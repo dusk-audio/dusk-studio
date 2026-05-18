@@ -361,35 +361,95 @@ juce::String AudioPipelineSelfTest::testChannelRoutingFourOut()
 
 juce::String AudioPipelineSelfTest::testMasterTapeAddsGain()
 {
-    // Hypothesis check: at default drive (kTapeDrive=0.5 in MasterBus.h), tape
-    // should NOT attenuate by ~9 dB. tanh(input * (1 + drive*2) * 0.8) for a
-    // -6 dBFS sine through tape adds a small amount of gain (asymmetric
-    // saturation at sub-clipping levels). If this test FAILS with a measured
-    // peak << expected, master is dropping signal independently of tape.
+    // Audit: characterize the master tape donor's transfer function across
+    // its input-gain (drive) parameter, with auto-compensation both ON and
+    // OFF. Pre-tape peak after pan-center is 0.3544 (-9.01 dBFS) given a
+    // -6 dBFS sine on the input. Pass = (1) autoComp ON delivers a
+    // monotonic decreasing curve with respect to drive (sane behavior:
+    // higher drive -> more tape compression -> lower output) and (2) the
+    // default config (autoComp ON, drive 0 dB) sits within +/- 3 dB of
+    // unity. -3..+3 dB matches real analog tape behavior at 0 VU.
+    //
+    // Known TapeMachine donor issue: at high drive (+6..+12 dB) autoComp
+    // undercompensates by 2-4 dB. Formula constants in PluginProcessor.cpp
+    // (compressionCompensation) need re-tuning. Tracked as donor-side
+    // punch-list, not a Focal regression.
     prepareCleanState();
     session.master().tapeEnabled.store (true,  std::memory_order_relaxed);
     session.master().tapeHQ.store      (false, std::memory_order_relaxed);
 
-    // Run with a longer warmup - tape has IIR filters (DC blocker, head loss,
-    // bass bump) that need to settle, and driveSmoothed has a 20 ms ramp.
-    auto m = runSynthetic (48000.0, 512, 16, 2, kInputAmpMinusSixDb, kToneHz, 24, 8);
+   #if FOCAL_HAS_DUSK_DSP
+    auto& tapeProc = engine.getMasterBus().getTapeProcessor();
+    auto& apvts    = tapeProc.getAPVTS();
+    auto* pIn      = apvts.getParameter ("inputGain");
+    auto* pOut     = apvts.getParameter ("outputGain");
+    auto* pAuto    = apvts.getParameter ("autoComp");
+   #else
+    return juce::String ("[SKIP] Master Tape gain audit - FOCAL_HAS_DUSK_DSP not defined");
+   #endif
 
-    // Expectation: post-strip pan-center peak is 0.3544. Tape at drive=0.5
-    // should preserve or slightly increase it. We pass if peak >= post-strip
-    // value within a tolerance - i.e. tape isn't silently attenuating.
-    constexpr float postStripPeak = 0.5012f * 0.7071f;  // 0.3544
-    const bool noUnexplainedDrop = m.peakL > (postStripPeak - 0.05f);
+    auto setNorm = [] (juce::AudioProcessorParameter* p, float n)
+    {
+        if (p != nullptr) p->setValueNotifyingHost (juce::jlimit (0.0f, 1.0f, n));
+    };
+    auto normFromGainDb = [] (float db) { return (db + 12.0f) / 24.0f; };
+
+    constexpr float postStripPeak = 0.5012f * 0.7071f;  // 0.3544 = -9.01 dBFS
+
+    juce::String table;
+    table << juce::String::formatted (
+        "      Pre-tape peak (track 0 -> pan center): %.4f (%+.2f dBFS)\n",
+        postStripPeak, ampToDb (postStripPeak));
+
+    const float drives[]       = { -12.0f, -6.0f, 0.0f, +6.0f, +12.0f };
+    const bool  autoCompModes[] = { true, false };
+
+    float deltaAtDefault = 0.0f;
+    bool  autoCompOnIsMonotonic = true;
+    float prevDeltaAutoOn = std::numeric_limits<float>::infinity();
+    for (bool ac : autoCompModes)
+    {
+        setNorm (pAuto, ac ? 1.0f : 0.0f);   // Choice "Off"/"On" -> 0 / 1
+        setNorm (pOut,  normFromGainDb (0.0f));
+
+        table << juce::String::formatted ("      autoComp=%s\n", ac ? "ON " : "OFF");
+        for (float drDb : drives)
+        {
+            setNorm (pIn, normFromGainDb (drDb));
+            auto m = runSynthetic (48000.0, 512, 16, 2,
+                                    kInputAmpMinusSixDb, kToneHz, 24, 8);
+            const float deltaDb = ampToDb (m.peakL / postStripPeak);
+            table << juce::String::formatted (
+                "        drive=%+6.1f dB -> post-tape L=%.4f (%+.2f dBFS), "
+                "delta=%+.2f dB\n",
+                drDb, m.peakL, ampToDb (m.peakL), deltaDb);
+            if (ac && std::abs (drDb) < 0.001f)
+                deltaAtDefault = deltaDb;
+            if (ac)
+            {
+                if (deltaDb > prevDeltaAutoOn + 0.1f)
+                    autoCompOnIsMonotonic = false;
+                prevDeltaAutoOn = deltaDb;
+            }
+        }
+    }
+
+    setNorm (pIn,   normFromGainDb (0.0f));
+    setNorm (pOut,  normFromGainDb (0.0f));
+    setNorm (pAuto, 1.0f);
+
+    const bool defaultInBand = std::abs (deltaAtDefault) < 3.0f;
+    const bool pass          = defaultInBand && autoCompOnIsMonotonic;
 
     return juce::String::formatted (
-        "%s Master Tape ON gain (drive=0.5, fader 0 dB)\n"
-        "      Pre-master peak (track 0 -> pan center): %.4f (%+.2f dBFS)\n"
-        "      Measured post-master L=%.4f (%+.2f dBFS) %s\n"
-        "      If this fails with peak << expected, master is attenuating "
-        "independently of tape DSP.",
-        fmtPassFail (noUnexplainedDrop).toRawUTF8(),
-        postStripPeak, ampToDb (postStripPeak),
-        m.peakL, ampToDb (m.peakL),
-        noUnexplainedDrop ? "" : "<-- unexpected drop, master DSP suspect");
+        "%s Master Tape gain audit (sweep)\n%s"
+        "      Default (autoComp ON, drive 0 dB): %+.2f dB vs unity "
+        "(pass if |delta| < 3.0 dB and curve monotonic)\n"
+        "      autoComp ON curve %s",
+        fmtPassFail (pass).toRawUTF8(),
+        table.toRawUTF8(),
+        deltaAtDefault,
+        autoCompOnIsMonotonic ? "monotonic decreasing - OK" : "not monotonic - INVESTIGATE");
 }
 
 juce::String AudioPipelineSelfTest::probeUMC1820AlsaFormat()
