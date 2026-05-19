@@ -93,6 +93,9 @@ private:
     juce::String testChannelRoutingTwoOut();
     juce::String testChannelRoutingFourOut();
     juce::String testMasterTapeAddsGain();   // sanity: tape ON should not silently drop signal
+    juce::String testCompEachMode();         // -18 dBFS sine through Opto/FET/VCA; THD + alias floor
+    juce::String testCompHeavyGR();          // extreme settings: characterize harmonics at heavy GR
+    juce::String testCompPerTrack();         // all 16 tracks under Opto produce identical output
     juce::String testBackendsOpenCleanly();
     juce::String probeUMC1820AlsaFormat();   // explicitly open UMC1820 ALSA & report format
 

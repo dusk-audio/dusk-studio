@@ -30,7 +30,8 @@ class EditModeToolbar;
 // crashing.
 class AudioRegionEditor final : public juce::Component,
                                   private juce::ChangeListener,
-                                  private juce::Timer
+                                  private juce::Timer,
+                                  private juce::ScrollBar::Listener
 {
 public:
     AudioRegionEditor (Session& session, AudioEngine& engine,
@@ -60,6 +61,11 @@ public:
     static constexpr int kIconRowHeight = 48;   // top - action icons + edit-mode palette
     static constexpr int kRulerHeight   = 28;   // bar.beat ruler under icon row
     static constexpr int kStatusBarH    = 30;   // bottom - readouts + props
+    static constexpr int kScrollBarH    = 12;   // horizontal scrollbar above status bar
+
+    juce::ScrollBar horizontalScrollBar { false };   // false = horizontal
+    void scrollBarMoved (juce::ScrollBar* bar, double newRangeStart) override;
+    void syncScrollBarRange();
     static constexpr int kKeyboardWidth = 0;
 
 private:

@@ -795,7 +795,7 @@ void restoreBus (Bus& a, const juce::var& v)
 }
 } // namespace
 
-bool SessionSerializer::save (const Session& s, const juce::File& target)
+juce::String SessionSerializer::serialize (const Session& s)
 {
     auto* root = new juce::DynamicObject();
     root->setProperty ("version", kFormatVersion);
@@ -908,6 +908,7 @@ bool SessionSerializer::save (const Session& s, const juce::File& target)
     tport->setProperty ("punch_out",     (juce::int64) s.savedPunchOut);
     tport->setProperty ("snap_to_grid",      s.snapToGrid);
     tport->setProperty ("snap_resolution",   (int) s.snapResolution);
+    tport->setProperty ("piano_roll_key_snap", s.pianoRollKeySnap);
     tport->setProperty ("edit_mode",         (int) s.editMode);
     tport->setProperty ("tempo_bpm",         s.tempoBpm.load());
     tport->setProperty ("sync_source_input",  s.syncSourceInputIdentifier);
@@ -952,29 +953,45 @@ bool SessionSerializer::save (const Session& s, const juce::File& target)
     tport->setProperty ("oversampling_factor", s.oversamplingFactor.load());
     root->setProperty ("transport", juce::var (tport));
 
-    const juce::String json = juce::JSON::toString (juce::var (root), false /*allOnOneLine*/);
+    return juce::JSON::toString (juce::var (root), false /*allOnOneLine*/);
+}
 
+bool SessionSerializer::writeAtomic (const juce::File& target, const juce::String& json)
+{
     // Atomic write: temp file + move-to-target. JUCE's File::moveFileTo uses
     // POSIX rename() under the hood which is atomic on the same filesystem,
     // so a partial session.json never appears even if we crash mid-save.
-    target.getParentDirectory().createDirectory();
-    auto tmp = target.getParentDirectory().getChildFile (target.getFileName() + ".tmp");
+    const auto parent = target.getParentDirectory();
+    parent.createDirectory();
+    auto tmp = parent.getChildFile (target.getFileName() + ".tmp");
+    // Cleanup-on-failure: any early-return below leaves no junk *.tmp behind.
+    auto cleanupTmp = [&tmp] { if (tmp.existsAsFile()) tmp.deleteFile(); };
     {
         juce::FileOutputStream out (tmp);
-        if (! out.openedOk()) return false;
+        if (! out.openedOk())                          { cleanupTmp(); return false; }
         out.setPosition (0);
-        if (! out.truncate().wasOk())                 return false;
-        if (! out.writeText (json, false, false, "\n")) return false;
+        if (! out.truncate().wasOk())                  { cleanupTmp(); return false; }
+        if (! out.writeText (json, false, false, "\n")) { cleanupTmp(); return false; }
         out.flush();
-        if (out.getStatus().failed())                  return false;
+        if (out.getStatus().failed())                  { cleanupTmp(); return false; }
     }
     // Push the temp-file contents to physical storage BEFORE the
     // rename. Without this, a power loss / kernel oops between the
     // rename and the next page-cache flush can leave the canonical
-    // session.json renamed but with empty / partial content - data
-    // loss bigger than just the in-progress save.
+    // session.json renamed but with empty / partial content.
     fsyncFile (tmp);
-    return tmp.moveFileTo (target);
+    if (! tmp.moveFileTo (target)) { cleanupTmp(); return false; }
+    // POSIX rename() is atomic in-memory only; durability of the rename
+    // itself requires fsync on the PARENT DIRECTORY. Without this a power
+    // loss after moveFileTo can vanish the rename and leave neither tmp
+    // nor target on disk.
+    fsyncFile (parent);
+    return true;
+}
+
+bool SessionSerializer::save (const Session& s, const juce::File& target)
+{
+    return writeAtomic (target, serialize (s));
 }
 
 bool SessionSerializer::load (Session& s, const juce::File& source)
@@ -1108,6 +1125,8 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         if (tport.hasProperty ("punch_in"))      s.savedPunchIn      = (juce::int64) tport["punch_in"];
         if (tport.hasProperty ("punch_out"))     s.savedPunchOut     = (juce::int64) tport["punch_out"];
         if (tport.hasProperty ("snap_to_grid"))  s.snapToGrid        = (bool) tport["snap_to_grid"];
+        if (tport.hasProperty ("piano_roll_key_snap"))
+            s.pianoRollKeySnap = (bool) tport["piano_roll_key_snap"];
         if (tport.hasProperty ("snap_resolution"))
         {
             const int i = (int) tport["snap_resolution"];

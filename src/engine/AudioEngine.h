@@ -384,6 +384,11 @@ private:
     std::array<std::vector<float>, Session::kNumAuxLanes> auxLaneL, auxLaneR;
     std::vector<float> playbackScratch;   // per-track playback L (or mono)
     std::vector<float> playbackScratchR;  // per-track playback R (stereo regions only)
+    // Read-only silent buffer fed to strips with a generator-style
+    // insert (e.g. signal generator) when the track has no audio
+    // source. Lets the insert plugin emit its output even when there's
+    // no live input or disk playback to drive the channel.
+    std::vector<float> silentInputScratch;
 
     // MIDI input plumbing. One MidiMessageCollector per registered MIDI
     // input device (parallel to the device list). The MIDI input thread

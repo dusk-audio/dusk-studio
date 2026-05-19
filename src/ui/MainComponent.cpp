@@ -401,7 +401,10 @@ MainComponent::MainComponent()
                               "Stop playback before importing files.");
             return;
         }
-        enqueueImports (std::move (files), timelineStart, trackHint);
+        if (files.size() > 1)
+            openMultiImportPicker (std::move (files), timelineStart);
+        else
+            enqueueImports (std::move (files), timelineStart, trackHint);
     };
     addAndMakeVisible (tapeStrip.get());
 
@@ -936,38 +939,30 @@ void MainComponent::resized()
     constexpr int kStageBtnH = 28;
     const int stageY = rowBounds.getY() + (rowBounds.getHeight() - kStageBtnH) / 2;
 
-    // Banking decision (kept before stageX so the stage block can flow
-    // right of the bank overlay when banks are visible).
+    // Banking decision: console can't fit all 16 strips at reference width.
+    // Hidden in mastering / aux (no console there). Banks now live in a
+    // dedicated row directly above the strip grid (see below), so they no
+    // longer need to be positioned within the transport row.
     const bool needsBanking = (consoleView != nullptr) && (! inFullscreenView)
                              && (area.getWidth() < consoleView->fixedWidthFor16Tracks());
     const bool transportCompact = rowBounds.getWidth() < TransportBar::kCompactTransportWidth;
 
-    // Stage tabs shrink in compact mode so the bank overlay + stage block
-    // don't crowd against the transport bar's right cluster at the OS
-    // minimum window width.
+    // Stage tabs shrink in compact mode so they don't crowd against the
+    // (now centered) transport cluster at the OS minimum window width.
     const int stageW = transportCompact ? 92 : 110;
     const int stageBlockW = stageW * 4;
     const int  kBankBtnW   = transportCompact ? 90 : 130;
     constexpr int kBankBtnGap = 6;
+    constexpr int kBankBtnH  = 26;
 
-    // Width of the transport bar's left block (transport buttons + time
-    // toggle + clock), tracked here so the stage tabs can sit just right
-    // of it when banks are showing. Numbers match TransportBar::resized.
-    const int kTransportLeftEnd = transportCompact ? 480 : 500;
-    const int kPostClockGap     = 16;
-
-    int stageX;
-    if (needsBanking)
-    {
-        const int bankWidth   = kBankBtnW * 2 + kBankBtnGap;
-        const int stageStartX = rowBounds.getX() + kTransportLeftEnd
-                                 + kPostClockGap + bankWidth + kPostClockGap;
-        stageX = stageStartX;
-    }
-    else
-    {
-        stageX = rowBounds.getX() + (rowBounds.getWidth() - stageBlockW) / 2;
-    }
+    // Center the stages + banks group within the row. Transport sits on
+    // the LEFT (TransportBar own widgets); BPM cluster sits on the RIGHT.
+    // The centered group reads: STAGES (4 tabs) [+ BANK A / BANK B when
+    // 16 strips need banking].
+    constexpr int kStageToBankGap = 12;
+    const int bankClusterW = needsBanking ? (kStageToBankGap + 2 * kBankBtnW + kBankBtnGap) : 0;
+    const int groupW       = stageBlockW + bankClusterW;
+    const int stageX       = rowBounds.getX() + (rowBounds.getWidth() - groupW) / 2;
 
     recordingStageBtn.setBounds (stageX,                stageY, stageW, kStageBtnH);
     mixingStageBtn   .setBounds (stageX + stageW,       stageY, stageW, kStageBtnH);
@@ -981,30 +976,28 @@ void MainComponent::resized()
     auxStageBtn      .toFront (false);
     masteringStageBtn.toFront (false);
 
-    // Banking decision: console can't fit all 16 strips at reference width.
-    // Hidden in mastering / aux (no console there). Banks now sit between
-    // the transport-bar clock and the stage-tab block (transport row
-    // reads left-to-right: transport buttons | time toggle | clock |
-    // BANK A | BANK B | RECORDING | MIXING | AUX | MASTERING).
-    bankAButton.setVisible (needsBanking);
-    bankBButton.setVisible (needsBanking);
+    // Banks sit inline immediately right of the centered stage block.
     if (needsBanking)
     {
-        constexpr int kBankBtnH = 26;
+        bankAButton.setVisible (true);
+        bankBButton.setVisible (true);
         bankAButton.setButtonText (transportCompact ? "1-8"  : "BANK A  (1-8)");
         bankBButton.setButtonText (transportCompact ? "9-16" : "BANK B  (9-16)");
         const int bankY = rowBounds.getY() + (rowBounds.getHeight() - kBankBtnH) / 2;
-        const int bankX = rowBounds.getX() + kTransportLeftEnd + kPostClockGap;
+        const int bankX = stageX + stageBlockW + kStageToBankGap;
         bankAButton.setBounds (bankX, bankY, kBankBtnW, kBankBtnH);
         bankBButton.setBounds (bankX + kBankBtnW + kBankBtnGap, bankY,
                                 kBankBtnW, kBankBtnH);
-        bankAButton.toFront (false);
-        bankBButton.toFront (false);
-        // Sync toggle state with the console's current bank.
         const int b = consoleView->getBank();
         bankAButton.setToggleState (b == 0, juce::dontSendNotification);
         bankBButton.setToggleState (b == 1, juce::dontSendNotification);
     }
+    else
+    {
+        bankAButton.setVisible (false);
+        bankBButton.setVisible (false);
+    }
+
     area.removeFromTop (4);
 
     if (! inFullscreenView)
@@ -1253,7 +1246,8 @@ bool MainComponent::saveSessionTo (const juce::File& dir)
     engine.publishTransportStateForSave();
 
     const auto target = dir.getChildFile ("session.json");
-    const bool saveOk = SessionSerializer::save (session, target);
+    const juce::String json = SessionSerializer::serialize (session);
+    const bool saveOk = SessionSerializer::writeAtomic (target, json);
 
     if (reattachAudioAfter)
     {
@@ -1271,6 +1265,10 @@ bool MainComponent::saveSessionTo (const juce::File& dir)
         // A successful manual save makes the autosave stale - drop it so the
         // recovery prompt doesn't fire on the next clean load.
         deleteAutosaveFor (dir);
+        // Remember the JSON so the next autosave tick can recognise an
+        // idle (no further edits) state and skip the write.
+        lastSavedSessionJson    = json;
+        lastWrittenAutosaveJson = juce::String();
         setStatusForPath ("Saved", target);
         return true;
     }
@@ -1304,7 +1302,18 @@ bool MainComponent::autosaveIsNewerThan (const juce::File& sessionJson) const
     const auto autosave = getAutosaveFileFor (sessionJson.getParentDirectory());
     if (! autosave.existsAsFile()) return false;
     if (! sessionJson.existsAsFile()) return true;   // autosave is the only state we have
-    return autosave.getLastModificationTime() > sessionJson.getLastModificationTime();
+    if (autosave.getLastModificationTime() <= sessionJson.getLastModificationTime())
+        return false;
+    // Both files exist and autosave looks newer by mtime. Avoid the
+    // double disk read where possible: compare against the in-memory
+    // snapshot of the last manual save first, then fall back to a size
+    // check + content check so a legacy / cold-load autosave still gets
+    // verified.
+    if (lastSavedSessionJson.isNotEmpty())
+        return autosave.loadFileAsString() != lastSavedSessionJson;
+    if (autosave.getSize() != sessionJson.getSize())
+        return true;
+    return autosave.loadFileAsString() != sessionJson.loadFileAsString();
 }
 
 void MainComponent::deleteAutosaveFor (const juce::File& sessionDir) const
@@ -1332,9 +1341,22 @@ void MainComponent::writeAutosave()
     engine.publishPluginStateForSave (/*audioCallbackDetached*/ false);
     engine.publishTransportStateForSave();
 
+    // Skip the write entirely when the snapshot matches what's already on
+    // disk - either the last manual save (no real edits since Ctrl+S) or
+    // the previous autosave tick (timer firing on idle state). Without
+    // this skip the autosave file's mtime would creep past session.json
+    // every 30 s, producing a false-positive recovery prompt on next load.
+    const juce::String json = SessionSerializer::serialize (session);
+    if (json == lastSavedSessionJson)    return;
+    if (json == lastWrittenAutosaveJson) return;
+
     const auto target = getAutosaveFileFor (dir);
-    if (! SessionSerializer::save (session, target))
+    if (! SessionSerializer::writeAtomic (target, json))
+    {
         DBG ("MainComponent: autosave write failed at " << target.getFullPathName());
+        return;
+    }
+    lastWrittenAutosaveJson = json;
 }
 
 void MainComponent::timerCallback()
@@ -1721,6 +1743,11 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     // the assumption they've made a deliberate choice to discard it.)
     deleteAutosaveFor (dir);
 
+    // Note: lastSavedSessionJson is seeded later in this function, after
+    // consumePluginStateAfterLoad has filled in plugin/transport state.
+    // Seeding it here would miss those fields and the first autosave tick
+    // would still fire (snapshot mismatch). The seed lives at the tail.
+
     // After deserialisation, the Track::pluginDescriptionXml /
     // pluginStateBase64 fields are populated; ask the engine to
     // re-instantiate each track's plugin from those.
@@ -1790,6 +1817,13 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     setStatusForPath ("Loaded", sourceJson,
                          /*isAutosave*/ sourceJson.getFileName().endsWithIgnoreCase (".autosave"));
 
+    // Seed the saved-state snapshot from the live in-memory session now
+    // that plugin + transport state have been consumed. The next autosave
+    // tick compares against this snapshot and skips the write while the
+    // session remains untouched.
+    lastSavedSessionJson    = SessionSerializer::serialize (session);
+    lastWrittenAutosaveJson = juce::String();
+
     std::fprintf (stderr,
                   "[Focal/Load] %s: parse=%dms plugins=%dms midiOuts=%dms console=%dms total=%dms\n",
                   sourceJson.getFileName().toRawUTF8(),
@@ -1853,6 +1887,21 @@ void MainComponent::openBounceDialog()
         panel->setSize (520, 200);
         bounceModal.show (*this, std::move (panel));
     });
+}
+
+// True when the track's name is empty or still the default "N" string.
+// Used by the import flow to decide whether to auto-rename the track to
+// the imported file's basename (preserves user-renamed tracks).
+static bool trackHasDefaultName (const Track& t, int idx)
+{
+    const auto trimmed = t.name.trim();
+    return trimmed.isEmpty() || trimmed == juce::String (idx + 1);
+}
+
+static void maybeRenameTrackFromFile (Track& t, int idx, const juce::File& f)
+{
+    if (trackHasDefaultName (t, idx))
+        t.name = f.getFileNameWithoutExtension();
 }
 
 void MainComponent::runAudioImportFlow (const juce::File& source,
@@ -1929,6 +1978,7 @@ void MainComponent::runAudioImportFlow (const juce::File& source,
             // in place is safe; the next play() pulls the new layout via
             // preparePlayback.
             track.regions.push_back (std::move (res.region));
+            focal::maybeRenameTrackFromFile (track, trackIndex, source);
             if (self->tapeStrip != nullptr) self->tapeStrip->repaint();
             self->pendingImportLastCommitted = trackIndex;
             self->kickNextImport();
@@ -2033,6 +2083,7 @@ void MainComponent::runMidiImportFlow (const juce::File& source,
             {
                 v.push_back (std::move (res.region));
             });
+            focal::maybeRenameTrackFromFile (track, trackIndex, source);
             if (self->tapeStrip != nullptr) self->tapeStrip->repaint();
             self->pendingImportLastCommitted = trackIndex;
             self->kickNextImport();
@@ -2072,9 +2123,11 @@ void MainComponent::importAudioPrompt()
         if (self == nullptr) return;
         const auto chosen = fc.getResults();
         if (chosen.isEmpty()) return;
-        self->enqueueImports (chosen,
-                                self->engine.getTransport().getPlayhead(),
-                                -1);
+        const auto t = self->engine.getTransport().getPlayhead();
+        if (chosen.size() > 1)
+            self->openMultiImportPicker (chosen, t);
+        else
+            self->enqueueImports (chosen, t, -1);
     });
 }
 
@@ -2104,9 +2157,11 @@ void MainComponent::importMidiPrompt()
         if (self == nullptr) return;
         const auto chosen = fc.getResults();
         if (chosen.isEmpty()) return;
-        self->enqueueImports (chosen,
-                                self->engine.getTransport().getPlayhead(),
-                                -1);
+        const auto t = self->engine.getTransport().getPlayhead();
+        if (chosen.size() > 1)
+            self->openMultiImportPicker (chosen, t);
+        else
+            self->enqueueImports (chosen, t, -1);
     });
 }
 
@@ -2119,15 +2174,53 @@ void MainComponent::enqueueImports (juce::Array<juce::File> files,
     pendingImportInitialHint   = trackHint;
     pendingImportTimelineStart = timelineStart;
     for (const auto& f : files)
-        pendingImportQueue.push_back (f);
+    {
+        PendingImport p;
+        p.file       = f;
+        p.trackIndex = -1;   // needs picker
+        const auto ext = f.getFileExtension().toLowerCase();
+        p.isMidi     = (ext == ".mid" || ext == ".midi");
+        pendingImportQueue.push_back (std::move (p));
+    }
+    kickNextImport();
+}
+
+void MainComponent::enqueueImportsWithTargets (
+    std::vector<MultiImportTargetPicker::Assignment> assignments,
+    juce::int64 timelineStart)
+{
+    pendingImportQueue.clear();
+    pendingImportLastCommitted = -2;
+    pendingImportInitialHint   = -1;
+    pendingImportTimelineStart = timelineStart;
+    for (const auto& a : assignments)
+    {
+        PendingImport p;
+        p.file       = a.file;
+        p.trackIndex = a.trackIndex;   // pre-assigned, picker skipped
+        p.isMidi     = a.isMidi;
+        pendingImportQueue.push_back (std::move (p));
+    }
     kickNextImport();
 }
 
 void MainComponent::kickNextImport()
 {
     if (pendingImportQueue.empty()) return;
-    auto file = pendingImportQueue.front();
+    auto entry = pendingImportQueue.front();
     pendingImportQueue.erase (pendingImportQueue.begin());
+
+    // Pre-assigned (multi-picker path): skip the per-file modal and
+    // dispatch straight to the importer.
+    if (entry.trackIndex >= 0)
+    {
+        MultiImportTargetPicker::Assignment a;
+        a.file       = entry.file;
+        a.trackIndex = entry.trackIndex;
+        a.isMidi     = entry.isMidi;
+        commitImportNoModal (a, pendingImportTimelineStart);
+        return;
+    }
 
     // Sequential hint: after the first commit, push subsequent files to
     // adjacent tracks so a drop on track 2 fills 2/3/4 unless the user
@@ -2137,11 +2230,10 @@ void MainComponent::kickNextImport()
                                        Session::kNumTracks - 1)
                        : pendingImportInitialHint;
 
-    const auto ext = file.getFileExtension().toLowerCase();
-    if (ext == ".mid" || ext == ".midi")
-        runMidiImportFlow (file, pendingImportTimelineStart, hint);
+    if (entry.isMidi)
+        runMidiImportFlow (entry.file, pendingImportTimelineStart, hint);
     else
-        runAudioImportFlow (file, pendingImportTimelineStart, hint);
+        runAudioImportFlow (entry.file, pendingImportTimelineStart, hint);
 }
 
 void MainComponent::cancelImportChain()
@@ -2149,6 +2241,148 @@ void MainComponent::cancelImportChain()
     pendingImportQueue.clear();
     pendingImportLastCommitted = -2;
     importTargetModal.close();
+}
+
+void MainComponent::commitImportNoModal (
+    const MultiImportTargetPicker::Assignment& a, juce::int64 timelineStart)
+{
+    // Mirror the per-file picker's onCommit body but without re-opening
+    // a modal. Mid-batch transport state changes abort the whole queue,
+    // same as the single-file path.
+    if (! engine.getTransport().isStopped())
+    {
+        showImportError (a.isMidi ? "Import MIDI" : "Import audio",
+                          "Stop playback before importing files.");
+        cancelImportChain();
+        return;
+    }
+
+    auto& track = session.track (a.trackIndex);
+
+    if (a.isMidi)
+    {
+        focal::fileimport::MidiImportRequest req;
+        req.source            = a.file;
+        req.sessionSampleRate = engine.getCurrentSampleRate();
+        req.sessionBpm        = session.tempoBpm.load (std::memory_order_relaxed);
+        req.timelineStart     = timelineStart;
+
+        auto res = focal::fileimport::importMidi (req);
+        if (! res.ok)
+        {
+            showImportError ("Import MIDI failed", res.errorMessage);
+            kickNextImport();
+            return;
+        }
+        track.midiRegions.mutate ([&] (std::vector<MidiRegion>& v)
+        {
+            v.push_back (std::move (res.region));
+        });
+    }
+    else
+    {
+        const auto mode = (Track::Mode) track.mode.load (std::memory_order_relaxed);
+
+        focal::fileimport::AudioImportRequest req;
+        req.source            = a.file;
+        req.audioDir          = session.getAudioDirectory();
+        req.trackIndex        = a.trackIndex;
+        req.sessionSampleRate = engine.getCurrentSampleRate();
+        req.targetChannels    = (mode == Track::Mode::Stereo) ? 2 : 1;
+        req.timelineStart     = timelineStart;
+
+        auto res = focal::fileimport::importAudio (req);
+        if (! res.ok)
+        {
+            showImportError ("Import audio failed", res.errorMessage);
+            kickNextImport();
+            return;
+        }
+        track.regions.push_back (std::move (res.region));
+    }
+
+    focal::maybeRenameTrackFromFile (track, a.trackIndex, a.file);
+    if (tapeStrip != nullptr) tapeStrip->repaint();
+    pendingImportLastCommitted = a.trackIndex;
+    kickNextImport();
+}
+
+void MainComponent::openMultiImportPicker (juce::Array<juce::File> files,
+                                              juce::int64 timelineStart)
+{
+    // Peek each file to build a FileSummary the picker can render. Audio
+    // peek opens an AudioFormatReader; MIDI peek runs MidiFile::readFrom +
+    // counts notes. Both happen synchronously on the message thread - the
+    // user clicked Import and is waiting for the modal to appear.
+    std::vector<ImportTargetPicker::FileSummary> summaries;
+    summaries.reserve ((size_t) files.size());
+    for (const auto& f : files)
+    {
+        ImportTargetPicker::FileSummary s;
+        s.file = f;
+        const auto ext = f.getFileExtension().toLowerCase();
+        s.isMidi = (ext == ".mid" || ext == ".midi");
+
+        if (s.isMidi)
+        {
+            juce::MidiFile peek;
+            juce::FileInputStream in (f);
+            if (in.openedOk() && peek.readFrom (in))
+            {
+                int noteCount = 0;
+                juce::int64 maxTick = 0;
+                const int ppq = (int) peek.getTimeFormat();
+                for (int t = 0; t < peek.getNumTracks(); ++t)
+                    if (const auto* trk = peek.getTrack (t))
+                        for (int i = 0; i < trk->getNumEvents(); ++i)
+                        {
+                            const auto& m = trk->getEventPointer (i)->message;
+                            if (m.isNoteOn() && m.getVelocity() > 0) ++noteCount;
+                            maxTick = juce::jmax (maxTick,
+                                (juce::int64) std::llround (m.getTimeStamp()));
+                        }
+                s.numMidiNotes = noteCount;
+                s.lengthTicks  = (ppq > 0 && ppq != kMidiTicksPerQuarter)
+                                    ? (juce::int64) std::llround ((double) maxTick
+                                          * (double) kMidiTicksPerQuarter / (double) ppq)
+                                    : maxTick;
+            }
+            s.numChannels = -1;
+        }
+        else
+        {
+            std::unique_ptr<juce::AudioFormatReader> reader (
+                importAudioFormatManager().createReaderFor (f));
+            if (reader == nullptr)
+                continue;
+            s.sampleRate    = reader->sampleRate;
+            s.numChannels   = juce::jmin (2, (int) reader->numChannels);
+            s.lengthSamples = (juce::int64) reader->lengthInSamples;
+        }
+        summaries.push_back (std::move (s));
+    }
+
+    auto picker = std::make_unique<MultiImportTargetPicker> (
+        session, std::move (summaries), timelineStart,
+        [safeThis = juce::Component::SafePointer<MainComponent> (this),
+         timelineStart]
+        (std::vector<MultiImportTargetPicker::Assignment> assignments)
+        {
+            auto* self = safeThis.getComponent();
+            if (self == nullptr) return;
+            self->importTargetModal.close();
+            self->enqueueImportsWithTargets (std::move (assignments), timelineStart);
+        },
+        [safeThis = juce::Component::SafePointer<MainComponent> (this)]
+        {
+            if (auto* self = safeThis.getComponent())
+                self->cancelImportChain();
+        });
+
+    // Modal stays open on click-outside - the user must explicitly
+    // Cancel or Import. Esc still routes to the body's key handling
+    // (no onDismiss installed -> Esc is currently a no-op too).
+    importTargetModal.show (*this, std::move (picker), {}, /*dismissOnClickOutside*/ false);
 }
 
 // ── MenuBarModel ─────────────────────────────────────────────────────────

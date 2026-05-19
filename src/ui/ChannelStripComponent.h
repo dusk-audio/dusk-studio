@@ -129,11 +129,18 @@ private:
 
     // COMP section. UniversalCompressor exposes a different control set per
     // mode (Opto/FET/VCA model real hardware), so the strip holds the union
-    // of all three and shows only the ones for the current mode.
-    juce::TextButton compOnButton { "COMP" };  // header doubles as on/off toggle
-    juce::TextButton compModeOpto { "OPT" };
-    juce::TextButton compModeFet  { "FET" };
-    juce::TextButton compModeVca  { "VCA" };
+    // of all three and shows only the ones for the current mode. The header
+    // button shows the active mode (OPTO/FET/VCA) and opens a popup picker
+    // on click. It also illuminates (background fills gold) when the comp
+    // is engaged - touching any knob auto-engages the comp.
+    //
+    // NOTE: illumination relies on the LookAndFeel reading getToggleState()
+    // independently of setClickingTogglesState. We do NOT call
+    // setClickingTogglesState(true) - that would flip the state on every
+    // click and detach the visual state from the underlying compEnabled
+    // atom. The button's onClick opens the mode menu; compEnabled is
+    // mutated separately via setCompEnabled / armCompOnUserEdit.
+    juce::TextButton compModeButton  { "OPTO" };
 
     // Opto (LA-2A): peak-reduction knob + gain knob + LIMIT toggle.
     juce::Slider     optoPeakRedKnob { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
@@ -179,7 +186,8 @@ private:
     // mode (e.g. "OFF", "READ"). Right-click reserved for future per-param
     // mode picker (also 3c-ii).
     juce::TextButton autoModeButton { "OFF" };
-    void onAutoModeClicked();
+    void showAutoModeMenu();
+    void setAutoMode (AutomationMode mode);
     void refreshAutoModeButton();
     // Append (normalized) `denormValue` to track.automationLanes[param]
     // at the current transport playhead. Maintains strict ascending
@@ -204,6 +212,16 @@ private:
     juce::ComboBox   midiInputSelector;     // MIDI input port (visible only in MIDI mode)
     juce::ComboBox   midiChannelSelector;   // Omni / Ch 1..16 filter (MIDI mode only)
     juce::ComboBox   midiOutputSelector;    // External MIDI output port (MIDI mode only)
+
+    // Compact header that replaces the inline mode/input/midi rows. Shows a
+    // one-line summary of the track's I/O (e.g. "Mono · In 1" or "MIDI Ch 5
+    // → Diva") and opens an InputConfigPanel popup when clicked. Saves ~60
+    // px vertical per strip; the 6 ComboBoxes above live as members so the
+    // popup can re-parent them on open and they keep their wiring + state.
+    juce::TextButton ioConfigButton;
+    void openIoConfigPopup();
+    void refreshIoConfigButton();
+    juce::Component::SafePointer<juce::CallOutBox> activeIoBox;
     // Small painted dot, repainted by the strip's existing 30 Hz timer when
     // the engine sets track.midiActivity (clear-on-read). Sits next to the
     // MIDI selectors when the track is in MIDI mode.
@@ -235,7 +253,18 @@ private:
     void applyTrackColour (juce::Colour c);
     void refreshEqTypeButton();
     void setCompMode (int modeIndex);
-    void refreshCompModeButtons();
+    // Cheap state-only refresh: button text + toggle illumination. Called
+    // every timer tick + after any compMode/compEnabled mutation.
+    void refreshCompModeButtonState();
+    // Heavy visibility refresh: shows the active mode's per-mode knobs +
+    // hides the other modes'. Only invoked after a real mode change or
+    // when the section's visibility flips - NOT from the 30 Hz timer.
+    void refreshCompKnobVisibility();
+    void showCompModeMenu();
+    void armCompOnUserEdit();
+    // Toggle comp on/off + refresh mode-button illumination. Used by the
+    // right-click context menu since the button itself is the mode picker.
+    void setCompEnabled (bool enabled);
 
     // Plugin slot UX. Delegates to pluginpicker::openPickerMenu, passing
     // PluginKind based on track mode (Instruments for Midi, Effects for
@@ -283,6 +312,12 @@ private:
     std::unique_ptr<PluginEditorWindow> pluginEditorWindow;
     std::unique_ptr<juce::AudioProcessorEditor> pluginEditor;
     juce::AudioProcessor* pluginEditorOwner = nullptr;
+    // Generic-fallback editors (plugins with no native UI) host inside
+    // the main window as an EmbeddedModal so combobox / popup peers
+    // share the main wl_surface — avoids the mixed X11/Wayland popup
+    // breakage that happens when a JUCE-native editor is wrapped in an
+    // X11 PluginEditorWindow.
+    EmbeddedModal pluginGenericEditorModal;
 
    #if JUCE_LINUX && FOCAL_HAS_OOP_PLUGINS
     // OOP-mode editor embedding. The plugin's editor lives in the

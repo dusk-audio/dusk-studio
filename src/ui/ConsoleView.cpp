@@ -242,6 +242,14 @@ void ConsoleView::applyCompactState()
     for (auto& strip : strips)
         if (strip != nullptr)
             strip->setCompactMode (compact);
+    // Bus + master strips don't collapse their EQ/COMP sections, but
+    // they shrink their VU meters in compact mode so the fader keeps a
+    // workable height when the tape SUMMARY is consuming vertical room.
+    for (auto& bus : busStrips)
+        if (bus != nullptr)
+            bus->setCompactVu (compact);
+    if (masterStrip != nullptr)
+        masterStrip->setCompactVu (compact);
 }
 
 void ConsoleView::setStripsMixingMode (bool mixing)

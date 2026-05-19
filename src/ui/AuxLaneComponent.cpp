@@ -532,9 +532,14 @@ void AuxLaneComponent::rebuildSlots()
         auto* instance = strip.getPluginSlot (i).getInstance();
         if (instance != nullptr && ui.editor == nullptr)
         {
-            focal::platform::preferX11ForNextNativeWindow();
-            ui.editor.reset (instance->createEditorIfNeeded());
-            focal::platform::clearPreferX11ForNativeWindow();
+            if (instance->hasEditor())
+            {
+                focal::platform::preferX11ForNextNativeWindow();
+                ui.editor.reset (instance->createEditorIfNeeded());
+                focal::platform::clearPreferX11ForNativeWindow();
+            }
+            if (ui.editor == nullptr)
+                ui.editor = std::make_unique<juce::GenericAudioProcessorEditor> (*instance);
         }
         if (instance != nullptr && ui.editor != nullptr && ui.editorHost == nullptr)
             createEditorHostForSlot (i);

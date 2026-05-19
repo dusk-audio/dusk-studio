@@ -24,8 +24,8 @@ void styleSmallKnob (juce::Slider& s, double minV, double maxV, double midPt,
     s.setColour (juce::Slider::rotarySliderOutlineColourId, juce::Colour (0xff2a2a2e));
     s.setColour (juce::Slider::thumbColourId, col.brighter (0.3f));
     s.setColour (juce::Slider::textBoxTextColourId, juce::Colour (0xffd0d0d0));
-    s.setColour (juce::Slider::textBoxBackgroundColourId, juce::Colour (0xff181820));
-    s.setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
+    s.setColour (juce::Slider::textBoxBackgroundColourId, juce::Colours::transparentBlack);
+    s.setColour (juce::Slider::textBoxOutlineColourId,    juce::Colours::transparentBlack);
     s.setNumDecimalPlacesToDisplay (decimals);
     s.setTextValueSuffix (suffix);
 }
@@ -101,7 +101,12 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
 
     styleSmallLabel (eqLfLabel,      "LF",     pultecGold);
     styleSmallLabel (eqHfBoostLabel, "HF+",    pultecGold);
-    styleSmallLabel (eqHfAttenLabel, "HF−", pultecGold);  // HF−
+    // U+2212 minus. Construct via CharPointer_UTF8 - juce::String's const char*
+    // ctor uses the system locale, which mangles UTF-8 into garbage on Linux
+    // ("HFâ\x88\x92" instead of "HF−").
+    styleSmallLabel (eqHfAttenLabel,
+                      juce::String (juce::CharPointer_UTF8 ("HF\xe2\x88\x92")),
+                      pultecGold);
     styleSmallLabel (eqDriveLabel,   "DRIVE",  pultecGold);
     styleSmallLabel (eqOutLabel,     "OUT",    pultecGold);
     addAndMakeVisible (eqLfLabel);   addAndMakeVisible (eqHfBoostLabel);
@@ -291,13 +296,31 @@ void MasterStripComponent::timerCallback()
 
 void MasterStripComponent::paint (juce::Graphics& g)
 {
-    auto r = getLocalBounds().toFloat().reduced (1.5f);
+    // Visible gap + gold-tinted outline so the master reads as its own
+    // group, separate from the bus row to its left.
+    auto r = getLocalBounds().toFloat().reduced (3.0f);
     g.setColour (juce::Colour (0xff202024));
-    g.fillRoundedRectangle (r, 4.0f);
+    g.fillRoundedRectangle (r, 5.0f);
     g.setColour (juce::Colour (0xffd0a060));
     g.fillRoundedRectangle (r.removeFromTop (4.0f), 2.0f);
-    g.setColour (juce::Colour (0xff3a3a3e));
-    g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (1.5f), 4.0f, 1.5f);
+    g.setColour (juce::Colour (0xffd0a060).withAlpha (0.55f));
+    g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (3.0f), 5.0f, 2.0f);
+
+    // EQ / COMP framed bands - same grammar as channel + bus strips.
+    if (! eqArea.isEmpty())
+    {
+        g.setColour (juce::Colour (0xff1f231e));
+        g.fillRoundedRectangle (eqArea.toFloat(), 3.0f);
+        g.setColour (juce::Colour (0xff80c090).withAlpha (0.40f));
+        g.drawRoundedRectangle (eqArea.toFloat().reduced (0.5f), 3.0f, 0.8f);
+    }
+    if (! compArea.isEmpty())
+    {
+        g.setColour (juce::Colour (0xff241f1c));
+        g.fillRoundedRectangle (compArea.toFloat(), 3.0f);
+        g.setColour (juce::Colour (0xffd09060).withAlpha (0.40f));
+        g.drawRoundedRectangle (compArea.toFloat().reduced (0.5f), 3.0f, 0.8f);
+    }
 
     // Stereo LED meter - two vertical bars (L | R) inside meterArea.
     if (! meterArea.isEmpty())
@@ -431,6 +454,13 @@ void MasterStripComponent::paint (juce::Graphics& g)
     }
 }
 
+void MasterStripComponent::setCompactVu (bool compact)
+{
+    if (compactVu == compact) return;
+    compactVu = compact;
+    resized();
+}
+
 void MasterStripComponent::resized()
 {
     auto area = getLocalBounds().reduced (4);
@@ -442,7 +472,9 @@ void MasterStripComponent::resized()
     // the meter row reads consistently across the console.
     if (vuMeter != nullptr)
     {
-        const int vuH = juce::jmax (40, area.getWidth() * 7 / 12);
+        const int ratioNum = compactVu ? 5 : 7;
+        const int minH     = compactVu ? 32 : 40;
+        const int vuH = juce::jmax (minH, area.getWidth() * ratioNum / 12);
         vuMeter->setBounds (area.removeFromTop (vuH));
         area.removeFromTop (4);
     }
@@ -468,10 +500,15 @@ void MasterStripComponent::resized()
     };
 
     // EQ section: bypass toggle, then 5 fixed-size knob blocks centred in row.
-    eqButton.setBounds (area.removeFromTop (20).reduced (4, 0));
-    area.removeFromTop (2);
+    // Wrap header + knob row in a framed band (eqArea) so the master reads
+    // with the same green-tinted EQ / amber-tinted COMP grammar as channels.
     {
-        auto rows = layKnobRow (area, 5);
+        constexpr int kEqSectionH = 20 + 2 + 10 + kKnobBlockH;
+        eqArea = area.removeFromTop (kEqSectionH);
+        auto s = eqArea;
+        eqButton.setBounds (s.removeFromTop (20).reduced (4, 0));
+        s.removeFromTop (2);
+        auto rows = layKnobRow (s, 5);
         auto& lblRow  = rows.first;
         auto& knobRow = rows.second;
         eqLfLabel     .setBounds (lblRow .removeFromLeft (kKnobBlockW));
@@ -488,10 +525,13 @@ void MasterStripComponent::resized()
     area.removeFromTop (4);
 
     // Comp section: same shape.
-    compButton.setBounds (area.removeFromTop (20).reduced (4, 0));
-    area.removeFromTop (2);
     {
-        auto rows = layKnobRow (area, 5);
+        constexpr int kCompSectionH = 20 + 2 + 10 + kKnobBlockH;
+        compArea = area.removeFromTop (kCompSectionH);
+        auto s = compArea;
+        compButton.setBounds (s.removeFromTop (20).reduced (4, 0));
+        s.removeFromTop (2);
+        auto rows = layKnobRow (s, 5);
         auto& lblRow  = rows.first;
         auto& knobRow = rows.second;
         compThrLabel .setBounds (lblRow .removeFromLeft (kKnobBlockW));

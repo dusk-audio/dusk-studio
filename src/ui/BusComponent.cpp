@@ -26,8 +26,8 @@ void styleSmallKnob (juce::Slider& s, double minV, double maxV, double midPt,
     s.setColour (juce::Slider::rotarySliderOutlineColourId, juce::Colour (0xff2a2a2e));
     s.setColour (juce::Slider::thumbColourId, col.brighter (0.3f));
     s.setColour (juce::Slider::textBoxTextColourId, juce::Colour (0xffd0d0d0));
-    s.setColour (juce::Slider::textBoxBackgroundColourId, juce::Colour (0xff181820));
-    s.setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
+    s.setColour (juce::Slider::textBoxBackgroundColourId, juce::Colours::transparentBlack);
+    s.setColour (juce::Slider::textBoxOutlineColourId,    juce::Colours::transparentBlack);
     s.setNumDecimalPlacesToDisplay (decimals);
     s.setTextValueSuffix (suffix);
 }
@@ -373,17 +373,36 @@ void BusComponent::showColourMenu()
 
 void BusComponent::paint (juce::Graphics& g)
 {
-    auto r = getLocalBounds().toFloat().reduced (1.5f);
+    // Inset the card more (3.0 vs 1.5) so adjacent bus strips have a
+    // visible gap between their outlines. Tint the outline with the bus's
+    // own colour so each bus reads as a self-contained group, not a slice
+    // of an undifferentiated row.
+    auto r = getLocalBounds().toFloat().reduced (3.0f);
     g.setColour (juce::Colour (0xff181820));
-    g.fillRoundedRectangle (r, 4.0f);
+    g.fillRoundedRectangle (r, 5.0f);
     g.setColour (bus.colour.withAlpha (0.85f));
     g.fillRoundedRectangle (r.removeFromTop (4.0f), 2.0f);
-    g.setColour (juce::Colour (0xff2a2a2e));
-    g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (1.5f), 4.0f, 1.0f);
+    g.setColour (bus.colour.withAlpha (0.45f));
+    g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (3.0f), 5.0f, 1.5f);
 
-    // fxArea is now occupied by the FX button (placed in resized()); the
-    // button paints its own background, so we don't draw a placeholder
-    // rectangle here any more.
+    // EQ region: green-tinted background + soft green outline, matching
+    // the channel strip's eqArea grammar.
+    if (! eqArea.isEmpty())
+    {
+        g.setColour (juce::Colour (0xff1f231e));
+        g.fillRoundedRectangle (eqArea.toFloat(), 3.0f);
+        g.setColour (juce::Colour (0xff80c090).withAlpha (0.40f));
+        g.drawRoundedRectangle (eqArea.toFloat().reduced (0.5f), 3.0f, 0.8f);
+    }
+
+    // COMP region: amber-tinted background + gold outline.
+    if (! compArea.isEmpty())
+    {
+        g.setColour (juce::Colour (0xff241f1c));
+        g.fillRoundedRectangle (compArea.toFloat(), 3.0f);
+        g.setColour (juce::Colour (0xffd09060).withAlpha (0.40f));
+        g.drawRoundedRectangle (compArea.toFloat().reduced (0.5f), 3.0f, 0.8f);
+    }
 
     // Stereo LED meter - two columns side by side inside meterArea.
     if (! meterArea.isEmpty())
@@ -519,6 +538,13 @@ void BusComponent::paint (juce::Graphics& g)
     }
 }
 
+void BusComponent::setCompactVu (bool compact)
+{
+    if (compactVu == compact) return;
+    compactVu = compact;
+    resized();
+}
+
 void BusComponent::resized()
 {
     auto area = getLocalBounds().reduced (4);
@@ -534,7 +560,12 @@ void BusComponent::resized()
     // widths.
     if (vuMeter != nullptr)
     {
-        const int vuH = juce::jmax (36, area.getWidth() * 7 / 12);
+        // Squatter VU when the SUMMARY tape strip is expanded so the
+        // bus fader keeps a workable height. Ratio drops from 7/12 to
+        // 5/12 of the strip width (~70 px -> ~50 px on a 120 px strip).
+        const int ratioNum = compactVu ? 5 : 7;
+        const int minH     = compactVu ? 28 : 36;
+        const int vuH = juce::jmax (minH, area.getWidth() * ratioNum / 12);
         vuMeter->setBounds (area.removeFromTop (vuH));
         area.removeFromTop (3);
     }
@@ -565,11 +596,15 @@ void BusComponent::resized()
         return { labelRow, knobRow };
     };
 
-    // EQ section.
-    eqButton.setBounds (area.removeFromTop (16).reduced (4, 0));
-    area.removeFromTop (1);
+    // EQ section. Pre-compute area so paint() can draw the green-tinted
+    // background band around the knob block.
     {
-        auto rows = layKnobRow (area, 3);
+        constexpr int kEqSectionH = 16 + 1 + 10 + kKnobBlockH;
+        eqArea = area.removeFromTop (kEqSectionH);
+        auto s = eqArea;
+        eqButton.setBounds (s.removeFromTop (16).reduced (4, 0));
+        s.removeFromTop (1);
+        auto rows = layKnobRow (s, 3);
         auto& lblRow  = rows.first;
         auto& knobRow = rows.second;
         eqLfLbl .setBounds (lblRow .removeFromLeft (kKnobBlockW));
@@ -581,29 +616,36 @@ void BusComponent::resized()
     }
     area.removeFromTop (3);
 
-    // Comp: 3 + 2 knobs across two rows.
-    compButton.setBounds (area.removeFromTop (16).reduced (4, 0));
-    area.removeFromTop (1);
+    // Comp: 3 + 2 knobs across two rows. Frame the whole pair with a
+    // gold-tinted background band so the section reads as one unit.
     {
-        auto rows = layKnobRow (area, 3);
-        auto& lblRow  = rows.first;
-        auto& knobRow = rows.second;
-        compThrLbl.setBounds (lblRow .removeFromLeft (kKnobBlockW));
-        compRatLbl.setBounds (lblRow .removeFromLeft (kKnobBlockW));
-        compAtkLbl.setBounds (lblRow .removeFromLeft (kKnobBlockW));
-        compThresh.setBounds (knobRow.removeFromLeft (kKnobBlockW));
-        compRatio .setBounds (knobRow.removeFromLeft (kKnobBlockW));
-        compAttack.setBounds (knobRow.removeFromLeft (kKnobBlockW));
-    }
-    area.removeFromTop (1);
-    {
-        auto rows = layKnobRow (area, 2);
-        auto& lblRow  = rows.first;
-        auto& knobRow = rows.second;
-        compRelLbl .setBounds (lblRow .removeFromLeft (kKnobBlockW));
-        compMakLbl .setBounds (lblRow .removeFromLeft (kKnobBlockW));
-        compRelease.setBounds (knobRow.removeFromLeft (kKnobBlockW));
-        compMakeup .setBounds (knobRow.removeFromLeft (kKnobBlockW));
+        constexpr int kCompSectionH = 16 + 1 + 10 + kKnobBlockH + 1
+                                       + 10 + kKnobBlockH;
+        compArea = area.removeFromTop (kCompSectionH);
+        auto s = compArea;
+        compButton.setBounds (s.removeFromTop (16).reduced (4, 0));
+        s.removeFromTop (1);
+        {
+            auto rows = layKnobRow (s, 3);
+            auto& lblRow  = rows.first;
+            auto& knobRow = rows.second;
+            compThrLbl.setBounds (lblRow .removeFromLeft (kKnobBlockW));
+            compRatLbl.setBounds (lblRow .removeFromLeft (kKnobBlockW));
+            compAtkLbl.setBounds (lblRow .removeFromLeft (kKnobBlockW));
+            compThresh.setBounds (knobRow.removeFromLeft (kKnobBlockW));
+            compRatio .setBounds (knobRow.removeFromLeft (kKnobBlockW));
+            compAttack.setBounds (knobRow.removeFromLeft (kKnobBlockW));
+        }
+        s.removeFromTop (1);
+        {
+            auto rows = layKnobRow (s, 2);
+            auto& lblRow  = rows.first;
+            auto& knobRow = rows.second;
+            compRelLbl .setBounds (lblRow .removeFromLeft (kKnobBlockW));
+            compMakLbl .setBounds (lblRow .removeFromLeft (kKnobBlockW));
+            compRelease.setBounds (knobRow.removeFromLeft (kKnobBlockW));
+            compMakeup .setBounds (knobRow.removeFromLeft (kKnobBlockW));
+        }
     }
     area.removeFromTop (3);
 

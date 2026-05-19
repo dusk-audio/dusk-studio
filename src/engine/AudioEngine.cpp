@@ -882,6 +882,7 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
     for (auto& v : auxLaneR)  v.assign ((size_t) bs, 0.0f);
     playbackScratch .assign ((size_t) bs, 0.0f);
     playbackScratchR.assign ((size_t) bs, 0.0f);
+    silentInputScratch.assign ((size_t) bs, 0.0f);
 }
 
 void AudioEngine::audioDeviceStopped()
@@ -1654,6 +1655,14 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         else if (deviceInput != nullptr && (armed || monitorEnabled))
         {
             monoIn = deviceInput;
+        }
+        else if (strips[(size_t) t].getPluginSlot().isLoaded())
+        {
+            // Generator-style insert with no input source: feed a
+            // pre-zeroed buffer so the chain runs and the plugin can
+            // emit its output. Costs one extra strip per loaded-but-
+            // unfed channel; effects feeding zero just produce zero.
+            monoIn = silentInputScratch.data();
         }
 
         // Input meter - armed tracks always show live input (so the user can

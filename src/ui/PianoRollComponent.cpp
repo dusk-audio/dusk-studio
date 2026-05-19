@@ -177,12 +177,14 @@ PianoRollComponent::PianoRollComponent (Session& s, AudioEngine& e, int t, int r
     addAndMakeVisible (colorCombo);
 
     keySnapToggle.setButtonText ("Key snap");
-    keySnapToggle.setToggleState (true, juce::dontSendNotification);
+    keySnap = session.pianoRollKeySnap;
+    keySnapToggle.setToggleState (keySnap, juce::dontSendNotification);
     keySnapToggle.setColour (juce::ToggleButton::textColourId,
                               juce::Colour (0xffd0d0d8));
     keySnapToggle.onClick = [this]
     {
         keySnap = keySnapToggle.getToggleState();
+        session.pianoRollKeySnap = keySnap;   // persist across reopens
     };
     addAndMakeVisible (keySnapToggle);
 
@@ -279,6 +281,10 @@ PianoRollComponent::PianoRollComponent (Session& s, AudioEngine& e, int t, int r
     toggleCcButton.setTooltip ("Show / hide CC lane");
     toggleCcButton.onClick = [this] { toggleCcLane(); };
 
+    horizontalScrollBar.setAutoHide (false);
+    horizontalScrollBar.addListener (this);
+    addAndMakeVisible (horizontalScrollBar);
+
     refreshStatusBarReadouts();
 
     // 30 Hz playhead poll - same cadence as the meters elsewhere in
@@ -342,6 +348,35 @@ void PianoRollComponent::resized()
     layoutIconRow    (juce::Rectangle<int> (0, 0, getWidth(), kToolbarHeight));
     layoutStatusBar  (juce::Rectangle<int> (0, getHeight() - kStatusBarH,
                                                 getWidth(), kStatusBarH));
+    horizontalScrollBar.setBounds (kKeyboardWidth,
+                                     getHeight() - kStatusBarH - kScrollBarH,
+                                     juce::jmax (1, getWidth() - kKeyboardWidth),
+                                     kScrollBarH);
+    syncScrollBarRange();
+}
+
+void PianoRollComponent::syncScrollBarRange()
+{
+    // Total content width = max(scrollX + visible, region length in px).
+    // The piano roll has no hard end; grow the scrollable extent with
+    // the largest x the user has scrolled to so the thumb shrinks as
+    // they explore further.
+    const int gridW = juce::jmax (1, getWidth() - kKeyboardWidth);
+    const auto* r = region();
+    const double regionTicks = (r != nullptr) ? (double) r->lengthInTicks : 0.0;
+    const double regionPx    = regionTicks * pixelsPerTick;
+    const double total       = juce::jmax ((double) (scrollX + gridW),
+                                              regionPx + (double) gridW);
+    horizontalScrollBar.setRangeLimits (0.0, total, juce::dontSendNotification);
+    horizontalScrollBar.setCurrentRange ((double) scrollX, (double) gridW,
+                                            juce::dontSendNotification);
+}
+
+void PianoRollComponent::scrollBarMoved (juce::ScrollBar* bar, double newRangeStart)
+{
+    if (bar != &horizontalScrollBar) return;
+    scrollX = juce::jmax (0, (int) std::round (newRangeStart));
+    repaint();
 }
 
 void PianoRollComponent::layoutIconRow (juce::Rectangle<int> area)
@@ -499,7 +534,11 @@ void PianoRollComponent::paint (juce::Graphics& g)
     // lane, then velocity lane. The note grid fills the space between
     // header and velocity lane.
     const int statusBarBottom = bounds.getBottom();
-    const int ccBottom        = statusBarBottom - kStatusBarH;
+    // The horizontal scrollbar sits between the status bar and the CC
+    // lane. ccBottom is the y-edge above which the CC strip + velocity
+    // strip + note grid stack.
+    const int scrollBarTop    = statusBarBottom - kStatusBarH - kScrollBarH;
+    const int ccBottom        = scrollBarTop;
     const auto ccArea = juce::Rectangle<int> (kKeyboardWidth,
                                                  ccBottom - ccStripH,
                                                  bounds.getWidth() - kKeyboardWidth,
@@ -510,11 +549,13 @@ void PianoRollComponent::paint (juce::Graphics& g)
                                                        velocityStripH);
     const auto keyboardArea = juce::Rectangle<int> (0, topBandH,
                                                        kKeyboardWidth,
-                                                       bounds.getHeight() - topBandH - kStatusBarH);
+                                                       bounds.getHeight() - topBandH
+                                                         - kStatusBarH - kScrollBarH);
     const auto gridArea    = juce::Rectangle<int> (kKeyboardWidth, topBandH,
                                                      bounds.getWidth() - kKeyboardWidth,
                                                      bounds.getHeight() - topBandH
-                                                       - velocityStripH - ccStripH - kStatusBarH);
+                                                       - velocityStripH - ccStripH
+                                                       - kStatusBarH - kScrollBarH);
 
     // Status-bar background fill - children are positioned in resized().
     const auto statusArea = juce::Rectangle<int> (0, ccBottom,
@@ -2341,6 +2382,25 @@ bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
         }
     }
 
+    // Cmd/Ctrl + Left/Right pans the view horizontally; Home / End jump
+    // to the start of the region. Lets the user scroll without a trackpad.
+    const bool cmdOrCtrl = k.getModifiers().isCommandDown()
+                              || k.getModifiers().isCtrlDown();
+    if (cmdOrCtrl && (k == juce::KeyPress::leftKey || k == juce::KeyPress::rightKey))
+    {
+        const int gridW = juce::jmax (1, getWidth() - kKeyboardWidth);
+        const int step  = juce::jmax (1, gridW / 4);
+        scrollX = juce::jmax (0, scrollX + (k == juce::KeyPress::leftKey ? -step : step));
+        repaint();
+        return true;
+    }
+    if (k == juce::KeyPress::homeKey)
+    {
+        scrollX = 0;
+        repaint();
+        return true;
+    }
+
     if (k == juce::KeyPress::backspaceKey || k == juce::KeyPress::deleteKey)
     {
         auto* r = region();
@@ -3184,6 +3244,30 @@ void PianoRollComponent::paintTransportPlayhead (juce::Graphics& g,
 
 void PianoRollComponent::timerCallback()
 {
+    // Mirror scrollX onto the scrollbar every tick so paths that mutate
+    // it (key arrows, mouse wheel, pan drag, zoom recentre) all stay
+    // in visual sync.
+    syncScrollBarRange();
+
+    // Toolbar button enabled-state + toggle sync. Polled because
+    // UndoManager + region atoms have no change-broadcaster we listen to.
+    {
+        const auto* r = region();
+        auto& um = engine.getUndoManager();
+        undoButton .setEnabled (um.canUndo());
+        redoButton .setEnabled (um.canRedo());
+        splitButton     .setEnabled (r != nullptr);
+        quantizeButton  .setEnabled (r != nullptr);
+        propertiesButton.setEnabled (r != nullptr);
+        glueButton      .setEnabled (selectedNotes.size() >= 2);
+        if (r != nullptr)
+        {
+            if (muteToggle.getToggleState() != r->muted)
+                muteToggle.setToggleState (r->muted, juce::dontSendNotification);
+            if (lockToggle.getToggleState() != r->locked)
+                lockToggle.setToggleState (r->locked, juce::dontSendNotification);
+        }
+    }
     // Recompute the grid rect the same way paint() does so the
     // playhead-x match the painted layout.
     const auto bounds = getLocalBounds();

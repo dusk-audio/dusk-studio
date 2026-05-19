@@ -10,16 +10,15 @@
 #include "HardwareInsertSlot.h"
 
 #if FOCAL_HAS_DUSK_DSP
-  #include "BritishEQProcessor.h"   // multi-q
-  // ChannelComp is a thin facade over UniversalCompressor with the donor's
-  // minimal-processing fast path enabled. Same Opto/FET/VCA per-sample DSP,
-  // but no internal oversampling, no sidechain HP/EQ, no true-peak detector,
-  // no transient shaper, no global lookahead, no mix wet/dry, no auto-makeup,
-  // no bypass-fade crossfader, no stereo linking - all of which would run
-  // unconditionally per-block in the standard path and dominate per-channel
-  // CPU when 16 strips are active. Master + aux buses still use the bare
-  // UniversalCompressor (Bus mode + the extras earn their keep there).
-  #include "ChannelComp.h"          // shared/channel-comp/ - header-only
+  #include "BritishEQProcessor.h"     // multi-q
+  // Use UniversalCompressor directly (NOT the ChannelComp facade) so each
+  // channel strip behaves identically to a DAW hosting the standalone
+  // multi-comp plugin: full feature set (sidechain HP, true-peak detector,
+  // transient shaper, lookahead, stereo linking, auto-makeup, bypass-fade
+  // crossfader). Donor's internal oversampling is DISABLED at prepare time
+  // because Focal wraps the strip in its own 4× oversampler — running both
+  // would double-OS.
+  #include "UniversalCompressor.h"    // multi-comp
 #endif
 
 namespace focal
@@ -201,12 +200,14 @@ private:
     // memcmp doesn't false-positive on garbage padding.
     BritishEQProcessor::Parameters lastEqParams {};
 
-    // Per-channel comp - facade over UniversalCompressor with the minimal
-    // processing fast path active. One instance per channel. Per-mode
-    // parameter pointers are cached in bindCompParams() to avoid string
-    // lookups on the audio thread.
-    dusk::ChannelComp compressor;
-    juce::AudioBuffer<float> compMonoBuffer;  // sized in prepare(); used only as a chunking fence
+    // Per-channel comp - direct UniversalCompressor (full multi-comp feature
+    // set; matches standalone plugin behavior). One instance per channel.
+    // Per-mode parameter pointers cached in bindCompParams() to avoid string
+    // lookups on the audio thread. Donor's internal oversampling is disabled
+    // in prepare() because Focal's strip-level wrapper already oversamples.
+    UniversalCompressor compressor;
+    juce::MidiBuffer compMidiScratch;          // unused but required by processBlock signature
+    juce::AudioBuffer<float> compMonoBuffer;   // sized in prepare(); used only as a chunking fence
 
     // Cached APVTS raw atomic value pointers - set once in bindCompParams().
     // These point at the SAME std::atomic<float> that UniversalCompressor's
@@ -230,6 +231,24 @@ private:
     std::atomic<float>* compVcaAttackAtom   = nullptr;
     std::atomic<float>* compVcaReleaseAtom  = nullptr;
     std::atomic<float>* compVcaOutputAtom   = nullptr;
+
+    // SmoothedValue wrappers for the continuous comp params. The session
+    // atoms hold the user's setpoint; these ramp toward it at 20 ms so
+    // knob drags don't zipper the donor's per-sample DSP. Discrete params
+    // (mode, bypass, LIMIT toggle, FET ratio index) bypass the smoother.
+    juce::SmoothedValue<float> smoothedOptoPeakRed;
+    juce::SmoothedValue<float> smoothedOptoGain;
+    juce::SmoothedValue<float> smoothedFetInput;
+    juce::SmoothedValue<float> smoothedFetOutput;
+    juce::SmoothedValue<float> smoothedFetAttack;
+    juce::SmoothedValue<float> smoothedFetRelease;
+    juce::SmoothedValue<float> smoothedVcaThresh;
+    juce::SmoothedValue<float> smoothedVcaRatio;
+    juce::SmoothedValue<float> smoothedVcaAttack;
+    juce::SmoothedValue<float> smoothedVcaRelease;
+    juce::SmoothedValue<float> smoothedVcaOutput;
+
+    void publishSmoothedCompParams (int numSamples) noexcept;
 
     void bindCompParams();
     static inline void storeAtom (std::atomic<float>* a, float v) noexcept

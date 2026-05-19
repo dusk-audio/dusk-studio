@@ -40,7 +40,8 @@ public:
     // closes.
     void show (juce::Component& parent,
                std::unique_ptr<juce::Component> body,
-               std::function<void()> onDismiss = {})
+               std::function<void()> onDismiss = {},
+               bool dismissOnClickOutside = true)
     {
         close();
         host = &parent;
@@ -48,11 +49,14 @@ public:
         dim_ = std::make_unique<DimOverlay>();
         dim_->setBounds (parent.getLocalBounds());
         userOnDismiss = std::move (onDismiss);
-        dim_->onClick = [this]
-        {
-            if (userOnDismiss) userOnDismiss();
-            else close();
-        };
+        if (dismissOnClickOutside)
+            dim_->onClick = [this]
+            {
+                if (userOnDismiss) userOnDismiss();
+                else close();
+            };
+        // else: leave dim_->onClick null - click on the dim is a no-op,
+        // forcing the user to explicit-action the body (Cancel / Import).
         parent.addAndMakeVisible (dim_.get());
 
         const auto bounds = parent.getLocalBounds();

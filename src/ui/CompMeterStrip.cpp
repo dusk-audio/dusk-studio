@@ -263,12 +263,19 @@ static void writeThresholdForMode (Track& t, float threshDb)
         }
         case 1:
         {
-            // Drag the THR marker DOWN the input bar -> more drive into the
-            // FET's fixed-threshold detector. OUTPUT is independent and is
-            // NOT auto-attenuated to compensate (real 1176 has separate
-            // Input and Output knobs).
+            // FET donor uses a FIXED -10 dBFS threshold; only the input
+            // gain knob exists. Make the meter-strip threshold drag feel
+            // like Opto / VCA (drop marker -> more compression, net level
+            // roughly unchanged) by pairing the input drive with an
+            // equal-and-opposite output trim. compFetOutput clamps at
+            // -20 dB so heavy drives past +20 dB drift hot, which is fine
+            // -- that corner is "deliberately driving the 1176". The
+            // dedicated IN knob in the comp editor still moves the input
+            // independently for 1176-style drive workflows.
             const float drive = juce::jlimit (0.0f, 40.0f, -threshDb);
-            t.strip.compFetInput.store (drive, std::memory_order_relaxed);
+            const float comp  = juce::jlimit (-20.0f, 20.0f, -drive);
+            t.strip.compFetInput .store (drive, std::memory_order_relaxed);
+            t.strip.compFetOutput.store (comp,  std::memory_order_relaxed);
             break;
         }
         case 2:

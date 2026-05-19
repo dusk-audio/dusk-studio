@@ -152,23 +152,44 @@ private:
 
     // Identifies the preset combo + Save / Del buttons by content. Called
     // once at construction; pointers cached for resized() to reposition.
+    //
+    // Detection is structural, not item-count-based: the previous heuristic
+    // ("ComboBox with > 6 items") relied on the donor having finished
+    // populating its factory list before our ctor ran. If the donor was
+    // still empty / async-loading, the preset combo wasn't identified and
+    // recentering silently skipped. Now we find Save/Del by text first,
+    // then pick the ComboBox horizontally adjacent to (and left of) Save
+    // on the same Y row — works regardless of whether the dropdown has any
+    // items in it at the moment.
     void findPresetCluster (juce::Component& editor)
     {
         for (auto* child : editor.getChildren())
         {
-            if (auto* cb = dynamic_cast<juce::ComboBox*> (child))
-            {
-                // Preset combo carries the factory preset list — typically
-                // 10+ items. The four other top-area combos (machine /
-                // speed / type / oversampling) have <= 4.
-                if (cb->getNumItems() > 6 && presetCombo.getComponent() == nullptr)
-                    presetCombo = cb;
-            }
-            else if (auto* btn = dynamic_cast<juce::TextButton*> (child))
+            if (auto* btn = dynamic_cast<juce::TextButton*> (child))
             {
                 if (btn->getButtonText() == "Save")     saveBtn = btn;
                 else if (btn->getButtonText() == "Del") delBtn  = btn;
             }
+        }
+        if (auto* save = saveBtn.getComponent())
+        {
+            const int saveY = save->getY();
+            const int saveX = save->getX();
+            juce::ComboBox* best = nullptr;
+            int bestRight = -1;
+            for (auto* child : editor.getChildren())
+            {
+                auto* cb = dynamic_cast<juce::ComboBox*> (child);
+                if (cb == nullptr) continue;
+                if (std::abs (cb->getY() - saveY) > 12) continue;
+                if (cb->getRight() > saveX + 6)         continue;
+                if (cb->getRight() > bestRight)
+                {
+                    bestRight = cb->getRight();
+                    best      = cb;
+                }
+            }
+            if (best != nullptr) presetCombo = best;
         }
     }
 

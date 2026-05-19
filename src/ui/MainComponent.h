@@ -6,6 +6,7 @@
 #include "EmbeddedModal.h"
 #include "FocalLookAndFeel.h"
 #include "ConsoleView.h"
+#include "MultiImportTargetPicker.h"
 #include "../engine/AudioEngine.h"
 #include "../session/Session.h"
 
@@ -112,20 +113,34 @@ private:
                               juce::int64 timelineStart,
                               int trackHint);
 
-    // Multi-file batch import. The chooser / drop site builds the queue
-    // and the initial hint, then calls kickNextImport. Each runFlow's
-    // onCommit pops the next file via kickNextImport; onCancel clears
-    // the queue so a single Cancel aborts the rest. Sequential commits
-    // bump the per-file hint to lastCommitted+1 so a 3-file drop on
-    // track 2 lands on tracks 2/3/4 by default (still overridable per
-    // picker).
+    // Multi-file batch import. Two entry points:
+    //   * enqueueImports - per-file picker chain (single-file flow). Each
+    //     runFlow's onCommit pops the next file via kickNextImport;
+    //     onCancel clears the queue so a single Cancel aborts the rest.
+    //     Sequential commits bump the per-file hint to lastCommitted+1.
+    //   * openMultiImportPicker / enqueueImportsWithTargets - shows ONE
+    //     modal with a row per file and a track dropdown each. User picks
+    //     every target explicitly; commit dispatches the whole batch
+    //     without further modals.
     void enqueueImports (juce::Array<juce::File> files,
                           juce::int64 timelineStart,
                           int trackHint);
+    void openMultiImportPicker (juce::Array<juce::File> files,
+                                  juce::int64 timelineStart);
+    void enqueueImportsWithTargets (std::vector<MultiImportTargetPicker::Assignment> assignments,
+                                       juce::int64 timelineStart);
     void kickNextImport();
+    void commitImportNoModal (const MultiImportTargetPicker::Assignment& a,
+                                juce::int64 timelineStart);
     void cancelImportChain();
 
-    std::vector<juce::File> pendingImportQueue;
+    struct PendingImport
+    {
+        juce::File file;
+        int        trackIndex = -1;   // -1 = needs picker; >=0 = pre-assigned
+        bool       isMidi     = false;
+    };
+    std::vector<PendingImport> pendingImportQueue;
     juce::int64 pendingImportTimelineStart = 0;
     int  pendingImportInitialHint   = -1;
     int  pendingImportLastCommitted = -2;
@@ -143,6 +158,15 @@ private:
     bool autosaveIsNewerThan (const juce::File& sessionJson) const;
     void deleteAutosaveFor   (const juce::File& sessionDir) const;
     static constexpr int kAutosaveIntervalMs = 30000;
+
+    // Last serialised state snapshots. writeAutosave compares the current
+    // snapshot against both to skip redundant writes - so the autosave
+    // file's mtime doesn't creep past session.json's just because the
+    // timer keeps firing on an unchanged session. Stored verbatim (not
+    // hashed) so no extra JUCE module is needed; session JSON is at most
+    // a few hundred KB.
+    juce::String lastSavedSessionJson;
+    juce::String lastWrittenAutosaveJson;
 
     Session session;
     AudioEngine engine { session };

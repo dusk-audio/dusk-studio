@@ -150,7 +150,6 @@ void AnalogVuMeter::resized()
 
     const float halfArcRad = juce::degreesToRadians (halfArcDeg);
     const float sinH = std::sin (halfArcRad);
-    const float cosH = std::cos (halfArcRad);
     // Label margin reserved past arc tips. Numeric labels need ~14 px;
     // compact-mode "-" / "+" endpoint glyphs need only ~4 px. Wider
     // labels are also suppressed under kLabelMinWidth on the master
@@ -160,8 +159,14 @@ void AnalogVuMeter::resized()
                               : (getWidth() >= kLabelMinWidth ? 14.0f : 2.0f);
     const float rByWidth  = (safe.getWidth() * 0.5f - lblMargin)
                              / juce::jmax (0.001f, sinH);
-    const float rByHeight = (safe.getHeight() - 4.0f)
-                             / juce::jmax (0.001f, cosH);
+    // The arc's TOP (angleFrac=0) is exactly arcRadius above pivot - it
+    // is NOT divided by cosH. Earlier division by cosH let the dial
+    // extend past the top edge whenever the face was short relative to
+    // its width. Reserve a band at the top: bigger when the face draws
+    // numbered labels (master), smaller for the compact "−" / "+" face
+    // on bus strips.
+    const float topHeadroom = compactScale ? 6.0f : 14.0f;
+    const float rByHeight   = juce::jmax (1.0f, safe.getHeight() - topHeadroom);
     arcRadius = juce::jmax (10.0f, juce::jmin (rByWidth, rByHeight));
     rebuildCachedFace();
 }
@@ -353,18 +358,22 @@ void AnalogVuMeter::rebuildCachedFace()
         g.setFont (juce::Font (juce::FontOptions (glyphFont, juce::Font::bold)));
         const float boxW = glyphFont * 1.6f;
         const float boxH = glyphFont * 1.2f;
-        auto drawEnd = [&] (float af, const char* glyph, juce::Colour col)
+        auto drawEnd = [&] (float af, const juce::String& glyph, juce::Colour col)
         {
             const auto pTickTop = pointOnArc (af, baselineRad + tickLenMaj);
             g.setColour (col);
-            g.drawText (juce::String (glyph),
+            g.drawText (glyph,
                          juce::Rectangle<float> (pTickTop.x - boxW * 0.5f,
                                                     pTickTop.y - boxH,
                                                     boxW, boxH),
                          juce::Justification::centredBottom, false);
         };
-        drawEnd (-1.0f, "\xe2\x88\x92", juce::Colours::black);   // U+2212 minus
-        drawEnd ( 1.0f, "+",            juce::Colours::red);
+        // U+2212 MINUS SIGN. Must construct via CharPointer_UTF8 - juce::String's
+        // const char* ctor uses the system locale, which mangles multi-byte
+        // UTF-8 into Latin-1 garbage on Linux ("â\x86" instead of "−").
+        drawEnd (-1.0f, juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x92")),
+                 juce::Colours::black);
+        drawEnd ( 1.0f, juce::String ("+"), juce::Colours::red);
     }
 
     // Semicircular pivot hub centred exactly on (pivot.x, pivot.y) — the

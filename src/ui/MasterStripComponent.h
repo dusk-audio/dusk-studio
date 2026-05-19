@@ -29,7 +29,12 @@ public:
     void resized() override;
     void mouseDown (const juce::MouseEvent& e) override;
 
+    // Shrinks the VU meter's vertical footprint when the tape SUMMARY
+    // is expanded. Toggled by ConsoleView alongside setStripsCompactMode.
+    void setCompactVu (bool compact);
+
 private:
+    bool compactVu = false;
     void timerCallback() override;
 
     MasterBusParams& params;
@@ -78,6 +83,10 @@ private:
     // the compressor's contribution to the final signal at a glance.
     juce::Rectangle<int> grMeterArea;
     juce::Rectangle<int> faderScaleArea;
+    // Framed bands for the EQ + COMP sections - same grammar as the
+    // channel + bus strips.
+    juce::Rectangle<int> eqArea;
+    juce::Rectangle<int> compArea;
     juce::Label outputPeakLabel;
     juce::Label grPeakLabel;
     float displayedOutputLDb = -100.0f;

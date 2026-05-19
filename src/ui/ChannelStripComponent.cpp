@@ -62,12 +62,17 @@ void styleCompactKnob (juce::Slider& k, juce::Colour fill)
 void enableValueLabel (juce::Slider& k, const juce::String& suffix, int decimals,
                        int width = 56, int height = 14)
 {
-    k.setTextBoxStyle (juce::Slider::TextBoxBelow, true, width, height);
+    // readOnly=false so single-click on the value text opens an inline
+    // editor and the user can type a precise value. Background + outline
+    // stay transparent so the value reads as a plain number against the
+    // strip's tinted section bands rather than a boxed-in textbox.
+    k.setTextBoxStyle (juce::Slider::TextBoxBelow, false, width, height);
     k.setTextValueSuffix (suffix);
     k.setNumDecimalPlacesToDisplay (decimals);
     k.setColour (juce::Slider::textBoxTextColourId,       juce::Colour (0xffd8d8d8));
-    k.setColour (juce::Slider::textBoxBackgroundColourId, juce::Colour (0));
-    k.setColour (juce::Slider::textBoxOutlineColourId,    juce::Colour (0));
+    k.setColour (juce::Slider::textBoxBackgroundColourId, juce::Colours::transparentBlack);
+    k.setColour (juce::Slider::textBoxOutlineColourId,    juce::Colours::transparentBlack);
+    k.setColour (juce::Slider::textBoxHighlightColourId,  juce::Colour (0xff404048));
 }
 
 // Format a frequency in Hz, switching to "1.2k" notation above 1 kHz and
@@ -184,44 +189,22 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     addAndMakeVisible (eqTypeButton);
 
     // ── COMP region ──
-    compOnButton.setClickingTogglesState (true);
-    compOnButton.setToggleState (track.strip.compEnabled.load (std::memory_order_relaxed),
-                                  juce::dontSendNotification);
-    compOnButton.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff202024));
-    compOnButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xffd09060));
-    compOnButton.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xffd09060));
-    compOnButton.setColour (juce::TextButton::textColourOnId,   juce::Colour (0xff121214));
-    compOnButton.setTooltip ("Compressor on/off");
-    compOnButton.onClick = [this]
-    {
-        track.strip.compEnabled.store (compOnButton.getToggleState(), std::memory_order_relaxed);
-    };
-    addAndMakeVisible (compOnButton);
+    // Header acts as both the mode picker AND the on/off indicator. Text
+    // shows the active mode (OPTO/FET/VCA). Click opens a popup menu with
+    // Off / Opto / FET / VCA. Background fills gold when the comp is
+    // engaged, sits dark when bypassed. Touching any knob auto-engages.
+    compModeButton.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff202024));
+    compModeButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xffd09060));
+    compModeButton.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xffd09060));
+    compModeButton.setColour (juce::TextButton::textColourOnId,   juce::Colour (0xff121214));
+    compModeButton.setTooltip ("Compressor mode (click to pick: Off / Opto / FET / VCA). "
+                                "Lit gold when the comp is engaged.");
+    compModeButton.onClick = [this] { showCompModeMenu(); };
+    addAndMakeVisible (compModeButton);
+    refreshCompModeButtonState();
+    refreshCompKnobVisibility();
 
-    auto styleModeButton = [] (juce::TextButton& b)
-    {
-        b.setClickingTogglesState (true);
-        b.setRadioGroupId (10, juce::dontSendNotification);
-        b.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff181820));
-        b.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xffd09060));
-        b.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xffd09060));
-        b.setColour (juce::TextButton::textColourOnId,   juce::Colour (0xff121214));
-    };
-    styleModeButton (compModeOpto);
-    styleModeButton (compModeFet);
-    styleModeButton (compModeVca);
-    compModeOpto.setTooltip ("Opto: program-dependent, smooth");
-    compModeFet.setTooltip  ("FET: fast attack, gritty under load");
-    compModeVca.setTooltip  ("VCA: clean, predictable");
-    compModeOpto.onClick = [this] { setCompMode (0); };
-    compModeFet.onClick  = [this] { setCompMode (1); };
-    compModeVca.onClick  = [this] { setCompMode (2); };
-    addAndMakeVisible (compModeOpto);
-    addAndMakeVisible (compModeFet);
-    addAndMakeVisible (compModeVca);
-    refreshCompModeButtons();
-
-    auto setupCompKnob = [] (juce::Slider& k, juce::Label& label, const juce::String& labelText,
+    auto setupCompKnob = [this] (juce::Slider& k, juce::Label& label, const juce::String& labelText,
                               double rangeMin, double rangeMax, double defaultVal,
                               double skewMid, const juce::String& tooltip,
                               std::atomic<float>& target,
@@ -235,7 +218,11 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         k.setColour (juce::Slider::rotarySliderOutlineColourId, juce::Colour (0xff404048));
         k.setTooltip (tooltip);
         enableValueLabel (k, valueSuffix, decimals);
-        k.onValueChange = [&k, &target] { target.store ((float) k.getValue(), std::memory_order_relaxed); };
+        k.onValueChange = [this, &k, &target]
+        {
+            target.store ((float) k.getValue(), std::memory_order_relaxed);
+            armCompOnUserEdit();
+        };
 
         label.setText (labelText, juce::dontSendNotification);
         label.setJustificationType (juce::Justification::centred);
@@ -268,8 +255,12 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     optoLimitButton.setTooltip ("Limit mode (more aggressive than Compress)");
     optoLimitButton.onClick = [this]
     {
-        track.strip.compOptoLimit.store (optoLimitButton.getToggleState(),
-                                          std::memory_order_relaxed);
+        const bool nowOn = optoLimitButton.getToggleState();
+        track.strip.compOptoLimit.store (nowOn, std::memory_order_relaxed);
+        // Only arm the comp when the user is ENGAGING limit, not when
+        // they're disengaging it. Toggling a sub-feature off shouldn't
+        // imply "user wants the comp engaged".
+        if (nowOn) armCompOnUserEdit();
     };
     addAndMakeVisible (optoLimitButton);
 
@@ -314,6 +305,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         track.strip.compFetRatio.store (
             juce::jlimit (0, 4, (int) std::round (fetRatioKnob.getValue())),
             std::memory_order_relaxed);
+        armCompOnUserEdit();
     };
     fetRatioKnob.updateText();
     addAndMakeVisible (fetRatioKnob);
@@ -635,11 +627,11 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     };
     addAndMakeVisible (phaseButton);
 
-    autoModeButton.setTooltip ("Automation: OFF -> READ -> WRITE -> TOUCH -> OFF. "
+    autoModeButton.setTooltip ("Automation mode (click to pick: Off / Read / Write / Touch). "
                                 "READ replays the recorded ride; WRITE captures "
                                 "fader+pan moves; TOUCH replays until you grab a "
                                 "control, then captures while held.");
-    autoModeButton.onClick = [this] { onAutoModeClicked(); };
+    autoModeButton.onClick = [this] { showAutoModeMenu(); };
     addAndMakeVisible (autoModeButton);
     refreshAutoModeButton();
     displayedLiveFaderDb = track.strip.liveFaderDb.load (std::memory_order_relaxed);
@@ -753,7 +745,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     };
     styleCombo (inputSelector);
     inputSelector.onChange = [this] { onInputSelectorChanged(); };
-    addAndMakeVisible (inputSelector);
+    addChildComponent (inputSelector);   // hidden inline; lives in the I/O popup
 
     // ── Mode selector (Mono / Stereo / MIDI) ──
     modeSelector.addItem ("Mono",   1);   // ID 1 = Mode::Mono
@@ -767,7 +759,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
                               "and feed the strip's hosted plugin.");
     styleCombo (modeSelector);
     modeSelector.onChange = [this] { onTrackModeChanged(); };
-    addAndMakeVisible (modeSelector);
+    addChildComponent (modeSelector);   // hidden inline; lives in the I/O popup
 
     // ── Stereo R-channel input (mirrors the L selector's options) ──
     inputSelectorR.addItem ("In " + juce::String (trackIndex + 2), 1);   // ID 1 = follow (-2 -> L+1)
@@ -789,6 +781,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         else if (id == 2)              v = -1;
         else if (id >= 100 && id < 200) v = id - 100;
         track.inputSourceR.store (v, std::memory_order_relaxed);
+        refreshIoConfigButton();
     };
     addChildComponent (inputSelectorR);   // visibility toggled by refreshInputSelectorVisibility
 
@@ -803,6 +796,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         const int id = midiInputSelector.getSelectedId();
         const int idx = id <= 1 ? -1 : (id - 2);
         track.midiInputIndex.store (idx, std::memory_order_relaxed);
+        refreshIoConfigButton();
         // Capture the stable identifier alongside the index so a later
         // session save records WHICH device this was, not just where it
         // happened to sit in the list. Re-querying inside the change
@@ -837,6 +831,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     {
         const int id = midiChannelSelector.getSelectedId();
         track.midiChannel.store (id <= 1 ? 0 : (id - 1), std::memory_order_relaxed);
+        refreshIoConfigButton();
     };
     styleCombo (midiChannelSelector);
     addChildComponent (midiChannelSelector);
@@ -878,6 +873,16 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     addChildComponent (midiActivityLed);
 
     refreshInputSelectorVisibility();
+
+    // I/O config button. Replaces the inline mode/input/midi rows; opens a
+    // CallOutBox populated with those widgets when clicked. Saves ~60 px
+    // vertical per strip without losing access to any setting.
+    ioConfigButton.setColour (juce::TextButton::buttonColourId,  juce::Colour (0xff222226));
+    ioConfigButton.setColour (juce::TextButton::textColourOffId, juce::Colour (0xffa0a8b8));
+    ioConfigButton.setTooltip ("Click to configure track type, audio inputs, MIDI port and channel.");
+    ioConfigButton.onClick = [this] { openIoConfigPopup(); };
+    addAndMakeVisible (ioConfigButton);
+    refreshIoConfigButton();
 
     // ── Aux send knobs (Mixing stage only) ──
     // Phase A: knobs + atomics only - audio routing through the aux buses
@@ -1114,10 +1119,7 @@ void ChannelStripComponent::setEqSectionVisible (bool visible)
 
 void ChannelStripComponent::setCompSectionVisible (bool visible)
 {
-    compOnButton .setVisible (visible);
-    compModeOpto .setVisible (visible);
-    compModeFet  .setVisible (visible);
-    compModeVca  .setVisible (visible);
+    compModeButton.setVisible (visible);
     optoPeakRedKnob .setVisible (visible);  optoPeakRedLabel.setVisible (visible);
     optoGainKnob    .setVisible (visible);  optoGainLabel   .setVisible (visible);
     optoLimitButton .setVisible (visible);
@@ -1142,7 +1144,11 @@ void ChannelStripComponent::setCompSectionVisible (bool visible)
     // shown. Without this, flipping out of SUMMARY (or any path that
     // re-shows the section) leaves all 13 per-mode knobs visible at the
     // same physical positions and they overlap.
-    if (visible) refreshCompModeButtons();
+    if (visible)
+    {
+        refreshCompModeButtonState();
+        refreshCompKnobVisibility();
+    }
 }
 
 void ChannelStripComponent::setCompactMode (bool compact)
@@ -1658,7 +1664,7 @@ private:
 
 bool ChannelStripComponent::isPluginEditorOpen() const noexcept
 {
-    return pluginEditorWindow != nullptr;
+    return pluginEditorWindow != nullptr || pluginGenericEditorModal.isOpen();
 }
 
 void ChannelStripComponent::openPluginEditor()
@@ -1709,40 +1715,56 @@ void ChannelStripComponent::openPluginEditor()
    #endif
 
     auto* instance = pluginSlot.getInstance();
-    if (instance == nullptr || ! instance->hasEditor()) return;
+    if (instance == nullptr) return;
 
-    // If the cached editor was created for a different processor (the
-    // user replaced the plugin), drop it now so the next call below
-    // builds a fresh one for the new processor.
     if (pluginEditor != nullptr && pluginEditorOwner != instance)
         dropPluginEditor();
 
     if (pluginEditor == nullptr)
     {
-        // createEditorIfNeeded returns a newly-created editor that the
-        // caller owns. We hold it here for the lifetime of the loaded
-        // plugin rather than destroying it on every close.
-        //
         // LV2 plugin editors eager-create an embedded X11 sub-window
         // inside their Editor constructor (juce_LV2PluginFormat.cpp
         // Inner::Inner → addToDesktop(0)). On the JUCE-wayland fork
         // that addToDesktop call lands on a Wayland peer by default,
-        // which then can't host an X11 child window — the LV2 UI
-        // renders blank. Setting the X11 latch BEFORE the
-        // createEditorIfNeeded call routes the nested peer
-        // creation to LinuxComponentPeer (X11), so the LV2's reparent
-        // target is a valid X11 host. VST3 doesn't need this (it
-        // defers attach to visibility-change) but the latch is a no-op
-        // for non-LV2 paths.
-        focal::platform::preferX11ForNextNativeWindow();
-        std::unique_ptr<juce::AudioProcessorEditor> fresh (instance->createEditorIfNeeded());
-        focal::platform::clearPreferX11ForNativeWindow();
-        if (fresh == nullptr) return;
+        // which then can't host an X11 child window. The X11 latch
+        // routes the nested peer creation to LinuxComponentPeer (X11)
+        // so the LV2's reparent target is a valid X11 host. No-op for
+        // non-LV2 paths. Skipped entirely when there's no native UI
+        // (we fall back to GenericAudioProcessorEditor below).
+        std::unique_ptr<juce::AudioProcessorEditor> fresh;
+        if (instance->hasEditor())
+        {
+            focal::platform::preferX11ForNextNativeWindow();
+            fresh.reset (instance->createEditorIfNeeded());
+            focal::platform::clearPreferX11ForNativeWindow();
+        }
+        if (fresh == nullptr)
+            fresh = std::make_unique<juce::GenericAudioProcessorEditor> (*instance);
         pluginEditor      = std::move (fresh);
         pluginEditorOwner = instance;
     }
 
     juce::Component::SafePointer<ChannelStripComponent> safe (this);
+
+    // Generic fallback editor: host inside the main window as an
+    // EmbeddedModal so combobox / popup peers share the main wl_surface.
+    // Wrapping a JUCE-native editor in an X11 PluginEditorWindow makes
+    // PopupMenu peer creation fall back to Wayland, which the JUCE-
+    // wayland fork can't create from an X11 parent — combo dropdowns
+    // never open. Native plugin editors still need the X11 wrapper.
+    if (dynamic_cast<juce::GenericAudioProcessorEditor*> (pluginEditor.get()) != nullptr)
+    {
+        auto* parent = findParentComponentOfClass<juce::Component>();
+        if (parent == nullptr) parent = this;
+        pluginGenericEditorModal.showBorrowed (*parent, *pluginEditor,
+            [safe]
+            {
+                if (auto* self = safe.getComponent())
+                    self->closePluginEditor();
+            });
+        return;
+    }
+
     pluginEditorWindow = std::make_unique<PluginEditorWindow> (
         pluginSlot.getLoadedName(),
         *pluginEditor,
@@ -1762,6 +1784,11 @@ void ChannelStripComponent::openPluginEditor()
 
 void ChannelStripComponent::closePluginEditor()
 {
+    if (pluginGenericEditorModal.isOpen())
+    {
+        pluginGenericEditorModal.close();
+        return;
+    }
     if (pluginEditorWindow == nullptr) return;
     pluginEditorWindow->setContentNonOwned (nullptr, false);
     focal::platform::prepareForTopLevelDestruction (*pluginEditorWindow);
@@ -1823,6 +1850,136 @@ void ChannelStripComponent::dropPluginEditor()
     // pluginSlot.unload). Either way the X client is safe to release.
     remoteEditorEmbed.reset();
    #endif
+}
+
+namespace
+{
+// Popup body for the I/O config button. Re-parents the 6 inline ComboBoxes
+// (+ MIDI activity LED) into a single column. When the popup closes the
+// widgets become orphans; ChannelStripComponent retains ownership and
+// state lives on Track atoms, so reopening the popup just re-parents.
+class IoConfigPopup : public juce::Component
+{
+public:
+    IoConfigPopup (juce::ComboBox& mode, juce::ComboBox& in, juce::ComboBox& inR,
+                    juce::ComboBox& mIn, juce::ComboBox& mCh, juce::ComboBox& mOut,
+                    juce::Component& led)
+        : modeSelector (mode), inputSelector (in), inputSelectorR (inR),
+          midiInputSelector (mIn), midiChannelSelector (mCh),
+          midiOutputSelector (mOut), activityLed (led)
+    {
+        addAndMakeVisible (modeSelector);
+        addAndMakeVisible (inputSelector);
+        addAndMakeVisible (inputSelectorR);
+        addAndMakeVisible (midiInputSelector);
+        addAndMakeVisible (midiChannelSelector);
+        addAndMakeVisible (midiOutputSelector);
+        addAndMakeVisible (activityLed);
+        setSize (240, 160);
+    }
+
+    void resized() override
+    {
+        auto area = getLocalBounds().reduced (8);
+        constexpr int kRowH = 24, kGap = 6;
+
+        modeSelector.setBounds (area.removeFromTop (kRowH));
+        area.removeFromTop (kGap);
+
+        const int mode = juce::jlimit (0, 2, modeSelector.getSelectedId() - 1);
+        inputSelector.setVisible (mode == 0 || mode == 1);
+        inputSelectorR.setVisible (mode == 1);
+        midiInputSelector  .setVisible (mode == 2);
+        midiChannelSelector.setVisible (mode == 2);
+        midiOutputSelector .setVisible (mode == 2);
+        activityLed       .setVisible (mode == 2);
+
+        if (mode == 0)
+        {
+            inputSelector.setBounds (area.removeFromTop (kRowH));
+        }
+        else if (mode == 1)
+        {
+            auto row = area.removeFromTop (kRowH);
+            const int half = (row.getWidth() - 4) / 2;
+            inputSelector .setBounds (row.removeFromLeft (half));
+            row.removeFromLeft (4);
+            inputSelectorR.setBounds (row);
+        }
+        else
+        {
+            constexpr int kLedW = 14;
+            auto inRow = area.removeFromTop (kRowH);
+            activityLed.setBounds (inRow.removeFromRight (kLedW).reduced (1));
+            inRow.removeFromRight (4);
+            midiInputSelector.setBounds (inRow);
+            area.removeFromTop (kGap);
+            midiChannelSelector.setBounds (area.removeFromTop (kRowH));
+            area.removeFromTop (kGap);
+            midiOutputSelector.setBounds (area.removeFromTop (kRowH));
+        }
+    }
+
+private:
+    juce::ComboBox& modeSelector;
+    juce::ComboBox& inputSelector;
+    juce::ComboBox& inputSelectorR;
+    juce::ComboBox& midiInputSelector;
+    juce::ComboBox& midiChannelSelector;
+    juce::ComboBox& midiOutputSelector;
+    juce::Component& activityLed;
+};
+} // namespace
+
+void ChannelStripComponent::openIoConfigPopup()
+{
+    if (auto* existing = activeIoBox.getComponent()) { existing->dismiss(); return; }
+
+    auto panel = std::make_unique<IoConfigPopup> (modeSelector, inputSelector, inputSelectorR,
+                                                   midiInputSelector, midiChannelSelector,
+                                                   midiOutputSelector, midiActivityLed);
+    const int mode = juce::jlimit (0, 2, modeSelector.getSelectedId() - 1);
+    const int rows = mode == 2 ? 4 : 2;
+    panel->setSize (240, 8 + rows * 24 + (rows - 1) * 6 + 8);
+
+    auto* topLevel = getTopLevelComponent();
+    if (topLevel == nullptr) topLevel = this;
+    const auto anchor = topLevel->getLocalArea (this, ioConfigButton.getBounds());
+
+    auto& box = juce::CallOutBox::launchAsynchronously (std::move (panel), anchor, topLevel);
+    box.setDismissalMouseClicksAreAlwaysConsumed (false);
+    activeIoBox = &box;
+}
+
+void ChannelStripComponent::refreshIoConfigButton()
+{
+    const int mode = juce::jlimit (0, 2, track.mode.load (std::memory_order_relaxed));
+    juce::String text;
+    if (mode == 0)        // Mono
+    {
+        text = "Mono ";
+        const auto in = inputSelector.getText();
+        text += in.isEmpty() ? "(none)" : in;
+    }
+    else if (mode == 1)   // Stereo
+    {
+        const auto inL = inputSelector .getText();
+        const auto inR = inputSelectorR.getText();
+        text = "Stereo " + (inL.isEmpty() ? juce::String ("?") : inL)
+                + " / " + (inR.isEmpty() ? juce::String ("?") : inR);
+    }
+    else                  // MIDI
+    {
+        const auto port = midiInputSelector.getText();
+        const auto ch   = midiChannelSelector.getText();
+        // U+00B7 middle dot via CharPointer_UTF8 - juce::String's char*
+        // ctor uses the system locale which mangles UTF-8 on Linux.
+        const juce::String midDot (juce::CharPointer_UTF8 ("\xc2\xb7"));
+        text = "MIDI " + (port.isEmpty() ? juce::String ("(none)") : port)
+                + " " + midDot + " " + (ch.isEmpty() ? juce::String ("Omni") : ch);
+    }
+    if (ioConfigButton.getButtonText() != text)
+        ioConfigButton.setButtonText (text);
 }
 
 void ChannelStripComponent::openEqEditorPopup()
@@ -1928,6 +2085,13 @@ void ChannelStripComponent::timerCallback()
     // just an atomic-pointer read + string compare against the cached name.
     refreshPluginSlotButton();
 
+    // Sync nameLabel with track.name when something external rewrites it
+    // (e.g. an audio import auto-renames the track to the file's basename).
+    // Skip while the user is mid-edit so their typed text isn't stomped.
+    if (! nameLabel.isBeingEdited()
+        && nameLabel.getText (false) != track.name)
+        nameLabel.setText (track.name, juce::dontSendNotification);
+
     // Tear down the dim overlay once both popups have closed. Polling at
     // 30 Hz is cheaper than wiring a ComponentListener on each CallOutBox.
     if (activeDimOverlay != nullptr
@@ -1949,14 +2113,12 @@ void ChannelStripComponent::timerCallback()
         }
     }
 
-    // Sync the inline COMP on/off button with the underlying atom so it
-    // reflects writes made from other surfaces - the meter-strip threshold
-    // drag now auto-enables the comp, the popup editor's ON toggle, etc.
-    {
-        const bool engineCompOn = track.strip.compEnabled.load (std::memory_order_relaxed);
-        if (compOnButton.getToggleState() != engineCompOn)
-            compOnButton.setToggleState (engineCompOn, juce::dontSendNotification);
-    }
+    // Sync the inline COMP mode button with the underlying atoms so it
+    // reflects writes from other surfaces (meter-strip threshold drag,
+    // popup editor's ON toggle, MIDI binding, etc.). State-only refresh
+    // every tick - knob visibility only changes on explicit mode swaps,
+    // so we skip that work here.
+    refreshCompModeButtonState();
 
     // Sync the inline COMP knobs with their underlying atoms so writes
     // from the meter-strip threshold drag or the popout editor reflect
@@ -2287,30 +2449,39 @@ void ChannelStripComponent::captureWritePoint (AutomationParam param, float deno
     lane.points.push_back (pt);
 }
 
-void ChannelStripComponent::onAutoModeClicked()
+void ChannelStripComponent::showAutoModeMenu()
 {
-    // 3c-ii cycle: OFF -> READ -> WRITE -> TOUCH -> OFF.
     const int cur = track.automationMode.load (std::memory_order_relaxed);
-    int next = (int) AutomationMode::Off;
-    switch ((AutomationMode) cur)
-    {
-        case AutomationMode::Off:   next = (int) AutomationMode::Read;  break;
-        case AutomationMode::Read:  next = (int) AutomationMode::Write; break;
-        case AutomationMode::Write: next = (int) AutomationMode::Touch; break;
-        case AutomationMode::Touch: next = (int) AutomationMode::Off;   break;
-    }
+    juce::PopupMenu menu;
+    menu.addItem (1, "Off",   true, cur == (int) AutomationMode::Off);
+    menu.addItem (2, "Read",  true, cur == (int) AutomationMode::Read);
+    menu.addItem (3, "Write", true, cur == (int) AutomationMode::Write);
+    menu.addItem (4, "Touch", true, cur == (int) AutomationMode::Touch);
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&autoModeButton),
+        [this] (int chosen)
+        {
+            if (chosen < 1 || chosen > 4) return;
+            const AutomationMode picked[] = {
+                AutomationMode::Off, AutomationMode::Read,
+                AutomationMode::Write, AutomationMode::Touch
+            };
+            setAutoMode (picked[chosen - 1]);
+        });
+}
 
+void ChannelStripComponent::setAutoMode (AutomationMode mode)
+{
     // When transitioning OUT of Write or Touch, the points just appended
     // to the lane need to be visible to the audio thread BEFORE it starts
     // reading from the lane. The release-store on mode synchronizes those
     // writes - any prior append to lane.points happens-before the audio
     // thread's acquire-load of the new mode.
-    track.automationMode.store (next, std::memory_order_release);
+    track.automationMode.store ((int) mode, std::memory_order_release);
 
     // Read mode disables every automated control (spec: "User cannot
     // override"). Off / Write / Touch leave them interactive so the
     // user can either ride them (Write) or grab to override (Touch).
-    const bool interactive = next != (int) AutomationMode::Read;
+    const bool interactive = mode != AutomationMode::Read;
     faderSlider.setEnabled (interactive);
     panKnob    .setEnabled (interactive);
     muteButton .setEnabled (interactive);
@@ -2587,6 +2758,7 @@ void ChannelStripComponent::onInputSelectorChanged()
     else if (id == 2)            src = -1;
     else if (id >= 100)          src = id - 100;
     track.inputSource.store (src, std::memory_order_relaxed);
+    refreshIoConfigButton();
 }
 
 void ChannelStripComponent::onTrackModeChanged()
@@ -2615,6 +2787,20 @@ void ChannelStripComponent::onTrackModeChanged()
     track.mode.store (mode, std::memory_order_relaxed);
     refreshInputSelectorVisibility();
     refreshPluginSlotButton();
+    refreshIoConfigButton();
+    // If the I/O popup is open it needs to re-lay out (rows differ per
+    // mode: 2 for audio, 4 for MIDI).
+    if (auto* box = activeIoBox.getComponent())
+    {
+        if (auto* body = box->findChildWithID ({}); body == nullptr)
+        {
+            // CallOutBox holds the content as its sole non-internal child.
+            // Walk children and call resized on the first IoConfigPopup-ish
+            // component.
+            for (int i = 0; i < box->getNumChildComponents(); ++i)
+                if (auto* c = box->getChildComponent (i)) c->resized();
+        }
+    }
     // Resize so the layout reflects the new mode (extra dropdown for stereo,
     // hidden audio dropdown for MIDI).
     resized();
@@ -2674,18 +2860,32 @@ void ChannelStripComponent::refreshEqTypeButton()
 void ChannelStripComponent::setCompMode (int modeIndex)
 {
     track.strip.compMode.store (modeIndex, std::memory_order_relaxed);
-    refreshCompModeButtons();
+    refreshCompModeButtonState();
+    refreshCompKnobVisibility();
     resized();  // mode swap reshapes the comp body
 }
 
-void ChannelStripComponent::refreshCompModeButtons()
+void ChannelStripComponent::refreshCompModeButtonState()
 {
     const int m = juce::jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
-    compModeOpto.setToggleState (m == 0, juce::dontSendNotification);
-    compModeFet.setToggleState  (m == 1, juce::dontSendNotification);
-    compModeVca.setToggleState  (m == 2, juce::dontSendNotification);
+    const char* names[] = { "OPTO", "FET", "VCA" };
+    if (compModeButton.getButtonText() != names[m])
+        compModeButton.setButtonText (names[m]);
 
-    // Show only the active mode's controls.
+    // Illuminate the button when the comp is engaged so the user gets a
+    // single-glance "is it on?" cue without a separate LED widget.
+    const bool on = track.strip.compEnabled.load (std::memory_order_relaxed);
+    if (compModeButton.getToggleState() != on)
+        compModeButton.setToggleState (on, juce::dontSendNotification);
+}
+
+void ChannelStripComponent::refreshCompKnobVisibility()
+{
+    // In compact mode the entire COMP section is hidden (replaced by the
+    // compCompactButton). Bail before touching per-mode knob visibility.
+    if (compactMode) return;
+
+    const int m = juce::jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
     const bool isOpto = (m == 0), isFet = (m == 1), isVca = (m == 2);
     optoPeakRedKnob.setVisible (isOpto);  optoPeakRedLabel.setVisible (isOpto);
     optoGainKnob   .setVisible (isOpto);  optoGainLabel   .setVisible (isOpto);
@@ -2701,6 +2901,45 @@ void ChannelStripComponent::refreshCompModeButtons()
     vcaAttackKnob  .setVisible (isVca);   vcaAttackLabel  .setVisible (isVca);
     vcaReleaseKnob .setVisible (isVca);   vcaReleaseLabel .setVisible (isVca);
     vcaOutputKnob  .setVisible (isVca);   vcaOutputLabel  .setVisible (isVca);
+}
+
+void ChannelStripComponent::showCompModeMenu()
+{
+    // Bypass + mode are orthogonal: the toggle at the top flips compEnabled
+    // without changing compMode (so the user can A/B mode timbres while
+    // bypassed). The mode items below set compMode only - they don't
+    // implicitly enable the comp.
+    const int  m  = juce::jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
+    const bool on = track.strip.compEnabled.load (std::memory_order_relaxed);
+    juce::PopupMenu menu;
+    menu.addItem (1, on ? "Bypass" : "Engage", true, false);
+    menu.addSeparator();
+    menu.addItem (2, "OPTO - program-dependent, smooth", true, m == 0);
+    menu.addItem (3, "FET - fast attack, gritty under load", true, m == 1);
+    menu.addItem (4, "VCA - clean, predictable", true, m == 2);
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&compModeButton),
+        [this, on] (int chosen)
+        {
+            if (chosen == 1)
+                setCompEnabled (! on);
+            else if (chosen >= 2 && chosen <= 4)
+                setCompMode (chosen - 2);
+        });
+}
+
+void ChannelStripComponent::setCompEnabled (bool enabled)
+{
+    track.strip.compEnabled.store (enabled, std::memory_order_relaxed);
+    refreshCompModeButtonState();   // only the lit state changed; knobs unchanged
+}
+
+void ChannelStripComponent::armCompOnUserEdit()
+{
+    if (! track.strip.compEnabled.load (std::memory_order_relaxed))
+    {
+        track.strip.compEnabled.store (true, std::memory_order_relaxed);
+        refreshCompModeButtonState();
+    }
 }
 
 static void drawSectionPlaceholder (juce::Graphics& g, juce::Rectangle<int> r,
@@ -2927,47 +3166,24 @@ void ChannelStripComponent::resized()
     // (signal-flow placement: EQ → COMP → SENDS → PAN → fader).
     if (! mixingMode)
     {
-        modeSelector.setBounds (area.removeFromTop (18));
-        area.removeFromTop (2);
+        // I/O region: one summary button (opens the I/O config popup with
+        // mode + input/output dropdowns) followed by the IN/ARM/PRINT row.
+        // Same fixed height for every track type so EQ / COMP / fader line
+        // up across audio + MIDI strips.
+        constexpr int kIoButtonH = 18;
+        constexpr int kIoRowH    = 18;
+        constexpr int kIoGap     = 3;
+        constexpr int kIoRegionH = kIoButtonH + kIoGap + kIoRowH + 2;
+        auto ioRegion = area.removeFromTop (kIoRegionH);
 
-        const int mode = juce::jlimit (0, 2, track.mode.load (std::memory_order_relaxed));
-        auto inputRow = area.removeFromTop (18);
-        if (mode == 0)
-        {
-            inputSelector.setBounds (inputRow);
-        }
-        else if (mode == 1)
-        {
-            const int half = inputRow.getWidth() / 2;
-            inputSelector .setBounds (inputRow.removeFromLeft (half).withTrimmedRight (1));
-            inputSelectorR.setBounds (inputRow.withTrimmedLeft (1));
-        }
-        else  // MIDI
-        {
-            // Row 1: [ MIDI input (wide) ][LED]
-            // Row 2: [ MIDI channel (full width) ]
-            // Row 3: [ MIDI output (full width) ]
-            constexpr int kLedW = 14;
-            auto led = inputRow.removeFromRight (kLedW);
-            midiActivityLed.setBounds (led.reduced (1));
-            midiInputSelector.setBounds (inputRow.withTrimmedRight (1));
+        ioConfigButton.setBounds (ioRegion.removeFromTop (kIoButtonH));
+        ioRegion.removeFromTop (kIoGap);
 
-            area.removeFromTop (2);
-            auto chRow = area.removeFromTop (18);
-            midiChannelSelector.setBounds (chRow);
-
-            area.removeFromTop (2);
-            auto outRow = area.removeFromTop (18);
-            midiOutputSelector.setBounds (outRow);
-        }
-
-        area.removeFromTop (3);
-        auto buttonRow = area.removeFromTop (18);
+        auto buttonRow = ioRegion.removeFromTop (kIoRowH);
         const int colW = buttonRow.getWidth() / 3;
         monitorButton.setBounds (buttonRow.removeFromLeft (colW).reduced (1));
         armButton    .setBounds (buttonRow.removeFromLeft (colW).reduced (1));
         printButton  .setBounds (buttonRow.reduced (1));
-        area.removeFromTop (2);
     }
 
     // Plugin-slot button right below the IN/ARM/PRINT row. Always visible -
@@ -3105,19 +3321,12 @@ void ChannelStripComponent::resized()
     // ATK/REL on row 2; VCA stays at RAT/OUT + ATK/REL. Body height is fixed
     // so the strip layout doesn't shift when the user switches modes.
     constexpr int kCompBodyH = 2 * kCompKnobRowH + kCompKnobGap;
-    compArea = area.removeFromTop (16 + 2 + 16 + 4 + kCompBodyH + 4);
+    compArea = area.removeFromTop (16 + 2 + kCompBodyH + 4);
     {
         auto s = compArea.reduced (3, 2);
 
-        compOnButton.setBounds (s.removeFromTop (16));
+        compModeButton.setBounds (s.removeFromTop (16));
         s.removeFromTop (2);
-
-        auto modeRow = s.removeFromTop (16);
-        const int modeColW = modeRow.getWidth() / 3;
-        compModeOpto.setBounds (modeRow.removeFromLeft (modeColW).reduced (1, 0));
-        compModeFet.setBounds  (modeRow.removeFromLeft (modeColW).reduced (1, 0));
-        compModeVca.setBounds  (modeRow.reduced (1, 0));
-        s.removeFromTop (4);
 
         // Body: split into knob area (left) + meter strip (right). Meter
         // shows pre-comp input level, GR, and the threshold drag handle.

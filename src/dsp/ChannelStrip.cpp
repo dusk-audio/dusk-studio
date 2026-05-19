@@ -95,9 +95,39 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     eq.prepare (prepSr, prepBs, 2);
     eq.reset();
 
-    compressor.prepare (prepSr, prepBs, 2);
+    // Force the full multi-comp processing path (sidechain HP, true-peak,
+    // transient shaper, stereo linking, auto-makeup, bypass-fade, lookahead)
+    // and disable the donor's internal oversampling since Focal already
+    // wraps the strip in its own oversampler.
+    compressor.setMinimalProcessing (false);
+    compressor.setInternalOversamplingEnabled (false);
+    compressor.setPlayConfigDetails (2, 2, prepSr, juce::jmax (1, prepBs));
+    compressor.prepareToPlay (prepSr, juce::jmax (1, prepBs));
     compMonoBuffer.setSize (1, prepBs, false, false, true);
     bindCompParams();
+
+    // SmoothedValue ramp at the OVERSAMPLED sample rate (the rate the
+    // donor sees inside processBlock). 20 ms is the same constant the
+    // fader / pan / bus gains use.
+    auto seedComp = [prepSr] (juce::SmoothedValue<float>& sv, float v)
+    {
+        sv.reset (prepSr, 0.020);
+        sv.setCurrentAndTargetValue (v);
+    };
+    if (paramsRef != nullptr)
+    {
+        seedComp (smoothedOptoPeakRed, paramsRef->compOptoPeakRed.load (std::memory_order_relaxed));
+        seedComp (smoothedOptoGain,    paramsRef->compOptoGain   .load (std::memory_order_relaxed));
+        seedComp (smoothedFetInput,    paramsRef->compFetInput   .load (std::memory_order_relaxed));
+        seedComp (smoothedFetOutput,   paramsRef->compFetOutput  .load (std::memory_order_relaxed));
+        seedComp (smoothedFetAttack,   paramsRef->compFetAttack  .load (std::memory_order_relaxed));
+        seedComp (smoothedFetRelease,  paramsRef->compFetRelease .load (std::memory_order_relaxed));
+        seedComp (smoothedVcaThresh,   paramsRef->compVcaThreshDb.load (std::memory_order_relaxed));
+        seedComp (smoothedVcaRatio,    paramsRef->compVcaRatio   .load (std::memory_order_relaxed));
+        seedComp (smoothedVcaAttack,   paramsRef->compVcaAttack  .load (std::memory_order_relaxed));
+        seedComp (smoothedVcaRelease,  paramsRef->compVcaRelease .load (std::memory_order_relaxed));
+        seedComp (smoothedVcaOutput,   paramsRef->compVcaOutput  .load (std::memory_order_relaxed));
+    }
 #endif
 }
 
@@ -220,34 +250,65 @@ void ChannelStrip::updateCompParameters() noexcept
 #if FOCAL_HAS_DUSK_DSP
     if (paramsRef == nullptr) return;
 
-    // Direct atomic stores - no lock, no message-thread notification, no
-    // queue traffic. UniversalCompressor's processBlock() reads from the same
-    // atomics. ~17 stores per channel × 16 channels per block, each ~4 ns.
+    // Discrete params (no smoothing): bypass + mode + LIMIT toggle + FET
+    // ratio index. Stored directly on the donor atoms.
     storeAtom (compBypassAtom,
                paramsRef->compEnabled.load (std::memory_order_relaxed) ? 0.0f : 1.0f);
 
     const int modeIdx = juce::jlimit (0, 2, paramsRef->compMode.load (std::memory_order_relaxed));
     storeAtom (compModeAtom, (float) modeIdx);
 
-    storeAtom (compOptoPeakRedAtom,
-               paramsRef->compOptoPeakRed.load (std::memory_order_relaxed));
-    storeAtom (compOptoGainAtom,
-               paramsRef->compOptoGain.load    (std::memory_order_relaxed));
     storeAtom (compOptoLimitAtom,
-               paramsRef->compOptoLimit.load   (std::memory_order_relaxed) ? 1.0f : 0.0f);
-
-    storeAtom (compFetInputAtom,   paramsRef->compFetInput.load   (std::memory_order_relaxed));
-    storeAtom (compFetOutputAtom,  paramsRef->compFetOutput.load  (std::memory_order_relaxed));
-    storeAtom (compFetAttackAtom,  paramsRef->compFetAttack.load  (std::memory_order_relaxed));
-    storeAtom (compFetReleaseAtom, paramsRef->compFetRelease.load (std::memory_order_relaxed));
+               paramsRef->compOptoLimit.load (std::memory_order_relaxed) ? 1.0f : 0.0f);
     storeAtom (compFetRatioAtom,
                (float) paramsRef->compFetRatio.load (std::memory_order_relaxed));
 
-    storeAtom (compVcaThreshAtom,  paramsRef->compVcaThreshDb.load (std::memory_order_relaxed));
-    storeAtom (compVcaRatioAtom,   paramsRef->compVcaRatio.load    (std::memory_order_relaxed));
-    storeAtom (compVcaAttackAtom,  paramsRef->compVcaAttack.load   (std::memory_order_relaxed));
-    storeAtom (compVcaReleaseAtom, paramsRef->compVcaRelease.load  (std::memory_order_relaxed));
-    storeAtom (compVcaOutputAtom,  paramsRef->compVcaOutput.load   (std::memory_order_relaxed));
+    // Continuous params: set smoother targets. The per-chunk
+    // publishSmoothedCompParams() advances the smoothers and writes the
+    // current value into the donor atom right before each comp.processBlock
+    // call, so a knob drag fans out as a 20 ms ramp instead of a step.
+    smoothedOptoPeakRed.setTargetValue (paramsRef->compOptoPeakRed.load (std::memory_order_relaxed));
+    smoothedOptoGain   .setTargetValue (paramsRef->compOptoGain   .load (std::memory_order_relaxed));
+    smoothedFetInput   .setTargetValue (paramsRef->compFetInput   .load (std::memory_order_relaxed));
+    smoothedFetOutput  .setTargetValue (paramsRef->compFetOutput  .load (std::memory_order_relaxed));
+    smoothedFetAttack  .setTargetValue (paramsRef->compFetAttack  .load (std::memory_order_relaxed));
+    smoothedFetRelease .setTargetValue (paramsRef->compFetRelease .load (std::memory_order_relaxed));
+    smoothedVcaThresh  .setTargetValue (paramsRef->compVcaThreshDb.load (std::memory_order_relaxed));
+    smoothedVcaRatio   .setTargetValue (paramsRef->compVcaRatio   .load (std::memory_order_relaxed));
+    smoothedVcaAttack  .setTargetValue (paramsRef->compVcaAttack  .load (std::memory_order_relaxed));
+    smoothedVcaRelease .setTargetValue (paramsRef->compVcaRelease .load (std::memory_order_relaxed));
+    smoothedVcaOutput  .setTargetValue (paramsRef->compVcaOutput  .load (std::memory_order_relaxed));
+#endif
+}
+
+void ChannelStrip::publishSmoothedCompParams (int numSamples) noexcept
+{
+#if FOCAL_HAS_DUSK_DSP
+    if (numSamples <= 0) return;
+    // Advance each smoother by N samples then write the current value to
+    // the donor atom. Called once per inner chunk so chunks shorter than
+    // the smoother's 20 ms ramp see a continuous, fan-out param trajectory
+    // rather than the raw setpoint.
+    auto step = [numSamples] (juce::SmoothedValue<float>& sv,
+                                 std::atomic<float>* atom)
+    {
+        sv.skip (numSamples);
+        if (atom != nullptr) atom->store (sv.getCurrentValue(),
+                                            std::memory_order_relaxed);
+    };
+    step (smoothedOptoPeakRed, compOptoPeakRedAtom);
+    step (smoothedOptoGain,    compOptoGainAtom);
+    step (smoothedFetInput,    compFetInputAtom);
+    step (smoothedFetOutput,   compFetOutputAtom);
+    step (smoothedFetAttack,   compFetAttackAtom);
+    step (smoothedFetRelease,  compFetReleaseAtom);
+    step (smoothedVcaThresh,   compVcaThreshAtom);
+    step (smoothedVcaRatio,    compVcaRatioAtom);
+    step (smoothedVcaAttack,   compVcaAttackAtom);
+    step (smoothedVcaRelease,  compVcaReleaseAtom);
+    step (smoothedVcaOutput,   compVcaOutputAtom);
+#else
+    (void) numSamples;
 #endif
 }
 
@@ -448,7 +509,13 @@ void ChannelStrip::processAndAccumulate (const float* inL,
                 const int n = juce::jmin (compBufSize, upN - offset);
                 float* compView[1] = { upPtrs[0] + offset };
                 juce::AudioBuffer<float> compBuf (compView, 1, n);
-                compressor.processBlock (compBuf);
+                // Smooth-publish continuous comp params to the donor atoms
+                // for this chunk (advances smoothers by n samples, writes
+                // current value). 20 ms ramp turns knob jumps into clean
+                // ramps instead of zipper-noise steps.
+                publishSmoothedCompParams (n);
+                compMidiScratch.clear();
+                compressor.processBlock (compBuf, compMidiScratch);
             }
 
             oversamplerMono->processSamplesDown (nativeOut);
@@ -466,10 +533,16 @@ void ChannelStrip::processAndAccumulate (const float* inL,
                 const int n = juce::jmin (bufSize, numSamples - offset);
                 float* monoView[1] = { tempMono.data() + offset };
                 juce::AudioBuffer<float> compBuf (monoView, 1, n);
-                compressor.processBlock (compBuf);
+                // Smooth-publish continuous comp params to the donor atoms
+                // for this chunk (advances smoothers by n samples, writes
+                // current value). 20 ms ramp turns knob jumps into clean
+                // ramps instead of zipper-noise steps.
+                publishSmoothedCompParams (n);
+                compMidiScratch.clear();
+                compressor.processBlock (compBuf, compMidiScratch);
             }
         }
-        currentGrDb.store (compressor.getGainReductionDb(), std::memory_order_relaxed);
+        currentGrDb.store (compressor.getGainReduction(), std::memory_order_relaxed);
 #endif
 
         srcL = tempMono.data();
@@ -572,7 +645,13 @@ void ChannelStrip::processAndAccumulate (const float* inL,
                 const int n = juce::jmin (compBufSize, upN - offset);
                 float* compView[2] = { upPtrs[0] + offset, upPtrs[1] + offset };
                 juce::AudioBuffer<float> compBuf (compView, 2, n);
-                compressor.processBlock (compBuf);
+                // Smooth-publish continuous comp params to the donor atoms
+                // for this chunk (advances smoothers by n samples, writes
+                // current value). 20 ms ramp turns knob jumps into clean
+                // ramps instead of zipper-noise steps.
+                publishSmoothedCompParams (n);
+                compMidiScratch.clear();
+                compressor.processBlock (compBuf, compMidiScratch);
             }
 
             oversamplerStereo->processSamplesDown (nativeOut);
@@ -589,10 +668,16 @@ void ChannelStrip::processAndAccumulate (const float* inL,
                 const int n = juce::jmin (bufSize, numSamples - offset);
                 float* stView[2] = { L + offset, R + offset };
                 juce::AudioBuffer<float> compBuf (stView, 2, n);
-                compressor.processBlock (compBuf);
+                // Smooth-publish continuous comp params to the donor atoms
+                // for this chunk (advances smoothers by n samples, writes
+                // current value). 20 ms ramp turns knob jumps into clean
+                // ramps instead of zipper-noise steps.
+                publishSmoothedCompParams (n);
+                compMidiScratch.clear();
+                compressor.processBlock (compBuf, compMidiScratch);
             }
         }
-        currentGrDb.store (compressor.getGainReductionDb(), std::memory_order_relaxed);
+        currentGrDb.store (compressor.getGainReduction(), std::memory_order_relaxed);
 #endif
 
         srcL = L;

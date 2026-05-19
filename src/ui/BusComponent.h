@@ -17,7 +17,13 @@ public:
     void resized() override;
     void mouseDown (const juce::MouseEvent& e) override;
 
+    // Shrinks the VU meter's vertical footprint when the tape SUMMARY
+    // is expanded - frees pixels for the fader. Toggled by ConsoleView
+    // alongside setStripsCompactMode.
+    void setCompactVu (bool compact);
+
 private:
+    bool compactVu = false;
     void timerCallback() override;
     void showColourMenu();
     void applyBusColour (juce::Colour c);
@@ -64,6 +70,11 @@ private:
     juce::Rectangle<int> meterArea;
     juce::Rectangle<int> grMeterArea;
     juce::Rectangle<int> faderScaleArea;
+    // Painted background bands for the EQ + COMP sections - same framed
+    // look as the channel strip's eqArea / compArea so all strip types
+    // share one visual grammar.
+    juce::Rectangle<int> eqArea;
+    juce::Rectangle<int> compArea;
     juce::Label outputPeakLabel;
     juce::Label grPeakLabel;
     float displayedOutputLDb = -100.0f;

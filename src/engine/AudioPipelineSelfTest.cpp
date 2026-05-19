@@ -452,6 +452,340 @@ juce::String AudioPipelineSelfTest::testMasterTapeAddsGain()
         autoCompOnIsMonotonic ? "monotonic decreasing - OK" : "not monotonic - INVESTIGATE");
 }
 
+namespace
+{
+// Goertzel sliding magnitude estimator. Returns the linear amplitude of a
+// single discrete frequency component in the input buffer. O(N) per
+// frequency; we only probe a handful so this is cheap compared to a full
+// FFT and avoids the juce::dsp::FFT plumbing.
+float goertzelMagnitude (const float* x, int n, double freqHz, double sr)
+{
+    if (n <= 0 || sr <= 0.0) return 0.0f;
+    const double k     = (double) n * freqHz / sr;
+    const double omega = 2.0 * juce::MathConstants<double>::pi * k / (double) n;
+    const double coeff = 2.0 * std::cos (omega);
+    double q0 = 0.0, q1 = 0.0, q2 = 0.0;
+    for (int i = 0; i < n; ++i)
+    {
+        q0 = coeff * q1 - q2 + (double) x[i];
+        q2 = q1;
+        q1 = q0;
+    }
+    const double re  = q1 - q2 * std::cos (omega);
+    const double im  = q2 * std::sin (omega);
+    const double mag = std::sqrt (re * re + im * im);
+    return (float) (mag * 2.0 / (double) n);   // scale to amplitude
+}
+
+// Drive the engine with a tone for `warmup + measure` blocks, capture the
+// last `captureSamples` L-channel samples for spectral analysis. Mirrors
+// runSynthetic but exposes the raw buffer for FFT/Goertzel work.
+void captureToneOutput (AudioEngine& engine, double sr, int blockSize,
+                          int numInChannels, int numOutChannels,
+                          float inputAmp, float toneHz,
+                          int warmupBlocks, int captureSamples,
+                          std::vector<float>& outBuffer)
+{
+    engine.prepareForSelfTest (sr, blockSize);
+
+    std::vector<std::vector<float>> inputs ((size_t) numInChannels,
+                                              std::vector<float> ((size_t) blockSize, 0.0f));
+    std::vector<const float*> inputPtrs ((size_t) numInChannels, nullptr);
+    for (int c = 0; c < numInChannels; ++c)
+        inputPtrs[(size_t) c] = inputs[(size_t) c].data();
+
+    std::vector<std::vector<float>> outputs ((size_t) numOutChannels,
+                                               std::vector<float> ((size_t) blockSize, 0.0f));
+    std::vector<float*> outputPtrs ((size_t) numOutChannels, nullptr);
+    for (int c = 0; c < numOutChannels; ++c)
+        outputPtrs[(size_t) c] = outputs[(size_t) c].data();
+
+    juce::AudioIODeviceCallbackContext ctx {};
+    const double phaseInc = 2.0 * juce::MathConstants<double>::pi * (double) toneHz / sr;
+    double phase = 0.0;
+
+    outBuffer.clear();
+    outBuffer.reserve ((size_t) captureSamples);
+
+    const int measureBlocks = (captureSamples + blockSize - 1) / blockSize;
+    const int totalBlocks   = warmupBlocks + measureBlocks;
+    for (int b = 0; b < totalBlocks; ++b)
+    {
+        for (int s = 0; s < blockSize; ++s)
+        {
+            inputs[0][(size_t) s] = inputAmp * (float) std::sin (phase);
+            phase += phaseInc;
+            if (phase >= 2.0 * juce::MathConstants<double>::pi)
+                phase -= 2.0 * juce::MathConstants<double>::pi;
+        }
+        for (auto& o : outputs) std::fill (o.begin(), o.end(), 0.0f);
+        engine.audioDeviceIOCallbackWithContext (
+            inputPtrs.data(), numInChannels,
+            outputPtrs.data(), numOutChannels,
+            blockSize, ctx);
+        if (b >= warmupBlocks)
+            for (int s = 0; s < blockSize
+                              && (int) outBuffer.size() < captureSamples; ++s)
+                outBuffer.push_back (outputs[0][(size_t) s]);
+    }
+}
+} // namespace
+
+juce::String AudioPipelineSelfTest::testCompEachMode()
+{
+    // -18 dBFS @ 1 kHz through each comp mode on track 0. Goertzel measures
+    // fundamental + first 4 harmonics; the 17 kHz bin acts as a "no-signal-
+    // expected-here" alias floor (with 4x oversampling + half-band downsampler,
+    // anything above ~6 kHz harmonic content should be deeply attenuated).
+    //
+    // Pass criteria per mode:
+    //   * Fundamental > -25 dBFS (comp + saturation should not crush below this)
+    //   * Alias floor at 17 kHz < -60 dBFS (donor saturation aliasing budget)
+    //
+    // Settings per mode are moderate (similar to real-world tracking use).
+    constexpr double sr = 48000.0;
+    constexpr int    bs = 512;
+    constexpr int    captureSamples = 8192;
+    constexpr int    warmupBlocks   = 32;     // ~340 ms; smoothers + envelopes settle
+    constexpr float  inputAmp       = 0.1259f;   // -18 dBFS
+
+    struct ModeSpec { int idx; const char* label; };
+    const ModeSpec modes[] = {
+        { 0, "Opto" }, { 1, "FET" }, { 2, "VCA" }
+    };
+
+    juce::String table;
+    bool allPass = true;
+
+    for (const auto& m : modes)
+    {
+        prepareCleanState();
+        auto& t0s = session.track (0).strip;
+        t0s.compEnabled.store (true, std::memory_order_relaxed);
+        t0s.compMode   .store (m.idx, std::memory_order_relaxed);
+
+        // Moderate, mode-appropriate defaults so all 3 actually engage on a
+        // -18 dBFS sine + audibly compress without slamming the donor's
+        // hard ±2.0 clip.
+        t0s.compOptoPeakRed.store (50.0f, std::memory_order_relaxed);
+        t0s.compOptoGain   .store (60.0f, std::memory_order_relaxed);
+        t0s.compFetInput   .store (12.0f, std::memory_order_relaxed);
+        t0s.compFetOutput  .store ( 0.0f, std::memory_order_relaxed);
+        t0s.compFetAttack  .store ( 1.0f, std::memory_order_relaxed);
+        t0s.compFetRelease .store (200.0f, std::memory_order_relaxed);
+        t0s.compFetRatio   .store (1, std::memory_order_relaxed);   // 8:1
+        t0s.compVcaThreshDb.store (-24.0f, std::memory_order_relaxed);
+        t0s.compVcaRatio   .store (4.0f, std::memory_order_relaxed);
+        t0s.compVcaAttack  .store (5.0f, std::memory_order_relaxed);
+        t0s.compVcaRelease .store (100.0f, std::memory_order_relaxed);
+        t0s.compVcaOutput  .store (0.0f, std::memory_order_relaxed);
+
+        std::vector<float> buf;
+        captureToneOutput (engine, sr, bs, 16, 2, inputAmp, kToneHz,
+                            warmupBlocks, captureSamples, buf);
+
+        const int n = (int) buf.size();
+        const float fund   = goertzelMagnitude (buf.data(), n, 1000.0,  sr);
+        const float h2     = goertzelMagnitude (buf.data(), n, 2000.0,  sr);
+        const float h3     = goertzelMagnitude (buf.data(), n, 3000.0,  sr);
+        const float h4     = goertzelMagnitude (buf.data(), n, 4000.0,  sr);
+        const float h5     = goertzelMagnitude (buf.data(), n, 5000.0,  sr);
+        const float alias  = goertzelMagnitude (buf.data(), n, 17000.0, sr);
+        const float harmonicRms = std::sqrt (h2*h2 + h3*h3 + h4*h4 + h5*h5);
+        const float thd     = fund > 0.0f ? harmonicRms / fund : 0.0f;
+
+        const bool fundOk  = ampToDb (fund)  > -25.0f;
+        const bool aliasOk = ampToDb (alias) < -60.0f;
+        const bool pass    = fundOk && aliasOk;
+        if (! pass) allPass = false;
+
+        table << juce::String::formatted (
+            "      %s  fund=%+6.2f dBFS  H2=%+6.2f  H3=%+6.2f  H4=%+6.2f  "
+            "H5=%+6.2f  THD=%5.2f%%  alias17k=%+7.2f dBFS  %s\n",
+            m.label,
+            ampToDb (fund),
+            ampToDb (h2),
+            ampToDb (h3),
+            ampToDb (h4),
+            ampToDb (h5),
+            thd * 100.0f,
+            ampToDb (alias),
+            pass ? "OK" : "FAIL");
+    }
+
+    return juce::String::formatted (
+        "%s Channel comp (Opto / FET / VCA) on -18 dBFS @ 1 kHz\n%s",
+        fmtPassFail (allPass).toRawUTF8(),
+        table.toRawUTF8());
+}
+
+juce::String AudioPipelineSelfTest::testCompHeavyGR()
+{
+    // Heavy gain-reduction stress: push each mode to its aggressive corner
+    // and measure how much harmonic + alias energy comes out. This run is
+    // CHARACTERIZATION ONLY (no pass/fail) - distortion under heavy GR is
+    // partially inherent (fast-attack envelope chatter, asymmetric sat) and
+    // partially side-effect (donor hard clip when makeup pushes hot). The
+    // table tells us which.
+    //
+    // Drive level raised to -6 dBFS so heavy comp settings actually engage.
+    constexpr double sr = 48000.0;
+    constexpr int    bs = 512;
+    constexpr int    captureSamples = 8192;
+    constexpr int    warmupBlocks   = 48;
+    constexpr float  inputAmp       = 0.5012f;   // -6 dBFS, hot
+
+    struct Spec
+    {
+        int idx; const char* label;
+        // mode-specific extreme settings
+        float opto_peakRed; float opto_gain;
+        float fet_input;    float fet_output;    float fet_attack;
+        int   fet_ratio;    float fet_release;
+        float vca_thresh;   float vca_ratio;     float vca_attack;
+        float vca_release;  float vca_output;
+    };
+    const Spec specs[] = {
+        // Opto: max peak-red + high gain = LA-2A "slammed" sound
+        { 0, "Opto-extreme",  100.0f, 80.0f,
+                                 0.0f, 0.0f, 1.0f, 0, 200.0f,
+                                 0.0f, 4.0f, 5.0f, 100.0f, 0.0f },
+        // FET: +40 dB input drive + ALL ratio = 1176 "British Mode" smash
+        { 1, "FET-allbutton",  50.0f, 50.0f,
+                                 40.0f, -10.0f, 0.02f, 4, 50.0f,
+                                 0.0f, 4.0f, 5.0f, 100.0f, 0.0f },
+        // VCA: -36 dB thresh + 20:1 ratio + +18 dB makeup = brick limiter
+        { 2, "VCA-brick",      50.0f, 50.0f,
+                                 0.0f, 0.0f, 1.0f, 0, 200.0f,
+                                 -36.0f, 20.0f, 1.0f, 50.0f, 12.0f }
+    };
+
+    juce::String table;
+    for (const auto& s : specs)
+    {
+        prepareCleanState();
+        auto& t0s = session.track (0).strip;
+        t0s.compEnabled.store (true, std::memory_order_relaxed);
+        t0s.compMode   .store (s.idx, std::memory_order_relaxed);
+        t0s.compOptoPeakRed.store (s.opto_peakRed, std::memory_order_relaxed);
+        t0s.compOptoGain   .store (s.opto_gain,    std::memory_order_relaxed);
+        t0s.compFetInput   .store (s.fet_input,    std::memory_order_relaxed);
+        t0s.compFetOutput  .store (s.fet_output,   std::memory_order_relaxed);
+        t0s.compFetAttack  .store (s.fet_attack,   std::memory_order_relaxed);
+        t0s.compFetRelease .store (s.fet_release,  std::memory_order_relaxed);
+        t0s.compFetRatio   .store (s.fet_ratio,    std::memory_order_relaxed);
+        t0s.compVcaThreshDb.store (s.vca_thresh,   std::memory_order_relaxed);
+        t0s.compVcaRatio   .store (s.vca_ratio,    std::memory_order_relaxed);
+        t0s.compVcaAttack  .store (s.vca_attack,   std::memory_order_relaxed);
+        t0s.compVcaRelease .store (s.vca_release,  std::memory_order_relaxed);
+        t0s.compVcaOutput  .store (s.vca_output,   std::memory_order_relaxed);
+
+        std::vector<float> buf;
+        captureToneOutput (engine, sr, bs, 16, 2, inputAmp, kToneHz,
+                            warmupBlocks, captureSamples, buf);
+
+        const int n = (int) buf.size();
+        const float fund  = goertzelMagnitude (buf.data(), n, 1000.0,  sr);
+        const float h2    = goertzelMagnitude (buf.data(), n, 2000.0,  sr);
+        const float h3    = goertzelMagnitude (buf.data(), n, 3000.0,  sr);
+        const float h4    = goertzelMagnitude (buf.data(), n, 4000.0,  sr);
+        const float h5    = goertzelMagnitude (buf.data(), n, 5000.0,  sr);
+        const float alias = goertzelMagnitude (buf.data(), n, 17000.0, sr);
+        const float harmonicRms = std::sqrt (h2*h2 + h3*h3 + h4*h4 + h5*h5);
+        const float thd = fund > 0.0f ? harmonicRms / fund : 0.0f;
+        float peak = 0.0f;
+        for (float v : buf) if (std::abs (v) > peak) peak = std::abs (v);
+
+        table << juce::String::formatted (
+            "      %s  peak=%+6.2f  fund=%+6.2f  H2=%+6.2f  H3=%+6.2f  "
+            "H4=%+6.2f  H5=%+6.2f  THD=%6.2f%%  alias17k=%+7.2f\n",
+            s.label,
+            ampToDb (peak),
+            ampToDb (fund),
+            ampToDb (h2),
+            ampToDb (h3),
+            ampToDb (h4),
+            ampToDb (h5),
+            thd * 100.0f,
+            ampToDb (alias));
+    }
+
+    return juce::String::formatted (
+        "[INFO] Channel comp heavy-GR characterization (-6 dBFS in, extreme settings)\n%s"
+        "      Heavy-GR distortion is partly intrinsic (envelope chatter,\n"
+        "      asymmetric saturation) and partly side-effect (donor clip if\n"
+        "      makeup pushes hot). 17 kHz floor < -50 dBFS = OS doing its job.",
+        table.toRawUTF8());
+}
+
+juce::String AudioPipelineSelfTest::testCompPerTrack()
+{
+    // Wiring uniformity: run the same Opto-comp config on each of the 16
+    // tracks one at a time. Output peaks must agree within tolerance,
+    // otherwise something is wired differently per-track (regression).
+    constexpr double sr = 48000.0;
+    constexpr int    bs = 512;
+    constexpr int    captureSamples = 4096;
+    constexpr int    warmupBlocks   = 24;
+    constexpr float  inputAmp       = 0.1259f;
+
+    float peaks[Session::kNumTracks] {};
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        // Unmute target track, mute the rest. Inputs land on track t when
+        // its inputSource follows the track index (-2 = follow).
+        for (int i = 0; i < Session::kNumTracks; ++i)
+        {
+            auto& ts = session.track (i).strip;
+            ts.faderDb     .store (0.0f, std::memory_order_relaxed);
+            ts.pan         .store (0.0f, std::memory_order_relaxed);
+            ts.mute        .store (i != t, std::memory_order_relaxed);
+            ts.solo        .store (false, std::memory_order_relaxed);
+            ts.compEnabled .store (i == t, std::memory_order_relaxed);
+            ts.compMode    .store (0, std::memory_order_relaxed);   // Opto
+            ts.compOptoPeakRed.store (50.0f, std::memory_order_relaxed);
+            ts.compOptoGain   .store (60.0f, std::memory_order_relaxed);
+            session.track (i).inputMonitor.store (i == t, std::memory_order_relaxed);
+            session.track (i).recordArmed .store (false, std::memory_order_relaxed);
+            session.track (i).inputSource .store (t, std::memory_order_relaxed);
+        }
+        session.recomputeRtCounters();
+
+        // Drive input channel t (track t reads from input t when source is
+        // explicit). captureToneOutput puts the sine on input 0, so we
+        // temporarily route track t to follow input 0 via inputSource=0.
+        session.track (t).inputSource.store (0, std::memory_order_relaxed);
+
+        std::vector<float> buf;
+        captureToneOutput (engine, sr, bs, 16, 2, inputAmp, kToneHz,
+                            warmupBlocks, captureSamples, buf);
+
+        float peak = 0.0f;
+        for (float v : buf) if (std::abs (v) > peak) peak = std::abs (v);
+        peaks[t] = peak;
+    }
+
+    float minP = peaks[0], maxP = peaks[0];
+    for (int t = 1; t < Session::kNumTracks; ++t)
+    {
+        minP = juce::jmin (minP, peaks[t]);
+        maxP = juce::jmax (maxP, peaks[t]);
+    }
+    const float spreadDb = (minP > 0.0f)
+                              ? std::abs (ampToDb (maxP) - ampToDb (minP))
+                              : 999.0f;
+    const bool pass = spreadDb < 0.5f && minP > 0.01f;
+
+    return juce::String::formatted (
+        "%s Comp wiring uniformity across 16 tracks (Opto)\n"
+        "      peak min=%+6.2f dBFS  max=%+6.2f dBFS  spread=%.3f dB "
+        "(pass if spread < 0.5 dB AND min > -40 dBFS)",
+        fmtPassFail (pass).toRawUTF8(),
+        ampToDb (minP),
+        ampToDb (maxP),
+        spreadDb);
+}
+
 juce::String AudioPipelineSelfTest::probeUMC1820AlsaFormat()
 {
     // Explicitly open the UMC1820 front: device on the ALSA backend so the
@@ -585,6 +919,9 @@ juce::String AudioPipelineSelfTest::runAll()
     report.add (testChannelRoutingTwoOut());
     report.add (testChannelRoutingFourOut());
     report.add (testMasterTapeAddsGain());
+    report.add (testCompEachMode());
+    report.add (testCompHeavyGR());
+    report.add (testCompPerTrack());
     report.add ("");
 
    #if defined(__linux__)

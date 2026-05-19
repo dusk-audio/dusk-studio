@@ -174,7 +174,7 @@ struct ChannelStripParams
     // set per mode (Opto/FET/VCA model real hardware), so each mode keeps its
     // own atomic state and the UI swaps which controls are visible.
     std::atomic<bool>  compEnabled    { false };
-    std::atomic<int>   compMode       { 2 };       // 0=Opto, 1=FET, 2=VCA
+    std::atomic<int>   compMode       { 0 };       // 0=Opto, 1=FET, 2=VCA
 
     // Opto (LA-2A style): peak-reduction + gain + optional limit mode.
     std::atomic<float> compOptoPeakRed { 30.0f };  // 0..100 %
@@ -1056,6 +1056,10 @@ public:
     bool           snapToGrid     = false;
     SnapResolution snapResolution = SnapResolution::Quarter;
 
+    // Piano-roll "snap to scale degree" toggle. Persists across editor
+    // reopens; touched only on the message thread. Defaults to ON.
+    bool           pianoRollKeySnap = true;
+
     // Ardour-style edit mode. Determines what a click/drag on the arrange
     // surface (TapeStrip) or the region editor does. Mouse handlers in
     // both components branch on this at the top of mouseDown. Persisted
@@ -1071,7 +1075,7 @@ public:
     // setAudioDeviceSetup). Stored as an atomic<int> so future audio-thread
     // reads (e.g. for per-block reactive ox) are lock-free, but today only
     // the message-thread prepare path consults it.
-    std::atomic<int> oversamplingFactor { 1 };
+    std::atomic<int> oversamplingFactor { 4 };
 
     // Tempo + transport-grid metadata. Persisted with the session.
     //   tempoBpm        - beats per minute. 0 disables beat-grid behavior

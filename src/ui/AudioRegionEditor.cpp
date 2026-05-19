@@ -220,6 +220,13 @@ AudioRegionEditor::AudioRegionEditor (Session& s, AudioEngine& e, int t, int r)
     addAndMakeVisible (muteToggle);
     addAndMakeVisible (lockToggle);
 
+    // Horizontal scrollbar above the status bar. Sized to anchor-range
+    // total samples; the visible-range thumb width tracks the on-screen
+    // sample window (anchor / pixelsPerSample). Drag scrolls the view.
+    horizontalScrollBar.setAutoHide (false);
+    horizontalScrollBar.addListener (this);
+    addAndMakeVisible (horizontalScrollBar);
+
     refreshStatusBarReadouts();
 
     // 30 Hz playhead poll - matches the meter cadence elsewhere. The
@@ -280,14 +287,34 @@ void AudioRegionEditor::resized()
     layoutIconRow   (juce::Rectangle<int> (0, 0, getWidth(), kIconRowHeight));
     layoutStatusBar (juce::Rectangle<int> (0, getHeight() - kStatusBarH,
                                                 getWidth(), kStatusBarH));
+    horizontalScrollBar.setBounds (0, getHeight() - kStatusBarH - kScrollBarH,
+                                     getWidth(), kScrollBarH);
 
     const auto* r = region();
     if (r == nullptr) return;
     const auto waveArea = juce::Rectangle<int> (
         0, kIconRowHeight + kRulerHeight,
         getWidth(),
-        getHeight() - kIconRowHeight - kRulerHeight - kStatusBarH);
+        getHeight() - kIconRowHeight - kRulerHeight - kStatusBarH - kScrollBarH);
     zoomFitToArea (waveArea);
+    syncScrollBarRange();
+}
+
+void AudioRegionEditor::syncScrollBarRange()
+{
+    if (pixelsPerSample <= 0.0f || anchorTimelineLength <= 0) return;
+    const double viewSamples = (double) getWidth() / (double) pixelsPerSample;
+    horizontalScrollBar.setRangeLimits (0.0, (double) anchorTimelineLength,
+                                          juce::dontSendNotification);
+    horizontalScrollBar.setCurrentRange ((double) scrollSamples, viewSamples,
+                                            juce::dontSendNotification);
+}
+
+void AudioRegionEditor::scrollBarMoved (juce::ScrollBar* bar, double newRangeStart)
+{
+    if (bar != &horizontalScrollBar) return;
+    scrollSamples = juce::jmax<juce::int64> (0, (juce::int64) newRangeStart);
+    repaint();
 }
 
 void AudioRegionEditor::zoomFitToArea (juce::Rectangle<int> area)
@@ -380,7 +407,7 @@ void AudioRegionEditor::paint (juce::Graphics& g)
     const auto waveArea  = juce::Rectangle<int> (
         0, kIconRowHeight + kRulerHeight,
         getWidth(),
-        getHeight() - kIconRowHeight - kRulerHeight - kStatusBarH);
+        getHeight() - kIconRowHeight - kRulerHeight - kStatusBarH - kScrollBarH);
 
     // Bottom status-bar band background - children paint over.
     const auto statusArea = juce::Rectangle<int> (
@@ -805,7 +832,7 @@ void AudioRegionEditor::mouseMove (const juce::MouseEvent& e)
 {
     const auto waveArea = juce::Rectangle<int> (0, kIconRowHeight + kRulerHeight,
                                                    getWidth(),
-                                                   getHeight() - kIconRowHeight - kRulerHeight - kStatusBarH);
+                                                   getHeight() - kIconRowHeight - kRulerHeight - kStatusBarH - kScrollBarH);
 
     if (fadeInHandleRect (waveArea).contains (e.x, e.y)
         || fadeOutHandleRect (waveArea).contains (e.x, e.y))
@@ -835,7 +862,7 @@ void AudioRegionEditor::mouseDown (const juce::MouseEvent& e)
     if (r == nullptr) return;
     const auto waveArea = juce::Rectangle<int> (0, kIconRowHeight + kRulerHeight,
                                                    getWidth(),
-                                                   getHeight() - kIconRowHeight - kRulerHeight - kStatusBarH);
+                                                   getHeight() - kIconRowHeight - kRulerHeight - kStatusBarH - kScrollBarH);
 
     // Middle-mouse-drag pans the timeline. Captured before any other
     // branch so it never gets shadowed by handle / range / context-menu
@@ -1108,7 +1135,7 @@ void AudioRegionEditor::mouseDrag (const juce::MouseEvent& e)
     if (r == nullptr || dragMode == DragMode::None) return;
     const auto waveArea = juce::Rectangle<int> (0, kIconRowHeight + kRulerHeight,
                                                    getWidth(),
-                                                   getHeight() - kIconRowHeight - kRulerHeight - kStatusBarH);
+                                                   getHeight() - kIconRowHeight - kRulerHeight - kStatusBarH - kScrollBarH);
 
     // Pan drag: convert the mouse-x delta to a sample delta and apply
     // against the captured scroll origin so the timeline tracks the
@@ -1560,7 +1587,7 @@ void AudioRegionEditor::mouseWheelMove (const juce::MouseEvent& e,
     if (r == nullptr) return;
     const auto waveArea = juce::Rectangle<int> (0, kIconRowHeight + kRulerHeight,
                                                    getWidth(),
-                                                   getHeight() - kIconRowHeight - kRulerHeight - kStatusBarH);
+                                                   getHeight() - kIconRowHeight - kRulerHeight - kStatusBarH - kScrollBarH);
 
     if (e.mods.isCommandDown() || e.mods.isCtrlDown())
     {
@@ -1618,6 +1645,34 @@ bool AudioRegionEditor::keyPressed (const juce::KeyPress& k)
                               || k.getModifiers().isCtrlDown();
     const bool noMods = ! cmdOrCtrl && ! k.getModifiers().isShiftDown()
                         && ! k.getModifiers().isAltDown();
+
+    // Cmd/Ctrl + Left / Right pans the view horizontally; Home / End jump
+    // to the start / end of the anchor range. Lets the user scroll without
+    // a trackpad - keeps zoomed-in editing workable on a plain mouse.
+    if (cmdOrCtrl && (k == juce::KeyPress::leftKey || k == juce::KeyPress::rightKey))
+    {
+        const juce::int64 widthSamples = (juce::int64) std::round (
+            (double) (getWidth() - 0) / juce::jmax (1.0e-9f, pixelsPerSample));
+        const juce::int64 step = juce::jmax<juce::int64> (1, widthSamples / 4);
+        const juce::int64 delta = (k == juce::KeyPress::leftKey ? -step : step);
+        scrollSamples = juce::jmax<juce::int64> (0, scrollSamples + delta);
+        repaint();
+        return true;
+    }
+    if (k == juce::KeyPress::homeKey)
+    {
+        scrollSamples = 0;
+        repaint();
+        return true;
+    }
+    if (k == juce::KeyPress::endKey)
+    {
+        const juce::int64 widthSamples = (juce::int64) std::round (
+            (double) getWidth() / juce::jmax (1.0e-9f, pixelsPerSample));
+        scrollSamples = juce::jmax<juce::int64> (0, anchorTimelineLength - widthSamples);
+        repaint();
+        return true;
+    }
 
     // Edit-mode shortcuts. The modal grabs keyboard focus on open so
     // MainComponent::keyPressed never sees these while the editor is up.
@@ -1948,7 +2003,7 @@ void AudioRegionEditor::zoomByFactor (float factor)
     const auto waveArea = juce::Rectangle<int> (
         0, kIconRowHeight + kRulerHeight,
         getWidth(),
-        getHeight() - kIconRowHeight - kRulerHeight - kStatusBarH);
+        getHeight() - kIconRowHeight - kRulerHeight - kStatusBarH - kScrollBarH);
     const auto anchorXBefore = xForSample (editCursorSample, waveArea);
     pixelsPerSample = juce::jlimit (1.0e-5f, 1.0f, pixelsPerSample * factor);
     const auto anchorSampleAfterRaw = sampleForX (anchorXBefore, waveArea);
@@ -2377,7 +2432,7 @@ void AudioRegionEditor::zoomFit()
 {
     const auto waveArea = juce::Rectangle<int> (0, kIconRowHeight + kRulerHeight,
                                                    getWidth(),
-                                                   getHeight() - kIconRowHeight - kRulerHeight - kStatusBarH);
+                                                   getHeight() - kIconRowHeight - kRulerHeight - kStatusBarH - kScrollBarH);
     zoomFitToArea (waveArea);
     repaint();
 }
@@ -2657,10 +2712,36 @@ void AudioRegionEditor::paintTransportPlayhead (juce::Graphics& g,
 
 void AudioRegionEditor::timerCallback()
 {
+    // Keep the horizontal scrollbar in sync with whichever path mutated
+    // scrollSamples since the last tick (keyboard arrows, mouse wheel,
+    // zoom recentre, etc.). One cheap call per tick beats threading
+    // notifications through every scroll-changing site.
+    syncScrollBarRange();
+
+    // Toolbar button enabled-state + toggle sync. UndoManager has no
+    // change-broadcaster we listen to and the modal can't see edits made
+    // through external surfaces (TapeStrip drag, RecordManager commit)
+    // any other way. Polling at 30 Hz is cheap.
+    {
+        const auto* r = region();
+        auto& um = engine.getUndoManager();
+        undoButton .setEnabled (um.canUndo());
+        redoButton .setEnabled (um.canRedo());
+        splitButton    .setEnabled (r != nullptr);
+        normalizeButton.setEnabled (r != nullptr);
+        propertiesButton.setEnabled (r != nullptr);
+        if (r != nullptr)
+        {
+            if (muteToggle.getToggleState() != r->muted)
+                muteToggle.setToggleState (r->muted, juce::dontSendNotification);
+            if (lockToggle.getToggleState() != r->locked)
+                lockToggle.setToggleState (r->locked, juce::dontSendNotification);
+        }
+    }
     const auto waveArea = juce::Rectangle<int> (
         0, kIconRowHeight + kRulerHeight,
         getWidth(),
-        getHeight() - kIconRowHeight - kRulerHeight - kStatusBarH);
+        getHeight() - kIconRowHeight - kRulerHeight - kStatusBarH - kScrollBarH);
     const int x = transportPlayheadX (waveArea);
     if (x == lastPlayheadX) return;
     // Repaint just the strip the playhead vacated AND the strip it

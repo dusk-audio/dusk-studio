@@ -433,12 +433,12 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
         repaint();
     };
     timeFormatToggle.onClick = flipTimeMode;
-    // addChildComponent (not addAndMakeVisible): visibility flips in
-    // resized() based on whether we're in compact mode. Compact mode
-    // hides this button to avoid colliding with the bank-buttons that
-    // MainComponent overlays in the same x-band; right-click on the
-    // clock label is the always-available fallback.
-    addChildComponent (timeFormatToggle);
+    // Always visible after the bank-row refactor — banks now live inline
+    // beside the centered stage block, not overlaid on the transport bar's
+    // x-band, so the time-format toggle no longer collides with them at
+    // any width. Right-click on the clock label remains a redundant
+    // fallback for changing time-display mode.
+    addAndMakeVisible (timeFormatToggle);
 
     // Right-click clock label to flip time-display mode. Works in
     // every layout including compact-mode where the dedicated button
@@ -875,11 +875,6 @@ void TransportBar::resized()
 {
     auto area = getLocalBounds().reduced (8, 6);
 
-    // On macOS, the OS traffic-light buttons sit at the top-left of the window
-    // when not in fullscreen and overlap the leftmost transport button. Reserve
-    // space so Stop is fully visible. In fullscreen the lights are gone and the
-    // pad collapses to zero. Querying the peer here works because resized() is
-    // re-invoked whenever the window enters / leaves fullscreen.
    #if JUCE_MAC
     int macTitlePad = 78;
     if (auto* top = getTopLevelComponent())
@@ -889,11 +884,6 @@ void TransportBar::resized()
     area.removeFromLeft (macTitlePad);
    #endif
 
-    // Circular transport buttons. Square bounds so the disc renders true.
-    // 36 px diameter with 4 px spacing; centred vertically in the row.
-    // Eight buttons (stop / rew / play / ffwd / record / loop / punch /
-    // keyboard) -> 7 gaps. Loop+Punch live next to record (Reaper-style)
-    // instead of as separate text toggles on the right edge.
     constexpr int kBtnDia = 36;
     constexpr int kBtnGap = 4;
     auto buttons = area.removeFromLeft (kBtnDia * 8 + kBtnGap * 7);
@@ -919,10 +909,6 @@ void TransportBar::resized()
     syncCompactLabels (compact);
 
     area.removeFromLeft (12);
-    // Time/Bars toggle sits BETWEEN the transport buttons and the clock.
-    // The bank-button overlay was moved right of the stage tabs in
-    // MainComponent so it no longer covers this x-band - the toggle now
-    // stays visible at every window width.
     timeFormatToggle.setVisible (true);
     {
         auto tfRect = area.removeFromLeft (kBtnDia);
@@ -930,23 +916,13 @@ void TransportBar::resized()
         timeFormatToggle.setBounds (tfRect.reduced (0, tfPad));
         area.removeFromLeft (6);
     }
-    // Compact clock fits "00:00.000" at 18 px bold mono with ~2 px slack;
-    // gains ~20 px back so the bank-button overlay (positioned by
-    // MainComponent in the same x-range) has more room before colliding.
     clockLabel.setBounds (area.removeFromLeft (compact ? 110 : 130));
 
-    // TAPE toggle on the right edge of the bar; chevron-only in compact.
     tapeToggle.setBounds (area.removeFromRight (compact ? 32 : 84).reduced (1));
     area.removeFromRight (12);
 
-    // BPM editor + CLICK + C/I toggles. Compact-mode widths trim the
-    // right-cluster footprint so the middle band (banks + stage tabs
-    // overlay) gets more elbow room at the smallest legal window width.
     countInToggle.setBounds (area.removeFromRight (compact ? 34 : 44).reduced (1, 4));
     area.removeFromRight (4);
-    // clickToggle is a TransportIconButton (drawn as a circular disc).
-    // Keep its bounds SQUARE so the ellipse renders round, matching the
-    // left-side transport buttons rather than looking like a wide oval.
     {
         auto rect = area.removeFromRight (kBtnDia);
         const int pad = juce::jmax (0, (rect.getHeight() - kBtnDia) / 2);
@@ -956,10 +932,6 @@ void TransportBar::resized()
     tapButton.setBounds  (area.removeFromRight (compact ? 42 : 48).reduced (1, 4));
     area.removeFromRight (4);
     bpmValue.setBounds   (area.removeFromRight (compact ? 44 : 52).reduced (1, 4));
-    // BPM caption ("BPM") suppressed in compact mode — the value field
-    // alone reads as tempo at a glance (mono digits, tooltip explains
-    // double-click-to-edit). Saves ~40 px in the band that's already
-    // fighting with the bank-button overlay.
     bpmCaption.setVisible (! compact);
     if (! compact)
     {
@@ -970,9 +942,6 @@ void TransportBar::resized()
     {
         area.removeFromRight (4);
     }
-    // Tune is now a circular TransportIconButton (tuning-fork glyph)
-    // - keep its bounds square so the disc renders round like the rest
-    // of the transport cluster.
     {
         auto rect = area.removeFromRight (kBtnDia);
         const int pad = juce::jmax (0, (rect.getHeight() - kBtnDia) / 2);

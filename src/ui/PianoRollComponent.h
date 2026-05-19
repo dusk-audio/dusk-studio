@@ -42,7 +42,8 @@ class EditModeToolbar;
 //   • Mouse wheel → vertical scroll across the 128-key range
 //   • Cmd/Ctrl + wheel → horizontal zoom (same as the main timeline)
 class PianoRollComponent final : public juce::Component,
-                                    private juce::Timer
+                                    private juce::Timer,
+                                    private juce::ScrollBar::Listener
 {
 public:
     PianoRollComponent (Session& session, AudioEngine& engine,
@@ -84,7 +85,8 @@ public:
     // Sized for daily-use legibility - earlier 10 pt / 12 px values
     // read as cramped on 1080p+ displays.
     static constexpr int kKeyboardWidth     = 76;
-    static constexpr int kToolbarHeight     = 34;   // mode indicators + hotkey legend
+    static constexpr int kToolbarHeight     = 48;   // mode indicators + hotkey legend
+                                                     // (matches AudioRegionEditor kIconRowHeight for visual parity)
     static constexpr int kHeaderHeight      = 28;   // bar/beat ruler (below toolbar)
     static constexpr int kNoteHeight        = 16;
     static constexpr int kNumKeys           = 128;
@@ -106,6 +108,11 @@ public:
     // ComboBox, ToggleButton) take their own clicks; the band is
     // never paint-handled directly by mouseDown.
     static constexpr int kStatusBarH = 30;
+    static constexpr int kScrollBarH = 12;
+
+    juce::ScrollBar horizontalScrollBar { false };   // false = horizontal
+    void scrollBarMoved (juce::ScrollBar* bar, double newRangeStart) override;
+    void syncScrollBarRange();
 
 private:
     Session& session;
