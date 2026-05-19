@@ -1943,6 +1943,13 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
             {
                 monoInR = playbackScratchR.data();
             }
+            else if (monoIn == silentInputScratch.data())
+            {
+                // Generator-style insert on a stereo track: feed a silent
+                // R buffer so ChannelStrip enters the stereo path and the
+                // donor plugin's stereo output is preserved end-to-end.
+                monoInR = silentInputScratch.data();
+            }
             else
             {
                 const int rIdxStrip = session.resolveInputRForTrack (t);

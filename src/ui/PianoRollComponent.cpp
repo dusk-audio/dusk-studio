@@ -281,6 +281,16 @@ PianoRollComponent::PianoRollComponent (Session& s, AudioEngine& e, int t, int r
     toggleCcButton.setTooltip ("Show / hide CC lane");
     toggleCcButton.onClick = [this] { toggleCcLane(); };
 
+    // Chase toggle - auto-scroll the grid to follow the transport
+    // playhead when it leaves the visible window. Off by default.
+    chaseToggle.setClickingTogglesState (true);
+    chaseToggle.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff222226));
+    chaseToggle.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff406030));
+    chaseToggle.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xff909094));
+    chaseToggle.setColour (juce::TextButton::textColourOnId,   juce::Colour (0xffe0e0e0));
+    chaseToggle.setTooltip ("Scroll the view to follow the playhead when it leaves the visible grid");
+    addAndMakeVisible (chaseToggle);
+
     horizontalScrollBar.setAutoHide (false);
     horizontalScrollBar.addListener (this);
     addAndMakeVisible (horizontalScrollBar);
@@ -403,6 +413,13 @@ void PianoRollComponent::layoutIconRow (juce::Rectangle<int> area)
     placeRight (zoomOutButton);
     inner.removeFromRight (gap);
     placeRight (toggleCcButton);
+    inner.removeFromRight (gap);
+    {
+        const int chaseW = 56;
+        chaseToggle.setBounds (inner.removeFromRight (chaseW)
+                                  .withSizeKeepingCentre (chaseW, dia));
+        inner.removeFromRight (gap);
+    }
     inner.removeFromRight (8);
 
     place (undoButton);
@@ -1908,7 +1925,15 @@ void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
                                                     getWidth() - kKeyboardWidth, kHeaderHeight);
     if (rulerBand.contains (e.x, e.y) && ! e.mods.isPopupMenu())
     {
-        rangeStartTick = juce::jmax<juce::int64> (0, tickForX (e.x));
+        // Plain ruler click seeks the transport playhead (Reaper / Ardour
+        // muscle memory), parity with AudioRegionEditor.
+        const auto tickHere = juce::jmax<juce::int64> (0, tickForX (e.x));
+        const double sr  = engine.getCurrentSampleRate();
+        const double bpm = session.tempoBpm.load (std::memory_order_relaxed);
+        const auto sampleOffset = ticksToSamples (tickHere, sr, bpm);
+        engine.getTransport().setPlayhead (r->timelineStart + sampleOffset);
+
+        rangeStartTick = tickHere;
         rangeEndTick   = rangeStartTick;
         rangeActive    = false;
         dragMode       = DragMode::RangeSelect;
@@ -2386,17 +2411,37 @@ bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
     // to the start of the region. Lets the user scroll without a trackpad.
     const bool cmdOrCtrl = k.getModifiers().isCommandDown()
                               || k.getModifiers().isCtrlDown();
+    auto scrollUpperBound = [this] (int gridW)
+    {
+        const auto* r = region();
+        const double regionPx = (r != nullptr)
+                                 ? (double) r->lengthInTicks * pixelsPerTick
+                                 : 0.0;
+        const double maxScroll = juce::jmax (0.0, regionPx - (double) gridW);
+        return (int) juce::jlimit (0.0,
+                                      (double) std::numeric_limits<int>::max(),
+                                      maxScroll);
+    };
     if (cmdOrCtrl && (k == juce::KeyPress::leftKey || k == juce::KeyPress::rightKey))
     {
         const int gridW = juce::jmax (1, getWidth() - kKeyboardWidth);
         const int step  = juce::jmax (1, gridW / 4);
-        scrollX = juce::jmax (0, scrollX + (k == juce::KeyPress::leftKey ? -step : step));
+        const int maxScroll = scrollUpperBound (gridW);
+        scrollX = juce::jlimit (0, maxScroll,
+                                   scrollX + (k == juce::KeyPress::leftKey ? -step : step));
         repaint();
         return true;
     }
     if (k == juce::KeyPress::homeKey)
     {
         scrollX = 0;
+        repaint();
+        return true;
+    }
+    if (k == juce::KeyPress::endKey)
+    {
+        const int gridW = juce::jmax (1, getWidth() - kKeyboardWidth);
+        scrollX = scrollUpperBound (gridW);
         repaint();
         return true;
     }
@@ -3278,6 +3323,38 @@ void PianoRollComponent::timerCallback()
         bounds.getWidth() - kKeyboardWidth,
         bounds.getHeight() - topBandH - velocityStripH - ccStripH - kStatusBarH);
     juce::ignoreUnused (ccBottom);
+
+    // Chase: when on + transport playing, scroll the grid so the playhead
+    // stays in view. Computes the playhead's absolute pixel position
+    // (region tick × pixelsPerTick) and re-anchors scrollX so the
+    // playhead lands in the left quarter of the grid after the jump.
+    if (chaseToggle.getToggleState() && engine.getTransport().isPlaying())
+    {
+        const auto* r = region();
+        if (r != nullptr && r->lengthInTicks > 0 && pixelsPerTick > 0.0)
+        {
+            const auto playheadSample = engine.getTransport().getPlayhead();
+            const auto localSample = playheadSample - r->timelineStart;
+            if (localSample >= 0 && localSample <= r->lengthInSamples)
+            {
+                const double sr  = juce::jmax (1.0, engine.getCurrentSampleRate());
+                const float  bpm = juce::jmax (1.0f, session.tempoBpm.load (std::memory_order_relaxed));
+                const auto localTick = samplesToTicks (localSample, sr, bpm);
+                const double playheadPx = (double) localTick * pixelsPerTick;
+                const int gridW = juce::jmax (1, getWidth() - kKeyboardWidth);
+                const int xRel  = (int) std::round (playheadPx) - scrollX;
+                if (xRel < 0 || xRel > gridW)
+                {
+                    const double regionPx = (double) r->lengthInTicks * pixelsPerTick;
+                    const double maxScroll = juce::jmax (0.0, regionPx - (double) gridW);
+                    const int target = (int) juce::jlimit (0.0, maxScroll,
+                                          playheadPx - (double) gridW * 0.25);
+                    scrollX = target;
+                    repaint (gridArea);
+                }
+            }
+        }
+    }
 
     const int x = transportPlayheadX (gridArea);
     if (x == lastPlayheadX) return;

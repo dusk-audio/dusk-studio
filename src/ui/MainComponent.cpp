@@ -313,6 +313,25 @@ MainComponent::MainComponent()
     // washed-out next to the saturated red / blue / purple of the other
     // three, making the AUX active state look like an outline rather
     // than a filled tab.
+    // TransportBar must be added BEFORE the stage tabs + bank buttons so
+    // those overlay controls naturally render on top in JUCE's child
+    // z-order. Constructing + addAndMakeVisible'ing it here means we
+    // don't have to call toFront() per-resize for every overlay child.
+    transportBar = std::make_unique<TransportBar> (engine);
+    transportBar->onTunerToggle = [this] { toggleTuner(); };
+    transportBar->onVirtualKeyboardToggle = [this] { toggleVirtualKeyboard(); };
+    transportBar->onTapeStripToggle = [this] (bool expanded)
+    {
+        tapeStripExpanded = expanded;
+        if (tapeStrip != nullptr) tapeStrip->setVisible (expanded);
+        // Collapse each track strip's EQ + COMP into popup buttons while the
+        // SUMMARY view is up - without this the fader and bus assigns get
+        // pushed off the bottom of the strip and become unusable.
+        if (consoleView != nullptr) consoleView->setStripsCompactMode (expanded);
+        resized();
+    };
+    addAndMakeVisible (transportBar.get());
+
     styleStageButton (recordingStageBtn, juce::Colour (0xffd03030));   // red, like REC
     styleStageButton (mixingStageBtn,    juce::Colour (0xff5a8ad0));   // mix-desk blue
     styleStageButton (auxStageBtn,       juce::Colour (0xff6e5ad0));   // aux indigo-violet
@@ -371,21 +390,6 @@ MainComponent::MainComponent()
 
     systemStatusBar = std::make_unique<SystemStatusBar> (engine);
     addAndMakeVisible (systemStatusBar.get());
-
-    transportBar = std::make_unique<TransportBar> (engine);
-    transportBar->onTunerToggle = [this] { toggleTuner(); };
-    transportBar->onVirtualKeyboardToggle = [this] { toggleVirtualKeyboard(); };
-    transportBar->onTapeStripToggle = [this] (bool expanded)
-    {
-        tapeStripExpanded = expanded;
-        if (tapeStrip != nullptr) tapeStrip->setVisible (expanded);
-        // Collapse each track strip's EQ + COMP into popup buttons while the
-        // SUMMARY view is up - without this the fader and bus assigns get
-        // pushed off the bottom of the strip and become unusable.
-        if (consoleView != nullptr) consoleView->setStripsCompactMode (expanded);
-        resized();
-    };
-    addAndMakeVisible (transportBar.get());
 
     tapeStrip = std::make_unique<TapeStrip> (session, engine);
     tapeStrip->setVisible (tapeStripExpanded);
@@ -968,13 +972,9 @@ void MainComponent::resized()
     mixingStageBtn   .setBounds (stageX + stageW,       stageY, stageW, kStageBtnH);
     auxStageBtn      .setBounds (stageX + 2 * stageW,   stageY, stageW, kStageBtnH);
     masteringStageBtn.setBounds (stageX + 3 * stageW,   stageY, stageW, kStageBtnH);
-    // Children added before transportBar in the constructor render UNDER it
-    // by default. Bring the overlay buttons to the front so the transport
-    // bar's painted hint area doesn't bury them.
-    recordingStageBtn.toFront (false);
-    mixingStageBtn   .toFront (false);
-    auxStageBtn      .toFront (false);
-    masteringStageBtn.toFront (false);
+    // Z-order is correct by construction: transportBar is added BEFORE
+    // the stage tabs + bank buttons in the ctor, so the overlays sit on
+    // top of the transport bar's painted background naturally.
 
     // Banks sit inline immediately right of the centered stage block.
     if (needsBanking)
@@ -1267,8 +1267,8 @@ bool MainComponent::saveSessionTo (const juce::File& dir)
         deleteAutosaveFor (dir);
         // Remember the JSON so the next autosave tick can recognise an
         // idle (no further edits) state and skip the write.
-        lastSavedSessionJson    = json;
-        lastWrittenAutosaveJson = juce::String();
+        setLastSavedSessionJson    (json);
+        setLastWrittenAutosaveJson (juce::String());
         setStatusForPath ("Saved", target);
         return true;
     }
@@ -1297,6 +1297,34 @@ juce::File MainComponent::getAutosaveFileFor (const juce::File& sessionDir) cons
     return sessionDir.getChildFile ("session.json.autosave");
 }
 
+// Hosted plugins (per-channel inserts, aux-lane slots, master tape) re-
+// emit slightly different APVTS state on each getStateInformation call -
+// internal counters / smoother phases that aren't user-meaningful. The
+// autosave dirty-check must ignore that drift, otherwise it fires every
+// 30 s on a freshly-saved session and resurfaces the recovery dialog on
+// the next launch. Strip the two base64 state values to "" before any
+// content compare.
+static juce::String stripVolatileStateForDirtyCompare (juce::String s)
+{
+    static const char* const markers[] = { "\"plugin_state\":", "\"tape_state\":" };
+    for (const char* marker : markers)
+    {
+        const juce::String m (marker);
+        int pos = 0;
+        while ((pos = s.indexOf (pos, m)) != -1)
+        {
+            const int afterColon = pos + m.length();
+            const int q1 = s.indexOfChar (afterColon, '"');
+            if (q1 < 0) break;
+            const int q2 = s.indexOfChar (q1 + 1, '"');
+            if (q2 < 0) break;
+            s = s.replaceSection (q1, q2 - q1 + 1, "\"\"");
+            pos = q1 + 2;
+        }
+    }
+    return s;
+}
+
 bool MainComponent::autosaveIsNewerThan (const juce::File& sessionJson) const
 {
     const auto autosave = getAutosaveFileFor (sessionJson.getParentDirectory());
@@ -1304,16 +1332,13 @@ bool MainComponent::autosaveIsNewerThan (const juce::File& sessionJson) const
     if (! sessionJson.existsAsFile()) return true;   // autosave is the only state we have
     if (autosave.getLastModificationTime() <= sessionJson.getLastModificationTime())
         return false;
-    // Both files exist and autosave looks newer by mtime. Avoid the
-    // double disk read where possible: compare against the in-memory
-    // snapshot of the last manual save first, then fall back to a size
-    // check + content check so a legacy / cold-load autosave still gets
-    // verified.
-    if (lastSavedSessionJson.isNotEmpty())
-        return autosave.loadFileAsString() != lastSavedSessionJson;
-    if (autosave.getSize() != sessionJson.getSize())
-        return true;
-    return autosave.loadFileAsString() != sessionJson.loadFileAsString();
+    // Both files exist and autosave looks newer by mtime. Compare content
+    // with volatile plugin/tape state stripped so an autosave written by
+    // a 30 s timer firing after a manual save doesn't trigger a recovery
+    // prompt when the only "change" is internal plugin drift.
+    const auto autosaveStripped    = stripVolatileStateForDirtyCompare (autosave.loadFileAsString());
+    const auto sessionJsonStripped = stripVolatileStateForDirtyCompare (sessionJson.loadFileAsString());
+    return autosaveStripped != sessionJsonStripped;
 }
 
 void MainComponent::deleteAutosaveFor (const juce::File& sessionDir) const
@@ -1347,8 +1372,14 @@ void MainComponent::writeAutosave()
     // this skip the autosave file's mtime would creep past session.json
     // every 30 s, producing a false-positive recovery prompt on next load.
     const juce::String json = SessionSerializer::serialize (session);
-    if (json == lastSavedSessionJson)    return;
-    if (json == lastWrittenAutosaveJson) return;
+    // Strip volatile plugin / tape APVTS state before comparing - donor
+    // getStateInformation drifts between calls even with no user change,
+    // which would otherwise fire an autosave write every tick on idle
+    // sessions. lastSaved/lastWritten stripped versions are cached on
+    // assignment so only the current snapshot is stripped per tick.
+    const auto stripped = stripVolatileStateForDirtyCompare (json);
+    if (stripped == lastSavedSessionJsonStripped)    return;
+    if (stripped == lastWrittenAutosaveJsonStripped) return;
 
     const auto target = getAutosaveFileFor (dir);
     if (! SessionSerializer::writeAtomic (target, json))
@@ -1356,7 +1387,19 @@ void MainComponent::writeAutosave()
         DBG ("MainComponent: autosave write failed at " << target.getFullPathName());
         return;
     }
-    lastWrittenAutosaveJson = json;
+    setLastWrittenAutosaveJson (json);
+}
+
+void MainComponent::setLastSavedSessionJson (const juce::String& json)
+{
+    lastSavedSessionJson         = json;
+    lastSavedSessionJsonStripped = stripVolatileStateForDirtyCompare (json);
+}
+
+void MainComponent::setLastWrittenAutosaveJson (const juce::String& json)
+{
+    lastWrittenAutosaveJson         = json;
+    lastWrittenAutosaveJsonStripped = stripVolatileStateForDirtyCompare (json);
 }
 
 void MainComponent::timerCallback()
@@ -1821,8 +1864,8 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     // that plugin + transport state have been consumed. The next autosave
     // tick compares against this snapshot and skips the write while the
     // session remains untouched.
-    lastSavedSessionJson    = SessionSerializer::serialize (session);
-    lastWrittenAutosaveJson = juce::String();
+    setLastSavedSessionJson    (SessionSerializer::serialize (session));
+    setLastWrittenAutosaveJson (juce::String());
 
     std::fprintf (stderr,
                   "[Focal/Load] %s: parse=%dms plugins=%dms midiOuts=%dms console=%dms total=%dms\n",
@@ -2360,6 +2403,17 @@ void MainComponent::openMultiImportPicker (juce::Array<juce::File> files,
             s.lengthSamples = (juce::int64) reader->lengthInSamples;
         }
         summaries.push_back (std::move (s));
+    }
+
+    // Every file failed to open (no reader, malformed MIDI). Surface the
+    // error and bail rather than opening a multi-import modal with zero
+    // rows and a permanently-disabled Import button.
+    if (summaries.empty())
+    {
+        showImportError ("Import",
+                          "None of the selected files could be opened. "
+                          "Check that they are valid audio or MIDI files.");
+        return;
     }
 
     auto picker = std::make_unique<MultiImportTargetPicker> (

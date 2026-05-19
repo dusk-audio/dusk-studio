@@ -207,7 +207,6 @@ private:
     // in prepare() because Focal's strip-level wrapper already oversamples.
     UniversalCompressor compressor;
     juce::MidiBuffer compMidiScratch;          // unused but required by processBlock signature
-    juce::AudioBuffer<float> compMonoBuffer;   // sized in prepare(); used only as a chunking fence
 
     // Cached APVTS raw atomic value pointers - set once in bindCompParams().
     // These point at the SAME std::atomic<float> that UniversalCompressor's

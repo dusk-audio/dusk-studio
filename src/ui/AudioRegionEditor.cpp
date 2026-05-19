@@ -62,6 +62,17 @@ AudioRegionEditor::AudioRegionEditor (Session& s, AudioEngine& e, int t, int r)
     wireIcon (zoomInButton,     "Zoom in (=)",          [this] { zoomByFactor (1.15f); });
     wireIcon (zoomFitButton,    "Zoom to fit region",   [this] { zoomFit(); });
 
+    // Chase: when on AND transport is playing AND the playhead leaves the
+    // visible window, scroll the view forward so the playhead stays in
+    // sight. Stateless toggle - off by default.
+    chaseToggle.setClickingTogglesState (true);
+    chaseToggle.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff222226));
+    chaseToggle.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff406030));
+    chaseToggle.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xff909094));
+    chaseToggle.setColour (juce::TextButton::textColourOnId,   juce::Colour (0xffe0e0e0));
+    chaseToggle.setTooltip ("Scroll the view to follow the playhead when it leaves the visible window");
+    addAndMakeVisible (chaseToggle);
+
     // Edit-mode + snap palette. Lives inline in the icon row band.
     // session.editMode drives both modal mouse handlers and TapeStrip's
     // dispatch, so a pick here is global.
@@ -313,7 +324,13 @@ void AudioRegionEditor::syncScrollBarRange()
 void AudioRegionEditor::scrollBarMoved (juce::ScrollBar* bar, double newRangeStart)
 {
     if (bar != &horizontalScrollBar) return;
-    scrollSamples = juce::jmax<juce::int64> (0, (juce::int64) newRangeStart);
+    const juce::int64 viewSamples = (pixelsPerSample > 0.0f)
+        ? (juce::int64) std::round ((double) getWidth() / pixelsPerSample)
+        : anchorTimelineLength;
+    const juce::int64 maxStart = juce::jmax<juce::int64> (0,
+                                    anchorTimelineLength - viewSamples);
+    scrollSamples = juce::jlimit<juce::int64> (0, maxStart,
+                                                  (juce::int64) newRangeStart);
     repaint();
 }
 
@@ -1655,7 +1672,9 @@ bool AudioRegionEditor::keyPressed (const juce::KeyPress& k)
             (double) (getWidth() - 0) / juce::jmax (1.0e-9f, pixelsPerSample));
         const juce::int64 step = juce::jmax<juce::int64> (1, widthSamples / 4);
         const juce::int64 delta = (k == juce::KeyPress::leftKey ? -step : step);
-        scrollSamples = juce::jmax<juce::int64> (0, scrollSamples + delta);
+        const juce::int64 maxStart = juce::jmax<juce::int64> (0,
+                                        anchorTimelineLength - widthSamples);
+        scrollSamples = juce::jlimit<juce::int64> (0, maxStart, scrollSamples + delta);
         repaint();
         return true;
     }
@@ -2202,6 +2221,13 @@ void AudioRegionEditor::layoutIconRow (juce::Rectangle<int> area)
     placeRight (zoomInButton);
     placeRight (zoomOutButton);
     inner.removeFromRight (8);
+    // Chase toggle between zoom cluster and edit-mode palette.
+    {
+        const int chaseW = 56;
+        chaseToggle.setBounds (inner.removeFromRight (chaseW)
+                                  .withSizeKeepingCentre (chaseW, dia - 8));
+        inner.removeFromRight (gap);
+    }
 
     place (undoButton);
     place (redoButton);
@@ -2742,7 +2768,35 @@ void AudioRegionEditor::timerCallback()
         0, kIconRowHeight + kRulerHeight,
         getWidth(),
         getHeight() - kIconRowHeight - kRulerHeight - kStatusBarH - kScrollBarH);
-    const int x = transportPlayheadX (waveArea);
+
+    // Cache the per-tick playhead X — used by both the chase logic and
+    // the standard repaint-when-the-line-moves check.
+    int x = transportPlayheadX (waveArea);
+
+    // Chase: when on and transport is playing AND the playhead is inside
+    // the anchor range, scroll the view forward so the playhead lands at
+    // left-quarter after the jump. The anchor-range guard prevents 30 Hz
+    // repaint storms when the playhead is OUTSIDE the region entirely -
+    // transportPlayheadX returns -1 for "out of anchor", which would
+    // otherwise trip the xNow < 0 branch every tick.
+    if (chaseToggle.getToggleState() && engine.getTransport().isPlaying()
+        && pixelsPerSample > 0.0f && anchorTimelineLength > 0)
+    {
+        const auto playhead   = engine.getTransport().getPlayhead();
+        const juce::int64 rel = playhead - anchorTimelineStart;
+        if (rel >= 0 && rel < anchorTimelineLength && x < 0)
+        {
+            const juce::int64 viewSamples = (juce::int64) std::round (
+                (double) getWidth() / pixelsPerSample);
+            const juce::int64 maxStart = juce::jmax<juce::int64> (0,
+                                            anchorTimelineLength - viewSamples);
+            scrollSamples = juce::jlimit<juce::int64> (0, maxStart,
+                                rel - viewSamples / 4);
+            repaint (waveArea);
+            x = transportPlayheadX (waveArea);   // playhead is in view now
+        }
+    }
+
     if (x == lastPlayheadX) return;
     // Repaint just the strip the playhead vacated AND the strip it
     // entered - 4 px wide each so the line + a tiny halo redraws

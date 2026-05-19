@@ -204,6 +204,7 @@ private:
     private:
         Glyph glyph;
     };
+    juce::TextButton chaseToggle { "Chase" };   // auto-scroll view to follow the transport playhead
     IconButton undoButton       { "Undo",       IconButton::Glyph::Undo };
     IconButton redoButton       { "Redo",       IconButton::Glyph::Redo };
     IconButton splitButton      { "Split",      IconButton::Glyph::Split };

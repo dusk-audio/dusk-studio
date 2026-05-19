@@ -103,7 +103,6 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     compressor.setInternalOversamplingEnabled (false);
     compressor.setPlayConfigDetails (2, 2, prepSr, juce::jmax (1, prepBs));
     compressor.prepareToPlay (prepSr, juce::jmax (1, prepBs));
-    compMonoBuffer.setSize (1, prepBs, false, false, true);
     bindCompParams();
 
     // SmoothedValue ramp at the OVERSAMPLED sample rate (the rate the
@@ -285,10 +284,13 @@ void ChannelStrip::publishSmoothedCompParams (int numSamples) noexcept
 {
 #if FOCAL_HAS_DUSK_DSP
     if (numSamples <= 0) return;
-    // Advance each smoother by N samples then write the current value to
-    // the donor atom. Called once per inner chunk so chunks shorter than
-    // the smoother's 20 ms ramp see a continuous, fan-out param trajectory
-    // rather than the raw setpoint.
+    // Advance each smoother by N samples then write the end-of-chunk
+    // value to the donor atom. Called once per inner chunk so chunks
+    // shorter than the smoother's 20 ms ramp see a STEPPED-but-fine-
+    // grained param trajectory (one step per 64 samples) rather than
+    // one step per audio block. Donor reads each atom only at the
+    // start of its processBlock call - true per-sample interpolation
+    // would require calling processBlock per-sample.
     auto step = [numSamples] (juce::SmoothedValue<float>& sv,
                                  std::atomic<float>* atom)
     {
@@ -503,7 +505,16 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             juce::AudioBuffer<float> upBuf (upPtrs, 1, upN);
             eq.process (upBuf);
 
-            const int compBufSize = compMonoBuffer.getNumSamples();
+            // 64-sample sub-chunks so the SmoothedValue ramp updates the
+            // donor's atoms many times per audio block instead of once -
+            // the donor reads each atom only at the start of its
+            // processBlock call, so a single big chunk = a single
+            // stepped value per block. Actual count per block depends
+            // on host buffer size + OS factor (range 4-64 sub-chunks
+            // for typical 256-512 sample buffers at 1-4× OS). 64
+            // samples = 1.3 ms at 48 kHz native / 0.33 ms at 4× OS,
+            // well below audible zipper threshold.
+            constexpr int compBufSize = 64;
             for (int offset = 0; offset < upN; offset += compBufSize)
             {
                 const int n = juce::jmin (compBufSize, upN - offset);
@@ -527,7 +538,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             juce::AudioBuffer<float> monoBuf (monoChannel, 1, numSamples);
             eq.process (monoBuf);
 
-            const int bufSize = compMonoBuffer.getNumSamples();
+            constexpr int bufSize = 64;   // same sub-chunk rationale as above
             for (int offset = 0; offset < numSamples; offset += bufSize)
             {
                 const int n = juce::jmin (bufSize, numSamples - offset);
@@ -639,7 +650,16 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             juce::AudioBuffer<float> upBuf (upPtrs, 2, upN);
             eq.process (upBuf);
 
-            const int compBufSize = compMonoBuffer.getNumSamples();
+            // 64-sample sub-chunks so the SmoothedValue ramp updates the
+            // donor's atoms many times per audio block instead of once -
+            // the donor reads each atom only at the start of its
+            // processBlock call, so a single big chunk = a single
+            // stepped value per block. Actual count per block depends
+            // on host buffer size + OS factor (range 4-64 sub-chunks
+            // for typical 256-512 sample buffers at 1-4× OS). 64
+            // samples = 1.3 ms at 48 kHz native / 0.33 ms at 4× OS,
+            // well below audible zipper threshold.
+            constexpr int compBufSize = 64;
             for (int offset = 0; offset < upN; offset += compBufSize)
             {
                 const int n = juce::jmin (compBufSize, upN - offset);
@@ -662,7 +682,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             juce::AudioBuffer<float> stereoBuf (stereoChannels, 2, numSamples);
             eq.process (stereoBuf);
 
-            const int bufSize = compMonoBuffer.getNumSamples();
+            constexpr int bufSize = 64;   // same sub-chunk rationale as above
             for (int offset = 0; offset < numSamples; offset += bufSize)
             {
                 const int n = juce::jmin (bufSize, numSamples - offset);

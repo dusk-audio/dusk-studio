@@ -2458,14 +2458,16 @@ void ChannelStripComponent::showAutoModeMenu()
     menu.addItem (3, "Write", true, cur == (int) AutomationMode::Write);
     menu.addItem (4, "Touch", true, cur == (int) AutomationMode::Touch);
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&autoModeButton),
-        [this] (int chosen)
+        [safeThis = juce::Component::SafePointer<ChannelStripComponent> (this)]
+        (int chosen)
         {
-            if (chosen < 1 || chosen > 4) return;
+            auto* self = safeThis.getComponent();
+            if (self == nullptr || chosen < 1 || chosen > 4) return;
             const AutomationMode picked[] = {
                 AutomationMode::Off, AutomationMode::Read,
                 AutomationMode::Write, AutomationMode::Touch
             };
-            setAutoMode (picked[chosen - 1]);
+            self->setAutoMode (picked[chosen - 1]);
         });
 }
 
@@ -2918,12 +2920,15 @@ void ChannelStripComponent::showCompModeMenu()
     menu.addItem (3, "FET - fast attack, gritty under load", true, m == 1);
     menu.addItem (4, "VCA - clean, predictable", true, m == 2);
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&compModeButton),
-        [this, on] (int chosen)
+        [safeThis = juce::Component::SafePointer<ChannelStripComponent> (this), on]
+        (int chosen)
         {
+            auto* self = safeThis.getComponent();
+            if (self == nullptr) return;
             if (chosen == 1)
-                setCompEnabled (! on);
+                self->setCompEnabled (! on);
             else if (chosen >= 2 && chosen <= 4)
-                setCompMode (chosen - 2);
+                self->setCompMode (chosen - 2);
         });
 }
 

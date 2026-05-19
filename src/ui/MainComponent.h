@@ -167,6 +167,13 @@ private:
     // a few hundred KB.
     juce::String lastSavedSessionJson;
     juce::String lastWrittenAutosaveJson;
+    // Stripped (volatile-plugin-state nulled) caches updated whenever the
+    // parents are assigned. Avoid re-running stripVolatileState 3× per
+    // 30 Hz autosave tick.
+    juce::String lastSavedSessionJsonStripped;
+    juce::String lastWrittenAutosaveJsonStripped;
+    void setLastSavedSessionJson (const juce::String& json);
+    void setLastWrittenAutosaveJson (const juce::String& json);
 
     Session session;
     AudioEngine engine { session };
