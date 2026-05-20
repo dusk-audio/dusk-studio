@@ -354,12 +354,31 @@ std::uint32_t handleShowEditor (HostState& host,
 
         if (host.editorWindow == nullptr)
         {
+            // The plugin's name (best-effort) labels the floating window
+            // on Win/Mac so the user can tell it apart from other windows
+            // when the OOP editor isn't embedded.
+            juce::String title = "dusk-studio-plugin-host";
+            if (host.ownedInstance != nullptr)
+                title = host.ownedInstance->getName();
+
             auto win = std::make_unique<juce::DocumentWindow> (
-                "dusk-studio-plugin-host editor",
+                title,
                 juce::Colours::black,
                 juce::DocumentWindow::closeButton);
+           #if JUCE_LINUX
+            // Linux: borderless toplevel because the parent XEmbeds the
+            // X11 window and provides its own chrome via PluginEditorWindow.
             win->setUsingNativeTitleBar (false);
             win->setTitleBarHeight (0);
+           #else
+            // Windows / macOS: real titlebar + close button so the
+            // floating editor window is movable + closable without the
+            // parent having to track its lifecycle. Cross-process HWND /
+            // NSView embedding can come later; for now the OOP editor
+            // lives as a top-level window the OS already knows how to
+            // manage.
+            win->setUsingNativeTitleBar (true);
+           #endif
             win->setOpaque (true);
             win->setContentNonOwned (host.editor, true);
             const int w = host.editor->getWidth()  > 0 ? host.editor->getWidth()  : 480;
@@ -371,6 +390,7 @@ std::uint32_t handleShowEditor (HostState& host,
         else
         {
             host.editorWindow->setVisible (true);
+            host.editorWindow->toFront (true);
         }
 
         if (auto* peer = host.editorWindow->getPeer())

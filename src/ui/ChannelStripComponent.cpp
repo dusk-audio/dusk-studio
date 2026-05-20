@@ -1708,17 +1708,20 @@ void ChannelStripComponent::openPluginEditor()
 {
     if (isPluginEditorOpen()) return;
 
-   #if JUCE_LINUX && DUSKSTUDIO_HAS_OOP_PLUGINS
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS
     if (pluginSlot.isRemote())
     {
-        // OOP path: ask the child to show the editor + report its X11
-        // Window ID; embed via JUCE's XEmbedComponent. The child owns
-        // the editor's lifecycle; we just host its native window.
+        // OOP path: ask the child to show the editor + report its
+        // native window handle. The child owns the editor's lifecycle;
+        // we either embed the handle (Linux XEmbed) or let it float
+        // as its own top-level window (Win/Mac — cross-process HWND /
+        // NSView embedding is a polish item, not a 1.0 blocker).
         std::uint64_t windowId = 0;
         int w = 0, h = 0;
         if (! pluginSlot.showRemoteEditor (windowId, w, h)) return;
         if (windowId == 0) return;
 
+       #if JUCE_LINUX
         if (remoteEditorEmbed == nullptr)
         {
             // XEmbedComponent's allowEmbedding ctor: takes a Window
@@ -1747,6 +1750,14 @@ void ChannelStripComponent::openPluginEditor()
                 });
             },
             &engine);
+       #else
+        // Win/Mac OOP: the child opened a native-titlebar floating
+        // window already; the parent doesn't track its lifecycle.
+        // Subsequent clicks on the plugin button re-fire ShowEditor;
+        // the child's handleShowEditor raises the existing window via
+        // toFront(true). User closes via the floating window's X.
+        juce::ignoreUnused (w, h);
+       #endif
         return;
     }
    #endif
@@ -1826,6 +1837,18 @@ void ChannelStripComponent::closePluginEditor()
         pluginGenericEditorModal.close();
         return;
     }
+
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS && ! JUCE_LINUX
+    // Win/Mac OOP: the floating editor window lives in the child
+    // process; the parent has no pluginEditorWindow wrapper to tear
+    // down. Just tell the child to dismiss it.
+    if (pluginSlot.isRemote())
+    {
+        pluginSlot.hideRemoteEditor();
+        return;
+    }
+   #endif
+
     if (pluginEditorWindow == nullptr) return;
     pluginEditorWindow->setContentNonOwned (nullptr, false);
     duskstudio::platform::prepareForTopLevelDestruction (*pluginEditorWindow);
@@ -1886,6 +1909,10 @@ void ChannelStripComponent::dropPluginEditor()
     // unloadPluginSlot which calls dropPluginEditor before
     // pluginSlot.unload). Either way the X client is safe to release.
     remoteEditorEmbed.reset();
+   #endif
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS && ! JUCE_LINUX
+    // Win/Mac OOP: closePluginEditor above already fired hideRemoteEditor
+    // when the slot is remote; nothing further to drop in the parent.
    #endif
 }
 
