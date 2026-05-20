@@ -856,6 +856,14 @@ void PianoRollComponent::paintNotes (juce::Graphics& g, juce::Rectangle<int> are
 {
     const auto* r = region();
     if (r == nullptr) return;
+
+    // Cull against the actual incoming dirty rect, not the full gridArea.
+    // The 30 Hz playhead's partial-repaint band is only ~5 px wide; without
+    // this, every visible note ran setColour + fillRect + drawRect on
+    // every tick even when only the playhead strip needed to change,
+    // dropping frames on busy regions and making the playhead jerky.
+    const auto dirty = g.getClipBounds().getIntersection (area);
+    if (dirty.isEmpty()) return;
     juce::Graphics::ScopedSaveState saved (g);
     g.reduceClipRegion (area);
 
@@ -865,8 +873,8 @@ void PianoRollComponent::paintNotes (juce::Graphics& g, juce::Rectangle<int> are
         const int x  = xForTick (n.startTick);
         const int x2 = xForTick (n.startTick + n.lengthInTicks);
         const int y  = yForNoteNumber (n.noteNumber);
-        if (x2 < area.getX() || x > area.getRight()) continue;
-        if (y + kNoteHeight < area.getY() || y > area.getBottom()) continue;
+        if (x2 < dirty.getX() || x > dirty.getRight()) continue;
+        if (y + kNoteHeight < dirty.getY() || y > dirty.getBottom()) continue;
 
         const auto rect = juce::Rectangle<int> (x, y + 1, juce::jmax (2, x2 - x), kNoteHeight - 2);
         const bool selected = isNoteSelected (i);
@@ -926,6 +934,12 @@ void PianoRollComponent::paintVelocityStrip (juce::Graphics& g, juce::Rectangle<
 
     const auto* r = region();
     if (r == nullptr || r->lengthInTicks <= 0) return;
+
+    // Cull against the actual incoming dirty rect — matches the
+    // paintNotes fix; without this, every visible velocity lollipop
+    // ran the stem + head + ellipse + selection paints on every
+    // 30 Hz playhead repaint tick.
+    const auto dirty = g.getClipBounds().getIntersection (area);
     juce::Graphics::ScopedSaveState saved (g);
     g.reduceClipRegion (area);
 
@@ -963,7 +977,8 @@ void PianoRollComponent::paintVelocityStrip (juce::Graphics& g, juce::Rectangle<
     {
         const auto& n = r->notes[(size_t) i];
         const int nx = xForTick (n.startTick);
-        if (nx < area.getX() - 8 || nx > area.getRight() + 8) continue;
+        // Cull against dirty rect with 8 px slack (lollipop head radius).
+        if (nx < dirty.getX() - 8 || nx > dirty.getRight() + 8) continue;
 
         const float frac   = juce::jlimit (0.0f, 1.0f, (float) n.velocity / 127.0f);
         const float headCY = baseY - span * frac;
@@ -1725,6 +1740,11 @@ void PianoRollComponent::paintCcStrip (juce::Graphics& g, juce::Rectangle<int> a
 
     const auto* r = region();
     if (r == nullptr || r->lengthInTicks <= 0) return;
+
+    // Cull against the actual dirty rect — same fix as paintNotes /
+    // paintVelocityStrip. The 30 Hz partial playhead repaint should
+    // skip every CC bar that doesn't intersect the playhead's strip.
+    const auto dirty = g.getClipBounds().getIntersection (area);
     juce::Graphics::ScopedSaveState saved (g);
     g.reduceClipRegion (area);
 
@@ -1752,7 +1772,8 @@ void PianoRollComponent::paintCcStrip (juce::Graphics& g, juce::Rectangle<int> a
         const auto& c = r->ccs[(size_t) i];
         if (c.controller != activeCcController) continue;
         const int nx = xForTick (c.atTick);
-        if (nx < area.getX() - 4 || nx > area.getRight() + 4) continue;
+        // Cull against dirty rect with 4 px slack (CC bar half-width).
+        if (nx < dirty.getX() - 4 || nx > dirty.getRight() + 4) continue;
 
         const float frac = juce::jlimit (0.0f, 1.0f, (float) c.value / 127.0f);
         const float top  = baseY - span * frac;
