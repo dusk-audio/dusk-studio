@@ -11,15 +11,6 @@ on:
   schedule:
     - cron: '0 6 * * *'      # 06:00 UTC daily
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - 'src/engine/**'
-      - 'src/dsp/**'
-      - 'src/session/**'
-      - 'tests/**'
-      - 'CMakeLists.txt'
-      - '.github/workflows/linux-sanitizer.yml'
 
 jobs:
   asan-ubsan:
