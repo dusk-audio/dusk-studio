@@ -1026,6 +1026,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         lastExtRolling = false;
         lastMtcRolling = false;
         mtcDriftWindowFrames = 0;
+        lastSeenMtcFrames = -1;
     }
     if (syncIdx >= 0 && (size_t) syncIdx < perInputMidi.size())
     {
@@ -1049,13 +1050,22 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         //   Freewheel:    |transport - mtc| ≤ kFreewheelToleranceFrames
         //                 → trust internal clock, no relocate.
         //   Soft re-locate: drift > tolerance for kFreewheelReSyncWindow
-        //                   consecutive frames → set playhead, keep rolling.
-        //   Stop:         rolling true→false → Stop.
-        // Reverse: receiver freezes mtcFrames during reverse scrub, so
-        // delta = transport - frozen → grows linearly → would trigger
-        // re-locate. Gate the chase on !isReversed so reverse-park
-        // leaves the transport rolling forward at its own rate.
-        if (session.externalTimeCodeChasesTransport.load (std::memory_order_relaxed))
+        //                   consecutive MTC frames → set playhead.
+        //   Stop:         rolling true→false → Stop (UNLESS the false
+        //                 came from a reverse-scrub park; reverse keeps
+        //                 transport rolling forward per plan).
+        const bool chaseEnabled =
+            session.externalTimeCodeChasesTransport.load (std::memory_order_relaxed);
+        const bool reversed = midiTimeCodeReceiver.isReversed();
+
+        // Force re-lock when user just enabled chase mid-roll. Without
+        // this, the rising-edge happened while chase was off and the
+        // edge detector missed it; transport would never snap.
+        if (chaseEnabled && ! lastChaseEnabled && mtcRolling)
+            lastMtcRolling = false;
+        lastChaseEnabled = chaseEnabled;
+
+        if (chaseEnabled)
         {
             constexpr int kFreewheelToleranceFrames = 2;
             constexpr int kFreewheelReSyncWindow    = 4;
@@ -1081,42 +1091,59 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                     (int) PendingTransportAction::Play,
                     std::memory_order_relaxed);
                 mtcDriftWindowFrames = 0;
+                lastSeenMtcFrames    = mtcFrames;
             }
-            else if (! mtcRolling && lastMtcRolling)
+            else if (! mtcRolling && lastMtcRolling && ! reversed)
             {
-                // Falling edge → stop.
+                // Falling edge → stop. Gated on !reversed so a reverse-
+                // scrub (which the receiver reports as rolling=false +
+                // reversed=true) doesn't drag the transport into Stop;
+                // master scrubbing back leaves Focal rolling forward.
                 session.pendingTransportAction.store (
                     (int) PendingTransportAction::Stop,
                     std::memory_order_relaxed);
                 mtcDriftWindowFrames = 0;
             }
-            else if (mtcRolling
-                     && ! midiTimeCodeReceiver.isReversed()
-                     && sPerFrame > 0.0)
+            else if (mtcRolling && ! reversed && sPerFrame > 0.0)
             {
-                // Freewheel + soft re-locate.
-                const auto transportSamples = transport.getPlayhead();
-                const auto mtcSamples =
-                    (juce::int64) ((double) mtcFrames * sPerFrame);
-                const auto deltaFrames =
-                    (juce::int64) std::llabs (
-                        (double) (transportSamples - mtcSamples) / sPerFrame);
-                if (deltaFrames > kFreewheelToleranceFrames)
+                // Freewheel + soft re-locate. Drift counter ticks only
+                // when MTC actually advances a frame (not every audio
+                // block) so kFreewheelReSyncWindow is in MTC-frame
+                // units as the comment promises. Without the gate the
+                // counter ticks at audio-block rate (~21 ms @ 48 k /
+                // 1024 samples) and the window collapses to ~80 ms.
+                if (mtcFrames != lastSeenMtcFrames)
                 {
-                    if (++mtcDriftWindowFrames >= kFreewheelReSyncWindow)
+                    const auto transportSamples = transport.getPlayhead();
+                    const auto mtcSamples =
+                        (juce::int64) ((double) mtcFrames * sPerFrame);
+                    const auto deltaSamples = transportSamples - mtcSamples;
+                    const auto deltaFrames = std::llabs (
+                        (juce::int64) ((double) deltaSamples / sPerFrame));
+                    if (deltaFrames > kFreewheelToleranceFrames)
                     {
-                        session.pendingTransportPlayhead.store (
-                            mtcSamples, std::memory_order_relaxed);
+                        if (++mtcDriftWindowFrames >= kFreewheelReSyncWindow)
+                        {
+                            session.pendingTransportPlayhead.store (
+                                mtcSamples, std::memory_order_relaxed);
+                            mtcDriftWindowFrames = 0;
+                        }
+                    }
+                    else
+                    {
                         mtcDriftWindowFrames = 0;
                     }
-                }
-                else
-                {
-                    mtcDriftWindowFrames = 0;
+                    lastSeenMtcFrames = mtcFrames;
                 }
             }
-            lastMtcRolling = mtcRolling;
         }
+
+        // Edge detector advances every block regardless of chaseEnabled
+        // so re-enabling chase mid-roll observes the correct current
+        // state (combined with the force-relock above this gives the
+        // user "snap to MTC now" UX without missing edges that
+        // happened while disabled).
+        lastMtcRolling = mtcRolling;
 
         const float ext = midiSyncReceiver.getBpm();
         const bool extRolling = midiSyncReceiver.isRolling();

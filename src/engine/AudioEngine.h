@@ -383,14 +383,22 @@ private:
     // true -> false = Stop), not the steady state, so a long Start
     // signal doesn't keep restarting the transport every block.
     bool        lastExtRolling      = false;
-    // MTC chase state. lastMtcRolling: rolling-edge detector (same
-    // shape as lastExtRolling). mtcDriftWindowFrames: count of
-    // consecutive frames where |transport - mtc| has exceeded the
-    // freewheel tolerance. Once it reaches kFreewheelReSyncWindow
-    // we trigger a soft re-locate; a single jittery frame doesn't
-    // count.
+    // MTC chase state.
+    //  lastMtcRolling   : rolling-edge detector. Updated EVERY block
+    //                     regardless of chase-enabled state so the edge
+    //                     detector stays current across toggle on/off.
+    //  lastChaseEnabled : tracks the toggle. On false→true transition
+    //                     while master is rolling, we force a re-lock
+    //                     (set lastMtcRolling=false so next block fires
+    //                     the rising-edge initial-lock path).
+    //  mtcDriftWindowFrames : count of consecutive MTC FRAMES (not
+    //                     audio blocks) where |transport - mtc| > tol.
+    //                     lastSeenMtcFrames gates the increment so the
+    //                     counter only ticks when MTC actually advances.
     bool        lastMtcRolling      = false;
+    bool        lastChaseEnabled    = false;
     int         mtcDriftWindowFrames = 0;
+    juce::int64 lastSeenMtcFrames    = -1;
     std::atomic<Stage> stage { Stage::Mixing };
 
     std::array<ChannelStrip, Session::kNumTracks> strips;

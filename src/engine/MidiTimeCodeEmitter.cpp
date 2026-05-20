@@ -4,25 +4,14 @@ namespace focal
 {
 namespace
 {
-// Same rate descriptors as the receiver — kept in lock-step so the
-// emit-side and decode-side never disagree on what 2 == 29.97 DF.
-struct RateInfo
-{
-    double nominalFps;   // 24 / 25 / 29.97 / 30
-    bool   dropFrame;
-};
-
-constexpr RateInfo kRates[4] =
-{
-    { 24.0,                false },
-    { 25.0,                false },
-    { 30000.0 / 1001.0,    true  },
-    { 30.0,                false },
-};
+// Nominal frame rates per enum index, kept in lock-step with the
+// receiver so the emit + decode sides never disagree on what 2 ==
+// 29.97 DF.
+constexpr double kNominalFps[4] = { 24.0, 25.0, 30000.0 / 1001.0, 30.0 };
 
 constexpr double samplesPerFrame (double sr, MidiTimeCodeEmitter::FrameRate r) noexcept
 {
-    return sr / kRates[(int) r].nominalFps;
+    return sr / kNominalFps[(int) r];
 }
 
 constexpr int framesPerSecondGrid (MidiTimeCodeEmitter::FrameRate r) noexcept
@@ -32,7 +21,7 @@ constexpr int framesPerSecondGrid (MidiTimeCodeEmitter::FrameRate r) noexcept
     // for non-drop it's the nominal int rate.
     return (r == MidiTimeCodeEmitter::FrameRate::Fps29_97DF)
            ? 30
-           : (int) kRates[(int) r].nominalFps;
+           : (int) kNominalFps[(int) r];
 }
 
 // frames (absolute count from 00:00:00:00 in drop-aware semantics) →

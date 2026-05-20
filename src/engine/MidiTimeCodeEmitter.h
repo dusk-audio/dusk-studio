@@ -76,7 +76,11 @@ private:
     // more than this many frames, the user must have jumped (ruler
     // click, marker locate, etc.) — emit a fresh full-frame sysex
     // and restart the QF sequence so slaves resync without drift.
-    static constexpr juce::int64 kJumpDetectFrames = 2;
+    // 4 not 2: sequenceFrames is stale by up to 2 frames across one
+    // 8-QF sequence (refreshed only at nibble 0), so liveFrames -
+    // sequenceFrames - 2 climbs to ~2 during normal playback.
+    // Threshold > 2 + some rounding margin = 4.
+    static constexpr juce::int64 kJumpDetectFrames = 4;
 
     void emitQuarterFrame (juce::int64 atSample,
                             int nibble,
