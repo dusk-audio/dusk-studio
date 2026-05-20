@@ -319,6 +319,12 @@ void thinAutomationLane (AutomationLane& lane,
     if (! isContinuousParam (param)) return;
     if (lane.points.size() <= 2) return;
 
+    // Negative epsilon would make `worst > epsilon` always true (since
+    // perpendicularDistance returns |…| ≥ 0), so every interior point
+    // would be marked keep — defeating the thin entirely. Clamp for
+    // safety; the caller should already pass a non-negative value.
+    epsilon = std::max (epsilon, 0.0);
+
     std::vector<char> keep (lane.points.size(), 0);
     keep.front() = 1;
     keep.back()  = 1;

@@ -61,9 +61,10 @@ TEST_CASE ("thinAutomationLane: collinear interior points are dropped",
 TEST_CASE ("thinAutomationLane: sine-shaped lane keeps the peak + endpoints",
             "[automation][rdp]")
 {
-    // Half-cycle of a sine from 0 → π over 21 points. The peak at index
-    // 10 must survive any epsilon below 1.0 (the max amplitude). Both
-    // endpoints must survive unconditionally.
+    // 0 → 1 → 0 hump over 21 points (a Hann window — a full cycle of
+    // cos run through 0.5*(1-cos(2π*frac))). The peak at index 10 must
+    // survive any epsilon below 1.0 (the peak amplitude); both endpoints
+    // must survive unconditionally.
     duskstudio::AutomationLane lane;
     for (int i = 0; i <= 20; ++i)
     {
@@ -110,8 +111,9 @@ TEST_CASE ("thinAutomationLane: discrete lanes are NOT thinned",
 TEST_CASE ("thinAutomationLane: large epsilon over-thins to 2 points",
             "[automation][rdp]")
 {
-    // With epsilon ≥ peak amplitude, even the sine peak gets dropped —
-    // only the two anchored endpoints remain.
+    // Same 0 → 1 → 0 hump as the previous test, but with epsilon ≥ peak
+    // amplitude the central peak gets thinned out — only the two anchored
+    // endpoints remain.
     duskstudio::AutomationLane lane;
     for (int i = 0; i <= 20; ++i)
     {

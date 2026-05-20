@@ -366,8 +366,12 @@ void MasterStripComponent::showAutoModeMenu()
 
 void MasterStripComponent::setAutoMode (AutomationMode m)
 {
-    // See ChannelStripComponent::setAutoMode — auto-thin on mode-flip is
-    // racy with the audio thread until lanes move to AtomicSnapshot.
+    // Release-store on the mode word so any pending captureFaderWritePoint
+    // appends from a Write/Touch pass are visible before the audio thread's
+    // next acquire-load. Thinning is intentionally NOT triggered here —
+    // handleWritePassComplete rewrites lane.points wholesale and would race
+    // the audio thread; the safe entry point is File ▸ Optimize automation,
+    // which gates on transport-stopped + all modes Off.
     params.automationMode.store ((int) m, std::memory_order_release);
     autoModeButton.setButtonText (m == AutomationMode::Off   ? "Off"
                                    : m == AutomationMode::Read  ? "R"
