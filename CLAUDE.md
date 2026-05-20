@@ -109,12 +109,12 @@ For plugin instances, audio file readers, or any heavy resource — never block 
 
 ## Testing
 
-Dusk Studio has Catch2 v3 unit tests in [tests/](tests/), gated behind `-DFOCAL_BUILD_TESTS=ON` so the default app build is unaffected. The convention is **narrow-link tests**: each test binary compiles only the `src/...` translation units it actually exercises, plus the JUCE modules those need. No GUI, no Dusk DSP, no full `Dusk Studio` target. This keeps the test build fast and isolates failures to the unit under test.
+Dusk Studio has Catch2 v3 unit tests in [tests/](tests/), gated behind `-DDUSKSTUDIO_BUILD_TESTS=ON` so the default app build is unaffected. The convention is **narrow-link tests**: each test binary compiles only the `src/...` translation units it actually exercises, plus the JUCE modules those need. No GUI, no Dusk DSP, no full `Dusk Studio` target. This keeps the test build fast and isolates failures to the unit under test.
 
 ### Build + run
 
 ```bash
-cmake -S . -B build-tests -DCMAKE_BUILD_TYPE=Release -DFOCAL_BUILD_TESTS=ON
+cmake -S . -B build-tests -DCMAKE_BUILD_TYPE=Release -DDUSKSTUDIO_BUILD_TESTS=ON
 cmake --build build-tests --target dusk-studio-tests -j$(nproc)
 ctest --test-dir build-tests --output-on-failure
 ```

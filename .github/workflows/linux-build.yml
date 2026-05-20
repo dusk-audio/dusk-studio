@@ -79,7 +79,7 @@ jobs:
         run: |
           cmake -S . -B build-linux -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DFOCAL_SKIP_FORK_CHECK=ON \
+            -DDUSKSTUDIO_SKIP_FORK_CHECK=ON \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE-wayland" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main"
 
@@ -168,8 +168,8 @@ jobs:
         run: |
           cmake -S . -B build-tests -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DFOCAL_BUILD_TESTS=ON \
-            -DFOCAL_SKIP_FORK_CHECK=ON \
+            -DDUSKSTUDIO_BUILD_TESTS=ON \
+            -DDUSKSTUDIO_SKIP_FORK_CHECK=ON \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE-wayland" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main"
 

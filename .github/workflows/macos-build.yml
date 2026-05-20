@@ -35,7 +35,7 @@ jobs:
             "${RUNNER_TEMP}/plugins"
 
       - name: Configure (Xcode / Release)
-        # No -DFOCAL_SKIP_FORK_CHECK needed — the XEmbed enforcement
+        # No -DDUSKSTUDIO_SKIP_FORK_CHECK needed — the XEmbed enforcement
         # is Linux-gated in CMakeLists.txt. Codesign identity left at
         # the default ad-hoc "-" since this is a per-run build, not
         # a notarised distribution artifact.
@@ -90,7 +90,7 @@ jobs:
           cmake -S . -B build-tests -G Xcode \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
-            -DFOCAL_BUILD_TESTS=ON \
+            -DDUSKSTUDIO_BUILD_TESTS=ON \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins"
 
