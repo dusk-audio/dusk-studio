@@ -407,6 +407,10 @@ void AuxLaneComponent::showAutoModeMenu()
 
 void AuxLaneComponent::setAutoMode (AutomationMode m)
 {
+    // See ChannelStripComponent::setAutoMode — auto-thin on mode-flip is
+    // racy until automation lanes move to AtomicSnapshot. Pre-filter at
+    // capture time handles the worst bloat; explicit Optimize action
+    // (future) is the safe RDP entrypoint.
     lane.params.automationMode.store ((int) m, std::memory_order_release);
     autoModeButton.setButtonText (m == AutomationMode::Off   ? "Off"
                                    : m == AutomationMode::Read  ? "R"
@@ -449,6 +453,19 @@ void AuxLaneComponent::captureWritePoint (AutomationParam param, float denormVal
     pt.timeSamples   = engine.getTransport().getPlayhead();
     pt.value         = normalize (param, denormValue);
     pt.recordedAtBPM = engine.getSession().tempoBpm.load (std::memory_order_relaxed);
+
+    // Pre-filter: skip near-identical samples close in time. Same shape
+    // as the per-channel captureWritePoint pre-filter; spec lines
+    // 750-753 (delta + max-span before RDP).
+    if (isContinuousParam (param) && ! laneRef.points.empty())
+    {
+        constexpr float kDeltaEps = 0.001f;
+        constexpr juce::int64 kMaxSpanSamples = 22050;   // ~500 ms @ 44.1 k
+        const auto& last = laneRef.points.back();
+        if (std::abs (pt.value - last.value) < kDeltaEps
+            && (pt.timeSamples - last.timeSamples) < kMaxSpanSamples)
+            return;
+    }
 
     if (! laneRef.points.empty() && laneRef.points.back().timeSamples >= pt.timeSamples)
     {

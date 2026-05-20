@@ -2454,6 +2454,21 @@ void ChannelStripComponent::captureWritePoint (AutomationParam param, float deno
     pt.value         = normalize (param, denormValue);
     pt.recordedAtBPM = session.tempoBpm.load (std::memory_order_relaxed);
 
+    // Pre-filter: drop near-identical samples close together in time
+    // (the timer fires every 33 ms; if the fader hasn't moved, those
+    // ticks are noise). Continuous params only — discrete state needs
+    // every transition. Spec: delta + max-span pre-filter. 0.001
+    // normalized = 0.1% of the lane's storage range.
+    if (isContinuousParam (param) && ! lane.points.empty())
+    {
+        constexpr float kDeltaEps = 0.001f;
+        constexpr juce::int64 kMaxSpanSamples = 22050;   // ~500 ms @ 44.1 k
+        const auto& last = lane.points.back();
+        if (std::abs (pt.value - last.value) < kDeltaEps
+            && (pt.timeSamples - last.timeSamples) < kMaxSpanSamples)
+            return;
+    }
+
     // Coalesce: if the most recent point is at the same timeline sample
     // (or earlier), replace its value (don't append). This handles two
     // cases: (a) Timer fires faster than transport advances (paused?
@@ -2515,6 +2530,17 @@ void ChannelStripComponent::setAutoMode (AutomationMode mode)
     // reading from the lane. The release-store on mode synchronizes those
     // writes - any prior append to lane.points happens-before the audio
     // thread's acquire-load of the new mode.
+    //
+    // Auto-thin on mode-flip would be tempting here, but the existing
+    // concurrency model partitions lane reads/writes by (mode, touched)
+    // and handleWritePassComplete rewrites lane.points unconditionally —
+    // there's no safe ordering relative to the audio thread acquiring
+    // the new mode (or to OTHER strips that are in Read). Thinning needs
+    // AtomicSnapshot on each lane before it can fire on mode-flip; for
+    // now the capture-time pre-filter handles the worst bloat and
+    // handleWritePassComplete stays callable only from a future
+    // explicit "Optimize Automation" menu action (transport stopped +
+    // all modes set to Off).
     track.automationMode.store ((int) mode, std::memory_order_release);
 
     // Read mode disables every automated control (spec: "User cannot

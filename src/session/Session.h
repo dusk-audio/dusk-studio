@@ -75,6 +75,35 @@ struct AutomationLane
 float evaluateLane (const AutomationLane& lane, juce::int64 t,
                     AutomationParam param) noexcept;
 
+// Ramer-Douglas-Peucker thin on continuous lanes. `epsilon` is in
+// normalized 0..1 lane storage units (so it's value-range-independent
+// across FaderDb / Pan / AuxSend*); 0.002 = 0.2% of the lane's vertical
+// range and is the production default. No-op for discrete params (Mute /
+// Solo) — those rely on the same-sample coalesce in captureWritePoint
+// to stay tight. Synchronous — RDP on a 10-minute timer-driven Write
+// pass (~18 k points) runs in well under a millisecond, so there's no
+// need to offload to a worker thread.
+void thinAutomationLane (AutomationLane& lane,
+                            AutomationParam param,
+                            double epsilon) noexcept;
+
+// Walk every per-track / per-aux / master lane and thin it.
+//
+// SAFETY: this rewrites lane.points unconditionally and is therefore
+// NOT safe to call concurrently with audio-thread reads of any lane.
+// Today the audio thread reads any lane whose strip is in Read mode,
+// or in Touch mode + the corresponding *Touched flag is false. Safe
+// callers must therefore guarantee NO strip / aux / master is in those
+// states — easiest contract is "transport stopped + every strip's
+// automationMode set to Off". A future commit can lift this restriction
+// once each AutomationLane moves to AtomicSnapshot so the swap is
+// lock-free against the audio reader.
+//
+// For now this is utility-grade — exposed for tests + a future explicit
+// "Optimize Automation" menu action that enforces the precondition.
+class Session;
+void handleWritePassComplete (Session& s) noexcept;
+
 // External hardware-insert routing. These fields change together when
 // the user flips the Output / Input dropdown in the HardwareInsertEditor,
 // so the audio thread must observe them as one consistent snapshot.

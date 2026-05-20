@@ -259,4 +259,99 @@ float evaluateLane (const AutomationLane& lane, juce::int64 t,
     const float v = lo.value + frac * (hi.value - lo.value);
     return denormalizeAutomation (param, v);
 }
+
+// Perpendicular distance from `p` to the chord `[a, b]` in (time, value)
+// space, with time normalized to value's range so dense-in-time bursts
+// don't dominate the metric. Used by thinAutomationLane.
+namespace
+{
+double perpendicularDistance (const AutomationPoint& p,
+                                const AutomationPoint& a,
+                                const AutomationPoint& b) noexcept
+{
+    const double dt = (double) (b.timeSamples - a.timeSamples);
+    if (dt <= 0.0) return std::abs ((double) p.value - (double) a.value);
+    // Linear interpolant on the chord at p.timeSamples.
+    const double frac = (double) (p.timeSamples - a.timeSamples) / dt;
+    const double interp = (double) a.value + frac * ((double) b.value - (double) a.value);
+    return std::abs ((double) p.value - interp);
+}
+
+// Ramer-Douglas-Peucker, iterative on a stack so we don't recurse into
+// stack overflow on a million-point lane.
+void rdp (const std::vector<AutomationPoint>& in,
+          std::size_t lo, std::size_t hi,
+          double epsilon,
+          std::vector<char>& keep)
+{
+    std::vector<std::pair<std::size_t, std::size_t>> stack;
+    stack.reserve (32);
+    stack.emplace_back (lo, hi);
+    while (! stack.empty())
+    {
+        const auto [a, b] = stack.back();
+        stack.pop_back();
+        if (b <= a + 1) continue;
+        double worst = 0.0;
+        std::size_t worstIdx = a;
+        for (std::size_t i = a + 1; i < b; ++i)
+        {
+            const double d = perpendicularDistance (in[i], in[a], in[b]);
+            if (d > worst) { worst = d; worstIdx = i; }
+        }
+        if (worst > epsilon)
+        {
+            keep[worstIdx] = 1;
+            stack.emplace_back (a, worstIdx);
+            stack.emplace_back (worstIdx, b);
+        }
+    }
+}
+} // namespace
+
+void thinAutomationLane (AutomationLane& lane,
+                            AutomationParam param,
+                            double epsilon) noexcept
+{
+    // Discrete params (mute / solo) are bit-exact — RDP'd values would
+    // round wrong and silently lose state transitions. Skip thinning;
+    // the existing same-sample coalesce in captureWritePoint is enough.
+    if (! isContinuousParam (param)) return;
+    if (lane.points.size() <= 2) return;
+
+    std::vector<char> keep (lane.points.size(), 0);
+    keep.front() = 1;
+    keep.back()  = 1;
+    rdp (lane.points, 0, lane.points.size() - 1, epsilon, keep);
+
+    std::vector<AutomationPoint> thinned;
+    thinned.reserve (lane.points.size());
+    for (std::size_t i = 0; i < lane.points.size(); ++i)
+        if (keep[i]) thinned.push_back (lane.points[i]);
+
+    lane.points = std::move (thinned);
+}
+
+void handleWritePassComplete (Session& s) noexcept
+{
+    // Normalized-space epsilon: 0.002 = 0.2% of the 0..1 lane storage
+    // range. Audibly inaudible (~0.024 dB on a 12-to-(-100) dB fader)
+    // and aggressive enough to drop ~90% of timer-tick duplicates on a
+    // typical "ride" gesture.
+    constexpr double kEpsilon = 0.002;
+
+    for (int t = 0; t < Session::kNumTracks; ++t)
+        for (int p = 0; p < kNumAutomationParams; ++p)
+            thinAutomationLane (s.track (t).automationLanes[(size_t) p],
+                                  (AutomationParam) p, kEpsilon);
+
+    for (int a = 0; a < Session::kNumAuxLanes; ++a)
+        for (int p = 0; p < kNumAutomationParams; ++p)
+            thinAutomationLane (s.auxLane (a).params.automationLanes[(size_t) p],
+                                  (AutomationParam) p, kEpsilon);
+
+    for (int p = 0; p < kNumAutomationParams; ++p)
+        thinAutomationLane (s.master().automationLanes[(size_t) p],
+                              (AutomationParam) p, kEpsilon);
+}
 } // namespace duskstudio

@@ -366,6 +366,8 @@ void MasterStripComponent::showAutoModeMenu()
 
 void MasterStripComponent::setAutoMode (AutomationMode m)
 {
+    // See ChannelStripComponent::setAutoMode — auto-thin on mode-flip is
+    // racy with the audio thread until lanes move to AtomicSnapshot.
     params.automationMode.store ((int) m, std::memory_order_release);
     autoModeButton.setButtonText (m == AutomationMode::Off   ? "Off"
                                    : m == AutomationMode::Read  ? "R"
@@ -384,6 +386,18 @@ void MasterStripComponent::captureFaderWritePoint (float denormDb)
     pt.timeSamples   = engine.getTransport().getPlayhead();
     pt.value         = v;
     pt.recordedAtBPM = session.tempoBpm.load (std::memory_order_relaxed);
+
+    // Pre-filter: delta + max-span. Master fader is the most-rideable
+    // single control on a session, so the savings here matter most.
+    if (! lane.points.empty())
+    {
+        constexpr float kDeltaEps = 0.001f;
+        constexpr juce::int64 kMaxSpanSamples = 22050;
+        const auto& last = lane.points.back();
+        if (std::abs (pt.value - last.value) < kDeltaEps
+            && (pt.timeSamples - last.timeSamples) < kMaxSpanSamples)
+            return;
+    }
 
     if (! lane.points.empty() && lane.points.back().timeSamples >= pt.timeSamples)
     {
