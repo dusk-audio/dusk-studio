@@ -15,7 +15,7 @@
 //   prepareNativePeer...   -> no-op (NSView reparenting is
 //                              synchronous, no race window).
 
-namespace focal::platform
+namespace duskstudio::platform
 {
 void bringWindowToFront (juce::ComponentPeer&)             {}
 void flushWindowOperations()                                {}
@@ -32,4 +32,4 @@ void clearXInputFocus() {}                 // X-only; no-op on macOS
 void requestFocusOnMainWaylandSurface() {} // Wayland-only; no-op on macOS
 void preferX11ForNextNativeWindow() {}     // Wayland-only; no-op on macOS
 void clearPreferX11ForNativeWindow() {}    // Wayland-only; no-op on macOS
-} // namespace focal::platform
+} // namespace duskstudio::platform
