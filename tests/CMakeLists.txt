@@ -23,10 +23,14 @@ add_executable(focal-tests
     session_format_version.cpp
     recording_byte_accuracy.cpp
     midi_fifo_overflow.cpp
+    midi_time_code_decode.cpp
+    midi_time_code_emit.cpp
     ${CMAKE_SOURCE_DIR}/src/dsp/BrickwallLimiter.cpp
     ${CMAKE_SOURCE_DIR}/src/dsp/HardwareInsertSlot.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/FileImporter.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/RecordManager.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/MidiTimeCodeReceiver.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/MidiTimeCodeEmitter.cpp
     ${CMAKE_SOURCE_DIR}/src/session/Session.cpp
     ${CMAKE_SOURCE_DIR}/src/session/SessionSerializer.cpp)
 

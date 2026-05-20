@@ -232,14 +232,22 @@ void MidiTimeCodeEmitter::generateBlock (juce::int64 blockStartSample,
     // Walk the block placing QF bytes at each scheduled sample.
     // sequenceFrames is refreshed at nibble 0 (start of a new 8-QF
     // sequence); each subsequent nibble encodes a slice of the SAME
-    // sequenceFrames value (this is the 2-frame-pre-roll contract).
+    // sequenceFrames value (the 2-frame-pre-roll contract).
+    //
+    // Value encoded = transport playhead at the QF's sample position,
+    // minus 2 frames for the QF transmission-delay compensation.
+    // Use `playheadSamples` (the caller's transport snapshot, at
+    // blockStart) + the QF's offset-into-block to extrapolate the
+    // playhead's wall-clock position at the QF instant. Sample clock
+    // and transport advance at the same rate (1:1) so the linear
+    // extrapolation is exact.
     while (nextQuarterFrameSample < blockEnd)
     {
         if (nibbleIdx == 0)
         {
-            const auto frozenLive = (juce::int64) (
-                (double) (nextQuarterFrameSample) / sPerFrame);
-            sequenceFrames = frozenLive - 2;
+            const auto offsetInBlock = nextQuarterFrameSample - blockStartSample;
+            const auto qfPlayhead    = playheadSamples + offsetInBlock;
+            sequenceFrames = (juce::int64) ((double) qfPlayhead / sPerFrame) - 2;
             if (sequenceFrames < 0) sequenceFrames = 0;
         }
 
