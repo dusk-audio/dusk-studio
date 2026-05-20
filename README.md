@@ -1,6 +1,7 @@
 # Focal
 
 [![Linux build](https://github.com/dusk-audio/focal-daw/actions/workflows/linux-build.yml/badge.svg)](https://github.com/dusk-audio/focal-daw/actions/workflows/linux-build.yml)
+[![Linux arm64](https://github.com/dusk-audio/focal-daw/actions/workflows/linux-build-arm64.yml/badge.svg)](https://github.com/dusk-audio/focal-daw/actions/workflows/linux-build-arm64.yml)
 [![macOS build](https://github.com/dusk-audio/focal-daw/actions/workflows/macos-build.yml/badge.svg)](https://github.com/dusk-audio/focal-daw/actions/workflows/macos-build.yml)
 [![Windows build](https://github.com/dusk-audio/focal-daw/actions/workflows/windows-build.yml/badge.svg)](https://github.com/dusk-audio/focal-daw/actions/workflows/windows-build.yml)
 [![Linux sanitizer](https://github.com/dusk-audio/focal-daw/actions/workflows/linux-sanitizer.yml/badge.svg)](https://github.com/dusk-audio/focal-daw/actions/workflows/linux-sanitizer.yml)
@@ -29,8 +30,11 @@ JUCE 8 / C++17. PipeWire (primary) via JUCE's JACK backend on Linux; native ALSA
 | External hardware inserts (with auto-latency ping) | Working |
 | MIDI tracks + instrument plugins | Working |
 | Take cycling + comping (option A — cycle previousTakes) | Working |
-| Console automation (Write / Read / Touch) | Backlog |
-| MTC + MIDI Clock sync | Backlog |
+| Console automation (Write / Read / Touch, per-param lanes) | Working |
+| MIDI Clock sync (slave + master) | Working |
+| MIDI bindings + MIDI Learn (transport / strip / sends / EQ / comp / plugin params) | Working |
+| Multi-file audio + MIDI import with target-track picker | Working |
+| MTC (SMPTE quarter-frame) | Deferred — picture-sync workflows only |
 | OOP plugin host on macOS + Windows | 1.0 blocker |
 
 65 Catch2 unit tests pass under Release + ASAN+UBSan. Linux + macOS + Windows builds + tests are run on every push.
@@ -44,21 +48,22 @@ Most DAWs are built for production studios with infinite track counts and infini
 These are not implementation details — they're the product. Anything that violates them is wrong.
 
 1. **16 channels maximum.** Fixed. Two banks of 8 to match standard control surfaces.
-2. **Fixed signal chain.** No reordering EQ / comp. No adding / removing processors. Channel-strip processing order is the same on every track, every time.
-3. **No waveform editing.** Region-level move / split / delete / trim only.
+2. **Fixed signal chain.** No reordering EQ / comp. Channel-strip processing order is the same on every track, every time. Each channel gets **one optional insert slot** (a single VST3 / LV2 plugin **or** a hardware insert — never a chain), at a fixed position in the strip; aux returns get one plugin slot each.
+3. **No waveform editing.** Region-level move / split / delete / trim only. (Draw mode exists only inside the MIDI piano roll.)
 4. **Console-style automation only.** Write / Read / Touch via gesture; no curve drawing.
-5. **Everything visible.** No tabs, no hidden panels (MIDI piano roll overlay is the only exception).
-6. **No preferences sprawl.** Audio device config and that's it.
+5. **Everything visible within a stage.** Four workflow stages match the portastudio layout (Recording / Mixing / Aux / Mastering); within each stage there are no tabs and no hidden panels. The MIDI piano roll, plugin editors, and audio-settings dialog are embedded modals over the current stage.
+6. **No preferences sprawl.** A single Audio Settings panel covers audio device + buffer + oversampling + MIDI sync (Clock in / out, chase, emit) + MIDI bindings + UI scale. No per-feature settings menus, no global preferences window.
 7. **Portastudio philosophy.** "Would this exist on a $2000 hardware recorder?" If no, don't build it.
 
 ## Architecture
 
 ```
-Channel 1-16 → 4 Aux Buses → Master → Output
-   HPF              EQ          Pultec EQ
-   4-band EQ        Comp        Bus Comp
-   FET/Opto Comp    Fader       Tape Saturation
-   Pan + Sends                  Fader
+Channel 1-16 ──────────────→ 4 Aux Buses ──→ Master ──→ Output
+   HPF                          EQ              Pultec EQ
+   4-band EQ                    Comp            Bus Comp
+   FET/Opto Comp                Insert slot     Tape Saturation
+   Insert slot (plugin or HW)   Fader           Fader
+   Pan + Sends
    Fader
    Mute / Solo / Ø
 ```

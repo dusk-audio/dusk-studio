@@ -1,0 +1,164 @@
+name: Linux build (arm64)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Focal (GCC Release, Ubuntu 22.04 arm64)
+    runs-on: ubuntu-22.04-arm
+
+    steps:
+      - name: Checkout Focal
+        uses: actions/checkout@v4
+
+      - name: Install Linux build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config \
+            libasound2-dev libjack-jackd2-dev \
+            ladspa-sdk \
+            libcurl4-openssl-dev libfreetype-dev libfontconfig1-dev \
+            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
+            libxinerama-dev libxrandr-dev libxrender-dev libxss-dev \
+            libwebkit2gtk-4.0-dev libglu1-mesa-dev xvfb \
+            libwayland-dev libxkbcommon-dev libdecor-0-dev
+
+      - name: Clone JUCE 8.0.4 (upstream)
+        # See linux-build.yml for upstream-vs-fork rationale.
+        run: |
+          git clone --depth 1 --branch 8.0.4 \
+            https://github.com/juce-framework/JUCE.git \
+            "${RUNNER_TEMP}/JUCE-wayland"
+
+      - name: Patch JUCE — SIMDNativeOps<long long> alias for Linux LP64
+        # aarch64 GCC uses NEON for SIMD, not SSE. juce_SIMDNativeOps_neon.h
+        # has the same gap as the SSE header: int64_t / uint64_t are
+        # specialised but long long / unsigned long long aren't.
+        # juce::int64 is `signed long long`, distinct from `int64_t`
+        # (which is `long` on aarch64 LP64), so jmax<juce::int64>()
+        # instantiates SIMDRegister<long long> → incomplete type.
+        # Patch both headers; only the active-arch header is compiled,
+        # the other is dead code. Symmetric with the x86_64 workflow.
+        run: |
+          for arch in sse neon; do
+            file="${RUNNER_TEMP}/JUCE-wayland/modules/juce_dsp/native/juce_SIMDNativeOps_${arch}.h"
+            [ -f "$file" ] || continue
+            awk '
+              /^} \/\/ namespace juce::dsp/ && !done {
+                print "#if defined (__GNUC__) && defined (__SIZEOF_LONG__) && __SIZEOF_LONG__ == 8 && !defined (_WIN32)"
+                print "template <> struct SIMDNativeOps<long long> : SIMDNativeOps<int64_t> {};"
+                print "template <> struct SIMDNativeOps<unsigned long long> : SIMDNativeOps<uint64_t> {};"
+                print "#endif"
+                done = 1
+              }
+              { print }
+            ' "$file" > "$file.new" && mv "$file.new" "$file"
+            echo "Patched: $file"
+          done
+
+      - name: Clone Dusk plugins (donor DSP)
+        run: |
+          git clone --depth 1 \
+            https://github.com/dusk-audio/dusk-audio-plugins.git \
+            "${RUNNER_TEMP}/plugins-main"
+
+      - name: Configure (Release)
+        run: |
+          cmake -S . -B build-linux -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DFOCAL_SKIP_FORK_CHECK=ON \
+            -DJUCE_PATH="${RUNNER_TEMP}/JUCE-wayland" \
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main"
+
+      - name: Build (Release)
+        run: cmake --build build-linux -j
+
+      - name: Smoke launch (xvfb, --version)
+        run: |
+          xvfb-run --auto-servernum \
+            build-linux/Focal_artefacts/Release/Focal --version
+
+      - name: Headless self-test (xvfb, FOCAL_RUN_SELFTEST=1)
+        run: |
+          timeout 60 xvfb-run --auto-servernum \
+            env FOCAL_RUN_SELFTEST=1 \
+            build-linux/Focal_artefacts/Release/Focal
+
+      - name: Upload Focal binary (per-run artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Focal-linux-arm64
+          path: build-linux/Focal_artefacts/Release/Focal
+          retention-days: 14
+          if-no-files-found: error
+
+  tests:
+    name: Catch2 tests (GCC Release, Ubuntu 22.04 arm64)
+    runs-on: ubuntu-22.04-arm
+    needs: build
+
+    steps:
+      - name: Checkout Focal
+        uses: actions/checkout@v4
+
+      - name: Install Linux build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config \
+            libasound2-dev libjack-jackd2-dev \
+            libcurl4-openssl-dev libfreetype-dev libfontconfig1-dev \
+            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
+            libxinerama-dev libxrandr-dev libxrender-dev libxss-dev \
+            libwebkit2gtk-4.0-dev libglu1-mesa-dev \
+            libwayland-dev libxkbcommon-dev libdecor-0-dev
+
+      - name: Clone JUCE 8.0.4 (upstream)
+        run: |
+          git clone --depth 1 --branch 8.0.4 \
+            https://github.com/juce-framework/JUCE.git \
+            "${RUNNER_TEMP}/JUCE-wayland"
+
+      - name: Patch JUCE — SIMDNativeOps<long long> alias for Linux LP64
+        run: |
+          for arch in sse neon; do
+            file="${RUNNER_TEMP}/JUCE-wayland/modules/juce_dsp/native/juce_SIMDNativeOps_${arch}.h"
+            [ -f "$file" ] || continue
+            awk '
+              /^} \/\/ namespace juce::dsp/ && !done {
+                print "#if defined (__GNUC__) && defined (__SIZEOF_LONG__) && __SIZEOF_LONG__ == 8 && !defined (_WIN32)"
+                print "template <> struct SIMDNativeOps<long long> : SIMDNativeOps<int64_t> {};"
+                print "template <> struct SIMDNativeOps<unsigned long long> : SIMDNativeOps<uint64_t> {};"
+                print "#endif"
+                done = 1
+              }
+              { print }
+            ' "$file" > "$file.new" && mv "$file.new" "$file"
+          done
+
+      - name: Clone Dusk plugins (donor DSP)
+        run: |
+          git clone --depth 1 \
+            https://github.com/dusk-audio/dusk-audio-plugins.git \
+            "${RUNNER_TEMP}/plugins-main"
+
+      - name: Configure tests
+        run: |
+          cmake -S . -B build-tests -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DFOCAL_BUILD_TESTS=ON \
+            -DFOCAL_SKIP_FORK_CHECK=ON \
+            -DJUCE_PATH="${RUNNER_TEMP}/JUCE-wayland" \
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main"
+
+      - name: Build tests
+        run: cmake --build build-tests --target focal-tests -j
+
+      - name: Run tests
+        run: ctest --test-dir build-tests --output-on-failure
