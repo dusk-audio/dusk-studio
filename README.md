@@ -1,27 +1,39 @@
 # Focal
 
-A deliberately constrained, portastudio-style DAW for Linux. Built for engineers who want to **record, mix, and master without leaving the application** — no plugin paralysis, no menu diving, no infinite-options sprawl.
+[![Linux build](https://github.com/dusk-audio/focal-daw/actions/workflows/linux-build.yml/badge.svg)](https://github.com/dusk-audio/focal-daw/actions/workflows/linux-build.yml)
+[![macOS build](https://github.com/dusk-audio/focal-daw/actions/workflows/macos-build.yml/badge.svg)](https://github.com/dusk-audio/focal-daw/actions/workflows/macos-build.yml)
+[![Windows build](https://github.com/dusk-audio/focal-daw/actions/workflows/windows-build.yml/badge.svg)](https://github.com/dusk-audio/focal-daw/actions/workflows/windows-build.yml)
+[![Linux sanitizer](https://github.com/dusk-audio/focal-daw/actions/workflows/linux-sanitizer.yml/badge.svg)](https://github.com/dusk-audio/focal-daw/actions/workflows/linux-sanitizer.yml)
+
+A deliberately constrained, portastudio-style DAW for Linux (macOS + Windows in beta). Built for engineers who want to **record, mix, and master without leaving the application** — no plugin paralysis, no menu diving, no infinite-options sprawl.
 
 > *"If it wouldn't exist as a physical control on a $2000 hardware recorder, it probably doesn't belong here."*
 
-JUCE 8 / C++17. PipeWire (primary) via JUCE's JACK backend; ALSA fallback. Authoritative spec: [Focal.md](Focal.md).
+JUCE 8 / C++17. PipeWire (primary) via JUCE's JACK backend on Linux; native ALSA backend with USB hot-unplug recovery; macOS CoreAudio + Windows WASAPI / ASIO via JUCE. Authoritative spec: [Focal.md](Focal.md). User guide: [docs/USER_GUIDE.md](docs/USER_GUIDE.md).
 
 ## Status
 
-**Phase 1a-2 in progress.** Alpha. Not for production work yet.
+**Alpha — Patreon-gated binaries.** Phase A (data safety) + Phase B (hardening) + Phase C smalls (license, Windows fsync, accessibility floor) shipped. Cross-platform plugin-host isolation, macOS notarisation, and Windows MSI still ahead of 1.0.
 
 | Stage | Status |
 |---|---|
 | Live mixer (16 ch + 4 aux + master, EQ + comp on each) | Working |
-| Multitrack recording / playback | Working |
+| Multitrack recording / playback with disk-full + MIDI-overflow detection | Working |
+| Atomic session save + autosave with content-hash dirty check | Working |
 | Plugin hosting (per-channel VST3 / LV2) | Working |
+| Plugin offline-state preservation (missing plugin doesn't wipe save) | Working |
+| Out-of-process plugin host (crash isolation, **Linux only**) | Working |
 | Mastering view (waveform + EQ + multiband comp + L4-style limiter) | Working |
 | Bounce / mixdown export | Working |
-| Aux sends + reverb / delay returns | In progress |
-| MIDI tracks + instrument plugins | Phase 4 |
-| Console automation (Write / Read / Touch) | Phase 3 |
+| Aux sends + reverb / delay returns | Working |
+| External hardware inserts (with auto-latency ping) | Working |
+| MIDI tracks + instrument plugins | Working |
+| Take cycling + comping (option A — cycle previousTakes) | Working |
+| Console automation (Write / Read / Touch) | Backlog |
+| MTC + MIDI Clock sync | Backlog |
+| OOP plugin host on macOS + Windows | 1.0 blocker |
 
-6/6 headless self-test passes at 96 kHz / 256 samples on UMC1820 ALSA.
+65 Catch2 unit tests pass under Release + ASAN+UBSan. Linux + macOS + Windows builds + tests are run on every push.
 
 ## Why
 
@@ -33,7 +45,7 @@ These are not implementation details — they're the product. Anything that viol
 
 1. **16 channels maximum.** Fixed. Two banks of 8 to match standard control surfaces.
 2. **Fixed signal chain.** No reordering EQ / comp. No adding / removing processors. Channel-strip processing order is the same on every track, every time.
-3. **Simple waveform editing.** Region-level move / split / delete / trim only.
+3. **No waveform editing.** Region-level move / split / delete / trim only.
 4. **Console-style automation only.** Write / Read / Touch via gesture; no curve drawing.
 5. **Everything visible.** No tabs, no hidden panels (MIDI piano roll overlay is the only exception).
 6. **No preferences sprawl.** Audio device config and that's it.
@@ -62,12 +74,28 @@ src/
   engine/      # AudioEngine, RecordManager, PlaybackEngine, BounceEngine, MasteringChain
   session/     # Session model + JSON serialisation
   ui/          # MainComponent, ConsoleView, channel/aux/master strips, mastering view
-Focal.md      # authoritative product spec
+  util/        # CrashHandler (FileLogger + signal-handler reports)
+tests/         # Catch2 unit tests (session, recording, MIDI, IPC, DSP)
+packaging/     # .desktop, AppStream, MIME — for AppImage builds
+docs/          # User guide + onboarding docs
+Focal.md       # authoritative product spec
 ```
 
 ## Builds & contributing
 
-Pre-built signed binaries will be available at **focal.audio** (coming soon). The source is GPL-3.0 and you're welcome to read it and propose changes; for build instructions and contributor onboarding, please reach out via the project's contact channel rather than relying on what's in this repository.
+Precompiled binaries delivered via Patreon (Linux AppImage today; macOS + Windows when the cross-platform plugin host lands). Self-build is fully supported and equivalent at the source level — no support tier for self-builders.
+
+| Platform | Doc |
+|----------|-----|
+| Linux | [BUILDING-LINUX.md](BUILDING-LINUX.md) |
+| Windows | [BUILDING-WINDOWS.md](BUILDING-WINDOWS.md) |
+| macOS | Mirror of Linux flow; upstream JUCE 8.0.4 + sibling `plugins-main`. Smoke-built per push on `macos-14` (Apple Silicon Sonoma) — see [.github/workflows/macos-build.yml](.github/workflows/macos-build.yml). |
+| AppImage packaging (Linux) | [packaging/README.md](packaging/README.md) |
+| User guide / troubleshooting | [docs/USER_GUIDE.md](docs/USER_GUIDE.md) |
+
+After a build, sanity check with `Focal --version` — prints app + JUCE + platform string and exits 0. Useful as a paste-target for Patreon support DMs.
+
+CI runs on every push to `main` against Linux (Ubuntu 22.04 GCC), macOS (14 Apple Silicon), and Windows (Server 2022 MSVC). Linux sanitizer (ASAN+UBSan) runs nightly and on engine/dsp/session paths.
 
 ## License
 

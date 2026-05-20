@@ -1012,6 +1012,25 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     compCompactButton.onClick = [this] { openCompEditorPopup(); };
     addChildComponent (eqCompactButton);    // hidden until compact mode flips on
     addChildComponent (compCompactButton);
+
+    // Accessibility floor (deeper a11y pass — names every user-driven
+    // control on the strip so screen readers announce intent, not just
+    // role+index). Track-relative names because each strip's controls
+    // are otherwise indistinguishable to the AT.
+    const auto tn = juce::String (trackIndex + 1);
+    faderSlider .setTitle ("Track " + tn + " fader");
+    panKnob     .setTitle ("Track " + tn + " pan");
+    muteButton  .setTitle ("Track " + tn + " mute");
+    soloButton  .setTitle ("Track " + tn + " solo");
+    armButton   .setTitle ("Track " + tn + " record arm");
+    monitorButton.setTitle ("Track " + tn + " input monitor");
+    printButton .setTitle ("Track " + tn + " print effects on record");
+    hpfKnob     .setTitle ("Track " + tn + " high-pass filter frequency");
+    eqTypeButton.setTitle ("Track " + tn + " EQ type");
+    pluginSlotButton.setTitle ("Track " + tn + " insert slot");
+    for (size_t i = 0; i < auxKnobs.size(); ++i)
+        if (auxKnobs[i] != nullptr)
+            auxKnobs[i]->setTitle ("Track " + tn + " aux " + juce::String ((int) i + 1) + " send");
 }
 
 ChannelStripComponent::~ChannelStripComponent()

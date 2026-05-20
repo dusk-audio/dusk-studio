@@ -280,6 +280,15 @@ AuxLaneComponent::AuxLaneComponent (AuxLane& l, AuxLaneStrip& s, int idx,
     for (int i = 0; i < AuxLaneParams::kMaxLanePlugins; ++i)
         refreshSlotControls (i);
     rebuildSlots();
+
+    // Deeper a11y — name every user-driven control on the lane.
+    const auto an = juce::String (laneIndex + 1);
+    returnFader .setTitle ("Aux " + an + " return fader");
+    muteButton  .setTitle ("Aux " + an + " mute");
+    for (int i = 0; i < AuxLaneParams::kMaxLanePlugins; ++i)
+        slots[(size_t) i].openOrAddButton.setTitle (
+            "Aux " + an + " plugin slot " + juce::String (i + 1));
+
     startTimerHz (30);
 }
 
