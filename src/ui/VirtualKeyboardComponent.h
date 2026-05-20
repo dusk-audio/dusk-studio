@@ -8,7 +8,7 @@ namespace duskstudio
 {
 // Embedded-modal panel that turns the user's typing keyboard into a MIDI
 // note source. Pushes Note On / Note Off messages into the engine's
-// synthetic "Virtual Keyboard (Focal)" MidiMessageCollector — to actually
+// synthetic "Virtual Keyboard (Dusk Studio)" MidiMessageCollector — to actually
 // hear the notes, a track must select that device on its MIDI input
 // dropdown and have an instrument plugin loaded.
 //

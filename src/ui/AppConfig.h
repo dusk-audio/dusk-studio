@@ -5,7 +5,7 @@
 namespace duskstudio::appconfig
 {
 // Per-machine preferences. Backed by a juce::PropertiesFile at
-//   <userApplicationDataDirectory>/Focal/app-config.properties
+//   <userApplicationDataDirectory>/Dusk Studio/app-config.properties
 // - separate store from window-state.txt (geometry) and recent.txt
 // (recent sessions list) so each file has a single concern.
 //

@@ -56,7 +56,7 @@ private:
     // Declared before `streams` so it outlives the readers attached to it
     // (members are destroyed in reverse declaration order - readers detach
     // via removeTimeSliceClient before this thread is torn down).
-    juce::TimeSliceThread bufferingThread { "Focal playback prefetch" };
+    juce::TimeSliceThread bufferingThread { "Dusk Studio playback prefetch" };
 
     struct RegionStream
     {

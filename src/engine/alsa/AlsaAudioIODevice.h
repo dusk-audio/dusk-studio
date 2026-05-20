@@ -7,9 +7,9 @@
 
 namespace duskstudio
 {
-// Focal-owned ALSA audio I/O. One instance per open device pair (a playback
+// Dusk Studio-owned ALSA audio I/O. One instance per open device pair (a playback
 // PCM, a capture PCM, or both linked together). Implements juce::AudioIODevice
-// so the rest of Focal (AudioDeviceManager, AudioDeviceSelectorComponent,
+// so the rest of Dusk Studio (AudioDeviceManager, AudioDeviceSelectorComponent,
 // AudioEngine's callback) can use it interchangeably with the JACK backend.
 //
 // Design choices, for new readers:

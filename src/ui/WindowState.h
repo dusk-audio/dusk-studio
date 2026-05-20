@@ -5,7 +5,7 @@
 namespace duskstudio
 {
 // Window position / size / fullscreen-flag persistence. Stored at
-//   <userApplicationDataDirectory>/Focal/window-state.txt
+//   <userApplicationDataDirectory>/Dusk Studio/window-state.txt
 // - separate from session.json (session-portable) and recent.txt (per-user
 // session list) because window geometry is per-machine state.
 //

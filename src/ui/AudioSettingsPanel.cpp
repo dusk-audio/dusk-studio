@@ -91,7 +91,7 @@ AudioSettingsPanel::AudioSettingsPanel (juce::AudioDeviceManager& dm,
     syncSourceLabel.setJustificationType (juce::Justification::centredRight);
     addAndMakeVisible (syncSourceLabel);
     syncSourceCombo.setTooltip (
-        "MIDI Clock sync source. When set, Focal's tempo "
+        "MIDI Clock sync source. When set, Dusk Studio's tempo "
         "follows incoming MIDI Clock (24 PPQN) from the chosen "
         "input. Start/Stop chase is not wired yet - this is "
         "tempo-only sync in v1.");
@@ -106,8 +106,8 @@ AudioSettingsPanel::AudioSettingsPanel (juce::AudioDeviceManager& dm,
         session.externalSyncChasesTransport.load (std::memory_order_relaxed),
         juce::dontSendNotification);
     syncChaseTransportToggle.setTooltip (
-        "When on, MIDI Start (FA / FB) plays Focal and MIDI Stop (FC) "
-        "stops it. Off = tempo-only sync; the user controls Focal's "
+        "When on, MIDI Start (FA / FB) plays Dusk Studio and MIDI Stop (FC) "
+        "stops it. Off = tempo-only sync; the user controls Dusk Studio's "
         "transport locally.");
     syncChaseTransportToggle.onClick = [this]
     {
@@ -116,12 +116,12 @@ AudioSettingsPanel::AudioSettingsPanel (juce::AudioDeviceManager& dm,
     };
     addAndMakeVisible (syncChaseTransportToggle);
 
-    // MIDI sync OUTPUT picker + emit toggle (Focal as master).
+    // MIDI sync OUTPUT picker + emit toggle (Dusk Studio as master).
     syncOutputLabel.setJustificationType (juce::Justification::centredRight);
     addAndMakeVisible (syncOutputLabel);
     syncOutputCombo.setTooltip (
         "Pick a MIDI output port to send Clock + Start/Stop to. "
-        "Used when Focal acts as the master. Emission only fires "
+        "Used when Dusk Studio acts as the master. Emission only fires "
         "while the 'Emit clock' toggle is on.");
     syncOutputCombo.onChange = [this] { applySyncOutputChange(); };
     addAndMakeVisible (syncOutputCombo);
@@ -131,9 +131,9 @@ AudioSettingsPanel::AudioSettingsPanel (juce::AudioDeviceManager& dm,
         session.syncOutputEmitClock.load (std::memory_order_relaxed),
         juce::dontSendNotification);
     syncEmitClockToggle.setTooltip (
-        "When on, Focal emits 24-PPQN MIDI Clock + Start/Stop "
+        "When on, Dusk Studio emits 24-PPQN MIDI Clock + Start/Stop "
         "transport bytes to the chosen output. Drum machines and "
-        "external sequencers will follow Focal's tempo + transport.");
+        "external sequencers will follow Dusk Studio's tempo + transport.");
     syncEmitClockToggle.onClick = [this]
     {
         session.syncOutputEmitClock.store (
@@ -147,7 +147,7 @@ AudioSettingsPanel::AudioSettingsPanel (juce::AudioDeviceManager& dm,
         session.externalTimeCodeChasesTransport.load (std::memory_order_relaxed),
         juce::dontSendNotification);
     mtcChaseToggle.setTooltip (
-        "When on, Focal's transport follows incoming MTC absolute time. "
+        "When on, Dusk Studio's transport follows incoming MTC absolute time. "
         "Initial lock on the master's Play edge; freewheels within ~2 "
         "frames of drift; soft re-locates on sustained drift. Off = "
         "MTC time displayed only, transport stays under your control.");
@@ -164,9 +164,9 @@ AudioSettingsPanel::AudioSettingsPanel (juce::AudioDeviceManager& dm,
         session.syncOutputEmitTimeCode.load (std::memory_order_relaxed),
         juce::dontSendNotification);
     mtcEmitToggle.setTooltip (
-        "When on, Focal emits MTC quarter-frames + full-frame sysex "
+        "When on, Dusk Studio emits MTC quarter-frames + full-frame sysex "
         "to the chosen Sync Output. Video editors and outboard tape "
-        "machines will chase Focal's absolute playback position.");
+        "machines will chase Dusk Studio's absolute playback position.");
     mtcEmitToggle.onClick = [this]
     {
         session.syncOutputEmitTimeCode.store (

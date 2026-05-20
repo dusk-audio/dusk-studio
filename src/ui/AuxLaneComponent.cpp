@@ -132,7 +132,7 @@ public:
             g.setColour (sendOn ? juce::Colours::white : juce::Colour (0xff707078));
             g.drawText (juce::String (i + 1), idxArea, juce::Justification::centred, false);
 
-            // Track name. Default Focal sessions name tracks "1".."16" -
+            // Track name. Default Dusk Studio sessions name tracks "1".."16" -
             // the colour swatch on the left already shows the index, so
             // promote those defaults to "Trk N" to avoid printing the same
             // digit twice. User-renamed tracks pass through verbatim.

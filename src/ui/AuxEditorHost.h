@@ -7,7 +7,7 @@ namespace duskstudio
 {
 // Borderless X11 top-level that hosts a plugin's AudioProcessorEditor
 // visually attached to an AUX lane's slot rect. The host is a separate
-// X11 toplevel because the Focal main window on Linux is a wl_surface
+// X11 toplevel because the Dusk Studio main window on Linux is a wl_surface
 // and X11 plugin editors (VST3, LV2) can't reparent into a Wayland
 // surface. Tracking the parent's screen rect + hiding when the AUX tab
 // isn't visible reads to the user as embedded panel hosting - no

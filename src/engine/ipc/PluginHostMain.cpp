@@ -1,5 +1,5 @@
 // dusk-studio-plugin-host - the child binary that owns one out-of-process VST3
-// (or LV2) instance on behalf of Focal's main process. Two modes:
+// (or LV2) instance on behalf of Dusk Studio's main process. Two modes:
 //
 //   --ipc-stub  : echo input -> output, no JUCE plugin. Exists so the
 //                 IPC self-test can validate shm + futex + fork/exec

@@ -24,7 +24,7 @@ void writeRaw (const juce::File& target, const juce::String& contents)
 }
 } // namespace
 
-// The most painful Patreon support ticket is "Focal crashed on session
+// The most painful Patreon support ticket is "Dusk Studio crashed on session
 // load and now I can't open my project." These tests pin the contract
 // that a corrupt session.json fails LOADING (returns false or leaves
 // defaults) rather than crashing the host process. A few seconds of

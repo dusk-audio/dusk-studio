@@ -2952,7 +2952,7 @@ void TapeStrip::paint (juce::Graphics& g)
     // Drawn last so it sits on top of every region / playhead / marker.
     if (rubberBandActive && ! rubberBand.isEmpty())
     {
-        const auto highlight = juce::Colour (0xff70b0e0);   // Focal accent blue
+        const auto highlight = juce::Colour (0xff70b0e0);   // Dusk Studio accent blue
         g.setColour (highlight.withAlpha (0.15f));
         g.fillRect (rubberBand);
         g.setColour (highlight.withAlpha (0.85f));

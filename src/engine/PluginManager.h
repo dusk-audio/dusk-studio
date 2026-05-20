@@ -51,9 +51,9 @@ public:
     bool isOopEnabled() const noexcept       { return oopEnabled; }
 
     // Path to the dusk-studio-plugin-host child binary. Computed lazily from
-    // the running Focal executable's own location: the binary lives at
+    // the running Dusk Studio executable's own location: the binary lives at
     // `<bundle dir>/dusk-studio-plugin-host` on Linux (CMake's
-    // RUNTIME_OUTPUT_DIRECTORY = $<TARGET_FILE_DIR:Focal>). Returns an
+    // RUNTIME_OUTPUT_DIRECTORY = $<TARGET_FILE_DIR:Dusk Studio>). Returns an
     // empty string when OOP is unavailable on this platform.
     juce::String getHostExecutablePath() const;
 
@@ -103,8 +103,8 @@ public:
                            juce::String& errorMessage);
 
     // Cache file lives under juce::File::userApplicationDataDirectory:
-    //   ~/.config/Focal/plugin-cache.xml on Linux,
-    //   ~/Library/Application Support/Focal/plugin-cache.xml on macOS.
+    //   ~/.config/Dusk Studio/plugin-cache.xml on Linux,
+    //   ~/Library/Application Support/Dusk Studio/plugin-cache.xml on macOS.
     // Saved every time a plugin is successfully added to knownPluginList;
     // loaded (best-effort) at construction. Invalid entries are tolerated -
     // JUCE's KnownPluginList::recreateFromXml silently skips bad ones.

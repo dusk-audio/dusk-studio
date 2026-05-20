@@ -897,7 +897,7 @@ void TransportBar::refreshButtonStates()
     //   "MTC" + amber  — incoming MTC quarter-frames decoded (master is
     //                    driving absolute time)
     //   "EXT" + amber  — incoming MIDI Clock producing a stable BPM
-    //   "BPM" + grey   — Focal-internal tempo
+    //   "BPM" + grey   — Dusk Studio-internal tempo
     // MTC takes priority over EXT because MTC implies a richer
     // master-slave relationship; if both flow, the user cares more
     // about the absolute-time chase.

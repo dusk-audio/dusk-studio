@@ -373,7 +373,7 @@ juce::String AudioPipelineSelfTest::testMasterTapeAddsGain()
     // Known TapeMachine donor issue: at high drive (+6..+12 dB) autoComp
     // undercompensates by 2-4 dB. Formula constants in PluginProcessor.cpp
     // (compressionCompensation) need re-tuning. Tracked as donor-side
-    // punch-list, not a Focal regression.
+    // punch-list, not a Dusk Studio regression.
     prepareCleanState();
     session.master().tapeEnabled.store (true,  std::memory_order_relaxed);
     session.master().tapeHQ.store      (false, std::memory_order_relaxed);
@@ -826,7 +826,7 @@ juce::String AudioPipelineSelfTest::probeUMC1820AlsaFormat()
         {
             out << juce::String::formatted (
                 "  %s\n      OPENED rate=%.0f buf=%d in=%d out=%d "
-                "(see [Focal/JUCE-ALSA] line in stderr for format/access)\n",
+                "(see [Dusk Studio/JUCE-ALSA] line in stderr for format/access)\n",
                 name.toRawUTF8(),
                 dev->getCurrentSampleRate(),
                 dev->getCurrentBufferSizeSamples(),
@@ -894,7 +894,7 @@ juce::String AudioPipelineSelfTest::testBackendsOpenCleanly()
 juce::String AudioPipelineSelfTest::runAll()
 {
     juce::StringArray report;
-    report.add ("=== Focal Audio Pipeline Self-Test ===");
+    report.add ("=== Dusk Studio Audio Pipeline Self-Test ===");
     report.add ("Time: " + juce::Time::getCurrentTime().toString (true, true));
     {
         const auto& setup = deviceManager.getAudioDeviceSetup();
@@ -925,7 +925,7 @@ juce::String AudioPipelineSelfTest::runAll()
     report.add ("");
 
    #if defined(__linux__)
-    // Pure-logic self-test for the Focal-owned ALSA backend. Covers the
+    // Pure-logic self-test for the Dusk Studio-owned ALSA backend. Covers the
     // converter math, channel-mask routing, hw:CARD,DEV parsing, and the
     // periods-knob clamping. Real-device opens of the backend are
     // exercised by the backend cycle below alongside the JUCE-stock
@@ -1079,7 +1079,7 @@ juce::String AudioPipelineSelfTest::runPerfBenchmark (const juce::String& label,
 juce::String AudioPipelineSelfTest::runPerfSuite()
 {
     juce::StringArray report;
-    report.add ("=== Focal Engine Perf Benchmark ===");
+    report.add ("=== Dusk Studio Engine Perf Benchmark ===");
     report.add (juce::String ("Time: ") + juce::Time::getCurrentTime().toString (true, true));
     report.add ("Measures pure-engine callback wall time across configs.");
     report.add ("All callbacks driven directly via audioDeviceIOCallbackWithContext;");

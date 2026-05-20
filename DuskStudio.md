@@ -1,8 +1,8 @@
-# **Focal: Digital Portastudio DAW — Implementation Prompt**
+# **Dusk Studio: Digital Portastudio DAW — Implementation Prompt**
 
 ## **What You're Building**
 
-Focal is a deliberately constrained DAW for everyone, designed for ADHD users who experience option paralysis in full-featured DAWs. It looks and feels like operating a high-end analog portastudio (think Tascam Model 2400 / DP-24), but with the non-destructive convenience of digital. The product philosophy: **if it wouldn't exist as a physical control on a console, it probably doesn't belong here.**
+Dusk Studio is a deliberately constrained DAW for everyone, designed for ADHD users who experience option paralysis in full-featured DAWs. It looks and feels like operating a high-end analog portastudio (think Tascam Model 2400 / DP-24), but with the non-destructive convenience of digital. The product philosophy: **if it wouldn't exist as a physical control on a console, it probably doesn't belong here.**
 
 The target user can record, mix, and master a complete song without ever leaving this application. No unlimited tracks. No plugin chains. No menu diving. Everything is visible, tactile, and committed.
 
@@ -161,7 +161,7 @@ A simple click generator produces accent + beat samples at the session BPM and t
 
 #### **Cue / headphone bus**
 
-Focal's master output doubles as the headphone feed. The assumed Linux setup is one output device routing to both monitors and headphones (or the user's audio interface mirroring monitor and headphone outs). A separate cue bus with independent routing is **out of scope for v1**. Users with multi-output interfaces assign the master to whichever physical output drives the headphones via the audio device settings dialog.
+Dusk Studio's master output doubles as the headphone feed. The assumed Linux setup is one output device routing to both monitors and headphones (or the user's audio interface mirroring monitor and headphone outs). A separate cue bus with independent routing is **out of scope for v1**. Users with multi-output interfaces assign the master to whichever physical output drives the headphones via the audio device settings dialog.
 
 ### **MIDI Piano Roll (modal overlay)**
 
@@ -446,7 +446,7 @@ This prevents the common foot-gun of pressing RECORD and producing no recording.
 
 ### **4. Channel Strip DSP (`src/dsp/`)**
 
-Extract DSP processing classes from existing Dusk Audio plugins. These are compiled directly into Focal — no plugin hosting overhead:
+Extract DSP processing classes from existing Dusk Audio plugins. These are compiled directly into Dusk Studio — no plugin hosting overhead:
 
 ```
 class ChannelStrip {
@@ -565,7 +565,7 @@ These rules are implemented in the region edit code that computes punch boundari
 **Plugin scanning:**
 
 * First launch: scan standard Linux VST3/LV2 paths (`~/.vst3/`, `/usr/lib/vst3/`, `/usr/lib/lv2/`, etc.)
-* Cache results to `~/.config/Focal/plugin-cache.json`
+* Cache results to `~/.config/Dusk Studio/plugin-cache.json`
 * Separate instrument plugins from effects in the UI (instruments show for MIDI channel slots, effects show for send slots)
 * Scan in a background thread — never block the UI. Show a progress indicator on first launch.
 * Crash-resistant scanning: fork a child process per plugin to scan, so a crashing plugin doesn't take down the app. JUCE's `PluginListComponent` does this.
@@ -591,7 +591,7 @@ These rules are implemented in the region edit code that computes punch boundari
 
 **Plugin latency:**
 
-* Instrument plugins may report latency. Focal must compensate: offset the MIDI event dispatch by the plugin's reported latency so that the audio output aligns with the timeline. This is handled in the MIDI engine, not the channel strip. (See "Plugin-latency-aware look-ahead" under MIDI Playback above for the read-ahead horizon implications.)
+* Instrument plugins may report latency. Dusk Studio must compensate: offset the MIDI event dispatch by the plugin's reported latency so that the audio output aligns with the timeline. This is handled in the MIDI engine, not the channel strip. (See "Plugin-latency-aware look-ahead" under MIDI Playback above for the read-ahead horizon implications.)
 
 #### **5d. MIDI Channel Strip UI Differences**
 
@@ -772,7 +772,7 @@ Thinning parameters are **hard-coded constants**, not user settings: `kAutomatio
 
 ### **9. Bounce / Export (`src/engine/`)**
 
-Bouncing in Focal spans three modes, all reached from a single "Bounce / Export" dialog (opened by the transport-bar Bounce button or `Cmd/Ctrl + B`). One dialog, three radio-selected modes — no menu diving.
+Bouncing in Dusk Studio spans three modes, all reached from a single "Bounce / Export" dialog (opened by the transport-bar Bounce button or `Cmd/Ctrl + B`). One dialog, three radio-selected modes — no menu diving.
 
 #### **9a. Modes**
 
@@ -827,7 +827,7 @@ While a bounce is running:
 ## **Project Structure**
 
 ```
-Focal/
+Dusk Studio/
 ├── CMakeLists.txt
 ├── CLAUDE.md                         # Project-specific instructions
 ├── src/
@@ -917,7 +917,7 @@ Build a JUCE standalone app that:
 Add to Phase 1a:
 
 * `AudioPluginFormatManager` + `KnownPluginList` infrastructure
-* Background, process-isolated plugin scan on first launch (cached to `~/.config/Focal/plugin-cache.json`)
+* Background, process-isolated plugin scan on first launch (cached to `~/.config/Dusk Studio/plugin-cache.json`)
 * Plugin selection UI on the two send-bus strips (sorted list, no search)
 * Single `PluginSlot` per send bus with the time-budget bypass mechanism
 * Floating plugin editor window
@@ -999,7 +999,7 @@ Add to Phase 3:
 
 ## **DSP Extraction Notes**
 
-The existing Dusk Audio plugins are JUCE `AudioProcessor` subclasses with editors. For Focal, you need the **DSP cores only**, not the plugin wrappers or UIs:
+The existing Dusk Audio plugins are JUCE `AudioProcessor` subclasses with editors. For Dusk Studio, you need the **DSP cores only**, not the plugin wrappers or UIs:
 
 * **4K EQ**: extract the 4-band filter processing (likely IIR biquads with oversampling). The parameter ranges and filter types define the character.
 * **Multi-Comp**: extract the compressor DSP with its FET and Opto detector modes. You need the detection, gain reduction, and makeup gain logic.
@@ -1017,7 +1017,7 @@ void setParameter(ParameterID id, float value);
 
 ### **Shared DSP cores (single source of truth)**
 
-The reusable DSP cores live in a new subfolder of the existing Dusk Audio plugins repo: `/home/marc/projects/plugins/plugins/shared/dsp-cores/`. Both Focal and the existing Dusk Audio plugins depend on those headers. This keeps a single source of truth — bug fixes propagate to both consumers without manual porting. Cores in scope: 4-band EQ filter chain, dual-mode (FET/Opto) compressor, Pultec tube EQ, Jiles-Atherton tape saturation, console saturation. The `shared/AnalogEmulation/` library is already header-only and parameter-agnostic; it is included as-is. Where a donor plugin's DSP is currently bound to APVTS atomic pointers (notably 4K EQ and the Multi-Comp mode classes), the extraction step decouples that into a parameter-struct API before lifting into `dsp-cores/`.
+The reusable DSP cores live in a new subfolder of the existing Dusk Audio plugins repo: `/home/marc/projects/plugins/plugins/shared/dsp-cores/`. Both Dusk Studio and the existing Dusk Audio plugins depend on those headers. This keeps a single source of truth — bug fixes propagate to both consumers without manual porting. Cores in scope: 4-band EQ filter chain, dual-mode (FET/Opto) compressor, Pultec tube EQ, Jiles-Atherton tape saturation, console saturation. The `shared/AnalogEmulation/` library is already header-only and parameter-agnostic; it is included as-is. Where a donor plugin's DSP is currently bound to APVTS atomic pointers (notably 4K EQ and the Multi-Comp mode classes), the extraction step decouples that into a parameter-struct API before lifting into `dsp-cores/`.
 
 ## **Technical Decisions**
 

@@ -7,7 +7,7 @@ namespace duskstudio
 {
 BounceEngine::BounceEngine (AudioEngine& e, Session& s,
                               juce::AudioDeviceManager& dm) noexcept
-    : juce::Thread ("Focal bounce"), engine (e), session (s), deviceManager (dm)
+    : juce::Thread ("Dusk Studio bounce"), engine (e), session (s), deviceManager (dm)
 {}
 
 BounceEngine::~BounceEngine()

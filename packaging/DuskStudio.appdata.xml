@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>audio.dusk.Focal</id>
+  <id>audio.dusk.studio</id>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-or-later</project_license>
-  <name>Focal</name>
+  <name>Dusk Studio</name>
   <summary>Portastudio-style 16-channel DAW</summary>
   <description>
     <p>
-      Focal is a deliberately constrained, portastudio-style digital audio
+      Dusk Studio is a deliberately constrained, portastudio-style digital audio
       workstation. Fixed 16-channel topology with a fixed signal chain
       (HPF, 4-band EQ, FET/Opto compressor, sends, pan, mute/solo,
       fader), four aux buses, and a mastering chain with Pultec EQ, bus
@@ -20,12 +20,12 @@
       bus reordering, no waveform-level editing.
     </p>
   </description>
-  <launchable type="desktop-id">audio.dusk.Focal.desktop</launchable>
+  <launchable type="desktop-id">audio.dusk.studio.desktop</launchable>
   <provides>
-    <binary>Focal</binary>
+    <binary>Dusk Studio</binary>
     <mediatype>application/x-dusk-studio-session</mediatype>
   </provides>
-  <url type="homepage">https://github.com/dusk-audio/Focal</url>
+  <url type="homepage">https://github.com/dusk-audio/Dusk Studio</url>
   <developer_name>Dusk Audio</developer_name>
   <content_rating type="oars-1.1"/>
 </component>

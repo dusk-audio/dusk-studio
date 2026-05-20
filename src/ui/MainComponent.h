@@ -43,7 +43,7 @@ public:
 
     // App-quit gate. Called from the window's close button. If there are
     // unsaved changes since the last manual save (autosave file is newer
-    // than session.json), shows a Focal-styled modal with Save / Don't
+    // than session.json), shows a Dusk Studio-styled modal with Save / Don't
     // Save / Cancel; otherwise quits immediately. Industry-standard
     // dirty-only prompt - matches Logic / Pro Tools / Bitwig.
     void requestQuit();
@@ -278,7 +278,7 @@ private:
     // Piano-roll overlay - constructed on demand when the user clicks a
     // MidiRegion in the tape strip; dismissed by clicking the dim backdrop
     // or pressing Esc. The roll is the single visible exception to "no
-    // tabs / no hidden panels" per Focal.md (the spec calls it out).
+    // tabs / no hidden panels" per Dusk Studio.md (the spec calls it out).
     // Tracks which region is currently open so the tape-strip click handler
     // can toggle (same region) vs swap (different region).
     std::unique_ptr<class DimOverlay>          pianoRollDim;

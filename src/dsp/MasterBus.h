@@ -76,11 +76,11 @@ private:
 
     int preparedBlockSize    = 0;
     int currentOxFactor      = 1;     // 1, 2 or 4 - set in prepare(); drives the
-                                       // Focal-side oversampler around (TubeEQ +
+                                       // Dusk Studio-side oversampler around (TubeEQ +
                                        // UC) and the TapeMachine "oversampling"
                                        // APVTS choice atom. UC's internal toggle
                                        // is OFF on the master bus because the
-                                       // Focal-side wrap handles oversampling.
+                                       // Dusk Studio-side wrap handles oversampling.
 
     // Master oversampler around (TubeEQ + bus comp). Both stages have
     // saturation (tube + UC) that aliases at native rate; running them at

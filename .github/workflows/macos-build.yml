@@ -9,14 +9,14 @@ on:
 
 jobs:
   build:
-    name: Build Focal (Apple Clang Release, macOS 14)
+    name: Build Dusk Studio (Apple Clang Release, macOS 14)
     # macos-14 = Apple Silicon (arm64) runner, Sonoma. macos-13 stays
     # available if we ever need an Intel build leg; for now Apple Silicon
     # is the dev target.
     runs-on: macos-14
 
     steps:
-      - name: Checkout Focal
+      - name: Checkout Dusk Studio
         uses: actions/checkout@v4
 
       - name: Clone JUCE 8.0.4 (upstream)
@@ -54,13 +54,13 @@ jobs:
         # cleanly before the AudioEngine spins up; macOS GH runners
         # have no audio device but the early-exit path doesn't need one.
         run: |
-          ./build/DuskStudio_artefacts/Release/Focal.app/Contents/MacOS/Focal --version
+          ./build/DuskStudio_artefacts/Release/DuskStudio.app/Contents/MacOS/DuskStudio --version
 
-      - name: Upload Focal.app (per-run artifact)
+      - name: Upload Dusk Studio.app (per-run artifact)
         uses: actions/upload-artifact@v4
         with:
-          name: Focal-macos-arm64
-          path: build/DuskStudio_artefacts/Release/Focal.app
+          name: DuskStudio-macos-arm64
+          path: build/DuskStudio_artefacts/Release/DuskStudio.app
           retention-days: 14
           if-no-files-found: error
 
@@ -70,7 +70,7 @@ jobs:
     needs: build
 
     steps:
-      - name: Checkout Focal
+      - name: Checkout Dusk Studio
         uses: actions/checkout@v4
 
       - name: Clone JUCE 8.0.4 (upstream)

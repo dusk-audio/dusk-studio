@@ -88,7 +88,7 @@ public:
         return midiOutputDevices;
     }
 
-    // Synthetic "Virtual Keyboard (Focal)" entry appended to midiInputDevices
+    // Synthetic "Virtual Keyboard (Dusk Studio)" entry appended to midiInputDevices
     // by rebuildMidiInputBank. The VirtualKeyboardComponent pushes typed-note
     // events into this collector via addMessageToQueue (lock-free); the audio
     // thread drains it through the same per-input → per-track filter as real

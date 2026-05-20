@@ -246,7 +246,7 @@ AudioImportResult importAudio (const AudioImportRequest& req)
 
 namespace
 {
-// Rescale a tick value from one PPQ resolution to Focal's canonical
+// Rescale a tick value from one PPQ resolution to Dusk Studio's canonical
 // kMidiTicksPerQuarter. Rounds rather than truncates so the cumulative
 // drift across a long region stays bounded.
 juce::int64 rescaleTicks (juce::int64 srcTicks, int srcPPQ) noexcept
@@ -307,7 +307,7 @@ MidiImportResult importMidi (const MidiImportRequest& req)
     if (isSmpte)
         mf.convertTimestampTicksToSeconds();
 
-    auto timestampToFocalTicks = [&] (double rawTime) -> juce::int64
+    auto timestampToProjectTicks = [&] (double rawTime) -> juce::int64
     {
         if (isSmpte)
         {
@@ -348,7 +348,7 @@ MidiImportResult importMidi (const MidiImportRequest& req)
             const auto* ev = track->getEventPointer (i);
             const auto& msg = ev->message;
 
-            const auto tick = timestampToFocalTicks (msg.getTimeStamp());
+            const auto tick = timestampToProjectTicks (msg.getTimeStamp());
             if (tick > maxTick) maxTick = tick;
 
             if (msg.isNoteOn())

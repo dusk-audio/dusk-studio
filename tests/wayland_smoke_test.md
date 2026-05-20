@@ -9,7 +9,7 @@ libmutter:ERROR:../src/core/window.c:1576:meta_window_unmanage:
 assertion failed: (window->display->focus_window != window)
 ```
 
-Focal hardens every top-level destruction site by calling
+Dusk Studio hardens every top-level destruction site by calling
 `duskstudio::platform::prepareForTopLevelDestruction(...)` (transfer
 keyboard focus + flush windowing system) before the destruct.
 This checklist exercises every site so a regression is caught before
@@ -26,7 +26,7 @@ gnome-shell --nested --wayland
 
 # Or: Xephyr if you only need an X server
 Xephyr -screen 1920x1080 :2 &
-DISPLAY=:2 ./Focal
+DISPLAY=:2 ./Dusk Studio
 ```
 
 ## Pre-flight
@@ -47,7 +47,7 @@ close it. Repeat 50 times. Watch for any GNOME freeze / logout.
 
 | # | Window type                       | How to open                                   | How to close                                |
 |---|-----------------------------------|-----------------------------------------------|---------------------------------------------|
-| 1 | Main window (full app lifecycle)  | Launch `./Focal`                              | Click X, choose "Don't Save" if prompted    |
+| 1 | Main window (full app lifecycle)  | Launch `./Dusk Studio`                              | Click X, choose "Don't Save" if prompted    |
 | 2 | Plugin editor (channel strip)     | Click the "+ Plugin" slot, pick any VST3      | Click X on the editor window                |
 | 3 | Plugin editor (aux pop-out)       | Open AUX stage, add plugin, click pop-out btn | Click X on the popout window                |
 | 4 | Audio settings panel              | Menu → Settings → Audio                       | Click outside / Esc                         |
@@ -73,10 +73,10 @@ journalctl --user -b | grep meta_window_unmanage
 # Must list no gnome-shell coredumps from the test run.
 coredumpctl list --since="-30 minutes" gnome-shell
 
-# Same for Focal itself — destruction-order or use-after-free regressions
-# in plugin teardown surface as Focal coredumps with VST3PluginInstance
+# Same for Dusk Studio itself — destruction-order or use-after-free regressions
+# in plugin teardown surface as Dusk Studio coredumps with VST3PluginInstance
 # at the bottom of the stack.
-coredumpctl list --since="-30 minutes" Focal
+coredumpctl list --since="-30 minutes" Dusk Studio
 ```
 
 If any of those produce output, capture:
@@ -88,7 +88,7 @@ coredumpctl debug <pid>
 # (gdb) info locals
 ```
 
-…and the relevant `[Focal/shutdown] phase N: …` lines from Focal's
+…and the relevant `[Dusk Studio/shutdown] phase N: …` lines from Dusk Studio's
 stderr. The combination of phase marker + crash frame narrows the
 regression to a specific phase of the staged shutdown.
 

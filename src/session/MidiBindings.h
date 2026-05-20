@@ -6,7 +6,7 @@
 namespace duskstudio
 {
 // MIDI controller infrastructure. Lets the user bind an external CC or note
-// to a target inside Focal (transport, fader, mute, solo, arm, master fader)
+// to a target inside Dusk Studio (transport, fader, mute, solo, arm, master fader)
 // via a "MIDI Learn" workflow. Bindings persist in the session JSON so a
 // user's pedal / fader-bank setup travels with the project.
 //

@@ -1,17 +1,17 @@
-Focal — third-party license inventory
+Dusk Studio — third-party license inventory
 =====================================
 
-Focal itself is GPL-3.0-or-later (see LICENSE). This file lists every
+Dusk Studio itself is GPL-3.0-or-later (see LICENSE). This file lists every
 external component bundled or vendored into the build, the license it
 ships under, and the path where it lives. Update whenever a new
 dependency is added so the legal surface stays auditable.
 
 PROJECT LICENSE
 ---------------
-Focal source code: GPL-3.0-or-later (./LICENSE)
+Dusk Studio source code: GPL-3.0-or-later (./LICENSE)
 
 
-VENDORED DEPENDENCIES (compiled into the Focal binary)
+VENDORED DEPENDENCIES (compiled into the Dusk Studio binary)
 ------------------------------------------------------
 
 JUCE (audio framework)
@@ -22,7 +22,7 @@ JUCE (audio framework)
   Upstream : https://juce.com/
 
 Dusk Audio plugins (donor DSP cores)
-  License  : GPL-3.0-or-later (matches Focal)
+  License  : GPL-3.0-or-later (matches Dusk Studio)
   Path     : ../plugins-main/plugins/  (Linux worktree)
              ../plugins/plugins/        (macOS/Windows sibling)
   Components used:
@@ -32,7 +32,7 @@ Dusk Audio plugins (donor DSP cores)
     - TapeMachine  (full tape emulation)
     - shared/AnalogEmulation (TubeEmulation, TransformerEmulation, etc.)
 
-Catch2 (test framework — TEST BUILDS ONLY, not bundled in Focal)
+Catch2 (test framework — TEST BUILDS ONLY, not bundled in Dusk Studio)
   Version  : v3.5.4
   License  : Boost Software License 1.0
   Path     : build-tests/_deps/catch2-src/ (FetchContent at configure time)
@@ -47,7 +47,7 @@ Steinberg ASIO SDK (Windows only, optional)
   Path     : fetched into RUNNER_TEMP at CI time, not in tree
   Notes    : Required only for ASIO driver support on Windows.
              Distribution rights covered by Steinberg's SDK terms;
-             Focal builds against the headers but does NOT redistribute
+             Dusk Studio builds against the headers but does NOT redistribute
              any portion of the SDK in source or binary form.
   Upstream : https://www.steinberg.net/developers/
 
@@ -56,7 +56,7 @@ WHAT THIS MEANS FOR YOU
 -----------------------
 
 Self-build from source : All components compatible with GPL-3.0.
-                          You can build and use Focal freely.
+                          You can build and use Dusk Studio freely.
 Paid Patreon binaries  : You are paying for support, packaging, and
                           ongoing development access. The source is
                           still GPL — your binary's compliance with the

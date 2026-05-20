@@ -1,13 +1,13 @@
-# Focal — User Guide
+# Dusk Studio — User Guide
 
-Focal is a 16-channel portastudio-style DAW for Linux (macOS + Windows
+Dusk Studio is a 16-channel portastudio-style DAW for Linux (macOS + Windows
 in beta). Deliberately constrained: fixed signal chain, no plugin
 chains on channels, no waveform-level editing. Built to finish songs
 instead of fiddling with them.
 
 ## Quick start: record your first track
 
-1. **Launch Focal.** Empty session opens with 16 channel strips on the
+1. **Launch Dusk Studio.** Empty session opens with 16 channel strips on the
    mixer view.
 2. **Pick an audio device.** Open the Audio Device panel (top-left
    gear icon or `Audio` menu). Choose your interface, sample rate,
@@ -78,10 +78,10 @@ controller via **MIDI Learn**.
 - **Increase buffer size** in Audio Device panel. 128 → 256 → 512.
   Each step doubles available headroom at the cost of ~5 ms latency.
 - **Bypass heavy plugins** with the `BYP` button on each insert slot.
-  Focal auto-bypasses plugins that exceed their CPU budget for several
+  Dusk Studio auto-bypasses plugins that exceed their CPU budget for several
   consecutive blocks (look for `(stalled)` on the slot label).
 - **Out-of-process plugin host** isolates plugin CPU spikes from
-  Focal's audio thread. Set `DUSKSTUDIO_USE_OOP_PLUGINS=1` before launch.
+  Dusk Studio's audio thread. Set `DUSKSTUDIO_USE_OOP_PLUGINS=1` before launch.
   Currently Linux-only; macOS and Windows ports land in 1.0.
 
 ### "Plugin failed - offline"
@@ -95,32 +95,32 @@ clear the slot if you don't plan to reinstall.
 
 ### Device not detected
 
-- **Linux + PipeWire**: Focal uses ALSA directly by default (lower
+- **Linux + PipeWire**: Dusk Studio uses ALSA directly by default (lower
   latency, no PipeWire graph hops). Force JACK via the dropdown if
   your interface is owned by PipeWire's JACK backend.
-- **USB hot-unplug** during recording: Focal stops the transport and
+- **USB hot-unplug** during recording: Dusk Studio stops the transport and
   finalises the in-flight WAV. If a take is incomplete, check the
   `Recording errors` dialog at the next stop — it lists per-track
   failures with byte counts.
 - **No outputs after device change**: open Audio Device panel and
-  re-pick the output. Focal sometimes shows the prior device's last
+  re-pick the output. Dusk Studio sometimes shows the prior device's last
   output config until the new device's channel mask is published.
 
 ### Where logs and crash reports live
 
 | OS | Path |
 |----|------|
-| Linux | `~/.local/share/Focal/log/dusk-studio-YYYYMMDD.log` |
-| macOS | `~/Library/Application Support/Focal/log/dusk-studio-YYYYMMDD.log` |
-| Windows | `%APPDATA%/Focal/log/dusk-studio-YYYYMMDD.log` |
+| Linux | `~/.local/share/Dusk Studio/log/dusk-studio-YYYYMMDD.log` |
+| macOS | `~/Library/Application Support/Dusk Studio/log/dusk-studio-YYYYMMDD.log` |
+| Windows | `%APPDATA%/Dusk Studio/log/dusk-studio-YYYYMMDD.log` |
 
 Crash reports under `crashes/` next to the log dir. **For Patreon
-support, paste the output of `Focal --version` plus the most recent
+support, paste the output of `Dusk Studio --version` plus the most recent
 log file into your DM.**
 
 ## The seven hard constraints
 
-By design — these will never change. If they bother you, Focal is the
+By design — these will never change. If they bother you, Dusk Studio is the
 wrong tool:
 
 1. **16 channels.** Two banks of 8.

@@ -21,7 +21,7 @@ constexpr FrameRateInfo kRates[4] =
 };
 
 // Convert (HH, MM, SS, FF, rate) to an absolute frame count from
-// 00:00:00:00 — the model the rest of Focal sees. For non-drop rates
+// 00:00:00:00 — the model the rest of Dusk Studio sees. For non-drop rates
 // this is the obvious h*nominalFps*3600 + m*nominalFps*60 + s*nominalFps + f.
 // For 29.97 DF we COUNT the drop-frame skips: every minute except every
 // 10th drops 2 frame indices (00 and 01) — the wall-clock frame count

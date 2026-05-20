@@ -16,7 +16,7 @@
   // multi-comp plugin: full feature set (sidechain HP, true-peak detector,
   // transient shaper, lookahead, stereo linking, auto-makeup, bypass-fade
   // crossfader). Donor's internal oversampling is DISABLED at prepare time
-  // because Focal wraps the strip in its own 4× oversampler — running both
+  // because Dusk Studio wraps the strip in its own 4× oversampler — running both
   // would double-OS.
   #include "UniversalCompressor.h"    // multi-comp
 #endif
@@ -204,7 +204,7 @@ private:
     // set; matches standalone plugin behavior). One instance per channel.
     // Per-mode parameter pointers cached in bindCompParams() to avoid string
     // lookups on the audio thread. Donor's internal oversampling is disabled
-    // in prepare() because Focal's strip-level wrapper already oversamples.
+    // in prepare() because Dusk Studio's strip-level wrapper already oversamples.
     UniversalCompressor compressor;
     juce::MidiBuffer compMidiScratch;          // unused but required by processBlock signature
 

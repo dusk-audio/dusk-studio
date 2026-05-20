@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
   <mime-type type="application/x-dusk-studio-session">
-    <comment>Focal session</comment>
+    <comment>Dusk Studio session</comment>
     <glob pattern="session.json" weight="20"/>
     <generic-icon name="audio-x-generic"/>
   </mime-type>

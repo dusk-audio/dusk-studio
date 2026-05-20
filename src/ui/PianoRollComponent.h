@@ -29,8 +29,8 @@ class EditModeToolbar;
 //     mutations on transport-stopped, or (b) introduce a swap-load
 //     atomic-pointer pattern. Not done yet.
 //
-// The roll is the ONE visible exception to Focal's "everything visible"
-// rule (per Focal.md): a modal overlay on top of the tape-strip, dismissed
+// The roll is the ONE visible exception to Dusk Studio's "everything visible"
+// rule (per Dusk Studio.md): a modal overlay on top of the tape-strip, dismissed
 // with Esc or by clicking outside. The overlay-host is parent code; this
 // component just paints the keyboard + note grid and handles edit input.
 //

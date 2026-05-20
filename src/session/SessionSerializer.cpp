@@ -19,8 +19,8 @@ namespace
 // the meaning of an existing one. Adding optional fields that default
 // sensibly when absent does NOT require a bump — the load path
 // gracefully ignores unknown keys.
-// Loader rejects sessions with version > kFormatVersion (newer Focal
-// can read older files via migrateSession; older Focal refusing
+// Loader rejects sessions with version > kFormatVersion (newer Dusk Studio
+// can read older files via migrateSession; older Dusk Studio refusing
 // newer files is safer than silently dropping fields).
 constexpr int kFormatVersion = 1;
 
@@ -45,7 +45,7 @@ static bool migrateSession (juce::var& root, int from)
             // case 1: do_v1_to_v2 (root); ++v; break;
             default:
                 std::fprintf (stderr,
-                              "[Focal/SessionSerializer] no migrator from v%d to v%d\n",
+                              "[Dusk Studio/SessionSerializer] no migrator from v%d to v%d\n",
                               v, v + 1);
                 return false;
         }
@@ -54,7 +54,7 @@ static bool migrateSession (juce::var& root, int from)
         if (v == before)
         {
             std::fprintf (stderr,
-                          "[Focal/SessionSerializer] migrator at v%d failed to advance "
+                          "[Dusk Studio/SessionSerializer] migrator at v%d failed to advance "
                           "version — aborting to avoid infinite loop\n", v);
             return false;
         }
@@ -1078,7 +1078,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
     // Format version gate. Missing key (pre-versioning sessions) is
     // treated as v1 — the format was effectively stable at v1 when the
     // version field landed. Future-versioned sessions are rejected up
-    // front rather than partial-loaded; downgrading Focal to read a
+    // front rather than partial-loaded; downgrading Dusk Studio to read a
     // session saved by a newer build silently dropping new state is
     // the worst-case bug class.
     const int fileVersion = root.hasProperty ("version")
@@ -1087,9 +1087,9 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
     if (fileVersion > kFormatVersion)
     {
         std::fprintf (stderr,
-                      "[Focal/SessionSerializer] session.json version %d is newer "
+                      "[Dusk Studio/SessionSerializer] session.json version %d is newer "
                       "than this build's max supported version %d — refusing to "
-                      "load. Upgrade Focal.\n",
+                      "load. Upgrade Dusk Studio.\n",
                       fileVersion, kFormatVersion);
         return false;
     }

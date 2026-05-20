@@ -10,7 +10,7 @@ namespace duskstudio::ipc
 // stdout, returns 0 on pass / non-zero on fail.
 //
 // `hostExecutablePath` should be the path to the dusk-studio-plugin-host
-// binary. The Focal binary's sibling file is the production answer;
+// binary. The Dusk Studio binary's sibling file is the production answer;
 // the test passes the path explicitly so it can also run against a
 // non-installed build.
 //

@@ -39,7 +39,7 @@ bool RecordManager::startRecording (double sampleRate, juce::int64 startSample)
         return true;
     if (! session.anyTrackArmed())
     {
-        std::fprintf (stderr, "[Focal/RecordManager] startRecording: anyTrackArmed=false; aborting.\n");
+        std::fprintf (stderr, "[Dusk Studio/RecordManager] startRecording: anyTrackArmed=false; aborting.\n");
         return false;
     }
 
@@ -77,7 +77,7 @@ bool RecordManager::startRecording (double sampleRate, juce::int64 startSample)
             cap->fifo.reset();
             midiCaptures[(size_t) t] = std::move (cap);
             std::fprintf (stderr,
-                          "[Focal/RecordManager] startRecording: track %d set up MIDI capture "
+                          "[Dusk Studio/RecordManager] startRecording: track %d set up MIDI capture "
                           "(midiInputIndex=%d, midiChannel=%d).\n",
                           t + 1,
                           session.track (t).midiInputIndex.load (std::memory_order_relaxed),
@@ -94,7 +94,7 @@ bool RecordManager::startRecording (double sampleRate, juce::int64 startSample)
         if (fileStream == nullptr)
         {
             std::fprintf (stderr,
-                          "[Focal/RecordManager] startRecording: track %d "
+                          "[Dusk Studio/RecordManager] startRecording: track %d "
                           "createOutputStream failed for \"%s\" - take will be silently "
                           "dropped without this surface.\n",
                           t + 1, outFile.getFullPathName().toRawUTF8());
@@ -116,7 +116,7 @@ bool RecordManager::startRecording (double sampleRate, juce::int64 startSample)
         if (writer == nullptr)
         {
             std::fprintf (stderr,
-                          "[Focal/RecordManager] startRecording: track %d "
+                          "[Dusk Studio/RecordManager] startRecording: track %d "
                           "createWriterFor failed (format-level error).\n",
                           t + 1);
             lastSetupFailures.push_back (t);
@@ -205,7 +205,7 @@ void RecordManager::stopRecording (juce::int64 endSample)
         // analyzer (which reads engine-wide perInputMidi) might have
         // shown chords.
         std::fprintf (stderr,
-                      "[Focal/RecordManager] Track %d MIDI capture: %d events drained, "
+                      "[Dusk Studio/RecordManager] Track %d MIDI capture: %d events drained, "
                       "writeMidiBlock-calls=%d, %d total samples, midiInputIndex=%d\n",
                       t + 1, (int) drained.size(),
                       writeMidiBlockCalls[(size_t) t].load (std::memory_order_relaxed),

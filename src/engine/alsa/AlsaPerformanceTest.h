@@ -8,7 +8,7 @@
 
 namespace duskstudio
 {
-// Performance + stability test harness for the Focal-owned ALSA backend.
+// Performance + stability test harness for the Dusk Studio-owned ALSA backend.
 // Tier 1: drives an AlsaAudioIODevice directly with a measuring callback,
 // no JUCE AudioDeviceManager involvement, no audible content, no special
 // hardware setup beyond a real ALSA hw: device.

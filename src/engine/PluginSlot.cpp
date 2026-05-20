@@ -94,7 +94,7 @@ void logLoadedPlugin (const juce::AudioPluginInstance& instance)
     juce::PluginDescription desc;
     instance.fillInPluginDescription (desc);
     std::fprintf (stderr,
-                  "[Focal/PluginSlot] Loaded \"%s\" (instrument=%d) — "
+                  "[Dusk Studio/PluginSlot] Loaded \"%s\" (instrument=%d) — "
                   "totalIn=%d totalOut=%d busesIn=%d busesOut=%d latency=%d\n",
                   desc.name.toRawUTF8(),
                   (int) desc.isInstrument,
@@ -174,7 +174,7 @@ void PluginSlot::pollRemoteReaper()
         remoteCrashed.store (true, std::memory_order_relaxed);
         currentRemote.store (nullptr, std::memory_order_release);
         std::fprintf (stderr,
-                      "[Focal/PluginSlot] OOP child process exited; slot "
+                      "[Dusk Studio/PluginSlot] OOP child process exited; slot "
                       "auto-bypassed. Reload the plugin to recover.\n");
         // Stop polling — child has been reaped, nothing more to watch.
         reaperTimer.stopTimer();
@@ -214,7 +214,7 @@ bool PluginSlot::showRemoteEditor (std::uint64_t& windowIdOut,
     if (! r->showEditor (windowIdOut, widthOut, heightOut, err))
     {
         std::fprintf (stderr,
-                      "[Focal/PluginSlot] OOP showEditor failed: %s\n",
+                      "[Dusk Studio/PluginSlot] OOP showEditor failed: %s\n",
                       err.c_str());
         return false;
     }
@@ -233,7 +233,7 @@ bool PluginSlot::hideRemoteEditor()
     if (! r->hideEditor (err))
     {
         std::fprintf (stderr,
-                      "[Focal/PluginSlot] OOP hideEditor failed: %s\n",
+                      "[Dusk Studio/PluginSlot] OOP hideEditor failed: %s\n",
                       err.c_str());
         return false;
     }
@@ -252,7 +252,7 @@ bool PluginSlot::resizeRemoteEditor (int width, int height)
     if (! r->resizeEditor (width, height, err))
     {
         std::fprintf (stderr,
-                      "[Focal/PluginSlot] OOP resizeEditor failed: %s\n",
+                      "[Dusk Studio/PluginSlot] OOP resizeEditor failed: %s\n",
                       err.c_str());
         return false;
     }
@@ -297,7 +297,7 @@ void PluginSlot::prepareToPlay (double sampleRate, int blockSize)
         if (preparedBlockSize > duskstudio::ipc::kMaxBlock)
         {
             std::fprintf (stderr,
-                          "[Focal/PluginSlot] OOP path can't host blockSize=%d "
+                          "[Dusk Studio/PluginSlot] OOP path can't host blockSize=%d "
                           "(SHM max=%d); slot will be silent until reload.\n",
                           preparedBlockSize, duskstudio::ipc::kMaxBlock);
             currentRemote.store (nullptr, std::memory_order_release);
@@ -308,7 +308,7 @@ void PluginSlot::prepareToPlay (double sampleRate, int blockSize)
         if (! ownedRemote->prepareToPlay (sampleRate, preparedBlockSize, err))
         {
             std::fprintf (stderr,
-                          "[Focal/PluginSlot] OOP prepareToPlay failed: %s\n",
+                          "[Dusk Studio/PluginSlot] OOP prepareToPlay failed: %s\n",
                           err.c_str());
             currentRemote.store (nullptr, std::memory_order_release);
             cachedLatencySamples.store (0, std::memory_order_relaxed);
@@ -515,7 +515,7 @@ bool PluginSlot::loadFromDescription (const juce::PluginDescription& desc,
         if (hostPath.isEmpty() || ! juce::File (hostPath).existsAsFile())
         {
             std::fprintf (stderr,
-                          "[Focal/PluginSlot] OOP requested but host binary not found "
+                          "[Dusk Studio/PluginSlot] OOP requested but host binary not found "
                           "at \"%s\"; falling back to in-process.\n",
                           hostPath.toRawUTF8());
         }
@@ -526,7 +526,7 @@ bool PluginSlot::loadFromDescription (const juce::PluginDescription& desc,
             if (! remote->connect (hostPath.toStdString(), "--ipc-host", err))
             {
                 std::fprintf (stderr,
-                              "[Focal/PluginSlot] OOP connect failed (%s); "
+                              "[Dusk Studio/PluginSlot] OOP connect failed (%s); "
                               "falling back to in-process.\n",
                               err.c_str());
             }
@@ -542,7 +542,7 @@ bool PluginSlot::loadFromDescription (const juce::PluginDescription& desc,
                                             numIn, numOut, latency, err))
                 {
                     std::fprintf (stderr,
-                                  "[Focal/PluginSlot] OOP loadPlugin failed (%s); "
+                                  "[Dusk Studio/PluginSlot] OOP loadPlugin failed (%s); "
                                   "falling back to in-process.\n",
                                   err.c_str());
                 }
@@ -729,7 +729,7 @@ juce::String PluginSlot::getStateBase64ForSave (int parkSleepMs)
         if (! r->getState (blob, err))
         {
             std::fprintf (stderr,
-                          "[Focal/PluginSlot] OOP getState failed: %s\n",
+                          "[Dusk Studio/PluginSlot] OOP getState failed: %s\n",
                           err.c_str());
             return {};
         }
@@ -850,7 +850,7 @@ bool PluginSlot::restoreFromSavedState (const juce::String& descriptionXml,
                                          mb.getSize(), err))
                     {
                         std::fprintf (stderr,
-                                      "[Focal/PluginSlot] OOP setState failed: %s\n",
+                                      "[Dusk Studio/PluginSlot] OOP setState failed: %s\n",
                                       err.c_str());
                     }
                 }

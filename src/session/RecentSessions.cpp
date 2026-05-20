@@ -5,7 +5,7 @@ namespace duskstudio
 juce::File RecentSessions::getStoreFile()
 {
     auto cfgDir = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
-                      .getChildFile ("Focal");
+                      .getChildFile ("Dusk Studio");
     if (! cfgDir.isDirectory() && cfgDir.createDirectory().failed())
         return {};   // empty File - load() returns empty, add() drops the write
     return cfgDir.getChildFile ("recent.txt");

@@ -9,7 +9,7 @@ constexpr const char* kKeyUiScale = "ui_scale";
 juce::File getStorePath()
 {
     auto cfgDir = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
-                      .getChildFile ("Focal");
+                      .getChildFile ("Dusk Studio");
     if (! cfgDir.exists()) cfgDir.createDirectory();
     return cfgDir.getChildFile ("app-config.properties");
 }

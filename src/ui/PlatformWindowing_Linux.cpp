@@ -126,7 +126,7 @@ void prepareForTopLevelDestruction (juce::Component& topLevel)
     if (isWaylandSession())
     {
         // Wayland-session path: the doomed plugin editor is an X11
-        // toplevel (via XWayland), the main Focal window is a
+        // toplevel (via XWayland), the main Dusk Studio window is a
         // wl_surface. Mutter does NOT honour X11 _NET_ACTIVE_WINDOW /
         // XSetInputFocus / XIconify for focus_window updates on a
         // Wayland session - the EWMH dance below is therefore a
@@ -142,7 +142,7 @@ void prepareForTopLevelDestruction (juce::Component& topLevel)
                 ::XWithdrawWindow (d, win, DefaultScreen (d));
             }
             ::XSync (d, False);
-            std::fprintf (stderr, "[Focal/Wayland] X11 unmap + roundtrip\n");
+            std::fprintf (stderr, "[Dusk Studio/Wayland] X11 unmap + roundtrip\n");
         }
         requestFocusOnMainWaylandSurface();
         std::fflush (stderr);
@@ -157,7 +157,7 @@ void prepareForTopLevelDestruction (juce::Component& topLevel)
     if (auto* sibling = pickSiblingFocusTargetPeer (topLevel))
     {
         bringWindowToFront (*sibling);
-        std::fprintf (stderr, "[Focal/X] focus -> sibling peer (EWMH)\n");
+        std::fprintf (stderr, "[Dusk Studio/X] focus -> sibling peer (EWMH)\n");
     }
     else if (d != nullptr)
     {
@@ -165,16 +165,16 @@ void prepareForTopLevelDestruction (juce::Component& topLevel)
         {
             const auto win = (::Window) (uintptr_t) peer->getNativeHandle();
             ::XIconifyWindow (d, win, DefaultScreen (d));
-            std::fprintf (stderr, "[Focal/X] focus -> iconify (no sibling)\n");
+            std::fprintf (stderr, "[Dusk Studio/X] focus -> iconify (no sibling)\n");
         }
         else
         {
-            std::fprintf (stderr, "[Focal/X] focus -> none (no peer)\n");
+            std::fprintf (stderr, "[Dusk Studio/X] focus -> none (no peer)\n");
         }
     }
     else
     {
-        std::fprintf (stderr, "[Focal/X] focus -> none (no display)\n");
+        std::fprintf (stderr, "[Dusk Studio/X] focus -> none (no display)\n");
     }
     std::fflush (stderr);
 

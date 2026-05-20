@@ -28,7 +28,7 @@ public:
     BusStrip() = default;
 
     // oversamplingFactor: 1 (native, default), 2 or 4. Drives the per-bus
-    // Focal-side juce::dsp::Oversampling wrapper that this strip applies
+    // Dusk Studio-side juce::dsp::Oversampling wrapper that this strip applies
     // around BOTH the BritishEQ and the UniversalCompressor (UC). UC's own
     // internal-oversampling toggle is intentionally left OFF here — the
     // external wrapper covers both stages, and engaging UC's internal OS
@@ -53,7 +53,7 @@ private:
     juce::MidiBuffer         compMidi;
     juce::AudioBuffer<float> compStereoBuffer;
 
-    // Per-bus Focal-side oversampler wrapping (EQ + UC). The donor's
+    // Per-bus Dusk Studio-side oversampler wrapping (EQ + UC). The donor's
     // BritishEQ has console saturation and UC has saturation - both alias
     // hard at native rate. UC's internal-oversampling toggle is left OFF
     // here because we wrap externally; doubling oversampling would compound.

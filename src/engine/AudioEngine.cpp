@@ -65,7 +65,7 @@ AudioEngine::AudioEngine (Session& sessionToBindTo) : session (sessionToBindTo)
     master.bind (session.master());
     masteringChain.bind (session.mastering());
 
-    // Linux: pre-register Focal's ALSA backend + JACK BEFORE
+    // Linux: pre-register Dusk Studio's ALSA backend + JACK BEFORE
     // initialiseWithDefaultDevices. JUCE's createDeviceTypesIfNeeded only
     // auto-registers its defaults (which would re-add the stock ALSA path
     // we don't want) when availableDeviceTypes is empty; pre-adding ours
@@ -92,7 +92,7 @@ AudioEngine::AudioEngine (Session& sessionToBindTo) : session (sessionToBindTo)
         err.isNotEmpty())
     {
         std::fprintf (stderr,
-                      "[Focal/AudioEngine] device-manager init reported: %s\n",
+                      "[Dusk Studio/AudioEngine] device-manager init reported: %s\n",
                       err.toRawUTF8());
     }
 
@@ -218,7 +218,7 @@ void AudioEngine::rebuildMidiInputBank()
         if (! deviceManager.isMidiInputDeviceEnabled (devId))
         {
             std::fprintf (stderr,
-                          "[Focal/AudioEngine] WARNING: failed to enable MIDI input \"%s\" "
+                          "[Dusk Studio/AudioEngine] WARNING: failed to enable MIDI input \"%s\" "
                           "(id %s). Another application may be holding it open.\n",
                           midiInputDevices[i].name.toRawUTF8(),
                           devId.toRawUTF8());
@@ -232,7 +232,7 @@ void AudioEngine::rebuildMidiInputBank()
     // load. The collector is not bound to any OS device — VKB UI calls
     // addMessageToQueue on it directly; the audio thread drains it as
     // perInputMidi[virtualKeyboardCollectorIndex].
-    juce::MidiDeviceInfo virtualKb { "Virtual Keyboard (Focal)", "focal:virtual-keyboard" };
+    juce::MidiDeviceInfo virtualKb { "Virtual Keyboard (Dusk Studio)", "Dusk Studio:virtual-keyboard" };
     midiInputDevices.add (virtualKb);
     {
         auto vkbCol = std::make_unique<juce::MidiMessageCollector>();
@@ -323,7 +323,7 @@ bool AudioEngine::ensureMidiOutputOpen (int index)
     if (out == nullptr)
     {
         std::fprintf (stderr,
-                      "[Focal/AudioEngine] WARNING: failed to open MIDI output \"%s\" "
+                      "[Dusk Studio/AudioEngine] WARNING: failed to open MIDI output \"%s\" "
                       "(id %s). Another application may be holding it open.\n",
                       midiOutputDevices[index].name.toRawUTF8(),
                       midiOutputDevices[index].identifier.toRawUTF8());
@@ -458,7 +458,7 @@ void AudioEngine::record()
 {
     if (transport.isRecording())
     {
-        std::fprintf (stderr, "[Focal/AudioEngine] record(): already recording, ignored.\n");
+        std::fprintf (stderr, "[Dusk Studio/AudioEngine] record(): already recording, ignored.\n");
         return;
     }
 
@@ -473,7 +473,7 @@ void AudioEngine::record()
     session.recomputeRtCounters();
     if (! session.anyTrackArmed())
     {
-        std::fprintf (stderr, "[Focal/AudioEngine] record(): no track is armed; "
+        std::fprintf (stderr, "[Dusk Studio/AudioEngine] record(): no track is armed; "
                               "click ARM on the strip you want to record into.\n");
         return;
     }
@@ -481,7 +481,7 @@ void AudioEngine::record()
     const double sr = currentSampleRate.load (std::memory_order_relaxed);
     if (sr <= 0.0)
     {
-        std::fprintf (stderr, "[Focal/AudioEngine] record(): no audio device open "
+        std::fprintf (stderr, "[Dusk Studio/AudioEngine] record(): no audio device open "
                               "(sample rate is 0); recording cannot start.\n");
         return;
     }
@@ -780,7 +780,7 @@ void AudioEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
     if (activeOut <= 0)
     {
         std::fprintf (stderr,
-                      "[Focal/AudioEngine] WARNING: device \"%s\" (type %s) opened with "
+                      "[Dusk Studio/AudioEngine] WARNING: device \"%s\" (type %s) opened with "
                       "0 output channels (in=%d). Engine output will be silent. Pick a "
                       "different device - \"Default ALSA Output\" or another backend - or "
                       "stop PipeWire if you want raw ALSA on this interface.\n",
@@ -909,13 +909,13 @@ void AudioEngine::audioDeviceError (const juce::String& errorMessage)
     // on the audio thread — RecordManager's stopRecording contract
     // forbids it. JUCE doesn't guarantee a follow-up
     // audioDeviceStopped after this callback, so we force it.
-    std::fprintf (stderr, "[Focal/AudioEngine] audioDeviceError: %s\n",
+    std::fprintf (stderr, "[Dusk Studio/AudioEngine] audioDeviceError: %s\n",
                   errorMessage.toRawUTF8());
 
     juce::MessageManager::callAsync (
         [this, errorMessage]
         {
-            juce::Logger::writeToLog ("[Focal/AudioEngine] audioDeviceError: "
+            juce::Logger::writeToLog ("[Dusk Studio/AudioEngine] audioDeviceError: "
                                           + errorMessage);
             audioDeviceStopped();
         });
@@ -1098,7 +1098,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                 // Falling edge → stop. Gated on !reversed so a reverse-
                 // scrub (which the receiver reports as rolling=false +
                 // reversed=true) doesn't drag the transport into Stop;
-                // master scrubbing back leaves Focal rolling forward.
+                // master scrubbing back leaves Dusk Studio rolling forward.
                 session.pendingTransportAction.store (
                     (int) PendingTransportAction::Stop,
                     std::memory_order_relaxed);
@@ -1196,7 +1196,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
     // a scratch MidiBuffer and hands it to the chosen MidiOutput's
     // background delivery thread. Uses the same monotonic sync clock
     // so receiver + emitter share a sample-time origin (matters when
-    // a user has Focal as both slave AND master - rare but possible
+    // a user has Dusk Studio as both slave AND master - rare but possible
     // via a MIDI thru).
     const int syncOutIdx = session.syncOutputIdx.load (std::memory_order_relaxed);
     if (syncOutIdx != lastSyncOutputIdx)
@@ -1215,7 +1215,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
     if (emitClock || emitTimeCode)
     {
         // Rolling state from the engine's transport - the bytes drive
-        // SLAVES, so they need to mirror Focal's local state, not the
+        // SLAVES, so they need to mirror Dusk Studio's local state, not the
         // external master's.
         const bool rolling = transport.isPlaying() || transport.isRecording();
         midiClockOutScratch.clear();

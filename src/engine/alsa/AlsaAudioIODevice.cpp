@@ -288,7 +288,7 @@ AlsaAudioIODevice::AlsaAudioIODevice (const juce::String& name,
                                         const juce::String& inId,
                                         const juce::String& outId)
     : juce::AudioIODevice (name, "ALSA"),
-      juce::Thread ("Focal-ALSA-IO"),
+      juce::Thread ("Dusk Studio-ALSA-IO"),
       inputId (inId),
       outputId (outId),
       displayName (name)
@@ -616,7 +616,7 @@ juce::String AlsaAudioIODevice::open (const juce::BigInteger& inputChannels,
         else
         {
             std::fprintf (stderr,
-                          "[Focal/ALSA] WARNING: input \"%s\" and output \"%s\" are on "
+                          "[Dusk Studio/ALSA] WARNING: input \"%s\" and output \"%s\" are on "
                           "different cards (\"%s\" vs \"%s\"); not linking. The two "
                           "clocks will drift over a long session. For tracking + "
                           "monitoring use the same interface for in and out.\n",
@@ -668,7 +668,7 @@ juce::String AlsaAudioIODevice::open (const juce::BigInteger& inputChannels,
     lastError.clear();
 
     std::fprintf (stderr,
-                  "[Focal/ALSA] opened \"%s\" rate=%u period=%d periods=%d bits=%d %s "
+                  "[Dusk Studio/ALSA] opened \"%s\" rate=%u period=%d periods=%d bits=%d %s "
                   "out=%uch in=%uch (active out=%d in=%d)\n",
                   displayName.toRawUTF8(),
                   (unsigned) rate, (int) period, (int) periods, openedBitDepth,
@@ -748,7 +748,7 @@ void AlsaAudioIODevice::start (juce::AudioIODeviceCallback* newCallback)
             const auto retry = snd_pcm_writei (outHandle, silence.getData(),
                                                  (snd_pcm_uframes_t) preFillFrames);
             if (retry < 0)
-                std::fprintf (stderr, "[Focal/ALSA] WARNING: pre-fill retry failed: %s\n",
+                std::fprintf (stderr, "[Dusk Studio/ALSA] WARNING: pre-fill retry failed: %s\n",
                               snd_strerror ((int) retry));
         }
     }
@@ -778,7 +778,7 @@ void AlsaAudioIODevice::start (juce::AudioIODeviceCallback* newCallback)
     if (! gotRT)
         startThread (juce::Thread::Priority::high);
 
-    std::fprintf (stderr, "[Focal/ALSA] thread started: %s (juce-prio=%d, RLIMIT_RTPRIO=%d)\n",
+    std::fprintf (stderr, "[Dusk Studio/ALSA] thread started: %s (juce-prio=%d, RLIMIT_RTPRIO=%d)\n",
                   gotRT ? "SCHED_RR" : "Priority::high",
                   juceRtPrio, (int) rl.rlim_cur);
 
@@ -1011,7 +1011,7 @@ loopExit: ;
     // Surface the device loss to AudioDeviceManager so it can switch
     // to a fallback device (or post audioDeviceError to the UI). Without
     // this, JUCE's AudioDeviceManager has no signal that the audio
-    // thread died — Focal's transport keeps "running" with no callbacks
+    // thread died — Dusk Studio's transport keeps "running" with no callbacks
     // firing and a recording-in-progress accumulates against a stalled
     // writer.
     if (fatalErr != 0)
@@ -1019,7 +1019,7 @@ loopExit: ;
         const auto msg = juce::String ("ALSA device error in ")
                        + juce::String (fatalCtx != nullptr ? fatalCtx : "I/O loop")
                        + ": " + juce::String (snd_strerror (fatalErr));
-        std::fprintf (stderr, "[Focal/ALSA] fatal: %s\n", msg.toRawUTF8());
+        std::fprintf (stderr, "[Dusk Studio/ALSA] fatal: %s\n", msg.toRawUTF8());
 
         const juce::ScopedLock sl (callbackLock);
         if (callback != nullptr)

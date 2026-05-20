@@ -1520,7 +1520,7 @@ public:
                                       // can't reparent into a wl_surface,
                                       // so this wrapper must be an X11
                                       // toplevel even when the rest of
-                                      // Focal is on Wayland. The flag
+                                      // Dusk Studio is on Wayland. The flag
                                       // is consumed by the very next
                                       // createNewPeer call (triggered
                                       // by addToDesktop=true below).
@@ -1556,7 +1556,7 @@ public:
             return -1;
         }();
         std::fprintf (stderr,
-                      "[Focal/PluginEditor] Opening \"%s\" editor: editor=%dx%d resizable=%d\n",
+                      "[Dusk Studio/PluginEditor] Opening \"%s\" editor: editor=%dx%d resizable=%d\n",
                       title.toRawUTF8(), ew, eh, isResz);
 
         // Size the WINDOW first (so its X11 peer is allocated at the

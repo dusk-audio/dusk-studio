@@ -1,6 +1,6 @@
-# Building Focal on Windows
+# Building Dusk Studio on Windows
 
-Focal targets Linux as its primary platform, but the codebase is JUCE 8 / C++17 with platform-specific code properly gated, so a Windows build is straightforward. JUCE's WASAPI / ASIO backends replace the Linux ALSA / PipeWire path automatically.
+Dusk Studio targets Linux as its primary platform, but the codebase is JUCE 8 / C++17 with platform-specific code properly gated, so a Windows build is straightforward. JUCE's WASAPI / ASIO backends replace the Linux ALSA / PipeWire path automatically.
 
 This document is aimed at a developer with a Windows machine who has been handed the source tree and wants to compile and run it.
 
@@ -14,7 +14,7 @@ This document is aimed at a developer with a Windows machine who has been handed
 
 ## Repository layout
 
-Focal expects two sibling repositories to be present alongside its own checkout:
+Dusk Studio expects two sibling repositories to be present alongside its own checkout:
 
 ```
 C:\dev\
@@ -27,7 +27,7 @@ CMake auto-discovers these. If you put them elsewhere, pass `-DJUCE_PATH=...` an
 
 ### Clone everything
 
-Open a terminal (PowerShell, cmd, or Git Bash). Both Focal repos are public, no auth needed.
+Open a terminal (PowerShell, cmd, or Git Bash). Both Dusk Studio repos are public, no auth needed.
 
 ```cmd
 cd C:\dev
@@ -38,11 +38,11 @@ git clone https://github.com/dusk-audio/dusk-audio-plugins.git plugins
 
 The explicit `plugins` target on the third clone is mandatory: CMake auto-discovery looks for a sibling directory named `plugins\` or `plugins-main\` ([CMakeLists.txt:160-168](CMakeLists.txt#L160-L168)). The repo itself is named `dusk-audio-plugins` on GitHub, so without the explicit target you'd get a directory CMake can't find.
 
-The Focal repo's own directory name (`dusk-studio-daw\`) doesn't matter to the build, but feel free to `git clone <url> Focal` if you prefer.
+The Dusk Studio repo's own directory name (`dusk-studio-daw\`) doesn't matter to the build, but feel free to `git clone <url> Dusk Studio` if you prefer.
 
 ## Configure + build
 
-From the Focal directory:
+From the Dusk Studio directory:
 
 ```cmd
 cd C:\dev\dusk-studio-daw
@@ -55,7 +55,7 @@ The first configure pulls in JUCE's CMake helpers and may take a minute. Subsequ
 The built binary lands at:
 
 ```
-C:\dev\dusk-studio-daw\build\DuskStudio_artefacts\Release\Focal.exe
+C:\dev\dusk-studio-daw\build\DuskStudio_artefacts\Release\Dusk Studio.exe
 ```
 
 Double-click to run, or launch from the terminal.
@@ -71,10 +71,10 @@ Debug binary appears under `build\DuskStudio_artefacts\Debug\`.
 ### Opening in Visual Studio
 
 ```cmd
-start build\Focal.sln
+start build\Dusk Studio.sln
 ```
 
-In VS, right-click the **Focal** project → **Set as Startup Project** → F5 to debug.
+In VS, right-click the **Dusk Studio** project → **Set as Startup Project** → F5 to debug.
 
 ## Overriding paths (if not using the sibling layout)
 
@@ -87,7 +87,7 @@ cmake -S . -B build ^
 
 ## Tests (optional)
 
-Focal has Catch2 unit tests behind a CMake flag:
+Dusk Studio has Catch2 unit tests behind a CMake flag:
 
 ```cmd
 cmake -S . -B build-tests -DCMAKE_BUILD_TYPE=Release -DFOCAL_BUILD_TESTS=ON
@@ -99,11 +99,11 @@ Use a separate `build-tests\` directory so the two configurations don't fight ov
 
 ## Headless self-test (optional)
 
-Set an environment variable to run Focal's internal DSP self-test on startup instead of opening the GUI:
+Set an environment variable to run Dusk Studio's internal DSP self-test on startup instead of opening the GUI:
 
 ```cmd
 set DUSKSTUDIO_RUN_SELFTEST=1
-build\DuskStudio_artefacts\Release\Focal.exe
+build\DuskStudio_artefacts\Release\Dusk Studio.exe
 ```
 
 Useful for confirming the audio engine wires up correctly without needing to drive the UI.
@@ -112,7 +112,7 @@ Useful for confirming the audio engine wires up correctly without needing to dri
 
 - **PlatformWindowing_Windows.cpp is a stub.** Most things work; the file exists as the place to land Windows-specific window-management fixes if/when XEmbed-equivalent bugs surface. The Linux-only `JUCE_XEmbedComponent` source isn't compiled on Windows ([CMakeLists.txt:57](CMakeLists.txt#L57)).
 - **No ASIO without the SDK.** WASAPI is the default; ASIO requires the SDK download above. Most users will be fine on WASAPI.
-- **The ALSA backend is not compiled.** [CMakeLists.txt:263](CMakeLists.txt#L263) gates Focal's custom ALSA `AudioIODeviceType` behind `UNIX AND NOT APPLE`. Windows falls through to JUCE's stock WASAPI/ASIO types.
+- **The ALSA backend is not compiled.** [CMakeLists.txt:263](CMakeLists.txt#L263) gates Dusk Studio's custom ALSA `AudioIODeviceType` behind `UNIX AND NOT APPLE`. Windows falls through to JUCE's stock WASAPI/ASIO types.
 - **Compiler warnings.** Project is primarily developed on Clang/GCC. MSVC may emit warnings; none are fatal. `/WX` (warnings-as-errors) is not enabled.
 - **MinGW/MSYS2 not tested.** Stick to MSVC via Visual Studio 2022.
 

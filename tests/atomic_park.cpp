@@ -10,7 +10,7 @@
 // safety work moved it here so it's testable without needing a real
 // plugin instance.
 //
-// Per the Focal test guidelines (no threads / no sleeps / one concept
+// Per the Dusk Studio test guidelines (no threads / no sleeps / one concept
 // per TEST_CASE), the contract is verified by inspecting the slot from
 // inside the work lambda: while the lambda runs, an atomic load on the
 // slot returns nullptr - which is exactly the property the audio

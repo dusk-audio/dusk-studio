@@ -9,11 +9,11 @@ on:
 
 jobs:
   build:
-    name: Build Focal (MSVC x64 Release)
+    name: Build Dusk Studio (MSVC x64 Release)
     runs-on: windows-latest
 
     steps:
-      - name: Checkout Focal
+      - name: Checkout Dusk Studio
         uses: actions/checkout@v4
 
       - name: Clone JUCE 8.0.4
@@ -57,11 +57,11 @@ jobs:
         shell: bash
         run: cmake --build build --config Release -j
 
-      - name: Upload Focal.exe (per-run artifact)
+      - name: Upload Dusk Studio.exe (per-run artifact)
         uses: actions/upload-artifact@v4
         with:
-          name: Focal-windows-x64
-          path: build/DuskStudio_artefacts/Release/Focal.exe
+          name: DuskStudio-windows-x64
+          path: build/DuskStudio_artefacts/Release/DuskStudio.exe
           retention-days: 14
           if-no-files-found: error
 
@@ -71,7 +71,7 @@ jobs:
     needs: build
 
     steps:
-      - name: Checkout Focal
+      - name: Checkout Dusk Studio
         uses: actions/checkout@v4
 
       - name: Clone JUCE 8.0.4

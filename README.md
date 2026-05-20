@@ -1,4 +1,4 @@
-# Focal
+# Dusk Studio
 
 [![Linux build](https://github.com/dusk-audio/dusk-studio-daw/actions/workflows/linux-build.yml/badge.svg)](https://github.com/dusk-audio/dusk-studio-daw/actions/workflows/linux-build.yml)
 [![Linux arm64](https://github.com/dusk-audio/dusk-studio-daw/actions/workflows/linux-build-arm64.yml/badge.svg)](https://github.com/dusk-audio/dusk-studio-daw/actions/workflows/linux-build-arm64.yml)
@@ -10,7 +10,7 @@ A deliberately constrained, portastudio-style DAW for Linux (macOS + Windows in 
 
 > *"If it wouldn't exist as a physical control on a $2000 hardware recorder, it probably doesn't belong here."*
 
-JUCE 8 / C++17. PipeWire (primary) via JUCE's JACK backend on Linux; native ALSA backend with USB hot-unplug recovery; macOS CoreAudio + Windows WASAPI / ASIO via JUCE. Authoritative spec: [Focal.md](Focal.md). User guide: [docs/USER_GUIDE.md](docs/USER_GUIDE.md).
+JUCE 8 / C++17. PipeWire (primary) via JUCE's JACK backend on Linux; native ALSA backend with USB hot-unplug recovery; macOS CoreAudio + Windows WASAPI / ASIO via JUCE. Authoritative spec: [DuskStudio.md](DuskStudio.md). User guide: [docs/USER_GUIDE.md](docs/USER_GUIDE.md).
 
 ## Status
 
@@ -41,7 +41,7 @@ JUCE 8 / C++17. PipeWire (primary) via JUCE's JACK backend on Linux; native ALSA
 
 ## Why
 
-Most DAWs are built for production studios with infinite track counts and infinite options. They're also paralysing for ADHD-pattern users — every decision branches, every parameter is reachable, every track type wants its own configuration. Focal flips the constraint: a fixed signal chain, a finite track count, a single visible page per stage. You commit, you move on.
+Most DAWs are built for production studios with infinite track counts and infinite options. They're also paralysing for ADHD-pattern users — every decision branches, every parameter is reachable, every track type wants its own configuration. Dusk Studio flips the constraint: a fixed signal chain, a finite track count, a single visible page per stage. You commit, you move on.
 
 ## The seven hard constraints
 
@@ -83,7 +83,7 @@ src/
 tests/         # Catch2 unit tests (session, recording, MIDI, IPC, DSP)
 packaging/     # .desktop, AppStream, MIME — for AppImage builds
 docs/          # User guide + onboarding docs
-Focal.md       # authoritative product spec
+DuskStudio.md       # authoritative product spec
 ```
 
 ## Builds & contributing
@@ -98,7 +98,7 @@ Precompiled binaries delivered via Patreon (Linux AppImage today; macOS + Window
 | AppImage packaging (Linux) | [packaging/README.md](packaging/README.md) |
 | User guide / troubleshooting | [docs/USER_GUIDE.md](docs/USER_GUIDE.md) |
 
-After a build, sanity check with `Focal --version` — prints app + JUCE + platform string and exits 0. Useful as a paste-target for Patreon support DMs.
+After a build, sanity check with `Dusk Studio --version` — prints app + JUCE + platform string and exits 0. Useful as a paste-target for Patreon support DMs.
 
 CI runs on every push to `main` against Linux (Ubuntu 22.04 GCC), macOS (14 Apple Silicon), and Windows (Server 2022 MSVC). Linux sanitizer (ASAN+UBSan) runs nightly and on engine/dsp/session paths.
 
@@ -107,7 +107,7 @@ CI runs on every push to `main` against Linux (Ubuntu 22.04 GCC), macOS (14 Appl
 [GPL-3.0-or-later](LICENSE), to match JUCE's licensing. Third-party
 component inventory in [LICENSES.txt](LICENSES.txt).
 
-Focal ships under a **dual access model**:
+Dusk Studio ships under a **dual access model**:
 
 - **Source**: GPL-3.0. Clone, audit, build, modify, redistribute — all
   fine under GPL terms.

@@ -20,7 +20,7 @@ PluginManager::~PluginManager() = default;
 juce::File PluginManager::getCacheFile() const
 {
     auto cfgDir = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
-                      .getChildFile ("Focal");
+                      .getChildFile ("Dusk Studio");
     if (! cfgDir.isDirectory() && cfgDir.createDirectory().failed())
         return {};   // fall back to empty File - load/saveCache become no-ops
     return cfgDir.getChildFile ("plugin-cache.xml");

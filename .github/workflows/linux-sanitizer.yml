@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-      - name: Checkout Focal
+      - name: Checkout Dusk Studio
         uses: actions/checkout@v4
 
       - name: Install Linux build deps

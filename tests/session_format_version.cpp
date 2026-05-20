@@ -27,8 +27,8 @@ void writeRaw (const juce::File& target, const juce::String& contents)
 // Format-version contract:
 //   * Manual save writes "version": kFormatVersion (currently 1).
 //   * Load rejects sessions whose version is HIGHER than the build's
-//     kFormatVersion — newer Focal can read older sessions (via the
-//     migrateSession switch) but older Focal must refuse newer ones
+//     kFormatVersion — newer Dusk Studio can read older sessions (via the
+//     migrateSession switch) but older Dusk Studio must refuse newer ones
 //     rather than silent-drop new fields the build doesn't understand.
 //   * Missing "version" key (pre-versioning saves) is treated as
 //     kFormatVersion — older builds wrote no key, but the schema was
@@ -60,7 +60,7 @@ TEST_CASE ("SessionSerializer accepts session with missing version (legacy)",
     const auto dir = makeTempSessionDir();
     const auto target = dir.getChildFile ("session.json");
 
-    // No "version" property — emulates a pre-versioning save (Focal
+    // No "version" property — emulates a pre-versioning save (Dusk Studio
     // wrote files without the key before the format-version contract
     // landed). Must succeed and parse the rest of the document.
     writeRaw (target, R"({"tempo":98.5,"tracks":[{"name":"Legacy"}]})");

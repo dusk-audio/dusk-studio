@@ -20,7 +20,7 @@ namespace duskstudio
 enum class AutomationMode : int { Off = 0, Read = 1, Write = 2, Touch = 3 };
 
 // The fixed set of automatable per-channel parameters. EQ, Comp, HPF and bus
-// assigns are deliberately NOT automatable per Focal.md - the console
+// assigns are deliberately NOT automatable per Dusk Studio.md - the console
 // metaphor wants automation on dynamics gestures (level / position / on-off),
 // not on tone-shaping. AuxSend1..4 maps onto the existing 4 aux-send knobs.
 enum class AutomationParam : int
@@ -331,9 +331,9 @@ enum class TimeDisplayMode : int { Bars = 0, Time = 1 };
 
 // Ardour-style edit mode. Click + drag semantics on the arrange surface
 // (TapeStrip) and inside the region editor branch on this. Grab is the
-// historical default — same gestures Focal had before the mode palette
+// historical default — same gestures Dusk Studio had before the mode palette
 // landed. Range, Cut, Grid, Draw are layered on top: each one specialises
-// what a body-click does. Stretch is deliberately absent (Focal spec
+// what a body-click does. Stretch is deliberately absent (Dusk Studio spec
 // forbids time-stretching).
 enum class EditMode : int
 {
@@ -1185,7 +1185,7 @@ public:
     mutable std::atomic<bool>  externalSyncRolling    { false };
     std::atomic<bool>          externalSyncFollowsTempo { true };
     // When true, FA/FB (Start/Continue) and FC (Stop) bytes drive the
-    // engine's Transport state - Focal plays/stops in lock-step with
+    // engine's Transport state - Dusk Studio plays/stops in lock-step with
     // the external master. Off by default so v1's "tempo-only" mode
     // stays the baseline; user opts in via the Audio Settings panel.
     std::atomic<bool>          externalSyncChasesTransport { false };

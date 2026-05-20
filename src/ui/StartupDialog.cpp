@@ -20,7 +20,7 @@ void styleRecentButton (juce::TextButton& b)
 StartupDialog::StartupDialog (juce::Array<juce::File> r)
     : recents (std::move (r))
 {
-    titleLabel.setText ("Focal", juce::dontSendNotification);
+    titleLabel.setText ("Dusk Studio", juce::dontSendNotification);
     titleLabel.setFont (juce::Font (juce::FontOptions (20.0f, juce::Font::bold)));
     titleLabel.setColour (juce::Label::textColourId, juce::Colour (0xffe8e8e8));
     addAndMakeVisible (titleLabel);

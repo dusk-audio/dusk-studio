@@ -9,11 +9,11 @@ on:
 
 jobs:
   build:
-    name: Build Focal (GCC Release, Ubuntu 22.04 arm64)
+    name: Build Dusk Studio (GCC Release, Ubuntu 22.04 arm64)
     runs-on: ubuntu-22.04-arm
 
     steps:
-      - name: Checkout Focal
+      - name: Checkout Dusk Studio
         uses: actions/checkout@v4
 
       - name: Install Linux build deps
@@ -82,19 +82,19 @@ jobs:
       - name: Smoke launch (xvfb, --version)
         run: |
           xvfb-run --auto-servernum \
-            build-linux/DuskStudio_artefacts/Release/Focal --version
+            build-linux/DuskStudio_artefacts/Release/DuskStudio --version
 
       - name: Headless self-test (xvfb, DUSKSTUDIO_RUN_SELFTEST=1)
         run: |
           timeout 60 xvfb-run --auto-servernum \
             env DUSKSTUDIO_RUN_SELFTEST=1 \
-            build-linux/DuskStudio_artefacts/Release/Focal
+            build-linux/DuskStudio_artefacts/Release/DuskStudio
 
-      - name: Upload Focal binary (per-run artifact)
+      - name: Upload Dusk Studio binary (per-run artifact)
         uses: actions/upload-artifact@v4
         with:
-          name: Focal-linux-arm64
-          path: build-linux/DuskStudio_artefacts/Release/Focal
+          name: DuskStudio-linux-arm64
+          path: build-linux/DuskStudio_artefacts/Release/DuskStudio
           retention-days: 14
           if-no-files-found: error
 
@@ -104,7 +104,7 @@ jobs:
     needs: build
 
     steps:
-      - name: Checkout Focal
+      - name: Checkout Dusk Studio
         uses: actions/checkout@v4
 
       - name: Install Linux build deps

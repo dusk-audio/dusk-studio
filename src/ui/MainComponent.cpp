@@ -97,7 +97,7 @@ private:
 
 namespace
 {
-// Focal-styled "save changes before quitting?" panel hosted by
+// Dusk Studio-styled "save changes before quitting?" panel hosted by
 // MainComponent::quitModal via EmbeddedModal. Three actions: Save (writes
 // session.json or pops the Save As chooser, then quits on success),
 // Don't Save (quits immediately, autosave keeps the changes for next
@@ -205,7 +205,7 @@ public:
             + sessionDir.getFullPathName()
             + "\n\nAutosave:  " + autosaveTime.toString (true, true)
             + "\nSaved:        " + savedTime    .toString (true, true)
-            + "\n\nFocal probably exited unexpectedly. "
+            + "\n\nDusk Studio probably exited unexpectedly. "
               "Recover the newer autosave, or load the saved session and "
               "discard it?",
             juce::dontSendNotification);
@@ -269,10 +269,10 @@ private:
 MainComponent::MainComponent()
 {
     // Accessibility floor — screen readers announce the root view as
-    // "Focal mixer" instead of "Component". Tab navigation across
+    // "Dusk Studio mixer" instead of "Component". Tab navigation across
     // strips is enabled per-strip via setWantsKeyboardFocus on each
     // ChannelStripComponent in resized().
-    setTitle ("Focal mixer");
+    setTitle ("Dusk Studio mixer");
     setDescription ("16-channel portastudio-style mixer");
 
     juce::LookAndFeel::setDefaultLookAndFeel (&lookAndFeel);
@@ -287,17 +287,17 @@ MainComponent::MainComponent()
     {
         engine.getPluginManager().setOopEnabled (true);
         std::fprintf (stdout,
-                      "[Focal] Out-of-process plugin hosting enabled "
+                      "[Dusk Studio] Out-of-process plugin hosting enabled "
                       "(DUSKSTUDIO_USE_OOP_PLUGINS=1).\n");
     }
    #endif
 
-    // Default to a session under ~/Music/Focal/Untitled. The user can change
+    // Default to a session under ~/Music/Dusk Studio/Untitled. The user can change
     // this later via a session-management UI; for the recorder MVP this is
     // enough to get WAVs on disk.
     auto musicDir = juce::File::getSpecialLocation (juce::File::userMusicDirectory);
     if (! musicDir.exists()) musicDir = juce::File::getSpecialLocation (juce::File::userHomeDirectory);
-    session.setSessionDirectory (musicDir.getChildFile ("Focal").getChildFile ("Untitled"));
+    session.setSessionDirectory (musicDir.getChildFile ("Dusk Studio").getChildFile ("Untitled"));
 
     // Top-of-window menu bar drives File / Settings actions. Replaces the
     // old row of TextButtons (Audio settings... / Save / Save As... / etc).
@@ -425,7 +425,7 @@ MainComponent::MainComponent()
 
     // Intentionally NO auto-load on startup. Standard DAW behavior is to
     // start with a fresh session and require the user to explicitly Load. The
-    // previous best-effort auto-load of ~/Music/Focal/Untitled/session.json
+    // previous best-effort auto-load of ~/Music/Dusk Studio/Untitled/session.json
     // was confusing - settings (master fader, mutes, etc.) silently persisted
     // across launches. Use the Load button to restore a saved session.
     // TODO: replace with a startup dialog (New / Open Recent / Browse...) when
@@ -489,7 +489,7 @@ MainComponent::MainComponent()
     // xdotool flows.
     // DUSKSTUDIO_LOAD_SESSION=/path/to/session.json bypasses the startup
     // dialog and loads the named session immediately. Useful for
-    // benchmarking the load path (the [Focal/Load] timing line ends
+    // benchmarking the load path (the [Dusk Studio/Load] timing line ends
     // up in the parent terminal) and for scripted reproductions of
     // user-reported regressions.
     if (const char* loadPath = std::getenv ("DUSKSTUDIO_LOAD_SESSION");
@@ -670,7 +670,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         // mode. No-op when no region is selected or the playhead is
         // outside it. Mnemonic: "Trim / spliT". 'B' (Reaper-style
         // razor) is taken by Bounce; Cmd+T (Logic-style) was rejected
-        // for consistency with Focal's other no-mod transport hotkeys.
+        // for consistency with Dusk Studio's other no-mod transport hotkeys.
         if (code == 'T' && noMods)
         {
             if (tapeStrip->splitSelectedAtPlayhead()) return true;
@@ -740,7 +740,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
 
     // ── Virtual MIDI Keyboard: K toggles the embedded VKB modal so the
     // user's typing keyboard becomes a MIDI input source. The modal pushes
-    // events into the synthetic "Virtual Keyboard (Focal)" device — to
+    // events into the synthetic "Virtual Keyboard (Dusk Studio)" device — to
     // hear notes, a track must select that device on its MIDI input
     // dropdown and have an instrument plugin loaded.
     if (code == 'K' && noMods)
@@ -1198,7 +1198,7 @@ void MainComponent::newSessionPrompt()
     // one step. The typed name becomes the session folder; the navigated
     // directory becomes its parent.
     auto startDir = juce::File::getSpecialLocation (juce::File::userMusicDirectory)
-                        .getChildFile ("Focal");
+                        .getChildFile ("Dusk Studio");
     if (! startDir.exists()) startDir.createDirectory();
 
     sessionFileChooser = std::make_unique<juce::FileChooser> (
@@ -1287,7 +1287,7 @@ bool MainComponent::saveSessionTo (const juce::File& dir)
         juce::MessageBoxOptions()
             .withIconType (juce::MessageBoxIconType::WarningIcon)
             .withTitle ("Save failed")
-            .withMessage ("Focal could not write the session file:\n\n    "
+            .withMessage ("Dusk Studio could not write the session file:\n\n    "
                             + target.getFullPathName() + "\n\n"
                             "Common causes: disk full, missing write "
                             "permission, or the parent folder was moved "
@@ -1365,7 +1365,7 @@ void MainComponent::writeAutosave()
 
     // Ensure the directory exists before serialising. setSessionDirectory's
     // ctor path normally handles this, but a session that was constructed
-    // via the default ~/Music/Focal/Untitled fallback may never have been
+    // via the default ~/Music/Dusk Studio/Untitled fallback may never have been
     // touched on disk yet.
     dir.createDirectory();
 
@@ -1426,7 +1426,7 @@ void MainComponent::requestQuit()
 {
     // Industry-standard dirty-only prompt: nothing changed since the last
     // manual save (autosave file isn't newer than session.json) → quit
-    // immediately. Otherwise show the Focal-styled Save / Don't Save /
+    // immediately. Otherwise show the Dusk Studio-styled Save / Don't Save /
     // Cancel modal.
     const auto dir = session.getSessionDirectory();
     const auto sessionJson = dir.getChildFile ("session.json");
@@ -1546,7 +1546,7 @@ void MainComponent::beginSafeShutdown()
     // finish the teardown.
     auto markPhase = [] (const char* msg)
     {
-        std::fprintf (stderr, "[Focal/shutdown] %s\n", msg);
+        std::fprintf (stderr, "[Dusk Studio/shutdown] %s\n", msg);
         std::fflush (stderr);
     };
 
@@ -1589,7 +1589,7 @@ void MainComponent::beginSafeShutdown()
     // Destruction, so the X-protocol focus stays on the popout and
     // mutter aborts at meta_window_unmanage. Diagnosed from a 12:53
     // crash trace where AM_VST3_Processor::terminate (Diva, on an
-    // aux bus) was the last Focal log line before the assertion.
+    // aux bus) was the last Dusk Studio log line before the assertion.
     if (auxView != nullptr)
         auxView->closeAllAuxPopouts();
 
@@ -1617,7 +1617,7 @@ void MainComponent::beginSafeShutdown()
 
         auto mark = [] (const char* msg)
         {
-            std::fprintf (stderr, "[Focal/shutdown] %s\n", msg);
+            std::fprintf (stderr, "[Dusk Studio/shutdown] %s\n", msg);
             std::fflush (stderr);
         };
 
@@ -1632,7 +1632,7 @@ void MainComponent::beginSafeShutdown()
         juce::MessageManager::callAsync ([]
         {
             std::fprintf (stderr,
-                          "[Focal/shutdown] phase 7b: posting systemRequestedQuit\n");
+                          "[Dusk Studio/shutdown] phase 7b: posting systemRequestedQuit\n");
             std::fflush (stderr);
             if (auto* app = juce::JUCEApplicationBase::getInstance())
                 app->systemRequestedQuit();
@@ -1661,7 +1661,7 @@ void MainComponent::saveSessionAndThen (std::function<void(bool)> onComplete)
     auto startDir = session.getSessionDirectory().getParentDirectory();
     if (! startDir.isDirectory())
         startDir = juce::File::getSpecialLocation (juce::File::userMusicDirectory)
-                       .getChildFile ("Focal");
+                       .getChildFile ("Dusk Studio");
     if (! startDir.exists()) startDir.createDirectory();
 
     juce::String defaultName = session.getSessionDirectory().getFileName();
@@ -1699,7 +1699,7 @@ void MainComponent::saveAsPrompt()
     auto startDir = session.getSessionDirectory().getParentDirectory();
     if (! startDir.isDirectory())
         startDir = juce::File::getSpecialLocation (juce::File::userMusicDirectory)
-                       .getChildFile ("Focal");
+                       .getChildFile ("Dusk Studio");
     if (! startDir.exists()) startDir.createDirectory();
 
     juce::String defaultName = session.getSessionDirectory().getFileName();
@@ -1879,7 +1879,7 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     setLastWrittenAutosaveJson (juce::String());
 
     std::fprintf (stderr,
-                  "[Focal/Load] %s: parse=%dms plugins=%dms midiOuts=%dms console=%dms total=%dms\n",
+                  "[Dusk Studio/Load] %s: parse=%dms plugins=%dms midiOuts=%dms console=%dms total=%dms\n",
                   sourceJson.getFileName().toRawUTF8(),
                   (int) (tAfterParse    - t0),
                   (int) (tAfterPlugins  - tAfterParse),
@@ -2520,7 +2520,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelMenuIndex,
     {
         menu.addItem (kMenuSettingsAudio, "Audio settings...");
         menu.addSeparator();
-        menu.addItem (kMenuSettingsAbout, "About Focal");
+        menu.addItem (kMenuSettingsAbout, "About Dusk Studio");
     }
     return menu;
 }
@@ -2562,13 +2562,13 @@ void MainComponent::menuItemSelected (int menuItemID, int /*topLevelMenuIndex*/)
             // Always matches what's in Info.plist so a bug report's reported
             // version can be cross-checked.
             const auto body =
-                juce::String ("Focal ") + JUCE_APPLICATION_VERSION_STRING + "\n\n"
+                juce::String ("Dusk Studio ") + JUCE_APPLICATION_VERSION_STRING + "\n\n"
                 "Portastudio-style DAW.\n"
                 "Built " __DATE__ " " __TIME__;
             juce::AlertWindow::showAsync (
                 juce::MessageBoxOptions()
                     .withIconType (juce::MessageBoxIconType::InfoIcon)
-                    .withTitle ("About Focal")
+                    .withTitle ("About Dusk Studio")
                     .withMessage (body)
                     .withButton ("OK"),
                 nullptr);

@@ -5,7 +5,7 @@
 namespace duskstudio
 {
 // Persistent list of session directories the user has recently saved/loaded.
-// Stored as a newline-delimited file at <userApplicationDataDirectory>/Focal/recent.txt
+// Stored as a newline-delimited file at <userApplicationDataDirectory>/Dusk Studio/recent.txt
 // (one absolute path per line, most recent first). Cap at kMaxEntries - older
 // entries are evicted on overflow. Stale paths (directory removed) are pruned
 // on read so the startup dialog never shows broken entries.

@@ -111,7 +111,7 @@ public:
     void closeButtonPressed() override
     {
         // Delegate to MainComponent's requestQuit, which checks dirty
-        // state (autosave-newer-than-saved) and shows the Focal-styled
+        // state (autosave-newer-than-saved) and shows the Dusk Studio-styled
         // Save / Don't Save / Cancel modal only when there are actual
         // unsaved changes. No dirty changes → quit immediately.
         if (auto* main = dynamic_cast<MainComponent*> (getContentComponent()))
@@ -189,12 +189,12 @@ static void runHeadlessToneTest()
 
     juce::AudioDeviceManager dm;
 
-    std::fprintf (stdout, "=== Focal Headless Tone Test ===\n");
+    std::fprintf (stdout, "=== Dusk Studio Headless Tone Test ===\n");
     std::fprintf (stdout, "Requested: backend=%s device=\"%s\" rate=%.0f buf=%d duration=%dms\n",
                   backendName.toRawUTF8(), deviceName.toRawUTF8(),
                   targetRate, targetBuf, durationMs);
 
-    // Linux: pre-register Focal's ALSA backend + JACK before init, same
+    // Linux: pre-register Dusk Studio's ALSA backend + JACK before init, same
     // pattern AudioEngine uses. Stops JUCE's createDeviceTypesIfNeeded
     // from auto-registering its stock ALSA path (which would collide on
     // the type-name "ALSA" with ours). Pre-scanning lets init's
@@ -262,7 +262,7 @@ static void runHeadlessToneTest()
 // DUSKSTUDIO_IPC_HOST_TEST which exercises the OOP dusk-studio-plugin-host path.
 //
 // Usage:
-//   DUSKSTUDIO_INSTRUMENT_TEST=/home/marc/.vst3/u-he/Diva.vst3 ./Focal
+//   DUSKSTUDIO_INSTRUMENT_TEST=/home/marc/.vst3/u-he/Diva.vst3 ./Dusk Studio
 static void runHeadlessInstrumentTest (const juce::String& pluginPath)
 {
     constexpr double sampleRate = 48000.0;
@@ -270,7 +270,7 @@ static void runHeadlessInstrumentTest (const juce::String& pluginPath)
     constexpr int    numBlocks  = 200;          // ~1.07 s of audio
     constexpr int    chordHoldBlocks = 150;     // release before measurement ends
 
-    std::fprintf (stdout, "=== Focal Headless Instrument Test ===\n");
+    std::fprintf (stdout, "=== Dusk Studio Headless Instrument Test ===\n");
     std::fprintf (stdout, "Plugin: %s\nSR=%.0f BS=%d Blocks=%d\n\n",
                   pluginPath.toRawUTF8(), sampleRate, blockSize, numBlocks);
 
@@ -347,10 +347,10 @@ static void runHeadlessInstrumentTest (const juce::String& pluginPath)
 // exercise the user's actual saved fader / mute / bus / aux state.
 //
 // Usage:
-//   DUSKSTUDIO_PIPELINE_TEST=/home/marc/.vst3/u-he/Diva.vst3 ./Focal
+//   DUSKSTUDIO_PIPELINE_TEST=/home/marc/.vst3/u-he/Diva.vst3 ./Dusk Studio
 //   DUSKSTUDIO_PIPELINE_TEST=/home/marc/.vst3/u-he/Diva.vst3 \
-//     DUSKSTUDIO_PIPELINE_TEST_SESSION=/home/marc/Music/Focal/Untitled/session.json.autosave \
-//     ./Focal
+//     DUSKSTUDIO_PIPELINE_TEST_SESSION=/home/marc/Music/Dusk Studio/Untitled/session.json.autosave \
+//     ./Dusk Studio
 static void runHeadlessPipelineTest (const juce::String& pluginPath)
 {
     constexpr double sampleRate = 48000.0;
@@ -360,7 +360,7 @@ static void runHeadlessPipelineTest (const juce::String& pluginPath)
     constexpr int    numBlocks       = 200;
     constexpr int    chordHoldBlocks = 150;
 
-    std::fprintf (stdout, "=== Focal Headless Pipeline Test ===\n");
+    std::fprintf (stdout, "=== Dusk Studio Headless Pipeline Test ===\n");
     std::fprintf (stdout, "Plugin: %s\nSR=%.0f BS=%d Blocks=%d\n\n",
                   pluginPath.toRawUTF8(), sampleRate, blockSize, numBlocks);
 
@@ -662,7 +662,7 @@ static void runHeadlessSelfTest()
     }
     if (engine->getCurrentSampleRate() <= 0.0)
         std::fprintf (stderr,
-                      "[Focal/selftest] WARNING: audio engine not ready after %d ms - "
+                      "[Dusk Studio/selftest] WARNING: audio engine not ready after %d ms - "
                       "synthetic tests will still run, backend tests may show degraded info\n",
                       maxWaitMs);
 
@@ -677,7 +677,7 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
 {
     // --version: print app + JUCE versions + platform string and exit
     // cleanly. Used by Patreon support flows (paste the output of
-    // `Focal --version` into the support DM) and by the Linux CI smoke
+    // `Dusk Studio --version` into the support DM) and by the Linux CI smoke
     // launch (verifies the binary actually links + starts headless).
     // Check BEFORE any audio init so the path works on machines with
     // no audio device. Tokenize commandLine — substring match would
@@ -686,7 +686,7 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
     const auto cliTokens = juce::StringArray::fromTokens (commandLine, true);
     if (cliTokens.contains ("--version") || cliTokens.contains ("-v"))
     {
-        std::fprintf (stdout, "Focal %s\nJUCE %s\nPlatform: %s\n",
+        std::fprintf (stdout, "Dusk Studio %s\nJUCE %s\nPlatform: %s\n",
                       JUCE_APPLICATION_VERSION_STRING,
                       juce::SystemStats::getJUCEVersion().toRawUTF8(),
                       juce::SystemStats::getOperatingSystemName().toRawUTF8());
@@ -826,7 +826,7 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
     {
         // Out-of-process plugin hosting Phase 1 acceptance gate.
         // Validates the shm + futex round-trip against the
-        // dusk-studio-plugin-host stub binary (which lives next to Focal in
+        // dusk-studio-plugin-host stub binary (which lives next to Dusk Studio in
         // the build output).
         const auto exe = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
         const auto host = exe.getSiblingFile ("dusk-studio-plugin-host");
@@ -838,7 +838,7 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
     }
 
     // Phase 2 acceptance gate. Pass DUSKSTUDIO_IPC_HOST_TEST=/path/to/plugin.vst3
-    // (or .lv2) and Focal launches dusk-studio-plugin-host in --ipc-host mode,
+    // (or .lv2) and Dusk Studio launches dusk-studio-plugin-host in --ipc-host mode,
     // loads the plugin, runs 1000 stereo blocks, asserts the signal was
     // modified. Use a real-world plugin like Multi-Q.vst3 to validate the
     // entire JUCE plugin loading + processBlock path through the IPC.

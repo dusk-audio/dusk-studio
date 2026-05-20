@@ -9,7 +9,7 @@ namespace duskstudio::crash_handler
 // first thing a crashing build does is leave a paste-able report at
 // getCrashDir().
 //
-// Layout under ${userApplicationData}/Focal/:
+// Layout under ${userApplicationData}/Dusk Studio/:
 //   log/dusk-studio-YYYYMMDD.log   — rotating daily, FileLogger
 //   crashes/crash-<iso>.txt  — one per terminate; backtrace + env summary
 //

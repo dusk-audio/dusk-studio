@@ -49,7 +49,7 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     // change, the slot re-preps it for the new config.
     pluginSlot.prepareToPlay (sampleRate, juce::jmax (1, blockSize));
 
-    // Oversampling: build a Focal-side wrapper around (EQ + Comp) when the
+    // Oversampling: build a Dusk Studio-side wrapper around (EQ + Comp) when the
     // user picks 2× / 4× in Audio Settings. The donor's BritishEQ console
     // saturation and ChannelComp/UC saturation alias hard at native rate;
     // wrapping the chain with juce::dsp::Oversampling moves the entire
@@ -97,7 +97,7 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
 
     // Force the full multi-comp processing path (sidechain HP, true-peak,
     // transient shaper, stereo linking, auto-makeup, bypass-fade, lookahead)
-    // and disable the donor's internal oversampling since Focal already
+    // and disable the donor's internal oversampling since Dusk Studio already
     // wraps the strip in its own oversampler.
     compressor.setMinimalProcessing (false);
     compressor.setInternalOversamplingEnabled (false);

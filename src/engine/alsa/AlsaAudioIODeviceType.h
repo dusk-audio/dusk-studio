@@ -4,7 +4,7 @@
 
 namespace duskstudio
 {
-// Custom ALSA backend for Focal. Enumerates raw hw:CARD,DEV PCMs only - no
+// Custom ALSA backend for Dusk Studio. Enumerates raw hw:CARD,DEV PCMs only - no
 // plug:, default:, front:, dmix: aliases. Those route through alsa-lib's plug
 // plugin, which on PipeWire systems gets intercepted by pipewire-alsa, with
 // the result that "raw hardware" is anything but. The hw: PCMs talk directly

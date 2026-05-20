@@ -21,7 +21,7 @@ void BusStrip::prepare (double sampleRate, int blockSize, int oversamplingFactor
     panGainR .setCurrentAndTargetValue (1.0f);
 
     // Bus oversampling: wrap (EQ + UC) externally. UC's internal toggle is
-    // disabled because Focal does the up/downsample around the chain — having
+    // disabled because Dusk Studio does the up/downsample around the chain — having
     // UC oversample on top would compound. EQ has no internal toggle, so the
     // external wrap is the only way to suppress its console-saturation
     // aliasing. Two stages = 4×, one stage = 2×, none = 1× (no oversampling).

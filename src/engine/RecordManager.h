@@ -103,7 +103,7 @@ private:
         std::atomic<juce::uint64> writeFailures { 0 };
     };
 
-    juce::TimeSliceThread diskThread { "Focal recorder" };
+    juce::TimeSliceThread diskThread { "Dusk Studio recorder" };
     juce::WavAudioFormat wav;
 
     std::array<std::unique_ptr<PerTrackWriter>, Session::kNumTracks> writers;

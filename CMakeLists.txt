@@ -26,7 +26,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 #   3. Any OS: sibling ../JUCE (upstream)
 #   4. external/JUCE submodule
 # The wayland fork has its own XEmbed + addDefaultFormatsToManager API that
-# Focal's source assumes on Linux; see [src/engine/JuceCompat.h](src/engine/JuceCompat.h)
+# Dusk Studio's source assumes on Linux; see [src/engine/JuceCompat.h](src/engine/JuceCompat.h)
 # for the API-split shim.
 if(DEFINED JUCE_PATH)
     set(DUSKSTUDIO_JUCE_SOURCE_DIR "${JUCE_PATH}")
@@ -60,24 +60,24 @@ message(STATUS "Using JUCE from: ${DUSKSTUDIO_JUCE_SOURCE_DIR}")
 option(DUSKSTUDIO_SKIP_FORK_CHECK
        "Skip the JUCE-wayland XEmbed patch enforcement (CI / tests only)" OFF)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT DUSKSTUDIO_SKIP_FORK_CHECK)
-    set(_focal_xembed_file
+    set(_duskstudio_xembed_file
         "${DUSKSTUDIO_JUCE_SOURCE_DIR}/modules/juce_gui_extra/native/juce_XEmbedComponent_linux.cpp")
-    if(NOT EXISTS "${_focal_xembed_file}")
-        message(FATAL_ERROR "Expected JUCE source not found: ${_focal_xembed_file}")
+    if(NOT EXISTS "${_duskstudio_xembed_file}")
+        message(FATAL_ERROR "Expected JUCE source not found: ${_duskstudio_xembed_file}")
     endif()
-    file(READ "${_focal_xembed_file}" _focal_xembed_src)
-    if(NOT _focal_xembed_src MATCHES "enum class Role { host, client }")
+    file(READ "${_duskstudio_xembed_file}" _duskstudio_xembed_src)
+    if(NOT _duskstudio_xembed_src MATCHES "enum class Role { host, client }")
         message(FATAL_ERROR
             "Dusk Studio requires a patched JUCE: the XEmbed host-mapping fix is missing in\n"
-            "  ${_focal_xembed_file}\n"
+            "  ${_duskstudio_xembed_file}\n"
             "Without it, pure-xcb VST3 plugins (e.g. MininnDrum) render as a blank\n"
             "rectangle. Re-apply the local commit titled\n"
             "  \"XEmbed: stop tying host-window mapping to client _XEMBED_INFO\"\n"
             "in your JUCE checkout, or pull a JUCE branch that contains it.\n"
             "(CI / test builds: pass -DFOCAL_SKIP_FORK_CHECK=ON to bypass.)")
     endif()
-    unset(_focal_xembed_file)
-    unset(_focal_xembed_src)
+    unset(_duskstudio_xembed_file)
+    unset(_duskstudio_xembed_src)
 endif()
 
 # Detect plugdata-team JUCE-wayland's free juce::addDefaultFormatsToManager
@@ -88,40 +88,40 @@ endif()
 # the qualified name lookup happens at template definition, not
 # substitution, so calling code wouldn't compile against upstream.
 set(DUSKSTUDIO_JUCE_HAS_FREE_ADD_FORMATS OFF)
-set(_focal_apf_helpers
+set(_duskstudio_apf_helpers
     "${DUSKSTUDIO_JUCE_SOURCE_DIR}/modules/juce_audio_processors/format/juce_AudioPluginFormatManagerHelpers.h")
-if(EXISTS "${_focal_apf_helpers}")
-    file(READ "${_focal_apf_helpers}" _focal_apf_src)
-    if(_focal_apf_src MATCHES "addDefaultFormatsToManager")
+if(EXISTS "${_duskstudio_apf_helpers}")
+    file(READ "${_duskstudio_apf_helpers}" _duskstudio_apf_src)
+    if(_duskstudio_apf_src MATCHES "addDefaultFormatsToManager")
         set(DUSKSTUDIO_JUCE_HAS_FREE_ADD_FORMATS ON)
         message(STATUS "JUCE has free juce::addDefaultFormatsToManager (wayland fork)")
     endif()
-    unset(_focal_apf_src)
+    unset(_duskstudio_apf_src)
 endif()
-unset(_focal_apf_helpers)
+unset(_duskstudio_apf_helpers)
 
 # Detect the wayland fork's WaylandWindowSystem / WaylandSymbols. The
 # fork integrates libwayland-client + libdecor directly for top-level
-# windowing; upstream JUCE has no such symbols. Focal's
+# windowing; upstream JUCE has no such symbols. Dusk Studio's
 # PlatformWindowing_Linux.cpp uses them to drive the X11-vs-Wayland
 # peer-creation latch + the requestFocusOnMainWaylandSurface roundtrip
 # yield. CI builds against upstream JUCE (no Wayland symbols) need
 # those code paths stubbed.
 set(DUSKSTUDIO_JUCE_HAS_WAYLAND OFF)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    set(_focal_juce_wayland_dir "${DUSKSTUDIO_JUCE_SOURCE_DIR}/modules/juce_gui_basics/native")
-    file(GLOB _focal_juce_wayland_files "${_focal_juce_wayland_dir}/*.h")
-    foreach(_f ${_focal_juce_wayland_files})
-        file(READ "${_f}" _focal_juce_wayland_src)
-        if(_focal_juce_wayland_src MATCHES "class +WaylandWindowSystem")
+    set(_duskstudio_juce_wayland_dir "${DUSKSTUDIO_JUCE_SOURCE_DIR}/modules/juce_gui_basics/native")
+    file(GLOB _duskstudio_juce_wayland_files "${_duskstudio_juce_wayland_dir}/*.h")
+    foreach(_f ${_duskstudio_juce_wayland_files})
+        file(READ "${_f}" _duskstudio_juce_wayland_src)
+        if(_duskstudio_juce_wayland_src MATCHES "class +WaylandWindowSystem")
             set(DUSKSTUDIO_JUCE_HAS_WAYLAND ON)
             message(STATUS "JUCE has WaylandWindowSystem (wayland fork): ${_f}")
             break()
         endif()
     endforeach()
-    unset(_focal_juce_wayland_files)
-    unset(_focal_juce_wayland_src)
-    unset(_focal_juce_wayland_dir)
+    unset(_duskstudio_juce_wayland_files)
+    unset(_duskstudio_juce_wayland_src)
+    unset(_duskstudio_juce_wayland_dir)
 endif()
 
 add_subdirectory(${DUSKSTUDIO_JUCE_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/JUCE)
@@ -143,9 +143,9 @@ else()
 endif()
 
 juce_add_gui_app(DuskStudio
-    PRODUCT_NAME       "Dusk Studio"
+    PRODUCT_NAME       "DuskStudio"
     COMPANY_NAME       "Marc Korte"
-    BUNDLE_ID          "com.marckorte.focal"
+    BUNDLE_ID          "audio.dusk.studio"
     VERSION            ${PROJECT_VERSION}
     ${DUSKSTUDIO_ICON_ARGS}
     NEEDS_WAYLAND      TRUE
@@ -200,13 +200,13 @@ endif()
 # FET/Opto compressor, Pultec EQ, tape saturation, console saturation, plus the
 # AnalogEmulation library). Header-only cores are picked up via the include
 # paths below; editing a header in the plugins repo automatically rebuilds
-# the affected Focal translation units. No copy / submodule bump required.
+# the affected Dusk Studio translation units. No copy / submodule bump required.
 #
 # Resolution priority:
 #   1. -DDUSK_PLUGINS_PATH (explicit override)
 #   2. sibling ../plugins-main — a permanent worktree pinned to plugins-`main`.
 #      Use this when the working ../plugins checkout is on a feature branch
-#      that may not have the donor API Focal expects. Create with:
+#      that may not have the donor API Dusk Studio expects. Create with:
 #          cd ../plugins && git worktree add ../plugins-main main
 #   3. sibling ../plugins (the usual checkout)
 if(DEFINED DUSK_PLUGINS_PATH)
@@ -337,7 +337,7 @@ if(WIN32)
     endif()
 endif()
 
-# Focal-owned ALSA backend - a juce::AudioIODevice + AudioIODeviceType pair
+# Dusk Studio-owned ALSA backend - a juce::AudioIODevice + AudioIODeviceType pair
 # written from scratch using Ardour's libs/backends/alsa/ as a reference for
 # patterns (xrun recovery, sw_params choices, format priority, channel-mask
 # handling) but with no copied code. Replaces JUCE's stock ALSA backend,
@@ -358,7 +358,7 @@ if(UNIX AND NOT APPLE)
 
     # Out-of-process plugin hosting: shared IPC primitives + the
     # parent-side connection class + a self-test driver. The
-    # dusk-studio-plugin-host child binary lives next to Focal in the build
+    # dusk-studio-plugin-host child binary lives next to Dusk Studio in the build
     # output. Linux-only; the IPC uses memfd_create + futex which are
     # Linux-specific. Mac/Windows builds keep using the in-process path
     # (PluginSlot) until the OOP work matures into a portable design.
@@ -423,12 +423,12 @@ target_include_directories(DuskStudio PRIVATE
 
 if(DEFINED DUSK_PLUGINS_PATH)
     # Per-plugin DSP headers from the Dusk plugins repo's main branch. Each
-    # plugin owns its DSP; Focal vendors:
+    # plugin owns its DSP; Dusk Studio vendors:
     #   - multi-q    (BritishEQProcessor — per-channel 4-band British EQ)
     #   - multi-comp (UniversalCompressor — per-channel Opto/FET/VCA comp,
     #                 used here as a juce::AudioProcessor; only its DSP path is
     #                 active — the plugin editor is compiled-in but never
-    #                 instantiated by Focal's UI)
+    #                 instantiated by Dusk Studio's UI)
     #   - tape-echo    (TapeEchoDSP::TapeSaturation — legacy master bus tape sat,
     #                   being replaced by TapeMachine; still vendored while the
     #                   migration completes)
@@ -437,7 +437,7 @@ if(DEFINED DUSK_PLUGINS_PATH)
     # SYSTEM include — vendored DSP headers carry benign warnings
     # (shadows, sign conversions) we don't own. Marking them SYSTEM
     # tells GCC/Clang to suppress those warnings on inclusion, which
-    # lets DUSKSTUDIO_STRICT_WARNINGS=-Werror apply to Focal's own sources
+    # lets DUSKSTUDIO_STRICT_WARNINGS=-Werror apply to Dusk Studio's own sources
     # without the vendored headers blocking the build.
     target_include_directories(DuskStudio SYSTEM PRIVATE
         "${DUSK_PLUGINS_PATH}/plugins/shared"
@@ -452,7 +452,7 @@ if(DEFINED DUSK_PLUGINS_PATH)
 
     # Compile multi-comp's processor + editor + shared LEDMeter so
     # UniversalCompressor links cleanly. Editor sources are linked but not
-    # invoked from Focal's UI — they exist only because UniversalCompressor's
+    # invoked from Dusk Studio's UI — they exist only because UniversalCompressor's
     # createEditor() references them.
     target_sources(DuskStudio PRIVATE
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/multicomp.cpp"
@@ -479,7 +479,7 @@ if(DEFINED DUSK_PLUGINS_PATH)
         COMPILE_DEFINITIONS "AnalogVUMeter=MultiCompAnalogVUMeter")
 
     # Both donors define createPluginFilter() as their JUCE plugin entry
-    # point. Focal instantiates them directly so neither is called, but the
+    # point. Dusk Studio instantiates them directly so neither is called, but the
     # global symbol still collides at link. Rename the TapeMachine one.
     set_source_files_properties(
         "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source/PluginProcessor.cpp"
@@ -494,7 +494,7 @@ target_compile_definitions(DuskStudio PRIVATE
     JUCE_USE_CURL=0
     $<$<BOOL:${DUSKSTUDIO_JUCE_HAS_FREE_ADD_FORMATS}>:DUSKSTUDIO_JUCE_HAS_FREE_ADD_FORMATS=1>
     $<$<BOOL:${DUSKSTUDIO_JUCE_HAS_WAYLAND}>:DUSKSTUDIO_JUCE_HAS_WAYLAND=1>
-    JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:DuskStudio,JUCE_PRODUCT_NAME>"
+    JUCE_APPLICATION_NAME_STRING="Dusk Studio"
     JUCE_APPLICATION_VERSION_STRING="$<TARGET_PROPERTY:DuskStudio,JUCE_VERSION>"
     JUCE_JACK=1
     JUCE_ALSA=1
@@ -518,7 +518,7 @@ target_compile_definitions(DuskStudio PRIVATE
     # toggles from inside #if blocks, so we provide defaults (all 0) globally
     # rather than per-source.
     JucePlugin_VersionString="${PROJECT_VERSION}"
-    JucePlugin_Name="Focal_Comp"
+    JucePlugin_Name="DuskStudio_Comp"
     JucePlugin_Manufacturer="Marc Korte"
     JucePlugin_IsMidiEffect=0
     JucePlugin_IsSynth=0
@@ -550,14 +550,14 @@ target_link_libraries(DuskStudio PRIVATE
     juce::juce_recommended_lto_flags
     juce::juce_recommended_warning_flags)
 
-# Treat warnings as errors on the Focal target. Off by default; opt-in
+# Treat warnings as errors on the Dusk Studio target. Off by default; opt-in
 # via -DFOCAL_STRICT_WARNINGS=ON. Not yet enabled in CI because the
-# vendored multi-comp .cpp sources compiled into Focal still emit
+# vendored multi-comp .cpp sources compiled into Dusk Studio still emit
 # shadow / sign-conversion warnings (vendored DSP HEADERS are marked
 # SYSTEM above and suppressed; the COMPILED .cpp from the plugins repo
 # is not). Flip the CI workflow once those are cleaned upstream or
 # wrapped with per-source warning overrides via set_source_files_properties.
-option(DUSKSTUDIO_STRICT_WARNINGS "Treat warnings as errors on the Focal target" OFF)
+option(DUSKSTUDIO_STRICT_WARNINGS "Treat warnings as errors on the Dusk Studio target" OFF)
 if(DUSKSTUDIO_STRICT_WARNINGS)
     if(MSVC)
         target_compile_options(DuskStudio PRIVATE /WX)
@@ -579,7 +579,7 @@ if(DUSKSTUDIO_ENABLE_ASAN AND NOT MSVC)
     add_link_options(-fsanitize=address,undefined)
 endif()
 
-option(DUSKSTUDIO_BUILD_TESTS "Build Focal unit tests with Catch2" OFF)
+option(DUSKSTUDIO_BUILD_TESTS "Build Dusk Studio unit tests with Catch2" OFF)
 if(DUSKSTUDIO_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)

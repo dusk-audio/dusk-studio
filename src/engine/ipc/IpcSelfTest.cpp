@@ -17,7 +17,7 @@ int runIpcSelfTest (const std::string& hostExecutablePath,
 {
     using namespace std::chrono;
 
-    std::fprintf (stdout, "=== Focal IPC Self-Test ===\n");
+    std::fprintf (stdout, "=== Dusk Studio IPC Self-Test ===\n");
     std::fprintf (stdout, "host:    %s\n", hostExecutablePath.c_str());
     std::fprintf (stdout, "iters:   %d\n", iterations);
     std::fprintf (stdout, "samples: %d (stereo)\n", numSamples);
@@ -130,7 +130,7 @@ int runIpcHostTest (const std::string& hostExecutablePath,
 {
     using namespace std::chrono;
 
-    std::fprintf (stdout, "=== Focal IPC Host Test (Phase 2) ===\n");
+    std::fprintf (stdout, "=== Dusk Studio IPC Host Test (Phase 2) ===\n");
     std::fprintf (stdout, "host:   %s\n", hostExecutablePath.c_str());
     std::fprintf (stdout, "plugin: %s\n", pluginPath.c_str());
     std::fprintf (stdout, "iters:  %d  samples: %d (stereo)\n", iterations, numSamples);

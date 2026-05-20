@@ -8,7 +8,7 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
-// IPC primitives shared between Focal (the parent / host process) and
+// IPC primitives shared between Dusk Studio (the parent / host process) and
 // dusk-studio-plugin-host (the child process running a JUCE AudioPluginInstance
 // out-of-process). Keep this header dependency-free - no JUCE includes,
 // no STL containers - so both binaries can include it without dragging

@@ -35,7 +35,7 @@ void MasterBus::prepare (double sampleRate, int blockSize, int oversamplingFacto
 
     // Drive TapeMachine's internal oversampling from the global Audio Settings
     // factor (Session::oversamplingFactor). The donor's "oversampling" param
-    // is a 3-choice (1x / 2x / 4x); map Focal's 1/2/4 factor to indices 0/1/2.
+    // is a 3-choice (1x / 2x / 4x); map Dusk Studio's 1/2/4 factor to indices 0/1/2.
     // Use AudioParameterChoice::operator= so JUCE's APVTS listeners fire and
     // any open editor's combo-box attachment updates — writing the raw atom
     // directly would skip the notification and leave the UI showing stale
@@ -51,7 +51,7 @@ void MasterBus::prepare (double sampleRate, int blockSize, int oversamplingFacto
 
     // Master oversampler around (TubeEQ + busComp). Both stages have donor
     // saturation that aliases at native rate; the wrap moves them to
-    // oversampled rate. UC's internal toggle is OFF here because Focal
+    // oversampled rate. UC's internal toggle is OFF here because Dusk Studio
     // does the up/downsample around the chain. TapeMachine has its own
     // internal oversampling (driven via APVTS above) so it processes at
     // native rate AFTER this wrap.
@@ -151,7 +151,7 @@ void MasterBus::updateCompParameters() noexcept
     storeAtom (compBusRatioAtom,   paramsRef->compRatio.load      (std::memory_order_relaxed));
     storeAtom (compBusAttackAtom,  paramsRef->compAttackMs.load   (std::memory_order_relaxed));
     // The donor's bus_release is a Choice param indexed 0..4 over
-    // {0.1s, 0.3s, 0.6s, 1.2s, Auto}. Map Focal's continuous release knob
+    // {0.1s, 0.3s, 0.6s, 1.2s, Auto}. Map Dusk Studio's continuous release knob
     // to the nearest discrete index, or send 4 ("Auto") when the Auto
     // toggle is engaged so the comp uses its program-dependent envelope.
     const bool autoRel = paramsRef->compReleaseAuto.load (std::memory_order_relaxed);

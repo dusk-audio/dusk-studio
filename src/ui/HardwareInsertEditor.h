@@ -13,7 +13,7 @@ namespace duskstudio
 //
 // Hosted inside an EmbeddedModal owned by the calling channel-strip /
 // aux-lane component. The panel mutates `params` directly via the same
-// AtomicSnapshot::publish + atomic-store pattern the rest of Focal uses
+// AtomicSnapshot::publish + atomic-store pattern the rest of Dusk Studio uses
 // for cross-thread parameter updates, so changes take effect on the
 // audio thread one block after the user moves a control.
 //

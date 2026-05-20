@@ -9,7 +9,7 @@ namespace duskstudio
 // MainComponent and lets the user pick a mouse-tool mode: Grab (default
 // move/select), Range (time selection), Cut (split at click), Grid
 // (tempo-map editing — Phase 3c), Draw (MIDI notes / region gain
-// envelope — Phase 3d). Stretch is deliberately absent (Focal spec
+// envelope — Phase 3d). Stretch is deliberately absent (Dusk Studio spec
 // forbids time-stretching).
 //
 // State is mirrored into session.editMode so it persists across reloads.

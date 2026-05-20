@@ -6,7 +6,7 @@
 
 namespace duskstudio
 {
-// AudioPlayHead reporting Focal's transport state, BPM, and timeline
+// AudioPlayHead reporting Dusk Studio's transport state, BPM, and timeline
 // position to hosted plugins. Tempo-synced features (LFOs, arpeggiators,
 // delays with bar/beat divisions, tape-style transport-driven UIs) all
 // query this. Without a playhead set, JUCE-hosted plugins fall back to a
@@ -38,7 +38,7 @@ public:
                             : 120.0;
         info.setBpm (bpm);
 
-        // 4/4 by default; Focal doesn't currently expose a session-wide
+        // 4/4 by default; Dusk Studio doesn't currently expose a session-wide
         // time signature but plugins do better with a sane value than
         // with the default 0/0.
         info.setTimeSignature (juce::AudioPlayHead::TimeSignature { 4, 4 });

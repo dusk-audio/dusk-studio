@@ -6,7 +6,7 @@
 
 // Regression guard: outside the per-platform PlatformWindowing
 // implementations (which deliberately use JUCE's existing Display*
-// connection), nothing in Focal should be calling XOpenDisplay()
+// connection), nothing in Dusk Studio should be calling XOpenDisplay()
 // with a nullptr argument to spin up a private X server connection.
 //
 // Why this matters:

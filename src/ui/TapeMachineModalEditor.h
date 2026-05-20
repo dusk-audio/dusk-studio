@@ -6,7 +6,7 @@
 
 namespace duskstudio
 {
-// Hosts a TapeMachine plugin editor inside Focal's gear modal and trims
+// Hosts a TapeMachine plugin editor inside Dusk Studio's gear modal and trims
 // down the parts of its UI that don't belong in the embedded context:
 //
 //   • Painted "TapeMachine" nameplate + "Vintage Tape Emulation" subtitle

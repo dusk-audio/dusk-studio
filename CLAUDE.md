@@ -1,6 +1,6 @@
-# Focal — instructions for Claude
+# Dusk Studio — instructions for Claude
 
-Focal is a deliberately constrained, portastudio-style DAW for Linux, JUCE 8 / C++17. The authoritative spec is [Focal.md](Focal.md). Read it before changing anything non-trivial.
+Dusk Studio is a deliberately constrained, portastudio-style DAW for Linux, JUCE 8 / C++17. The authoritative spec is [DuskStudio.md](DuskStudio.md). Read it before changing anything non-trivial.
 
 ## The seven hard constraints (do not violate)
 
@@ -15,7 +15,7 @@ Focal is a deliberately constrained, portastudio-style DAW for Linux, JUCE 8 / C
 ## Architecture cheat-sheet
 
 - **Audio backend**: PipeWire (primary) via JUCE's JACK backend; ALSA fallback.
-- **DSP**: extracted from the user's existing Dusk Audio plugins at `/home/marc/projects/plugins/`. Shared headers live (or will live) at `plugins/plugins/shared/dsp-cores/` so both Focal and the Dusk plugins are single-source-of-truth consumers. Resolved via `-DDUSK_PLUGINS_PATH=/path/to/plugins` or sibling `../plugins` (mirror of the JUCE pattern). Header-only cores: edit a file in the plugins repo, next Focal build picks it up — no copy step, no submodule bump.
+- **DSP**: extracted from the user's existing Dusk Audio plugins at `/home/marc/projects/plugins/`. Shared headers live (or will live) at `plugins/plugins/shared/dsp-cores/` so both Dusk Studio and the Dusk plugins are single-source-of-truth consumers. Resolved via `-DDUSK_PLUGINS_PATH=/path/to/plugins` or sibling `../plugins` (mirror of the JUCE pattern). Header-only cores: edit a file in the plugins repo, next Dusk Studio build picks it up — no copy step, no submodule bump.
 - **JUCE**: 8.x, resolved via `-DJUCE_PATH` or sibling `../JUCE` (same scheme as the Dusk plugins repo).
 - **Topology**: 16 channel strips (HPF → 4-band EQ → FET/Opto comp → sends → pan → bus assign → fader → mute/solo) → 4 aux buses (EQ + comp + fader) → master (Pultec EQ + bus comp + tape sat + fader).
 
@@ -24,14 +24,14 @@ Focal is a deliberately constrained, portastudio-style DAW for Linux, JUCE 8 / C
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j$(nproc)
-./build/DuskStudio_artefacts/Release/Focal
+./build/DuskStudio_artefacts/Release/DuskStudio
 ```
 
 JUCE and the Dusk plugins repo are auto-discovered from sibling directories. Pass `-DJUCE_PATH=...` or `-DDUSK_PLUGINS_PATH=...` to override either.
 
 ### Cross-OS dev (macOS authoring, Linux testing)
 
-Focal builds against different sibling repos depending on the host OS. Keep the two builds in separate directories so you never have to reconfigure when switching machines:
+Dusk Studio builds against different sibling repos depending on the host OS. Keep the two builds in separate directories so you never have to reconfigure when switching machines:
 
 | OS    | Build dir        | JUCE source                              | Plugins source                 |
 |-------|------------------|------------------------------------------|--------------------------------|
@@ -40,8 +40,8 @@ Focal builds against different sibling repos depending on the host OS. Keep the 
 | Tests | `build-tests/`   | same as host OS                          | same as host OS                |
 
 CMake auto-detects:
-- **JUCE** — on Linux it prefers `../JUCE-wayland` if present, falls back to `../JUCE`. The wayland fork has 5 local commits Focal depends on (XEmbed mapping, X11-on-Wayland fix, peer-creation latch — see [memory](../../.claude/projects/-home-marc-projects-Focal/memory/linux_juce_wayland_pin.md)) and a divergent `addDefaultFormatsToManager` free function.
-- **Plugins** — prefers `../plugins-main` over `../plugins`. The `plugins-main` directory is a git worktree pinned to the plugins repo's `main` branch so feature-branch work in `../plugins/` doesn't break Focal's expected donor API. Set up once on Linux:
+- **JUCE** — on Linux it prefers `../JUCE-wayland` if present, falls back to `../JUCE`. The wayland fork has 5 local commits Dusk Studio depends on (XEmbed mapping, X11-on-Wayland fix, peer-creation latch — see [memory](../../.claude/projects/-home-marc-projects-Dusk Studio/memory/linux_juce_wayland_pin.md)) and a divergent `addDefaultFormatsToManager` free function.
+- **Plugins** — prefers `../plugins-main` over `../plugins`. The `plugins-main` directory is a git worktree pinned to the plugins repo's `main` branch so feature-branch work in `../plugins/` doesn't break Dusk Studio's expected donor API. Set up once on Linux:
   ```bash
   cd ../plugins && git worktree add ../plugins-main main
   ```
@@ -51,7 +51,7 @@ The upstream-vs-fork `addDefaultFormats` API split is hidden behind [src/engine/
 
 ## Phase plan
 
-Phases 1a → 5 follow [Focal.md](Focal.md). Don't skip ahead. As of writing, Phase 1a (live mixer) and most of Phase 2 (multitrack recording + atomic JSON session save/load + autosave) are working. Phase 1b (send-bus plugin hosting on aux strips) and Phase 3 prep (take history) are the most recent additions. Phase 3 proper (markers, fader automation, punch+loop refinements) is next.
+Phases 1a → 5 follow [DuskStudio.md](DuskStudio.md). Don't skip ahead. As of writing, Phase 1a (live mixer) and most of Phase 2 (multitrack recording + atomic JSON session save/load + autosave) are working. Phase 1b (send-bus plugin hosting on aux strips) and Phase 3 prep (take history) are the most recent additions. Phase 3 proper (markers, fader automation, punch+loop refinements) is next.
 
 ## Audio thread rules (MANDATORY)
 
@@ -70,18 +70,18 @@ The audio thread (`AudioEngine::audioDeviceIOCallbackWithContext` and any `proce
 
 ## DSP lifecycle
 
-Focal's DSP classes (`ChannelStrip`, `AuxBusStrip`, `MasterBus`, `MasteringChain`, `PluginSlot`) follow a consistent shape:
+Dusk Studio's DSP classes (`ChannelStrip`, `AuxBusStrip`, `MasterBus`, `MasteringChain`, `PluginSlot`) follow a consistent shape:
 
 - **`prepare(sampleRate, blockSize, ...)`** — cache `sampleRate`, `.prepare(spec)` every `juce::dsp::*` member, `.reset(sampleRate, rampSeconds)` every `SmoothedValue`, size every per-block scratch buffer. Called from `AudioEngine::prepareForSelfTest` (and indirectly from `audioDeviceAboutToStart`). May be called multiple times — must be idempotent.
 - **`bind(params)`** — stash a reference to the matching `ChannelStripParams` / `AuxBusParams` / `MasterBusParams` so the audio thread can read live values via the cached atom addresses. Called once at `AudioEngine` construction.
 - **`processInPlace(L, R, numSamples)`** or **`processAndAccumulate(...)`** — the audio-thread entry point. Updates smoother targets at the top, runs DSP, updates `mutable` meter atomics at the bottom.
-- **Latency** — set via `setLatencySamples()` in `prepareToPlay` for plugins; clear to 0 when bypassed, restore on un-bypass. Focal's hosted plugin slots inherit latency from the loaded instance.
+- **Latency** — set via `setLatencySamples()` in `prepareToPlay` for plugins; clear to 0 when bypassed, restore on un-bypass. Dusk Studio's hosted plugin slots inherit latency from the loaded instance.
 - **Smoothing** — `juce::SmoothedValue<float>` everywhere a control changes. `.reset()` in `prepare`, `.setTargetValue()` from the param-update step at the top of each block, `.getNextValue()` per sample inside the DSP loop.
 - **Buffer processing** — raw pointer loops (`getWritePointer`) for sample-level DSP; wrap as `juce::AudioBuffer<float>` over existing storage (NOT a copy) when handing off to a JUCE DSP module like `BritishEQProcessor::process`.
 
 ## Parameter conventions
 
-Focal has two parameter sources, both following the same "cache-the-atomic-pointer-once, read-lock-free-on-the-audio-thread" rule:
+Dusk Studio has two parameter sources, both following the same "cache-the-atomic-pointer-once, read-lock-free-on-the-audio-thread" rule:
 
 1. **Session-level atomics** — `ChannelStripParams::faderDb`, `AuxBusParams::eqLfGainDb`, etc. are plain `std::atomic<T>` members of structs in [src/session/Session.h](src/session/Session.h). The UI mutates via `.store(v, std::memory_order_relaxed)` on `onValueChange`; the audio thread reads via `.load(std::memory_order_relaxed)`. New audio params go here.
 2. **APVTS atoms in vendored DSP** — `UniversalCompressor`, `BritishEQProcessor`, `TubeEQProcessor` etc. expose their parameters via `juce::AudioProcessorValueTreeState::getRawParameterValue("name")`. Cache the returned pointer ONCE in a `bindCompParams()`-style function called from `prepare`. The audio thread writes via `storeAtom(p, v)` at the top of each block (lock-free, notification-free path) and the donor's `processBlock` reads it.
@@ -109,7 +109,7 @@ For plugin instances, audio file readers, or any heavy resource — never block 
 
 ## Testing
 
-Focal has Catch2 v3 unit tests in [tests/](tests/), gated behind `-DFOCAL_BUILD_TESTS=ON` so the default app build is unaffected. The convention is **narrow-link tests**: each test binary compiles only the `src/...` translation units it actually exercises, plus the JUCE modules those need. No GUI, no Dusk DSP, no full `Focal` target. This keeps the test build fast and isolates failures to the unit under test.
+Dusk Studio has Catch2 v3 unit tests in [tests/](tests/), gated behind `-DFOCAL_BUILD_TESTS=ON` so the default app build is unaffected. The convention is **narrow-link tests**: each test binary compiles only the `src/...` translation units it actually exercises, plus the JUCE modules those need. No GUI, no Dusk DSP, no full `Dusk Studio` target. This keeps the test build fast and isolates failures to the unit under test.
 
 ### Build + run
 
@@ -187,7 +187,7 @@ Operating within a constrained context window. Adhere to these regardless of any
 ### Context management
 5. **Sub-agent strategy.** For research tasks touching >5 independent files, spawn parallel `Explore` agents (each gets its own clean context) rather than serially loading every file into the main context. We did this earlier in this session — works well.
 6. **Context decay awareness.** After ~10 messages or any focus shift, re-read the files you're about to edit. Don't trust prior memory — auto-compaction may have altered it. The conversation summary is lossy.
-7. **File read budget.** `Read` is hard-capped at ~25k tokens (~2000 lines for typical source). For files over that limit (notably [Focal.md](Focal.md), ~30k tokens), read in offset/limit chunks or delegate to an Explore agent. Never assume a single read covered the whole file.
+7. **File read budget.** `Read` is hard-capped at ~25k tokens (~2000 lines for typical source). For files over that limit (notably [DuskStudio.md](DuskStudio.md), ~30k tokens), read in offset/limit chunks or delegate to an Explore agent. Never assume a single read covered the whole file.
 8. **Tool result blindness.** Large tool outputs may be silently truncated. If a `grep` or `find` returns suspiciously few results, re-run with narrower scope and explicitly say in the summary that earlier output may have been truncated.
 
 ### Edit safety

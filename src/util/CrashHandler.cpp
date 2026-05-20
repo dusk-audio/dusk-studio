@@ -16,11 +16,11 @@ std::unique_ptr<juce::FileLogger> ownedLogger;
 
 juce::File baseDir()
 {
-    // ~/.local/share/Focal on Linux, ~/Library/Application Support/Focal
-    // on macOS, %APPDATA%/Focal on Windows. Same root used by the
+    // ~/.local/share/Dusk Studio on Linux, ~/Library/Application Support/Dusk Studio
+    // on macOS, %APPDATA%/Dusk Studio on Windows. Same root used by the
     // Patreon support docs so users know where to look.
     return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
-              .getChildFile ("Focal");
+              .getChildFile ("Dusk Studio");
 }
 
 juce::File makeLogFile()
@@ -46,7 +46,7 @@ void crashCallback (void* /*platformSpecific*/)
     juce::FileOutputStream stream (report);
     if (! stream.openedOk()) return;
 
-    stream << "Focal crash report\n"
+    stream << "Dusk Studio crash report\n"
            << "==================\n"
            << "Time:         " << juce::Time::getCurrentTime().toString (true, true) << "\n"
            << "App version:  " << cachedAppVersion << "\n"
@@ -118,7 +118,7 @@ void install (const juce::String& appVersion)
     // from the date in the filename — next-day startup picks a new file.
     ownedLogger = std::make_unique<juce::FileLogger> (
         cachedLogFile,
-        "Focal " + appVersion + " — "
+        "Dusk Studio " + appVersion + " — "
             + juce::Time::getCurrentTime().toString (true, true));
     juce::Logger::setCurrentLogger (ownedLogger.get());
 

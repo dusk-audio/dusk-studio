@@ -7,7 +7,7 @@
 namespace duskstudio::fileimport
 {
 // Message-thread orchestrator for bringing user-supplied audio / MIDI
-// files into a Focal session. Audio imports are decoded, channel-
+// files into a Dusk Studio session. Audio imports are decoded, channel-
 // conformed to a target mono/stereo layout, resampled to the session
 // sample-rate if needed, then written as a 24-bit WAV into the
 // session's audio directory - matching RecordManager's on-disk
