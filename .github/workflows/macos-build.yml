@@ -1,0 +1,101 @@
+name: macOS build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Focal (Apple Clang Release, macOS 14)
+    # macos-14 = Apple Silicon (arm64) runner, Sonoma. macos-13 stays
+    # available if we ever need an Intel build leg; for now Apple Silicon
+    # is the dev target.
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout Focal
+        uses: actions/checkout@v4
+
+      - name: Clone JUCE 8.0.4 (upstream)
+        # macOS uses upstream JUCE. The plugdata-team wayland fork +
+        # local commits are Linux-only — see CLAUDE.md cross-OS table
+        # and src/engine/JuceCompat.h for the API split.
+        run: |
+          git clone --depth 1 --branch 8.0.4 \
+            https://github.com/juce-framework/JUCE.git \
+            "${RUNNER_TEMP}/JUCE"
+
+      - name: Clone Dusk plugins (donor DSP)
+        run: |
+          git clone --depth 1 \
+            https://github.com/dusk-audio/dusk-audio-plugins.git \
+            "${RUNNER_TEMP}/plugins"
+
+      - name: Configure (Xcode / Release)
+        # No -DFOCAL_SKIP_FORK_CHECK needed — the XEmbed enforcement
+        # is Linux-gated in CMakeLists.txt. Codesign identity left at
+        # the default ad-hoc "-" since this is a per-run build, not
+        # a notarised distribution artifact.
+        run: |
+          cmake -S . -B build -G Xcode \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
+            -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins"
+
+      - name: Build (Release)
+        run: cmake --build build --config Release -j
+
+      - name: Smoke launch (--version)
+        # Verifies the binary actually links + starts. --version exits
+        # cleanly before the AudioEngine spins up; macOS GH runners
+        # have no audio device but the early-exit path doesn't need one.
+        run: |
+          ./build/Focal_artefacts/Release/Focal.app/Contents/MacOS/Focal --version
+
+      - name: Upload Focal.app (per-run artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Focal-macos-arm64
+          path: build/Focal_artefacts/Release/Focal.app
+          retention-days: 14
+          if-no-files-found: error
+
+  tests:
+    name: Catch2 tests (Apple Clang Release, macOS 14)
+    runs-on: macos-14
+    needs: build
+
+    steps:
+      - name: Checkout Focal
+        uses: actions/checkout@v4
+
+      - name: Clone JUCE 8.0.4 (upstream)
+        run: |
+          git clone --depth 1 --branch 8.0.4 \
+            https://github.com/juce-framework/JUCE.git \
+            "${RUNNER_TEMP}/JUCE"
+
+      - name: Clone Dusk plugins (donor DSP)
+        run: |
+          git clone --depth 1 \
+            https://github.com/dusk-audio/dusk-audio-plugins.git \
+            "${RUNNER_TEMP}/plugins"
+
+      - name: Configure tests
+        run: |
+          cmake -S . -B build-tests -G Xcode \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
+            -DFOCAL_BUILD_TESTS=ON \
+            -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins"
+
+      - name: Build tests
+        run: cmake --build build-tests --target focal-tests --config Release -j
+
+      - name: Run tests
+        run: ctest --test-dir build-tests --output-on-failure -C Release
