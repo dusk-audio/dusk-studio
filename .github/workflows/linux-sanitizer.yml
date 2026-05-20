@@ -43,13 +43,28 @@ jobs:
             libwayland-dev libxkbcommon-dev libdecor-0-dev
 
       - name: Clone JUCE 8.0.4 (upstream)
-        # See linux-build.yml for rationale — CI uses vanilla upstream;
-        # the wayland fork's local commits are runtime-only and not
-        # pushable. JuceCompat.h adapts at compile time.
+        # See linux-build.yml for rationale.
         run: |
           git clone --depth 1 --branch 8.0.4 \
             https://github.com/juce-framework/JUCE.git \
             "${RUNNER_TEMP}/JUCE-wayland"
+
+      - name: Patch JUCE — SIMDNativeOps<long long> alias for x86_64 Linux
+        # See linux-build.yml for context (upstream JUCE lacks the alias
+        # that the wayland fork adds; jmax<juce::int64> hard-errors
+        # without it on GCC x86_64).
+        run: |
+          file="${RUNNER_TEMP}/JUCE-wayland/modules/juce_dsp/native/juce_SIMDNativeOps_sse.h"
+          awk '
+            /^} \/\/ namespace juce::dsp/ && !done {
+              print "#if defined (__GNUC__) && defined (__SIZEOF_LONG__) && __SIZEOF_LONG__ == 8 && !defined (_WIN32)"
+              print "template <> struct SIMDNativeOps<long long> : SIMDNativeOps<int64_t> {};"
+              print "template <> struct SIMDNativeOps<unsigned long long> : SIMDNativeOps<uint64_t> {};"
+              print "#endif"
+              done = 1
+            }
+            { print }
+          ' "$file" > "$file.new" && mv "$file.new" "$file"
 
       - name: Clone Dusk plugins (donor DSP)
         run: |
