@@ -1,10 +1,10 @@
 # Dusk Studio
 
-[![Linux build](https://github.com/dusk-audio/dusk-studio-daw/actions/workflows/linux-build.yml/badge.svg)](https://github.com/dusk-audio/dusk-studio-daw/actions/workflows/linux-build.yml)
-[![Linux arm64](https://github.com/dusk-audio/dusk-studio-daw/actions/workflows/linux-build-arm64.yml/badge.svg)](https://github.com/dusk-audio/dusk-studio-daw/actions/workflows/linux-build-arm64.yml)
-[![macOS build](https://github.com/dusk-audio/dusk-studio-daw/actions/workflows/macos-build.yml/badge.svg)](https://github.com/dusk-audio/dusk-studio-daw/actions/workflows/macos-build.yml)
-[![Windows build](https://github.com/dusk-audio/dusk-studio-daw/actions/workflows/windows-build.yml/badge.svg)](https://github.com/dusk-audio/dusk-studio-daw/actions/workflows/windows-build.yml)
-[![Linux sanitizer](https://github.com/dusk-audio/dusk-studio-daw/actions/workflows/linux-sanitizer.yml/badge.svg)](https://github.com/dusk-audio/dusk-studio-daw/actions/workflows/linux-sanitizer.yml)
+[![Linux build](https://github.com/dusk-audio/dusk-studio/actions/workflows/linux-build.yml/badge.svg)](https://github.com/dusk-audio/dusk-studio/actions/workflows/linux-build.yml)
+[![Linux arm64](https://github.com/dusk-audio/dusk-studio/actions/workflows/linux-build-arm64.yml/badge.svg)](https://github.com/dusk-audio/dusk-studio/actions/workflows/linux-build-arm64.yml)
+[![macOS build](https://github.com/dusk-audio/dusk-studio/actions/workflows/macos-build.yml/badge.svg)](https://github.com/dusk-audio/dusk-studio/actions/workflows/macos-build.yml)
+[![Windows build](https://github.com/dusk-audio/dusk-studio/actions/workflows/windows-build.yml/badge.svg)](https://github.com/dusk-audio/dusk-studio/actions/workflows/windows-build.yml)
+[![Linux sanitizer](https://github.com/dusk-audio/dusk-studio/actions/workflows/linux-sanitizer.yml/badge.svg)](https://github.com/dusk-audio/dusk-studio/actions/workflows/linux-sanitizer.yml)
 
 A deliberately constrained, portastudio-style DAW for Linux (macOS + Windows in beta). Built for engineers who want to **record, mix, and master without leaving the application** — no plugin paralysis, no menu diving, no infinite-options sprawl.
 

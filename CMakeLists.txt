@@ -189,10 +189,10 @@ if(APPLE)
         # not be opened". --deep dropped too (deprecated; JUCE has
         # already signed inner Mach-Os).
         COMMAND codesign --force --options runtime
-                          --entitlements "${CMAKE_CURRENT_BINARY_DIR}/DuskStudio_artefacts/JuceLibraryCode/Dusk Studio.entitlements"
+                          --entitlements "${CMAKE_CURRENT_BINARY_DIR}/DuskStudio_artefacts/JuceLibraryCode/DuskStudio.entitlements"
                           --sign "${DUSKSTUDIO_CODESIGN_IDENTITY}"
                           "$<TARGET_BUNDLE_DIR:DuskStudio>"
-        COMMENT "patch Info.plist + codesign "Dusk Studio.app" (identity='${DUSKSTUDIO_CODESIGN_IDENTITY}')"
+        COMMENT "patch Info.plist + codesign DuskStudio.app (identity='${DUSKSTUDIO_CODESIGN_IDENTITY}')"
         VERBATIM)
 endif()
 

@@ -18,7 +18,7 @@ Dusk Studio expects two sibling repositories to be present alongside its own che
 
 ```
 C:\dev\
-├── dusk-studio-daw\       (this repo)
+├── dusk-studio\       (this repo)
 ├── JUCE\            (JUCE 8.0.x, the framework)
 └── plugins\         (Dusk Audio plugins, donor DSP)
 ```
@@ -31,21 +31,21 @@ Open a terminal (PowerShell, cmd, or Git Bash). Both Dusk Studio repos are publi
 
 ```cmd
 cd C:\dev
-git clone https://github.com/dusk-audio/dusk-studio-daw.git
+git clone https://github.com/dusk-audio/dusk-studio.git
 git clone --branch 8.0.4 https://github.com/juce-framework/JUCE.git
 git clone https://github.com/dusk-audio/dusk-audio-plugins.git plugins
 ```
 
 The explicit `plugins` target on the third clone is mandatory: CMake auto-discovery looks for a sibling directory named `plugins\` or `plugins-main\` ([CMakeLists.txt:160-168](CMakeLists.txt#L160-L168)). The repo itself is named `dusk-audio-plugins` on GitHub, so without the explicit target you'd get a directory CMake can't find.
 
-The Dusk Studio repo's own directory name (`dusk-studio-daw\`) doesn't matter to the build, but feel free to `git clone <url> Dusk Studio` if you prefer.
+The Dusk Studio repo's own directory name (`dusk-studio\`) doesn't matter to the build, but feel free to `git clone <url> Dusk Studio` if you prefer.
 
 ## Configure + build
 
 From the Dusk Studio directory:
 
 ```cmd
-cd C:\dev\dusk-studio-daw
+cd C:\dev\dusk-studio
 cmake -S . -B build -G "Visual Studio 17 2022" -A x64
 cmake --build build --config Release -j
 ```
@@ -55,7 +55,7 @@ The first configure pulls in JUCE's CMake helpers and may take a minute. Subsequ
 The built binary lands at:
 
 ```
-C:\dev\dusk-studio-daw\build\DuskStudio_artefacts\Release\Dusk Studio.exe
+C:\dev\dusk-studio\build\DuskStudio_artefacts\Release\DuskStudio.exe
 ```
 
 Double-click to run, or launch from the terminal.
@@ -103,7 +103,7 @@ Set an environment variable to run Dusk Studio's internal DSP self-test on start
 
 ```cmd
 set DUSKSTUDIO_RUN_SELFTEST=1
-build\DuskStudio_artefacts\Release\Dusk Studio.exe
+build\DuskStudio_artefacts\Release\DuskStudio.exe
 ```
 
 Useful for confirming the audio engine wires up correctly without needing to drive the UI.

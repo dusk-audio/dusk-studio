@@ -57,7 +57,7 @@ jobs:
         shell: bash
         run: cmake --build build --config Release -j
 
-      - name: Upload Dusk Studio.exe (per-run artifact)
+      - name: Upload DuskStudio.exe (per-run artifact)
         uses: actions/upload-artifact@v4
         with:
           name: DuskStudio-windows-x64

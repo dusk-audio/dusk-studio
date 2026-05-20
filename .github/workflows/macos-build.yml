@@ -56,7 +56,7 @@ jobs:
         run: |
           ./build/DuskStudio_artefacts/Release/DuskStudio.app/Contents/MacOS/DuskStudio --version
 
-      - name: Upload Dusk Studio.app (per-run artifact)
+      - name: Upload DuskStudio.app (per-run artifact)
         uses: actions/upload-artifact@v4
         with:
           name: DuskStudio-macos-arm64
