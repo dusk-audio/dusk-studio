@@ -171,12 +171,13 @@ struct HostState
     std::atomic<bool> shouldQuit { false };
 
     // Editor embedding (Phase 4). The plugin's editor lives in this
-    // process; the parent embeds our native X11 window via XEmbed.
-    // editorWindow is a borderless toplevel that wraps the plugin's
-    // AudioProcessorEditor so it has its own native peer; editor is
-    // a non-owning pointer (the wrapper window owns the Component).
-    // Both are message-thread-only; the socket-reader thread acquires
-    // MessageManagerLock before touching them.
+    // process; the parent either embeds our native window (Linux XEmbed)
+    // or lets it float as a native-titlebar toplevel (Win/Mac — see
+    // handleShowEditor for the per-platform chrome choice). editorWindow
+    // wraps the plugin's AudioProcessorEditor so it has its own native
+    // peer; editor is a non-owning pointer (the wrapper window owns the
+    // Component). Both are message-thread-only; the socket-reader thread
+    // acquires MessageManagerLock before touching them.
     std::unique_ptr<juce::DocumentWindow>     editorWindow;
     juce::AudioProcessorEditor*               editor { nullptr };
 };
