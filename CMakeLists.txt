@@ -52,7 +52,14 @@ message(STATUS "Using JUCE from: ${FOCAL_JUCE_SOURCE_DIR}")
 # plugin's _XEMBED_INFO flag, which leaves pure-xcb VST3s (e.g. MininnDrum) as
 # blank rectangles. The fix splits WindowMapper by Role; the marker below is in
 # our local commit. Detect drift if JUCE is ever updated without re-applying.
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+#
+# Skippable via -DFOCAL_SKIP_FORK_CHECK=ON for CI / test builds that use a
+# vanilla upstream JUCE clone (no plugin editors involved, so the XEmbed patch
+# is irrelevant). Never set this for a distribution build — pure-xcb VST3
+# plugins will render blank without the patch.
+option(FOCAL_SKIP_FORK_CHECK
+       "Skip the JUCE-wayland XEmbed patch enforcement (CI / tests only)" OFF)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT FOCAL_SKIP_FORK_CHECK)
     set(_focal_xembed_file
         "${FOCAL_JUCE_SOURCE_DIR}/modules/juce_gui_extra/native/juce_XEmbedComponent_linux.cpp")
     if(NOT EXISTS "${_focal_xembed_file}")
@@ -66,7 +73,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
             "Without it, pure-xcb VST3 plugins (e.g. MininnDrum) render as a blank\n"
             "rectangle. Re-apply the local commit titled\n"
             "  \"XEmbed: stop tying host-window mapping to client _XEMBED_INFO\"\n"
-            "in your JUCE checkout, or pull a JUCE branch that contains it.")
+            "in your JUCE checkout, or pull a JUCE branch that contains it.\n"
+            "(CI / test builds: pass -DFOCAL_SKIP_FORK_CHECK=ON to bypass.)")
     endif()
     unset(_focal_xembed_file)
     unset(_focal_xembed_src)

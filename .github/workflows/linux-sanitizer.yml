@@ -60,6 +60,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DFOCAL_BUILD_TESTS=ON \
             -DFOCAL_ENABLE_ASAN=ON \
+            -DFOCAL_SKIP_FORK_CHECK=ON \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE-wayland" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main"
 
