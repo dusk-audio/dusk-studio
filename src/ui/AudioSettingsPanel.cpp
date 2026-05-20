@@ -141,6 +141,61 @@ AudioSettingsPanel::AudioSettingsPanel (juce::AudioDeviceManager& dm,
     };
     addAndMakeVisible (syncEmitClockToggle);
 
+    // MTC chase toggle (slave-side absolute-time follow). Off by
+    // default — same UX baseline as the Clock chase toggle.
+    mtcChaseToggle.setToggleState (
+        session.externalTimeCodeChasesTransport.load (std::memory_order_relaxed),
+        juce::dontSendNotification);
+    mtcChaseToggle.setTooltip (
+        "When on, Focal's transport follows incoming MTC absolute time. "
+        "Initial lock on the master's Play edge; freewheels within ~2 "
+        "frames of drift; soft re-locates on sustained drift. Off = "
+        "MTC time displayed only, transport stays under your control.");
+    mtcChaseToggle.onClick = [this]
+    {
+        session.externalTimeCodeChasesTransport.store (
+            mtcChaseToggle.getToggleState(), std::memory_order_relaxed);
+    };
+    addAndMakeVisible (mtcChaseToggle);
+
+    // MTC emit toggle (master-side). Multiplexes onto the existing
+    // Sync Output port — same MIDI cable carries Clock + MTC.
+    mtcEmitToggle.setToggleState (
+        session.syncOutputEmitTimeCode.load (std::memory_order_relaxed),
+        juce::dontSendNotification);
+    mtcEmitToggle.setTooltip (
+        "When on, Focal emits MTC quarter-frames + full-frame sysex "
+        "to the chosen Sync Output. Video editors and outboard tape "
+        "machines will chase Focal's absolute playback position.");
+    mtcEmitToggle.onClick = [this]
+    {
+        session.syncOutputEmitTimeCode.store (
+            mtcEmitToggle.getToggleState(), std::memory_order_relaxed);
+    };
+    addAndMakeVisible (mtcEmitToggle);
+
+    mtcEmitFrameRateLabel.setJustificationType (juce::Justification::centredRight);
+    addAndMakeVisible (mtcEmitFrameRateLabel);
+    mtcEmitFrameRateCombo.addItem ("24 fps",        1);
+    mtcEmitFrameRateCombo.addItem ("25 fps",        2);
+    mtcEmitFrameRateCombo.addItem ("29.97 DF",      3);
+    mtcEmitFrameRateCombo.addItem ("30 fps",        4);
+    mtcEmitFrameRateCombo.setSelectedId (
+        session.syncOutputTimeCodeFrameRate.load (std::memory_order_relaxed) + 1,
+        juce::dontSendNotification);
+    mtcEmitFrameRateCombo.setTooltip (
+        "SMPTE frame rate used when emitting MTC. 29.97 DF for NTSC "
+        "video sync (drop-frame); 25 fps for PAL; 24 fps for film; "
+        "30 fps non-drop for audio-only workflows.");
+    mtcEmitFrameRateCombo.onChange = [this]
+    {
+        const int id = mtcEmitFrameRateCombo.getSelectedId();
+        if (id >= 1 && id <= 4)
+            session.syncOutputTimeCodeFrameRate.store (id - 1,
+                                                         std::memory_order_relaxed);
+    };
+    addAndMakeVisible (mtcEmitFrameRateCombo);
+
     midiBindingsButton.setTooltip (
         "Open the MIDI Bindings panel: list everything currently mapped, "
         "remove individual bindings, or clear all. Use right-click on "
@@ -222,11 +277,26 @@ void AudioSettingsPanel::resized()
     uiScaleSlider.setBounds (scaleRow.removeFromLeft (260).reduced (4, 2));
     uiScaleHint.setBounds   (scaleRow.reduced (4, 2));
 
+    // MTC OUTPUT row: emit toggle + frame-rate dropdown. Sits above
+    // the Clock output row because MTC and Clock multiplex onto the
+    // same Sync Output port — the rate dropdown only makes sense for
+    // MTC, so it lives in the MTC row.
+    auto mtcOutRow = area.removeFromBottom (28);
+    mtcEmitFrameRateLabel.setBounds (mtcOutRow.removeFromLeft (180).reduced (4, 2));
+    mtcEmitFrameRateCombo.setBounds (mtcOutRow.removeFromLeft (140).reduced (4, 2));
+    mtcEmitToggle.setBounds (mtcOutRow.reduced (8, 2));
+
     // MIDI Clock OUTPUT row (master mode): output picker + emit toggle.
     auto syncOutRow = area.removeFromBottom (28);
     syncOutputLabel.setBounds (syncOutRow.removeFromLeft (180).reduced (4, 2));
     syncOutputCombo.setBounds (syncOutRow.removeFromLeft (300).reduced (4, 2));
     syncEmitClockToggle.setBounds (syncOutRow.reduced (8, 2));
+
+    // MTC INPUT row: chase toggle only (the picker + frame-rate auto-
+    // detected from incoming QF nibble 7 / full-frame sysex).
+    auto mtcInRow = area.removeFromBottom (28);
+    mtcInRow.removeFromLeft (180 + 300 + 8);   // align with toggle column
+    mtcChaseToggle.setBounds (mtcInRow.reduced (4, 2));
 
     // MIDI Clock INPUT row: source picker + chase toggle.
     auto syncRow = area.removeFromBottom (28);

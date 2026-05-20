@@ -1213,6 +1213,20 @@ public:
     mutable std::atomic<bool>        externalTimeCodeReversed  { false };
     mutable std::atomic<int>         externalTimeCodeFrameRate { 3 };  // 0=24, 1=25, 2=29.97DF, 3=30
 
+    // When true AND externalTimeCodeRolling is true, the audio engine
+    // drives Transport state to follow the MTC master. Initial lock
+    // on rolling-edge, freewheel within tolerance, soft re-locate on
+    // sustained drift, stop on rolling-edge false. Off by default;
+    // user opts in via the Audio Settings panel.
+    std::atomic<bool> externalTimeCodeChasesTransport { false };
+
+    // Pending transport playhead set, drained on the message thread.
+    // -1 = nothing pending. Audio thread writes a target sample value;
+    // a message-thread timer drains it, calls Transport::setPlayhead,
+    // and stores -1 back. Mirrors pendingTransportAction's dispatch
+    // pattern — Transport mutators aren't RT-safe.
+    std::atomic<juce::int64> pendingTransportPlayhead { -1 };
+
     // MTC master-emit toggles. Reuses the existing syncOutputIdx /
     // syncOutputIdentifier port — Clock + MTC multiplex on the same
     // MidiOutput. syncOutputTimeCodeFrameRate selects the SMPTE rate

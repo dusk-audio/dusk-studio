@@ -383,6 +383,14 @@ private:
     // true -> false = Stop), not the steady state, so a long Start
     // signal doesn't keep restarting the transport every block.
     bool        lastExtRolling      = false;
+    // MTC chase state. lastMtcRolling: rolling-edge detector (same
+    // shape as lastExtRolling). mtcDriftWindowFrames: count of
+    // consecutive frames where |transport - mtc| has exceeded the
+    // freewheel tolerance. Once it reaches kFreewheelReSyncWindow
+    // we trigger a soft re-locate; a single jittery frame doesn't
+    // count.
+    bool        lastMtcRolling      = false;
+    int         mtcDriftWindowFrames = 0;
     std::atomic<Stage> stage { Stage::Mixing };
 
     std::array<ChannelStrip, Session::kNumTracks> strips;

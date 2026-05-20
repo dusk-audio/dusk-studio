@@ -1024,6 +1024,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         midiSyncSampleClock = 0;
         lastSyncSourceIdx = syncIdx;
         lastExtRolling = false;
+        lastMtcRolling = false;
+        mtcDriftWindowFrames = 0;
     }
     if (syncIdx >= 0 && (size_t) syncIdx < perInputMidi.size())
     {
@@ -1032,14 +1034,89 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                                          midiSyncSampleClock, numSamples);
         // Publish MTC decoded state. Same input port — Clock + MTC
         // multiplex on it; both decoders ignore bytes they don't own.
-        session.externalTimeCodeFrames   .store (midiTimeCodeReceiver.getFrames(),
-                                                   std::memory_order_relaxed);
-        session.externalTimeCodeRolling  .store (midiTimeCodeReceiver.isRolling(),
-                                                   std::memory_order_relaxed);
+        const auto mtcFrames  = midiTimeCodeReceiver.getFrames();
+        const bool mtcRolling = midiTimeCodeReceiver.isRolling();
+        const auto mtcRate    = midiTimeCodeReceiver.getFrameRate();
+        session.externalTimeCodeFrames   .store (mtcFrames, std::memory_order_relaxed);
+        session.externalTimeCodeRolling  .store (mtcRolling, std::memory_order_relaxed);
         session.externalTimeCodeReversed .store (midiTimeCodeReceiver.isReversed(),
                                                    std::memory_order_relaxed);
-        session.externalTimeCodeFrameRate.store ((int) midiTimeCodeReceiver.getFrameRate(),
+        session.externalTimeCodeFrameRate.store ((int) mtcRate,
                                                    std::memory_order_relaxed);
+
+        // MTC transport chase (freewheeling model).
+        //   Initial lock: rolling false→true → set playhead + Play.
+        //   Freewheel:    |transport - mtc| ≤ kFreewheelToleranceFrames
+        //                 → trust internal clock, no relocate.
+        //   Soft re-locate: drift > tolerance for kFreewheelReSyncWindow
+        //                   consecutive frames → set playhead, keep rolling.
+        //   Stop:         rolling true→false → Stop.
+        // Reverse: receiver freezes mtcFrames during reverse scrub, so
+        // delta = transport - frozen → grows linearly → would trigger
+        // re-locate. Gate the chase on !isReversed so reverse-park
+        // leaves the transport rolling forward at its own rate.
+        if (session.externalTimeCodeChasesTransport.load (std::memory_order_relaxed))
+        {
+            constexpr int kFreewheelToleranceFrames = 2;
+            constexpr int kFreewheelReSyncWindow    = 4;
+
+            // Samples-per-frame at the current SMPTE rate. Reads sr
+            // off the engine atom — well-defined because this block
+            // can't execute until audioDeviceAboutToStart published a
+            // non-zero rate.
+            const double sr = currentSampleRate.load (std::memory_order_relaxed);
+            const double sPerFrame =
+                  mtcRate == MidiTimeCodeReceiver::Fps24      ? sr / 24.0
+                : mtcRate == MidiTimeCodeReceiver::Fps25      ? sr / 25.0
+                : mtcRate == MidiTimeCodeReceiver::Fps29_97DF ? sr * 1001.0 / 30000.0
+                                                              : sr / 30.0;
+
+            if (mtcRolling && ! lastMtcRolling)
+            {
+                // Initial lock on rising edge.
+                session.pendingTransportPlayhead.store (
+                    (juce::int64) ((double) mtcFrames * sPerFrame),
+                    std::memory_order_relaxed);
+                session.pendingTransportAction.store (
+                    (int) PendingTransportAction::Play,
+                    std::memory_order_relaxed);
+                mtcDriftWindowFrames = 0;
+            }
+            else if (! mtcRolling && lastMtcRolling)
+            {
+                // Falling edge → stop.
+                session.pendingTransportAction.store (
+                    (int) PendingTransportAction::Stop,
+                    std::memory_order_relaxed);
+                mtcDriftWindowFrames = 0;
+            }
+            else if (mtcRolling
+                     && ! midiTimeCodeReceiver.isReversed()
+                     && sPerFrame > 0.0)
+            {
+                // Freewheel + soft re-locate.
+                const auto transportSamples = transport.getPlayhead();
+                const auto mtcSamples =
+                    (juce::int64) ((double) mtcFrames * sPerFrame);
+                const auto deltaFrames =
+                    (juce::int64) std::llabs (
+                        (double) (transportSamples - mtcSamples) / sPerFrame);
+                if (deltaFrames > kFreewheelToleranceFrames)
+                {
+                    if (++mtcDriftWindowFrames >= kFreewheelReSyncWindow)
+                    {
+                        session.pendingTransportPlayhead.store (
+                            mtcSamples, std::memory_order_relaxed);
+                        mtcDriftWindowFrames = 0;
+                    }
+                }
+                else
+                {
+                    mtcDriftWindowFrames = 0;
+                }
+            }
+            lastMtcRolling = mtcRolling;
+        }
 
         const float ext = midiSyncReceiver.getBpm();
         const bool extRolling = midiSyncReceiver.isRolling();

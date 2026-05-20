@@ -716,6 +716,18 @@ void TransportBar::timerCallback()
     {
         auto& s = engine.getSession();
 
+        // Playhead locate queue: MTC chase pokes a target sample value
+        // on the audio thread; Transport::setPlayhead isn't RT-safe so
+        // we drain it here. -1 sentinel means "nothing pending". The
+        // locate runs BEFORE pendingTransportAction so a combined
+        // "locate + play" rising-edge from MTC chase lands the playhead
+        // first and then engine.play() picks it up.
+        if (const auto target = s.pendingTransportPlayhead.exchange (
+                (juce::int64) -1, std::memory_order_relaxed); target >= 0)
+        {
+            engine.getTransport().setPlayhead (target);
+        }
+
         // Transport-action queue: a binding hit on the audio thread (which
         // can't safely call engine.play/stop/record) pokes the queue; we
         // call the right method here on the message thread, then clear.

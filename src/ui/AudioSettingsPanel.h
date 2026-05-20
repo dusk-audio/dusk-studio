@@ -84,6 +84,17 @@ private:
     juce::ComboBox syncOutputCombo;
     juce::ToggleButton syncEmitClockToggle { "Emit clock (Focal as master)" };
 
+    // MTC slave: chase the master's absolute SMPTE time. When on AND
+    // the receiver is rolling, the engine locks the playhead to the
+    // master's frame count on rising edge + freewheels with re-locate.
+    juce::ToggleButton mtcChaseToggle { "Chase transport from MTC" };
+
+    // MTC master emission. Toggle = emit QF + full-frame sysex on the
+    // existing Sync Output. Frame-rate dropdown selects what we encode.
+    juce::ToggleButton mtcEmitToggle { "Emit MTC (Focal as master)" };
+    juce::Label        mtcEmitFrameRateLabel { {}, "MTC frame rate" };
+    juce::ComboBox     mtcEmitFrameRateCombo;
+
     // Central MIDI bindings audit / cleanup. Per-target right-click is
     // still the primary add path; this modal lists everything in one
     // place so the user can review + remove without hunting controls.
