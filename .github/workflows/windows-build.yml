@@ -57,13 +57,9 @@ jobs:
         shell: bash
         run: cmake --build build --config Release -j
 
-      - name: Upload DuskStudio.exe (per-run artifact)
-        uses: actions/upload-artifact@v4
-        with:
-          name: DuskStudio-windows-x64
-          path: build/DuskStudio_artefacts/Release/DuskStudio.exe
-          retention-days: 14
-          if-no-files-found: error
+      # Artifact upload intentionally removed: Dusk Studio's binaries are
+      # paid + the source is open. CI proves the build compiles + tests
+      # pass, but doesn't hand out free downloadable binaries.
 
   tests:
     name: Catch2 tests (MSVC x64 Release)

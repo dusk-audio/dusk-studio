@@ -56,13 +56,9 @@ jobs:
         run: |
           ./build/DuskStudio_artefacts/Release/DuskStudio.app/Contents/MacOS/DuskStudio --version
 
-      - name: Upload DuskStudio.app (per-run artifact)
-        uses: actions/upload-artifact@v4
-        with:
-          name: DuskStudio-macos-arm64
-          path: build/DuskStudio_artefacts/Release/DuskStudio.app
-          retention-days: 14
-          if-no-files-found: error
+      # Artifact upload intentionally removed: Dusk Studio's binaries are
+      # paid + the source is open. CI proves the build compiles + tests
+      # pass, but doesn't hand out free downloadable binaries.
 
   tests:
     name: Catch2 tests (Apple Clang Release, macOS 14)
