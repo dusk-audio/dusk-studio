@@ -6,8 +6,8 @@
 #include <vector>
 
 using Catch::Matchers::WithinAbs;
-using focal::FadeShape;
-using focal::applyFadeShape;
+using duskstudio::FadeShape;
+using duskstudio::applyFadeShape;
 
 namespace
 {

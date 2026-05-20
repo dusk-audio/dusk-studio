@@ -2,7 +2,7 @@
 #include "PlatformWindowing.h"
 #include "../engine/AudioEngine.h"
 
-namespace focal
+namespace duskstudio
 {
 class AuxEditorHost::EditorPanel final : public juce::Component
 {
@@ -63,7 +63,7 @@ AuxEditorHost::AuxEditorHost (const juce::String& title,
                                   // LV2 X11 sub-windows have an X11 host
                                   // to reparent into. Same comma-expression
                                   // pattern PluginEditorWindow uses.
-                                  focal::platform::preferX11ForNextNativeWindow();
+                                  duskstudio::platform::preferX11ForNextNativeWindow();
                                   return title;
                               })(),
                               juce::Colour (0xff202024),
@@ -96,7 +96,7 @@ AuxEditorHost::AuxEditorHost (const juce::String& title,
     {
         if (auto* self = safeThis.getComponent())
             if (auto* peer = self->getPeer())
-                focal::platform::bringWindowToFront (*peer);
+                duskstudio::platform::bringWindowToFront (*peer);
     });
 
     // LV2 + some VST3 editors finalize their preferred size on a later
@@ -112,7 +112,7 @@ AuxEditorHost::AuxEditorHost (const juce::String& title,
         });
     }
 
-    focal::platform::clearPreferX11ForNativeWindow();
+    duskstudio::platform::clearPreferX11ForNativeWindow();
 }
 
 AuxEditorHost::~AuxEditorHost()
@@ -187,4 +187,4 @@ void AuxEditorHost::applyEditorLayout()
     }
     editorPanel->resized();
 }
-} // namespace focal
+} // namespace duskstudio

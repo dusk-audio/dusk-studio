@@ -1,7 +1,7 @@
 #include "PluginManager.h"
 #include "JuceCompat.h"
 
-namespace focal
+namespace duskstudio
 {
 PluginManager::PluginManager()
 {
@@ -157,4 +157,4 @@ PluginManager::createPluginInstance (const juce::PluginDescription& desc,
 
     return instance;
 }
-} // namespace focal
+} // namespace duskstudio

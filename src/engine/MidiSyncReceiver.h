@@ -3,7 +3,7 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <atomic>
 
-namespace focal
+namespace duskstudio
 {
 // Receives MIDI Clock + transport bytes (F8 / FA / FB / FC) from a chosen
 // MIDI input and derives a live BPM + rolling state. Audio-thread only -
@@ -84,4 +84,4 @@ private:
     std::atomic<float> bpm     { 0.0f };
     std::atomic<bool>  rolling { false };
 };
-} // namespace focal
+} // namespace duskstudio

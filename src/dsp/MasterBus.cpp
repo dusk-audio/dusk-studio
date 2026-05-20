@@ -2,7 +2,7 @@
 #include <cmath>
 #include <cstring>
 
-namespace focal
+namespace duskstudio
 {
 MasterBus::MasterBus() = default;
 
@@ -22,7 +22,7 @@ void MasterBus::prepare (double sampleRate, int blockSize, int oversamplingFacto
     currentOxFactor = (oversamplingFactor == 2 || oversamplingFactor == 4)
                        ? oversamplingFactor : 1;
 
-#if FOCAL_HAS_DUSK_DSP
+#if DUSKSTUDIO_HAS_DUSK_DSP
     // TapeMachine is a full juce::AudioProcessor instance. Configure its bus
     // layout, prepare it for the working SR/block size, and pre-size the
     // scratch buffer used to feed processBlock each callback. The bypass
@@ -88,7 +88,7 @@ void MasterBus::prepare (double sampleRate, int blockSize, int oversamplingFacto
     preparedBlockSize = blockSize;
 }
 
-#if FOCAL_HAS_DUSK_DSP
+#if DUSKSTUDIO_HAS_DUSK_DSP
 void MasterBus::bindCompParams()
 {
     auto& apvts = busComp.getParameters();
@@ -186,7 +186,7 @@ void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
         faderGain.setTargetValue (gain);
     }
 
-#if FOCAL_HAS_DUSK_DSP
+#if DUSKSTUDIO_HAS_DUSK_DSP
     updateEqParameters();
     updateCompParameters();
 
@@ -250,7 +250,7 @@ void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
     }
 #endif
 
-#if FOCAL_HAS_DUSK_DSP
+#if DUSKSTUDIO_HAS_DUSK_DSP
     // TapeMachine handles its own internal oversampling (driven from the
     // global factor via its `oversampling` APVTS param, written in
     // prepare()). The TAPE button toggles the donor's `bypass` atom -
@@ -305,4 +305,4 @@ void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
         paramsRef->meterPostMasterRmsR.store (vuRmsLinR, std::memory_order_relaxed);
     }
 }
-} // namespace focal
+} // namespace duskstudio

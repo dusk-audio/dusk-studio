@@ -11,7 +11,7 @@ namespace
 juce::File makeTempSessionDir()
 {
     auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
-                  .getChildFile ("focal-midi-overflow-"
+                  .getChildFile ("dusk-studio-midi-overflow-"
                                     + juce::String (juce::Random::getSystemRandom().nextInt()));
     dir.createDirectory();
     return dir;
@@ -27,9 +27,9 @@ juce::File makeTempSessionDir()
 TEST_CASE ("RecordManager surfaces MIDI FIFO overflow at stopRecording",
            "[recording][recordmanager][midi]")
 {
-    using focal::RecordManager;
-    using focal::Session;
-    using focal::Track;
+    using duskstudio::RecordManager;
+    using duskstudio::Session;
+    using duskstudio::Track;
 
     constexpr double kSampleRate = 48000.0;
     constexpr int    kFifoCap    = 65536;
@@ -90,9 +90,9 @@ TEST_CASE ("RecordManager surfaces MIDI FIFO overflow at stopRecording",
 TEST_CASE ("RecordManager clean MIDI take leaves overflow list empty",
            "[recording][recordmanager][midi]")
 {
-    using focal::RecordManager;
-    using focal::Session;
-    using focal::Track;
+    using duskstudio::RecordManager;
+    using duskstudio::Session;
+    using duskstudio::Track;
 
     const auto dir = makeTempSessionDir();
     Session session;

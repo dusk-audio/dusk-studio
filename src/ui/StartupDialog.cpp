@@ -1,6 +1,6 @@
 #include "StartupDialog.h"
 
-namespace focal
+namespace duskstudio
 {
 namespace
 {
@@ -143,4 +143,4 @@ void StartupDialog::closeDialog (int returnCode)
     if (auto* parent = findParentComponentOfClass<juce::DialogWindow>())
         parent->exitModalState (returnCode);
 }
-} // namespace focal
+} // namespace duskstudio

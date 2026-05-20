@@ -1,7 +1,7 @@
 #include "MasteringChain.h"
 #include <cstring>
 
-namespace focal
+namespace duskstudio
 {
 void MasteringChain::bind (const MasteringParams& params) noexcept
 {
@@ -17,7 +17,7 @@ void MasteringChain::prepare (double sampleRate, int blockSize, int oversampling
     digitalEq.prepare (sampleRate, bs);
     digitalEq.reset();
 
-#if FOCAL_HAS_DUSK_DSP
+#if DUSKSTUDIO_HAS_DUSK_DSP
     busComp.setPlayConfigDetails (2, 2, sampleRate, bs);
     busComp.prepareToPlay (sampleRate, bs);
     // Honor the global Effect Oversampling setting. The donor defaults to
@@ -44,7 +44,7 @@ void MasteringChain::resetLoudness()
     loudnessMeter.reset();
 }
 
-#if FOCAL_HAS_DUSK_DSP
+#if DUSKSTUDIO_HAS_DUSK_DSP
 void MasteringChain::bindCompParams()
 {
     auto& apvts = busComp.getParameters();
@@ -92,7 +92,7 @@ void MasteringChain::updateCompParameters() noexcept
 #endif
 
 // MasteringDigitalEq is built unconditionally - its updater must be too,
-// otherwise the link fails when FOCAL_HAS_DUSK_DSP is off (the call site
+// otherwise the link fails when DUSKSTUDIO_HAS_DUSK_DSP is off (the call site
 // in processInPlace is unconditional and the prototype lives outside the
 // macro guard in the header).
 void MasteringChain::updateEqParameters() noexcept
@@ -129,7 +129,7 @@ void MasteringChain::processInPlace (float* L, float* R, int numSamples) noexcep
     updateEqParameters();
     digitalEq.processInPlace (L, R, numSamples);
 
-#if FOCAL_HAS_DUSK_DSP
+#if DUSKSTUDIO_HAS_DUSK_DSP
     {
         const int bufSize = compStereoBuffer.getNumSamples();
         updateCompParameters();
@@ -200,4 +200,4 @@ void MasteringChain::processInPlace (float* L, float* R, int numSamples) noexcep
         paramsRef->meterTruePeakDb.store     (loudnessMeter.getTruePeakDb(),    std::memory_order_relaxed);
     }
 }
-} // namespace focal
+} // namespace duskstudio

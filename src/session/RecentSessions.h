@@ -2,7 +2,7 @@
 
 #include <juce_core/juce_core.h>
 
-namespace focal
+namespace duskstudio
 {
 // Persistent list of session directories the user has recently saved/loaded.
 // Stored as a newline-delimited file at <userApplicationDataDirectory>/Focal/recent.txt
@@ -24,4 +24,4 @@ public:
 private:
     static juce::File getStoreFile();
 };
-} // namespace focal
+} // namespace duskstudio

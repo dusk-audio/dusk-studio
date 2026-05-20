@@ -3,12 +3,12 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <atomic>
 
-#if FOCAL_HAS_OOP_PLUGINS
+#if DUSKSTUDIO_HAS_OOP_PLUGINS
  #include "ipc/RemotePluginConnection.h"
  #include <memory>
 #endif
 
-namespace focal
+namespace duskstudio
 {
 class PluginManager;
 
@@ -163,7 +163,7 @@ public:
     // platforms without OOP support.
     bool wasCrashed() const noexcept
     {
-       #if FOCAL_HAS_OOP_PLUGINS
+       #if DUSKSTUDIO_HAS_OOP_PLUGINS
         return remoteCrashed.load (std::memory_order_relaxed);
        #else
         return false;
@@ -176,7 +176,7 @@ public:
     // showRemoteEditor to fetch a native window ID for XEmbed embedding.
     bool isRemote() const noexcept
     {
-       #if FOCAL_HAS_OOP_PLUGINS
+       #if DUSKSTUDIO_HAS_OOP_PLUGINS
         return currentRemote.load (std::memory_order_acquire) != nullptr;
        #else
         return false;
@@ -390,7 +390,7 @@ private:
     // prepareToPlay so the audio thread doesn't allocate. 2-channel.
     juce::AudioBuffer<float> stereoScratch;
 
-   #if FOCAL_HAS_OOP_PLUGINS
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS
     // Out-of-process plugin state. When `remote` is non-null we route
     // every audio + state RPC through it instead of `ownedInstance`.
     // The slot stays in one mode for its lifetime per load: a single
@@ -401,8 +401,8 @@ private:
     // RT-safety: `remote.get()` is read from the audio thread. We mirror
     // the in-process atomic-pointer pattern with `currentRemote` so the
     // load can swap-publish without locks.
-    std::unique_ptr<focal::ipc::RemotePluginConnection> ownedRemote;
-    std::atomic<focal::ipc::RemotePluginConnection*>    currentRemote { nullptr };
+    std::unique_ptr<duskstudio::ipc::RemotePluginConnection> ownedRemote;
+    std::atomic<duskstudio::ipc::RemotePluginConnection*>    currentRemote { nullptr };
 
     // Deferred-destruction slot for the IPC connection. Mirrors
     // `previousInstance` for the in-process path: at swap time we move
@@ -412,7 +412,7 @@ private:
     // SHM + a live child for one more block. The NEXT swap destroys
     // whatever sits here, by which point any in-flight processBlockSync
     // has long since returned.
-    std::unique_ptr<focal::ipc::RemotePluginConnection> previousRemote;
+    std::unique_ptr<duskstudio::ipc::RemotePluginConnection> previousRemote;
 
     // Cached at load time (the LoadPluginReply tells us all three).
     // Audio thread reads them from the same atomics so no message-thread
@@ -456,9 +456,9 @@ private:
     // empty, so a save while offline doesn't wipe the user's data.
     // Cleared on successful load / unload. Message-thread only. Used
     // by the in-process restore path so lives OUTSIDE the OOP gate —
-    // FOCAL_HAS_OOP_PLUGINS is Linux-only and the offline fallback
+    // DUSKSTUDIO_HAS_OOP_PLUGINS is Linux-only and the offline fallback
     // is cross-platform.
     juce::String offlineDescriptionXml;
     juce::String offlineStateBase64;
 };
-} // namespace focal
+} // namespace duskstudio

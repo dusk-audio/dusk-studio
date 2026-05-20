@@ -2,7 +2,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
-namespace focal::platform
+namespace duskstudio::platform
 {
 // Cross-platform window-management primitives. Per-platform
 // implementations live in PlatformWindowing_{Linux,Mac,Windows}.{cpp,mm}.
@@ -118,4 +118,4 @@ void requestFocusOnMainWaylandSurface();
 // Mac/Windows: no-op.
 void preferX11ForNextNativeWindow();
 void clearPreferX11ForNativeWindow();
-} // namespace focal::platform
+} // namespace duskstudio::platform

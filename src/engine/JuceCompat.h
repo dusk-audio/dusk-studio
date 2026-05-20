@@ -2,11 +2,11 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
-namespace focal::juce_compat
+namespace duskstudio::juce_compat
 {
 // One-call shim hiding the AudioPluginFormatManager::addDefaultFormats
 // vs the wayland fork's free juce::addDefaultFormatsToManager() split.
-// FOCAL_JUCE_HAS_FREE_ADD_FORMATS is set by CMake at configure time
+// DUSKSTUDIO_JUCE_HAS_FREE_ADD_FORMATS is set by CMake at configure time
 // (CMakeLists.txt scans the JUCE source for the free function symbol)
 // so this picks the right API for any combination of platform + JUCE
 // version. No __linux__ branch at the call site.
@@ -20,10 +20,10 @@ namespace focal::juce_compat
 // detection.
 inline void addDefaultFormats (juce::AudioPluginFormatManager& fm)
 {
-   #if FOCAL_JUCE_HAS_FREE_ADD_FORMATS
+   #if DUSKSTUDIO_JUCE_HAS_FREE_ADD_FORMATS
     juce::addDefaultFormatsToManager (fm);
    #else
     fm.addDefaultFormats();
    #endif
 }
-} // namespace focal::juce_compat
+} // namespace duskstudio::juce_compat

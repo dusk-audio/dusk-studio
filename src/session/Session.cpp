@@ -1,6 +1,6 @@
 #include "Session.h"
 
-namespace focal
+namespace duskstudio
 {
 Session::Session()
 {
@@ -259,4 +259,4 @@ float evaluateLane (const AutomationLane& lane, juce::int64 t,
     const float v = lo.value + frac * (hi.value - lo.value);
     return denormalizeAutomation (param, v);
 }
-} // namespace focal
+} // namespace duskstudio

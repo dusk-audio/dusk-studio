@@ -61,7 +61,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Focal-windows-x64
-          path: build/Focal_artefacts/Release/Focal.exe
+          path: build/DuskStudio_artefacts/Release/Focal.exe
           retention-days: 14
           if-no-files-found: error
 
@@ -100,7 +100,7 @@ jobs:
 
       - name: Build tests
         shell: bash
-        run: cmake --build build-tests --target focal-tests --config Release -j
+        run: cmake --build build-tests --target dusk-studio-tests --config Release -j
 
       - name: Run tests
         shell: bash

@@ -5,7 +5,7 @@
 #include <memory>
 #include "../session/Session.h"
 
-namespace focal
+namespace duskstudio
 {
 // Overlay editor for a channel's 4-band EQ. Constructed each time the user
 // clicks the strip's "EQ" button - controls bind to the same atomics on the
@@ -41,4 +41,4 @@ private:
 
     void refreshTypeButton();
 };
-} // namespace focal
+} // namespace duskstudio

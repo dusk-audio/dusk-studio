@@ -3,7 +3,7 @@
 #include "MasteringPlayer.h"
 #include "../session/Session.h"
 
-namespace focal
+namespace duskstudio
 {
 BounceEngine::BounceEngine (AudioEngine& e, Session& s,
                               juce::AudioDeviceManager& dm) noexcept
@@ -233,4 +233,4 @@ void BounceEngine::run()
     }
     if (onFinished) onFinished (succeeded, errSnapshot);
 }
-} // namespace focal
+} // namespace duskstudio

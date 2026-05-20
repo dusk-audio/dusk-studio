@@ -1,8 +1,8 @@
 #include "BusComponent.h"
-#include "FocalLookAndFeel.h"  // fourKColors palette
+#include "DuskStudioLookAndFeel.h"  // fourKColors palette
 #include "../session/MidiBindings.h"
 
-namespace focal
+namespace duskstudio
 {
 namespace
 {
@@ -688,4 +688,4 @@ void BusComponent::resized()
     area.removeFromRight (3);
     faderSlider.setBounds (area);
 }
-} // namespace focal
+} // namespace duskstudio

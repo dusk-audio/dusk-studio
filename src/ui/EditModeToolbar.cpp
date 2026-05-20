@@ -1,6 +1,6 @@
 #include "EditModeToolbar.h"
 
-namespace focal
+namespace duskstudio
 {
 namespace
 {
@@ -316,4 +316,4 @@ void EditModeToolbar::resized()
     r.removeFromLeft (4);
     snapResolutionButton.setBounds (r.removeFromLeft (110));
 }
-} // namespace focal
+} // namespace duskstudio

@@ -88,7 +88,7 @@ struct TempScope
     TempScope()
     {
         dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
-                  .getChildFile ("focal-fileimporter-tests")
+                  .getChildFile ("dusk-studio-fileimporter-tests")
                   .getChildFile (juce::Uuid().toDashedString());
         const auto result = dir.createDirectory();
         if (result.failed())
@@ -111,7 +111,7 @@ TEST_CASE ("FileImporter: 44.1k mono -> 48k session preserves length", "[FileImp
         return 0.5f * (float) std::sin (2.0 * kPi * 440.0 * (double) n / kSrcSr);
     });
 
-    focal::fileimport::AudioImportRequest req;
+    duskstudio::fileimport::AudioImportRequest req;
     req.source            = src;
     req.audioDir          = tmp.dir;
     req.trackIndex        = 0;
@@ -119,7 +119,7 @@ TEST_CASE ("FileImporter: 44.1k mono -> 48k session preserves length", "[FileImp
     req.targetChannels    = 1;
     req.timelineStart     = 0;
 
-    const auto res = focal::fileimport::importAudio (req);
+    const auto res = duskstudio::fileimport::importAudio (req);
     REQUIRE (res.ok);
     REQUIRE (res.errorMessage.isEmpty());
 
@@ -144,7 +144,7 @@ TEST_CASE ("FileImporter: 96k mono -> 48k session preserves length", "[FileImpor
         return 0.5f * (float) std::sin (2.0 * kPi * 220.0 * (double) n / kSrcSr);
     });
 
-    focal::fileimport::AudioImportRequest req;
+    duskstudio::fileimport::AudioImportRequest req;
     req.source            = src;
     req.audioDir          = tmp.dir;
     req.trackIndex        = 0;
@@ -152,7 +152,7 @@ TEST_CASE ("FileImporter: 96k mono -> 48k session preserves length", "[FileImpor
     req.targetChannels    = 1;
     req.timelineStart     = 0;
 
-    const auto res = focal::fileimport::importAudio (req);
+    const auto res = duskstudio::fileimport::importAudio (req);
     REQUIRE (res.ok);
     const auto rb = readWav (res.region.file);
     REQUIRE (rb.sampleRate == 48000.0);
@@ -173,13 +173,13 @@ TEST_CASE ("FileImporter: stereo -> mono sums L+R at 0.5 each", "[FileImporter]"
         return c == 0 ? 0.5f : -0.5f;
     });
 
-    focal::fileimport::AudioImportRequest req;
+    duskstudio::fileimport::AudioImportRequest req;
     req.source            = src;
     req.audioDir          = tmp.dir;
     req.sessionSampleRate = kSr;
     req.targetChannels    = 1;
 
-    const auto res = focal::fileimport::importAudio (req);
+    const auto res = duskstudio::fileimport::importAudio (req);
     REQUIRE (res.ok);
     const auto rb = readWav (res.region.file);
     REQUIRE (rb.numChannels == 1);
@@ -196,13 +196,13 @@ TEST_CASE ("FileImporter: mono -> stereo duplicates to L and R", "[FileImporter]
 
     writeTestWav (src, kSr, 1, kLen, [&] (int, int) { return kAmp; });
 
-    focal::fileimport::AudioImportRequest req;
+    duskstudio::fileimport::AudioImportRequest req;
     req.source            = src;
     req.audioDir          = tmp.dir;
     req.sessionSampleRate = kSr;
     req.targetChannels    = 2;
 
-    const auto res = focal::fileimport::importAudio (req);
+    const auto res = duskstudio::fileimport::importAudio (req);
     REQUIRE (res.ok);
     const auto rb = readWav (res.region.file);
     REQUIRE (rb.numChannels == 2);

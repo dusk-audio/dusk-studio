@@ -4,7 +4,7 @@
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
-namespace focal
+namespace duskstudio
 {
 // Generates MTC (MIDI Time Code) quarter-frame + full-frame sysex
 // bytes into a per-block MidiBuffer. Companion to MidiClockEmitter —
@@ -112,4 +112,4 @@ private:
     // MidiBuffer offsets, which is `sample - blockStart`.
     juce::int64 lastBlockStart = 0;
 };
-} // namespace focal
+} // namespace duskstudio

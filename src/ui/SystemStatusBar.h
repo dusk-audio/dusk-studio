@@ -6,7 +6,7 @@
 
 class ChordAnalyzer;
 
-namespace focal
+namespace duskstudio
 {
 // Compact monospace readout that lives in the upper-right of the window:
 //   Audio: 48 kHz 5.3 ms   DSP: 12% (3)
@@ -43,4 +43,4 @@ private:
     int    lastBackendXruns  = 0;
     bool   lastAudioWarn     = false;
 };
-} // namespace focal
+} // namespace duskstudio

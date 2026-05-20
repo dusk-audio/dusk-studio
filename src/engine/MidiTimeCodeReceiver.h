@@ -3,7 +3,7 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <atomic>
 
-namespace focal
+namespace duskstudio
 {
 // MTC (MIDI Time Code) decoder. Companion to MidiSyncReceiver — Clock
 // carries musical tempo, MTC carries absolute SMPTE time (HH:MM:SS:FF).
@@ -147,4 +147,4 @@ private:
     std::atomic<bool>        reversed      { false };
     std::atomic<int>         detectedRate  { (int) kDefaultRate };
 };
-} // namespace focal
+} // namespace duskstudio

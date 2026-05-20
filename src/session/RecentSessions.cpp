@@ -1,6 +1,6 @@
 #include "RecentSessions.h"
 
-namespace focal
+namespace duskstudio
 {
 juce::File RecentSessions::getStoreFile()
 {
@@ -52,4 +52,4 @@ void RecentSessions::add (const juce::File& sessionDirectory)
     for (auto& f : entries) lines.add (f.getFullPathName());
     getStoreFile().replaceWithText (lines.joinIntoString ("\n"));
 }
-} // namespace focal
+} // namespace duskstudio

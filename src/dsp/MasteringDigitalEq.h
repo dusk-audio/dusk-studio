@@ -4,7 +4,7 @@
 #include <atomic>
 #include <array>
 
-namespace focal
+namespace duskstudio
 {
 // Five-band digital EQ for the mastering stage.
 //
@@ -78,4 +78,4 @@ private:
     using Filter = juce::dsp::IIR::Filter<float>;
     std::array<Filter, kNumBands> filtersL, filtersR;
 };
-} // namespace focal
+} // namespace duskstudio

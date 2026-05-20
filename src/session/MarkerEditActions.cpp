@@ -1,7 +1,7 @@
 #include "MarkerEditActions.h"
 #include <algorithm>
 
-namespace focal
+namespace duskstudio
 {
 namespace
 {
@@ -108,4 +108,4 @@ bool MoveMarkerAction::undo()
     sortMarkers (session);
     return true;
 }
-} // namespace focal
+} // namespace duskstudio

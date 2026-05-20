@@ -6,13 +6,13 @@
 #include <memory>
 #include "../session/Session.h"
 
-#if FOCAL_HAS_DUSK_DSP
+#if DUSKSTUDIO_HAS_DUSK_DSP
   #include "PluginProcessor.h"    // TapeMachine/Source - master tape emulation (full plugin processor + editor)
   #include "TubeEQProcessor.h"    // multi-q - Pultec-style EQ
   #include "UniversalCompressor.h"// multi-comp - Bus mode for the master comp
 #endif
 
-namespace focal
+namespace duskstudio
 {
 // Phase 1a master bus: Pultec-style Tube EQ → bus compressor → tape
 // saturation → master fader. Parameters come from session.master() via
@@ -30,7 +30,7 @@ public:
 
     void processInPlace (float* L, float* R, int numSamples) noexcept;
 
-#if FOCAL_HAS_DUSK_DSP
+#if DUSKSTUDIO_HAS_DUSK_DSP
     // Live access to the hosted TapeMachine processor. Used by the master
     // strip's gear button to spawn its editor on demand.
     TapeMachineAudioProcessor& getTapeProcessor() noexcept { return tape; }
@@ -40,7 +40,7 @@ private:
     const MasterBusParams* paramsRef = nullptr;
     juce::SmoothedValue<float> faderGain { 1.0f };
 
-#if FOCAL_HAS_DUSK_DSP
+#if DUSKSTUDIO_HAS_DUSK_DSP
     TapeMachineAudioProcessor   tape;
     juce::AudioBuffer<float>    tapeStereoBuffer;    // pre-allocated; tape processBlock target
     juce::MidiBuffer            tapeMidi;            // unused but required by processBlock
@@ -97,4 +97,4 @@ private:
     float  vuRmsLinL = 0.0f;
     float  vuRmsLinR = 0.0f;
 };
-} // namespace focal
+} // namespace duskstudio

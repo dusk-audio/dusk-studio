@@ -1,7 +1,7 @@
 #include "LoudnessMeter.h"
 #include <cmath>
 
-namespace focal
+namespace duskstudio
 {
 namespace
 {
@@ -199,4 +199,4 @@ void LoudnessMeter::process (const float* L, const float* R, int numSamples) noe
                         : -100.0f,
                        std::memory_order_relaxed);
 }
-} // namespace focal
+} // namespace duskstudio

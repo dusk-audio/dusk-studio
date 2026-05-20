@@ -7,7 +7,7 @@
 
 namespace
 {
-using focal::MidiTimeCodeReceiver;
+using duskstudio::MidiTimeCodeReceiver;
 
 // Build the 8 QF bytes that encode (hh, mm, ss, ff) at rate r.
 // Nibble layout matches the receiver (and the emitter):

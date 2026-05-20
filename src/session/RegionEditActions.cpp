@@ -6,7 +6,7 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <algorithm>
 
-namespace focal
+namespace duskstudio
 {
 namespace
 {
@@ -740,4 +740,4 @@ bool JoinRegionsAction::undo()
     rebuildPlaybackIfStopped (engine);
     return true;
 }
-} // namespace focal
+} // namespace duskstudio

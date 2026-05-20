@@ -7,7 +7,7 @@
 #include "../engine/PluginSlot.h"
 #include "HardwareInsertSlot.h"
 
-namespace focal
+namespace duskstudio
 {
 // AUX return lane DSP. Hosts up to AuxLaneParams::kMaxLanePlugins plugin
 // slots in series, applies a return-level gain, and writes stereo output
@@ -106,4 +106,4 @@ private:
 
     void updateGainTarget() noexcept;
 };
-} // namespace focal
+} // namespace duskstudio

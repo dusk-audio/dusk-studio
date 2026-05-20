@@ -1,6 +1,6 @@
 #include "AppConfig.h"
 
-namespace focal::appconfig
+namespace duskstudio::appconfig
 {
 namespace
 {
@@ -78,4 +78,4 @@ void setUiScaleOverride (float scale)
     const float clamped = juce::jlimit (kUiScaleMin, kUiScaleMax, scale);
     writeKey (kKeyUiScale, juce::String (clamped));
 }
-} // namespace focal::appconfig
+} // namespace duskstudio::appconfig

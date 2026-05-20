@@ -1,7 +1,7 @@
 #include "TransportBar.h"
 #include <algorithm>
 
-namespace focal
+namespace duskstudio
 {
 TransportIconButton::TransportIconButton (const juce::String& name, Icon icon,
                                             juce::Colour active)
@@ -1158,4 +1158,4 @@ void TransportBar::onTap()
     engine.getSession().tempoBpm.store (bpm);
     bpmValue.setText (juce::String ((int) bpm), juce::dontSendNotification);
 }
-} // namespace focal
+} // namespace duskstudio

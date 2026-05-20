@@ -2,7 +2,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
-namespace focal
+namespace duskstudio
 {
 // Window position / size / fullscreen-flag persistence. Stored at
 //   <userApplicationDataDirectory>/Focal/window-state.txt
@@ -36,4 +36,4 @@ public:
 private:
     static juce::File getStorePath();
 };
-} // namespace focal
+} // namespace duskstudio

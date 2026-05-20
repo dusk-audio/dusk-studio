@@ -7,7 +7,7 @@ FetchContent_Declare(
     GIT_SHALLOW    TRUE)
 FetchContent_MakeAvailable(Catch2)
 
-add_executable(focal-tests
+add_executable(dusk-studio-tests
     smoke_brickwall_limiter.cpp
     session_tick_conversion.cpp
     atomic_park.cpp
@@ -34,18 +34,18 @@ add_executable(focal-tests
     ${CMAKE_SOURCE_DIR}/src/session/Session.cpp
     ${CMAKE_SOURCE_DIR}/src/session/SessionSerializer.cpp)
 
-target_include_directories(focal-tests PRIVATE
+target_include_directories(dusk-studio-tests PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/external/projucer-shim)
 
-target_compile_definitions(focal-tests PRIVATE
+target_compile_definitions(dusk-studio-tests PRIVATE
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
     JUCE_STANDALONE_APPLICATION=1
-    $<$<BOOL:${FOCAL_JUCE_HAS_FREE_ADD_FORMATS}>:FOCAL_JUCE_HAS_FREE_ADD_FORMATS=1>
-    FOCAL_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+    $<$<BOOL:${DUSKSTUDIO_JUCE_HAS_FREE_ADD_FORMATS}>:DUSKSTUDIO_JUCE_HAS_FREE_ADD_FORMATS=1>
+    DUSKSTUDIO_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
-target_link_libraries(focal-tests PRIVATE
+target_link_libraries(dusk-studio-tests PRIVATE
     Catch2::Catch2WithMain
     juce::juce_audio_basics
     # juce_audio_devices required by SessionSerializer.cpp for
@@ -63,19 +63,19 @@ target_link_libraries(focal-tests PRIVATE
 
 # IPC round-trip regression — Linux only because the IPC uses
 # memfd_create + futex (no macOS / Windows port yet). The test spawns
-# the focal-plugin-host child in --ipc-stub mode, so we hard-depend on
-# that target being built first. FOCAL_PLUGIN_HOST_PATH is resolved via
+# the dusk-studio-plugin-host child in --ipc-stub mode, so we hard-depend on
+# that target being built first. DUSKSTUDIO_PLUGIN_HOST_PATH is resolved via
 # a generator expression so it points to wherever CMake actually puts
 # the binary in the current build configuration.
 if (UNIX AND NOT APPLE)
-    target_sources(focal-tests PRIVATE
+    target_sources(dusk-studio-tests PRIVATE
         ipc_stub_round_trip.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/ipc/RemotePluginConnection.cpp)
-    target_compile_definitions(focal-tests PRIVATE
-        FOCAL_PLUGIN_HOST_PATH="$<TARGET_FILE:focal-plugin-host>")
-    add_dependencies(focal-tests focal-plugin-host)
+    target_compile_definitions(dusk-studio-tests PRIVATE
+        DUSKSTUDIO_PLUGIN_HOST_PATH="$<TARGET_FILE:dusk-studio-plugin-host>")
+    add_dependencies(dusk-studio-tests dusk-studio-plugin-host)
 endif()
 
 list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)
 include(Catch)
-catch_discover_tests(focal-tests)
+catch_discover_tests(dusk-studio-tests)

@@ -7,8 +7,8 @@
 
 namespace
 {
-using focal::MidiTimeCodeEmitter;
-using focal::MidiTimeCodeReceiver;
+using duskstudio::MidiTimeCodeEmitter;
+using duskstudio::MidiTimeCodeReceiver;
 
 // Count specific status bytes in a MidiBuffer.
 int countOf (const juce::MidiBuffer& buf, juce::uint8 status)

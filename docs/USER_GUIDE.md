@@ -81,7 +81,7 @@ controller via **MIDI Learn**.
   Focal auto-bypasses plugins that exceed their CPU budget for several
   consecutive blocks (look for `(stalled)` on the slot label).
 - **Out-of-process plugin host** isolates plugin CPU spikes from
-  Focal's audio thread. Set `FOCAL_USE_OOP_PLUGINS=1` before launch.
+  Focal's audio thread. Set `DUSKSTUDIO_USE_OOP_PLUGINS=1` before launch.
   Currently Linux-only; macOS and Windows ports land in 1.0.
 
 ### "Plugin failed - offline"
@@ -110,9 +110,9 @@ clear the slot if you don't plan to reinstall.
 
 | OS | Path |
 |----|------|
-| Linux | `~/.local/share/Focal/log/focal-YYYYMMDD.log` |
-| macOS | `~/Library/Application Support/Focal/log/focal-YYYYMMDD.log` |
-| Windows | `%APPDATA%/Focal/log/focal-YYYYMMDD.log` |
+| Linux | `~/.local/share/Focal/log/dusk-studio-YYYYMMDD.log` |
+| macOS | `~/Library/Application Support/Focal/log/dusk-studio-YYYYMMDD.log` |
+| Windows | `%APPDATA%/Focal/log/dusk-studio-YYYYMMDD.log` |
 
 Crash reports under `crashes/` next to the log dir. **For Patreon
 support, paste the output of `Focal --version` plus the most recent

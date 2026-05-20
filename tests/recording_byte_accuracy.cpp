@@ -17,7 +17,7 @@ namespace
 juce::File makeTempSessionDir()
 {
     auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
-                  .getChildFile ("focal-recording-accuracy-"
+                  .getChildFile ("dusk-studio-recording-accuracy-"
                                     + juce::String (juce::Random::getSystemRandom().nextInt()));
     dir.createDirectory();
     return dir;
@@ -35,9 +35,9 @@ juce::File makeTempSessionDir()
 TEST_CASE ("RecordManager writes mono input back accurately",
            "[recording][recordmanager]")
 {
-    using focal::RecordManager;
-    using focal::Session;
-    using focal::Track;
+    using duskstudio::RecordManager;
+    using duskstudio::Session;
+    using duskstudio::Track;
 
     constexpr double kSampleRate = 48000.0;
     constexpr int    kNumBlocks  = 8;
@@ -100,9 +100,9 @@ TEST_CASE ("RecordManager writes mono input back accurately",
 TEST_CASE ("RecordManager writes stereo L+R interleaving in order",
            "[recording][recordmanager]")
 {
-    using focal::RecordManager;
-    using focal::Session;
-    using focal::Track;
+    using duskstudio::RecordManager;
+    using duskstudio::Session;
+    using duskstudio::Track;
 
     constexpr double kSampleRate = 48000.0;
     constexpr int    kNumBlocks  = 4;

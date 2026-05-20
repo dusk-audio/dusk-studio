@@ -2,7 +2,7 @@
 #include "../engine/AudioEngine.h"
 #include "../session/Session.h"
 
-namespace focal
+namespace duskstudio
 {
 BounceDialog::BounceDialog (AudioEngine& e,
                               Session& s,
@@ -169,4 +169,4 @@ void BounceDialog::closeDialog()
     if (auto* parent = findParentComponentOfClass<juce::DialogWindow>())
         parent->exitModalState (succeeded ? 1 : 0);
 }
-} // namespace focal
+} // namespace duskstudio

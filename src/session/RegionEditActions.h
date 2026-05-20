@@ -3,7 +3,7 @@
 #include <juce_data_structures/juce_data_structures.h>
 #include "Session.h"
 
-namespace focal
+namespace duskstudio
 {
 class AudioEngine;
 
@@ -252,4 +252,4 @@ private:
     std::unique_ptr<Impl> beforeState;
     std::unique_ptr<Impl> afterState;
 };
-} // namespace focal
+} // namespace duskstudio

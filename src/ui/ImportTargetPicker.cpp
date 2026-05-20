@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace focal
+namespace duskstudio
 {
 namespace
 {
@@ -197,7 +197,7 @@ ImportTargetPicker::ImportTargetPicker (Session& s,
     addAndMakeVisible (headerSubtitle);
 
     const auto placeAtText = juce::String ("Place at ")
-                              + focal::formatSamplePosition (
+                              + duskstudio::formatSamplePosition (
                                   timelineStart, sessionSampleRate, sessionBpm,
                                   beatsPerBar,
                                   (TimeDisplayMode) timeDisplayMode);
@@ -361,4 +361,4 @@ void ImportTargetPicker::resized()
     }
     listContainer.setSize (rowW, juce::jmax (y + kListPad, bounds.getHeight()));
 }
-} // namespace focal
+} // namespace duskstudio

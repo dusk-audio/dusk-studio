@@ -23,12 +23,12 @@ constexpr double kSmoothMs  = 20.0;
 constexpr int kSettleBlocks = 6;
 
 // Helper: publish a fresh routing snapshot into a HardwareInsertParams.
-void setRouting (focal::HardwareInsertParams& p,
+void setRouting (duskstudio::HardwareInsertParams& p,
                   int outL, int outR, int inL, int inR,
                   int latencySamples, int format)
 {
-    p.routing.publish (std::make_unique<focal::HardwareInsertRouting> (
-        focal::HardwareInsertRouting {
+    p.routing.publish (std::make_unique<duskstudio::HardwareInsertRouting> (
+        duskstudio::HardwareInsertRouting {
             outL, outR, inL, inR, latencySamples, format
         }));
 }
@@ -64,9 +64,9 @@ struct DeviceBuffers
 };
 
 // Helper: build + bind + prepare a slot.
-std::unique_ptr<focal::HardwareInsertSlot> makeSlot (focal::HardwareInsertParams& params)
+std::unique_ptr<duskstudio::HardwareInsertSlot> makeSlot (duskstudio::HardwareInsertParams& params)
 {
-    auto slot = std::make_unique<focal::HardwareInsertSlot>();
+    auto slot = std::make_unique<duskstudio::HardwareInsertSlot>();
     slot->prepare (kSr, kBlock);
     slot->bind (params);
     return slot;
@@ -76,7 +76,7 @@ std::unique_ptr<focal::HardwareInsertSlot> makeSlot (focal::HardwareInsertParams
 TEST_CASE ("HardwareInsertSlot: dryWet=0 returns dry signal unchanged at zero latency",
             "[HardwareInsertSlot]")
 {
-    focal::HardwareInsertParams params;
+    duskstudio::HardwareInsertParams params;
     setRouting (params, -1, -1, -1, -1, 0, 0);   // routing irrelevant, dry-only
     params.dryWet.store (0.0f);                  // 100 % dry
     auto slot = makeSlot (params);
@@ -128,7 +128,7 @@ TEST_CASE ("HardwareInsertSlot: dry-path delay aligns dry with hardware latency"
     // i=latencySamples after processing.
     constexpr int kLatency = 64;
 
-    focal::HardwareInsertParams params;
+    duskstudio::HardwareInsertParams params;
     setRouting (params, 0, 1, 0, 1, kLatency, 0);
     params.dryWet.store (0.0f);                  // 100 % dry, latency aligned
     auto slot = makeSlot (params);
@@ -175,7 +175,7 @@ TEST_CASE ("HardwareInsertSlot: Mid/Side encode + decode round-trip is unity gai
     //   DECODE: deviceInputs pre-loaded with (M, S). Strip output =
     //   (M+S, M-S) = original (L, R) at unity gain.
 
-    focal::HardwareInsertParams params;
+    duskstudio::HardwareInsertParams params;
     setRouting (params, 0, 1, 0, 1, 0, /*format = M/S*/ 1);
     params.dryWet.store (1.0f);                  // 100 % wet
     auto slot = makeSlot (params);
@@ -223,7 +223,7 @@ TEST_CASE ("HardwareInsertSlot: Mid/Side encode + decode round-trip is unity gai
 TEST_CASE ("HardwareInsertSlot: outputGain and inputGain compose independently",
             "[HardwareInsertSlot]")
 {
-    focal::HardwareInsertParams params;
+    duskstudio::HardwareInsertParams params;
     setRouting (params, 0, 1, 0, 1, 0, 0);   // Stereo format
     params.dryWet.store (1.0f);              // 100 % wet so the return drives the output
     params.outputGainDb.store (-6.0f);       // SEND trim -6 dB ≈ 0.5012
@@ -278,7 +278,7 @@ TEST_CASE ("HardwareInsertSlot: invalid routing falls through to dry-only path",
     // device) must NOT crash and must produce sensible audio: dry
     // signal back at the strip output, deviceOutputs untouched, return
     // path silent.
-    focal::HardwareInsertParams params;
+    duskstudio::HardwareInsertParams params;
     setRouting (params, 7, 8, 7, 8, 0, 0);
     params.dryWet.store (0.0f);   // dry-only is the safe fallback
     auto slot = makeSlot (params);

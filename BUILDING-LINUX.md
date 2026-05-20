@@ -82,13 +82,13 @@ First configure pulls in JUCE's CMake helpers and may take a minute. Subsequent 
 The built binary lands at:
 
 ```
-build-linux/Focal_artefacts/Release/Focal
+build-linux/DuskStudio_artefacts/Release/Focal
 ```
 
 Run it from the terminal:
 
 ```bash
-./build-linux/Focal_artefacts/Release/Focal
+./build-linux/DuskStudio_artefacts/Release/Focal
 ```
 
 ### Building Debug instead
@@ -110,7 +110,7 @@ cmake -S . -B build-linux \
 
 ```bash
 cmake -S . -B build-tests -DCMAKE_BUILD_TYPE=Release -DFOCAL_BUILD_TESTS=ON
-cmake --build build-tests --target focal-tests -j$(nproc)
+cmake --build build-tests --target dusk-studio-tests -j$(nproc)
 ctest --test-dir build-tests --output-on-failure
 ```
 
@@ -121,7 +121,7 @@ Use a separate `build-tests/` directory so the two configurations don't fight ov
 ```bash
 cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=RelWithDebInfo \
   -DFOCAL_BUILD_TESTS=ON -DFOCAL_ENABLE_ASAN=ON
-cmake --build build-asan --target focal-tests -j$(nproc)
+cmake --build build-asan --target dusk-studio-tests -j$(nproc)
 ASAN_OPTIONS="halt_on_error=1:abort_on_error=1:detect_leaks=0" \
   ctest --test-dir build-asan --output-on-failure
 ```
@@ -133,7 +133,7 @@ CI runs this nightly via [.github/workflows/linux-sanitizer.yml](.github/workflo
 Drives the synthetic DSP pipeline without opening the GUI:
 
 ```bash
-FOCAL_RUN_SELFTEST=1 ./build-linux/Focal_artefacts/Release/Focal
+DUSKSTUDIO_RUN_SELFTEST=1 ./build-linux/DuskStudio_artefacts/Release/Focal
 ```
 
 Useful for confirming the audio engine wires up correctly without needing to drive the UI.
@@ -150,10 +150,10 @@ The Focal-native ALSA backend handles USB hot-unplug by surfacing the device err
 ## Out-of-process plugin host (Linux only, currently)
 
 ```bash
-FOCAL_USE_OOP_PLUGINS=1 ./build-linux/Focal_artefacts/Release/Focal
+DUSKSTUDIO_USE_OOP_PLUGINS=1 ./build-linux/DuskStudio_artefacts/Release/Focal
 ```
 
-Routes new plugin loads through the `focal-plugin-host` child process so a misbehaving plugin can't take down the host. Currently Linux-only via `memfd_create` + `futex`. macOS (Mach ports) and Windows (named pipes) ports land in 1.0.
+Routes new plugin loads through the `dusk-studio-plugin-host` child process so a misbehaving plugin can't take down the host. Currently Linux-only via `memfd_create` + `futex`. macOS (Mach ports) and Windows (named pipes) ports land in 1.0.
 
 ## Packaging an AppImage
 
@@ -162,9 +162,9 @@ See [packaging/README.md](packaging/README.md). Requires `linuxdeploy` and a 256
 ## Known caveats on Linux
 
 - **JUCE-wayland fork is required at runtime.** The fork has five local commits (XEmbed mapping, X11-on-Wayland fix, peer-creation latch, XEmbed bg fix) on top of plugdata-team's `wayland-juce8` branch. Vanilla upstream JUCE will compile (the `addDefaultFormats` shim in [src/engine/JuceCompat.h](src/engine/JuceCompat.h) abstracts the API split) but will hit the mutter crash on plugin-editor close under GNOME/Wayland. See [CLAUDE.md](CLAUDE.md) for context.
-- **Plugin destructors are intentionally leaked at shutdown.** [src/FocalApp.cpp](src/FocalApp.cpp) `leakAllPluginInstancesForShutdown` is a Linux-only workaround for Diva's `__cxa_pure_virtual` abort in `~AM_VST3_ViewInterface`. The OS reclaims memory on process exit.
+- **Plugin destructors are intentionally leaked at shutdown.** [src/DuskStudioApp.cpp](src/DuskStudioApp.cpp) `leakAllPluginInstancesForShutdown` is a Linux-only workaround for Diva's `__cxa_pure_virtual` abort in `~AM_VST3_ViewInterface`. The OS reclaims memory on process exit.
 - **PipeWire native backend is not implemented.** Focal uses ALSA directly or via JUCE's JACK backend (which speaks to PipeWire's JACK shim). A native PipeWire-graph integration would be a future addition, not blocking.
-- **Compiler warnings.** The vendored Dusk DSP `.cpp` files compiled into Focal emit shadow/sign-conversion warnings. `FOCAL_STRICT_WARNINGS=ON` (`-Werror`) is opt-in but not yet enabled in CI until those are cleaned upstream or wrapped with per-source overrides.
+- **Compiler warnings.** The vendored Dusk DSP `.cpp` files compiled into Focal emit shadow/sign-conversion warnings. `DUSKSTUDIO_STRICT_WARNINGS=ON` (`-Werror`) is opt-in but not yet enabled in CI until those are cleaned upstream or wrapped with per-source overrides.
 
 ## Reporting build issues
 
@@ -173,6 +173,6 @@ If the build fails, capture:
 1. Full CMake configure output (`cmake -S . -B build-linux ...`)
 2. Full build output (`cmake --build build-linux -j ...`)
 3. `cmake --version`, `gcc --version` or `clang --version`, distro + kernel (`uname -a`, `cat /etc/os-release`)
-4. Output of `./build-linux/Focal_artefacts/Release/Focal --version` if you got that far
+4. Output of `./build-linux/DuskStudio_artefacts/Release/Focal --version` if you got that far
 
 Open an issue on GitHub or paste into the Patreon support thread.

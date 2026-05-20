@@ -4,7 +4,7 @@
 #include <juce_core/juce_core.h>
 #include "../session/Session.h"
 
-namespace focal::fileimport
+namespace duskstudio::fileimport
 {
 // Message-thread orchestrator for bringing user-supplied audio / MIDI
 // files into a Focal session. Audio imports are decoded, channel-
@@ -59,4 +59,4 @@ MidiImportResult importMidi (const MidiImportRequest&);
 // 96 kHz; rejects bigger files with a clear error so we don't OOM trying
 // to load a multi-hour stem in one allocation.
 constexpr juce::int64 kMaxImportSamplesPerChannel = 96000ll * 60ll * 30ll;
-} // namespace focal::fileimport
+} // namespace duskstudio::fileimport

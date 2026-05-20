@@ -9,7 +9,7 @@
 #include "../engine/Transport.h"
 #include "../session/MidiBindings.h"
 
-namespace focal
+namespace duskstudio
 {
 namespace
 {
@@ -506,7 +506,7 @@ void AuxLaneComponent::destroyEditorHostForSlot (int slotIdx)
 {
     auto& ui = slots[(size_t) slotIdx];
     if (ui.editorHost == nullptr) return;
-    focal::platform::prepareForTopLevelDestruction (*ui.editorHost);
+    duskstudio::platform::prepareForTopLevelDestruction (*ui.editorHost);
     ui.editorHost.reset();
 }
 
@@ -578,9 +578,9 @@ void AuxLaneComponent::rebuildSlots()
         {
             if (instance->hasEditor())
             {
-                focal::platform::preferX11ForNextNativeWindow();
+                duskstudio::platform::preferX11ForNextNativeWindow();
                 ui.editor.reset (instance->createEditorIfNeeded());
-                focal::platform::clearPreferX11ForNativeWindow();
+                duskstudio::platform::clearPreferX11ForNativeWindow();
             }
             if (ui.editor == nullptr)
                 ui.editor = std::make_unique<juce::GenericAudioProcessorEditor> (*instance);
@@ -696,4 +696,4 @@ void AuxLaneComponent::mouseDown (const juce::MouseEvent& e)
         return;
     }
 }
-} // namespace focal
+} // namespace duskstudio

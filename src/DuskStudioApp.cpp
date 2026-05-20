@@ -1,4 +1,4 @@
-#include "FocalApp.h"
+#include "DuskStudioApp.h"
 #include "ui/AppConfig.h"
 #include "ui/ConsoleView.h"
 #include "ui/MainComponent.h"
@@ -27,9 +27,9 @@
 #endif
 #include "ui/PlatformWindowing.h"
 
-namespace focal
+namespace duskstudio
 {
-class FocalApp::MainWindow final : public juce::DocumentWindow
+class DuskStudioApp::MainWindow final : public juce::DocumentWindow
 {
 public:
     MainWindow (juce::String name)
@@ -104,7 +104,7 @@ public:
             if (self == nullptr) return;
             self->setVisible (true);
             if (auto* peer = self->getPeer())
-                focal::platform::bringWindowToFront (*peer);
+                duskstudio::platform::bringWindowToFront (*peer);
         });
     }
 
@@ -125,8 +125,8 @@ public:
     }
 };
 
-FocalApp::FocalApp() = default;
-FocalApp::~FocalApp() = default;
+DuskStudioApp::DuskStudioApp() = default;
+DuskStudioApp::~DuskStudioApp() = default;
 
 #if JUCE_LINUX
 static void primeRealtimeAudio()
@@ -143,7 +143,7 @@ static void primeRealtimeAudio()
 }
 #endif
 
-// Headless self-test entry: triggered by setting FOCAL_RUN_SELFTEST=1 in
+// Headless self-test entry: triggered by setting DUSKSTUDIO_RUN_SELFTEST=1 in
 // the environment before launching. Runs AudioPipelineSelfTest::runAll() at
 // startup, writes the formatted report to stdout, and quits. The MainWindow
 // (and the entire UI) is never created in this mode. Useful for automated
@@ -166,26 +166,26 @@ static bool envFlagSet (const char* name)
 // Test button at low buffer sizes on ALSA + USB interfaces.
 //
 // Env vars (all optional, sensible defaults):
-//   FOCAL_TONE_BACKEND     "ALSA" | "JACK"           (default "ALSA")
-//   FOCAL_TONE_DEVICE      output device name        (default "" = backend default)
-//   FOCAL_TONE_RATE        sample rate in Hz         (default 48000)
-//   FOCAL_TONE_BUFFER      buffer size in samples    (default 128)
-//   FOCAL_TONE_DURATION_MS playback duration (ms)    (default 2000)
+//   DUSKSTUDIO_TONE_BACKEND     "ALSA" | "JACK"           (default "ALSA")
+//   DUSKSTUDIO_TONE_DEVICE      output device name        (default "" = backend default)
+//   DUSKSTUDIO_TONE_RATE        sample rate in Hz         (default 48000)
+//   DUSKSTUDIO_TONE_BUFFER      buffer size in samples    (default 128)
+//   DUSKSTUDIO_TONE_DURATION_MS playback duration (ms)    (default 2000)
 static void runHeadlessToneTest()
 {
     auto env = [] (const char* name) -> juce::String {
         if (const char* v = std::getenv (name)) return juce::String (v);
         return {};
     };
-    const juce::String backendName = env ("FOCAL_TONE_BACKEND").isNotEmpty()
-                                     ? env ("FOCAL_TONE_BACKEND") : juce::String ("ALSA");
-    const juce::String deviceName  = env ("FOCAL_TONE_DEVICE");
-    const double       targetRate  = env ("FOCAL_TONE_RATE").isNotEmpty()
-                                     ? env ("FOCAL_TONE_RATE").getDoubleValue() : 48000.0;
-    const int          targetBuf   = env ("FOCAL_TONE_BUFFER").isNotEmpty()
-                                     ? env ("FOCAL_TONE_BUFFER").getIntValue()  : 128;
-    const int          durationMs  = env ("FOCAL_TONE_DURATION_MS").isNotEmpty()
-                                     ? env ("FOCAL_TONE_DURATION_MS").getIntValue() : 2000;
+    const juce::String backendName = env ("DUSKSTUDIO_TONE_BACKEND").isNotEmpty()
+                                     ? env ("DUSKSTUDIO_TONE_BACKEND") : juce::String ("ALSA");
+    const juce::String deviceName  = env ("DUSKSTUDIO_TONE_DEVICE");
+    const double       targetRate  = env ("DUSKSTUDIO_TONE_RATE").isNotEmpty()
+                                     ? env ("DUSKSTUDIO_TONE_RATE").getDoubleValue() : 48000.0;
+    const int          targetBuf   = env ("DUSKSTUDIO_TONE_BUFFER").isNotEmpty()
+                                     ? env ("DUSKSTUDIO_TONE_BUFFER").getIntValue()  : 128;
+    const int          durationMs  = env ("DUSKSTUDIO_TONE_DURATION_MS").isNotEmpty()
+                                     ? env ("DUSKSTUDIO_TONE_DURATION_MS").getIntValue() : 2000;
 
     juce::AudioDeviceManager dm;
 
@@ -203,7 +203,7 @@ static void runHeadlessToneTest()
    #if defined(__linux__)
     if (auto* jackType = juce::AudioIODeviceType::createAudioIODeviceType_JACK())
         dm.addAudioDeviceType (std::unique_ptr<juce::AudioIODeviceType> (jackType));
-    dm.addAudioDeviceType (std::make_unique<focal::AlsaAudioIODeviceType>());
+    dm.addAudioDeviceType (std::make_unique<duskstudio::AlsaAudioIODeviceType>());
     for (auto* type : dm.getAvailableDeviceTypes())
         if (type != nullptr) type->scanForDevices();
    #endif
@@ -259,10 +259,10 @@ static void runHeadlessToneTest()
 // instrument, send a synthetic MIDI chord, and report whether the
 // plugin produced audio. Exercises the same in-process PluginSlot path
 // the GUI uses (loadFromFile + processStereoBlock) - distinct from
-// FOCAL_IPC_HOST_TEST which exercises the OOP focal-plugin-host path.
+// DUSKSTUDIO_IPC_HOST_TEST which exercises the OOP dusk-studio-plugin-host path.
 //
 // Usage:
-//   FOCAL_INSTRUMENT_TEST=/home/marc/.vst3/u-he/Diva.vst3 ./Focal
+//   DUSKSTUDIO_INSTRUMENT_TEST=/home/marc/.vst3/u-he/Diva.vst3 ./Focal
 static void runHeadlessInstrumentTest (const juce::String& pluginPath)
 {
     constexpr double sampleRate = 48000.0;
@@ -343,13 +343,13 @@ static void runHeadlessInstrumentTest (const juce::String& pluginPath)
 // loaded but no audio" between PluginSlot (validated by the instrument-
 // test path) and engine routing (this).
 //
-// Optionally loads a session file via FOCAL_PIPELINE_TEST_SESSION so we
+// Optionally loads a session file via DUSKSTUDIO_PIPELINE_TEST_SESSION so we
 // exercise the user's actual saved fader / mute / bus / aux state.
 //
 // Usage:
-//   FOCAL_PIPELINE_TEST=/home/marc/.vst3/u-he/Diva.vst3 ./Focal
-//   FOCAL_PIPELINE_TEST=/home/marc/.vst3/u-he/Diva.vst3 \
-//     FOCAL_PIPELINE_TEST_SESSION=/home/marc/Music/Focal/Untitled/session.json.autosave \
+//   DUSKSTUDIO_PIPELINE_TEST=/home/marc/.vst3/u-he/Diva.vst3 ./Focal
+//   DUSKSTUDIO_PIPELINE_TEST=/home/marc/.vst3/u-he/Diva.vst3 \
+//     DUSKSTUDIO_PIPELINE_TEST_SESSION=/home/marc/Music/Focal/Untitled/session.json.autosave \
 //     ./Focal
 static void runHeadlessPipelineTest (const juce::String& pluginPath)
 {
@@ -370,7 +370,7 @@ static void runHeadlessPipelineTest (const juce::String& pluginPath)
     // Don't depend on a real device coming up - prepare directly.
     engine->prepareForSelfTest (sampleRate, blockSize);
 
-    const char* sessionPath = std::getenv ("FOCAL_PIPELINE_TEST_SESSION");
+    const char* sessionPath = std::getenv ("DUSKSTUDIO_PIPELINE_TEST_SESSION");
     const bool useSession = (sessionPath != nullptr && *sessionPath != '\0');
 
     if (useSession)
@@ -635,7 +635,7 @@ static void runHeadlessPipelineTest (const juce::String& pluginPath)
 static void runHeadlessSelfTest()
 {
     // Heap-allocated so destruction order matches the GUI path: AudioEngine
-    // first, then Session, before this function returns and FocalApp::quit()
+    // first, then Session, before this function returns and DuskStudioApp::quit()
     // tears down the message loop.
     auto session = std::make_unique<Session>();
     auto engine  = std::make_unique<AudioEngine> (*session);
@@ -673,7 +673,7 @@ static void runHeadlessSelfTest()
     std::fflush (stdout);
 }
 
-void FocalApp::initialise (const juce::String& commandLine)
+void DuskStudioApp::initialise (const juce::String& commandLine)
 {
     // --version: print app + JUCE versions + platform string and exit
     // cleanly. Used by Patreon support flows (paste the output of
@@ -699,35 +699,35 @@ void FocalApp::initialise (const juce::String& commandLine)
     primeRealtimeAudio();
    #endif
 
-    if (envFlagSet ("FOCAL_RUN_SELFTEST"))
+    if (envFlagSet ("DUSKSTUDIO_RUN_SELFTEST"))
     {
         runHeadlessSelfTest();
         quit();
         return;
     }
 
-    if (const char* path = std::getenv ("FOCAL_INSTRUMENT_TEST"); path != nullptr && *path)
+    if (const char* path = std::getenv ("DUSKSTUDIO_INSTRUMENT_TEST"); path != nullptr && *path)
     {
         runHeadlessInstrumentTest (juce::String (path));
         quit();
         return;
     }
 
-    if (const char* path = std::getenv ("FOCAL_PIPELINE_TEST"); path != nullptr && *path)
+    if (const char* path = std::getenv ("DUSKSTUDIO_PIPELINE_TEST"); path != nullptr && *path)
     {
         runHeadlessPipelineTest (juce::String (path));
         quit();
         return;
     }
 
-    // FOCAL_REPLACE_TEST=A.vst3:B.vst3 — exercises the Replace plugin...
+    // DUSKSTUDIO_REPLACE_TEST=A.vst3:B.vst3 — exercises the Replace plugin...
     // swap pattern under live processing. Loads A, runs audio, swaps to
     // B mid-stream via loadFromDescription, runs more audio. Mirrors the
     // user's GUI flow: right-click slot button -> Replace plugin -> pick
     // a different plugin. The colon-separated form lets us test ACROSS
     // distinct plugins, which is the actual crashing case (a single
     // plugin reload doesn't reproduce the same destructor-race surface).
-    if (const char* path = std::getenv ("FOCAL_REPLACE_TEST"); path != nullptr && *path)
+    if (const char* path = std::getenv ("DUSKSTUDIO_REPLACE_TEST"); path != nullptr && *path)
     {
         constexpr double sampleRate = 48000.0;
         constexpr int    blockSize  = 256;
@@ -822,31 +822,31 @@ void FocalApp::initialise (const juce::String& commandLine)
     }
 
    #if JUCE_LINUX
-    if (envFlagSet ("FOCAL_RUN_IPC_SELFTEST"))
+    if (envFlagSet ("DUSKSTUDIO_RUN_IPC_SELFTEST"))
     {
         // Out-of-process plugin hosting Phase 1 acceptance gate.
         // Validates the shm + futex round-trip against the
-        // focal-plugin-host stub binary (which lives next to Focal in
+        // dusk-studio-plugin-host stub binary (which lives next to Focal in
         // the build output).
         const auto exe = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
-        const auto host = exe.getSiblingFile ("focal-plugin-host");
-        const auto rc = focal::ipc::runIpcSelfTest (host.getFullPathName().toStdString());
+        const auto host = exe.getSiblingFile ("dusk-studio-plugin-host");
+        const auto rc = duskstudio::ipc::runIpcSelfTest (host.getFullPathName().toStdString());
         std::fflush (stdout);
         setApplicationReturnValue (rc);
         quit();
         return;
     }
 
-    // Phase 2 acceptance gate. Pass FOCAL_IPC_HOST_TEST=/path/to/plugin.vst3
-    // (or .lv2) and Focal launches focal-plugin-host in --ipc-host mode,
+    // Phase 2 acceptance gate. Pass DUSKSTUDIO_IPC_HOST_TEST=/path/to/plugin.vst3
+    // (or .lv2) and Focal launches dusk-studio-plugin-host in --ipc-host mode,
     // loads the plugin, runs 1000 stereo blocks, asserts the signal was
     // modified. Use a real-world plugin like Multi-Q.vst3 to validate the
     // entire JUCE plugin loading + processBlock path through the IPC.
-    if (const char* path = std::getenv ("FOCAL_IPC_HOST_TEST"); path != nullptr && *path)
+    if (const char* path = std::getenv ("DUSKSTUDIO_IPC_HOST_TEST"); path != nullptr && *path)
     {
         const auto exe = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
-        const auto host = exe.getSiblingFile ("focal-plugin-host");
-        const auto rc = focal::ipc::runIpcHostTest (
+        const auto host = exe.getSiblingFile ("dusk-studio-plugin-host");
+        const auto rc = duskstudio::ipc::runIpcHostTest (
             host.getFullPathName().toStdString(), std::string (path));
         std::fflush (stdout);
         setApplicationReturnValue (rc);
@@ -855,7 +855,7 @@ void FocalApp::initialise (const juce::String& commandLine)
     }
    #endif
 
-    if (envFlagSet ("FOCAL_RUN_TONE_TEST"))
+    if (envFlagSet ("DUSKSTUDIO_RUN_TONE_TEST"))
     {
         runHeadlessToneTest();
         quit();
@@ -863,22 +863,22 @@ void FocalApp::initialise (const juce::String& commandLine)
     }
 
    #if defined(__linux__)
-    if (envFlagSet ("FOCAL_RUN_ALSA_PERF"))
+    if (envFlagSet ("DUSKSTUDIO_RUN_ALSA_PERF"))
     {
         // Tier 1 ALSA backend perf test. Drives the backend directly (no
         // AudioDeviceManager involvement, no engine), output-only, silent.
         // Configurable via env vars - device picks default of hw:0,0 if
         // none set.
-        focal::AlsaPerformanceTest::Options opts;
-        if (const auto* v = std::getenv ("FOCAL_ALSA_PERF_DEVICE"))      opts.deviceId      = v;
-        if (const auto* v = std::getenv ("FOCAL_ALSA_PERF_RATE"))        opts.sampleRate    = (unsigned int) juce::String (v).getIntValue();
-        if (const auto* v = std::getenv ("FOCAL_ALSA_PERF_DURATION_MS")) opts.durationMs    = juce::String (v).getIntValue();
-        if (const auto* v = std::getenv ("FOCAL_ALSA_PERF_LOAD_US"))     opts.fakeDspLoadUs = juce::String (v).getIntValue();
-        if (const auto* v = std::getenv ("FOCAL_ALSA_PERF_LOOPBACK"))    opts.runLoopback   = juce::String (v).getIntValue() != 0;
+        duskstudio::AlsaPerformanceTest::Options opts;
+        if (const auto* v = std::getenv ("DUSKSTUDIO_ALSA_PERF_DEVICE"))      opts.deviceId      = v;
+        if (const auto* v = std::getenv ("DUSKSTUDIO_ALSA_PERF_RATE"))        opts.sampleRate    = (unsigned int) juce::String (v).getIntValue();
+        if (const auto* v = std::getenv ("DUSKSTUDIO_ALSA_PERF_DURATION_MS")) opts.durationMs    = juce::String (v).getIntValue();
+        if (const auto* v = std::getenv ("DUSKSTUDIO_ALSA_PERF_LOAD_US"))     opts.fakeDspLoadUs = juce::String (v).getIntValue();
+        if (const auto* v = std::getenv ("DUSKSTUDIO_ALSA_PERF_LOOPBACK"))    opts.runLoopback   = juce::String (v).getIntValue() != 0;
 
         // Tier 2: comma-separated list, e.g. "44100,48000,96000". Empty
         // (or unset) keeps the single-rate Tier 1 behaviour.
-        if (const auto* v = std::getenv ("FOCAL_ALSA_PERF_RATES"))
+        if (const auto* v = std::getenv ("DUSKSTUDIO_ALSA_PERF_RATES"))
         {
             const auto tokens = juce::StringArray::fromTokens (juce::String (v), ",", "");
             for (const auto& t : tokens)
@@ -888,7 +888,7 @@ void FocalApp::initialise (const juce::String& commandLine)
             }
         }
 
-        const auto report = focal::AlsaPerformanceTest::runAll (opts);
+        const auto report = duskstudio::AlsaPerformanceTest::runAll (opts);
         std::fprintf (stdout, "%s\n", report.toRawUTF8());
         std::fflush (stdout);
 
@@ -897,7 +897,7 @@ void FocalApp::initialise (const juce::String& commandLine)
     }
    #endif
 
-    if (envFlagSet ("FOCAL_RUN_PERF_TEST"))
+    if (envFlagSet ("DUSKSTUDIO_RUN_PERF_TEST"))
     {
         // Headless engine-CPU benchmark. Builds a Session+AudioEngine the
         // same way the GUI path does, then drives many callbacks directly
@@ -927,7 +927,7 @@ void FocalApp::initialise (const juce::String& commandLine)
     // runner $HOME). Normal-user launches fall through to here, so the
     // crash report path is established before the main window opens
     // and before any plugin scan / audio device init can fault.
-    focal::crash_handler::install (JUCE_APPLICATION_VERSION_STRING);
+    duskstudio::crash_handler::install (JUCE_APPLICATION_VERSION_STRING);
 
     // User UI-scale override. JUCE composes this with each display's own
     // OS-reported DPI scale, so 1.0 here means "let the OS decide" and
@@ -938,7 +938,7 @@ void FocalApp::initialise (const juce::String& commandLine)
     mainWindow = std::make_unique<MainWindow> (getApplicationName());
 }
 
-void FocalApp::shutdown()
+void DuskStudioApp::shutdown()
 {
     // Persist window geometry before tearing down the window. Reading
     // getWindowStateAsString() AFTER mainWindow.reset() would crash; doing
@@ -983,13 +983,13 @@ void FocalApp::shutdown()
     // JUCE's leak detector doesn't complain at exit. The crash callback
     // installed via setApplicationCrashHandler is harmless if it stays
     // registered — process is exiting either way.
-    focal::crash_handler::uninstall();
+    duskstudio::crash_handler::uninstall();
 }
 
-void FocalApp::systemRequestedQuit()
+void DuskStudioApp::systemRequestedQuit()
 {
     quit();
 }
 
-void FocalApp::anotherInstanceStarted (const juce::String&) {}
-} // namespace focal
+void DuskStudioApp::anotherInstanceStarted (const juce::String&) {}
+} // namespace duskstudio

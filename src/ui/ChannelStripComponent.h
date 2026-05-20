@@ -9,7 +9,7 @@
 #include "EmbeddedModal.h"
 #include "../session/Session.h"
 
-namespace focal
+namespace duskstudio
 {
 class AudioEngine;
 
@@ -319,9 +319,9 @@ private:
     // X11 PluginEditorWindow.
     EmbeddedModal pluginGenericEditorModal;
 
-   #if JUCE_LINUX && FOCAL_HAS_OOP_PLUGINS
+   #if JUCE_LINUX && DUSKSTUDIO_HAS_OOP_PLUGINS
     // OOP-mode editor embedding. The plugin's editor lives in the
-    // focal-plugin-host child; we wrap its X11 Window ID in a JUCE
+    // dusk-studio-plugin-host child; we wrap its X11 Window ID in a JUCE
     // XEmbedComponent and feed THAT into PluginEditorWindow as the
     // body. Lifetime mirrors `pluginEditor` (in-process counterpart):
     // built lazily on first open, kept across close/reopen cycles so
@@ -366,4 +366,4 @@ private:
     void setEqSectionVisible (bool visible);
     void setCompSectionVisible (bool visible);
 };
-} // namespace focal
+} // namespace duskstudio

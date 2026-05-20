@@ -8,9 +8,9 @@
 
 #include <juce_audio_basics/juce_audio_basics.h>  // juce::MidiBuffer
 
-namespace focal::ipc
+namespace duskstudio::ipc
 {
-// Parent-side connection to a focal-plugin-host child process. Owns:
+// Parent-side connection to a dusk-studio-plugin-host child process. Owns:
 //   • the SHM file descriptor (memfd_create) and its mmap.
 //   • the child PID + fork/exec + waitpid lifecycle.
 //   • the futex round-trip that drives processBlockSync.
@@ -112,7 +112,7 @@ public:
     // return, the caller can read from `audioOutChannel(...)` for
     // `numOut` channels.
     //
-    // MIDI is serialised in the same wire format the focal-plugin-host
+    // MIDI is serialised in the same wire format the dusk-studio-plugin-host
     // child uses: each event is `[int sample][uint16 len][bytes]`, total
     // capped at PluginIpc::kMidiBytes (16 KB). Events that don't fit are
     // dropped — same behaviour as the child's serialiser.
@@ -175,4 +175,4 @@ private:
     std::atomic<std::uint64_t> roundTrips { 0 };
     std::atomic<bool> crashed { false };
 };
-} // namespace focal::ipc
+} // namespace duskstudio::ipc

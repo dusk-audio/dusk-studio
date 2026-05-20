@@ -12,7 +12,7 @@
 // AudioSettingsPanel.cpp pulls in the header where it actually uses the
 // setter; the .h here keeps the dependency narrow.
 
-namespace focal
+namespace duskstudio
 {
 class AudioEngine;
 class Session;
@@ -118,4 +118,4 @@ private:
     void populateSyncOutputCombo();
     void applySyncOutputChange();
 };
-} // namespace focal
+} // namespace duskstudio

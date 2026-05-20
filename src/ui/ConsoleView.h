@@ -10,7 +10,7 @@
 #include "../session/Session.h"
 #include "../engine/AudioEngine.h"
 
-namespace focal
+namespace duskstudio
 {
 class ConsoleView final : public juce::Component
 {
@@ -105,4 +105,4 @@ private:
 
     void updateBankVisibility();
 };
-} // namespace focal
+} // namespace duskstudio

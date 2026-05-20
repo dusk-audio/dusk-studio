@@ -4,7 +4,7 @@
 #include <array>
 #include "../engine/AudioEngine.h"
 
-namespace focal
+namespace duskstudio
 {
 // Embedded-modal panel that turns the user's typing keyboard into a MIDI
 // note source. Pushes Note On / Note Off messages into the engine's
@@ -74,4 +74,4 @@ private:
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (VirtualKeyboardComponent)
 };
-} // namespace focal
+} // namespace duskstudio

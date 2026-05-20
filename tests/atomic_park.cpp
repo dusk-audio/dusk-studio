@@ -27,7 +27,7 @@ TEST_CASE ("withParkedAtomicPointer: parks slot during work, restores after",
     int  workCalls       = 0;
     int* observedDuring  = reinterpret_cast<int*> (0xdeadbeef);  // sentinel "not set yet"
 
-    auto* parked = focal::withParkedAtomicPointer (slot,
+    auto* parked = duskstudio::withParkedAtomicPointer (slot,
         [&] (int& ref)
         {
             REQUIRE (&ref == &sentinel);
@@ -48,7 +48,7 @@ TEST_CASE ("withParkedAtomicPointer: null slot is a no-op", "[atomic-park]")
 {
     std::atomic<int*> slot { nullptr };
     int workCalls = 0;
-    auto* parked = focal::withParkedAtomicPointer (slot,
+    auto* parked = duskstudio::withParkedAtomicPointer (slot,
         [&] (int&) { ++workCalls; },
         /*sleepMs*/ 0);
 
@@ -74,7 +74,7 @@ TEST_CASE ("withParkedAtomicPointer: pointer is restored even if the work "
     bool threw = false;
     try
     {
-        focal::withParkedAtomicPointer (slot,
+        duskstudio::withParkedAtomicPointer (slot,
             [] (int&) { throw std::runtime_error ("boom"); },
             /*sleepMs*/ 0);
     }

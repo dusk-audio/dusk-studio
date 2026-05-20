@@ -10,7 +10,7 @@ assertion failed: (window->display->focus_window != window)
 ```
 
 Focal hardens every top-level destruction site by calling
-`focal::platform::prepareForTopLevelDestruction(...)` (transfer
+`duskstudio::platform::prepareForTopLevelDestruction(...)` (transfer
 keyboard focus + flush windowing system) before the destruct.
 This checklist exercises every site so a regression is caught before
 shipping.

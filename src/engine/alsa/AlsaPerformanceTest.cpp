@@ -7,7 +7,7 @@
 #include <cstring>
 #include <vector>
 
-namespace focal
+namespace duskstudio
 {
 namespace
 {
@@ -652,4 +652,4 @@ juce::String AlsaPerformanceTest::runAll (const Options& opts)
     return out.joinIntoString ("\n");
 }
 
-} // namespace focal
+} // namespace duskstudio

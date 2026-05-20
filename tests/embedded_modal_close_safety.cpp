@@ -22,7 +22,7 @@
 //      callAsync slot is drained, which we simulate by destructing
 //      the holder's deferred slot manually.
 //
-// We don't link juce_gui_basics into focal-tests (would drag a
+// We don't link juce_gui_basics into dusk-studio-tests (would drag a
 // MessageManager + GraphicsContext stack in for a single test), so
 // the test exercises the property at the std::unique_ptr level: a
 // minimal Holder that mirrors EmbeddedModal::close's deferred-slot

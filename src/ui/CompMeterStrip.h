@@ -3,7 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "../session/Session.h"
 
-namespace focal
+namespace duskstudio
 {
 // Mixbus-style compressor metering: two vertical LED bars side by side
 // (input level on the left, gain reduction on the right) plus a draggable
@@ -54,4 +54,4 @@ private:
 
     bool draggingThreshold = false;
 };
-} // namespace focal
+} // namespace duskstudio

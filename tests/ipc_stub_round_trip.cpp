@@ -1,5 +1,5 @@
 // Linux-only IPC round-trip regression test. Verifies that:
-//   • RemotePluginConnection can fork+exec the focal-plugin-host child in
+//   • RemotePluginConnection can fork+exec the dusk-studio-plugin-host child in
 //     --ipc-stub mode (the dependency-light Phase 1 echo loop).
 //   • processBlockSync round-trips audio buffers through SHM + futex pair
 //     without timing out.
@@ -9,7 +9,7 @@
 // Compiled only on Linux. The IPC primitives use memfd_create + futex
 // which don't exist on macOS / Windows. CMakeLists conditionally adds
 // this source + RemotePluginConnection.cpp + a dependency on the
-// focal-plugin-host binary so $<TARGET_FILE:focal-plugin-host> resolves
+// dusk-studio-plugin-host binary so $<TARGET_FILE:dusk-studio-plugin-host> resolves
 // at build time.
 
 #if defined(__linux__)
@@ -34,10 +34,10 @@ constexpr long long kTimeoutNs = 100'000'000LL;  // 100 ms
 TEST_CASE ("ipc-stub: connect, round-trip 32 blocks, byte-exact echo",
             "[ipc][linux]")
 {
-    focal::ipc::RemotePluginConnection conn;
+    duskstudio::ipc::RemotePluginConnection conn;
 
     std::string err;
-    REQUIRE (conn.connect (FOCAL_PLUGIN_HOST_PATH, "--ipc-stub", err));
+    REQUIRE (conn.connect (DUSKSTUDIO_PLUGIN_HOST_PATH, "--ipc-stub", err));
     REQUIRE (err.empty());
 
     std::vector<float> bufL ((std::size_t) kBlockSize);
@@ -77,10 +77,10 @@ TEST_CASE ("ipc-stub: connect, round-trip 32 blocks, byte-exact echo",
 
 TEST_CASE ("ipc-stub: rejects oversize block", "[ipc][linux]")
 {
-    focal::ipc::RemotePluginConnection conn;
+    duskstudio::ipc::RemotePluginConnection conn;
 
     std::string err;
-    REQUIRE (conn.connect (FOCAL_PLUGIN_HOST_PATH, "--ipc-stub", err));
+    REQUIRE (conn.connect (DUSKSTUDIO_PLUGIN_HOST_PATH, "--ipc-stub", err));
 
     // PluginIpc.h hardcodes kMaxBlock = 1024. processBlockSync must
     // return false rather than overrun the SHM audio region.

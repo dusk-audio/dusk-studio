@@ -1,7 +1,7 @@
 #include "ChannelEqEditor.h"
-#include "FocalLookAndFeel.h"
+#include "DuskStudioLookAndFeel.h"
 
-namespace focal
+namespace duskstudio
 {
 namespace
 {
@@ -300,4 +300,4 @@ void ChannelEqEditor::resized()
         area.removeFromTop (kRowGap);
     }
 }
-} // namespace focal
+} // namespace duskstudio

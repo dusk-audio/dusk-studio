@@ -1,6 +1,6 @@
 #include "SessionTemplates.h"
 
-namespace focal
+namespace duskstudio
 {
 namespace
 {
@@ -115,4 +115,4 @@ void applyTemplate (Session& s, SessionTemplate t)
         case SessionTemplate::kCount:           return;
     }
 }
-} // namespace focal
+} // namespace duskstudio

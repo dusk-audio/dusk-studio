@@ -7,7 +7,7 @@
 #include "ImportTargetPicker.h"
 #include "../session/Session.h"
 
-namespace focal
+namespace duskstudio
 {
 // Single-modal multi-file import picker. One row per file, each with a
 // track dropdown the user must pick. No auto-assignment - the user is
@@ -60,4 +60,4 @@ private:
     juce::TextButton cancelButton { "Cancel" };
     juce::TextButton importButton { "Import" };
 };
-} // namespace focal
+} // namespace duskstudio

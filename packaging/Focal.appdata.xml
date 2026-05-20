@@ -23,7 +23,7 @@
   <launchable type="desktop-id">audio.dusk.Focal.desktop</launchable>
   <provides>
     <binary>Focal</binary>
-    <mediatype>application/x-focal-session</mediatype>
+    <mediatype>application/x-dusk-studio-session</mediatype>
   </provides>
   <url type="homepage">https://github.com/dusk-audio/Focal</url>
   <developer_name>Dusk Audio</developer_name>

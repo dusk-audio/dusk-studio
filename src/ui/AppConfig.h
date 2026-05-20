@@ -2,7 +2,7 @@
 
 #include <juce_data_structures/juce_data_structures.h>
 
-namespace focal::appconfig
+namespace duskstudio::appconfig
 {
 // Per-machine preferences. Backed by a juce::PropertiesFile at
 //   <userApplicationDataDirectory>/Focal/app-config.properties
@@ -22,4 +22,4 @@ constexpr float kUiScaleDefault = 1.0f;
 
 float getUiScaleOverride();
 void  setUiScaleOverride (float scale);
-} // namespace focal::appconfig
+} // namespace duskstudio::appconfig

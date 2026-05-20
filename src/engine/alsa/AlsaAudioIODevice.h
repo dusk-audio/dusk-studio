@@ -5,7 +5,7 @@
 #include <alsa/asoundlib.h>
 #include <atomic>
 
-namespace focal
+namespace duskstudio
 {
 // Focal-owned ALSA audio I/O. One instance per open device pair (a playback
 // PCM, a capture PCM, or both linked together). Implements juce::AudioIODevice
@@ -91,7 +91,7 @@ public:
     // interleaved frame, hw:CARD,DEV id parsing for cross-card detection,
     // and periods-knob clamping. Returns a multi-line "[PASS] ..." /
     // "[FAIL] ..." report. AudioPipelineSelfTest::runAll() invokes this
-    // alongside the engine pipeline tests, so FOCAL_RUN_SELFTEST=1 picks
+    // alongside the engine pipeline tests, so DUSKSTUDIO_RUN_SELFTEST=1 picks
     // it up. Real-device opens are covered by the existing backend cycle
     // section of AudioPipelineSelfTest, not here.
     static juce::String runSelfTest();
@@ -179,4 +179,4 @@ private:
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AlsaAudioIODevice)
 };
-} // namespace focal
+} // namespace duskstudio

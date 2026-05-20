@@ -3,7 +3,7 @@
 #include "../session/RegionEditActions.h"
 #include "../session/SnapHelpers.h"
 
-namespace focal
+namespace duskstudio
 {
 TapeStrip::TapeStrip (Session& s, AudioEngine& e) : session (s), engine (e)
 {
@@ -3506,4 +3506,4 @@ void TapeStrip::filesDropped (const juce::StringArray& files, int x, int y)
     if (! compatible.isEmpty())
         onFilesDropped (compatible, timelineStart, trackHint);
 }
-} // namespace focal
+} // namespace duskstudio

@@ -5,7 +5,7 @@
 #include <functional>
 #include <memory>
 
-namespace focal
+namespace duskstudio
 {
 class PluginManager;
 class PluginSlot;
@@ -76,4 +76,4 @@ void openFileChooser (PluginSlot& slot,
                        juce::Component::SafePointer<juce::Component> parentForLifetime,
                        PluginKind expectedKind = PluginKind::Effects);
 }
-} // namespace focal
+} // namespace duskstudio

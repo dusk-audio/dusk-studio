@@ -1,4 +1,4 @@
-// focal-plugin-host - the child binary that owns one out-of-process VST3
+// dusk-studio-plugin-host - the child binary that owns one out-of-process VST3
 // (or LV2) instance on behalf of Focal's main process. Two modes:
 //
 //   --ipc-stub  : echo input -> output, no JUCE plugin. Exists so the
@@ -54,7 +54,7 @@
 
 namespace
 {
-using namespace focal::ipc;
+using namespace duskstudio::ipc;
 
 constexpr int kSocketFd = 3;
 
@@ -135,7 +135,7 @@ int runIpcStub() noexcept
     int shmFd = recvFd (kSocketFd);
     if (shmFd < 0)
     {
-        std::fprintf (stderr, "[focal-plugin-host] recvFd failed\n");
+        std::fprintf (stderr, "[dusk-studio-plugin-host] recvFd failed\n");
         return 1;
     }
 
@@ -143,7 +143,7 @@ int runIpcStub() noexcept
                        MAP_SHARED, shmFd, 0);
     if (shm == MAP_FAILED)
     {
-        std::fprintf (stderr, "[focal-plugin-host] mmap failed: %s\n",
+        std::fprintf (stderr, "[dusk-studio-plugin-host] mmap failed: %s\n",
                       std::strerror (errno));
         ::close (shmFd);
         return 1;
@@ -155,7 +155,7 @@ int runIpcStub() noexcept
     auto* hdr = headerOf (shm);
     if (hdr->magic != kMagic || hdr->version != kVersion)
     {
-        std::fprintf (stderr, "[focal-plugin-host] SHM magic/version mismatch\n");
+        std::fprintf (stderr, "[dusk-studio-plugin-host] SHM magic/version mismatch\n");
         munmap (shm, kTotalSize);
         return 1;
     }
@@ -448,7 +448,7 @@ std::uint32_t handleShowEditor (HostState& host,
             // provides a frame + close button. Native peer required so we
             // have an X11 Window ID to embed.
             auto win = std::make_unique<juce::DocumentWindow> (
-                "focal-plugin-host editor",
+                "dusk-studio-plugin-host editor",
                 juce::Colours::black,
                 juce::DocumentWindow::closeButton);
             win->setUsingNativeTitleBar (false);
@@ -687,7 +687,7 @@ int runIpcHost() noexcept
 
     // Register the formats we host. Compat shim covers the upstream-vs-
     // wayland-fork API split.
-    focal::juce_compat::addDefaultFormats (host.formatManager);
+    duskstudio::juce_compat::addDefaultFormats (host.formatManager);
 
     // 3) Ready handshake.
     {
@@ -777,6 +777,6 @@ int main (int argc, char** argv)
     if (ipcHost) return runIpcHost();
 
     std::fprintf (stderr,
-                  "focal-plugin-host: pass --ipc-stub or --ipc-host.\n");
+                  "dusk-studio-plugin-host: pass --ipc-stub or --ipc-host.\n");
     return 64;
 }

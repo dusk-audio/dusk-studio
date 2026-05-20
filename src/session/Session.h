@@ -10,7 +10,7 @@
 #include "AtomicSnapshot.h"
 #include "MidiBindings.h"
 
-namespace focal
+namespace duskstudio
 {
 // Console-style automation. Parameters are recorded as performance gestures
 // in Write/Touch mode and replayed in Read mode - no curve drawing UI ever
@@ -1260,4 +1260,4 @@ private:
     std::atomic<int> soloBusCount   { 0 };
     std::atomic<int> armedTrackCount { 0 };
 };
-} // namespace focal
+} // namespace duskstudio

@@ -36,17 +36,17 @@ std::string readEntireFile (const std::string& path)
     return ss.str();
 }
 
-// FOCAL_SOURCE_DIR is defined by the test target's CMake so the
+// DUSKSTUDIO_SOURCE_DIR is defined by the test target's CMake so the
 // test runs from the build directory but still finds the source
 // tree.
-#ifndef FOCAL_SOURCE_DIR
- #define FOCAL_SOURCE_DIR "."
+#ifndef DUSKSTUDIO_SOURCE_DIR
+ #define DUSKSTUDIO_SOURCE_DIR "."
 #endif
 
 bool fileContainsXOpenDisplayNull (const std::string& relativePath)
 {
     const auto contents = readEntireFile (
-        std::string (FOCAL_SOURCE_DIR) + "/" + relativePath);
+        std::string (DUSKSTUDIO_SOURCE_DIR) + "/" + relativePath);
     // Match `XOpenDisplay(nullptr)` and `XOpenDisplay (nullptr)`.
     // We don't try to be clever about comments — a literal in a
     // doc comment would also flag, which is fine: the comment
@@ -66,7 +66,7 @@ TEST_CASE ("XOpenDisplay(nullptr) is confined to PlatformWindowing impls",
         "src/ui/MainComponent.cpp",
         "src/ui/ChannelStripComponent.cpp",
         "src/ui/AuxLaneComponent.cpp",
-        "src/FocalApp.cpp",
+        "src/DuskStudioApp.cpp",
     };
 
     for (const auto* path : shouldBeClean)

@@ -4,7 +4,7 @@
 #include "Transport.h"
 #include <atomic>
 
-namespace focal
+namespace duskstudio
 {
 // AudioPlayHead reporting Focal's transport state, BPM, and timeline
 // position to hosted plugins. Tempo-synced features (LFOs, arpeggiators,
@@ -19,10 +19,10 @@ namespace focal
 //
 // `sampleRateSource` is a pointer to AudioEngine::currentSampleRate for
 // converting the playhead's sample position into wall-clock seconds.
-class FocalPlayHead final : public juce::AudioPlayHead
+class DuskStudioPlayHead final : public juce::AudioPlayHead
 {
 public:
-    FocalPlayHead (Transport& t,
+    DuskStudioPlayHead (Transport& t,
                    const std::atomic<float>* bpm,
                    const std::atomic<double>* sampleRate) noexcept
         : transport (t), bpmSource (bpm), sampleRateSource (sampleRate) {}
@@ -71,4 +71,4 @@ private:
     const std::atomic<float>*  bpmSource;
     const std::atomic<double>* sampleRateSource;
 };
-} // namespace focal
+} // namespace duskstudio

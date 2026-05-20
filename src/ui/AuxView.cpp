@@ -2,7 +2,7 @@
 #include "AuxLaneComponent.h"
 #include "../engine/AudioEngine.h"
 
-namespace focal
+namespace duskstudio
 {
 namespace
 {
@@ -135,4 +135,4 @@ void AuxView::resized()
         lanes[(size_t) activeLaneIndex]->setBounds (area);
     }
 }
-} // namespace focal
+} // namespace duskstudio

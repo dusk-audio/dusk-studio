@@ -6,18 +6,18 @@
 #include "AnalogVuMeter.h"
 
 // Forward decl unconditional; the definition is only #included from the
-// .cpp when FOCAL_HAS_DUSK_DSP is set. The pointer parameter stays valid
+// .cpp when DUSKSTUDIO_HAS_DUSK_DSP is set. The pointer parameter stays valid
 // either way (passed as nullptr when the donor isn't available).
 class TapeMachineAudioProcessor;
 
-namespace focal
+namespace duskstudio
 {
 class MasterStripComponent final : public juce::Component, private juce::Timer
 {
 public:
     // tapeProcessor is a borrowed pointer to the master-bus TapeMachine
     // instance owned by AudioEngine; the gear button uses it to spawn the
-    // editor. Nullable when the donor DSP is disabled (FOCAL_HAS_DUSK_DSP=0).
+    // editor. Nullable when the donor DSP is disabled (DUSKSTUDIO_HAS_DUSK_DSP=0).
     // sessionRef is the live session, used by the right-click MIDI Learn
     // menu on the master fader.
     explicit MasterStripComponent (MasterBusParams& paramsRef,
@@ -97,4 +97,4 @@ private:
     int   outputPeakHoldFramesL = 0;
     int   outputPeakHoldFramesR = 0;
 };
-} // namespace focal
+} // namespace duskstudio

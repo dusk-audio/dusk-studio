@@ -3,7 +3,7 @@
 #include <atomic>
 #include <juce_core/juce_core.h>
 
-namespace focal
+namespace duskstudio
 {
 // Atomic-park bracketing for a pointer that's being read by another
 // thread (typically the audio thread) and we need to do something with
@@ -45,4 +45,4 @@ T* withParkedAtomicPointer (std::atomic<T*>& slot, Fn&& fn, int sleepMs = 25)
     slot.store (p, std::memory_order_release);
     return p;
 }
-} // namespace focal
+} // namespace duskstudio

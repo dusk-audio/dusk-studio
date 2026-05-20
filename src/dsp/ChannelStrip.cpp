@@ -2,7 +2,7 @@
 #include <cmath>
 #include <cstring>
 
-namespace focal
+namespace duskstudio
 {
 void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFactor)
 {
@@ -87,7 +87,7 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     const double prepSr = sampleRate * (double) factor;
     const int    prepBs = bsClamped * factor;
 
-#if FOCAL_HAS_DUSK_DSP
+#if DUSKSTUDIO_HAS_DUSK_DSP
     // EQ + Comp prep at the OVERSAMPLED rate / block size so their internal
     // filter coefficients + scratch sizes track the upsampled buffer the
     // chain processes when factor > 1. At factor == 1 this collapses to
@@ -130,7 +130,7 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
 #endif
 }
 
-#if FOCAL_HAS_DUSK_DSP
+#if DUSKSTUDIO_HAS_DUSK_DSP
 void ChannelStrip::bindCompParams()
 {
     auto& apvts = compressor.getParameters();
@@ -207,7 +207,7 @@ void ChannelStrip::updateGainTargets() noexcept
 
 void ChannelStrip::updateEqParameters() noexcept
 {
-#if FOCAL_HAS_DUSK_DSP
+#if DUSKSTUDIO_HAS_DUSK_DSP
     if (paramsRef == nullptr) return;
     // Value-init so padding bytes are zero - paired with lastEqParams's {}
     // initializer, this lets memcmp tell us reliably whether the params
@@ -246,7 +246,7 @@ void ChannelStrip::updateEqParameters() noexcept
 
 void ChannelStrip::updateCompParameters() noexcept
 {
-#if FOCAL_HAS_DUSK_DSP
+#if DUSKSTUDIO_HAS_DUSK_DSP
     if (paramsRef == nullptr) return;
 
     // Discrete params (no smoothing): bypass + mode + LIMIT toggle + FET
@@ -282,7 +282,7 @@ void ChannelStrip::updateCompParameters() noexcept
 
 void ChannelStrip::publishSmoothedCompParams (int numSamples) noexcept
 {
-#if FOCAL_HAS_DUSK_DSP
+#if DUSKSTUDIO_HAS_DUSK_DSP
     if (numSamples <= 0) return;
     // Advance each smoother by N samples then write the end-of-chunk
     // value to the donor atom. Called once per inner chunk so chunks
@@ -487,7 +487,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         for (int i = safeSamples; i < numSamples; ++i)
             activeInsertGain.getNextValue();
 
-#if FOCAL_HAS_DUSK_DSP
+#if DUSKSTUDIO_HAS_DUSK_DSP
         if (oversamplerStages > 0 && oversamplerMono != nullptr)
         {
             // Oversampled chain: upsample tempMono, run EQ + Comp on the
@@ -635,7 +635,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
                 activeInsertGain.getNextValue();
         }
 
-#if FOCAL_HAS_DUSK_DSP
+#if DUSKSTUDIO_HAS_DUSK_DSP
         if (oversamplerStages > 0 && oversamplerStereo != nullptr)
         {
             const float* readPtrs[2]  = { L, R };
@@ -837,4 +837,4 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         }
     }
 }
-} // namespace focal
+} // namespace duskstudio

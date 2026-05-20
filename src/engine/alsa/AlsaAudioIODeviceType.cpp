@@ -3,7 +3,7 @@
 
 #include <alsa/asoundlib.h>
 
-namespace focal
+namespace duskstudio
 {
 AlsaAudioIODeviceType::AlsaAudioIODeviceType()
     : juce::AudioIODeviceType ("ALSA")
@@ -175,4 +175,4 @@ void AlsaAudioIODeviceType::rescan()
     scanForDevices();
     callDeviceChangeListeners();
 }
-} // namespace focal
+} // namespace duskstudio

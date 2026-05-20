@@ -22,9 +22,9 @@
 #include "PluginManager.h"
 #include "RecordManager.h"
 #include "Transport.h"
-#include "FocalPlayHead.h"
+#include "DuskStudioPlayHead.h"
 
-namespace focal
+namespace duskstudio
 {
 // Phase 2 engine: input -> channel strip (live or playback source) -> aux/master.
 // Adds Transport state, recording (RecordManager), and playback (PlaybackEngine).
@@ -228,7 +228,7 @@ public:
     // `perInputMidi[inputIdx]` AFTER the collector drain, so the
     // injected events flow through the same per-track filter and
     // strip path that real MIDI takes. Cleared after one block. Used
-    // by the headless instrument-pipeline test in FocalApp.cpp; does
+    // by the headless instrument-pipeline test in DuskStudioApp.cpp; does
     // nothing at runtime under normal device operation.
     void stageTestMidiInjection (int inputIdx, juce::MidiBuffer events);
 
@@ -339,7 +339,7 @@ private:
     // run before constructor body so we can't pass &session.tempoBpm
     // here without manual ordering. Pointer to keep the field a
     // simple owned object initialized later.
-    std::unique_ptr<FocalPlayHead> playHead;
+    std::unique_ptr<DuskStudioPlayHead> playHead;
     RecordManager   recordManager   { session };
 
     // Populated by consumePluginStateAfterLoad. Message-thread only.
@@ -527,4 +527,4 @@ private:
     bool         wasRolling          = false;
     juce::int64  lastBlockEndSample  = 0;
 };
-} // namespace focal
+} // namespace duskstudio

@@ -26,7 +26,7 @@ float blockPeak (const std::vector<float>& L, const std::vector<float>& R)
 
 TEST_CASE ("BrickwallLimiter: silence in -> silence out", "[BrickwallLimiter]")
 {
-    focal::BrickwallLimiter lim;
+    duskstudio::BrickwallLimiter lim;
     lim.prepare (kSr, kBlock, kLookahead);
 
     std::vector<float> L (kBlock, 0.0f), R (kBlock, 0.0f);
@@ -46,7 +46,7 @@ TEST_CASE ("BrickwallLimiter: silence in -> silence out", "[BrickwallLimiter]")
 
 TEST_CASE ("BrickwallLimiter: peaks above ceiling are clamped", "[BrickwallLimiter]")
 {
-    focal::BrickwallLimiter lim;
+    duskstudio::BrickwallLimiter lim;
     lim.prepare (kSr, kBlock, kLookahead);
     lim.setCeilingDb (-1.0f);
     lim.setEnabled  (true);
@@ -82,7 +82,7 @@ TEST_CASE ("BrickwallLimiter: peaks above ceiling are clamped", "[BrickwallLimit
 
 TEST_CASE ("BrickwallLimiter: bypass passes signal through (delayed)", "[BrickwallLimiter]")
 {
-    focal::BrickwallLimiter lim;
+    duskstudio::BrickwallLimiter lim;
     lim.prepare (kSr, kBlock, kLookahead);
     lim.setEnabled (false);
 

@@ -4,13 +4,13 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <memory>
 #include "EmbeddedModal.h"
-#include "FocalLookAndFeel.h"
+#include "DuskStudioLookAndFeel.h"
 #include "ConsoleView.h"
 #include "MultiImportTargetPicker.h"
 #include "../engine/AudioEngine.h"
 #include "../session/Session.h"
 
-namespace focal
+namespace duskstudio
 {
 class MainComponent final : public juce::Component,
                              public juce::MenuBarModel,
@@ -65,7 +65,7 @@ public:
 
     // Process-shutdown only: relinquishes ownership of every loaded
     // plugin instance without destroying it. Called from
-    // FocalApp::shutdown() right before mainWindow.reset() so the
+    // DuskStudioApp::shutdown() right before mainWindow.reset() so the
     // engine teardown skips plugin destruction (some Linux plugins
     // abort the process from their destructor - see
     // AudioEngine::leakAllPluginInstancesForShutdown for the why).
@@ -178,7 +178,7 @@ private:
     Session session;
     AudioEngine engine { session };
 
-    FocalLookAndFeel lookAndFeel;
+    DuskStudioLookAndFeel lookAndFeel;
 
     // App-wide tooltip dispatcher. JUCE only displays setTooltip()
     // strings when a TooltipWindow exists somewhere in the component
@@ -310,4 +310,4 @@ private:
     void toggleTuner();
     void closeTuner();
 };
-} // namespace focal
+} // namespace duskstudio

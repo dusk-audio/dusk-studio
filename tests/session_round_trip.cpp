@@ -13,7 +13,7 @@ namespace
 juce::File makeTempSessionDir()
 {
     auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
-                  .getChildFile ("focal-session-round-trip-"
+                  .getChildFile ("dusk-studio-session-round-trip-"
                                     + juce::String (juce::Random::getSystemRandom().nextInt()));
     dir.createDirectory();
     return dir;
@@ -28,9 +28,9 @@ juce::File makeTempSessionDir()
 TEST_CASE ("SessionSerializer round-trip preserves transport + per-track state",
            "[session][serializer]")
 {
-    using focal::Session;
-    using focal::Track;
-    using focal::SessionSerializer;
+    using duskstudio::Session;
+    using duskstudio::Track;
+    using duskstudio::SessionSerializer;
 
     const auto dir = makeTempSessionDir();
     const auto target = dir.getChildFile ("session.json");
@@ -95,8 +95,8 @@ TEST_CASE ("SessionSerializer round-trip preserves transport + per-track state",
 TEST_CASE ("SessionSerializer save is atomic - tmp file gone after success",
            "[session][serializer]")
 {
-    using focal::Session;
-    using focal::SessionSerializer;
+    using duskstudio::Session;
+    using duskstudio::SessionSerializer;
 
     const auto dir = makeTempSessionDir();
     const auto target = dir.getChildFile ("session.json");

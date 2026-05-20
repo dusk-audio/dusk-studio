@@ -1,7 +1,7 @@
 #include "MasteringLimiterEditor.h"
 #include "../dsp/BrickwallLimiter.h"
 
-namespace focal
+namespace duskstudio
 {
 namespace
 {
@@ -492,4 +492,4 @@ void MasteringLimiterEditor::mouseDoubleClick (const juce::MouseEvent& e)
         params.limiterCeilingDb.store (-0.3f, std::memory_order_relaxed);
     repaint();
 }
-} // namespace focal
+} // namespace duskstudio

@@ -2,7 +2,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
-namespace focal
+namespace duskstudio
 {
 // Per-app plugin host infrastructure. Owns the AudioPluginFormatManager and
 // the shared KnownPluginList (the "what's installed" cache). Channel strips
@@ -17,7 +17,7 @@ namespace focal
 //
 // Lifetime: a single PluginManager instance lives in AudioEngine for now
 // (so the audio engine owns plugin infrastructure alongside the device
-// manager). Could move to FocalApp scope later if non-engine code needs
+// manager). Could move to DuskStudioApp scope later if non-engine code needs
 // access.
 //
 // Threading: ALL methods on this class are message-thread-only. The audio
@@ -38,7 +38,7 @@ public:
     juce::KnownPluginList&          getKnownPluginList() noexcept { return knownPluginList; }
 
     // Out-of-process plugin hosting toggle. Off by default. When on,
-    // PluginSlot::loadFromDescription forks the focal-plugin-host child
+    // PluginSlot::loadFromDescription forks the dusk-studio-plugin-host child
     // and routes processBlock / state I/O through RemotePluginConnection
     // instead of holding the AudioPluginInstance in-process. Off-platform
     // (Mac / Windows) the flag is harmless — PluginSlot's #if branches
@@ -46,13 +46,13 @@ public:
     //
     // Read by PluginSlot at load time only; flipping mid-session affects
     // the next load, not currently-loaded plugins. Set via UI (later
-    // phase) or the FOCAL_USE_OOP_PLUGINS env var on app startup.
+    // phase) or the DUSKSTUDIO_USE_OOP_PLUGINS env var on app startup.
     void setOopEnabled (bool enable) noexcept { oopEnabled = enable; }
     bool isOopEnabled() const noexcept       { return oopEnabled; }
 
-    // Path to the focal-plugin-host child binary. Computed lazily from
+    // Path to the dusk-studio-plugin-host child binary. Computed lazily from
     // the running Focal executable's own location: the binary lives at
-    // `<bundle dir>/focal-plugin-host` on Linux (CMake's
+    // `<bundle dir>/dusk-studio-plugin-host` on Linux (CMake's
     // RUNTIME_OUTPUT_DIRECTORY = $<TARGET_FILE_DIR:Focal>). Returns an
     // empty string when OOP is unavailable on this platform.
     juce::String getHostExecutablePath() const;
@@ -134,11 +134,11 @@ private:
 
 inline juce::String PluginManager::getHostExecutablePath() const
 {
-   #if FOCAL_HAS_OOP_PLUGINS
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS
     auto exe = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
-    return exe.getParentDirectory().getChildFile ("focal-plugin-host").getFullPathName();
+    return exe.getParentDirectory().getChildFile ("dusk-studio-plugin-host").getFullPathName();
    #else
     return {};
    #endif
 }
-} // namespace focal
+} // namespace duskstudio

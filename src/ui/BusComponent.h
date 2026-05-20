@@ -5,7 +5,7 @@
 #include "../session/Session.h"
 #include "AnalogVuMeter.h"
 
-namespace focal
+namespace duskstudio
 {
 class BusComponent final : public juce::Component, private juce::Timer
 {
@@ -85,4 +85,4 @@ private:
     int   outputPeakHoldFramesL = 0;
     int   outputPeakHoldFramesR = 0;
 };
-} // namespace focal
+} // namespace duskstudio

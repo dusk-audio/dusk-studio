@@ -38,7 +38,7 @@ jobs:
         # because GCC on x86_64 instantiates SIMDRegister<long long>
         # for jmax<juce::int64>(). Patch it in below.
         # JuceCompat.h picks the right addDefaultFormats API via the
-        # FOCAL_JUCE_HAS_FREE_ADD_FORMATS preprocessor define (CMake
+        # DUSKSTUDIO_JUCE_HAS_FREE_ADD_FORMATS preprocessor define (CMake
         # detects which surface is present at configure time).
         run: |
           git clone --depth 1 --branch 8.0.4 \
@@ -92,11 +92,11 @@ jobs:
         # JUCE init that still touches X11 even for the early-exit path.
         run: |
           xvfb-run --auto-servernum \
-            build-linux/Focal_artefacts/Release/Focal --version
+            build-linux/DuskStudio_artefacts/Release/Focal --version
 
-      - name: Headless self-test (xvfb, FOCAL_RUN_SELFTEST=1)
+      - name: Headless self-test (xvfb, DUSKSTUDIO_RUN_SELFTEST=1)
         # --version exits before primeRealtimeAudio + crash_handler +
-        # the rest of initialise. FOCAL_RUN_SELFTEST drives the
+        # the rest of initialise. DUSKSTUDIO_RUN_SELFTEST drives the
         # AudioPipelineSelfTest path: full AudioEngine construction,
         # plugin scan attempt, prepareForSelfTest, synthetic DSP. Catches
         # link / startup regressions that --version alone can't see.
@@ -105,14 +105,14 @@ jobs:
         # out before falling through to the synthetic tests.
         run: |
           timeout 60 xvfb-run --auto-servernum \
-            env FOCAL_RUN_SELFTEST=1 \
-            build-linux/Focal_artefacts/Release/Focal
+            env DUSKSTUDIO_RUN_SELFTEST=1 \
+            build-linux/DuskStudio_artefacts/Release/Focal
 
       - name: Upload Focal binary (per-run artifact)
         uses: actions/upload-artifact@v4
         with:
           name: Focal-linux-x86_64
-          path: build-linux/Focal_artefacts/Release/Focal
+          path: build-linux/DuskStudio_artefacts/Release/Focal
           retention-days: 14
           if-no-files-found: error
 
@@ -174,7 +174,7 @@ jobs:
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main"
 
       - name: Build tests
-        run: cmake --build build-tests --target focal-tests -j
+        run: cmake --build build-tests --target dusk-studio-tests -j
 
       - name: Run tests
         run: ctest --test-dir build-tests --output-on-failure

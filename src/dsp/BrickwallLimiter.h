@@ -5,7 +5,7 @@
 #include <atomic>
 #include <vector>
 
-namespace focal
+namespace duskstudio
 {
 // Lookahead brickwall peak limiter, intended for the master / mastering chain.
 //
@@ -89,4 +89,4 @@ private:
 
     mutable std::atomic<float> currentGrDb { 0.0f };
 };
-} // namespace focal
+} // namespace duskstudio

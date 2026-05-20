@@ -10,7 +10,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
-namespace focal::ipc
+namespace duskstudio::ipc
 {
 int runIpcSelfTest (const std::string& hostExecutablePath,
                      int iterations, int numSamples)
@@ -139,7 +139,7 @@ int runIpcHostTest (const std::string& hostExecutablePath,
     // format manager is parent-side here only to produce the XML; the
     // actual instance lives in the child.
     juce::AudioPluginFormatManager fm;
-    focal::juce_compat::addDefaultFormats (fm);
+    duskstudio::juce_compat::addDefaultFormats (fm);
     juce::OwnedArray<juce::PluginDescription> found;
     bool scanned = false;
     for (auto* fmt : fm.getFormats())
@@ -288,4 +288,4 @@ int runIpcHostTest (const std::string& hostExecutablePath,
     std::fprintf (stdout, "PASS\n");
     return 0;
 }
-} // namespace focal::ipc
+} // namespace duskstudio::ipc

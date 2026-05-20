@@ -9,7 +9,7 @@
 #include "../engine/PluginSlot.h"
 #include "HardwareInsertSlot.h"
 
-#if FOCAL_HAS_DUSK_DSP
+#if DUSKSTUDIO_HAS_DUSK_DSP
   #include "BritishEQProcessor.h"     // multi-q
   // Use UniversalCompressor directly (NOT the ChannelComp facade) so each
   // channel strip behaves identically to a DAW hosting the standalone
@@ -21,7 +21,7 @@
   #include "UniversalCompressor.h"    // multi-comp
 #endif
 
-namespace focal
+namespace duskstudio
 {
 // Phase 1a channel strip: 4K-style HPF + 4-band EQ + per-aux sends + pan +
 // fader + SIP gating. FET/Opto/VCA compressor inserts after the EQ stage in
@@ -190,7 +190,7 @@ private:
     // never default-constructs one. Stays empty in the effect-insert path.
     juce::MidiBuffer pluginMidiScratch;
 
-#if FOCAL_HAS_DUSK_DSP
+#if DUSKSTUDIO_HAS_DUSK_DSP
     BritishEQProcessor eq;
     // Cache of the most recent Parameters we pushed to `eq`. updateEqParameters
     // memcmp's the freshly-built Parameters against this and only calls
@@ -266,4 +266,4 @@ private:
     void updateEqParameters() noexcept;
     void updateCompParameters() noexcept;
 };
-} // namespace focal
+} // namespace duskstudio

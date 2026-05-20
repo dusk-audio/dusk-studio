@@ -1,6 +1,6 @@
 #include "MasteringDigitalEq.h"
 
-namespace focal
+namespace duskstudio
 {
 void MasteringDigitalEq::prepare (double sampleRate, int blockSize)
 {
@@ -123,4 +123,4 @@ void MasteringDigitalEq::processInPlace (float* L, float* R, int numSamples) noe
         for (int i = 0; i < numSamples; ++i) R[i] = filtersR[(size_t) b].processSample (R[i]);
     }
 }
-} // namespace focal
+} // namespace duskstudio

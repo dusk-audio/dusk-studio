@@ -5,7 +5,7 @@
 #include <atomic>
 #include <vector>
 
-namespace focal
+namespace duskstudio
 {
 // Stereo loudness meter conforming to ITU BS.1770-4 / EBU R128. Computes:
 //   • Momentary LUFS  - sliding 400 ms window
@@ -92,4 +92,4 @@ private:
     std::atomic<float> integratedLufs  { -100.0f };
     std::atomic<float> truePeakDb      { -100.0f };
 };
-} // namespace focal
+} // namespace duskstudio

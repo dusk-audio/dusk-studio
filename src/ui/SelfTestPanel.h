@@ -3,7 +3,7 @@
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 
-namespace focal
+namespace duskstudio
 {
 class AudioEngine;
 class Session;
@@ -34,4 +34,4 @@ private:
     void runTest();
     void copyToClipboard();
 };
-} // namespace focal
+} // namespace duskstudio

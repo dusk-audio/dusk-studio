@@ -5,7 +5,7 @@
 #include <functional>
 #include "../session/Session.h"
 
-namespace focal
+namespace duskstudio
 {
 // In-window panel for configuring a HardwareInsertParams. Mirrors Logic
 // Pro's I/O insert dialog: Output / Output Volume / Input / Input Volume
@@ -80,4 +80,4 @@ private:
     juce::TextButton cancelButton { "Cancel" };
     juce::TextButton doneButton   { "Done" };
 };
-} // namespace focal
+} // namespace duskstudio

@@ -10,7 +10,7 @@ namespace
 juce::File makeTempSessionDir()
 {
     auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
-                  .getChildFile ("focal-corrupted-session-"
+                  .getChildFile ("dusk-studio-corrupted-session-"
                                     + juce::String (juce::Random::getSystemRandom().nextInt()));
     dir.createDirectory();
     return dir;
@@ -33,8 +33,8 @@ void writeRaw (const juce::File& target, const juce::String& contents)
 TEST_CASE ("SessionSerializer::load survives truncated JSON",
            "[session][serializer][corruption]")
 {
-    using focal::Session;
-    using focal::SessionSerializer;
+    using duskstudio::Session;
+    using duskstudio::SessionSerializer;
 
     const auto dir = makeTempSessionDir();
     const auto target = dir.getChildFile ("session.json");
@@ -55,8 +55,8 @@ TEST_CASE ("SessionSerializer::load survives truncated JSON",
 TEST_CASE ("SessionSerializer::load survives empty / non-JSON garbage",
            "[session][serializer][corruption]")
 {
-    using focal::Session;
-    using focal::SessionSerializer;
+    using duskstudio::Session;
+    using duskstudio::SessionSerializer;
 
     const auto dir = makeTempSessionDir();
     const auto target = dir.getChildFile ("session.json");

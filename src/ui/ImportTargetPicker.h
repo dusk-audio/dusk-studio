@@ -6,7 +6,7 @@
 #include <vector>
 #include "../session/Session.h"
 
-namespace focal
+namespace duskstudio
 {
 // In-window modal body that lets the user pick which track an import
 // should land on. Built to be hosted inside an EmbeddedModal owned by
@@ -79,4 +79,4 @@ private:
     juce::TextButton cancelButton { "Cancel" };
     juce::TextButton importButton { "Import" };
 };
-} // namespace focal
+} // namespace duskstudio

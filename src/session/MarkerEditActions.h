@@ -3,7 +3,7 @@
 #include <juce_data_structures/juce_data_structures.h>
 #include "Session.h"
 
-namespace focal
+namespace duskstudio
 {
 // UndoableActions for the marker timeline. Mirrors the shape of
 // RegionEditActions: each operation captures whatever it needs at
@@ -67,4 +67,4 @@ private:
     juce::int64  fromSamples;
     juce::int64  toSamples;
 };
-} // namespace focal
+} // namespace duskstudio

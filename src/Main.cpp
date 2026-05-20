@@ -1,3 +1,3 @@
-#include "FocalApp.h"
+#include "DuskStudioApp.h"
 
-START_JUCE_APPLICATION (focal::FocalApp)
+START_JUCE_APPLICATION (duskstudio::DuskStudioApp)

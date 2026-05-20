@@ -1,6 +1,6 @@
 #include "ConsoleView.h"
 
-namespace focal
+namespace duskstudio
 {
 void ConsoleView::dropAllPluginEditors()
 {
@@ -26,7 +26,7 @@ ConsoleView::ConsoleView (Session& session, AudioEngine& engine) : sessionRef (s
     masterStrip = std::make_unique<MasterStripComponent> (
         session.master(),
         session,
-#if FOCAL_HAS_DUSK_DSP
+#if DUSKSTUDIO_HAS_DUSK_DSP
         &engine.getMasterBus().getTapeProcessor());
 #else
         nullptr);
@@ -265,4 +265,4 @@ void ConsoleView::setOnStripFocusRequested (std::function<void (int)> cb)
         if (strip != nullptr)
             strip->onTrackFocusRequested = cb;
 }
-} // namespace focal
+} // namespace duskstudio

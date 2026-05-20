@@ -1,7 +1,7 @@
 #include "AnalogVuMeter.h"
 #include <cmath>
 
-namespace focal
+namespace duskstudio
 {
 namespace
 {
@@ -483,4 +483,4 @@ void AnalogVuMeter::paint (juce::Graphics& g)
         }
     }
 }
-} // namespace focal
+} // namespace duskstudio

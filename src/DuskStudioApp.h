@@ -2,13 +2,13 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
-namespace focal
+namespace duskstudio
 {
-class FocalApp final : public juce::JUCEApplication
+class DuskStudioApp final : public juce::JUCEApplication
 {
 public:
-    FocalApp();
-    ~FocalApp() override;
+    DuskStudioApp();
+    ~DuskStudioApp() override;
 
     const juce::String getApplicationName() override       { return JUCE_APPLICATION_NAME_STRING; }
     const juce::String getApplicationVersion() override    { return JUCE_APPLICATION_VERSION_STRING; }
@@ -23,4 +23,4 @@ private:
     class MainWindow;
     std::unique_ptr<MainWindow> mainWindow;
 };
-} // namespace focal
+} // namespace duskstudio

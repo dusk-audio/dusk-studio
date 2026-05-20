@@ -1,6 +1,6 @@
 #include "MidiSyncReceiver.h"
 
-namespace focal
+namespace duskstudio
 {
 void MidiSyncReceiver::process (const juce::MidiBuffer& events,
                                   juce::int64 blockStartSample) noexcept
@@ -91,4 +91,4 @@ void MidiSyncReceiver::process (const juce::MidiBuffer& events,
         }
     }
 }
-} // namespace focal
+} // namespace duskstudio

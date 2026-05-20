@@ -2,7 +2,7 @@
 
 #include <memory>
 
-namespace focal
+namespace duskstudio
 {
 namespace
 {
@@ -382,4 +382,4 @@ void HardwareInsertEditor::resized()
     footer.removeFromRight (8);
     cancelButton.setBounds (footer.removeFromRight (90));
 }
-} // namespace focal
+} // namespace duskstudio

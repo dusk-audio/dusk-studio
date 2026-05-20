@@ -2,7 +2,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace focal
+namespace duskstudio
 {
 void BrickwallLimiter::prepare (double sampleRate, int /*maxBlockSize*/, double lookaheadMs)
 {
@@ -104,4 +104,4 @@ void BrickwallLimiter::processInPlace (float* L, float* R, int numSamples) noexc
                         : juce::Decibels::gainToDecibels (blockMinEnv, -60.0f);
     currentGrDb.store (grDb, std::memory_order_relaxed);
 }
-} // namespace focal
+} // namespace duskstudio

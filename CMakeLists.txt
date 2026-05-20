@@ -11,7 +11,7 @@ if(APPLE AND NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "macOS deployment target")
 endif()
 
-project(Focal VERSION 0.0.1 LANGUAGES C CXX)
+project(DuskStudio VERSION 0.0.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -29,14 +29,14 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Focal's source assumes on Linux; see [src/engine/JuceCompat.h](src/engine/JuceCompat.h)
 # for the API-split shim.
 if(DEFINED JUCE_PATH)
-    set(FOCAL_JUCE_SOURCE_DIR "${JUCE_PATH}")
+    set(DUSKSTUDIO_JUCE_SOURCE_DIR "${JUCE_PATH}")
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux"
        AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../JUCE-wayland/CMakeLists.txt")
-    set(FOCAL_JUCE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../JUCE-wayland")
+    set(DUSKSTUDIO_JUCE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../JUCE-wayland")
 elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../JUCE/CMakeLists.txt")
-    set(FOCAL_JUCE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../JUCE")
+    set(DUSKSTUDIO_JUCE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../JUCE")
 elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/JUCE/CMakeLists.txt")
-    set(FOCAL_JUCE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/JUCE")
+    set(DUSKSTUDIO_JUCE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/JUCE")
 else()
     message(FATAL_ERROR
         "JUCE not found. Options:\n"
@@ -45,7 +45,7 @@ else()
         "  3. Add as submodule: git submodule add https://github.com/juce-framework/JUCE.git external/JUCE")
 endif()
 
-message(STATUS "Using JUCE from: ${FOCAL_JUCE_SOURCE_DIR}")
+message(STATUS "Using JUCE from: ${DUSKSTUDIO_JUCE_SOURCE_DIR}")
 
 # Linux-only: verify our local XEmbed mapping fix is present in the JUCE checkout.
 # Stock JUCE 8.0.10 ties the host container's X11 mapping to the embedded
@@ -57,18 +57,18 @@ message(STATUS "Using JUCE from: ${FOCAL_JUCE_SOURCE_DIR}")
 # vanilla upstream JUCE clone (no plugin editors involved, so the XEmbed patch
 # is irrelevant). Never set this for a distribution build — pure-xcb VST3
 # plugins will render blank without the patch.
-option(FOCAL_SKIP_FORK_CHECK
+option(DUSKSTUDIO_SKIP_FORK_CHECK
        "Skip the JUCE-wayland XEmbed patch enforcement (CI / tests only)" OFF)
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT FOCAL_SKIP_FORK_CHECK)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT DUSKSTUDIO_SKIP_FORK_CHECK)
     set(_focal_xembed_file
-        "${FOCAL_JUCE_SOURCE_DIR}/modules/juce_gui_extra/native/juce_XEmbedComponent_linux.cpp")
+        "${DUSKSTUDIO_JUCE_SOURCE_DIR}/modules/juce_gui_extra/native/juce_XEmbedComponent_linux.cpp")
     if(NOT EXISTS "${_focal_xembed_file}")
         message(FATAL_ERROR "Expected JUCE source not found: ${_focal_xembed_file}")
     endif()
     file(READ "${_focal_xembed_file}" _focal_xembed_src)
     if(NOT _focal_xembed_src MATCHES "enum class Role { host, client }")
         message(FATAL_ERROR
-            "Focal requires a patched JUCE: the XEmbed host-mapping fix is missing in\n"
+            "Dusk Studio requires a patched JUCE: the XEmbed host-mapping fix is missing in\n"
             "  ${_focal_xembed_file}\n"
             "Without it, pure-xcb VST3 plugins (e.g. MininnDrum) render as a blank\n"
             "rectangle. Re-apply the local commit titled\n"
@@ -83,17 +83,17 @@ endif()
 # Detect plugdata-team JUCE-wayland's free juce::addDefaultFormatsToManager
 # function at configure time. The fork added it + marked the member
 # = delete; upstream JUCE only has the member. JuceCompat.h picks the
-# right API via the FOCAL_JUCE_HAS_FREE_ADD_FORMATS preprocessor define.
+# right API via the DUSKSTUDIO_JUCE_HAS_FREE_ADD_FORMATS preprocessor define.
 # Done at configure time because SFINAE on the free function fails:
 # the qualified name lookup happens at template definition, not
 # substitution, so calling code wouldn't compile against upstream.
-set(FOCAL_JUCE_HAS_FREE_ADD_FORMATS OFF)
+set(DUSKSTUDIO_JUCE_HAS_FREE_ADD_FORMATS OFF)
 set(_focal_apf_helpers
-    "${FOCAL_JUCE_SOURCE_DIR}/modules/juce_audio_processors/format/juce_AudioPluginFormatManagerHelpers.h")
+    "${DUSKSTUDIO_JUCE_SOURCE_DIR}/modules/juce_audio_processors/format/juce_AudioPluginFormatManagerHelpers.h")
 if(EXISTS "${_focal_apf_helpers}")
     file(READ "${_focal_apf_helpers}" _focal_apf_src)
     if(_focal_apf_src MATCHES "addDefaultFormatsToManager")
-        set(FOCAL_JUCE_HAS_FREE_ADD_FORMATS ON)
+        set(DUSKSTUDIO_JUCE_HAS_FREE_ADD_FORMATS ON)
         message(STATUS "JUCE has free juce::addDefaultFormatsToManager (wayland fork)")
     endif()
     unset(_focal_apf_src)
@@ -107,14 +107,14 @@ unset(_focal_apf_helpers)
 # peer-creation latch + the requestFocusOnMainWaylandSurface roundtrip
 # yield. CI builds against upstream JUCE (no Wayland symbols) need
 # those code paths stubbed.
-set(FOCAL_JUCE_HAS_WAYLAND OFF)
+set(DUSKSTUDIO_JUCE_HAS_WAYLAND OFF)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    set(_focal_juce_wayland_dir "${FOCAL_JUCE_SOURCE_DIR}/modules/juce_gui_basics/native")
+    set(_focal_juce_wayland_dir "${DUSKSTUDIO_JUCE_SOURCE_DIR}/modules/juce_gui_basics/native")
     file(GLOB _focal_juce_wayland_files "${_focal_juce_wayland_dir}/*.h")
     foreach(_f ${_focal_juce_wayland_files})
         file(READ "${_f}" _focal_juce_wayland_src)
         if(_focal_juce_wayland_src MATCHES "class +WaylandWindowSystem")
-            set(FOCAL_JUCE_HAS_WAYLAND ON)
+            set(DUSKSTUDIO_JUCE_HAS_WAYLAND ON)
             message(STATUS "JUCE has WaylandWindowSystem (wayland fork): ${_f}")
             break()
         endif()
@@ -124,30 +124,30 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     unset(_focal_juce_wayland_dir)
 endif()
 
-add_subdirectory(${FOCAL_JUCE_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/JUCE)
+add_subdirectory(${DUSKSTUDIO_JUCE_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/JUCE)
 
 # App icon. JUCE bakes the PNG into platform-specific resources at
 # build time (.ico on Windows, .icns on macOS, embedded data block on
 # Linux). Same file is used for both BIG and SMALL - JUCE downscales
 # internally as needed. The conditional keeps a fresh checkout
 # building when assets/icon.png hasn't been added yet.
-set(FOCAL_ICON_PATH "${CMAKE_CURRENT_SOURCE_DIR}/assets/icon.png")
-if(EXISTS "${FOCAL_ICON_PATH}")
-    set(FOCAL_ICON_ARGS
-        ICON_BIG   "${FOCAL_ICON_PATH}"
-        ICON_SMALL "${FOCAL_ICON_PATH}")
-    message(STATUS "Focal app icon: ${FOCAL_ICON_PATH}")
+set(DUSKSTUDIO_ICON_PATH "${CMAKE_CURRENT_SOURCE_DIR}/assets/icon.png")
+if(EXISTS "${DUSKSTUDIO_ICON_PATH}")
+    set(DUSKSTUDIO_ICON_ARGS
+        ICON_BIG   "${DUSKSTUDIO_ICON_PATH}"
+        ICON_SMALL "${DUSKSTUDIO_ICON_PATH}")
+    message(STATUS "Dusk Studio app icon: ${DUSKSTUDIO_ICON_PATH}")
 else()
-    set(FOCAL_ICON_ARGS "")
-    message(STATUS "Focal app icon not found at ${FOCAL_ICON_PATH} - building without one")
+    set(DUSKSTUDIO_ICON_ARGS "")
+    message(STATUS "Dusk Studio app icon not found at ${DUSKSTUDIO_ICON_PATH} - building without one")
 endif()
 
-juce_add_gui_app(Focal
-    PRODUCT_NAME       "Focal"
+juce_add_gui_app(DuskStudio
+    PRODUCT_NAME       "Dusk Studio"
     COMPANY_NAME       "Marc Korte"
     BUNDLE_ID          "com.marckorte.focal"
     VERSION            ${PROJECT_VERSION}
-    ${FOCAL_ICON_ARGS}
+    ${DUSKSTUDIO_ICON_ARGS}
     NEEDS_WAYLAND      TRUE
     HARDENED_RUNTIME_ENABLED TRUE
     HARDENED_RUNTIME_OPTIONS
@@ -156,7 +156,7 @@ juce_add_gui_app(Focal
         com.apple.security.cs.disable-library-validation
         com.apple.security.device.audio-input
     MICROPHONE_PERMISSION_ENABLED TRUE
-    MICROPHONE_PERMISSION_TEXT    "Focal needs microphone access to record audio from your inputs.")
+    MICROPHONE_PERMISSION_TEXT    "Dusk Studio needs microphone access to record audio from your inputs.")
 
 # macOS code signing. Ad-hoc by default (works for local dev launch +
 # satisfies the runtime-loadable plugin requirement that the host be
@@ -167,7 +167,7 @@ juce_add_gui_app(Focal
 # because it needs an Apple ID + app-specific password the build can't
 # safely embed.
 if(APPLE)
-    set(FOCAL_CODESIGN_IDENTITY "-" CACHE STRING "macOS codesign identity. '-' = ad-hoc (default). Override for distribution builds.")
+    set(DUSKSTUDIO_CODESIGN_IDENTITY "-" CACHE STRING "macOS codesign identity. '-' = ad-hoc (default). Override for distribution builds.")
     # Inject LSMinimumSystemVersion into the bundled Info.plist. JUCE 8
     # builds the plist from juce_add_gui_app args but doesn't expose this
     # key directly; without it, Gatekeeper / App Store / older macOS
@@ -176,10 +176,10 @@ if(APPLE)
     # overwrites an existing key, or adds it if missing) so reruns
     # don't accumulate. Must run BEFORE codesign so the modified
     # Info.plist hashes are sealed into the signature.
-    add_custom_command(TARGET Focal POST_BUILD
+    add_custom_command(TARGET DuskStudio POST_BUILD
         COMMAND plutil -replace LSMinimumSystemVersion -string
                 "${CMAKE_OSX_DEPLOYMENT_TARGET}"
-                "$<TARGET_BUNDLE_DIR:Focal>/Contents/Info.plist"
+                "$<TARGET_BUNDLE_DIR:DuskStudio>/Contents/Info.plist"
         # Pass --entitlements pointing at JUCE's generated plist so the
         # allow-jit / allow-unsigned-executable-memory / disable-library-
         # validation flags stay attached. Without this, the resigning
@@ -189,10 +189,10 @@ if(APPLE)
         # not be opened". --deep dropped too (deprecated; JUCE has
         # already signed inner Mach-Os).
         COMMAND codesign --force --options runtime
-                          --entitlements "${CMAKE_CURRENT_BINARY_DIR}/Focal_artefacts/JuceLibraryCode/Focal.entitlements"
-                          --sign "${FOCAL_CODESIGN_IDENTITY}"
-                          "$<TARGET_BUNDLE_DIR:Focal>"
-        COMMENT "patch Info.plist + codesign Focal.app (identity='${FOCAL_CODESIGN_IDENTITY}')"
+                          --entitlements "${CMAKE_CURRENT_BINARY_DIR}/DuskStudio_artefacts/JuceLibraryCode/Dusk Studio.entitlements"
+                          --sign "${DUSKSTUDIO_CODESIGN_IDENTITY}"
+                          "$<TARGET_BUNDLE_DIR:DuskStudio>"
+        COMMENT "patch Info.plist + codesign "Dusk Studio.app" (identity='${DUSKSTUDIO_CODESIGN_IDENTITY}')"
         VERBATIM)
 endif()
 
@@ -219,14 +219,14 @@ elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../plugins/plugins/shared")
     message(STATUS "Using Dusk plugins from sibling directory: ${DUSK_PLUGINS_PATH}")
 else()
     message(WARNING
-        "Dusk plugins repo not found. Focal will build but DSP cores will be "
+        "Dusk plugins repo not found. Dusk Studio will build but DSP cores will be "
         "unavailable until you set -DDUSK_PLUGINS_PATH=/path/to/plugins or clone "
         "the plugins repo to ../plugins (sibling directory).")
 endif()
 
-target_sources(Focal PRIVATE
+target_sources(DuskStudio PRIVATE
     src/Main.cpp
-    src/FocalApp.cpp
+    src/DuskStudioApp.cpp
     src/engine/AudioEngine.cpp
     src/engine/BounceEngine.cpp
     src/engine/FileImporter.cpp
@@ -301,11 +301,11 @@ target_sources(Focal PRIVATE
 # the files exist so the fix slot is obvious when the equivalent bugs
 # surface there.
 if(APPLE)
-    target_sources(Focal PRIVATE src/ui/PlatformWindowing_Mac.mm)
+    target_sources(DuskStudio PRIVATE src/ui/PlatformWindowing_Mac.mm)
 elseif(WIN32)
-    target_sources(Focal PRIVATE src/ui/PlatformWindowing_Windows.cpp)
+    target_sources(DuskStudio PRIVATE src/ui/PlatformWindowing_Windows.cpp)
 else()
-    target_sources(Focal PRIVATE src/ui/PlatformWindowing_Linux.cpp)
+    target_sources(DuskStudio PRIVATE src/ui/PlatformWindowing_Linux.cpp)
 endif()
 
 # ASIO (Windows only). Steinberg's ASIO SDK can't be bundled because of its
@@ -328,11 +328,11 @@ if(WIN32)
         set(_asio_candidate "${CMAKE_CURRENT_SOURCE_DIR}/../asiosdk")
     endif()
     if(NOT "${_asio_candidate}" STREQUAL "")
-        message(STATUS "Focal: ASIO SDK found at ${_asio_candidate} - enabling JUCE_ASIO")
-        target_include_directories(Focal PRIVATE "${_asio_candidate}/common")
-        target_compile_definitions(Focal PRIVATE JUCE_ASIO=1)
+        message(STATUS "Dusk Studio: ASIO SDK found at ${_asio_candidate} - enabling JUCE_ASIO")
+        target_include_directories(DuskStudio PRIVATE "${_asio_candidate}/common")
+        target_compile_definitions(DuskStudio PRIVATE JUCE_ASIO=1)
     else()
-        message(STATUS "Focal: ASIO SDK not found (set -DASIOSDK_PATH=... or place at ../asiosdk to enable). "
+        message(STATUS "Dusk Studio: ASIO SDK not found (set -DASIOSDK_PATH=... or place at ../asiosdk to enable). "
                        "Falling back to WASAPI / DirectSound.")
     endif()
 endif()
@@ -349,52 +349,52 @@ endif()
 # (CoreAudio / WASAPI). The AudioEngine constructor's registration is
 # similarly guarded by #if defined(__linux__).
 if(UNIX AND NOT APPLE)
-    target_sources(Focal PRIVATE
+    target_sources(DuskStudio PRIVATE
         src/engine/alsa/AlsaAudioIODevice.cpp
         src/engine/alsa/AlsaAudioIODeviceType.cpp
         src/engine/alsa/AlsaPerformanceTest.cpp)
-    target_link_libraries(Focal PRIVATE asound X11)
-    target_compile_definitions(Focal PRIVATE FOCAL_HAS_FOCAL_ALSA=1)
+    target_link_libraries(DuskStudio PRIVATE asound X11)
+    target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_FOCAL_ALSA=1)
 
     # Out-of-process plugin hosting: shared IPC primitives + the
     # parent-side connection class + a self-test driver. The
-    # focal-plugin-host child binary lives next to Focal in the build
+    # dusk-studio-plugin-host child binary lives next to Focal in the build
     # output. Linux-only; the IPC uses memfd_create + futex which are
     # Linux-specific. Mac/Windows builds keep using the in-process path
     # (PluginSlot) until the OOP work matures into a portable design.
-    # FOCAL_HAS_OOP_PLUGINS gates every #if branch in PluginSlot that
+    # DUSKSTUDIO_HAS_OOP_PLUGINS gates every #if branch in PluginSlot that
     # routes through RemotePluginConnection; defined only here so the
     # rest of the codebase can rely on a single feature flag.
-    target_sources(Focal PRIVATE
+    target_sources(DuskStudio PRIVATE
         src/engine/ipc/RemotePluginConnection.cpp
         src/engine/ipc/IpcSelfTest.cpp)
-    target_compile_definitions(Focal PRIVATE FOCAL_HAS_OOP_PLUGINS=1)
+    target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_OOP_PLUGINS=1)
 
-    # focal-plugin-host is a JUCE console app so it can pull in the
+    # dusk-studio-plugin-host is a JUCE console app so it can pull in the
     # AudioPluginFormatManager + AudioPluginInstance machinery and
     # (in Phase 3) the gui_extra modules for plugin-editor embedding.
     # juce_add_console_app gives us juce::JUCEApplicationBase plumbing
     # without forcing a UI; we still set NEEDS_*_GRAPHICS / GUI for the
     # editor module to compile. The host's main() runs JUCE's message
     # loop on the main thread + a worker juce::Thread for the audio path.
-    juce_add_console_app(focal-plugin-host
-        PRODUCT_NAME "focal-plugin-host"
+    juce_add_console_app(dusk-studio-plugin-host
+        PRODUCT_NAME "dusk-studio-plugin-host"
         COMPANY_NAME "Marc Korte")
-    target_sources(focal-plugin-host PRIVATE
+    target_sources(dusk-studio-plugin-host PRIVATE
         src/engine/ipc/PluginHostMain.cpp)
-    target_compile_features (focal-plugin-host PRIVATE cxx_std_17)
-    target_compile_definitions (focal-plugin-host PRIVATE
+    target_compile_features (dusk-studio-plugin-host PRIVATE cxx_std_17)
+    target_compile_definitions (dusk-studio-plugin-host PRIVATE
         JUCE_PLUGINHOST_VST3=1
         JUCE_PLUGINHOST_LV2=1
         JUCE_PLUGINHOST_AU=0
-        $<$<BOOL:${FOCAL_JUCE_HAS_FREE_ADD_FORMATS}>:FOCAL_JUCE_HAS_FREE_ADD_FORMATS=1>
+        $<$<BOOL:${DUSKSTUDIO_JUCE_HAS_FREE_ADD_FORMATS}>:DUSKSTUDIO_JUCE_HAS_FREE_ADD_FORMATS=1>
         # Stop juce_audio_processors from generating JuceHeader.h-style
         # stubs and Projucer-only metadata - we drive everything from
         # CMake.
         JUCE_DONT_DECLARE_PROJECTINFO=1
         JUCE_USE_CURL=0
         JUCE_WEB_BROWSER=0)
-    target_link_libraries(focal-plugin-host PRIVATE
+    target_link_libraries(dusk-studio-plugin-host PRIVATE
         juce::juce_audio_processors
         juce::juce_audio_formats
         juce::juce_audio_basics
@@ -411,13 +411,13 @@ if(UNIX AND NOT APPLE)
         juce::juce_graphics
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags)
-    target_include_directories(focal-plugin-host PRIVATE src)
-    set_target_properties(focal-plugin-host PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY "$<TARGET_FILE_DIR:Focal>")
-    add_dependencies(Focal focal-plugin-host)
+    target_include_directories(dusk-studio-plugin-host PRIVATE src)
+    set_target_properties(dusk-studio-plugin-host PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "$<TARGET_FILE_DIR:DuskStudio>")
+    add_dependencies(DuskStudio dusk-studio-plugin-host)
 endif()
 
-target_include_directories(Focal PRIVATE
+target_include_directories(DuskStudio PRIVATE
     src
     external/projucer-shim)  # JuceHeader.h shim used by vendored plugin DSP headers
 
@@ -437,9 +437,9 @@ if(DEFINED DUSK_PLUGINS_PATH)
     # SYSTEM include — vendored DSP headers carry benign warnings
     # (shadows, sign conversions) we don't own. Marking them SYSTEM
     # tells GCC/Clang to suppress those warnings on inclusion, which
-    # lets FOCAL_STRICT_WARNINGS=-Werror apply to Focal's own sources
+    # lets DUSKSTUDIO_STRICT_WARNINGS=-Werror apply to Focal's own sources
     # without the vendored headers blocking the build.
-    target_include_directories(Focal SYSTEM PRIVATE
+    target_include_directories(DuskStudio SYSTEM PRIVATE
         "${DUSK_PLUGINS_PATH}/plugins/shared"
         "${DUSK_PLUGINS_PATH}/plugins/shared/AnalogEmulation"
         "${DUSK_PLUGINS_PATH}/plugins/shared/channel-comp"
@@ -454,7 +454,7 @@ if(DEFINED DUSK_PLUGINS_PATH)
     # UniversalCompressor links cleanly. Editor sources are linked but not
     # invoked from Focal's UI — they exist only because UniversalCompressor's
     # createEditor() references them.
-    target_sources(Focal PRIVATE
+    target_sources(DuskStudio PRIVATE
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/multicomp.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/AnalogLookAndFeel.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/EnhancedCompressorEditor.cpp"
@@ -486,16 +486,16 @@ if(DEFINED DUSK_PLUGINS_PATH)
         PROPERTIES
         COMPILE_DEFINITIONS "createPluginFilter=createTapeMachinePluginFilter")
 
-    target_compile_definitions(Focal PRIVATE FOCAL_HAS_DUSK_DSP=1)
+    target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_DUSK_DSP=1)
 endif()
 
-target_compile_definitions(Focal PRIVATE
+target_compile_definitions(DuskStudio PRIVATE
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
-    $<$<BOOL:${FOCAL_JUCE_HAS_FREE_ADD_FORMATS}>:FOCAL_JUCE_HAS_FREE_ADD_FORMATS=1>
-    $<$<BOOL:${FOCAL_JUCE_HAS_WAYLAND}>:FOCAL_JUCE_HAS_WAYLAND=1>
-    JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:Focal,JUCE_PRODUCT_NAME>"
-    JUCE_APPLICATION_VERSION_STRING="$<TARGET_PROPERTY:Focal,JUCE_VERSION>"
+    $<$<BOOL:${DUSKSTUDIO_JUCE_HAS_FREE_ADD_FORMATS}>:DUSKSTUDIO_JUCE_HAS_FREE_ADD_FORMATS=1>
+    $<$<BOOL:${DUSKSTUDIO_JUCE_HAS_WAYLAND}>:DUSKSTUDIO_JUCE_HAS_WAYLAND=1>
+    JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:DuskStudio,JUCE_PRODUCT_NAME>"
+    JUCE_APPLICATION_VERSION_STRING="$<TARGET_PROPERTY:DuskStudio,JUCE_VERSION>"
     JUCE_JACK=1
     JUCE_ALSA=1
     # Native Wayland windowing on Linux (plugdata fork). Bypasses XWayland
@@ -530,10 +530,10 @@ if((CMAKE_SYSTEM_NAME STREQUAL "Linux") AND TARGET juce::pkgconfig_JUCE_WAYLAND_
     # Linkage is dlopen at runtime (NOLINK in the JUCE pkg-config target),
     # so this is purely for the headers exposed via juce_gui_basics.h
     # under JUCE_WAYLAND.
-    target_link_libraries(Focal PRIVATE juce::pkgconfig_JUCE_WAYLAND_LINUX_DEPS)
+    target_link_libraries(DuskStudio PRIVATE juce::pkgconfig_JUCE_WAYLAND_LINUX_DEPS)
 endif()
 
-target_link_libraries(Focal PRIVATE
+target_link_libraries(DuskStudio PRIVATE
     juce::juce_audio_basics
     juce::juce_audio_devices
     juce::juce_audio_formats
@@ -557,12 +557,12 @@ target_link_libraries(Focal PRIVATE
 # SYSTEM above and suppressed; the COMPILED .cpp from the plugins repo
 # is not). Flip the CI workflow once those are cleaned upstream or
 # wrapped with per-source warning overrides via set_source_files_properties.
-option(FOCAL_STRICT_WARNINGS "Treat warnings as errors on the Focal target" OFF)
-if(FOCAL_STRICT_WARNINGS)
+option(DUSKSTUDIO_STRICT_WARNINGS "Treat warnings as errors on the Focal target" OFF)
+if(DUSKSTUDIO_STRICT_WARNINGS)
     if(MSVC)
-        target_compile_options(Focal PRIVATE /WX)
+        target_compile_options(DuskStudio PRIVATE /WX)
     else()
-        target_compile_options(Focal PRIVATE -Werror)
+        target_compile_options(DuskStudio PRIVATE -Werror)
     endif()
 endif()
 
@@ -573,14 +573,14 @@ endif()
 # test binary under ASAN to catch heap corruption / use-after-free /
 # undefined-behaviour from a long-running session's worth of edits.
 # Not for production builds — overhead is ~2× CPU and ~3× memory.
-option(FOCAL_ENABLE_ASAN "Enable AddressSanitizer + UBSan" OFF)
-if(FOCAL_ENABLE_ASAN AND NOT MSVC)
+option(DUSKSTUDIO_ENABLE_ASAN "Enable AddressSanitizer + UBSan" OFF)
+if(DUSKSTUDIO_ENABLE_ASAN AND NOT MSVC)
     add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
     add_link_options(-fsanitize=address,undefined)
 endif()
 
-option(FOCAL_BUILD_TESTS "Build Focal unit tests with Catch2" OFF)
-if(FOCAL_BUILD_TESTS)
+option(DUSKSTUDIO_BUILD_TESTS "Build Focal unit tests with Catch2" OFF)
+if(DUSKSTUDIO_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
 endif()

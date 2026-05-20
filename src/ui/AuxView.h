@@ -5,7 +5,7 @@
 #include <memory>
 #include "../session/Session.h"
 
-namespace focal
+namespace duskstudio
 {
 class AudioEngine;
 class AuxLaneComponent;
@@ -57,4 +57,4 @@ private:
     std::array<juce::TextButton, Session::kNumAuxLanes>            selectorButtons;
     std::array<std::unique_ptr<AuxLaneComponent>, Session::kNumAuxLanes> lanes;
 };
-} // namespace focal
+} // namespace duskstudio

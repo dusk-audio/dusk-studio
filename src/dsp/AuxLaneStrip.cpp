@@ -1,7 +1,7 @@
 #include "AuxLaneStrip.h"
 #include <cmath>
 
-namespace focal
+namespace duskstudio
 {
 void AuxLaneStrip::prepare (double sampleRate, int blockSize)
 {
@@ -157,4 +157,4 @@ void AuxLaneStrip::processStereoBlock (float* L, float* R, int numSamples,
     paramsRef->meterPostL.store (toDb (postPeakL), std::memory_order_relaxed);
     paramsRef->meterPostR.store (toDb (postPeakR), std::memory_order_relaxed);
 }
-} // namespace focal
+} // namespace duskstudio

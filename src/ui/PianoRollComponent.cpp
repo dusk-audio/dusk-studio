@@ -7,7 +7,7 @@
 #include <limits>
 #include <map>
 
-namespace focal
+namespace duskstudio
 {
 namespace
 {
@@ -3421,4 +3421,4 @@ void PianoRollComponent::timerCallback()
     invalidateAt (x);
     lastPlayheadX = x;
 }
-} // namespace focal
+} // namespace duskstudio

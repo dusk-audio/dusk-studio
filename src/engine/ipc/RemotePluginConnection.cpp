@@ -14,7 +14,7 @@
 #include <thread>
 #include <unistd.h>
 
-namespace focal::ipc
+namespace duskstudio::ipc
 {
 namespace
 {
@@ -104,10 +104,10 @@ bool writeExact (int socketFd, const void* buf, std::size_t n) noexcept
 }
 
 // Send a control request: [header][payload]. Returns true on success.
-bool sendControl (int socketFd, focal::ipc::OpCode op,
+bool sendControl (int socketFd, duskstudio::ipc::OpCode op,
                    const void* payload, std::uint32_t payloadLen) noexcept
 {
-    using focal::ipc::ControlMsgHeader;
+    using duskstudio::ipc::ControlMsgHeader;
     ControlMsgHeader hdr {};
     hdr.totalLen   = (std::uint32_t) sizeof (hdr) + payloadLen;
     hdr.op         = (std::uint32_t) op;
@@ -123,7 +123,7 @@ bool sendControl (int socketFd, focal::ipc::OpCode op,
 // fixed-size replies the caller can ignore the vector and rely on the
 // status field. Returns the parsed header.
 bool recvControl (int socketFd,
-                   focal::ipc::ControlMsgHeader& hdrOut,
+                   duskstudio::ipc::ControlMsgHeader& hdrOut,
                    std::vector<std::uint8_t>& payloadOut) noexcept
 {
     if (! readExact (socketFd, &hdrOut, sizeof (hdrOut))) return false;
@@ -152,7 +152,7 @@ bool RemotePluginConnection::connect (const std::string& hostExecutablePath,
     // the fd via SCM_RIGHTS (or simpler: F_CLOEXEC is OFF by default
     // for memfd_create, so the fd is inherited - but the child needs to
     // know which fd number, hence SCM_RIGHTS with a known protocol).
-    shmFd = memfdCreate ("focal-plugin-shm", 0 /* default: not cloexec */);
+    shmFd = memfdCreate ("dusk-studio-plugin-shm", 0 /* default: not cloexec */);
     if (shmFd < 0)
     {
         errorOut = std::string ("memfd_create failed: ") + std::strerror (errno);
@@ -195,7 +195,7 @@ bool RemotePluginConnection::connect (const std::string& hostExecutablePath,
         return false;
     }
 
-    // 4) Fork + exec. Child execs focal-plugin-host with the socketpair
+    // 4) Fork + exec. Child execs dusk-studio-plugin-host with the socketpair
     // end as fd 3 plus an --ipc-stub flag to enable Phase-1 echo mode.
     childPid = fork();
     if (childPid < 0)
@@ -224,7 +224,7 @@ bool RemotePluginConnection::connect (const std::string& hostExecutablePath,
         const char* argv[] = { hostExecutablePath.c_str(), extraArg.c_str(), nullptr };
         execv (hostExecutablePath.c_str(), const_cast<char* const*> (argv));
         // exec failed.
-        std::fprintf (stderr, "[focal-plugin-host] execv failed: %s\n",
+        std::fprintf (stderr, "[dusk-studio-plugin-host] execv failed: %s\n",
                       std::strerror (errno));
         _exit (127);
     }
@@ -688,4 +688,4 @@ void RemotePluginConnection::disconnect()
     if (shmFd >= 0) { ::close (shmFd); shmFd = -1; }
 }
 
-} // namespace focal::ipc
+} // namespace duskstudio::ipc

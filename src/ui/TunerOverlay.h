@@ -16,7 +16,7 @@
 
 #include <cmath>
 
-namespace focal
+namespace duskstudio
 {
 class TunerOverlay : public juce::Component
 {
@@ -198,4 +198,4 @@ private:
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (TunerOverlay)
 };
-} // namespace focal
+} // namespace duskstudio

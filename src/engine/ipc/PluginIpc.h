@@ -9,7 +9,7 @@
 #include <unistd.h>
 
 // IPC primitives shared between Focal (the parent / host process) and
-// focal-plugin-host (the child process running a JUCE AudioPluginInstance
+// dusk-studio-plugin-host (the child process running a JUCE AudioPluginInstance
 // out-of-process). Keep this header dependency-free - no JUCE includes,
 // no STL containers - so both binaries can include it without dragging
 // in their respective build flags.
@@ -19,7 +19,7 @@
 // futex syscalls. No mutexes, no condition variables, no allocations on
 // the hot path.
 
-namespace focal::ipc
+namespace duskstudio::ipc
 {
 
 constexpr std::uint32_t kMagic     = 0x46434C30;  // 'FCL0'
@@ -242,4 +242,4 @@ inline struct timespec absTimeoutFromNow (long long nsFromNow) noexcept
     return { now.tv_sec + (time_t) secs, rem };
 }
 
-} // namespace focal::ipc
+} // namespace duskstudio::ipc

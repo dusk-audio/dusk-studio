@@ -11,7 +11,7 @@
  #include <windows.h>
 #endif
 
-namespace focal
+namespace duskstudio
 {
 namespace
 {
@@ -1347,4 +1347,4 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
     s.recomputeRtCounters();
     return true;
 }
-} // namespace focal
+} // namespace duskstudio

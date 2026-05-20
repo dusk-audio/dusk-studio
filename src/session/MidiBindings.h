@@ -3,7 +3,7 @@
 #include <juce_core/juce_core.h>
 #include <vector>
 
-namespace focal
+namespace duskstudio
 {
 // MIDI controller infrastructure. Lets the user bind an external CC or note
 // to a target inside Focal (transport, fader, mute, solo, arm, master fader)
@@ -273,11 +273,11 @@ juce::String serializeBindingsPreset (const std::vector<MidiBinding>& binds);
 std::vector<MidiBinding> deserializeBindingsPreset (const juce::String& json);
 
 class Session;
-} // namespace focal
+} // namespace duskstudio
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
-namespace focal
+namespace duskstudio
 {
 namespace midilearn
 {
@@ -292,5 +292,5 @@ void showLearnMenu (juce::Component& target,
                     MidiBindingTarget kind,
                     int index = 0);
 } // namespace midilearn
-} // namespace focal
+} // namespace duskstudio
 

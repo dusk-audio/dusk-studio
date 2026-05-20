@@ -1,11 +1,11 @@
 #include "AudioEngine.h"
-#if defined(FOCAL_HAS_FOCAL_ALSA)
+#if defined(DUSKSTUDIO_HAS_FOCAL_ALSA)
   #include "alsa/AlsaAudioIODeviceType.h"
 #endif
 #include <cstring>
 #include <thread>
 
-namespace focal
+namespace duskstudio
 {
 AudioEngine::AudioEngine (Session& sessionToBindTo) : session (sessionToBindTo)
 {
@@ -23,7 +23,7 @@ AudioEngine::AudioEngine (Session& sessionToBindTo) : session (sessionToBindTo)
     // get this via setPlayHead so tempo-synced features (LFOs, arps,
     // delays, transport-driven UIs) read the live session BPM and
     // playhead position.
-    playHead = std::make_unique<FocalPlayHead> (transport,
+    playHead = std::make_unique<DuskStudioPlayHead> (transport,
                                                   &session.tempoBpm,
                                                   &currentSampleRate);
 
@@ -77,9 +77,9 @@ AudioEngine::AudioEngine (Session& sessionToBindTo) : session (sessionToBindTo)
     //
     // On macOS / Windows we let JUCE auto-register its native backends
     // (CoreAudio / WASAPI / ASIO / JACK-if-installed) the standard way -
-    // FOCAL_HAS_FOCAL_ALSA isn't defined there so the pre-registration
+    // DUSKSTUDIO_HAS_FOCAL_ALSA isn't defined there so the pre-registration
     // path is skipped entirely.
-   #if defined(FOCAL_HAS_FOCAL_ALSA)
+   #if defined(DUSKSTUDIO_HAS_FOCAL_ALSA)
     if (auto* jackType = juce::AudioIODeviceType::createAudioIODeviceType_JACK())
         deviceManager.addAudioDeviceType (std::unique_ptr<juce::AudioIODeviceType> (jackType));
     deviceManager.addAudioDeviceType (std::make_unique<AlsaAudioIODeviceType>());
@@ -637,7 +637,7 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
         }
     }
 
-#if FOCAL_HAS_DUSK_DSP
+#if DUSKSTUDIO_HAS_DUSK_DSP
     // Master tape (TapeMachine) state. Mirrors the per-slot pattern: serialise
     // getStateInformation() into a base64 string on the session model so the
     // serializer (which only sees Session) can persist it.
@@ -749,7 +749,7 @@ void AudioEngine::consumePluginStateAfterLoad()
         }
     }
 
-#if FOCAL_HAS_DUSK_DSP
+#if DUSKSTUDIO_HAS_DUSK_DSP
     // Master tape state: push the deserialised base64 blob back into the
     // hosted TapeMachineAudioProcessor. fromBase64Encoding fails-soft (no
     // exception); empty / malformed data leaves the processor at its
@@ -832,7 +832,7 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
     // from another thread while the audio callback is live, the audio
     // thread reads half-prepared state and corrupts buffers silently.
     // The existing call paths (audioDeviceAboutToStart, BounceEngine,
-    // FocalApp startup, AudioPipelineSelfTest) all run here; assert
+    // DuskStudioApp startup, AudioPipelineSelfTest) all run here; assert
     // catches a future caller that gets this wrong.
     jassert (juce::MessageManager::existsAndIsCurrentThread());
 
@@ -865,7 +865,7 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
     midiTimeCodeReceiver.prepare (sr);
     midiClockEmitter.prepare (sr);
     midiTimeCodeEmitter.prepare (sr);
-#if FOCAL_HAS_DUSK_DSP
+#if DUSKSTUDIO_HAS_DUSK_DSP
     // TapeMachine animates its reels + level-integration timing from
     // getPlayHead()->getPosition(). Without a playhead the donor reads
     // null and the reels stay still even while audio passes through.
@@ -2434,4 +2434,4 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         }
     }
 }
-} // namespace focal
+} // namespace duskstudio

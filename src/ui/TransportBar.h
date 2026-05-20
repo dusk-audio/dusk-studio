@@ -4,7 +4,7 @@
 #include <array>
 #include "../engine/AudioEngine.h"
 
-namespace focal
+namespace duskstudio
 {
 // Circular icon button used for the transport row (Stop / Play / Record).
 // Replaces the text-only buttons with a real-mixer look: a dark filled disc
@@ -195,4 +195,4 @@ public:
     void setTapeStripExpanded (bool expanded);
     bool isTapeStripExpanded() const;
 };
-} // namespace focal
+} // namespace duskstudio

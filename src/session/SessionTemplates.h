@@ -2,7 +2,7 @@
 
 #include "Session.h"
 
-namespace focal
+namespace duskstudio
 {
 // Opinionated starting points for "New session". Each template stamps
 // track names / colours / modes onto a fresh Session so the user is one
@@ -31,4 +31,4 @@ const char* nameForTemplate (SessionTemplate t) noexcept;
 // remaining tracks fall back to numeric / hue-rotated defaults so the
 // 16-channel grid is always fully populated.
 void applyTemplate (Session& session, SessionTemplate t);
-} // namespace focal
+} // namespace duskstudio

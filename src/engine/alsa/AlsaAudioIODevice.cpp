@@ -8,7 +8,7 @@
 #include <cstdint>
 #include <sys/resource.h>
 
-namespace focal
+namespace duskstudio
 {
 namespace
 {
@@ -1236,4 +1236,4 @@ juce::String AlsaAudioIODevice::runSelfTest()
     return header.joinIntoString ("\n") + "\n" + report.joinIntoString ("\n");
 }
 
-} // namespace focal
+} // namespace duskstudio

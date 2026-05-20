@@ -1,7 +1,7 @@
 #include "Metronome.h"
 #include <cmath>
 
-namespace focal
+namespace duskstudio
 {
 void Metronome::prepare (double sampleRate)
 {
@@ -105,4 +105,4 @@ void Metronome::process (juce::int64 playheadStart, bool transportRolling,
         }
     }
 }
-} // namespace focal
+} // namespace duskstudio

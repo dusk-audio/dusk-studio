@@ -7,7 +7,7 @@
 #include "../engine/AudioEngine.h"
 #include "../session/Session.h"
 
-namespace focal
+namespace duskstudio
 {
 class MasteringPlayer;
 
@@ -136,4 +136,4 @@ private:
     // mixdown / bounce dialogs in MainComponent.
     EmbeddedModal exportModal;
 };
-} // namespace focal
+} // namespace duskstudio

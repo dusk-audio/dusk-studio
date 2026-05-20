@@ -54,13 +54,13 @@ jobs:
         # cleanly before the AudioEngine spins up; macOS GH runners
         # have no audio device but the early-exit path doesn't need one.
         run: |
-          ./build/Focal_artefacts/Release/Focal.app/Contents/MacOS/Focal --version
+          ./build/DuskStudio_artefacts/Release/Focal.app/Contents/MacOS/Focal --version
 
       - name: Upload Focal.app (per-run artifact)
         uses: actions/upload-artifact@v4
         with:
           name: Focal-macos-arm64
-          path: build/Focal_artefacts/Release/Focal.app
+          path: build/DuskStudio_artefacts/Release/Focal.app
           retention-days: 14
           if-no-files-found: error
 
@@ -95,7 +95,7 @@ jobs:
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins"
 
       - name: Build tests
-        run: cmake --build build-tests --target focal-tests --config Release -j
+        run: cmake --build build-tests --target dusk-studio-tests --config Release -j
 
       - name: Run tests
         run: ctest --test-dir build-tests --output-on-failure -C Release

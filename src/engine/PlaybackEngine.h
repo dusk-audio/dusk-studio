@@ -7,7 +7,7 @@
 #include <memory>
 #include "../session/Session.h"
 
-namespace focal
+namespace duskstudio
 {
 // Multi-region playback. Each track may have any number of AudioRegions on
 // the timeline; preparePlayback opens one reader per region. readForTrack
@@ -106,4 +106,4 @@ private:
     // once in prepare(); reused on every audio-thread call to readForTrack.
     juce::AudioBuffer<float> readScratch;
 };
-} // namespace focal
+} // namespace duskstudio

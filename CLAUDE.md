@@ -24,7 +24,7 @@ Focal is a deliberately constrained, portastudio-style DAW for Linux, JUCE 8 / C
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j$(nproc)
-./build/Focal_artefacts/Release/Focal
+./build/DuskStudio_artefacts/Release/Focal
 ```
 
 JUCE and the Dusk plugins repo are auto-discovered from sibling directories. Pass `-DJUCE_PATH=...` or `-DDUSK_PLUGINS_PATH=...` to override either.
@@ -47,7 +47,7 @@ CMake auto-detects:
   ```
   Mac dev typically stays on `main` of `../plugins` and skips the worktree.
 
-The upstream-vs-fork `addDefaultFormats` API split is hidden behind [src/engine/JuceCompat.h](src/engine/JuceCompat.h) — call `focal::juce_compat::addDefaultFormats(fm)` and the `#if defined(__linux__)` lives in one place. Don't sprinkle new platform `#ifdef`s into call sites.
+The upstream-vs-fork `addDefaultFormats` API split is hidden behind [src/engine/JuceCompat.h](src/engine/JuceCompat.h) — call `duskstudio::juce_compat::addDefaultFormats(fm)` and the `#if defined(__linux__)` lives in one place. Don't sprinkle new platform `#ifdef`s into call sites.
 
 ## Phase plan
 
@@ -115,7 +115,7 @@ Focal has Catch2 v3 unit tests in [tests/](tests/), gated behind `-DFOCAL_BUILD_
 
 ```bash
 cmake -S . -B build-tests -DCMAKE_BUILD_TYPE=Release -DFOCAL_BUILD_TESTS=ON
-cmake --build build-tests --target focal-tests -j$(nproc)
+cmake --build build-tests --target dusk-studio-tests -j$(nproc)
 ctest --test-dir build-tests --output-on-failure
 ```
 
@@ -127,13 +127,13 @@ Use `build-tests/` (separate from `build/`) so the two configurations don't figh
 - **Any pure logic change** in `src/session/`, `src/engine/`, or `src/dsp/` that doesn't require a live audio device or Dusk DSP — region edit math, marker math, parameter range conversions, smoother behaviour.
 - **Regression tests for fixed bugs** — write the failing test first, then the fix.
 
-Don't write tests for: UI components (no JUCE message-loop / Component test harness yet), code that requires a real audio device, or anything that would need to spin up the full `AudioEngine` + Dusk DSP chain. Those are integration scope and currently belong in `FOCAL_RUN_SELFTEST=1`.
+Don't write tests for: UI components (no JUCE message-loop / Component test harness yet), code that requires a real audio device, or anything that would need to spin up the full `AudioEngine` + Dusk DSP chain. Those are integration scope and currently belong in `DUSKSTUDIO_RUN_SELFTEST=1`.
 
 ### How to add a test
 
 1. Drop a new `tests/<unit>_<aspect>.cpp` following the [tests/smoke_brickwall_limiter.cpp](tests/smoke_brickwall_limiter.cpp) pattern (`#include <catch2/...>`, `TEST_CASE(...)`, `REQUIRE(...)` / `REQUIRE_THAT(..., WithinAbs(...))`).
 2. In [tests/CMakeLists.txt](tests/CMakeLists.txt), add the new `.cpp` AND every additional `src/...` source file it pulls in (header-only deps don't need listing). Keep the source list minimal — only what's transitively reachable from the test.
-3. If the unit needs a JUCE module not yet linked (e.g. `juce_dsp` for an oversampler test), add it to `target_link_libraries(focal-tests PRIVATE ...)`.
+3. If the unit needs a JUCE module not yet linked (e.g. `juce_dsp` for an oversampler test), add it to `target_link_libraries(dusk-studio-tests PRIVATE ...)`.
 4. Build + run the commands above. `catch_discover_tests` registers each `TEST_CASE` with ctest automatically — no manual wiring per test.
 
 ### Test style
@@ -148,7 +148,7 @@ Don't write tests for: UI components (no JUCE message-loop / Component test harn
 For DSP / engine / session changes, "task complete" now requires the test build + ctest pass in addition to the main build:
 
 ```bash
-cmake --build build-tests --target focal-tests -j$(nproc) && ctest --test-dir build-tests --output-on-failure
+cmake --build build-tests --target dusk-studio-tests -j$(nproc) && ctest --test-dir build-tests --output-on-failure
 ```
 
 If a change touches a unit that has tests, those tests must pass. If it touches a unit that *doesn't* have tests but easily could, add at least one.
@@ -181,7 +181,7 @@ Operating within a constrained context window. Adhere to these regardless of any
 3. **Senior dev override.** Ignore the "simplest approach first / don't refactor beyond the ask" defaults when the architecture is genuinely flawed, state is duplicated, or patterns diverge. Ask: "What would a senior dev reject in code review?" Fix the structural issues, not just the surface symptom. (This is in tension with "no abstractions on spec" — the difference is: existing duplication that's already a problem is fair game; speculative future flexibility is not.)
 4. **Forced verification.** Don't claim a task is complete until you have run:
    - `cmake --build build -j$(nproc)` — must succeed with zero new warnings
-   - For audio-path changes: launch the binary with `FOCAL_RUN_SELFTEST=1` if practical, or at minimum confirm the binary launches without immediate crash
+   - For audio-path changes: launch the binary with `DUSKSTUDIO_RUN_SELFTEST=1` if practical, or at minimum confirm the binary launches without immediate crash
    If verification isn't possible in the current environment, say so explicitly. "Builds locally" ≠ "works."
 
 ### Context management

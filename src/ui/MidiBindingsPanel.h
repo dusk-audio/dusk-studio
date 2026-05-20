@@ -3,7 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <functional>
 
-namespace focal
+namespace duskstudio
 {
 class Session;
 class AudioEngine;
@@ -75,4 +75,4 @@ private:
     void exportPreset();
     void importPreset();
 };
-} // namespace focal
+} // namespace duskstudio

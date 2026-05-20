@@ -4,7 +4,7 @@
 #include <functional>
 #include "../session/Session.h"
 
-namespace focal
+namespace duskstudio
 {
 class AudioEngine;
 class EditModeToolbar;
@@ -503,4 +503,4 @@ private:
     // editCursorTick or selectedNotes mutates.
     void refreshStatusBarReadouts();
 };
-} // namespace focal
+} // namespace duskstudio

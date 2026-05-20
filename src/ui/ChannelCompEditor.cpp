@@ -1,7 +1,7 @@
 #include "ChannelCompEditor.h"
-#include "FocalLookAndFeel.h"
+#include "DuskStudioLookAndFeel.h"
 
-namespace focal
+namespace duskstudio
 {
 namespace
 {
@@ -735,4 +735,4 @@ void ChannelCompEditor::resized()
     inputMeterArea   = inMeter;
     grMeterArea      = grMeter;
 }
-} // namespace focal
+} // namespace duskstudio

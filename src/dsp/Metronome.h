@@ -3,7 +3,7 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <atomic>
 
-namespace focal
+namespace duskstudio
 {
 // Metronome click generator. Sits in the AudioEngine's main callback and
 // mixes a short tone into the master output at every beat boundary while
@@ -64,4 +64,4 @@ private:
     juce::int64 lastBeatIdx = std::numeric_limits<juce::int64>::min();
     bool        lastBeatSeeded = false;
 };
-} // namespace focal
+} // namespace duskstudio

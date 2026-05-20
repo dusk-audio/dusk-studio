@@ -1,7 +1,7 @@
 #include "SystemStatusBar.h"
 #include "../dsp/ChordAnalyzer.h"
 
-namespace focal
+namespace duskstudio
 {
 SystemStatusBar::SystemStatusBar (AudioEngine& e) : engine (e)
 {
@@ -147,4 +147,4 @@ void SystemStatusBar::paint (juce::Graphics& g)
     g.setColour (warn ? juce::Colour (0xffe05050) : juce::Colour (0xffb0b0b8));
     g.drawText (dspInfo, dspBounds, juce::Justification::centredRight, false);
 }
-} // namespace focal
+} // namespace duskstudio

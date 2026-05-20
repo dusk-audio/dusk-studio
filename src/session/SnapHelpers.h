@@ -3,7 +3,7 @@
 #include <juce_core/juce_core.h>
 #include "Session.h"
 
-namespace focal::snap
+namespace duskstudio::snap
 {
     // Beat step in samples when bpm > 0. Returns 0 otherwise. Use this
     // when callers want to *skip* snapping entirely if there's no tempo

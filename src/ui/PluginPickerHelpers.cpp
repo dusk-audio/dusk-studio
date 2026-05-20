@@ -2,7 +2,7 @@
 #include "../engine/PluginManager.h"
 #include "../engine/PluginSlot.h"
 
-namespace focal::pluginpicker
+namespace duskstudio::pluginpicker
 {
 namespace
 {
@@ -317,4 +317,4 @@ void openPickerMenu (PluginSlot& slot,
             if (onChangeCopy) onChangeCopy();
         });
 }
-} // namespace focal::pluginpicker
+} // namespace duskstudio::pluginpicker

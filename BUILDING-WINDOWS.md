@@ -18,7 +18,7 @@ Focal expects two sibling repositories to be present alongside its own checkout:
 
 ```
 C:\dev\
-├── focal-daw\       (this repo)
+├── dusk-studio-daw\       (this repo)
 ├── JUCE\            (JUCE 8.0.x, the framework)
 └── plugins\         (Dusk Audio plugins, donor DSP)
 ```
@@ -31,21 +31,21 @@ Open a terminal (PowerShell, cmd, or Git Bash). Both Focal repos are public, no 
 
 ```cmd
 cd C:\dev
-git clone https://github.com/dusk-audio/focal-daw.git
+git clone https://github.com/dusk-audio/dusk-studio-daw.git
 git clone --branch 8.0.4 https://github.com/juce-framework/JUCE.git
 git clone https://github.com/dusk-audio/dusk-audio-plugins.git plugins
 ```
 
 The explicit `plugins` target on the third clone is mandatory: CMake auto-discovery looks for a sibling directory named `plugins\` or `plugins-main\` ([CMakeLists.txt:160-168](CMakeLists.txt#L160-L168)). The repo itself is named `dusk-audio-plugins` on GitHub, so without the explicit target you'd get a directory CMake can't find.
 
-The Focal repo's own directory name (`focal-daw\`) doesn't matter to the build, but feel free to `git clone <url> Focal` if you prefer.
+The Focal repo's own directory name (`dusk-studio-daw\`) doesn't matter to the build, but feel free to `git clone <url> Focal` if you prefer.
 
 ## Configure + build
 
 From the Focal directory:
 
 ```cmd
-cd C:\dev\focal-daw
+cd C:\dev\dusk-studio-daw
 cmake -S . -B build -G "Visual Studio 17 2022" -A x64
 cmake --build build --config Release -j
 ```
@@ -55,7 +55,7 @@ The first configure pulls in JUCE's CMake helpers and may take a minute. Subsequ
 The built binary lands at:
 
 ```
-C:\dev\focal-daw\build\Focal_artefacts\Release\Focal.exe
+C:\dev\dusk-studio-daw\build\DuskStudio_artefacts\Release\Focal.exe
 ```
 
 Double-click to run, or launch from the terminal.
@@ -66,7 +66,7 @@ Double-click to run, or launch from the terminal.
 cmake --build build --config Debug -j
 ```
 
-Debug binary appears under `build\Focal_artefacts\Debug\`.
+Debug binary appears under `build\DuskStudio_artefacts\Debug\`.
 
 ### Opening in Visual Studio
 
@@ -91,7 +91,7 @@ Focal has Catch2 unit tests behind a CMake flag:
 
 ```cmd
 cmake -S . -B build-tests -DCMAKE_BUILD_TYPE=Release -DFOCAL_BUILD_TESTS=ON
-cmake --build build-tests --target focal-tests --config Release -j
+cmake --build build-tests --target dusk-studio-tests --config Release -j
 ctest --test-dir build-tests --output-on-failure -C Release
 ```
 
@@ -102,8 +102,8 @@ Use a separate `build-tests\` directory so the two configurations don't fight ov
 Set an environment variable to run Focal's internal DSP self-test on startup instead of opening the GUI:
 
 ```cmd
-set FOCAL_RUN_SELFTEST=1
-build\Focal_artefacts\Release\Focal.exe
+set DUSKSTUDIO_RUN_SELFTEST=1
+build\DuskStudio_artefacts\Release\Focal.exe
 ```
 
 Useful for confirming the audio engine wires up correctly without needing to drive the UI.

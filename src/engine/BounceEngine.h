@@ -5,7 +5,7 @@
 #include <atomic>
 #include <functional>
 
-namespace focal
+namespace duskstudio
 {
 class AudioEngine;
 class Session;
@@ -100,4 +100,4 @@ private:
 
     juce::int64 computeBounceLength (double sampleRate, double tail) const;
 };
-} // namespace focal
+} // namespace duskstudio

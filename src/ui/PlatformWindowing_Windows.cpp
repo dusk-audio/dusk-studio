@@ -7,7 +7,7 @@
 //   flushWindowOperations  -> while (PeekMessage(&msg, ...)) DispatchMessage.
 //   prepareNativePeer...   -> no-op (Win32 SetParent is synchronous).
 
-namespace focal::platform
+namespace duskstudio::platform
 {
 void bringWindowToFront (juce::ComponentPeer&)             {}
 void flushWindowOperations()                                {}
@@ -24,4 +24,4 @@ void clearXInputFocus() {}                 // X-only; no-op on Windows
 void requestFocusOnMainWaylandSurface() {} // Wayland-only; no-op on Windows
 void preferX11ForNextNativeWindow() {}     // Linux-only; no-op on Windows
 void clearPreferX11ForNativeWindow() {}    // Linux-only; no-op on Windows
-} // namespace focal::platform
+} // namespace duskstudio::platform

@@ -6,7 +6,7 @@
 #include <atomic>
 #include <memory>
 
-namespace focal
+namespace duskstudio
 {
 // Stereo file player used by the Mastering stage. Loads a WAV/AIFF on the
 // message thread; on the audio thread, fills a stereo block from the file
@@ -69,4 +69,4 @@ private:
     std::atomic<bool>        playing  { false };
     std::atomic<juce::int64> playhead { 0 };
 };
-} // namespace focal
+} // namespace duskstudio

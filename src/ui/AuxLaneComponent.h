@@ -7,7 +7,7 @@
 #include "../session/Session.h"
 #include "EmbeddedModal.h"
 
-namespace focal
+namespace duskstudio
 {
 class PluginSlot;
 class AuxLaneStrip;
@@ -88,4 +88,4 @@ private:
     std::unique_ptr<juce::FileChooser> activePluginChooser;
     EmbeddedModal hardwareInsertModal;
 };
-} // namespace focal
+} // namespace duskstudio

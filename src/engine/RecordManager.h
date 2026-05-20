@@ -8,7 +8,7 @@
 #include <memory>
 #include "../session/Session.h"
 
-namespace focal
+namespace duskstudio
 {
 // Per-track threaded WAV writer. Lifetime: created on the message thread when
 // recording starts, written to from the audio thread (lock-free queue), drained
@@ -160,4 +160,4 @@ private:
     juce::int64 recordStartSample = 0;
     double      recordSampleRate  = 0.0;
 };
-} // namespace focal
+} // namespace duskstudio

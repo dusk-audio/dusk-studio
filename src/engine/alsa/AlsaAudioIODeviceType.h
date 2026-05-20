@@ -2,7 +2,7 @@
 
 #include <juce_audio_devices/juce_audio_devices.h>
 
-namespace focal
+namespace duskstudio
 {
 // Custom ALSA backend for Focal. Enumerates raw hw:CARD,DEV PCMs only - no
 // plug:, default:, front:, dmix: aliases. Those route through alsa-lib's plug
@@ -39,4 +39,4 @@ private:
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AlsaAudioIODeviceType)
 };
-} // namespace focal
+} // namespace duskstudio

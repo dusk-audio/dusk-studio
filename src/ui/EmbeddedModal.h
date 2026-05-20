@@ -5,7 +5,7 @@
 #include <memory>
 #include "DimOverlay.h"
 
-namespace focal
+namespace duskstudio
 {
 // Small helper that wraps the recurring "DimOverlay + centred panel"
 // pattern used by the piano roll, tuner, and (post-conversion) audio
@@ -222,4 +222,4 @@ private:
     juce::Component* borrowedBody_ = nullptr;
     std::function<void()> userOnDismiss;
 };
-} // namespace focal
+} // namespace duskstudio

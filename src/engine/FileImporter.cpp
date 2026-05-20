@@ -7,7 +7,7 @@
 #include <utility>
 #include <vector>
 
-namespace focal::fileimport
+namespace duskstudio::fileimport
 {
 namespace
 {
@@ -313,7 +313,7 @@ MidiImportResult importMidi (const MidiImportRequest& req)
         {
             // rawTime is in seconds.
             const double samples = rawTime * req.sessionSampleRate;
-            return focal::samplesToTicks ((juce::int64) std::llround (samples),
+            return duskstudio::samplesToTicks ((juce::int64) std::llround (samples),
                                             req.sessionSampleRate,
                                             req.sessionBpm);
         }
@@ -416,11 +416,11 @@ MidiImportResult importMidi (const MidiImportRequest& req)
     result.ok = true;
     result.region.timelineStart   = req.timelineStart;
     result.region.lengthInTicks   = juce::jmax<juce::int64> (1, maxTick);
-    result.region.lengthInSamples = focal::ticksToSamples (result.region.lengthInTicks,
+    result.region.lengthInSamples = duskstudio::ticksToSamples (result.region.lengthInTicks,
                                                               req.sessionSampleRate,
                                                               req.sessionBpm);
     result.region.notes = std::move (notes);
     result.region.ccs   = std::move (ccs);
     return result;
 }
-} // namespace focal::fileimport
+} // namespace duskstudio::fileimport

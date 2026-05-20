@@ -7,7 +7,7 @@
 #include <cmath>
 #include <limits>
 
-namespace focal
+namespace duskstudio
 {
 namespace
 {
@@ -2821,4 +2821,4 @@ void AudioRegionEditor::timerCallback()
     invalidateAt (x);
     lastPlayheadX = x;
 }
-} // namespace focal
+} // namespace duskstudio

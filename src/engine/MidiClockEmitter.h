@@ -2,7 +2,7 @@
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
-namespace focal
+namespace duskstudio
 {
 // Generates MIDI Clock (F8) + transport (FA / FC) bytes for a per-block
 // MidiBuffer. The caller routes the buffer to a juce::MidiOutput via
@@ -55,4 +55,4 @@ private:
     juce::int64 nextClockSample = 0;
     bool lastRolling = false;
 };
-} // namespace focal
+} // namespace duskstudio

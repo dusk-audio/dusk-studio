@@ -1,6 +1,6 @@
 #include "WindowState.h"
 
-namespace focal
+namespace duskstudio
 {
 juce::File WindowState::getStorePath()
 {
@@ -34,4 +34,4 @@ bool WindowState::rectIsUsable (juce::Rectangle<int> rect)
     }
     return false;
 }
-} // namespace focal
+} // namespace duskstudio

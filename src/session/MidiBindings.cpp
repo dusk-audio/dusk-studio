@@ -4,7 +4,7 @@
 #include "../engine/PluginSlot.h"
 #include <algorithm>
 
-namespace focal
+namespace duskstudio
 {
 juce::String describeBindingSource (const MidiBinding& b)
 {
@@ -268,4 +268,4 @@ std::vector<MidiBinding> deserializeBindingsPreset (const juce::String& json)
     }
     return out;
 }
-} // namespace focal
+} // namespace duskstudio

@@ -1,6 +1,6 @@
 #include "MidiTimeCodeEmitter.h"
 
-namespace focal
+namespace duskstudio
 {
 namespace
 {
@@ -252,4 +252,4 @@ void MidiTimeCodeEmitter::generateBlock (juce::int64 blockStartSample,
         nextQuarterFrameSample += (juce::int64) std::llround (sPerQF);
     }
 }
-} // namespace focal
+} // namespace duskstudio

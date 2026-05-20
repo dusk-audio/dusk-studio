@@ -4,7 +4,7 @@
 #endif
 #include <cmath>
 
-namespace focal
+namespace duskstudio
 {
 namespace
 {
@@ -378,14 +378,14 @@ juce::String AudioPipelineSelfTest::testMasterTapeAddsGain()
     session.master().tapeEnabled.store (true,  std::memory_order_relaxed);
     session.master().tapeHQ.store      (false, std::memory_order_relaxed);
 
-   #if FOCAL_HAS_DUSK_DSP
+   #if DUSKSTUDIO_HAS_DUSK_DSP
     auto& tapeProc = engine.getMasterBus().getTapeProcessor();
     auto& apvts    = tapeProc.getAPVTS();
     auto* pIn      = apvts.getParameter ("inputGain");
     auto* pOut     = apvts.getParameter ("outputGain");
     auto* pAuto    = apvts.getParameter ("autoComp");
    #else
-    return juce::String ("[SKIP] Master Tape gain audit - FOCAL_HAS_DUSK_DSP not defined");
+    return juce::String ("[SKIP] Master Tape gain audit - DUSKSTUDIO_HAS_DUSK_DSP not defined");
    #endif
 
     auto setNorm = [] (juce::AudioProcessorParameter* p, float n)
@@ -1143,4 +1143,4 @@ juce::String AudioPipelineSelfTest::runPerfSuite()
     report.add ("=== End of Engine Perf Benchmark ===");
     return report.joinIntoString ("\n");
 }
-} // namespace focal
+} // namespace duskstudio

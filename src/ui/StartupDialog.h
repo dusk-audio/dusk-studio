@@ -4,7 +4,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <functional>
 
-namespace focal
+namespace duskstudio
 {
 // Shown once on app launch. Lets the user pick from recent sessions, open a
 // session.json, create a new session in a chosen directory, or skip and
@@ -48,4 +48,4 @@ private:
     juce::TextButton openFileButton   { "Open..." };
     juce::TextButton skipButton       { "Continue blank" };
 };
-} // namespace focal
+} // namespace duskstudio

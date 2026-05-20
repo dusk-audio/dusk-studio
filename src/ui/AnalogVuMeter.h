@@ -3,7 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <atomic>
 
-namespace focal
+namespace duskstudio
 {
 // Classic analog VU meter - cream face, swept needle, red overload zone past
 // 0 VU. Reads one or two std::atomic<float> linear-RMS sources (audio-thread
@@ -89,4 +89,4 @@ private:
     // overlay the lit state without recomputing layout each frame.
     juce::Rectangle<float> peakLedRect;
 };
-} // namespace focal
+} // namespace duskstudio

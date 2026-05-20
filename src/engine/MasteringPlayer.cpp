@@ -1,7 +1,7 @@
 #include "MasteringPlayer.h"
 #include <cstring>
 
-namespace focal
+namespace duskstudio
 {
 MasteringPlayer::MasteringPlayer()
 {
@@ -109,4 +109,4 @@ void MasteringPlayer::process (float* L, float* R, int numSamples) noexcept
     if (start + available >= r->lengthInSamples)
         playing.store (false, std::memory_order_relaxed);
 }
-} // namespace focal
+} // namespace duskstudio

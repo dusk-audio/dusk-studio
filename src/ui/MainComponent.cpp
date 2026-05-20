@@ -1,5 +1,5 @@
 #include "MainComponent.h"
-#include <cstdlib>  // std::getenv (FOCAL_USE_OOP_PLUGINS)
+#include <cstdlib>  // std::getenv (DUSKSTUDIO_USE_OOP_PLUGINS)
 #include "AudioSettingsPanel.h"
 #include "AuxView.h"
 #include "BounceDialog.h"
@@ -21,7 +21,7 @@
 #include "ImportTargetPicker.h"
 #include <juce_audio_formats/juce_audio_formats.h>
 
-namespace focal
+namespace duskstudio
 {
 namespace
 {
@@ -54,11 +54,11 @@ void showImportError (const juce::String& title, const juce::String& message)
         nullptr);
 }
 } // namespace
-} // namespace focal
+} // namespace duskstudio
 #include "ConsoleView.h"  // (already included transitively, kept explicit)
 #include "PlatformWindowing.h"
 
-namespace focal
+namespace duskstudio
 {
 // Tracks the top-level window so AuxView's editor hosts (separate X11
 // toplevels on Linux/Wayland) can follow the main window across the
@@ -277,18 +277,18 @@ MainComponent::MainComponent()
 
     juce::LookAndFeel::setDefaultLookAndFeel (&lookAndFeel);
 
-   #if FOCAL_HAS_OOP_PLUGINS
-    // FOCAL_USE_OOP_PLUGINS=1 routes new plugin loads through the
-    // focal-plugin-host child process. Read once at startup; flipping
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS
+    // DUSKSTUDIO_USE_OOP_PLUGINS=1 routes new plugin loads through the
+    // dusk-studio-plugin-host child process. Read once at startup; flipping
     // mid-session would require reloading every plugin to pick up the
     // new mode. Off by default while the OOP path is still maturing.
-    if (auto* env = std::getenv ("FOCAL_USE_OOP_PLUGINS");
+    if (auto* env = std::getenv ("DUSKSTUDIO_USE_OOP_PLUGINS");
         env != nullptr && *env != 0 && *env != '0')
     {
         engine.getPluginManager().setOopEnabled (true);
         std::fprintf (stdout,
                       "[Focal] Out-of-process plugin hosting enabled "
-                      "(FOCAL_USE_OOP_PLUGINS=1).\n");
+                      "(DUSKSTUDIO_USE_OOP_PLUGINS=1).\n");
     }
    #endif
 
@@ -465,9 +465,9 @@ MainComponent::MainComponent()
 
     setSize (w, h);
 
-    // Dev affordance for screenshot / xdotool flows: set FOCAL_START_STAGE=mastering
+    // Dev affordance for screenshot / xdotool flows: set DUSKSTUDIO_START_STAGE=mastering
     // to land in Mastering at startup. No-op in normal use.
-    if (auto envStage = std::getenv ("FOCAL_START_STAGE"))
+    if (auto envStage = std::getenv ("DUSKSTUDIO_START_STAGE"))
     {
         const juce::String s (envStage);
         if (s.equalsIgnoreCase ("mastering"))
@@ -485,14 +485,14 @@ MainComponent::MainComponent()
     // window paints first - otherwise the dialog can pop up over a blank
     // canvas. SafePointer guards the case where the user closes the app
     // before the message loop catches up to the queued lambda.
-    // FOCAL_SKIP_STARTUP_DIALOG=1 bypasses the picker for screenshot /
+    // DUSKSTUDIO_SKIP_STARTUP_DIALOG=1 bypasses the picker for screenshot /
     // xdotool flows.
-    // FOCAL_LOAD_SESSION=/path/to/session.json bypasses the startup
+    // DUSKSTUDIO_LOAD_SESSION=/path/to/session.json bypasses the startup
     // dialog and loads the named session immediately. Useful for
     // benchmarking the load path (the [Focal/Load] timing line ends
     // up in the parent terminal) and for scripted reproductions of
     // user-reported regressions.
-    if (const char* loadPath = std::getenv ("FOCAL_LOAD_SESSION");
+    if (const char* loadPath = std::getenv ("DUSKSTUDIO_LOAD_SESSION");
         loadPath != nullptr && *loadPath)
     {
         juce::Component::SafePointer<MainComponent> safeThis (this);
@@ -503,7 +503,7 @@ MainComponent::MainComponent()
                 safeThis->loadSessionFromJson (juce::File (pathStr));
         });
     }
-    else if (std::getenv ("FOCAL_SKIP_STARTUP_DIALOG") == nullptr)
+    else if (std::getenv ("DUSKSTUDIO_SKIP_STARTUP_DIALOG") == nullptr)
     {
         juce::Component::SafePointer<MainComponent> safeThis (this);
         juce::MessageManager::callAsync ([safeThis]
@@ -1594,7 +1594,7 @@ void MainComponent::beginSafeShutdown()
         auxView->closeAllAuxPopouts();
 
     markPhase ("phase 5: flush window operations");
-    focal::platform::flushWindowOperations();
+    duskstudio::platform::flushWindowOperations();
 
     // Walk every juce::TopLevelWindow so any future window class
     // (mastering popout, file dialog left open) inherits the
@@ -1602,7 +1602,7 @@ void MainComponent::beginSafeShutdown()
     markPhase ("phase 5b: clear keyboard focus from every top-level window");
     for (int i = juce::TopLevelWindow::getNumTopLevelWindows(); --i >= 0;)
         if (auto* w = juce::TopLevelWindow::getTopLevelWindow (i))
-            focal::platform::prepareForTopLevelDestruction (*w);
+            duskstudio::platform::prepareForTopLevelDestruction (*w);
 
     // Yield to mutter's compositor loop so it ticks a focus-out /
     // focus-in cycle and updates its internal focus_window tracker
@@ -1624,9 +1624,9 @@ void MainComponent::beginSafeShutdown()
         mark ("phase 6: hide main window");
         if (auto* tlw = self->getTopLevelComponent())
             tlw->setVisible (false);
-        focal::platform::flushWindowOperations();
+        duskstudio::platform::flushWindowOperations();
 
-        focal::platform::clearXInputFocus();
+        duskstudio::platform::clearXInputFocus();
 
         mark ("phase 7: defer systemRequestedQuit to next message-loop tick");
         juce::MessageManager::callAsync ([]
@@ -2012,7 +2012,7 @@ void MainComponent::runAudioImportFlow (const juce::File& source,
             auto& track = self->session.track (trackIndex);
             const auto mode = (Track::Mode) track.mode.load (std::memory_order_relaxed);
 
-            focal::fileimport::AudioImportRequest req;
+            duskstudio::fileimport::AudioImportRequest req;
             req.source            = source;
             req.audioDir          = self->session.getAudioDirectory();
             req.trackIndex        = trackIndex;
@@ -2020,7 +2020,7 @@ void MainComponent::runAudioImportFlow (const juce::File& source,
             req.targetChannels    = (mode == Track::Mode::Stereo) ? 2 : 1;
             req.timelineStart     = timelineStart;
 
-            auto res = focal::fileimport::importAudio (req);
+            auto res = duskstudio::fileimport::importAudio (req);
             if (! res.ok)
             {
                 showImportError ("Import audio failed", res.errorMessage);
@@ -2032,7 +2032,7 @@ void MainComponent::runAudioImportFlow (const juce::File& source,
             // in place is safe; the next play() pulls the new layout via
             // preparePlayback.
             track.regions.push_back (std::move (res.region));
-            focal::maybeRenameTrackFromFile (track, trackIndex, source);
+            duskstudio::maybeRenameTrackFromFile (track, trackIndex, source);
             if (self->tapeStrip != nullptr) self->tapeStrip->repaint();
             self->pendingImportLastCommitted = trackIndex;
             self->kickNextImport();
@@ -2120,13 +2120,13 @@ void MainComponent::runMidiImportFlow (const juce::File& source,
 
             auto& track = self->session.track (trackIndex);
 
-            focal::fileimport::MidiImportRequest req;
+            duskstudio::fileimport::MidiImportRequest req;
             req.source            = source;
             req.sessionSampleRate = self->engine.getCurrentSampleRate();
             req.sessionBpm        = self->session.tempoBpm.load (std::memory_order_relaxed);
             req.timelineStart     = timelineStart;
 
-            auto res = focal::fileimport::importMidi (req);
+            auto res = duskstudio::fileimport::importMidi (req);
             if (! res.ok)
             {
                 showImportError ("Import MIDI failed", res.errorMessage);
@@ -2137,7 +2137,7 @@ void MainComponent::runMidiImportFlow (const juce::File& source,
             {
                 v.push_back (std::move (res.region));
             });
-            focal::maybeRenameTrackFromFile (track, trackIndex, source);
+            duskstudio::maybeRenameTrackFromFile (track, trackIndex, source);
             if (self->tapeStrip != nullptr) self->tapeStrip->repaint();
             self->pendingImportLastCommitted = trackIndex;
             self->kickNextImport();
@@ -2315,13 +2315,13 @@ void MainComponent::commitImportNoModal (
 
     if (a.isMidi)
     {
-        focal::fileimport::MidiImportRequest req;
+        duskstudio::fileimport::MidiImportRequest req;
         req.source            = a.file;
         req.sessionSampleRate = engine.getCurrentSampleRate();
         req.sessionBpm        = session.tempoBpm.load (std::memory_order_relaxed);
         req.timelineStart     = timelineStart;
 
-        auto res = focal::fileimport::importMidi (req);
+        auto res = duskstudio::fileimport::importMidi (req);
         if (! res.ok)
         {
             showImportError ("Import MIDI failed", res.errorMessage);
@@ -2337,7 +2337,7 @@ void MainComponent::commitImportNoModal (
     {
         const auto mode = (Track::Mode) track.mode.load (std::memory_order_relaxed);
 
-        focal::fileimport::AudioImportRequest req;
+        duskstudio::fileimport::AudioImportRequest req;
         req.source            = a.file;
         req.audioDir          = session.getAudioDirectory();
         req.trackIndex        = a.trackIndex;
@@ -2345,7 +2345,7 @@ void MainComponent::commitImportNoModal (
         req.targetChannels    = (mode == Track::Mode::Stereo) ? 2 : 1;
         req.timelineStart     = timelineStart;
 
-        auto res = focal::fileimport::importAudio (req);
+        auto res = duskstudio::fileimport::importAudio (req);
         if (! res.ok)
         {
             showImportError ("Import audio failed", res.errorMessage);
@@ -2355,7 +2355,7 @@ void MainComponent::commitImportNoModal (
         track.regions.push_back (std::move (res.region));
     }
 
-    focal::maybeRenameTrackFromFile (track, a.trackIndex, a.file);
+    duskstudio::maybeRenameTrackFromFile (track, a.trackIndex, a.file);
     if (tapeStrip != nullptr) tapeStrip->repaint();
     pendingImportLastCommitted = a.trackIndex;
     kickNextImport();
@@ -2899,4 +2899,4 @@ void MainComponent::toggleVirtualKeyboard()
 
     virtualKeyboardModal.show (*this, std::move (body));
 }
-} // namespace focal
+} // namespace duskstudio

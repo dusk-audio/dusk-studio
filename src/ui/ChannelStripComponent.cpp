@@ -1,5 +1,5 @@
 #include "ChannelStripComponent.h"
-#include "FocalLookAndFeel.h"
+#include "DuskStudioLookAndFeel.h"
 #include "ChannelEqEditor.h"
 #include "ChannelCompEditor.h"
 #include "DimOverlay.h"
@@ -11,7 +11,7 @@
 #include "PlatformWindowing.h"
 #include "../session/RegionEditActions.h"
 
-namespace focal
+namespace duskstudio
 {
 namespace
 {
@@ -1503,8 +1503,8 @@ public:
     // AudioProcessorEditor& so this same wrapper can host either:
     //  - in-process: the plugin's own AudioProcessorEditor (which IS a
     //    Component);
-    //  - OOP (Linux+FOCAL_HAS_OOP_PLUGINS): a juce::XEmbedComponent
-    //    wrapping the X11 Window the focal-plugin-host child reported.
+    //  - OOP (Linux+DUSKSTUDIO_HAS_OOP_PLUGINS): a juce::XEmbedComponent
+    //    wrapping the X11 Window the dusk-studio-plugin-host child reported.
     // The implementation only relies on Component-level API
     // (getWidth/getHeight/setSize/setContentNonOwned).
     PluginEditorWindow (const juce::String& title,
@@ -1524,7 +1524,7 @@ public:
                                       // is consumed by the very next
                                       // createNewPeer call (triggered
                                       // by addToDesktop=true below).
-                                      focal::platform::preferX11ForNextNativeWindow();
+                                      duskstudio::platform::preferX11ForNextNativeWindow();
                                       return title;
                                   })(),
                                   juce::Colour (0xff202024),
@@ -1616,7 +1616,7 @@ public:
             });
         }
 
-        // Same foreground-promotion as FocalApp's MainWindow: without
+        // Same foreground-promotion as DuskStudioApp's MainWindow: without
         // it Mutter on Linux/XWayland may open this editor iconified,
         // leaving the user to Alt+Tab to find it. No-op on Mac/Win.
         juce::Component::SafePointer<PluginEditorWindow> safeThis (this);
@@ -1624,13 +1624,13 @@ public:
         {
             if (auto* self = safeThis.getComponent())
                 if (auto* peer = self->getPeer())
-                    focal::platform::bringWindowToFront (*peer);
+                    duskstudio::platform::bringWindowToFront (*peer);
         });
 
         // Release the latched X11 preference so subsequent unrelated
         // top-level windows (e.g. another plugin editor opened later
         // for a different strip) start from the platform default.
-        focal::platform::clearPreferX11ForNativeWindow();
+        duskstudio::platform::clearPreferX11ForNativeWindow();
     }
 
     ~PluginEditorWindow() override
@@ -1652,7 +1652,7 @@ public:
         // EWMH-activate a sibling top-level so mutter's focus_window is
         // off this peer before the deferred destroy lands - else
         // meta_window_unmanage asserts on a focused xdg_toplevel.
-        focal::platform::prepareForTopLevelDestruction (*this);
+        duskstudio::platform::prepareForTopLevelDestruction (*this);
         if (onClose) onClose();
     }
 
@@ -1708,7 +1708,7 @@ void ChannelStripComponent::openPluginEditor()
 {
     if (isPluginEditorOpen()) return;
 
-   #if JUCE_LINUX && FOCAL_HAS_OOP_PLUGINS
+   #if JUCE_LINUX && DUSKSTUDIO_HAS_OOP_PLUGINS
     if (pluginSlot.isRemote())
     {
         // OOP path: ask the child to show the editor + report its X11
@@ -1771,9 +1771,9 @@ void ChannelStripComponent::openPluginEditor()
         std::unique_ptr<juce::AudioProcessorEditor> fresh;
         if (instance->hasEditor())
         {
-            focal::platform::preferX11ForNextNativeWindow();
+            duskstudio::platform::preferX11ForNextNativeWindow();
             fresh.reset (instance->createEditorIfNeeded());
-            focal::platform::clearPreferX11ForNativeWindow();
+            duskstudio::platform::clearPreferX11ForNativeWindow();
         }
         if (fresh == nullptr)
             fresh = std::make_unique<juce::GenericAudioProcessorEditor> (*instance);
@@ -1828,7 +1828,7 @@ void ChannelStripComponent::closePluginEditor()
     }
     if (pluginEditorWindow == nullptr) return;
     pluginEditorWindow->setContentNonOwned (nullptr, false);
-    focal::platform::prepareForTopLevelDestruction (*pluginEditorWindow);
+    duskstudio::platform::prepareForTopLevelDestruction (*pluginEditorWindow);
 
     // Defer the wrapper's destruction one message-loop tick so mutter
     // gets a chance to retarget focus_window from the EWMH activate
@@ -1841,7 +1841,7 @@ void ChannelStripComponent::closePluginEditor()
             self->pluginEditorWindow.reset();
     });
 
-   #if JUCE_LINUX && FOCAL_HAS_OOP_PLUGINS
+   #if JUCE_LINUX && DUSKSTUDIO_HAS_OOP_PLUGINS
     if (pluginSlot.isRemote())
     {
         // Tell the child to drop its toplevel so the X11 client window
@@ -1875,11 +1875,11 @@ void ChannelStripComponent::dropPluginEditor()
     // within the deferred-reset window would destroy the processor
     // before the deferred reset, turning a rare focus race into a
     // certain use-after-free.
-    focal::platform::requestFocusOnMainWaylandSurface();
+    duskstudio::platform::requestFocusOnMainWaylandSurface();
     pluginEditor.reset();
     pluginEditorOwner = nullptr;
 
-   #if JUCE_LINUX && FOCAL_HAS_OOP_PLUGINS
+   #if JUCE_LINUX && DUSKSTUDIO_HAS_OOP_PLUGINS
     // Drop the OOP-side embed too. The XEmbedComponent's destructor
     // tells the foreign X11 client to detach; the child has already
     // been told to hide the editor by closePluginEditor above (or by
@@ -3582,4 +3582,4 @@ void ChannelStripComponent::resized()
     meterScaleArea = scaleColumn;
     faderSlider.setBounds (faderArea);
 }
-} // namespace focal
+} // namespace duskstudio

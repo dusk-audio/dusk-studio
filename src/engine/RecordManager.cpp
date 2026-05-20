@@ -1,7 +1,7 @@
 #include "RecordManager.h"
 #include <unordered_map>
 
-namespace focal
+namespace duskstudio
 {
 namespace
 {
@@ -589,4 +589,4 @@ void RecordManager::writeInputBlock (int trackIndex,
     else
         slot->writeFailures.fetch_add (1, std::memory_order_relaxed);
 }
-} // namespace focal
+} // namespace duskstudio

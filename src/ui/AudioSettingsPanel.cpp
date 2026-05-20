@@ -8,7 +8,7 @@
  #include "../engine/alsa/AlsaAudioIODevice.h"
 #endif
 
-namespace focal
+namespace duskstudio
 {
 AudioSettingsPanel::AudioSettingsPanel (juce::AudioDeviceManager& dm,
                                           AudioEngine& e, Session& s)
@@ -484,4 +484,4 @@ void AudioSettingsPanel::applySyncOutputChange()
     // race with a synchronous ALSA snd_seq_connect.
     engine.ensureMidiOutputOpen (idx);
 }
-} // namespace focal
+} // namespace duskstudio

@@ -4,7 +4,7 @@
 #include <csignal>
 #include <memory>
 
-namespace focal::crash_handler
+namespace duskstudio::crash_handler
 {
 namespace
 {
@@ -26,7 +26,7 @@ juce::File baseDir()
 juce::File makeLogFile()
 {
     const auto stamp = juce::Time::getCurrentTime().formatted ("%Y%m%d");
-    return baseDir().getChildFile ("log").getChildFile (juce::String ("focal-")
+    return baseDir().getChildFile ("log").getChildFile (juce::String ("dusk-studio-")
                                                               + stamp + ".log");
 }
 
@@ -144,4 +144,4 @@ void uninstall()
 juce::File getLogDir()     { return baseDir().getChildFile ("log"); }
 juce::File getCrashDir()   { return baseDir().getChildFile ("crashes"); }
 juce::File getCurrentLogFile() { return cachedLogFile; }
-} // namespace focal::crash_handler
+} // namespace duskstudio::crash_handler

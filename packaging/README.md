@@ -12,7 +12,7 @@ launches it.
 |------|---------|
 | `audio.dusk.Focal.desktop` | Desktop Entry (XDG) — launcher icon, MIME association, WM class match. Filename matches `<id>` in the AppStream XML per spec (component-id + `.desktop`). |
 | `Focal.appdata.xml` | AppStream component — app-store metadata, summary, description |
-| `Focal.mime.xml` | MIME info — registers `application/x-focal-session` for `session.json` |
+| `Focal.mime.xml` | MIME info — registers `application/x-dusk-studio-session` for `session.json` |
 
 ## Prerequisites
 
@@ -41,7 +41,7 @@ mkdir -p AppDir/usr/bin AppDir/usr/share/applications \
          AppDir/usr/share/metainfo AppDir/usr/share/mime/packages \
          AppDir/usr/share/icons/hicolor/256x256/apps
 
-cp build-linux/Focal_artefacts/Release/Focal           AppDir/usr/bin/
+cp build-linux/DuskStudio_artefacts/Release/Focal           AppDir/usr/bin/
 cp packaging/audio.dusk.Focal.desktop                   AppDir/usr/share/applications/
 cp packaging/Focal.appdata.xml                          AppDir/usr/share/metainfo/
 cp packaging/Focal.mime.xml                             AppDir/usr/share/mime/packages/

@@ -11,7 +11,7 @@
 #include <functional>
 #include "../session/Session.h"
 
-namespace focal
+namespace duskstudio
 {
 class AudioEngine;
 class EditModeToolbar;
@@ -301,4 +301,4 @@ private:
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AudioRegionEditor)
 };
-} // namespace focal
+} // namespace duskstudio

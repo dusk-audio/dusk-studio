@@ -4,11 +4,11 @@
 #include "MasteringLimiterEditor.h"
 #include "../engine/BounceEngine.h"
 #include "../engine/MasteringPlayer.h"
-#if FOCAL_HAS_DUSK_DSP
+#if DUSKSTUDIO_HAS_DUSK_DSP
   #include "ModernCompressorPanels.h"   // multi-comp - MultibandCompressorPanel
 #endif
 
-namespace focal
+namespace duskstudio
 {
 WaveformDisplay::WaveformDisplay (MasteringPlayer& p)
     : player (p),
@@ -355,7 +355,7 @@ MasteringView::MasteringView (Session& s, AudioEngine& e)
     // mastering chain has already pinned the UC into multiband mode, so
     // hosting the multiband panel by itself gives us the focused UI we
     // actually need.
-#if FOCAL_HAS_DUSK_DSP
+#if DUSKSTUDIO_HAS_DUSK_DSP
     if (auto* compProc = engine.getMasteringChain().getCompProcessor())
     {
         compEditor = std::make_unique<MultibandCompressorPanel> (compProc->getParameters());
@@ -716,4 +716,4 @@ void MasteringView::doExport()
     panel->setSize (520, 200);
     exportModal.show (*this, std::move (panel));
 }
-} // namespace focal
+} // namespace duskstudio

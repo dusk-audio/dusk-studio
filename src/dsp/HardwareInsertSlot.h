@@ -5,7 +5,7 @@
 #include <atomic>
 #include <vector>
 
-namespace focal
+namespace duskstudio
 {
 // HardwareInsertParams + HardwareInsertRouting live in Session.h
 // (`src/session/Session.h`) alongside the other per-strip POD param
@@ -142,4 +142,4 @@ private:
     void startPing();
     void finishPing (int measuredLag);
 };
-} // namespace focal
+} // namespace duskstudio

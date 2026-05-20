@@ -1,7 +1,7 @@
 #include "CompMeterStrip.h"
-#include "FocalLookAndFeel.h"
+#include "DuskStudioLookAndFeel.h"
 
-namespace focal
+namespace duskstudio
 {
 CompMeterStrip::CompMeterStrip (Track& t) : track (t)
 {
@@ -351,4 +351,4 @@ void CompMeterStrip::mouseDoubleClick (const juce::MouseEvent&)
     resetThresholdForMode (track);
     repaint();
 }
-} // namespace focal
+} // namespace duskstudio

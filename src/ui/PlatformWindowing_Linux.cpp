@@ -9,7 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 
-namespace focal::platform
+namespace duskstudio::platform
 {
 namespace
 {
@@ -195,27 +195,27 @@ void clearXInputFocus()
 
 // All three helpers below touch the plugdata-team JUCE-wayland fork's
 // WaylandWindowSystem / WaylandSymbols. Upstream JUCE has no such
-// types. FOCAL_JUCE_HAS_WAYLAND is set by CMake when the fork is in
+// types. DUSKSTUDIO_JUCE_HAS_WAYLAND is set by CMake when the fork is in
 // use; absent that, these are stubs (CI builds + non-Wayland deploys
 // don't need the X11/Wayland peer-creation latch or the focus
 // roundtrip).
 void preferX11ForNextNativeWindow()
 {
-   #if FOCAL_JUCE_HAS_WAYLAND
+   #if DUSKSTUDIO_JUCE_HAS_WAYLAND
     juce::WaylandWindowSystem::setSkipForPeerCreation (true);
    #endif
 }
 
 void clearPreferX11ForNativeWindow()
 {
-   #if FOCAL_JUCE_HAS_WAYLAND
+   #if DUSKSTUDIO_JUCE_HAS_WAYLAND
     juce::WaylandWindowSystem::setSkipForPeerCreation (false);
    #endif
 }
 
 void requestFocusOnMainWaylandSurface()
 {
-   #if FOCAL_JUCE_HAS_WAYLAND
+   #if DUSKSTUDIO_JUCE_HAS_WAYLAND
     // The plumbed-in JUCE-wayland fork doesn't expose xdg-activation-v1
     // (no protocol XML codegen, no registry binding, no public API);
     // adding it cleanly is a separate fork-side change. Until then we
@@ -235,4 +235,4 @@ void requestFocusOnMainWaylandSurface()
     juce::WaylandSymbols::getInstance()->displayRoundtrip (display);
    #endif
 }
-} // namespace focal::platform
+} // namespace duskstudio::platform

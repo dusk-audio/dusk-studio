@@ -1,6 +1,6 @@
 #include "MidiClockEmitter.h"
 
-namespace focal
+namespace duskstudio
 {
 void MidiClockEmitter::generateBlock (juce::int64 blockStartSample,
                                        int numSamples,
@@ -52,4 +52,4 @@ void MidiClockEmitter::generateBlock (juce::int64 blockStartSample,
         nextClockSample += (juce::int64) std::llround (samplesPerClock);
     }
 }
-} // namespace focal
+} // namespace duskstudio

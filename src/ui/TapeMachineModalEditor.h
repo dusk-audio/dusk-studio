@@ -4,7 +4,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <memory>
 
-namespace focal
+namespace duskstudio
 {
 // Hosts a TapeMachine plugin editor inside Focal's gear modal and trims
 // down the parts of its UI that don't belong in the embedded context:
@@ -286,4 +286,4 @@ private:
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (TapeMachineModalEditor)
 };
-} // namespace focal
+} // namespace duskstudio

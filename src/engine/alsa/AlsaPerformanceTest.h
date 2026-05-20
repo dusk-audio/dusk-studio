@@ -6,7 +6,7 @@
 
 #include <juce_core/juce_core.h>
 
-namespace focal
+namespace duskstudio
 {
 // Performance + stability test harness for the Focal-owned ALSA backend.
 // Tier 1: drives an AlsaAudioIODevice directly with a measuring callback,
@@ -21,8 +21,8 @@ namespace focal
 // Plus open/close cycle stress (catches resource leaks) and start/stop
 // race (catches deadlock or inconsistent state).
 //
-// Hooked via FOCAL_RUN_ALSA_PERF=1; see runHeadlessAlsaPerfTest in
-// FocalApp.cpp for the env var surface.
+// Hooked via DUSKSTUDIO_RUN_ALSA_PERF=1; see runHeadlessAlsaPerfTest in
+// DuskStudioApp.cpp for the env var surface.
 class AlsaPerformanceTest
 {
 public:
@@ -91,4 +91,4 @@ public:
     static Result              runStartStopRace   (const Options& opts);
     static LoopbackResult      runLoopbackProbe   (const Options& opts);
 };
-} // namespace focal
+} // namespace duskstudio

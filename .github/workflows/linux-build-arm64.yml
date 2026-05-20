@@ -82,19 +82,19 @@ jobs:
       - name: Smoke launch (xvfb, --version)
         run: |
           xvfb-run --auto-servernum \
-            build-linux/Focal_artefacts/Release/Focal --version
+            build-linux/DuskStudio_artefacts/Release/Focal --version
 
-      - name: Headless self-test (xvfb, FOCAL_RUN_SELFTEST=1)
+      - name: Headless self-test (xvfb, DUSKSTUDIO_RUN_SELFTEST=1)
         run: |
           timeout 60 xvfb-run --auto-servernum \
-            env FOCAL_RUN_SELFTEST=1 \
-            build-linux/Focal_artefacts/Release/Focal
+            env DUSKSTUDIO_RUN_SELFTEST=1 \
+            build-linux/DuskStudio_artefacts/Release/Focal
 
       - name: Upload Focal binary (per-run artifact)
         uses: actions/upload-artifact@v4
         with:
           name: Focal-linux-arm64
-          path: build-linux/Focal_artefacts/Release/Focal
+          path: build-linux/DuskStudio_artefacts/Release/Focal
           retention-days: 14
           if-no-files-found: error
 
@@ -158,7 +158,7 @@ jobs:
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main"
 
       - name: Build tests
-        run: cmake --build build-tests --target focal-tests -j
+        run: cmake --build build-tests --target dusk-studio-tests -j
 
       - name: Run tests
         run: ctest --test-dir build-tests --output-on-failure

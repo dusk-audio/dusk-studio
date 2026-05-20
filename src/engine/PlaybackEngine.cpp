@@ -1,7 +1,7 @@
 #include "PlaybackEngine.h"
 #include <cstring>
 
-namespace focal
+namespace duskstudio
 {
 PlaybackEngine::PlaybackEngine (Session& s) : session (s)
 {
@@ -236,4 +236,4 @@ void PlaybackEngine::readForTrack (int trackIndex,
         }
     }
 }
-} // namespace focal
+} // namespace duskstudio

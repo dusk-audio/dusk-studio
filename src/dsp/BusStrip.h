@@ -6,12 +6,12 @@
 #include <atomic>
 #include <memory>
 
-#if FOCAL_HAS_DUSK_DSP
+#if DUSKSTUDIO_HAS_DUSK_DSP
   #include "BritishEQProcessor.h"
   #include "UniversalCompressor.h"
 #endif
 
-namespace focal
+namespace duskstudio
 {
 // Phase 1a aux bus: 3-band EQ → bus compressor → pan → fader → meter.
 // EQ uses BritishEQProcessor's LF / LM / HF bands (with the LM band exposed
@@ -46,7 +46,7 @@ private:
     juce::SmoothedValue<float> panGainL  { 1.0f };
     juce::SmoothedValue<float> panGainR  { 1.0f };
 
-#if FOCAL_HAS_DUSK_DSP
+#if DUSKSTUDIO_HAS_DUSK_DSP
     BritishEQProcessor       eq;
     BritishEQProcessor::Parameters lastEqParams {};   // see ChannelStrip equivalent
     UniversalCompressor      busComp;
@@ -89,4 +89,4 @@ private:
     float  vuRmsLinL = 0.0f;
     float  vuRmsLinR = 0.0f;
 };
-} // namespace focal
+} // namespace duskstudio

@@ -3,7 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "../engine/AudioEngine.h"
 
-namespace focal
+namespace duskstudio
 {
 // Ardour-style edit-mode palette. Sits above the TapeStrip in
 // MainComponent and lets the user pick a mouse-tool mode: Grab (default
@@ -77,4 +77,4 @@ private:
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (EditModeToolbar)
 };
-} // namespace focal
+} // namespace duskstudio

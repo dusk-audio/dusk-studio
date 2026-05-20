@@ -10,7 +10,7 @@ namespace
 juce::File makeTempSessionDir()
 {
     auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
-                  .getChildFile ("focal-version-"
+                  .getChildFile ("dusk-studio-version-"
                                     + juce::String (juce::Random::getSystemRandom().nextInt()));
     dir.createDirectory();
     return dir;
@@ -37,8 +37,8 @@ void writeRaw (const juce::File& target, const juce::String& contents)
 TEST_CASE ("SessionSerializer rejects future-version sessions",
            "[session][serializer][version]")
 {
-    using focal::Session;
-    using focal::SessionSerializer;
+    using duskstudio::Session;
+    using duskstudio::SessionSerializer;
 
     const auto dir = makeTempSessionDir();
     const auto target = dir.getChildFile ("session.json");
@@ -54,8 +54,8 @@ TEST_CASE ("SessionSerializer rejects future-version sessions",
 TEST_CASE ("SessionSerializer accepts session with missing version (legacy)",
            "[session][serializer][version]")
 {
-    using focal::Session;
-    using focal::SessionSerializer;
+    using duskstudio::Session;
+    using duskstudio::SessionSerializer;
 
     const auto dir = makeTempSessionDir();
     const auto target = dir.getChildFile ("session.json");
@@ -74,8 +74,8 @@ TEST_CASE ("SessionSerializer accepts session with missing version (legacy)",
 TEST_CASE ("SessionSerializer round-trip preserves version field",
            "[session][serializer][version]")
 {
-    using focal::Session;
-    using focal::SessionSerializer;
+    using duskstudio::Session;
+    using duskstudio::SessionSerializer;
 
     const auto dir = makeTempSessionDir();
     const auto target = dir.getChildFile ("session.json");

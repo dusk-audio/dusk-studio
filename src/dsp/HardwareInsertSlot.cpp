@@ -3,7 +3,7 @@
 
 #include <cmath>
 
-namespace focal
+namespace duskstudio
 {
 HardwareInsertSlot::HardwareInsertSlot() = default;
 HardwareInsertSlot::~HardwareInsertSlot() = default;
@@ -378,4 +378,4 @@ void HardwareInsertSlot::processStereoBlock (float* L, float* R, int numSamples,
         R[i] = dryMix * dryR + wetMix * wetR;
     }
 }
-} // namespace focal
+} // namespace duskstudio

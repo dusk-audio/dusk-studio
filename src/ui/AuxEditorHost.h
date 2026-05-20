@@ -3,7 +3,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 
-namespace focal
+namespace duskstudio
 {
 // Borderless X11 top-level that hosts a plugin's AudioProcessorEditor
 // visually attached to an AUX lane's slot rect. The host is a separate
@@ -50,4 +50,4 @@ private:
     juce::Rectangle<int> lastBounds;             // suppress redundant setBounds + Component-listener loops
     std::unique_ptr<EditorPanel> editorPanel;    // wraps the editor so the host can be larger than it (centers non-resizable plugins)
 };
-} // namespace focal
+} // namespace duskstudio

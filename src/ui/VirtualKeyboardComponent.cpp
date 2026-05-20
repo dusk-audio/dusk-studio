@@ -1,6 +1,6 @@
 #include "VirtualKeyboardComponent.h"
 
-namespace focal
+namespace duskstudio
 {
 namespace
 {
@@ -279,4 +279,4 @@ void VirtualKeyboardComponent::paint (juce::Graphics& g)
         x += wkW;
     }
 }
-} // namespace focal
+} // namespace duskstudio

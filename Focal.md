@@ -832,7 +832,7 @@ Focal/
 ├── CLAUDE.md                         # Project-specific instructions
 ├── src/
 │   ├── Main.cpp
-│   ├── FocalApp.h/cpp
+│   ├── DuskStudioApp.h/cpp
 │   │
 │   ├── engine/
 │   │   ├── AudioEngine.h/cpp         # Real-time callback, routes everything
@@ -870,7 +870,7 @@ Focal/
 │   │   └── PianoRollEditor.h/cpp     # Minimal MIDI note editor (overlay UI)
 │   │
 │   └── ui/
-│       ├── FocalLookAndFeel.h/cpp  # Dark console aesthetic
+│       ├── DuskStudioLookAndFeel.h/cpp  # Dark console aesthetic
 │       ├── ConsoleView.h/cpp             # The mixer (16 ch + 4 aux + master)
 │       ├── ChannelStripComponent.h/cpp   # Single channel strip widget
 │       ├── AuxBusComponent.h/cpp         # Aux bus strip widget

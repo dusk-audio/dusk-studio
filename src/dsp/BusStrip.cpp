@@ -2,7 +2,7 @@
 #include <cmath>
 #include <cstring>
 
-namespace focal
+namespace duskstudio
 {
 void BusStrip::bind (const BusParams& params) noexcept
 {
@@ -46,7 +46,7 @@ void BusStrip::prepare (double sampleRate, int blockSize, int oversamplingFactor
     const double prepSr = sampleRate * (double) factor;
     const int    prepBs = bsClamped * factor;
 
-#if FOCAL_HAS_DUSK_DSP
+#if DUSKSTUDIO_HAS_DUSK_DSP
     eq.prepare (prepSr, prepBs, 2);
     eq.reset();
 
@@ -60,7 +60,7 @@ void BusStrip::prepare (double sampleRate, int blockSize, int oversamplingFactor
 #endif
 }
 
-#if FOCAL_HAS_DUSK_DSP
+#if DUSKSTUDIO_HAS_DUSK_DSP
 void BusStrip::bindCompParams() noexcept
 {
     auto& apvts = busComp.getParameters();
@@ -160,7 +160,7 @@ void BusStrip::processInPlace (float* L, float* R, int numSamples) noexcept
     juce::ScopedNoDenormals noDenormals;
     if (numSamples == 0) return;
 
-   #if FOCAL_HAS_DUSK_DSP
+   #if DUSKSTUDIO_HAS_DUSK_DSP
     // Contract: numSamples must fit the buffer prepare() sized for the comp.
     // The chunk loop below is the production safety net.
     jassert (numSamples <= compStereoBuffer.getNumSamples());
@@ -168,7 +168,7 @@ void BusStrip::processInPlace (float* L, float* R, int numSamples) noexcept
 
     updateGainTargets();
 
-#if FOCAL_HAS_DUSK_DSP
+#if DUSKSTUDIO_HAS_DUSK_DSP
     updateEqParameters();
     updateCompParameters();
 
@@ -262,4 +262,4 @@ void BusStrip::processInPlace (float* L, float* R, int numSamples) noexcept
         paramsRef->meterPostBusRmsR.store (vuRmsLinR, std::memory_order_relaxed);
     }
 }
-} // namespace focal
+} // namespace duskstudio

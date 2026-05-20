@@ -1,6 +1,6 @@
 #include "DimOverlay.h"
 
-namespace focal
+namespace duskstudio
 {
 DimOverlay::DimOverlay (float alpha)
     : fillAlpha (juce::jlimit (0.0f, 1.0f, alpha))
@@ -25,4 +25,4 @@ void DimOverlay::parentSizeChanged()
     if (auto* p = getParentComponent())
         setBounds (p->getLocalBounds());
 }
-} // namespace focal
+} // namespace duskstudio

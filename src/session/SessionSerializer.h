@@ -3,7 +3,7 @@
 #include <juce_core/juce_core.h>
 #include "Session.h"
 
-namespace focal
+namespace duskstudio
 {
 // Serialise / restore a Session to/from JSON on disk. Save uses an atomic
 // write pattern (write to .tmp, move into place) so a crash mid-save never
@@ -24,4 +24,4 @@ public:
     // the autosave path. Returns true on success.
     static bool writeAtomic (const juce::File& target, const juce::String& json);
 };
-} // namespace focal
+} // namespace duskstudio

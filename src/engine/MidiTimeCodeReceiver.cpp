@@ -1,6 +1,6 @@
 #include "MidiTimeCodeReceiver.h"
 
-namespace focal
+namespace duskstudio
 {
 namespace
 {
@@ -204,4 +204,4 @@ void MidiTimeCodeReceiver::process (const juce::MidiBuffer& events,
         reversed.store (false, std::memory_order_relaxed);
     }
 }
-} // namespace focal
+} // namespace duskstudio

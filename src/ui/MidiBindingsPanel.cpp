@@ -4,7 +4,7 @@
 #include "../session/MidiBindings.h"
 #include <algorithm>
 
-namespace focal
+namespace duskstudio
 {
 MidiBindingsPanel::Row::Row()
 {
@@ -160,13 +160,13 @@ void MidiBindingsPanel::resized()
 
 void MidiBindingsPanel::exportPreset()
 {
-    // Default to ~/Documents/<focal-bindings>.json. The user picks the
+    // Default to ~/Documents/<dusk-studio-bindings>.json. The user picks the
     // final path; we just seed the dialog with something sensible.
     const auto defaultDir = juce::File::getSpecialLocation (
         juce::File::userDocumentsDirectory);
     exportChooser = std::make_unique<juce::FileChooser> (
         "Save MIDI bindings preset",
-        defaultDir.getChildFile ("focal-bindings.json"),
+        defaultDir.getChildFile ("dusk-studio-bindings.json"),
         "*.json");
     juce::Component::SafePointer<MidiBindingsPanel> safe (this);
     exportChooser->launchAsync (
@@ -242,4 +242,4 @@ void MidiBindingsPanel::importPreset()
             self->importChooser.reset();
         });
 }
-} // namespace focal
+} // namespace duskstudio

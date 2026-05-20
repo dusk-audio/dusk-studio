@@ -4,11 +4,11 @@
 #include <cstdio>
 #include <cstring>
 
-namespace focal
+namespace duskstudio
 {
 namespace
 {
-#if FOCAL_HAS_OOP_PLUGINS
+#if DUSKSTUDIO_HAS_OOP_PLUGINS
 // OOP timeout per processBlock round-trip. Generous because the child
 // has to memcpy through SHM, run the plugin, memcpy back. A 100 ms cap
 // is well under the audio-thread starvation point (~250 ms = visible
@@ -127,7 +127,7 @@ PluginSlot::~PluginSlot()
     if (previousInstance != nullptr)
         previousInstance->releaseResources();
 
-   #if FOCAL_HAS_OOP_PLUGINS
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS
     reaperTimer.stopTimer();
     currentRemote.store (nullptr, std::memory_order_release);
     // ~RemotePluginConnection sends SIGTERM/SIGKILL to the child and
@@ -145,7 +145,7 @@ void PluginSlot::leakInstanceForShutdown()
     if (previousInstance != nullptr)
         (void) previousInstance.release();
 
-   #if FOCAL_HAS_OOP_PLUGINS
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS
     // OOP plugins live in a separate process — the in-process leak hack
     // is irrelevant. Cleanly disconnecting kills the child, which
     // releases its plugin in its own address space (so any plugin-side
@@ -157,7 +157,7 @@ void PluginSlot::leakInstanceForShutdown()
    #endif
 }
 
-#if FOCAL_HAS_OOP_PLUGINS
+#if DUSKSTUDIO_HAS_OOP_PLUGINS
 void PluginSlot::pollRemoteReaper()
 {
     auto* r = ownedRemote.get();
@@ -185,7 +185,7 @@ void PluginSlot::pollRemoteReaper()
 void PluginSlot::clearAutoBypass() noexcept
 {
     autoBypassed.store (false, std::memory_order_relaxed);
-   #if FOCAL_HAS_OOP_PLUGINS
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS
     // Clearing crashed state too: if the user explicitly asks to
     // re-enable a crashed slot, drop the dead connection so the next
     // load (or processBlock attempt) doesn't see a stale carcass. The
@@ -207,7 +207,7 @@ bool PluginSlot::showRemoteEditor (std::uint64_t& windowIdOut,
                                      int& widthOut, int& heightOut)
 {
     windowIdOut = 0; widthOut = 0; heightOut = 0;
-   #if FOCAL_HAS_OOP_PLUGINS
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS
     auto* r = ownedRemote.get();
     if (r == nullptr) return false;
     std::string err;
@@ -226,7 +226,7 @@ bool PluginSlot::showRemoteEditor (std::uint64_t& windowIdOut,
 
 bool PluginSlot::hideRemoteEditor()
 {
-   #if FOCAL_HAS_OOP_PLUGINS
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS
     auto* r = ownedRemote.get();
     if (r == nullptr) return false;
     std::string err;
@@ -245,7 +245,7 @@ bool PluginSlot::hideRemoteEditor()
 
 bool PluginSlot::resizeRemoteEditor (int width, int height)
 {
-   #if FOCAL_HAS_OOP_PLUGINS
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS
     auto* r = ownedRemote.get();
     if (r == nullptr) return false;
     std::string err;
@@ -288,18 +288,18 @@ void PluginSlot::prepareToPlay (double sampleRate, int blockSize)
         return;
     }
 
-   #if FOCAL_HAS_OOP_PLUGINS
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS
     if (ownedRemote != nullptr)
     {
         // Re-prepare the child. Caller (AudioEngine) typically drives this
         // when sample rate or block size changes; bail to bypass if the
         // new block size exceeds what the IPC SHM was sized for.
-        if (preparedBlockSize > focal::ipc::kMaxBlock)
+        if (preparedBlockSize > duskstudio::ipc::kMaxBlock)
         {
             std::fprintf (stderr,
                           "[Focal/PluginSlot] OOP path can't host blockSize=%d "
                           "(SHM max=%d); slot will be silent until reload.\n",
-                          preparedBlockSize, focal::ipc::kMaxBlock);
+                          preparedBlockSize, duskstudio::ipc::kMaxBlock);
             currentRemote.store (nullptr, std::memory_order_release);
             cachedLatencySamples.store (0, std::memory_order_relaxed);
             return;
@@ -331,7 +331,7 @@ void PluginSlot::releaseResources()
     if (ownedInstance != nullptr)
         ownedInstance->releaseResources();
 
-   #if FOCAL_HAS_OOP_PLUGINS
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS
     reaperTimer.stopTimer();
     currentRemote.store (nullptr, std::memory_order_release);
     if (ownedRemote != nullptr)
@@ -348,7 +348,7 @@ void PluginSlot::releaseResources()
 bool PluginSlot::isLoaded() const noexcept
 {
     if (currentInstance.load (std::memory_order_acquire) != nullptr) return true;
-   #if FOCAL_HAS_OOP_PLUGINS
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS
     if (currentRemote.load (std::memory_order_acquire) != nullptr)   return true;
    #endif
     return false;
@@ -358,7 +358,7 @@ juce::String PluginSlot::getLoadedName() const
 {
     if (auto* p = currentInstance.load (std::memory_order_acquire))
         return p->getName();
-   #if FOCAL_HAS_OOP_PLUGINS
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS
     if (currentRemote.load (std::memory_order_acquire) != nullptr)
     {
         // Parse the cached description XML for the plugin's display
@@ -483,7 +483,7 @@ bool PluginSlot::loadFromDescription (const juce::PluginDescription& desc,
     previousInstance = std::move (ownedInstance);
     ownedInstance.reset();
 
-   #if FOCAL_HAS_OOP_PLUGINS
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS
     // Tear down any prior OOP slot before deciding which path the new
     // load takes. Mode is per-load: we may end up in-process this time
     // even if the previous load was OOP (and vice versa).
@@ -507,7 +507,7 @@ bool PluginSlot::loadFromDescription (const juce::PluginDescription& desc,
 
     const bool tryOop = manager->isOopEnabled()
                          && preparedBlockSize > 0
-                         && preparedBlockSize <= focal::ipc::kMaxBlock;
+                         && preparedBlockSize <= duskstudio::ipc::kMaxBlock;
 
     if (tryOop)
     {
@@ -521,7 +521,7 @@ bool PluginSlot::loadFromDescription (const juce::PluginDescription& desc,
         }
         else
         {
-            auto remote = std::make_unique<focal::ipc::RemotePluginConnection>();
+            auto remote = std::make_unique<duskstudio::ipc::RemotePluginConnection>();
             std::string err;
             if (! remote->connect (hostPath.toStdString(), "--ipc-host", err))
             {
@@ -640,7 +640,7 @@ void PluginSlot::unload()
     previousInstance = std::move (ownedInstance);
     ownedInstance.reset();
 
-   #if FOCAL_HAS_OOP_PLUGINS
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS
     // Same deferred-destruction shape as loadFromDescription: defer the
     // child-process kill + SHM unmap to the NEXT swap so an in-flight
     // audio-thread processBlockSync on the just-cleared currentRemote
@@ -662,7 +662,7 @@ void PluginSlot::unload()
 
 juce::String PluginSlot::getDescriptionXmlForSave (int parkSleepMs)
 {
-   #if FOCAL_HAS_OOP_PLUGINS
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS
     if (currentRemote.load (std::memory_order_acquire) != nullptr
         && savedDescriptionXml.isNotEmpty())
     {
@@ -702,7 +702,7 @@ juce::String PluginSlot::getDescriptionXmlForSave (int parkSleepMs)
 
 bool PluginSlot::isLoadedPluginInstrument() const
 {
-   #if FOCAL_HAS_OOP_PLUGINS
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS
     if (currentRemote.load (std::memory_order_acquire) != nullptr)
         return remoteIsInstrument.load (std::memory_order_relaxed);
    #endif
@@ -716,7 +716,7 @@ bool PluginSlot::isLoadedPluginInstrument() const
 
 juce::String PluginSlot::getStateBase64ForSave (int parkSleepMs)
 {
-   #if FOCAL_HAS_OOP_PLUGINS
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS
     if (auto* r = currentRemote.load (std::memory_order_acquire))
     {
         // OOP path: the parking + setActive(false) bracket is intrinsic
@@ -829,10 +829,10 @@ bool PluginSlot::restoreFromSavedState (const juce::String& descriptionXml,
     // to the in-process load below — the user's session restore should
     // succeed even if the host child can't be spawned for some reason
     // (e.g. binary not present in a stripped-down build).
-   #if FOCAL_HAS_OOP_PLUGINS
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS
     if (manager->isOopEnabled()
         && preparedBlockSize > 0
-        && preparedBlockSize <= focal::ipc::kMaxBlock)
+        && preparedBlockSize <= duskstudio::ipc::kMaxBlock)
     {
         // Use the standard load path, then setState. loadFromDescription
         // handles parking, swap, and OOP/in-process choice; on success,
@@ -931,7 +931,7 @@ void PluginSlot::processMonoBlock (float* monoData, int numSamples,
                               ? 1000.0 * (double) numSamples / preparedSampleRate
                               : 0.0;
 
-   #if FOCAL_HAS_OOP_PLUGINS
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS
     if (auto* r = currentRemote.load (std::memory_order_acquire))
     {
         const auto rt0 = juce::Time::getHighResolutionTicks();
@@ -1088,7 +1088,7 @@ void PluginSlot::processStereoBlock (float* L, float* R, int numSamples,
                               ? 1000.0 * (double) numSamples / preparedSampleRate
                               : 0.0;
 
-   #if FOCAL_HAS_OOP_PLUGINS
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS
     if (auto* r = currentRemote.load (std::memory_order_acquire))
     {
         constexpr double kRemoteBudgetFraction = kOopBudgetFraction;
@@ -1295,4 +1295,4 @@ void PluginSlot::setParamNormalised (int paramIndex, float value01) noexcept
     if (auto* param = params[paramIndex])
         param->setValue (juce::jlimit (0.0f, 1.0f, value01));
 }
-} // namespace focal
+} // namespace duskstudio

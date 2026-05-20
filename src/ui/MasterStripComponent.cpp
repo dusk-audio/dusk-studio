@@ -1,13 +1,13 @@
 #include "MasterStripComponent.h"
 #include "DimOverlay.h"
-#include "FocalLookAndFeel.h"
+#include "DuskStudioLookAndFeel.h"
 #include "TapeMachineModalEditor.h"
 
-#if FOCAL_HAS_DUSK_DSP
+#if DUSKSTUDIO_HAS_DUSK_DSP
   #include "PluginProcessor.h"   // TapeMachineAudioProcessor + createEditor
 #endif
 
-namespace focal
+namespace duskstudio
 {
 namespace
 {
@@ -604,7 +604,7 @@ void MasterStripComponent::openTapeMachineModal()
 
     juce::Component* body = nullptr;
 
-#if FOCAL_HAS_DUSK_DSP
+#if DUSKSTUDIO_HAS_DUSK_DSP
     // Spawn the TapeMachine plugin's native editor and wrap it so the
     // donor's plugin-style header (painted "TapeMachine" + "Vintage Tape
     // Emulation") is masked and the HQ oversampling combo (now driven
@@ -646,4 +646,4 @@ void MasterStripComponent::mouseDown (const juce::MouseEvent& e)
     }
     juce::Component::mouseDown (e);
 }
-} // namespace focal
+} // namespace duskstudio

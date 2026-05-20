@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace focal
+namespace duskstudio
 {
 namespace
 {
@@ -274,4 +274,4 @@ MultiImportTargetPicker::collectAssignments() const
     }
     return out;
 }
-} // namespace focal
+} // namespace duskstudio

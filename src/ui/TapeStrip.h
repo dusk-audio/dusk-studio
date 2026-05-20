@@ -4,7 +4,7 @@
 #include "../engine/AudioEngine.h"
 #include "../session/Session.h"
 
-namespace focal
+namespace duskstudio
 {
 // Phase 2 minimum tape strip:
 //   - 16 horizontal rows (one per track), color-coded with track accent
@@ -408,4 +408,4 @@ private:
     bool                  rubberBandActive = false;
     juce::Rectangle<int>  rubberBand;
 };
-} // namespace focal
+} // namespace duskstudio

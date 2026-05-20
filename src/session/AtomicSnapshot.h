@@ -5,7 +5,7 @@
 #include <memory>
 #include <utility>
 
-namespace focal
+namespace duskstudio
 {
 // Lock-free snapshot of an owned value of type T. The audio thread reads
 // the snapshot via an acquire-load of a raw pointer; the message thread
@@ -100,4 +100,4 @@ private:
     std::unique_ptr<T>    owned;
     std::unique_ptr<T>    previous;  // kept alive for one publish
 };
-} // namespace focal
+} // namespace duskstudio

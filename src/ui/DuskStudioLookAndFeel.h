@@ -3,7 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <array>
 
-namespace focal
+namespace duskstudio
 {
 // Standard fader scale ticks - the dB values that get a horizontal mark on
 // every vertical fader's track and a numeric label in the strip's scale
@@ -48,10 +48,10 @@ inline float faderYForDb (juce::Slider& fader, float dB)
 //
 // Per-knob accent comes from the slider's `rotarySliderFillColourId` - set
 // that to the band/section color and the cap takes it.
-class FocalLookAndFeel final : public juce::LookAndFeel_V4
+class DuskStudioLookAndFeel final : public juce::LookAndFeel_V4
 {
 public:
-    FocalLookAndFeel()
+    DuskStudioLookAndFeel()
     {
         setColour (juce::Slider::rotarySliderFillColourId,    juce::Colour (0xff4a7c9e));
         setColour (juce::Slider::rotarySliderOutlineColourId, juce::Colour (0xff404048));
@@ -264,4 +264,4 @@ namespace sslEqColors
     inline constexpr juce::uint32 kLfBlack = 0xff353538;
     inline constexpr juce::uint32 kHpfBlue = 0xff4a7c9e;
 }
-} // namespace focal
+} // namespace duskstudio

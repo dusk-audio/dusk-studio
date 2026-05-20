@@ -4,8 +4,8 @@
 #include "session/Session.h"
 
 using Catch::Matchers::WithinAbs;
-using focal::FadeShape;
-using focal::applyFadeShape;
+using duskstudio::FadeShape;
+using duskstudio::applyFadeShape;
 
 TEST_CASE ("FadeShape: every shape is 0 at t=0 and 1 at t=1", "[FadeShape]")
 {
