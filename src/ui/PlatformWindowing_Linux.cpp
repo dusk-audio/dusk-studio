@@ -235,4 +235,11 @@ void requestFocusOnMainWaylandSurface()
     juce::WaylandSymbols::getInstance()->displayRoundtrip (display);
    #endif
 }
+
+std::unique_ptr<juce::Component> createForeignNativeWindowEmbed (std::uint64_t)
+{
+    // Linux uses juce::XEmbedComponent directly in ChannelStripComponent;
+    // no generic-wrapper path needed here.
+    return nullptr;
+}
 } // namespace duskstudio::platform

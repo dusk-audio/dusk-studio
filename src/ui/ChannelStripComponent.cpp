@@ -1751,12 +1751,37 @@ void ChannelStripComponent::openPluginEditor()
             },
             &engine);
        #else
-        // Win/Mac OOP: the child opened a native-titlebar floating
-        // window already; the parent doesn't track its lifecycle.
-        // Subsequent clicks on the plugin button re-fire ShowEditor;
-        // the child's handleShowEditor raises the existing window via
-        // toFront(true). User closes via the floating window's X.
-        juce::ignoreUnused (w, h);
+        // Win/Mac OOP. Try real embed via the platform-specific foreign-
+        // window wrapper (HWND SetParent on Windows; nullptr on Mac for
+        // now). Fall through to the float-as-toplevel path if the
+        // factory returns nullptr — that's still better than the OOP
+        // editor being inaccessible.
+        auto embed = duskstudio::platform::createForeignNativeWindowEmbed (windowId);
+        if (embed != nullptr)
+        {
+            embed->setSize (juce::jmax (200, w), juce::jmax (200, h));
+            juce::Component::SafePointer<ChannelStripComponent> safe (this);
+            pluginEditorWindow = std::make_unique<PluginEditorWindow> (
+                pluginSlot.getLoadedName(),
+                *embed,
+                [safe]
+                {
+                    juce::MessageManager::callAsync ([safe]
+                    {
+                        if (auto* self = safe.getComponent())
+                            self->closePluginEditor();
+                    });
+                },
+                &engine);
+            remoteForeignEmbed = std::move (embed);
+        }
+        else
+        {
+            // Floating-window fallback (Mac): the child opened a native-
+            // titlebar top-level already; subsequent clicks re-fire
+            // ShowEditor and the child raises the existing window.
+            juce::ignoreUnused (w, h);
+        }
        #endif
         return;
     }
@@ -1839,10 +1864,12 @@ void ChannelStripComponent::closePluginEditor()
     }
 
    #if DUSKSTUDIO_HAS_OOP_PLUGINS && ! JUCE_LINUX
-    // Win/Mac OOP: the floating editor window lives in the child
-    // process; the parent has no pluginEditorWindow wrapper to tear
-    // down. Just tell the child to dismiss it.
-    if (pluginSlot.isRemote())
+    // Mac OOP floating-window path (no embed available): the editor
+    // window lives in the child process and the parent has no
+    // pluginEditorWindow wrapper to tear down — just send HideEditor.
+    // Windows embed succeeded path falls through to the standard
+    // teardown below (pluginEditorWindow + remoteForeignEmbed exist).
+    if (pluginSlot.isRemote() && remoteForeignEmbed == nullptr)
     {
         pluginSlot.hideRemoteEditor();
         return;
@@ -1864,18 +1891,16 @@ void ChannelStripComponent::closePluginEditor()
             self->pluginEditorWindow.reset();
     });
 
-   #if JUCE_LINUX && DUSKSTUDIO_HAS_OOP_PLUGINS
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS
     if (pluginSlot.isRemote())
     {
-        // Tell the child to drop its toplevel so the X11 client window
-        // is fully unmapped before our XEmbedComponent's destructor
-        // runs (when the deferred reset above fires). Removed on the
-        // child side, the XEmbed reparent dance becomes a no-op and
-        // we avoid a stale Window reference in the foreign-client
-        // bookkeeping.
+        // Tell the child to dismiss the editor before our embed
+        // (XEmbedComponent on Linux / ForeignHwndEmbed on Windows)
+        // destructs. On Linux this lets the XEmbed reparent dance
+        // wind down cleanly; on Windows the ~ForeignHwndEmbed call
+        // SetParent's the HWND back to desktop, then hideRemoteEditor
+        // tells the OOP host to hide the window.
         pluginSlot.hideRemoteEditor();
-        // XEmbedComponent stays cached so reopen reuses it; only drop
-        // it on full unload.
     }
    #endif
 }
@@ -1911,8 +1936,10 @@ void ChannelStripComponent::dropPluginEditor()
     remoteEditorEmbed.reset();
    #endif
    #if DUSKSTUDIO_HAS_OOP_PLUGINS && ! JUCE_LINUX
-    // Win/Mac OOP: closePluginEditor above already fired hideRemoteEditor
-    // when the slot is remote; nothing further to drop in the parent.
+    // Windows: ~ForeignHwndEmbed (in PlatformWindowing_Windows.cpp)
+    // SetParent's the child HWND back to desktop so the OOP host can
+    // hide/destroy it cleanly. Mac: nullptr — no-op.
+    remoteForeignEmbed.reset();
    #endif
 }
 
@@ -2485,13 +2512,18 @@ void ChannelStripComponent::captureWritePoint (AutomationParam param, float deno
     // (the timer fires every 33 ms; if the fader hasn't moved, those
     // ticks are noise). Continuous params only — discrete state needs
     // every transition. Spec: delta + max-span pre-filter. 0.001
-    // normalized = 0.1% of the lane's storage range.
+    // normalized = 0.1% of the lane's storage range. The
+    // pt.timeSamples >= last.timeSamples guard prevents a backward
+    // playhead jump (loop wrap / transport rewind) from sliding under
+    // the short-span cutoff and skipping the future-tail truncation
+    // block below.
     if (isContinuousParam (param) && ! lane.points.empty())
     {
         constexpr float kDeltaEps = 0.001f;
         constexpr juce::int64 kMaxSpanSamples = 22050;   // ~500 ms @ 44.1 k
         const auto& last = lane.points.back();
         if (std::abs (pt.value - last.value) < kDeltaEps
+            && pt.timeSamples >= last.timeSamples
             && (pt.timeSamples - last.timeSamples) < kMaxSpanSamples)
             return;
     }
@@ -2564,10 +2596,9 @@ void ChannelStripComponent::setAutoMode (AutomationMode mode)
     // there's no safe ordering relative to the audio thread acquiring
     // the new mode (or to OTHER strips that are in Read). Thinning needs
     // AtomicSnapshot on each lane before it can fire on mode-flip; for
-    // now the capture-time pre-filter handles the worst bloat and
-    // handleWritePassComplete stays callable only from a future
-    // explicit "Optimize Automation" menu action (transport stopped +
-    // all modes set to Off).
+    // now the capture-time pre-filter handles the worst bloat and the
+    // safe RDP entry point is File ▸ Optimize automation, which gates
+    // on transport-stopped + every strip's mode set to Off.
     track.automationMode.store ((int) mode, std::memory_order_release);
 
     // Read mode disables every automated control (spec: "User cannot

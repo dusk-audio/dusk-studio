@@ -118,4 +118,23 @@ void requestFocusOnMainWaylandSurface();
 // Mac/Windows: no-op.
 void preferX11ForNextNativeWindow();
 void clearPreferX11ForNativeWindow();
+
+// Factory for a Component that adopts a foreign native window handle
+// (HWND on Windows, NSView on macOS, X11 Window on Linux) and embeds
+// it into the JUCE component hierarchy. Used by ChannelStripComponent's
+// OOP plugin-editor path to host the child process's editor window
+// inside the DAW UI instead of letting it float as a separate top-level.
+//
+// Linux  : returns nullptr — the Linux OOP editor path already uses
+//          juce::XEmbedComponent directly (better fit for the XEmbed
+//          protocol than a generic foreign-window wrapper).
+// Windows: returns a Component that SetParents the HWND on attach,
+//          strips its top-level styles (WS_POPUP / WS_CAPTION → WS_CHILD),
+//          and tracks SetWindowPos to the Component's bounds on resize.
+//          On destruction, detaches the HWND back to the desktop so the
+//          OOP host can cleanly destroy its window.
+// macOS  : returns nullptr today — cross-process NSView reparenting is
+//          its own research project; the Mac OOP editor stays floating.
+std::unique_ptr<juce::Component> createForeignNativeWindowEmbed (
+    std::uint64_t nativeHandle);
 } // namespace duskstudio::platform

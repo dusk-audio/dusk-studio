@@ -329,6 +329,13 @@ private:
     // when the slot is unloaded.
     std::unique_ptr<juce::XEmbedComponent> remoteEditorEmbed;
    #endif
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS && ! JUCE_LINUX
+    // Windows OOP editor embedding via SetParent. macOS keeps this
+    // null and falls through to the floating-window path. Lifetime
+    // tied to pluginEditorWindow — ~ForeignHwndEmbed re-parents the
+    // child HWND back to desktop so the OOP host can hide it cleanly.
+    std::unique_ptr<juce::Component> remoteForeignEmbed;
+   #endif
 
     bool isPluginEditorOpen() const noexcept;
 
