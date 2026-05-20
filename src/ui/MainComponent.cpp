@@ -2469,6 +2469,7 @@ enum MenuItemId
     kMenuFileMixdown  = 1010,
     kMenuFileBounce   = 1011,
     kMenuFileCleanOut = 1012,
+    kMenuFileOptimizeAutomation = 1013,
     kMenuFileQuit     = 1099,
     // Reserved range for template entries (one per SessionTemplate enum
     // value, indexed off this base). Stays well above the file-action IDs
@@ -2513,6 +2514,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelMenuIndex,
         menu.addItem (kMenuFileBounce,  "Bounce...");
         menu.addSeparator();
         menu.addItem (kMenuFileCleanOut, "Clean out unreferenced files...");
+        menu.addItem (kMenuFileOptimizeAutomation, "Optimize automation...");
         menu.addSeparator();
         menu.addItem (kMenuFileQuit, "Quit");
     }
@@ -2550,6 +2552,85 @@ void MainComponent::menuItemSelected (int menuItemID, int /*topLevelMenuIndex*/)
         case kMenuFileMixdown: doMixdown();             break;
         case kMenuFileBounce:  openBounceDialog();      break;
         case kMenuFileCleanOut: cleanOutUnreferencedFiles(); break;
+        case kMenuFileOptimizeAutomation:
+        {
+            // Safety contract from Session.h: handleWritePassComplete is
+            // NOT lock-free against audio-thread lane reads, so we only
+            // call it when no strip is in Read/Touch and the transport
+            // is stopped (no audio routing through evaluateLane). The
+            // dialog enforces this explicitly so a user who hasn't read
+            // the spec can't trigger a race.
+            const bool playing = engine.getTransport().isPlaying();
+            bool anyActive = false;
+            auto isActive = [] (int amode) noexcept
+            {
+                return amode == (int) AutomationMode::Read
+                    || amode == (int) AutomationMode::Write
+                    || amode == (int) AutomationMode::Touch;
+            };
+            for (int t = 0; t < Session::kNumTracks && ! anyActive; ++t)
+                if (isActive (session.track (t).automationMode.load (std::memory_order_relaxed)))
+                    anyActive = true;
+            for (int a = 0; a < Session::kNumAuxLanes && ! anyActive; ++a)
+                if (isActive (session.auxLane (a).params.automationMode.load (std::memory_order_relaxed)))
+                    anyActive = true;
+            if (! anyActive
+                && isActive (session.master().automationMode.load (std::memory_order_relaxed)))
+                anyActive = true;
+
+            if (playing || anyActive)
+            {
+                juce::AlertWindow::showAsync (
+                    juce::MessageBoxOptions()
+                        .withIconType (juce::MessageBoxIconType::WarningIcon)
+                        .withTitle ("Optimize automation")
+                        .withMessage (
+                            playing
+                              ? "Stop playback before optimising automation. "
+                                "The optimiser rewrites every lane's point "
+                                "data; running it while the audio thread "
+                                "may be reading the lanes is unsafe."
+                              : "Set every strip's automation mode to Off "
+                                "before optimising. The optimiser rewrites "
+                                "lane data; doing it while a strip is in "
+                                "Read or Touch can race the audio thread.")
+                        .withButton ("OK"),
+                    nullptr);
+                break;
+            }
+
+            // Count points before / after so the user sees what the
+            // optimiser actually did.
+            auto countPoints = [this]() noexcept
+            {
+                std::size_t total = 0;
+                for (int t = 0; t < Session::kNumTracks; ++t)
+                    for (int p = 0; p < kNumAutomationParams; ++p)
+                        total += session.track (t).automationLanes[(size_t) p].points.size();
+                for (int a = 0; a < Session::kNumAuxLanes; ++a)
+                    for (int p = 0; p < kNumAutomationParams; ++p)
+                        total += session.auxLane (a).params.automationLanes[(size_t) p].points.size();
+                for (int p = 0; p < kNumAutomationParams; ++p)
+                    total += session.master().automationLanes[(size_t) p].points.size();
+                return total;
+            };
+            const auto before = countPoints();
+            handleWritePassComplete (session);
+            const auto after = countPoints();
+
+            juce::AlertWindow::showAsync (
+                juce::MessageBoxOptions()
+                    .withIconType (juce::MessageBoxIconType::InfoIcon)
+                    .withTitle ("Optimize automation")
+                    .withMessage (
+                        juce::String ("Thinned ")
+                          + juce::String ((juce::int64) before)
+                          + " automation points down to "
+                          + juce::String ((juce::int64) after) + ".")
+                    .withButton ("OK"),
+                nullptr);
+            break;
+        }
         case kMenuFileQuit:
             if (auto* app = juce::JUCEApplicationBase::getInstance())
                 app->systemRequestedQuit();
