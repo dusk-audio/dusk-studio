@@ -3314,19 +3314,25 @@ int PianoRollComponent::transportPlayheadX (juce::Rectangle<int> gridArea) const
 void PianoRollComponent::paintTransportPlayhead (juce::Graphics& g,
                                                     juce::Rectangle<int> gridArea)
 {
-    // Use the X that timerCallback queued the invalidation against,
-    // not a fresh live transport read. The audio thread may have
-    // advanced the playhead between timer queue and paint dispatch;
-    // a live re-read here would put the painted line outside the
-    // dirty band that was invalidated, JUCE's clip would eat
-    // pixels and the playhead would render torn / segmented /
-    // intermittently invisible (the "tape head looks jagged" bug).
-    // Initial-paint fallback: if timerCallback hasn't run yet
-    // (lastPlayheadX == -1), compute live so the very first frame
-    // shows the line.
-    int x = lastPlayheadX;
-    if (x < 0)
-        x = transportPlayheadX (gridArea);
+    // Cache-vs-live decision by clip width:
+    //   Narrow clip (timerCallback's partial-band invalidation): use
+    //     lastPlayheadX so the painted line lands inside the dirty
+    //     band that was queued for it. Without this the audio
+    //     thread's between-tick advance would put a live X outside
+    //     the band, JUCE's clip would eat its pixels and the line
+    //     renders torn / partial.
+    //   Wide clip (zoom, scroll, region change, parent resize,
+    //     initial paint): use a fresh live read because the cache is
+    //     in OLD pixel coords for any coord-space mutator that
+    //     repainted the whole grid; the live read is correct for
+    //     the current frame and the wide dirty rect cleanly
+    //     contains it.
+    constexpr int kNarrowBandWidth = 64;
+    const int clipW = g.getClipBounds().getWidth();
+    const bool useCache = clipW > 0
+                            && clipW < kNarrowBandWidth
+                            && lastPlayheadX >= 0;
+    const int x = useCache ? lastPlayheadX : transportPlayheadX (gridArea);
     if (x < 0) return;
     juce::Graphics::ScopedSaveState saved (g);
     g.reduceClipRegion (gridArea);
