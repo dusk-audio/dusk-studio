@@ -1,4 +1,5 @@
 #include "MasterStripComponent.h"
+#include "../engine/AudioEngine.h"
 #include "DimOverlay.h"
 #include "DuskStudioLookAndFeel.h"
 #include "TapeMachineModalEditor.h"
@@ -41,8 +42,9 @@ void styleSmallLabel (juce::Label& lbl, const juce::String& text, juce::Colour c
 
 MasterStripComponent::MasterStripComponent (MasterBusParams& p,
                                               Session& s,
+                                              AudioEngine& e,
                                               ::TapeMachineAudioProcessor* tapeProc)
-    : params (p), session (s), tapeProcessorPtr (tapeProc)
+    : params (p), session (s), engine (e), tapeProcessorPtr (tapeProc)
 {
     nameLabel.setText ("MASTER", juce::dontSendNotification);
     nameLabel.setJustificationType (juce::Justification::centred);
@@ -201,8 +203,29 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     {
         params.faderDb.store ((float) faderSlider.getValue(), std::memory_order_relaxed);
     };
+    faderSlider.onDragStart = [this]
+    {
+        params.faderTouched.store (true, std::memory_order_release);
+    };
+    faderSlider.onDragEnd = [this]
+    {
+        params.faderTouched.store (false, std::memory_order_release);
+    };
     faderSlider.addMouseListener (this, false);
     addAndMakeVisible (faderSlider);
+
+    // Automation mode button — cycles Off / R / W / T via popup.
+    autoModeButton.setTooltip ("Master automation: Off / Read / Write / Touch");
+    autoModeButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff222226));
+    autoModeButton.onClick = [this] { showAutoModeMenu(); };
+    {
+        const int amode = params.automationMode.load (std::memory_order_relaxed);
+        autoModeButton.setButtonText (amode == (int) AutomationMode::Off   ? "Off"
+                                       : amode == (int) AutomationMode::Read  ? "R"
+                                       : amode == (int) AutomationMode::Write ? "W"
+                                                                              : "T");
+    }
+    addAndMakeVisible (autoModeButton);
 
     // Output meter readouts (peak dBFS + GR dB).
     auto styleReadout = [] (juce::Label& lbl, juce::Colour col)
@@ -292,6 +315,92 @@ void MasterStripComponent::timerCallback()
         repaint (meterArea);
     if (! grMeterArea.isEmpty())
         repaint (grMeterArea.expanded (2, 10));   // include "GR" caption
+
+    // Motor-fader animate + Write/Touch capture — mirrors the per-channel
+    // and per-aux pattern. Master only has one automatable param.
+    {
+        const int amode = params.automationMode.load (std::memory_order_relaxed);
+        const bool isRead  = amode == (int) AutomationMode::Read;
+        const bool isWrite = amode == (int) AutomationMode::Write;
+        const bool isTouch = amode == (int) AutomationMode::Touch;
+        const bool playing = engine.getTransport().isPlaying();
+
+        const float live    = params.liveFaderDb.load (std::memory_order_relaxed);
+        const bool  touched = params.faderTouched.load (std::memory_order_relaxed);
+        const bool  animating = isRead || (isTouch && ! touched);
+        if (animating && std::abs (live - displayedLiveFaderDb) > 0.05f)
+        {
+            displayedLiveFaderDb = live;
+            faderSlider.setValue (live, juce::dontSendNotification);
+        }
+        else if (! animating)
+        {
+            displayedLiveFaderDb = live;
+        }
+
+        const bool capturing = playing && (isWrite || (isTouch && touched));
+        if (capturing)
+            captureFaderWritePoint (params.faderDb.load (std::memory_order_relaxed));
+    }
+}
+
+void MasterStripComponent::showAutoModeMenu()
+{
+    juce::PopupMenu m;
+    const int cur = params.automationMode.load (std::memory_order_relaxed);
+    auto add = [&] (int v, const char* label)
+    {
+        m.addItem (v + 1, label, true, cur == v);
+    };
+    add ((int) AutomationMode::Off,   "Off");
+    add ((int) AutomationMode::Read,  "Read");
+    add ((int) AutomationMode::Write, "Write");
+    add ((int) AutomationMode::Touch, "Touch");
+    m.showMenuAsync (juce::PopupMenu::Options{}.withTargetComponent (&autoModeButton),
+                       [this] (int picked)
+    {
+        if (picked <= 0) return;
+        setAutoMode ((AutomationMode) (picked - 1));
+    });
+}
+
+void MasterStripComponent::setAutoMode (AutomationMode m)
+{
+    params.automationMode.store ((int) m, std::memory_order_release);
+    autoModeButton.setButtonText (m == AutomationMode::Off   ? "Off"
+                                   : m == AutomationMode::Read  ? "R"
+                                   : m == AutomationMode::Write ? "W"
+                                                                : "T");
+}
+
+void MasterStripComponent::captureFaderWritePoint (float denormDb)
+{
+    const float lo = ChannelStripParams::kFaderMinDb;
+    const float hi = ChannelStripParams::kFaderMaxDb;
+    const float v  = juce::jlimit (0.0f, 1.0f, (denormDb - lo) / (hi - lo));
+
+    auto& lane = params.automationLanes[(size_t) AutomationParam::FaderDb];
+    AutomationPoint pt;
+    pt.timeSamples   = engine.getTransport().getPlayhead();
+    pt.value         = v;
+    pt.recordedAtBPM = session.tempoBpm.load (std::memory_order_relaxed);
+
+    if (! lane.points.empty() && lane.points.back().timeSamples >= pt.timeSamples)
+    {
+        if (lane.points.back().timeSamples > pt.timeSamples)
+        {
+            auto cutoff = std::lower_bound (lane.points.begin(), lane.points.end(),
+                pt.timeSamples,
+                [] (const AutomationPoint& a, juce::int64 t) { return a.timeSamples < t; });
+            lane.points.erase (cutoff, lane.points.end());
+        }
+        if (! lane.points.empty() && lane.points.back().timeSamples == pt.timeSamples)
+        {
+            lane.points.back() = pt;
+            return;
+        }
+    }
+    lane.points.push_back (pt);
 }
 
 void MasterStripComponent::paint (juce::Graphics& g)
@@ -465,7 +574,13 @@ void MasterStripComponent::resized()
 {
     auto area = getLocalBounds().reduced (4);
     area.removeFromTop (6);
-    nameLabel.setBounds (area.removeFromTop (22));
+    {
+        auto headerRow = area.removeFromTop (22);
+        // 40 px slot at top-right for the automation mode button.
+        autoModeButton.setBounds (headerRow.removeFromRight (40));
+        headerRow.removeFromRight (4);
+        nameLabel.setBounds (headerRow);
+    }
     area.removeFromTop (6);
 
     // Analog VU meter at the top - same proportions as the bus strips so

@@ -26,6 +26,7 @@ ConsoleView::ConsoleView (Session& session, AudioEngine& engine) : sessionRef (s
     masterStrip = std::make_unique<MasterStripComponent> (
         session.master(),
         session,
+        engine,
 #if DUSKSTUDIO_HAS_DUSK_DSP
         &engine.getMasterBus().getTapeProcessor());
 #else

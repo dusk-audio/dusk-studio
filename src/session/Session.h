@@ -811,6 +811,27 @@ struct AuxLaneParams
     std::atomic<float> returnLevelDb { 0.0f };   // -inf via kFaderInfThreshDb sentinel
     std::atomic<bool>  mute           { false };
 
+    // Live return-level + mute AFTER automation routing. Same pattern as
+    // ChannelStripParams::liveFaderDb / liveMute: the audio thread reads
+    // THESE (not returnLevelDb / mute) so the Off/Read/Write/Touch
+    // hand-off happens in the engine's per-block routing block, with
+    // AuxLaneStrip staying lane-agnostic. `mutable` so write-by-DSP
+    // semantics still work through a const AuxLaneParams*.
+    mutable std::atomic<float> liveReturnLevelDb { 0.0f };
+    mutable std::atomic<bool>  liveMute          { false };
+
+    // Touch-mode latch: true while the user has the fader slider grabbed.
+    // Audio thread reads the lane normally except when faderTouched is
+    // true, in which case it falls through to the manual returnLevelDb
+    // and the UI captures into the lane during the grab.
+    std::atomic<bool> faderTouched { false };
+
+    // Per-aux automation engagement + lanes. Same shape as ChannelStripParams
+    // (kNumAutomationParams slots) for code reuse, but only FaderDb + Mute
+    // get populated — pan, solo, and aux sends aren't aux-bus concepts.
+    std::atomic<int> automationMode { 0 };  // AutomationMode cast to int
+    std::array<AutomationLane, kNumAutomationParams> automationLanes {};
+
     // Stereo output meters - mutable for write-by-DSP semantics.
     mutable std::atomic<float> meterPostL { -100.0f };
     mutable std::atomic<float> meterPostR { -100.0f };
@@ -849,6 +870,20 @@ struct AuxLane
 struct MasterBusParams
 {
     std::atomic<float> faderDb     { 0.0f };
+
+    // Live master fader AFTER automation routing. MasterBus DSP reads
+    // THIS (not faderDb) so the Off/Read/Write/Touch hand-off lives in
+    // the engine. `mutable` keeps the write-by-DSP path clean.
+    mutable std::atomic<float> liveFaderDb { 0.0f };
+
+    // Touch-mode latch on the master fader slider.
+    std::atomic<bool> faderTouched { false };
+
+    // Master-bus automation engagement + lanes. Spec only lists the
+    // master fader as automatable; the lanes array reuses the per-track
+    // shape for symmetry but only FaderDb is meaningful here.
+    std::atomic<int> automationMode { 0 };  // AutomationMode cast to int
+    std::array<AutomationLane, kNumAutomationParams> automationLanes {};
 
     // Tape on/off + HQ. Internal saturation drive / bias / formulation are
     // fixed in the DSP; the user toggles only the engagement and the HQ

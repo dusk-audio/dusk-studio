@@ -923,6 +923,32 @@ juce::String SessionSerializer::serialize (const Session& s)
             slots.add (juce::var (slot));
         }
         obj->setProperty ("plugin_slots", slots);
+
+        // Automation: aux fader + mute lanes. Same shape as per-track.
+        obj->setProperty ("automation_mode",
+                           lane.params.automationMode.load (std::memory_order_relaxed));
+        juce::DynamicObject::Ptr autoObj = new juce::DynamicObject();
+        bool anyLane = false;
+        for (int p = 0; p < kNumAutomationParams; ++p)
+        {
+            const auto& al = lane.params.automationLanes[(size_t) p];
+            if (al.points.empty()) continue;
+            juce::Array<juce::var> pts;
+            pts.ensureStorageAllocated ((int) al.points.size());
+            for (const auto& pt : al.points)
+            {
+                auto* pObj = new juce::DynamicObject();
+                pObj->setProperty ("t",   (juce::int64) pt.timeSamples);
+                pObj->setProperty ("v",   (double) pt.value);
+                pObj->setProperty ("bpm", (double) pt.recordedAtBPM);
+                pts.add (juce::var (pObj));
+            }
+            autoObj->setProperty (automationParamKey ((AutomationParam) p), pts);
+            anyLane = true;
+        }
+        if (anyLane)
+            obj->setProperty ("automation", juce::var (autoObj.get()));
+
         auxLanesArr.add (juce::var (obj));
     }
     root->setProperty ("aux_lanes", auxLanesArr);
@@ -946,6 +972,35 @@ juce::String SessionSerializer::serialize (const Session& s)
     // sessions don't gain a noisy field they don't need.
     if (s.master().tapeStateBase64.isNotEmpty())
         master->setProperty ("tape_state", s.master().tapeStateBase64);
+
+    // Master automation: only FaderDb is automatable per spec. Reuses
+    // the same shape as track / aux serialization for symmetry.
+    master->setProperty ("automation_mode",
+                          s.master().automationMode.load (std::memory_order_relaxed));
+    {
+        juce::DynamicObject::Ptr autoObj = new juce::DynamicObject();
+        bool anyLane = false;
+        for (int p = 0; p < kNumAutomationParams; ++p)
+        {
+            const auto& al = s.master().automationLanes[(size_t) p];
+            if (al.points.empty()) continue;
+            juce::Array<juce::var> pts;
+            pts.ensureStorageAllocated ((int) al.points.size());
+            for (const auto& pt : al.points)
+            {
+                auto* pObj = new juce::DynamicObject();
+                pObj->setProperty ("t",   (juce::int64) pt.timeSamples);
+                pObj->setProperty ("v",   (double) pt.value);
+                pObj->setProperty ("bpm", (double) pt.recordedAtBPM);
+                pts.add (juce::var (pObj));
+            }
+            autoObj->setProperty (automationParamKey ((AutomationParam) p), pts);
+            anyLane = true;
+        }
+        if (anyLane)
+            master->setProperty ("automation", juce::var (autoObj.get()));
+    }
+
     root->setProperty ("master", juce::var (master));
 
     // Mastering chain - separate from the master strip so its EQ/comp/limiter
@@ -1157,6 +1212,34 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                     }
                 }
             }
+
+            if (v.hasProperty ("automation_mode"))
+                lane.params.automationMode.store ((int) v["automation_mode"],
+                                                   std::memory_order_relaxed);
+            for (auto& al : lane.params.automationLanes)
+                al.points.clear();
+            if (auto autoObj = v["automation"]; autoObj.isObject())
+            {
+                for (int p = 0; p < kNumAutomationParams; ++p)
+                {
+                    const char* key = automationParamKey ((AutomationParam) p);
+                    if (! autoObj.hasProperty (key)) continue;
+                    auto pts = autoObj[key];
+                    if (! pts.isArray()) continue;
+                    auto& al = lane.params.automationLanes[(size_t) p];
+                    al.points.reserve ((size_t) pts.size());
+                    for (int k = 0; k < pts.size(); ++k)
+                    {
+                        auto pv = pts[k];
+                        if (! pv.isObject()) continue;
+                        AutomationPoint pt;
+                        pt.timeSamples   = (juce::int64) pv["t"];
+                        pt.value         = (float) (double) pv["v"];
+                        pt.recordedAtBPM = (float) (double) pv["bpm"];
+                        al.points.push_back (pt);
+                    }
+                }
+            }
         }
     }
     if (auto markersArr = root["markers"]; markersArr.isArray())
@@ -1179,6 +1262,33 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         if (master.hasProperty ("tape_enabled")) s.master().tapeEnabled.store ((bool) master["tape_enabled"]);
         if (master.hasProperty ("tape_hq"))      s.master().tapeHQ.store ((bool) master["tape_hq"]);
         if (master.hasProperty ("tape_state"))   s.master().tapeStateBase64 = master["tape_state"].toString();
+        if (master.hasProperty ("automation_mode"))
+            s.master().automationMode.store ((int) master["automation_mode"],
+                                              std::memory_order_relaxed);
+        for (auto& al : s.master().automationLanes)
+            al.points.clear();
+        if (auto autoObj = master["automation"]; autoObj.isObject())
+        {
+            for (int p = 0; p < kNumAutomationParams; ++p)
+            {
+                const char* key = automationParamKey ((AutomationParam) p);
+                if (! autoObj.hasProperty (key)) continue;
+                auto pts = autoObj[key];
+                if (! pts.isArray()) continue;
+                auto& al = s.master().automationLanes[(size_t) p];
+                al.points.reserve ((size_t) pts.size());
+                for (int k = 0; k < pts.size(); ++k)
+                {
+                    auto pv = pts[k];
+                    if (! pv.isObject()) continue;
+                    AutomationPoint pt;
+                    pt.timeSamples   = (juce::int64) pv["t"];
+                    pt.value         = (float) (double) pv["v"];
+                    pt.recordedAtBPM = (float) (double) pv["bpm"];
+                    al.points.push_back (pt);
+                }
+            }
+        }
     }
     if (auto mast = root["mastering"]; mast.isObject())
     {

@@ -210,6 +210,18 @@ AuxLaneComponent::AuxLaneComponent (AuxLane& l, AuxLaneStrip& s, int idx,
         lane.params.returnLevelDb.store ((float) returnFader.getValue(),
                                            std::memory_order_relaxed);
     };
+    // Touch latch: faderTouched gates the audio-thread routing in
+    // Touch mode (manual wins while grabbed, lane wins when released).
+    // Also handles same-slot Write capture if the user grabs the
+    // fader and rides it while in Write mode.
+    returnFader.onDragStart = [this]
+    {
+        lane.params.faderTouched.store (true, std::memory_order_release);
+    };
+    returnFader.onDragEnd = [this]
+    {
+        lane.params.faderTouched.store (false, std::memory_order_release);
+    };
     // Right-click on fader or mute → MIDI Learn menu (mouseDown handler
     // checks eventComponent).
     returnFader.addMouseListener (this, false);
@@ -222,10 +234,33 @@ AuxLaneComponent::AuxLaneComponent (AuxLane& l, AuxLaneStrip& s, int idx,
     muteButton.setTooltip ("Mute this AUX return lane");
     muteButton.onClick = [this]
     {
-        lane.params.mute.store (muteButton.getToggleState(), std::memory_order_relaxed);
+        const bool newState = muteButton.getToggleState();
+        lane.params.mute.store (newState, std::memory_order_relaxed);
+
+        // If we're playing in Write or Touch, drop a discrete mute point
+        // at the playhead so the user-toggled state lands on the lane.
+        const int amode = lane.params.automationMode.load (std::memory_order_relaxed);
+        const bool playing = engine.getTransport().isPlaying();
+        if (playing && (amode == (int) AutomationMode::Write
+                        || amode == (int) AutomationMode::Touch))
+            captureWritePoint (AutomationParam::Mute, newState ? 1.0f : 0.0f);
     };
     muteButton.addMouseListener (this, false);
     addAndMakeVisible (muteButton);
+
+    // Automation mode button: cycles Off / R / W / T via popup menu.
+    // Sits below the mute button on the strip.
+    autoModeButton.setTooltip ("Automation mode: Off / Read / Write / Touch");
+    autoModeButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff222226));
+    autoModeButton.onClick = [this] { showAutoModeMenu(); };
+    {
+        const int amode = lane.params.automationMode.load (std::memory_order_relaxed);
+        autoModeButton.setButtonText (amode == (int) AutomationMode::Off   ? "Off"
+                                       : amode == (int) AutomationMode::Read  ? "R"
+                                       : amode == (int) AutomationMode::Write ? "W"
+                                                                              : "T");
+    }
+    addAndMakeVisible (autoModeButton);
 
     stripMeter = std::make_unique<StripMeter> (lane.params);
     addAndMakeVisible (stripMeter.get());
@@ -311,6 +346,126 @@ void AuxLaneComponent::timerCallback()
         refreshSlotControls (i);
     if (stripMeter != nullptr) stripMeter->repaint();
     if (sendPanel  != nullptr) sendPanel->repaint();
+
+    // Motor-fader animate + Write/Touch capture, mirroring the per-
+    // channel pattern in ChannelStripComponent::timerCallback.
+    const int amode = lane.params.automationMode.load (std::memory_order_relaxed);
+    const bool isRead  = amode == (int) AutomationMode::Read;
+    const bool isWrite = amode == (int) AutomationMode::Write;
+    const bool isTouch = amode == (int) AutomationMode::Touch;
+    const bool playing = engine.getTransport().isPlaying();
+
+    {
+        const float live    = lane.params.liveReturnLevelDb.load (std::memory_order_relaxed);
+        const bool  touched = lane.params.faderTouched.load (std::memory_order_relaxed);
+        const bool  animating = isRead || (isTouch && ! touched);
+        if (animating && std::abs (live - displayedLiveReturnLevelDb) > 0.05f)
+        {
+            displayedLiveReturnLevelDb = live;
+            returnFader.setValue (live, juce::dontSendNotification);
+        }
+        else if (! animating)
+        {
+            displayedLiveReturnLevelDb = live;
+        }
+
+        const bool capturing = playing && (isWrite || (isTouch && touched));
+        if (capturing)
+            captureWritePoint (AutomationParam::FaderDb,
+                                lane.params.returnLevelDb.load (std::memory_order_relaxed));
+    }
+
+    // Mute visual sync — when reading the lane, mirror the live state
+    // onto the toggle so the user sees the automated value.
+    {
+        const bool live = lane.params.liveMute.load (std::memory_order_relaxed);
+        const bool readsLane = isRead || isTouch;
+        if (readsLane && muteButton.getToggleState() != live)
+            muteButton.setToggleState (live, juce::dontSendNotification);
+    }
+}
+
+void AuxLaneComponent::showAutoModeMenu()
+{
+    juce::PopupMenu m;
+    const int cur = lane.params.automationMode.load (std::memory_order_relaxed);
+    auto add = [&] (int v, const char* label)
+    {
+        m.addItem (v + 1, label, true, cur == v);
+    };
+    add ((int) AutomationMode::Off,   "Off");
+    add ((int) AutomationMode::Read,  "Read");
+    add ((int) AutomationMode::Write, "Write");
+    add ((int) AutomationMode::Touch, "Touch");
+    m.showMenuAsync (juce::PopupMenu::Options{}.withTargetComponent (&autoModeButton),
+                       [this] (int picked)
+    {
+        if (picked <= 0) return;
+        setAutoMode ((AutomationMode) (picked - 1));
+    });
+}
+
+void AuxLaneComponent::setAutoMode (AutomationMode m)
+{
+    lane.params.automationMode.store ((int) m, std::memory_order_release);
+    autoModeButton.setButtonText (m == AutomationMode::Off   ? "Off"
+                                   : m == AutomationMode::Read  ? "R"
+                                   : m == AutomationMode::Write ? "W"
+                                                                : "T");
+}
+
+void AuxLaneComponent::captureWritePoint (AutomationParam param, float denormValue)
+{
+    auto normalize = [] (AutomationParam p, float v) -> float
+    {
+        switch (p)
+        {
+            case AutomationParam::FaderDb:
+            {
+                const float lo = ChannelStripParams::kFaderMinDb;
+                const float hi = ChannelStripParams::kFaderMaxDb;
+                return juce::jlimit (0.0f, 1.0f, (v - lo) / (hi - lo));
+            }
+            case AutomationParam::Mute:
+                return v >= 0.5f ? 1.0f : 0.0f;
+            // The other AutomationParam values (Pan, Solo, AuxSend*) are
+            // valid in the enum but don't apply to aux lanes. captureWritePoint
+            // is never called for them; the explicit cases silence
+            // -Wswitch-enum.
+            case AutomationParam::Pan:
+            case AutomationParam::Solo:
+            case AutomationParam::AuxSend1:
+            case AutomationParam::AuxSend2:
+            case AutomationParam::AuxSend3:
+            case AutomationParam::AuxSend4:
+            case AutomationParam::kCount:
+                break;
+        }
+        return 0.0f;
+    };
+
+    auto& laneRef = lane.params.automationLanes[(size_t) param];
+    AutomationPoint pt;
+    pt.timeSamples   = engine.getTransport().getPlayhead();
+    pt.value         = normalize (param, denormValue);
+    pt.recordedAtBPM = engine.getSession().tempoBpm.load (std::memory_order_relaxed);
+
+    if (! laneRef.points.empty() && laneRef.points.back().timeSamples >= pt.timeSamples)
+    {
+        if (laneRef.points.back().timeSamples > pt.timeSamples)
+        {
+            auto cutoff = std::lower_bound (laneRef.points.begin(), laneRef.points.end(),
+                pt.timeSamples,
+                [] (const AutomationPoint& a, juce::int64 t) { return a.timeSamples < t; });
+            laneRef.points.erase (cutoff, laneRef.points.end());
+        }
+        if (! laneRef.points.empty() && laneRef.points.back().timeSamples == pt.timeSamples)
+        {
+            laneRef.points.back() = pt;
+            return;
+        }
+    }
+    laneRef.points.push_back (pt);
 }
 
 void AuxLaneComponent::refreshSlotControls (int i)
@@ -619,7 +774,8 @@ void AuxLaneComponent::paint (juce::Graphics& g)
 
 void AuxLaneComponent::resized()
 {
-    // Left column: header row (name + M) + vertical return fader + meter.
+    // Left column: header row (name + M) + auto-mode row + vertical
+    // return fader + meter.
     auto stripCol = getStripArea().reduced (6);
     stripCol.removeFromTop (6);
     {
@@ -628,7 +784,11 @@ void AuxLaneComponent::resized()
         headerRow.removeFromRight (4);
         nameLabel.setBounds (headerRow);
     }
-    stripCol.removeFromTop (8);
+    {
+        auto autoRow = stripCol.removeFromTop (18);
+        autoModeButton.setBounds (autoRow.removeFromRight (44));
+    }
+    stripCol.removeFromTop (6);
 
     // Fader on the left of the column body, meter on the right.
     auto faderArea = stripCol.removeFromLeft (stripCol.getWidth() - 22);

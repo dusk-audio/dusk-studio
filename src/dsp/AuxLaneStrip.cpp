@@ -36,7 +36,7 @@ void AuxLaneStrip::bindHardwareInsert (int slotIdx, const HardwareInsertParams& 
 void AuxLaneStrip::updateGainTarget() noexcept
 {
     if (paramsRef == nullptr) return;
-    const float db = paramsRef->returnLevelDb.load (std::memory_order_relaxed);
+    const float db = paramsRef->liveReturnLevelDb.load (std::memory_order_relaxed);
     // Same -inf-via-sentinel pattern as the channel strip's fader: anything
     // at or below the floor hard-mutes (avoids feeding reverb tails through
     // an inaudible-but-nonzero gain).
@@ -65,8 +65,9 @@ void AuxLaneStrip::processStereoBlock (float* L, float* R, int numSamples,
     const int safeSamples = juce::jmin (numSamples, (int) insertScratchL.size());
 
     // Mute path: clear in-place so the engine's accumulator into master
-    // sees silence (the lane's buffer is reused across blocks).
-    if (paramsRef->mute.load (std::memory_order_relaxed))
+    // sees silence (the lane's buffer is reused across blocks). Reads
+    // liveMute (post-automation) so automated mutes also drop the lane.
+    if (paramsRef->liveMute.load (std::memory_order_relaxed))
     {
         std::memset (L, 0, sizeof (float) * (size_t) numSamples);
         std::memset (R, 0, sizeof (float) * (size_t) numSamples);

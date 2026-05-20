@@ -2316,6 +2316,54 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                                             numSamples);
     }
 
+    // AUX automation routing. Mirror of the per-track per-block block
+    // up at the top: for each aux lane, drive liveReturnLevelDb /
+    // liveMute from the lane in Read or (Touch && !touched) mode,
+    // and pass the manual setpoint through otherwise. AuxLaneStrip
+    // reads the live atoms — see updateGainTarget / the mute check
+    // in AuxLaneStrip::processStereoBlock.
+    for (int a = 0; a < Session::kNumAuxLanes; ++a)
+    {
+        auto& aparams = session.auxLane (a).params;
+        const int amode = aparams.automationMode.load (std::memory_order_acquire);
+
+        // FaderDb (continuous).
+        {
+            const auto& lane = aparams.automationLanes[(size_t) AutomationParam::FaderDb];
+            const bool touched = aparams.faderTouched.load (std::memory_order_acquire);
+            const bool readsLane = amode == (int) AutomationMode::Read
+                                 || (amode == (int) AutomationMode::Touch && ! touched);
+            const float v = (readsLane && ! lane.points.empty())
+                ? evaluateLane (lane, blockStartSamples, AutomationParam::FaderDb)
+                : aparams.returnLevelDb.load (std::memory_order_relaxed);
+            aparams.liveReturnLevelDb.store (v, std::memory_order_relaxed);
+        }
+        // Mute (discrete).
+        {
+            const auto& lane = aparams.automationLanes[(size_t) AutomationParam::Mute];
+            const bool readsLane = amode == (int) AutomationMode::Read
+                                 || amode == (int) AutomationMode::Touch;
+            const bool effective = (readsLane && ! lane.points.empty())
+                ? (evaluateLane (lane, blockStartSamples, AutomationParam::Mute) >= 0.5f)
+                : aparams.mute.load (std::memory_order_relaxed);
+            aparams.liveMute.store (effective, std::memory_order_relaxed);
+        }
+    }
+
+    // Master automation routing — single FaderDb lane.
+    {
+        auto& mparams = session.master();
+        const int amode = mparams.automationMode.load (std::memory_order_acquire);
+        const auto& lane = mparams.automationLanes[(size_t) AutomationParam::FaderDb];
+        const bool touched = mparams.faderTouched.load (std::memory_order_acquire);
+        const bool readsLane = amode == (int) AutomationMode::Read
+                             || (amode == (int) AutomationMode::Touch && ! touched);
+        const float v = (readsLane && ! lane.points.empty())
+            ? evaluateLane (lane, blockStartSamples, AutomationParam::FaderDb)
+            : mparams.faderDb.load (std::memory_order_relaxed);
+        mparams.liveFaderDb.store (v, std::memory_order_relaxed);
+    }
+
     // AUX return lanes - process each lane's accumulated send buffer
     // through its plugin chain, then sum the wet output into master. Same
     // silence-skip optimisation as the bus pass above so idle lanes (no

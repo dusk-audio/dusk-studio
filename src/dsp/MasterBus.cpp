@@ -179,7 +179,10 @@ void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
 
     if (paramsRef != nullptr)
     {
-        const float faderDb = paramsRef->faderDb.load (std::memory_order_relaxed);
+        // Reads liveFaderDb (post-automation), not faderDb. Off mode
+        // leaves them equal; Read/Touch routes the lane value into
+        // liveFaderDb each block from AudioEngine's automation block.
+        const float faderDb = paramsRef->liveFaderDb.load (std::memory_order_relaxed);
         const float gain = (faderDb <= ChannelStripParams::kFaderInfThreshDb)
                            ? 0.0f
                            : juce::Decibels::decibelsToGain (faderDb);

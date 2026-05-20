@@ -12,6 +12,7 @@ class TapeMachineAudioProcessor;
 
 namespace duskstudio
 {
+class AudioEngine;
 class MasterStripComponent final : public juce::Component, private juce::Timer
 {
 public:
@@ -19,9 +20,11 @@ public:
     // instance owned by AudioEngine; the gear button uses it to spawn the
     // editor. Nullable when the donor DSP is disabled (DUSKSTUDIO_HAS_DUSK_DSP=0).
     // sessionRef is the live session, used by the right-click MIDI Learn
-    // menu on the master fader.
+    // menu on the master fader. engineRef is needed so the automation
+    // capture path can read the transport state (playhead + isPlaying).
     explicit MasterStripComponent (MasterBusParams& paramsRef,
                                    class Session& sessionRef,
+                                   AudioEngine& engineRef,
                                    ::TapeMachineAudioProcessor* tapeProcessor = nullptr);
     ~MasterStripComponent() override;
 
@@ -39,6 +42,7 @@ private:
 
     MasterBusParams& params;
     class Session& session;
+    AudioEngine& engine;
 
     juce::Label nameLabel;
 
@@ -68,6 +72,14 @@ private:
     juce::Component::SafePointer<juce::Component> tapeMachineModal;
 
     juce::Slider faderSlider { juce::Slider::LinearVertical, juce::Slider::TextBoxBelow };
+    juce::TextButton autoModeButton { "Off" };
+
+    // Throttled motor-fader display state.
+    float displayedLiveFaderDb { 0.0f };
+
+    void showAutoModeMenu();
+    void setAutoMode (AutomationMode m);
+    void captureFaderWritePoint (float denormDb);
 
     // Analog VU meter at the top of the strip - same look as the bus VUs
     // so the user reads master level the same way they read bus level.

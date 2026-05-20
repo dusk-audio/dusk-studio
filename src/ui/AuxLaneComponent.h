@@ -59,6 +59,10 @@ private:
     juce::Rectangle<int> getCenterArea() const noexcept;
     juce::Rectangle<int> getSendPanelArea() const noexcept;
 
+    void showAutoModeMenu();
+    void setAutoMode (AutomationMode m);
+    void captureWritePoint (AutomationParam param, float denormValue);
+
     AuxLane& lane;
     AuxLaneStrip& strip;
     AudioEngine& engine;
@@ -67,6 +71,12 @@ private:
     juce::Label   nameLabel;
     juce::Slider  returnFader { juce::Slider::LinearVertical, juce::Slider::TextBoxBelow };
     juce::TextButton muteButton { "M" };
+    juce::TextButton autoModeButton { "Off" };
+
+    // Throttle motor-fader setValue() to changes >0.05 dB so the slider
+    // doesn't churn every timer tick when the value is effectively
+    // stable. Mirrors the per-channel pattern.
+    float displayedLiveReturnLevelDb { 0.0f };
 
     // Repainted by timer for the return-fader meter bar.
     class StripMeter;
