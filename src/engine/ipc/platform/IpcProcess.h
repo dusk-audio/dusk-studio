@@ -2,6 +2,7 @@
 
 #include "IpcChannel.h"
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -56,8 +57,11 @@ public:
     bool isAlive() const noexcept { return alive; }
 
 private:
-    int  pid   { -1 };
-    bool alive { false };
+    // intptr_t (not int) so the Windows impl can pack a heap pointer
+    // to its WinProcessState block here without truncation on x64.
+    // Linux stores the pid_t value directly; -1 = not spawned.
+    std::intptr_t pid   { -1 };
+    bool          alive { false };
 };
 
 } // namespace duskstudio::ipc::platform

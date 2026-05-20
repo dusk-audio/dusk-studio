@@ -21,14 +21,15 @@ bool ChildProcess::spawn (const std::string& executablePath,
                               NativeHandle& childChannelEnd,
                               std::string& errorOut) noexcept
 {
-    pid = ::fork();
-    if (pid < 0)
+    const pid_t forked = ::fork();
+    if (forked < 0)
     {
         errorOut = std::string ("fork failed: ") + std::strerror (errno);
         return false;
     }
+    pid = (std::intptr_t) forked;
 
-    if (pid == 0)
+    if (forked == 0)
     {
         if (! moveHandleToFd (childChannelEnd, kChildInheritFd))
             ::_exit (127);
@@ -58,7 +59,7 @@ bool ChildProcess::pollExit() noexcept
 {
     if (pid <= 0) return false;
     int status = 0;
-    const pid_t r = ::waitpid (pid, &status, WNOHANG);
+    const pid_t r = ::waitpid ((pid_t) pid, &status, WNOHANG);
     if (r == 0) return false;
     if (r < 0)  return false;
     pid   = -1;
@@ -70,22 +71,22 @@ void ChildProcess::terminate (int graceMs) noexcept
 {
     if (pid <= 0) { alive = false; return; }
 
-    ::kill (pid, SIGTERM);
+    ::kill ((pid_t) pid, SIGTERM);
 
     const int slices = (graceMs > 0 ? graceMs : 1) / 10;
     for (int i = 0; i < slices; ++i)
     {
         int status = 0;
-        const pid_t r = ::waitpid (pid, &status, WNOHANG);
-        if (r == pid) { pid = -1; alive = false; return; }
+        const pid_t r = ::waitpid ((pid_t) pid, &status, WNOHANG);
+        if (r == (pid_t) pid) { pid = -1; alive = false; return; }
         ::usleep (10000);
     }
 
     if (pid > 0)
     {
-        ::kill (pid, SIGKILL);
+        ::kill ((pid_t) pid, SIGKILL);
         int status = 0;
-        ::waitpid (pid, &status, 0);
+        ::waitpid ((pid_t) pid, &status, 0);
         pid = -1;
         alive = false;
     }

@@ -70,9 +70,14 @@ bool sendControlReply (ipcp::NativeHandle& ch, std::uint32_t op,
 }
 
 // --- Phase 1 echo mode (kept for the IPC self-test) ----------------------
-int runIpcStub() noexcept
+int runIpcStub (int argc, const char* const* argv) noexcept
 {
-    ipcp::NativeHandle channel; channel.fd = ipcp::kChildInheritFd;
+    ipcp::NativeHandle channel = ipcp::locateInheritedChannel (argc, argv);
+    if (! ipcp::isValid (channel))
+    {
+        std::fprintf (stderr, "[dusk-studio-plugin-host] no inherited channel\n");
+        return 1;
+    }
 
     ipcp::NativeHandle shmHandle;
     if (! ipcp::recvHandle (channel, shmHandle))
@@ -517,10 +522,15 @@ void audioWorkerLoop (HostState& host) noexcept
     }
 }
 
-int runIpcHost() noexcept
+int runIpcHost (int argc, const char* const* argv) noexcept
 {
     HostState host;
-    host.channel.fd = ipcp::kChildInheritFd;
+    host.channel = ipcp::locateInheritedChannel (argc, argv);
+    if (! ipcp::isValid (host.channel))
+    {
+        std::fprintf (stderr, "no inherited channel\n");
+        return 1;
+    }
 
     ipcp::NativeHandle shmHandle;
     if (! ipcp::recvHandle (host.channel, shmHandle))
@@ -609,7 +619,9 @@ int runIpcHost() noexcept
 
 int main (int argc, char** argv)
 {
+   #if ! defined (_WIN32)
     signal (SIGPIPE, SIG_IGN);
+   #endif
 
     bool ipcStub = false;
     bool ipcHost = false;
@@ -619,8 +631,8 @@ int main (int argc, char** argv)
         if (std::strcmp (argv[i], "--ipc-host") == 0) ipcHost = true;
     }
 
-    if (ipcStub) return runIpcStub();
-    if (ipcHost) return runIpcHost();
+    if (ipcStub) return runIpcStub (argc, argv);
+    if (ipcHost) return runIpcHost (argc, argv);
 
     std::fprintf (stderr,
                   "dusk-studio-plugin-host: pass --ipc-stub or --ipc-host.\n");

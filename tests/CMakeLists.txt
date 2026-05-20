@@ -61,22 +61,36 @@ target_link_libraries(dusk-studio-tests PRIVATE
     juce::juce_recommended_config_flags
     juce::juce_recommended_warning_flags)
 
-# IPC round-trip regression — Linux only because the IPC uses
-# memfd_create + futex (no macOS / Windows port yet). The test spawns
-# the dusk-studio-plugin-host child in --ipc-stub mode, so we hard-depend on
-# that target being built first. DUSKSTUDIO_PLUGIN_HOST_PATH is resolved via
-# a generator expression so it points to wherever CMake actually puts
-# the binary in the current build configuration.
-if (UNIX AND NOT APPLE)
+# IPC round-trip regression — Linux + Windows. The test spawns the
+# dusk-studio-plugin-host child in --ipc-stub mode, so we hard-depend
+# on that target being built first. DUSKSTUDIO_PLUGIN_HOST_PATH is
+# resolved via a generator expression so it points to wherever CMake
+# actually puts the binary in the current build configuration. macOS
+# is pending — the abstraction in src/engine/ipc/platform/ doesn't
+# yet have *_Mac impls.
+if (UNIX AND NOT APPLE OR WIN32)
+    if (UNIX AND NOT APPLE)
+        set(_duskstudio_ipc_test_sources
+            ${CMAKE_SOURCE_DIR}/src/engine/ipc/platform/IpcChannel_Linux.cpp
+            ${CMAKE_SOURCE_DIR}/src/engine/ipc/platform/IpcProcess_Linux.cpp
+            ${CMAKE_SOURCE_DIR}/src/engine/ipc/platform/IpcShm_Linux.cpp
+            ${CMAKE_SOURCE_DIR}/src/engine/ipc/platform/IpcSync_Linux.cpp)
+    else()
+        set(_duskstudio_ipc_test_sources
+            ${CMAKE_SOURCE_DIR}/src/engine/ipc/platform/IpcChannel_Windows.cpp
+            ${CMAKE_SOURCE_DIR}/src/engine/ipc/platform/IpcProcess_Windows.cpp
+            ${CMAKE_SOURCE_DIR}/src/engine/ipc/platform/IpcShm_Windows.cpp
+            ${CMAKE_SOURCE_DIR}/src/engine/ipc/platform/IpcSync_Windows.cpp)
+    endif()
     target_sources(dusk-studio-tests PRIVATE
         ipc_stub_round_trip.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/ipc/RemotePluginConnection.cpp
-        ${CMAKE_SOURCE_DIR}/src/engine/ipc/platform/IpcChannel_Linux.cpp
-        ${CMAKE_SOURCE_DIR}/src/engine/ipc/platform/IpcProcess_Linux.cpp
-        ${CMAKE_SOURCE_DIR}/src/engine/ipc/platform/IpcShm_Linux.cpp
-        ${CMAKE_SOURCE_DIR}/src/engine/ipc/platform/IpcSync_Linux.cpp)
+        ${_duskstudio_ipc_test_sources})
     target_compile_definitions(dusk-studio-tests PRIVATE
         DUSKSTUDIO_PLUGIN_HOST_PATH="$<TARGET_FILE:dusk-studio-plugin-host>")
+    if (WIN32)
+        target_link_libraries(dusk-studio-tests PRIVATE synchronization)
+    endif()
     add_dependencies(dusk-studio-tests dusk-studio-plugin-host)
 endif()
 

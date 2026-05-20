@@ -456,8 +456,8 @@ private:
     // empty, so a save while offline doesn't wipe the user's data.
     // Cleared on successful load / unload. Message-thread only. Used
     // by the in-process restore path so lives OUTSIDE the OOP gate —
-    // DUSKSTUDIO_HAS_OOP_PLUGINS is Linux-only and the offline fallback
-    // is cross-platform.
+    // DUSKSTUDIO_HAS_OOP_PLUGINS isn't defined on macOS (no *_Mac IPC
+    // impls yet) and the offline fallback is cross-platform.
     juce::String offlineDescriptionXml;
     juce::String offlineStateBase64;
 };

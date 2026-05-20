@@ -355,51 +355,70 @@ if(UNIX AND NOT APPLE)
         src/engine/alsa/AlsaPerformanceTest.cpp)
     target_link_libraries(DuskStudio PRIVATE asound X11)
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_ALSA=1)
+endif()
 
-    # Out-of-process plugin hosting: shared IPC primitives + the
-    # parent-side connection class + a self-test driver. The
-    # dusk-studio-plugin-host child binary lives next to Dusk Studio in the build
-    # output. Linux-only at the build level: the platform-abstraction
-    # layer (src/engine/ipc/platform/) lets the same call sites work on
-    # macOS / Windows once the *_Mac.{cpp,mm} and *_Windows.cpp impls
-    # land, but for now only the *_Linux.cpp files exist.
-    # DUSKSTUDIO_HAS_OOP_PLUGINS gates every #if branch in PluginSlot that
-    # routes through RemotePluginConnection; defined only here so the
-    # rest of the codebase can rely on a single feature flag.
+# Out-of-process plugin hosting: shared IPC primitives + the parent-side
+# connection class + a self-test driver. The dusk-studio-plugin-host
+# child binary lives next to Dusk Studio in the build output.
+#
+# Supported platforms: Linux (memfd_create + futex + socketpair) and
+# Windows (CreateFileMapping + WaitOnAddress + named pipe). macOS is
+# pending — the abstraction in src/engine/ipc/platform/ is ready for
+# Mach ports + posix_spawn + shm_open but no *_Mac impls have landed.
+# DUSKSTUDIO_HAS_OOP_PLUGINS gates every #if branch in PluginSlot that
+# routes through RemotePluginConnection.
+if(UNIX AND NOT APPLE OR WIN32)
+    if(UNIX AND NOT APPLE)
+        set(_duskstudio_ipc_platform_sources
+            src/engine/ipc/platform/IpcChannel_Linux.cpp
+            src/engine/ipc/platform/IpcProcess_Linux.cpp
+            src/engine/ipc/platform/IpcShm_Linux.cpp
+            src/engine/ipc/platform/IpcSync_Linux.cpp)
+        set(_duskstudio_ipc_child_platform_sources
+            src/engine/ipc/platform/IpcChannel_Linux.cpp
+            src/engine/ipc/platform/IpcShm_Linux.cpp
+            src/engine/ipc/platform/IpcSync_Linux.cpp)
+    else()
+        set(_duskstudio_ipc_platform_sources
+            src/engine/ipc/platform/IpcChannel_Windows.cpp
+            src/engine/ipc/platform/IpcProcess_Windows.cpp
+            src/engine/ipc/platform/IpcShm_Windows.cpp
+            src/engine/ipc/platform/IpcSync_Windows.cpp)
+        set(_duskstudio_ipc_child_platform_sources
+            src/engine/ipc/platform/IpcChannel_Windows.cpp
+            src/engine/ipc/platform/IpcShm_Windows.cpp
+            src/engine/ipc/platform/IpcSync_Windows.cpp)
+    endif()
+
     target_sources(DuskStudio PRIVATE
         src/engine/ipc/RemotePluginConnection.cpp
         src/engine/ipc/IpcSelfTest.cpp
-        src/engine/ipc/platform/IpcChannel_Linux.cpp
-        src/engine/ipc/platform/IpcProcess_Linux.cpp
-        src/engine/ipc/platform/IpcShm_Linux.cpp
-        src/engine/ipc/platform/IpcSync_Linux.cpp)
+        ${_duskstudio_ipc_platform_sources})
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_OOP_PLUGINS=1)
+    if(WIN32)
+        # WaitOnAddress / WakeByAddressSingle live in synchronization.lib
+        # (re-exported by API-Set "api-ms-win-core-synch-l1-2-0.dll" on
+        # Win8+). Link explicitly on the parent so the IPC sync layer
+        # resolves; the child binary links it too below.
+        target_link_libraries(DuskStudio PRIVATE synchronization)
+    endif()
 
     # dusk-studio-plugin-host is a JUCE console app so it can pull in the
-    # AudioPluginFormatManager + AudioPluginInstance machinery and
-    # (in Phase 3) the gui_extra modules for plugin-editor embedding.
-    # juce_add_console_app gives us juce::JUCEApplicationBase plumbing
-    # without forcing a UI; we still set NEEDS_*_GRAPHICS / GUI for the
-    # editor module to compile. The host's main() runs JUCE's message
-    # loop on the main thread + a worker juce::Thread for the audio path.
+    # AudioPluginFormatManager + AudioPluginInstance machinery and the
+    # gui_extra modules for plugin-editor embedding.
     juce_add_console_app(dusk-studio-plugin-host
         PRODUCT_NAME "dusk-studio-plugin-host"
         COMPANY_NAME "Marc Korte"
         BUNDLE_ID    "audio.dusk.studio.pluginhost")
     target_sources(dusk-studio-plugin-host PRIVATE
         src/engine/ipc/PluginHostMain.cpp
-        src/engine/ipc/platform/IpcChannel_Linux.cpp
-        src/engine/ipc/platform/IpcShm_Linux.cpp
-        src/engine/ipc/platform/IpcSync_Linux.cpp)
+        ${_duskstudio_ipc_child_platform_sources})
     target_compile_features (dusk-studio-plugin-host PRIVATE cxx_std_17)
     target_compile_definitions (dusk-studio-plugin-host PRIVATE
         JUCE_PLUGINHOST_VST3=1
         JUCE_PLUGINHOST_LV2=1
         JUCE_PLUGINHOST_AU=0
         $<$<BOOL:${DUSKSTUDIO_JUCE_HAS_FREE_ADD_FORMATS}>:DUSKSTUDIO_JUCE_HAS_FREE_ADD_FORMATS=1>
-        # Stop juce_audio_processors from generating JuceHeader.h-style
-        # stubs and Projucer-only metadata - we drive everything from
-        # CMake.
         JUCE_DONT_DECLARE_PROJECTINFO=1
         JUCE_USE_CURL=0
         JUCE_WEB_BROWSER=0)
@@ -409,17 +428,13 @@ if(UNIX AND NOT APPLE)
         juce::juce_audio_basics
         juce::juce_events
         juce::juce_core
-        # Phase 4 editor embedding: createEditorIfNeeded returns a
-        # juce::AudioProcessorEditor (which derives from Component);
-        # hosting it in a borderless DocumentWindow to expose its native
-        # X11 Window ID over IPC needs gui_basics + graphics. Linked
-        # explicitly rather than relying on transitive resolution from
-        # audio_processors so an upstream JUCE refactor doesn't silently
-        # drop them.
         juce::juce_gui_basics
         juce::juce_graphics
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags)
+    if(WIN32)
+        target_link_libraries(dusk-studio-plugin-host PRIVATE synchronization)
+    endif()
     target_include_directories(dusk-studio-plugin-host PRIVATE src)
     set_target_properties(dusk-studio-plugin-host PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "$<TARGET_FILE_DIR:DuskStudio>")

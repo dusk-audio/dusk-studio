@@ -31,6 +31,13 @@ bool createChannelPair (ChannelPair& out, std::string& errorOut) noexcept
     return true;
 }
 
+NativeHandle locateInheritedChannel (int, const char* const*) noexcept
+{
+    NativeHandle h;
+    h.fd = kChildInheritFd;
+    return h;
+}
+
 bool moveHandleToFd (NativeHandle& h, int targetFd) noexcept
 {
     if (h.fd < 0) return false;

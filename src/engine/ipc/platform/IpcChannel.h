@@ -24,14 +24,26 @@ namespace duskstudio::ipc::platform
 // Opaque per-platform handle. Public-by-layout so the impl files can
 // construct it directly; callers go through the free functions below.
 //
-// Linux: file descriptor. Windows will add a `void* h = nullptr;` member;
-// macOS will use the same `int fd` if we keep the socketpair fallback.
+// Linux / macOS: file descriptor.
+// Windows      : Win32 HANDLE (stored as void* so this header stays
+//                Windows.h-free; the impl casts via reinterpret_cast).
 struct NativeHandle
 {
+   #if defined(_WIN32)
+    void* h { nullptr };
+   #else
     int fd { -1 };
+   #endif
 };
 
-inline bool isValid (const NativeHandle& h) noexcept { return h.fd >= 0; }
+inline bool isValid (const NativeHandle& h) noexcept
+{
+   #if defined(_WIN32)
+    return h.h != nullptr && h.h != reinterpret_cast<void*> (-1);
+   #else
+    return h.fd >= 0;
+   #endif
+}
 
 // Close + invalidate. Idempotent — closing an already-invalid handle is
 // a no-op. On Linux: ::close(fd).
@@ -48,18 +60,24 @@ struct ChannelPair
 
 bool createChannelPair (ChannelPair& out, std::string& errorOut) noexcept;
 
-// Fd number where the child finds the inherited channel endpoint after
-// exec. Both sides reference this so the wire-protocol code can use a
-// well-known fd without a CLI argument. Linux uses dup2() to land the
-// channel here; macOS posix_spawn() uses file-action remap; Windows
-// passes the handle via lpReserved2 / STARTUPINFO inheritance.
+// Fd number where the Linux child finds the inherited channel endpoint
+// after exec. Linux uses dup2() to land the channel here. Windows uses
+// CreateProcess(bInheritHandles=TRUE) instead and passes the inherited
+// HANDLE value on the command line; locateInheritedChannel() abstracts
+// over both.
 constexpr int kChildInheritFd = 3;
 
 // Move the given handle so its underlying fd is exactly `targetFd`.
 // Linux: dup2() + close-source. Used in the forked child between
-// fork() and execv() so the channel lands at kChildInheritFd. No-op
-// if the handle's fd already equals targetFd.
+// fork() and execv() so the channel lands at kChildInheritFd. Windows:
+// no-op success (handle inheritance + CLI value used instead).
 bool moveHandleToFd (NativeHandle& h, int targetFd) noexcept;
+
+// Child-side: find the channel endpoint the parent's spawn handed us.
+// Linux: returns { fd = kChildInheritFd } unconditionally (argv unused).
+// Windows: scans argv for "--ipc-channel=0xHEX" and returns the parsed
+//          inherited HANDLE; returns an invalid handle if missing.
+NativeHandle locateInheritedChannel (int argc, const char* const* argv) noexcept;
 
 // Blocking I/O. Retries on EINTR. Returns true only on a full transfer
 // of n bytes; returns false on EOF, peer-close, error, or short write.
