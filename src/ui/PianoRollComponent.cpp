@@ -911,6 +911,14 @@ void PianoRollComponent::paintEditCursor (juce::Graphics& g, juce::Rectangle<int
 
 void PianoRollComponent::paintVelocityStrip (juce::Graphics& g, juce::Rectangle<int> area)
 {
+    // Strip + handle footprint: the resize handle paints ABOVE area.getY()
+    // by kStripResizeGrabPx, so the "considered" rect for the empty-dirty
+    // short-circuit must include those handle pixels. Without the extra
+    // Y span, partial repaints that hit only the handle's pixels would
+    // be early-returned and the handle would not redraw.
+    const auto considered = area.withTop (area.getY() - kStripResizeGrabPx);
+    if (g.getClipBounds().getIntersection (considered).isEmpty()) return;
+
     g.setColour (juce::Colour (0xff121218));
     g.fillRect (area);
 
@@ -1718,6 +1726,12 @@ juce::Colour PianoRollComponent::colourForNote (const MidiNote& n) const noexcep
 
 void PianoRollComponent::paintCcStrip (juce::Graphics& g, juce::Rectangle<int> area)
 {
+    // Strip + handle footprint. Same shape as paintVelocityStrip: the
+    // resize handle paints above area.getY(), so the empty-dirty
+    // short-circuit must include those handle pixels.
+    const auto considered = area.withTop (area.getY() - kStripResizeGrabPx);
+    if (g.getClipBounds().getIntersection (considered).isEmpty()) return;
+
     g.setColour (juce::Colour (0xff0e0e14));
     g.fillRect (area);
 
