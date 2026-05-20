@@ -49,10 +49,12 @@ public:
     // override this default the moment a real signal arrives.
     static constexpr FrameRate kDefaultRate = Fps30;
 
-    // QF arrival watchdog. If a block elapses without ANY QF or sysex
-    // for this long, declare not-rolling. 250 ms covers a single
-    // dropped QF cycle at 24 fps + some master-side cable hiccup.
-    static constexpr juce::int64 kRollingTimeoutSamplesAt48k = 12000; // ~250 ms
+    // QF arrival watchdog. If the engine sees no QF / sysex for this
+    // long, declare not-rolling. 500 ms covers a few-QF USB-MIDI
+    // hiccup at 24 fps (96 QF/sec, ~10.4 ms between QFs) without
+    // falsely dropping rolling on real-world cable jitter. Matches
+    // Pro Tools' default freewheel timeout magnitude.
+    static constexpr juce::int64 kRollingTimeoutSamplesAt48k = 24000; // ~500 ms
 
     void prepare (double sampleRate) noexcept
     {
@@ -68,8 +70,7 @@ public:
     {
         nibbleAccumulator[0] = nibbleAccumulator[1] =
             nibbleAccumulator[2] = nibbleAccumulator[3] = 0;
-        lastNibbleIndex      = -1;
-        sequenceComplete     = false;
+        expectedNibble       = 0;
         lastEventSample      = -1;
         currentFrames.store (0, std::memory_order_relaxed);
         rolling.store       (false, std::memory_order_relaxed);
@@ -127,8 +128,17 @@ private:
     // seconds lo+hi, minutes lo+hi, hours+rate lo+hi). Index in the
     // outer array picks which of the 4 SMPTE fields we're filling.
     juce::uint8 nibbleAccumulator[4] {};
-    int  lastNibbleIndex   = -1;     // -1 = no QF seen yet
-    bool sequenceComplete  = false;  // set on nibble-7 commit
+
+    // Strict monotonic-sequence validator. We commit + publish ONLY
+    // after observing nibbles 0,1,2,3,4,5,6,7 in that exact order
+    // without gaps. Any out-of-order arrival (reverse-scrub, USB drop,
+    // duplicate) resets `expectedNibble` to 0 and waits for a fresh
+    // sequence start. Without this, a steady reverse-scrub stream
+    // (7,6,5,4,3,2,1,0,7,6,...) would wake the receiver on nibble 0,
+    // partially populate the accumulator with stale lo/hi bytes from
+    // the previous sequence, and emit garbage SMPTE values with
+    // mm=ss=0.
+    int expectedNibble = 0;          // next nibble we'll accept (0..7)
 
     juce::int64 lastEventSample = -1;
 

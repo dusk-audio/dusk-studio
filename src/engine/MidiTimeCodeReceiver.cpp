@@ -56,31 +56,33 @@ void MidiTimeCodeReceiver::onQuarterFrame (juce::uint8 data1,
     const int nibbleIdx = (data1 >> 4) & 0x07;
     const int dataBits  = data1 & 0x0F;
 
-    // Reverse-QF detection. If we just received a nibble whose index is
-    // strictly LOWER than the previous one (and we're not wrapping
-    // 7→0 which is the normal forward roll), we're being scrubbed back.
-    // Park: drop the accumulator, mark reversed, do not emit frames.
-    // We exit park when nibble 0 arrives again (a fresh forward
-    // sequence start).
-    if (lastNibbleIndex >= 0
-        && nibbleIdx < lastNibbleIndex
-        && ! (lastNibbleIndex == 7 && nibbleIdx == 0))
+    // Strict monotonic-sequence validator. We accept a nibble only if
+    // it matches the one we were expecting next (0 → 1 → ... → 7).
+    // Any deviation (reverse-scrub, USB drop, duplicate) snaps the
+    // expectation back to 0 and parks the receiver until a fresh
+    // forward sequence starts. Without this guard, reverse-scrub
+    // streams sneak through the nibble-0 wake path and emit garbage
+    // SMPTE values with partially-stale accumulator bytes.
+    if (nibbleIdx != expectedNibble)
     {
-        reversed.store (true, std::memory_order_relaxed);
-        rolling.store  (false, std::memory_order_relaxed);
-        // Discard partial accumulator; wait for forward sequence.
-        nibbleAccumulator[0] = nibbleAccumulator[1] =
-            nibbleAccumulator[2] = nibbleAccumulator[3] = 0;
-        lastNibbleIndex  = -1;
-        sequenceComplete = false;
+        // Detect reverse-scrub for the UI cue. Two heuristics:
+        //   - any nibble strictly less than the one we were expecting
+        //     and we'd already started a sequence (expectedNibble > 0)
+        //   - OR: nibble 7 arrives when we were expecting 0 (master
+        //     just reversed and re-started a sequence at the top)
+        if ((expectedNibble > 0 && nibbleIdx < expectedNibble)
+            || (expectedNibble == 0 && nibbleIdx == 7))
+        {
+            reversed.store (true, std::memory_order_relaxed);
+            rolling .store (false, std::memory_order_relaxed);
+        }
+        expectedNibble = 0;  // wait for fresh forward sequence start
         return;
     }
 
-    // Forward sequence — entering or continuing.
     if (nibbleIdx == 0)
     {
-        // Start of a fresh sequence. Clear any partial state from the
-        // last commit. Exit reverse-park if we were in it.
+        // Fresh forward sequence — clear accumulator + exit reverse-park.
         reversed.store (false, std::memory_order_relaxed);
         nibbleAccumulator[0] = (juce::uint8) dataBits;
         nibbleAccumulator[1] = nibbleAccumulator[2] = nibbleAccumulator[3] = 0;
@@ -100,13 +102,16 @@ void MidiTimeCodeReceiver::onQuarterFrame (juce::uint8 data1,
                                  | (dataBits << 4));
     }
 
-    lastNibbleIndex = nibbleIdx;
-
-    // Nibble 7 finishes the SMPTE value. Commit + publish.
+    // Nibble 7 finishes the SMPTE value. Commit + publish, then wrap
+    // the expectation back to 0 for the next sequence.
     if (nibbleIdx == 7)
     {
-        sequenceComplete = true;
         commitAssembledFrame (atSample, /*applyTwoFrameOffset*/ true);
+        expectedNibble = 0;
+    }
+    else
+    {
+        expectedNibble = nibbleIdx + 1;
     }
 }
 
