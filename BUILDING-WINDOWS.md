@@ -90,7 +90,7 @@ cmake -S . -B build ^
 Dusk Studio has Catch2 unit tests behind a CMake flag:
 
 ```cmd
-cmake -S . -B build-tests -DCMAKE_BUILD_TYPE=Release -DFOCAL_BUILD_TESTS=ON
+cmake -S . -B build-tests -DCMAKE_BUILD_TYPE=Release -DDUSKSTUDIO_BUILD_TESTS=ON
 cmake --build build-tests --target dusk-studio-tests --config Release -j
 ctest --test-dir build-tests --output-on-failure -C Release
 ```

@@ -53,7 +53,7 @@ message(STATUS "Using JUCE from: ${DUSKSTUDIO_JUCE_SOURCE_DIR}")
 # blank rectangles. The fix splits WindowMapper by Role; the marker below is in
 # our local commit. Detect drift if JUCE is ever updated without re-applying.
 #
-# Skippable via -DFOCAL_SKIP_FORK_CHECK=ON for CI / test builds that use a
+# Skippable via -DDUSKSTUDIO_SKIP_FORK_CHECK=ON for CI / test builds that use a
 # vanilla upstream JUCE clone (no plugin editors involved, so the XEmbed patch
 # is irrelevant). Never set this for a distribution build — pure-xcb VST3
 # plugins will render blank without the patch.
@@ -74,7 +74,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT DUSKSTUDIO_SKIP_FORK_CHECK)
             "rectangle. Re-apply the local commit titled\n"
             "  \"XEmbed: stop tying host-window mapping to client _XEMBED_INFO\"\n"
             "in your JUCE checkout, or pull a JUCE branch that contains it.\n"
-            "(CI / test builds: pass -DFOCAL_SKIP_FORK_CHECK=ON to bypass.)")
+            "(CI / test builds: pass -DDUSKSTUDIO_SKIP_FORK_CHECK=ON to bypass.)")
     endif()
     unset(_duskstudio_xembed_file)
     unset(_duskstudio_xembed_src)
@@ -161,7 +161,7 @@ juce_add_gui_app(DuskStudio
 # macOS code signing. Ad-hoc by default (works for local dev launch +
 # satisfies the runtime-loadable plugin requirement that the host be
 # at least ad-hoc signed). For distribution: set
-#   -DFOCAL_CODESIGN_IDENTITY="Developer ID Application: <name> (TEAMID)"
+#   -DDUSKSTUDIO_CODESIGN_IDENTITY="Developer ID Application: <name> (TEAMID)"
 # at configure time and the post-build step uses that identity instead.
 # Notarization is still a manual step (xcrun notarytool submit + staple)
 # because it needs an Apple ID + app-specific password the build can't
@@ -354,7 +354,7 @@ if(UNIX AND NOT APPLE)
         src/engine/alsa/AlsaAudioIODeviceType.cpp
         src/engine/alsa/AlsaPerformanceTest.cpp)
     target_link_libraries(DuskStudio PRIVATE asound X11)
-    target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_FOCAL_ALSA=1)
+    target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_ALSA=1)
 
     # Out-of-process plugin hosting: shared IPC primitives + the
     # parent-side connection class + a self-test driver. The
@@ -379,7 +379,8 @@ if(UNIX AND NOT APPLE)
     # loop on the main thread + a worker juce::Thread for the audio path.
     juce_add_console_app(dusk-studio-plugin-host
         PRODUCT_NAME "dusk-studio-plugin-host"
-        COMPANY_NAME "Marc Korte")
+        COMPANY_NAME "Marc Korte"
+        BUNDLE_ID    "audio.dusk.studio.pluginhost")
     target_sources(dusk-studio-plugin-host PRIVATE
         src/engine/ipc/PluginHostMain.cpp)
     target_compile_features (dusk-studio-plugin-host PRIVATE cxx_std_17)
@@ -551,7 +552,7 @@ target_link_libraries(DuskStudio PRIVATE
     juce::juce_recommended_warning_flags)
 
 # Treat warnings as errors on the Dusk Studio target. Off by default; opt-in
-# via -DFOCAL_STRICT_WARNINGS=ON. Not yet enabled in CI because the
+# via -DDUSKSTUDIO_STRICT_WARNINGS=ON. Not yet enabled in CI because the
 # vendored multi-comp .cpp sources compiled into Dusk Studio still emit
 # shadow / sign-conversion warnings (vendored DSP HEADERS are marked
 # SYSTEM above and suppressed; the COMPILED .cpp from the plugins repo
@@ -567,7 +568,7 @@ if(DUSKSTUDIO_STRICT_WARNINGS)
 endif()
 
 # AddressSanitizer + UBSan. Off by default; opt-in via
-# -DFOCAL_ENABLE_ASAN=ON. Applied build-wide (directory-level options)
+# -DDUSKSTUDIO_ENABLE_ASAN=ON. Applied build-wide (directory-level options)
 # because sanitizer-instrumented code can't link against
 # non-instrumented code without symbol-resolution drama. CI runs the
 # test binary under ASAN to catch heap corruption / use-after-free /

@@ -1,5 +1,5 @@
 #include "AudioEngine.h"
-#if defined(DUSKSTUDIO_HAS_FOCAL_ALSA)
+#if defined(DUSKSTUDIO_HAS_ALSA)
   #include "alsa/AlsaAudioIODeviceType.h"
 #endif
 #include <cstring>
@@ -77,9 +77,9 @@ AudioEngine::AudioEngine (Session& sessionToBindTo) : session (sessionToBindTo)
     //
     // On macOS / Windows we let JUCE auto-register its native backends
     // (CoreAudio / WASAPI / ASIO / JACK-if-installed) the standard way -
-    // DUSKSTUDIO_HAS_FOCAL_ALSA isn't defined there so the pre-registration
+    // DUSKSTUDIO_HAS_ALSA isn't defined there so the pre-registration
     // path is skipped entirely.
-   #if defined(DUSKSTUDIO_HAS_FOCAL_ALSA)
+   #if defined(DUSKSTUDIO_HAS_ALSA)
     if (auto* jackType = juce::AudioIODeviceType::createAudioIODeviceType_JACK())
         deviceManager.addAudioDeviceType (std::unique_ptr<juce::AudioIODeviceType> (jackType));
     deviceManager.addAudioDeviceType (std::make_unique<AlsaAudioIODeviceType>());

@@ -109,7 +109,7 @@ cmake -S . -B build-linux \
 ## Tests
 
 ```bash
-cmake -S . -B build-tests -DCMAKE_BUILD_TYPE=Release -DFOCAL_BUILD_TESTS=ON
+cmake -S . -B build-tests -DCMAKE_BUILD_TYPE=Release -DDUSKSTUDIO_BUILD_TESTS=ON
 cmake --build build-tests --target dusk-studio-tests -j$(nproc)
 ctest --test-dir build-tests --output-on-failure
 ```
@@ -120,7 +120,7 @@ Use a separate `build-tests/` directory so the two configurations don't fight ov
 
 ```bash
 cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-  -DFOCAL_BUILD_TESTS=ON -DFOCAL_ENABLE_ASAN=ON
+  -DDUSKSTUDIO_BUILD_TESTS=ON -DDUSKSTUDIO_ENABLE_ASAN=ON
 cmake --build build-asan --target dusk-studio-tests -j$(nproc)
 ASAN_OPTIONS="halt_on_error=1:abort_on_error=1:detect_leaks=0" \
   ctest --test-dir build-asan --output-on-failure
