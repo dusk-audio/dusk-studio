@@ -100,6 +100,30 @@ if(EXISTS "${_focal_apf_helpers}")
 endif()
 unset(_focal_apf_helpers)
 
+# Detect the wayland fork's WaylandWindowSystem / WaylandSymbols. The
+# fork integrates libwayland-client + libdecor directly for top-level
+# windowing; upstream JUCE has no such symbols. Focal's
+# PlatformWindowing_Linux.cpp uses them to drive the X11-vs-Wayland
+# peer-creation latch + the requestFocusOnMainWaylandSurface roundtrip
+# yield. CI builds against upstream JUCE (no Wayland symbols) need
+# those code paths stubbed.
+set(FOCAL_JUCE_HAS_WAYLAND OFF)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(_focal_juce_wayland_dir "${FOCAL_JUCE_SOURCE_DIR}/modules/juce_gui_basics/native")
+    file(GLOB _focal_juce_wayland_files "${_focal_juce_wayland_dir}/*.h")
+    foreach(_f ${_focal_juce_wayland_files})
+        file(READ "${_f}" _focal_juce_wayland_src)
+        if(_focal_juce_wayland_src MATCHES "class +WaylandWindowSystem")
+            set(FOCAL_JUCE_HAS_WAYLAND ON)
+            message(STATUS "JUCE has WaylandWindowSystem (wayland fork): ${_f}")
+            break()
+        endif()
+    endforeach()
+    unset(_focal_juce_wayland_files)
+    unset(_focal_juce_wayland_src)
+    unset(_focal_juce_wayland_dir)
+endif()
+
 add_subdirectory(${FOCAL_JUCE_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/JUCE)
 
 # App icon. JUCE bakes the PNG into platform-specific resources at
@@ -467,6 +491,7 @@ target_compile_definitions(Focal PRIVATE
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
     $<$<BOOL:${FOCAL_JUCE_HAS_FREE_ADD_FORMATS}>:FOCAL_JUCE_HAS_FREE_ADD_FORMATS=1>
+    $<$<BOOL:${FOCAL_JUCE_HAS_WAYLAND}>:FOCAL_JUCE_HAS_WAYLAND=1>
     JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:Focal,JUCE_PRODUCT_NAME>"
     JUCE_APPLICATION_VERSION_STRING="$<TARGET_PROPERTY:Focal,JUCE_VERSION>"
     JUCE_JACK=1

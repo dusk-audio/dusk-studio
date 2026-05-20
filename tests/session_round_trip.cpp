@@ -92,7 +92,7 @@ TEST_CASE ("SessionSerializer round-trip preserves transport + per-track state",
     dir.deleteRecursively();
 }
 
-TEST_CASE ("SessionSerializer save is atomic — tmp file gone after success",
+TEST_CASE ("SessionSerializer save is atomic - tmp file gone after success",
            "[session][serializer]")
 {
     using focal::Session;
