@@ -361,34 +361,53 @@ endif()
 # connection class + a self-test driver. The dusk-studio-plugin-host
 # child binary lives next to Dusk Studio in the build output.
 #
-# Supported platforms: Linux (memfd_create + futex + socketpair) and
-# Windows (CreateFileMapping + WaitOnAddress + named pipe). macOS is
-# pending — the abstraction in src/engine/ipc/platform/ is ready for
-# Mach ports + posix_spawn + shm_open but no *_Mac impls have landed.
+# Supported platforms:
+#   Linux   : memfd_create + futex + socketpair + SCM_RIGHTS
+#   Windows : CreateFileMapping + WaitOnAddress + named pipe
+#   macOS   : shm_open + os_sync_wait_on_address + socketpair + SCM_RIGHTS
+#             (requires macOS 14.4 — os_sync_wait_on_address shared
+#             addresses were added in Sonoma 14.4; older systems fall
+#             back to the in-process path because DUSKSTUDIO_HAS_OOP_PLUGINS
+#             stays undefined.)
 # DUSKSTUDIO_HAS_OOP_PLUGINS gates every #if branch in PluginSlot that
 # routes through RemotePluginConnection.
-if(UNIX AND NOT APPLE OR WIN32)
-    if(UNIX AND NOT APPLE)
-        set(_duskstudio_ipc_platform_sources
-            src/engine/ipc/platform/IpcChannel_Linux.cpp
-            src/engine/ipc/platform/IpcProcess_Linux.cpp
-            src/engine/ipc/platform/IpcShm_Linux.cpp
-            src/engine/ipc/platform/IpcSync_Linux.cpp)
-        set(_duskstudio_ipc_child_platform_sources
-            src/engine/ipc/platform/IpcChannel_Linux.cpp
-            src/engine/ipc/platform/IpcShm_Linux.cpp
-            src/engine/ipc/platform/IpcSync_Linux.cpp)
-    else()
-        set(_duskstudio_ipc_platform_sources
-            src/engine/ipc/platform/IpcChannel_Windows.cpp
-            src/engine/ipc/platform/IpcProcess_Windows.cpp
-            src/engine/ipc/platform/IpcShm_Windows.cpp
-            src/engine/ipc/platform/IpcSync_Windows.cpp)
-        set(_duskstudio_ipc_child_platform_sources
-            src/engine/ipc/platform/IpcChannel_Windows.cpp
-            src/engine/ipc/platform/IpcShm_Windows.cpp
-            src/engine/ipc/platform/IpcSync_Windows.cpp)
-    endif()
+set(_duskstudio_oop_enabled FALSE)
+if(UNIX AND NOT APPLE)
+    set(_duskstudio_oop_enabled TRUE)
+    set(_duskstudio_ipc_platform_sources
+        src/engine/ipc/platform/IpcChannel_Linux.cpp
+        src/engine/ipc/platform/IpcProcess_Linux.cpp
+        src/engine/ipc/platform/IpcShm_Linux.cpp
+        src/engine/ipc/platform/IpcSync_Linux.cpp)
+    set(_duskstudio_ipc_child_platform_sources
+        src/engine/ipc/platform/IpcChannel_Linux.cpp
+        src/engine/ipc/platform/IpcShm_Linux.cpp
+        src/engine/ipc/platform/IpcSync_Linux.cpp)
+elseif(WIN32)
+    set(_duskstudio_oop_enabled TRUE)
+    set(_duskstudio_ipc_platform_sources
+        src/engine/ipc/platform/IpcChannel_Windows.cpp
+        src/engine/ipc/platform/IpcProcess_Windows.cpp
+        src/engine/ipc/platform/IpcShm_Windows.cpp
+        src/engine/ipc/platform/IpcSync_Windows.cpp)
+    set(_duskstudio_ipc_child_platform_sources
+        src/engine/ipc/platform/IpcChannel_Windows.cpp
+        src/engine/ipc/platform/IpcShm_Windows.cpp
+        src/engine/ipc/platform/IpcSync_Windows.cpp)
+elseif(APPLE AND CMAKE_OSX_DEPLOYMENT_TARGET VERSION_GREATER_EQUAL 14.4)
+    set(_duskstudio_oop_enabled TRUE)
+    set(_duskstudio_ipc_platform_sources
+        src/engine/ipc/platform/IpcChannel_Mac.cpp
+        src/engine/ipc/platform/IpcProcess_Mac.cpp
+        src/engine/ipc/platform/IpcShm_Mac.cpp
+        src/engine/ipc/platform/IpcSync_Mac.cpp)
+    set(_duskstudio_ipc_child_platform_sources
+        src/engine/ipc/platform/IpcChannel_Mac.cpp
+        src/engine/ipc/platform/IpcShm_Mac.cpp
+        src/engine/ipc/platform/IpcSync_Mac.cpp)
+endif()
+
+if(_duskstudio_oop_enabled)
 
     target_sources(DuskStudio PRIVATE
         src/engine/ipc/RemotePluginConnection.cpp

@@ -61,27 +61,35 @@ target_link_libraries(dusk-studio-tests PRIVATE
     juce::juce_recommended_config_flags
     juce::juce_recommended_warning_flags)
 
-# IPC round-trip regression — Linux + Windows. The test spawns the
-# dusk-studio-plugin-host child in --ipc-stub mode, so we hard-depend
-# on that target being built first. DUSKSTUDIO_PLUGIN_HOST_PATH is
-# resolved via a generator expression so it points to wherever CMake
-# actually puts the binary in the current build configuration. macOS
-# is pending — the abstraction in src/engine/ipc/platform/ doesn't
-# yet have *_Mac impls.
-if (UNIX AND NOT APPLE OR WIN32)
-    if (UNIX AND NOT APPLE)
-        set(_duskstudio_ipc_test_sources
-            ${CMAKE_SOURCE_DIR}/src/engine/ipc/platform/IpcChannel_Linux.cpp
-            ${CMAKE_SOURCE_DIR}/src/engine/ipc/platform/IpcProcess_Linux.cpp
-            ${CMAKE_SOURCE_DIR}/src/engine/ipc/platform/IpcShm_Linux.cpp
-            ${CMAKE_SOURCE_DIR}/src/engine/ipc/platform/IpcSync_Linux.cpp)
-    else()
-        set(_duskstudio_ipc_test_sources
-            ${CMAKE_SOURCE_DIR}/src/engine/ipc/platform/IpcChannel_Windows.cpp
-            ${CMAKE_SOURCE_DIR}/src/engine/ipc/platform/IpcProcess_Windows.cpp
-            ${CMAKE_SOURCE_DIR}/src/engine/ipc/platform/IpcShm_Windows.cpp
-            ${CMAKE_SOURCE_DIR}/src/engine/ipc/platform/IpcSync_Windows.cpp)
-    endif()
+# IPC round-trip regression — Linux + Windows + macOS 14.4+. The test
+# spawns the dusk-studio-plugin-host child in --ipc-stub mode, so we
+# hard-depend on that target being built first. DUSKSTUDIO_PLUGIN_HOST_PATH
+# is resolved via a generator expression so it points to wherever CMake
+# actually puts the binary in the current build configuration.
+set(_duskstudio_ipc_test_enabled FALSE)
+if (UNIX AND NOT APPLE)
+    set(_duskstudio_ipc_test_enabled TRUE)
+    set(_duskstudio_ipc_test_sources
+        ${CMAKE_SOURCE_DIR}/src/engine/ipc/platform/IpcChannel_Linux.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/ipc/platform/IpcProcess_Linux.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/ipc/platform/IpcShm_Linux.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/ipc/platform/IpcSync_Linux.cpp)
+elseif (WIN32)
+    set(_duskstudio_ipc_test_enabled TRUE)
+    set(_duskstudio_ipc_test_sources
+        ${CMAKE_SOURCE_DIR}/src/engine/ipc/platform/IpcChannel_Windows.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/ipc/platform/IpcProcess_Windows.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/ipc/platform/IpcShm_Windows.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/ipc/platform/IpcSync_Windows.cpp)
+elseif (APPLE AND CMAKE_OSX_DEPLOYMENT_TARGET VERSION_GREATER_EQUAL 14.4)
+    set(_duskstudio_ipc_test_enabled TRUE)
+    set(_duskstudio_ipc_test_sources
+        ${CMAKE_SOURCE_DIR}/src/engine/ipc/platform/IpcChannel_Mac.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/ipc/platform/IpcProcess_Mac.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/ipc/platform/IpcShm_Mac.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/ipc/platform/IpcSync_Mac.cpp)
+endif()
+if (_duskstudio_ipc_test_enabled)
     target_sources(dusk-studio-tests PRIVATE
         ipc_stub_round_trip.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/ipc/RemotePluginConnection.cpp
