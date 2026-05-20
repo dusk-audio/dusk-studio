@@ -359,15 +359,20 @@ if(UNIX AND NOT APPLE)
     # Out-of-process plugin hosting: shared IPC primitives + the
     # parent-side connection class + a self-test driver. The
     # dusk-studio-plugin-host child binary lives next to Dusk Studio in the build
-    # output. Linux-only; the IPC uses memfd_create + futex which are
-    # Linux-specific. Mac/Windows builds keep using the in-process path
-    # (PluginSlot) until the OOP work matures into a portable design.
+    # output. Linux-only at the build level: the platform-abstraction
+    # layer (src/engine/ipc/platform/) lets the same call sites work on
+    # macOS / Windows once the *_Mac.{cpp,mm} and *_Windows.cpp impls
+    # land, but for now only the *_Linux.cpp files exist.
     # DUSKSTUDIO_HAS_OOP_PLUGINS gates every #if branch in PluginSlot that
     # routes through RemotePluginConnection; defined only here so the
     # rest of the codebase can rely on a single feature flag.
     target_sources(DuskStudio PRIVATE
         src/engine/ipc/RemotePluginConnection.cpp
-        src/engine/ipc/IpcSelfTest.cpp)
+        src/engine/ipc/IpcSelfTest.cpp
+        src/engine/ipc/platform/IpcChannel_Linux.cpp
+        src/engine/ipc/platform/IpcProcess_Linux.cpp
+        src/engine/ipc/platform/IpcShm_Linux.cpp
+        src/engine/ipc/platform/IpcSync_Linux.cpp)
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_OOP_PLUGINS=1)
 
     # dusk-studio-plugin-host is a JUCE console app so it can pull in the
@@ -382,7 +387,10 @@ if(UNIX AND NOT APPLE)
         COMPANY_NAME "Marc Korte"
         BUNDLE_ID    "audio.dusk.studio.pluginhost")
     target_sources(dusk-studio-plugin-host PRIVATE
-        src/engine/ipc/PluginHostMain.cpp)
+        src/engine/ipc/PluginHostMain.cpp
+        src/engine/ipc/platform/IpcChannel_Linux.cpp
+        src/engine/ipc/platform/IpcShm_Linux.cpp
+        src/engine/ipc/platform/IpcSync_Linux.cpp)
     target_compile_features (dusk-studio-plugin-host PRIVATE cxx_std_17)
     target_compile_definitions (dusk-studio-plugin-host PRIVATE
         JUCE_PLUGINHOST_VST3=1

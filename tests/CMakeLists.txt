@@ -70,7 +70,11 @@ target_link_libraries(dusk-studio-tests PRIVATE
 if (UNIX AND NOT APPLE)
     target_sources(dusk-studio-tests PRIVATE
         ipc_stub_round_trip.cpp
-        ${CMAKE_SOURCE_DIR}/src/engine/ipc/RemotePluginConnection.cpp)
+        ${CMAKE_SOURCE_DIR}/src/engine/ipc/RemotePluginConnection.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/ipc/platform/IpcChannel_Linux.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/ipc/platform/IpcProcess_Linux.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/ipc/platform/IpcShm_Linux.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/ipc/platform/IpcSync_Linux.cpp)
     target_compile_definitions(dusk-studio-tests PRIVATE
         DUSKSTUDIO_PLUGIN_HOST_PATH="$<TARGET_FILE:dusk-studio-plugin-host>")
     add_dependencies(dusk-studio-tests dusk-studio-plugin-host)

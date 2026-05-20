@@ -1,6 +1,9 @@
 #pragma once
 
 #include "PluginIpc.h"
+#include "platform/IpcChannel.h"
+#include "platform/IpcProcess.h"
+#include "platform/IpcShm.h"
 #include <atomic>
 #include <cstdint>
 #include <string>
@@ -132,7 +135,7 @@ public:
     // returns true.
     const float* readOutChannel (int chan) const noexcept
     {
-        return audioOutChannel (mappedShm, chan);
+        return audioOutChannel (shm.data(), chan);
     }
 
     // True once the child has been declared dead (timeout, crash, or
@@ -166,10 +169,9 @@ public:
     }
 
 private:
-    int shmFd        { -1 };
-    void* mappedShm  { nullptr };
-    int   childPid   { -1 };
-    int   socketFd   { -1 };  // for SCM_RIGHTS handoff (closed after connect)
+    platform::SharedMemory  shm;
+    platform::ChildProcess  child;
+    platform::NativeHandle  controlChannel {};
 
     std::uint32_t   localSeq { 0 };
     std::atomic<std::uint64_t> roundTrips { 0 };

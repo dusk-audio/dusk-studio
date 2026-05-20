@@ -1,135 +1,38 @@
 #include "RemotePluginConnection.h"
 
+#include "platform/IpcSync.h"
+
 #include <cerrno>
-#include <csignal>
 #include <cstdio>
 #include <cstring>
-#include <fcntl.h>
-#include <linux/memfd.h>
-#include <sys/mman.h>
-#include <sys/prctl.h>
-#include <sys/socket.h>
-#include <sys/syscall.h>
-#include <sys/wait.h>
-#include <thread>
-#include <unistd.h>
 
 namespace duskstudio::ipc
 {
 namespace
 {
-// memfd_create wrapper. glibc only added a symbol around 2.27; rather
-// than depend on the glibc version, just hit the syscall directly.
-inline int memfdCreate (const char* name, unsigned int flags) noexcept
-{
-    return (int) syscall (SYS_memfd_create, name, flags);
-}
-
-// Polite spin pause - reduces SMT contention with the child while we
-// wait for replySeq. Per-arch fallbacks so non-x86 builds compile.
-inline void cpuRelax() noexcept
-{
-   #if defined(__x86_64__) || defined(__i386__)
-    __builtin_ia32_pause();
-   #elif defined(__aarch64__) || defined(__arm__)
-    asm volatile ("yield" ::: "memory");
-   #else
-    std::this_thread::yield();
-   #endif
-}
-
-// Send the SHM fd to the child over the connected socketpair using
-// SCM_RIGHTS ancillary data. Returns 0 on success, -1 on error.
-int sendFd (int socket, int fd) noexcept
-{
-    char dummy = 'x';
-    struct iovec iov { &dummy, 1 };
-
-    char ctlBuf[CMSG_SPACE (sizeof (int))] {};
-    struct msghdr msg {};
-    msg.msg_iov     = &iov;
-    msg.msg_iovlen  = 1;
-    msg.msg_control = ctlBuf;
-    msg.msg_controllen = sizeof (ctlBuf);
-
-    struct cmsghdr* cm = CMSG_FIRSTHDR (&msg);
-    cm->cmsg_level = SOL_SOCKET;
-    cm->cmsg_type  = SCM_RIGHTS;
-    cm->cmsg_len   = CMSG_LEN (sizeof (int));
-    std::memcpy (CMSG_DATA (cm), &fd, sizeof (fd));
-
-    return sendmsg (socket, &msg, 0) >= 0 ? 0 : -1;
-}
-} // namespace
-
-namespace
-{
-// Read exactly `n` bytes or fail. Returns true on full read, false on
-// EOF / error / short read. socketFd should be in blocking mode (with a
-// SO_RCVTIMEO if the caller wants a deadline).
-bool readExact (int socketFd, void* buf, std::size_t n) noexcept
-{
-    auto* p = static_cast<char*> (buf);
-    while (n > 0)
-    {
-        const ssize_t r = ::read (socketFd, p, n);
-        if (r < 0)
-        {
-            if (errno == EINTR) continue;
-            return false;
-        }
-        if (r == 0) return false;  // EOF
-        p += r;
-        n -= (std::size_t) r;
-    }
-    return true;
-}
-
-bool writeExact (int socketFd, const void* buf, std::size_t n) noexcept
-{
-    auto* p = static_cast<const char*> (buf);
-    while (n > 0)
-    {
-        const ssize_t w = ::write (socketFd, p, n);
-        if (w < 0)
-        {
-            if (errno == EINTR) continue;
-            return false;
-        }
-        if (w == 0) return false;  // peer closed; avoid infinite loop
-        p += w;
-        n -= (std::size_t) w;
-    }
-    return true;
-}
-
 // Send a control request: [header][payload]. Returns true on success.
-bool sendControl (int socketFd, duskstudio::ipc::OpCode op,
-                   const void* payload, std::uint32_t payloadLen) noexcept
+bool sendControl (platform::NativeHandle& ch, OpCode op,
+                    const void* payload, std::uint32_t payloadLen) noexcept
 {
-    using duskstudio::ipc::ControlMsgHeader;
     ControlMsgHeader hdr {};
     hdr.totalLen   = (std::uint32_t) sizeof (hdr) + payloadLen;
     hdr.op         = (std::uint32_t) op;
     hdr.status     = 0;
     hdr.payloadLen = payloadLen;
-    if (! writeExact (socketFd, &hdr, sizeof (hdr))) return false;
-    if (payloadLen > 0 && ! writeExact (socketFd, payload, payloadLen))
+    if (! platform::writeExact (ch, &hdr, sizeof (hdr))) return false;
+    if (payloadLen > 0 && ! platform::writeExact (ch, payload, payloadLen))
         return false;
     return true;
 }
 
-// Read a control reply. Allocates a vector of size payloadLen; for
-// fixed-size replies the caller can ignore the vector and rely on the
-// status field. Returns the parsed header.
-bool recvControl (int socketFd,
-                   duskstudio::ipc::ControlMsgHeader& hdrOut,
-                   std::vector<std::uint8_t>& payloadOut) noexcept
+bool recvControl (platform::NativeHandle& ch,
+                    ControlMsgHeader& hdrOut,
+                    std::vector<std::uint8_t>& payloadOut) noexcept
 {
-    if (! readExact (socketFd, &hdrOut, sizeof (hdrOut))) return false;
+    if (! platform::readExact (ch, &hdrOut, sizeof (hdrOut))) return false;
     payloadOut.resize (hdrOut.payloadLen);
     if (hdrOut.payloadLen > 0
-        && ! readExact (socketFd, payloadOut.data(), hdrOut.payloadLen))
+        && ! platform::readExact (ch, payloadOut.data(), hdrOut.payloadLen))
         return false;
     return true;
 }
@@ -144,109 +47,48 @@ bool RemotePluginConnection::connect (const std::string& hostExecutablePath,
                                         const std::string& extraArg,
                                         std::string& errorOut)
 {
-    if (childPid > 0)
-        return true;  // already connected
+    if (child.isAlive())
+        return true;
 
-    // 1) Create the SHM region. memfd_create gives us an anonymous
-    // file-backed mapping that survives across fork+exec when we pass
-    // the fd via SCM_RIGHTS (or simpler: F_CLOEXEC is OFF by default
-    // for memfd_create, so the fd is inherited - but the child needs to
-    // know which fd number, hence SCM_RIGHTS with a known protocol).
-    shmFd = memfdCreate ("dusk-studio-plugin-shm", 0 /* default: not cloexec */);
-    if (shmFd < 0)
-    {
-        errorOut = std::string ("memfd_create failed: ") + std::strerror (errno);
+    if (! shm.createAnonymous ("dusk-studio-plugin-shm", kTotalSize, errorOut))
         return false;
-    }
 
-    if (ftruncate (shmFd, kTotalSize) < 0)
-    {
-        errorOut = std::string ("ftruncate failed: ") + std::strerror (errno);
-        disconnect();
-        return false;
-    }
-
-    mappedShm = mmap (nullptr, kTotalSize, PROT_READ | PROT_WRITE,
-                       MAP_SHARED, shmFd, 0);
-    if (mappedShm == MAP_FAILED)
-    {
-        mappedShm = nullptr;
-        errorOut  = std::string ("mmap failed: ") + std::strerror (errno);
-        disconnect();
-        return false;
-    }
-
-    // 2) Initialise the header. The child checks the magic before
-    // touching anything.
-    auto* hdr = headerOf (mappedShm);
-    new (hdr) BlockHeader();   // placement-new to initialise atomics
+    auto* hdr = headerOf (shm.data());
+    new (hdr) BlockHeader();
     hdr->magic   = kMagic;
     hdr->version = kVersion;
     hdr->cmdSeq.store (0, std::memory_order_relaxed);
     hdr->replySeq.store (0, std::memory_order_relaxed);
     hdr->state.store (kStateReady, std::memory_order_relaxed);
 
-    // 3) Create the socketpair used to hand the SHM fd to the child.
-    int sv[2] {};
-    if (socketpair (AF_UNIX, SOCK_STREAM, 0, sv) < 0)
+    platform::ChannelPair pair;
+    if (! platform::createChannelPair (pair, errorOut))
     {
-        errorOut = std::string ("socketpair failed: ") + std::strerror (errno);
         disconnect();
         return false;
     }
 
-    // 4) Fork + exec. Child execs dusk-studio-plugin-host with the socketpair
-    // end as fd 3 plus an --ipc-stub flag to enable Phase-1 echo mode.
-    childPid = fork();
-    if (childPid < 0)
+    std::vector<std::string> args { extraArg };
+    if (! child.spawn (hostExecutablePath, args, pair.childEnd, errorOut))
     {
-        errorOut = std::string ("fork failed: ") + std::strerror (errno);
-        ::close (sv[0]);
-        ::close (sv[1]);
+        platform::closeHandle (pair.parentEnd);
+        platform::closeHandle (pair.childEnd);
         disconnect();
         return false;
     }
 
-    if (childPid == 0)
+    controlChannel = pair.parentEnd;
+
+    if (! platform::sendHandle (controlChannel, shm.handle()))
     {
-        // --- child --------------------------------------------------
-        ::close (sv[0]);                // child uses sv[1]
-        // Move sv[1] to fd 3 so the child finds it at a known fd.
-        if (sv[1] != 3)
-        {
-            dup2 (sv[1], 3);
-            ::close (sv[1]);
-        }
-
-        // Best-effort: kill the child if the parent dies.
-        prctl (PR_SET_PDEATHSIG, SIGTERM);
-
-        const char* argv[] = { hostExecutablePath.c_str(), extraArg.c_str(), nullptr };
-        execv (hostExecutablePath.c_str(), const_cast<char* const*> (argv));
-        // exec failed.
-        std::fprintf (stderr, "[dusk-studio-plugin-host] execv failed: %s\n",
-                      std::strerror (errno));
-        _exit (127);
-    }
-
-    // --- parent ---------------------------------------------------------
-    ::close (sv[1]);                    // parent uses sv[0]
-    socketFd = sv[0];
-
-    // Send the SHM fd to the child.
-    if (sendFd (socketFd, shmFd) < 0)
-    {
-        errorOut = std::string ("sendFd failed: ") + std::strerror (errno);
+        errorOut = std::string ("sendHandle failed: ") + std::strerror (errno);
         disconnect();
         return false;
     }
 
-    // Wait for the child to confirm "ready" by writing a single byte
-    // back. Bounded so a broken host can't hang us forever.
+    platform::setReadTimeout (controlChannel, 5000);
     char ack = 0;
-    struct timeval to { 5, 0 };
-    setsockopt (socketFd, SOL_SOCKET, SO_RCVTIMEO, &to, sizeof (to));
-    if (::read (socketFd, &ack, 1) != 1 || ack != 'k')
+    if (! platform::readExact (controlChannel, &ack, 1) || ack != 'k')
     {
         errorOut = "child did not send ready handshake";
         disconnect();
@@ -261,29 +103,23 @@ bool RemotePluginConnection::processBlockSync (const float* const* inChannels,
                                                  juce::MidiBuffer& midi,
                                                  long long timeoutNs) noexcept
 {
-    if (mappedShm == nullptr || crashed.load (std::memory_order_acquire))
+    if (! shm.isMapped() || crashed.load (std::memory_order_acquire))
         return false;
 
     if (numSamples <= 0 || numSamples > kMaxBlock) return false;
     if (numIn     <  0 || numIn      > kMaxChans) return false;
 
-    auto* hdr = headerOf (mappedShm);
+    auto* hdr = headerOf (shm.data());
 
-    // Copy input audio to SHM. memcpy only - no allocation.
     for (int c = 0; c < numIn; ++c)
     {
         if (inChannels[c] != nullptr)
-            std::memcpy (audioInChannel (mappedShm, c), inChannels[c],
-                         (std::size_t) numSamples * sizeof (float));
+            std::memcpy (audioInChannel (shm.data(), c), inChannels[c],
+                          (std::size_t) numSamples * sizeof (float));
     }
 
-    // Serialise input MIDI to SHM. Wire format mirrors PluginHostMain's
-    // child-side reader: each event is native-endian
-    //   [int sample(4)][uint16 len(2)][bytes(len)]
-    // Events that don't fit get dropped — same behaviour as the child's
-    // serialiser when a plugin emits a flood of events.
     {
-        std::uint8_t* out = midiIn (mappedShm);
+        std::uint8_t* out = midiIn (shm.data());
         std::uint32_t written = 0;
         for (const auto meta : midi)
         {
@@ -303,24 +139,19 @@ bool RemotePluginConnection::processBlockSync (const float* const* inChannels,
 
     hdr->numSamples  = (std::uint32_t) numSamples;
     hdr->numInChans  = (std::uint32_t) numIn;
-    hdr->numOutChans = (std::uint32_t) numIn;   // stub: same as input
+    hdr->numOutChans = (std::uint32_t) numIn;
     hdr->midiOutBytes = 0;
 
-    // Bump cmdSeq + wake the child.
     const std::uint32_t mySeq = ++localSeq;
     hdr->cmdSeq.store (mySeq, std::memory_order_release);
-    futexWakeOne (&hdr->cmdSeq);
+    platform::wakeOneAddress (&hdr->cmdSeq);
 
-    // Replace caller's MIDI buffer with whatever the plugin emitted.
-    // Mirror of the child's serialiser; parses the same wire format.
-    // RT-safe assuming `midi` was pre-sized at engine prepare-time so
-    // addEvent reuses existing capacity.
     auto deserialiseMidiOut = [&]
     {
         midi.clear();
         const std::uint32_t midiOutBytes = hdr->midiOutBytes;
         if (midiOutBytes == 0 || midiOutBytes > kMidiBytes) return;
-        const std::uint8_t* base = midiOut (mappedShm);
+        const std::uint8_t* base = midiOut (shm.data());
         std::uint32_t off = 0;
         std::uint8_t evBuf[256];
         while (off + 6 <= midiOutBytes)
@@ -338,9 +169,6 @@ bool RemotePluginConnection::processBlockSync (const float* const* inChannels,
         }
     };
 
-    // Bounded spin first - typical block finishes in a few microseconds,
-    // and a syscall pair (~600 ns) per block is wasteful at 64-sample
-    // buffers. Then fall through to a futex-wait with absolute timeout.
     constexpr int kSpinIters = 2000;
     for (int i = 0; i < kSpinIters; ++i)
     {
@@ -350,27 +178,25 @@ bool RemotePluginConnection::processBlockSync (const float* const* inChannels,
             roundTrips.fetch_add (1, std::memory_order_relaxed);
             return true;
         }
-        cpuRelax();
+        platform::cpuRelax();
     }
 
-    auto deadline = absTimeoutFromNow (timeoutNs);
+    const auto deadline = platform::deadlineFromNow (timeoutNs);
     while (hdr->replySeq.load (std::memory_order_acquire) != mySeq)
     {
-        // Wait while replySeq is still its old value (mySeq - 1).
-        long r = futexWaitOnce (&hdr->replySeq, mySeq - 1, &deadline);
-        if (r == -1 && errno == ETIMEDOUT)
+        const auto r = platform::waitOnAddress (&hdr->replySeq, mySeq - 1, &deadline);
+        if (r == platform::WaitResult::Timeout)
         {
             crashed.store (true, std::memory_order_release);
             return false;
         }
-        // EINTR / EAGAIN: re-check the seq and either return success or
-        // retry the wait. EAGAIN means replySeq already advanced past
-        // (mySeq - 1) before we entered the kernel - common; just retry.
-        if (r == -1 && errno != EINTR && errno != EAGAIN)
+        if (r == platform::WaitResult::Error)
         {
             crashed.store (true, std::memory_order_release);
             return false;
         }
+        // Awoken / ValueChanged / Interrupted: re-check the seq and either
+        // return success or retry the wait.
     }
 
     deserialiseMidiOut();
@@ -378,23 +204,20 @@ bool RemotePluginConnection::processBlockSync (const float* const* inChannels,
     return true;
 }
 
-// --- Control-plane RPCs --------------------------------------------------
-
 bool RemotePluginConnection::ping (int timeoutMs, std::string& errorOut)
 {
-    if (socketFd < 0) { errorOut = "not connected"; return false; }
+    if (! platform::isValid (controlChannel)) { errorOut = "not connected"; return false; }
 
-    struct timeval to { timeoutMs / 1000, (timeoutMs % 1000) * 1000 };
-    setsockopt (socketFd, SOL_SOCKET, SO_RCVTIMEO, &to, sizeof (to));
+    platform::setReadTimeout (controlChannel, timeoutMs);
 
-    if (! sendControl (socketFd, OpCode::Ping, nullptr, 0))
+    if (! sendControl (controlChannel, OpCode::Ping, nullptr, 0))
     {
         errorOut = std::string ("Ping write failed: ") + std::strerror (errno);
         return false;
     }
     ControlMsgHeader hdr {};
     std::vector<std::uint8_t> payload;
-    if (! recvControl (socketFd, hdr, payload))
+    if (! recvControl (controlChannel, hdr, payload))
     {
         errorOut = std::string ("Ping read failed: ") + std::strerror (errno);
         return false;
@@ -412,9 +235,8 @@ bool RemotePluginConnection::loadPlugin (const std::string& pluginDescriptionXml
                                           int& numInOut, int& numOutOut,
                                           int& latencyOut, std::string& errorOut)
 {
-    if (socketFd < 0) { errorOut = "not connected"; return false; }
+    if (! platform::isValid (controlChannel)) { errorOut = "not connected"; return false; }
 
-    // Payload: [PrepareToPlayPayload][xml bytes].
     PrepareToPlayPayload header {};
     header.sampleRate = sampleRate;
     header.blockSize  = (std::int32_t) blockSize;
@@ -426,11 +248,9 @@ bool RemotePluginConnection::loadPlugin (const std::string& pluginDescriptionXml
     std::memcpy (payload.data() + sizeof (header),
                   pluginDescriptionXml.data(), pluginDescriptionXml.size());
 
-    // 30 s timeout - plugin instantiation can be slow on first scan.
-    struct timeval to { 30, 0 };
-    setsockopt (socketFd, SOL_SOCKET, SO_RCVTIMEO, &to, sizeof (to));
+    platform::setReadTimeout (controlChannel, 30000);
 
-    if (! sendControl (socketFd, OpCode::LoadPlugin,
+    if (! sendControl (controlChannel, OpCode::LoadPlugin,
                         payload.data(), (std::uint32_t) payload.size()))
     {
         errorOut = std::string ("LoadPlugin write failed: ") + std::strerror (errno);
@@ -439,7 +259,7 @@ bool RemotePluginConnection::loadPlugin (const std::string& pluginDescriptionXml
 
     ControlMsgHeader hdr {};
     std::vector<std::uint8_t> reply;
-    if (! recvControl (socketFd, hdr, reply))
+    if (! recvControl (controlChannel, hdr, reply))
     {
         errorOut = std::string ("LoadPlugin read failed: ") + std::strerror (errno);
         return false;
@@ -468,18 +288,18 @@ bool RemotePluginConnection::loadPlugin (const std::string& pluginDescriptionXml
 bool RemotePluginConnection::prepareToPlay (double sampleRate, int blockSize,
                                               std::string& errorOut)
 {
-    if (socketFd < 0) { errorOut = "not connected"; return false; }
+    if (! platform::isValid (controlChannel)) { errorOut = "not connected"; return false; }
     PrepareToPlayPayload p {};
     p.sampleRate = sampleRate;
     p.blockSize  = (std::int32_t) blockSize;
-    if (! sendControl (socketFd, OpCode::PrepareToPlay, &p, sizeof (p)))
+    if (! sendControl (controlChannel, OpCode::PrepareToPlay, &p, sizeof (p)))
     {
         errorOut = std::string ("PrepareToPlay write failed: ") + std::strerror (errno);
         return false;
     }
     ControlMsgHeader hdr {};
     std::vector<std::uint8_t> reply;
-    if (! recvControl (socketFd, hdr, reply))
+    if (! recvControl (controlChannel, hdr, reply))
     {
         errorOut = std::string ("PrepareToPlay read failed: ") + std::strerror (errno);
         return false;
@@ -490,15 +310,15 @@ bool RemotePluginConnection::prepareToPlay (double sampleRate, int blockSize,
 
 bool RemotePluginConnection::release (std::string& errorOut)
 {
-    if (socketFd < 0) { errorOut = "not connected"; return false; }
-    if (! sendControl (socketFd, OpCode::Release, nullptr, 0))
+    if (! platform::isValid (controlChannel)) { errorOut = "not connected"; return false; }
+    if (! sendControl (controlChannel, OpCode::Release, nullptr, 0))
     {
         errorOut = std::string ("Release write failed: ") + std::strerror (errno);
         return false;
     }
     ControlMsgHeader hdr {};
     std::vector<std::uint8_t> reply;
-    if (! recvControl (socketFd, hdr, reply))
+    if (! recvControl (controlChannel, hdr, reply))
     {
         errorOut = std::string ("Release read failed: ") + std::strerror (errno);
         return false;
@@ -510,15 +330,15 @@ bool RemotePluginConnection::release (std::string& errorOut)
 bool RemotePluginConnection::getState (std::vector<std::uint8_t>& blobOut,
                                          std::string& errorOut)
 {
-    if (socketFd < 0) { errorOut = "not connected"; return false; }
-    if (! sendControl (socketFd, OpCode::GetState, nullptr, 0))
+    if (! platform::isValid (controlChannel)) { errorOut = "not connected"; return false; }
+    if (! sendControl (controlChannel, OpCode::GetState, nullptr, 0))
     {
         errorOut = std::string ("GetState write failed: ") + std::strerror (errno);
         return false;
     }
     ControlMsgHeader hdr {};
     std::vector<std::uint8_t> reply;
-    if (! recvControl (socketFd, hdr, reply))
+    if (! recvControl (controlChannel, hdr, reply))
     {
         errorOut = std::string ("GetState read failed: ") + std::strerror (errno);
         return false;
@@ -533,30 +353,30 @@ bool RemotePluginConnection::getState (std::vector<std::uint8_t>& blobOut,
     std::memcpy (&blobSize, reply.data(), sizeof (blobSize));
     if (blobSize > kStateBytes) { errorOut = "state blob exceeds staging area"; return false; }
     blobOut.assign (
-        reinterpret_cast<const std::uint8_t*> (mappedShm) + kStateOffset,
-        reinterpret_cast<const std::uint8_t*> (mappedShm) + kStateOffset + blobSize);
+        reinterpret_cast<const std::uint8_t*> (shm.data()) + kStateOffset,
+        reinterpret_cast<const std::uint8_t*> (shm.data()) + kStateOffset + blobSize);
     return true;
 }
 
 bool RemotePluginConnection::setState (const std::uint8_t* data, std::size_t size,
                                          std::string& errorOut)
 {
-    if (socketFd < 0) { errorOut = "not connected"; return false; }
+    if (! platform::isValid (controlChannel)) { errorOut = "not connected"; return false; }
     if (size > kStateBytes)
     {
         errorOut = "state blob exceeds staging area";
         return false;
     }
-    std::memcpy (static_cast<char*> (mappedShm) + kStateOffset, data, size);
+    std::memcpy (static_cast<char*> (shm.data()) + kStateOffset, data, size);
     const std::uint32_t sz = (std::uint32_t) size;
-    if (! sendControl (socketFd, OpCode::SetState, &sz, sizeof (sz)))
+    if (! sendControl (controlChannel, OpCode::SetState, &sz, sizeof (sz)))
     {
         errorOut = std::string ("SetState write failed: ") + std::strerror (errno);
         return false;
     }
     ControlMsgHeader hdr {};
     std::vector<std::uint8_t> reply;
-    if (! recvControl (socketFd, hdr, reply))
+    if (! recvControl (controlChannel, hdr, reply))
     {
         errorOut = std::string ("SetState read failed: ") + std::strerror (errno);
         return false;
@@ -570,15 +390,15 @@ bool RemotePluginConnection::showEditor (std::uint64_t& windowIdOut,
                                             std::string& errorOut)
 {
     windowIdOut = 0; widthOut = 0; heightOut = 0;
-    if (socketFd < 0) { errorOut = "not connected"; return false; }
-    if (! sendControl (socketFd, OpCode::ShowEditor, nullptr, 0))
+    if (! platform::isValid (controlChannel)) { errorOut = "not connected"; return false; }
+    if (! sendControl (controlChannel, OpCode::ShowEditor, nullptr, 0))
     {
         errorOut = std::string ("ShowEditor write failed: ") + std::strerror (errno);
         return false;
     }
     ControlMsgHeader hdr {};
     std::vector<std::uint8_t> reply;
-    if (! recvControl (socketFd, hdr, reply))
+    if (! recvControl (controlChannel, hdr, reply))
     {
         errorOut = std::string ("ShowEditor read failed: ") + std::strerror (errno);
         return false;
@@ -599,15 +419,15 @@ bool RemotePluginConnection::showEditor (std::uint64_t& windowIdOut,
 
 bool RemotePluginConnection::hideEditor (std::string& errorOut)
 {
-    if (socketFd < 0) { errorOut = "not connected"; return false; }
-    if (! sendControl (socketFd, OpCode::HideEditor, nullptr, 0))
+    if (! platform::isValid (controlChannel)) { errorOut = "not connected"; return false; }
+    if (! sendControl (controlChannel, OpCode::HideEditor, nullptr, 0))
     {
         errorOut = std::string ("HideEditor write failed: ") + std::strerror (errno);
         return false;
     }
     ControlMsgHeader hdr {};
     std::vector<std::uint8_t> reply;
-    if (! recvControl (socketFd, hdr, reply))
+    if (! recvControl (controlChannel, hdr, reply))
     {
         errorOut = std::string ("HideEditor read failed: ") + std::strerror (errno);
         return false;
@@ -618,18 +438,18 @@ bool RemotePluginConnection::hideEditor (std::string& errorOut)
 
 bool RemotePluginConnection::resizeEditor (int width, int height, std::string& errorOut)
 {
-    if (socketFd < 0) { errorOut = "not connected"; return false; }
+    if (! platform::isValid (controlChannel)) { errorOut = "not connected"; return false; }
     ResizeEditorPayload p {};
     p.width  = (std::int32_t) width;
     p.height = (std::int32_t) height;
-    if (! sendControl (socketFd, OpCode::ResizeEditor, &p, sizeof (p)))
+    if (! sendControl (controlChannel, OpCode::ResizeEditor, &p, sizeof (p)))
     {
         errorOut = std::string ("ResizeEditor write failed: ") + std::strerror (errno);
         return false;
     }
     ControlMsgHeader hdr {};
     std::vector<std::uint8_t> reply;
-    if (! recvControl (socketFd, hdr, reply))
+    if (! recvControl (controlChannel, hdr, reply))
     {
         errorOut = std::string ("ResizeEditor read failed: ") + std::strerror (errno);
         return false;
@@ -640,52 +460,26 @@ bool RemotePluginConnection::resizeEditor (int width, int height, std::string& e
 
 bool RemotePluginConnection::pollReaper() noexcept
 {
-    if (childPid <= 0) return false;
-    int status = 0;
-    const pid_t r = waitpid (childPid, &status, WNOHANG);
-    if (r == 0)         return false;            // still alive
-    if (r < 0)          return false;            // ECHILD / error - already reaped elsewhere
-    // r == childPid: child has exited.
-    childPid = -1;
+    if (! child.isAlive()) return false;
+    if (! child.pollExit()) return false;
     crashed.store (true, std::memory_order_release);
     return true;
 }
 
 void RemotePluginConnection::disconnect()
 {
-    if (childPid > 0)
+    if (child.isAlive())
     {
-        if (auto* hdr = mappedShm != nullptr ? headerOf (mappedShm) : nullptr)
+        if (shm.isMapped())
         {
+            auto* hdr = headerOf (shm.data());
             hdr->state.store (kStateTeardown, std::memory_order_release);
-            // Wake the child so it observes the teardown state and
-            // exits its wait loop cleanly.
-            futexWakeOne (&hdr->cmdSeq);
+            platform::wakeOneAddress (&hdr->cmdSeq);
         }
-        ::kill (childPid, SIGTERM);
-        // Brief grace period for clean shutdown, then SIGKILL.
-        for (int i = 0; i < 50; ++i)
-        {
-            int status = 0;
-            pid_t r = waitpid (childPid, &status, WNOHANG);
-            if (r == childPid) { childPid = -1; break; }
-            usleep (10000);  // 10ms
-        }
-        if (childPid > 0)
-        {
-            ::kill (childPid, SIGKILL);
-            int status = 0;
-            waitpid (childPid, &status, 0);
-            childPid = -1;
-        }
+        child.terminate (500);
     }
-    if (socketFd >= 0) { ::close (socketFd); socketFd = -1; }
-    if (mappedShm != nullptr)
-    {
-        munmap (mappedShm, kTotalSize);
-        mappedShm = nullptr;
-    }
-    if (shmFd >= 0) { ::close (shmFd); shmFd = -1; }
+    platform::closeHandle (controlChannel);
+    shm.close();
 }
 
 } // namespace duskstudio::ipc

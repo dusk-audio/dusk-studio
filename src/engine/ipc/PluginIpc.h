@@ -3,21 +3,21 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
-#include <ctime>
-#include <linux/futex.h>
-#include <sys/syscall.h>
-#include <unistd.h>
 
 // IPC primitives shared between Dusk Studio (the parent / host process) and
 // dusk-studio-plugin-host (the child process running a JUCE AudioPluginInstance
 // out-of-process). Keep this header dependency-free - no JUCE includes,
-// no STL containers - so both binaries can include it without dragging
-// in their respective build flags.
+// no STL containers, no OS-specific includes - so both binaries can include
+// it without dragging in their respective build flags.
+//
+// Wire format only: SHM layout + opcodes + payload structs. The platform
+// mechanism that backs the channel / SHM / wake-wait primitives lives in
+// platform/Ipc*.h.
 //
 // Threading model: the parent's audio thread and the child's worker thread
-// communicate exclusively through the shared-memory layout below + Linux
-// futex syscalls. No mutexes, no condition variables, no allocations on
-// the hot path.
+// communicate exclusively through the shared-memory layout below and the
+// platform wake/wait helpers. No mutexes, no condition variables, no
+// allocations on the hot path.
 
 namespace duskstudio::ipc
 {
@@ -199,47 +199,6 @@ inline std::uint8_t* midiIn (void* shm) noexcept
 inline std::uint8_t* midiOut (void* shm) noexcept
 {
     return reinterpret_cast<std::uint8_t*> (static_cast<char*> (shm) + kMidiOutOffset);
-}
-
-// --- Futex helpers --------------------------------------------------------
-// Tiny wrappers around the Linux SYS_futex syscall. NOTE: the PRIVATE
-// variants are process-local (futex address keyed by mm_struct), so they
-// do NOT cross the parent/child fence even when both processes mmap the
-// same memfd. Use the non-private FUTEX_WAIT / FUTEX_WAKE for our shared
-// header words.
-
-inline long futexWaitOnce (std::atomic<std::uint32_t>* addr,
-                            std::uint32_t expected,
-                            const struct timespec* absTimeout) noexcept
-{
-    // FUTEX_WAIT_BITSET with FUTEX_BITSET_MATCH_ANY = wake on any wake-call,
-    // and the timespec is interpreted as ABSOLUTE CLOCK_MONOTONIC time.
-    // Non-private so the address is hashed by physical page (works across
-    // a shared memfd between two processes).
-    return syscall (SYS_futex, addr,
-                    FUTEX_WAIT_BITSET,
-                    expected, absTimeout, nullptr,
-                    FUTEX_BITSET_MATCH_ANY);
-}
-
-inline long futexWakeOne (std::atomic<std::uint32_t>* addr) noexcept
-{
-    return syscall (SYS_futex, addr,
-                    FUTEX_WAKE, 1,
-                    nullptr, nullptr, 0);
-}
-
-// Compute an absolute CLOCK_MONOTONIC timeout `nsFromNow` nanoseconds in
-// the future. Used by the audio thread to bound how long it'll wait on
-// the plugin process before falling back to bypass.
-inline struct timespec absTimeoutFromNow (long long nsFromNow) noexcept
-{
-    struct timespec now {};
-    clock_gettime (CLOCK_MONOTONIC, &now);
-    long long total = (long long) now.tv_nsec + nsFromNow;
-    long long secs  = total / 1000000000LL;
-    long long rem   = total % 1000000000LL;
-    return { now.tv_sec + (time_t) secs, rem };
 }
 
 } // namespace duskstudio::ipc

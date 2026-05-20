@@ -2,8 +2,8 @@
 // (or LV2) instance on behalf of Dusk Studio's main process. Two modes:
 //
 //   --ipc-stub  : echo input -> output, no JUCE plugin. Exists so the
-//                 IPC self-test can validate shm + futex + fork/exec
-//                 plumbing without a plugin in the loop.
+//                 IPC self-test can validate shm + sync + spawn plumbing
+//                 without a plugin in the loop.
 //   --ipc-host  : full Phase-2 host. Loads a juce::AudioPluginInstance
 //                 via the format manager, runs processBlock on a worker
 //                 thread, services control RPCs on a separate socket-
@@ -17,29 +17,26 @@
 //                          notifications, editor lifecycle in Phase 3)
 //                          need this running.
 //   socket reader thread - reads length-prefixed control messages from
-//                          fd 3, dispatches them: LoadPlugin,
+//                          kChildInheritFd, dispatches them: LoadPlugin,
 //                          PrepareToPlay, Release, GetState, SetState.
 //                          Uses MessageManagerLock when calling APIs
 //                          that JUCE marks message-thread-only.
-//   audio worker thread  - futex-waits on cmdSeq, calls
-//                          plugin->processBlock when a command arrives.
-//                          Lock-free read of the atomic instance pointer
-//                          so the parent's audio thread isn't gated on
-//                          control-plane traffic.
+//   audio worker thread  - waits on cmdSeq, calls plugin->processBlock
+//                          when a command arrives. Lock-free read of the
+//                          atomic instance pointer so the parent's audio
+//                          thread isn't gated on control-plane traffic.
 
 #include "PluginIpc.h"
 #include "../JuceCompat.h"
+#include "platform/IpcChannel.h"
+#include "platform/IpcShm.h"
+#include "platform/IpcSync.h"
 
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <fcntl.h>
 #include <signal.h>
-#include <sys/mman.h>
-#include <sys/socket.h>
-#include <sys/stat.h>
-#include <unistd.h>
 
 #include <atomic>
 #include <chrono>
@@ -55,76 +52,19 @@
 namespace
 {
 using namespace duskstudio::ipc;
+namespace ipcp = duskstudio::ipc::platform;
 
-constexpr int kSocketFd = 3;
-
-// Receive the SHM fd that the parent passed via SCM_RIGHTS.
-int recvFd (int socketFd) noexcept
-{
-    char dummy = 0;
-    struct iovec iov { &dummy, 1 };
-
-    char ctlBuf[CMSG_SPACE (sizeof (int))] {};
-    struct msghdr msg {};
-    msg.msg_iov     = &iov;
-    msg.msg_iovlen  = 1;
-    msg.msg_control = ctlBuf;
-    msg.msg_controllen = sizeof (ctlBuf);
-
-    if (recvmsg (socketFd, &msg, 0) < 0) return -1;
-
-    for (struct cmsghdr* cm = CMSG_FIRSTHDR (&msg);
-         cm != nullptr;
-         cm = CMSG_NXTHDR (&msg, cm))
-    {
-        if (cm->cmsg_level == SOL_SOCKET && cm->cmsg_type == SCM_RIGHTS)
-        {
-            int fd = -1;
-            std::memcpy (&fd, CMSG_DATA (cm), sizeof (fd));
-            return fd;
-        }
-    }
-    return -1;
-}
-
-bool readExact (int fd, void* buf, std::size_t n) noexcept
-{
-    auto* p = static_cast<char*> (buf);
-    while (n > 0)
-    {
-        const ssize_t r = ::read (fd, p, n);
-        if (r < 0) { if (errno == EINTR) continue; return false; }
-        if (r == 0) return false;
-        p += r;
-        n -= (std::size_t) r;
-    }
-    return true;
-}
-
-bool writeExact (int fd, const void* buf, std::size_t n) noexcept
-{
-    auto* p = static_cast<const char*> (buf);
-    while (n > 0)
-    {
-        const ssize_t w = ::write (fd, p, n);
-        if (w < 0) { if (errno == EINTR) continue; return false; }
-        if (w == 0) return false;  // peer closed; avoid infinite loop
-        p += w;
-        n -= (std::size_t) w;
-    }
-    return true;
-}
-
-bool sendControlReply (std::uint32_t op, std::uint32_t status,
-                        const void* payload, std::uint32_t payloadLen) noexcept
+bool sendControlReply (ipcp::NativeHandle& ch, std::uint32_t op,
+                          std::uint32_t status, const void* payload,
+                          std::uint32_t payloadLen) noexcept
 {
     ControlMsgHeader hdr {};
     hdr.totalLen   = (std::uint32_t) sizeof (hdr) + payloadLen;
     hdr.op         = op;
     hdr.status     = status;
     hdr.payloadLen = payloadLen;
-    if (! writeExact (kSocketFd, &hdr, sizeof (hdr))) return false;
-    if (payloadLen > 0 && ! writeExact (kSocketFd, payload, payloadLen))
+    if (! ipcp::writeExact (ch, &hdr, sizeof (hdr))) return false;
+    if (payloadLen > 0 && ! ipcp::writeExact (ch, payload, payloadLen))
         return false;
     return true;
 }
@@ -132,41 +72,33 @@ bool sendControlReply (std::uint32_t op, std::uint32_t status,
 // --- Phase 1 echo mode (kept for the IPC self-test) ----------------------
 int runIpcStub() noexcept
 {
-    int shmFd = recvFd (kSocketFd);
-    if (shmFd < 0)
+    ipcp::NativeHandle channel; channel.fd = ipcp::kChildInheritFd;
+
+    ipcp::NativeHandle shmHandle;
+    if (! ipcp::recvHandle (channel, shmHandle))
     {
-        std::fprintf (stderr, "[dusk-studio-plugin-host] recvFd failed\n");
+        std::fprintf (stderr, "[dusk-studio-plugin-host] recvHandle failed\n");
         return 1;
     }
 
-    void* shm = mmap (nullptr, kTotalSize, PROT_READ | PROT_WRITE,
-                       MAP_SHARED, shmFd, 0);
-    if (shm == MAP_FAILED)
+    ipcp::SharedMemory shm;
+    std::string err;
+    if (! shm.mapInheritedHandle (shmHandle, kTotalSize, err))
     {
-        std::fprintf (stderr, "[dusk-studio-plugin-host] mmap failed: %s\n",
-                      std::strerror (errno));
-        ::close (shmFd);
+        std::fprintf (stderr, "[dusk-studio-plugin-host] %s\n", err.c_str());
         return 1;
     }
-    // The mapping holds an independent reference to the underlying memfd,
-    // so the fd itself is no longer needed.
-    ::close (shmFd);
 
-    auto* hdr = headerOf (shm);
+    auto* hdr = headerOf (shm.data());
     if (hdr->magic != kMagic || hdr->version != kVersion)
     {
         std::fprintf (stderr, "[dusk-studio-plugin-host] SHM magic/version mismatch\n");
-        munmap (shm, kTotalSize);
         return 1;
     }
 
     {
         char k = 'k';
-        if (write (kSocketFd, &k, 1) != 1)
-        {
-            munmap (shm, kTotalSize);
-            return 1;
-        }
+        if (! ipcp::writeExact (channel, &k, 1)) return 1;
     }
 
     std::uint32_t lastSeq = 0;
@@ -178,16 +110,10 @@ int runIpcStub() noexcept
         const auto cmd = hdr->cmdSeq.load (std::memory_order_acquire);
         if (cmd == lastSeq)
         {
-            (void) syscall (SYS_futex, &hdr->cmdSeq,
-                            FUTEX_WAIT_BITSET,
-                            cmd, nullptr, nullptr,
-                            FUTEX_BITSET_MATCH_ANY);
+            (void) ipcp::waitOnAddress (&hdr->cmdSeq, cmd, nullptr);
             continue;
         }
 
-        // Clamp header fields - the SHM is shared with another process so
-        // out-of-range values from a malformed/old peer must not be used
-        // unchecked as memcpy lengths or channel indices.
         int n  = (int) hdr->numSamples;
         int ci = (int) hdr->numInChans;
         int co = (int) hdr->numOutChans;
@@ -197,9 +123,9 @@ int runIpcStub() noexcept
 
         for (int c = 0; c < co; ++c)
         {
-            float* outCh = audioOutChannel (shm, c);
+            float* outCh = audioOutChannel (shm.data(), c);
             if (c < ci)
-                std::memcpy (outCh, audioInChannel (shm, c),
+                std::memcpy (outCh, audioInChannel (shm.data(), c),
                              (std::size_t) n * sizeof (float));
             else
                 std::memset (outCh, 0, (std::size_t) n * sizeof (float));
@@ -208,15 +134,13 @@ int runIpcStub() noexcept
         const auto midiInBytes = hdr->midiInBytes <= kMidiBytes ? hdr->midiInBytes : 0u;
         hdr->midiOutBytes = midiInBytes;
         if (midiInBytes > 0)
-            std::memcpy (midiOut (shm), midiIn (shm), midiInBytes);
+            std::memcpy (midiOut (shm.data()), midiIn (shm.data()), midiInBytes);
 
         lastSeq = cmd;
         hdr->replySeq.store (cmd, std::memory_order_release);
-        (void) syscall (SYS_futex, &hdr->replySeq,
-                        FUTEX_WAKE, 1, nullptr, nullptr, 0);
+        ipcp::wakeOneAddress (&hdr->replySeq);
     }
 
-    munmap (shm, kTotalSize);
     return 0;
 }
 
@@ -224,20 +148,16 @@ int runIpcStub() noexcept
 
 struct HostState
 {
-    void* shm = nullptr;
+    ipcp::SharedMemory shm;
     BlockHeader* hdr = nullptr;
+    ipcp::NativeHandle channel {};
 
     juce::AudioPluginFormatManager formatManager;
     juce::KnownPluginList knownList;
 
-    // Owned only by the control thread. Worker reads via the atomic
-    // pointer below.
     std::unique_ptr<juce::AudioPluginInstance> ownedInstance;
     std::atomic<juce::AudioPluginInstance*> currentInstance { nullptr };
 
-    // Pre-allocated buffers reused per block on the audio worker. Sized
-    // up to (kMaxChans, kMaxBlock) so one Audio Worker doesn't allocate
-    // even when the parent shrinks/grows the block.
     juce::AudioBuffer<float> workBuffer { kMaxChans, kMaxBlock };
 
     double currentSampleRate = 0.0;
@@ -256,8 +176,6 @@ struct HostState
     juce::AudioProcessorEditor*               editor { nullptr };
 };
 
-// Build a juce::PluginDescription from a string holding the XML emitted
-// by juce::PluginDescription::createXml(). Returns true on success.
 bool parsePluginDescriptionXml (const juce::String& xml,
                                   juce::PluginDescription& out)
 {
@@ -292,15 +210,9 @@ void withParkedWorker (HostState& host, Fn&& fn)
         std::this_thread::sleep_for (std::chrono::microseconds (200));
     }
     fn();
-    // Restore from ownedInstance; fn may have replaced or cleared it
-    // (handleRelease nulls it out, handleLoadPlugin would swap it).
     host.currentInstance.store (host.ownedInstance.get(),
                                   std::memory_order_release);
 }
-
-// Control-plane handlers. Each returns the status field for the reply
-// (0 = ok). They run on the socket-reader thread; ones that touch JUCE
-// APIs marked message-thread-only acquire MessageManagerLock first.
 
 std::uint32_t handleLoadPlugin (HostState& host,
                                   const std::vector<std::uint8_t>& payload,
@@ -321,11 +233,8 @@ std::uint32_t handleLoadPlugin (HostState& host,
         return 2;
     }
 
-    // Park the worker by clearing the live pointer first.
     host.currentInstance.store (nullptr, std::memory_order_release);
 
-    // createPluginInstance is OK off the message thread (JUCE handles
-    // the necessary locking inside). prepareToPlay is too.
     juce::String errorMsg;
     auto fresh = host.formatManager.createPluginInstance (
         desc, hdr.sampleRate, hdr.blockSize, errorMsg);
@@ -364,7 +273,7 @@ std::uint32_t handlePrepareToPlay (HostState& host,
     if (payload.size() < sizeof (PrepareToPlayPayload)) return 1;
     PrepareToPlayPayload p {};
     std::memcpy (&p, payload.data(), sizeof (p));
-    if (host.ownedInstance == nullptr) return 0;  // nothing to prepare
+    if (host.ownedInstance == nullptr) return 0;
     withParkedWorker (host, [&]
     {
         host.ownedInstance->prepareToPlay (p.sampleRate, p.blockSize);
@@ -394,11 +303,11 @@ std::uint32_t handleGetState (HostState& host,
     juce::MemoryBlock mb;
     withParkedWorker (host, [&]
     {
-        const juce::MessageManagerLock mml;  // some plugins need it
+        const juce::MessageManagerLock mml;
         host.ownedInstance->getStateInformation (mb);
     });
     if (mb.getSize() > kStateBytes) return 2;
-    std::memcpy (static_cast<char*> (host.shm) + kStateOffset,
+    std::memcpy (static_cast<char*> (host.shm.data()) + kStateOffset,
                   mb.getData(), mb.getSize());
     const std::uint32_t sz = (std::uint32_t) mb.getSize();
     replyOut.resize (sizeof (sz));
@@ -418,7 +327,7 @@ std::uint32_t handleSetState (HostState& host,
     {
         const juce::MessageManagerLock mml;
         host.ownedInstance->setStateInformation (
-            static_cast<const char*> (host.shm) + kStateOffset, (int) sz);
+            static_cast<const char*> (host.shm.data()) + kStateOffset, (int) sz);
     });
     return 0;
 }
@@ -432,21 +341,14 @@ std::uint32_t handleShowEditor (HostState& host,
     {
         const juce::MessageManagerLock mml;
 
-        // Lazily create the editor + its borderless wrapper window. The
-        // wrapper is sized to the editor's preferred size; the parent's
-        // XEmbedComponent will resize-on-mount to whatever space it has.
         if (host.editor == nullptr)
         {
             host.editor = host.ownedInstance->createEditorIfNeeded();
-            if (host.editor == nullptr) return 2;  // plugin has no editor
+            if (host.editor == nullptr) return 2;
         }
 
         if (host.editorWindow == nullptr)
         {
-            // Borderless DocumentWindow so the plugin's GUI is unencumbered
-            // by host chrome - the parent's PluginEditorWindow already
-            // provides a frame + close button. Native peer required so we
-            // have an X11 Window ID to embed.
             auto win = std::make_unique<juce::DocumentWindow> (
                 "dusk-studio-plugin-host editor",
                 juce::Colours::black,
@@ -455,14 +357,9 @@ std::uint32_t handleShowEditor (HostState& host,
             win->setTitleBarHeight (0);
             win->setOpaque (true);
             win->setContentNonOwned (host.editor, true);
-            // Match the editor's preferred size so a JUCE-default
-            // resized() inside the plugin populates against real bounds.
             const int w = host.editor->getWidth()  > 0 ? host.editor->getWidth()  : 480;
             const int h = host.editor->getHeight() > 0 ? host.editor->getHeight() : 360;
             win->centreWithSize (w, h);
-            // setVisible(true) realizes the native peer so getNativeHandle
-            // is non-null. Toplevel needs to be addToDesktop'd; centre+
-            // setVisible does that internally.
             win->setVisible (true);
             host.editorWindow = std::move (win);
         }
@@ -474,9 +371,6 @@ std::uint32_t handleShowEditor (HostState& host,
         if (auto* peer = host.editorWindow->getPeer())
         {
             auto* nativeHandle = peer->getNativeHandle();
-            // On Linux, getNativeHandle returns an X11 Window cast to
-            // void*. Window is `unsigned long`, which is 64-bit on
-            // x86_64 Linux; pack into uint64_t for wire transport.
             reply.windowId = (std::uint64_t) (std::uintptr_t) nativeHandle;
         }
         reply.width  = host.editorWindow->getWidth();
@@ -484,7 +378,7 @@ std::uint32_t handleShowEditor (HostState& host,
         reply.reserved = 0;
     }
 
-    if (reply.windowId == 0) return 3;  // peer wasn't ready
+    if (reply.windowId == 0) return 3;
 
     replyOut.resize (sizeof (reply));
     std::memcpy (replyOut.data(), &reply, sizeof (reply));
@@ -496,18 +390,9 @@ std::uint32_t handleHideEditor (HostState& host)
     const juce::MessageManagerLock mml;
     if (host.editorWindow != nullptr)
     {
-        // Detach the editor from the window BEFORE destroying the window.
-        // setContentNonOwned was called earlier; clearing it explicitly
-        // ensures the editor isn't dragged through ~DocumentWindow's
-        // child-component teardown (some plugins react badly to that).
         host.editorWindow->clearContentComponent();
         host.editorWindow.reset();
     }
-    // Keep host.editor alive — the plugin owns its editor's lifecycle
-    // through the AudioPluginInstance; we just stop hosting it. A
-    // subsequent ShowEditor re-attaches the same editor to a fresh
-    // wrapper window (cheaper than re-creating the editor itself,
-    // which can be slow for GUI-heavy plugins).
     return 0;
 }
 
@@ -524,7 +409,6 @@ std::uint32_t handleResizeEditor (HostState& host,
     return 0;
 }
 
-// Audio worker. Wakes on cmdSeq, runs processBlock, signals replySeq.
 void audioWorkerLoop (HostState& host) noexcept
 {
     juce::MidiBuffer midiScratch;
@@ -538,15 +422,10 @@ void audioWorkerLoop (HostState& host) noexcept
         const auto cmd = host.hdr->cmdSeq.load (std::memory_order_acquire);
         if (cmd == lastSeq)
         {
-            (void) syscall (SYS_futex, &host.hdr->cmdSeq,
-                            FUTEX_WAIT_BITSET,
-                            cmd, nullptr, nullptr,
-                            FUTEX_BITSET_MATCH_ANY);
+            (void) ipcp::waitOnAddress (&host.hdr->cmdSeq, cmd, nullptr);
             continue;
         }
 
-        // Clamp header fields - the SHM is shared so a malformed peer must
-        // not be able to drive memcpy/memset past the channel buffers.
         int n  = (int) host.hdr->numSamples;
         int ci = (int) host.hdr->numInChans;
         int co = (int) host.hdr->numOutChans;
@@ -558,41 +437,29 @@ void audioWorkerLoop (HostState& host) noexcept
 
         if (p == nullptr || n <= 0 || co <= 0)
         {
-            // No plugin (or pre-load): zero the output. Parent observes
-            // this as silence, not as an error.
             for (int c = 0; c < co; ++c)
-                std::memset (audioOutChannel (host.shm, c), 0,
+                std::memset (audioOutChannel (host.shm.data(), c), 0,
                              (std::size_t) n * sizeof (float));
         }
         else
         {
-            // Copy SHM input into the pre-allocated work buffer, run the
-            // plugin in place, copy the result back to SHM output.
             const int bufCh = juce::jmax (ci, co);
-            // Resize is a no-op if already large enough; in release the
-            // buffer is fixed at (kMaxChans, kMaxBlock) from ctor so this
-            // never allocates.
             for (int c = 0; c < bufCh; ++c)
             {
                 if (c < ci)
                     std::memcpy (host.workBuffer.getWritePointer (c),
-                                  audioInChannel (host.shm, c),
+                                  audioInChannel (host.shm.data(), c),
                                   (std::size_t) n * sizeof (float));
                 else
                     std::memset (host.workBuffer.getWritePointer (c), 0,
                                   (std::size_t) n * sizeof (float));
             }
 
-            // MIDI in: deserialise once into midiScratch. The writer side
-            // packs each event as native-endian [int sample][uint16 len]
-            // [bytes], so we read with raw memcpy here to match. Stack-
-            // allocated event buffer keeps this RT-safe (no heap on the
-            // audio worker).
             midiScratch.clear();
             const auto midiInBytes = host.hdr->midiInBytes;
             if (midiInBytes > 0 && midiInBytes <= kMidiBytes)
             {
-                const std::uint8_t* base = midiIn (host.shm);
+                const std::uint8_t* base = midiIn (host.shm.data());
                 std::uint32_t off = 0;
                 std::uint8_t evBuf[256];
                 while (off + 6 <= midiInBytes)
@@ -618,20 +485,16 @@ void audioWorkerLoop (HostState& host) noexcept
             }
             catch (...)
             {
-                // Plugin threw - mark the connection crashed and exit
-                // the audio loop so the parent's futex wait times out.
                 host.hdr->state.store (kStateCrashed, std::memory_order_release);
                 break;
             }
 
             for (int c = 0; c < co; ++c)
-                std::memcpy (audioOutChannel (host.shm, c),
+                std::memcpy (audioOutChannel (host.shm.data(), c),
                               host.workBuffer.getReadPointer (c),
                               (std::size_t) n * sizeof (float));
 
-            // Serialise MIDI out (events the plugin emitted - synth
-            // notes, automation, etc.).
-            std::uint8_t* out = midiOut (host.shm);
+            std::uint8_t* out = midiOut (host.shm.data());
             std::uint32_t written = 0;
             for (const auto meta : midiScratch)
             {
@@ -650,66 +513,55 @@ void audioWorkerLoop (HostState& host) noexcept
 
         lastSeq = cmd;
         host.hdr->replySeq.store (cmd, std::memory_order_release);
-        (void) syscall (SYS_futex, &host.hdr->replySeq,
-                        FUTEX_WAKE, 1, nullptr, nullptr, 0);
+        ipcp::wakeOneAddress (&host.hdr->replySeq);
     }
 }
 
 int runIpcHost() noexcept
 {
     HostState host;
+    host.channel.fd = ipcp::kChildInheritFd;
 
-    // 1) SHM handoff.
-    int shmFd = recvFd (kSocketFd);
-    if (shmFd < 0) { std::fprintf (stderr, "recvFd failed\n"); return 1; }
-
-    host.shm = mmap (nullptr, kTotalSize, PROT_READ | PROT_WRITE,
-                      MAP_SHARED, shmFd, 0);
-    if (host.shm == MAP_FAILED)
+    ipcp::NativeHandle shmHandle;
+    if (! ipcp::recvHandle (host.channel, shmHandle))
     {
-        std::fprintf (stderr, "mmap failed\n");
-        ::close (shmFd);
+        std::fprintf (stderr, "recvHandle failed\n");
         return 1;
     }
-    // Mapping retains its own ref on the memfd; the fd itself can go.
-    ::close (shmFd);
-    host.hdr = headerOf (host.shm);
+
+    std::string err;
+    if (! host.shm.mapInheritedHandle (shmHandle, kTotalSize, err))
+    {
+        std::fprintf (stderr, "%s\n", err.c_str());
+        return 1;
+    }
+    host.hdr = headerOf (host.shm.data());
     if (host.hdr->magic != kMagic || host.hdr->version != kVersion)
     {
         std::fprintf (stderr, "SHM magic/version mismatch\n");
         return 1;
     }
 
-    // 2) JUCE init. ScopedJuceInitialiser_GUI is fine for headless use -
-    // it sets up MessageManager + fonts + a no-op event loop. We need
-    // it for any plugin that posts async messages.
     juce::ScopedJuceInitialiser_GUI juceInit;
 
-    // Register the formats we host. Compat shim covers the upstream-vs-
-    // wayland-fork API split.
     duskstudio::juce_compat::addDefaultFormats (host.formatManager);
 
-    // 3) Ready handshake.
     {
         char k = 'k';
-        if (write (kSocketFd, &k, 1) != 1) return 1;
+        if (! ipcp::writeExact (host.channel, &k, 1)) return 1;
     }
 
-    // 4) Audio worker thread.
     std::thread worker (audioWorkerLoop, std::ref (host));
 
-    // 5) Socket-reader thread reads control messages and dispatches.
-    // Runs on its own thread so the JUCE message loop on main can
-    // process messages plugins post to themselves.
     std::thread sockThread ([&host]
     {
         while (! host.shouldQuit.load (std::memory_order_acquire))
         {
             ControlMsgHeader hdr {};
-            if (! readExact (kSocketFd, &hdr, sizeof (hdr))) break;
+            if (! ipcp::readExact (host.channel, &hdr, sizeof (hdr))) break;
             std::vector<std::uint8_t> payload (hdr.payloadLen);
             if (hdr.payloadLen > 0
-                && ! readExact (kSocketFd, payload.data(), hdr.payloadLen))
+                && ! ipcp::readExact (host.channel, payload.data(), hdr.payloadLen))
                 break;
 
             std::vector<std::uint8_t> reply;
@@ -729,22 +581,17 @@ int runIpcHost() noexcept
                 default:                     status = 99; break;
             }
 
-            if (! sendControlReply (hdr.op, status,
+            if (! sendControlReply (host.channel, hdr.op, status,
                                      reply.empty() ? nullptr : reply.data(),
                                      (std::uint32_t) reply.size()))
                 break;
         }
         host.shouldQuit.store (true, std::memory_order_release);
-        // Wake the audio worker so it observes shouldQuit.
         host.hdr->state.store (kStateTeardown, std::memory_order_release);
-        (void) syscall (SYS_futex, &host.hdr->cmdSeq,
-                        FUTEX_WAKE, 1, nullptr, nullptr, 0);
-        // Tell the JUCE message loop to exit.
+        ipcp::wakeOneAddress (&host.hdr->cmdSeq);
         juce::MessageManager::getInstance()->stopDispatchLoop();
     });
 
-    // 6) JUCE message loop on main. Returns when stopDispatchLoop is
-    // called from the socket thread.
     juce::MessageManager::getInstance()->runDispatchLoop();
 
     sockThread.join();
@@ -756,7 +603,6 @@ int runIpcHost() noexcept
         host.ownedInstance.reset();
     }
 
-    munmap (host.shm, kTotalSize);
     return 0;
 }
 } // namespace
