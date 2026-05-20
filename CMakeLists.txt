@@ -234,6 +234,7 @@ target_sources(Focal PRIVATE
     src/engine/MidiClockEmitter.cpp
     src/engine/MidiSyncReceiver.cpp
     src/engine/MidiTimeCodeReceiver.cpp
+    src/engine/MidiTimeCodeEmitter.cpp
     src/engine/PlaybackEngine.cpp
     src/engine/PluginManager.cpp
     src/engine/PluginSlot.cpp

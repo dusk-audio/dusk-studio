@@ -864,6 +864,7 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
     midiSyncReceiver.prepare (sr);
     midiTimeCodeReceiver.prepare (sr);
     midiClockEmitter.prepare (sr);
+    midiTimeCodeEmitter.prepare (sr);
 #if FOCAL_HAS_DUSK_DSP
     // TapeMachine animates its reels + level-integration timing from
     // getPlayHead()->getPosition(). Without a playhead the donor reads
@@ -1097,23 +1098,44 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
     if (syncOutIdx != lastSyncOutputIdx)
     {
         midiClockEmitter.reset();
+        midiTimeCodeEmitter.reset();
         lastSyncOutputIdx = syncOutIdx;
     }
-    const bool emitClock = session.syncOutputEmitClock.load (std::memory_order_relaxed)
-                         && syncOutIdx >= 0
+    const bool portReady = syncOutIdx >= 0
                          && (size_t) syncOutIdx < midiOutputs.size()
                          && midiOutputs[(size_t) syncOutIdx] != nullptr;
-    if (emitClock)
+    const bool emitClock = portReady
+                         && session.syncOutputEmitClock.load (std::memory_order_relaxed);
+    const bool emitTimeCode = portReady
+                            && session.syncOutputEmitTimeCode.load (std::memory_order_relaxed);
+    if (emitClock || emitTimeCode)
     {
         // Rolling state from the engine's transport - the bytes drive
         // SLAVES, so they need to mirror Focal's local state, not the
         // external master's.
         const bool rolling = transport.isPlaying() || transport.isRecording();
-        const float emitBpm = session.tempoBpm.load (std::memory_order_relaxed);
         midiClockOutScratch.clear();
-        midiClockEmitter.generateBlock (midiSyncSampleClock - numSamples,
-                                          numSamples, emitBpm, rolling,
-                                          midiClockOutScratch);
+
+        if (emitClock)
+        {
+            const float emitBpm = session.tempoBpm.load (std::memory_order_relaxed);
+            midiClockEmitter.generateBlock (midiSyncSampleClock - numSamples,
+                                              numSamples, emitBpm, rolling,
+                                              midiClockOutScratch);
+        }
+        if (emitTimeCode)
+        {
+            // MTC + Clock multiplex onto the same scratch buffer; the
+            // chosen MidiOutput delivers both message types together.
+            const auto rate = (MidiTimeCodeEmitter::FrameRate)
+                session.syncOutputTimeCodeFrameRate.load (std::memory_order_relaxed);
+            midiTimeCodeEmitter.generateBlock (midiSyncSampleClock - numSamples,
+                                                  numSamples,
+                                                  transport.getPlayhead(),
+                                                  rolling, rate,
+                                                  midiClockOutScratch);
+        }
+
         if (! midiClockOutScratch.isEmpty())
         {
             // sendBlockOfMessages places the buffer into JUCE's background

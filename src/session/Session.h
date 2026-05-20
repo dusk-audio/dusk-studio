@@ -1213,6 +1213,14 @@ public:
     mutable std::atomic<bool>        externalTimeCodeReversed  { false };
     mutable std::atomic<int>         externalTimeCodeFrameRate { 3 };  // 0=24, 1=25, 2=29.97DF, 3=30
 
+    // MTC master-emit toggles. Reuses the existing syncOutputIdx /
+    // syncOutputIdentifier port — Clock + MTC multiplex on the same
+    // MidiOutput. syncOutputTimeCodeFrameRate selects the SMPTE rate
+    // we encode (24 / 25 / 29.97DF / 30). syncOutputEmitTimeCode
+    // toggles QF + full-frame sysex emission.
+    std::atomic<bool> syncOutputEmitTimeCode     { false };
+    std::atomic<int>  syncOutputTimeCodeFrameRate { 3 };
+
     // Resolve the audio device input channel that this track should read from.
     // -2 (default) means "follow the track index", -1 means "no input".
     int resolveInputForTrack (int trackIndex) const noexcept;

@@ -15,6 +15,7 @@
 #include "MidiSyncReceiver.h"
 #include "MidiTimeCodeReceiver.h"
 #include "MidiClockEmitter.h"
+#include "MidiTimeCodeEmitter.h"
 #include "../session/Session.h"
 #include "MasteringPlayer.h"
 #include "PlaybackEngine.h"
@@ -361,7 +362,8 @@ private:
     // engine's Transport state machine yet.
     MidiSyncReceiver       midiSyncReceiver;
     MidiTimeCodeReceiver   midiTimeCodeReceiver;
-    MidiClockEmitter midiClockEmitter;
+    MidiClockEmitter     midiClockEmitter;
+    MidiTimeCodeEmitter  midiTimeCodeEmitter;
     // Scratch buffer the emitter writes F8/FA/FC bytes into before the
     // engine hands it off to MidiOutput::sendBlockOfMessages. Allocated
     // once via clear()/reserve-on-first-use semantics of juce::MidiBuffer.
