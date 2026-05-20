@@ -2730,7 +2730,16 @@ int AudioRegionEditor::transportPlayheadX (juce::Rectangle<int> waveArea) const
 void AudioRegionEditor::paintTransportPlayhead (juce::Graphics& g,
                                                   juce::Rectangle<int> waveArea)
 {
-    const int x = transportPlayheadX (waveArea);
+    // Use the X that timerCallback queued the invalidation against,
+    // not a fresh live transport read. The audio thread may have
+    // advanced between timer queue + paint dispatch; a live re-read
+    // here would put the line outside the dirty band, JUCE's clip
+    // would eat pixels and the playhead would render torn.
+    // Initial-paint fallback: live compute if timerCallback hasn't
+    // populated lastPlayheadX yet.
+    int x = lastPlayheadX;
+    if (x < 0)
+        x = transportPlayheadX (waveArea);
     if (x < 0) return;
     g.setColour (kTransportPlayhead.withAlpha (0.85f));
     g.drawVerticalLine (x, (float) waveArea.getY(), (float) waveArea.getBottom());

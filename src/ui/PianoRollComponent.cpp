@@ -3314,7 +3314,19 @@ int PianoRollComponent::transportPlayheadX (juce::Rectangle<int> gridArea) const
 void PianoRollComponent::paintTransportPlayhead (juce::Graphics& g,
                                                     juce::Rectangle<int> gridArea)
 {
-    const int x = transportPlayheadX (gridArea);
+    // Use the X that timerCallback queued the invalidation against,
+    // not a fresh live transport read. The audio thread may have
+    // advanced the playhead between timer queue and paint dispatch;
+    // a live re-read here would put the painted line outside the
+    // dirty band that was invalidated, JUCE's clip would eat
+    // pixels and the playhead would render torn / segmented /
+    // intermittently invisible (the "tape head looks jagged" bug).
+    // Initial-paint fallback: if timerCallback hasn't run yet
+    // (lastPlayheadX == -1), compute live so the very first frame
+    // shows the line.
+    int x = lastPlayheadX;
+    if (x < 0)
+        x = transportPlayheadX (gridArea);
     if (x < 0) return;
     juce::Graphics::ScopedSaveState saved (g);
     g.reduceClipRegion (gridArea);
