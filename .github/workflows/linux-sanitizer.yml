@@ -42,10 +42,13 @@ jobs:
             libwebkit2gtk-4.0-dev libglu1-mesa-dev \
             libwayland-dev libxkbcommon-dev libdecor-0-dev
 
-      - name: Clone JUCE (plugdata-team wayland-juce8)
+      - name: Clone JUCE 8.0.4 (upstream)
+        # See linux-build.yml for rationale — CI uses vanilla upstream;
+        # the wayland fork's local commits are runtime-only and not
+        # pushable. JuceCompat.h adapts at compile time.
         run: |
-          git clone --depth 1 --branch wayland-juce8 \
-            https://github.com/plugdata-team/JUCE.git \
+          git clone --depth 1 --branch 8.0.4 \
+            https://github.com/juce-framework/JUCE.git \
             "${RUNNER_TEMP}/JUCE-wayland"
 
       - name: Clone Dusk plugins (donor DSP)

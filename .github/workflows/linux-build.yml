@@ -29,14 +29,20 @@ jobs:
             libwebkit2gtk-4.0-dev libglu1-mesa-dev xvfb \
             libwayland-dev libxkbcommon-dev libdecor-0-dev
 
-      - name: Clone JUCE (plugdata-team wayland-juce8)
-        # Linux pins to the plugdata-team JUCE fork. Its wayland-juce8
-        # branch is what Focal's __linux__ branch in JuceCompat.h targets
-        # (the free juce::addDefaultFormatsToManager() function lives
-        # there). Upstream JUCE 8.0.4 won't compile the Linux branch.
+      - name: Clone JUCE 8.0.4 (upstream)
+        # CI uses upstream JUCE. The plugdata-team wayland-juce8 fork
+        # carries 5 local commits (XEmbed mapping, SIMD<int64> alias,
+        # Wayland peer-creation latch, etc.) that exist only on the dev
+        # box — not pushable. The local fixes are runtime-only (plugin
+        # editor rendering, mutter crash on plugin-editor close); CI
+        # builds + runs unit tests without ever opening a plugin editor,
+        # so vanilla upstream is fine.
+        # JuceCompat.h detects which API surface is present at compile
+        # time via if constexpr — no platform branch needed at the call
+        # site.
         run: |
-          git clone --depth 1 --branch wayland-juce8 \
-            https://github.com/plugdata-team/JUCE.git \
+          git clone --depth 1 --branch 8.0.4 \
+            https://github.com/juce-framework/JUCE.git \
             "${RUNNER_TEMP}/JUCE-wayland"
 
       - name: Clone Dusk plugins (donor DSP)

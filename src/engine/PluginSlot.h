@@ -431,14 +431,6 @@ private:
     // re-prepare-on-block-size-change. Both are message-thread state.
     juce::String savedDescriptionXml;
 
-    // Stashed when restoreFromSavedState fails: the slot is empty but
-    // we still know what *should* have loaded. getDescriptionXmlForSave
-    // / getStateBase64ForSave return these when the slot is otherwise
-    // empty, so a save while offline doesn't wipe the user's data.
-    // Cleared on successful load / unload. Message-thread only.
-    juce::String offlineDescriptionXml;
-    juce::String offlineStateBase64;
-
     // Polls the connected child process every kReaperPeriodMs ms via
     // waitpid(WNOHANG). When the child has exited, sets autoBypassed +
     // remoteCrashed and stops polling (the slot needs an explicit
@@ -457,5 +449,16 @@ private:
     ReaperTimer reaperTimer { *this };
     void pollRemoteReaper();
    #endif
+
+    // Stashed when restoreFromSavedState fails: the slot is empty but
+    // we still know what *should* have loaded. getDescriptionXmlForSave
+    // / getStateBase64ForSave return these when the slot is otherwise
+    // empty, so a save while offline doesn't wipe the user's data.
+    // Cleared on successful load / unload. Message-thread only. Used
+    // by the in-process restore path so lives OUTSIDE the OOP gate —
+    // FOCAL_HAS_OOP_PLUGINS is Linux-only and the offline fallback
+    // is cross-platform.
+    juce::String offlineDescriptionXml;
+    juce::String offlineStateBase64;
 };
 } // namespace focal
