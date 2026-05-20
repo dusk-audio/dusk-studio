@@ -80,6 +80,26 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT FOCAL_SKIP_FORK_CHECK)
     unset(_focal_xembed_src)
 endif()
 
+# Detect plugdata-team JUCE-wayland's free juce::addDefaultFormatsToManager
+# function at configure time. The fork added it + marked the member
+# = delete; upstream JUCE only has the member. JuceCompat.h picks the
+# right API via the FOCAL_JUCE_HAS_FREE_ADD_FORMATS preprocessor define.
+# Done at configure time because SFINAE on the free function fails:
+# the qualified name lookup happens at template definition, not
+# substitution, so calling code wouldn't compile against upstream.
+set(FOCAL_JUCE_HAS_FREE_ADD_FORMATS OFF)
+set(_focal_apf_helpers
+    "${FOCAL_JUCE_SOURCE_DIR}/modules/juce_audio_processors/format/juce_AudioPluginFormatManagerHelpers.h")
+if(EXISTS "${_focal_apf_helpers}")
+    file(READ "${_focal_apf_helpers}" _focal_apf_src)
+    if(_focal_apf_src MATCHES "addDefaultFormatsToManager")
+        set(FOCAL_JUCE_HAS_FREE_ADD_FORMATS ON)
+        message(STATUS "JUCE has free juce::addDefaultFormatsToManager (wayland fork)")
+    endif()
+    unset(_focal_apf_src)
+endif()
+unset(_focal_apf_helpers)
+
 add_subdirectory(${FOCAL_JUCE_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/JUCE)
 
 # App icon. JUCE bakes the PNG into platform-specific resources at
@@ -341,6 +361,7 @@ if(UNIX AND NOT APPLE)
         JUCE_PLUGINHOST_VST3=1
         JUCE_PLUGINHOST_LV2=1
         JUCE_PLUGINHOST_AU=0
+        $<$<BOOL:${FOCAL_JUCE_HAS_FREE_ADD_FORMATS}>:FOCAL_JUCE_HAS_FREE_ADD_FORMATS=1>
         # Stop juce_audio_processors from generating JuceHeader.h-style
         # stubs and Projucer-only metadata - we drive everything from
         # CMake.
@@ -445,6 +466,7 @@ endif()
 target_compile_definitions(Focal PRIVATE
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
+    $<$<BOOL:${FOCAL_JUCE_HAS_FREE_ADD_FORMATS}>:FOCAL_JUCE_HAS_FREE_ADD_FORMATS=1>
     JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:Focal,JUCE_PRODUCT_NAME>"
     JUCE_APPLICATION_VERSION_STRING="$<TARGET_PROPERTY:Focal,JUCE_VERSION>"
     JUCE_JACK=1

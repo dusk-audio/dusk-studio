@@ -1,46 +1,29 @@
 #pragma once
 
 #include <juce_audio_processors/juce_audio_processors.h>
-#include <type_traits>
 
 namespace focal::juce_compat
 {
-namespace detail
-{
-// SFINAE detector for the plugdata-team JUCE-wayland fork's FREE
-// function juce::addDefaultFormatsToManager(). The fork added it +
-// marked the member `= delete`; upstream has neither the free function
-// nor a deleted member.
-//
-// Detecting via the free function (rather than the member) is the only
-// path that compiles cleanly against both shapes — a member SFINAE
-// would resolve "exists" against the fork's deleted overload and fire
-// "use of deleted function" at the call site.
-template <typename, typename = void>
-struct has_free_addDefaultFormatsToManager : std::false_type {};
-
-template <typename T>
-struct has_free_addDefaultFormatsToManager<
-    T,
-    std::void_t<decltype (juce::addDefaultFormatsToManager (std::declval<T&>()))>>
-    : std::true_type {};
-} // namespace detail
-
 // One-call shim hiding the AudioPluginFormatManager::addDefaultFormats
 // vs the wayland fork's free juce::addDefaultFormatsToManager() split.
-// Picks the right API at compile time via if constexpr — no platform
-// macro needed at the call site. Works for any combination of host
-// JUCE version on any platform.
+// FOCAL_JUCE_HAS_FREE_ADD_FORMATS is set by CMake at configure time
+// (CMakeLists.txt scans the JUCE source for the free function symbol)
+// so this picks the right API for any combination of platform + JUCE
+// version. No __linux__ branch at the call site.
 //
-// Templated on FM so if constexpr can ACTUALLY discard the dead
-// branch — a non-template function would type-check both arms, hitting
-// "use of deleted function" against the fork's = delete member.
-template <typename FM = juce::AudioPluginFormatManager>
-inline void addDefaultFormats (FM& fm)
+// Why CMake-time detection over SFINAE: the plugdata-team fork marks
+// the member `= delete`, which passes SFINAE then fails at the call
+// site. The upstream JUCE lacks the free function entirely, so
+// `decltype(juce::addDefaultFormatsToManager(...))` fails lookup at
+// template definition time rather than substitution — also unusable
+// for SFINAE. CMake-time text scan is the only clean cross-shape
+// detection.
+inline void addDefaultFormats (juce::AudioPluginFormatManager& fm)
 {
-    if constexpr (detail::has_free_addDefaultFormatsToManager<FM>::value)
-        juce::addDefaultFormatsToManager (fm);
-    else
-        fm.addDefaultFormats();
+   #if FOCAL_JUCE_HAS_FREE_ADD_FORMATS
+    juce::addDefaultFormatsToManager (fm);
+   #else
+    fm.addDefaultFormats();
+   #endif
 }
 } // namespace focal::juce_compat

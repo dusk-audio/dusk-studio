@@ -38,6 +38,7 @@ target_compile_definitions(focal-tests PRIVATE
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
     JUCE_STANDALONE_APPLICATION=1
+    $<$<BOOL:${FOCAL_JUCE_HAS_FREE_ADD_FORMATS}>:FOCAL_JUCE_HAS_FREE_ADD_FORMATS=1>
     FOCAL_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 target_link_libraries(focal-tests PRIVATE
