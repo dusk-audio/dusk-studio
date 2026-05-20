@@ -881,14 +881,23 @@ void TransportBar::refreshButtonStates()
         bpmValue.setText (juce::String ((int) engine.getSession().tempoBpm.load()),
                            juce::dontSendNotification);
 
-    // BPM caption flips to "EXT" + amber tint when external MIDI Clock
-    // sync is producing a stable BPM. Otherwise reads "BPM" in the
-    // neutral grey. Single-source-of-truth cue that the tempo display
-    // is being driven by an external master.
+    // BPM caption priority:
+    //   "MTC" + amber  — incoming MTC quarter-frames decoded (master is
+    //                    driving absolute time)
+    //   "EXT" + amber  — incoming MIDI Clock producing a stable BPM
+    //   "BPM" + grey   — Focal-internal tempo
+    // MTC takes priority over EXT because MTC implies a richer
+    // master-slave relationship; if both flow, the user cares more
+    // about the absolute-time chase.
     {
-        const float ext = engine.getSession().externalBpm.load (std::memory_order_relaxed);
-        const bool externalActive = ext > 0.0f;
-        bpmCaption.setText (externalActive ? "EXT" : "BPM", juce::dontSendNotification);
+        const auto& s = engine.getSession();
+        const bool mtcRolling = s.externalTimeCodeRolling.load (std::memory_order_relaxed);
+        const float ext = s.externalBpm.load (std::memory_order_relaxed);
+        const bool clockActive = ext > 0.0f;
+        const char* captionText = mtcRolling ? "MTC"
+                                : clockActive ? "EXT" : "BPM";
+        const bool externalActive = mtcRolling || clockActive;
+        bpmCaption.setText (captionText, juce::dontSendNotification);
         bpmCaption.setColour (juce::Label::textColourId,
             externalActive ? juce::Colour (0xffe0c060)
                             : juce::Colour (0xff707074));

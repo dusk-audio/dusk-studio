@@ -261,6 +261,7 @@ void AudioEngine::rebuildMidiInputBank()
     }
     session.syncSourceInputIdx.store (resolvedSyncIdx, std::memory_order_release);
     midiSyncReceiver.reset();
+    midiTimeCodeReceiver.reset();
 }
 
 juce::MidiMessageCollector* AudioEngine::getVirtualKeyboardCollector() noexcept
@@ -861,6 +862,7 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
     // per-block playhead from. Reset on every prepare so a sample-rate
     // change drops stale BPM history.
     midiSyncReceiver.prepare (sr);
+    midiTimeCodeReceiver.prepare (sr);
     midiClockEmitter.prepare (sr);
 #if FOCAL_HAS_DUSK_DSP
     // TapeMachine animates its reels + level-integration timing from
@@ -1017,6 +1019,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         // new source is rolling first-block, an old "rolling" latch can
         // suppress the Start edge that should fire.
         midiSyncReceiver.reset();
+        midiTimeCodeReceiver.reset();
         midiSyncSampleClock = 0;
         lastSyncSourceIdx = syncIdx;
         lastExtRolling = false;
@@ -1024,6 +1027,19 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
     if (syncIdx >= 0 && (size_t) syncIdx < perInputMidi.size())
     {
         midiSyncReceiver.process (perInputMidi[(size_t) syncIdx], midiSyncSampleClock);
+        midiTimeCodeReceiver.process (perInputMidi[(size_t) syncIdx],
+                                         midiSyncSampleClock, numSamples);
+        // Publish MTC decoded state. Same input port — Clock + MTC
+        // multiplex on it; both decoders ignore bytes they don't own.
+        session.externalTimeCodeFrames   .store (midiTimeCodeReceiver.getFrames(),
+                                                   std::memory_order_relaxed);
+        session.externalTimeCodeRolling  .store (midiTimeCodeReceiver.isRolling(),
+                                                   std::memory_order_relaxed);
+        session.externalTimeCodeReversed .store (midiTimeCodeReceiver.isReversed(),
+                                                   std::memory_order_relaxed);
+        session.externalTimeCodeFrameRate.store ((int) midiTimeCodeReceiver.getFrameRate(),
+                                                   std::memory_order_relaxed);
+
         const float ext = midiSyncReceiver.getBpm();
         const bool extRolling = midiSyncReceiver.isRolling();
         session.externalBpm.store (ext, std::memory_order_relaxed);
@@ -1064,6 +1080,9 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         // sync off.
         session.externalBpm.store (0.0f, std::memory_order_relaxed);
         session.externalSyncRolling.store (false, std::memory_order_relaxed);
+        session.externalTimeCodeFrames  .store (0,     std::memory_order_relaxed);
+        session.externalTimeCodeRolling .store (false, std::memory_order_relaxed);
+        session.externalTimeCodeReversed.store (false, std::memory_order_relaxed);
         lastExtRolling = false;
     }
     midiSyncSampleClock += numSamples;

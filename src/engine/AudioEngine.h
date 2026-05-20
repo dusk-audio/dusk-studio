@@ -13,6 +13,7 @@
 #include "../dsp/Metronome.h"
 #include "../dsp/PitchDetector.h"
 #include "MidiSyncReceiver.h"
+#include "MidiTimeCodeReceiver.h"
 #include "MidiClockEmitter.h"
 #include "../session/Session.h"
 #include "MasteringPlayer.h"
@@ -358,7 +359,8 @@ private:
     // reads via session.externalBpm / externalSyncRolling atoms. v1 is
     // tempo-only - the rolling hint is exposed but doesn't drive the
     // engine's Transport state machine yet.
-    MidiSyncReceiver midiSyncReceiver;
+    MidiSyncReceiver       midiSyncReceiver;
+    MidiTimeCodeReceiver   midiTimeCodeReceiver;
     MidiClockEmitter midiClockEmitter;
     // Scratch buffer the emitter writes F8/FA/FC bytes into before the
     // engine hands it off to MidiOutput::sendBlockOfMessages. Allocated

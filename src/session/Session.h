@@ -1199,6 +1199,20 @@ public:
     std::atomic<int>          syncOutputIdx        { -1 };
     std::atomic<bool>         syncOutputEmitClock  { false };
 
+    // MTC (MIDI Time Code) — slave-side decoded state. Shares the
+    // syncSourceInputIdx port with Clock (both QF and F8 multiplex on
+    // the same input). externalTimeCodeFrames is the running absolute
+    // SMPTE frame count from 00:00:00:00 (with the standard 2-frame
+    // QF transmission-delay compensation already applied — i.e., this
+    // matches what the master's display reads RIGHT NOW, not what its
+    // QF sequence assembled 2 frames ago). externalTimeCodeReversed
+    // is a UI cue when the master is scrubbing backward — chase
+    // ignores this state (v1 doesn't support reverse chase).
+    mutable std::atomic<juce::int64> externalTimeCodeFrames    { 0 };
+    mutable std::atomic<bool>        externalTimeCodeRolling   { false };
+    mutable std::atomic<bool>        externalTimeCodeReversed  { false };
+    mutable std::atomic<int>         externalTimeCodeFrameRate { 3 };  // 0=24, 1=25, 2=29.97DF, 3=30
+
     // Resolve the audio device input channel that this track should read from.
     // -2 (default) means "follow the track index", -1 means "no input".
     int resolveInputForTrack (int trackIndex) const noexcept;
