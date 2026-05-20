@@ -71,4 +71,16 @@ Pre-built signed binaries will be available at **focal.audio** (coming soon). Th
 
 ## License
 
-[GPL-3.0](LICENSE), to match JUCE's licensing.
+[GPL-3.0-or-later](LICENSE), to match JUCE's licensing. Third-party
+component inventory in [LICENSES.txt](LICENSES.txt).
+
+Focal ships under a **dual access model**:
+
+- **Source**: GPL-3.0. Clone, audit, build, modify, redistribute — all
+  fine under GPL terms.
+- **Patreon binaries**: precompiled Linux AppImages (and eventually
+  macOS / Windows installers) delivered to supporters. The payment is
+  for packaging, signing, and support access — the source remains
+  open. Self-builders get no support, but the code is the same.
+- **Paid 1.0 ($29)**: same source, same GPL. Buys you the signed
+  installer + access to bug triage.

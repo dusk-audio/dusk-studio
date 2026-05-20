@@ -825,6 +825,16 @@ void AudioEngine::stageTestMidiInjection (int inputIdx, juce::MidiBuffer events)
 
 void AudioEngine::prepareForSelfTest (double sr, int bs)
 {
+    // Must run on the message thread. The function mutates shared DSP
+    // state (every strip's prepare, every smoother reset, every scratch
+    // buffer resize) without locks. If a future caller invokes this
+    // from another thread while the audio callback is live, the audio
+    // thread reads half-prepared state and corrupts buffers silently.
+    // The existing call paths (audioDeviceAboutToStart, BounceEngine,
+    // FocalApp startup, AudioPipelineSelfTest) all run here; assert
+    // catches a future caller that gets this wrong.
+    jassert (juce::MessageManager::existsAndIsCurrentThread());
+
     currentSampleRate.store (sr, std::memory_order_relaxed);
     currentBlockSize.store  (bs, std::memory_order_relaxed);
 
@@ -883,6 +893,29 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
     playbackScratch .assign ((size_t) bs, 0.0f);
     playbackScratchR.assign ((size_t) bs, 0.0f);
     silentInputScratch.assign ((size_t) bs, 0.0f);
+}
+
+void AudioEngine::audioDeviceError (const juce::String& errorMessage)
+{
+    // Fires from the audio thread (ALSA run() at fatal-recover exit;
+    // macOS / Windows backends similar). stderr fprintf is RT-safe
+    // enough for a dying-device path; everything else (FileLogger
+    // write, RecordManager::stopRecording, Transport state-flip) is
+    // message-thread-only and gets dispatched via callAsync. Without
+    // the dispatch we'd join the disk thread + flush a ThreadedWriter
+    // on the audio thread — RecordManager's stopRecording contract
+    // forbids it. JUCE doesn't guarantee a follow-up
+    // audioDeviceStopped after this callback, so we force it.
+    std::fprintf (stderr, "[Focal/AudioEngine] audioDeviceError: %s\n",
+                  errorMessage.toRawUTF8());
+
+    juce::MessageManager::callAsync (
+        [this, errorMessage]
+        {
+            juce::Logger::writeToLog ("[Focal/AudioEngine] audioDeviceError: "
+                                          + errorMessage);
+            audioDeviceStopped();
+        });
 }
 
 void AudioEngine::audioDeviceStopped()
@@ -978,10 +1011,15 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
     {
         // Source changed (or first run). Reset both the receiver's
         // history and the local sample clock so the new source starts
-        // from a clean baseline.
+        // from a clean baseline. Also clear lastExtRolling — without
+        // this, if the old source was rolling and the new source is
+        // stopped, the first block fires a spurious Stop edge; if the
+        // new source is rolling first-block, an old "rolling" latch can
+        // suppress the Start edge that should fire.
         midiSyncReceiver.reset();
         midiSyncSampleClock = 0;
         lastSyncSourceIdx = syncIdx;
+        lastExtRolling = false;
     }
     if (syncIdx >= 0 && (size_t) syncIdx < perInputMidi.size())
     {

@@ -53,7 +53,18 @@ public:
     {
         hostPlayHead = ph;
         if (auto* p = currentInstance.load (std::memory_order_acquire))
+        {
             p->setPlayHead (ph);
+            // Tempo-locked plugins (grid-quantised slicers, BPM-synced
+            // delays) can derive their reported latency from the host
+            // playhead's tempo. Re-cache after the binding so the PDC
+            // aggregator picks up the post-playhead value instead of
+            // the stale post-load number. OOP path doesn't surface
+            // post-playhead latency over IPC yet — flagged in the
+            // matching prepareToPlay comment.
+            cachedLatencySamples.store (p->getLatencySamples(),
+                                          std::memory_order_relaxed);
+        }
     }
 
     // UI-side access to the bound manager - used by the ChannelStripComponent
@@ -268,6 +279,17 @@ public:
                                   const juce::String& stateBase64,
                                   juce::String& errorMessage);
 
+    // True when restoreFromSavedState was called with a non-empty
+    // description but the slot couldn't be re-instantiated (plugin
+    // missing / moved / format unsupported). The original description
+    // XML + state blob are preserved on the slot so a subsequent
+    // session save round-trips them — the user does NOT lose their
+    // saved plugin state just because the plugin wasn't available at
+    // load time. Explicit loadFromFile / loadFromDescription / unload
+    // clear the offline state.
+    bool         isOffline() const noexcept;
+    juce::String getOfflineName() const;
+
 private:
     PluginManager* manager = nullptr;
 
@@ -292,6 +314,18 @@ private:
     std::atomic<juce::AudioPluginInstance*> currentInstance { nullptr };
     std::atomic<bool> bypassed { false };
     std::atomic<bool> autoBypassed { false };  // tripped by the time-budget watchdog
+
+    // Audio-thread helper: engage auto-bypass + zero cached latency in
+    // one place. Without zeroing the latency cache, the AudioEngine's
+    // MIDI scheduler keeps shifting note timing forward by the
+    // plugin's reported pre-bypass latency, so events drift on every
+    // overrun-trip. Restored on the next successful load (autoBypassed
+    // cleared, cachedLatencySamples re-queried).
+    void engageAutoBypass() noexcept
+    {
+        autoBypassed       .store (true, std::memory_order_relaxed);
+        cachedLatencySamples.store (0,    std::memory_order_relaxed);
+    }
 
     double preparedSampleRate = 0.0;
     int    preparedBlockSize  = 0;
@@ -396,6 +430,14 @@ private:
     // can't fillInPluginDescription on a remote instance) and to drive
     // re-prepare-on-block-size-change. Both are message-thread state.
     juce::String savedDescriptionXml;
+
+    // Stashed when restoreFromSavedState fails: the slot is empty but
+    // we still know what *should* have loaded. getDescriptionXmlForSave
+    // / getStateBase64ForSave return these when the slot is otherwise
+    // empty, so a save while offline doesn't wipe the user's data.
+    // Cleared on successful load / unload. Message-thread only.
+    juce::String offlineDescriptionXml;
+    juce::String offlineStateBase64;
 
     // Polls the connected child process every kReaperPeriodMs ms via
     // waitpid(WNOHANG). When the child has exited, sets autoBypassed +

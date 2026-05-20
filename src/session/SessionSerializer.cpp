@@ -4,20 +4,80 @@
 #if JUCE_LINUX || JUCE_MAC
  #include <fcntl.h>
  #include <unistd.h>
+#elif JUCE_WINDOWS
+ #ifndef NOMINMAX
+  #define NOMINMAX
+ #endif
+ #include <windows.h>
 #endif
 
 namespace focal
 {
 namespace
 {
+// Bump whenever the JSON shape gains a NEW required field or changes
+// the meaning of an existing one. Adding optional fields that default
+// sensibly when absent does NOT require a bump — the load path
+// gracefully ignores unknown keys.
+// Loader rejects sessions with version > kFormatVersion (newer Focal
+// can read older files via migrateSession; older Focal refusing
+// newer files is safer than silently dropping fields).
 constexpr int kFormatVersion = 1;
+
+// Forward-migrate `root` from a known older version to kFormatVersion
+// by mutating in place. Add cases as the format evolves:
+//   case 1: do_v1_to_v2 (root); ++v; break;
+//   case 2: do_v2_to_v3 (root); ++v; break;
+// Each case MUST do its own ++v before break — the loop relies on the
+// case body advancing the version. Without it the loop would spin
+// forever on the same version. Today's body is a no-op because the
+// current schema is v1 (loop predicate v < kFormatVersion is false on
+// entry).
+// Returns true on success, false if a step refuses to migrate.
+static bool migrateSession (juce::var& root, int from)
+{
+    int v = from;
+    while (v < kFormatVersion)
+    {
+        const int before = v;
+        switch (v)
+        {
+            // case 1: do_v1_to_v2 (root); ++v; break;
+            default:
+                std::fprintf (stderr,
+                              "[Focal/SessionSerializer] no migrator from v%d to v%d\n",
+                              v, v + 1);
+                return false;
+        }
+        // Belt-and-suspenders against a future migrator that forgets
+        // its ++v — would otherwise spin the loop forever.
+        if (v == before)
+        {
+            std::fprintf (stderr,
+                          "[Focal/SessionSerializer] migrator at v%d failed to advance "
+                          "version — aborting to avoid infinite loop\n", v);
+            return false;
+        }
+    }
+    juce::ignoreUnused (root);
+    return true;
+}
 
 // Force the kernel page cache for `path` out to physical storage. Without
 // this, a system crash between the temp-file write and the rename below
 // can leave a renamed-but-empty file: the rename metadata reaches disk
-// before the data does. fsync is a no-op on Windows in this build (the
-// SessionSerializer is Linux-first; FlushFileBuffers wiring can land
-// alongside the rest of the Windows port).
+// before the data does.
+//
+//   Linux/macOS : open + fsync + close.
+//   Windows     : FlushFileBuffers requires GENERIC_WRITE per MSDN
+//                 ("the file handle must have the GENERIC_WRITE access
+//                 right"). For the regular-file case we open WRITE;
+//                 for directories (parent-dir fsync below) we open with
+//                 GENERIC_READ + FILE_FLAG_BACKUP_SEMANTICS because
+//                 GENERIC_WRITE on a directory handle fails ACCESS
+//                 DENIED on NTFS. Directory flush is a best-effort no-op
+//                 on NTFS — rename+file-flush carries the data-
+//                 durability invariant.
 void fsyncFile (const juce::File& path)
 {
    #if JUCE_LINUX || JUCE_MAC
@@ -25,6 +85,21 @@ void fsyncFile (const juce::File& path)
     if (fd < 0) return;
     (void) ::fsync (fd);
     ::close (fd);
+   #elif JUCE_WINDOWS
+    const auto wide = path.getFullPathName().toWideCharPointer();
+    const bool isDir = path.isDirectory();
+    const DWORD access = isDir ? GENERIC_READ : GENERIC_WRITE;
+    const DWORD flags  = isDir ? FILE_FLAG_BACKUP_SEMANTICS : FILE_ATTRIBUTE_NORMAL;
+    HANDLE h = ::CreateFileW (wide,
+                                access,
+                                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                nullptr,
+                                OPEN_EXISTING,
+                                flags,
+                                nullptr);
+    if (h == INVALID_HANDLE_VALUE) return;
+    (void) ::FlushFileBuffers (h);
+    ::CloseHandle (h);
    #else
     (void) path;
    #endif
@@ -999,6 +1074,27 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
     if (! source.existsAsFile()) return false;
     juce::var root = juce::JSON::parse (source);
     if (! root.isObject()) return false;
+
+    // Format version gate. Missing key (pre-versioning sessions) is
+    // treated as v1 — the format was effectively stable at v1 when the
+    // version field landed. Future-versioned sessions are rejected up
+    // front rather than partial-loaded; downgrading Focal to read a
+    // session saved by a newer build silently dropping new state is
+    // the worst-case bug class.
+    const int fileVersion = root.hasProperty ("version")
+        ? (int) root["version"]
+        : kFormatVersion;
+    if (fileVersion > kFormatVersion)
+    {
+        std::fprintf (stderr,
+                      "[Focal/SessionSerializer] session.json version %d is newer "
+                      "than this build's max supported version %d — refusing to "
+                      "load. Upgrade Focal.\n",
+                      fileVersion, kFormatVersion);
+        return false;
+    }
+    if (fileVersion < kFormatVersion && ! migrateSession (root, fileVersion))
+        return false;
 
     if (auto tracks = root["tracks"]; tracks.isArray())
     {

@@ -73,6 +73,16 @@ public:
     // value never triggered because the user couldn't drag below 1790.
     static constexpr int kCompactTransportWidth = 1850;
 
+    // Public surface for any stop path outside this component (hotkeys
+    // in MainComponent, external transport calls, MIDI bindings). After
+    // engine.stop() drains the take, RecordManager populates
+    // getLastRecordErrors() with per-track mid-take failures: WAV write
+    // returned false (disk full / writer error) or the MIDI FIFO ran out
+    // of capacity and dropped events. Surfaces as an AlertWindow so the
+    // user knows the take is partial / corrupt before relying on it.
+    // Safe no-op when no errors are pending.
+    void notifyRecordStopped();
+
 private:
     void timerCallback() override;
     void refreshButtonStates();

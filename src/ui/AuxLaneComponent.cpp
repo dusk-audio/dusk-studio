@@ -179,6 +179,11 @@ AuxLaneComponent::AuxLaneComponent (AuxLane& l, AuxLaneStrip& s, int idx,
                                        AudioEngine& e)
     : lane (l), strip (s), engine (e), laneIndex (idx)
 {
+    // Accessibility floor — screen readers announce the lane as
+    // "Aux N" instead of "Component".
+    setTitle ("Aux " + juce::String (idx + 1));
+    setDescription ("Aux send/return lane " + juce::String (idx + 1));
+
     nameLabel.setText (lane.name, juce::dontSendNotification);
     nameLabel.setJustificationType (juce::Justification::centredLeft);
     nameLabel.setColour (juce::Label::textColourId, juce::Colours::white);
@@ -348,6 +353,13 @@ void AuxLaneComponent::refreshSlotControls (int i)
         {
             ui.displayedName = name;
             ui.openOrAddButton.setButtonText (name);
+            // First-time-loaded trigger (mirrors the offline branch
+            // below). If we transitioned offline → loaded, the prior
+            // resized() ran the offline layout which skips
+            // bypassButton.setBounds — without re-running resized()
+            // here the bypass button is visible at the empty layout's
+            // zero rectangle and uncliclable.
+            resized();
         }
         if (slotRef.wasCrashed())
             ui.openOrAddButton.setButtonText ("! " + name + " (crashed)");
@@ -355,6 +367,29 @@ void AuxLaneComponent::refreshSlotControls (int i)
             ui.openOrAddButton.setButtonText ("! " + name + " (stalled)");
         ui.bypassButton.setVisible (true);
         ui.bypassButton.setToggleState (slotRef.isBypassed(), juce::dontSendNotification);
+        ui.removeButton.setVisible (true);
+    }
+    else if (slotRef.isOffline())
+    {
+        // Saved-session plugin missing on this host. Preserve the saved
+        // name so the user knows what to reinstall; the slot's stashed
+        // descXml + state base64 will round-trip on the next save.
+        const auto offline = slotRef.getOfflineName();
+        const auto label = juce::String (juce::CharPointer_UTF8 ("\xe2\x9a\xa0 "))
+                         + (offline.isNotEmpty() ? offline : juce::String ("offline"))
+                         + " (offline)";
+        if (label != ui.displayedName)
+        {
+            ui.displayedName = label;
+            ui.openOrAddButton.setButtonText (label);
+            // First time we enter offline state for this slot — re-run
+            // resized() so removeButton gets its header-strip bounds.
+            // Without this the button is visible at the prior empty
+            // layout's zero rectangle and the user can't dismiss the
+            // placeholder.
+            resized();
+        }
+        ui.bypassButton.setVisible (false);
         ui.removeButton.setVisible (true);
     }
     else
@@ -602,13 +637,21 @@ void AuxLaneComponent::resized()
                      "extend the layout block before raising kMaxLanePlugins.");
     auto center = getCenterArea();
     auto& ui = slots[0];
-    if (strip.getPluginSlot (0).isLoaded())
+    auto& slot0 = strip.getPluginSlot (0);
+    // Offline placeholder shares the header layout so the X button is
+    // positioned and clickable — without this the offline branch in
+    // refreshSlotControls makes removeButton visible but never gives
+    // it bounds, leaving a zero-sized non-interactive control.
+    if (slot0.isLoaded() || slot0.isOffline())
     {
         auto headerStrip = center.removeFromTop (kSlotHeaderH);
         ui.removeButton.setBounds (headerStrip.removeFromRight (28));
         headerStrip.removeFromRight (4);
-        ui.bypassButton.setBounds (headerStrip.removeFromRight (44));
-        headerStrip.removeFromRight (4);
+        if (slot0.isLoaded())
+        {
+            ui.bypassButton.setBounds (headerStrip.removeFromRight (44));
+            headerStrip.removeFromRight (4);
+        }
         ui.openOrAddButton.setBounds (headerStrip);
     }
     else

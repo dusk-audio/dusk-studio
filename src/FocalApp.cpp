@@ -8,6 +8,7 @@
 #include "engine/PluginManager.h"
 #include "engine/PluginSlot.h"
 #include "session/SessionSerializer.h"
+#include "util/CrashHandler.h"
 #if JUCE_LINUX
  #include "engine/ipc/IpcSelfTest.h"
 #endif
@@ -672,8 +673,28 @@ static void runHeadlessSelfTest()
     std::fflush (stdout);
 }
 
-void FocalApp::initialise (const juce::String&)
+void FocalApp::initialise (const juce::String& commandLine)
 {
+    // --version: print app + JUCE versions + platform string and exit
+    // cleanly. Used by Patreon support flows (paste the output of
+    // `Focal --version` into the support DM) and by the Linux CI smoke
+    // launch (verifies the binary actually links + starts headless).
+    // Check BEFORE any audio init so the path works on machines with
+    // no audio device. Tokenize commandLine — substring match would
+    // false-trip on session paths containing "--version" (e.g.
+    // ~/Sessions/test--version-bug/session.json).
+    const auto cliTokens = juce::StringArray::fromTokens (commandLine, true);
+    if (cliTokens.contains ("--version") || cliTokens.contains ("-v"))
+    {
+        std::fprintf (stdout, "Focal %s\nJUCE %s\nPlatform: %s\n",
+                      JUCE_APPLICATION_VERSION_STRING,
+                      juce::SystemStats::getJUCEVersion().toRawUTF8(),
+                      juce::SystemStats::getOperatingSystemName().toRawUTF8());
+        std::fflush (stdout);
+        quit();
+        return;
+    }
+
    #if JUCE_LINUX
     primeRealtimeAudio();
    #endif
@@ -900,6 +921,14 @@ void FocalApp::initialise (const juce::String&)
         return;
     }
 
+    // Install crash handler + FileLogger AFTER every selftest env-gate
+    // above has had its chance to quit. Self-test paths don't want
+    // stray daily log files littering the user's data dir (or CI
+    // runner $HOME). Normal-user launches fall through to here, so the
+    // crash report path is established before the main window opens
+    // and before any plugin scan / audio device init can fault.
+    focal::crash_handler::install (JUCE_APPLICATION_VERSION_STRING);
+
     // User UI-scale override. JUCE composes this with each display's own
     // OS-reported DPI scale, so 1.0 here means "let the OS decide" and
     // anything else is the user's manual zoom. Applied BEFORE creating
@@ -949,6 +978,12 @@ void FocalApp::shutdown()
             main->leakAllPluginInstancesForShutdown();
 
     mainWindow.reset();
+
+    // Tear down the FileLogger installed by crash_handler::install so
+    // JUCE's leak detector doesn't complain at exit. The crash callback
+    // installed via setApplicationCrashHandler is harmless if it stays
+    // registered — process is exiting either way.
+    focal::crash_handler::uninstall();
 }
 
 void FocalApp::systemRequestedQuit()

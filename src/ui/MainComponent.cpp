@@ -268,6 +268,13 @@ private:
 
 MainComponent::MainComponent()
 {
+    // Accessibility floor — screen readers announce the root view as
+    // "Focal mixer" instead of "Component". Tab navigation across
+    // strips is enabled per-strip via setWantsKeyboardFocus on each
+    // ChannelStripComponent in resized().
+    setTitle ("Focal mixer");
+    setDescription ("16-channel portastudio-style mixer");
+
     juce::LookAndFeel::setDefaultLookAndFeel (&lookAndFeel);
 
    #if FOCAL_HAS_OOP_PLUGINS
@@ -720,13 +727,13 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     {
         auto& transport = engine.getTransport();
         if (transport.isStopped()) engine.play();
-        else                       engine.stop();
+        else                       { engine.stop(); if (transportBar != nullptr) transportBar->notifyRecordStopped(); }
         return true;
     }
     if (code == 'R' && noMods)
     {
         auto& transport = engine.getTransport();
-        if (transport.isRecording()) engine.stop();
+        if (transport.isRecording()) { engine.stop(); if (transportBar != nullptr) transportBar->notifyRecordStopped(); }
         else                         engine.record();
         return true;
     }
@@ -1330,12 +1337,16 @@ bool MainComponent::autosaveIsNewerThan (const juce::File& sessionJson) const
     const auto autosave = getAutosaveFileFor (sessionJson.getParentDirectory());
     if (! autosave.existsAsFile()) return false;
     if (! sessionJson.existsAsFile()) return true;   // autosave is the only state we have
-    if (autosave.getLastModificationTime() <= sessionJson.getLastModificationTime())
-        return false;
-    // Both files exist and autosave looks newer by mtime. Compare content
-    // with volatile plugin/tape state stripped so an autosave written by
-    // a 30 s timer firing after a manual save doesn't trigger a recovery
-    // prompt when the only "change" is internal plugin drift.
+    // Content-based comparison only. mtime is unreliable on common
+    // filesystems (ext4 typically has 1 s mtime resolution; FAT-class
+    // filesystems are 2 s), so a manual save followed by an autosave
+    // within the same second can look like "autosave not newer" via
+    // mtime even when the in-memory state genuinely diverged. Manual
+    // save deletes the autosave (see saveSession), so the autosave
+    // file existing AND its content differing from session.json is
+    // the authoritative signal that a recovery point is available.
+    // Volatile plugin/tape APVTS drift is stripped so an idle session
+    // doesn't see spurious diffs.
     const auto autosaveStripped    = stripVolatileStateForDirtyCompare (autosave.loadFileAsString());
     const auto sessionJsonStripped = stripVolatileStateForDirtyCompare (sessionJson.loadFileAsString());
     return autosaveStripped != sessionJsonStripped;

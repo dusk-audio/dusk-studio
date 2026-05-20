@@ -182,11 +182,13 @@ void HardwareInsertEditor::timerCallback()
         {
             // Inline failure status - replaces the AlertWindow popup so
             // the user can immediately retry without dismissing a modal.
-            // The full troubleshooting hint (cable / level / manual offset)
-            // lives in the editor's existing copy + tooltip on the ping
-            // button; the inline message names just the failure cause.
-            pingStatusLabel.setText ("Ping failed - check level / cables.",
-                                       juce::dontSendNotification);
+            // Distinguish -2 (capture stall = no input samples arrived)
+            // from -1 (captured but correlation weak) so the user gets
+            // the right troubleshooting hint.
+            const juce::String msg = (lag == -2)
+                ? juce::String ("No input signal - check routing / device.")
+                : juce::String ("Ping failed - check level / cables.");
+            pingStatusLabel.setText (msg, juce::dontSendNotification);
             pingStatusLabel.setColour (juce::Label::textColourId,
                                          juce::Colour (0xffe06060));
         }

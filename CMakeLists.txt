@@ -203,6 +203,7 @@ target_sources(Focal PRIVATE
     src/session/Session.cpp
     src/session/SessionSerializer.cpp
     src/session/SessionTemplates.cpp
+    src/util/CrashHandler.cpp
     src/ui/AnalogVuMeter.cpp
     src/ui/AppConfig.cpp
     src/ui/AudioRegionEditor.cpp
@@ -378,7 +379,12 @@ if(DEFINED DUSK_PLUGINS_PATH)
     #                   migration completes)
     #   - TapeMachine  (full-featured tape emulation hosted on the master bus;
     #                   editor opened via the gear button next to TAPE)
-    target_include_directories(Focal PRIVATE
+    # SYSTEM include — vendored DSP headers carry benign warnings
+    # (shadows, sign conversions) we don't own. Marking them SYSTEM
+    # tells GCC/Clang to suppress those warnings on inclusion, which
+    # lets FOCAL_STRICT_WARNINGS=-Werror apply to Focal's own sources
+    # without the vendored headers blocking the build.
+    target_include_directories(Focal SYSTEM PRIVATE
         "${DUSK_PLUGINS_PATH}/plugins/shared"
         "${DUSK_PLUGINS_PATH}/plugins/shared/AnalogEmulation"
         "${DUSK_PLUGINS_PATH}/plugins/shared/channel-comp"
@@ -486,6 +492,35 @@ target_link_libraries(Focal PRIVATE
     juce::juce_recommended_config_flags
     juce::juce_recommended_lto_flags
     juce::juce_recommended_warning_flags)
+
+# Treat warnings as errors on the Focal target. Off by default; opt-in
+# via -DFOCAL_STRICT_WARNINGS=ON. Not yet enabled in CI because the
+# vendored multi-comp .cpp sources compiled into Focal still emit
+# shadow / sign-conversion warnings (vendored DSP HEADERS are marked
+# SYSTEM above and suppressed; the COMPILED .cpp from the plugins repo
+# is not). Flip the CI workflow once those are cleaned upstream or
+# wrapped with per-source warning overrides via set_source_files_properties.
+option(FOCAL_STRICT_WARNINGS "Treat warnings as errors on the Focal target" OFF)
+if(FOCAL_STRICT_WARNINGS)
+    if(MSVC)
+        target_compile_options(Focal PRIVATE /WX)
+    else()
+        target_compile_options(Focal PRIVATE -Werror)
+    endif()
+endif()
+
+# AddressSanitizer + UBSan. Off by default; opt-in via
+# -DFOCAL_ENABLE_ASAN=ON. Applied build-wide (directory-level options)
+# because sanitizer-instrumented code can't link against
+# non-instrumented code without symbol-resolution drama. CI runs the
+# test binary under ASAN to catch heap corruption / use-after-free /
+# undefined-behaviour from a long-running session's worth of edits.
+# Not for production builds — overhead is ~2× CPU and ~3× memory.
+option(FOCAL_ENABLE_ASAN "Enable AddressSanitizer + UBSan" OFF)
+if(FOCAL_ENABLE_ASAN AND NOT MSVC)
+    add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
+    add_link_options(-fsanitize=address,undefined)
+endif()
 
 option(FOCAL_BUILD_TESTS "Build Focal unit tests with Catch2" OFF)
 if(FOCAL_BUILD_TESTS)

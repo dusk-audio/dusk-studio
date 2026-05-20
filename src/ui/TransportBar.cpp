@@ -268,8 +268,18 @@ void TransportIconButton::buttonStateChanged()
 
 TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
 {
+    // Accessibility floor — screen readers announce buttons by name
+    // (icon-only buttons would otherwise speak as "button"). Tooltip
+    // text supplied below covers the description.
+    setTitle ("Transport bar");
+    playButton  .setTitle ("Play");
+    stopButton  .setTitle ("Stop");
+    recordButton.setTitle ("Record");
+    rewButton   .setTitle ("Rewind");
+    ffwdButton  .setTitle ("Fast forward");
+
     playButton.onClick   = [this] { engine.play();   refreshButtonStates(); };
-    stopButton.onClick   = [this] { engine.stop();   refreshButtonStates(); };
+    stopButton.onClick   = [this] { engine.stop();   notifyRecordStopped(); refreshButtonStates(); };
     recordButton.onClick = [this]
     {
         engine.record();
@@ -693,7 +703,10 @@ void TransportBar::timerCallback()
             {
                 const auto stopAt = pOut + (juce::int64) ((double) postRoll * sr);
                 if (engine.getTransport().getPlayhead() >= stopAt)
+                {
                     engine.stop();
+                    notifyRecordStopped();
+                }
             }
         }
     }
@@ -712,11 +725,11 @@ void TransportBar::timerCallback()
         switch (pending)
         {
             case PendingTransportAction::Play:   engine.play();   break;
-            case PendingTransportAction::Stop:   engine.stop();   break;
+            case PendingTransportAction::Stop:   engine.stop();   notifyRecordStopped(); break;
             case PendingTransportAction::Record: engine.record(); surfaceRecordSetupFailures(); break;
             case PendingTransportAction::Toggle:
                 if (engine.getTransport().isStopped()) engine.play();
-                else                                    engine.stop();
+                else                                    { engine.stop(); notifyRecordStopped(); }
                 break;
             case PendingTransportAction::None:   break;
         }
@@ -809,6 +822,36 @@ void TransportBar::surfaceRecordSetupFailures()
         juce::MessageBoxOptions()
             .withIconType (juce::MessageBoxIconType::WarningIcon)
             .withTitle ("Recording setup failed")
+            .withMessage (body)
+            .withButton ("OK"),
+        nullptr);
+}
+
+void TransportBar::notifyRecordStopped()
+{
+    const auto& errs = engine.getRecordManager().getLastRecordErrors();
+    if (errs.empty()) return;
+
+    juce::String body =
+        "The last take captured with errors. Listed tracks may be partial "
+        "or missing audio / MIDI data:\n\n";
+    for (const auto& e : errs)
+    {
+        const juce::String kind =
+            e.kind == RecordManager::RecordErrorKind::WavWrite
+                ? "WAV write failed (disk full / I/O error)"
+                : "MIDI events dropped (capture buffer full)";
+        body += "    Track " + juce::String (e.trackIndex + 1)
+              + " — " + kind + " ("
+              + juce::String (e.count) + ")\n";
+    }
+    body += "\nCheck the session's audio folder for free space and the "
+            "session log for I/O details before continuing.";
+
+    juce::AlertWindow::showAsync (
+        juce::MessageBoxOptions()
+            .withIconType (juce::MessageBoxIconType::WarningIcon)
+            .withTitle ("Recording errors")
             .withMessage (body)
             .withButton ("OK"),
         nullptr);

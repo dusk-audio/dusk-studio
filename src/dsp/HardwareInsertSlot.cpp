@@ -348,10 +348,12 @@ void HardwareInsertSlot::processStereoBlock (float* L, float* R, int numSamples,
             // Routing went invalid mid-capture (user cleared the input
             // combo, device hot-swap, etc.). Without this watchdog
             // pingCapturePos would never advance and the UI would hang
-            // on the "Pinging..." button forever. Bail with a failure
-            // result once the stall has lasted ~2× the capture window.
+            // on the "Pinging..." button forever. Bail with -2 (distinct
+            // from -1 = "captured but correlation peak too low") so the
+            // UI can say "no input signal" instead of the generic
+            // "ping failed - check level".
             if (++pingCaptureStallSamples > kPingCaptureStallMax)
-                finishPing (-1);
+                finishPing (-2);
         }
         const float inGain = inGainLin.getNextValue();
         retL *= inGain;

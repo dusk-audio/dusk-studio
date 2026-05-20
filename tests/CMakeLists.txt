@@ -18,9 +18,17 @@ add_executable(focal-tests
     crossfade.cpp
     file_importer_audio.cpp
     hardware_insert.cpp
+    session_round_trip.cpp
+    session_corrupted_recovery.cpp
+    session_format_version.cpp
+    recording_byte_accuracy.cpp
+    midi_fifo_overflow.cpp
     ${CMAKE_SOURCE_DIR}/src/dsp/BrickwallLimiter.cpp
     ${CMAKE_SOURCE_DIR}/src/dsp/HardwareInsertSlot.cpp
-    ${CMAKE_SOURCE_DIR}/src/engine/FileImporter.cpp)
+    ${CMAKE_SOURCE_DIR}/src/engine/FileImporter.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/RecordManager.cpp
+    ${CMAKE_SOURCE_DIR}/src/session/Session.cpp
+    ${CMAKE_SOURCE_DIR}/src/session/SessionSerializer.cpp)
 
 target_include_directories(focal-tests PRIVATE
     ${CMAKE_SOURCE_DIR}/src
@@ -35,6 +43,12 @@ target_compile_definitions(focal-tests PRIVATE
 target_link_libraries(focal-tests PRIVATE
     Catch2::Catch2WithMain
     juce::juce_audio_basics
+    # juce_audio_devices required by SessionSerializer.cpp for
+    # juce::MidiInput::getAvailableDevices() — resolves Track::
+    # midiInputIdentifier back to an index on session load. Removing
+    # this triggers an ld undefined-reference on the MidiInput /
+    # MidiOutput statics.
+    juce::juce_audio_devices
     juce::juce_audio_formats
     juce::juce_core
     juce::juce_dsp

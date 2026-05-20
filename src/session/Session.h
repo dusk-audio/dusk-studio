@@ -111,6 +111,11 @@ struct HardwareInsertParams
     // const HardwareInsertParams* reference (same pattern as the meter
     // atomics on Bus / Master params).
     mutable std::atomic<bool> pingPending { false };
+    // -1 = correlation peak below threshold (cable connected but signal
+    // too weak / noisy); -2 = capture stall (no input samples ever
+    // arrived — likely no routing / device unplugged); >= 0 = measured
+    // lag in samples. Default -1 is a no-op until the first ping
+    // completes; UI gates on pingPending falling edge before reading.
     mutable std::atomic<int>  pingResult  { -1 };
 };
 

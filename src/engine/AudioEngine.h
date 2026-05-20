@@ -196,6 +196,13 @@ public:
 
     void audioDeviceAboutToStart (juce::AudioIODevice* device) override;
     void audioDeviceStopped() override;
+    // Fires from the audio thread when the backend can no longer service
+    // I/O (USB / Bluetooth unplug; ALSA -ENODEV; macOS interrupt). JUCE
+    // doesn't guarantee a follow-up audioDeviceStopped after this, so we
+    // do the same flush-record-and-stop-transport dance to keep
+    // recordings recoverable and prevent transport from "rolling" with
+    // a dead audio backend.
+    void audioDeviceError (const juce::String& errorMessage) override;
 
     // juce::MidiInputCallback. Bound to AudioDeviceManager via
     // addMidiInputDeviceCallback("", this) — empty deviceIdentifier means

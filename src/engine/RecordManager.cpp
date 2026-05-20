@@ -51,6 +51,7 @@ bool RecordManager::startRecording (double sampleRate, juce::int64 startSample)
     recordSampleRate  = sampleRate;
 
     lastSetupFailures.clear();
+    lastRecordErrors.clear();
 
     // Reset the per-track audio-thread counters before the audio
     // callback can start writing - the counter readout at stopRecording
@@ -126,8 +127,16 @@ bool RecordManager::startRecording (double sampleRate, juce::int64 startSample)
         auto perTrack = std::make_unique<PerTrackWriter>();
         perTrack->file = outFile;
         perTrack->numChannels = trackChannels;
+        // Ring sized to hold ~4 s at the active sample rate so a brief
+        // disk stall (NFS hiccup, drive spindown) doesn't push the
+        // audio callback into dropped writes. Scaled by sampleRate so a
+        // 48k session doesn't pay the 12× memory tax of a 96k worst-
+        // case constant: ≈ 1.5 MB / track @ 48k stereo vs ≈ 3 MB @ 96k.
+        // Floor at 65536 samples to guarantee a safety margin even on
+        // exotic low-rate setups.
+        const int kThreadedWriterSamples = juce::jmax (65536, (int) (sampleRate * 4.0));
         perTrack->writer = std::make_unique<juce::AudioFormatWriter::ThreadedWriter> (
-            writer.release(), diskThread, 32768);
+            writer.release(), diskThread, kThreadedWriterSamples);
         writers[(size_t) t] = std::move (perTrack);
     }
 
@@ -141,6 +150,26 @@ void RecordManager::stopRecording (juce::int64 endSample)
         return;
 
     active.store (false, std::memory_order_release);
+
+    // Latch audio-thread error counters into lastRecordErrors before
+    // teardown so TransportBar can surface them after engine.stop(). Per-
+    // writer write failures + per-track MIDI overflows; setup-time
+    // failures are tracked separately by lastSetupFailures.
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        if (auto& w = writers[(size_t) t])
+        {
+            const auto fails = w->writeFailures.load (std::memory_order_relaxed);
+            if (fails > 0)
+                lastRecordErrors.push_back ({ t, RecordErrorKind::WavWrite, fails });
+        }
+        if (auto& cap = midiCaptures[(size_t) t])
+        {
+            const auto over = cap->overflowCount.load (std::memory_order_relaxed);
+            if (over > 0)
+                lastRecordErrors.push_back ({ t, RecordErrorKind::MidiOverflow, over });
+        }
+    }
 
     // Drain any per-track MIDI captures into MidiRegions BEFORE the writer
     // teardown loop below - audio + MIDI commit phases are independent so
@@ -503,10 +532,26 @@ void RecordManager::writeMidiBlock (int trackIndex,
         if (samplePos < 0) continue;
 
         int needed = 1;
-        if (cap->fifo.getFreeSpace() < needed) continue;  // FIFO full → drop this event, try next
+        if (cap->fifo.getFreeSpace() < needed)
+        {
+            cap->overflowCount.fetch_add (1, std::memory_order_relaxed);
+            continue;  // FIFO full → drop this event, try next
+        }
         int s1 = 0, sz1 = 0, s2 = 0, sz2 = 0;
         cap->fifo.prepareToWrite (needed, s1, sz1, s2, sz2);
-        if (sz1 + sz2 < needed) { cap->fifo.finishedWrite (sz1 + sz2); continue; }
+        if (sz1 + sz2 < needed)
+        {
+            cap->overflowCount.fetch_add (1, std::memory_order_relaxed);
+            // Don't advance the write pointer when we didn't write — calling
+            // finishedWrite(sz1+sz2) would expose stale/uninitialized slots
+            // to the reader on drain. finishedWrite(0) matches the actual
+            // bytes written. Rare today (the getFreeSpace guard above
+            // usually catches the no-room case first) but not strictly
+            // unreachable — getFreeSpace + prepareToWrite aren't atomic,
+            // a concurrent drain could shrink the window in between.
+            cap->fifo.finishedWrite (0);
+            continue;
+        }
         auto& slot = cap->events[(size_t) s1];
         slot.samplePos = samplePos;
         slot.status = status;
@@ -541,5 +586,7 @@ void RecordManager::writeInputBlock (int trackIndex,
              && (slot->numChannels < 2 || channels[1] != nullptr));
     if (slot->writer->write (channels, numSamples))
         slot->framesWritten += numSamples;
+    else
+        slot->writeFailures.fetch_add (1, std::memory_order_relaxed);
 }
 } // namespace focal

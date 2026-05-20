@@ -1,0 +1,133 @@
+name: Linux build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Focal (GCC Release, Ubuntu 22.04)
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout Focal
+        uses: actions/checkout@v4
+
+      - name: Install Linux build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config \
+            libasound2-dev libjack-jackd2-dev \
+            ladspa-sdk \
+            libcurl4-openssl-dev libfreetype-dev libfontconfig1-dev \
+            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
+            libxinerama-dev libxrandr-dev libxrender-dev libxss-dev \
+            libwebkit2gtk-4.0-dev libglu1-mesa-dev xvfb \
+            libwayland-dev libxkbcommon-dev libdecor-0-dev
+
+      - name: Clone JUCE (plugdata-team wayland-juce8)
+        # Linux pins to the plugdata-team JUCE fork. Its wayland-juce8
+        # branch is what Focal's __linux__ branch in JuceCompat.h targets
+        # (the free juce::addDefaultFormatsToManager() function lives
+        # there). Upstream JUCE 8.0.4 won't compile the Linux branch.
+        run: |
+          git clone --depth 1 --branch wayland-juce8 \
+            https://github.com/plugdata-team/JUCE.git \
+            "${RUNNER_TEMP}/JUCE-wayland"
+
+      - name: Clone Dusk plugins (donor DSP)
+        run: |
+          git clone --depth 1 \
+            https://github.com/dusk-audio/dusk-audio-plugins.git \
+            "${RUNNER_TEMP}/plugins-main"
+
+      - name: Configure (Release)
+        run: |
+          cmake -S . -B build-linux -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DJUCE_PATH="${RUNNER_TEMP}/JUCE-wayland" \
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main"
+
+      - name: Build (Release)
+        run: cmake --build build-linux -j
+
+      - name: Smoke launch (xvfb, --version)
+        # Verifies the binary actually links + starts. --version exits
+        # cleanly without bringing up the GUI; xvfb covers the headless
+        # JUCE init that still touches X11 even for the early-exit path.
+        run: |
+          xvfb-run --auto-servernum \
+            build-linux/Focal_artefacts/Release/Focal --version
+
+      - name: Headless self-test (xvfb, FOCAL_RUN_SELFTEST=1)
+        # --version exits before primeRealtimeAudio + crash_handler +
+        # the rest of initialise. FOCAL_RUN_SELFTEST drives the
+        # AudioPipelineSelfTest path: full AudioEngine construction,
+        # plugin scan attempt, prepareForSelfTest, synthetic DSP. Catches
+        # link / startup regressions that --version alone can't see.
+        # 60 s timeout because CI runners have no audio device, so the
+        # 5 s device-readiness wait in runHeadlessSelfTest will time
+        # out before falling through to the synthetic tests.
+        run: |
+          timeout 60 xvfb-run --auto-servernum \
+            env FOCAL_RUN_SELFTEST=1 \
+            build-linux/Focal_artefacts/Release/Focal
+
+      - name: Upload Focal binary (per-run artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Focal-linux-x86_64
+          path: build-linux/Focal_artefacts/Release/Focal
+          retention-days: 14
+          if-no-files-found: error
+
+  tests:
+    name: Catch2 tests (GCC Release, Ubuntu 22.04)
+    runs-on: ubuntu-22.04
+    needs: build
+
+    steps:
+      - name: Checkout Focal
+        uses: actions/checkout@v4
+
+      - name: Install Linux build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config \
+            libasound2-dev libjack-jackd2-dev \
+            libcurl4-openssl-dev libfreetype-dev libfontconfig1-dev \
+            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
+            libxinerama-dev libxrandr-dev libxrender-dev libxss-dev \
+            libwebkit2gtk-4.0-dev libglu1-mesa-dev \
+            libwayland-dev libxkbcommon-dev libdecor-0-dev
+
+      - name: Clone JUCE (plugdata-team wayland-juce8)
+        run: |
+          git clone --depth 1 --branch wayland-juce8 \
+            https://github.com/plugdata-team/JUCE.git \
+            "${RUNNER_TEMP}/JUCE-wayland"
+
+      - name: Clone Dusk plugins (donor DSP)
+        run: |
+          git clone --depth 1 \
+            https://github.com/dusk-audio/dusk-audio-plugins.git \
+            "${RUNNER_TEMP}/plugins-main"
+
+      - name: Configure tests
+        run: |
+          cmake -S . -B build-tests -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DFOCAL_BUILD_TESTS=ON \
+            -DJUCE_PATH="${RUNNER_TEMP}/JUCE-wayland" \
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main"
+
+      - name: Build tests
+        run: cmake --build build-tests --target focal-tests -j
+
+      - name: Run tests
+        run: ctest --test-dir build-tests --output-on-failure

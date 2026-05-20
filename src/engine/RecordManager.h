@@ -67,6 +67,24 @@ public:
         return lastSetupFailures;
     }
 
+    // Mid-take errors latched at stopRecording from the audio-thread
+    // counters. WavWrite = ThreadedWriter::write() returned false (disk
+    // full / write-error / ring-buffer overrun); MidiOverflow = per-track
+    // MIDI FIFO ran out of capacity and dropped events. count is the
+    // number of failed writes / dropped events. Empty when the take ran
+    // clean. Message-thread only.
+    enum class RecordErrorKind { WavWrite, MidiOverflow };
+    struct RecordError
+    {
+        int trackIndex;
+        RecordErrorKind kind;
+        juce::uint64    count;
+    };
+    const std::vector<RecordError>& getLastRecordErrors() const noexcept
+    {
+        return lastRecordErrors;
+    }
+
 private:
     Session& session;
 
@@ -79,6 +97,10 @@ private:
                               // tracks, 2 for stereo. Stamped onto the committed
                               // AudioRegion so PlaybackEngine reads back the
                               // right number of channels.
+        // Audio-thread counter: ThreadedWriter::write() returned false (disk
+        // full / ring overrun / underlying writer failed). Reset at setup,
+        // latched into lastRecordErrors at stopRecording.
+        std::atomic<juce::uint64> writeFailures { 0 };
     };
 
     juce::TimeSliceThread diskThread { "Focal recorder" };
@@ -105,6 +127,10 @@ private:
         static constexpr int kCapacity = 65536;
         std::vector<RawEvent>  events;
         juce::AbstractFifo     fifo { kCapacity };
+        // Audio-thread counter: bumped when an incoming event can't fit
+        // because the FIFO is full. Latched into lastRecordErrors at
+        // stopRecording so the user is warned about MIDI data loss.
+        std::atomic<juce::uint64> overflowCount { 0 };
         PerTrackMidi() : events ((size_t) kCapacity) {}
     };
 
@@ -125,6 +151,11 @@ private:
     // track's WAV writer can't be set up. Stored on the message
     // thread only — the audio callback never touches it.
     std::vector<int> lastSetupFailures;
+
+    // Cleared on startRecording, populated at stopRecording by reading
+    // the audio-thread counters on each writer / midi capture before
+    // teardown. Message-thread only.
+    std::vector<RecordError> lastRecordErrors;
 
     juce::int64 recordStartSample = 0;
     double      recordSampleRate  = 0.0;

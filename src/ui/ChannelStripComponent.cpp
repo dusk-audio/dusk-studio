@@ -121,6 +121,12 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
                                                 PluginSlot& slot, AudioEngine& eng)
     : trackIndex (idx), track (t), session (s), pluginSlot (slot), engine (eng)
 {
+    // Accessibility floor: screen readers announce the strip as
+    // "Track N" instead of the default "Component". Description
+    // surfaces in extended-info readers.
+    setTitle ("Track " + juce::String (idx + 1));
+    setDescription ("Channel strip for track " + juce::String (idx + 1));
+
     // Listen for engine-side MIDI device-list rebuilds (USB hot-plug
     // refresh) so the dropdown stays in sync with the live device list.
     engine.addChangeListener (this);
@@ -1415,6 +1421,18 @@ void ChannelStripComponent::refreshPluginSlotButton()
         const auto name = pluginSlot.getLoadedName();
         if (name.isNotEmpty())
             label = juce::String (juce::CharPointer_UTF8 ("\xe2\x96\xbe ")) + name;
+        else if (pluginSlot.isOffline())
+        {
+            // Slot held a plugin in the saved session but couldn't be
+            // re-instantiated (plugin missing / moved / format unsupported).
+            // Show the saved name with a warning marker so the user knows
+            // the slot's saved state is preserved on disk and that
+            // reinstalling the plugin will restore it.
+            const auto offline = pluginSlot.getOfflineName();
+            label = juce::String (juce::CharPointer_UTF8 ("\xe2\x9a\xa0 "))
+                  + (offline.isNotEmpty() ? offline : juce::String ("offline"))
+                  + " (offline)";
+        }
         else
             label = "Insert";
     }

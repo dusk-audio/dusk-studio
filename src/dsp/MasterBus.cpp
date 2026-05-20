@@ -167,6 +167,8 @@ void MasterBus::updateCompParameters() noexcept
 
 void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
 {
+    juce::ScopedNoDenormals noDenormals;
+
     // Contract: numSamples must not exceed what was passed to prepare().
     // If a host violates this, our chunk loop below correctly handles the
     // comp portion; the assert just makes the violation visible in debug.

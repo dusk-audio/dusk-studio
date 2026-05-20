@@ -1,0 +1,78 @@
+name: Linux sanitizer
+
+# AddressSanitizer + UBSan run against the unit-test target. Separate
+# workflow from linux-build.yml because the sanitized build is slower
+# (~2× compile, ~3× test runtime) and we don't want to gate every push
+# behind a 10-minute job. Scheduled nightly + on-demand via
+# workflow_dispatch; PRs touching engine / DSP / session can also fire
+# manually if a regression is suspected.
+
+on:
+  schedule:
+    - cron: '0 6 * * *'      # 06:00 UTC daily
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'src/engine/**'
+      - 'src/dsp/**'
+      - 'src/session/**'
+      - 'tests/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/linux-sanitizer.yml'
+
+jobs:
+  asan-ubsan:
+    name: ASAN + UBSan (GCC, Ubuntu 22.04)
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout Focal
+        uses: actions/checkout@v4
+
+      - name: Install Linux build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config \
+            libasound2-dev libjack-jackd2-dev \
+            libcurl4-openssl-dev libfreetype-dev libfontconfig1-dev \
+            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
+            libxinerama-dev libxrandr-dev libxrender-dev libxss-dev \
+            libwebkit2gtk-4.0-dev libglu1-mesa-dev \
+            libwayland-dev libxkbcommon-dev libdecor-0-dev
+
+      - name: Clone JUCE (plugdata-team wayland-juce8)
+        run: |
+          git clone --depth 1 --branch wayland-juce8 \
+            https://github.com/plugdata-team/JUCE.git \
+            "${RUNNER_TEMP}/JUCE-wayland"
+
+      - name: Clone Dusk plugins (donor DSP)
+        run: |
+          git clone --depth 1 \
+            https://github.com/dusk-audio/dusk-audio-plugins.git \
+            "${RUNNER_TEMP}/plugins-main"
+
+      - name: Configure (ASAN + UBSan tests)
+        run: |
+          cmake -S . -B build-asan -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DFOCAL_BUILD_TESTS=ON \
+            -DFOCAL_ENABLE_ASAN=ON \
+            -DJUCE_PATH="${RUNNER_TEMP}/JUCE-wayland" \
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main"
+
+      - name: Build tests
+        run: cmake --build build-asan --target focal-tests -j
+
+      - name: Run tests under ASAN + UBSan
+        # halt_on_error=1 makes the first sanitizer report fail the run
+        # immediately; abort_on_error=1 turns warnings into aborts so
+        # ctest sees them as failed tests. detect_leaks=0 because JUCE
+        # has leak suppressions in its own headers we'd need to layer
+        # in — leak detection comes once we've sorted the noise.
+        env:
+          ASAN_OPTIONS: "halt_on_error=1:abort_on_error=1:detect_leaks=0"
+          UBSAN_OPTIONS: "halt_on_error=1:abort_on_error=1:print_stacktrace=1"
+        run: ctest --test-dir build-asan --output-on-failure

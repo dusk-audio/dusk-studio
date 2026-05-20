@@ -741,9 +741,15 @@ void AlsaAudioIODevice::start (juce::AudioIODeviceCallback* newCallback)
         {
             // EPIPE here means the device went into XRUN state during prepare
             // (rare, but seen on some USB drivers). Recover and retry once.
+            // Log the retry result — start() proceeds either way and the
+            // I/O thread will detect a still-broken handle on its first
+            // writei, but the warning here pins the failure to pre-fill.
             recoverFromXrun (outHandle, (int) wrote);
-            snd_pcm_writei (outHandle, silence.getData(),
-                            (snd_pcm_uframes_t) preFillFrames);
+            const auto retry = snd_pcm_writei (outHandle, silence.getData(),
+                                                 (snd_pcm_uframes_t) preFillFrames);
+            if (retry < 0)
+                std::fprintf (stderr, "[Focal/ALSA] WARNING: pre-fill retry failed: %s\n",
+                              snd_strerror ((int) retry));
         }
     }
 
@@ -852,6 +858,15 @@ void AlsaAudioIODevice::deinterleaveCaptureBlock (const void* src,
 // ----- I/O thread ------------------------------------------------------------
 void AlsaAudioIODevice::run()
 {
+    // Fatal-recovery indicator. When snd_pcm_recover refuses to bring
+    // the handle back (typically -ENODEV on USB / Bluetooth hot-unplug)
+    // we capture the snd_strerror text and surface it to the
+    // AudioIODeviceCallback after the loop exits. Without this the
+    // audio thread dies silently and AudioEngine's transport keeps
+    // "rolling" against a missing device — recordings continue against
+    // a stalled writer until the user notices.
+    int          fatalErr = 0;
+    const char*  fatalCtx = nullptr;
     while (! threadShouldExit())
     {
         // Capture path: read one period (blocking with a long timeout). If
@@ -862,7 +877,12 @@ void AlsaAudioIODevice::run()
             const int avail = snd_pcm_wait (inHandle, 1000);
             if (avail < 0)
             {
-                if (recoverFromXrun (inHandle, avail) < 0) break;
+                if (recoverFromXrun (inHandle, avail) < 0)
+                {
+                    fatalErr = avail;
+                    fatalCtx = "snd_pcm_wait (capture)";
+                    break;
+                }
                 continue;
             }
             if (threadShouldExit()) break;
@@ -891,6 +911,8 @@ void AlsaAudioIODevice::run()
                     if (recoverFromXrun (inHandle, (int) got) < 0)
                     {
                         readFatal = true;
+                        fatalErr = (int) got;
+                        fatalCtx = "snd_pcm_readi";
                         break;
                     }
                     // After recovery, the device is in PREPARED state and
@@ -937,7 +959,12 @@ void AlsaAudioIODevice::run()
                 const int avail = snd_pcm_wait (outHandle, 1000);
                 if (avail < 0)
                 {
-                    if (recoverFromXrun (outHandle, avail) < 0) break;
+                    if (recoverFromXrun (outHandle, avail) < 0)
+                    {
+                        fatalErr = avail;
+                        fatalCtx = "snd_pcm_wait (playback)";
+                        break;
+                    }
                     continue;
                 }
                 if (threadShouldExit()) break;
@@ -966,7 +993,12 @@ void AlsaAudioIODevice::run()
                         snd_pcm_wait (outHandle, 100);
                         continue;
                     }
-                    if (recoverFromXrun (outHandle, (int) wrote) < 0) goto loopExit;
+                    if (recoverFromXrun (outHandle, (int) wrote) < 0)
+                    {
+                        fatalErr = (int) wrote;
+                        fatalCtx = "snd_pcm_writei";
+                        goto loopExit;
+                    }
                     continue;
                 }
                 cursor          += wrote * frameBytes;
@@ -975,6 +1007,24 @@ void AlsaAudioIODevice::run()
         }
     }
 loopExit: ;
+
+    // Surface the device loss to AudioDeviceManager so it can switch
+    // to a fallback device (or post audioDeviceError to the UI). Without
+    // this, JUCE's AudioDeviceManager has no signal that the audio
+    // thread died — Focal's transport keeps "running" with no callbacks
+    // firing and a recording-in-progress accumulates against a stalled
+    // writer.
+    if (fatalErr != 0)
+    {
+        const auto msg = juce::String ("ALSA device error in ")
+                       + juce::String (fatalCtx != nullptr ? fatalCtx : "I/O loop")
+                       + ": " + juce::String (snd_strerror (fatalErr));
+        std::fprintf (stderr, "[Focal/ALSA] fatal: %s\n", msg.toRawUTF8());
+
+        const juce::ScopedLock sl (callbackLock);
+        if (callback != nullptr)
+            callback->audioDeviceError (msg);
+    }
 }
 
 // ============================================================================

@@ -376,6 +376,24 @@ juce::String PluginSlot::getLoadedName() const
     return {};
 }
 
+bool PluginSlot::isOffline() const noexcept
+{
+    if (isLoaded()) return false;
+    return offlineDescriptionXml.isNotEmpty();
+}
+
+juce::String PluginSlot::getOfflineName() const
+{
+    if (offlineDescriptionXml.isEmpty()) return {};
+    if (auto xml = juce::XmlDocument::parse (offlineDescriptionXml))
+    {
+        juce::PluginDescription desc;
+        if (desc.loadFromXml (*xml))
+            return desc.name;
+    }
+    return {};
+}
+
 bool PluginSlot::loadFromFile (const juce::File& pluginFile, juce::String& errorMessage)
 {
     if (manager == nullptr)
@@ -434,6 +452,8 @@ bool PluginSlot::loadFromFile (const juce::File& pluginFile, juce::String& error
     for (auto* p : ownedInstance->getParameters())
         if (p != nullptr) p->addListener (lastTouchedListener.get());
     currentInstance.store (ownedInstance.get(), std::memory_order_release);
+    offlineDescriptionXml.clear();
+    offlineStateBase64.clear();
     return true;
 }
 
@@ -542,6 +562,8 @@ bool PluginSlot::loadFromDescription (const juce::PluginDescription& desc,
                     currentRemote.store (ownedRemote.get(),
                                             std::memory_order_release);
                     reaperTimer.startTimer (kReaperPeriodMs);
+                    offlineDescriptionXml.clear();
+                    offlineStateBase64.clear();
                     return true;
                 }
             }
@@ -589,6 +611,8 @@ bool PluginSlot::loadFromDescription (const juce::PluginDescription& desc,
     for (auto* p : ownedInstance->getParameters())
         if (p != nullptr) p->addListener (lastTouchedListener.get());
     currentInstance.store (ownedInstance.get(), std::memory_order_release);
+    offlineDescriptionXml.clear();
+    offlineStateBase64.clear();
     return true;
 }
 
@@ -632,6 +656,8 @@ void PluginSlot::unload()
     remoteCrashed.store (false, std::memory_order_relaxed);
     savedDescriptionXml.clear();
    #endif
+    offlineDescriptionXml.clear();
+    offlineStateBase64.clear();
 }
 
 juce::String PluginSlot::getDescriptionXmlForSave (int parkSleepMs)
@@ -646,6 +672,13 @@ juce::String PluginSlot::getDescriptionXmlForSave (int parkSleepMs)
         return savedDescriptionXml;
     }
    #endif
+
+    // Slot is empty in-process but holds an offline placeholder from a
+    // failed restoreFromSavedState. Return the stashed XML so the next
+    // save round-trips the user's data instead of wiping it.
+    if (currentInstance.load (std::memory_order_acquire) == nullptr
+        && offlineDescriptionXml.isNotEmpty())
+        return offlineDescriptionXml;
 
     juce::PluginDescription desc;
     bool ok = false;
@@ -706,6 +739,13 @@ juce::String PluginSlot::getStateBase64ForSave (int parkSleepMs)
     juce::ignoreUnused (parkSleepMs);
    #endif
 
+    // Slot is empty but holds an offline placeholder. Round-trip the
+    // stashed state so a save while offline doesn't wipe the user's
+    // data on disk.
+    if (currentInstance.load (std::memory_order_acquire) == nullptr
+        && offlineStateBase64.isNotEmpty())
+        return offlineStateBase64;
+
     juce::MemoryBlock mb;
     // Atomic-park alone is NOT sufficient for state capture: it tells the
     // AUDIO thread to skip the plugin, but doesn't tell the PLUGIN that
@@ -753,6 +793,15 @@ bool PluginSlot::restoreFromSavedState (const juce::String& descriptionXml,
         unload();
         return true;
     }
+
+    // Stash the inputs up front. On any failure path below the slot
+    // ends up empty, but these copies survive so getDescriptionXmlForSave
+    // / getStateBase64ForSave still return the user's saved data — a
+    // subsequent autosave or manual save then round-trips it instead of
+    // wiping it because the plugin happened to be unavailable. Cleared
+    // by every success path and by unload().
+    offlineDescriptionXml = descriptionXml;
+    offlineStateBase64    = stateBase64;
 
     if (manager == nullptr)
     {
@@ -806,6 +855,8 @@ bool PluginSlot::restoreFromSavedState (const juce::String& descriptionXml,
                     }
                 }
             }
+            offlineDescriptionXml.clear();
+            offlineStateBase64.clear();
             return true;
         }
         // loadFromDescription set errorMessage; fall through to retry
@@ -848,6 +899,8 @@ bool PluginSlot::restoreFromSavedState (const juce::String& descriptionXml,
     cachedLatencySamples.store (ownedInstance->getLatencySamples(),
                                   std::memory_order_relaxed);
     currentInstance.store (ownedInstance.get(), std::memory_order_release);
+    offlineDescriptionXml.clear();
+    offlineStateBase64.clear();
     return true;
 }
 
@@ -905,7 +958,7 @@ void PluginSlot::processMonoBlock (float* monoData, int numSamples,
                                        numSamples, midiMessages,
                                        kOopProcessTimeoutNs))
         {
-            autoBypassed.store (true, std::memory_order_relaxed);
+            engageAutoBypass();
             return;
         }
 
@@ -930,7 +983,7 @@ void PluginSlot::processMonoBlock (float* monoData, int numSamples,
             if (elapsedMs > bufferMs * kOopBudgetFraction)
             {
                 if (++consecutiveOverruns >= kMaxConsecutiveOverruns)
-                    autoBypassed.store (true, std::memory_order_relaxed);
+                    engageAutoBypass();
             }
             else
             {
@@ -1009,7 +1062,7 @@ void PluginSlot::processMonoBlock (float* monoData, int numSamples,
         if (elapsedMs > bufferMs * kBudgetFraction)
         {
             if (++consecutiveOverruns >= kMaxConsecutiveOverruns)
-                autoBypassed.store (true, std::memory_order_relaxed);
+                engageAutoBypass();
         }
         else
         {
@@ -1071,7 +1124,7 @@ void PluginSlot::processStereoBlock (float* L, float* R, int numSamples,
             // Should not happen - kMaxChans=2 in PluginIpc - but if a
             // future build raises the cap and this code wasn't updated,
             // bail rather than read garbage.
-            autoBypassed.store (true, std::memory_order_relaxed);
+            engageAutoBypass();
             return;
         }
 
@@ -1085,7 +1138,7 @@ void PluginSlot::processStereoBlock (float* L, float* R, int numSamples,
             // timeout every block (the futex cost itself is what we're
             // avoiding here — re-trying a dead connection still pays
             // the deadline cost).
-            autoBypassed.store (true, std::memory_order_relaxed);
+            engageAutoBypass();
             return;
         }
 
@@ -1116,7 +1169,7 @@ void PluginSlot::processStereoBlock (float* L, float* R, int numSamples,
             if (elapsedMs > bufferMs * kRemoteBudgetFraction)
             {
                 if (++consecutiveOverruns >= kMaxConsecutiveOverruns)
-                    autoBypassed.store (true, std::memory_order_relaxed);
+                    engageAutoBypass();
             }
             else
             {
@@ -1218,7 +1271,7 @@ void PluginSlot::processStereoBlock (float* L, float* R, int numSamples,
         if (elapsedMs > bufferMs * kBudgetFraction)
         {
             if (++consecutiveOverruns >= kMaxConsecutiveOverruns)
-                autoBypassed.store (true, std::memory_order_relaxed);
+                engageAutoBypass();
         }
         else
         {

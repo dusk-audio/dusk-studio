@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Name=Focal
+GenericName=Multitrack Recorder
+Comment=Portastudio-style 16-channel DAW
+Exec=Focal
+Icon=focal
+Terminal=false
+Categories=AudioVideo;Audio;Recorder;Music;
+StartupWMClass=Focal
+Keywords=DAW;recording;mixer;multitrack;portastudio;
+# MimeType + %f restored once FocalApp::initialise parses a positional
+# session path. Until then the file-manager double-click would launch
+# Focal without opening the session — confusing — so don't claim the
+# association at all.
