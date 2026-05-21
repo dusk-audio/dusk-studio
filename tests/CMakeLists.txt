@@ -29,6 +29,7 @@ add_executable(dusk-studio-tests
     session_midi_tempolock_roundtrip.cpp
     session_apply_tempo_change.cpp
     transport_state_machine.cpp
+    session_mcu_roundtrip.cpp
     ${CMAKE_SOURCE_DIR}/src/dsp/BrickwallLimiter.cpp
     ${CMAKE_SOURCE_DIR}/src/dsp/HardwareInsertSlot.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/FileImporter.cpp

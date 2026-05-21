@@ -260,6 +260,24 @@ void AudioEngine::rebuildMidiInputBank()
         }
     }
     session.syncSourceInputIdx.store (resolvedSyncIdx, std::memory_order_release);
+
+    // MCU input: same identifier->index resolve. -1 = MCU surface off
+    // (the audio callback will skip MCU decode for this block).
+    int resolvedMcuInputIdx = -1;
+    const auto& wantedMcuInputId = session.mcu.inputIdentifier;
+    if (wantedMcuInputId.isNotEmpty())
+    {
+        for (int i = 0; i < midiInputDevices.size(); ++i)
+        {
+            if (midiInputDevices[i].identifier == wantedMcuInputId)
+            {
+                resolvedMcuInputIdx = i;
+                break;
+            }
+        }
+    }
+    session.mcu.resolvedInputIdx.store (resolvedMcuInputIdx, std::memory_order_release);
+
     midiSyncReceiver.reset();
     midiTimeCodeReceiver.reset();
 }
@@ -309,6 +327,26 @@ void AudioEngine::rebuildMidiOutputBank()
         }
     }
     session.syncOutputIdx.store (resolvedSyncOutIdx, std::memory_order_release);
+
+    // MCU output: same identifier->index resolve + eager-open so the
+    // McuController's first 30 Hz tick doesn't race with ALSA's
+    // synchronous snd_seq_connect.
+    int resolvedMcuOutIdx = -1;
+    const auto& wantedMcuOutId = session.mcu.outputIdentifier;
+    if (wantedMcuOutId.isNotEmpty())
+    {
+        for (int i = 0; i < midiOutputDevices.size(); ++i)
+        {
+            if (midiOutputDevices[i].identifier == wantedMcuOutId)
+            {
+                resolvedMcuOutIdx = i;
+                ensureMidiOutputOpen (i);
+                break;
+            }
+        }
+    }
+    session.mcu.resolvedOutputIdx.store (resolvedMcuOutIdx, std::memory_order_release);
+
     midiClockEmitter.reset();
 }
 

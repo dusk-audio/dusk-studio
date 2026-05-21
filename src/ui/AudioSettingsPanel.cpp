@@ -196,6 +196,33 @@ AudioSettingsPanel::AudioSettingsPanel (juce::AudioDeviceManager& dm,
     };
     addAndMakeVisible (mtcEmitFrameRateCombo);
 
+    // MCU control surface input + output. Independent of the
+    // sync-source pair so a user can run a master clock on one device
+    // and an MCU controller on another. Receiver / Controller are
+    // wired up by AudioEngine once both identifiers resolve to a
+    // device index.
+    mcuInputLabel.setJustificationType (juce::Justification::centredRight);
+    addAndMakeVisible (mcuInputLabel);
+    mcuInputCombo.setTooltip (
+        "Pick the MIDI input port your Mackie Control / X-Touch / "
+        "Tascam Model 12 (MCU mode) is sending on. Faders, V-pot "
+        "encoders, transport buttons, and mute/solo/arm presses arrive "
+        "on this port. Setting this gates that device's MIDI from the "
+        "generic MIDI Learn surface so MCU traffic doesn't double-fire.");
+    populateMcuInputCombo();
+    mcuInputCombo.onChange = [this] { applyMcuInputChange(); };
+    addAndMakeVisible (mcuInputCombo);
+
+    mcuOutputLabel.setJustificationType (juce::Justification::centredRight);
+    addAndMakeVisible (mcuOutputLabel);
+    mcuOutputCombo.setTooltip (
+        "Pick the MIDI output port for motorized fader / button LED / "
+        "LCD / timecode / meter feedback to the control surface. "
+        "Typically the same physical device as the MCU input.");
+    populateMcuOutputCombo();
+    mcuOutputCombo.onChange = [this] { applyMcuOutputChange(); };
+    addAndMakeVisible (mcuOutputCombo);
+
     midiBindingsButton.setTooltip (
         "Open the MIDI Bindings panel: list everything currently mapped, "
         "remove individual bindings, or clear all. Use right-click on "
@@ -303,6 +330,16 @@ void AudioSettingsPanel::resized()
     syncSourceLabel.setBounds (syncRow.removeFromLeft (180).reduced (4, 2));
     syncSourceCombo.setBounds (syncRow.removeFromLeft (300).reduced (4, 2));
     syncChaseTransportToggle.setBounds (syncRow.reduced (8, 2));
+
+    // MCU control surface OUTPUT row: motor faders / LEDs / LCD / meters.
+    auto mcuOutRow = area.removeFromBottom (28);
+    mcuOutputLabel.setBounds (mcuOutRow.removeFromLeft (180).reduced (4, 2));
+    mcuOutputCombo.setBounds (mcuOutRow.removeFromLeft (300).reduced (4, 2));
+
+    // MCU control surface INPUT row: faders / encoders / buttons.
+    auto mcuInRow = area.removeFromBottom (28);
+    mcuInputLabel.setBounds (mcuInRow.removeFromLeft (180).reduced (4, 2));
+    mcuInputCombo.setBounds (mcuInRow.removeFromLeft (300).reduced (4, 2));
 
     // MIDI Bindings entry button. Right-aligned on its own row so the
     // sync rows above stay clean.
@@ -414,6 +451,8 @@ void AudioSettingsPanel::changeListenerCallback (juce::ChangeBroadcaster*)
     // touches both banks.
     populateSyncSourceCombo();
     populateSyncOutputCombo();
+    populateMcuInputCombo();
+    populateMcuOutputCombo();
 }
 
 void AudioSettingsPanel::populateSyncSourceCombo()
@@ -482,6 +521,71 @@ void AudioSettingsPanel::applySyncOutputChange()
     session.syncOutputIdx.store (idx, std::memory_order_release);
     // Eagerly open the port so the first audio-thread emission doesn't
     // race with a synchronous ALSA snd_seq_connect.
+    engine.ensureMidiOutputOpen (idx);
+}
+
+void AudioSettingsPanel::populateMcuInputCombo()
+{
+    mcuInputCombo.clear (juce::dontSendNotification);
+    mcuInputCombo.addItem ("(none)", 1);
+    const auto& devices = engine.getMidiInputDevices();
+    int matchId = 1;
+    for (int i = 0; i < devices.size(); ++i)
+    {
+        mcuInputCombo.addItem (devices[i].name, i + 2);
+        if (devices[i].identifier == session.mcu.inputIdentifier)
+            matchId = i + 2;
+    }
+    mcuInputCombo.setSelectedId (matchId, juce::dontSendNotification);
+}
+
+void AudioSettingsPanel::populateMcuOutputCombo()
+{
+    mcuOutputCombo.clear (juce::dontSendNotification);
+    mcuOutputCombo.addItem ("(none)", 1);
+    const auto& devices = engine.getMidiOutputDevices();
+    int matchId = 1;
+    for (int i = 0; i < devices.size(); ++i)
+    {
+        mcuOutputCombo.addItem (devices[i].name, i + 2);
+        if (devices[i].identifier == session.mcu.outputIdentifier)
+            matchId = i + 2;
+    }
+    mcuOutputCombo.setSelectedId (matchId, juce::dontSendNotification);
+}
+
+void AudioSettingsPanel::applyMcuInputChange()
+{
+    const int id = mcuInputCombo.getSelectedId();
+    if (id <= 1)
+    {
+        session.mcu.inputIdentifier = juce::String();
+        session.mcu.resolvedInputIdx.store (-1, std::memory_order_release);
+        return;
+    }
+    const auto& devices = engine.getMidiInputDevices();
+    const int idx = id - 2;
+    if (idx < 0 || idx >= devices.size()) return;
+    session.mcu.inputIdentifier = devices[idx].identifier;
+    session.mcu.resolvedInputIdx.store (idx, std::memory_order_release);
+}
+
+void AudioSettingsPanel::applyMcuOutputChange()
+{
+    const int id = mcuOutputCombo.getSelectedId();
+    if (id <= 1)
+    {
+        session.mcu.outputIdentifier = juce::String();
+        session.mcu.resolvedOutputIdx.store (-1, std::memory_order_release);
+        return;
+    }
+    const auto& devices = engine.getMidiOutputDevices();
+    const int idx = id - 2;
+    if (idx < 0 || idx >= devices.size()) return;
+    session.mcu.outputIdentifier = devices[idx].identifier;
+    session.mcu.resolvedOutputIdx.store (idx, std::memory_order_release);
+    // Eagerly open so the first 30 Hz emit doesn't race with ALSA's
+    // synchronous snd_seq_connect.
     engine.ensureMidiOutputOpen (idx);
 }
 } // namespace duskstudio

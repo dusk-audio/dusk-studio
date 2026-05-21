@@ -1363,6 +1363,39 @@ public:
     std::atomic<bool> syncOutputEmitTimeCode     { false };
     std::atomic<int>  syncOutputTimeCodeFrameRate { 3 };
 
+    // Mackie Control Universal control-surface state. The MIDI input
+    // (controller -> host) and MIDI output (host -> controller motor
+    // faders / LEDs / LCD) are picked in Audio Settings; identifiers
+    // persist; the resolved* indices are recomputed at device open
+    // (parallel to syncSourceInputIdx). Bank + selectedChannel +
+    // assignMode are session-runtime state, NOT persisted -- a fresh
+    // launch always starts on bank 0 / channel 0 / PAN mode so the
+    // controller LEDs match the on-screen mixer's reset state.
+    struct McuSessionState
+    {
+        juce::String inputIdentifier;        // empty = MCU input off
+        juce::String outputIdentifier;       // empty = MCU output off
+        std::atomic<int> resolvedInputIdx  { -1 };
+        std::atomic<int> resolvedOutputIdx { -1 };
+
+        // Encoder assign mode. 0 = PAN, 1..4 = SEND1..SEND4,
+        // 5 = EQ, 6 = COMP. EQ and COMP modes operate on the channel
+        // selected by selectedChannel; PAN / SEND operate on the eight
+        // banked channels.
+        std::atomic<int> assignMode      { 0 };
+
+        // Which 8 of the 16 tracks the controller is currently showing.
+        // 0 = tracks 0..7, 1 = tracks 8..15. Updated by the BANK
+        // LEFT / RIGHT buttons; mirrored to the on-screen BANK A/B
+        // toggle by McuController.
+        std::atomic<int> bank            { 0 };
+
+        // Globally selected channel (0..15). Drives EQ / COMP encoder
+        // target + plugin-editor focus (the SELECT button on a strip).
+        std::atomic<int> selectedChannel { 0 };
+    };
+    McuSessionState mcu;
+
     // Resolve the audio device input channel that this track should read from.
     // -2 (default) means "follow the track index", -1 means "no input".
     int resolveInputForTrack (int trackIndex) const noexcept;

@@ -1071,6 +1071,13 @@ juce::String SessionSerializer::serialize (const Session& s)
                           s.externalSyncChasesTransport.load());
     tport->setProperty ("sync_output",         s.syncOutputIdentifier);
     tport->setProperty ("sync_emit_clock",     s.syncOutputEmitClock.load());
+
+    // Mackie Control Universal device pair + last-used assign mode.
+    // Bank + selectedChannel are session-runtime state and intentionally
+    // NOT persisted -- a fresh launch always starts on bank 0 / ch 0.
+    tport->setProperty ("mcu_input_id",   s.mcu.inputIdentifier);
+    tport->setProperty ("mcu_output_id",  s.mcu.outputIdentifier);
+    tport->setProperty ("mcu_assign_mode", s.mcu.assignMode.load (std::memory_order_relaxed));
     tport->setProperty ("beats_per_bar",     s.beatsPerBar.load());
     tport->setProperty ("beat_unit",         s.beatUnit.load());
     tport->setProperty ("metronome_enabled", s.metronomeEnabled.load());
@@ -1390,6 +1397,15 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
             s.syncOutputIdentifier = tport["sync_output"].toString();
         if (tport.hasProperty ("sync_emit_clock"))
             s.syncOutputEmitClock.store ((bool) tport["sync_emit_clock"]);
+        if (tport.hasProperty ("mcu_input_id"))
+            s.mcu.inputIdentifier = tport["mcu_input_id"].toString();
+        if (tport.hasProperty ("mcu_output_id"))
+            s.mcu.outputIdentifier = tport["mcu_output_id"].toString();
+        if (tport.hasProperty ("mcu_assign_mode"))
+        {
+            const int m = juce::jlimit (0, 6, (int) tport["mcu_assign_mode"]);
+            s.mcu.assignMode.store (m, std::memory_order_relaxed);
+        }
         if (tport.hasProperty ("beats_per_bar"))     s.beatsPerBar.store      ((int)    tport["beats_per_bar"]);
         if (tport.hasProperty ("beat_unit"))         s.beatUnit.store         ((int)    tport["beat_unit"]);
         if (tport.hasProperty ("metronome_enabled")) s.metronomeEnabled.store ((bool)   tport["metronome_enabled"]);

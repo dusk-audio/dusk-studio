@@ -95,6 +95,20 @@ private:
     juce::Label        mtcEmitFrameRateLabel { {}, "MTC frame rate" };
     juce::ComboBox     mtcEmitFrameRateCombo;
 
+    // Mackie Control Universal controller pair. One MIDI input (faders,
+    // buttons, encoders) + one MIDI output (motor faders, LEDs, LCD,
+    // timecode display, meters). Selected device identifier persists in
+    // session.mcu.*; ephemeral state (bank, selected channel, assign
+    // mode) lives on Session::mcu as atomics.
+    juce::Label    mcuInputLabel  { {}, "MCU Control Surface Input" };
+    juce::ComboBox mcuInputCombo;
+    juce::Label    mcuOutputLabel { {}, "MCU Control Surface Output" };
+    juce::ComboBox mcuOutputCombo;
+    void populateMcuInputCombo();
+    void populateMcuOutputCombo();
+    void applyMcuInputChange();
+    void applyMcuOutputChange();
+
     // Central MIDI bindings audit / cleanup. Per-target right-click is
     // still the primary add path; this modal lists everything in one
     // place so the user can review + remove without hunting controls.
