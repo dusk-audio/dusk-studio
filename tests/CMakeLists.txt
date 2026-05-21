@@ -26,6 +26,9 @@ add_executable(dusk-studio-tests
     midi_time_code_decode.cpp
     midi_time_code_emit.cpp
     automation_thinning.cpp
+    session_midi_tempolock_roundtrip.cpp
+    session_apply_tempo_change.cpp
+    transport_state_machine.cpp
     ${CMAKE_SOURCE_DIR}/src/dsp/BrickwallLimiter.cpp
     ${CMAKE_SOURCE_DIR}/src/dsp/HardwareInsertSlot.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/FileImporter.cpp

@@ -186,6 +186,7 @@ bool CreateMidiRegionAction::perform()
     region.timelineStart   = timelineStart;
     region.lengthInSamples = lengthInSamples;
     region.lengthInTicks   = lengthInTicks;
+    region.recordedAtBPM   = (double) session.tempoBpm.load (std::memory_order_relaxed);
 
     int idx = -1;
     session.track (trackIdx).midiRegions.mutate (

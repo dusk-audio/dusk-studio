@@ -1942,7 +1942,14 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         // emitted All Notes Off events. Both source paths add to those.
         if (willReadFromDisk)
         {
-            const float bpm = session.tempoBpm.load (std::memory_order_relaxed);
+            // Acquire on tempoBpm pairs with the release store in
+            // duskstudio::applyTempoChange so this MIDI scheduling block
+            // observes the BPM that matches the published-with-release
+            // MidiRegion sample positions. Without acquire here, a stale
+            // BPM combined with new region positions could schedule notes
+            // at the wrong tick→sample translation for one audio block
+            // following a BPM change.
+            const float bpm = session.tempoBpm.load (std::memory_order_acquire);
             const double sr = currentSampleRate.load (std::memory_order_relaxed);
             // Plugin latency comp for instrument tracks: shift the scheduling
             // window forward by the plugin's reported latency so the

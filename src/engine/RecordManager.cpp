@@ -222,6 +222,7 @@ void RecordManager::stopRecording (juce::int64 endSample)
         region.timelineStart   = recordStartSample;
         region.lengthInSamples = totalSamples;
         region.lengthInTicks   = samplesToTicks (totalSamples, recordSampleRate, bpm);
+        region.recordedAtBPM   = (double) bpm;
 
         // Pair Note On / Note Off into MidiNote entries. Pending map keyed
         // on (channel, noteNumber) so concurrent notes on different keys
@@ -375,14 +376,15 @@ void RecordManager::stopRecording (juce::int64 endSample)
             const juce::int64 newEnd   = newStart + region.lengthInSamples;
             auto& regs = session.track (t).regions;
 
-            // Crossfade length: 10 ms per side. Short enough that the user
-            // doesn't perceive it as a fade, long enough to mask boundary
-            // discontinuities between takes. Bound by half the new take's
-            // length so a punch shorter than 20 ms still gets symmetric
-            // ramps without the in/out fades overlapping each other.
-            const juce::int64 fadeSamplesNominal = (juce::int64) (recordSampleRate * 0.010);
+            // Crossfade length: 64 samples per side, raised-cosine
+            // shape. DuskStudio.md §5b specifies the click-mask fade as
+            // 64 samples ~ 1.3 ms at 48 kHz - imperceptible as a fade
+            // but enough to suppress the boundary discontinuity. Bound
+            // by half the new take's length so a punch shorter than 128
+            // samples still gets symmetric ramps that don't overlap.
+            constexpr juce::int64 kPunchFadeSamples = 64;
             const juce::int64 fadeSamples = juce::jmax (
-                (juce::int64) 0, juce::jmin (fadeSamplesNominal, region.lengthInSamples / 2));
+                (juce::int64) 0, juce::jmin (kPunchFadeSamples, region.lengthInSamples / 2));
 
             // Pass 1 — fully-contained takes get absorbed into the new
             // region's previousTakes (no audio overlap, just history).
@@ -444,6 +446,7 @@ void RecordManager::stopRecording (juce::int64 endSample)
                                            + (right.timelineStart - it->timelineStart);
                     right.lengthInSamples = exEnd - right.timelineStart;
                     right.fadeInSamples   = fadeSamples;
+                    right.fadeInShape     = FadeShape::RaisedCosine;
                     // Right fragment ends at the original exEnd, so any fade-out
                     // the source region carried still applies. Clamp so the new
                     // shorter length still satisfies fadeIn + fadeOut <= length.
@@ -455,6 +458,7 @@ void RecordManager::stopRecording (juce::int64 endSample)
 
                     it->lengthInSamples = (newStart + fadeSamples) - exStart;
                     it->fadeOutSamples  = fadeSamples;
+                    it->fadeOutShape    = FadeShape::RaisedCosine;
                     hasOverlapL = hasOverlapR = true;
                     ++it;
                 }
@@ -463,6 +467,7 @@ void RecordManager::stopRecording (juce::int64 endSample)
                     // Left overlap only: trim end to newStart + fade.
                     it->lengthInSamples = (newStart + fadeSamples) - exStart;
                     it->fadeOutSamples  = fadeSamples;
+                    it->fadeOutShape    = FadeShape::RaisedCosine;
                     hasOverlapL = true;
                     ++it;
                 }
@@ -474,6 +479,7 @@ void RecordManager::stopRecording (juce::int64 endSample)
                     it->timelineStart    = newLeft;
                     it->lengthInSamples  = exEnd - newLeft;
                     it->fadeInSamples    = fadeSamples;
+                    it->fadeInShape      = FadeShape::RaisedCosine;
                     hasOverlapR = true;
                     ++it;
                 }
@@ -487,8 +493,16 @@ void RecordManager::stopRecording (juce::int64 endSample)
             for (auto& frag : spawnedFragments)
                 regs.push_back (std::move (frag));
 
-            if (hasOverlapL) region.fadeInSamples  = fadeSamples;
-            if (hasOverlapR) region.fadeOutSamples = fadeSamples;
+            if (hasOverlapL)
+            {
+                region.fadeInSamples = fadeSamples;
+                region.fadeInShape   = FadeShape::RaisedCosine;
+            }
+            if (hasOverlapR)
+            {
+                region.fadeOutSamples = fadeSamples;
+                region.fadeOutShape   = FadeShape::RaisedCosine;
+            }
 
             regs.push_back (std::move (region));
         }

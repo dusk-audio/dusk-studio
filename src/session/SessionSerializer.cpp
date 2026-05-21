@@ -389,6 +389,13 @@ juce::DynamicObject::Ptr trackToObject (const Track& t)
             if (r.muted)  rObj->setProperty ("muted",  true);
         if (r.locked) rObj->setProperty ("locked", true);
 
+            // BPM-change semantics (DuskStudio.md §5b). Default is locked,
+            // so emit only when the user has explicitly unlocked. recorded_at_bpm
+            // is always emitted so legacy sessions can be anchored deterministically
+            // on first BPM change.
+            if (! r.tempoLock) rObj->setProperty ("tempo_lock", false);
+            rObj->setProperty ("recorded_at_bpm", r.recordedAtBPM);
+
             // MIDI take history mirrors audio: previously-recorded versions
             // of the same range stack here when an overdub fully overlaps
             // an existing region.
@@ -491,7 +498,7 @@ juce::DynamicObject::Ptr busToObject (const Bus& a)
     return obj;
 }
 
-void restoreTrack (Track& t, const juce::var& v)
+void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm)
 {
     if (! v.isObject()) return;
     if (auto s = v["name"].toString();           s.isNotEmpty()) t.name = s;
@@ -725,7 +732,7 @@ void restoreTrack (Track& t, const juce::var& v)
             auto loadShape = [] (const juce::var& v) -> FadeShape
             {
                 const int i = (int) v;
-                if (i >= 0 && i <= (int) FadeShape::Log) return (FadeShape) i;
+                if (i >= 0 && i <= (int) FadeShape::RaisedCosine) return (FadeShape) i;
                 return FadeShape::Linear;
             };
             r.fadeInShape     = rv.hasProperty ("fade_in_shape")
@@ -822,6 +829,18 @@ void restoreTrack (Track& t, const juce::var& v)
                                                           : juce::String();
             r.muted           = rv.hasProperty ("muted")  && (bool) rv["muted"];
             r.locked          = rv.hasProperty ("locked") && (bool) rv["locked"];
+
+            // tempo_lock defaults true (spec §5b: locked is the default).
+            // recorded_at_bpm defaults to the session's tempo at load time,
+            // so legacy sessions that didn't record this field are
+            // anchored to their own saved BPM rather than 120 - the first
+            // BPM change after load won't silently mis-retime.
+            r.tempoLock       = ! rv.hasProperty ("tempo_lock")
+                                  || (bool) rv["tempo_lock"];
+            r.recordedAtBPM   = rv.hasProperty ("recorded_at_bpm")
+                                  ? (double) rv["recorded_at_bpm"]
+                                  : defaultRecordBpm;
+
             parseNotes (rv["notes"], r.notes);
             parseCcs   (rv["ccs"],   r.ccs);
 
@@ -966,6 +985,10 @@ juce::String SessionSerializer::serialize (const Session& s)
 
     auto* master = new juce::DynamicObject();
     master->setProperty ("fader_db",     s.master().faderDb.load());
+    if (s.master().mute.load (std::memory_order_relaxed))
+        master->setProperty ("mute", true);
+    if (s.master().monoSum.load (std::memory_order_relaxed))
+        master->setProperty ("mono_sum", true);
     master->setProperty ("tape_enabled", s.master().tapeEnabled.load());
     master->setProperty ("tape_hq",      s.master().tapeHQ.load());
     // TapeMachine APVTS state (base64). Skipped when empty so existing
@@ -1151,11 +1174,22 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
     if (fileVersion < kFormatVersion && ! migrateSession (root, fileVersion))
         return false;
 
+    // Peek at transport.tempo_bpm BEFORE the track loop so legacy sessions
+    // (no recorded_at_bpm field on MidiRegion) get anchored to their own
+    // saved tempo rather than the struct default of 120. The transport
+    // block is parsed in full further down; this is a read-only peek.
+    double sessionLoadBpm = (double) s.tempoBpm.load (std::memory_order_relaxed);
+    if (auto tportPeek = root["transport"]; tportPeek.isObject())
+    {
+        if (tportPeek.hasProperty ("tempo_bpm"))
+            sessionLoadBpm = (double) tportPeek["tempo_bpm"];
+    }
+
     if (auto tracks = root["tracks"]; tracks.isArray())
     {
         const int n = juce::jmin (Session::kNumTracks, tracks.size());
         for (int i = 0; i < n; ++i)
-            restoreTrack (s.track (i), tracks[i]);
+            restoreTrack (s.track (i), tracks[i], sessionLoadBpm);
     }
     if (auto busesArr = root["buses"]; busesArr.isArray())
     {
@@ -1259,6 +1293,8 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
     if (auto master = root["master"]; master.isObject())
     {
         if (master.hasProperty ("fader_db"))     s.master().faderDb.store ((float) (double) master["fader_db"]);
+        if (master.hasProperty ("mute"))         s.master().mute.store ((bool) master["mute"]);
+        if (master.hasProperty ("mono_sum"))     s.master().monoSum.store ((bool) master["mono_sum"]);
         if (master.hasProperty ("tape_enabled")) s.master().tapeEnabled.store ((bool) master["tape_enabled"]);
         if (master.hasProperty ("tape_hq"))      s.master().tapeHQ.store ((bool) master["tape_hq"]);
         if (master.hasProperty ("tape_state"))   s.master().tapeStateBase64 = master["tape_state"].toString();

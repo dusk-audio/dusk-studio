@@ -275,19 +275,42 @@ void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
     }
 #endif
 
+    // Master mute + mono-sum live alongside the fader gain: same loop,
+    // no extra pass over the buffer. Both are read once at block top
+    // (relaxed: UI clicks are message-thread, one-block stale read is
+    // benign). Mute zeros L+R + bypasses the meter writes since a
+    // muted bus's RMS smoothing should also fall to silence cleanly.
+    const bool muteOn = paramsRef != nullptr
+                       && paramsRef->mute.load (std::memory_order_relaxed);
+    const bool monoOn = paramsRef != nullptr
+                       && paramsRef->monoSum.load (std::memory_order_relaxed);
+
     float postPeakL = 0.0f, postPeakR = 0.0f;
     float sumSqL = 0.0f, sumSqR = 0.0f;
     for (int i = 0; i < numSamples; ++i)
     {
         const float g = faderGain.getNextValue();
-        L[i] *= g;
-        R[i] *= g;
-        const float aL = std::fabs (L[i]);
-        const float aR = std::fabs (R[i]);
+        float lv = L[i] * g;
+        float rv = R[i] * g;
+        if (monoOn)
+        {
+            const float m = 0.5f * (lv + rv);
+            lv = m;
+            rv = m;
+        }
+        if (muteOn)
+        {
+            lv = 0.0f;
+            rv = 0.0f;
+        }
+        L[i] = lv;
+        R[i] = rv;
+        const float aL = std::fabs (lv);
+        const float aR = std::fabs (rv);
         if (aL > postPeakL) postPeakL = aL;
         if (aR > postPeakR) postPeakR = aR;
-        sumSqL += L[i] * L[i];
-        sumSqR += R[i] * R[i];
+        sumSqL += lv * lv;
+        sumSqR += rv * rv;
     }
 
     if (paramsRef != nullptr)

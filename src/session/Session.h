@@ -104,6 +104,37 @@ void thinAutomationLane (AutomationLane& lane,
 class Session;
 void handleWritePassComplete (Session& s) noexcept;
 
+// Retime every MidiRegion in the session for a BPM change. Reads the
+// current `session.tempoBpm` as the *old* tempo and writes `newBpm`
+// atomically last, so the publish order to the audio thread is:
+//   (1) per-track midiRegions vector republished with new sample
+//       positions, then (2) tempoBpm.store(newBpm) with release.
+// The MIDI-scheduling site in AudioEngine acquire-loads tempoBpm so
+// observing the new BPM implies the new region positions are also
+// visible (transitive happens-before via the release chain). The
+// reverse direction - audio thread observing new regions while BPM
+// is still the old value - is a tens-of-nanoseconds window between
+// the two store atomics on the message thread; spec says BPM is
+// changed with transport stopped, so this transient mismatch is
+// accepted for 1.0 rather than introducing an epoch counter.
+//
+// tempoLock == true  ── timelineStart scales by oldBpm/newBpm and
+//                       lengthInSamples is rederived from
+//                       lengthInTicks at newBpm. Musical position
+//                       and duration preserved across the change.
+// tempoLock == false ── sample positions stay, lengthInTicks is
+//                       rederived from lengthInSamples at newBpm.
+//                       The region effectively "floats" on the new
+//                       grid (its musical extent changes).
+//
+// Audio regions and markers are NOT retimed (audio is time-anchored
+// per the spec's no-time-stretching rule; markers are message-thread
+// timeline labels and retime is out of scope for 1.0).
+//
+// Call only from the message thread. `sampleRate` must be positive;
+// pass 0 to skip the recompute (BPM still stores).
+void applyTempoChange (Session& s, float newBpm, double sampleRate) noexcept;
+
 // External hardware-insert routing. These fields change together when
 // the user flips the Output / Input dropdown in the HardwareInsertEditor,
 // so the audio thread must observe them as one consistent snapshot.
@@ -518,20 +549,37 @@ struct MidiRegion
     // grow lock-awareness) edit gestures. Doesn't affect
     // playback or note scheduling.
     bool locked = false;
+
+    // BPM-change semantics (DuskStudio.md §5b). When tempoLock is true
+    // (default) the region's musical position + length stay fixed - on a
+    // BPM change, lengthInSamples and the sample-domain scheduling are
+    // recomputed from lengthInTicks at the new tempo. When false, the
+    // sample positions stay put and the tick mapping is re-derived (the
+    // region effectively "floats" on the new tempo grid).
+    bool   tempoLock     = true;
+
+    // BPM that was active when this region was recorded / created. Used as
+    // the conversion anchor for tempo-locked retime. PlaybackEngine and
+    // BPM-change dialogs read this; SessionSerializer round-trips it.
+    double recordedAtBPM = 120.0;
 };
 
 // Fade curve shape applied to a region's fade-in / fade-out (and to the
 // implicit crossfade across overlapping regions on the same track). All
 // shapes map t in [0,1] -> gain in [0,1] with shape(0)=0 and shape(1)=1.
 // Linear is the historical default; EqualPower is constant-power and
-// preserves perceived loudness across crossfade overlaps.
+// preserves perceived loudness across crossfade overlaps. RaisedCosine
+// has zero slope at BOTH endpoints (unlike EqualPower's non-zero slope
+// at t=0) which makes it the right choice for very-short click-mask
+// fades like the punch-in/out crossfade.
 enum class FadeShape : int
 {
-    Linear     = 0,
-    EqualPower = 1,
-    Sigmoid    = 2,
-    Exp        = 3,
-    Log        = 4
+    Linear      = 0,
+    EqualPower  = 1,
+    Sigmoid     = 2,
+    Exp         = 3,
+    Log         = 4,
+    RaisedCosine = 5
 };
 
 // Apply the shape function. Caller normalises t into [0,1]. Out-of-range
@@ -542,11 +590,15 @@ inline float applyFadeShape (float t, FadeShape s) noexcept
     t = juce::jlimit (0.0f, 1.0f, t);
     switch (s)
     {
-        case FadeShape::Linear:     return t;
-        case FadeShape::EqualPower: return std::sin (t * juce::MathConstants<float>::halfPi);
-        case FadeShape::Sigmoid:    return t * t * (3.0f - 2.0f * t);
-        case FadeShape::Exp:        return t * t;
-        case FadeShape::Log:        return 1.0f - (1.0f - t) * (1.0f - t);
+        case FadeShape::Linear:      return t;
+        case FadeShape::EqualPower:  return std::sin (t * juce::MathConstants<float>::halfPi);
+        case FadeShape::Sigmoid:     return t * t * (3.0f - 2.0f * t);
+        case FadeShape::Exp:         return t * t;
+        case FadeShape::Log:         return 1.0f - (1.0f - t) * (1.0f - t);
+        case FadeShape::RaisedCosine:
+            // 0.5 * (1 - cos(πt)) - zero slope at both endpoints, the
+            // canonical click-mask shape for very short crossfades.
+            return 0.5f * (1.0f - std::cos (t * juce::MathConstants<float>::pi));
     }
     return t;
 }
@@ -899,6 +951,18 @@ struct AuxLane
 struct MasterBusParams
 {
     std::atomic<float> faderDb     { 0.0f };
+
+    // Master mute: zero the output bus when true. Treated as a final
+    // gate after fader / EQ / comp / tape - the entire stereo bus is
+    // silenced. Cheaper than dropping the fader to -inf because the
+    // MasterBus skips the metering RMS smooth too.
+    std::atomic<bool>  mute        { false };
+
+    // Mono-sum: collapse L+R to (L+R)*0.5 on both channels for mono
+    // compatibility checks. Mirrors the "Mono" button on a console's
+    // monitor section. Independent of stereo width / pan; only affects
+    // the very last stereo->mono fold at the master output.
+    std::atomic<bool>  monoSum     { false };
 
     // Live master fader AFTER automation routing. MasterBus DSP reads
     // THIS (not faderDb) so the Off/Read/Write/Touch hand-off lives in

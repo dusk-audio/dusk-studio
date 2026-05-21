@@ -360,4 +360,60 @@ void handleWritePassComplete (Session& s) noexcept
         thinAutomationLane (s.master().automationLanes[(size_t) p],
                               (AutomationParam) p, kEpsilon);
 }
+
+void applyTempoChange (Session& s, float newBpm, double sampleRate) noexcept
+{
+    const float oldBpm = s.tempoBpm.load (std::memory_order_relaxed);
+
+    // Clamp before storing so an external caller can't push 0 / NaN /
+    // negative tempos into the audio thread's tick→sample math. Same
+    // limits the TransportBar's spinner and tap-tempo enforce. Note:
+    // juce::jlimit returns NaN when its input is NaN (the comparisons
+    // it relies on are both false for NaN), so an explicit isfinite
+    // check has to run first.
+    if (! std::isfinite (newBpm)) newBpm = 120.0f;
+    newBpm = juce::jlimit (30.0f, 300.0f, newBpm);
+
+    if (sampleRate > 0.0 && oldBpm > 0.0f && newBpm > 0.0f
+        && std::abs (oldBpm - newBpm) > 1e-4f)
+    {
+        const double oldB = (double) oldBpm;
+        const double newB = (double) newBpm;
+        const double factor = oldB / newB;   // positions in beats stay fixed → scale samples
+
+        for (int ti = 0; ti < Session::kNumTracks; ++ti)
+        {
+            auto& holder = s.track (ti).midiRegions;
+            if (holder.current().empty()) continue;
+
+            // mutate() copies the current snapshot, runs the lambda, and
+            // republishes with release ordering. The audio thread's next
+            // read() picks up the new positions atomically.
+            holder.mutate ([factor, sampleRate, newBpm] (std::vector<MidiRegion>& v)
+            {
+                for (auto& r : v)
+                {
+                    if (r.tempoLock)
+                    {
+                        r.timelineStart = (juce::int64) std::llround (
+                            (double) r.timelineStart * factor);
+                        r.lengthInSamples = ticksToSamples (r.lengthInTicks,
+                                                              sampleRate, newBpm);
+                    }
+                    else
+                    {
+                        // Float regions keep sample positions; rebuild
+                        // musical length so the piano-roll grid + the
+                        // scheduling math stay consistent at the new
+                        // tempo.
+                        r.lengthInTicks = samplesToTicks (r.lengthInSamples,
+                                                           sampleRate, newBpm);
+                    }
+                }
+            });
+        }
+    }
+
+    s.tempoBpm.store (newBpm, std::memory_order_release);
+}
 } // namespace duskstudio

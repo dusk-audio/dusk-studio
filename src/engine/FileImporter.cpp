@@ -88,11 +88,13 @@ AudioImportResult importAudio (const AudioImportRequest& req)
         result.errorMessage = "Source file does not exist: " + req.source.getFullPathName();
         return result;
     }
-    if (! std::isfinite (req.sessionSampleRate) || req.sessionSampleRate <= 0.0)
-    {
-        result.errorMessage = "Invalid session sample rate";
-        return result;
-    }
+    // Session sample rate can legitimately be zero at import time when
+    // the user opened the project before an audio device finished
+    // initialising. Fall back to 48 kHz so the resample target is still
+    // a sane value - the device-open path will recompute downstream
+    // lengthInSamples when the live SR is known.
+    double sessionSr = req.sessionSampleRate;
+    if (! std::isfinite (sessionSr) || sessionSr <= 0.0) sessionSr = 48000.0;
     if (req.targetChannels < 1 || req.targetChannels > 2)
     {
         result.errorMessage = "Target channel count must be 1 or 2";
@@ -151,7 +153,7 @@ AudioImportResult importAudio (const AudioImportRequest& req)
     conformChannels (srcBuf, conformed, req.targetChannels);
 
     // Resample if necessary.
-    const bool needsResample = std::abs (srcSampleRate - req.sessionSampleRate) > 0.001;
+    const bool needsResample = std::abs (srcSampleRate - sessionSr) > 0.001;
     juce::int64 outLength = srcLength;
     juce::AudioBuffer<float> outBuf;
 
@@ -161,7 +163,7 @@ AudioImportResult importAudio (const AudioImportRequest& req)
     }
     else
     {
-        const double ratioOut = req.sessionSampleRate / srcSampleRate;
+        const double ratioOut = sessionSr / srcSampleRate;
         outLength = (juce::int64) std::llround ((double) srcLength * ratioOut);
         if (outLength <= 0)
         {
@@ -181,7 +183,7 @@ AudioImportResult importAudio (const AudioImportRequest& req)
             const int written = resampleChannel (conformed.getReadPointer (c),
                                                    (int) srcLength, srcSampleRate,
                                                    outBuf.getWritePointer (c),
-                                                   (int) outLength, req.sessionSampleRate);
+                                                   (int) outLength, sessionSr);
             // CatmullRomInterpolator can return fewer samples than asked
             // when the input runs out before producing every output slot
             // (boundary case at the tail). The remaining range was
@@ -213,7 +215,7 @@ AudioImportResult importAudio (const AudioImportRequest& req)
     constexpr int kBitsPerSample = 24;
     std::unique_ptr<juce::AudioFormatWriter> writer (
         wav.createWriterFor (stream.get(),
-                              req.sessionSampleRate,
+                              sessionSr,
                               (unsigned int) req.targetChannels,
                               kBitsPerSample,
                               {},
@@ -268,11 +270,14 @@ MidiImportResult importMidi (const MidiImportRequest& req)
         result.errorMessage = "MIDI file does not exist: " + req.source.getFullPathName();
         return result;
     }
-    if (! std::isfinite (req.sessionSampleRate) || req.sessionSampleRate <= 0.0)
-    {
-        result.errorMessage = "Invalid session sample rate";
-        return result;
-    }
+    // MIDI has no inherent sample rate - the importer only needs one to
+    // cache the rendered lengthInSamples on the resulting MidiRegion.
+    // PlaybackEngine recomputes that cache when the live session SR is
+    // known. Fall back to 48 kHz when the session hasn't opened a device
+    // yet so a fresh-session import doesn't fail just for asking too
+    // early.
+    double sessionSr = req.sessionSampleRate;
+    if (! std::isfinite (sessionSr) || sessionSr <= 0.0) sessionSr = 48000.0;
     // Upper bound for BPM picked well above anything musically plausible
     // - rejects NaN/inf as well as nonsense values from a hand-edited
     // session.json that would otherwise turn into ridiculous tick-to-
@@ -312,9 +317,9 @@ MidiImportResult importMidi (const MidiImportRequest& req)
         if (isSmpte)
         {
             // rawTime is in seconds.
-            const double samples = rawTime * req.sessionSampleRate;
+            const double samples = rawTime * sessionSr;
             return duskstudio::samplesToTicks ((juce::int64) std::llround (samples),
-                                            req.sessionSampleRate,
+                                            sessionSr,
                                             req.sessionBpm);
         }
         // rawTime is in source-PPQ ticks.
@@ -417,8 +422,13 @@ MidiImportResult importMidi (const MidiImportRequest& req)
     result.region.timelineStart   = req.timelineStart;
     result.region.lengthInTicks   = juce::jmax<juce::int64> (1, maxTick);
     result.region.lengthInSamples = duskstudio::ticksToSamples (result.region.lengthInTicks,
-                                                              req.sessionSampleRate,
+                                                              sessionSr,
                                                               req.sessionBpm);
+    // Anchor BPM for tempo-locked retime. Without this, an imported MIDI
+    // file defaults to the struct's 120 BPM and a subsequent BPM change
+    // in applyTempoChange would scale positions by 120/newBpm instead of
+    // sessionBpm/newBpm - silently mis-timing the take.
+    result.region.recordedAtBPM   = (double) req.sessionBpm;
     result.region.notes = std::move (notes);
     result.region.ccs   = std::move (ccs);
     return result;
