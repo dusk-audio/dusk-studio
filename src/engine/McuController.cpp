@@ -309,6 +309,106 @@ juce::MidiBuffer McuController::buildEmitBuffer (bool forceAll)
         writeStripField (row1, strip, value);
     }
 
+    // ── Per-channel meters (channel pressure 0xD0) ──
+    // Toggle every tick so we emit at ~15 Hz - half of the 30 Hz UI
+    // cadence. MCU meters fall back from peak under their own
+    // ballistics; over-driving them buries the bus in low-value
+    // updates. Skip the toggle on forceAll so a fresh resync gets
+    // initial meter values immediately.
+    emitMeterOnThisTick = ! emitMeterOnThisTick;
+    if (forceAll || emitMeterOnThisTick)
+    {
+        for (int strip = 0; strip < kStripsPerBank; ++strip)
+        {
+            const int t = bank * kStripsPerBank + strip;
+            if (t < 0 || t >= Session::kNumTracks) continue;
+            const auto& trk = session.track (t);
+            const float dbL = trk.meterInputDb .load (std::memory_order_relaxed);
+            const float dbR = trk.meterInputRDb.load (std::memory_order_relaxed);
+            const float peakDb = juce::jmax (dbL, dbR);
+            // Map -60..0 dB to 0..14, clip > 0 dB to 15.
+            int level;
+            if (peakDb >= 0.0f) level = mcu::meter::kClipLevel;
+            else if (peakDb <= -60.0f) level = 0;
+            else level = (int) std::round ((peakDb + 60.0f) * mcu::meter::kMaxLevel / 60.0f);
+            if (forceAll || level != lastMeter[(size_t) strip])
+            {
+                // 0xD0 status (channel pressure, ch 1): hi-nibble of
+                // data byte = strip 0..7, lo-nibble = level 0..15.
+                const juce::uint8 dataByte = (juce::uint8) ((strip << 4) | (level & 0x0F));
+                buf.addEvent (juce::MidiMessage (mcu::meter::kStatus, dataByte), 0);
+                lastMeter[(size_t) strip] = level;
+            }
+        }
+    }
+
+    // ── V-pot LED rings (CC 0x30+N) ──
+    // Value encodes mode (high nibble) + LED position 1..11 (low
+    // nibble). In PAN mode use ModeBoost (single dot moves from
+    // centre); in SEND modes use ModeWrap (fill from left); in EQ /
+    // COMP modes light the centre dot for the selected channel's
+    // strip (visual cue that the encoders are now editing the
+    // selected channel, not the banked strip). Bit 6 turns on the
+    // centre-dot LED regardless of mode - we use it for the C
+    // (centre) indicator in pan.
+    for (int strip = 0; strip < kStripsPerBank; ++strip)
+    {
+        const int t = bank * kStripsPerBank + strip;
+        if (t < 0 || t >= Session::kNumTracks) continue;
+        const auto& trk = session.track (t);
+        int ringValue = 0;
+        switch (assign)
+        {
+            case 0:
+            {
+                // PAN: 0 = centre, -1..+1 maps to LED 1..11. Use
+                // ModeBoost with centre-dot lit when pan == 0.
+                const float pan = trk.strip.pan.load (std::memory_order_relaxed);
+                const int led = juce::jlimit (1, mcu::vring::kLedCount,
+                    1 + (int) std::round ((pan + 1.0f) * 0.5f * (mcu::vring::kLedCount - 1)));
+                ringValue = mcu::vring::ModeBoost | led
+                              | (std::abs (pan) < 0.01f ? mcu::vring::DotCenter : 0);
+                break;
+            }
+            case 1: case 2: case 3: case 4:
+            {
+                // SEND: -inf..+6 dB. ModeWrap (fill from left).
+                const float db = trk.strip.auxSendDb[(size_t) (assign - 1)]
+                                    .load (std::memory_order_relaxed);
+                const float norm = (db <= ChannelStripParams::kFaderInfThreshDb)
+                                      ? 0.0f
+                                      : juce::jlimit (0.0f, 1.0f,
+                                          (db - ChannelStripParams::kAuxSendMinDb)
+                                          / (ChannelStripParams::kAuxSendMaxDb
+                                             - ChannelStripParams::kAuxSendMinDb));
+                const int led = juce::jlimit (1, mcu::vring::kLedCount,
+                    (int) std::round (norm * mcu::vring::kLedCount));
+                ringValue = mcu::vring::ModeWrap | led;
+                break;
+            }
+            case 5: case 6:
+                // EQ / COMP modes: the encoders edit the selected
+                // channel, not the banked strip. Show a single dot in
+                // the middle so the user knows the ring isn't tracking
+                // strip state. The selected channel's V-pot lights
+                // its centre dot brighter (via DotCenter).
+                ringValue = mcu::vring::ModeSingle | 6
+                              | ((bank * kStripsPerBank + strip) == selected
+                                    ? mcu::vring::DotCenter : 0);
+                break;
+            default:
+                ringValue = 0;
+                break;
+        }
+        if (forceAll || ringValue != lastVpotRing[(size_t) strip])
+        {
+            buf.addEvent (juce::MidiMessage::controllerEvent (1,
+                mcu::cc::VPotRingBase + strip,
+                (juce::uint8) (ringValue & 0x7F)), 0);
+            lastVpotRing[(size_t) strip] = ringValue;
+        }
+    }
+
     if (forceAll || row0 != lastLcdRow0)
     {
         emitLcdRow (buf, mcu::sysex::kLcdRow0Addr, row0);

@@ -129,6 +129,15 @@ private:
     // to once per second so static positions don't flood MIDI.
     int  ticksSinceTimecode = 0;
 
+    // Per-channel meter (0..14 + clip-15). Throttled to every other
+    // tick (~15 Hz) since these are the highest-traffic feedback
+    // updates on the MCU bus.
+    std::array<int, kStripsPerBank> lastMeter = { -1, -1, -1, -1, -1, -1, -1, -1 };
+    bool emitMeterOnThisTick = false;
+
+    // V-pot LED ring values (0..127). One per strip. -1 = never sent.
+    std::array<int, kStripsPerBank> lastVpotRing = { -1, -1, -1, -1, -1, -1, -1, -1 };
+
     std::atomic<bool> resyncRequested        { true };  // first tick re-emits
     std::atomic<bool> transportEdgeRequested { false };
 };

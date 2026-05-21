@@ -44,28 +44,149 @@ int McuReceiver::faderDbToPitchBend (float db) const noexcept
 
 void McuReceiver::resetVpotTarget (int stripIndex) noexcept
 {
+    const int mode = session.mcu.assignMode.load (std::memory_order_relaxed);
+
+    // EQ + COMP: encoder bank acts on the SELECTED channel, not the
+    // banked strip. Push action resets the encoder's parameter to a
+    // sane default. Encoder indices match the assign-mode table.
+    if (mode == 5 || mode == 6)
+    {
+        const int selT = session.mcu.selectedChannel.load (std::memory_order_relaxed);
+        if (selT < 0 || selT >= Session::kNumTracks) return;
+        auto& strip = session.track (selT).strip;
+        if (mode == 5)
+        {
+            // EQ encoders 1=HPF, 2=LF gain, 3=LF freq, 4=LM gain,
+            // 5=LM freq, 6=HM gain, 7=HF gain, 8=HF freq. Push -> 0
+            // gain / centre freq. Encoder index = stripIndex (0..7).
+            switch (stripIndex)
+            {
+                case 0: strip.hpfFreq.store (20.0f, std::memory_order_relaxed); break;
+                case 1: strip.lfGainDb.store (0.0f, std::memory_order_relaxed); break;
+                case 2: strip.lfFreq.store (100.0f, std::memory_order_relaxed); break;
+                case 3: strip.lmGainDb.store (0.0f, std::memory_order_relaxed); break;
+                case 4: strip.lmFreq.store (600.0f, std::memory_order_relaxed); break;
+                case 5: strip.hmGainDb.store (0.0f, std::memory_order_relaxed); break;
+                case 6: strip.hfGainDb.store (0.0f, std::memory_order_relaxed); break;
+                case 7: strip.hfFreq.store (4000.0f, std::memory_order_relaxed); break;
+                default: break;
+            }
+        }
+        else
+        {
+            // COMP encoders 1=thresh, 2=ratio, 3=attack, 4=release,
+            // 5=makeup. 6/7/8 unused. Push -> sensible defaults.
+            switch (stripIndex)
+            {
+                case 0: strip.compThresholdDb.store (0.0f, std::memory_order_relaxed); break;
+                case 1: strip.compVcaRatio   .store (4.0f, std::memory_order_relaxed); break;
+                case 2: strip.compVcaAttack  .store (1.0f, std::memory_order_relaxed); break;
+                case 3: strip.compVcaRelease .store (100.0f, std::memory_order_relaxed); break;
+                case 4: strip.compMakeupDb   .store (0.0f, std::memory_order_relaxed); break;
+                default: break;
+            }
+        }
+        return;
+    }
+
     const int bank = session.mcu.bank.load (std::memory_order_relaxed);
     const int trackIdx = bank * mcu::kStripsPerBank + stripIndex;
     if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return;
-    const int mode = session.mcu.assignMode.load (std::memory_order_relaxed);
     auto& strip = session.track (trackIdx).strip;
     if (mode == 0)
         strip.pan.store (0.0f, std::memory_order_relaxed);
     else if (mode >= 1 && mode <= 4)
         strip.auxSendDb[(size_t) (mode - 1)].store (
             ChannelStripParams::kAuxSendOffDb, std::memory_order_relaxed);
-    // EQ + COMP V-pot push resets the currently-edited param to its
-    // mid value. Step 5 will fill in the per-encoder mapping; for now
-    // PAN-reset only is enough to validate the path.
 }
 
 void McuReceiver::applyVpotDelta (int stripIndex, int delta) noexcept
 {
     if (delta == 0) return;
+    const int mode = session.mcu.assignMode.load (std::memory_order_relaxed);
+
+    // EQ / COMP: encoders act on the SELECTED channel. The 8 V-pots
+    // map to fixed parameter slots (see resetVpotTarget for the same
+    // index->param table). Step size tuned per param so a full
+    // encoder sweep (~64 ticks) covers the typical adjust range.
+    if (mode == 5 || mode == 6)
+    {
+        const int selT = session.mcu.selectedChannel.load (std::memory_order_relaxed);
+        if (selT < 0 || selT >= Session::kNumTracks) return;
+        auto& strip = session.track (selT).strip;
+        const float d = (float) delta;
+        if (mode == 5)
+        {
+            switch (stripIndex)
+            {
+                case 0: strip.hpfFreq.store (juce::jlimit (ChannelStripParams::kHpfMinHz,
+                                                            ChannelStripParams::kHpfMaxHz,
+                                                            strip.hpfFreq.load() + d * 4.0f),
+                                              std::memory_order_relaxed); break;
+                case 1: strip.lfGainDb.store (juce::jlimit (ChannelStripParams::kBandGainMin,
+                                                             ChannelStripParams::kBandGainMax,
+                                                             strip.lfGainDb.load() + d * 0.3f),
+                                               std::memory_order_relaxed); break;
+                case 2: strip.lfFreq.store (juce::jlimit (ChannelStripParams::kLfFreqMin,
+                                                           ChannelStripParams::kLfFreqMax,
+                                                           strip.lfFreq.load() + d * 5.0f),
+                                             std::memory_order_relaxed); break;
+                case 3: strip.lmGainDb.store (juce::jlimit (ChannelStripParams::kBandGainMin,
+                                                             ChannelStripParams::kBandGainMax,
+                                                             strip.lmGainDb.load() + d * 0.3f),
+                                               std::memory_order_relaxed); break;
+                case 4: strip.lmFreq.store (juce::jlimit (ChannelStripParams::kLmFreqMin,
+                                                           ChannelStripParams::kLmFreqMax,
+                                                           strip.lmFreq.load() + d * 20.0f),
+                                             std::memory_order_relaxed); break;
+                case 5: strip.hmGainDb.store (juce::jlimit (ChannelStripParams::kBandGainMin,
+                                                             ChannelStripParams::kBandGainMax,
+                                                             strip.hmGainDb.load() + d * 0.3f),
+                                               std::memory_order_relaxed); break;
+                case 6: strip.hfGainDb.store (juce::jlimit (ChannelStripParams::kBandGainMin,
+                                                             ChannelStripParams::kBandGainMax,
+                                                             strip.hfGainDb.load() + d * 0.3f),
+                                               std::memory_order_relaxed); break;
+                case 7: strip.hfFreq.store (juce::jlimit (ChannelStripParams::kHfFreqMin,
+                                                           ChannelStripParams::kHfFreqMax,
+                                                           strip.hfFreq.load() + d * 100.0f),
+                                             std::memory_order_relaxed); break;
+                default: break;
+            }
+        }
+        else
+        {
+            switch (stripIndex)
+            {
+                case 0: strip.compThresholdDb.store (juce::jlimit (ChannelStripParams::kCompThreshMin,
+                                                                    ChannelStripParams::kCompThreshMax,
+                                                                    strip.compThresholdDb.load() + d * 0.5f),
+                                                       std::memory_order_relaxed); break;
+                case 1: strip.compVcaRatio.store (juce::jlimit (ChannelStripParams::kCompRatioMin,
+                                                                  ChannelStripParams::kCompRatioMax,
+                                                                  strip.compVcaRatio.load() + d * 0.2f),
+                                                    std::memory_order_relaxed); break;
+                case 2: strip.compVcaAttack.store (juce::jlimit (ChannelStripParams::kCompAttackMin,
+                                                                   ChannelStripParams::kCompAttackMax,
+                                                                   strip.compVcaAttack.load() + d * 0.5f),
+                                                     std::memory_order_relaxed); break;
+                case 3: strip.compVcaRelease.store (juce::jlimit (ChannelStripParams::kCompReleaseMin,
+                                                                    ChannelStripParams::kCompReleaseMax,
+                                                                    strip.compVcaRelease.load() + d * 10.0f),
+                                                      std::memory_order_relaxed); break;
+                case 4: strip.compMakeupDb.store (juce::jlimit (ChannelStripParams::kCompMakeupMin,
+                                                                  ChannelStripParams::kCompMakeupMax,
+                                                                  strip.compMakeupDb.load() + d * 0.3f),
+                                                    std::memory_order_relaxed); break;
+                default: break;
+            }
+        }
+        return;
+    }
+
     const int bank = session.mcu.bank.load (std::memory_order_relaxed);
     const int trackIdx = bank * mcu::kStripsPerBank + stripIndex;
     if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return;
-    const int mode = session.mcu.assignMode.load (std::memory_order_relaxed);
     auto& strip = session.track (trackIdx).strip;
 
     if (mode == 0)
