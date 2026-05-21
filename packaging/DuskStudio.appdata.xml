@@ -28,4 +28,15 @@
   <url type="homepage">https://github.com/dusk-audio/Dusk Studio</url>
   <developer_name>Dusk Audio</developer_name>
   <content_rating type="oars-1.1"/>
+  <releases>
+    <!-- scripts/bump-version.sh prepends new <release> entries here. -->
+    <release version="0.9.0" date="2026-05-21">
+      <description>
+        <p>Beta release leading up to 1.0. Phase 4 MIDI tempo retime,
+        BPM-change confirmation dialog, 64-sample raised-cosine punch
+        crossfade, triplet quantize variants, and packaging targets
+        for Linux AppImage / deb / rpm, Windows MSI, macOS DMG.</p>
+      </description>
+    </release>
+  </releases>
 </component>

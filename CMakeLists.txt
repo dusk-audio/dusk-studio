@@ -11,7 +11,14 @@ if(APPLE AND NOT DEFINED CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "macOS deployment target")
 endif()
 
-project(DuskStudio VERSION 0.0.1 LANGUAGES C CXX)
+# Version is sourced from the top-level VERSION file so packaging
+# scripts (AppImage, deb/rpm, MSI, DMG) and AppStream metadata see the
+# same value as the binary. scripts/bump-version.sh writes both
+# VERSION and the AppStream <release> entry; do NOT edit the project()
+# version literal here.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" DUSKSTUDIO_VERSION_RAW)
+string(STRIP "${DUSKSTUDIO_VERSION_RAW}" DUSKSTUDIO_VERSION)
+project(DuskStudio VERSION ${DUSKSTUDIO_VERSION} LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -130,8 +137,8 @@ add_subdirectory(${DUSKSTUDIO_JUCE_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/JUCE)
 # build time (.ico on Windows, .icns on macOS, embedded data block on
 # Linux). Same file is used for both BIG and SMALL - JUCE downscales
 # internally as needed. The conditional keeps a fresh checkout
-# building when assets/icon.png hasn't been added yet.
-set(DUSKSTUDIO_ICON_PATH "${CMAKE_CURRENT_SOURCE_DIR}/assets/icon.png")
+# building when assets/ds-icon.png hasn't been added yet.
+set(DUSKSTUDIO_ICON_PATH "${CMAKE_CURRENT_SOURCE_DIR}/assets/ds-icon.png")
 if(EXISTS "${DUSKSTUDIO_ICON_PATH}")
     set(DUSKSTUDIO_ICON_ARGS
         ICON_BIG   "${DUSKSTUDIO_ICON_PATH}"
@@ -627,3 +634,72 @@ if(DUSKSTUDIO_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
 endif()
+
+# Packaging via CPack. Generators are selected by scripts/package-*.{sh,ps1}
+# at cpack invocation time (-G DEB / -G RPM / -G WIX / -G DragNDrop);
+# this block just supplies the metadata each generator reads. The
+# AppImage path is NOT a CPack generator - linuxdeploy + appimagetool
+# stage AppDir from the same install() rules below.
+install(TARGETS DuskStudio
+        RUNTIME DESTINATION bin
+        BUNDLE  DESTINATION .)
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/audio.dusk.studio.desktop"
+        DESTINATION share/applications)
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/DuskStudio.appdata.xml"
+        DESTINATION share/metainfo)
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/DuskStudio.mime.xml"
+        DESTINATION share/mime/packages)
+# Packaging icon: hard requirement only when DUSKSTUDIO_PACKAGE_BUILD=ON
+# (release packaging path). The icon is a brand asset not committed to
+# the repo, so dev builds and CI tests stay buildable without it.
+# scripts/package-appimage.sh sets the option (and would fail at runtime
+# if the icon were missing anyway). install() is gated on file presence
+# so a non-packaging dev build doesn't include a stale install rule.
+option(DUSKSTUDIO_PACKAGE_BUILD
+       "Enforce assets required for distribution packaging (icon, etc.)" OFF)
+if(DUSKSTUDIO_PACKAGE_BUILD AND NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/packaging/DuskStudio.png")
+    message(FATAL_ERROR
+        "packaging/DuskStudio.png is required for packaging. "
+        "Provide a 256x256 PNG at ${CMAKE_CURRENT_SOURCE_DIR}/packaging/DuskStudio.png "
+        "(brand asset, not committed to the repo).")
+endif()
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/packaging/DuskStudio.png")
+    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/packaging/DuskStudio.png"
+            DESTINATION share/icons/hicolor/256x256/apps)
+endif()
+
+set(CPACK_PACKAGE_NAME              "dusk-studio")
+set(CPACK_PACKAGE_VENDOR            "Dusk Audio")
+set(CPACK_PACKAGE_VERSION           "${DUSKSTUDIO_VERSION}")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Portastudio-style 16-channel DAW")
+set(CPACK_PACKAGE_HOMEPAGE_URL      "https://github.com/dusk-audio/dusk-studio")
+set(CPACK_PACKAGE_CONTACT           "Dusk Audio <support@duskaudio.example>")
+set(CPACK_RESOURCE_FILE_LICENSE     "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
+set(CPACK_PACKAGE_INSTALL_DIRECTORY "Dusk Studio")
+
+# Debian: runtime deps gathered automatically via dpkg-shlibdeps when
+# the package is built on an Ubuntu/Debian host. JUCE statically links
+# audio/MIDI; the audible runtime needs are PipeWire (libjack-replacement)
+# and ALSA fallback. GTK is pulled in by juce_gui_basics.
+set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS  ON)
+set(CPACK_DEBIAN_PACKAGE_DEPENDS    "libc6, libstdc++6, libasound2, libgtk-3-0, libxcb1, libxcb-cursor0")
+set(CPACK_DEBIAN_PACKAGE_SECTION    "sound")
+set(CPACK_DEBIAN_PACKAGE_PRIORITY   "optional")
+
+# RPM: dependency auto-extraction from ELF symbols; explicit hints for
+# the dynamic GTK/X11 stack that JUCE expects on Fedora/RHEL.
+set(CPACK_RPM_PACKAGE_REQUIRES      "alsa-lib, gtk3, libxcb, xcb-util-cursor")
+set(CPACK_RPM_PACKAGE_LICENSE       "GPL-3.0-or-later")
+set(CPACK_RPM_PACKAGE_GROUP         "Applications/Multimedia")
+
+# Windows WIX MSI. GUIDs are STABLE per product family; the upgrade
+# GUID lets newer installers replace older ones in-place.
+set(CPACK_WIX_UPGRADE_GUID          "8F2C9C3E-5F4B-4D9E-B7A1-3E7E8D9F0C12")
+set(CPACK_WIX_PRODUCT_GUID          "*")  # generated per build per WIX best practice
+
+# macOS DMG: cpack -G DragNDrop. scripts/package-macos.sh chains
+# codesign + notarytool because cpack doesn't notarize.
+set(CPACK_DMG_FORMAT                "UDZO")
+set(CPACK_DMG_VOLUME_NAME           "Dusk Studio ${DUSKSTUDIO_VERSION}")
+
+include(CPack)
