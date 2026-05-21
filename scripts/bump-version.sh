@@ -48,29 +48,32 @@ echo "$NEW_VERSION" > VERSION
 # new <release> entries here. -->" pins the position deterministically.
 APPDATA="packaging/DuskStudio.appdata.xml"
 if [[ -f "$APPDATA" ]]; then
-    RELEASE_BLOCK="    <release version=\"$NEW_VERSION\" date=\"$TODAY\">\n      <description>\n        <p>$NOTES</p>\n      </description>\n    </release>"
-    # The trailing colon after the address keeps the comment line in
-    # place; the insert happens AFTER it (a-command in sed). awk would
-    # be cleaner but sed is universally available.
     if grep -q "scripts/bump-version.sh prepends new" "$APPDATA"; then
-        # macOS sed needs a backup-suffix arg; GNU sed is fine with -i ''.
-        # `set -e` already aborts on a non-zero sed exit, but the explicit
-        # `|| { ... }` blocks emit a clearer message before bailing so the
-        # operator knows which side of the GNU/BSD branch tripped.
-        if sed --version >/dev/null 2>&1; then
-            sed -i "/scripts\\/bump-version.sh prepends new/a\\
-$RELEASE_BLOCK" "$APPDATA" \
-                || { echo "error: GNU sed failed to update $APPDATA" >&2; exit 1; }
-        else
-            sed -i '' "/scripts\\/bump-version.sh prepends new/a\\
-$RELEASE_BLOCK
-" "$APPDATA" \
-                || { echo "error: BSD sed failed to update $APPDATA" >&2; exit 1; }
-        fi
+        # Compose the new <release> block in a temp file (real newlines)
+        # and have awk splice it in after the anchor comment. awk's
+        # -v assignment rejects literal newlines on BSD awk (macOS), so
+        # the multi-line block has to come from a file via getline,
+        # not from a string variable.
+        RELEASE_FILE=$(mktemp -t duskstudio-release.XXXXXX)
+        trap 'rm -f "$RELEASE_FILE" "$APPDATA.tmp"' EXIT
+        printf '    <release version="%s" date="%s">\n      <description>\n        <p>%s</p>\n      </description>\n    </release>\n' \
+            "$NEW_VERSION" "$TODAY" "$NOTES" > "$RELEASE_FILE"
+
+        awk -v release_file="$RELEASE_FILE" '
+            { print }
+            /scripts\/bump-version.sh prepends new/ {
+                while ((getline line < release_file) > 0) print line
+                close (release_file)
+            }
+        ' "$APPDATA" > "$APPDATA.tmp" \
+            || { echo "error: awk failed to update $APPDATA" >&2; exit 1; }
+        mv "$APPDATA.tmp" "$APPDATA"
+        rm -f "$RELEASE_FILE"
+        trap - EXIT
+
         # Sanity check: the new version string MUST be present in the
-        # file after the insert. Cheap, catches the case where sed
-        # exited 0 but the address pattern didn't match (the `a\`
-        # command is silent in that case).
+        # file after the insert. Cheap, catches the case where awk
+        # exited 0 but the anchor comment was missing/different.
         if ! grep -q "version=\"$NEW_VERSION\"" "$APPDATA"; then
             echo "error: $APPDATA was not updated with version $NEW_VERSION " \
                  "(the anchor comment may have moved)." >&2
