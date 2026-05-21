@@ -113,6 +113,22 @@ private:
     int  lastTransportState  = -1;
     bool lastLoopOn          = false;
 
+    // LCD: 56 columns x 2 rows. Each row cached as a flat 56-char
+    // string. Static-init to spaces so the first diff fires fresh
+    // bytes for everything that's not blank.
+    std::array<char, 56> lastLcdRow0 {};
+    std::array<char, 56> lastLcdRow1 {};
+
+    // Timecode display: 10 ASCII bytes (no separators - MCU's number
+    // panel adds dots). Mirrors lastLcd* shape.
+    std::array<char, 10> lastTimecode {};
+
+    // Round-trip counter for the "transport rolling" cheap timer.
+    // When transport is rolling we re-emit the timecode every block
+    // so the digit display tracks playback; when stopped we throttle
+    // to once per second so static positions don't flood MIDI.
+    int  ticksSinceTimecode = 0;
+
     std::atomic<bool> resyncRequested        { true };  // first tick re-emits
     std::atomic<bool> transportEdgeRequested { false };
 };
