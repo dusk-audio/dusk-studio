@@ -108,6 +108,16 @@ public:
     // sessions touch zero or one output port.
     bool ensureMidiOutputOpen (int index);
 
+    // Push a MidiBuffer to the lazy-opened output at `index`. Returns
+    // true on enqueue success, false on out-of-range index or unopened
+    // port (no implicit ensure - the caller checks state first; this
+    // keeps the call site lock-free and predictable). Message-thread
+    // OR audio-thread safe: JUCE's MidiOutput marshals the buffer to
+    // its own delivery thread. Used by McuController's 30 Hz feedback
+    // emit + (future) any other host->controller emit path that lives
+    // outside the existing Clock / MTC scratch buffer.
+    bool sendMidiToOutput (int index, const juce::MidiBuffer& events) noexcept;
+
     // Walk every track and open the MIDI output port each one is routed
     // to. Called once after SessionSerializer::load has resolved the
     // saved identifiers. Skips tracks with midiOutputIndex == -1.
@@ -368,7 +378,21 @@ private:
     // value (small struct, no allocations); needs a Session ref so the
     // constructor takes one - declared after sessionRef in the engine
     // member init list. Forward declaration here, full include in .cpp.
-    std::unique_ptr<class McuReceiver> mcuReceiver;
+    std::unique_ptr<class McuReceiver>   mcuReceiver;
+    // Companion 30 Hz feedback emitter. Polls Session atoms, diffs
+    // against cached lastSent state, pushes deltas through
+    // sendMidiToOutput. Held by unique_ptr to keep juce::Timer out of
+    // this header.
+    std::unique_ptr<class McuController> mcuController;
+
+public:
+    // Public accessor so the on-screen transport buttons can force-
+    // emit a transport LED edge without waiting for the next 30 Hz
+    // tick. Returns nullptr when the engine hasn't constructed it yet
+    // (e.g. during static-init of selftest harnesses).
+    class McuController* getMcuController() noexcept { return mcuController.get(); }
+
+private:
     MidiClockEmitter     midiClockEmitter;
     MidiTimeCodeEmitter  midiTimeCodeEmitter;
     // Scratch buffer the emitter writes F8/FA/FC bytes into before the

@@ -31,7 +31,9 @@ add_executable(dusk-studio-tests
     transport_state_machine.cpp
     session_mcu_roundtrip.cpp
     mcu_receiver_decode.cpp
+    mcu_controller_emit.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/McuReceiver.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/McuController.cpp
     ${CMAKE_SOURCE_DIR}/src/dsp/BrickwallLimiter.cpp
     ${CMAKE_SOURCE_DIR}/src/dsp/HardwareInsertSlot.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/FileImporter.cpp

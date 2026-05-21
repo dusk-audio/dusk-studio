@@ -1,5 +1,6 @@
 #include "AudioEngine.h"
 #include "McuReceiver.h"
+#include "McuController.h"
 #if defined(DUSKSTUDIO_HAS_ALSA)
   #include "alsa/AlsaAudioIODeviceType.h"
 #endif
@@ -10,10 +11,21 @@ namespace duskstudio
 {
 AudioEngine::AudioEngine (Session& sessionToBindTo) : session (sessionToBindTo)
 {
-    // Construct the MCU receiver once the session ref is bound. Held
-    // by unique_ptr so the AudioEngine header stays free of the
-    // McuReceiver definition.
-    mcuReceiver = std::make_unique<McuReceiver> (session);
+    // Construct the MCU receiver + controller once the session ref is
+    // bound. Held by unique_ptr so the AudioEngine header stays free
+    // of the McuReceiver / McuController definitions (and the JUCE
+    // Timer base class).
+    mcuReceiver   = std::make_unique<McuReceiver>   (session);
+    mcuController = std::make_unique<McuController> (session);
+    // Wire the controller's emit sink + transport provider. Both
+    // captures use `this` because AudioEngine owns the controller -
+    // their lifetime is bounded by the engine's.
+    mcuController->setSink ([this] (const juce::MidiBuffer& buf)
+    {
+        const int outIdx = session.mcu.resolvedOutputIdx.load (std::memory_order_acquire);
+        if (outIdx >= 0) sendMidiToOutput (outIdx, buf);
+    });
+    mcuController->setTransportProvider ([this] { return &transport; });
     // Cap the undo stack. Each RegionEditAction's getSizeInUnits is 1
     // (Split = 2, Clone = 4) so 500 covers thousands of typical edits
     // while bounding memory under a multi-hour edit session — without
@@ -376,6 +388,22 @@ bool AudioEngine::ensureMidiOutputOpen (int index)
     // sendBlockOfMessages enqueue without blocking on the OS port.
     out->startBackgroundThread();
     midiOutputs[(size_t) index] = std::move (out);
+    return true;
+}
+
+bool AudioEngine::sendMidiToOutput (int index, const juce::MidiBuffer& events) noexcept
+{
+    if (index < 0 || index >= (int) midiOutputs.size())
+        return false;
+    auto* out = midiOutputs[(size_t) index].get();
+    if (out == nullptr) return false;
+    // sendBlockOfMessages takes an absolute ms-since-epoch base; passing
+    // Time::getMillisecondCounterHiRes() means "deliver as soon as the
+    // background thread can". Used by the McuController's 30 Hz feedback
+    // emit; lower latency than buffering for the next audio block.
+    out->sendBlockOfMessages (events,
+                                juce::Time::getMillisecondCounterHiRes(),
+                                /* sampleRate (used only for time stamps) */ 48000.0);
     return true;
 }
 
