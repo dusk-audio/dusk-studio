@@ -1,0 +1,156 @@
+name: Release tag validation
+
+# Tag-only release-readiness gate. Fires on a vX.Y.Z tag push and on
+# manual workflow_dispatch (so you can dry-run before tagging). Does
+# NOT trigger on every push / PR — that's why the per-push linux /
+# macos / windows workflows in this directory stay disabled. Enable
+# this workflow before cutting a 1.0 release:
+#   git mv .github/workflows.disabled/release-tag.yml \
+#          .github/workflows/release-tag.yml
+#
+# Validates the build on all three target OSes + runs the test suite
+# on Linux (with the sanitizer leg) + macOS + Windows. The actual
+# package / sign / notarise steps live in scripts/package-*.{sh,ps1}
+# and run on the operator's signing-equipped machine, not in CI -
+# code-signing certs and an Apple notary keychain profile shouldn't
+# live in repo secrets.
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+
+jobs:
+  linux:
+    name: Linux build + tests (Ubuntu 22.04, GCC Release)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config \
+            libasound2-dev libjack-jackd2-dev \
+            ladspa-sdk \
+            libcurl4-openssl-dev libfreetype-dev libfontconfig1-dev \
+            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
+            libxinerama-dev libxrandr-dev libxrender-dev libxss-dev \
+            libwebkit2gtk-4.0-dev libglu1-mesa-dev xvfb \
+            libwayland-dev libxkbcommon-dev libdecor-0-dev
+
+      - name: Clone JUCE 8.0.4 (upstream) + SIMD<long long> alias
+        # Linux CI uses upstream JUCE + a SIMDNativeOps<long long>
+        # alias patch. See linux-build.yml for the full rationale -
+        # this workflow uses the same patch shape so the release
+        # tag build matches the per-push validation.
+        run: |
+          git clone --depth 1 --branch 8.0.4 \
+            https://github.com/juce-framework/JUCE.git \
+            "${RUNNER_TEMP}/JUCE-wayland"
+          file="${RUNNER_TEMP}/JUCE-wayland/modules/juce_dsp/native/juce_SIMDNativeOps_sse.h"
+          awk '
+            /^} \/\/ namespace juce::dsp/ && !done {
+              print "#if defined (__GNUC__) && defined (__SIZEOF_LONG__) && __SIZEOF_LONG__ == 8 && !defined (_WIN32)"
+              print "template <> struct SIMDNativeOps<long long> : SIMDNativeOps<int64_t> {};"
+              print "template <> struct SIMDNativeOps<unsigned long long> : SIMDNativeOps<uint64_t> {};"
+              print "#endif"
+              done = 1
+            }
+            { print }
+          ' "$file" > "$file.new" && mv "$file.new" "$file"
+
+      - name: Clone Dusk plugins (donor DSP)
+        run: |
+          git clone --depth 1 \
+            https://github.com/dusk-audio/dusk-audio-plugins.git \
+            "${RUNNER_TEMP}/plugins-main"
+
+      - name: Configure + build (Release, tests on)
+        run: |
+          cmake -S . -B build-linux -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DDUSKSTUDIO_BUILD_TESTS=ON \
+            -DDUSKSTUDIO_SKIP_FORK_CHECK=ON \
+            -DJUCE_PATH="${RUNNER_TEMP}/JUCE-wayland" \
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main"
+          cmake --build build-linux -j
+
+      - name: Run tests
+        run: ctest --test-dir build-linux --output-on-failure
+
+      - name: Headless self-test
+        # Drives AudioPipelineSelfTest's synthetic DSP path. The 5 s
+        # device-readiness wait inside runHeadlessSelfTest will time
+        # out on the CI runner (no audio device) before falling through
+        # to the synthetic tests, hence the 60 s outer timeout.
+        run: |
+          timeout 60 xvfb-run --auto-servernum \
+            env DUSKSTUDIO_RUN_SELFTEST=1 \
+            build-linux/DuskStudio_artefacts/Release/DuskStudio
+
+  macos:
+    name: macOS build + tests (macos-14, Apple Clang Release)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clone JUCE 8.0.4 (upstream)
+        run: |
+          git clone --depth 1 --branch 8.0.4 \
+            https://github.com/juce-framework/JUCE.git \
+            "${RUNNER_TEMP}/JUCE"
+
+      - name: Clone Dusk plugins (donor DSP)
+        run: |
+          git clone --depth 1 \
+            https://github.com/dusk-audio/dusk-audio-plugins.git \
+            "${RUNNER_TEMP}/plugins"
+
+      - name: Configure + build (Release, tests on)
+        run: |
+          cmake -S . -B build-mac -G Xcode \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DDUSKSTUDIO_BUILD_TESTS=ON \
+            -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins"
+          cmake --build build-mac --config Release -j
+
+      - name: Run tests
+        run: ctest --test-dir build-mac --output-on-failure -C Release
+
+  windows:
+    name: Windows build + tests (Server 2022, MSVC Release)
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clone JUCE 8.0.4 (upstream)
+        shell: bash
+        run: |
+          git clone --depth 1 --branch 8.0.4 \
+            https://github.com/juce-framework/JUCE.git \
+            "${RUNNER_TEMP}/JUCE"
+
+      - name: Clone Dusk plugins (donor DSP)
+        shell: bash
+        run: |
+          git clone --depth 1 \
+            https://github.com/dusk-audio/dusk-audio-plugins.git \
+            "${RUNNER_TEMP}/plugins"
+
+      - name: Configure + build (Release, tests on)
+        shell: bash
+        run: |
+          cmake -S . -B build-win \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DDUSKSTUDIO_BUILD_TESTS=ON \
+            -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins"
+          cmake --build build-win --config Release -j
+
+      - name: Run tests
+        shell: bash
+        run: ctest --test-dir build-win --output-on-failure -C Release
