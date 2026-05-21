@@ -362,6 +362,13 @@ private:
     // engine's Transport state machine yet.
     MidiSyncReceiver       midiSyncReceiver;
     MidiTimeCodeReceiver   midiTimeCodeReceiver;
+    // Mackie Control Universal protocol decoder. Audio-thread `process`
+    // call dispatched from the same per-block loop that feeds the sync
+    // receivers, gated on session.mcu.resolvedInputIdx >= 0. Owned by
+    // value (small struct, no allocations); needs a Session ref so the
+    // constructor takes one - declared after sessionRef in the engine
+    // member init list. Forward declaration here, full include in .cpp.
+    std::unique_ptr<class McuReceiver> mcuReceiver;
     MidiClockEmitter     midiClockEmitter;
     MidiTimeCodeEmitter  midiTimeCodeEmitter;
     // Scratch buffer the emitter writes F8/FA/FC bytes into before the

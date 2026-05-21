@@ -1,4 +1,5 @@
 #include "AudioEngine.h"
+#include "McuReceiver.h"
 #if defined(DUSKSTUDIO_HAS_ALSA)
   #include "alsa/AlsaAudioIODeviceType.h"
 #endif
@@ -9,6 +10,10 @@ namespace duskstudio
 {
 AudioEngine::AudioEngine (Session& sessionToBindTo) : session (sessionToBindTo)
 {
+    // Construct the MCU receiver once the session ref is bound. Held
+    // by unique_ptr so the AudioEngine header stays free of the
+    // McuReceiver definition.
+    mcuReceiver = std::make_unique<McuReceiver> (session);
     // Cap the undo stack. Each RegionEditAction's getSizeInUnits is 1
     // (Split = 2, Clone = 4) so 500 covers thousands of typical edits
     // while bounding memory under a multi-hour edit session — without
@@ -1066,6 +1071,18 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         mtcDriftWindowFrames = 0;
         lastSeenMtcFrames = -1;
     }
+    // Mackie Control surface input. Independent of sync source - the
+    // user could run MIDI Clock on device A and the MCU on device B.
+    // Gate on the resolved index so MCU decode is a no-op when no
+    // controller is selected. Audio-thread only; receiver writes
+    // directly to Session atoms.
+    if (mcuReceiver != nullptr)
+    {
+        const int mcuIdx = session.mcu.resolvedInputIdx.load (std::memory_order_acquire);
+        if (mcuIdx >= 0 && (size_t) mcuIdx < perInputMidi.size())
+            mcuReceiver->process (perInputMidi[(size_t) mcuIdx], midiSyncSampleClock);
+    }
+
     if (syncIdx >= 0 && (size_t) syncIdx < perInputMidi.size())
     {
         midiSyncReceiver.process (perInputMidi[(size_t) syncIdx], midiSyncSampleClock);

@@ -241,6 +241,7 @@ target_sources(DuskStudio PRIVATE
     src/engine/MidiClockEmitter.cpp
     src/engine/MidiSyncReceiver.cpp
     src/engine/MidiTimeCodeReceiver.cpp
+    src/engine/McuReceiver.cpp
     src/engine/MidiTimeCodeEmitter.cpp
     src/engine/PlaybackEngine.cpp
     src/engine/PluginManager.cpp
