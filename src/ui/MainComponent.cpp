@@ -758,6 +758,21 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         return true;
     }
 
+    // ── '.' (period) → stop transport and rewind to 0. Pro Tools / Cubase
+    // convention. Mirrors the Stop button on the transport bar with the
+    // added rewind that the bare Stop doesn't provide.
+    if (key.getTextCharacter() == '.' && noMods)
+    {
+        auto& tr = engine.getTransport();
+        if (! tr.isStopped())
+        {
+            engine.stop();
+            if (transportBar != nullptr) transportBar->notifyRecordStopped();
+        }
+        tr.setPlayhead (0);
+        return true;
+    }
+
     // ── Markers: 'M' (no modifiers) drops a marker at the current playhead.
     // Common DAW shortcut. Skips when typing - the noMods guard means this
     // only fires when no text editor has focus.

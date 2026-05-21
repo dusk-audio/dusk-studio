@@ -373,17 +373,18 @@ void BusComponent::showColourMenu()
 
 void BusComponent::paint (juce::Graphics& g)
 {
-    // Inset the card more (3.0 vs 1.5) so adjacent bus strips have a
-    // visible gap between their outlines. Tint the outline with the bus's
-    // own colour so each bus reads as a self-contained group, not a slice
-    // of an undifferentiated row.
-    auto r = getLocalBounds().toFloat().reduced (3.0f);
+    // Inset the card 4 px so adjacent bus strips show a clear gap
+    // between their outlines AND so the inner content (with its 6 px
+    // resized() margin) has a 2 px gutter between knobs/faders and the
+    // frame. Earlier 3 px inset put the frame nearly on top of the
+    // content, which read as cramped.
+    auto r = getLocalBounds().toFloat().reduced (4.0f);
     g.setColour (juce::Colour (0xff181820));
     g.fillRoundedRectangle (r, 5.0f);
     g.setColour (bus.colour.withAlpha (0.85f));
     g.fillRoundedRectangle (r.removeFromTop (4.0f), 2.0f);
     g.setColour (bus.colour.withAlpha (0.45f));
-    g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (3.0f), 5.0f, 1.5f);
+    g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (4.0f), 5.0f, 1.5f);
 
     // EQ region: green-tinted background + soft green outline, matching
     // the channel strip's eqArea grammar.
@@ -547,26 +548,38 @@ void BusComponent::setCompactVu (bool compact)
 
 void BusComponent::resized()
 {
-    auto area = getLocalBounds().reduced (4);
+    // 6 px inner inset matches MasterStripComponent so the bus row +
+    // master share the same visual gutter between content and frame.
+    auto area = getLocalBounds().reduced (6);
     area.removeFromTop (6);
     nameLabel.setBounds (area.removeFromTop (20));
     area.removeFromTop (3);
 
-    // Analog VU meter spans the full strip width at a ~12:7 (~1.71:1)
-    // aspect ratio. Sits between the name label and the EQ block so the
-    // user reads level first (the most common monitoring task). The
-    // squatter 12:7 ratio (vs the 12:5 photo aspect) leaves more
-    // vertical room for the EQ + comp section below at narrow strip
-    // widths.
+    // Analog VU meter at ~12:7 (~1.71:1) aspect ratio. Sits between the
+    // name label and the EQ block so the user reads level first (the
+    // most common monitoring task). The squatter 12:7 ratio (vs the
+    // 12:5 photo aspect) leaves more vertical room for the EQ + comp
+    // section below at narrow strip widths.
     if (vuMeter != nullptr)
     {
-        // Squatter VU when the SUMMARY tape strip is expanded so the
-        // bus fader keeps a workable height. Ratio drops from 7/12 to
-        // 5/12 of the strip width (~70 px -> ~50 px on a 120 px strip).
-        const int ratioNum = compactVu ? 5 : 7;
-        const int minH     = compactVu ? 28 : 36;
-        const int vuH = juce::jmax (minH, area.getWidth() * ratioNum / 12);
-        vuMeter->setBounds (area.removeFromTop (vuH));
+        // When the SUMMARY tape strip is expanded the bus fader needs
+        // more room, so the VU shrinks. Shrink BOTH dimensions so the
+        // dial keeps the same 12:7 aspect ratio as the expanded form
+        // (just smaller) - earlier code only reduced the height which
+        // left a wide-and-flat box with a tiny dial floating inside.
+        constexpr int kRatioW = 12;
+        constexpr int kRatioH = 7;
+        const int stripW = area.getWidth();
+        // Compact heightDriver = stripW * 6/12; gives vuW = stripW * 6/7
+        // (~86% of strip) so the VU fills most of the horizontal room
+        // without crowding the fader stack. Expanded uses 7/12 height
+        // -> vuW = full strip width.
+        const int heightDriver = compactVu ? stripW * 6 / 12 : stripW * 7 / 12;
+        const int minH = compactVu ? 32 : 36;
+        const int vuH  = juce::jmax (minH, heightDriver);
+        const int vuW  = juce::jmin (stripW, vuH * kRatioW / kRatioH);
+        auto slot = area.removeFromTop (vuH);
+        vuMeter->setBounds (slot.withSizeKeepingCentre (vuW, vuH));
         area.removeFromTop (3);
     }
 
@@ -680,12 +693,22 @@ void BusComponent::resized()
     constexpr int kGrGap        = 2;
     constexpr int kFaderScaleW  = 14;
     constexpr int kFaderScaleGap = 2;
+    constexpr int kFaderRightPad = 3;
     meterArea   = area.removeFromRight (kMeterW);
     area.removeFromRight (kGrGap);
     grMeterArea = area.removeFromRight (kGrMeterW);
     area.removeFromRight (kFaderScaleGap);
     faderScaleArea = area.removeFromRight (kFaderScaleW);
-    area.removeFromRight (3);
+    area.removeFromRight (kFaderRightPad);
+    // Mirror padding so the fader's track sits on the strip's true
+    // horizontal centre. Earlier code left the fader area as the
+    // entire leftover post-meter, which pushed the slider left of the
+    // strip centre by ~half the meter-stack width.
+    constexpr int kRightStackW = kMeterW + kGrGap + kGrMeterW
+                                  + kFaderScaleGap + kFaderScaleW + kFaderRightPad;
+    const int leftPad = juce::jlimit (0, juce::jmax (0, area.getWidth() - 20),
+                                         kRightStackW);
+    area.removeFromLeft (leftPad);
     faderSlider.setBounds (area);
 }
 } // namespace duskstudio

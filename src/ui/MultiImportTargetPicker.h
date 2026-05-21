@@ -41,6 +41,13 @@ private:
     struct Row;
 
     void rebuildImportEnabled();
+
+    // Re-populate every row's track-picker combo so a track picked by
+    // one row is hidden from the other rows' dropdowns. Called whenever
+    // any row's selection changes. Each combo retains its own current
+    // pick - only other rows' picks are filtered out.
+    void rebuildAvailableTracks();
+
     std::vector<Assignment> collectAssignments() const;
 
     Session& session;

@@ -135,6 +135,14 @@ private:
     juce::Label      bpmCaption;
     juce::Label      bpmValue;
     juce::TextButton tapButton      { "TAP" };
+    // Time signature picker. Label format "N/M" - clicks open a popup
+    // with the common-time presets plus a Custom... entry that brings up
+    // an AlertWindow numerator/denominator input pair.
+    juce::TextButton timeSigButton  { "4/4" };
+    void showTimeSigMenu();
+    void promptCustomTimeSig();
+    void applyTimeSig (int numerator, int denominator);
+    void refreshTimeSigButton();
     TransportIconButton tuneButton  { "Tune",
                                           TransportIconButton::Icon::Tuner,
                                           juce::Colour (0xff70d0a0) };
@@ -154,6 +162,16 @@ private:
     std::array<juce::int64, kTapWindow> tapStamps {};
     int  tapStampCount = 0;
     void onTap();
+
+    // Confirmation surface for a BPM change. Tallies tempo-locked MIDI
+    // regions, float MIDI regions, and automation points across every
+    // track/aux/master lane; when the totals are non-zero an
+    // AlertWindow summarises the retime impact before applyTempoChange
+    // is called. If the totals are all zero the BPM change applies
+    // directly without prompting. `oldBpm` is restored to the displayed
+    // value on cancel so the spinner doesn't lie about the active
+    // tempo.
+    void confirmAndApplyBpm (float newBpm, float oldBpm);
 
     juce::TextButton tapeToggle    { juce::CharPointer_UTF8 ("\xe2\x96\xbe SUMMARY") };  // "▾ SUMMARY" - toggles the arrangement/summary view
     juce::Label      clockLabel;

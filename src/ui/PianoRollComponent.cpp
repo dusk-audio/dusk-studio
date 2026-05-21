@@ -1579,6 +1579,13 @@ void PianoRollComponent::showQuantizePopup()
         { "1/16 @ 100%",  kMidiTicksPerQuarter / 4,    1.00f },
         { "1/32 @ 100%",  kMidiTicksPerQuarter / 8,    1.00f },
         { nullptr, 0, 0.0f },                          // separator
+        // Triplet variants per spec §5e. A whole-quarter contains 3
+        // triplet-eighth notes, so each = 480/3 = 160 ticks; 1/16T =
+        // 480/6 = 80 ticks; 1/32T = 480/12 = 40 ticks.
+        { "1/8T @ 100%",  kMidiTicksPerQuarter / 3,    1.00f },
+        { "1/16T @ 100%", kMidiTicksPerQuarter / 6,    1.00f },
+        { "1/32T @ 100%", kMidiTicksPerQuarter / 12,   1.00f },
+        { nullptr, 0, 0.0f },                          // separator
         { "1/16 @ 75%",   kMidiTicksPerQuarter / 4,    0.75f },
         { "1/16 @ 50%",   kMidiTicksPerQuarter / 4,    0.50f },
         { "1/8 @ 50%",    kMidiTicksPerQuarter / 2,    0.50f },

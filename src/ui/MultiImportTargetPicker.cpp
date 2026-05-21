@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <set>
 
 namespace duskstudio
 {
@@ -86,7 +87,7 @@ struct MultiImportTargetPicker::Row : public juce::Component
 {
     Row (Session& s, const ImportTargetPicker::FileSummary& summary,
          std::function<void()> onPick)
-        : session (s), pickCallback (std::move (onPick))
+        : session (s), fileSummary (summary), pickCallback (std::move (onPick))
     {
         nameLabel.setText (summary.file.getFileName(), juce::dontSendNotification);
         nameLabel.setFont (juce::Font (juce::FontOptions (13.0f, juce::Font::bold)));
@@ -98,19 +99,42 @@ struct MultiImportTargetPicker::Row : public juce::Component
         summaryLabel.setColour (juce::Label::textColourId, juce::Colour (0xff909094));
         addAndMakeVisible (summaryLabel);
 
+        rebuildPicker ({});  // initial population - no exclusions yet
+        trackPicker.onChange = [this] { if (pickCallback) pickCallback(); };
+        addAndMakeVisible (trackPicker);
+    }
+
+    // Rebuild the combo items, skipping tracks already picked by OTHER
+    // rows. The row's own current pick (if any) is always retained so
+    // the selection stays valid across rebuilds. Item IDs map to track
+    // index + 2 (ID 1 reserved for the "Choose track..." placeholder).
+    void rebuildPicker (const std::set<int>& excludeTracks)
+    {
+        const int previousId = trackPicker.getSelectedId();
+        // Suppress onChange while we rebuild - otherwise clearing the
+        // items would fire a stray "selection = 0" callback that triggers
+        // a recursive rebuild on the picker host.
+        trackPicker.onChange = nullptr;
+        trackPicker.clear (juce::dontSendNotification);
         trackPicker.addItem ("Choose track...", 1);
         for (int i = 0; i < Session::kNumTracks; ++i)
         {
+            // Skip if another row claims it - except keep our own
+            // previous pick visible so we don't yank the selection from
+            // under the user.
+            if (excludeTracks.count (i) && (previousId != i + 2)) continue;
+
             const auto& t = session.track (i);
             const auto mode = (Track::Mode) t.mode.load (std::memory_order_relaxed);
-            const bool match = modeMatches (mode, summary);
+            const bool match = modeMatches (mode, fileSummary);
             juce::String label = trackDisplayName (t, i) + "  (" + modeBadge (mode) + ")";
             if (! match) label += "  - mode will flip";
-            trackPicker.addItem (label, i + 2);   // IDs 2..17
+            trackPicker.addItem (label, i + 2);
         }
-        trackPicker.setSelectedId (1, juce::dontSendNotification);
+        // Re-apply previous selection (or fall back to the placeholder).
+        const int restoreId = previousId > 1 ? previousId : 1;
+        trackPicker.setSelectedId (restoreId, juce::dontSendNotification);
         trackPicker.onChange = [this] { if (pickCallback) pickCallback(); };
-        addAndMakeVisible (trackPicker);
     }
 
     int chosenTrack() const
@@ -142,6 +166,7 @@ struct MultiImportTargetPicker::Row : public juce::Component
     }
 
     Session& session;
+    ImportTargetPicker::FileSummary fileSummary;
     juce::Label nameLabel;
     juce::Label summaryLabel;
     juce::ComboBox trackPicker;
@@ -167,9 +192,24 @@ MultiImportTargetPicker::MultiImportTargetPicker (Session& s,
     headerTitle.setColour (juce::Label::textColourId, juce::Colour (0xfff0f0f0));
     addAndMakeVisible (headerTitle);
 
-    headerSubtitle.setText ("Pick a target track for each file. Same-track picks "
-                              "are allowed - files stack at the playhead.",
-                              juce::dontSendNotification);
+    juce::String subtitle = "Pick a target track for each file. Each track "
+                              "can host at most one of the imports.";
+    // Add a resample notice when the batch contains any audio file. MIDI
+    // files have no SR and import as-is. Users who want the session SR
+    // to match a specific file should change it in Audio Settings
+    // BEFORE running the import - this batch always resamples to the
+    // live session SR.
+    for (const auto& sum : summaries)
+    {
+        if (! sum.isMidi)
+        {
+            subtitle += "\nAudio files resample to the session sample rate "
+                        "on import. Open Audio Settings first if you want "
+                        "the session SR to match.";
+            break;
+        }
+    }
+    headerSubtitle.setText (subtitle, juce::dontSendNotification);
     headerSubtitle.setFont (juce::Font (juce::FontOptions (11.5f)));
     headerSubtitle.setColour (juce::Label::textColourId, juce::Colour (0xff909094));
     addAndMakeVisible (headerSubtitle);
@@ -181,7 +221,12 @@ MultiImportTargetPicker::MultiImportTargetPicker (Session& s,
     for (const auto& sum : summaries)
     {
         auto row = std::make_unique<Row> (session, sum,
-                                            [this] { rebuildImportEnabled(); repaint(); });
+                                            [this]
+                                            {
+                                                rebuildAvailableTracks();
+                                                rebuildImportEnabled();
+                                                repaint();
+                                            });
         listContainer.addAndMakeVisible (row.get());
         rows.push_back (std::move (row));
     }
@@ -257,6 +302,27 @@ void MultiImportTargetPicker::rebuildImportEnabled()
         if (row->chosenTrack() < 0) { allAssigned = false; break; }
     importButton.setEnabled (allAssigned);
     importButton.setToggleState (allAssigned, juce::dontSendNotification);
+}
+
+void MultiImportTargetPicker::rebuildAvailableTracks()
+{
+    // Snapshot every row's current pick once; build per-row exclude sets
+    // (everyone's picks except this row's own) and refresh each picker.
+    std::vector<int> picks;
+    picks.reserve (rows.size());
+    for (const auto& row : rows)
+        picks.push_back (row->chosenTrack());
+
+    for (size_t i = 0; i < rows.size(); ++i)
+    {
+        std::set<int> exclude;
+        for (size_t j = 0; j < rows.size(); ++j)
+        {
+            if (j == i) continue;
+            if (picks[j] >= 0) exclude.insert (picks[j]);
+        }
+        rows[i]->rebuildPicker (exclude);
+    }
 }
 
 std::vector<MultiImportTargetPicker::Assignment>

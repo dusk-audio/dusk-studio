@@ -58,6 +58,13 @@ private:
     juce::TextButton muteButton { "M" };
     juce::TextButton soloButton { "S" };
 
+    // Bus subgroup automation is not in 1.0 scope - spec lists per-track,
+    // per-aux, and master as the automatable surfaces (BusParams has no
+    // automationMode field, no AudioEngine routing path). A bottom-row
+    // auto button is omitted here for consistency with what the engine
+    // actually supports; channel + aux + master strips all show the
+    // button because their DSP honours the mode atom.
+
     // Analog VU meter at the top of the strip. Reads the bus's post-DSP
     // peak atoms; its internal Timer applies VU ballistics and repaints
     // independently of the strip's own timer.

@@ -227,6 +227,32 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     }
     addAndMakeVisible (autoModeButton);
 
+    muteButton.setClickingTogglesState (true);
+    muteButton.setColour (juce::TextButton::buttonOnColourId, juce::Colours::orangered);
+    muteButton.setTooltip ("Mute master output");
+    muteButton.setToggleState (params.mute.load (std::memory_order_relaxed),
+                                juce::dontSendNotification);
+    muteButton.onClick = [this]
+    {
+        params.mute.store (muteButton.getToggleState(), std::memory_order_release);
+    };
+    addAndMakeVisible (muteButton);
+
+    monoStereoButton.setClickingTogglesState (true);
+    monoStereoButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff806020));
+    monoStereoButton.setTooltip ("Mono-sum the master output (L+R)*0.5 - "
+                                 "for mono-compat checks. Stereo when off.");
+    const bool monoInit = params.monoSum.load (std::memory_order_relaxed);
+    monoStereoButton.setToggleState (monoInit, juce::dontSendNotification);
+    monoStereoButton.setButtonText (monoInit ? "MONO" : "STEREO");
+    monoStereoButton.onClick = [this]
+    {
+        const bool on = monoStereoButton.getToggleState();
+        params.monoSum.store (on, std::memory_order_release);
+        monoStereoButton.setButtonText (on ? "MONO" : "STEREO");
+    };
+    addAndMakeVisible (monoStereoButton);
+
     // Output meter readouts (peak dBFS + GR dB).
     auto styleReadout = [] (juce::Label& lbl, juce::Colour col)
     {
@@ -424,14 +450,16 @@ void MasterStripComponent::captureFaderWritePoint (float denormDb)
 void MasterStripComponent::paint (juce::Graphics& g)
 {
     // Visible gap + gold-tinted outline so the master reads as its own
-    // group, separate from the bus row to its left.
-    auto r = getLocalBounds().toFloat().reduced (3.0f);
+    // group, separate from the bus row to its left. Larger inset (4 vs
+    // the old 3) gives the frame breathing room from the inner content
+    // grid so the strip stops feeling cramped against its own outline.
+    auto r = getLocalBounds().toFloat().reduced (4.0f);
     g.setColour (juce::Colour (0xff202024));
     g.fillRoundedRectangle (r, 5.0f);
     g.setColour (juce::Colour (0xffd0a060));
     g.fillRoundedRectangle (r.removeFromTop (4.0f), 2.0f);
     g.setColour (juce::Colour (0xffd0a060).withAlpha (0.55f));
-    g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (3.0f), 5.0f, 2.0f);
+    g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (4.0f), 5.0f, 2.0f);
 
     // EQ / COMP framed bands - same grammar as channel + bus strips.
     if (! eqArea.isEmpty())
@@ -590,25 +618,49 @@ void MasterStripComponent::setCompactVu (bool compact)
 
 void MasterStripComponent::resized()
 {
-    auto area = getLocalBounds().reduced (4);
+    // Inner content inset of 6 px sits 2 px inside the 4 px outer-frame
+    // inset - enough gutter to keep knobs/labels off the frame, light
+    // enough to not steal noticeable layout room.
+    auto area = getLocalBounds().reduced (6);
     area.removeFromTop (6);
     {
         auto headerRow = area.removeFromTop (22);
-        // 40 px slot at top-right for the automation mode button.
-        autoModeButton.setBounds (headerRow.removeFromRight (40));
-        headerRow.removeFromRight (4);
         nameLabel.setBounds (headerRow);
     }
     area.removeFromTop (6);
 
+    // Bottom button stack mirrors ChannelStrip: 24 px mute / mono-stereo
+    // row at the very bottom, 16 px automation-mode row above it. Carved
+    // from `area` before the fader+meter consume the rest so the
+    // remaining space drives the fader height directly.
+    {
+        auto bottomBtns = area.removeFromBottom (24);
+        const int btnW = bottomBtns.getWidth() / 2;
+        muteButton      .setBounds (bottomBtns.removeFromLeft (btnW).reduced (1));
+        monoStereoButton.setBounds (bottomBtns.reduced (1));
+        area.removeFromBottom (2);
+
+        auto autoRow = area.removeFromBottom (16);
+        autoModeButton.setBounds (autoRow.reduced (1, 0));
+        area.removeFromBottom (4);
+    }
+
     // Analog VU meter at the top - same proportions as the bus strips so
-    // the meter row reads consistently across the console.
+    // the meter row reads consistently across the console. Shrink both
+    // dimensions in compact mode (SUMMARY tape strip expanded) so the
+    // dial keeps its 12:7 aspect ratio instead of stretching wide and
+    // flat with a tiny dial inside.
     if (vuMeter != nullptr)
     {
-        const int ratioNum = compactVu ? 5 : 7;
-        const int minH     = compactVu ? 32 : 40;
-        const int vuH = juce::jmax (minH, area.getWidth() * ratioNum / 12);
-        vuMeter->setBounds (area.removeFromTop (vuH));
+        constexpr int kRatioW = 12;
+        constexpr int kRatioH = 7;
+        const int stripW = area.getWidth();
+        const int heightDriver = compactVu ? stripW * 6 / 12 : stripW * 7 / 12;
+        const int minH = compactVu ? 36 : 40;
+        const int vuH  = juce::jmax (minH, heightDriver);
+        const int vuW  = juce::jmin (stripW, vuH * kRatioW / kRatioH);
+        auto slot = area.removeFromTop (vuH);
+        vuMeter->setBounds (slot.withSizeKeepingCentre (vuW, vuH));
         area.removeFromTop (4);
     }
 
@@ -684,13 +736,22 @@ void MasterStripComponent::resized()
     // takes the remaining width on the row. The standalone HQ button retired
     // when the global Audio Settings oversampling became the single source
     // of truth for tape oversampling.
-    auto buttonRow = area.removeFromTop (24).reduced (2, 0);
-    constexpr int kGearW = 22;
+    // TAPE + gear row. Gear shrunk to 18 px (was 22) so the TAPE button
+    // gets back the width it needs to read clearly. Reserve the gear's
+    // column on the RIGHT side outside the tape button so the gear
+    // doesn't sit inside the tape button's frame.
+    auto buttonRow = area.removeFromTop (22).reduced (2, 0);
+    constexpr int kGearW = 18;
     tapeGearButton.setBounds (buttonRow.removeFromRight (kGearW));
-    buttonRow.removeFromRight (2);
+    buttonRow.removeFromRight (3);
     tapeButton    .setBounds (buttonRow);
 
-    area.removeFromTop (4);
+    // Extra headroom below the tape row so the "GR" caption painted
+    // above the gain-reduction meter doesn't collide with the gear
+    // button. The caption sits at meterY - 9 px in paint(); 12 px of
+    // breathing room keeps it clear and gives the strip a quieter
+    // visual break between the comp/tape band and the fader/meter band.
+    area.removeFromTop (12);
 
     // Peak readouts above the meter.
     auto peakRow = area.removeFromBottom (16);
@@ -709,12 +770,23 @@ void MasterStripComponent::resized()
     constexpr int kGrGap        = 2;
     constexpr int kFaderScaleW  = 16;
     constexpr int kFaderScaleGap = 3;
+    constexpr int kFaderRightPad = 4;
     meterArea   = area.removeFromRight (kMeterW);
     area.removeFromRight (kGrGap);
     grMeterArea = area.removeFromRight (kGrMeterW);
     area.removeFromRight (kFaderScaleGap);
     faderScaleArea = area.removeFromRight (kFaderScaleW);
-    area.removeFromRight (4);
+    area.removeFromRight (kFaderRightPad);
+    // Mirror the right-side meter stack with equal padding on the left
+    // so the fader's track sits at the strip's true horizontal centre
+    // instead of being pushed left by the meter column. Strip-width
+    // permitting: if the remaining area would collapse, fall back to
+    // half the deficit so the fader stays visible on narrow strips.
+    constexpr int kRightStackW = kMeterW + kGrGap + kGrMeterW
+                                  + kFaderScaleGap + kFaderScaleW + kFaderRightPad;
+    const int leftPad = juce::jlimit (0, juce::jmax (0, area.getWidth() - 24),
+                                         kRightStackW);
+    area.removeFromLeft (leftPad);
     faderSlider.setBounds (area);
 }
 

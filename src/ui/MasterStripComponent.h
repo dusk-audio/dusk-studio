@@ -74,6 +74,15 @@ private:
     juce::Slider faderSlider { juce::Slider::LinearVertical, juce::Slider::TextBoxBelow };
     juce::TextButton autoModeButton { "Off" };
 
+    // Master mute + mono-sum buttons. Mute zeros the bus; mono sums
+    // L+R*0.5 into both channels for mono-compat checks. The
+    // monoStereoButton's runtime label flips between "STEREO" (default)
+    // and "MONO" (mono-sum on); the constructor sets the initial text
+    // from the params.monoSum atom, so the inline literal here only
+    // matters until that runs.
+    juce::TextButton muteButton       { "M" };
+    juce::TextButton monoStereoButton { "STEREO" };
+
     // Throttled motor-fader display state.
     float displayedLiveFaderDb { 0.0f };
 

@@ -547,8 +547,8 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
     {
         const auto raw = bpmValue.getText().getFloatValue();
         const float clamped = juce::jlimit (30.0f, 300.0f, raw);
-        engine.getSession().tempoBpm.store (clamped);
-        bpmValue.setText (juce::String ((int) clamped), juce::dontSendNotification);
+        const float oldBpm = engine.getSession().tempoBpm.load (std::memory_order_relaxed);
+        confirmAndApplyBpm (clamped, oldBpm);
     };
     addAndMakeVisible (bpmValue);
 
@@ -560,6 +560,14 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
                           "resets the pulse.");
     tapButton.onClick = [this] { onTap(); };
     addAndMakeVisible (tapButton);
+
+    timeSigButton.setColour (juce::TextButton::buttonColourId,  juce::Colour (0xff202024));
+    timeSigButton.setColour (juce::TextButton::textColourOffId, juce::Colour (0xffd0d0d0));
+    timeSigButton.setTooltip ("Time signature. Click to pick a common time "
+                              "(3/4, 4/4, 5/4, 6/8, 7/8, 12/8) or open Custom...");
+    timeSigButton.onClick = [this] { showTimeSigMenu(); };
+    addAndMakeVisible (timeSigButton);
+    refreshTimeSigButton();
 
     // TUNE button - opens a modal pitch-tracker overlay on click.
     // Selection of which track to tune lives on MainComponent (it knows
@@ -995,6 +1003,8 @@ void TransportBar::resized()
     area.removeFromRight (4);
     tapButton.setBounds  (area.removeFromRight (compact ? 42 : 48).reduced (1, 4));
     area.removeFromRight (4);
+    timeSigButton.setBounds (area.removeFromRight (compact ? 44 : 52).reduced (1, 4));
+    area.removeFromRight (4);
     bpmValue.setBounds   (area.removeFromRight (compact ? 44 : 52).reduced (1, 4));
     bpmCaption.setVisible (! compact);
     if (! compact)
@@ -1155,7 +1165,188 @@ void TransportBar::onTap()
     const double avgMs = (double) sumMs / (double) intervals;
     if (avgMs <= 0.0) return;
     const float bpm = juce::jlimit (30.0f, 300.0f, (float) (60000.0 / avgMs));
-    engine.getSession().tempoBpm.store (bpm);
-    bpmValue.setText (juce::String ((int) bpm), juce::dontSendNotification);
+    const float oldBpm = engine.getSession().tempoBpm.load (std::memory_order_relaxed);
+    confirmAndApplyBpm (bpm, oldBpm);
+}
+
+void TransportBar::refreshTimeSigButton()
+{
+    auto& s = engine.getSession();
+    const int n = juce::jmax (1, s.beatsPerBar.load (std::memory_order_relaxed));
+    const int d = juce::jmax (1, s.beatUnit   .load (std::memory_order_relaxed));
+    timeSigButton.setButtonText (juce::String (n) + "/" + juce::String (d));
+}
+
+void TransportBar::applyTimeSig (int numerator, int denominator)
+{
+    // Beat unit is restricted to power-of-two divisions; anything else
+    // breaks the metronome subdivision math. Clamp numerator to a
+    // musical range (1..32) - 32 is enough for double-time 16-bar phrases.
+    static const int kAllowedDenoms[] = { 1, 2, 4, 8, 16, 32 };
+    int safeD = denominator;
+    bool denomOk = false;
+    for (int d : kAllowedDenoms) if (d == safeD) { denomOk = true; break; }
+    if (! denomOk) safeD = 4;
+    const int safeN = juce::jlimit (1, 32, numerator);
+
+    auto& s = engine.getSession();
+    s.beatsPerBar.store (safeN, std::memory_order_release);
+    s.beatUnit   .store (safeD, std::memory_order_release);
+    refreshTimeSigButton();
+}
+
+void TransportBar::promptCustomTimeSig()
+{
+    auto& s = engine.getSession();
+    auto* aw = new juce::AlertWindow ("Custom time signature",
+                                        "Enter numerator (beats per bar) and "
+                                        "denominator (beat unit). Denominator "
+                                        "must be a power of two (1, 2, 4, 8, "
+                                        "16, 32).",
+                                        juce::MessageBoxIconType::QuestionIcon);
+    aw->addTextEditor ("num", juce::String (s.beatsPerBar.load (std::memory_order_relaxed)),
+                        "Numerator");
+    aw->addTextEditor ("den", juce::String (s.beatUnit   .load (std::memory_order_relaxed)),
+                        "Denominator");
+    aw->addButton ("Apply",  1, juce::KeyPress (juce::KeyPress::returnKey));
+    aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+
+    juce::Component::SafePointer<TransportBar> safe (this);
+    aw->enterModalState (true,
+        juce::ModalCallbackFunction::create ([safe, aw] (int result)
+        {
+            std::unique_ptr<juce::AlertWindow> owner (aw);
+            if (safe == nullptr || result == 0) return;
+            const int n = owner->getTextEditorContents ("num").getIntValue();
+            const int d = owner->getTextEditorContents ("den").getIntValue();
+            safe->applyTimeSig (n, d);
+        }), false);
+}
+
+void TransportBar::showTimeSigMenu()
+{
+    auto& s = engine.getSession();
+    const int curN = s.beatsPerBar.load (std::memory_order_relaxed);
+    const int curD = s.beatUnit   .load (std::memory_order_relaxed);
+
+    // std::array (not a raw C array) so the lambda capture below is
+    // unambiguously by-value across every compiler the project targets.
+    // A raw `const Preset[6]` capture by value IS well-formed in C++17,
+    // but std::array removes the question entirely and reads identically.
+    struct Preset { int n, d; };
+    const std::array<Preset, 6> presets = { {
+        { 3, 4 }, { 4, 4 }, { 5, 4 },
+        { 6, 8 }, { 7, 8 }, { 12, 8 },
+    } };
+
+    juce::PopupMenu m;
+    for (int i = 0; i < (int) presets.size(); ++i)
+    {
+        const auto& p = presets[(size_t) i];
+        const bool ticked = (p.n == curN && p.d == curD);
+        m.addItem (i + 1,
+                    juce::String (p.n) + "/" + juce::String (p.d),
+                    true, ticked);
+    }
+    m.addSeparator();
+    constexpr int kCustomId = 100;
+    m.addItem (kCustomId, "Custom...");
+
+    juce::Component::SafePointer<TransportBar> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&timeSigButton),
+        [safe, presets] (int chosen)
+        {
+            if (safe == nullptr || chosen <= 0) return;
+            if (chosen == kCustomId) { safe->promptCustomTimeSig(); return; }
+            if (chosen >= 1 && chosen <= (int) presets.size())
+            {
+                const auto& p = presets[(size_t) (chosen - 1)];
+                safe->applyTimeSig (p.n, p.d);
+            }
+        });
+}
+
+void TransportBar::confirmAndApplyBpm (float newBpm, float oldBpm)
+{
+    auto& s = engine.getSession();
+
+    // Treat tempo changes inside the BPM-spinner's own integer rounding
+    // as no-ops. Without this, double-clicking the field without editing
+    // would still pop the dialog.
+    if (std::abs (newBpm - oldBpm) < 0.5f)
+    {
+        bpmValue.setText (juce::String ((int) newBpm), juce::dontSendNotification);
+        return;
+    }
+
+    int lockedMidi = 0, floatMidi = 0;
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        const auto& v = s.track (t).midiRegions.current();
+        for (const auto& r : v)
+            (r.tempoLock ? lockedMidi : floatMidi) += 1;
+    }
+
+    int autoPoints = 0;
+    for (int t = 0; t < Session::kNumTracks; ++t)
+        for (const auto& lane : s.track (t).automationLanes)
+            autoPoints += (int) lane.points.size();
+    for (int a = 0; a < Session::kNumAuxLanes; ++a)
+        for (const auto& lane : s.auxLane (a).params.automationLanes)
+            autoPoints += (int) lane.points.size();
+    for (const auto& lane : s.master().automationLanes)
+        autoPoints += (int) lane.points.size();
+
+    const bool empty = (lockedMidi == 0 && floatMidi == 0 && autoPoints == 0);
+    if (empty)
+    {
+        applyTempoChange (s, newBpm, engine.getCurrentSampleRate());
+        bpmValue.setText (juce::String ((int) newBpm), juce::dontSendNotification);
+        return;
+    }
+
+    juce::String body;
+    body << "Change tempo from " << (int) oldBpm << " to "
+         << (int) newBpm << " BPM?\n\n";
+    if (lockedMidi > 0)
+        body << "    " << lockedMidi
+             << " tempo-locked MIDI region" << (lockedMidi == 1 ? "" : "s")
+             << " will retime to keep musical position.\n";
+    if (floatMidi > 0)
+        body << "    " << floatMidi
+             << " floating MIDI region" << (floatMidi == 1 ? "" : "s")
+             << " will keep sample position (musical length changes).\n";
+    if (autoPoints > 0)
+        body << "    " << autoPoints
+             << " automation point" << (autoPoints == 1 ? "" : "s")
+             << " will scale (already anchored to recordedAtBPM).\n";
+    body << "\nAudio regions and markers are NOT retimed.";
+
+    // Capture by value so the lambda doesn't hold a dangling reference
+    // if the TransportBar is destroyed before the user clicks.
+    juce::Component::SafePointer<TransportBar> safe (this);
+    juce::AlertWindow::showAsync (
+        juce::MessageBoxOptions()
+            .withIconType (juce::MessageBoxIconType::QuestionIcon)
+            .withTitle ("Confirm tempo change")
+            .withMessage (body)
+            .withButton ("Apply")
+            .withButton ("Cancel"),
+        [safe, newBpm, oldBpm] (int result)
+        {
+            if (safe == nullptr) return;
+            if (result == 1)  // first button: Apply
+            {
+                applyTempoChange (safe->engine.getSession(), newBpm,
+                                    safe->engine.getCurrentSampleRate());
+                safe->bpmValue.setText (juce::String ((int) newBpm),
+                                          juce::dontSendNotification);
+            }
+            else              // 0 = Cancel / dialog dismissed
+            {
+                safe->bpmValue.setText (juce::String ((int) oldBpm),
+                                          juce::dontSendNotification);
+            }
+        });
 }
 } // namespace duskstudio
