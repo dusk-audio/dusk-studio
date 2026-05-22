@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_audio_processors/juce_audio_processors.h>
+#include <array>
 #include <atomic>
 
 #if DUSKSTUDIO_HAS_OOP_PLUGINS
@@ -297,17 +298,16 @@ private:
     // thread reads via the `currentInstance` atomic below.
     std::unique_ptr<juce::AudioPluginInstance> ownedInstance;
 
-    // Holds the previous plugin instance across exactly one swap, so a
-    // plugin that the audio thread might still be holding a stale
-    // pointer to from the in-flight callback isn't destructed until the
-    // NEXT swap (by which point at least one full audio block has
-    // elapsed since we stored nullptr into currentInstance, and the
-    // audio thread is guaranteed to have re-acquired). Mirrors
-    // MasteringPlayer's previousReader pattern. Without this, calling
-    // Replace plugin... while the audio device is running races the
-    // ~AudioPluginInstance destructor against the audio callback's
-    // processBlock and crashes inside the plugin's own teardown.
-    std::unique_ptr<juce::AudioPluginInstance> previousInstance;
+    // Two-deep keep-alive for deposed plugin instances. At swap time the
+    // freshly-deposed instance moves into slot [0]; whatever was in [0]
+    // rotates to [1]; the instance in [1] is destroyed. Two slots
+    // because a single slot races itself: two rapid Replace clicks
+    // within one audio block destroy the instance the audio thread is
+    // still holding a pointer to (loaded via acquire before the
+    // currentInstance.store(nullptr)). With two slots the deposed
+    // instance survives two full swaps before destruction, so any
+    // pointer the audio thread captured can complete its block.
+    std::array<std::unique_ptr<juce::AudioPluginInstance>, 2> previousInstances;
 
     // Atomic view of `ownedInstance.get()` so the audio thread can
     // swap-load without a lock. Set after prepareToPlay completes.
@@ -404,15 +404,13 @@ private:
     std::unique_ptr<duskstudio::ipc::RemotePluginConnection> ownedRemote;
     std::atomic<duskstudio::ipc::RemotePluginConnection*>    currentRemote { nullptr };
 
-    // Deferred-destruction slot for the IPC connection. Mirrors
-    // `previousInstance` for the in-process path: at swap time we move
-    // the just-deposed ownedRemote here instead of destroying it
-    // immediately, so the audio thread (which may have loaded
-    // currentRemote just before the store-nullptr) still sees valid
-    // SHM + a live child for one more block. The NEXT swap destroys
-    // whatever sits here, by which point any in-flight processBlockSync
-    // has long since returned.
-    std::unique_ptr<duskstudio::ipc::RemotePluginConnection> previousRemote;
+    // Two-deep keep-alive for deposed IPC connections. Same rationale as
+    // `previousInstances` (in-process side): one slot races itself
+    // when the user fires two Replace clicks within an audio block;
+    // two slots guarantee the SHM mapping + child process stay valid
+    // for any pointer the audio thread captured before the
+    // currentRemote.store(nullptr).
+    std::array<std::unique_ptr<duskstudio::ipc::RemotePluginConnection>, 2> previousRemotes;
 
     // Cached at load time (the LoadPluginReply tells us all three).
     // Audio thread reads them from the same atomics so no message-thread

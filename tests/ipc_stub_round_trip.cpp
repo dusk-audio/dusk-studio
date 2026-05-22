@@ -55,7 +55,7 @@ TEST_CASE ("ipc-stub: connect, round-trip 32 blocks, byte-exact echo",
             bufR[(std::size_t) i] = 0.5f * std::cos (((float) (i + it)) * 0.1f);
         }
 
-        REQUIRE (conn.processBlockSync (in, kNumChans, kBlockSize, midi, kTimeoutNs));
+        REQUIRE (conn.processBlockSync (in, kNumChans, kNumChans, kBlockSize, midi, kTimeoutNs));
 
         for (int c = 0; c < kNumChans; ++c)
         {
@@ -87,7 +87,7 @@ TEST_CASE ("ipc-stub: rejects oversize block", "[ipc][linux]")
     std::vector<float> oversize (4096, 0.0f);
     const float* in[1] { oversize.data() };
     juce::MidiBuffer midi;
-    REQUIRE_FALSE (conn.processBlockSync (in, 1, 4096, midi, 1'000'000LL));
+    REQUIRE_FALSE (conn.processBlockSync (in, 1, 1, 4096, midi, 1'000'000LL));
     REQUIRE_FALSE (conn.isCrashed());  // bad-input rejection isn't a crash
 }
 

@@ -125,7 +125,14 @@ public:
     // `midi`; juce::MidiBuffer::clear is RT-safe and addEvent only
     // allocates when capacity is exceeded — the engine pre-sizes per-
     // track scratch buffers so this stays allocation-free in practice.
-    bool processBlockSync (const float* const* inChannels, int numIn,
+    // numOut is the plugin's output channel count (queried at scan/load
+    // and stored in PluginSlot::remoteNumOut). The child copies its
+    // plugin's processBlock output into the first `numOut` SHM channels;
+    // the parent then reads via readOutChannel(0..numOut-1). Passing the
+    // wrong numOut breaks instrument plugins (numIn=0, numOut=2): with
+    // numIn used as numOut, the child writes 0 channels and the parent
+    // reads stale SHM.
+    bool processBlockSync (const float* const* inChannels, int numIn, int numOut,
                             int numSamples,
                             juce::MidiBuffer& midi,
                             long long timeoutNs) noexcept;

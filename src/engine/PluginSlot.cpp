@@ -124,8 +124,8 @@ PluginSlot::~PluginSlot()
     lastTouchedListener.reset();
     if (ownedInstance != nullptr)
         ownedInstance->releaseResources();
-    if (previousInstance != nullptr)
-        previousInstance->releaseResources();
+    for (auto& slot : previousInstances)
+        if (slot != nullptr) slot->releaseResources();
 
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
     reaperTimer.stopTimer();
@@ -133,7 +133,7 @@ PluginSlot::~PluginSlot()
     // ~RemotePluginConnection sends SIGTERM/SIGKILL to the child and
     // unmaps SHM. Safe at process shutdown - audio thread is detached.
     ownedRemote.reset();
-    previousRemote.reset();
+    for (auto& slot : previousRemotes) slot.reset();
    #endif
 }
 
@@ -142,8 +142,8 @@ void PluginSlot::leakInstanceForShutdown()
     currentInstance.store (nullptr, std::memory_order_release);
     if (ownedInstance != nullptr)
         (void) ownedInstance.release();
-    if (previousInstance != nullptr)
-        (void) previousInstance.release();
+    for (auto& slot : previousInstances)
+        if (slot != nullptr) (void) slot.release();
 
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
     // OOP plugins live in a separate process — the in-process leak hack
@@ -153,7 +153,7 @@ void PluginSlot::leakInstanceForShutdown()
     reaperTimer.stopTimer();
     currentRemote.store (nullptr, std::memory_order_release);
     ownedRemote.reset();
-    previousRemote.reset();
+    for (auto& slot : previousRemotes) slot.reset();
    #endif
 }
 
@@ -196,8 +196,9 @@ void PluginSlot::clearAutoBypass() noexcept
     // can complete safely.
     if (remoteCrashed.load (std::memory_order_relaxed))
     {
-        previousRemote.reset();
-        previousRemote = std::move (ownedRemote);
+        previousRemotes[1].reset();
+        previousRemotes[1] = std::move (previousRemotes[0]);
+        previousRemotes[0] = std::move (ownedRemote);
         remoteCrashed.store (false, std::memory_order_relaxed);
     }
    #endif
@@ -402,15 +403,33 @@ bool PluginSlot::loadFromFile (const juce::File& pluginFile, juce::String& error
         return false;
     }
 
-    // Park the audio thread first. Detach the current instance, then move
-    // ownership of the prior plugin into previousInstance so its
-    // destructor is deferred until the NEXT swap (see previousInstance
-    // doc comment). This is the difference between a clean Replace and a
-    // crash inside the audio callback under live device operation.
+    // Park the audio thread first. Detach the current instance, then
+    // rotate the prior plugin through the two-deep keep-alive ring so
+    // its destructor is deferred by TWO swaps (see previousInstances
+    // doc comment). Two slots, not one, because the audio thread can
+    // hold a pointer from the latest swap for a full block-worth of
+    // time; a second rapid Replace within that window would destroy
+    // the instance under it.
+    //
+    // Mirror unload(): detach the existing lastTouchedListener from
+    // ownedInstance BEFORE the rotation. Without this, lastTouchedListener
+    // is reassigned via make_unique below (destroying the old listener
+    // object) while the just-deposed instance still has the old listener
+    // pointer registered on its param listener lists. A param callback
+    // from the deposed instance's editor during the swap (e.g. fired
+    // by the editor's teardown that follows a Replace action) would
+    // then dereference freed memory.
+    if (ownedInstance != nullptr && lastTouchedListener != nullptr)
+        for (auto* p : ownedInstance->getParameters())
+            if (p != nullptr) p->removeListener (lastTouchedListener.get());
+    lastTouchedListener.reset();
+    lastTouchedParamIndex.store (-1, std::memory_order_relaxed);
+
     currentInstance.store (nullptr, std::memory_order_release);
-    if (previousInstance != nullptr)
-        previousInstance->releaseResources();
-    previousInstance = std::move (ownedInstance);
+    if (previousInstances[1] != nullptr)
+        previousInstances[1]->releaseResources();
+    previousInstances[1] = std::move (previousInstances[0]);
+    previousInstances[0] = std::move (ownedInstance);
     ownedInstance.reset();
 
     auto fresh = manager->createPluginInstance (pluginFile,
@@ -471,16 +490,27 @@ bool PluginSlot::loadFromDescription (const juce::PluginDescription& desc,
     juce::PluginDescription fixedDesc = desc;
     normalizeVst3FileOrIdentifier (fixedDesc);
 
-    // Same swap-load shape as loadFromFile; just resolves via the
-    // description path inside PluginManager. The previous owner moves
-    // into `previousInstance` so its destructor is deferred until the
-    // NEXT swap (or this PluginSlot's destruction). That guarantees at
-    // least one full audio block elapses between the audio thread last
-    // possibly seeing the old pointer and the destructor firing.
+    // Same swap-load shape as loadFromFile; rotates through the
+    // two-deep keep-alive ring so the deposed instance survives TWO
+    // swaps before destruction. See previousInstances doc comment.
+    //
+    // Detach the existing lastTouchedListener from ownedInstance
+    // BEFORE rotation (mirrors unload()). The listener gets recreated
+    // via make_unique further down; if we left the old listener
+    // pointer in the deposed instance's param listener lists, a param
+    // callback from that instance (typical during Replace-action
+    // editor teardown) would hit freed memory.
+    if (ownedInstance != nullptr && lastTouchedListener != nullptr)
+        for (auto* p : ownedInstance->getParameters())
+            if (p != nullptr) p->removeListener (lastTouchedListener.get());
+    lastTouchedListener.reset();
+    lastTouchedParamIndex.store (-1, std::memory_order_relaxed);
+
     currentInstance.store (nullptr, std::memory_order_release);
-    if (previousInstance != nullptr)
-        previousInstance->releaseResources();
-    previousInstance = std::move (ownedInstance);
+    if (previousInstances[1] != nullptr)
+        previousInstances[1]->releaseResources();
+    previousInstances[1] = std::move (previousInstances[0]);
+    previousInstances[0] = std::move (ownedInstance);
     ownedInstance.reset();
 
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
@@ -488,20 +518,16 @@ bool PluginSlot::loadFromDescription (const juce::PluginDescription& desc,
     // load takes. Mode is per-load: we may end up in-process this time
     // even if the previous load was OOP (and vice versa).
     //
-    // Deferred-destruction: move the just-deposed ownedRemote into
-    // previousRemote rather than destroying it in place. The audio
-    // thread may have just loaded currentRemote pre-store-nullptr and
-    // be inside processBlockSync right now; tearing the SHM mapping
-    // and child process down underneath that call is the classic
-    // use-after-free shape. previousRemote holds the connection alive
-    // for one more swap cycle; the previousRemote.reset() below
-    // destroys whatever was deposed on the PRIOR swap, by which
-    // point any audio block that started during that swap has long
-    // since completed.
+    // Two-deep deferred-destruction via previousRemotes ring (see
+    // declaration). Slot [0] holds the just-deposed connection; slot
+    // [1] holds the one-before-that. A third rapid swap evicts [1] and
+    // destroys it, by which point any audio block that captured the
+    // ring's contents has had two block-worths of time to drain.
     reaperTimer.stopTimer();
     currentRemote.store (nullptr, std::memory_order_release);
-    previousRemote.reset();
-    previousRemote = std::move (ownedRemote);
+    previousRemotes[1].reset();
+    previousRemotes[1] = std::move (previousRemotes[0]);
+    previousRemotes[0] = std::move (ownedRemote);
     remoteCrashed.store (false, std::memory_order_relaxed);
     savedDescriptionXml.clear();
 
@@ -635,21 +661,20 @@ void PluginSlot::unload()
             if (p != nullptr) p->removeListener (lastTouchedListener.get());
     lastTouchedListener.reset();
     lastTouchedParamIndex.store (-1, std::memory_order_relaxed);
-    if (previousInstance != nullptr)
-        previousInstance->releaseResources();
-    previousInstance = std::move (ownedInstance);
+    if (previousInstances[1] != nullptr)
+        previousInstances[1]->releaseResources();
+    previousInstances[1] = std::move (previousInstances[0]);
+    previousInstances[0] = std::move (ownedInstance);
     ownedInstance.reset();
 
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
-    // Same deferred-destruction shape as loadFromDescription: defer the
-    // child-process kill + SHM unmap to the NEXT swap so an in-flight
-    // audio-thread processBlockSync on the just-cleared currentRemote
-    // can complete cleanly. previousRemote.reset() destroys whatever
-    // was deposed on the previous cycle (one full swap ago).
+    // Two-deep deferred-destruction via previousRemotes ring; see
+    // loadFromDescription for the rationale.
     reaperTimer.stopTimer();
     currentRemote.store (nullptr, std::memory_order_release);
-    previousRemote.reset();
-    previousRemote = std::move (ownedRemote);
+    previousRemotes[1].reset();
+    previousRemotes[1] = std::move (previousRemotes[0]);
+    previousRemotes[0] = std::move (ownedRemote);
     remoteNumIn .store (0, std::memory_order_relaxed);
     remoteNumOut.store (0, std::memory_order_relaxed);
     remoteIsInstrument.store (false, std::memory_order_relaxed);
@@ -865,11 +890,20 @@ bool PluginSlot::restoreFromSavedState (const juce::String& descriptionXml,
    #endif
 
     // Same swap-load shape as loadFromFile/loadFromDescription, with the
-    // same deferred-destruction-via-previousInstance discipline.
+    // same two-deep deferred-destruction-via-previousInstances ring and
+    // the same detach-listener-before-rotate discipline (see
+    // loadFromFile for the rationale).
+    if (ownedInstance != nullptr && lastTouchedListener != nullptr)
+        for (auto* p : ownedInstance->getParameters())
+            if (p != nullptr) p->removeListener (lastTouchedListener.get());
+    lastTouchedListener.reset();
+    lastTouchedParamIndex.store (-1, std::memory_order_relaxed);
+
     currentInstance.store (nullptr, std::memory_order_release);
-    if (previousInstance != nullptr)
-        previousInstance->releaseResources();
-    previousInstance = std::move (ownedInstance);
+    if (previousInstances[1] != nullptr)
+        previousInstances[1]->releaseResources();
+    previousInstances[1] = std::move (previousInstances[0]);
+    previousInstances[0] = std::move (ownedInstance);
     ownedInstance.reset();
 
     auto fresh = manager->createPluginInstance (desc, preparedSampleRate,
@@ -898,6 +932,15 @@ bool PluginSlot::restoreFromSavedState (const juce::String& descriptionXml,
         ownedInstance->setPlayHead (hostPlayHead);
     cachedLatencySamples.store (ownedInstance->getLatencySamples(),
                                   std::memory_order_relaxed);
+    // Re-install the last-touched listener on the restored instance so
+    // MIDI Learn's "last-touched parameter" works after session reload.
+    // Pre-existing miss: the OOP path inherits its own listener
+    // machinery on the child side, but the in-process fallback dropped
+    // it on the floor.
+    lastTouchedParamIndex.store (-1, std::memory_order_relaxed);
+    lastTouchedListener = std::make_unique<LastTouchedListener> (lastTouchedParamIndex);
+    for (auto* p : ownedInstance->getParameters())
+        if (p != nullptr) p->addListener (lastTouchedListener.get());
     currentInstance.store (ownedInstance.get(), std::memory_order_release);
     offlineDescriptionXml.clear();
     offlineStateBase64.clear();
@@ -955,6 +998,7 @@ void PluginSlot::processMonoBlock (float* monoData, int numSamples,
         }
 
         if (! r->processBlockSync (inPtrs, juce::jmax (rNumIn, 0),
+                                       juce::jmax (rNumOut, 0),
                                        numSamples, midiMessages,
                                        kOopProcessTimeoutNs))
         {
@@ -1129,6 +1173,7 @@ void PluginSlot::processStereoBlock (float* L, float* R, int numSamples,
         }
 
         if (! r->processBlockSync (inPtrs, juce::jmax (rNumIn, 0),
+                                       juce::jmax (rNumOut, 0),
                                        numSamples, midiMessages,
                                        kOopProcessTimeoutNs))
         {

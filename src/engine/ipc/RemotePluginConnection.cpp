@@ -99,7 +99,7 @@ bool RemotePluginConnection::connect (const std::string& hostExecutablePath,
 }
 
 bool RemotePluginConnection::processBlockSync (const float* const* inChannels,
-                                                 int numIn, int numSamples,
+                                                 int numIn, int numOut, int numSamples,
                                                  juce::MidiBuffer& midi,
                                                  long long timeoutNs) noexcept
 {
@@ -108,6 +108,7 @@ bool RemotePluginConnection::processBlockSync (const float* const* inChannels,
 
     if (numSamples <= 0 || numSamples > kMaxBlock) return false;
     if (numIn     <  0 || numIn      > kMaxChans) return false;
+    if (numOut    <  0 || numOut     > kMaxChans) return false;
 
     auto* hdr = headerOf (shm.data());
 
@@ -139,7 +140,7 @@ bool RemotePluginConnection::processBlockSync (const float* const* inChannels,
 
     hdr->numSamples  = (std::uint32_t) numSamples;
     hdr->numInChans  = (std::uint32_t) numIn;
-    hdr->numOutChans = (std::uint32_t) numIn;
+    hdr->numOutChans = (std::uint32_t) numOut;
     hdr->midiOutBytes = 0;
 
     const std::uint32_t mySeq = ++localSeq;
@@ -182,9 +183,18 @@ bool RemotePluginConnection::processBlockSync (const float* const* inChannels,
     }
 
     const auto deadline = platform::deadlineFromNow (timeoutNs);
-    while (hdr->replySeq.load (std::memory_order_acquire) != mySeq)
+    for (;;)
     {
-        const auto r = platform::waitOnAddress (&hdr->replySeq, mySeq - 1, &deadline);
+        const auto seen = hdr->replySeq.load (std::memory_order_acquire);
+        if (seen == mySeq) break;
+        // Pass the CURRENT replySeq as the "expected" value for the
+        // futex. After a prior call's timeout, replySeq can be stuck
+        // at an older value (e.g. mySeq-2); a hardcoded `mySeq-1`
+        // would mismatch and cause waitOnAddress to spin-return
+        // ValueChanged until the deadline. Reading the live value
+        // makes the wait correctly block until the child actually
+        // bumps replySeq.
+        const auto r = platform::waitOnAddress (&hdr->replySeq, seen, &deadline);
         if (r == platform::WaitResult::Timeout)
         {
             crashed.store (true, std::memory_order_release);
@@ -195,8 +205,7 @@ bool RemotePluginConnection::processBlockSync (const float* const* inChannels,
             crashed.store (true, std::memory_order_release);
             return false;
         }
-        // Awoken / ValueChanged / Interrupted: re-check the seq and either
-        // return success or retry the wait.
+        // Awoken / ValueChanged / Interrupted: re-loop and re-check.
     }
 
     deserialiseMidiOut();

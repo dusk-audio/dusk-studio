@@ -60,7 +60,7 @@ int runIpcSelfTest (const std::string& hostExecutablePath,
         }
 
         const auto t0 = steady_clock::now();
-        if (! conn.processBlockSync (in, 2, numSamples, emptyMidi, kTimeoutNs))
+        if (! conn.processBlockSync (in, 2, 2, numSamples, emptyMidi, kTimeoutNs))
         {
             std::fprintf (stderr, "FAIL: processBlockSync at iter %d\n", it);
             return 2;
@@ -221,7 +221,8 @@ int runIpcHostTest (const std::string& hostExecutablePath,
         }
 
         const auto t0 = steady_clock::now();
-        if (! conn.processBlockSync (in, juce::jmax (numIn, 1), numSamples, emptyMidi, kTimeoutNs))
+        if (! conn.processBlockSync (in, juce::jmax (numIn, 1), juce::jmax (numOut, 1),
+                                       numSamples, emptyMidi, kTimeoutNs))
         {
             std::fprintf (stderr, "FAIL: processBlockSync at iter %d\n", it);
             return 14;
