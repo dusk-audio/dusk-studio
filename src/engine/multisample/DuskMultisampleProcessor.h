@@ -76,6 +76,20 @@ public:
     // can replace it.
     void clearLoadedFile();
 
+    // Polyphony change. Per sfizz.h, sfizz_set_num_voices is marked
+    // OFF - "cannot be invoked while a thread is calling RT
+    // functions". setPolyphony() runs on the message thread (editor
+    // / state-load callers), pauses sfizz briefly, applies, then
+    // resumes. The Overrides atom is updated so getStateInformation
+    // sees the latest value.
+    void setPolyphony (int newPolyphony);
+
+    // Surfaces the most-recent error from setStateInformation /
+    // loadSfzFile when called from the deserialiser. Editor polls it
+    // so a missing-file restore shows "(file not found)" instead of
+    // silent emptiness. Cleared when a load succeeds.
+    juce::String getLastLoadError() const noexcept { return lastLoadError; }
+
     // Override parameters. Phase 1 v1: master volume, master tune,
     // polyphony cap. Phase 2 widens to ADSR + filter + LFO overrides
     // wired through sfizz's CC automation surface. UI mutates via
@@ -94,6 +108,7 @@ private:
     double currentSampleRate { 48000.0 };
     int    currentBlockSize  { 512 };
     juce::String loadedFilePath;     // empty when no file loaded
+    juce::String lastLoadError;      // most recent setState / load failure
     Overrides overrides;
 
     // Cached "last applied" override values so processBlock only

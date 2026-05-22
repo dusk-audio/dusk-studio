@@ -72,8 +72,10 @@ DuskMultisampleEditor::DuskMultisampleEditor (DuskMultisampleProcessor& proc)
     polySlider.setNumDecimalPlacesToDisplay (0);
     polySlider.onValueChange = [this]
     {
-        processor.getOverrides().polyphony.store ((int) polySlider.getValue(),
-                                                    std::memory_order_relaxed);
+        // Polyphony goes via setPolyphony (message-thread only) -
+        // sfizz_set_num_voices is marked OFF in sfizz.h and can't be
+        // invoked while the audio thread is rendering.
+        processor.setPolyphony ((int) polySlider.getValue());
     };
     addAndMakeVisible (polySlider);
     polyLabel.setJustificationType (juce::Justification::centred);
@@ -89,14 +91,26 @@ DuskMultisampleEditor::DuskMultisampleEditor (DuskMultisampleProcessor& proc)
     timerCallback();   // initial sync
 }
 
-DuskMultisampleEditor::~DuskMultisampleEditor() = default;
+DuskMultisampleEditor::~DuskMultisampleEditor()
+{
+    // Explicit stopTimer before any member destructs so the 4 Hz
+    // poller can't fire one final tick against half-torn-down state.
+    // juce::Timer's dtor stops too, but that runs AFTER the derived
+    // class's members destruct - too late if a tick is mid-flight.
+    stopTimer();
+}
 
 void DuskMultisampleEditor::timerCallback()
 {
+    const auto err  = processor.getLastLoadError();
     const auto path = processor.getLoadedFilePath();
-    const auto display = path.isEmpty()
-                            ? juce::String ("(no file)")
-                            : juce::File (path).getFileName();
+    juce::String display;
+    if (err.isNotEmpty())
+        display = "(" + err + ")";
+    else if (path.isEmpty())
+        display = "(no file)";
+    else
+        display = juce::File (path).getFileName();
     if (filePathLabel.getText() != display)
         filePathLabel.setText (display, juce::dontSendNotification);
 

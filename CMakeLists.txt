@@ -602,6 +602,25 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/src/sfizz.h")
     unset(_duskstudio_aq_patched)
     unset(_duskstudio_atomic_queue_hdr)
 
+    # Belt-and-suspenders integrity check: re-read after the patches
+    # ran and abort configure if either anchor string is back to its
+    # pre-patch form. Catches the case where a developer ran
+    # `git submodule update` after configure (restoring upstream)
+    # but didn't reconfigure - the build would otherwise fail later
+    # with cryptic compile errors instead of a clear up-front message.
+    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/cmake/SfizzConfig.cmake" _dsk_chk_a)
+    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/external/atomic_queue/include/atomic_queue/atomic_queue.h" _dsk_chk_b)
+    if(_dsk_chk_a MATCHES "elseif\\(PROJECT_SYSTEM_PROCESSOR MATCHES \"\\(arm\\.\\*\\)\"\\)\n[ \t]*add_compile_options\\(-mfpu=neon\\)"
+       OR _dsk_chk_b MATCHES "Base::template do_pop_any")
+        message(FATAL_ERROR
+            "external/sfizz patches missing - the submodule was likely "
+            "restored by `git submodule update` after configure last ran. "
+            "Re-run cmake configure (the patches re-apply automatically) "
+            "before building.")
+    endif()
+    unset(_dsk_chk_a)
+    unset(_dsk_chk_b)
+
     add_subdirectory(external/sfizz EXCLUDE_FROM_ALL)
     target_link_libraries(DuskStudio PRIVATE sfizz::static)
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_MULTISAMPLE=1)

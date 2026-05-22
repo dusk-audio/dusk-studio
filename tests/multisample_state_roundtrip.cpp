@@ -15,7 +15,7 @@ TEST_CASE ("DuskMultisampleProcessor round-trips overrides through state", "[mul
     auto& aov = a.getOverrides();
     aov.masterVolDb    .store (-6.0f, std::memory_order_relaxed);
     aov.masterTuneCents.store ( 25.0f, std::memory_order_relaxed);
-    aov.polyphony      .store ( 32,    std::memory_order_relaxed);
+    a.setPolyphony (32);   // message-thread-only setter
 
     juce::MemoryBlock block;
     a.getStateInformation (block);
@@ -41,7 +41,7 @@ TEST_CASE ("DuskMultisampleProcessor clamps out-of-range state", "[multisample]"
     auto& aov = a.getOverrides();
     aov.masterVolDb    .store (1000.0f, std::memory_order_relaxed);   // ridiculous
     aov.masterTuneCents.store (-9999.0f, std::memory_order_relaxed);  // ditto
-    aov.polyphony      .store (0,        std::memory_order_relaxed);   // invalid
+    a.setPolyphony (0);   // clamps inside setPolyphony
 
     juce::MemoryBlock block;
     a.getStateInformation (block);

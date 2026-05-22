@@ -73,8 +73,13 @@ void DuskMultisamplePluginFormat::createPluginInstance (
         return;
     }
 
+    juce::ignoreUnused (initialSampleRate, initialBufferSize);
+    // PluginSlot::loadFromFile calls prepareToPlay on the returned
+    // instance with the host's live SR + block size, so we don't
+    // call it here - the format's initialSampleRate / initialBufferSize
+    // args are a hint, not a contract, and double-calling would mean
+    // sfizz_set_sample_rate fires twice on every load.
     auto inst = std::make_unique<DuskMultisampleProcessor>();
-    inst->prepareToPlay (initialSampleRate, initialBufferSize);
 
     if (desc.fileOrIdentifier.isNotEmpty())
     {

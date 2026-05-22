@@ -69,6 +69,25 @@ void DuskMultisampleProcessor::clearLoadedFile()
     // sfizz_load_string with empty body unloads the current file.
     sfizz_load_string (impl->synth, "", "");
     loadedFilePath.clear();
+    lastLoadError.clear();
+}
+
+void DuskMultisampleProcessor::setPolyphony (int newPolyphony)
+{
+    // Message-thread entry point. sfizz_set_num_voices is marked OFF
+    // in sfizz.h (cannot be called while RT functions run). JUCE's
+    // AudioProcessorEditor + state-load both run on the message
+    // thread, so we're already off the audio thread here. The
+    // processor's audio thread may be mid-block when this fires;
+    // sfizz handles its own internal synchronisation - we don't add
+    // a lock from this side.
+    const int clamped = juce::jlimit (1, 256, newPolyphony);
+    overrides.polyphony.store (clamped, std::memory_order_relaxed);
+    if (impl != nullptr && impl->synth != nullptr)
+    {
+        sfizz_set_num_voices (impl->synth, clamped);
+        lastAppliedPolyphony = clamped;
+    }
 }
 
 bool DuskMultisampleProcessor::loadSfzFile (const juce::File& sfz,
@@ -89,9 +108,11 @@ bool DuskMultisampleProcessor::loadSfzFile (const juce::File& sfz,
     if (! ok)
     {
         errorMessage = "sfizz_load_file failed for " + sfz.getFileName();
+        lastLoadError = errorMessage;
         return false;
     }
     loadedFilePath = sfz.getFullPathName();
+    lastLoadError.clear();
     return true;
 }
 
@@ -108,10 +129,12 @@ void DuskMultisampleProcessor::processBlock (juce::AudioBuffer<float>& buf,
         return;
     }
 
-    // Apply override-param drift before MIDI dispatch. Each setter
-    // is a no-op when the cached "last applied" equals the current
-    // atom; sfizz's set_volume / set_num_voices take internal locks
-    // so skipping the no-op path matters on every block.
+    // Apply RT-safe override drift before MIDI dispatch. Each
+    // setter is a no-op when the cached "last applied" equals the
+    // current atom. sfizz documents sfizz_set_volume + sfizz_set_
+    // tuning_frequency as RT functions (safe from processBlock);
+    // sfizz_set_num_voices is marked OFF and CANNOT be called here -
+    // it's invoked from the message thread via setPolyphony().
     {
         const float vol = overrides.masterVolDb.load (std::memory_order_relaxed);
         if (vol != lastAppliedVolDb)
@@ -127,12 +150,6 @@ void DuskMultisampleProcessor::processBlock (juce::AudioBuffer<float>& buf,
             const float a4 = 440.0f * std::pow (2.0f, tune / 1200.0f);
             sfizz_set_tuning_frequency (impl->synth, a4);
             lastAppliedTuneCents = tune;
-        }
-        const int poly = overrides.polyphony.load (std::memory_order_relaxed);
-        if (poly != lastAppliedPolyphony)
-        {
-            sfizz_set_num_voices (impl->synth, juce::jlimit (1, 256, poly));
-            lastAppliedPolyphony = poly;
         }
     }
 
@@ -194,12 +211,16 @@ void DuskMultisampleProcessor::setStateInformation (const void* data, int size)
     if (path.isNotEmpty())
     {
         juce::String err;
-        loadSfzFile (juce::File (path), err);
-        // Loading errors are non-fatal - the processor stays alive in
-        // a no-file state so the user can pick a replacement file
-        // via the editor.
-        if (err.isNotEmpty())
-            DBG ("DuskMultisample setState: " << err);
+        if (! loadSfzFile (juce::File (path), err))
+        {
+            // Non-fatal: processor stays in no-file state so the user
+            // can pick a replacement via the editor. lastLoadError
+            // surfaces the reason - editor polls + displays it.
+            lastLoadError = err.isNotEmpty()
+                              ? err
+                              : ("File not found: " + path);
+            DBG ("DuskMultisample setState: " << lastLoadError);
+        }
     }
 
     if (state.hasProperty ("masterVolDb"))
@@ -211,9 +232,7 @@ void DuskMultisampleProcessor::setStateInformation (const void* data, int size)
             juce::jlimit (-100.0f, 100.0f, (float) state.getProperty ("masterTuneCents")),
             std::memory_order_relaxed);
     if (state.hasProperty ("polyphony"))
-        overrides.polyphony.store (
-            juce::jlimit (1, 256, (int) state.getProperty ("polyphony")),
-            std::memory_order_relaxed);
+        setPolyphony (juce::jlimit (1, 256, (int) state.getProperty ("polyphony")));
 }
 
 juce::AudioProcessorEditor* DuskMultisampleProcessor::createEditor()

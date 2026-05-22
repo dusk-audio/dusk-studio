@@ -36,6 +36,7 @@ add_executable(dusk-studio-tests
     ${CMAKE_SOURCE_DIR}/src/engine/McuController.cpp
     multisample_state_roundtrip.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/multisample/DuskMultisampleProcessor.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/multisample/DuskMultisampleEditor.cpp
     ${CMAKE_SOURCE_DIR}/src/dsp/BrickwallLimiter.cpp
     ${CMAKE_SOURCE_DIR}/src/dsp/HardwareInsertSlot.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/FileImporter.cpp
@@ -69,6 +70,11 @@ target_link_libraries(dusk-studio-tests PRIVATE
     # juce_audio_processors brings in juce::AudioPluginInstance for
     # multisample tests (DuskMultisampleProcessor subclasses it).
     juce::juce_audio_processors
+    # juce_gui_basics required by DuskMultisampleEditor (compiled into
+    # the test binary via the multisample tests). The tests don't
+    # construct the editor; we just link the symbol it references
+    # through createEditor().
+    juce::juce_gui_basics
     juce::juce_core
     juce::juce_dsp
     juce::juce_graphics
