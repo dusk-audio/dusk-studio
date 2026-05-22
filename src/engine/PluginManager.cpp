@@ -1,6 +1,10 @@
 #include "PluginManager.h"
 #include "JuceCompat.h"
 
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+  #include "multisample/DuskMultisamplePluginFormat.h"
+#endif
+
 namespace duskstudio
 {
 PluginManager::PluginManager()
@@ -11,6 +15,14 @@ PluginManager::PluginManager()
     // juce_audio_processors which we already link. The compat shim covers
     // the upstream-vs-wayland-fork API split.
     juce_compat::addDefaultFormats (formatManager);
+
+   #if DUSKSTUDIO_HAS_MULTISAMPLE
+    // Native multisample format: makes .sfz / .sf2 files first-class
+    // citizens alongside VST3 / LV2 / AU. The format claims those
+    // extensions in fileMightContainThisPluginType so PluginSlot's
+    // loadFromFile path lands here first for soundfont files.
+    formatManager.addFormat (new DuskMultisamplePluginFormat());
+   #endif
 
     loadCache();
 }
