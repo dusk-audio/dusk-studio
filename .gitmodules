@@ -1,0 +1,3 @@
+[submodule "external/sfizz"]
+	path = external/sfizz
+	url = https://github.com/sfztools/sfizz.git

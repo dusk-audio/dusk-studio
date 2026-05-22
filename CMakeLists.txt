@@ -541,6 +541,34 @@ if(DEFINED DUSK_PLUGINS_PATH)
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_DUSK_DSP=1)
 endif()
 
+# Sfizz native sampler engine (BSD-2-Clause). Vendored as a git
+# submodule under external/sfizz; built as a static library so we
+# don't ship a separate .so/.dylib + dlopen at startup. Library-only
+# build: no JACK CLI, no MIDI-file renderer, no benchmarks/tests/demos.
+# DuskMultisampleProcessor (src/engine/multisample/) wraps it as a
+# juce::AudioPluginInstance.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/src/sfizz.h")
+    set(SFIZZ_JACK      OFF CACHE BOOL "" FORCE)
+    set(SFIZZ_RENDER    OFF CACHE BOOL "" FORCE)
+    set(SFIZZ_BENCHMARKS OFF CACHE BOOL "" FORCE)
+    set(SFIZZ_TESTS     OFF CACHE BOOL "" FORCE)
+    set(SFIZZ_DEMOS     OFF CACHE BOOL "" FORCE)
+    set(SFIZZ_DEVTOOLS  OFF CACHE BOOL "" FORCE)
+    set(SFIZZ_SHARED    OFF CACHE BOOL "" FORCE)
+    set(SFIZZ_USE_SNDFILE OFF CACHE BOOL "" FORCE)
+    # We don't ship sfizz as an LV2 / VST3 plugin - just the library.
+    set(SFIZZ_LV2  OFF CACHE BOOL "" FORCE)
+    set(SFIZZ_VST3 OFF CACHE BOOL "" FORCE)
+    set(SFIZZ_VST2 OFF CACHE BOOL "" FORCE)
+    set(SFIZZ_AU   OFF CACHE BOOL "" FORCE)
+    set(SFIZZ_GIT_SUBMODULE_CHECK OFF CACHE BOOL "" FORCE)
+    add_subdirectory(external/sfizz EXCLUDE_FROM_ALL)
+    target_link_libraries(DuskStudio PRIVATE sfizz::static)
+    target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_MULTISAMPLE=1)
+    target_sources(DuskStudio PRIVATE
+        src/engine/multisample/DuskMultisampleProcessor.cpp)
+endif()
+
 target_compile_definitions(DuskStudio PRIVATE
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
