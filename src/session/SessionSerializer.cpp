@@ -678,7 +678,7 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm)
     // the JSON stay empty (default-constructed). 3c-i loads only; 3c-ii
     // adds Write which mutates lanes mid-play via an atomic-swap pattern.
     if (v.hasProperty ("automation_mode"))
-        t.automationMode.store ((int) v["automation_mode"], std::memory_order_relaxed);
+        t.automationMode.store ((int) v["automation_mode"], std::memory_order_release);
     for (auto& lane : t.automationLanes)
         lane.points.clear();
     if (auto autoVar = v["automation"]; autoVar.isObject())
@@ -1106,6 +1106,7 @@ juce::String SessionSerializer::serialize (const Session& s)
             o->setProperty ("target",      (int) b.target);
             o->setProperty ("target_idx",  b.targetIndex);
             o->setProperty ("param_idx",   b.paramIndex);
+            o->setProperty ("button_mode", (int) b.buttonMode);
             arr.add (juce::var (o));
         }
         tport->setProperty ("midi_bindings", arr);
@@ -1256,7 +1257,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
 
             if (v.hasProperty ("automation_mode"))
                 lane.params.automationMode.store ((int) v["automation_mode"],
-                                                   std::memory_order_relaxed);
+                                                   std::memory_order_release);
             for (auto& al : lane.params.automationLanes)
                 al.points.clear();
             if (auto autoObj = v["automation"]; autoObj.isObject())
@@ -1275,8 +1276,10 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                         if (! pv.isObject()) continue;
                         AutomationPoint pt;
                         pt.timeSamples   = (juce::int64) pv["t"];
-                        pt.value         = (float) (double) pv["v"];
-                        pt.recordedAtBPM = (float) (double) pv["bpm"];
+                        pt.value         = juce::jlimit (0.0f, 1.0f, (float) (double) pv["v"]);
+                        pt.recordedAtBPM = pv.hasProperty ("bpm")
+                            ? (float) (double) pv["bpm"]
+                            : 120.0f;
                         al.points.push_back (pt);
                     }
                 }
@@ -1307,7 +1310,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         if (master.hasProperty ("tape_state"))   s.master().tapeStateBase64 = master["tape_state"].toString();
         if (master.hasProperty ("automation_mode"))
             s.master().automationMode.store ((int) master["automation_mode"],
-                                              std::memory_order_relaxed);
+                                              std::memory_order_release);
         for (auto& al : s.master().automationLanes)
             al.points.clear();
         if (auto autoObj = master["automation"]; autoObj.isObject())
@@ -1326,8 +1329,10 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                     if (! pv.isObject()) continue;
                     AutomationPoint pt;
                     pt.timeSamples   = (juce::int64) pv["t"];
-                    pt.value         = (float) (double) pv["v"];
-                    pt.recordedAtBPM = (float) (double) pv["bpm"];
+                    pt.value         = juce::jlimit (0.0f, 1.0f, (float) (double) pv["v"]);
+                    pt.recordedAtBPM = pv.hasProperty ("bpm")
+                        ? (float) (double) pv["bpm"]
+                        : 120.0f;
                     al.points.push_back (pt);
                 }
             }
@@ -1438,8 +1443,13 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                     v.hasProperty ("data") ? (int) v["data"] : 0);
                 const int rawTrig = v.hasProperty ("trigger") ? (int) v["trigger"]
                                                               : (int) MidiBindingTrigger::CC;
-                b.trigger = (rawTrig == (int) MidiBindingTrigger::Note)
-                    ? MidiBindingTrigger::Note : MidiBindingTrigger::CC;
+                switch (rawTrig)
+                {
+                    case (int) MidiBindingTrigger::Note:       b.trigger = MidiBindingTrigger::Note;       break;
+                    case (int) MidiBindingTrigger::PitchBend:  b.trigger = MidiBindingTrigger::PitchBend;  break;
+                    case (int) MidiBindingTrigger::MmcCommand: b.trigger = MidiBindingTrigger::MmcCommand; break;
+                    default:                                   b.trigger = MidiBindingTrigger::CC;         break;
+                }
                 const int rawTgt = v.hasProperty ("target") ? (int) v["target"]
                                                             : (int) MidiBindingTarget::None;
                 // Map every legal enumerator; everything else falls back to
@@ -1493,6 +1503,11 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                 // round-trip cleanly.
                 if (v.hasProperty ("param_idx"))
                     b.paramIndex = juce::jlimit (0, 65535, (int) v["param_idx"]);
+                if (v.hasProperty ("button_mode"))
+                {
+                    const int bm = juce::jlimit (0, 1, (int) v["button_mode"]);
+                    b.buttonMode = (MidiButtonMode) bm;
+                }
                 if (b.isValid())
                     fresh->push_back (b);
             }

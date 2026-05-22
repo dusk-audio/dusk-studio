@@ -19,8 +19,31 @@ namespace duskstudio
 
 enum class MidiBindingTrigger : int
 {
-    CC   = 0,    // dataNumber = controller number (0..127)
-    Note = 1,    // dataNumber = note number (0..127)
+    CC         = 0,   // dataNumber = controller number (0..127)
+    Note       = 1,   // dataNumber = note number (0..127)
+    PitchBend  = 2,   // dataNumber unused (pitch-bend is per-channel only).
+                      // 14-bit value 0..16383 — used for MCU-style fader
+                      // controllers (Mackie / X-Touch / Panorama T6 etc).
+    MmcCommand = 3,   // dataNumber = MMC command code (juce::MidiMessage::
+                      //   MidiMachineControlCommand: 1=stop, 2=play, 3=def-play,
+                      //   4=ffwd, 5=rew, 6=recStart, 7=recStop, 9=pause).
+                      // Channel unused (MMC is sysex, no channel). Always
+                      // treated as a one-shot press; value ignored.
+};
+
+// Discrete-target trigger behaviour. Two flavours of hardware button
+// produce different CC patterns that look the same on the wire:
+//   • Momentary (B-type): each physical press sends 127 then 0.
+//     Rising-edge detection (val ≥ 64) fires once per click — correct.
+//   • Latching/Toggle (D-type): each physical press alternates 127/0.
+//     Rising-edge fires every other click — needs to fire on every
+//     received message to toggle once per click.
+// We can't tell them apart from the MIDI stream, so the user picks via
+// the right-click menu. Default = Press (covers the common case).
+enum class MidiButtonMode : int
+{
+    Press  = 0,    // Rising edge only (val ≥ 64). Momentary / B-type.
+    Toggle = 1,    // Fire on every received message. Latching / D-type.
 };
 
 enum class MidiBindingTarget : int
@@ -158,6 +181,9 @@ struct MidiBinding
     // time from PluginSlot::getLastTouchedParamIndex. Zero / unused
     // for every other target.
     int paramIndex = 0;
+    // For discrete (button) targets only — see MidiButtonMode doc.
+    // Ignored for continuous targets.
+    MidiButtonMode buttonMode = MidiButtonMode::Press;
 
     // True when this binding is live (target != None and dataNumber valid).
     bool isValid() const noexcept
@@ -174,7 +200,14 @@ struct MidiBinding
     bool sourceMatches (int ch, int dn, MidiBindingTrigger tg) const noexcept
     {
         if (trigger != tg) return false;
+        // Per-trigger matching shape:
+        //  CC / Note:  dataNumber + channel (channel == 0 is wildcard)
+        //  PitchBend:  channel only (no dataNumber concept)
+        //  MmcCommand: dataNumber only (sysex, no channel)
+        if (trigger == MidiBindingTrigger::PitchBend)
+            return channel == 0 || channel == ch;
         if (dataNumber != dn) return false;
+        if (trigger == MidiBindingTrigger::MmcCommand) return true;
         if (channel != 0 && channel != ch) return false;
         return true;
     }

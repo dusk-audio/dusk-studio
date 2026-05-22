@@ -125,12 +125,43 @@ namespace
 {
 juce::String describeBinding (const MidiBinding& b)
 {
+    if (b.trigger == MidiBindingTrigger::MmcCommand)
+    {
+        static constexpr const char* names[] = {
+            "?", "Stop", "Play", "DefPlay", "FFwd", "Rew",
+            "RecStart", "RecStop", "?", "Pause"
+        };
+        const int cmd = b.dataNumber;
+        const char* name = (cmd >= 1 && cmd <= 9) ? names[cmd] : "?";
+        return juce::String ("MMC ") + name;
+    }
     auto chStr = b.channel == 0 ? juce::String ("Ch -")
                                 : "Ch " + juce::String (b.channel);
+    if (b.trigger == MidiBindingTrigger::PitchBend)
+        return chStr + " PitchBend";
     auto kindStr = b.trigger == MidiBindingTrigger::CC ? "CC " : "Note ";
     return chStr + " " + kindStr + juce::String (b.dataNumber);
 }
 } // namespace
+
+// Discrete (toggle) targets — those that show "Button mode" in the
+// learn menu so the user can switch a latching D-type controller from
+// the default rising-edge fire to fire-on-every-message.
+static bool isToggleTarget (MidiBindingTarget t) noexcept
+{
+    switch (t)
+    {
+        case MidiBindingTarget::TrackMute:
+        case MidiBindingTarget::TrackSolo:
+        case MidiBindingTarget::TrackArm:
+        case MidiBindingTarget::BusMute:
+        case MidiBindingTarget::BusSolo:
+        case MidiBindingTarget::AuxLaneMute:
+            return true;
+        default:
+            return false;
+    }
+}
 
 void showLearnMenu (juce::Component& target,
                     Session& session,
@@ -158,6 +189,41 @@ void showLearnMenu (juce::Component& target,
     {
         const auto label = "Bound: " + describeBinding (*existing);
         m.addItem (label, false, false, []{});
+
+        // Button-mode submenu for discrete (toggle) targets. Lets the
+        // user flip a binding from rising-edge (default — fires once on
+        // press 127, releases on 0) to fire-on-every-message for
+        // latching controllers whose physical press alternates 127/0
+        // each click (e.g. Panorama T6 in some modes).
+        if (isToggleTarget (kind))
+        {
+            const auto mode = existing->buttonMode;
+            juce::PopupMenu modeMenu;
+            modeMenu.addItem ("Press (momentary 127 → 0)",
+                                true, mode == MidiButtonMode::Press,
+                [&session, kind, index]
+                {
+                    session.midiBindings.mutate ([kind, index] (std::vector<MidiBinding>& binds)
+                    {
+                        for (auto& x : binds)
+                            if (x.target == kind && x.targetIndex == index)
+                                x.buttonMode = MidiButtonMode::Press;
+                    });
+                });
+            modeMenu.addItem ("Toggle (latching 127 ↔ 0)",
+                                true, mode == MidiButtonMode::Toggle,
+                [&session, kind, index]
+                {
+                    session.midiBindings.mutate ([kind, index] (std::vector<MidiBinding>& binds)
+                    {
+                        for (auto& x : binds)
+                            if (x.target == kind && x.targetIndex == index)
+                                x.buttonMode = MidiButtonMode::Toggle;
+                    });
+                });
+            m.addSubMenu ("Button mode", modeMenu);
+        }
+
         m.addItem ("Forget binding", true, false,
             [&session, kind, index]
             {
@@ -194,6 +260,7 @@ juce::String serializeBindingsPreset (const std::vector<MidiBinding>& binds)
         o->setProperty ("target",      (int) b.target);
         o->setProperty ("target_idx",  b.targetIndex);
         o->setProperty ("param_idx",   b.paramIndex);
+        o->setProperty ("button_mode", (int) b.buttonMode);
         arr.add (juce::var (o));
     }
     root->setProperty ("bindings", arr);
@@ -224,8 +291,13 @@ std::vector<MidiBinding> deserializeBindingsPreset (const juce::String& json)
             v.hasProperty ("data") ? (int) v["data"] : 0);
         const int rawTrig = v.hasProperty ("trigger") ? (int) v["trigger"]
                                                       : (int) MidiBindingTrigger::CC;
-        b.trigger = (rawTrig == (int) MidiBindingTrigger::Note)
-                       ? MidiBindingTrigger::Note : MidiBindingTrigger::CC;
+        switch (rawTrig)
+        {
+            case (int) MidiBindingTrigger::Note:       b.trigger = MidiBindingTrigger::Note;       break;
+            case (int) MidiBindingTrigger::PitchBend:  b.trigger = MidiBindingTrigger::PitchBend;  break;
+            case (int) MidiBindingTrigger::MmcCommand: b.trigger = MidiBindingTrigger::MmcCommand; break;
+            default:                                   b.trigger = MidiBindingTrigger::CC;         break;
+        }
         const int rawTgt = v.hasProperty ("target") ? (int) v["target"]
                                                     : (int) MidiBindingTarget::None;
         // Reject unknown target ints up front so a malformed / forward-
@@ -264,6 +336,11 @@ std::vector<MidiBinding> deserializeBindingsPreset (const juce::String& json)
         }
         b.targetIndex = v.hasProperty ("target_idx") ? (int) v["target_idx"] : 0;
         b.paramIndex  = v.hasProperty ("param_idx")  ? (int) v["param_idx"]  : 0;
+        if (v.hasProperty ("button_mode"))
+        {
+            const int bm = juce::jlimit (0, 1, (int) v["button_mode"]);
+            b.buttonMode = (MidiButtonMode) bm;
+        }
         if (b.isValid()) out.push_back (b);
     }
     return out;

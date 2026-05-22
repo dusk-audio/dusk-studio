@@ -1374,8 +1374,15 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
     // actions queue into pendingTransportAction (engine.play/stop/record
     // aren't RT-safe). Note triggers fire on press only (NoteOn vel > 0);
     // NoteOff and CC release are ignored per the v1 spec.
+    //
+    // Also enter the loop when a MIDI Learn capture is pending — the
+    // capture lives inside this loop, and gating it on bindings being
+    // non-empty would make it impossible to learn the FIRST binding
+    // (no bindings → no loop → no capture → no first binding ever).
     const auto* bindings = session.midiBindings.read();
-    if (bindings != nullptr && ! bindings->empty())
+    const bool hasBindings = bindings != nullptr && ! bindings->empty();
+    const bool learnPending = session.midiLearnPending.load (std::memory_order_relaxed) >= 0;
+    if (hasBindings || learnPending)
     {
         for (const auto& buf : perInputMidi)
         {
@@ -1385,8 +1392,10 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                 const auto m = meta.getMessage();
                 MidiBindingTrigger tg;
                 int dn = 0, val = 0;
-                if      (m.isController())             { tg = MidiBindingTrigger::CC;   dn = m.getControllerNumber(); val = m.getControllerValue(); }
-                else if (m.isNoteOn() && m.getVelocity() > 0) { tg = MidiBindingTrigger::Note; dn = m.getNoteNumber();       val = m.getVelocity(); }
+                if      (m.isController())                    { tg = MidiBindingTrigger::CC;         dn = m.getControllerNumber(); val = m.getControllerValue(); }
+                else if (m.isNoteOn() && m.getVelocity() > 0) { tg = MidiBindingTrigger::Note;       dn = m.getNoteNumber();       val = m.getVelocity(); }
+                else if (m.isPitchWheel())                    { tg = MidiBindingTrigger::PitchBend;  dn = 0;                       val = m.getPitchWheelValue(); }
+                else if (m.isMidiMachineControlMessage())     { tg = MidiBindingTrigger::MmcCommand; dn = (int) m.getMidiMachineControlCommand(); val = 127; }
                 else continue;
                 const int ch = m.getChannel();
 
@@ -1403,10 +1412,40 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                         packLearnCapture (tg, ch, dn), std::memory_order_relaxed);
                 }
 
+                if (! hasBindings) continue;
                 for (const auto& b : *bindings)
                 {
                     if (! b.sourceMatches (ch, dn, tg)) continue;
                     if (! b.isValid()) continue;
+
+                    // 7-bit (CC/Note vel) and 14-bit (pitch-bend) sources
+                    // normalize to a common 0..1 fraction. `pressed` is the
+                    // trigger for discrete (toggle) targets — its
+                    // definition depends on `buttonMode` so latching
+                    // controllers (D-type buttons that alternate 127/0
+                    // each press, e.g. Panorama T6 in some modes) toggle
+                    // once per physical press instead of every other.
+                    //
+                    // MMC commands are one-shot events with no value — treat
+                    // them as fully-pressed (frac = 1, pressed = true) so a
+                    // bound transport / arm target fires on receipt.
+                    float frac;
+                    bool pressed;
+                    if (b.trigger == MidiBindingTrigger::MmcCommand)
+                    {
+                        frac = 1.0f; pressed = true;
+                    }
+                    else if (b.trigger == MidiBindingTrigger::PitchBend)
+                    {
+                        frac = (float) val / 16383.0f; pressed = val >= 8192;
+                    }
+                    else
+                    {
+                        frac = (float) val / 127.0f;
+                        pressed = (b.buttonMode == MidiButtonMode::Toggle)
+                                      ? true              // fire every received CC / Note
+                                      : (val >= 64);      // rising-edge / level threshold
+                    }
 
                     switch (b.target)
                     {
@@ -1430,10 +1469,11 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                         case MidiBindingTarget::TrackFader:
                             if (b.targetIndex >= 0 && b.targetIndex < Session::kNumTracks)
                             {
-                                // CC 0..127 -> -90..+12 dB linearly. -90 maps below
-                                // the kFaderInfThreshDb hard-mute floor so a value
-                                // of 0 cleanly silences the strip.
-                                const float frac = (float) val / 127.0f;
+                                // 0..1 fraction maps to -90..+12 dB linearly. -90
+                                // sits below the kFaderInfThreshDb hard-mute floor
+                                // so a zero-position fader cleanly silences the
+                                // strip. Pitch-bend's 14-bit resolution gives a
+                                // ~128x finer dB step than 7-bit CC.
                                 const float db = -90.0f + frac * (12.0f + 90.0f);
                                 session.track (b.targetIndex).strip.faderDb.store (
                                     db, std::memory_order_relaxed);
@@ -1442,13 +1482,13 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                         case MidiBindingTarget::TrackPan:
                             if (b.targetIndex >= 0 && b.targetIndex < Session::kNumTracks)
                             {
-                                const float p = ((float) val / 127.0f) * 2.0f - 1.0f;
+                                const float p = frac * 2.0f - 1.0f;
                                 session.track (b.targetIndex).strip.pan.store (
                                     p, std::memory_order_relaxed);
                             }
                             break;
                         case MidiBindingTarget::TrackMute:
-                            if (val >= 64 && b.targetIndex >= 0 && b.targetIndex < Session::kNumTracks)
+                            if (pressed && b.targetIndex >= 0 && b.targetIndex < Session::kNumTracks)
                             {
                                 auto& a = session.track (b.targetIndex).strip.mute;
                                 a.store (! a.load (std::memory_order_relaxed),
@@ -1456,28 +1496,36 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                             }
                             break;
                         case MidiBindingTarget::TrackSolo:
-                            if (val >= 64 && b.targetIndex >= 0 && b.targetIndex < Session::kNumTracks)
+                            if (pressed && b.targetIndex >= 0 && b.targetIndex < Session::kNumTracks)
                             {
-                                auto& a = session.track (b.targetIndex).strip.solo;
-                                a.store (! a.load (std::memory_order_relaxed),
-                                          std::memory_order_relaxed);
+                                // Route through Session helper so the
+                                // soloTrackCount RT counter stays in sync.
+                                // Direct atom store bypasses the counter
+                                // → audio thread misjudges "any soloed?".
+                                const bool was = session.track (b.targetIndex).strip.solo
+                                                       .load (std::memory_order_relaxed);
+                                session.setTrackSoloed (b.targetIndex, ! was);
                             }
                             break;
                         case MidiBindingTarget::TrackArm:
-                            if (val >= 64 && b.targetIndex >= 0 && b.targetIndex < Session::kNumTracks)
+                            if (pressed && b.targetIndex >= 0 && b.targetIndex < Session::kNumTracks)
                             {
-                                auto& a = session.track (b.targetIndex).recordArmed;
-                                a.store (! a.load (std::memory_order_relaxed),
-                                          std::memory_order_relaxed);
+                                // Same counter-consistency reason as solo
+                                // above: setTrackArmed maintains
+                                // armedTrackCount which gates the
+                                // "any-armed" fast path.
+                                const bool was = session.track (b.targetIndex).recordArmed
+                                                       .load (std::memory_order_relaxed);
+                                session.setTrackArmed (b.targetIndex, ! was);
                             }
                             break;
                         case MidiBindingTarget::TrackAuxSend:
                         {
                             // Decode the packed (track, aux) index and map
-                            // CC 0..127 onto the aux-send dB range. CC 0
-                            // lands on the kAuxSendOffDb sentinel so a
-                            // fully-down controller hard-mutes the send
-                            // (matches the UI knob's CCW behaviour).
+                            // the 0..1 fraction onto the aux-send dB range.
+                            // A zero-position source lands on the kAuxSendOffDb
+                            // sentinel so a fully-down controller hard-mutes the
+                            // send (matches the UI knob's CCW behaviour).
                             const int trk = unpackTrackAuxTrack (b.targetIndex);
                             const int aux = unpackTrackAuxLane  (b.targetIndex);
                             if (trk >= 0 && trk < Session::kNumTracks
@@ -1486,9 +1534,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                                 const float db = (val == 0)
                                     ? ChannelStripParams::kAuxSendOffDb
                                     : ChannelStripParams::kAuxSendMinDb
-                                       + ((float) val / 127.0f)
-                                          * (ChannelStripParams::kAuxSendMaxDb
-                                             - ChannelStripParams::kAuxSendMinDb);
+                                       + frac * (ChannelStripParams::kAuxSendMaxDb
+                                                 - ChannelStripParams::kAuxSendMinDb);
                                 session.track (trk).strip.auxSendDb[(size_t) aux]
                                     .store (db, std::memory_order_relaxed);
                             }
@@ -1496,9 +1543,9 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                         }
                         case MidiBindingTarget::TrackHpfFreq:
                         {
-                            // CC 0 maps to kHpfOffHz (bypass sentinel). 1..127
-                            // is log-mapped over the rest of the range so the
-                            // perceived sweep stays linear across the band.
+                            // Zero-position maps to kHpfOffHz (bypass sentinel).
+                            // Above zero is log-mapped across the band so the
+                            // perceived sweep stays linear.
                             if (b.targetIndex >= 0 && b.targetIndex < Session::kNumTracks)
                             {
                                 float freq;
@@ -1510,7 +1557,6 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                                 {
                                     const float lo = ChannelStripParams::kHpfMinHz;
                                     const float hi = ChannelStripParams::kHpfMaxHz;
-                                    const float frac = (float) val / 127.0f;
                                     freq = lo * std::exp (std::log (hi / lo) * frac);
                                 }
                                 session.track (b.targetIndex).strip.hpfFreq
@@ -1523,7 +1569,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                         }
                         case MidiBindingTarget::TrackEqGain:
                         {
-                            // CC 0..127 -> -15..+15 dB linearly. Band index
+                            // 0..1 fraction -> -15..+15 dB linearly. Band index
                             // 0=LF, 1=LM, 2=HM, 3=HF; the apply path writes
                             // the matching atom on the strip.
                             const int trk  = unpackTrackEqTrack (b.targetIndex);
@@ -1531,7 +1577,6 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                             if (trk >= 0 && trk < Session::kNumTracks
                                 && band >= 0 && band < kPackedEqBands)
                             {
-                                const float frac = (float) val / 127.0f;
                                 const float db = -15.0f + frac * 30.0f;
                                 auto& strip = session.track (trk).strip;
                                 switch (band)
@@ -1558,7 +1603,6 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                             auto& strip = session.track (b.targetIndex).strip;
                             const int mode = juce::jlimit (0, 2,
                                 strip.compMode.load (std::memory_order_relaxed));
-                            const float frac = (float) val / 127.0f;
                             const bool isMakeup = (b.target == MidiBindingTarget::TrackCompMakeup);
                             auto remap = [frac] (float lo, float hi)
                             {
@@ -1591,7 +1635,6 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                         case MidiBindingTarget::BusFader:
                             if (b.targetIndex >= 0 && b.targetIndex < Session::kNumBuses)
                             {
-                                const float frac = (float) val / 127.0f;
                                 const float db = -90.0f + frac * (12.0f + 90.0f);
                                 session.bus (b.targetIndex).strip.faderDb.store (
                                     db, std::memory_order_relaxed);
@@ -1600,13 +1643,13 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                         case MidiBindingTarget::BusPan:
                             if (b.targetIndex >= 0 && b.targetIndex < Session::kNumBuses)
                             {
-                                const float p = ((float) val / 127.0f) * 2.0f - 1.0f;
+                                const float p = frac * 2.0f - 1.0f;
                                 session.bus (b.targetIndex).strip.pan.store (
                                     p, std::memory_order_relaxed);
                             }
                             break;
                         case MidiBindingTarget::BusMute:
-                            if (val >= 64 && b.targetIndex >= 0 && b.targetIndex < Session::kNumBuses)
+                            if (pressed && b.targetIndex >= 0 && b.targetIndex < Session::kNumBuses)
                             {
                                 auto& a = session.bus (b.targetIndex).strip.mute;
                                 a.store (! a.load (std::memory_order_relaxed),
@@ -1618,7 +1661,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                             // anyBusSoloed counter stays in sync (the audio
                             // thread relies on it for O(1) "is any bus
                             // soloed?" checks).
-                            if (val >= 64 && b.targetIndex >= 0 && b.targetIndex < Session::kNumBuses)
+                            if (pressed && b.targetIndex >= 0 && b.targetIndex < Session::kNumBuses)
                             {
                                 const bool was = session.bus (b.targetIndex)
                                                        .strip.solo.load (std::memory_order_relaxed);
@@ -1627,37 +1670,34 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                             break;
                         case MidiBindingTarget::TrackPluginParam:
                         {
-                            // CC 0..127 -> 0..1 normalised. Targets the
-                            // strip's plugin slot at the param index
-                            // stored in the binding (filled at learn-
-                            // resolve time from the slot's last-touched
-                            // tracker). paramIndex >= 0 is enforced
-                            // here so the apply site matches the
-                            // inline-validation pattern other targets
-                            // use; setParamNormalised also no-ops on
-                            // out-of-range as a second line of defence.
+                            // 0..1 fraction targets the strip's plugin slot
+                            // at the param index stored in the binding
+                            // (filled at learn-resolve time from the slot's
+                            // last-touched tracker). paramIndex >= 0 is
+                            // enforced here so the apply site matches the
+                            // inline-validation pattern other targets use;
+                            // setParamNormalised also no-ops on out-of-range
+                            // as a second line of defence.
                             if (b.targetIndex >= 0
                                 && b.targetIndex < Session::kNumTracks
                                 && b.paramIndex >= 0)
                             {
-                                const float v = (float) val / 127.0f;
                                 getChannelStrip (b.targetIndex)
                                     .getPluginSlot()
-                                    .setParamNormalised (b.paramIndex, v);
+                                    .setParamNormalised (b.paramIndex, frac);
                             }
                             break;
                         }
                         case MidiBindingTarget::AuxLaneFader:
                             if (b.targetIndex >= 0 && b.targetIndex < Session::kNumAuxLanes)
                             {
-                                const float frac = (float) val / 127.0f;
                                 const float db = -90.0f + frac * (12.0f + 90.0f);
                                 session.auxLane (b.targetIndex).params.returnLevelDb
                                     .store (db, std::memory_order_relaxed);
                             }
                             break;
                         case MidiBindingTarget::AuxLaneMute:
-                            if (val >= 64 && b.targetIndex >= 0 && b.targetIndex < Session::kNumAuxLanes)
+                            if (pressed && b.targetIndex >= 0 && b.targetIndex < Session::kNumAuxLanes)
                             {
                                 auto& a = session.auxLane (b.targetIndex).params.mute;
                                 a.store (! a.load (std::memory_order_relaxed),
@@ -1667,7 +1707,6 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
 
                         case MidiBindingTarget::MasterFader:
                         {
-                            const float frac = (float) val / 127.0f;
                             const float db = -90.0f + frac * (12.0f + 90.0f);
                             session.master().faderDb.store (db, std::memory_order_relaxed);
                             break;
