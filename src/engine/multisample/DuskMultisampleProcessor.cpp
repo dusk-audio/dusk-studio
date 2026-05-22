@@ -1,14 +1,12 @@
 #include "DuskMultisampleProcessor.h"
 
+#include <sfizz.h>
+
 namespace duskstudio
 {
-// Forward-decl Impl so the unique_ptr in the header is happy. Step 2
-// fills this with the sfizz_synth_t* + the loaded file path + the
-// override-param atomics. Step 1 is intentionally empty so the
-// processor builds against sfizz without invoking any of its API.
 struct DuskMultisampleProcessor::Impl
 {
-    // sfizz handle goes here in step 2.
+    sfizz_synth_t* synth { nullptr };
 };
 
 DuskMultisampleProcessor::DuskMultisampleProcessor()
@@ -21,45 +19,128 @@ DuskMultisampleProcessor::DuskMultisampleProcessor()
         .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
       impl (std::make_unique<Impl>())
 {
+    impl->synth = sfizz_create_synth();
+    // sfizz allocates per-voice state lazily on prepareToPlay, so the
+    // ctor is cheap. Polyphony default (128 voices on v1.2) is fine
+    // until step 5's editor exposes a slider override.
 }
 
-DuskMultisampleProcessor::~DuskMultisampleProcessor() = default;
+DuskMultisampleProcessor::~DuskMultisampleProcessor()
+{
+    if (impl != nullptr && impl->synth != nullptr)
+        sfizz_free (impl->synth);
+}
 
 void DuskMultisampleProcessor::prepareToPlay (double sampleRate, int blockSize)
 {
     currentSampleRate = sampleRate;
     currentBlockSize  = blockSize;
-    // sfizz_set_sample_rate / sfizz_set_samples_per_block land here in
-    // step 2. For step 1, the stub renders silence regardless of
-    // prepare params.
+    if (impl == nullptr || impl->synth == nullptr) return;
+    sfizz_set_sample_rate (impl->synth, (float) sampleRate);
+    sfizz_set_samples_per_block (impl->synth, blockSize);
 }
 
 void DuskMultisampleProcessor::releaseResources()
 {
-    // sfizz_synth_t teardown lands in step 2. Stub: nothing to release.
+    // sfizz keeps its voice state allocated across releaseResources -
+    // a subsequent prepareToPlay reuses the buffers. No-op here.
+}
+
+bool DuskMultisampleProcessor::loadSfzFile (const juce::File& sfz,
+                                              juce::String& errorMessage)
+{
+    if (impl == nullptr || impl->synth == nullptr)
+    {
+        errorMessage = "Internal: sfizz synth not initialised";
+        return false;
+    }
+    if (! sfz.existsAsFile())
+    {
+        errorMessage = "File does not exist: " + sfz.getFullPathName();
+        return false;
+    }
+    const auto path = sfz.getFullPathName().toStdString();
+    const bool ok = sfizz_load_file (impl->synth, path.c_str());
+    if (! ok)
+    {
+        errorMessage = "sfizz_load_file failed for " + sfz.getFileName();
+        return false;
+    }
+    loadedFilePath = sfz.getFullPathName();
+    return true;
 }
 
 void DuskMultisampleProcessor::processBlock (juce::AudioBuffer<float>& buf,
                                               juce::MidiBuffer& midi)
 {
     juce::ScopedNoDenormals noDenormals;
-    juce::ignoreUnused (midi);
-    // Silence: clear every output channel for the block. Step 2
-    // replaces this with sfizz_render_block().
-    buf.clear();
+    const int numSamples = buf.getNumSamples();
+    if (numSamples == 0) return;
+
+    if (impl == nullptr || impl->synth == nullptr)
+    {
+        buf.clear();
+        return;
+    }
+
+    // Dispatch incoming MIDI events to sfizz. sfizz batches them
+    // against the current block; delays are sample offsets within
+    // the block.
+    for (const auto meta : midi)
+    {
+        const auto m = meta.getMessage();
+        const int delay = juce::jlimit (0, numSamples - 1, meta.samplePosition);
+        if (m.isNoteOn())
+            sfizz_send_note_on (impl->synth, delay,
+                                 m.getNoteNumber(), m.getVelocity());
+        else if (m.isNoteOff())
+            sfizz_send_note_off (impl->synth, delay,
+                                  m.getNoteNumber(), m.getVelocity());
+        else if (m.isController())
+            sfizz_send_cc (impl->synth, delay,
+                            m.getControllerNumber(), m.getControllerValue());
+        else if (m.isPitchWheel())
+            sfizz_send_pitch_wheel (impl->synth, delay, m.getPitchWheelValue());
+        else if (m.isChannelPressure())
+            sfizz_send_channel_aftertouch (impl->synth, delay,
+                                            m.getChannelPressureValue());
+    }
+
+    // Render. sfizz wants float** with 2 channels for the default
+    // stereo output layout. JUCE's AudioBuffer already gives us
+    // contiguous per-channel pointers.
+    float* chans[2] = { buf.getWritePointer (0), buf.getWritePointer (1) };
+    sfizz_render_block (impl->synth, chans, 2, numSamples);
 }
 
 void DuskMultisampleProcessor::getStateInformation (juce::MemoryBlock& block)
 {
-    juce::ignoreUnused (block);
     // Step 4 carries (a) the loaded file path + (b) the override
-    // params. For now, empty state is correct - PluginSlot's
-    // setStateInformation no-ops on a zero-length block.
+    // params. For now, persist just the file path so a session
+    // reload re-loads the same .sfz.
+    juce::ValueTree state ("DuskMultisample");
+    state.setProperty ("file", loadedFilePath, nullptr);
+    juce::MemoryOutputStream stream (block, false);
+    state.writeToStream (stream);
 }
 
 void DuskMultisampleProcessor::setStateInformation (const void* data, int size)
 {
-    juce::ignoreUnused (data, size);
+    if (data == nullptr || size <= 0) return;
+    juce::MemoryInputStream stream (data, (size_t) size, false);
+    const auto state = juce::ValueTree::readFromStream (stream);
+    if (! state.isValid()) return;
+    const auto path = state.getProperty ("file").toString();
+    if (path.isNotEmpty())
+    {
+        juce::String err;
+        loadSfzFile (juce::File (path), err);
+        // Loading errors are logged but non-fatal - the processor
+        // stays alive in a no-file state so the user can pick a
+        // replacement file via the editor.
+        if (err.isNotEmpty())
+            DBG ("DuskMultisample setState: " << err);
+    }
 }
 
 void DuskMultisampleProcessor::fillInPluginDescription (juce::PluginDescription& desc) const
@@ -73,7 +154,7 @@ void DuskMultisampleProcessor::fillInPluginDescription (juce::PluginDescription&
     desc.category            = "Instrument";
     desc.manufacturerName    = "Dusk Audio";
     desc.version             = "0.9.0";
-    desc.fileOrIdentifier    = juce::String();  // file path lands at load time
+    desc.fileOrIdentifier    = loadedFilePath;   // empty until a file is loaded
     desc.isInstrument        = true;
     desc.numInputChannels    = 0;
     desc.numOutputChannels   = 2;

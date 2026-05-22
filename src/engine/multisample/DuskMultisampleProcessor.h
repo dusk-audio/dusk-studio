@@ -53,12 +53,24 @@ public:
     void fillInPluginDescription (juce::PluginDescription& desc) const override;
     void refreshParameterList() override {}
 
+    // Load an .sfz file synchronously on the message thread. Returns
+    // true + clears errorMessage on success. PluginSlot's atomic-swap
+    // pattern moves the loaded processor into place once this returns.
+    bool loadSfzFile (const juce::File& sfz, juce::String& errorMessage);
+
+    // True if a soundfont has been loaded. Used by editor UI to show
+    // "(no file)" vs the loaded file name.
+    bool hasLoadedFile() const noexcept { return loadedFilePath.isNotEmpty(); }
+    const juce::String& getLoadedFilePath() const noexcept { return loadedFilePath; }
+
 private:
     double currentSampleRate { 48000.0 };
     int    currentBlockSize  { 512 };
-    // sfizz handle lands in step 2. Forward-declared via void* so this
-    // header doesn't pull in sfizz.h - keeps compile time + ABI
-    // surface clean. The .cpp owns the type.
+    juce::String loadedFilePath;     // empty when no file loaded
+
+    // sfizz handle owned via pimpl so the public header doesn't drag
+    // in sfizz.h (keeps compile time + ABI surface clean). The .cpp
+    // owns the sfizz_synth_t*.
     struct Impl;
     std::unique_ptr<Impl> impl;
 };

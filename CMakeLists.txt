@@ -562,6 +562,46 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/src/sfizz.h")
     set(SFIZZ_VST2 OFF CACHE BOOL "" FORCE)
     set(SFIZZ_AU   OFF CACHE BOOL "" FORCE)
     set(SFIZZ_GIT_SUBMODULE_CHECK OFF CACHE BOOL "" FORCE)
+
+    # Configure-time patches against vendored sfizz v1.2.3. Re-applied
+    # idempotently on every reconfigure so a `git submodule update`
+    # that restores the upstream files doesn't break the build.
+    #
+    #   1) SfizzConfig.cmake: -mfpu=neon + -mfloat-abi=hard are armv7-
+    #      only flags but sfizz's regex matches "arm.*" which includes
+    #      arm64 (Apple Silicon + aarch64 Linux). Clang on arm64
+    #      rejects both flags.
+    #   2) atomic_queue.h: `Base::template do_pop_any` /
+    #      `do_push_any` reference non-template members. Apple Clang 21
+    #      promotes the resulting -Wmissing-template-arg-list-after-
+    #      template-kw warning to an error.
+    set(_duskstudio_sfizz_cfg
+        "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/cmake/SfizzConfig.cmake")
+    file(READ "${_duskstudio_sfizz_cfg}" _duskstudio_sfizz_cfg_src)
+    string(REPLACE "elseif(PROJECT_SYSTEM_PROCESSOR MATCHES \"(arm.*)\")"
+                   "elseif(PROJECT_SYSTEM_PROCESSOR MATCHES \"(arm.*)\" AND NOT PROJECT_SYSTEM_PROCESSOR MATCHES \"(aarch64|arm64)\")"
+                   _duskstudio_sfizz_cfg_patched "${_duskstudio_sfizz_cfg_src}")
+    if(NOT _duskstudio_sfizz_cfg_src STREQUAL _duskstudio_sfizz_cfg_patched)
+        file(WRITE "${_duskstudio_sfizz_cfg}" "${_duskstudio_sfizz_cfg_patched}")
+        message(STATUS "Dusk Studio: patched sfizz SfizzConfig.cmake (skip armv7 flags on arm64)")
+    endif()
+    unset(_duskstudio_sfizz_cfg_src)
+    unset(_duskstudio_sfizz_cfg_patched)
+    unset(_duskstudio_sfizz_cfg)
+
+    set(_duskstudio_atomic_queue_hdr
+        "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/external/atomic_queue/include/atomic_queue/atomic_queue.h")
+    file(READ "${_duskstudio_atomic_queue_hdr}" _duskstudio_aq_src)
+    string(REPLACE "Base::template do_pop_any("  "Base::do_pop_any("  _duskstudio_aq_patched "${_duskstudio_aq_src}")
+    string(REPLACE "Base::template do_push_any(" "Base::do_push_any(" _duskstudio_aq_patched "${_duskstudio_aq_patched}")
+    if(NOT _duskstudio_aq_src STREQUAL _duskstudio_aq_patched)
+        file(WRITE "${_duskstudio_atomic_queue_hdr}" "${_duskstudio_aq_patched}")
+        message(STATUS "Dusk Studio: patched sfizz atomic_queue.h (drop spurious template keyword)")
+    endif()
+    unset(_duskstudio_aq_src)
+    unset(_duskstudio_aq_patched)
+    unset(_duskstudio_atomic_queue_hdr)
+
     add_subdirectory(external/sfizz EXCLUDE_FROM_ALL)
     target_link_libraries(DuskStudio PRIVATE sfizz::static)
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_MULTISAMPLE=1)
