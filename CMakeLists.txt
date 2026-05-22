@@ -602,16 +602,36 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/src/sfizz.h")
     unset(_duskstudio_aq_patched)
     unset(_duskstudio_atomic_queue_hdr)
 
+    #   3) Voice.cpp: `0x1.fffffep-1` C99 hex-float literal. GCC 15
+    #      rejects hex-float literals in -std=c++14 mode (sfizz pins
+    #      that standard), reporting "exponent has no digits". The
+    #      replacement decimal rounds back to exactly the same float
+    #      (the IEEE single just below 1.0).
+    set(_duskstudio_voice_cpp
+        "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/src/sfizz/Voice.cpp")
+    file(READ "${_duskstudio_voice_cpp}" _duskstudio_voice_src)
+    string(REPLACE "0x1.fffffep-1" "0.99999994f"
+                   _duskstudio_voice_patched "${_duskstudio_voice_src}")
+    if(NOT _duskstudio_voice_src STREQUAL _duskstudio_voice_patched)
+        file(WRITE "${_duskstudio_voice_cpp}" "${_duskstudio_voice_patched}")
+        message(STATUS "Dusk Studio: patched sfizz Voice.cpp (replace C99 hex-float literal for GCC 15 -std=c++14)")
+    endif()
+    unset(_duskstudio_voice_src)
+    unset(_duskstudio_voice_patched)
+    unset(_duskstudio_voice_cpp)
+
     # Belt-and-suspenders integrity check: re-read after the patches
-    # ran and abort configure if either anchor string is back to its
+    # ran and abort configure if any anchor string is back to its
     # pre-patch form. Catches the case where a developer ran
     # `git submodule update` after configure (restoring upstream)
     # but didn't reconfigure - the build would otherwise fail later
     # with cryptic compile errors instead of a clear up-front message.
     file(READ "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/cmake/SfizzConfig.cmake" _dsk_chk_a)
     file(READ "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/external/atomic_queue/include/atomic_queue/atomic_queue.h" _dsk_chk_b)
+    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/src/sfizz/Voice.cpp" _dsk_chk_c)
     if(_dsk_chk_a MATCHES "elseif\\(PROJECT_SYSTEM_PROCESSOR MATCHES \"\\(arm\\.\\*\\)\"\\)\n[ \t]*add_compile_options\\(-mfpu=neon\\)"
-       OR _dsk_chk_b MATCHES "Base::template do_pop_any")
+       OR _dsk_chk_b MATCHES "Base::template do_pop_any"
+       OR _dsk_chk_c MATCHES "0x1\\.fffffep-1")
         message(FATAL_ERROR
             "external/sfizz patches missing - the submodule was likely "
             "restored by `git submodule update` after configure last ran. "
@@ -620,6 +640,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/src/sfizz.h")
     endif()
     unset(_dsk_chk_a)
     unset(_dsk_chk_b)
+    unset(_dsk_chk_c)
 
     add_subdirectory(external/sfizz EXCLUDE_FROM_ALL)
     target_link_libraries(DuskStudio PRIVATE sfizz::static)
@@ -688,8 +709,18 @@ target_link_libraries(DuskStudio PRIVATE
     juce::juce_gui_basics
     juce::juce_gui_extra
     juce::juce_recommended_config_flags
-    juce::juce_recommended_lto_flags
     juce::juce_recommended_warning_flags)
+
+# LTO is on by default for release builds (5-10% smaller binary, slight perf
+# win) but it serializes the GCC link stage — lto-wrapper runs LTRANS jobs
+# one at a time, idling 127 of your 128 cores for 2-4 minutes per build.
+# For local dev iterations that's painful, so make it opt-in: pass
+# -DDUSKSTUDIO_ENABLE_LTO=ON when you want it (CI / release packaging).
+if(DUSKSTUDIO_ENABLE_LTO)
+    target_link_libraries(DuskStudio PRIVATE juce::juce_recommended_lto_flags)
+else()
+    set_property(TARGET DuskStudio PROPERTY INTERPROCEDURAL_OPTIMIZATION FALSE)
+endif()
 
 # Treat warnings as errors on the Dusk Studio target. Off by default; opt-in
 # via -DDUSKSTUDIO_STRICT_WARNINGS=ON. Not yet enabled in CI because the

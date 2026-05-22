@@ -30,10 +30,19 @@ namespace
 // True when the process is attached to a Wayland session. The plugin
 // editor toplevels are still X11 (via XWayland) but the main window is
 // a wl_surface, which is what makes the X-side focus dance no-op.
+//
+// Cached on first call: $WAYLAND_DISPLAY is fixed for the lifetime of
+// the session-manager-spawned process, and re-reading per call let the
+// focus logic toggle if the env var were ever cleared mid-flight (which
+// some shells do for child processes).
 bool isWaylandSession()
 {
-    const char* wd = std::getenv ("WAYLAND_DISPLAY");
-    return wd != nullptr && *wd != '\0';
+    static const bool cached = []
+    {
+        const char* wd = std::getenv ("WAYLAND_DISPLAY");
+        return wd != nullptr && *wd != '\0';
+    }();
+    return cached;
 }
 
 juce::ComponentPeer* pickSiblingFocusTargetPeer (juce::Component& departing)

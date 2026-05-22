@@ -132,21 +132,28 @@ void DuskMultisampleEditor::openFileChooser()
 
     const auto flags = juce::FileBrowserComponent::openMode
                        | juce::FileBrowserComponent::canSelectFiles;
-    fileChooser->launchAsync (flags, [this] (const juce::FileChooser& fc)
+    // SafePointer guards against the user dismissing the chooser
+    // after this editor has already been destroyed (plugin removed
+    // / track torn down). Without it, the async callback would
+    // invoke methods on a deallocated `this`.
+    juce::Component::SafePointer<DuskMultisampleEditor> safe (this);
+    fileChooser->launchAsync (flags, [safe] (const juce::FileChooser& fc)
     {
+        auto* self = safe.getComponent();
+        if (self == nullptr) return;
         const auto file = fc.getResult();
         if (! file.existsAsFile()) return;
         if (file.getFileExtension().toLowerCase() == ".sf2")
         {
-            filePathLabel.setText ("(SF2 support lands in 1.0)",
-                                    juce::dontSendNotification);
+            self->filePathLabel.setText ("(SF2 support lands in 1.0)",
+                                          juce::dontSendNotification);
             return;
         }
         juce::String err;
-        if (! processor.loadSfzFile (file, err))
-            filePathLabel.setText ("(" + err + ")", juce::dontSendNotification);
+        if (! self->processor.loadSfzFile (file, err))
+            self->filePathLabel.setText ("(" + err + ")", juce::dontSendNotification);
         else
-            timerCallback();
+            self->timerCallback();
     });
 }
 

@@ -474,10 +474,32 @@ void McuReceiver::process (const juce::MidiBuffer& events,
             }
             if (cc == mcu::cc::JogWheel)
             {
-                // Jog wheel: same sign encoding as V-pot. Step 2 only
-                // decodes - actual playhead nudge is wired in step 3
-                // alongside the rest of the transport feedback.
-                juce::ignoreUnused (val);
+                // Jog wheel: same sign encoding as V-pot. Magnitude is
+                // detent count; nudge the playhead by a fixed sample
+                // count per detent (~50 ms at 48 kHz; close enough at
+                // common sample rates — jog feel is approximate).
+                // setPlayhead isn't RT-safe so queue via the existing
+                // pendingTransportPlayhead atom drained on the message
+                // thread (same channel Rewind / FFwd / MTC-chase use).
+                //
+                // Base the next target on any already-pending value
+                // first so multiple jog ticks arriving in the same
+                // audio block accumulate (otherwise rapid spins lose
+                // all but the last detent). Only fall back to the
+                // block-start playhead when no value is queued (-1
+                // sentinel).
+                const int magnitude = val & 0x3F;
+                const int delta     = (val & 0x40) ? -magnitude : +magnitude;
+                if (delta == 0) continue;
+                constexpr juce::int64 kSamplesPerDetent = 2400;
+                const auto stepSamples = (juce::int64) delta * kSamplesPerDetent;
+                const auto pending = session.pendingTransportPlayhead.load (
+                    std::memory_order_relaxed);
+                const juce::int64 base = (pending >= 0) ? pending : blockStartSample;
+                const juce::int64 target = juce::jmax ((juce::int64) 0,
+                                                         base + stepSamples);
+                session.pendingTransportPlayhead.store (target,
+                                                          std::memory_order_relaxed);
                 continue;
             }
         }
