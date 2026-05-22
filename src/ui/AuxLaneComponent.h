@@ -15,12 +15,12 @@ class AudioEngine;
 class AuxEditorHost;
 
 // AUX return lane. Three-column layout: aux-return strip (name, mute,
-// return fader, output meter) on the left, plugin host area in the
-// center, send-source panel showing every channel's send-to-this-lane
-// level on the right. The plugin editor is hosted by an AuxEditorHost -
-// a borderless X11 toplevel positioned over the center-column slot rect
-// so it reads as embedded. The editor cannot be a true Component child
-// on Wayland because X11 plugin windows can't reparent into a wl_surface.
+// return fader, output meter) on the left, plugin slot in the center,
+// send-source panel showing every channel's send-to-this-lane level on
+// the right. The plugin editor opens as a floating X11 toplevel
+// (AuxEditorHost) - true in-lane embedding isn't achievable on the
+// JUCE-wayland fork (X11 plugin sub-windows can't reparent into a
+// wl_surface and Wayland never exposes screen position to clients).
 class AuxLaneComponent final : public juce::Component, private juce::Timer
 {
 public:
@@ -53,7 +53,6 @@ private:
     void refreshSlotControls (int slotIdx);
     void createEditorHostForSlot (int slotIdx);
     void destroyEditorHostForSlot (int slotIdx);
-    juce::Rectangle<int> computeSlotScreenRect (int slotIdx) const;
 
     juce::Rectangle<int> getStripArea() const noexcept;
     juce::Rectangle<int> getCenterArea() const noexcept;
@@ -93,6 +92,7 @@ private:
         std::unique_ptr<juce::AudioProcessorEditor> editor;
         std::unique_ptr<AuxEditorHost>              editorHost;
         juce::String displayedName;
+        bool userClosedHost { false }; // true after user clicks the host's X — suppress rebuildSlots auto-recreate
     };
     std::array<SlotUI, AuxLaneParams::kMaxLanePlugins> slots;
     std::unique_ptr<juce::FileChooser> activePluginChooser;

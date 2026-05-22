@@ -1,4 +1,5 @@
 #include "MainComponent.h"
+#include <cstdio>
 #include <cstdlib>  // std::getenv (DUSKSTUDIO_USE_OOP_PLUGINS)
 #include "AudioSettingsPanel.h"
 #include "AuxView.h"
@@ -1069,6 +1070,8 @@ void MainComponent::switchToStage (AudioEngine::Stage s)
 {
     if (engine.getStage() == s) return;
 
+    std::fprintf (stderr, "[MainComponent] switchToStage(%d) enter\n", (int) s);
+    std::fflush (stderr);
     engine.setStage (s);
 
     // Mixing/Recording share the console + tape strip; Mastering swaps to
@@ -1105,10 +1108,17 @@ void MainComponent::switchToStage (AudioEngine::Stage s)
     {
         if (auxView == nullptr)
         {
+            std::fprintf (stderr, "[MainComponent] switchToStage(Aux): constructing AuxView\n");
+            std::fflush (stderr);
             auxView = std::make_unique<AuxView> (session, engine);
             addAndMakeVisible (auxView.get());
+            std::fprintf (stderr, "[MainComponent] switchToStage(Aux): AuxView constructed + addAndMakeVisible'd\n");
+            std::fflush (stderr);
         }
         auxView->setVisible (true);
+        std::fprintf (stderr, "[MainComponent] switchToStage(Aux): auxView setVisible(true), bounds=%d,%d %dx%d\n",
+                      auxView->getX(), auxView->getY(), auxView->getWidth(), auxView->getHeight());
+        std::fflush (stderr);
     }
     else if (auxView != nullptr)
     {

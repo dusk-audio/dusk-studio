@@ -36,8 +36,22 @@ public:
         : DocumentWindow (std::move (name),
                           juce::Desktop::getInstance().getDefaultLookAndFeel()
                               .findColour (juce::ResizableWindow::backgroundColourId),
-                          DocumentWindow::allButtons)
+                          DocumentWindow::allButtons,
+                          /*addToDesktop*/ false)
     {
+        // Defer addToDesktop until ALL style flags are set. Reason:
+        // setUsingNativeTitleBar + setResizable destroy + recreate the
+        // peer; if we add to desktop first, those calls each spawn a
+        // fresh peer (= 3 peers across MainWindow ctor). Doing style
+        // setup with no peer means flags are stashed and applied by
+        // the single addToDesktop call at the end of this ctor.
+        //
+        // Env-var gate: DUSKSTUDIO_FORCE_X11_MAIN=1 routes the peer to
+        // X11 (XWayland) instead of wl_surface. Required for embedded
+        // AUX plugin editors (X11 plugin sub-windows can't reparent
+        // into a wl_surface parent). Default = Wayland native.
+        const bool forceX11Main = std::getenv ("DUSKSTUDIO_FORCE_X11_MAIN") != nullptr;
+
         setUsingNativeTitleBar (true);
         setContentOwned (new MainComponent(), true);
         // Native title bar already provides edge resize handles on every OS
@@ -81,16 +95,26 @@ public:
             centreWithSize (getWidth(), getHeight());
         }
 
-        // Defer setVisible to the next message-loop tick so the bounds
-        // restoration above fully propagates before the wl_surface gets
-        // created. Without this, on the JUCE-wayland fork + libdecor,
-        // the surface briefly maps at libdecor's default size (small
-        // box, upper-left) before the compositor's configure event
-        // with the saved bounds lands - the user sees a flash of a
-        // tiny upper-left window before the real UI shows. Stock X11
-        // doesn't have this gap because XCB sets the configured size
-        // synchronously inside setVisible(true). Hiding explicitly
-        // avoids any chance JUCE's base ctor flipped the flag on.
+        // Single addToDesktop call with all style flags already set.
+        // X11-latched when forceX11Main is set so the peer factory in
+        // Component::createNewPeer picks LinuxComponentPeer (XWayland)
+        // instead of WaylandComponentPeer.
+        if (forceX11Main)
+            duskstudio::platform::preferX11ForNextNativeWindow();
+        addToDesktop (getDesktopWindowStyleFlags());
+        if (forceX11Main)
+            duskstudio::platform::clearPreferX11ForNativeWindow();
+
+        if (auto* p = getPeer())
+            std::fprintf (stderr,
+                          "[MainWindow] forceX11=%d peer=%p nativeHandle=%p\n",
+                          (int) forceX11Main,
+                          (void*) p, p->getNativeHandle());
+        std::fflush (stderr);
+
+        // Hide explicitly so the deferred setVisible(true) below gets
+        // a clean transition - JUCE's Component default is visible=true,
+        // and addToDesktop just made the peer visible.
         setVisible (false);
 
         // Combined async tick: setVisible(true) creates the peer at the

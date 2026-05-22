@@ -1,6 +1,7 @@
 #include "AuxView.h"
 #include "AuxLaneComponent.h"
 #include "../engine/AudioEngine.h"
+#include <cstdio>
 
 namespace duskstudio
 {
@@ -19,6 +20,8 @@ void styleSelectorButton (juce::TextButton& b, juce::Colour onColour)
 
 AuxView::AuxView (Session& session, AudioEngine& engine)
 {
+    std::fprintf (stderr, "[AuxView] ctor enter\n");
+    std::fflush (stderr);
     for (int i = 0; i < Session::kNumAuxLanes; ++i)
     {
         // Selector button. Use full-saturation accent (matches stage-tab
@@ -45,6 +48,8 @@ AuxView::AuxView (Session& session, AudioEngine& engine)
     }
 
     setActiveLane (0);
+    std::fprintf (stderr, "[AuxView] ctor exit\n");
+    std::fflush (stderr);
 }
 
 AuxView::~AuxView() = default;
@@ -112,6 +117,9 @@ void AuxView::paint (juce::Graphics& g)
 
 void AuxView::resized()
 {
+    std::fprintf (stderr, "[AuxView] resized: bounds=%d,%d %dx%d active=%d\n",
+                  getX(), getY(), getWidth(), getHeight(), activeLaneIndex);
+    std::fflush (stderr);
     auto area = getLocalBounds().reduced (4);
 
     // Selector row across the top - same height as the main stage buttons

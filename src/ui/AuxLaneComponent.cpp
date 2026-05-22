@@ -657,6 +657,9 @@ void AuxLaneComponent::unloadSlot (int slotIdx)
 void AuxLaneComponent::toggleEditorForSlot (int slotIdx)
 {
     auto& ui = slots[(size_t) slotIdx];
+    // User clicked the slot's open button - clear the closed flag so
+    // rebuildSlots will recreate the host if it was closed via the X.
+    ui.userClosedHost = false;
     if (ui.editorHost != nullptr)
         ui.editorHost->setHostHidden (ui.editorHost->isVisible());
     rebuildSlots();
@@ -668,15 +671,35 @@ void AuxLaneComponent::createEditorHostForSlot (int slotIdx)
     if (ui.editor == nullptr || ui.editorHost != nullptr) return;
 
     auto* instance = strip.getPluginSlot (slotIdx).getInstance();
+
+    juce::Component::SafePointer<AuxLaneComponent> safe (this);
     ui.editorHost = std::make_unique<AuxEditorHost> (
         lane.name + " - " + ui.editor->getName(),
         *ui.editor,
         instance,
-        &engine);
-
-    const auto target = computeSlotScreenRect (slotIdx);
-    if (! target.isEmpty())
-        ui.editorHost->setLaneScreenBounds (target);
+        &engine,
+        [safe, slotIdx]
+        {
+            // Defer the unique_ptr reset to the next message-loop tick
+            // so we don't destruct the host from inside its own
+            // closeButtonPressed (JUCE no-no). Set userClosedHost so
+            // rebuildSlots won't immediately recreate the host on the
+            // next refresh - user has to click the slot button to
+            // re-open the editor.
+            juce::MessageManager::callAsync ([safe, slotIdx]
+            {
+                if (auto* self = safe.getComponent())
+                {
+                    if (slotIdx >= 0 && slotIdx < (int) self->slots.size())
+                    {
+                        auto& ui = self->slots[(size_t) slotIdx];
+                        ui.userClosedHost = true;
+                        ui.editorHost.reset();
+                    }
+                    self->rebuildSlots();
+                }
+            });
+        });
 }
 
 void AuxLaneComponent::destroyEditorHostForSlot (int slotIdx)
@@ -707,29 +730,12 @@ juce::Rectangle<int> AuxLaneComponent::getCenterArea() const noexcept
     return area;
 }
 
-juce::Rectangle<int> AuxLaneComponent::computeSlotScreenRect (int slotIdx) const
-{
-    if (slotIdx < 0 || slotIdx >= (int) slots.size()) return {};
-    if (! strip.getPluginSlot (slotIdx).isLoaded()) return {};
-
-    auto center = getCenterArea();
-    if (center.isEmpty()) return {};
-    center.removeFromTop (kSlotHeaderH);
-    center.removeFromTop (4);
-    if (center.isEmpty()) return {};
-    return localAreaToGlobal (center);
-}
-
 void AuxLaneComponent::repositionEditorHosts()
 {
-    for (int i = 0; i < (int) slots.size(); ++i)
-    {
-        auto& ui = slots[(size_t) i];
-        if (ui.editorHost == nullptr) continue;
-        const auto target = computeSlotScreenRect (i);
-        if (! target.isEmpty())
-            ui.editorHost->setLaneScreenBounds (target);
-    }
+    // No-op kept for ABI/header parity. AUX plugin editors are floating
+    // X11 toplevels (channel-strip pattern) - they don't follow the
+    // main window. Future xdg-foreign-based embedded variant may restore
+    // a real implementation here.
 }
 
 void AuxLaneComponent::setEditorHostsHidden (bool hidden)
@@ -762,12 +768,14 @@ void AuxLaneComponent::rebuildSlots()
             if (ui.editor == nullptr)
                 ui.editor = std::make_unique<juce::GenericAudioProcessorEditor> (*instance);
         }
-        if (instance != nullptr && ui.editor != nullptr && ui.editorHost == nullptr)
+        if (instance != nullptr && ui.editor != nullptr
+            && ui.editorHost == nullptr && ! ui.userClosedHost)
             createEditorHostForSlot (i);
         if (instance == nullptr && (ui.editor != nullptr || ui.editorHost != nullptr))
         {
             destroyEditorHostForSlot (i);
             ui.editor.reset();
+            ui.userClosedHost = false; // reset so a future load auto-opens normally
         }
     }
     resized();
@@ -853,6 +861,10 @@ void AuxLaneComponent::resized()
     // Right column: send-source panel fills.
     if (sendPanel != nullptr) sendPanel->setBounds (getSendPanelArea());
 
+    // X11 toplevel editor hosts get repositioned over the freshly
+    // laid-out lane slot area in screen coords. Lane bounds may have
+    // changed (window resize, AUX tab switch); the host's setBounds
+    // tracks them.
     repositionEditorHosts();
 }
 
