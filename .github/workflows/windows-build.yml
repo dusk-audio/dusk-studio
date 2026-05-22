@@ -1,0 +1,105 @@
+name: Windows build (manual)
+
+# Manual-trigger only. The repo's other CI workflows live in
+# `.github/workflows.disabled/` and stay off per the no-free-binaries
+# policy; this one is the exception, intended for hand-offs to testers
+# who need an MSI installer.
+#
+# Trigger via the "Actions" tab → "Windows build (manual)" → "Run workflow".
+# When complete, the run page exposes a downloadable artifact zip
+# containing the WIX MSI installer. Anyone with a GitHub account who can
+# see the public repo can download the artifact for ~90 days (default
+# retention). For wider distribution, attach the MSI to a GitHub Release.
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build + package (MSVC x64 Release, ASIO enabled)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Dusk Studio
+        uses: actions/checkout@v4
+
+      - name: Clone JUCE 8.0.4
+        shell: bash
+        run: |
+          git clone --depth 1 --branch 8.0.4 \
+            https://github.com/juce-framework/JUCE.git \
+            "${RUNNER_TEMP}/JUCE"
+
+      - name: Clone Dusk plugins (donor DSP)
+        shell: bash
+        run: |
+          git clone --depth 1 \
+            https://github.com/dusk-audio/dusk-audio-plugins.git \
+            "${RUNNER_TEMP}/plugins"
+
+      - name: Fetch Steinberg ASIO SDK
+        shell: bash
+        run: |
+          # Steinberg distributes the ASIO SDK as a ZIP on a stable URL.
+          # CMake looks at $ASIOSDK_PATH so we extract + export. The
+          # vendor occasionally bumps version - if the URL 404s, update
+          # the path here AND in the README.
+          curl -sSL -o "${RUNNER_TEMP}/asiosdk.zip" https://download.steinberg.net/sdk_downloads/asiosdk_2.3.3_2019-06-14.zip
+          7z x -y "${RUNNER_TEMP}/asiosdk.zip" -o"${RUNNER_TEMP}/asiosdk-extract" > /dev/null
+          # ZIP wraps everything under asiosdk_2.3.3_2019-06-14/; lift the
+          # inner folder out so CMake just sees ${ASIOSDK_PATH}/common.
+          mv "${RUNNER_TEMP}/asiosdk-extract"/asiosdk_*/* "${RUNNER_TEMP}/asiosdk-extract/"
+          echo "ASIOSDK_PATH=${RUNNER_TEMP}/asiosdk-extract" >> "$GITHUB_ENV"
+
+      - name: Configure (CMake / Visual Studio 17 2022 / x64)
+        shell: bash
+        run: |
+          cmake -S . -B build \
+            -G "Visual Studio 17 2022" -A x64 \
+            -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
+            -DASIOSDK_PATH="${ASIOSDK_PATH}" \
+            -DDUSKSTUDIO_ENABLE_LTO=ON
+
+      - name: Build (Release)
+        shell: bash
+        run: cmake --build build --config Release -j
+
+      - name: Package MSI via CPack WIX
+        shell: pwsh
+        working-directory: build
+        run: |
+          # WIX Toolset is preinstalled on windows-latest. cpack -G WIX
+          # reads CPACK_WIX_* settings from CMakeLists.txt to produce a
+          # standalone installer that bundles the MSVC runtime so the
+          # tester doesn't need a separate vc_redist.exe.
+          cpack -G WIX -C Release
+          if ($LASTEXITCODE -ne 0) { throw "cpack failed" }
+          Get-ChildItem *.msi
+
+      - name: Compute SHA256 of MSI(s)
+        shell: pwsh
+        working-directory: build
+        run: |
+          # Cover every MSI cpack produced (cpack normally emits one,
+          # but a future multi-component package or per-arch split
+          # could produce more — match what the upload-artifact step
+          # globs in build/*.msi).
+          if (Test-Path sha256.txt) { Remove-Item sha256.txt }
+          $msis = Get-ChildItem *.msi
+          if (-not $msis) { throw "No MSI produced by cpack" }
+          foreach ($msi in $msis) {
+            $hash = (Get-FileHash -Algorithm SHA256 $msi.FullName).Hash
+            "$hash  $($msi.Name)" | Out-File -FilePath sha256.txt -Encoding ascii -Append
+            Write-Host "SHA256: $hash"
+            Write-Host "File:   $($msi.Name)"
+          }
+
+      - name: Upload MSI + checksum
+        uses: actions/upload-artifact@v4
+        with:
+          name: dusk-studio-windows-x64
+          path: |
+            build/*.msi
+            build/sha256.txt
+          if-no-files-found: error
+          retention-days: 90
