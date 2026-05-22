@@ -83,6 +83,34 @@ void DuskMultisampleProcessor::processBlock (juce::AudioBuffer<float>& buf,
         return;
     }
 
+    // Apply override-param drift before MIDI dispatch. Each setter
+    // is a no-op when the cached "last applied" equals the current
+    // atom; sfizz's set_volume / set_num_voices take internal locks
+    // so skipping the no-op path matters on every block.
+    {
+        const float vol = overrides.masterVolDb.load (std::memory_order_relaxed);
+        if (vol != lastAppliedVolDb)
+        {
+            sfizz_set_volume (impl->synth, vol);
+            lastAppliedVolDb = vol;
+        }
+        const float tune = overrides.masterTuneCents.load (std::memory_order_relaxed);
+        if (tune != lastAppliedTuneCents)
+        {
+            // sfizz tunes via absolute Hz of A4. Convert cents offset
+            // from 440 Hz to Hz: f = 440 * 2^(cents/1200).
+            const float a4 = 440.0f * std::pow (2.0f, tune / 1200.0f);
+            sfizz_set_tuning_frequency (impl->synth, a4);
+            lastAppliedTuneCents = tune;
+        }
+        const int poly = overrides.polyphony.load (std::memory_order_relaxed);
+        if (poly != lastAppliedPolyphony)
+        {
+            sfizz_set_num_voices (impl->synth, juce::jlimit (1, 256, poly));
+            lastAppliedPolyphony = poly;
+        }
+    }
+
     // Dispatch incoming MIDI events to sfizz. sfizz batches them
     // against the current block; delays are sample offsets within
     // the block.
@@ -115,11 +143,17 @@ void DuskMultisampleProcessor::processBlock (juce::AudioBuffer<float>& buf,
 
 void DuskMultisampleProcessor::getStateInformation (juce::MemoryBlock& block)
 {
-    // Step 4 carries (a) the loaded file path + (b) the override
-    // params. For now, persist just the file path so a session
-    // reload re-loads the same .sfz.
     juce::ValueTree state ("DuskMultisample");
     state.setProperty ("file", loadedFilePath, nullptr);
+    state.setProperty ("masterVolDb",
+                        overrides.masterVolDb.load (std::memory_order_relaxed),
+                        nullptr);
+    state.setProperty ("masterTuneCents",
+                        overrides.masterTuneCents.load (std::memory_order_relaxed),
+                        nullptr);
+    state.setProperty ("polyphony",
+                        overrides.polyphony.load (std::memory_order_relaxed),
+                        nullptr);
     juce::MemoryOutputStream stream (block, false);
     state.writeToStream (stream);
 }
@@ -130,17 +164,31 @@ void DuskMultisampleProcessor::setStateInformation (const void* data, int size)
     juce::MemoryInputStream stream (data, (size_t) size, false);
     const auto state = juce::ValueTree::readFromStream (stream);
     if (! state.isValid()) return;
+
     const auto path = state.getProperty ("file").toString();
     if (path.isNotEmpty())
     {
         juce::String err;
         loadSfzFile (juce::File (path), err);
-        // Loading errors are logged but non-fatal - the processor
-        // stays alive in a no-file state so the user can pick a
-        // replacement file via the editor.
+        // Loading errors are non-fatal - the processor stays alive in
+        // a no-file state so the user can pick a replacement file
+        // via the editor.
         if (err.isNotEmpty())
             DBG ("DuskMultisample setState: " << err);
     }
+
+    if (state.hasProperty ("masterVolDb"))
+        overrides.masterVolDb.store (
+            juce::jlimit (-60.0f, 12.0f, (float) state.getProperty ("masterVolDb")),
+            std::memory_order_relaxed);
+    if (state.hasProperty ("masterTuneCents"))
+        overrides.masterTuneCents.store (
+            juce::jlimit (-100.0f, 100.0f, (float) state.getProperty ("masterTuneCents")),
+            std::memory_order_relaxed);
+    if (state.hasProperty ("polyphony"))
+        overrides.polyphony.store (
+            juce::jlimit (1, 256, (int) state.getProperty ("polyphony")),
+            std::memory_order_relaxed);
 }
 
 void DuskMultisampleProcessor::fillInPluginDescription (juce::PluginDescription& desc) const

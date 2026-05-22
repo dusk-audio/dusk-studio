@@ -63,10 +63,33 @@ public:
     bool hasLoadedFile() const noexcept { return loadedFilePath.isNotEmpty(); }
     const juce::String& getLoadedFilePath() const noexcept { return loadedFilePath; }
 
+    // Override parameters. Phase 1 v1: master volume, master tune,
+    // polyphony cap. Phase 2 widens to ADSR + filter + LFO overrides
+    // wired through sfizz's CC automation surface. UI mutates via
+    // relaxed atomic stores; processBlock loads each value once at
+    // block top + applies via the sfizz API.
+    struct Overrides
+    {
+        std::atomic<float> masterVolDb     { 0.0f };   // -60..+12 dB
+        std::atomic<float> masterTuneCents { 0.0f };   // -100..+100
+        std::atomic<int>   polyphony       { 64 };     // 1..256
+    };
+    Overrides& getOverrides() noexcept { return overrides; }
+    const Overrides& getOverrides() const noexcept { return overrides; }
+
 private:
     double currentSampleRate { 48000.0 };
     int    currentBlockSize  { 512 };
     juce::String loadedFilePath;     // empty when no file loaded
+    Overrides overrides;
+
+    // Cached "last applied" override values so processBlock only
+    // hits sfizz's setter when the user has actually moved a knob.
+    // sfizz internally takes a sample-rate lock on volume change;
+    // skipping the no-op path avoids that on every block.
+    float lastAppliedVolDb     { 0.0f };
+    float lastAppliedTuneCents { 0.0f };
+    int   lastAppliedPolyphony { 64 };
 
     // sfizz handle owned via pimpl so the public header doesn't drag
     // in sfizz.h (keeps compile time + ABI surface clean). The .cpp

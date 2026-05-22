@@ -34,6 +34,8 @@ add_executable(dusk-studio-tests
     mcu_controller_emit.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/McuReceiver.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/McuController.cpp
+    multisample_state_roundtrip.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/multisample/DuskMultisampleProcessor.cpp
     ${CMAKE_SOURCE_DIR}/src/dsp/BrickwallLimiter.cpp
     ${CMAKE_SOURCE_DIR}/src/dsp/HardwareInsertSlot.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/FileImporter.cpp
@@ -64,11 +66,22 @@ target_link_libraries(dusk-studio-tests PRIVATE
     # MidiOutput statics.
     juce::juce_audio_devices
     juce::juce_audio_formats
+    # juce_audio_processors brings in juce::AudioPluginInstance for
+    # multisample tests (DuskMultisampleProcessor subclasses it).
+    juce::juce_audio_processors
     juce::juce_core
     juce::juce_dsp
     juce::juce_graphics
     juce::juce_recommended_config_flags
     juce::juce_recommended_warning_flags)
+
+# Multisample tests need sfizz_static + the DUSKSTUDIO_HAS_MULTISAMPLE
+# define for the same gating the main app uses. Skip when sfizz isn't
+# vendored (the multisample sources are then a no-op too).
+if(TARGET sfizz_static)
+    target_link_libraries(dusk-studio-tests PRIVATE sfizz::static)
+    target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_MULTISAMPLE=1)
+endif()
 
 # IPC round-trip regression — Linux + Windows + macOS 14.4+. The test
 # spawns the dusk-studio-plugin-host child in --ipc-stub mode, so we
