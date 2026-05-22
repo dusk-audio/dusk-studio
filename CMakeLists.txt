@@ -607,7 +607,8 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/src/sfizz.h")
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_MULTISAMPLE=1)
     target_sources(DuskStudio PRIVATE
         src/engine/multisample/DuskMultisampleProcessor.cpp
-        src/engine/multisample/DuskMultisamplePluginFormat.cpp)
+        src/engine/multisample/DuskMultisamplePluginFormat.cpp
+        src/ui/multisample/DuskMultisampleEditor.cpp)
 endif()
 
 target_compile_definitions(DuskStudio PRIVATE

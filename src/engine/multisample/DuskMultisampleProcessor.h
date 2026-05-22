@@ -37,8 +37,8 @@ public:
     bool producesMidi() const override                         { return false; }
     bool isMidiEffect() const override                         { return false; }
     double getTailLengthSeconds() const override               { return 0.0; }
-    bool hasEditor() const override                            { return false; }
-    juce::AudioProcessorEditor* createEditor() override         { return nullptr; }
+    bool hasEditor() const override                            { return true; }
+    juce::AudioProcessorEditor* createEditor() override;
     int getNumPrograms() override                              { return 1; }
     int getCurrentProgram() override                           { return 0; }
     void setCurrentProgram (int) override                      {}
@@ -62,6 +62,19 @@ public:
     // "(no file)" vs the loaded file name.
     bool hasLoadedFile() const noexcept { return loadedFilePath.isNotEmpty(); }
     const juce::String& getLoadedFilePath() const noexcept { return loadedFilePath; }
+
+    // Number of regions sfizz parsed from the loaded .sfz. 0 when
+    // no file is loaded. Editor polls this on its refresh timer.
+    int getNumRegions() const noexcept;
+
+    // Reload the currently-loaded .sfz from disk. No-op when no
+    // file is loaded. Returns true on success.
+    bool reloadCurrentFile (juce::String& errorMessage);
+
+    // Drop the loaded soundfont. After this call the processor
+    // renders silence; subsequent loadSfzFile / setStateInformation
+    // can replace it.
+    void clearLoadedFile();
 
     // Override parameters. Phase 1 v1: master volume, master tune,
     // polyphony cap. Phase 2 widens to ADSR + filter + LFO overrides

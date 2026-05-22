@@ -1,4 +1,5 @@
 #include "DuskMultisampleProcessor.h"
+#include "../../ui/multisample/DuskMultisampleEditor.h"
 
 #include <sfizz.h>
 
@@ -44,6 +45,30 @@ void DuskMultisampleProcessor::releaseResources()
 {
     // sfizz keeps its voice state allocated across releaseResources -
     // a subsequent prepareToPlay reuses the buffers. No-op here.
+}
+
+int DuskMultisampleProcessor::getNumRegions() const noexcept
+{
+    if (impl == nullptr || impl->synth == nullptr) return 0;
+    return sfizz_get_num_regions (impl->synth);
+}
+
+bool DuskMultisampleProcessor::reloadCurrentFile (juce::String& errorMessage)
+{
+    if (loadedFilePath.isEmpty())
+    {
+        errorMessage = "No file loaded";
+        return false;
+    }
+    return loadSfzFile (juce::File (loadedFilePath), errorMessage);
+}
+
+void DuskMultisampleProcessor::clearLoadedFile()
+{
+    if (impl == nullptr || impl->synth == nullptr) return;
+    // sfizz_load_string with empty body unloads the current file.
+    sfizz_load_string (impl->synth, "", "");
+    loadedFilePath.clear();
 }
 
 bool DuskMultisampleProcessor::loadSfzFile (const juce::File& sfz,
@@ -189,6 +214,11 @@ void DuskMultisampleProcessor::setStateInformation (const void* data, int size)
         overrides.polyphony.store (
             juce::jlimit (1, 256, (int) state.getProperty ("polyphony")),
             std::memory_order_relaxed);
+}
+
+juce::AudioProcessorEditor* DuskMultisampleProcessor::createEditor()
+{
+    return new DuskMultisampleEditor (*this);
 }
 
 void DuskMultisampleProcessor::fillInPluginDescription (juce::PluginDescription& desc) const
