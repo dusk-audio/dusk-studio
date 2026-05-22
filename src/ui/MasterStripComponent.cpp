@@ -344,22 +344,23 @@ void MasterStripComponent::timerCallback()
 
     // Motor-fader animate + Write/Touch capture — mirrors the per-channel
     // and per-aux pattern. Master only has one automatable param.
+    // Animate whenever liveFaderDb diverges and the user isn't dragging —
+    // mode-agnostic so MIDI-bound master fader moves the on-screen slider
+    // in Off mode too.
     {
         const int amode = params.automationMode.load (std::memory_order_relaxed);
-        const bool isRead  = amode == (int) AutomationMode::Read;
         const bool isWrite = amode == (int) AutomationMode::Write;
         const bool isTouch = amode == (int) AutomationMode::Touch;
         const bool playing = engine.getTransport().isPlaying();
 
         const float live    = params.liveFaderDb.load (std::memory_order_relaxed);
         const bool  touched = params.faderTouched.load (std::memory_order_relaxed);
-        const bool  animating = isRead || (isTouch && ! touched);
-        if (animating && std::abs (live - displayedLiveFaderDb) > 0.05f)
+        if (! touched && std::abs (live - displayedLiveFaderDb) > 0.05f)
         {
             displayedLiveFaderDb = live;
             faderSlider.setValue (live, juce::dontSendNotification);
         }
-        else if (! animating)
+        else if (touched)
         {
             displayedLiveFaderDb = live;
         }
@@ -367,6 +368,23 @@ void MasterStripComponent::timerCallback()
         const bool capturing = playing && (isWrite || (isTouch && touched));
         if (capturing)
             captureFaderWritePoint (params.faderDb.load (std::memory_order_relaxed));
+    }
+
+    // Master mute / mono toggle visual sync — poll the atoms so any MIDI
+    // path (or future binding target) that flips them is reflected on
+    // screen. No automation lane on these so liveMute isn't needed.
+    {
+        const bool mute = params.mute.load (std::memory_order_relaxed);
+        if (muteButton.getToggleState() != mute)
+            muteButton.setToggleState (mute, juce::dontSendNotification);
+    }
+    {
+        const bool mono = params.monoSum.load (std::memory_order_relaxed);
+        if (monoStereoButton.getToggleState() != mono)
+        {
+            monoStereoButton.setToggleState (mono, juce::dontSendNotification);
+            monoStereoButton.setButtonText (mono ? "MONO" : "STEREO");
+        }
     }
 }
 

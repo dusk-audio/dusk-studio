@@ -1635,19 +1635,20 @@ public:
 
     ~PluginEditorWindow() override
     {
-        if (trackedEditor != nullptr)
-            trackedEditor->removeComponentListener (this);
+        // SafePointer auto-nulls when the borrowed editor destructs, so
+        // this is a no-op in the "unloadPluginSlot tore the editor down
+        // before our deferred reset landed" case that previously UAF'd.
+        if (auto* ed = trackedEditor.getComponent())
+            ed->removeComponentListener (this);
     }
 
     void closeButtonPressed() override
     {
         // Detach the borrowed editor before we go away so this window's
         // destructor doesn't touch it, then ask the host to drop us.
-        if (trackedEditor != nullptr)
-        {
-            trackedEditor->removeComponentListener (this);
-            trackedEditor = nullptr;
-        }
+        if (auto* ed = trackedEditor.getComponent())
+            ed->removeComponentListener (this);
+        trackedEditor = nullptr;
         setContentNonOwned (nullptr, false);
         // EWMH-activate a sibling top-level so mutter's focus_window is
         // off this peer before the deferred destroy lands - else
@@ -1686,7 +1687,7 @@ public:
     void componentMovedOrResized (juce::Component& c, bool /*wasMoved*/, bool wasResized) override
     {
         if (! wasResized) return;
-        if (&c != trackedEditor) return;
+        if (&c != trackedEditor.getComponent()) return;
         const int ew = c.getWidth();
         const int eh = c.getHeight();
         if (ew <= 0 || eh <= 0) return;
@@ -1696,7 +1697,7 @@ public:
 private:
     std::function<void()> onClose;
     AudioEngine* enginePtr = nullptr;
-    juce::Component* trackedEditor = nullptr;
+    juce::Component::SafePointer<juce::Component> trackedEditor;
 };
 
 bool ChannelStripComponent::isPluginEditorOpen() const noexcept
@@ -2371,22 +2372,26 @@ void ChannelStripComponent::timerCallback()
     // IS the value source, so we don't fight it.
     {
         const int amode = track.automationMode.load (std::memory_order_relaxed);
-        const bool isRead  = amode == (int) AutomationMode::Read;
         const bool isWrite = amode == (int) AutomationMode::Write;
         const bool isTouch = amode == (int) AutomationMode::Touch;
         const bool playing = engine.getTransport().isPlaying();
 
-        // Fader animate / capture.
+        // Fader animate / capture. Animate whenever liveFaderDb diverges
+        // from what we've drawn AND the user isn't dragging — this covers
+        // automation Read/Touch AS WELL AS external sources that mutate
+        // faderDb directly (MIDI Learn bindings, MCU faders, future
+        // remote controls). Gating on `isRead || isTouch` previously
+        // meant a CC-bound fader could move the audio but leave the
+        // on-screen slider frozen in Off mode.
         {
             const float live    = track.strip.liveFaderDb.load (std::memory_order_relaxed);
             const bool  touched = track.strip.faderTouched.load (std::memory_order_relaxed);
-            const bool  animating = isRead || (isTouch && ! touched);
-            if (animating && std::abs (live - displayedLiveFaderDb) > 0.05f)
+            if (! touched && std::abs (live - displayedLiveFaderDb) > 0.05f)
             {
                 displayedLiveFaderDb = live;
                 faderSlider.setValue (live, juce::dontSendNotification);
             }
-            else if (! animating)
+            else if (touched)
             {
                 displayedLiveFaderDb = live;
             }
@@ -2403,13 +2408,12 @@ void ChannelStripComponent::timerCallback()
         {
             const float live    = track.strip.livePan.load (std::memory_order_relaxed);
             const bool  touched = track.strip.panTouched.load (std::memory_order_relaxed);
-            const bool  animating = isRead || (isTouch && ! touched);
-            if (animating && std::abs (live - displayedLivePan) > 0.005f)
+            if (! touched && std::abs (live - displayedLivePan) > 0.005f)
             {
                 displayedLivePan = live;
                 panKnob.setValue (live, juce::dontSendNotification);
             }
-            else if (! animating)
+            else if (touched)
             {
                 displayedLivePan = live;
             }
@@ -2435,22 +2439,30 @@ void ChannelStripComponent::timerCallback()
             if (soloButton.getToggleState() != live)
                 soloButton.setToggleState (live, juce::dontSendNotification);
         }
+        // ARM has no Live atom (no automation lane) — read recordArmed
+        // directly. Needed so a MIDI-bound arm toggle reflects on screen.
+        {
+            const bool armed = track.recordArmed.load (std::memory_order_relaxed);
+            if (armButton.getToggleState() != armed)
+                armButton.setToggleState (armed, juce::dontSendNotification);
+        }
 
         // Aux sends - animate + capture in lockstep with fader / pan.
         // Threshold 0.1 dB on a -60..+6 dB knob (~0.15 % of travel).
         // Knob is null when the strip isn't in mixing mode (visible).
+        // Same touched-only gate as fader/pan so MIDI-bound sends move
+        // the on-screen knob regardless of automation mode.
         for (int i = 0; i < ChannelStripParams::kNumAuxSends; ++i)
         {
             const float live    = track.strip.liveAuxSendDb[(size_t) i].load (std::memory_order_relaxed);
             const bool  touched = track.strip.auxSendTouched[(size_t) i].load (std::memory_order_relaxed);
-            const bool  animating = isRead || (isTouch && ! touched);
-            if (animating && std::abs (live - displayedLiveAuxSendDb[(size_t) i]) > 0.1f)
+            if (! touched && std::abs (live - displayedLiveAuxSendDb[(size_t) i]) > 0.1f)
             {
                 displayedLiveAuxSendDb[(size_t) i] = live;
                 if (auto* knob = auxKnobs[(size_t) i].get())
                     knob->setValue (live, juce::dontSendNotification);
             }
-            else if (! animating)
+            else if (touched)
             {
                 displayedLiveAuxSendDb[(size_t) i] = live;
             }
@@ -2911,17 +2923,26 @@ void ChannelStripComponent::onTrackModeChanged()
     refreshInputSelectorVisibility();
     refreshPluginSlotButton();
     refreshIoConfigButton();
-    // If the I/O popup is open it needs to re-lay out (rows differ per
-    // mode: 2 for audio, 4 for MIDI).
+    // If the I/O popup is open it needs to grow / shrink (rows differ
+    // per mode: 2 for audio, 4 for MIDI). Setting the content's size
+    // triggers CallOutBox's auto-reflow — it repositions itself to
+    // accommodate the new content height. Walking the box's children
+    // and calling resized() alone is insufficient: that re-runs layout
+    // within the existing bounds, so the MIDI rows render outside the
+    // popup's visible area and the user only sees the mode dropdown.
+    //
+    // Also call resized() unconditionally after setSize: mono ↔ stereo
+    // both use rows == 2 so the height doesn't change, setSize becomes
+    // a no-op, and IoConfigPopup::resized() wouldn't fire — the inner
+    // layout (full-width mono input vs L/R halves) would stay frozen
+    // on whichever mode the popup was opened with.
     if (auto* box = activeIoBox.getComponent())
     {
-        if (auto* body = box->findChildWithID ({}); body == nullptr)
+        if (auto* content = box->getChildComponent (0))
         {
-            // CallOutBox holds the content as its sole non-internal child.
-            // Walk children and call resized on the first IoConfigPopup-ish
-            // component.
-            for (int i = 0; i < box->getNumChildComponents(); ++i)
-                if (auto* c = box->getChildComponent (i)) c->resized();
+            const int rows = (mode == 2) ? 4 : 2;
+            content->setSize (240, 8 + rows * 24 + (rows - 1) * 6 + 8);
+            content->resized();
         }
     }
     // Resize so the layout reflects the new mode (extra dropdown for stereo,

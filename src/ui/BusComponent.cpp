@@ -293,6 +293,34 @@ void BusComponent::timerCallback()
 
     if (! meterArea.isEmpty())   repaint (meterArea);
     if (! grMeterArea.isEmpty()) repaint (grMeterArea.expanded (2, 10));  // include "GR" caption
+
+    // Visual sync for MIDI-bound controls. Buses don't have automation
+    // lanes (deferred per the project spec) so there's no liveFaderDb to
+    // poll — read the setpoint atoms directly. Gate on the user not
+    // currently dragging that specific control so we never fight a
+    // user gesture.
+    {
+        const float setp = bus.strip.faderDb.load (std::memory_order_relaxed);
+        if (! faderSlider.isMouseButtonDown()
+            && std::abs (setp - (float) faderSlider.getValue()) > 0.05f)
+            faderSlider.setValue (setp, juce::dontSendNotification);
+    }
+    {
+        const float setp = bus.strip.pan.load (std::memory_order_relaxed);
+        if (! panKnob.isMouseButtonDown()
+            && std::abs (setp - (float) panKnob.getValue()) > 0.005f)
+            panKnob.setValue (setp, juce::dontSendNotification);
+    }
+    {
+        const bool m = bus.strip.mute.load (std::memory_order_relaxed);
+        if (muteButton.getToggleState() != m)
+            muteButton.setToggleState (m, juce::dontSendNotification);
+    }
+    {
+        const bool s = bus.strip.solo.load (std::memory_order_relaxed);
+        if (soloButton.getToggleState() != s)
+            soloButton.setToggleState (s, juce::dontSendNotification);
+    }
 }
 
 void BusComponent::mouseDown (const juce::MouseEvent& e)

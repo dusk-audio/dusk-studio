@@ -348,9 +348,10 @@ void AuxLaneComponent::timerCallback()
     if (sendPanel  != nullptr) sendPanel->repaint();
 
     // Motor-fader animate + Write/Touch capture, mirroring the per-
-    // channel pattern in ChannelStripComponent::timerCallback.
+    // channel pattern in ChannelStripComponent::timerCallback. Animate
+    // is mode-agnostic — gated only on the user not dragging — so a
+    // MIDI-bound aux return moves the on-screen fader in Off mode too.
     const int amode = lane.params.automationMode.load (std::memory_order_relaxed);
-    const bool isRead  = amode == (int) AutomationMode::Read;
     const bool isWrite = amode == (int) AutomationMode::Write;
     const bool isTouch = amode == (int) AutomationMode::Touch;
     const bool playing = engine.getTransport().isPlaying();
@@ -358,13 +359,12 @@ void AuxLaneComponent::timerCallback()
     {
         const float live    = lane.params.liveReturnLevelDb.load (std::memory_order_relaxed);
         const bool  touched = lane.params.faderTouched.load (std::memory_order_relaxed);
-        const bool  animating = isRead || (isTouch && ! touched);
-        if (animating && std::abs (live - displayedLiveReturnLevelDb) > 0.05f)
+        if (! touched && std::abs (live - displayedLiveReturnLevelDb) > 0.05f)
         {
             displayedLiveReturnLevelDb = live;
             returnFader.setValue (live, juce::dontSendNotification);
         }
-        else if (! animating)
+        else if (touched)
         {
             displayedLiveReturnLevelDb = live;
         }
@@ -375,12 +375,13 @@ void AuxLaneComponent::timerCallback()
                                 lane.params.returnLevelDb.load (std::memory_order_relaxed));
     }
 
-    // Mute visual sync — when reading the lane, mirror the live state
-    // onto the toggle so the user sees the automated value.
+    // Mute visual sync — poll liveMute regardless of automation mode so
+    // a MIDI-bound mute toggle (or automation in any mode) updates the
+    // button. The atom mirrors the manual setpoint in Off/Write so this
+    // is idempotent in all modes.
     {
         const bool live = lane.params.liveMute.load (std::memory_order_relaxed);
-        const bool readsLane = isRead || isTouch;
-        if (readsLane && muteButton.getToggleState() != live)
+        if (muteButton.getToggleState() != live)
             muteButton.setToggleState (live, juce::dontSendNotification);
     }
 }
