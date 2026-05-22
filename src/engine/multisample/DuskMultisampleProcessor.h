@@ -58,6 +58,12 @@ public:
     // pattern moves the loaded processor into place once this returns.
     bool loadSfzFile (const juce::File& sfz, juce::String& errorMessage);
 
+    // Load an .sf2 (SoundFont 2) file. Routes through libfluidsynth
+    // when DUSKSTUDIO_HAS_SF2 is defined (set by CMake when
+    // pkg-config finds fluidsynth at build time); returns a clear
+    // error otherwise.
+    bool loadSf2File (const juce::File& sf2, juce::String& errorMessage);
+
     // True if a soundfont has been loaded. Used by editor UI to show
     // "(no file)" vs the loaded file name.
     bool hasLoadedFile() const noexcept { return loadedFilePath.isNotEmpty(); }

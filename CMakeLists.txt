@@ -649,6 +649,30 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/src/sfizz.h")
         src/engine/multisample/DuskMultisampleProcessor.cpp
         src/engine/multisample/DuskMultisamplePluginFormat.cpp
         src/ui/multisample/DuskMultisampleEditor.cpp)
+
+    # Optional SF2 (SoundFont 2) backend via libfluidsynth. Detected
+    # at configure time via pkg-config. When found, DUSKSTUDIO_HAS_SF2
+    # is set and DuskMultisampleProcessor routes .sf2 file loads
+    # through FluidSynth instead of erroring with the "Coming in 1.0"
+    # message. SFZ still goes through sfizz; the processor owns one
+    # backend at a time keyed off the file extension.
+    #
+    # Linux ships fluidsynth as a system library on every common
+    # distro. Mac/Win bundling is a 1.0 packaging task — when the
+    # devel package is missing the build falls back to the
+    # SFZ-only path.
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(FLUIDSYNTH IMPORTED_TARGET fluidsynth)
+        if(FLUIDSYNTH_FOUND)
+            message(STATUS "Dusk Studio: FluidSynth ${FLUIDSYNTH_VERSION} found - enabling SF2 import")
+            target_link_libraries(DuskStudio PRIVATE PkgConfig::FLUIDSYNTH)
+            target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_SF2=1)
+        else()
+            message(STATUS "Dusk Studio: FluidSynth not found - SF2 import disabled "
+                           "(install fluidsynth-devel / libfluidsynth-dev to enable)")
+        endif()
+    endif()
 endif()
 
 target_compile_definitions(DuskStudio PRIVATE

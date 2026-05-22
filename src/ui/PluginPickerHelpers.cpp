@@ -9,6 +9,7 @@ namespace
 constexpr int kIdScan            = 9001;
 constexpr int kIdBrowseFile      = 9002;
 constexpr int kIdHardwareInsert  = 9003;
+constexpr int kIdLoadSoundfont   = 9004;
 
 void showLoadFailureAlert (const juce::String& message)
 {
@@ -143,6 +144,50 @@ void openFileChooser (PluginSlot& slot,
         });
 }
 
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+// Soundfont (SFZ) chooser. Mirrors openFileChooser's lifetime model
+// but filters for .sfz files and loads through the built-in
+// DuskMultisamplePluginFormat — feels native, not like a plugin.
+static void openSoundfontFileChooser (PluginSlot& slot,
+                                       std::unique_ptr<juce::FileChooser>& chooserOwner,
+                                       std::function<void()> onChange,
+                                       juce::Component::SafePointer<juce::Component> parentForLifetime)
+{
+    const auto defaultDir = juce::File::getSpecialLocation (juce::File::userHomeDirectory);
+    // useOSNativeDialogBox = false (JUCE's own FileBrowserComponent
+    // top-level dialog) without a parentComponent. Native GTK dialog
+    // loses stacking against the DAW window on Wayland; non-native
+    // + parent crashed Mutter (JUCE-wayland fork's modal-child
+    // path); standalone top-level non-native works — same shape as
+    // PluginEditorWindow which we already handle on the fork.
+    chooserOwner = std::make_unique<juce::FileChooser> (
+        "Load soundfont (.sfz)",
+        defaultDir,
+        "*.sfz;*.sf2",
+        /*useOSNativeDialogBox*/ false);
+
+    chooserOwner->launchAsync (
+        juce::FileBrowserComponent::openMode |
+        juce::FileBrowserComponent::canSelectFiles,
+        [&slot, &chooserOwner, onChange = std::move (onChange),
+         parentForLifetime] (const juce::FileChooser& chooser)
+        {
+            if (parentForLifetime.getComponent() == nullptr) return;
+            const auto file = chooser.getResult();
+            if (file == juce::File())
+            {
+                chooserOwner.reset();
+                return;
+            }
+            juce::String error;
+            const bool ok = slot.loadFromFile (file, error);
+            chooserOwner.reset();
+            if (! ok) { showLoadFailureAlert (error); return; }
+            if (onChange) onChange();
+        });
+}
+#endif
+
 void openPickerMenu (PluginSlot& slot,
                       juce::Component& target,
                       std::unique_ptr<juce::FileChooser>& chooserOwner,
@@ -177,10 +222,23 @@ void openPickerMenu (PluginSlot& slot,
     // regardless of plugin state. Only shown when the caller wired up
     // a handler - aux + channel slots both do, mastering stages don't.
     if (onPickHardwareInsert)
-    {
         menu.addItem (kIdHardwareInsert, "External Hardware Insert...");
+
+   #if DUSKSTUDIO_HAS_MULTISAMPLE
+    // "Load Soundfont..." sits alongside External Hardware Insert as a
+    // native Dusk Studio entry (not in the plugins submenu — it isn't
+    // a third-party plugin). Only meaningful on MIDI tracks; for audio
+    // (Effects) tracks the option is hidden to avoid confusion.
+    if (kind == PluginKind::Instruments)
+        menu.addItem (kIdLoadSoundfont, "Load Soundfont...");
+   #endif
+
+    if (onPickHardwareInsert
+       #if DUSKSTUDIO_HAS_MULTISAMPLE
+        || kind == PluginKind::Instruments
+       #endif
+        )
         menu.addSeparator();
-    }
 
     if (known.getNumTypes() == 0)
     {
@@ -257,6 +315,14 @@ void openPickerMenu (PluginSlot& slot,
                 if (onHardwareCopy) onHardwareCopy();
                 return;
             }
+           #if DUSKSTUDIO_HAS_MULTISAMPLE
+            if (result == kIdLoadSoundfont)
+            {
+                openSoundfontFileChooser (*slotPtr, *chooserOwnerPtr,
+                                            std::move (onChangeCopy), safeTarget);
+                return;
+            }
+           #endif
             if (result == kIdScan)
             {
                 runScanModal (slotPtr->getManagerForUi());

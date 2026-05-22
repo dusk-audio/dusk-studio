@@ -125,10 +125,15 @@ void DuskMultisampleEditor::timerCallback()
 
 void DuskMultisampleEditor::openFileChooser()
 {
+    // Standalone non-native chooser — JUCE creates its own top-level
+    // dialog window which stays in front of the DAW. Native GTK lost
+    // stacking on Wayland; non-native + parentComponent crashed
+    // Mutter via the JUCE-wayland fork's modal-child path.
     fileChooser = std::make_unique<juce::FileChooser> (
         "Load soundfont (.sfz)",
         juce::File::getSpecialLocation (juce::File::userHomeDirectory),
-        "*.sfz;*.sf2");
+        "*.sfz;*.sf2",
+        /*useOSNativeDialogBox*/ false);
 
     const auto flags = juce::FileBrowserComponent::openMode
                        | juce::FileBrowserComponent::canSelectFiles;

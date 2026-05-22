@@ -28,9 +28,11 @@ juce::String DuskMultisamplePluginFormat::getNameOfPluginFromIdentifier (const j
     const auto file = juce::File (path);
     if (file.existsAsFile())
         return file.getFileNameWithoutExtension();
-    // Empty / unresolved identifier - the picker uses this for the
-    // "blank" Multisample entry the user selects to open a file dialog.
-    return "Dusk Multisample";
+    // Empty / unresolved identifier — rarely hit now that the picker's
+    // "Load Soundfont..." entry goes straight through loadFromFile;
+    // this label only surfaces if a saved session ever round-trips an
+    // unresolved soundfont description.
+    return "Soundfont";
 }
 
 void DuskMultisamplePluginFormat::findAllTypesForFile (
@@ -40,7 +42,7 @@ void DuskMultisamplePluginFormat::findAllTypesForFile (
     if (! isSoundfontExtension (path)) return;
     auto desc = std::make_unique<juce::PluginDescription>();
     desc->name              = juce::File (path).getFileNameWithoutExtension();
-    desc->descriptiveName   = "Dusk Multisample: " + desc->name;
+    desc->descriptiveName   = "Soundfont: " + desc->name;
     desc->pluginFormatName  = getName();
     desc->category          = "Instrument";
     desc->manufacturerName  = "Dusk Audio";
@@ -58,33 +60,23 @@ void DuskMultisamplePluginFormat::createPluginInstance (
     int initialBufferSize,
     PluginCreationCallback callback)
 {
-    // .sf2 placeholder: createPluginInstance fails with a clear
-    // message until Phase 2's Sf2ToSfz converter lands. The picker
-    // still shows .sf2 files (because fileMightContainThisPluginType
-    // claims them) but selecting one surfaces the "Coming in 1.0"
-    // error so the user knows it's not unsupported, just deferred.
-    const auto ext = juce::File (desc.fileOrIdentifier).getFileExtension().toLowerCase();
-    if (ext == ".sf2")
-    {
-        callback (nullptr,
-                  "SF2 import lands in Dusk Studio 1.0. Beta supports "
-                  "SFZ files; use one of the many free SFZ packs in "
-                  "the meantime.");
-        return;
-    }
-
     juce::ignoreUnused (initialSampleRate, initialBufferSize);
     // PluginSlot::loadFromFile calls prepareToPlay on the returned
     // instance with the host's live SR + block size, so we don't
     // call it here - the format's initialSampleRate / initialBufferSize
     // args are a hint, not a contract, and double-calling would mean
-    // sfizz_set_sample_rate fires twice on every load.
+    // the backend's set_sample_rate fires twice on every load.
     auto inst = std::make_unique<DuskMultisampleProcessor>();
 
     if (desc.fileOrIdentifier.isNotEmpty())
     {
+        const auto file = juce::File (desc.fileOrIdentifier);
+        const auto ext = file.getFileExtension().toLowerCase();
         juce::String err;
-        if (! inst->loadSfzFile (juce::File (desc.fileOrIdentifier), err))
+        const bool ok = (ext == ".sf2")
+                          ? inst->loadSf2File (file, err)
+                          : inst->loadSfzFile (file, err);
+        if (! ok)
         {
             callback (nullptr, err);
             return;

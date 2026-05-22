@@ -31,7 +31,7 @@ private:
 
     DuskMultisampleProcessor& processor;
 
-    juce::Label    titleLabel       { {}, "Dusk Multisample" };
+    juce::Label    titleLabel       { {}, "Soundfont" };
     juce::Label    filePathLabel    { {}, "(no file)" };
     juce::TextButton browseButton   { "Browse..." };
     juce::TextButton reloadButton   { "Reload" };

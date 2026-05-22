@@ -8,8 +8,23 @@ namespace duskstudio
 {
 juce::String describeBindingSource (const MidiBinding& b)
 {
+    // MMC is sysex (no channel); render in the same shape as
+    // midilearn::describeBinding so the bindings panel + readout
+    // stay consistent.
+    if (b.trigger == MidiBindingTrigger::MmcCommand)
+    {
+        static constexpr const char* names[] = {
+            "?", "Stop", "Play", "DefPlay", "FFwd", "Rew",
+            "RecStart", "RecStop", "?", "Pause"
+        };
+        const int cmd = b.dataNumber;
+        const char* name = (cmd >= 1 && cmd <= 9) ? names[cmd] : "?";
+        return juce::String ("MMC ") + name;
+    }
     const auto chStr = b.channel == 0 ? juce::String ("Ch -")
                                        : "Ch " + juce::String (b.channel);
+    if (b.trigger == MidiBindingTrigger::PitchBend)
+        return chStr + " PitchBend";
     const auto kindStr = b.trigger == MidiBindingTrigger::CC
                             ? juce::String ("CC ") : juce::String ("Note ");
     return chStr + " " + kindStr + juce::String (b.dataNumber);
@@ -157,6 +172,16 @@ static bool isToggleTarget (MidiBindingTarget t) noexcept
         case MidiBindingTarget::BusMute:
         case MidiBindingTarget::BusSolo:
         case MidiBindingTarget::AuxLaneMute:
+        // One-shot transport actions are idempotent (Play while
+        // already playing is a no-op; same for Stop / Record), so
+        // exposing Press/Toggle lets latching CC buttons on cheap
+        // controllers fire each physical press. TransportToggle is
+        // deliberately excluded: its "play if stopped, stop if
+        // rolling" semantics would flip twice per click in Toggle
+        // mode (127 then 0), netting a no-op.
+        case MidiBindingTarget::TransportPlay:
+        case MidiBindingTarget::TransportStop:
+        case MidiBindingTarget::TransportRecord:
             return true;
         default:
             return false;

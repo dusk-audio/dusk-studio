@@ -31,13 +31,12 @@ JUCE and the Dusk plugins repo are auto-discovered from sibling directories. Pas
 
 ### Cross-OS dev (macOS authoring, Linux testing)
 
-Dusk Studio builds against different sibling repos depending on the host OS. Keep the two builds in separate directories so you never have to reconfigure when switching machines:
+Single canonical build dir on both OSes: `build/` (app) and `build-tests/` (Catch2 tests). The sibling repos and JUCE source differ per OS, but the build directory does not — switching machines does not require a new build dir.
 
-| OS    | Build dir        | JUCE source                              | Plugins source                 |
-|-------|------------------|------------------------------------------|--------------------------------|
-| macOS | `build/`         | `../JUCE` (upstream)                     | `../plugins` (any branch)      |
-| Linux | `build-linux/`   | `../JUCE-wayland` (plugdata-team fork)   | `../plugins-main` (worktree)   |
-| Tests | `build-tests/`   | same as host OS                          | same as host OS                |
+| OS    | App build | Tests build      | JUCE source                              | Plugins source                 |
+|-------|-----------|------------------|------------------------------------------|--------------------------------|
+| macOS | `build/`  | `build-tests/`   | `../JUCE` (upstream)                     | `../plugins` (any branch)      |
+| Linux | `build/`  | `build-tests/`   | `../JUCE-wayland` (plugdata-team fork)   | `../plugins-main` (worktree)   |
 
 CMake auto-detects:
 - **JUCE** — on Linux it prefers `../JUCE-wayland` if present, falls back to `../JUCE`. The wayland fork has 5 local commits Dusk Studio depends on (XEmbed mapping, X11-on-Wayland fix, peer-creation latch — see [memory](../../.claude/projects/-home-marc-projects-Dusk Studio/memory/linux_juce_wayland_pin.md)) and a divergent `addDefaultFormatsToManager` free function.

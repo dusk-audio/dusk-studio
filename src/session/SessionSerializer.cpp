@@ -677,8 +677,13 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm)
     // Automation - per-strip mode + per-param point arrays. Lanes not in
     // the JSON stay empty (default-constructed). 3c-i loads only; 3c-ii
     // adds Write which mutates lanes mid-play via an atomic-swap pattern.
-    if (v.hasProperty ("automation_mode"))
-        t.automationMode.store ((int) v["automation_mode"], std::memory_order_release);
+    //
+    // Note: we mutate automationLanes BEFORE publishing the new
+    // automationMode. Publishing the mode first would let the audio
+    // thread observe Read/Touch and pull from a half-rebuilt lane
+    // vector (mid-clear / mid-push_back). Release-store of the mode
+    // after all lane mutations pairs with the engine's acquire-load
+    // gating lane reads.
     for (auto& lane : t.automationLanes)
         lane.points.clear();
     if (auto autoVar = v["automation"]; autoVar.isObject())
@@ -714,6 +719,8 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm)
                 { return a.timeSamples < b.timeSamples; });
         }
     }
+    if (v.hasProperty ("automation_mode"))
+        t.automationMode.store ((int) v["automation_mode"], std::memory_order_release);
 
     t.regions.clear();
     if (auto regions = v["regions"]; regions.isArray())
@@ -1255,9 +1262,9 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                 }
             }
 
-            if (v.hasProperty ("automation_mode"))
-                lane.params.automationMode.store ((int) v["automation_mode"],
-                                                   std::memory_order_release);
+            // Mode publish happens AFTER lane mutations below — same
+            // ordering rationale as the track-load block: avoid the
+            // audio thread reading half-rebuilt lane vectors.
             for (auto& al : lane.params.automationLanes)
                 al.points.clear();
             if (auto autoObj = v["automation"]; autoObj.isObject())
@@ -1284,6 +1291,9 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                     }
                 }
             }
+            if (v.hasProperty ("automation_mode"))
+                lane.params.automationMode.store ((int) v["automation_mode"],
+                                                   std::memory_order_release);
         }
     }
     if (auto markersArr = root["markers"]; markersArr.isArray())
@@ -1308,9 +1318,8 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         if (master.hasProperty ("tape_enabled")) s.master().tapeEnabled.store ((bool) master["tape_enabled"]);
         if (master.hasProperty ("tape_hq"))      s.master().tapeHQ.store ((bool) master["tape_hq"]);
         if (master.hasProperty ("tape_state"))   s.master().tapeStateBase64 = master["tape_state"].toString();
-        if (master.hasProperty ("automation_mode"))
-            s.master().automationMode.store ((int) master["automation_mode"],
-                                              std::memory_order_release);
+        // Mode publish happens AFTER lane mutations below — same
+        // ordering rationale as the track-load + aux-load blocks.
         for (auto& al : s.master().automationLanes)
             al.points.clear();
         if (auto autoObj = master["automation"]; autoObj.isObject())
@@ -1337,6 +1346,9 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                 }
             }
         }
+        if (master.hasProperty ("automation_mode"))
+            s.master().automationMode.store ((int) master["automation_mode"],
+                                              std::memory_order_release);
     }
     if (auto mast = root["mastering"]; mast.isObject())
     {
