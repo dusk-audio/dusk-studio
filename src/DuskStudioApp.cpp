@@ -46,11 +46,11 @@ public:
         // setup with no peer means flags are stashed and applied by
         // the single addToDesktop call at the end of this ctor.
         //
-        // Env-var gate: DUSKSTUDIO_FORCE_X11_MAIN=1 routes the peer to
-        // X11 (XWayland) instead of wl_surface. Required for embedded
-        // AUX plugin editors (X11 plugin sub-windows can't reparent
-        // into a wl_surface parent). Default = Wayland native.
-        const bool forceX11Main = std::getenv ("DUSKSTUDIO_FORCE_X11_MAIN") != nullptr;
+        // Linux: route the main peer to X11 (XWayland) instead of
+        // wl_surface. Required for inline-embedded plugin editors —
+        // VST3/LV2/CLAP SDKs hand back X11 Window IDs that can only
+        // reparent into an X11 host. XWayland is transparent and ships
+        // on every mainstream Wayland session.
 
         setUsingNativeTitleBar (true);
         setContentOwned (new MainComponent(), true);
@@ -96,21 +96,16 @@ public:
         }
 
         // Single addToDesktop call with all style flags already set.
-        // X11-latched when forceX11Main is set so the peer factory in
+        // X11-latched on Linux so the peer factory in
         // Component::createNewPeer picks LinuxComponentPeer (XWayland)
         // instead of WaylandComponentPeer.
-        if (forceX11Main)
-            duskstudio::platform::preferX11ForNextNativeWindow();
+       #if defined(__linux__)
+        duskstudio::platform::preferX11ForNextNativeWindow();
+       #endif
         addToDesktop (getDesktopWindowStyleFlags());
-        if (forceX11Main)
-            duskstudio::platform::clearPreferX11ForNativeWindow();
-
-        if (auto* p = getPeer())
-            std::fprintf (stderr,
-                          "[MainWindow] forceX11=%d peer=%p nativeHandle=%p\n",
-                          (int) forceX11Main,
-                          (void*) p, p->getNativeHandle());
-        std::fflush (stderr);
+       #if defined(__linux__)
+        duskstudio::platform::clearPreferX11ForNativeWindow();
+       #endif
 
         // Hide explicitly so the deferred setVisible(true) below gets
         // a clean transition - JUCE's Component default is visible=true,

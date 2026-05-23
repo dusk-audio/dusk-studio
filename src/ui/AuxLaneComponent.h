@@ -5,22 +5,20 @@
 #include <array>
 #include <memory>
 #include "../session/Session.h"
-#include "EmbeddedModal.h"
 
 namespace duskstudio
 {
 class PluginSlot;
 class AuxLaneStrip;
 class AudioEngine;
-class AuxEditorHost;
+class HardwareInsertEditor;
 
 // AUX return lane. Three-column layout: aux-return strip (name, mute,
 // return fader, output meter) on the left, plugin slot in the center,
 // send-source panel showing every channel's send-to-this-lane level on
-// the right. The plugin editor opens as a floating X11 toplevel
-// (AuxEditorHost) - true in-lane embedding isn't achievable on the
-// JUCE-wayland fork (X11 plugin sub-windows can't reparent into a
-// wl_surface and Wayland never exposes screen position to clients).
+// the right. The plugin editor embeds inline in the center area below
+// the slot header (DuskStudioApp forces the main window peer to X11 on
+// Linux so OOP plugin X11 sub-windows can reparent into the lane).
 class AuxLaneComponent final : public juce::Component, private juce::Timer
 {
 public:
@@ -30,11 +28,8 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+    void childBoundsChanged (juce::Component* child) override;
     void mouseDown (const juce::MouseEvent&) override;
-
-    void repositionEditorHosts();
-    void setEditorHostsHidden (bool hidden);
-    void closeAllPopoutsForShutdown();
 
     static constexpr int kStripWidth      = 150;
     static constexpr int kSendPanelWidth  = 280;
@@ -51,8 +46,12 @@ private:
     void unloadSlot (int slotIdx);
     void toggleEditorForSlot (int slotIdx);
     void refreshSlotControls (int slotIdx);
-    void createEditorHostForSlot (int slotIdx);
-    void destroyEditorHostForSlot (int slotIdx);
+    void attachEditorForSlot (int slotIdx);
+    void detachEditorForSlot (int slotIdx);
+    void attachHardwareInsertForSlot (int slotIdx);
+    void detachHardwareInsertForSlot (int slotIdx);
+    void layoutEditorForSlot (int slotIdx);
+    void scheduleEditorRefits (int slotIdx);
 
     juce::Rectangle<int> getStripArea() const noexcept;
     juce::Rectangle<int> getCenterArea() const noexcept;
@@ -89,13 +88,15 @@ private:
         juce::TextButton bypassButton;
         juce::TextButton removeButton;
 
+        // Exactly one of these is attached at a time, gated by
+        // strip.insertMode[i]:
+        //   kInsertPlugin   → `editor` (plugin's AudioProcessorEditor)
+        //   kInsertHardware → `hwInsertEditor` (HardwareInsertEditor panel)
         std::unique_ptr<juce::AudioProcessorEditor> editor;
-        std::unique_ptr<AuxEditorHost>              editorHost;
+        std::unique_ptr<HardwareInsertEditor>       hwInsertEditor;
         juce::String displayedName;
-        bool userClosedHost { false }; // true after user clicks the host's X — suppress rebuildSlots auto-recreate
     };
     std::array<SlotUI, AuxLaneParams::kMaxLanePlugins> slots;
     std::unique_ptr<juce::FileChooser> activePluginChooser;
-    EmbeddedModal hardwareInsertModal;
 };
 } // namespace duskstudio

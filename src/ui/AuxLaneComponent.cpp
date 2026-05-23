@@ -1,5 +1,4 @@
 #include "AuxLaneComponent.h"
-#include "AuxEditorHost.h"
 #include "HardwareInsertEditor.h"
 #include "PlatformWindowing.h"
 #include "PluginPickerHelpers.h"
@@ -334,10 +333,11 @@ AuxLaneComponent::~AuxLaneComponent()
     // eventually, but base-class destruction runs AFTER member
     // destruction - leaving a window for a UAF.
     stopTimer();
-    for (int i = 0; i < AuxLaneParams::kMaxLanePlugins; ++i)
-        destroyEditorHostForSlot (i);
     for (auto& s : slots)
+    {
         s.editor.reset();
+        s.hwInsertEditor.reset();
+    }
 }
 
 void AuxLaneComponent::timerCallback()
@@ -625,89 +625,146 @@ void AuxLaneComponent::openHardwareInsertEditor (int slotIdx)
     strip.insertMode[(size_t) slotIdx].store (AuxLaneStrip::kInsertHardware,
                                                 std::memory_order_release);
     refreshSlotControls (slotIdx);
-
-    juce::Component::SafePointer<AuxLaneComponent> safe (this);
-    auto editor = std::make_unique<HardwareInsertEditor> (
-        lane.hardwareInserts[(size_t) slotIdx],
-        engine.getDeviceManager(),
-        [safe, slotIdx]
-        {
-            if (auto* self = safe.getComponent())
-            {
-                self->hardwareInsertModal.close();
-                self->refreshSlotControls (slotIdx);
-            }
-        });
-
-    auto* parent = findParentComponentOfClass<juce::Component>();
-    if (parent == nullptr) parent = this;
-    hardwareInsertModal.show (*parent, std::move (editor));
+    // rebuildSlots will see the flipped mode and call
+    // attachHardwareInsertForSlot, mirroring the plugin-editor inline
+    // path. No popup modal.
+    rebuildSlots();
 }
 
 void AuxLaneComponent::unloadSlot (int slotIdx)
 {
-    destroyEditorHostForSlot (slotIdx);
-    auto& ui = slots[(size_t) slotIdx];
-    ui.editor.reset();
-    strip.getPluginSlot (slotIdx).unload();
-    refreshSlotControls (slotIdx);
-    rebuildSlots();
-}
-
-void AuxLaneComponent::toggleEditorForSlot (int slotIdx)
-{
-    auto& ui = slots[(size_t) slotIdx];
-    // User clicked the slot's open button - clear the closed flag so
-    // rebuildSlots will recreate the host if it was closed via the X.
-    ui.userClosedHost = false;
-    if (ui.editorHost != nullptr)
-        ui.editorHost->setHostHidden (ui.editorHost->isVisible());
-    rebuildSlots();
-}
-
-void AuxLaneComponent::createEditorHostForSlot (int slotIdx)
-{
-    auto& ui = slots[(size_t) slotIdx];
-    if (ui.editor == nullptr || ui.editorHost != nullptr) return;
-
-    auto* instance = strip.getPluginSlot (slotIdx).getInstance();
-
+    // Defer the whole teardown to next message-loop tick. unloadSlot
+    // runs from the remove-button's onClick stack; doing the editor
+    // destruction (which for OOP/XEmbed plugins tears down child-
+    // process IPC + native windows), plugin instance unload, and
+    // rebuild synchronously from inside that click handler has been
+    // observed to crash on plugins like Multi-Q whose editor destructor
+    // posts further messages that race with the in-flight click event.
+    // Letting the click handler unwind first puts the teardown on a
+    // clean stack.
     juce::Component::SafePointer<AuxLaneComponent> safe (this);
-    ui.editorHost = std::make_unique<AuxEditorHost> (
-        lane.name + " - " + ui.editor->getName(),
-        *ui.editor,
-        instance,
-        &engine,
-        [safe, slotIdx]
-        {
-            // Defer the unique_ptr reset to the next message-loop tick
-            // so we don't destruct the host from inside its own
-            // closeButtonPressed (JUCE no-no). Set userClosedHost so
-            // rebuildSlots won't immediately recreate the host on the
-            // next refresh - user has to click the slot button to
-            // re-open the editor.
-            juce::MessageManager::callAsync ([safe, slotIdx]
-            {
-                if (auto* self = safe.getComponent())
-                {
-                    if (slotIdx >= 0 && slotIdx < (int) self->slots.size())
-                    {
-                        auto& ui = self->slots[(size_t) slotIdx];
-                        ui.userClosedHost = true;
-                        ui.editorHost.reset();
-                    }
-                    self->rebuildSlots();
-                }
-            });
-        });
+    juce::MessageManager::callAsync ([safe, slotIdx]
+    {
+        auto* self = safe.getComponent();
+        if (self == nullptr) return;
+        self->detachEditorForSlot (slotIdx);
+        self->detachHardwareInsertForSlot (slotIdx);
+        self->strip.getPluginSlot (slotIdx).unload();
+        // Clear the model's enabled flag so any consumer that polls
+        // lane.hardwareInserts[slotIdx].enabled sees a disabled slot
+        // after unload — without this the flag could stay true and
+        // confuse session save / routing diagnostics.
+        self->lane.hardwareInserts[(size_t) slotIdx].enabled.store (
+            false, std::memory_order_release);
+        // Flip back to Plugin mode so the next picker open lands in the
+        // default code path (and the audio thread stops routing through
+        // the hardware-insert crossfade).
+        self->strip.insertMode[(size_t) slotIdx].store (
+            AuxLaneStrip::kInsertPlugin, std::memory_order_release);
+        self->refreshSlotControls (slotIdx);
+        self->rebuildSlots();
+    });
 }
 
-void AuxLaneComponent::destroyEditorHostForSlot (int slotIdx)
+void AuxLaneComponent::toggleEditorForSlot (int /*slotIdx*/)
+{
+    // Editor embeds inline whenever the slot is loaded — nothing to
+    // toggle. Clicks on the slot's name button when loaded fall through
+    // to a no-op; users use the X button to unload the slot.
+}
+
+void AuxLaneComponent::attachEditorForSlot (int slotIdx)
 {
     auto& ui = slots[(size_t) slotIdx];
-    if (ui.editorHost == nullptr) return;
-    duskstudio::platform::prepareForTopLevelDestruction (*ui.editorHost);
-    ui.editorHost.reset();
+    if (ui.editor == nullptr) return;
+    if (ui.editor->getParentComponent() == this) return;
+
+    addAndMakeVisible (*ui.editor);
+    layoutEditorForSlot (slotIdx);
+
+    // LV2 / OOP plugin editors sometimes finalize their preferred size
+    // after a few X11 idle pumps - the bounds reported at
+    // createEditorIfNeeded() time are stale. Re-layout after a few
+    // delays so the inline embed picks up the final geometry.
+    scheduleEditorRefits (slotIdx);
+}
+
+void AuxLaneComponent::detachEditorForSlot (int slotIdx)
+{
+    auto& ui = slots[(size_t) slotIdx];
+    if (ui.editor == nullptr) return;
+    // editor destructor auto-removes from parent, but be explicit so
+    // bounds-changed callbacks during teardown can't fire against a
+    // half-destructed editor.
+    removeChildComponent (ui.editor.get());
+    ui.editor.reset();
+}
+
+void AuxLaneComponent::attachHardwareInsertForSlot (int slotIdx)
+{
+    auto& ui = slots[(size_t) slotIdx];
+    if (ui.hwInsertEditor != nullptr) return;
+
+    ui.hwInsertEditor = std::make_unique<HardwareInsertEditor> (
+        lane.hardwareInserts[(size_t) slotIdx],
+        engine.getDeviceManager(),
+        /*onDone*/ [] {},
+        /*embedded*/ true);
+    addAndMakeVisible (*ui.hwInsertEditor);
+    layoutEditorForSlot (slotIdx);
+}
+
+void AuxLaneComponent::detachHardwareInsertForSlot (int slotIdx)
+{
+    auto& ui = slots[(size_t) slotIdx];
+    if (ui.hwInsertEditor == nullptr) return;
+    removeChildComponent (ui.hwInsertEditor.get());
+    ui.hwInsertEditor.reset();
+}
+
+void AuxLaneComponent::layoutEditorForSlot (int slotIdx)
+{
+    auto& ui = slots[(size_t) slotIdx];
+
+    // Plugin editor and hardware-insert editor share the same center
+    // area below the slot header; only one is ever attached at a time.
+    juce::Component* body = nullptr;
+    if (ui.editor != nullptr && ui.editor->getParentComponent() == this)
+        body = ui.editor.get();
+    else if (ui.hwInsertEditor != nullptr && ui.hwInsertEditor->getParentComponent() == this)
+        body = ui.hwInsertEditor.get();
+    if (body == nullptr) return;
+
+    auto center = getCenterArea();
+    auto& slot = strip.getPluginSlot (slotIdx);
+    const int mode = strip.insertMode[(size_t) slotIdx].load (std::memory_order_relaxed);
+    if (slot.isLoaded() || slot.isOffline() || mode == AuxLaneStrip::kInsertHardware)
+        center.removeFromTop (kSlotHeaderH + 4);
+
+    if (center.isEmpty()) return;
+
+    const int prefW = body->getWidth();
+    const int prefH = body->getHeight();
+    if (prefW <= 0 || prefH <= 0) return;
+
+    const int w = juce::jmin (prefW, center.getWidth());
+    const int h = juce::jmin (prefH, center.getHeight());
+    const int x = center.getX() + (center.getWidth()  - w) / 2;
+    const int y = center.getY() + (center.getHeight() - h) / 2;
+    body->setBounds (x, y, w, h);
+}
+
+void AuxLaneComponent::scheduleEditorRefits (int slotIdx)
+{
+    for (int delayMs : { 100, 350, 800 })
+    {
+        juce::Component::SafePointer<AuxLaneComponent> safe (this);
+        juce::Timer::callAfterDelay (delayMs, [safe, slotIdx]
+        {
+            if (auto* self = safe.getComponent())
+                self->layoutEditorForSlot (slotIdx);
+        });
+    }
 }
 
 juce::Rectangle<int> AuxLaneComponent::getStripArea() const noexcept
@@ -730,52 +787,43 @@ juce::Rectangle<int> AuxLaneComponent::getCenterArea() const noexcept
     return area;
 }
 
-void AuxLaneComponent::repositionEditorHosts()
-{
-    // No-op kept for ABI/header parity. AUX plugin editors are floating
-    // X11 toplevels (channel-strip pattern) - they don't follow the
-    // main window. Future xdg-foreign-based embedded variant may restore
-    // a real implementation here.
-}
-
-void AuxLaneComponent::setEditorHostsHidden (bool hidden)
-{
-    for (auto& ui : slots)
-        if (ui.editorHost != nullptr)
-            ui.editorHost->setHostHidden (hidden);
-}
-
-void AuxLaneComponent::closeAllPopoutsForShutdown()
-{
-    for (int i = 0; i < (int) slots.size(); ++i)
-        destroyEditorHostForSlot (i);
-}
-
 void AuxLaneComponent::rebuildSlots()
 {
     for (int i = 0; i < AuxLaneParams::kMaxLanePlugins; ++i)
     {
         auto& ui = slots[(size_t) i];
-        auto* instance = strip.getPluginSlot (i).getInstance();
-        if (instance != nullptr && ui.editor == nullptr)
+        const int mode = strip.insertMode[(size_t) i].load (std::memory_order_relaxed);
+
+        if (mode == AuxLaneStrip::kInsertHardware)
         {
-            if (instance->hasEditor())
-            {
-                duskstudio::platform::preferX11ForNextNativeWindow();
-                ui.editor.reset (instance->createEditorIfNeeded());
-                duskstudio::platform::clearPreferX11ForNativeWindow();
-            }
-            if (ui.editor == nullptr)
-                ui.editor = std::make_unique<juce::GenericAudioProcessorEditor> (*instance);
+            // HW mode wins — drop any plugin editor that was attached
+            // before the mode flip.
+            if (ui.editor != nullptr) detachEditorForSlot (i);
+            if (ui.hwInsertEditor == nullptr) attachHardwareInsertForSlot (i);
         }
-        if (instance != nullptr && ui.editor != nullptr
-            && ui.editorHost == nullptr && ! ui.userClosedHost)
-            createEditorHostForSlot (i);
-        if (instance == nullptr && (ui.editor != nullptr || ui.editorHost != nullptr))
+        else
         {
-            destroyEditorHostForSlot (i);
-            ui.editor.reset();
-            ui.userClosedHost = false; // reset so a future load auto-opens normally
+            if (ui.hwInsertEditor != nullptr) detachHardwareInsertForSlot (i);
+
+            auto* instance = strip.getPluginSlot (i).getInstance();
+            if (instance != nullptr && ui.editor == nullptr)
+            {
+                if (instance->hasEditor())
+                {
+                    // X11 latch is a no-op when main is already X11, but
+                    // keep it for safety on platforms that don't force the
+                    // main peer to X11 (and to keep the call sites uniform
+                    // with ChannelStripComponent).
+                    duskstudio::platform::preferX11ForNextNativeWindow();
+                    ui.editor.reset (instance->createEditorIfNeeded());
+                    duskstudio::platform::clearPreferX11ForNativeWindow();
+                }
+                if (ui.editor == nullptr)
+                    ui.editor = std::make_unique<juce::GenericAudioProcessorEditor> (*instance);
+                attachEditorForSlot (i);
+            }
+            if (instance == nullptr && ui.editor != nullptr)
+                detachEditorForSlot (i);
         }
     }
     resized();
@@ -837,11 +885,15 @@ void AuxLaneComponent::resized()
     auto center = getCenterArea();
     auto& ui = slots[0];
     auto& slot0 = strip.getPluginSlot (0);
-    // Offline placeholder shares the header layout so the X button is
-    // positioned and clickable — without this the offline branch in
-    // refreshSlotControls makes removeButton visible but never gives
-    // it bounds, leaving a zero-sized non-interactive control.
-    if (slot0.isLoaded() || slot0.isOffline())
+    const int mode0 = strip.insertMode[0].load (std::memory_order_relaxed);
+    const bool hardware = mode0 == AuxLaneStrip::kInsertHardware;
+    // Offline placeholder + hardware-insert mode share the header
+    // layout. Without the hardware branch the HW editor would overlap
+    // openOrAddButton (which would otherwise fill the entire center),
+    // and removeButton — made visible by refreshSlotControls in HW
+    // mode — would never get bounds and the user couldn't dismiss
+    // the HW insert.
+    if (slot0.isLoaded() || slot0.isOffline() || hardware)
     {
         auto headerStrip = center.removeFromTop (kSlotHeaderH);
         ui.removeButton.setBounds (headerStrip.removeFromRight (28));
@@ -861,11 +913,55 @@ void AuxLaneComponent::resized()
     // Right column: send-source panel fills.
     if (sendPanel != nullptr) sendPanel->setBounds (getSendPanelArea());
 
-    // X11 toplevel editor hosts get repositioned over the freshly
-    // laid-out lane slot area in screen coords. Lane bounds may have
-    // changed (window resize, AUX tab switch); the host's setBounds
-    // tracks them.
-    repositionEditorHosts();
+    // Inline plugin editor — sits below the slot header in the center
+    // column, centered horizontally and vertically inside the remaining
+    // area. layoutEditorForSlot is a no-op when the editor isn't
+    // attached, so loaded-vs-empty branches above don't need to know.
+    for (int i = 0; i < AuxLaneParams::kMaxLanePlugins; ++i)
+        layoutEditorForSlot (i);
+}
+
+void AuxLaneComponent::childBoundsChanged (juce::Component* child)
+{
+    // Plugin editors (especially LV2 / OOP) self-resize after their
+    // first X11 idle pumps. Re-center inside the editor area when the
+    // hosted editor reports a new size. Same path applies to the
+    // hardware-insert editor (it has a fixed size, but resized() may
+    // run early before bounds settle).
+    for (int i = 0; i < AuxLaneParams::kMaxLanePlugins; ++i)
+    {
+        auto& ui = slots[(size_t) i];
+        juce::Component* body = nullptr;
+        if (ui.editor.get() == child) body = ui.editor.get();
+        else if (ui.hwInsertEditor.get() == child) body = ui.hwInsertEditor.get();
+        if (body != nullptr)
+        {
+            // Only re-center if the editor is sized within the area —
+            // direct recursion through setBounds is impossible because
+            // layoutEditorForSlot pins width/height to jmin(pref,area).
+            // Calling setBounds with the same w/h re-emits
+            // childBoundsChanged so we guard against repeat layout when
+            // x/y already match.
+            auto center = getCenterArea();
+            auto& slot = strip.getPluginSlot (i);
+            const int mode = strip.insertMode[(size_t) i].load (std::memory_order_relaxed);
+            if (slot.isLoaded() || slot.isOffline() || mode == AuxLaneStrip::kInsertHardware)
+                center.removeFromTop (kSlotHeaderH + 4);
+            if (center.isEmpty()) return;
+
+            const int prefW = body->getWidth();
+            const int prefH = body->getHeight();
+            const int w = juce::jmin (prefW, center.getWidth());
+            const int h = juce::jmin (prefH, center.getHeight());
+            const int x = center.getX() + (center.getWidth()  - w) / 2;
+            const int y = center.getY() + (center.getHeight() - h) / 2;
+            if (body->getX() == x && body->getY() == y
+                && body->getWidth() == w && body->getHeight() == h)
+                return;
+            body->setBounds (x, y, w, h);
+            return;
+        }
+    }
 }
 
 void AuxLaneComponent::mouseDown (const juce::MouseEvent& e)

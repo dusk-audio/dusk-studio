@@ -55,9 +55,15 @@ void openPickerMenu (PluginSlot& slot,
                       juce::Point<int> screenPosition = { -1, -1 },
                       std::function<void()> onPickHardwareInsert = {});
 
-// Synchronous scan with a tiny modal banner so the user sees progress.
-// Same UX as the per-channel scan dialog. Safe to call from message thread.
-void runScanModal (PluginManager& manager);
+// Synchronous scan. Blocks the message thread during scanInstalledPlugins().
+// Shows a Dusk in-window completion alert in `parent` (top-level Component)
+// when done. Pass nullptr for `parent` to fall back to a JUCE AlertWindow
+// (legacy path; new callsites should always provide a parent).
+// `onAlertDismiss` fires after the user dismisses the completion alert;
+// use it to chain subsequent UI work (e.g. reopening the picker) so the
+// follow-up doesn't stack on top of the alert and hide it.
+void runScanModal (PluginManager& manager, juce::Component* parent = nullptr,
+                    std::function<void()> onAlertDismiss = {});
 
 // Run a juce::FileChooser to pick a plugin file (.vst3 / .so / .lv2),
 // loading on selection. `chooserOwner` keeps the chooser alive across the

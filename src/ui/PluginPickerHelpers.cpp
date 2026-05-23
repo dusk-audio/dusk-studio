@@ -1,4 +1,6 @@
 #include "PluginPickerHelpers.h"
+#include "EmbeddedModal.h"
+#include "PluginPickerPanel.h"
 #include "../engine/PluginManager.h"
 #include "../engine/PluginSlot.h"
 
@@ -6,12 +8,115 @@ namespace duskstudio::pluginpicker
 {
 namespace
 {
-constexpr int kIdScan            = 9001;
-constexpr int kIdBrowseFile      = 9002;
-constexpr int kIdHardwareInsert  = 9003;
-constexpr int kIdLoadSoundfont   = 9004;
+// One picker modal at a time, app-wide. EmbeddedModal::close() is
+// idempotent so re-entering show() across different parents is safe;
+// callers don't need to track instance lifetime.
+EmbeddedModal& sharedPickerModal()
+{
+    static EmbeddedModal m;
+    return m;
+}
 
-void showLoadFailureAlert (const juce::String& message)
+// Separate static modal so alerts can stack OVER the picker modal
+// without one clobbering the other.
+EmbeddedModal& sharedAlertModal()
+{
+    static EmbeddedModal m;
+    return m;
+}
+
+// Dusk-styled message panel - title row, multiline message, single OK
+// button. Replaces juce::AlertWindow for the picker's scan-complete /
+// load-failure feedback so we don't drop another native popup onto the
+// XWayland-flaky stack.
+class DuskAlertPanel final : public juce::Component
+{
+public:
+    DuskAlertPanel (juce::String title, juce::String message)
+        : titleStr (std::move (title)), messageStr (std::move (message))
+    {
+        setOpaque (true);
+        okBtn.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff262630));
+        okBtn.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff5a4880));
+        okBtn.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xffd0d0d4));
+        okBtn.setColour (juce::TextButton::textColourOnId,   juce::Colours::white);
+        okBtn.onClick = [this] { if (onOK) onOK(); };
+        addAndMakeVisible (okBtn);
+        setSize (460, 220);
+        setWantsKeyboardFocus (true);
+    }
+
+    std::function<void()> onOK;
+
+    void paint (juce::Graphics& g) override
+    {
+        g.fillAll (juce::Colour (0xff1a1a22));
+        auto r = getLocalBounds().reduced (20);
+
+        g.setColour (juce::Colours::white);
+        g.setFont (juce::Font (juce::FontOptions (15.0f, juce::Font::bold)));
+        g.drawText (titleStr, r.removeFromTop (24),
+                     juce::Justification::topLeft, false);
+        r.removeFromTop (10);
+
+        g.setColour (juce::Colour (0xffd0d0d4));
+        g.setFont (juce::Font (juce::FontOptions (12.5f)));
+        // Reserve the bottom strip for the OK button; everything above
+        // is message body. drawFittedText wraps at the body width.
+        auto body = r.withTrimmedBottom (kButtonStripH + 8);
+        g.drawFittedText (messageStr.isEmpty() ? juce::String ("Unknown error")
+                                                  : messageStr,
+                            body, juce::Justification::topLeft, 6);
+    }
+
+    void resized() override
+    {
+        auto r = getLocalBounds().reduced (20);
+        auto buttonRow = r.removeFromBottom (kButtonStripH);
+        okBtn.setBounds (buttonRow.removeFromRight (100));
+    }
+
+    bool keyPressed (const juce::KeyPress& k) override
+    {
+        if (k == juce::KeyPress::escapeKey || k == juce::KeyPress::returnKey)
+        {
+            if (onOK) onOK();
+            return true;
+        }
+        return false;
+    }
+
+private:
+    static constexpr int kButtonStripH = 32;
+    juce::String titleStr;
+    juce::String messageStr;
+    juce::TextButton okBtn { "OK" };
+};
+
+void showDuskAlert (juce::Component& parent,
+                     juce::String title,
+                     juce::String message,
+                     std::function<void()> onDismiss = {})
+{
+    auto panel = std::make_unique<DuskAlertPanel> (std::move (title),
+                                                     std::move (message));
+    panel->onOK = [onDismiss]() mutable
+    {
+        sharedAlertModal().close();
+        if (onDismiss) onDismiss();
+    };
+    sharedAlertModal().show (parent, std::move (panel),
+                                /*onDismiss*/ [onDismiss]() mutable
+                                {
+                                    sharedAlertModal().close();
+                                    if (onDismiss) onDismiss();
+                                });
+}
+
+// Fallback for callsites that have no parent component handy. Keeps the
+// flow alive (better than swallowing the error silently) but the
+// long-term direction is to plumb a parent everywhere.
+void showLoadFailureAlertFallback (const juce::String& message)
 {
     juce::AlertWindow::showAsync (
         juce::MessageBoxOptions()
@@ -23,33 +128,46 @@ void showLoadFailureAlert (const juce::String& message)
 }
 } // namespace
 
-void runScanModal (PluginManager& manager)
+void runScanModal (PluginManager& manager, juce::Component* parent,
+                    std::function<void()> onAlertDismiss)
 {
-    // PluginDirectoryScanner is internally synchronous when allowAsync=false;
-    // we surface a tiny banner so the user knows we're working. A polished
-    // UX would lift this onto a thread with a real progress bar - good
-    // follow-up once the picker is in active use across surfaces.
-    auto* dialog = new juce::AlertWindow ("Scanning plugins",
-                                            "Looking through VST3 / LV2 install "
-                                            "locations... this can take a few "
-                                            "seconds the first time.",
-                                            juce::MessageBoxIconType::NoIcon);
-    dialog->setUsingNativeTitleBar (true);
-    dialog->enterModalState (false /*not blocking*/);
-
+    // scanInstalledPlugins is synchronous and blocks the message thread,
+    // so a real progress dialog can't repaint while it runs. The previous
+    // JUCE AlertWindow "scanning..." pop was cosmetic - it would freeze
+    // and then disappear. Skip the progress UX entirely; show only the
+    // completion alert as a Dusk in-window modal.
     const int added = manager.scanInstalledPlugins();
-    delete dialog;
 
-    juce::AlertWindow::showAsync (
-        juce::MessageBoxOptions()
-            .withIconType (juce::MessageBoxIconType::InfoIcon)
-            .withTitle ("Plugin scan complete")
-            .withMessage (juce::String::formatted (
-                "Added %d plugin%s to the picker. (Total known: %d)",
-                added, added == 1 ? "" : "s",
-                manager.getKnownPluginList().getNumTypes()))
-            .withButton ("OK"),
-        nullptr);
+    auto message = juce::String::formatted (
+        "Added %d plugin%s to the picker. (Total known: %d)",
+        added, added == 1 ? "" : "s",
+        manager.getKnownPluginList().getNumTypes());
+
+    if (parent != nullptr)
+    {
+        showDuskAlert (*parent, "Plugin scan complete", std::move (message),
+                          std::move (onAlertDismiss));
+    }
+    else
+    {
+        // Fallback for callers without a parent component handy. JUCE
+        // AlertWindow remains a native popup; eventually every callsite
+        // should plumb a parent and this branch can be removed. Pass the
+        // dismiss callback through ModalCallbackFunction so it fires when
+        // the user actually closes the alert, not immediately on
+        // schedule.
+        juce::AlertWindow::showAsync (
+            juce::MessageBoxOptions()
+                .withIconType (juce::MessageBoxIconType::InfoIcon)
+                .withTitle ("Plugin scan complete")
+                .withMessage (message)
+                .withButton ("OK"),
+            juce::ModalCallbackFunction::create (
+                [cb = std::move (onAlertDismiss)] (int /*result*/) mutable
+                {
+                    if (cb) cb();
+                }));
+    }
 }
 
 namespace
@@ -133,7 +251,16 @@ void openFileChooser (PluginSlot& slot,
             juce::String error;
             const bool ok = slot.loadFromFile (file, error);
             chooserOwner.reset();
-            if (! ok) { showLoadFailureAlert (error); return; }
+            if (! ok)
+            {
+                if (auto* tl = parentForLifetime.getComponent() != nullptr
+                                  ? parentForLifetime.getComponent()->getTopLevelComponent()
+                                  : nullptr)
+                    showDuskAlert (*tl, "Plugin load failed", error);
+                else
+                    showLoadFailureAlertFallback (error);
+                return;
+            }
             if (! loadedKindMatches (slot, expectedKind))
             {
                 rejectMismatchedKind (slot, expectedKind);
@@ -182,7 +309,16 @@ static void openSoundfontFileChooser (PluginSlot& slot,
             juce::String error;
             const bool ok = slot.loadFromFile (file, error);
             chooserOwner.reset();
-            if (! ok) { showLoadFailureAlert (error); return; }
+            if (! ok)
+            {
+                if (auto* tl = parentForLifetime.getComponent() != nullptr
+                                  ? parentForLifetime.getComponent()->getTopLevelComponent()
+                                  : nullptr)
+                    showDuskAlert (*tl, "Plugin load failed", error);
+                else
+                    showLoadFailureAlertFallback (error);
+                return;
+            }
             if (onChange) onChange();
         });
 }
@@ -193,194 +329,136 @@ void openPickerMenu (PluginSlot& slot,
                       std::unique_ptr<juce::FileChooser>& chooserOwner,
                       std::function<void()> onChange,
                       PluginKind kind,
-                      juce::Point<int> screenPosition,
+                      juce::Point<int> /*screenPosition*/,
                       std::function<void()> onPickHardwareInsert)
 {
     auto& manager = slot.getManagerForUi();
-    auto& known   = manager.getKnownPluginList();
 
-    // Build the filtered list. We can't use KnownPluginList::addToMenu
-    // because it builds menu IDs off the full list with no filter hook;
-    // we sort and group by manufacturer manually instead. IDs 1..N map
-    // to indices in `sorted` (captured by the lambda); 9000+ are reserved
-    // for our own action items.
     auto descriptions = (kind == PluginKind::Instruments)
                           ? manager.getInstrumentDescriptions()
                           : manager.getEffectDescriptions();
-    std::sort (descriptions.begin(), descriptions.end(),
-        [] (const juce::PluginDescription& a, const juce::PluginDescription& b)
-        {
-            if (a.manufacturerName != b.manufacturerName)
-                return a.manufacturerName.compareIgnoreCase (b.manufacturerName) < 0;
-            return a.name.compareIgnoreCase (b.name) < 0;
-        });
 
-    juce::PopupMenu menu;
-
-    // External Hardware Insert lives at the very top of the menu (above
-    // even the "no plugins scanned" banner) so the user can reach it
-    // regardless of plugin state. Only shown when the caller wired up
-    // a handler - aux + channel slots both do, mastering stages don't.
-    if (onPickHardwareInsert)
-        menu.addItem (kIdHardwareInsert, "External Hardware Insert...");
-
-   #if DUSKSTUDIO_HAS_MULTISAMPLE
-    // "Load Soundfont..." sits alongside External Hardware Insert as a
-    // native Dusk Studio entry (not in the plugins submenu — it isn't
-    // a third-party plugin). Only meaningful on MIDI tracks; for audio
-    // (Effects) tracks the option is hidden to avoid confusion.
-    if (kind == PluginKind::Instruments)
-        menu.addItem (kIdLoadSoundfont, "Load Soundfont...");
-   #endif
-
-    if (onPickHardwareInsert
-       #if DUSKSTUDIO_HAS_MULTISAMPLE
-        || kind == PluginKind::Instruments
-       #endif
-        )
-        menu.addSeparator();
-
-    if (known.getNumTypes() == 0)
-    {
-        menu.addSectionHeader ("No plugins scanned yet");
-    }
-    else if (descriptions.isEmpty())
-    {
-        menu.addSectionHeader (kind == PluginKind::Instruments
-                                  ? "No instruments scanned yet"
-                                  : "No effects scanned yet");
-    }
-    else
-    {
-        juce::String currentManufacturer;
-        juce::PopupMenu submenu;
-        for (int i = 0; i < descriptions.size(); ++i)
-        {
-            const auto& d = descriptions.getReference (i);
-            if (d.manufacturerName != currentManufacturer)
-            {
-                if (currentManufacturer.isNotEmpty())
-                    menu.addSubMenu (currentManufacturer, submenu);
-                submenu = juce::PopupMenu();
-                currentManufacturer = d.manufacturerName;
-            }
-            // Append format in parens so the user can distinguish
-            // VST3 vs LV2 vs AU when the same plugin exists in multiple
-            // formats (common for cross-platform vendors). LV2 plugins
-            // without a native UI now fall back to a generic parameter
-            // editor at open time, so no per-format suffix is needed.
-            juce::String label = d.name;
-            if (d.pluginFormatName.isNotEmpty())
-                label += "  (" + d.pluginFormatName + ")";
-            submenu.addItem (i + 1, label);
-        }
-        if (currentManufacturer.isNotEmpty())
-            menu.addSubMenu (currentManufacturer, submenu);
-    }
-    menu.addSeparator();
-    menu.addItem (kIdScan,       "Scan plugins (VST3 / LV2)...");
-    menu.addItem (kIdBrowseFile, "Browse for file...");
+    auto* parent = target.getTopLevelComponent();
+    if (parent == nullptr) parent = &target;
 
     juce::Component::SafePointer<juce::Component> safeTarget (&target);
+    juce::Component::SafePointer<juce::Component> safeParent  (parent);
     auto* slotPtr = &slot;
     auto* chooserOwnerPtr = &chooserOwner;
-    auto onChangeCopy = onChange;
 
-    // Capture descriptions by shared_ptr so the result lambda can resolve
-    // an ID back to a description without copying the whole array per
-    // showMenuAsync.
-    auto sharedDescriptions = std::make_shared<juce::Array<juce::PluginDescription>> (std::move (descriptions));
+    // Shared closure helpers - all callbacks close the modal first so
+    // the picker disappears immediately, then run the action.
+    auto closeModal = []
+    {
+        sharedPickerModal().close();
+    };
 
-    // Anchor on click position when supplied (large click-target buttons
-    // would otherwise drop the menu at their top-left), otherwise on the
-    // component's bounds.
-    auto options = juce::PopupMenu::Options();
-    if (screenPosition.x >= 0 && screenPosition.y >= 0)
-        options = options.withTargetScreenArea (
-            juce::Rectangle<int> (screenPosition.x, screenPosition.y, 1, 1));
-    else
-        options = options.withTargetComponent (&target);
+    PluginPickerPanel::Callbacks cb;
 
-    auto onHardwareCopy = onPickHardwareInsert;
+    cb.onCancel = closeModal;
 
-    menu.showMenuAsync (options,
-        [slotPtr, safeTarget, chooserOwnerPtr, onChangeCopy = std::move (onChangeCopy),
-         onHardwareCopy = std::move (onHardwareCopy),
-         kind, screenPosition, sharedDescriptions] (int result) mutable
+    cb.onScan = [closeModal, slotPtr, safeTarget, safeParent, chooserOwnerPtr,
+                  onChange, kind, onPickHardwareInsert]() mutable
+    {
+        closeModal();
+
+        // Capture for the post-alert reopen. Run scan, then schedule
+        // picker reopen ONLY after the user dismisses the completion
+        // alert — otherwise the picker stacks back over the alert (alert
+        // was added before the picker, so JUCE z-order puts the picker
+        // on top), making the result message invisible.
+        auto reopenPicker = [slotPtr, safeTarget, chooserOwnerPtr,
+                              onChange, kind, onPickHardwareInsert]() mutable
         {
-            if (safeTarget.getComponent() == nullptr) return;  // host UI gone
-            if (result == 0) return;  // cancelled
-            if (result == kIdHardwareInsert)
-            {
-                if (onHardwareCopy) onHardwareCopy();
-                return;
-            }
-           #if DUSKSTUDIO_HAS_MULTISAMPLE
-            if (result == kIdLoadSoundfont)
-            {
-                openSoundfontFileChooser (*slotPtr, *chooserOwnerPtr,
-                                            std::move (onChangeCopy), safeTarget);
-                return;
-            }
-           #endif
-            if (result == kIdScan)
-            {
-                runScanModal (slotPtr->getManagerForUi());
-                // Reopen the picker so the user immediately sees the newly
-                // scanned plugins without a second click. Preserve the
-                // original anchor so the reopened menu lands in the same
-                // visual spot.
-                openPickerMenu (*slotPtr, *safeTarget.getComponent(),
-                                  *chooserOwnerPtr, std::move (onChangeCopy),
-                                  kind, screenPosition,
-                                  std::move (onHardwareCopy));
-                return;
-            }
-            if (result == kIdBrowseFile)
-            {
-                openFileChooser (*slotPtr, *chooserOwnerPtr,
-                                  std::move (onChangeCopy), safeTarget, kind);
-                return;
-            }
+            if (auto* t = safeTarget.getComponent())
+                openPickerMenu (*slotPtr, *t, *chooserOwnerPtr,
+                                  std::move (onChange), kind, { -1, -1 },
+                                  std::move (onPickHardwareInsert));
+        };
+        runScanModal (slotPtr->getManagerForUi(), safeParent.getComponent(),
+                       std::move (reopenPicker));
+    };
 
-            // 1..N → index into the filtered, sorted descriptions array.
-            const int idx = result - 1;
-            if (idx < 0 || idx >= sharedDescriptions->size()) return;
-            const auto& desc = sharedDescriptions->getReference (idx);
+    cb.onBrowseFile = [closeModal, slotPtr, safeTarget, chooserOwnerPtr,
+                        onChange, kind]() mutable
+    {
+        closeModal();
+        if (safeTarget.getComponent() == nullptr) return;
+        openFileChooser (*slotPtr, *chooserOwnerPtr,
+                           std::move (onChange), safeTarget, kind);
+    };
 
-            // Defence-in-depth: getInstrument/EffectDescriptions already
-            // filtered by kind, but a stale KnownPluginList entry (e.g.
-            // scanned before the plugin was reclassified by the vendor)
-            // could slip through. Verify the description matches the
-            // expected kind before loading.
-            const bool descIsInstrument = desc.isInstrument;
-            const bool descMatches = (kind == PluginKind::Instruments)
-                                       ? descIsInstrument
-                                       : ! descIsInstrument;
-            if (! descMatches)
-            {
-                rejectMismatchedKind (*slotPtr, kind);
-                if (onChangeCopy) onChangeCopy();
-                return;
-            }
+    if (onPickHardwareInsert)
+    {
+        cb.onHardwareInsert = [closeModal, hw = onPickHardwareInsert]() mutable
+        {
+            closeModal();
+            if (hw) hw();
+        };
+    }
 
-            juce::String error;
-            if (! slotPtr->loadFromDescription (desc, error))
-            {
-                showLoadFailureAlert (error);
-                return;
-            }
-            // Post-load sanity check: rare for the loaded plugin's
-            // self-reported flag to differ from its scanned description,
-            // but it has been seen (plugin reports differently when
-            // hosted vs scanned). Reject + warn in that case too.
-            if (! loadedKindMatches (*slotPtr, kind))
-            {
-                rejectMismatchedKind (*slotPtr, kind);
-                if (onChangeCopy) onChangeCopy();
-                return;
-            }
-            if (onChangeCopy) onChangeCopy();
-        });
+   #if DUSKSTUDIO_HAS_MULTISAMPLE
+    if (kind == PluginKind::Instruments)
+    {
+        cb.onLoadSoundfont = [closeModal, slotPtr, safeTarget, chooserOwnerPtr,
+                                onChange]() mutable
+        {
+            closeModal();
+            if (safeTarget.getComponent() == nullptr) return;
+            openSoundfontFileChooser (*slotPtr, *chooserOwnerPtr,
+                                         std::move (onChange), safeTarget);
+        };
+    }
+   #endif
+
+    cb.onPickPlugin = [closeModal, slotPtr, safeTarget, safeParent, onChange, kind]
+                        (const juce::PluginDescription& desc) mutable
+    {
+        closeModal();
+        if (safeTarget.getComponent() == nullptr) return;
+
+        // Defence-in-depth: getInstrument/EffectDescriptions already
+        // filtered by kind, but a stale KnownPluginList entry could slip
+        // through (plugin reclassified by vendor since last scan).
+        const bool descMatches = (kind == PluginKind::Instruments)
+                                   ? desc.isInstrument
+                                   : ! desc.isInstrument;
+        if (! descMatches)
+        {
+            rejectMismatchedKind (*slotPtr, kind);
+            if (onChange) onChange();
+            return;
+        }
+
+        juce::String error;
+        if (! slotPtr->loadFromDescription (desc, error))
+        {
+            if (auto* p = safeParent.getComponent())
+                showDuskAlert (*p, "Plugin load failed", error);
+            else
+                showLoadFailureAlertFallback (error);
+            return;
+        }
+        // Post-load sanity check: rare for the loaded plugin's
+        // self-reported flag to differ from its scanned description,
+        // but it has been seen (plugin reports differently when hosted
+        // vs scanned). Reject + warn in that case too.
+        if (! loadedKindMatches (*slotPtr, kind))
+        {
+            rejectMismatchedKind (*slotPtr, kind);
+            if (onChange) onChange();
+            return;
+        }
+        if (onChange) onChange();
+    };
+
+    auto panel = std::make_unique<PluginPickerPanel> (
+        std::move (descriptions),
+        kind == PluginKind::Instruments ? PluginPickerPanel::Kind::Instruments
+                                          : PluginPickerPanel::Kind::Effects,
+        std::move (cb));
+
+    sharedPickerModal().show (*parent, std::move (panel),
+                                /*onDismiss*/ [] { sharedPickerModal().close(); });
 }
 } // namespace duskstudio::pluginpicker

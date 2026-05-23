@@ -16,10 +16,12 @@ int decodePairR (int id)        noexcept { return (id - 1) % 1000; }
 
 HardwareInsertEditor::HardwareInsertEditor (HardwareInsertParams& paramsRef,
                                                 juce::AudioDeviceManager& dm,
-                                                std::function<void()> onDone)
+                                                std::function<void()> onDone,
+                                                bool embedded)
     : params (paramsRef),
       deviceManager (dm),
-      onDoneCallback (std::move (onDone))
+      onDoneCallback (std::move (onDone)),
+      isEmbedded (embedded)
 {
     setSize (kPanelW, kPanelH);
 
@@ -153,8 +155,14 @@ HardwareInsertEditor::HardwareInsertEditor (HardwareInsertParams& paramsRef,
     doneButton  .onClick = [this] { if (onDoneCallback) onDoneCallback(); };
     doneButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff2a5a3a));
     doneButton.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
-    addAndMakeVisible (cancelButton);
-    addAndMakeVisible (doneButton);
+    // Cancel + Done are popup-modal vestiges. When embedded inline in
+    // the AUX lane, the X (remove) button on the slot header handles
+    // teardown and the editor never needs its own footer actions.
+    if (! isEmbedded)
+    {
+        addAndMakeVisible (cancelButton);
+        addAndMakeVisible (doneButton);
+    }
 
     // Mark the params as actively in use so the audio thread's strip
     // dispatcher (Phase 3) flips into Hardware mode. The strip's
@@ -376,10 +384,16 @@ void HardwareInsertEditor::resized()
         formatMidSideButton.setBounds (row.removeFromLeft (110));
     }
 
-    // Footer row, pinned to the bottom.
-    auto footer = getLocalBounds().reduced (16, 12).removeFromBottom (kRowH);
-    doneButton  .setBounds (footer.removeFromRight (100));
-    footer.removeFromRight (8);
-    cancelButton.setBounds (footer.removeFromRight (90));
+    // Footer row, pinned to the bottom. Skip layout when embedded —
+    // the buttons aren't addAndMakeVisible'd, but setBounds on a hidden
+    // child is wasted work and also keeps the buttons offscreen in
+    // case someone later flips them visible without re-layout.
+    if (! isEmbedded)
+    {
+        auto footer = getLocalBounds().reduced (16, 12).removeFromBottom (kRowH);
+        doneButton  .setBounds (footer.removeFromRight (100));
+        footer.removeFromRight (8);
+        cancelButton.setBounds (footer.removeFromRight (90));
+    }
 }
 } // namespace duskstudio

@@ -13,6 +13,62 @@
 
 namespace duskstudio
 {
+
+class ChannelStripComponent::CompBypassLed final : public juce::Component,
+                                                       public juce::SettableTooltipClient
+{
+public:
+    CompBypassLed (std::function<bool()> getEnabled,
+                    std::function<void()> onToggle)
+        : isEnabledFn (std::move (getEnabled)),
+          toggleFn (std::move (onToggle))
+    {
+        setMouseCursor (juce::MouseCursor::PointingHandCursor);
+        setTooltip ("Compressor bypass — green when engaged, click to toggle");
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        const auto r = getLocalBounds().toFloat().reduced (1.0f);
+        const bool on = isEnabledFn ? isEnabledFn() : false;
+
+        // Bezel
+        g.setColour (juce::Colour (0xff141416));
+        g.fillEllipse (r);
+        g.setColour (juce::Colour (0xff2a2a2e));
+        g.drawEllipse (r, 1.0f);
+
+        // Lit core
+        const auto inner = r.reduced (2.0f);
+        if (on)
+        {
+            g.setColour (juce::Colour (0xff60d060));
+            g.fillEllipse (inner);
+            // Inner highlight for "lit" feel
+            g.setColour (juce::Colour (0xffa0f0a0).withAlpha (0.6f));
+            g.fillEllipse (inner.reduced (inner.getWidth() * 0.35f,
+                                            inner.getHeight() * 0.35f)
+                                  .translated (-inner.getWidth() * 0.12f,
+                                                 -inner.getHeight() * 0.12f));
+        }
+        else
+        {
+            g.setColour (juce::Colour (0xff2a3028));
+            g.fillEllipse (inner);
+        }
+    }
+
+    void mouseDown (const juce::MouseEvent&) override
+    {
+        if (toggleFn) toggleFn();
+        repaint();
+    }
+
+private:
+    std::function<bool()> isEnabledFn;
+    std::function<void()> toggleFn;
+};
+
 namespace
 {
 struct BandSpec
@@ -207,6 +263,12 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
                                 "Lit gold when the comp is engaged.");
     compModeButton.onClick = [this] { showCompModeMenu(); };
     addAndMakeVisible (compModeButton);
+
+    compBypassLed = std::make_unique<CompBypassLed> (
+        [this] { return track.strip.compEnabled.load (std::memory_order_relaxed); },
+        [this] { setCompEnabled (! track.strip.compEnabled.load (std::memory_order_relaxed)); });
+    addAndMakeVisible (compBypassLed.get());
+
     refreshCompModeButtonState();
     refreshCompKnobVisibility();
 
@@ -1145,6 +1207,7 @@ void ChannelStripComponent::setEqSectionVisible (bool visible)
 void ChannelStripComponent::setCompSectionVisible (bool visible)
 {
     compModeButton.setVisible (visible);
+    if (compBypassLed != nullptr) compBypassLed->setVisible (visible);
     optoPeakRedKnob .setVisible (visible);  optoPeakRedLabel.setVisible (visible);
     optoGainKnob    .setVisible (visible);  optoGainLabel   .setVisible (visible);
     optoLimitButton .setVisible (visible);
@@ -3021,6 +3084,8 @@ void ChannelStripComponent::refreshCompModeButtonState()
     const bool on = track.strip.compEnabled.load (std::memory_order_relaxed);
     if (compModeButton.getToggleState() != on)
         compModeButton.setToggleState (on, juce::dontSendNotification);
+
+    if (compBypassLed != nullptr) compBypassLed->repaint();
 }
 
 void ChannelStripComponent::refreshCompKnobVisibility()
@@ -3049,27 +3114,20 @@ void ChannelStripComponent::refreshCompKnobVisibility()
 
 void ChannelStripComponent::showCompModeMenu()
 {
-    // Bypass + mode are orthogonal: the toggle at the top flips compEnabled
-    // without changing compMode (so the user can A/B mode timbres while
-    // bypassed). The mode items below set compMode only - they don't
-    // implicitly enable the comp.
-    const int  m  = juce::jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
-    const bool on = track.strip.compEnabled.load (std::memory_order_relaxed);
+    // Mode-only dropdown. Bypass lives on the round LED in the lower
+    // left of the comp section — click that LED to toggle compEnabled.
+    const int m = juce::jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
     juce::PopupMenu menu;
-    menu.addItem (1, on ? "Bypass" : "Engage", true, false);
-    menu.addSeparator();
     menu.addItem (2, "OPTO - program-dependent, smooth", true, m == 0);
     menu.addItem (3, "FET - fast attack, gritty under load", true, m == 1);
     menu.addItem (4, "VCA - clean, predictable", true, m == 2);
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&compModeButton),
-        [safeThis = juce::Component::SafePointer<ChannelStripComponent> (this), on]
+        [safeThis = juce::Component::SafePointer<ChannelStripComponent> (this)]
         (int chosen)
         {
             auto* self = safeThis.getComponent();
             if (self == nullptr) return;
-            if (chosen == 1)
-                self->setCompEnabled (! on);
-            else if (chosen >= 2 && chosen <= 4)
+            if (chosen >= 2 && chosen <= 4)
                 self->setCompMode (chosen - 2);
         });
 }
@@ -3472,7 +3530,24 @@ void ChannelStripComponent::resized()
     {
         auto s = compArea.reduced (3, 2);
 
-        compModeButton.setBounds (s.removeFromTop (16));
+        // Header row: bypass LED on the left, comp-mode button taking
+        // the rest. Putting the LED in the lower-left of the body would
+        // overlap the leftmost knob's value text in FET / VCA modes
+        // (knob row spans full width and value labels sit at the
+        // bottom). Header row is the only horizontal strip that stays
+        // free of knob real estate across all three modes.
+        auto headerRow = s.removeFromTop (16);
+        constexpr int kLedSize  = 10;
+        constexpr int kLedSpace = 14;
+        if (compBypassLed != nullptr)
+        {
+            compBypassLed->setBounds (
+                headerRow.getX(),
+                headerRow.getY() + (headerRow.getHeight() - kLedSize) / 2,
+                kLedSize, kLedSize);
+        }
+        headerRow.removeFromLeft (kLedSpace);
+        compModeButton.setBounds (headerRow);
         s.removeFromTop (2);
 
         // Body: split into knob area (left) + meter strip (right). Meter

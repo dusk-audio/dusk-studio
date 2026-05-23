@@ -23,7 +23,6 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
     bool keyPressed (const juce::KeyPress&) override;
-    void parentHierarchyChanged() override;
 
     // MenuBarModel overrides - drive the File / Settings menus at the top
     // of the window. Replaces the previous row of large TextButtons.
@@ -213,13 +212,6 @@ private:
     std::unique_ptr<juce::FileChooser> importFileChooser;
     std::unique_ptr<class MasteringView> masteringView;
     std::unique_ptr<class AuxView>       auxView;
-
-    // Watches the top-level window for move/resize so AUX plugin editor
-    // hosts (separate X11 toplevels positioned over the lane area on
-    // Linux/Wayland) can track the parent. Installed lazily once the
-    // top-level peer exists.
-    class TopLevelMovementWatcher;
-    std::unique_ptr<TopLevelMovementWatcher> topLevelMovementWatcher;
 
     // Track the audio settings DialogWindow so we can explicitly delete it
     // in our destructor BEFORE AudioEngine destructs. Required because the

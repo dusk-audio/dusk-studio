@@ -102,19 +102,20 @@ void requestFocusOnMainWaylandSurface();
 
 // Latch a "use X11 for top-level peer creation" flag. While set, every
 // Component::createNewPeer routes to LinuxComponentPeer (X11) instead
-// of WaylandComponentPeer, even on a Wayland session. Used by plugin-
-// editor host wrappers because the Linux plugin protocols (VST3
-// X11EmbedWindowID, LV2 LV2_UI__X11UI, JUCE-plugin X11-windowed
-// renderer) need an X11 parent to attach to.
+// of WaylandComponentPeer, even on a Wayland session. Used so the
+// main window, popup menus, plugin editor peers, and dialog windows
+// all share the X11 backend — required because the Linux plugin
+// protocols (VST3 X11EmbedWindowID, LV2 LV2_UI__X11UI, JUCE-plugin
+// X11-windowed renderer) need an X11 parent to attach to, AND because
+// wl_surface popups can't parent to an X11 main window.
 //
-// Latched, not one-shot: a single juce::DocumentWindow ctor body
-// triggers multiple peer recreations (TopLevelWindow base ctor,
-// setUsingNativeTitleBar, setResizable, lookAndFeelChanged) - we
-// need the X11 routing to hold across all of them. Caller pattern:
-// preferX11ForNextNativeWindow() before construction, then
-// clearPreferX11ForNativeWindow() at the end of the ctor body.
+// Sticky on Linux: once preferX11ForNextNativeWindow() runs (during
+// MainWindow ctor), the latch stays on for the process lifetime.
+// clearPreferX11ForNativeWindow() is a no-op on Linux — clearing the
+// latch would let the next popup menu pick wl_surface and silently
+// fail to map under an X11 parent.
 //
-// Linux: sets / clears JUCE-wayland's latched skip flag.
+// Linux: sets JUCE-wayland's latched skip flag; clear is a no-op.
 // Mac/Windows: no-op.
 void preferX11ForNextNativeWindow();
 void clearPreferX11ForNativeWindow();

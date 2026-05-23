@@ -29,7 +29,8 @@ class HardwareInsertEditor final : public juce::Component,
 public:
     HardwareInsertEditor (HardwareInsertParams& params,
                           juce::AudioDeviceManager& deviceManager,
-                          std::function<void()> onDone);
+                          std::function<void()> onDone,
+                          bool embedded = false);
     ~HardwareInsertEditor() override;
 
     void paint (juce::Graphics&) override;
@@ -47,6 +48,7 @@ private:
     HardwareInsertParams& params;
     juce::AudioDeviceManager& deviceManager;
     std::function<void()> onDoneCallback;
+    bool isEmbedded = false;
 
     juce::Label headerLabel;
 

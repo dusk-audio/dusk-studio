@@ -142,6 +142,13 @@ private:
     // mutated separately via setCompEnabled / armCompOnUserEdit.
     juce::TextButton compModeButton  { "OPTO" };
 
+    // Round LED in the lower-left of the comp section. Lights green when
+    // the compressor is engaged, dim grey when bypassed. Click toggles
+    // compEnabled — replaces the old "Bypass" menu item on the mode
+    // dropdown so the dropdown stays mode-only.
+    class CompBypassLed;
+    std::unique_ptr<CompBypassLed> compBypassLed;
+
     // Opto (LA-2A): peak-reduction knob + gain knob + LIMIT toggle.
     juce::Slider     optoPeakRedKnob { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
     juce::Slider     optoGainKnob    { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };

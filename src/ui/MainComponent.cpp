@@ -64,38 +64,6 @@ namespace duskstudio
 // Tracks the top-level window so AuxView's editor hosts (separate X11
 // toplevels on Linux/Wayland) can follow the main window across the
 // screen. Override targets ComponentMovementWatcher protected virtuals.
-class MainComponent::TopLevelMovementWatcher : public juce::ComponentMovementWatcher
-{
-public:
-    TopLevelMovementWatcher (juce::Component& target, MainComponent& ownerIn)
-        : juce::ComponentMovementWatcher (&target), owner (ownerIn) {}
-
-    using juce::ComponentMovementWatcher::componentMovedOrResized;
-    using juce::ComponentMovementWatcher::componentVisibilityChanged;
-
-    void componentMovedOrResized (bool /*wasMoved*/, bool /*wasResized*/) override
-    {
-        if (owner.auxView != nullptr)
-            owner.auxView->repositionAllHosts();
-    }
-    void componentPeerChanged() override
-    {
-        if (owner.auxView != nullptr)
-            owner.auxView->repositionAllHosts();
-    }
-    void componentVisibilityChanged() override
-    {
-        if (owner.auxView != nullptr)
-        {
-            const bool vis = getComponent() != nullptr && getComponent()->isVisible();
-            owner.auxView->setAllHostsHidden (! vis);
-        }
-    }
-
-private:
-    MainComponent& owner;
-};
-
 namespace
 {
 // Dusk Studio-styled "save changes before quitting?" panel hosted by
@@ -557,18 +525,6 @@ MainComponent::~MainComponent()
     // Save button when you want to keep state.
 
     juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
-}
-
-void MainComponent::parentHierarchyChanged()
-{
-    juce::Component::parentHierarchyChanged();
-    // Install the top-level movement watcher exactly once, after the
-    // host top-level (the DocumentWindow that owns us) is attached.
-    if (topLevelMovementWatcher == nullptr)
-    {
-        if (auto* tlw = getTopLevelComponent(); tlw != nullptr && tlw != this)
-            topLevelMovementWatcher = std::make_unique<TopLevelMovementWatcher> (*tlw, *this);
-    }
 }
 
 void MainComponent::paint (juce::Graphics& g)
@@ -1606,17 +1562,10 @@ void MainComponent::beginSafeShutdown()
     markPhase ("phase 4: drop plugin editor windows");
     if (consoleView != nullptr)
         consoleView->dropAllPluginEditors();
-    // Channel-strip plugin editors are owned by ConsoleView's strips;
-    // aux-bus plugin pop-out windows are owned by AuxView's lanes and
-    // sit in a separate ownership chain. Without this call, an open
-    // aux popout cascades through ~MainWindow → ~AuxLaneComponent →
-    // popoutWindow.reset() WITHOUT going through prepareForTopLevel-
-    // Destruction, so the X-protocol focus stays on the popout and
-    // mutter aborts at meta_window_unmanage. Diagnosed from a 12:53
-    // crash trace where AM_VST3_Processor::terminate (Diva, on an
-    // aux bus) was the last Dusk Studio log line before the assertion.
-    if (auxView != nullptr)
-        auxView->closeAllAuxPopouts();
+    // AUX plugin editors are inline children of their AuxLaneComponent —
+    // they tear down with the normal ~MainWindow → ~AuxView cascade. The
+    // mutter focus race that required an explicit pre-shutdown pass only
+    // applied to the old floating-window editors.
 
     markPhase ("phase 5: flush window operations");
     duskstudio::platform::flushWindowOperations();

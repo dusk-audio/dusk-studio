@@ -1,7 +1,6 @@
 #include "AuxView.h"
 #include "AuxLaneComponent.h"
 #include "../engine/AudioEngine.h"
-#include <cstdio>
 
 namespace duskstudio
 {
@@ -20,8 +19,6 @@ void styleSelectorButton (juce::TextButton& b, juce::Colour onColour)
 
 AuxView::AuxView (Session& session, AudioEngine& engine)
 {
-    std::fprintf (stderr, "[AuxView] ctor enter\n");
-    std::fflush (stderr);
     for (int i = 0; i < Session::kNumAuxLanes; ++i)
     {
         // Selector button. Use full-saturation accent (matches stage-tab
@@ -48,18 +45,9 @@ AuxView::AuxView (Session& session, AudioEngine& engine)
     }
 
     setActiveLane (0);
-    std::fprintf (stderr, "[AuxView] ctor exit\n");
-    std::fflush (stderr);
 }
 
 AuxView::~AuxView() = default;
-
-void AuxView::closeAllAuxPopouts()
-{
-    for (auto& lane : lanes)
-        if (lane != nullptr)
-            lane->closeAllPopoutsForShutdown();
-}
 
 void AuxView::setActiveLane (int index)
 {
@@ -70,44 +58,9 @@ void AuxView::setActiveLane (int index)
     {
         selectorButtons[(size_t) i].setToggleState (i == index, juce::dontSendNotification);
         if (lanes[(size_t) i] != nullptr)
-        {
-            const bool active = (i == index);
-            lanes[(size_t) i]->setVisible (active);
-            // Editor hosts are X11 toplevels separate from the JUCE
-            // visibility tree - hide them explicitly when their lane
-            // isn't active, else they keep floating over the screen.
-            lanes[(size_t) i]->setEditorHostsHidden (! active || ! isVisible());
-        }
+            lanes[(size_t) i]->setVisible (i == index);
     }
     resized();
-    repositionAllHosts();
-}
-
-void AuxView::repositionAllHosts()
-{
-    if (activeLaneIndex < 0 || activeLaneIndex >= Session::kNumAuxLanes) return;
-    if (auto* lane = lanes[(size_t) activeLaneIndex].get())
-        lane->repositionEditorHosts();
-}
-
-void AuxView::setAllHostsHidden (bool hidden)
-{
-    for (auto& lane : lanes)
-        if (lane != nullptr)
-            lane->setEditorHostsHidden (hidden);
-}
-
-void AuxView::visibilityChanged()
-{
-    // Whole AUX view swapped out (user picked MIXING / RECORDING /
-    // MASTERING) or back in. Hide / re-show only the active lane's host
-    // since inactive lanes' hosts are already hidden.
-    const bool nowVisible = isVisible();
-    for (int i = 0; i < Session::kNumAuxLanes; ++i)
-        if (lanes[(size_t) i] != nullptr)
-            lanes[(size_t) i]->setEditorHostsHidden (! nowVisible || i != activeLaneIndex);
-    if (nowVisible)
-        repositionAllHosts();
 }
 
 void AuxView::paint (juce::Graphics& g)
@@ -117,9 +70,6 @@ void AuxView::paint (juce::Graphics& g)
 
 void AuxView::resized()
 {
-    std::fprintf (stderr, "[AuxView] resized: bounds=%d,%d %dx%d active=%d\n",
-                  getX(), getY(), getWidth(), getHeight(), activeLaneIndex);
-    std::fflush (stderr);
     auto area = getLocalBounds().reduced (4);
 
     // Selector row across the top - same height as the main stage buttons
