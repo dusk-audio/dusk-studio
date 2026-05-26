@@ -30,9 +30,9 @@ void  setUiScaleOverride (float scale);
 bool getScanPluginsOnStartup();
 void setScanPluginsOnStartup (bool scan);
 
-// Expand the tape SUMMARY strip by default on app launch. When false
+// Expand the tape TIMELINE strip by default on app launch. When false
 // (default) the strip starts collapsed so the channel strips get full
-// vertical room; user toggles via TapeStrip's SUMMARY button. Persisted
+// vertical room; user toggles via TapeStrip's TIMELINE button. Persisted
 // per-machine.
 bool getTapeStripExpandedDefault();
 void setTapeStripExpandedDefault (bool expanded);

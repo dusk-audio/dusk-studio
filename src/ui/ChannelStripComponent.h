@@ -46,9 +46,9 @@ public:
 
     // Compact mode hides the inline EQ + COMP controls and replaces each
     // section with a single small button that opens the corresponding
-    // editor as a modal popup. Used when the SUMMARY (tape-strip) view is
+    // editor as a modal popup. Used when the TIMELINE (tape-strip) view is
     // expanded, so the fader / bus assigns / meters / M-S-Ø stay visible
-    // even on a screen the SUMMARY ate half of.
+    // even on a screen the TIMELINE ate half of.
     void setCompactMode (bool compact);
     bool isCompactMode() const noexcept { return compactMode; }
 

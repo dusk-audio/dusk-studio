@@ -331,7 +331,7 @@ MainComponent::MainComponent()
         tapeStripExpanded = expanded;
         if (tapeStrip != nullptr) tapeStrip->setVisible (expanded);
         // Collapse each track strip's EQ + COMP into popup buttons while the
-        // SUMMARY view is up - without this the fader and bus assigns get
+        // TIMELINE view is up - without this the fader and bus assigns get
         // pushed off the bottom of the strip and become unusable.
         if (consoleView != nullptr) consoleView->setStripsCompactMode (expanded);
         resized();
@@ -1050,7 +1050,19 @@ void MainComponent::resized()
                                      + (numBanks - 1) * kBankBtnGap)
                                 : 0;
     const int groupW       = stageBlockW + bankClusterW;
-    const int stageX       = rowBounds.getX() + (rowBounds.getWidth() - groupW) / 2;
+    int stageX             = rowBounds.getX() + (rowBounds.getWidth() - groupW) / 2;
+
+    // Pure window-width centering walks over the transport bar's clock /
+    // timecode label at wide widths (the transport cluster is left-anchored,
+    // the stage tabs centre on the FULL row). Clamp the centred group so
+    // its left edge sits at least `kStageClockGap` past the clock's right
+    // edge — matches the gap conventions used elsewhere in this row.
+    if (transportBar != nullptr)
+    {
+        constexpr int kStageClockGap = 12;
+        const int clockRight = rowBounds.getX() + transportBar->getClockRightX();
+        stageX = juce::jmax (stageX, clockRight + kStageClockGap);
+    }
 
     recordingStageBtn.setBounds (stageX,                stageY, stageW, kStageBtnH);
     mixingStageBtn   .setBounds (stageX + stageW,       stageY, stageW, kStageBtnH);
@@ -1318,7 +1330,7 @@ void MainComponent::launchStartupDialog()
 
     // Centered on the main window. The dialog is plain dark — no native
     // title bar — to match the embedded-modal aesthetic shared with the
-    // TapeMachine gear modal and the SUMMARY EQ/COMP popups.
+    // TapeMachine gear modal and the TIMELINE EQ/COMP popups.
     const auto bounds = getLocalBounds()
                             .withSizeKeepingCentre (startupDialog->getWidth(),
                                                        startupDialog->getHeight());

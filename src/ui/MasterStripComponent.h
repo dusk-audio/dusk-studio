@@ -47,18 +47,23 @@ public:
     void audioProcessorChanged          (juce::AudioProcessor*,
                                            const juce::AudioProcessorListener::ChangeDetails&) override;
 
-    // Shrinks the VU meter's vertical footprint when the tape SUMMARY
+    // Shrinks the VU meter's vertical footprint when the tape TIMELINE
     // is expanded. Toggled by ConsoleView alongside setStripsCompactMode.
     void setCompactVu (bool compact);
 
     // Collapses the EQ + COMP sections into compact placeholder buttons
     // (same grammar as BusComponent + ChannelStripComponent) when the
-    // tape SUMMARY consumes vertical room. Toggled by ConsoleView.
+    // tape TIMELINE consumes vertical room. Toggled by ConsoleView.
     void setCompactMode (bool compact);
 
 private:
     bool compactVu = false;
     bool compactMode = false;
+    // Gate the compact-pill repaint on actual state change (mirrors
+    // ChannelStripComponent / BusComponent) so the 30 Hz timer does not
+    // burn a repaint per tick.
+    int lastCompactEqOn   = -1;
+    int lastCompactCompOn = -1;
     void timerCallback() override;
 
     MasterBusParams& params;
@@ -171,7 +176,7 @@ private:
     juce::Rectangle<int> compArea;
     // Compact-mode placeholder buttons. Hidden when compactMode=false;
     // visible (sections hidden) when true. Decorative — tooltip points
-    // at SUMMARY toggle as the expand/collapse owner.
+    // at TIMELINE toggle as the expand/collapse owner.
     juce::TextButton eqCompactButton  { "EQ"   };
     juce::TextButton compCompactButton { "COMP" };
     EmbeddedModal eqEditorModal;

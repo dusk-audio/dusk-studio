@@ -32,7 +32,7 @@ public:
     static constexpr int kRefBusWidth     = 192;   // accommodates single-row 4-knob COMP with comfortable per-cell width for value labels
     static constexpr int kRefMasterWidth  = 340;   // 4-cell EQ HF row at ~80 px per column — comfortable for "HF BOOST FREQ" full caption
 
-    // Auto-engage SUMMARY (compact mode) so the EQ/COMP sections collapse
+    // Auto-engage TIMELINE (compact mode) so the EQ/COMP sections collapse
     // into popup-launchers and the fader keeps its full vertical span when
     // the window gets cramped. Two independent triggers:
     //   - Height: EQ + COMP eat ~230 px of fixed vertical space inside the
@@ -100,7 +100,7 @@ private:
     std::array<std::unique_ptr<ChannelStripComponent>, Session::kNumTracks> strips;
 
 public:
-    // Forwarded by MainComponent when the SUMMARY view toggles. Each track
+    // Forwarded by MainComponent when the TIMELINE view toggles. Each track
     // strip collapses its EQ + COMP into popup-launch buttons so the fader,
     // bus assigns, and meters stay visible while the tape strip is up.
     // The user's intent is OR'd with auto-compact (engaged when the window
@@ -119,7 +119,7 @@ public:
     void setOnStripFocusRequested (std::function<void (int)> cb);
 
 private:
-    // SUMMARY can be requested by the user (TAPE button) OR by the layout
+    // TIMELINE can be requested by the user (TAPE button) OR by the layout
     // engine when the window shrinks past kAutoCompactChannelWidth. The
     // applied state on each strip is the OR of both.
     bool userWantsCompact = false;

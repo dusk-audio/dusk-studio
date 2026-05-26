@@ -73,8 +73,14 @@ public:
     // compact mode.
     int getTunerLeftX() const noexcept { return tuneButton.getX(); }
 
+    // Right edge of the timecode label, in TransportBar-local coords.
+    // MainComponent uses this to clamp the centered stage-tab overlay so
+    // RECORDING/MIXING/AUX/MASTERING never slide left over the clock at
+    // wide window widths.
+    int getClockRightX() const noexcept { return clockLabel.getRight(); }
+
     // Below this transport-bar width, the right-side toggles collapse to
-    // short labels (SNAP→S, SUMMARY→chevron), the clock label shrinks,
+    // short labels (SNAP→S, TIMELINE→chevron), the clock label shrinks,
     // and MainComponent shrinks the bank-button overlay to match. The
     // threshold is calibrated to fire just above the OS-enforced resize
     // floor (ConsoleView::minimumContentWidth()+24, ~1790 px) so compact
@@ -186,7 +192,7 @@ private:
     // tempo.
     void confirmAndApplyBpm (float newBpm, float oldBpm);
 
-    juce::TextButton tapeToggle    { juce::CharPointer_UTF8 ("\xe2\x96\xbe SUMMARY") };  // "▾ SUMMARY" - toggles the arrangement/summary view
+    juce::TextButton tapeToggle    { juce::CharPointer_UTF8 ("\xe2\x96\xbe TIMELINE") };  // "▾ TIMELINE" - toggles the tape-strip arrangement view
     juce::Label      clockLabel;
     // Flips session.timeDisplayMode between Bars/Beats and mm:ss.ms.
     // The toggle's label always shows the FORMAT THE USER WILL SEE

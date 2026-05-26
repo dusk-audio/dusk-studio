@@ -790,7 +790,7 @@ BusComponent::BusComponent (Bus& b, Session& s, int idx)
     // Compact placeholder buttons (hidden until setCompactMode(true)).
     // Same visual grammar as ChannelStripComponent's eq/comp compact
     // pills so the bus + master strips read as the same compact form
-    // when the tape SUMMARY shrinks the strip.
+    // when the tape TIMELINE shrinks the strip.
     auto styleCompactSectionBtn = [] (juce::TextButton& b, juce::Colour accent)
     {
         b.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff282830));
@@ -829,19 +829,29 @@ void BusComponent::timerCallback()
     // Compact-mode button illumination: the EQ + COMP pills light up
     // when their corresponding section is engaged (eqEnabled /
     // compEnabled). Mirrors ChannelStripComponent's compact-button
-    // refresh so all three strip types read the same way under SUMMARY.
+    // refresh so all three strip types read the same way under TIMELINE.
     if (compactMode)
     {
         const auto eqAccent   = juce::Colour (0xff5fc46f);
         const auto compAccent = juce::Colour (0xffe0c050);
-        const bool eqOn   = bus.strip.eqEnabled  .load (std::memory_order_relaxed);
-        const bool compOn = bus.strip.compEnabled.load (std::memory_order_relaxed);
-        eqCompactButton  .setColour (juce::TextButton::buttonColourId,
-                                       eqOn   ? eqAccent.darker (0.55f)   : juce::Colour (0xff282830));
-        compCompactButton.setColour (juce::TextButton::buttonColourId,
-                                       compOn ? compAccent.darker (0.55f) : juce::Colour (0xff282830));
-        eqCompactButton  .repaint();
-        compCompactButton.repaint();
+        const int eqOn   = bus.strip.eqEnabled  .load (std::memory_order_relaxed) ? 1 : 0;
+        const int compOn = bus.strip.compEnabled.load (std::memory_order_relaxed) ? 1 : 0;
+        if (eqOn != lastCompactEqOn)
+        {
+            lastCompactEqOn = eqOn;
+            eqCompactButton.setColour (juce::TextButton::buttonColourId,
+                                         eqOn != 0 ? eqAccent.darker (0.55f)
+                                                    : juce::Colour (0xff282830));
+            eqCompactButton.repaint();
+        }
+        if (compOn != lastCompactCompOn)
+        {
+            lastCompactCompOn = compOn;
+            compCompactButton.setColour (juce::TextButton::buttonColourId,
+                                           compOn != 0 ? compAccent.darker (0.55f)
+                                                        : juce::Colour (0xff282830));
+            compCompactButton.repaint();
+        }
     }
 
     auto smoothChannel = [] (float& displayed, float& peakHold, int& peakFrames, float src)
@@ -1199,6 +1209,14 @@ void BusComponent::setCompactMode (bool compact)
     if (compactMode == compact) return;
     compactMode = compact;
 
+    // Reset the gated-repaint sentinels so the next timer tick after
+    // re-entering compact mode unconditionally publishes the pill
+    // colours; otherwise a previous compact-mode cache value would
+    // suppress the first refresh when the underlying EQ/COMP state
+    // hasn't flipped between toggles.
+    lastCompactEqOn   = -1;
+    lastCompactCompOn = -1;
+
     // Hide / show every EQ + COMP child in lockstep with the mode.
     // Same approach as ChannelStripComponent::setEqSectionVisible /
     // setCompSectionVisible — no per-section toggle, the whole block
@@ -1238,7 +1256,7 @@ void BusComponent::resized()
     // section below at narrow strip widths.
     if (vuMeter != nullptr)
     {
-        // When the SUMMARY tape strip is expanded the bus fader needs
+        // When the TIMELINE tape strip is expanded the bus fader needs
         // more room, so the VU shrinks. Shrink BOTH dimensions so the
         // dial keeps the same 12:7 aspect ratio as the expanded form
         // (just smaller) - earlier code only reduced the height which
