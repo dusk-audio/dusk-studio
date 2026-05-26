@@ -1,3 +1,4 @@
 [submodule "external/sfizz"]
 	path = external/sfizz
-	url = https://github.com/sfztools/sfizz.git
+	url = https://github.com/dusk-audio/sfizz.git
+	branch = dusk-studio
