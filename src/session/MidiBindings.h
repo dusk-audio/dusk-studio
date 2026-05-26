@@ -180,6 +180,10 @@ constexpr bool needsAuxLaneIndex (MidiBindingTarget t) noexcept
 // True when the target packs two indices (track + aux-lane) into
 // targetIndex via packTrackAux(). The apply path decodes back to the
 // (track, aux) pair before reading the right atom.
+// Note: only covers the absolute-track variant. TrackAuxSendBank packs
+// position*kPackedAuxLanes+aux with a smaller range (kBankSize-based),
+// which is bounds-checked separately in callers — extending this helper
+// would conflict with the SessionSerializer's maxIdx tree.
 constexpr bool needsPackedTrackAuxIndex (MidiBindingTarget t) noexcept
 {
     return t == MidiBindingTarget::TrackAuxSend;
@@ -198,7 +202,7 @@ constexpr int unpackTrackAuxTrack (int packed) noexcept { return packed / kPacke
 constexpr int unpackTrackAuxLane  (int packed) noexcept { return packed % kPackedAuxLanes; }
 
 // Same packing shape for TrackEqGain: 4 bands per track (LF / LM / HM / HF).
-// Range fits in targetIndex (kNumTracks 16 * 4 = 64).
+// Range fits in targetIndex (kNumTracks 24 * 4 = 96).
 constexpr int kPackedEqBands = 4;
 constexpr int packTrackEqBand (int track, int band) noexcept
 {

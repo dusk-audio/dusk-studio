@@ -1,4 +1,5 @@
 #include "RecordManager.h"
+#include <thread>
 #include <unordered_map>
 
 namespace duskstudio
@@ -150,6 +151,17 @@ void RecordManager::stopRecording (juce::int64 endSample)
         return;
 
     active.store (false, std::memory_order_release);
+
+    // Drain in-flight audio-thread calls before reading per-writer
+    // counters or destroying writers / midiCaptures. Both writeInputBlock
+    // and writeMidiBlock bump audioInFlight before touching their slots;
+    // when it reaches zero the audio thread is guaranteed to have left
+    // those entry points and any pointers it captured are no longer in
+    // use. Yield in a tight loop — wait is bounded by one audio block
+    // (sub-ms to ~10 ms worst case), short enough that the message
+    // thread can absorb it during a stop transition.
+    while (audioInFlight.load (std::memory_order_acquire) > 0)
+        std::this_thread::yield();
 
     // Latch audio-thread error counters into lastRecordErrors before
     // teardown so TransportBar can surface them after engine.stop(). Per-
@@ -560,6 +572,7 @@ void RecordManager::writeMidiBlock (int trackIndex,
                                      const juce::MidiBuffer& events,
                                      juce::int64 blockStartFromRecord) noexcept
 {
+    AudioInFlightScope guard (audioInFlight);
     if (! active.load (std::memory_order_acquire)) return;
     if (events.isEmpty()) return;
     if (trackIndex < 0 || trackIndex >= Session::kNumTracks) return;
@@ -622,6 +635,7 @@ void RecordManager::writeInputBlock (int trackIndex,
                                      const float* R,
                                      int numSamples) noexcept
 {
+    AudioInFlightScope guard (audioInFlight);
     if (! active.load (std::memory_order_acquire)) return;
     if (numSamples == 0) return;
     if (trackIndex < 0 || trackIndex >= Session::kNumTracks) return;

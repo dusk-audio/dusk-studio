@@ -1078,6 +1078,13 @@ juce::String SessionSerializer::serialize (const Session& s)
     auto* mast = new juce::DynamicObject();
     mast->setProperty ("source_file",       s.mastering().sourceFile.getFullPathName());
     mast->setProperty ("eq_enabled",        s.mastering().eqEnabled.load());
+    for (int b = 0; b < MasteringParams::kNumEqBands; ++b)
+    {
+        const auto idx = juce::String (b);
+        mast->setProperty ("eq_band_" + idx + "_freq",    s.mastering().eqBandFreq[b].load());
+        mast->setProperty ("eq_band_" + idx + "_gain_db", s.mastering().eqBandGainDb[b].load());
+        mast->setProperty ("eq_band_" + idx + "_q",       s.mastering().eqBandQ[b].load());
+    }
     mast->setProperty ("eq_lf_boost",       s.mastering().eqLfBoost.load());
     mast->setProperty ("eq_hf_boost",       s.mastering().eqHfBoost.load());
     mast->setProperty ("eq_hf_atten",       s.mastering().eqHfAtten.load());
@@ -1438,6 +1445,13 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         auto loadB = [&] (const char* k, std::atomic<bool>& dst)
             { if (mast.hasProperty (k)) dst.store ((bool) mast[k]); };
         loadB ("eq_enabled",        m.eqEnabled);
+        for (int b = 0; b < MasteringParams::kNumEqBands; ++b)
+        {
+            const auto idx = juce::String (b);
+            loadF (("eq_band_" + idx + "_freq").toRawUTF8(),    m.eqBandFreq[b]);
+            loadF (("eq_band_" + idx + "_gain_db").toRawUTF8(), m.eqBandGainDb[b]);
+            loadF (("eq_band_" + idx + "_q").toRawUTF8(),       m.eqBandQ[b]);
+        }
         loadF ("eq_lf_boost",       m.eqLfBoost);
         loadF ("eq_hf_boost",       m.eqHfBoost);
         loadF ("eq_hf_atten",       m.eqHfAtten);
@@ -1567,6 +1581,17 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                     case (int) MidiBindingTarget::TrackCompThresh:
                     case (int) MidiBindingTarget::TrackCompMakeup:
                     case (int) MidiBindingTarget::TrackPluginParam:
+                    case (int) MidiBindingTarget::TrackFaderBank:
+                    case (int) MidiBindingTarget::TrackPanBank:
+                    case (int) MidiBindingTarget::TrackMuteBank:
+                    case (int) MidiBindingTarget::TrackSoloBank:
+                    case (int) MidiBindingTarget::TrackArmBank:
+                    case (int) MidiBindingTarget::TrackAuxSendBank:
+                    case (int) MidiBindingTarget::TrackHpfFreqBank:
+                    case (int) MidiBindingTarget::TrackEqGainBank:
+                    case (int) MidiBindingTarget::TrackCompThreshBank:
+                    case (int) MidiBindingTarget::TrackCompMakeupBank:
+                    case (int) MidiBindingTarget::TrackPluginParamBank:
                     case (int) MidiBindingTarget::BusFader:
                     case (int) MidiBindingTarget::BusPan:
                     case (int) MidiBindingTarget::BusMute:
@@ -1580,9 +1605,12 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                 }
                 // Bus targets index 0..kNumBuses-1; aux-send targets pack
                 // (track, aux) so range is 0..(kNumTracks*kNumAuxSends-1);
-                // everything else uses 0..kNumTracks-1 (global targets
-                // ignore the field).
+                // bank-relative variants use position 0..kBankSize-1 (or a
+                // packed pos*N+sub range for the AuxSend/EqGain bank
+                // variants); everything else uses 0..kNumTracks-1 (global
+                // targets ignore the field).
                 const int rawIdx = v.hasProperty ("target_idx") ? (int) v["target_idx"] : 0;
+                const bool bankRelative = isBankRelativeTarget (b.target);
                 const int maxIdx = needsBusIndex (b.target)
                     ? Session::kNumBuses - 1
                     : (needsAuxLaneIndex (b.target)
@@ -1591,7 +1619,13 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                             ? Session::kNumTracks * ChannelStripParams::kNumAuxSends - 1
                             : (needsPackedTrackEqIndex (b.target)
                                 ? Session::kNumTracks * kPackedEqBands - 1
-                                : Session::kNumTracks - 1)));
+                                : (bankRelative
+                                    ? (b.target == MidiBindingTarget::TrackAuxSendBank
+                                        ? Session::kBankSize * kPackedAuxLanes - 1
+                                        : (b.target == MidiBindingTarget::TrackEqGainBank
+                                            ? Session::kBankSize * kPackedEqBands - 1
+                                            : Session::kBankSize - 1))
+                                    : Session::kNumTracks - 1))));
                 b.targetIndex = juce::jlimit (0, maxIdx, rawIdx);
                 // paramIndex only meaningful for TrackPluginParam, but
                 // round-trip unconditionally for forward-compat. Clamp

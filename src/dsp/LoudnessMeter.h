@@ -70,8 +70,12 @@ private:
     double blockSumSquared       = 0.0;       // sum of (L^2 + R^2) of K-weighted samples
 
     // Block history. Stored as MS-per-block; LUFS is computed on demand
-    // from sliding-window means.
-    std::vector<double> blockHistory;        // unbounded, used for integrated
+    // from sliding-window means. Capped at kMaxHistoryBlocks (1 hour at
+    // 100 ms per block) so the audio-thread push_back in finishBlock never
+    // reallocates. Sessions longer than an hour silently saturate — the
+    // integrated reading stops absorbing new blocks past the cap.
+    static constexpr int kMaxHistoryBlocks = 36000;
+    std::vector<double> blockHistory;
     double  momentaryRingMS [kMomentaryBlocks] = {};
     double  shortTermRingMS [kShortTermBlocks] = {};
     int     ringWritePos = 0;

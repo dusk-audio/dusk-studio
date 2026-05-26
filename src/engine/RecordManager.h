@@ -167,6 +167,26 @@ private:
 
     std::atomic<bool> active { false };
 
+    // In-flight counter for the audio-thread entry points
+    // (writeInputBlock / writeMidiBlock). The audio thread bumps this
+    // BEFORE inspecting `active` or any per-track writer/cap pointer, and
+    // decrements when it leaves. stopRecording sets active=false then
+    // spins on this until it drains to zero before destroying writers
+    // and midiCaptures — closes the use-after-free window where the
+    // audio thread could be mid-write while the message thread tears
+    // down the ThreadedWriter / FIFO. Yield rather than sleep so the
+    // wait stays sub-block in the common case.
+    std::atomic<int> audioInFlight { 0 };
+
+    struct AudioInFlightScope
+    {
+        std::atomic<int>& c;
+        AudioInFlightScope (std::atomic<int>& a) noexcept : c (a)
+            { c.fetch_add (1, std::memory_order_release); }
+        ~AudioInFlightScope() noexcept
+            { c.fetch_sub (1, std::memory_order_release); }
+    };
+
     // Cleared on each startRecording call, populated when an armed
     // track's WAV writer can't be set up. Stored on the message
     // thread only — the audio callback never touches it.

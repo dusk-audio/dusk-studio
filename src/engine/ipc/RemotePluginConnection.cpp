@@ -187,6 +187,15 @@ bool RemotePluginConnection::processBlockSync (const float* const* inChannels,
     {
         const auto seen = hdr->replySeq.load (std::memory_order_acquire);
         if (seen == mySeq) break;
+        // Fast crash detection: the child publishes kStateCrashed
+        // when its handler trips before getting a chance to bump
+        // replySeq. Without this check the parent would wait the
+        // full futex deadline before noticing.
+        if (hdr->state.load (std::memory_order_acquire) == kStateCrashed)
+        {
+            crashed.store (true, std::memory_order_release);
+            return false;
+        }
         // Pass the CURRENT replySeq as the "expected" value for the
         // futex. After a prior call's timeout, replySeq can be stuck
         // at an older value (e.g. mySeq-2); a hardcoded `mySeq-1`

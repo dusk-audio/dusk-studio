@@ -139,10 +139,10 @@ bool SplitRegionAction::undo()
     auto& regs = session.track (trackIdx).regions;
 
     // Remove the right half (idx+1) and restore the left to its full extent.
+    // After the bounds check below, regionIdx < initial_size - 1, so post-
+    // erase regionIdx < new_size: a second check would be unreachable.
     if (regionIdx + 1 >= (int) regs.size()) return false;
     regs.erase (regs.begin() + regionIdx + 1);
-
-    if (regionIdx >= (int) regs.size()) return false;
     regs[(size_t) regionIdx] = originalState;
 
     rebuildPlaybackIfStopped (engine);
@@ -324,6 +324,8 @@ struct CloneTrackAction::Impl
     float compFetInput = 0.0f, compFetOutput = 0.0f, compFetAttack = 0.2f, compFetRelease = 400.0f;
     int   compFetRatio = 0;
     float compVcaThreshDb = 0.0f, compVcaRatio = 4.0f, compVcaAttack = 1.0f, compVcaRelease = 100.0f, compVcaOutput = 0.0f;
+    bool  compVcaOverEasy = false;
+    bool  compVcaDetectorClassic = false;
 
     // Recording surface.
     bool  recordArmed = false;
@@ -393,6 +395,8 @@ CloneTrackAction::Impl captureTrack (Track& t, AudioEngine& engine, int idx)
     s.compVcaAttack   = t.strip.compVcaAttack.load   (std::memory_order_relaxed);
     s.compVcaRelease  = t.strip.compVcaRelease.load  (std::memory_order_relaxed);
     s.compVcaOutput   = t.strip.compVcaOutput.load   (std::memory_order_relaxed);
+    s.compVcaOverEasy = t.strip.compVcaOverEasy.load (std::memory_order_relaxed);
+    s.compVcaDetectorClassic = t.strip.compVcaDetectorClassic.load (std::memory_order_relaxed);
 
     s.recordArmed    = t.recordArmed.load    (std::memory_order_relaxed);
     s.inputMonitor   = t.inputMonitor.load   (std::memory_order_relaxed);
@@ -463,6 +467,8 @@ void applyTrack (Track& t, AudioEngine& engine, int idx,
     t.strip.compVcaAttack.store   (s.compVcaAttack,   std::memory_order_relaxed);
     t.strip.compVcaRelease.store  (s.compVcaRelease,  std::memory_order_relaxed);
     t.strip.compVcaOutput.store   (s.compVcaOutput,   std::memory_order_relaxed);
+    t.strip.compVcaOverEasy.store (s.compVcaOverEasy, std::memory_order_relaxed);
+    t.strip.compVcaDetectorClassic.store (s.compVcaDetectorClassic, std::memory_order_relaxed);
 
     t.recordArmed.store    (s.recordArmed,    std::memory_order_relaxed);
     t.inputMonitor.store   (s.inputMonitor,   std::memory_order_relaxed);
