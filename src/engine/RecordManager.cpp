@@ -171,6 +171,20 @@ void RecordManager::stopRecording (juce::int64 endSample)
         }
     }
 
+    // Snapshot every track's regions + midiRegions BEFORE the commit so
+    // the engine can wrap the diff in an undoable transaction. Per-track
+    // entries are only emitted into lastCommitDiff at the END of this
+    // method (after the after-snapshot pass) when something actually
+    // changed; tracks untouched by the commit are dropped.
+    lastCommitDiff.clear();
+    std::array<std::vector<AudioRegion>, Session::kNumTracks> beforeAudio;
+    std::array<std::vector<MidiRegion>,  Session::kNumTracks> beforeMidi;
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        beforeAudio[(size_t) t] = session.track (t).regions;
+        beforeMidi[(size_t) t]  = session.track (t).midiRegions.current();
+    }
+
     // Drain any per-track MIDI captures into MidiRegions BEFORE the writer
     // teardown loop below - audio + MIDI commit phases are independent so
     // ordering doesn't matter, but doing MIDI first keeps the two paths
@@ -511,6 +525,34 @@ void RecordManager::stopRecording (juce::int64 endSample)
             slot->file.deleteFile();
         }
         slot.reset();
+    }
+
+    // Build the per-track diff: only emit an entry for tracks whose
+    // regions OR midiRegions actually changed during the commit. The
+    // engine reads lastCommitDiff right after this method returns and
+    // wraps it in an UndoableAction so Ctrl+Z reverts the take.
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        auto& afterA = session.track (t).regions;
+        auto  afterM = session.track (t).midiRegions.current();
+        const bool audioChanged = ! (afterA.size() == beforeAudio[(size_t) t].size()
+                                      && std::equal (afterA.begin(), afterA.end(),
+                                                      beforeAudio[(size_t) t].begin(),
+                                                      [] (const AudioRegion& a, const AudioRegion& b)
+                                                      { return a.file == b.file
+                                                               && a.timelineStart == b.timelineStart
+                                                               && a.lengthInSamples == b.lengthInSamples
+                                                               && a.sourceOffset == b.sourceOffset; }));
+        const bool midiChanged  = afterM.size() != beforeMidi[(size_t) t].size();  // cheap heuristic; a real take always adds notes
+        if (! audioChanged && ! midiChanged) continue;
+
+        TrackCommitDiff diff;
+        diff.trackIndex  = t;
+        diff.audioBefore = std::move (beforeAudio[(size_t) t]);
+        diff.audioAfter  = afterA;
+        diff.midiBefore  = std::move (beforeMidi[(size_t) t]);
+        diff.midiAfter   = std::move (afterM);
+        lastCommitDiff.push_back (std::move (diff));
     }
 }
 

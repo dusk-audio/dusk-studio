@@ -192,6 +192,10 @@ private:
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
     BritishEQProcessor eq;
+    // Tracks the eqEnabled state from the previous block. On a false->true
+    // transition we call eq.reset() so a disabled-then-re-enabled EQ doesn't
+    // emit a transient burst from stale filter history.
+    bool prevEqEnabled { true };
     // Cache of the most recent Parameters we pushed to `eq`. updateEqParameters
     // memcmp's the freshly-built Parameters against this and only calls
     // setParameters() when the bytes differ - this skips the full coefficient
@@ -217,6 +221,11 @@ private:
     std::atomic<float>* compBypassAtom      = nullptr;
     std::atomic<float>* compMixAtom         = nullptr;
     std::atomic<float>* compAutoMakeupAtom  = nullptr;
+    // Per-mode sidechain HPF preset is written from updateCompParameters() —
+    // VCA defaults to 60 Hz (SSL/dbx convention to keep kick-pumping at bay),
+    // Opto and FET stay at 0 Hz so their feedback-detector character is
+    // unchanged. Phase 2 will promote this to a user-controlled per-mode atom.
+    std::atomic<float>* compScHpAtom        = nullptr;
     std::atomic<float>* compOptoPeakRedAtom = nullptr;
     std::atomic<float>* compOptoGainAtom    = nullptr;
     std::atomic<float>* compOptoLimitAtom   = nullptr;
@@ -230,6 +239,11 @@ private:
     std::atomic<float>* compVcaAttackAtom   = nullptr;
     std::atomic<float>* compVcaReleaseAtom  = nullptr;
     std::atomic<float>* compVcaOutputAtom   = nullptr;
+    // dbx OverEasy soft-knee toggle. Bool param on the donor; written from
+    // updateCompParameters() so the audio thread never touches APVTS.
+    std::atomic<float>* compVcaOverEasyAtom = nullptr;
+    // M3: VCA detector mode choice param (0 = Adaptive, 1 = Classic).
+    std::atomic<float>* compVcaDetectorModeAtom = nullptr;
 
     // SmoothedValue wrappers for the continuous comp params. The session
     // atoms hold the user's setpoint; these ramp toward it at 20 ms so

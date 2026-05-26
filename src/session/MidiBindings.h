@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_core/juce_core.h>
+#include <optional>
 #include <vector>
 
 namespace duskstudio
@@ -76,6 +77,24 @@ enum class MidiBindingTarget : int
                               // paramIndex (separate field) = plugin
                               // parameter slot in the loaded instance.
 
+    // Bank-relative track targets — targetIndex is a POSITION 0..kBankSize-1
+    // (or packed pos*N+sub for AuxSend/EqGain). Resolved on the audio
+    // thread via `absoluteTrack = session.activeBank * kBankSize + pos`.
+    // Lets a single 8-fader / 8-button controller drive whichever 8 of
+    // the 24 tracks are currently in the active bank. See the per-target
+    // apply-path branch in AudioEngine.cpp for details.
+    TrackFaderBank        = 130,
+    TrackPanBank          = 131,
+    TrackMuteBank         = 132,
+    TrackSoloBank         = 133,
+    TrackArmBank          = 134,
+    TrackAuxSendBank      = 135, // targetIndex = pos * kNumAuxSends + auxIdx
+    TrackHpfFreqBank      = 136,
+    TrackEqGainBank       = 137, // targetIndex = pos * kPackedEqBands + band
+    TrackCompThreshBank   = 138,
+    TrackCompMakeupBank   = 139,
+    TrackPluginParamBank  = 140, // paramIndex still in MidiBinding::paramIndex
+
     BusFader          = 150, // continuous; targetIndex = bus 0..kNumBuses-1
     BusPan            = 151, // continuous; -1..+1
     BusMute           = 152, // discrete on press
@@ -99,10 +118,35 @@ constexpr bool isContinuousTarget (MidiBindingTarget t) noexcept
         || t == MidiBindingTarget::TrackCompThresh
         || t == MidiBindingTarget::TrackCompMakeup
         || t == MidiBindingTarget::TrackPluginParam
+        || t == MidiBindingTarget::TrackFaderBank
+        || t == MidiBindingTarget::TrackPanBank
+        || t == MidiBindingTarget::TrackAuxSendBank
+        || t == MidiBindingTarget::TrackHpfFreqBank
+        || t == MidiBindingTarget::TrackEqGainBank
+        || t == MidiBindingTarget::TrackCompThreshBank
+        || t == MidiBindingTarget::TrackCompMakeupBank
+        || t == MidiBindingTarget::TrackPluginParamBank
         || t == MidiBindingTarget::BusFader
         || t == MidiBindingTarget::BusPan
         || t == MidiBindingTarget::AuxLaneFader
         || t == MidiBindingTarget::MasterFader;
+}
+
+// True for the bank-relative variants — apply path resolves via
+// session.activeBank * kBankSize + position.
+constexpr bool isBankRelativeTarget (MidiBindingTarget t) noexcept
+{
+    return t == MidiBindingTarget::TrackFaderBank
+        || t == MidiBindingTarget::TrackPanBank
+        || t == MidiBindingTarget::TrackMuteBank
+        || t == MidiBindingTarget::TrackSoloBank
+        || t == MidiBindingTarget::TrackArmBank
+        || t == MidiBindingTarget::TrackAuxSendBank
+        || t == MidiBindingTarget::TrackHpfFreqBank
+        || t == MidiBindingTarget::TrackEqGainBank
+        || t == MidiBindingTarget::TrackCompThreshBank
+        || t == MidiBindingTarget::TrackCompMakeupBank
+        || t == MidiBindingTarget::TrackPluginParamBank;
 }
 
 // True when the target needs a strip index. Track + bus targets both
@@ -142,7 +186,7 @@ constexpr bool needsPackedTrackAuxIndex (MidiBindingTarget t) noexcept
 }
 
 // Packing helpers for TrackAuxSend. Bus + aux range fits within the
-// 0..255 budget for targetIndex (kNumTracks=16 x kNumAuxSends=4 = 64).
+// 0..255 budget for targetIndex (kNumTracks=24 x kNumAuxSends=4 = 96).
 // kNumAuxSendsLanes is the multiplier - hard-coded so the helper stays
 // header-only (Session.h pulls in too much).
 constexpr int kPackedAuxLanes = 4;
@@ -303,7 +347,10 @@ juce::String describeBindingSource (const MidiBinding& b);
 // the current binding set to a .json file for sharing across sessions
 // / machines and to import one back.
 juce::String serializeBindingsPreset (const std::vector<MidiBinding>& binds);
-std::vector<MidiBinding> deserializeBindingsPreset (const juce::String& json);
+// Returns std::nullopt when the JSON is malformed / wrong schema.
+// Returns an empty vector when the preset is well-formed but intentionally
+// empty (a valid "clear all bindings" preset).
+std::optional<std::vector<MidiBinding>> deserializeBindingsPreset (const juce::String& json);
 
 class Session;
 } // namespace duskstudio

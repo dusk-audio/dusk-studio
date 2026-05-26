@@ -53,7 +53,26 @@ void openPickerMenu (PluginSlot& slot,
                       std::function<void()> onChange,
                       PluginKind kind,
                       juce::Point<int> screenPosition = { -1, -1 },
-                      std::function<void()> onPickHardwareInsert = {});
+                      std::function<void()> onPickHardwareInsert = {},
+                      bool suppressSecondaryButtons = false);
+
+// Two-step insert flow. Step 1 shows a small modal with three big
+// buttons — Hardware Insert / Soundfont / Plugin — letting the user
+// pick WHAT kind of insert they want before the (potentially long)
+// plugin list appears. Step 2 routes to the existing helper:
+//   • Hardware Insert → onPickHardwareInsert() (no-op if unset)
+//   • Soundfont       → openSoundfontFileChooser
+//   • Plugin          → openPickerMenu (existing plugin list flow)
+// Same lifetime / callback contract as openPickerMenu — onChange runs
+// on every successful slot change. Buttons that don't make sense for
+// the active slot (HW insert on a MIDI/instrument slot, Soundfont on
+// an audio/effect slot) are hidden.
+void openInsertChooser (PluginSlot& slot,
+                         juce::Component& target,
+                         std::unique_ptr<juce::FileChooser>& chooserOwner,
+                         std::function<void()> onChange,
+                         PluginKind kind,
+                         std::function<void()> onPickHardwareInsert = {});
 
 // Synchronous scan. Blocks the message thread during scanInstalledPlugins().
 // Shows a Dusk in-window completion alert in `parent` (top-level Component)

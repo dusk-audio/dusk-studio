@@ -62,6 +62,20 @@ public:
         ownedEditor->setBounds (getLocalBounds());
         applyChildOverrides (*ownedEditor);
 
+        // Donor's own resized() runs DURING ownedEditor->setBounds and
+        // sometimes cascades async layout that re-pins the preset
+        // cluster to the right edge after applyChildOverrides finishes
+        // synchronously. Re-run the recenter on the next message-loop
+        // tick so we win the final position. Cheap (one setBounds per
+        // cached pointer) and harmless if the donor already left them
+        // where we put them.
+        juce::Component::SafePointer<TapeMachineModalEditor> safe (this);
+        juce::MessageManager::callAsync ([safe]
+        {
+            if (auto* s = safe.getComponent())
+                s->recenterPresetCluster();
+        });
+
         // Donor uses a scale relative to baseWidth=800 for pixel sizes.
         // Mirror the same scale here so masks line up at non-1.0 sizes.
         constexpr float kBaseWidth  = 800.0f;

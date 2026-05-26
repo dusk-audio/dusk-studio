@@ -15,10 +15,107 @@ void styleSelectorButton (juce::TextButton& b, juce::Colour onColour)
     b.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xff909094));
     b.setColour (juce::TextButton::textColourOnId,   juce::Colours::white);
 }
+
+// In-window rename panel — replaces juce::AlertWindow so the rename UI
+// matches the project's other modals (DimOverlay backdrop, rounded
+// panel, Esc/click-outside dismiss). Owned and shown via EmbeddedModal.
+class RenameAuxPanel final : public juce::Component
+{
+public:
+    RenameAuxPanel (int laneIndex,
+                    const juce::String& currentName,
+                    int maxChars,
+                    std::function<void(const juce::String&)> onCommitIn,
+                    std::function<void()> onCancelIn)
+        : onCommit (std::move (onCommitIn)),
+          onCancel (std::move (onCancelIn))
+    {
+        titleLabel.setText ("Rename AUX " + juce::String (laneIndex + 1),
+                              juce::dontSendNotification);
+        titleLabel.setJustificationType (juce::Justification::centred);
+        titleLabel.setFont (juce::Font (juce::FontOptions (16.0f, juce::Font::bold)));
+        titleLabel.setColour (juce::Label::textColourId, juce::Colours::white);
+        addAndMakeVisible (titleLabel);
+
+        promptLabel.setText ("Enter a name for this AUX lane (max "
+                                + juce::String (maxChars) + " characters):",
+                               juce::dontSendNotification);
+        promptLabel.setJustificationType (juce::Justification::centred);
+        promptLabel.setFont (juce::Font (juce::FontOptions (12.5f)));
+        promptLabel.setColour (juce::Label::textColourId, juce::Colour (0xffc0c0c8));
+        addAndMakeVisible (promptLabel);
+
+        editor.setText (currentName, juce::dontSendNotification);
+        editor.setJustification (juce::Justification::centredLeft);
+        editor.setFont (juce::Font (juce::FontOptions (14.0f)));
+        editor.setColour (juce::TextEditor::backgroundColourId, juce::Colour (0xff181820));
+        editor.setColour (juce::TextEditor::outlineColourId,    juce::Colour (0xff3a3a42));
+        editor.setColour (juce::TextEditor::focusedOutlineColourId, juce::Colour (0xff6a6a78));
+        editor.setColour (juce::TextEditor::textColourId,       juce::Colours::white);
+        editor.setInputRestrictions (maxChars);    // hard char cap at typing time
+        editor.setSelectAllWhenFocused (true);
+        editor.onReturnKey = [this] { commit(); };
+        editor.onEscapeKey = [this] { if (onCancel) onCancel(); };
+        addAndMakeVisible (editor);
+
+        okButton    .setButtonText ("OK");
+        cancelButton.setButtonText ("Cancel");
+        for (auto* b : { &okButton, &cancelButton })
+        {
+            b->setColour (juce::TextButton::buttonColourId, juce::Colour (0xff2a2a32));
+            b->setColour (juce::TextButton::textColourOffId, juce::Colours::white);
+            b->setColour (juce::TextButton::textColourOnId,  juce::Colours::white);
+            addAndMakeVisible (*b);
+        }
+        okButton    .onClick = [this] { commit(); };
+        cancelButton.onClick = [this] { if (onCancel) onCancel(); };
+
+        setSize (380, 220);
+    }
+
+    void resized() override
+    {
+        auto area = getLocalBounds().reduced (24, 20);
+        titleLabel .setBounds (area.removeFromTop (28));
+        area.removeFromTop (12);
+        promptLabel.setBounds (area.removeFromTop (36));
+        area.removeFromTop (8);
+        editor     .setBounds (area.removeFromTop (28));
+        area.removeFromTop (20);
+
+        auto buttons = area.removeFromTop (32);
+        const int buttonW = 96;
+        const int gap = 16;
+        const int total = buttonW * 2 + gap;
+        auto row = buttons.withSizeKeepingCentre (total, buttons.getHeight());
+        okButton    .setBounds (row.removeFromLeft (buttonW));
+        row.removeFromLeft (gap);
+        cancelButton.setBounds (row.removeFromLeft (buttonW));
+    }
+
+    void visibilityChanged() override
+    {
+        if (isShowing()) editor.grabKeyboardFocus();
+    }
+
+private:
+    void commit()
+    {
+        if (! onCommit) return;
+        onCommit (editor.getText());
+    }
+
+    juce::Label titleLabel, promptLabel;
+    juce::TextEditor editor;
+    juce::TextButton okButton, cancelButton;
+    std::function<void(const juce::String&)> onCommit;
+    std::function<void()> onCancel;
+};
 } // namespace
 
 AuxView::AuxView (Session& session, AudioEngine& engine)
 {
+    sessionPtr = &session;
     for (int i = 0; i < Session::kNumAuxLanes; ++i)
     {
         // Selector button. Use full-saturation accent (matches stage-tab
@@ -34,6 +131,11 @@ AuxView::AuxView (Session& session, AudioEngine& engine)
         else
             btn.setConnectedEdges (juce::Button::ConnectedOnLeft | juce::Button::ConnectedOnRight);
         btn.onClick = [this, i] { setActiveLane (i); };
+        btn.setTooltip ("Single-click to select this AUX lane. Double-click to rename it.");
+        // Route the button's mouse events through this AuxView so we
+        // can catch double-clicks for inline rename. Single click still
+        // hits onClick on the button itself.
+        btn.addMouseListener (this, false);
         addAndMakeVisible (btn);
 
         // Lane content. All four are constructed up front so plugin
@@ -45,9 +147,79 @@ AuxView::AuxView (Session& session, AudioEngine& engine)
     }
 
     setActiveLane (0);
+    // Poll the session lane names so a rename from anywhere (channel
+    // strip aux label, aux-lane header, compact-mode popup) refreshes
+    // this tab row within ~70 ms.
+    startTimerHz (15);
 }
 
-AuxView::~AuxView() = default;
+AuxView::~AuxView()
+{
+    // Stop the polling timer BEFORE the derived members (sessionPtr,
+    // selectorButtons, lanes) tear down. juce::Timer's own dtor would
+    // call stopTimer too, but only after the AuxView destructor body
+    // returns — by then the timerCallback has nothing alive to touch.
+    stopTimer();
+}
+
+void AuxView::timerCallback()
+{
+    if (sessionPtr == nullptr) return;
+    for (int i = 0; i < Session::kNumAuxLanes; ++i)
+    {
+        const auto& laneName = sessionPtr->auxLane (i).name;
+        if (selectorButtons[(size_t) i].getButtonText() != laneName)
+            selectorButtons[(size_t) i].setButtonText (laneName);
+    }
+}
+
+void AuxView::mouseDoubleClick (const juce::MouseEvent& e)
+{
+    for (int i = 0; i < Session::kNumAuxLanes; ++i)
+    {
+        if (e.eventComponent == &selectorButtons[(size_t) i])
+        {
+            promptRenameLane (i);
+            return;
+        }
+    }
+}
+
+void AuxView::promptRenameLane (int index)
+{
+    if (sessionPtr == nullptr) return;
+    if (index < 0 || index >= Session::kNumAuxLanes) return;
+
+    constexpr int kAuxNameMaxChars = 12;
+    auto* host = getTopLevelComponent();
+    if (host == nullptr) host = this;
+
+    juce::Component::SafePointer<AuxView> safeSelf (this);
+    auto panel = std::make_unique<RenameAuxPanel> (
+        index,
+        sessionPtr->auxLane (index).name,
+        kAuxNameMaxChars,
+        [safeSelf, index] (const juce::String& raw)
+        {
+            if (safeSelf == nullptr || safeSelf->sessionPtr == nullptr) return;
+            auto txt = raw.trim();
+            if (! txt.isEmpty())
+            {
+                if (txt.length() > kAuxNameMaxChars)
+                    txt = txt.substring (0, kAuxNameMaxChars);
+                safeSelf->sessionPtr->auxLane (index).name = txt;
+                safeSelf->selectorButtons[(size_t) index].setButtonText (txt);
+            }
+            safeSelf->renameModal.close();
+        },
+        [safeSelf]
+        {
+            if (safeSelf == nullptr) return;
+            safeSelf->renameModal.close();
+        });
+
+    renameModal.show (*host, std::move (panel));
+}
 
 void AuxView::setActiveLane (int index)
 {

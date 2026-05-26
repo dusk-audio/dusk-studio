@@ -22,4 +22,18 @@ constexpr float kUiScaleDefault = 1.0f;
 
 float getUiScaleOverride();
 void  setUiScaleOverride (float scale);
+
+// Scan installed plugin formats on every app launch (synchronous). When
+// false (default) the cached KnownPluginList is used as-is and the user
+// runs scans manually from the plugin picker's "Scan plugins" button.
+// Persisted per-machine so the choice survives session changes.
+bool getScanPluginsOnStartup();
+void setScanPluginsOnStartup (bool scan);
+
+// Expand the tape SUMMARY strip by default on app launch. When false
+// (default) the strip starts collapsed so the channel strips get full
+// vertical room; user toggles via TapeStrip's SUMMARY button. Persisted
+// per-machine.
+bool getTapeStripExpandedDefault();
+void setTapeStripExpandedDefault (bool expanded);
 } // namespace duskstudio::appconfig

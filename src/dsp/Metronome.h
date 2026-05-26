@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_audio_basics/juce_audio_basics.h>
+#include <array>
 #include <atomic>
 
 namespace duskstudio
@@ -43,6 +44,12 @@ public:
     void setBpm (float bpm) noexcept               { bpm_.store (bpm, std::memory_order_relaxed); }
     void setBeatsPerBar (int n) noexcept           { beatsPerBar.store (n, std::memory_order_relaxed); }
     void setVolumeDb (float dB) noexcept           { volumeDb.store (dB, std::memory_order_relaxed); }
+    // When true, a fresh click can trigger before the previous click
+    // finishes — both bodies render together. When false (default), a
+    // new beat boundary cuts the previous click off (legacy mono
+    // behaviour, used at typical BPMs where click bodies always end
+    // before the next beat anyway).
+    void setPolyphonic (bool p) noexcept           { polyphonic.store (p, std::memory_order_relaxed); }
 
     bool  isEnabled() const noexcept   { return enabled.load (std::memory_order_relaxed); }
     float getBpm() const noexcept      { return bpm_.load (std::memory_order_relaxed); }
@@ -54,8 +61,25 @@ private:
     std::atomic<float> bpm_       { 120.0f };
     std::atomic<int>   beatsPerBar { 4 };
     std::atomic<float> volumeDb   { -12.0f };
+    std::atomic<bool>  polyphonic { false };
 
-    // Click envelope state. -1 means no click is currently sounding.
+    // Click envelope state. Monophonic path uses [0]; polyphonic mode
+    // round-robins through the full ring so a fast-tempo or fast-
+    // beat-subdivision click sequence can overlap. kVoices=4 is
+    // plenty: at 240 BPM, beat spacing = 250 ms; click body fades
+    // out in ~80 ms so 4 simultaneous voices covers extreme cases
+    // (e.g. polyrhythm subdivisions) without sounding stacked.
+    static constexpr int kVoices = 4;
+    struct Voice
+    {
+        int   pos = -1;          // -1 = idle
+        int   length = 0;
+        float freq = 1000.0f;
+    };
+    std::array<Voice, kVoices> voices {};
+    int nextVoice = 0;
+    // Mono-mode legacy fields retained for source-compat with anything
+    // still reading them (cleared on every triggerClick).
     int   clickPos = -1;
     int   clickLength = 0;
     float clickFreq = 1000.0f;

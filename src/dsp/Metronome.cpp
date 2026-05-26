@@ -14,6 +14,8 @@ void Metronome::prepare (double sampleRate)
 void Metronome::reset() noexcept
 {
     clickPos = -1;
+    for (auto& v : voices) v.pos = -1;
+    nextVoice = 0;
     lastBeatIdx = std::numeric_limits<juce::int64>::min();
     lastBeatSeeded = false;
 }
@@ -25,15 +27,18 @@ void Metronome::process (juce::int64 playheadStart, bool transportRolling,
     if (sr <= 0.0 || L == nullptr || R == nullptr) return;
     const bool effectiveEnabled = forceEnable
                                   || enabled.load (std::memory_order_relaxed);
+    const bool poly = polyphonic.load (std::memory_order_relaxed);
+
     if (! effectiveEnabled)
     {
         // Disabled - but if a click was already sounding, finish it so we
-        // don't hard-cut audio. New clicks are NOT triggered.
-        if (clickPos < 0) return;
+        // don't hard-cut audio. New clicks are NOT triggered. Check ALL
+        // voices in polyphonic mode + the legacy mono slot.
+        bool anyInFlight = (clickPos >= 0);
+        for (auto& v : voices) if (v.pos >= 0) { anyInFlight = true; break; }
+        if (! anyInFlight) return;
     }
 
-    // If the transport isn't rolling, drop the seeded-beat anchor so the
-    // next Play / seek re-seeds without firing a stray click.
     if (! transportRolling) lastBeatSeeded = false;
 
     const float bpm = bpm_.load (std::memory_order_relaxed);
@@ -46,13 +51,60 @@ void Metronome::process (juce::int64 playheadStart, bool transportRolling,
     const float vol  = juce::Decibels::decibelsToGain (
                          volumeDb.load (std::memory_order_relaxed));
 
+    auto triggerClick = [this, poly] (float freq)
+    {
+        if (poly)
+        {
+            // Round-robin voice grab — overwrite the oldest voice (the
+            // slot we last assigned). With kVoices=4 and click bodies
+            // ~80 ms at 5 ms sine + 4× envelope ramp, four overlapping
+            // voices covers any realistic polyrhythm. Worst case = a
+            // 5th click steals voice 0 mid-fade-out (negligible click
+            // tail loss).
+            auto& v = voices[(size_t) nextVoice];
+            v.pos = 0;
+            v.length = clickLength;
+            v.freq = freq;
+            nextVoice = (nextVoice + 1) % kVoices;
+            // Keep the legacy mono path silent so we don't double-
+            // trigger when toggling poly mid-play.
+            clickPos = -1;
+        }
+        else
+        {
+            clickPos = 0;
+            clickFreq = freq;
+            // Idle all polyphonic voices so leftover ones don't ring on.
+            for (auto& v : voices) v.pos = -1;
+        }
+    };
+
+    auto renderVoice = [this, vol] (int& pos, int length, float freq,
+                                     float* L_, float* R_, int i)
+    {
+        if (pos < 0 || pos >= length) return;
+        const float t = (float) pos / (float) sr;
+        const int rampLen = juce::jmax (1, length / 4);
+        float env = 1.0f;
+        if (pos < rampLen)
+            env = (float) pos / (float) rampLen;
+        else if (pos > length - rampLen)
+            env = (float) (length - pos) / (float) rampLen;
+
+        const float accent = (freq > 1000.0f) ? 1.4f : 1.0f;
+        const float s = std::sin (2.0f * juce::MathConstants<float>::pi
+                                   * freq * t)
+                         * env * vol * accent;
+        L_[i] += s;
+        R_[i] += s;
+        ++pos;
+        if (pos >= length) pos = -1;
+    };
+
     for (int i = 0; i < numSamples; ++i)
     {
         const juce::int64 absSample = playheadStart + i;
 
-        // Beat-edge detection: trigger a click whenever we cross from
-        // "before beat N" to "at beat N or beyond" while the transport
-        // is rolling. Negative playheads (count-in) still tick.
         if (transportRolling && effectiveEnabled)
         {
             const juce::int64 beatIdx = (absSample >= 0)
@@ -61,48 +113,30 @@ void Metronome::process (juce::int64 playheadStart, bool transportRolling,
 
             if (! lastBeatSeeded)
             {
-                // First sample after start/seek: seed without firing -
-                // we don't want a stray click on Play if the playhead
-                // happens to land on a beat boundary.
                 lastBeatIdx = beatIdx;
                 lastBeatSeeded = true;
             }
             else if (beatIdx != lastBeatIdx)
             {
-                // We've crossed (at least one) beat boundary in this
-                // sample. Start a new click; ignore the rare case of
-                // multiple boundaries in one sample at very high BPM -
-                // BPM > sampleRate × 60 isn't musical anyway.
-                clickPos = 0;
                 const int beatInBar = (int) (((beatIdx % bpb) + bpb) % bpb);
-                // Downbeat (beat 0) accent: higher pitch + slightly louder
-                // via envelope below.
-                clickFreq = (beatInBar == 0) ? 1200.0f : 880.0f;
+                // Downbeat (beat 0) higher pitch + the accent in
+                // renderVoice; other beats lower pitch. User explicitly
+                // requested this contour ("bar higher, beats lower").
+                const float freq = (beatInBar == 0) ? 1200.0f : 880.0f;
+                triggerClick (freq);
                 lastBeatIdx = beatIdx;
             }
         }
 
-        // Render the in-flight click sample.
-        if (clickPos >= 0 && clickPos < clickLength)
-        {
-            const float t = (float) clickPos / (float) sr;
-            const int rampLen = juce::jmax (1, clickLength / 4);
-            float env = 1.0f;
-            if (clickPos < rampLen)
-                env = (float) clickPos / (float) rampLen;
-            else if (clickPos > clickLength - rampLen)
-                env = (float) (clickLength - clickPos) / (float) rampLen;
-
-            const float accent = (clickFreq > 1000.0f) ? 1.4f : 1.0f;
-            const float s = std::sin (2.0f * juce::MathConstants<float>::pi
-                                       * clickFreq * t)
-                             * env * vol * accent;
-            L[i] += s;
-            R[i] += s;
-
-            ++clickPos;
-            if (clickPos >= clickLength) clickPos = -1;
-        }
+        // Render BOTH paths every sample so an in-flight click tail
+        // finishes after a poly toggle. triggerClick still owns mutual
+        // exclusion at click-START time (poly trigger silences legacy
+        // mono slot + vice versa), so we never double-fire. Tails just
+        // ring out cleanly on whichever path was active when they
+        // started. Inactive slots are no-ops (pos < 0 early-returns
+        // inside renderVoice).
+        for (auto& v : voices) renderVoice (v.pos, v.length, v.freq, L, R, i);
+        renderVoice (clickPos, clickLength, clickFreq, L, R, i);
     }
 }
 } // namespace duskstudio

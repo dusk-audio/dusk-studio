@@ -310,8 +310,6 @@ void McuReceiver::handleNotePress (int noteNumber, bool pressed) noexcept
             }
             case mcu::btn::AssignEq:     session.mcu.assignMode.store (5, std::memory_order_release); return;
             case mcu::btn::AssignTrack:  session.mcu.assignMode.store (6, std::memory_order_release); return;
-            case mcu::btn::AssignPlugin: return;   // unused in Dusk Studio for now
-            case mcu::btn::AssignInst:   return;   // unused
             default: break;
         }
     }

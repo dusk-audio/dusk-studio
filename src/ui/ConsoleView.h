@@ -24,13 +24,13 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
 
-    static constexpr int kMinChannelWidth = 120;
-    static constexpr int kMinBusWidth     = 130;   // 3 × 40 px knob blocks + 10 px padding
-    static constexpr int kMinMasterWidth  = 210;   // 5 × 40 px knob blocks + 10 px padding
+    static constexpr int kMinChannelWidth = 154;   // bumped so VCA comp's "513 ms" + "0.2 ms" etc textboxes don't clip at min strip width
+    static constexpr int kMinBusWidth     = 172;   // wide enough for single-row 4-knob COMP labels ("4.0:1", "AUTO", "10.0") without truncation
+    static constexpr int kMinMasterWidth  = 290;   // master EQ HF row hosts 4 cells — ~70 px per column readable for "HF BOOST FREQ" labels
 
-    static constexpr int kRefChannelWidth = 150;
-    static constexpr int kRefBusWidth     = 150;   // comfortable padding around the 3-knob row
-    static constexpr int kRefMasterWidth  = 230;   // 5 EQ knobs + 5 comp knobs at 40 px each
+    static constexpr int kRefChannelWidth = 188;   // +24 so labels like "VCA 513 ms" + "0.0 dB" never clip in comfortable-default layout
+    static constexpr int kRefBusWidth     = 192;   // accommodates single-row 4-knob COMP with comfortable per-cell width for value labels
+    static constexpr int kRefMasterWidth  = 340;   // 4-cell EQ HF row at ~80 px per column — comfortable for "HF BOOST FREQ" full caption
 
     // Auto-engage SUMMARY (compact mode) so the EQ/COMP sections collapse
     // into popup-launchers and the fader keeps its full vertical span when
@@ -53,6 +53,35 @@ public:
     // Public so MainComponent (which now owns the BANK A/B row) can decide
     // whether to render the bank-row above the transport.
     int fixedWidthFor16Tracks() const;
+
+    // Number of channel strips that fit at kMinChannelWidth given the
+    // CURRENT component width. Buses + master are always reserved on the
+    // right; this returns how many channel slots are left for the
+    // strip column. Capped at kNumTracks. Used by MainComponent to lay
+    // out the dynamic bank-button row.
+    int  channelsThatFit() const;
+
+    // Same as channelsThatFit() but for a hypothetical component width
+    // — lets the parent compute fit/numBanks for the width it is
+    // ABOUT to set on the console (avoiding the one-frame stale-width
+    // race when window snap-resizes shrink the console).
+    static int channelsThatFitForWidth (int componentWidth) noexcept;
+
+    // Number of banks needed to surface every track at the current
+    // fit count. Returns 1 when all 16 fit (no banking). bankStride()
+    // gives the number of strips in each non-final bank; the last bank
+    // may be sparse.
+    int  numBanks()    const noexcept;
+    int  bankStride()  const noexcept;
+
+    static int numBanksForWidth (int componentWidth) noexcept;
+
+    // Inclusive 1-based range labels for a given bank index, e.g.
+    // {1, 13} for the first bank when bankStride()==13. Used by the
+    // dynamic bank-button row in MainComponent.
+    std::pair<int, int> rangeForBank (int bankIndex) const noexcept;
+    static std::pair<int, int> rangeForBankAtWidth (int bankIndex,
+                                                      int componentWidth) noexcept;
 
     void setBank (int bankIndex);
     int  getBank() const noexcept { return currentBank; }

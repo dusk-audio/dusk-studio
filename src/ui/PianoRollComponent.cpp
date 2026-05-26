@@ -1,4 +1,5 @@
 #include "PianoRollComponent.h"
+#include "DuskContextMenu.h"
 #include "EditModeToolbar.h"
 #include "../engine/AudioEngine.h"
 #include "../engine/Transport.h"
@@ -1204,7 +1205,7 @@ void PianoRollComponent::showVelocityPopup()
     m.addItem (104, "Set to 64 (mid)");
     m.addItem (105, "Set to 32");
     juce::Component::SafePointer<PianoRollComponent> safe (this);
-    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
+    showContextMenu (m, *this,
         [safe] (int chosen)
         {
             auto* self = safe.getComponent();
@@ -1303,9 +1304,7 @@ void PianoRollComponent::showNotePropertiesPopup (int hitNoteIdx, juce::Point<in
     m.addSubMenu ("Velocity", velSub);
 
     juce::Component::SafePointer<PianoRollComponent> safe (this);
-    m.showMenuAsync (juce::PopupMenu::Options()
-                        .withTargetScreenArea (juce::Rectangle<int> (
-                            screenPos.x, screenPos.y, 1, 1)),
+    showContextMenu (m, *this, screenPos,
         [safe] (int chosen)
         {
             auto* self = safe.getComponent();
@@ -1596,7 +1595,7 @@ void PianoRollComponent::showQuantizePopup()
         m.addItem (i + 1, choices[i].label);
     }
     juce::Component::SafePointer<PianoRollComponent> safe (this);
-    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
+    showContextMenu (m, *this,
         [safe, choices] (int chosen)
         {
             if (chosen <= 0) return;
@@ -1633,7 +1632,7 @@ void PianoRollComponent::showScalePopup()
         m.addSubMenu (juce::String (scaleNames[s]), sub);
     }
     juce::Component::SafePointer<PianoRollComponent> safe (this);
-    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
+    showContextMenu (m, *this,
         [safe] (int chosen)
         {
             if (chosen <= 0) return;
@@ -1661,7 +1660,7 @@ void PianoRollComponent::showColorModePopup()
     m.addItem (2, "Velocity", true, colorMode == ColorMode::Velocity);
     m.addItem (3, "Channel",  true, colorMode == ColorMode::Channel);
     juce::Component::SafePointer<PianoRollComponent> safe (this);
-    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
+    showContextMenu (m, *this,
         [safe] (int chosen)
         {
             auto* self = safe.getComponent();
@@ -1695,7 +1694,7 @@ void PianoRollComponent::showCcControllerPopup()
     m.addSubMenu ("All controllers (0-127)", numeric);
 
     juce::Component::SafePointer<PianoRollComponent> safe (this);
-    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
+    showContextMenu (m, *this,
         [safe] (int chosen)
         {
             auto* self = safe.getComponent();
@@ -3248,7 +3247,7 @@ void PianoRollComponent::showRegionPropertiesPopup()
         m.addItem (9999, info, false /*disabled*/, false);
     }
 
-    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&propertiesButton),
+    showContextMenu (m, propertiesButton,
         [safe = juce::Component::SafePointer<PianoRollComponent> (this)] (int chosen)
         {
             auto* self = safe.getComponent();

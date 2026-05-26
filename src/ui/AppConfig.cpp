@@ -4,7 +4,9 @@ namespace duskstudio::appconfig
 {
 namespace
 {
-constexpr const char* kKeyUiScale = "ui_scale";
+constexpr const char* kKeyUiScale            = "ui_scale";
+constexpr const char* kKeyScanOnStartup      = "scan_plugins_on_startup";
+constexpr const char* kKeyTapeStripExpanded  = "tape_strip_expanded_default";
 
 juce::File getStorePath()
 {
@@ -77,5 +79,31 @@ void setUiScaleOverride (float scale)
 {
     const float clamped = juce::jlimit (kUiScaleMin, kUiScaleMax, scale);
     writeKey (kKeyUiScale, juce::String (clamped));
+}
+
+bool getScanPluginsOnStartup()
+{
+    const auto raw = readKey (kKeyScanOnStartup);
+    if (raw.isEmpty()) return false;   // default off — caches are cheap, scans aren't
+    return raw == "1" || raw.equalsIgnoreCase ("true")
+        || raw.equalsIgnoreCase ("yes");
+}
+
+void setScanPluginsOnStartup (bool scan)
+{
+    writeKey (kKeyScanOnStartup, scan ? "1" : "0");
+}
+
+bool getTapeStripExpandedDefault()
+{
+    const auto raw = readKey (kKeyTapeStripExpanded);
+    if (raw.isEmpty()) return false;   // default collapsed — strips get full body
+    return raw == "1" || raw.equalsIgnoreCase ("true")
+        || raw.equalsIgnoreCase ("yes");
+}
+
+void setTapeStripExpandedDefault (bool expanded)
+{
+    writeKey (kKeyTapeStripExpanded, expanded ? "1" : "0");
 }
 } // namespace duskstudio::appconfig

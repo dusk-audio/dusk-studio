@@ -151,15 +151,17 @@ HardwareInsertEditor::HardwareInsertEditor (HardwareInsertParams& paramsRef,
     addAndMakeVisible (formatStereoButton);
     addAndMakeVisible (formatMidSideButton);
 
-    cancelButton.onClick = [this] { if (onDoneCallback) onDoneCallback(); };
-    doneButton  .onClick = [this] { if (onDoneCallback) onDoneCallback(); };
-    doneButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff2a5a3a));
-    doneButton.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
     // Cancel + Done are popup-modal vestiges. When embedded inline in
     // the AUX lane, the X (remove) button on the slot header handles
-    // teardown and the editor never needs its own footer actions.
+    // teardown — the editor doesn't need its own footer actions, and
+    // we don't even wire the onClicks so the dead state can't surprise
+    // anyone later.
+    doneButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff2a5a3a));
+    doneButton.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
     if (! isEmbedded)
     {
+        cancelButton.onClick = [this] { if (onDoneCallback) onDoneCallback(); };
+        doneButton  .onClick = [this] { if (onDoneCallback) onDoneCallback(); };
         addAndMakeVisible (cancelButton);
         addAndMakeVisible (doneButton);
     }

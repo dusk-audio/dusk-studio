@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include "DuskComboBox.h"
 #include "../session/Session.h"
 
 namespace duskstudio
@@ -49,7 +50,7 @@ private:
     juce::ToggleButton enableToggle { "ON" };
 
     juce::Label       modeCaption  { {}, "Mode"   };
-    juce::ComboBox    modeCombo;
+    DuskComboBox    modeCombo;
 
     juce::Slider releaseKnob;
     juce::Label  releaseLabel { {}, "Release" };

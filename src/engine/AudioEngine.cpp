@@ -1,9 +1,12 @@
 #include "AudioEngine.h"
 #include "McuReceiver.h"
 #include "McuController.h"
+#include "../session/RegionEditActions.h"
 #if defined(DUSKSTUDIO_HAS_ALSA)
   #include "alsa/AlsaAudioIODeviceType.h"
 #endif
+#include <array>
+#include <cstdlib>
 #include <cstring>
 #include <thread>
 
@@ -519,6 +522,26 @@ void AudioEngine::stop()
         recordManager.stopRecording (transport.getPlayhead());
         activeRecordStart.store (std::numeric_limits<juce::int64>::min(),
                                   std::memory_order_relaxed);
+
+        // Wrap the committed take in an UndoableAction so Ctrl+Z reverts
+        // it. RecordManager has already mutated session state; the action
+        // captures the before/after snapshot it produced. perform()'s
+        // first call is a no-op (state already applied), subsequent
+        // perform() calls (redo after undo) re-apply the after-state.
+        const auto& diff = recordManager.getLastCommitDiff();
+        if (! diff.empty())
+        {
+            std::vector<RecordCommitAction::TrackDiff> wrapped;
+            wrapped.reserve (diff.size());
+            for (const auto& d : diff)
+                wrapped.push_back ({ d.trackIndex,
+                                      d.audioBefore, d.audioAfter,
+                                      d.midiBefore,  d.midiAfter });
+            undoManager.beginNewTransaction ("Record");
+            undoManager.perform (new RecordCommitAction (
+                session, *this, std::move (wrapped)));
+            recordManager.clearLastCommitDiff();
+        }
     }
 
     playbackEngine.stopPlayback();
@@ -1413,10 +1436,83 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                 }
 
                 if (! hasBindings) continue;
-                for (const auto& b : *bindings)
+                for (const auto& sourceBinding : *bindings)
                 {
-                    if (! b.sourceMatches (ch, dn, tg)) continue;
-                    if (! b.isValid()) continue;
+                    if (! sourceBinding.sourceMatches (ch, dn, tg)) continue;
+                    if (! sourceBinding.isValid()) continue;
+
+                    // Resolve bank-relative targets up front so the switch
+                    // below stays one big case per absolute target. For
+                    // bank-relative variants `targetIndex` is a position
+                    // 0..kBankSize-1 (or packed pos*N+sub); rewrite into the
+                    // matching absolute target + absolute track index by
+                    // adding activeBank * kBankSize to the position. The
+                    // load is relaxed because the bank index is owned by
+                    // the message thread (ConsoleView::setBank) and only
+                    // changes on explicit user action.
+                    MidiBinding b = sourceBinding;
+                    if (isBankRelativeTarget (b.target))
+                    {
+                        const int bank = session.activeBank
+                                              .load (std::memory_order_relaxed);
+                        const int base = bank * Session::kBankSize;
+                        switch (b.target)
+                        {
+                            case MidiBindingTarget::TrackFaderBank:
+                                b.target = MidiBindingTarget::TrackFader;
+                                b.targetIndex = base + b.targetIndex;
+                                break;
+                            case MidiBindingTarget::TrackPanBank:
+                                b.target = MidiBindingTarget::TrackPan;
+                                b.targetIndex = base + b.targetIndex;
+                                break;
+                            case MidiBindingTarget::TrackMuteBank:
+                                b.target = MidiBindingTarget::TrackMute;
+                                b.targetIndex = base + b.targetIndex;
+                                break;
+                            case MidiBindingTarget::TrackSoloBank:
+                                b.target = MidiBindingTarget::TrackSolo;
+                                b.targetIndex = base + b.targetIndex;
+                                break;
+                            case MidiBindingTarget::TrackArmBank:
+                                b.target = MidiBindingTarget::TrackArm;
+                                b.targetIndex = base + b.targetIndex;
+                                break;
+                            case MidiBindingTarget::TrackAuxSendBank:
+                            {
+                                const int pos = b.targetIndex / kPackedAuxLanes;
+                                const int aux = b.targetIndex % kPackedAuxLanes;
+                                b.target = MidiBindingTarget::TrackAuxSend;
+                                b.targetIndex = packTrackAux (base + pos, aux);
+                                break;
+                            }
+                            case MidiBindingTarget::TrackHpfFreqBank:
+                                b.target = MidiBindingTarget::TrackHpfFreq;
+                                b.targetIndex = base + b.targetIndex;
+                                break;
+                            case MidiBindingTarget::TrackEqGainBank:
+                            {
+                                const int pos = b.targetIndex / kPackedEqBands;
+                                const int band = b.targetIndex % kPackedEqBands;
+                                b.target = MidiBindingTarget::TrackEqGain;
+                                b.targetIndex = packTrackEqBand (base + pos, band);
+                                break;
+                            }
+                            case MidiBindingTarget::TrackCompThreshBank:
+                                b.target = MidiBindingTarget::TrackCompThresh;
+                                b.targetIndex = base + b.targetIndex;
+                                break;
+                            case MidiBindingTarget::TrackCompMakeupBank:
+                                b.target = MidiBindingTarget::TrackCompMakeup;
+                                b.targetIndex = base + b.targetIndex;
+                                break;
+                            case MidiBindingTarget::TrackPluginParamBank:
+                                b.target = MidiBindingTarget::TrackPluginParam;
+                                b.targetIndex = base + b.targetIndex;
+                                break;
+                            default: break;
+                        }
+                    }
 
                     // 7-bit (CC/Note vel) and 14-bit (pitch-bend) sources
                     // normalize to a common 0..1 fraction. `pressed` is the
@@ -1896,16 +1992,13 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         // an armed one). Otherwise the strip's source is live device input.
         const bool willReadFromDisk = isPlaying || (isRecording && ! armed);
 
-        // The IN button (inputMonitor) gates LIVE input from passing through
-        // the strip to master - engineer turns IN off when monitoring direct
-        // from the hardware interface. It must NOT gate disk playback: when
-        // we're playing back a previous take (regardless of arm state), the
-        // disk audio should always reach master. So monitorPasses is forced
-        // true when reading from disk; only when we're routing live input
-        // does the IN toggle actually silence the master path.
-        const bool monitorPasses = willReadFromDisk
-            ? true
-            : (armed ? monitorEnabled : true);
+        // Live-input monitor gate. IN is the ONLY control over live-input
+        // monitoring. ARM is purely a recorder-enable; it does NOT gate
+        // monitor passthrough. Safety against feedback comes from IN
+        // defaulting to false — the user must explicitly click IN to
+        // open the live-input → master path. Disk playback always passes
+        // (independent of IN).
+        const bool monitorPasses = willReadFromDisk ? true : monitorEnabled;
         const bool passes = ! muted && (anyChannelSolo ? soloed : true) && monitorPasses;
 
         // Resolve the input source for this track.
@@ -2273,6 +2366,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         // MIDI tracks have no audio input - their gate is just mute/solo.
         // Audio tracks still require a non-null source to pass.
         const bool stripPasses = midiTrack ? passes : (passes && monoIn != nullptr);
+
         strips[(size_t) t].processAndAccumulate (monoIn, monoInR,
                                                  perTrackMidiScratch, midiTrack,
                                                  mixL.data(), mixR.data(),
@@ -2540,16 +2634,44 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
     // block (cheap atomic loads), then mix the click into the post-master
     // bus. Click is post-master so it never gets EQ'd or compressed by
     // the master strip - it's purely a monitoring aid.
+    // Apply per-mode metronome flags from the right-click menu:
+    //   • clickWhileRecording / clickWhilePlaying gate the engine-side
+    //     "is the click eligible at all this block?" decision.
+    //   • onlyDuringCountIn overrides both during a record pass — the
+    //     click stops the instant the take's first sample arrives.
+    //   • polyphonic forwarded to Metronome.setPolyphonic so a new
+    //     click can trigger before the previous body finishes.
+    const bool wantWhileRec  = session.metronomeClickWhileRecording.load (std::memory_order_relaxed);
+    const bool wantWhilePlay = session.metronomeClickWhilePlaying  .load (std::memory_order_relaxed);
+    const bool onlyCountIn   = session.metronomeOnlyDuringCountIn  .load (std::memory_order_relaxed);
+    const bool polyphonic    = session.metronomePolyphonic         .load (std::memory_order_relaxed);
+
     metronome.setEnabled    (session.metronomeEnabled.load (std::memory_order_relaxed));
     metronome.setBpm        (session.tempoBpm.load (std::memory_order_relaxed));
     metronome.setBeatsPerBar(session.beatsPerBar.load (std::memory_order_relaxed));
     metronome.setVolumeDb   (session.metronomeVolDb.load (std::memory_order_relaxed));
+    metronome.setPolyphonic (polyphonic);
     {
-        // Force the click on during count-in pre-roll so the user always
-        // gets the count-in even if they haven't engaged CLICK manually.
         const auto recStart   = activeRecordStart.load (std::memory_order_relaxed);
         const bool inCountIn  = isRecording && blockStartSamples < recStart;
-        metronome.process (blockStartSamples, isPlaying || isRecording,
+
+        // Decide whether the click is eligible this block.
+        //   • Recording (post-count-in): gated by clickWhileRecording AND
+        //     NOT (onlyDuringCountIn). If onlyDuringCountIn is set the
+        //     click is suppressed once the take begins.
+        //   • Playing: gated by clickWhilePlaying.
+        //   • Count-in pre-roll: ALWAYS forced on — user enabled count-in
+        //     specifically to get the lead-in clicks regardless of the
+        //     CLICK toggle.
+        bool clickRolling = false;
+        if (isRecording)
+            clickRolling = inCountIn
+                              ? true
+                              : (wantWhileRec && ! onlyCountIn);
+        else if (isPlaying)
+            clickRolling = wantWhilePlay;
+
+        metronome.process (blockStartSamples, clickRolling,
                             mixL.data(), mixR.data(), numSamples,
                             /*forceEnable*/ inCountIn);
     }

@@ -3,7 +3,9 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <memory>
+#include <vector>
 #include "EmbeddedModal.h"
+#include "DuskComboBox.h"
 
 // The ALSA "periods per buffer" knob is owned by Dusk Studio's custom ALSA
 // backend now (see AlsaAudioIODevice::set/getRequestedPeriods); the UI
@@ -35,6 +37,7 @@ public:
                          Session& session);
     ~AudioSettingsPanel() override;
 
+    void paint   (juce::Graphics&) override;
     void resized() override;
     // ChangeListener: the engine broadcasts on MIDI-bank rebuild (hot-
     // plug, manual rescan). Refreshes the sync-source combo so newly
@@ -49,7 +52,7 @@ private:
 
 #if defined(__linux__)
     juce::Label    periodsLabel  { {}, "Periods (ALSA)" };
-    juce::ComboBox periodsCombo;
+    DuskComboBox periodsCombo;
 #endif
     juce::TextButton selfTestButton { "Run Self-Test..." };
 
@@ -65,7 +68,7 @@ private:
     // oversampling on master + aux bus comps and the master tape sat
     // oversampler. Per-channel comp + EQ stay at native rate regardless.
     juce::Label    oversamplingLabel { {}, "Effect Oversampling" };
-    juce::ComboBox oversamplingCombo;
+    DuskComboBox oversamplingCombo;
 
     // MIDI Clock sync source. Lists every registered MIDI input plus
     // "(none)" as the first entry. The engine resolves the selection
@@ -73,7 +76,7 @@ private:
     // bytes from that input to its MidiSyncReceiver. v1 follows tempo
     // only - the chase + Start/Stop chase land in a later phase.
     juce::Label    syncSourceLabel { {}, "MIDI Sync Source" };
-    juce::ComboBox syncSourceCombo;
+    DuskComboBox syncSourceCombo;
     // When checked, FA/FB (Start) and FC (Stop) from the master drive
     // the engine's Transport state, not just the tempo display.
     juce::ToggleButton syncChaseTransportToggle { "Chase transport (Start/Stop)" };
@@ -81,7 +84,7 @@ private:
     // MIDI Clock OUTPUT: Dusk Studio as master. Picker selects one of the
     // engine's MIDI output ports; toggle enables F8 + FA/FC emission.
     juce::Label    syncOutputLabel { {}, "MIDI Sync Output" };
-    juce::ComboBox syncOutputCombo;
+    DuskComboBox syncOutputCombo;
     juce::ToggleButton syncEmitClockToggle { "Emit clock (Dusk Studio as master)" };
 
     // MTC slave: chase the master's absolute SMPTE time. When on AND
@@ -93,7 +96,7 @@ private:
     // existing Sync Output. Frame-rate dropdown selects what we encode.
     juce::ToggleButton mtcEmitToggle { "Emit MTC (Dusk Studio as master)" };
     juce::Label        mtcEmitFrameRateLabel { {}, "MTC frame rate" };
-    juce::ComboBox     mtcEmitFrameRateCombo;
+    DuskComboBox     mtcEmitFrameRateCombo;
 
     // Mackie Control Universal controller pair. One MIDI input (faders,
     // buttons, encoders) + one MIDI output (motor faders, LEDs, LCD,
@@ -101,9 +104,9 @@ private:
     // session.mcu.*; ephemeral state (bank, selected channel, assign
     // mode) lives on Session::mcu as atomics.
     juce::Label    mcuInputLabel  { {}, "MCU Control Surface Input" };
-    juce::ComboBox mcuInputCombo;
+    DuskComboBox mcuInputCombo;
     juce::Label    mcuOutputLabel { {}, "MCU Control Surface Output" };
-    juce::ComboBox mcuOutputCombo;
+    DuskComboBox mcuOutputCombo;
     void populateMcuInputCombo();
     void populateMcuOutputCombo();
     void applyMcuInputChange();
@@ -114,11 +117,35 @@ private:
     // place so the user can review + remove without hunting controls.
     juce::TextButton midiBindingsButton { "MIDI Bindings..." };
     EmbeddedModal    midiBindingsModal;
+    EmbeddedModal    selfTestModal;
 
     juce::Label  uiScaleLabel  { {}, "UI scale" };
     juce::Slider uiScaleSlider;
     juce::Label  uiScaleHint;
     bool         uiScaleDragging = false;
+
+    // Scan-on-startup: when on, every app launch synchronously scans
+    // every installed plugin format and refreshes the cached
+    // KnownPluginList. Backed by AppConfig (per-machine), independent
+    // of session. Validation: log line in stderr after MainComponent
+    // wires the engine, showing added / total counts.
+    juce::ToggleButton scanOnStartupToggle { "Scan plugins on startup" };
+
+    // Section header labels. Each marks a logical group of rows in the
+    // settings panel; resized() captures the Y of each section's top
+    // edge so paint() can draw a thin horizontal separator between
+    // groups.
+    juce::Label audioSectionLabel         { {}, "Audio" };
+    juce::Label controlSurfaceSectionLabel{ {}, "Control Surface" };
+    juce::Label midiBindingsSectionLabel  { {}, "MIDI Bindings" };
+    juce::Label midiSyncSectionLabel      { {}, "MIDI Sync" };
+    juce::Label generalSectionLabel       { {}, "General" };
+    juce::Label advancedSectionLabel      { {}, "Advanced" };
+    juce::ToggleButton tapeStripExpandedToggle { "Expand tape strip by default" };
+
+    // Separator Y positions captured during resized() and drawn by
+    // paint() as a thin horizontal rule between section groups.
+    std::vector<int> separatorYs;
 
 #if defined(__linux__)
     void applyPeriodsChange();

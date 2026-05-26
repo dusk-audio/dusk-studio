@@ -1,4 +1,6 @@
 #include "AudioRegionEditor.h"
+#include "DuskAlerts.h"
+#include "DuskContextMenu.h"
 #include "EditModeToolbar.h"
 #include "../engine/AudioEngine.h"
 #include "../engine/Transport.h"
@@ -231,6 +233,18 @@ AudioRegionEditor::AudioRegionEditor (Session& s, AudioEngine& e, int t, int r)
     addAndMakeVisible (muteToggle);
     addAndMakeVisible (lockToggle);
 
+    // Automation param picker — short pill button on the icon row.
+    // Click pops a menu listing each automatable param (Off + Fader /
+    // Pan / Mute / AuxSend1..4). Selection updates automationParam +
+    // repaints so the lane overlay re-renders.
+    automationParamButton.setColour (juce::TextButton::buttonColourId,  juce::Colour (0xff282830));
+    automationParamButton.setColour (juce::TextButton::textColourOffId, juce::Colour (0xffd0d0d8));
+    automationParamButton.setTooltip ("Pick a parameter lane to draw automation on.");
+    automationParamButton.setMouseClickGrabsKeyboardFocus (false);
+    automationParamButton.setWantsKeyboardFocus (false);
+    automationParamButton.onClick = [this] { showAutomationParamMenu(); };
+    addAndMakeVisible (automationParamButton);
+
     // Horizontal scrollbar above the status bar. Sized to anchor-range
     // total samples; the visible-range thumb width tracks the on-screen
     // sample window (anchor / pixelsPerSample). Drag scrolls the view.
@@ -285,6 +299,18 @@ void AudioRegionEditor::rebuildThumbIfNeeded()
         thumb->setSource (nullptr);
     thumb->addChangeListener (this);
     loadedFile = r->file;
+
+    // Cache the WAV's native sample rate so the bar grid + thumbnail
+    // time-domain agree. One-shot reader open just to read the metadata
+    // header (no audio data read); destructor closes it before we leave.
+    loadedFileSampleRate = 0.0;
+    if (r->file.existsAsFile())
+    {
+        std::unique_ptr<juce::AudioFormatReader> reader (
+            formatManager.createReaderFor (r->file));
+        if (reader != nullptr)
+            loadedFileSampleRate = reader->sampleRate;
+    }
 }
 
 void AudioRegionEditor::changeListenerCallback (juce::ChangeBroadcaster*)
@@ -376,6 +402,31 @@ int AudioRegionEditor::xForSample (juce::int64 absSample,
     if (r == nullptr) return area.getX();
     const auto t = r->timelineStart + (absSample - r->sourceOffset);
     return xForTimelineSample (t, area);
+}
+
+juce::int64 AudioRegionEditor::snapFileSampleToGrid (juce::int64 fileSample,
+                                                       bool bypass) const noexcept
+{
+    if (bypass || ! session.snapToGrid) return fileSample;
+    const auto* r = region();
+    if (r == nullptr) return fileSample;
+    const auto fileToTimeline = r->timelineStart - r->sourceOffset;
+    const auto timelineSample = fileSample + fileToTimeline;
+    const auto sr = juce::jmax (1.0,
+        loadedFileSampleRate > 0.0 ? loadedFileSampleRate
+                                    : engine.getCurrentSampleRate());
+    const auto snapped = snap::snapAbsoluteToGrid (timelineSample, session, sr);
+    return snapped - fileToTimeline;
+}
+
+juce::int64 AudioRegionEditor::snapTimelineSampleToGrid (juce::int64 timelineSample,
+                                                          bool bypass) const noexcept
+{
+    if (bypass || ! session.snapToGrid) return timelineSample;
+    const auto sr = juce::jmax (1.0,
+        loadedFileSampleRate > 0.0 ? loadedFileSampleRate
+                                    : engine.getCurrentSampleRate());
+    return snap::snapAbsoluteToGrid (timelineSample, session, sr);
 }
 
 juce::int64 AudioRegionEditor::sampleForX (int x, juce::Rectangle<int> area) const
@@ -509,6 +560,7 @@ void AudioRegionEditor::paint (juce::Graphics& g)
     }
     paintEditCursor    (g, waveArea);
     paintTransportPlayhead (g, waveArea);
+    paintAutomationOverlay (g, waveArea);
 
     // Snap guide - thin vertical line at the snapped target of the
     // active drag. Painted last so it sits on top of every overlay.
@@ -544,7 +596,16 @@ void AudioRegionEditor::paintRuler (juce::Graphics& g, juce::Rectangle<int> area
 
     const auto* r = region();
     if (r == nullptr || r->lengthInSamples <= 0) return;
-    const double sr = juce::jmax (1.0, engine.getCurrentSampleRate());
+    // The bar grid + the "time" ruler must speak in the WAV's OWN
+    // sample-rate domain — region.timelineStart / lengthInSamples were
+    // stored at recording-time SR, and the rendered waveform uses the
+    // WAV file's native SR via the thumbnail. Using engine.getCurrentSampleRate()
+    // here drifts the grid against the audio whenever the user hot-swaps
+    // to a device at a different rate. Fall back to engine SR when the
+    // WAV's SR hasn't been cached yet (thumb not loaded).
+    const double sr = juce::jmax (1.0,
+        loadedFileSampleRate > 0.0 ? loadedFileSampleRate
+                                    : engine.getCurrentSampleRate());
 
     g.setFont (juce::Font (juce::FontOptions (12.0f, juce::Font::bold)));
 
@@ -617,7 +678,13 @@ void AudioRegionEditor::paintWaveform (juce::Graphics& g, juce::Rectangle<int> a
     const auto* focused = region();
     if (focused == nullptr || thumb == nullptr) return;
 
-    const double sr = juce::jmax (1.0, engine.getCurrentSampleRate());
+    // Waveform thumbnail expects seconds in the FILE'S native SR domain.
+    // Use the cached WAV SR so a hot-swap of the audio device doesn't
+    // stretch the waveform vs the bar grid above. Fall back to engine
+    // SR before the thumb has loaded its metadata.
+    const double sr = juce::jmax (1.0,
+        loadedFileSampleRate > 0.0 ? loadedFileSampleRate
+                                    : engine.getCurrentSampleRate());
     auto inset = area.reduced (4, 4);
     g.setColour (juce::Colours::black.withAlpha (0.25f));
     g.fillRect (inset);
@@ -894,6 +961,111 @@ void AudioRegionEditor::mouseDown (const juce::MouseEvent& e)
         return;
     }
 
+    // Automation overlay: when a param lane is active, intercept clicks
+    // inside the wave area BEFORE the region-edit branches so the
+    // engineer can edit points without first hitting "Off" on the
+    // automation picker. Editing is GATED ON TRANSPORT STOPPED — the
+    // audio thread reads lane.points lock-free in Read/Touch mode, so
+    // mid-play mutation would race.
+    if (automationParam >= 0
+        && automationParam < kNumAutomationParams
+        && waveArea.contains (e.x, e.y)
+        && trackIdx >= 0 && trackIdx < Session::kNumTracks
+        && engine.getTransport().getState() == Transport::State::Stopped)
+    {
+        auto& lane = session.track (trackIdx)
+                          .automationLanes[(size_t) automationParam];
+        const int hit = hitTestAutomationPoint (e.x, e.y, waveArea);
+
+        if (e.mods.isPopupMenu())
+        {
+            // Right-click a dot → delete. Right-click empty → no-op so
+            // the user can still get the region context menu by aiming
+            // away from any dot.
+            if (hit >= 0)
+            {
+                lane.points.erase (lane.points.begin() + hit);
+                // Publish the lane mutation via a release-store on the
+                // track's automationMode atomic (Session.h synchronisation
+                // contract: every message-thread append/erase must
+                // happen-before the audio thread's next acquire-load).
+                // Cheap — single re-store of the same value.
+                {
+                    auto& trk = session.track (trackIdx);
+                    const int m = trk.automationMode.load (std::memory_order_relaxed);
+                    trk.automationMode.store (m, std::memory_order_release);
+                }
+                repaint();
+                return;
+            }
+        }
+        else
+        {
+            if (hit >= 0)
+            {
+                draggedPointIdx = hit;
+                dragMode = DragMode::AutomationPoint;
+                setMouseCursor (juce::MouseCursor::DraggingHandCursor);
+                return;
+            }
+            // Empty area click → add a point at the snapped click position.
+            const auto fileSample = sampleForX (e.x, waveArea);
+            const auto snappedFile = snapFileSampleToGrid (fileSample,
+                                                              e.mods.isCommandDown());
+            const auto fileToTimeline = r->timelineStart - r->sourceOffset;
+            const juce::int64 t = snappedFile + fileToTimeline;
+            float v01 = automationValueForY (e.y, waveArea);
+            // Discrete lanes (Mute / Solo) store 0/1 only — intermediate
+            // values would render correctly via the connected-dot view
+            // but evaluateLane thresholds at 0.5, so a 0.3-stored value
+            // round-trips to 0 anyway. Quantize at storage time so the
+            // dot's painted position matches its audible behaviour.
+            if (! isContinuousParam ((AutomationParam) automationParam))
+                v01 = (v01 >= 0.5f) ? 1.0f : 0.0f;
+
+            AutomationPoint pt;
+            pt.timeSamples = juce::jmax<juce::int64> (0, t);
+            pt.value       = v01;
+            pt.recordedAtBPM = session.tempoBpm.load (std::memory_order_relaxed);
+
+            auto insertAt = std::upper_bound (
+                lane.points.begin(), lane.points.end(), pt,
+                [] (const AutomationPoint& a, const AutomationPoint& b)
+                { return a.timeSamples < b.timeSamples; });
+            const int newIdx = (int) (insertAt - lane.points.begin());
+            lane.points.insert (insertAt, pt);
+
+            // Auto-arm: flip the track's automation mode to Read so
+            // the freshly-drawn lane is audible immediately on Play.
+            // No-op if already Read / Touch. Without this the engineer
+            // draws a curve, hits Play, and hears nothing because the
+            // engine ignores lanes in Off mode.
+            // The mode store is ALSO the release publication of the
+            // lane.points.insert above (Session.h sync contract). If
+            // the mode is already Read / Touch (no transition), do an
+            // explicit re-store so the audio thread's next acquire-load
+            // still happens-after this insert.
+            auto& trk = session.track (trackIdx);
+            const int curMode = trk.automationMode.load (std::memory_order_acquire);
+            if (curMode == (int) AutomationMode::Off
+                || curMode == (int) AutomationMode::Write)
+            {
+                trk.automationMode.store ((int) AutomationMode::Read,
+                                            std::memory_order_release);
+            }
+            else
+            {
+                trk.automationMode.store (curMode, std::memory_order_release);
+            }
+
+            draggedPointIdx = newIdx;
+            dragMode = DragMode::AutomationPoint;
+            setMouseCursor (juce::MouseCursor::DraggingHandCursor);
+            repaint();
+            return;
+        }
+    }
+
     // Right-click → context menu (split / reset gain / reset fades / mute /
     // lock / colour). Captured here so it doesn't slip through to the
     // edit-cursor branch below. Right-click on a fade handle goes to the
@@ -915,7 +1087,8 @@ void AudioRegionEditor::mouseDown (const juce::MouseEvent& e)
         }
         if (waveArea.contains (e.x, e.y))
         {
-            editCursorSample = sampleForX (e.x, waveArea);
+            editCursorSample = snapFileSampleToGrid (sampleForX (e.x, waveArea),
+                                                     e.mods.isCommandDown());
             refreshStatusBarReadouts();
         }
         showContextMenu (e.getScreenPosition());
@@ -933,9 +1106,12 @@ void AudioRegionEditor::mouseDown (const juce::MouseEvent& e)
         // Ruler click seeks the transport playhead (Reaper/Ardour
         // muscle memory) AND starts a range-select drag. A click
         // without drag is therefore a pure seek; a drag refines the
-        // selection on top.
-        engine.getTransport().setPlayhead (timelineSampleForX (e.x, waveArea));
-        rangeStartSample = sampleForX (e.x, waveArea);
+        // selection on top. Both the seek + the range origin honour
+        // SNAP so the playhead and selection land on the grid.
+        const bool bypassSnap = e.mods.isCommandDown();
+        engine.getTransport().setPlayhead (
+            snapTimelineSampleToGrid (timelineSampleForX (e.x, waveArea), bypassSnap));
+        rangeStartSample = snapFileSampleToGrid (sampleForX (e.x, waveArea), bypassSnap);
         rangeEndSample   = rangeStartSample;
         rangeActive      = false;   // becomes true once the drag distance > 0
         dragMode         = DragMode::Range;
@@ -1049,7 +1225,8 @@ void AudioRegionEditor::mouseDown (const juce::MouseEvent& e)
             const auto& reg = session.track (trackIdx).regions[(size_t) hitIdx];
             if (! reg.locked)
             {
-                const auto timelineSplit = timelineSampleForX (e.x, waveArea);
+                const auto timelineSplit = snapTimelineSampleToGrid (
+                    timelineSampleForX (e.x, waveArea), e.mods.isCommandDown());
                 auto& um = engine.getUndoManager();
                 um.beginNewTransaction ("Split region");
                 um.perform (new SplitRegionAction (
@@ -1137,7 +1314,8 @@ void AudioRegionEditor::mouseDown (const juce::MouseEvent& e)
         // tracked so a follow-up horizontal drag past the 3 px
         // threshold promotes the click into a MoveRegion drag.
         if (! clickedSelected) additionalSelectedRegions.clear();
-        editCursorSample = sampleForX (e.x, waveArea);
+        editCursorSample = snapFileSampleToGrid (sampleForX (e.x, waveArea),
+                                                 e.mods.isCommandDown());
         dragOriginTimelineSample = r->timelineStart;
         captureMultiOrigins();
         dragMode = DragMode::MoveCursor;
@@ -1167,6 +1345,79 @@ void AudioRegionEditor::mouseDrag (const juce::MouseEvent& e)
         scrollSamples = juce::jlimit<juce::int64> (0,
             juce::jmax<juce::int64> (0, anchorTimelineLength - 1),
             panStartScroll + dxSamples);
+        repaint();
+        return;
+    }
+
+    // Automation point drag: move time + value of the in-flight point.
+    // Re-sorts the lane if the drag pushed the point past a neighbour
+    // so the polyline + binary-search lookup stay consistent.
+    if (dragMode == DragMode::AutomationPoint
+        && automationParam >= 0
+        && automationParam < kNumAutomationParams
+        && draggedPointIdx >= 0
+        && trackIdx >= 0 && trackIdx < Session::kNumTracks)
+    {
+        auto& lane = session.track (trackIdx)
+                          .automationLanes[(size_t) automationParam];
+        if (draggedPointIdx >= (int) lane.points.size())
+        {
+            draggedPointIdx = -1;
+            dragMode = DragMode::None;
+            return;
+        }
+        const auto* rr = region();
+        if (rr == nullptr) return;
+        const auto fileSample = sampleForX (e.x, waveArea);
+        const auto snappedFile = snapFileSampleToGrid (fileSample,
+                                                          e.mods.isCommandDown());
+        const auto fileToTimeline = rr->timelineStart - rr->sourceOffset;
+        const juce::int64 t = juce::jmax<juce::int64> (0, snappedFile + fileToTimeline);
+        float v01 = automationValueForY (e.y, waveArea);
+        // Discrete lanes (Mute / Solo): same quantization rationale as
+        // the click-add path above — store 0/1 so the painted dot and
+        // the audible behaviour agree.
+        if (! isContinuousParam ((AutomationParam) automationParam))
+            v01 = (v01 >= 0.5f) ? 1.0f : 0.0f;
+
+        auto& pt = lane.points[(size_t) draggedPointIdx];
+        pt.timeSamples = t;
+        pt.value       = v01;
+
+        // Maintain sort: if the new time crosses a neighbour, sort the
+        // lane and refind our point's new index by identity (time +
+        // value match — collisions are negligible at click resolution).
+        const auto needSort = (draggedPointIdx > 0
+                                  && lane.points[(size_t) draggedPointIdx - 1].timeSamples > t)
+                             || (draggedPointIdx + 1 < (int) lane.points.size()
+                                  && lane.points[(size_t) draggedPointIdx + 1].timeSamples < t);
+        if (needSort)
+        {
+            std::stable_sort (lane.points.begin(), lane.points.end(),
+                [] (const AutomationPoint& a, const AutomationPoint& b)
+                { return a.timeSamples < b.timeSamples; });
+            int refound = -1;
+            for (int i = 0; i < (int) lane.points.size(); ++i)
+                if (lane.points[(size_t) i].timeSamples == t
+                    && std::abs (lane.points[(size_t) i].value - v01) < 1e-4f)
+                {
+                    refound = i;
+                    break;
+                }
+            // Refind miss: float-tolerance match failed (rare but
+            // possible after value quantization on discrete lanes).
+            // Bail the drag rather than mutate a stale index that
+            // could update the wrong point on the next mouseDrag.
+            if (refound < 0)
+            {
+                draggedPointIdx = -1;
+                dragMode = DragMode::None;
+                setMouseCursor (juce::MouseCursor::NormalCursor);
+                repaint();
+                return;
+            }
+            draggedPointIdx = refound;
+        }
         repaint();
         return;
     }
@@ -1346,6 +1597,30 @@ void AudioRegionEditor::mouseUp (const juce::MouseEvent&)
         setMouseCursor (juce::MouseCursor::NormalCursor);
         return;
     }
+    // Automation point drag finishes: clear the in-flight index. No
+    // undoable wrapper for v1 — direct lane mutation matches the
+    // existing piano-roll-edit race profile (transport must be stopped,
+    // gated at mouseDown). Future commit can add an undo action.
+    if (dragMode == DragMode::AutomationPoint)
+    {
+        // Publish the drag's lane.points writes via a release-store on
+        // automationMode so the audio thread's next acquire-load sees
+        // them. Per-frame publication during the drag would be wasteful;
+        // one re-store at drag-end is sufficient because editing is
+        // gated on transport=Stopped (no acquire-load can race during
+        // the drag).
+        if (trackIdx >= 0 && trackIdx < Session::kNumTracks
+            && automationParam >= 0 && automationParam < kNumAutomationParams)
+        {
+            auto& trk = session.track (trackIdx);
+            const int m = trk.automationMode.load (std::memory_order_relaxed);
+            trk.automationMode.store (m, std::memory_order_release);
+        }
+        draggedPointIdx = -1;
+        dragMode = DragMode::None;
+        setMouseCursor (juce::MouseCursor::NormalCursor);
+        return;
+    }
     if (dragMode == DragMode::Range)
     {
         // Normalise so start <= end (drag-leftwards still works).
@@ -1467,9 +1742,7 @@ void AudioRegionEditor::showContextMenu (juce::Point<int> screenPos)
     m.addItem (5, r->locked ? "Unlock"  : "Lock");
 
     juce::Component::SafePointer<AudioRegionEditor> safe (this);
-    m.showMenuAsync (juce::PopupMenu::Options()
-                        .withTargetScreenArea (juce::Rectangle<int> (
-                            screenPos.x, screenPos.y, 1, 1)),
+    duskstudio::showContextMenu (m, *this, screenPos,
         [safe] (int chosen)
         {
             auto* self = safe.getComponent();
@@ -1565,9 +1838,7 @@ void AudioRegionEditor::showFadeShapeMenu (juce::Point<int> screenPos, bool isFa
     addShape (FadeShape::Log,        "Logarithmic");
 
     juce::Component::SafePointer<AudioRegionEditor> safe (this);
-    m.showMenuAsync (juce::PopupMenu::Options()
-                        .withTargetScreenArea (juce::Rectangle<int> (
-                            screenPos.x, screenPos.y, 1, 1)),
+    duskstudio::showContextMenu (m, *this, screenPos,
         [safe, isFadeIn] (int chosen)
         {
             auto* self = safe.getComponent();
@@ -2245,6 +2516,18 @@ void AudioRegionEditor::layoutIconRow (juce::Rectangle<int> area)
         editModeToolbar->setBounds (inner.removeFromLeft (w));
         inner.removeFromLeft (gap);
     }
+    // Automation param picker — sits between the edit-mode toolbar and
+    // the title strip so it's discoverable without crowding the actions.
+    {
+        constexpr int kAutoBtnW = 130;
+        const int w = juce::jmin (kAutoBtnW, inner.getWidth());
+        if (w > 0)
+        {
+            automationParamButton.setBounds (
+                inner.removeFromLeft (w).withSizeKeepingCentre (w, dia - 6));
+            inner.removeFromLeft (gap);
+        }
+    }
     // Title strip occupies what's left of the toolbar band. Stretches
     // so long region labels / filenames don't get truncated below the
     // available width.
@@ -2400,7 +2683,13 @@ juce::String formatBarBeatTickAt (juce::int64 sliceFileSample,
 void AudioRegionEditor::refreshStatusBarReadouts()
 {
     const auto* r = region();
-    const double sr  = juce::jmax (1.0, engine.getCurrentSampleRate());
+    // Use the WAV's native SR — same reasoning as paintRuler /
+    // paintWaveform: anchorTimelineLength + lengthInSamples were
+    // captured at recording-time SR. Reading at engine SR drifts the
+    // bar/beat display vs the rendered audio after a device hot-swap.
+    const double sr  = juce::jmax (1.0,
+        loadedFileSampleRate > 0.0 ? loadedFileSampleRate
+                                    : engine.getCurrentSampleRate());
     const double bpm = juce::jmax (1.0, (double) session.tempoBpm.load (std::memory_order_relaxed));
     const int    bpb = juce::jmax (1, session.beatsPerBar.load (std::memory_order_relaxed));
 
@@ -2530,35 +2819,33 @@ void AudioRegionEditor::showRegionPropertiesPopup()
                 {
                     auto* self = safe.getComponent();
                     if (self == nullptr) return;
-                    auto window = std::make_shared<juce::AlertWindow> (
-                        "Audio region label",
-                        "Type a label for this region:",
-                        juce::AlertWindow::NoIcon);
-                    window->addTextEditor ("text", currentLabel,
-                                              juce::String(), false);
-                    window->addButton ("OK",     1,
-                                          juce::KeyPress (juce::KeyPress::returnKey));
-                    window->addButton ("Cancel", 0,
-                                          juce::KeyPress (juce::KeyPress::escapeKey));
-                    auto* raw = window.get();
-                    raw->enterModalState (true, juce::ModalCallbackFunction::create (
-                        [safe, holder = window] (int result) mutable
-                        {
-                            auto* s = safe.getComponent();
-                            if (result != 1 || s == nullptr) return;
-                            auto* rr = s->region();
-                            if (rr == nullptr) return;
-                            const AudioRegion before = *rr;
-                            AudioRegion after = before;
-                            after.label = holder->getTextEditorContents ("text");
-                            auto& um = s->engine.getUndoManager();
-                            um.beginNewTransaction ("Rename region");
-                            um.perform (new RegionEditAction (s->session, s->engine,
-                                                                s->trackIdx, s->regionIdx,
-                                                                before, after));
-                            s->refreshStatusBarReadouts();
-                            s->repaint();
-                        }), false);
+                    // Fall back to the editor component itself if no top-
+                    // level exists — the rename should still proceed; the
+                    // modal just renders centred on the editor instead of
+                    // the whole window.
+                    auto* host = self->getTopLevelComponent();
+                    if (host == nullptr) host = self;
+                    showDuskTextInput (*host, "Audio region label",
+                                          "Type a label for this region:",
+                                          currentLabel,
+                                          [safe] (const juce::String& text)
+                                          {
+                                              auto* s = safe.getComponent();
+                                              if (s == nullptr) return;
+                                              auto* rr = s->region();
+                                              if (rr == nullptr) return;
+                                              const AudioRegion before = *rr;
+                                              AudioRegion after = before;
+                                              after.label = text;
+                                              auto& um = s->engine.getUndoManager();
+                                              um.beginNewTransaction ("Rename region");
+                                              um.perform (new RegionEditAction (
+                                                  s->session, s->engine,
+                                                  s->trackIdx, s->regionIdx,
+                                                  before, after));
+                                              s->refreshStatusBarReadouts();
+                                              s->repaint();
+                                          });
                 });
 
     m.addSeparator();
@@ -2651,7 +2938,7 @@ void AudioRegionEditor::showRegionPropertiesPopup()
         m.addItem (9999, info, false /*disabled*/, false);
     }
 
-    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&propertiesButton),
+    duskstudio::showContextMenu (m, propertiesButton,
         [safe = juce::Component::SafePointer<AudioRegionEditor> (this)] (int chosen)
         {
             auto* self = safe.getComponent();
@@ -2820,5 +3107,184 @@ void AudioRegionEditor::timerCallback()
     invalidateAt (lastPlayheadX);
     invalidateAt (x);
     lastPlayheadX = x;
+}
+
+// ── Automation overlay ────────────────────────────────────────────────────
+
+namespace
+{
+const char* automationParamName (int p)
+{
+    switch ((AutomationParam) p)
+    {
+        case AutomationParam::FaderDb:  return "Fader (dB)";
+        case AutomationParam::Pan:      return "Pan";
+        case AutomationParam::Mute:     return "Mute";
+        case AutomationParam::Solo:     return "Solo";
+        case AutomationParam::AuxSend1: return "Aux 1";
+        case AutomationParam::AuxSend2: return "Aux 2";
+        case AutomationParam::AuxSend3: return "Aux 3";
+        case AutomationParam::AuxSend4: return "Aux 4";
+        default: return "Off";
+    }
+}
+
+juce::Colour automationParamColour (int p)
+{
+    switch ((AutomationParam) p)
+    {
+        case AutomationParam::FaderDb:  return juce::Colour (0xff5fc46f);   // green
+        case AutomationParam::Pan:      return juce::Colour (0xffe07a40);   // orange
+        case AutomationParam::Mute:     return juce::Colour (0xffd05050);   // red
+        case AutomationParam::AuxSend1: return juce::Colour (0xff60a8d8);
+        case AutomationParam::AuxSend2: return juce::Colour (0xff70b0c0);
+        case AutomationParam::AuxSend3: return juce::Colour (0xff8090d0);
+        case AutomationParam::AuxSend4: return juce::Colour (0xffa080c0);
+        default:                         return juce::Colour (0xff909098);
+    }
+}
+} // namespace
+
+void AudioRegionEditor::showAutomationParamMenu()
+{
+    juce::PopupMenu m;
+    m.addSectionHeader ("Automate parameter");
+    m.addItem (1000, "Off", true, automationParam < 0);
+    m.addSeparator();
+    static constexpr int kParams[] = {
+        (int) AutomationParam::FaderDb,
+        (int) AutomationParam::Pan,
+        (int) AutomationParam::Mute,
+        (int) AutomationParam::Solo,
+        (int) AutomationParam::AuxSend1,
+        (int) AutomationParam::AuxSend2,
+        (int) AutomationParam::AuxSend3,
+        (int) AutomationParam::AuxSend4,
+    };
+    for (int p : kParams)
+        m.addItem (p + 1, automationParamName (p), true, automationParam == p);
+
+    juce::Component::SafePointer<AudioRegionEditor> safe (this);
+    duskstudio::showContextMenu (m, automationParamButton,
+        [safe] (int chosen)
+        {
+            if (safe == nullptr || chosen == 0) return;
+            if (chosen == 1000)
+                safe->automationParam = -1;
+            else
+                safe->automationParam = chosen - 1;
+            safe->automationParamButton.setButtonText (
+                juce::String ("Auto: ") + automationParamName (safe->automationParam));
+            safe->repaint();
+        });
+}
+
+juce::Rectangle<int> AudioRegionEditor::automationLaneArea (juce::Rectangle<int> waveArea) const
+{
+    // Overlay sits OVER the waveform — not a separate band — so the lane
+    // line + dots stay aligned with the audio they're shaping. Inset
+    // matches paintWaveform's reduced(4,4) so dots don't clip the frame.
+    return waveArea.reduced (4, 4);
+}
+
+int AudioRegionEditor::automationYForValue (float v01, juce::Rectangle<int> waveArea) const
+{
+    const auto a = automationLaneArea (waveArea);
+    const float clamped = juce::jlimit (0.0f, 1.0f, v01);
+    return a.getBottom() - (int) std::round (clamped * (float) a.getHeight());
+}
+
+float AudioRegionEditor::automationValueForY (int y, juce::Rectangle<int> waveArea) const
+{
+    const auto a = automationLaneArea (waveArea);
+    if (a.getHeight() <= 0) return 0.0f;
+    const float frac = (float) (a.getBottom() - y) / (float) a.getHeight();
+    return juce::jlimit (0.0f, 1.0f, frac);
+}
+
+int AudioRegionEditor::hitTestAutomationPoint (int x, int y,
+                                                  juce::Rectangle<int> waveArea) const
+{
+    if (automationParam < 0 || automationParam >= kNumAutomationParams) return -1;
+    const auto& lane = session.track (trackIdx)
+                            .automationLanes[(size_t) automationParam];
+    constexpr int kHitR = 8;
+    for (int i = 0; i < (int) lane.points.size(); ++i)
+    {
+        const auto& pt = lane.points[(size_t) i];
+        const int px = xForTimelineSample (pt.timeSamples, waveArea);
+        const int py = automationYForValue (pt.value, waveArea);
+        if (std::abs (px - x) <= kHitR && std::abs (py - y) <= kHitR)
+            return i;
+    }
+    return -1;
+}
+
+void AudioRegionEditor::paintAutomationOverlay (juce::Graphics& g, juce::Rectangle<int> waveArea)
+{
+    if (automationParam < 0 || automationParam >= kNumAutomationParams) return;
+    const auto& lane = session.track (trackIdx)
+                            .automationLanes[(size_t) automationParam];
+    const auto colour = automationParamColour (automationParam);
+    const auto laneArea = automationLaneArea (waveArea);
+
+    // Header strip: param name + value scale hint at the top-right of
+    // the wave area so the user knows which lane they're editing.
+    {
+        g.setColour (colour.withAlpha (0.85f));
+        g.setFont (juce::Font (juce::FontOptions (11.0f, juce::Font::bold)));
+        g.drawText (juce::String ("AUTO: ") + automationParamName (automationParam),
+                     waveArea.removeFromTop (16).reduced (6, 2),
+                     juce::Justification::topLeft, false);
+    }
+
+    // Empty lane: just paint the baseline ghost line.
+    if (lane.points.empty())
+    {
+        g.setColour (colour.withAlpha (0.25f));
+        const int midY = laneArea.getY() + laneArea.getHeight() / 2;
+        g.drawHorizontalLine (midY, (float) laneArea.getX(), (float) laneArea.getRight());
+        return;
+    }
+
+    // Polyline through the points. Step-hold for discrete (Mute / Solo),
+    // linear otherwise. evaluateLane already encodes the right semantic
+    // but for the overlay we just connect dots — same visual idiom Reaper
+    // / Ardour use for envelope lanes.
+    const bool discrete = ! isContinuousParam ((AutomationParam) automationParam);
+    juce::Path line;
+    bool first = true;
+    int prevX = laneArea.getX(), prevY = laneArea.getBottom();
+    for (const auto& pt : lane.points)
+    {
+        const int px = xForTimelineSample (pt.timeSamples, laneArea);
+        const int py = automationYForValue (pt.value, laneArea);
+        if (first)
+        {
+            line.startNewSubPath ((float) px, (float) py);
+            first = false;
+        }
+        else
+        {
+            if (discrete)
+                line.lineTo ((float) px, (float) prevY);
+            line.lineTo ((float) px, (float) py);
+        }
+        prevX = px;
+        prevY = py;
+    }
+    g.setColour (colour.withAlpha (0.9f));
+    g.strokePath (line, juce::PathStrokeType (1.6f));
+
+    // Dots
+    for (const auto& pt : lane.points)
+    {
+        const int px = xForTimelineSample (pt.timeSamples, laneArea);
+        const int py = automationYForValue (pt.value, laneArea);
+        g.setColour (juce::Colour (0xff0a0a0a));
+        g.fillEllipse ((float) px - 5.0f, (float) py - 5.0f, 10.0f, 10.0f);
+        g.setColour (colour);
+        g.fillEllipse ((float) px - 3.5f, (float) py - 3.5f, 7.0f, 7.0f);
+    }
 }
 } // namespace duskstudio

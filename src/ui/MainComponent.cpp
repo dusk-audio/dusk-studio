@@ -1,11 +1,16 @@
 #include "MainComponent.h"
 #include <cstdio>
 #include <cstdlib>  // std::getenv (DUSKSTUDIO_USE_OOP_PLUGINS)
+#include "AppConfig.h"
 #include "AudioSettingsPanel.h"
+#include "DuskFileBrowser.h"
 #include "AuxView.h"
 #include "BounceDialog.h"
+#include "ConsoleView.h"
 #include "DimOverlay.h"
+#include "DuskAlerts.h"
 #include "PianoRollComponent.h"
+#include "PlatformWindowing.h"
 #include "AudioRegionEditor.h"
 #include "TunerOverlay.h"
 #include "VirtualKeyboardComponent.h"
@@ -44,8 +49,22 @@ juce::AudioFormatManager& importAudioFormatManager()
     return fm;
 }
 
+// Route every import-error alert through the in-window Dusk alert
+// modal. The free function pulls the active top-level so existing
+// call sites don't need to thread a Component reference through.
 void showImportError (const juce::String& title, const juce::String& message)
 {
+    if (auto* tlw = juce::TopLevelWindow::getActiveTopLevelWindow())
+    {
+        if (auto* dw = dynamic_cast<juce::DocumentWindow*> (tlw))
+            if (auto* content = dw->getContentComponent())
+            {
+                showDuskAlert (*content, title, message);
+                return;
+            }
+    }
+    // Fallback only when no top-level exists (shouldn't happen in
+    // normal use; safety net for headless / shutdown paths).
     juce::AlertWindow::showAsync (
         juce::MessageBoxOptions()
             .withIconType (juce::MessageBoxIconType::WarningIcon)
@@ -55,12 +74,7 @@ void showImportError (const juce::String& title, const juce::String& message)
         nullptr);
 }
 } // namespace
-} // namespace duskstudio
-#include "ConsoleView.h"  // (already included transitively, kept explicit)
-#include "PlatformWindowing.h"
 
-namespace duskstudio
-{
 // Tracks the top-level window so AuxView's editor hosts (separate X11
 // toplevels on Linux/Wayland) can follow the main window across the
 // screen. Override targets ComponentMovementWatcher protected virtuals.
@@ -261,6 +275,22 @@ MainComponent::MainComponent()
     }
    #endif
 
+    // Optional plugin scan on launch. Per-machine setting (AppConfig);
+    // default off. Synchronous — blocks the message thread for a few
+    // seconds with a full plugin folder. Logs the result so the user
+    // sees the validation in stderr without an extra modal.
+    if (appconfig::getScanPluginsOnStartup())
+    {
+        auto& mgr = engine.getPluginManager();
+        const int added = mgr.scanInstalledPlugins();
+        const int total = mgr.getEffectDescriptions().size()
+                         + mgr.getInstrumentDescriptions().size();
+        std::fprintf (stderr,
+                      "[Dusk Studio] Scan-on-startup: added %d new plugins "
+                      "(%d total).\n", added, total);
+        std::fflush (stderr);
+    }
+
     // Default to a session under ~/Music/Dusk Studio/Untitled. The user can change
     // this later via a session-management UI; for the recorder MVP this is
     // enough to get WAVs on disk.
@@ -324,33 +354,54 @@ MainComponent::MainComponent()
     addAndMakeVisible (mixingStageBtn);
     addAndMakeVisible (auxStageBtn);
     addAndMakeVisible (masteringStageBtn);
-    mixingStageBtn.setToggleState (true, juce::dontSendNotification);  // default
+    recordingStageBtn.setToggleState (true, juce::dontSendNotification);  // Recording is the workflow default
 
-    // Bank A/B buttons (visible only when the window is too narrow to fit
-    // all 16 strips). Sit on a row directly below the stage selector so
-    // the channel strips inside ConsoleView get the full body height.
-    auto styleBankBtn = [] (juce::TextButton& b)
+    // SNAP / zoom-out / zoom-in / fit cluster. Pulled out of TapeStrip
+    // to free the ruler band; placed in the header row between the
+    // rightmost bank button and the tuner button (transport bar).
+    auto styleHdrPill = [] (juce::TextButton& b)
     {
-        b.setClickingTogglesState (true);
-        b.setRadioGroupId (1002);
-        b.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff202024));
-        b.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xffd0a060));
-        b.setColour (juce::TextButton::textColourOffId,  juce::Colours::lightgrey);
-        b.setColour (juce::TextButton::textColourOnId,   juce::Colour (0xff121214));
+        b.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff262630));
+        b.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff3f5870));
+        b.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xffd0d0d4));
+        b.setColour (juce::TextButton::textColourOnId,   juce::Colours::white);
+        b.setMouseClickGrabsKeyboardFocus (false);
     };
-    styleBankBtn (bankAButton);
-    styleBankBtn (bankBButton);
-    bankAButton.setToggleState (true, juce::dontSendNotification);
-    bankAButton.onClick = [this]
+    styleHdrPill (hdrSnapToggle);
+    styleHdrPill (hdrZoomOutBtn);
+    styleHdrPill (hdrZoomInBtn);
+    styleHdrPill (hdrZoomFitBtn);
+    hdrSnapToggle.setClickingTogglesState (true);
+    hdrSnapToggle.setToggleState (session.snapToGrid, juce::dontSendNotification);
+    hdrSnapToggle.setTooltip ("Snap region drags to the grid.");
+    hdrZoomOutBtn.setTooltip ("Zoom out (-)");
+    hdrZoomInBtn .setTooltip ("Zoom in (=)");
+    hdrZoomFitBtn.setTooltip ("Zoom to fit (Cmd+0)");
+    hdrSnapToggle.onClick = [this]
     {
-        if (consoleView != nullptr) consoleView->setBank (0);
+        session.snapToGrid = hdrSnapToggle.getToggleState();
     };
-    bankBButton.onClick = [this]
+    hdrZoomOutBtn.onClick = [this]
     {
-        if (consoleView != nullptr) consoleView->setBank (1);
+        if (tapeStrip != nullptr) tapeStrip->zoomByFactor (1.0f / 1.25f);
     };
-    addChildComponent (bankAButton);   // visibility set per-resize based on window width
-    addChildComponent (bankBButton);
+    hdrZoomInBtn.onClick = [this]
+    {
+        if (tapeStrip != nullptr) tapeStrip->zoomByFactor (1.25f);
+    };
+    hdrZoomFitBtn.onClick = [this]
+    {
+        if (tapeStrip != nullptr) tapeStrip->zoomFit();
+    };
+    addAndMakeVisible (hdrSnapToggle);
+    addAndMakeVisible (hdrZoomOutBtn);
+    addAndMakeVisible (hdrZoomInBtn);
+    addAndMakeVisible (hdrZoomFitBtn);
+
+    // Bank-button row is rebuilt by syncBankButtons() each layout pass
+    // (visible only when the window can't fit all 16 strips at min
+    // width). Sits on a row directly below the stage selector so the
+    // channel strips inside ConsoleView get the full body height.
 
     // Save / Save As / Open / Mixdown / Bounce / Audio settings now live in
     // the menu bar - see getMenuForIndex() and menuItemSelected() below.
@@ -367,6 +418,11 @@ MainComponent::MainComponent()
     systemStatusBar = std::make_unique<SystemStatusBar> (engine);
     addAndMakeVisible (systemStatusBar.get());
 
+    // Read the user's persisted "tape strip expanded by default"
+    // preference from AppConfig (per-machine setting in the General
+    // settings panel). Default off so the strips get full vertical
+    // room unless the user explicitly opted in.
+    tapeStripExpanded = appconfig::getTapeStripExpandedDefault();
     tapeStrip = std::make_unique<TapeStrip> (session, engine);
     tapeStrip->setVisible (tapeStripExpanded);
     tapeStrip->onMidiRegionDoubleClicked  = [this] (int t, int r) { openPianoRoll   (t, r); };
@@ -407,9 +463,10 @@ MainComponent::MainComponent()
         if (tapeStrip != nullptr) tapeStrip->setSelectedTrack (t);
     });
 
-    // Initial stage is Mixing (mixingStageBtn defaults toggled on) - sync the
-    // strips so they show aux sends instead of input/IN/ARM/PRINT from the
-    // first paint. switchToStage() handles subsequent changes.
+    // Initial stage is Recording (engine default + recordingStageBtn
+    // toggled on) — sync strip controls so the first paint shows
+    // input / IN / ARM / PRINT instead of aux sends. switchToStage()
+    // handles subsequent changes.
     consoleView->setStripsMixingMode (engine.getStage() == AudioEngine::Stage::Mixing);
 
     // Auto-size to screen: prefer the reference size (1440x1280) but shrink to
@@ -819,16 +876,22 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         {
             if (code == 'A' && noMods)
             {
-                auto& a = session.track (sel).recordArmed;
-                a.store (! a.load (std::memory_order_relaxed),
-                          std::memory_order_relaxed);
+                // Route through setTrackArmed so armedTrackCount stays
+                // in sync. Bypassing it (atom.store directly) left the
+                // counter stale and silently broke the Rec button's
+                // anyTrackArmed() fast-path.
+                const bool now = session.track (sel).recordArmed
+                                       .load (std::memory_order_relaxed);
+                session.setTrackArmed (sel, ! now);
                 return true;
             }
             if (code == 'S' && noMods)
             {
-                auto& s = session.track (sel).strip.solo;
-                s.store (! s.load (std::memory_order_relaxed),
-                          std::memory_order_relaxed);
+                // Route through setTrackSoloed so soloTrackCount stays
+                // in sync (same reason as ARM above).
+                const bool now = session.track (sel).strip.solo
+                                       .load (std::memory_order_relaxed);
+                session.setTrackSoloed (sel, ! now);
                 return true;
             }
             // 'X' = mute toggle. M is already taken by drop-marker; X is
@@ -875,6 +938,34 @@ void MainComponent::setStatusForPath (const juce::String& prefix,
     statusLabel.setTooltip (path.getFullPathName());
 }
 
+void MainComponent::syncBankButtons (int desiredCount)
+{
+    // Grow / shrink the bank-button vector to match. Shrinking destroys
+    // the trailing buttons (removes them from the parent automatically
+    // via ~Component). Each fresh button is wired with the Dusk bank
+    // style + click handler that hops the console to that bank index.
+    while ((int) bankButtons.size() > desiredCount)
+        bankButtons.pop_back();
+
+    while ((int) bankButtons.size() < desiredCount)
+    {
+        const int idx = (int) bankButtons.size();
+        auto btn = std::make_unique<juce::TextButton>();
+        btn->setClickingTogglesState (true);
+        btn->setRadioGroupId (1002);
+        btn->setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff202024));
+        btn->setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xffd0a060));
+        btn->setColour (juce::TextButton::textColourOffId,  juce::Colours::lightgrey);
+        btn->setColour (juce::TextButton::textColourOnId,   juce::Colour (0xff121214));
+        btn->onClick = [this, idx]
+        {
+            if (consoleView != nullptr) consoleView->setBank (idx);
+        };
+        addAndMakeVisible (btn.get());
+        bankButtons.push_back (std::move (btn));
+    }
+}
+
 void MainComponent::resized()
 {
     auto area = getLocalBounds().reduced (8);
@@ -883,7 +974,7 @@ void MainComponent::resized()
     // top-level menu names (~80 px); status text + system meters share
     // the rest of the row to its right.
     auto top = area.removeFromTop (22);
-    menuBar.setBounds (top.removeFromLeft (140));
+    menuBar.setBounds (top.removeFromLeft (200));
     top.removeFromLeft (8);
     if (systemStatusBar != nullptr)
         systemStatusBar->setBounds (top.removeFromRight (300));
@@ -922,28 +1013,42 @@ void MainComponent::resized()
     constexpr int kStageBtnH = 28;
     const int stageY = rowBounds.getY() + (rowBounds.getHeight() - kStageBtnH) / 2;
 
-    // Banking decision: console can't fit all 16 strips at reference width.
-    // Hidden in mastering / aux (no console there). Banks now live in a
-    // dedicated row directly above the strip grid (see below), so they no
-    // longer need to be positioned within the transport row.
-    const bool needsBanking = (consoleView != nullptr) && (! inFullscreenView)
-                             && (area.getWidth() < consoleView->fixedWidthFor16Tracks());
+    // Banking decision: ConsoleView reports how many channel strips fit
+    // alongside the always-anchored bus + master column at min width.
+    // When all 16 fit we render NO bank buttons (numBanks == 1). When
+    // they don't fit, we render one button per bank with the actual
+    // 1-based range as the label ("1-13", "14-16", etc.) — bank size
+    // tracks the window width, not a fixed stride of 8.
+    //
+    // CRITICAL: use the WIDTH the console is ABOUT to receive (area's
+    // current width), not consoleView->getWidth() — the latter reflects
+    // the PREVIOUS resize pass, so a fast snap-to-half-screen would
+    // render labels one frame stale (showed "1-6" with only 3 strips
+    // visible).
+    const int consoleTargetWidth = area.getWidth();
+    const int numBanks = (consoleView != nullptr && ! inFullscreenView)
+                            ? ConsoleView::numBanksForWidth (consoleTargetWidth) : 1;
+    const bool needsBanking = numBanks > 1;
     const bool transportCompact = rowBounds.getWidth() < TransportBar::kCompactTransportWidth;
 
     // Stage tabs shrink in compact mode so they don't crowd against the
     // (now centered) transport cluster at the OS minimum window width.
     const int stageW = transportCompact ? 92 : 110;
     const int stageBlockW = stageW * 4;
-    const int  kBankBtnW   = transportCompact ? 90 : 130;
+    const int  kBankBtnW   = transportCompact ? 70 : 100;
     constexpr int kBankBtnGap = 6;
     constexpr int kBankBtnH  = 26;
 
     // Center the stages + banks group within the row. Transport sits on
     // the LEFT (TransportBar own widgets); BPM cluster sits on the RIGHT.
-    // The centered group reads: STAGES (4 tabs) [+ BANK A / BANK B when
-    // 16 strips need banking].
+    // The centered group reads: STAGES (4 tabs) [+ BANK 1..N buttons
+    // when 16 strips need banking].
     constexpr int kStageToBankGap = 12;
-    const int bankClusterW = needsBanking ? (kStageToBankGap + 2 * kBankBtnW + kBankBtnGap) : 0;
+    const int bankClusterW = needsBanking
+                                ? (kStageToBankGap
+                                     + numBanks * kBankBtnW
+                                     + (numBanks - 1) * kBankBtnGap)
+                                : 0;
     const int groupW       = stageBlockW + bankClusterW;
     const int stageX       = rowBounds.getX() + (rowBounds.getWidth() - groupW) / 2;
 
@@ -955,26 +1060,77 @@ void MainComponent::resized()
     // the stage tabs + bank buttons in the ctor, so the overlays sit on
     // top of the transport bar's painted background naturally.
 
-    // Banks sit inline immediately right of the centered stage block.
-    if (needsBanking)
+    // Rebuild bank-button row to match the current numBanks. Buttons
+    // sit inline immediately right of the centered stage block.
+    syncBankButtons (needsBanking ? numBanks : 0);
+    int lastBankRight = stageX + stageBlockW;   // fallback when no banks
+    if (needsBanking && consoleView != nullptr)
     {
-        bankAButton.setVisible (true);
-        bankBButton.setVisible (true);
-        bankAButton.setButtonText (transportCompact ? "1-8"  : "BANK A  (1-8)");
-        bankBButton.setButtonText (transportCompact ? "9-16" : "BANK B  (9-16)");
         const int bankY = rowBounds.getY() + (rowBounds.getHeight() - kBankBtnH) / 2;
-        const int bankX = stageX + stageBlockW + kStageToBankGap;
-        bankAButton.setBounds (bankX, bankY, kBankBtnW, kBankBtnH);
-        bankBButton.setBounds (bankX + kBankBtnW + kBankBtnGap, bankY,
-                                kBankBtnW, kBankBtnH);
-        const int b = consoleView->getBank();
-        bankAButton.setToggleState (b == 0, juce::dontSendNotification);
-        bankBButton.setToggleState (b == 1, juce::dontSendNotification);
+        int bankX = stageX + stageBlockW + kStageToBankGap;
+        const int activeBank = consoleView->getBank();
+        for (int i = 0; i < (int) bankButtons.size(); ++i)
+        {
+            auto* btn = bankButtons[(size_t) i].get();
+            const auto range = ConsoleView::rangeForBankAtWidth (i, consoleTargetWidth);
+            btn->setButtonText (transportCompact
+                                  ? (juce::String (range.first) + "-" + juce::String (range.second))
+                                  : (juce::String ("BANK ") + juce::String (i + 1) + "  ("
+                                       + juce::String (range.first) + "-"
+                                       + juce::String (range.second) + ")"));
+            btn->setBounds (bankX, bankY, kBankBtnW, kBankBtnH);
+            btn->setToggleState (i == activeBank, juce::dontSendNotification);
+            bankX += kBankBtnW + kBankBtnGap;
+        }
+        lastBankRight = bankX - kBankBtnGap;
     }
-    else
+
+    // SNAP + zoom cluster pinned in the gap between the rightmost bank
+    // tab and the tuner button (transport bar right edge - kBtnDia(36)
+    // - right padding). Hidden when there's no TapeStrip context (e.g.
+    // user in AUX/Mastering fullscreen views — strip controls don't
+    // apply there).
+    constexpr int kHdrSnapW    = 50;
+    constexpr int kHdrZoomBtnW = 30;
+    constexpr int kHdrFitW     = 36;
+    constexpr int kHdrBtnGap   = 4;
+    constexpr int kHdrBtnH     = 24;
+    constexpr int kHdrClusterW = kHdrSnapW + kHdrZoomBtnW * 2 + kHdrFitW + kHdrBtnGap * 3;
+    // Only show when TapeStrip is actually expanded — when it's
+    // collapsed or the user is in a fullscreen stage (AUX/Mastering),
+    // SNAP+zoom have no on-screen subject so they don't belong in
+    // the header.
+    const bool hdrClusterVisible = ! inFullscreenView
+                                  && tapeStrip != nullptr
+                                  && tapeStripExpanded;
+    hdrSnapToggle.setVisible (hdrClusterVisible);
+    hdrZoomOutBtn.setVisible (hdrClusterVisible);
+    hdrZoomInBtn .setVisible (hdrClusterVisible);
+    hdrZoomFitBtn.setVisible (hdrClusterVisible);
+    if (hdrClusterVisible)
     {
-        bankAButton.setVisible (false);
-        bankBButton.setVisible (false);
+        // Real tuner X (parent-local on transportBar = parent-local on
+        // our row, since transportBar.setBounds(rowBounds) puts them
+        // in the same coord space). The previous heuristic
+        // (rowBounds.getRight() - 56) was ~320 px off — tuner sits
+        // BEFORE the right-anchored BPM / tap / time-sig / tape cluster.
+        const int tunerLeftInBar = transportBar != nullptr ? transportBar->getTunerLeftX() : rowBounds.getWidth() - 56;
+        const int tunerLeft = rowBounds.getX() + tunerLeftInBar;
+        const int leftEdge  = lastBankRight + 16;
+        const int rightEdge = tunerLeft - 16;
+        const int gapW      = juce::jmax (0, rightEdge - leftEdge);
+        const int clusterX  = leftEdge + juce::jmax (0, (gapW - kHdrClusterW) / 2);
+        const int clusterY  = rowBounds.getY() + (rowBounds.getHeight() - kHdrBtnH) / 2;
+        int x = clusterX;
+        hdrSnapToggle.setBounds (x, clusterY, kHdrSnapW,   kHdrBtnH); x += kHdrSnapW   + kHdrBtnGap;
+        hdrZoomOutBtn.setBounds (x, clusterY, kHdrZoomBtnW, kHdrBtnH); x += kHdrZoomBtnW + kHdrBtnGap;
+        hdrZoomInBtn .setBounds (x, clusterY, kHdrZoomBtnW, kHdrBtnH); x += kHdrZoomBtnW + kHdrBtnGap;
+        hdrZoomFitBtn.setBounds (x, clusterY, kHdrFitW,    kHdrBtnH);
+
+        // Sync SNAP visual state with the session atom (e.g. session
+        // load, MIDI-bound toggle).
+        if (hdrSnapToggle.getToggleState() != (bool) session.snapToGrid)
+            hdrSnapToggle.setToggleState (session.snapToGrid, juce::dontSendNotification);
     }
 
     area.removeFromTop (4);
@@ -1018,7 +1174,12 @@ void MainComponent::openAudioSettings()
     if (audioSettingsModal.isOpen()) return;
     auto panel = std::make_unique<AudioSettingsPanel> (engine.getDeviceManager(),
                                                           engine, session);
-    panel->setSize (600, 520);
+    // Tall enough that the new grouped layout (Audio + Control Surface +
+    // MIDI Bindings + MIDI Sync + General + Advanced, each with a
+    // section header + separator) fits without any group being clipped.
+    // The Audio block hosts JUCE's AudioDeviceSelectorComponent in a
+    // fixed 280 px slot — see AudioSettingsPanel::resized.
+    panel->setSize (820, 920);
     audioSettingsModal.show (*this, std::move (panel));
 }
 
@@ -1029,7 +1190,17 @@ void MainComponent::switchToStage (AudioEngine::Stage s)
     std::fprintf (stderr, "[MainComponent] switchToStage(%d) enter\n", (int) s);
     std::fflush (stderr);
     engine.setStage (s);
+    // Mirror into session so save/load round-trips the user's last
+    // visited stage — new sessions still default to Recording via the
+    // Session::uiStage default + AudioEngine::stage default.
+    session.uiStage.store ((int) s, std::memory_order_relaxed);
 
+    syncStageUi (s);
+    resized();
+}
+
+void MainComponent::syncStageUi (AudioEngine::Stage s)
+{
     // Mixing/Recording share the console + tape strip; Mastering swaps to
     // MasteringView; Aux swaps to AuxView. Both heavy views are constructed
     // lazily so users who never visit them pay no startup cost.
@@ -1064,15 +1235,15 @@ void MainComponent::switchToStage (AudioEngine::Stage s)
     {
         if (auxView == nullptr)
         {
-            std::fprintf (stderr, "[MainComponent] switchToStage(Aux): constructing AuxView\n");
+            std::fprintf (stderr, "[MainComponent] syncStageUi(Aux): constructing AuxView\n");
             std::fflush (stderr);
             auxView = std::make_unique<AuxView> (session, engine);
             addAndMakeVisible (auxView.get());
-            std::fprintf (stderr, "[MainComponent] switchToStage(Aux): AuxView constructed + addAndMakeVisible'd\n");
+            std::fprintf (stderr, "[MainComponent] syncStageUi(Aux): AuxView constructed + addAndMakeVisible'd\n");
             std::fflush (stderr);
         }
         auxView->setVisible (true);
-        std::fprintf (stderr, "[MainComponent] switchToStage(Aux): auxView setVisible(true), bounds=%d,%d %dx%d\n",
+        std::fprintf (stderr, "[MainComponent] syncStageUi(Aux): auxView setVisible(true), bounds=%d,%d %dx%d\n",
                       auxView->getX(), auxView->getY(), auxView->getWidth(), auxView->getHeight());
         std::fflush (stderr);
     }
@@ -1088,8 +1259,6 @@ void MainComponent::switchToStage (AudioEngine::Stage s)
     mixingStageBtn   .setToggleState (s == AudioEngine::Stage::Mixing,    juce::dontSendNotification);
     auxStageBtn      .setToggleState (s == AudioEngine::Stage::Aux,       juce::dontSendNotification);
     masteringStageBtn.setToggleState (s == AudioEngine::Stage::Mastering, juce::dontSendNotification);
-
-    resized();
 }
 
 void MainComponent::doMixdown()
@@ -1182,20 +1351,17 @@ void MainComponent::newSessionPrompt()
                         .getChildFile ("Dusk Studio");
     if (! startDir.exists()) startDir.createDirectory();
 
-    sessionFileChooser = std::make_unique<juce::FileChooser> (
-        "Name your new session",
-        startDir.getChildFile ("MySong"),
-        juce::String());
-
-    const auto chooserFlags = juce::FileBrowserComponent::saveMode
-                            | juce::FileBrowserComponent::canSelectFiles
-                            | juce::FileBrowserComponent::warnAboutOverwriting;
-
-    sessionFileChooser->launchAsync (chooserFlags, [this] (const juce::FileChooser& fc)
+    filebrowser::open (*this, {
+        /*title*/                  "Name your new session",
+        /*initialFileOrDirectory*/ startDir.getChildFile ("MySong"),
+        /*filePatternsAllowed*/    juce::String(),
+        /*mode*/                   filebrowser::Mode::Save,
+        /*warnAboutOverwriting*/   true,
+        /*selectDirectories*/      false,
+    },
+    [this] (juce::File chosen)
     {
-        const auto chosen = fc.getResult();
         if (chosen == juce::File()) return;
-
         // Treat the chosen path as the new session folder. saveSessionTo
         // creates the dir + audio subdir and persists an initial session.json
         // so subsequent saves don't re-prompt.
@@ -1264,19 +1430,14 @@ bool MainComponent::saveSessionTo (const juce::File& dir)
     // Status-label-only feedback is too easy to miss on a critical
     // operation. Pop a modal so the user knows the session WASN'T
     // saved and can act before losing more work.
-    juce::AlertWindow::showAsync (
-        juce::MessageBoxOptions()
-            .withIconType (juce::MessageBoxIconType::WarningIcon)
-            .withTitle ("Save failed")
-            .withMessage ("Dusk Studio could not write the session file:\n\n    "
-                            + target.getFullPathName() + "\n\n"
-                            "Common causes: disk full, missing write "
-                            "permission, or the parent folder was moved "
-                            "since the session was opened. The session "
-                            "is unchanged in memory; try Save As to a "
-                            "different location.")
-            .withButton ("OK"),
-        nullptr);
+    showDuskAlert (*this, "Save failed",
+                      "Dusk Studio could not write the session file:\n\n    "
+                      + target.getFullPathName() + "\n\n"
+                      "Common causes: disk full, missing write "
+                      "permission, or the parent folder was moved "
+                      "since the session was opened. The session "
+                      "is unchanged in memory; try Save As to a "
+                      "different location.");
     return false;
 }
 
@@ -1504,7 +1665,13 @@ void MainComponent::requestQuit()
         });
     };
 
-    quitModal.show (*this, std::move (dialog));
+    // Focus-locked: save-before-quit MUST go through Save / Don't Save /
+    // Cancel. Esc and click-outside would let the user dismiss with no
+    // decision, leaving the dirty state ambiguous and the X-button quit
+    // request silently swallowed.
+    quitModal.show (*this, std::move (dialog), /*onDismiss*/ {},
+                       /*dismissOnClickOutside*/ false,
+                       /*dismissOnEscape*/        false);
 }
 
 void MainComponent::leakAllPluginInstancesForShutdown()
@@ -1641,27 +1808,24 @@ void MainComponent::saveSessionAndThen (std::function<void(bool)> onComplete)
     juce::String defaultName = session.getSessionDirectory().getFileName();
     if (defaultName.isEmpty() || defaultName == "Untitled") defaultName = "MySong";
 
-    sessionFileChooser = std::make_unique<juce::FileChooser> (
-        "Save session as...",
-        startDir.getChildFile (defaultName),
-        juce::String());
-
-    const auto chooserFlags = juce::FileBrowserComponent::saveMode
-                            | juce::FileBrowserComponent::canSelectFiles
-                            | juce::FileBrowserComponent::warnAboutOverwriting;
-
-    sessionFileChooser->launchAsync (chooserFlags,
-        [this, onComplete = std::move (onComplete)] (const juce::FileChooser& fc)
+    filebrowser::open (*this, {
+        /*title*/                  "Save session as...",
+        /*initialFileOrDirectory*/ startDir.getChildFile (defaultName),
+        /*filePatternsAllowed*/    juce::String(),
+        /*mode*/                   filebrowser::Mode::Save,
+        /*warnAboutOverwriting*/   true,
+        /*selectDirectories*/      false,
+    },
+    [this, onComplete = std::move (onComplete)] (juce::File chosen)
+    {
+        if (chosen == juce::File())
         {
-            const auto chosen = fc.getResult();
-            if (chosen == juce::File())
-            {
-                if (onComplete) onComplete (false);
-                return;
-            }
-            const bool ok = saveSessionTo (chosen);
-            if (onComplete) onComplete (ok);
-        });
+            if (onComplete) onComplete (false);
+            return;
+        }
+        const bool ok = saveSessionTo (chosen);
+        if (onComplete) onComplete (ok);
+    });
 }
 
 void MainComponent::saveAsPrompt()
@@ -1679,22 +1843,19 @@ void MainComponent::saveAsPrompt()
     juce::String defaultName = session.getSessionDirectory().getFileName();
     if (defaultName.isEmpty() || defaultName == "Untitled") defaultName = "MySong";
 
-    sessionFileChooser = std::make_unique<juce::FileChooser> (
-        "Save session as...",
-        startDir.getChildFile (defaultName),
-        juce::String());
-
-    const auto chooserFlags = juce::FileBrowserComponent::saveMode
-                            | juce::FileBrowserComponent::canSelectFiles
-                            | juce::FileBrowserComponent::warnAboutOverwriting;
-
-    sessionFileChooser->launchAsync (chooserFlags,
-        [this] (const juce::FileChooser& fc)
-        {
-            const auto chosen = fc.getResult();
-            if (chosen == juce::File()) return;
-            saveSessionTo (chosen);
-        });
+    filebrowser::open (*this, {
+        /*title*/                  "Save session as...",
+        /*initialFileOrDirectory*/ startDir.getChildFile (defaultName),
+        /*filePatternsAllowed*/    juce::String(),
+        /*mode*/                   filebrowser::Mode::Save,
+        /*warnAboutOverwriting*/   true,
+        /*selectDirectories*/      false,
+    },
+    [this] (juce::File chosen)
+    {
+        if (chosen == juce::File()) return;
+        saveSessionTo (chosen);
+    });
 }
 
 bool MainComponent::loadSessionFromJson (const juce::File& sessionJson)
@@ -1804,16 +1965,12 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
             body += "\nCheck that the plugins are still installed for the "
                     "right format (VST3 / LV2) and that this binary can "
                     "find them, then reload the session.";
+            juce::Component::SafePointer<MainComponent> safeThis (this);
             juce::MessageManager::callAsync (
-                [body = std::move (body)]
+                [body = std::move (body), safeThis]
                 {
-                    juce::AlertWindow::showAsync (
-                        juce::MessageBoxOptions()
-                            .withIconType (juce::MessageBoxIconType::WarningIcon)
-                            .withTitle ("Missing plugins")
-                            .withMessage (body)
-                            .withButton ("OK"),
-                        nullptr);
+                    if (auto* self = safeThis.getComponent())
+                        showDuskAlert (*self, "Missing plugins", body);
                 });
         }
     }
@@ -1838,6 +1995,20 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     });
     if (consoleView != nullptr && transportBar != nullptr)
         consoleView->setStripsCompactMode (tapeStripExpanded);
+
+    // Restore the saved UI stage. switchToStage() early-returns when the
+    // engine is already on the requested stage, but the freshly-rebuilt
+    // consoleView (above) still needs the per-stage sync (strip mixing
+    // mode, mastering/aux view construction, toggle button state). Call
+    // syncStageUi unconditionally so the on-screen stage always matches
+    // session.uiStage after load.
+    {
+        const int loaded = juce::jlimit (0, 3, session.uiStage.load (std::memory_order_relaxed));
+        const auto wantStage = (AudioEngine::Stage) loaded;
+        if (engine.getStage() != wantStage)
+            engine.setStage (wantStage);
+        syncStageUi (wantStage);
+    }
     resized();
     const auto tAfterConsole = juce::Time::getMillisecondCounterHiRes();
 
@@ -1869,17 +2040,16 @@ void MainComponent::openFromFilePrompt()
     if (! startDir.isDirectory())
         startDir = juce::File::getSpecialLocation (juce::File::userMusicDirectory);
 
-    sessionFileChooser = std::make_unique<juce::FileChooser> (
-        "Open session.json",
-        startDir.getChildFile ("session.json"),
-        "*.json");
-
-    const auto chooserFlags = juce::FileBrowserComponent::openMode
-                            | juce::FileBrowserComponent::canSelectFiles;
-
-    sessionFileChooser->launchAsync (chooserFlags, [this] (const juce::FileChooser& fc)
+    filebrowser::open (*this, {
+        /*title*/                  "Open session.json",
+        /*initialFileOrDirectory*/ startDir.getChildFile ("session.json"),
+        /*filePatternsAllowed*/    "*.json",
+        /*mode*/                   filebrowser::Mode::Open,
+        /*warnAboutOverwriting*/   false,
+        /*selectDirectories*/      false,
+    },
+    [this] (juce::File chosen)
     {
-        const auto chosen = fc.getResult();
         if (chosen == juce::File()) return;
         loadSessionFromJson (chosen);
     });
@@ -1892,20 +2062,17 @@ void MainComponent::openBounceDialog()
         defaultDir = juce::File::getSpecialLocation (juce::File::userMusicDirectory);
     const auto defaultFile = defaultDir.getChildFile ("bounce.wav");
 
-    bounceFileChooser = std::make_unique<juce::FileChooser> (
-        "Bounce master mix to WAV",
-        defaultFile,
-        "*.wav");
-
-    const auto chooserFlags = juce::FileBrowserComponent::saveMode
-                            | juce::FileBrowserComponent::canSelectFiles
-                            | juce::FileBrowserComponent::warnAboutOverwriting;
-
-    bounceFileChooser->launchAsync (chooserFlags, [this] (const juce::FileChooser& fc)
+    filebrowser::open (*this, {
+        /*title*/                  "Bounce master mix to WAV",
+        /*initialFileOrDirectory*/ defaultFile,
+        /*filePatternsAllowed*/    "*.wav",
+        /*mode*/                   filebrowser::Mode::Save,
+        /*warnAboutOverwriting*/   true,
+        /*selectDirectories*/      false,
+    },
+    [this] (juce::File out)
     {
-        const auto out = fc.getResult();
         if (out == juce::File()) return;  // user cancelled
-
         auto outFile = out;
         if (! outFile.hasFileExtension ("wav"))
             outFile = outFile.withFileExtension ("wav");
@@ -2134,23 +2301,19 @@ void MainComponent::importAudioPrompt()
     }
 
     const auto startDir = juce::File::getSpecialLocation (juce::File::userMusicDirectory);
-    importFileChooser = std::make_unique<juce::FileChooser> (
-        "Import audio file(s)",
-        startDir,
-        "*.wav;*.aiff;*.aif;*.flac");
-
-    const auto chooserFlags = juce::FileBrowserComponent::openMode
-                            | juce::FileBrowserComponent::canSelectFiles
-                            | juce::FileBrowserComponent::canSelectMultipleItems;
-
-    importFileChooser->launchAsync (chooserFlags,
-        [safeThis = juce::Component::SafePointer<MainComponent> (this)]
-        (const juce::FileChooser& fc)
+    filebrowser::openMulti (*this, {
+        /*title*/                  "Import audio file(s)",
+        /*initialFileOrDirectory*/ startDir,
+        /*filePatternsAllowed*/    "*.wav;*.aiff;*.aif;*.flac",
+        /*mode*/                   filebrowser::Mode::Open,
+        /*warnAboutOverwriting*/   false,
+        /*selectDirectories*/      false,
+    },
+    [safeThis = juce::Component::SafePointer<MainComponent> (this)]
+    (juce::Array<juce::File> chosen)
     {
         auto* self = safeThis.getComponent();
-        if (self == nullptr) return;
-        const auto chosen = fc.getResults();
-        if (chosen.isEmpty()) return;
+        if (self == nullptr || chosen.isEmpty()) return;
         const auto t = self->engine.getTransport().getPlayhead();
         if (chosen.size() > 1)
             self->openMultiImportPicker (chosen, t);
@@ -2168,23 +2331,19 @@ void MainComponent::importMidiPrompt()
     }
 
     const auto startDir = juce::File::getSpecialLocation (juce::File::userMusicDirectory);
-    importFileChooser = std::make_unique<juce::FileChooser> (
-        "Import MIDI file(s)",
-        startDir,
-        "*.mid;*.midi");
-
-    const auto chooserFlags = juce::FileBrowserComponent::openMode
-                            | juce::FileBrowserComponent::canSelectFiles
-                            | juce::FileBrowserComponent::canSelectMultipleItems;
-
-    importFileChooser->launchAsync (chooserFlags,
-        [safeThis = juce::Component::SafePointer<MainComponent> (this)]
-        (const juce::FileChooser& fc)
+    filebrowser::openMulti (*this, {
+        /*title*/                  "Import MIDI file(s)",
+        /*initialFileOrDirectory*/ startDir,
+        /*filePatternsAllowed*/    "*.mid;*.midi",
+        /*mode*/                   filebrowser::Mode::Open,
+        /*warnAboutOverwriting*/   false,
+        /*selectDirectories*/      false,
+    },
+    [safeThis = juce::Component::SafePointer<MainComponent> (this)]
+    (juce::Array<juce::File> chosen)
     {
         auto* self = safeThis.getComponent();
-        if (self == nullptr) return;
-        const auto chosen = fc.getResults();
-        if (chosen.isEmpty()) return;
+        if (self == nullptr || chosen.isEmpty()) return;
         const auto t = self->engine.getTransport().getPlayhead();
         if (chosen.size() > 1)
             self->openMultiImportPicker (chosen, t);
@@ -2494,7 +2653,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelMenuIndex,
     }
     else if (topLevelMenuIndex == 1)   // Settings
     {
-        menu.addItem (kMenuSettingsAudio, "Audio settings...");
+        menu.addItem (kMenuSettingsAudio, "Settings...");
         menu.addSeparator();
         menu.addItem (kMenuSettingsAbout, "About Dusk Studio");
     }
@@ -2554,22 +2713,16 @@ void MainComponent::menuItemSelected (int menuItemID, int /*topLevelMenuIndex*/)
 
             if (playing || anyActive)
             {
-                juce::AlertWindow::showAsync (
-                    juce::MessageBoxOptions()
-                        .withIconType (juce::MessageBoxIconType::WarningIcon)
-                        .withTitle ("Optimize automation")
-                        .withMessage (
-                            playing
-                              ? "Stop playback before optimising automation. "
-                                "The optimiser rewrites every lane's point "
-                                "data; running it while the audio thread "
-                                "may be reading the lanes is unsafe."
-                              : "Set every strip's automation mode to Off "
-                                "before optimising. The optimiser rewrites "
-                                "lane data; doing it while a strip is in "
-                                "Read or Touch can race the audio thread.")
-                        .withButton ("OK"),
-                    nullptr);
+                showDuskAlert (*this, "Optimize automation",
+                                  playing
+                                    ? juce::String ("Stop playback before optimising automation. "
+                                                      "The optimiser rewrites every lane's point "
+                                                      "data; running it while the audio thread "
+                                                      "may be reading the lanes is unsafe.")
+                                    : juce::String ("Set every strip's automation mode to Off "
+                                                      "before optimising. The optimiser rewrites "
+                                                      "lane data; doing it while a strip is in "
+                                                      "Read or Touch can race the audio thread."));
                 break;
             }
 
@@ -2592,17 +2745,11 @@ void MainComponent::menuItemSelected (int menuItemID, int /*topLevelMenuIndex*/)
             handleWritePassComplete (session);
             const auto after = countPoints();
 
-            juce::AlertWindow::showAsync (
-                juce::MessageBoxOptions()
-                    .withIconType (juce::MessageBoxIconType::InfoIcon)
-                    .withTitle ("Optimize automation")
-                    .withMessage (
-                        juce::String ("Thinned ")
-                          + juce::String ((juce::int64) before)
-                          + " automation points down to "
-                          + juce::String ((juce::int64) after) + ".")
-                    .withButton ("OK"),
-                nullptr);
+            showDuskAlert (*this, "Optimize automation",
+                              juce::String ("Thinned ")
+                                + juce::String ((juce::int64) before)
+                                + " automation points down to "
+                                + juce::String ((juce::int64) after) + ".");
             break;
         }
         case kMenuFileQuit:
@@ -2620,13 +2767,7 @@ void MainComponent::menuItemSelected (int menuItemID, int /*topLevelMenuIndex*/)
                 juce::String ("Dusk Studio ") + JUCE_APPLICATION_VERSION_STRING + "\n\n"
                 "Portastudio-style DAW.\n"
                 "Built " __DATE__ " " __TIME__;
-            juce::AlertWindow::showAsync (
-                juce::MessageBoxOptions()
-                    .withIconType (juce::MessageBoxIconType::InfoIcon)
-                    .withTitle ("About Dusk Studio")
-                    .withMessage (body)
-                    .withButton ("OK"),
-                nullptr);
+            showDuskAlert (*this, "About Dusk Studio", body);
             break;
         }
         default:
@@ -2663,14 +2804,9 @@ void MainComponent::cleanOutUnreferencedFiles()
     auto audioDir = session.getAudioDirectory();
     if (! audioDir.isDirectory())
     {
-        juce::AlertWindow::showAsync (
-            juce::MessageBoxOptions()
-                .withIconType (juce::MessageBoxIconType::InfoIcon)
-                .withTitle ("Clean out")
-                .withMessage ("This session has no audio directory yet, "
-                                "so there's nothing to clean.")
-                .withButton ("OK"),
-            nullptr);
+        showDuskAlert (*this, "Clean out",
+                          "This session has no audio directory yet, "
+                          "so there's nothing to clean.");
         return;
     }
 
@@ -2702,14 +2838,9 @@ void MainComponent::cleanOutUnreferencedFiles()
 
     if (candidates.isEmpty())
     {
-        juce::AlertWindow::showAsync (
-            juce::MessageBoxOptions()
-                .withIconType (juce::MessageBoxIconType::InfoIcon)
-                .withTitle ("Clean out")
-                .withMessage ("No unreferenced files found. The audio "
-                                "directory is already clean.")
-                .withButton ("OK"),
-            nullptr);
+        showDuskAlert (*this, "Clean out",
+                          "No unreferenced files found. The audio "
+                          "directory is already clean.");
         return;
     }
 
@@ -2721,24 +2852,23 @@ void MainComponent::cleanOutUnreferencedFiles()
                      "longer have any region or take pointing at them. "
                      "Deleting cannot be undone.";
 
-    juce::AlertWindow::showAsync (
-        juce::MessageBoxOptions()
-            .withIconType (juce::MessageBoxIconType::WarningIcon)
-            .withTitle ("Clean out unreferenced files")
-            .withMessage (msg)
-            .withButton ("Delete")
-            .withButton ("Cancel"),
-        [safeThis = juce::Component::SafePointer<MainComponent> (this), candidates] (int buttonIdx)
-        {
-            if (buttonIdx != 1) return;   // 1 = first button = Delete
-            int deleted = 0;
-            for (const auto& f : candidates)
-                if (f.deleteFile()) ++deleted;
-            if (auto* self = safeThis.getComponent())
-                self->statusLabel.setText ("Deleted " + juce::String (deleted)
-                                            + " unreferenced file(s).",
-                                            juce::dontSendNotification);
-        });
+    juce::Component::SafePointer<MainComponent> safeThis (this);
+    showDuskConfirm (*this, "Clean out unreferenced files", msg,
+                       /*primary*/   "Delete",
+                       /*onPrimary*/ [safeThis, candidates]
+                       {
+                           int deleted = 0;
+                           for (const auto& f : candidates)
+                               if (f.deleteFile()) ++deleted;
+                           if (auto* self = safeThis.getComponent())
+                               self->statusLabel.setText (
+                                   "Deleted " + juce::String (deleted)
+                                       + " unreferenced file(s).",
+                                   juce::dontSendNotification);
+                       },
+                       /*secondary*/   "Cancel",
+                       /*onSecondary*/ {},
+                       /*destructive*/ true);
 }
 
 void MainComponent::openPianoRoll (int trackIdx, int regionIdx)

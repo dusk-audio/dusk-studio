@@ -252,4 +252,36 @@ private:
     std::unique_ptr<Impl> beforeState;
     std::unique_ptr<Impl> afterState;
 };
+
+// Wraps the per-track regions + midiRegions diff produced by
+// RecordManager::stopRecording so a take commit (audio + midi) becomes
+// one undo step. perform() applies the after-snapshot; undo() restores
+// the before-snapshot. WAV files on disk are NOT deleted on undo —
+// the user can redo to re-attach the take, and orphaned files are
+// reclaimed via the existing "Clean Out" menu action.
+class RecordCommitAction final : public juce::UndoableAction
+{
+public:
+    struct TrackDiff
+    {
+        int                       trackIndex = -1;
+        std::vector<AudioRegion>  audioBefore;
+        std::vector<AudioRegion>  audioAfter;
+        std::vector<MidiRegion>   midiBefore;
+        std::vector<MidiRegion>   midiAfter;
+    };
+
+    RecordCommitAction (Session& session, AudioEngine& engine,
+                         std::vector<TrackDiff> diffs);
+
+    bool perform() override;
+    bool undo()    override;
+    int  getSizeInUnits() override { return juce::jmax (1, (int) diffs.size() * 4); }
+
+private:
+    Session& session;
+    AudioEngine& engine;
+    std::vector<TrackDiff> diffs;
+    bool firstPerformDone = false;
+};
 } // namespace duskstudio

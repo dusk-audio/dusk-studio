@@ -3,6 +3,7 @@
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <functional>
+#include "DuskComboBox.h"
 #include "../session/Session.h"
 
 namespace duskstudio
@@ -55,10 +56,10 @@ private:
     juce::Label   outVolLabel;
     juce::Slider  outVolSlider;
     juce::Label   outChLabel;
-    juce::ComboBox outChCombo;
+    DuskComboBox outChCombo;
 
     juce::Label   inChLabel;
-    juce::ComboBox inChCombo;
+    DuskComboBox inChCombo;
     juce::Label   inVolLabel;
     juce::Slider  inVolSlider;
 

@@ -33,7 +33,11 @@ public:
     ~VirtualKeyboardComponent() override;
 
     void paint (juce::Graphics&) override;
+    void resized() override;
     bool keyPressed (const juce::KeyPress&) override;
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp   (const juce::MouseEvent&) override;
 
     // Fired immediately after a Note On / Note Off is queued into
     // the engine's collector. Used by step-record into the piano
@@ -71,6 +75,34 @@ private:
         int channel { -1 };
     };
     std::array<HeldNote, 128> held {};
+
+    // Single slot for the note currently being mouse-pressed (separate
+    // from the keyboard 'held' array so a user can mouse-drag across
+    // keys without competing with typed notes).
+    HeldNote mouseHeld {};
+
+    // Helper: which note sits under a given parent-local point? -1 when
+    // the point is outside the keyboard rect or on no key. Walks the
+    // same layout logic paint() uses; cached key rects would be faster
+    // but the keyboard repaints every input event anyway, so the cost
+    // is irrelevant on the message thread.
+    int noteAtPoint (juce::Point<int> p) const;
+
+    // Returns the typing-keyboard letter / digit that triggers this
+    // note, or empty if the note isn't part of the current layout
+    // (centreNote shift makes some notes unmapped).
+    juce::String letterForNote (int note) const;
+
+    // Transport-like buttons on the header strip for users without a
+    // physical typing keyboard (e.g. trackpad-only laptops).
+    juce::TextButton octDownBtn { "Oct -" };
+    juce::TextButton octUpBtn   { "Oct +" };
+    juce::TextButton chDownBtn  { "Ch -" };
+    juce::TextButton chUpBtn    { "Ch +" };
+
+    // Bounds of the keyboard rect (computed in resized + paint, used
+    // by mouse hit-testing). Excludes header + footer.
+    juce::Rectangle<int> keyboardArea;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (VirtualKeyboardComponent)
 };

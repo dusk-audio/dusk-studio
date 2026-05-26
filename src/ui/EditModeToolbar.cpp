@@ -1,4 +1,5 @@
 #include "EditModeToolbar.h"
+#include "DuskContextMenu.h"
 
 namespace duskstudio
 {
@@ -256,7 +257,7 @@ void EditModeToolbar::showSnapResolutionMenu()
     makeItem (m, SnapResolution::CDFrames);
 
     juce::Component::SafePointer<EditModeToolbar> safe (this);
-    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&snapResolutionButton),
+    showContextMenu (m, snapResolutionButton,
         [safe] (int chosen)
         {
             auto* self = safe.getComponent();

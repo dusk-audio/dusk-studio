@@ -219,7 +219,13 @@ juce::DynamicObject::Ptr trackToObject (const Track& t)
     hpf->setProperty ("freq",    t.strip.hpfFreq.load());
     obj->setProperty ("hpf", juce::var (hpf));
 
+    auto* lpf = new juce::DynamicObject();
+    lpf->setProperty ("enabled", t.strip.lpfEnabled.load());
+    lpf->setProperty ("freq",    t.strip.lpfFreq.load());
+    obj->setProperty ("lpf", juce::var (lpf));
+
     auto* eq = new juce::DynamicObject();
+    eq->setProperty ("enabled", t.strip.eqEnabled.load());
     eq->setProperty ("type", t.strip.eqBlackMode.load() ? "black" : "brown");
     auto bandObj = [] (float gain, float freq, float q = -1.0f)
     {
@@ -236,8 +242,9 @@ juce::DynamicObject::Ptr trackToObject (const Track& t)
     obj->setProperty ("eq", juce::var (eq));
 
     auto* comp = new juce::DynamicObject();
-    comp->setProperty ("enabled",  t.strip.compEnabled.load());
-    comp->setProperty ("mode",     t.strip.compMode.load());
+    comp->setProperty ("enabled",     t.strip.compEnabled.load());
+    comp->setProperty ("mode_picked", t.strip.compModePicked.load());
+    comp->setProperty ("mode",        t.strip.compMode.load());
     comp->setProperty ("threshold_db", t.strip.compThresholdDb.load());  // legacy meter-strip drag
     // Per-mode parameters - UniversalCompressor's native shape.
     comp->setProperty ("opto_peak_red", t.strip.compOptoPeakRed.load());
@@ -253,6 +260,8 @@ juce::DynamicObject::Ptr trackToObject (const Track& t)
     comp->setProperty ("vca_attack",    t.strip.compVcaAttack.load());
     comp->setProperty ("vca_release",   t.strip.compVcaRelease.load());
     comp->setProperty ("vca_output",    t.strip.compVcaOutput.load());
+    comp->setProperty ("vca_overeasy",  t.strip.compVcaOverEasy.load());
+    comp->setProperty ("vca_detector_classic", t.strip.compVcaDetectorClassic.load());
     obj->setProperty ("comp", juce::var (comp));
 
     // External hardware-insert state. The routing snapshot is read via
@@ -597,8 +606,15 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm)
         if (hpf.hasProperty ("freq"))    t.strip.hpfFreq.store ((float) (double) hpf["freq"]);
     }
 
+    if (auto lpf = v["lpf"]; lpf.isObject())
+    {
+        if (lpf.hasProperty ("enabled")) t.strip.lpfEnabled.store ((bool) lpf["enabled"]);
+        if (lpf.hasProperty ("freq"))    t.strip.lpfFreq.store ((float) (double) lpf["freq"]);
+    }
+
     if (auto eq = v["eq"]; eq.isObject())
     {
+        if (eq.hasProperty ("enabled")) t.strip.eqEnabled.store ((bool) eq["enabled"]);
         if (auto type = eq["type"].toString(); type.isNotEmpty())
             t.strip.eqBlackMode.store (type == "black");
 
@@ -631,8 +647,9 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm)
         {
             if (comp.hasProperty (key)) dst.store ((bool) comp[key]);
         };
-        loadB ("enabled", t.strip.compEnabled);
-        loadI ("mode",    t.strip.compMode);
+        loadB ("enabled",     t.strip.compEnabled);
+        loadB ("mode_picked", t.strip.compModePicked);
+        loadI ("mode",        t.strip.compMode);
         loadF ("threshold_db", t.strip.compThresholdDb);
         loadF ("opto_peak_red", t.strip.compOptoPeakRed);
         loadF ("opto_gain",     t.strip.compOptoGain);
@@ -647,6 +664,8 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm)
         loadF ("vca_attack",    t.strip.compVcaAttack);
         loadF ("vca_release",   t.strip.compVcaRelease);
         loadF ("vca_output",    t.strip.compVcaOutput);
+        loadB ("vca_overeasy",  t.strip.compVcaOverEasy);
+        loadB ("vca_detector_classic", t.strip.compVcaDetectorClassic);
     }
 
     if (auto hwi = v["hardware_insert"]; hwi.isObject())
@@ -998,6 +1017,27 @@ juce::String SessionSerializer::serialize (const Session& s)
         master->setProperty ("mono_sum", true);
     master->setProperty ("tape_enabled", s.master().tapeEnabled.load());
     master->setProperty ("tape_hq",      s.master().tapeHQ.load());
+
+    // Pultec EQ (all atoms — every knob the user can move).
+    master->setProperty ("eq_enabled",            s.master().eqEnabled.load());
+    master->setProperty ("eq_lf_boost",           s.master().eqLfBoost.load());
+    master->setProperty ("eq_lf_atten",           s.master().eqLfAtten.load());
+    master->setProperty ("eq_lf_freq",            s.master().eqLfFreq.load());
+    master->setProperty ("eq_hf_boost",           s.master().eqHfBoost.load());
+    master->setProperty ("eq_hf_boost_freq",      s.master().eqHfBoostFreq.load());
+    master->setProperty ("eq_hf_boost_bandwidth", s.master().eqHfBoostBandwidth.load());
+    master->setProperty ("eq_hf_atten",           s.master().eqHfAtten.load());
+    master->setProperty ("eq_hf_atten_freq",      s.master().eqHfAttenFreq.load());
+    master->setProperty ("eq_output_gain_db",     s.master().eqOutputGainDb.load());
+
+    // Bus comp (SSL-style).
+    master->setProperty ("comp_enabled",      s.master().compEnabled.load());
+    master->setProperty ("comp_thresh_db",    s.master().compThreshDb.load());
+    master->setProperty ("comp_ratio",        s.master().compRatio.load());
+    master->setProperty ("comp_attack_ms",    s.master().compAttackMs.load());
+    master->setProperty ("comp_release_ms",   s.master().compReleaseMs.load());
+    master->setProperty ("comp_release_auto", s.master().compReleaseAuto.load());
+    master->setProperty ("comp_makeup_db",    s.master().compMakeupDb.load());
     // TapeMachine APVTS state (base64). Skipped when empty so existing
     // sessions don't gain a noisy field they don't need.
     if (s.master().tapeStateBase64.isNotEmpty())
@@ -1071,6 +1111,7 @@ juce::String SessionSerializer::serialize (const Session& s)
     tport->setProperty ("piano_roll_key_snap", s.pianoRollKeySnap);
     tport->setProperty ("edit_mode",         (int) s.editMode);
     tport->setProperty ("tempo_bpm",         s.tempoBpm.load());
+    tport->setProperty ("ui_stage",          s.uiStage.load());
     tport->setProperty ("sync_source_input",  s.syncSourceInputIdentifier);
     tport->setProperty ("sync_follow_tempo",
                           s.externalSyncFollowsTempo.load());
@@ -1087,8 +1128,12 @@ juce::String SessionSerializer::serialize (const Session& s)
     tport->setProperty ("mcu_assign_mode", s.mcu.assignMode.load (std::memory_order_relaxed));
     tport->setProperty ("beats_per_bar",     s.beatsPerBar.load());
     tport->setProperty ("beat_unit",         s.beatUnit.load());
-    tport->setProperty ("metronome_enabled", s.metronomeEnabled.load());
-    tport->setProperty ("metronome_vol_db",  s.metronomeVolDb.load());
+    tport->setProperty ("metronome_enabled",          s.metronomeEnabled.load());
+    tport->setProperty ("metronome_vol_db",           s.metronomeVolDb.load());
+    tport->setProperty ("metronome_click_recording",  s.metronomeClickWhileRecording.load());
+    tport->setProperty ("metronome_click_playing",    s.metronomeClickWhilePlaying.load());
+    tport->setProperty ("metronome_only_countin",     s.metronomeOnlyDuringCountIn.load());
+    tport->setProperty ("metronome_polyphonic",       s.metronomePolyphonic.load());
     tport->setProperty ("count_in_enabled",  s.countInEnabled.load());
     tport->setProperty ("time_display_mode", s.timeDisplayMode.load());
     // Tascam-style transport-cluster state. The last-record point is
@@ -1318,6 +1363,36 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         if (master.hasProperty ("tape_enabled")) s.master().tapeEnabled.store ((bool) master["tape_enabled"]);
         if (master.hasProperty ("tape_hq"))      s.master().tapeHQ.store ((bool) master["tape_hq"]);
         if (master.hasProperty ("tape_state"))   s.master().tapeStateBase64 = master["tape_state"].toString();
+
+        // Pultec EQ. Missing keys keep the in-memory default (matches
+        // the per-track / per-bus pattern).
+        auto loadMasterFloat = [&master] (std::atomic<float>& dst, const char* key)
+        {
+            if (master.hasProperty (key)) dst.store ((float) (double) master[key]);
+        };
+        auto loadMasterBool = [&master] (std::atomic<bool>& dst, const char* key)
+        {
+            if (master.hasProperty (key)) dst.store ((bool) master[key]);
+        };
+        loadMasterBool  (s.master().eqEnabled,           "eq_enabled");
+        loadMasterFloat (s.master().eqLfBoost,           "eq_lf_boost");
+        loadMasterFloat (s.master().eqLfAtten,           "eq_lf_atten");
+        loadMasterFloat (s.master().eqLfFreq,            "eq_lf_freq");
+        loadMasterFloat (s.master().eqHfBoost,           "eq_hf_boost");
+        loadMasterFloat (s.master().eqHfBoostFreq,       "eq_hf_boost_freq");
+        loadMasterFloat (s.master().eqHfBoostBandwidth,  "eq_hf_boost_bandwidth");
+        loadMasterFloat (s.master().eqHfAtten,           "eq_hf_atten");
+        loadMasterFloat (s.master().eqHfAttenFreq,       "eq_hf_atten_freq");
+        loadMasterFloat (s.master().eqOutputGainDb,      "eq_output_gain_db");
+
+        // Bus comp.
+        loadMasterBool  (s.master().compEnabled,      "comp_enabled");
+        loadMasterFloat (s.master().compThreshDb,     "comp_thresh_db");
+        loadMasterFloat (s.master().compRatio,        "comp_ratio");
+        loadMasterFloat (s.master().compAttackMs,     "comp_attack_ms");
+        loadMasterFloat (s.master().compReleaseMs,    "comp_release_ms");
+        loadMasterBool  (s.master().compReleaseAuto,  "comp_release_auto");
+        loadMasterFloat (s.master().compMakeupDb,     "comp_makeup_db");
         // Mode publish happens AFTER lane mutations below — same
         // ordering rationale as the track-load + aux-load blocks.
         for (auto& al : s.master().automationLanes)
@@ -1404,6 +1479,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
             if (i >= 0 && i <= (int) EditMode::Draw) s.editMode = (EditMode) i;
         }
         if (tport.hasProperty ("tempo_bpm"))         s.tempoBpm.store         ((float) (double) tport["tempo_bpm"]);
+        if (tport.hasProperty ("ui_stage"))          s.uiStage.store          ((int)  tport["ui_stage"]);
         if (tport.hasProperty ("sync_source_input"))
             s.syncSourceInputIdentifier = tport["sync_source_input"].toString();
         if (tport.hasProperty ("sync_follow_tempo"))
@@ -1427,6 +1503,14 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         if (tport.hasProperty ("beat_unit"))         s.beatUnit.store         ((int)    tport["beat_unit"]);
         if (tport.hasProperty ("metronome_enabled")) s.metronomeEnabled.store ((bool)   tport["metronome_enabled"]);
         if (tport.hasProperty ("metronome_vol_db"))  s.metronomeVolDb.store   ((float) (double) tport["metronome_vol_db"]);
+        if (tport.hasProperty ("metronome_click_recording"))
+            s.metronomeClickWhileRecording.store ((bool) tport["metronome_click_recording"]);
+        if (tport.hasProperty ("metronome_click_playing"))
+            s.metronomeClickWhilePlaying  .store ((bool) tport["metronome_click_playing"]);
+        if (tport.hasProperty ("metronome_only_countin"))
+            s.metronomeOnlyDuringCountIn  .store ((bool) tport["metronome_only_countin"]);
+        if (tport.hasProperty ("metronome_polyphonic"))
+            s.metronomePolyphonic         .store ((bool) tport["metronome_polyphonic"]);
         if (tport.hasProperty ("count_in_enabled"))  s.countInEnabled.store   ((bool)   tport["count_in_enabled"]);
         if (tport.hasProperty ("time_display_mode")) s.timeDisplayMode.store  ((int)    tport["time_display_mode"]);
         // jumpback_seconds was a previous-version Session field powering

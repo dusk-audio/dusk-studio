@@ -85,6 +85,26 @@ public:
         return lastRecordErrors;
     }
 
+    // Snapshot of the regions / midiRegions vectors for one track,
+    // captured BEFORE and AFTER the most recent stopRecording commit.
+    // AudioEngine reads this after stopRecording returns and wraps it
+    // in an UndoableAction so Ctrl+Z reverts the recorded take.
+    struct TrackCommitDiff
+    {
+        int                       trackIndex = -1;
+        std::vector<AudioRegion>  audioBefore;
+        std::vector<AudioRegion>  audioAfter;
+        std::vector<MidiRegion>   midiBefore;
+        std::vector<MidiRegion>   midiAfter;
+    };
+    const std::vector<TrackCommitDiff>& getLastCommitDiff() const noexcept
+    {
+        return lastCommitDiff;
+    }
+    // Called by AudioEngine after consuming the diff so the next
+    // stopRecording starts from a clean slate.
+    void clearLastCommitDiff() noexcept { lastCommitDiff.clear(); }
+
 private:
     Session& session;
 
@@ -159,5 +179,10 @@ private:
 
     juce::int64 recordStartSample = 0;
     double      recordSampleRate  = 0.0;
+
+    // Populated at stopRecording: per-track snapshot of regions +
+    // midiRegions, both BEFORE and AFTER the commit so the engine can
+    // wrap it in an undoable transaction.
+    std::vector<TrackCommitDiff> lastCommitDiff;
 };
 } // namespace duskstudio

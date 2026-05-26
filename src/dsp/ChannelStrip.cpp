@@ -142,6 +142,7 @@ void ChannelStrip::bindCompParams()
     compBypassAtom      = apvts.getRawParameterValue ("bypass");
     compMixAtom         = apvts.getRawParameterValue ("mix");
     compAutoMakeupAtom  = apvts.getRawParameterValue ("auto_makeup");
+    compScHpAtom        = apvts.getRawParameterValue ("sidechain_hp");
     compOptoPeakRedAtom = apvts.getRawParameterValue ("opto_peak_reduction");
     compOptoGainAtom    = apvts.getRawParameterValue ("opto_gain");
     compOptoLimitAtom   = apvts.getRawParameterValue ("opto_limit");
@@ -155,6 +156,8 @@ void ChannelStrip::bindCompParams()
     compVcaAttackAtom   = apvts.getRawParameterValue ("vca_attack");
     compVcaReleaseAtom  = apvts.getRawParameterValue ("vca_release");
     compVcaOutputAtom   = apvts.getRawParameterValue ("vca_output");
+    compVcaOverEasyAtom = apvts.getRawParameterValue ("vca_overeasy");
+    compVcaDetectorModeAtom = apvts.getRawParameterValue ("vca_detector_mode");
 
     // Mix=100% wet, auto-makeup off (we control makeup via per-mode output param).
     storeAtom (compMixAtom,        100.0f);
@@ -217,9 +220,8 @@ void ChannelStrip::updateEqParameters() noexcept
     BritishEQProcessor::Parameters p {};
     p.hpfEnabled = paramsRef->hpfEnabled.load (std::memory_order_relaxed);
     p.hpfFreq    = paramsRef->hpfFreq.load    (std::memory_order_relaxed);
-    // LPF stays disabled at the per-channel level - the strip doesn't expose one.
-    p.lpfEnabled = false;
-    p.lpfFreq    = 20000.0f;
+    p.lpfEnabled = paramsRef->lpfEnabled.load (std::memory_order_relaxed);
+    p.lpfFreq    = paramsRef->lpfFreq.load    (std::memory_order_relaxed);
     p.lfGain     = paramsRef->lfGainDb.load (std::memory_order_relaxed);
     p.lfFreq     = paramsRef->lfFreq.load   (std::memory_order_relaxed);
     p.lfBell     = false;
@@ -257,10 +259,22 @@ void ChannelStrip::updateCompParameters() noexcept
     const int modeIdx = juce::jlimit (0, 2, paramsRef->compMode.load (std::memory_order_relaxed));
     storeAtom (compModeAtom, (float) modeIdx);
 
+    // Per-mode sidechain HPF preset. VCA gets 60 Hz to match the SSL G /
+    // dbx convention (keeps low-end transients from pumping the mids);
+    // Opto and FET stay at 0 Hz so their original feedback-detector
+    // character is preserved.
+    const float scHpHz = (modeIdx == 2) ? 60.0f : 0.0f;
+    storeAtom (compScHpAtom, scHpHz);
+
     storeAtom (compOptoLimitAtom,
                paramsRef->compOptoLimit.load (std::memory_order_relaxed) ? 1.0f : 0.0f);
     storeAtom (compFetRatioAtom,
                (float) paramsRef->compFetRatio.load (std::memory_order_relaxed));
+    storeAtom (compVcaOverEasyAtom,
+               paramsRef->compVcaOverEasy.load (std::memory_order_relaxed) ? 1.0f : 0.0f);
+    // 0 = Adaptive (donor default), 1 = Classic (dbx 160 fixed 10 ms).
+    storeAtom (compVcaDetectorModeAtom,
+               paramsRef->compVcaDetectorClassic.load (std::memory_order_relaxed) ? 1.0f : 0.0f);
 
     // Continuous params: set smoother targets. The per-chunk
     // publishSmoothedCompParams() advances the smoothers and writes the
@@ -423,6 +437,15 @@ void ChannelStrip::processAndAccumulate (const float* inL,
     updateEqParameters();
     updateCompParameters();
 
+    // Hoist eqEnabled once per block (constant for the whole pass) so the
+    // four call-sites below all see the same value. On a false->true
+    // transition reset the EQ so stale filter history from before the
+    // bypass doesn't ring out as a transient burst when re-enabled.
+    const bool eqEnabled = paramsRef->eqEnabled.load (std::memory_order_relaxed);
+    if (eqEnabled && ! prevEqEnabled)
+        eq.reset();
+    prevEqEnabled = eqEnabled;
+
     // Source-pointer set used by the accumulation loop below. For mono,
     // both point at tempMono (so srcL[i] and srcR[i] are the same sample —
     // the existing equal-power pan distributes the mono signal to L/R).
@@ -503,7 +526,8 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             const int upN = (int) upBlock.getNumSamples();
             float* upPtrs[1] = { upBlock.getChannelPointer (0) };
             juce::AudioBuffer<float> upBuf (upPtrs, 1, upN);
-            eq.process (upBuf);
+            if (eqEnabled)
+                eq.process (upBuf);
 
             // 64-sample sub-chunks so the SmoothedValue ramp updates the
             // donor's atoms many times per audio block instead of once -
@@ -526,6 +550,11 @@ void ChannelStrip::processAndAccumulate (const float* inL,
                 // ramps instead of zipper-noise steps.
                 publishSmoothedCompParams (n);
                 compMidiScratch.clear();
+                // Always call processBlock — even when bypassed — so the
+                // donor's lookahead ring buffers, bypass-fade crossfader,
+                // and detector state stay warm. compBypassAtom flips the
+                // donor's bypass param at the top of updateCompParameters,
+                // and its internal bypass branch returns dry signal.
                 compressor.processBlock (compBuf, compMidiScratch);
             }
 
@@ -536,7 +565,8 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             // Native-rate path (factor == 1).
             float* monoChannel[1] = { tempMono.data() };
             juce::AudioBuffer<float> monoBuf (monoChannel, 1, numSamples);
-            eq.process (monoBuf);
+            if (eqEnabled)
+                eq.process (monoBuf);
 
             constexpr int bufSize = 64;   // same sub-chunk rationale as above
             for (int offset = 0; offset < numSamples; offset += bufSize)
@@ -544,16 +574,17 @@ void ChannelStrip::processAndAccumulate (const float* inL,
                 const int n = juce::jmin (bufSize, numSamples - offset);
                 float* monoView[1] = { tempMono.data() + offset };
                 juce::AudioBuffer<float> compBuf (monoView, 1, n);
-                // Smooth-publish continuous comp params to the donor atoms
-                // for this chunk (advances smoothers by n samples, writes
-                // current value). 20 ms ramp turns knob jumps into clean
-                // ramps instead of zipper-noise steps.
                 publishSmoothedCompParams (n);
                 compMidiScratch.clear();
                 compressor.processBlock (compBuf, compMidiScratch);
             }
         }
-        currentGrDb.store (compressor.getGainReduction(), std::memory_order_relaxed);
+        // When bypassed, force the GR atom to 0 so the meter doesn't hold
+        // the last-computed reduction (the donor's getGainReduction()
+        // returns the cached value from its detector even while bypass=1).
+        const bool compOn = paramsRef->compEnabled.load (std::memory_order_relaxed);
+        currentGrDb.store (compOn ? compressor.getGainReduction() : 0.0f,
+                            std::memory_order_relaxed);
 #endif
 
         srcL = tempMono.data();
@@ -648,7 +679,8 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             float* upPtrs[2] = { upBlock.getChannelPointer (0),
                                   upBlock.getChannelPointer (1) };
             juce::AudioBuffer<float> upBuf (upPtrs, 2, upN);
-            eq.process (upBuf);
+            if (eqEnabled)
+                eq.process (upBuf);
 
             // 64-sample sub-chunks so the SmoothedValue ramp updates the
             // donor's atoms many times per audio block instead of once -
@@ -665,10 +697,6 @@ void ChannelStrip::processAndAccumulate (const float* inL,
                 const int n = juce::jmin (compBufSize, upN - offset);
                 float* compView[2] = { upPtrs[0] + offset, upPtrs[1] + offset };
                 juce::AudioBuffer<float> compBuf (compView, 2, n);
-                // Smooth-publish continuous comp params to the donor atoms
-                // for this chunk (advances smoothers by n samples, writes
-                // current value). 20 ms ramp turns knob jumps into clean
-                // ramps instead of zipper-noise steps.
                 publishSmoothedCompParams (n);
                 compMidiScratch.clear();
                 compressor.processBlock (compBuf, compMidiScratch);
@@ -680,7 +708,8 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         {
             float* stereoChannels[2] = { L, R };
             juce::AudioBuffer<float> stereoBuf (stereoChannels, 2, numSamples);
-            eq.process (stereoBuf);
+            if (eqEnabled)
+                eq.process (stereoBuf);
 
             constexpr int bufSize = 64;   // same sub-chunk rationale as above
             for (int offset = 0; offset < numSamples; offset += bufSize)
@@ -688,16 +717,16 @@ void ChannelStrip::processAndAccumulate (const float* inL,
                 const int n = juce::jmin (bufSize, numSamples - offset);
                 float* stView[2] = { L + offset, R + offset };
                 juce::AudioBuffer<float> compBuf (stView, 2, n);
-                // Smooth-publish continuous comp params to the donor atoms
-                // for this chunk (advances smoothers by n samples, writes
-                // current value). 20 ms ramp turns knob jumps into clean
-                // ramps instead of zipper-noise steps.
                 publishSmoothedCompParams (n);
                 compMidiScratch.clear();
                 compressor.processBlock (compBuf, compMidiScratch);
             }
         }
-        currentGrDb.store (compressor.getGainReduction(), std::memory_order_relaxed);
+        // See mono-path comment above — zero the GR atom when bypassed so
+        // the meter doesn't pin at the last reduction value.
+        const bool compOnStereo = paramsRef->compEnabled.load (std::memory_order_relaxed);
+        currentGrDb.store (compOnStereo ? compressor.getGainReduction() : 0.0f,
+                            std::memory_order_relaxed);
 #endif
 
         srcL = L;

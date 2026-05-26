@@ -88,6 +88,13 @@ private:
     juce::AudioThumbnailCache thumbCache { 8 };
     std::unique_ptr<juce::AudioThumbnail> thumb;
     juce::File loadedFile;
+    // Native sample-rate of the WAV currently shown. Cached from the
+    // AudioFormatReader when rebuildThumbIfNeeded swaps source so the
+    // bar/beat grid is computed in the WAV's own time domain regardless
+    // of the device's current SR. Without this the bar grid drifts vs
+    // the rendered waveform whenever the user hot-swaps to a device at
+    // a different rate. 0 = unknown (fall back to engine SR).
+    double loadedFileSampleRate = 0.0;
 
     // Neighborhood view: the editor is anchored to a FIXED timeline
     // range captured at open time (or after Cmd+]/Cmd+[ navigation).
@@ -107,7 +114,7 @@ private:
     // is not undoable; the rest are.
     // MoveRegion (Phase 2) drags a slice's timelineStart so the user
     // can reposition a chunk after splitting it out.
-    enum class DragMode { None, FadeIn, FadeOut, Gain, TrimStart, TrimEnd, MoveCursor, Range, MoveRegion, Pan };
+    enum class DragMode { None, FadeIn, FadeOut, Gain, TrimStart, TrimEnd, MoveCursor, Range, MoveRegion, Pan, AutomationPoint };
     DragMode dragMode = DragMode::None;
     juce::int64 dragOriginTimelineSample = 0;  // anchor for MoveRegion drag
     // Range selection on the waveform - inclusive [start, end) in
@@ -251,10 +258,35 @@ private:
     juce::ToggleButton muteToggle;
     juce::ToggleButton lockToggle;
 
+    // Automation overlay: a single param's lane is drawn on top of the
+    // waveform as a connected polyline with one dot per AutomationPoint.
+    // Click empty area to add, drag a dot to move, right-click a dot to
+    // delete. Editing is only allowed when transport is stopped — the
+    // audio thread reads the lane lock-free, so message-thread mutation
+    // mid-play would race.
+    juce::TextButton automationParamButton { "Auto: Off" };
+    int  automationParam = -1;        // -1 = overlay disabled; else AutomationParam enum
+    int  draggedPointIdx = -1;        // index into the active lane during a drag
+    void showAutomationParamMenu();
+    void paintAutomationOverlay (juce::Graphics&, juce::Rectangle<int> waveArea);
+    int  hitTestAutomationPoint (int x, int y, juce::Rectangle<int> waveArea) const;
+    juce::Rectangle<int> automationLaneArea (juce::Rectangle<int> waveArea) const;
+    float automationValueForY (int y, juce::Rectangle<int> waveArea) const;
+    int   automationYForValue (float v01, juce::Rectangle<int> waveArea) const;
+
     // Layout helpers.
     void layoutIconRow   (juce::Rectangle<int>);
     void layoutStatusBar (juce::Rectangle<int>);
     void refreshStatusBarReadouts();
+
+    // Snap a file-sample to the session's timeline grid via the focused
+    // slice's (sourceOffset → timelineStart) mapping. Honours
+    // session.snapToGrid + the active snapResolution. `bypass` short-
+    // circuits to the input (used for Cmd-bypass during drags). Shared
+    // by click-cursor placement, ruler seeks, and the drag handlers so
+    // every gesture lands on the same grid.
+    juce::int64 snapFileSampleToGrid (juce::int64 fileSample, bool bypass) const noexcept;
+    juce::int64 snapTimelineSampleToGrid (juce::int64 timelineSample, bool bypass) const noexcept;
 
     // Action handlers. Each finalises through engine.getUndoManager()
     // so Cmd+Z reverts cleanly. normalize is non-destructive (gainDb

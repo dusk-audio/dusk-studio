@@ -1,4 +1,5 @@
 #include "MultiImportTargetPicker.h"
+#include "DuskComboBox.h"
 
 #include <algorithm>
 #include <cmath>
@@ -169,7 +170,7 @@ struct MultiImportTargetPicker::Row : public juce::Component
     ImportTargetPicker::FileSummary fileSummary;
     juce::Label nameLabel;
     juce::Label summaryLabel;
-    juce::ComboBox trackPicker;
+    DuskComboBox trackPicker;
     std::function<void()> pickCallback;
 };
 

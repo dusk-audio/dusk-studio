@@ -2,6 +2,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <functional>
+#include "DuskComboBox.h"
 #include "../session/Session.h"
 
 namespace duskstudio
@@ -419,9 +420,9 @@ private:
     juce::Label        positionLabel;
     juce::Label        valueLabel;
     juce::Label        trackLabel;
-    juce::ComboBox     gridCombo;
-    juce::ComboBox     notesCombo;
-    juce::ComboBox     colorCombo;
+    DuskComboBox     gridCombo;
+    DuskComboBox     notesCombo;
+    DuskComboBox     colorCombo;
     juce::ToggleButton keySnapToggle;
     // Region-level mute / lock - parity with AudioRegionEditor's
     // status-bar checkboxes. Both submit via MidiRegionEditAction so

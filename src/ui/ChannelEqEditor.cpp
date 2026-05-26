@@ -68,42 +68,99 @@ ChannelEqEditor::ChannelEqEditor (Track& t) : track (t)
     refreshTypeButton();
     addAndMakeVisible (typeButton);
 
-    // HPF row at the top of the popup, mirroring the strip's HPF control.
-    // Same accent colour as the strip's HPF (kHpfBlue).
-    const auto hpfAccent = juce::Colour (sslEqColors::kHpfBlue);
+    // EQ section ON/OFF toggle — pill with green LED-style fill when
+    // engaged. Mirrors track.strip.eqEnabled so it stays in sync with
+    // the strip's header pill + the band-knob auto-arm path.
+    enableButton.setClickingTogglesState (true);
+    enableButton.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff202024));
+    enableButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff20603a));   // muted green
+    enableButton.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xffb0b0b8));
+    enableButton.setColour (juce::TextButton::textColourOnId,   juce::Colours::white);
+    enableButton.setTooltip ("EQ section on / off (bypasses HPF + LPF + all 4 bands).");
+    enableButton.setToggleState (track.strip.eqEnabled.load (std::memory_order_relaxed),
+                                   juce::dontSendNotification);
+    enableButton.onClick = [this]
+    {
+        track.strip.eqEnabled.store (enableButton.getToggleState(),
+                                       std::memory_order_release);
+    };
+    addAndMakeVisible (enableButton);
+
+    // HPF + LPF — SSL 9000 J white-filter top section. Both knobs share
+    // the white accent so they read as a filter pair (matches the
+    // inline strip's filter row).
+    const auto filterWhite = juce::Colour (sslEqColors::kFilterWhite);
     hpfLabel.setText ("HPF", juce::dontSendNotification);
     hpfLabel.setJustificationType (juce::Justification::centred);
-    hpfLabel.setColour (juce::Label::textColourId, hpfAccent.brighter (0.2f));
+    hpfLabel.setColour (juce::Label::textColourId, filterWhite);
     hpfLabel.setFont (juce::Font (juce::FontOptions (16.0f, juce::Font::bold)));
     addAndMakeVisible (hpfLabel);
 
-    hpfKnob.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
-    hpfKnob.setColour (juce::Slider::rotarySliderFillColourId, hpfAccent);
-    hpfKnob.setColour (juce::Slider::rotarySliderOutlineColourId, juce::Colour (0xff404048));
-    hpfKnob.setRange (ChannelStripParams::kHpfMinHz, ChannelStripParams::kHpfMaxHz, 1.0);
-    hpfKnob.setSkewFactorFromMidPoint (80.0);
-    hpfKnob.setDoubleClickReturnValue (true, ChannelStripParams::kHpfOffHz);
-    hpfKnob.setTextBoxStyle (juce::Slider::TextBoxBelow, true, 80, 18);
-    hpfKnob.setColour (juce::Slider::textBoxTextColourId, juce::Colour (0xffe0e0e0));
-    hpfKnob.setColour (juce::Slider::textBoxBackgroundColourId, juce::Colour (0));
-    hpfKnob.setColour (juce::Slider::textBoxOutlineColourId, juce::Colour (0));
-    hpfKnob.textFromValueFunction = [] (double v) -> juce::String
+    auto setupFilterKnob = [this] (juce::Slider& k, juce::Colour fill,
+                                      double minHz, double maxHz, double offHz,
+                                      double skewMid,
+                                      bool offIsMax)
     {
-        if (v <= ChannelStripParams::kHpfOffHz + 0.5) return "off";
-        return formatFrequency (v);
+        k.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
+        k.setColour (juce::Slider::rotarySliderFillColourId, fill);
+        k.setColour (juce::Slider::rotarySliderOutlineColourId, juce::Colour (0xff404048));
+        k.setRange (minHz, maxHz, 1.0);
+        k.setSkewFactorFromMidPoint (skewMid);
+        k.setDoubleClickReturnValue (true, offHz);
+        k.setTextBoxStyle (juce::Slider::TextBoxBelow, true, 80, 18);
+        k.setColour (juce::Slider::textBoxTextColourId, juce::Colour (0xffe0e0e0));
+        k.setColour (juce::Slider::textBoxBackgroundColourId, juce::Colour (0));
+        k.setColour (juce::Slider::textBoxOutlineColourId, juce::Colour (0));
+        k.textFromValueFunction = [offHz, offIsMax] (double v) -> juce::String
+        {
+            if (offIsMax ? (v >= offHz - 0.5) : (v <= offHz + 0.5)) return "off";
+            return formatFrequency (v);
+        };
     };
+    setupFilterKnob (hpfKnob, filterWhite,
+                      ChannelStripParams::kHpfMinHz, ChannelStripParams::kHpfMaxHz,
+                      ChannelStripParams::kHpfOffHz, 80.0, /*offIsMax*/ false);
     hpfKnob.setValue (track.strip.hpfFreq.load (std::memory_order_relaxed),
                        juce::dontSendNotification);
     hpfKnob.onValueChange = [this]
     {
         const float freq = (float) hpfKnob.getValue();
         track.strip.hpfFreq.store (freq, std::memory_order_relaxed);
-        // Bypass the HPF DSP entirely when the knob is at the floor, same
-        // as the strip's HPF wiring.
-        track.strip.hpfEnabled.store (freq > ChannelStripParams::kHpfOffHz + 0.5f,
-                                       std::memory_order_relaxed);
+        const bool hpfOn = freq > ChannelStripParams::kHpfOffHz + 0.5f;
+        track.strip.hpfEnabled.store (hpfOn, std::memory_order_relaxed);
+        if (hpfOn)
+        {
+            track.strip.eqEnabled.store (true, std::memory_order_release);
+            enableButton.setToggleState (true, juce::dontSendNotification);
+        }
     };
     addAndMakeVisible (hpfKnob);
+
+    // LPF — symmetric counterpart on the right side of the filter row.
+    lpfLabel.setText ("LPF", juce::dontSendNotification);
+    lpfLabel.setJustificationType (juce::Justification::centred);
+    lpfLabel.setColour (juce::Label::textColourId, filterWhite);
+    lpfLabel.setFont (juce::Font (juce::FontOptions (16.0f, juce::Font::bold)));
+    addAndMakeVisible (lpfLabel);
+
+    setupFilterKnob (lpfKnob, filterWhite,
+                      ChannelStripParams::kLpfMinHz, ChannelStripParams::kLpfMaxHz,
+                      ChannelStripParams::kLpfOffHz, 8000.0, /*offIsMax*/ true);
+    lpfKnob.setValue (track.strip.lpfFreq.load (std::memory_order_relaxed),
+                       juce::dontSendNotification);
+    lpfKnob.onValueChange = [this]
+    {
+        const float freq = (float) lpfKnob.getValue();
+        track.strip.lpfFreq.store (freq, std::memory_order_relaxed);
+        const bool lpfOn = freq < ChannelStripParams::kLpfOffHz - 0.5f;
+        track.strip.lpfEnabled.store (lpfOn, std::memory_order_relaxed);
+        if (lpfOn)
+        {
+            track.strip.eqEnabled.store (true, std::memory_order_release);
+            enableButton.setToggleState (true, juce::dontSendNotification);
+        }
+    };
+    addAndMakeVisible (lpfKnob);
 
     for (size_t i = 0; i < bandSpecs().size(); ++i)
     {
@@ -143,9 +200,12 @@ ChannelEqEditor::ChannelEqEditor (Track& t) : track (t)
         {
             auto* atomicPtr = spec.gain (track.strip);
             auto* knob = row.gain.get();
-            knob->onValueChange = [knob, atomicPtr]
+            auto* eqEnabledPtr = &track.strip.eqEnabled;
+            knob->onValueChange = [knob, atomicPtr, eqEnabledPtr]
             {
                 atomicPtr->store ((float) knob->getValue(), std::memory_order_relaxed);
+                // Auto-arm — same UX as the inline strip-band knobs.
+                eqEnabledPtr->store (true, std::memory_order_release);
             };
         }
         addAndMakeVisible (row.gain.get());
@@ -161,9 +221,11 @@ ChannelEqEditor::ChannelEqEditor (Track& t) : track (t)
         {
             auto* atomicPtr = spec.freq (track.strip);
             auto* knob = row.freq.get();
-            knob->onValueChange = [knob, atomicPtr]
+            auto* eqEnabledPtr = &track.strip.eqEnabled;
+            knob->onValueChange = [knob, atomicPtr, eqEnabledPtr]
             {
                 atomicPtr->store ((float) knob->getValue(), std::memory_order_relaxed);
+                eqEnabledPtr->store (true, std::memory_order_release);
             };
         }
         addAndMakeVisible (row.freq.get());
@@ -183,9 +245,11 @@ ChannelEqEditor::ChannelEqEditor (Track& t) : track (t)
                 row.q->setValue (qAtom->load (std::memory_order_relaxed),
                                   juce::dontSendNotification);
                 auto* knob = row.q.get();
-                knob->onValueChange = [knob, qAtom]
+                auto* eqEnabledPtr = &track.strip.eqEnabled;
+                knob->onValueChange = [knob, qAtom, eqEnabledPtr]
                 {
                     qAtom->store ((float) knob->getValue(), std::memory_order_relaxed);
+                    eqEnabledPtr->store (true, std::memory_order_release);
                 };
                 addAndMakeVisible (row.q.get());
 
@@ -223,9 +287,10 @@ void ChannelEqEditor::resized()
 {
     auto area = getLocalBounds().reduced (12);
 
-    // Header: just the E/G type toggle on the right.
+    // Header: EQ enable pill on the LEFT, E/G type toggle on the RIGHT.
     auto header = area.removeFromTop (24);
-    typeButton.setBounds (header.removeFromRight (40));
+    enableButton.setBounds (header.removeFromLeft (60));
+    typeButton  .setBounds (header.removeFromRight (40));
     area.removeFromTop (8);
 
     // Layout matches the inline strip's EQ section so the SUMMARY popup
@@ -245,14 +310,24 @@ void ChannelEqEditor::resized()
     constexpr int kBellRowH     = kKnobBlockH + kQBlockH;
     constexpr int kRowGap       = 4;
 
-    // HPF row - single knob centred horizontally.
+    // Filter row — HPF | LPF side-by-side, white-faced SSL 9000 J top.
     {
         auto row = area.removeFromTop (kHpfRowH);
-        hpfLabel.setBounds (row.removeFromLeft (kRowLabelW)
-                              .withSizeKeepingCentre (kRowLabelW, kKnobSize));
-        const int knobW = juce::jmin (96, row.getWidth());
-        const int knobX = row.getX() + (row.getWidth() - knobW) / 2;
-        hpfKnob.setBounds (knobX, row.getY(), knobW, kKnobBlockH);
+        // Carve same kRowLabelW gutter as the band rows so the filter
+        // columns line up with the gain / freq columns below.
+        row.removeFromLeft (kRowLabelW);
+        const int colW = row.getWidth() / 2;
+        auto hpfCell = row.removeFromLeft (colW);
+        auto lpfCell = row;
+
+        // Label sits at the top of each cell (centred, 16-pt bold) and
+        // the knob takes the remaining height — matches the inline
+        // strip's HPF/LPF layout grammar.
+        constexpr int kFilterLabelH = 18;
+        hpfLabel.setBounds (hpfCell.removeFromTop (kFilterLabelH));
+        hpfKnob .setBounds (hpfCell);
+        lpfLabel.setBounds (lpfCell.removeFromTop (kFilterLabelH));
+        lpfKnob .setBounds (lpfCell);
         area.removeFromTop (kRowGap);
     }
 

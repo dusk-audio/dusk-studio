@@ -34,6 +34,40 @@ void PlaybackEngine::prepare (int maxBlockSize)
                           /*avoidReallocating*/    false);
 }
 
+void PlaybackEngine::refreshLiveRegionParams()
+{
+    // Walk every per-track stream and push the latest gainDb / muted
+    // from the AudioRegion model into the cached RegionStream. Only
+    // applies when the stream still matches the region by file +
+    // timeline position + length; structural mismatches (split / join
+    // / move) leave the stream untouched and the next preparePlayback
+    // rebuilds. Single field overwrites are hardware-atomic for the
+    // naturally-aligned scalar types involved.
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        auto& stream = streams[(size_t) t];
+        if (stream == nullptr) continue;
+        const auto& regs = session.track (t).regions;
+
+        // Streams are sorted by timelineStart in preparePlayback; the
+        // session.regions vector is NOT sorted. Match each stream by
+        // walking regions until we find one with the same identity.
+        for (auto& rs : stream->regions)
+        {
+            for (const auto& region : regs)
+            {
+                if (region.file != rs.sourceFile
+                    || region.timelineStart   != rs.timelineStart
+                    || region.lengthInSamples != rs.lengthInSamples) continue;
+                rs.gainLinear = juce::Decibels::decibelsToGain (
+                    juce::jlimit (-60.0f, 24.0f, region.gainDb), -60.0f);
+                rs.muted = region.muted;
+                break;
+            }
+        }
+    }
+}
+
 void PlaybackEngine::preparePlayback()
 {
     stopPlayback();
@@ -67,6 +101,7 @@ void PlaybackEngine::preparePlayback()
 
             RegionStream rs;
             rs.reader          = std::move (buffered);
+            rs.sourceFile      = region.file;
             rs.timelineStart   = region.timelineStart;
             rs.lengthInSamples = region.lengthInSamples;
             rs.sourceOffset    = region.sourceOffset;

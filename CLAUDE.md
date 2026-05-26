@@ -4,7 +4,7 @@ Dusk Studio is a deliberately constrained, portastudio-style DAW for Linux, JUCE
 
 ## The seven hard constraints (do not violate)
 
-1. **16 channels maximum.** Fixed. Two banks of 8 to match standard control surfaces.
+1. **24 channels maximum.** Fixed. Three banks of 8 (1-8 / 9-16 / 17-24) to match standard control surfaces.
 2. **Fixed signal chain.** No reordering EQ/comp. No adding/removing processors. No plugin chains on channels.
 3. **No waveform editing.** Region-level move/split/delete/trim only. No zoom-to-sample, no pencil tool.
 4. **Console-style automation only.** Write/Read/Touch via gesture; no curve drawing.
@@ -17,7 +17,7 @@ Dusk Studio is a deliberately constrained, portastudio-style DAW for Linux, JUCE
 - **Audio backend**: PipeWire (primary) via JUCE's JACK backend; ALSA fallback.
 - **DSP**: extracted from the user's existing Dusk Audio plugins at `/home/marc/projects/plugins/`. Shared headers live (or will live) at `plugins/plugins/shared/dsp-cores/` so both Dusk Studio and the Dusk plugins are single-source-of-truth consumers. Resolved via `-DDUSK_PLUGINS_PATH=/path/to/plugins` or sibling `../plugins` (mirror of the JUCE pattern). Header-only cores: edit a file in the plugins repo, next Dusk Studio build picks it up — no copy step, no submodule bump.
 - **JUCE**: 8.x, resolved via `-DJUCE_PATH` or sibling `../JUCE` (same scheme as the Dusk plugins repo).
-- **Topology**: 16 channel strips (HPF → 4-band EQ → FET/Opto comp → sends → pan → bus assign → fader → mute/solo) → 4 aux buses (EQ + comp + fader) → master (Pultec EQ + bus comp + tape sat + fader).
+- **Topology**: 24 channel strips (HPF → 4-band EQ → FET/Opto comp → sends → pan → bus assign → fader → mute/solo) → 4 aux buses (EQ + comp + fader) → master (Pultec EQ + bus comp + tape sat + fader). Three banks of 8 select which 8 strips the control surface drives at a time; the full 24 are visible on screen.
 
 ## Build
 

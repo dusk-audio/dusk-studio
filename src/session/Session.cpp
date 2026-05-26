@@ -188,11 +188,11 @@ int Session::findMarkerNear (juce::int64 timelineSamples,
     return closest;
 }
 
-namespace
-{
 // Per-param normalize / denormalize. value lives in 0..1 in the lane so the
 // JSON schema and thinning constants stay range-independent.
-float denormalizeAutomation (AutomationParam p, float v) noexcept
+// Exposed via Session.h so the editor UI can convert between displayed
+// (dB / pan / 0|1) and stored (0..1) values when drawing automation.
+float denormalizeAutomationValue (AutomationParam p, float v) noexcept
 {
     v = juce::jlimit (0.0f, 1.0f, v);
     switch (p)
@@ -224,7 +224,45 @@ float denormalizeAutomation (AutomationParam p, float v) noexcept
     }
     return 0.0f;
 }
-} // namespace
+
+float normalizeAutomationValue (AutomationParam p, float denormValue) noexcept
+{
+    switch (p)
+    {
+        case AutomationParam::FaderDb:
+        {
+            const float lo = ChannelStripParams::kFaderMinDb;
+            const float hi = ChannelStripParams::kFaderMaxDb;
+            return juce::jlimit (0.0f, 1.0f, (denormValue - lo) / (hi - lo));
+        }
+        case AutomationParam::Pan:
+            return juce::jlimit (0.0f, 1.0f, (denormValue + 1.0f) * 0.5f);
+
+        case AutomationParam::Mute:
+        case AutomationParam::Solo:
+            return denormValue >= 0.5f ? 1.0f : 0.0f;
+
+        case AutomationParam::AuxSend1:
+        case AutomationParam::AuxSend2:
+        case AutomationParam::AuxSend3:
+        case AutomationParam::AuxSend4:
+        {
+            if (denormValue <= ChannelStripParams::kAuxSendOffDb + 0.1f) return 0.0f;
+            const float lo = ChannelStripParams::kAuxSendMinDb;
+            const float hi = ChannelStripParams::kAuxSendMaxDb;
+            return juce::jlimit (0.0f, 1.0f, (denormValue - lo) / (hi - lo));
+        }
+
+        case AutomationParam::kCount:
+            break;
+    }
+    return 0.0f;
+}
+
+namespace { float denormalizeAutomation (AutomationParam p, float v) noexcept
+{
+    return denormalizeAutomationValue (p, v);
+} } // namespace
 
 float evaluateLane (const AutomationLane& lane, juce::int64 t,
                     AutomationParam param) noexcept

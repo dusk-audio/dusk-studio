@@ -110,16 +110,19 @@ TEST_CASE ("McuReceiver: bank LEFT / RIGHT step session.mcu.bank", "[mcu][receiv
     Session s;
     McuReceiver r (s);
 
+    const int lastBank = Session::kNumBanks - 1;
     REQUIRE (s.mcu.bank.load (std::memory_order_relaxed) == 0);
     r.process (makeNoteOn (mcu::btn::BankRight, 0x7F), 0);
     REQUIRE (s.mcu.bank.load (std::memory_order_relaxed) == 1);
-    // Past last bank (kNumBanks - 1 = 1) -> clamped to 1.
-    r.process (makeNoteOn (mcu::btn::BankRight, 0x7F), 0);
-    REQUIRE (s.mcu.bank.load (std::memory_order_relaxed) == 1);
+    // Walk RIGHT past the last bank — value clamps to kNumBanks - 1.
+    for (int i = 0; i < Session::kNumBanks + 2; ++i)
+        r.process (makeNoteOn (mcu::btn::BankRight, 0x7F), 0);
+    REQUIRE (s.mcu.bank.load (std::memory_order_relaxed) == lastBank);
     r.process (makeNoteOn (mcu::btn::BankLeft, 0x7F), 0);
-    REQUIRE (s.mcu.bank.load (std::memory_order_relaxed) == 0);
-    // Below 0 -> stays at 0.
-    r.process (makeNoteOn (mcu::btn::BankLeft, 0x7F), 0);
+    REQUIRE (s.mcu.bank.load (std::memory_order_relaxed) == lastBank - 1);
+    // Walk LEFT past 0 -> stays at 0.
+    for (int i = 0; i < Session::kNumBanks + 2; ++i)
+        r.process (makeNoteOn (mcu::btn::BankLeft, 0x7F), 0);
     REQUIRE (s.mcu.bank.load (std::memory_order_relaxed) == 0);
 }
 

@@ -92,6 +92,35 @@ juce::String describeBindingTarget (const MidiBinding& b,
                 paramName = "param " + juce::String (b.paramIndex);
             return "Track " + trk() + " " + paramName;
         }
+        // Bank-relative variants. targetIndex is a POSITION 0..kBankSize-1
+        // (or packed pos*N+sub for AuxSend/EqGain). Display "Bank pos N"
+        // so the bindings panel reads the right grammar.
+        case MidiBindingTarget::TrackFaderBank:       return "Bank pos " + trk() + " fader (banked)";
+        case MidiBindingTarget::TrackPanBank:         return "Bank pos " + trk() + " pan (banked)";
+        case MidiBindingTarget::TrackMuteBank:        return "Bank pos " + trk() + " mute (banked)";
+        case MidiBindingTarget::TrackSoloBank:        return "Bank pos " + trk() + " solo (banked)";
+        case MidiBindingTarget::TrackArmBank:         return "Bank pos " + trk() + " arm (banked)";
+        case MidiBindingTarget::TrackAuxSendBank:
+        {
+            const int pos = b.targetIndex / kPackedAuxLanes;
+            const int aux = b.targetIndex % kPackedAuxLanes;
+            return "Bank pos " + juce::String (pos + 1)
+                 + " AUX " + juce::String (aux + 1) + " send (banked)";
+        }
+        case MidiBindingTarget::TrackHpfFreqBank:     return "Bank pos " + trk() + " HPF (banked)";
+        case MidiBindingTarget::TrackEqGainBank:
+        {
+            const int pos  = b.targetIndex / kPackedEqBands;
+            const int band = b.targetIndex % kPackedEqBands;
+            static const char* kBandNames[] = { "LF", "LM", "HM", "HF" };
+            const char* bandName = (band >= 0 && band < 4) ? kBandNames[band] : "?";
+            return "Bank pos " + juce::String (pos + 1)
+                 + " EQ " + juce::String (bandName) + " gain (banked)";
+        }
+        case MidiBindingTarget::TrackCompThreshBank:  return "Bank pos " + trk() + " comp threshold (banked)";
+        case MidiBindingTarget::TrackCompMakeupBank:  return "Bank pos " + trk() + " comp makeup (banked)";
+        case MidiBindingTarget::TrackPluginParamBank: return "Bank pos " + trk() + " plugin param (banked)";
+
         case MidiBindingTarget::BusFader:        return "Bus " + trk() + " fader";
         case MidiBindingTarget::BusPan:          return "Bus " + trk() + " pan";
         case MidiBindingTarget::BusMute:         return "Bus " + trk() + " mute";
@@ -123,6 +152,17 @@ const char* nameForTarget (MidiBindingTarget t) noexcept
         case MidiBindingTarget::TrackCompThresh: return "Comp threshold";
         case MidiBindingTarget::TrackCompMakeup: return "Comp makeup";
         case MidiBindingTarget::TrackPluginParam: return "Plugin parameter";
+        case MidiBindingTarget::TrackFaderBank:       return "Track fader (banked)";
+        case MidiBindingTarget::TrackPanBank:         return "Track pan (banked)";
+        case MidiBindingTarget::TrackMuteBank:        return "Track mute (banked)";
+        case MidiBindingTarget::TrackSoloBank:        return "Track solo (banked)";
+        case MidiBindingTarget::TrackArmBank:         return "Track arm (banked)";
+        case MidiBindingTarget::TrackAuxSendBank:     return "AUX send (banked)";
+        case MidiBindingTarget::TrackHpfFreqBank:     return "HPF cutoff (banked)";
+        case MidiBindingTarget::TrackEqGainBank:      return "EQ band gain (banked)";
+        case MidiBindingTarget::TrackCompThreshBank:  return "Comp threshold (banked)";
+        case MidiBindingTarget::TrackCompMakeupBank:  return "Comp makeup (banked)";
+        case MidiBindingTarget::TrackPluginParamBank: return "Plugin parameter (banked)";
         case MidiBindingTarget::BusFader:        return "Bus fader";
         case MidiBindingTarget::BusPan:          return "Bus pan";
         case MidiBindingTarget::BusMute:         return "Bus mute";
@@ -159,6 +199,46 @@ juce::String describeBinding (const MidiBinding& b)
 }
 } // namespace
 
+// Resolves an absolute per-track binding (kind, index) to its bank-relative
+// equivalent (target + position-encoded index). Returns false for targets
+// that don't have a banked variant (Bus / Aux-lane / Master / Transport).
+// Position-in-bank = trackIndex % kBankSize so the same physical
+// controller slot drives whichever of the 8 tracks is bank-active.
+static bool tryGetBankedVariant (MidiBindingTarget kind, int absIndex,
+                                  MidiBindingTarget& outTarget, int& outIndex) noexcept
+{
+    auto pos = [] (int trk) { return trk % Session::kBankSize; };
+    switch (kind)
+    {
+        case MidiBindingTarget::TrackFader:       outTarget = MidiBindingTarget::TrackFaderBank;      outIndex = pos (absIndex); return true;
+        case MidiBindingTarget::TrackPan:         outTarget = MidiBindingTarget::TrackPanBank;        outIndex = pos (absIndex); return true;
+        case MidiBindingTarget::TrackMute:        outTarget = MidiBindingTarget::TrackMuteBank;       outIndex = pos (absIndex); return true;
+        case MidiBindingTarget::TrackSolo:        outTarget = MidiBindingTarget::TrackSoloBank;       outIndex = pos (absIndex); return true;
+        case MidiBindingTarget::TrackArm:         outTarget = MidiBindingTarget::TrackArmBank;        outIndex = pos (absIndex); return true;
+        case MidiBindingTarget::TrackHpfFreq:     outTarget = MidiBindingTarget::TrackHpfFreqBank;    outIndex = pos (absIndex); return true;
+        case MidiBindingTarget::TrackCompThresh:  outTarget = MidiBindingTarget::TrackCompThreshBank; outIndex = pos (absIndex); return true;
+        case MidiBindingTarget::TrackCompMakeup:  outTarget = MidiBindingTarget::TrackCompMakeupBank; outIndex = pos (absIndex); return true;
+        case MidiBindingTarget::TrackPluginParam: outTarget = MidiBindingTarget::TrackPluginParamBank;outIndex = pos (absIndex); return true;
+        case MidiBindingTarget::TrackAuxSend:
+        {
+            const int trk = unpackTrackAuxTrack (absIndex);
+            const int aux = unpackTrackAuxLane  (absIndex);
+            outTarget = MidiBindingTarget::TrackAuxSendBank;
+            outIndex  = packTrackAux (pos (trk), aux);
+            return true;
+        }
+        case MidiBindingTarget::TrackEqGain:
+        {
+            const int trk  = unpackTrackEqTrack (absIndex);
+            const int band = unpackTrackEqBand  (absIndex);
+            outTarget = MidiBindingTarget::TrackEqGainBank;
+            outIndex  = packTrackEqBand (pos (trk), band);
+            return true;
+        }
+        default: return false;
+    }
+}
+
 // Discrete (toggle) targets — those that show "Button mode" in the
 // learn menu so the user can switch a latching D-type controller from
 // the default rising-edge fire to fire-on-every-message.
@@ -169,6 +249,9 @@ static bool isToggleTarget (MidiBindingTarget t) noexcept
         case MidiBindingTarget::TrackMute:
         case MidiBindingTarget::TrackSolo:
         case MidiBindingTarget::TrackArm:
+        case MidiBindingTarget::TrackMuteBank:
+        case MidiBindingTarget::TrackSoloBank:
+        case MidiBindingTarget::TrackArmBank:
         case MidiBindingTarget::BusMute:
         case MidiBindingTarget::BusSolo:
         case MidiBindingTarget::AuxLaneMute:
@@ -193,75 +276,117 @@ void showLearnMenu (juce::Component& target,
                     MidiBindingTarget kind,
                     int index)
 {
-    // Find an existing binding for this (kind, index) pair so the menu
-    // can show its source and offer "Forget".
-    const MidiBinding* existing = nullptr;
+    // Resolve the bank-relative equivalent of this (kind, index) for the
+    // optional banked MIDI Learn item. Empty / false when the target
+    // isn't per-track (no banking for transport / bus / master).
+    MidiBindingTarget bankedKind  = MidiBindingTarget::None;
+    int               bankedIndex = -1;
+    const bool        hasBanked   = tryGetBankedVariant (kind, index,
+                                                            bankedKind, bankedIndex);
+
+    // Find existing bindings — absolute first, then banked. Both can
+    // coexist (user could bind two different controllers, one each).
+    const MidiBinding* existingAbsolute = nullptr;
+    const MidiBinding* existingBanked   = nullptr;
     for (const auto& b : session.midiBindings.current())
     {
-        if (b.target == kind && b.targetIndex == index) { existing = &b; break; }
+        if (existingAbsolute == nullptr && b.target == kind && b.targetIndex == index)
+            existingAbsolute = &b;
+        if (hasBanked && existingBanked == nullptr
+            && b.target == bankedKind && b.targetIndex == bankedIndex)
+            existingBanked = &b;
+        if (existingAbsolute != nullptr && (! hasBanked || existingBanked != nullptr))
+            break;
     }
+    const MidiBinding* existing = existingAbsolute != nullptr ? existingAbsolute
+                                                              : existingBanked;
 
     juce::PopupMenu m;
     m.addSectionHeader (nameForTarget (kind));
-    m.addItem ("MIDI Learn...", true, false,
+    m.addItem ("MIDI Learn (this track)...", true, false,
         [&session, kind, index]
         {
             session.midiLearnPending.store (packLearnTarget (kind, index),
                                               std::memory_order_relaxed);
             session.midiLearnCapture.store (0, std::memory_order_relaxed);
         });
-    if (existing != nullptr)
+    if (hasBanked)
     {
-        const auto label = "Bound: " + describeBinding (*existing);
-        m.addItem (label, false, false, []{});
+        const int posDisplay =
+            (bankedKind == MidiBindingTarget::TrackAuxSendBank)
+                ? (bankedIndex / kPackedAuxLanes) + 1
+            : (bankedKind == MidiBindingTarget::TrackEqGainBank)
+                ? (bankedIndex / kPackedEqBands) + 1
+                : bankedIndex + 1;
+        const auto banklabel = "MIDI Learn (follow bank, position "
+                              + juce::String (posDisplay) + ")...";
+        m.addItem (banklabel, true, false,
+            [&session, bankedKind, bankedIndex]
+            {
+                session.midiLearnPending.store (packLearnTarget (bankedKind, bankedIndex),
+                                                  std::memory_order_relaxed);
+                session.midiLearnCapture.store (0, std::memory_order_relaxed);
+            });
+    }
+    auto addExistingControls = [&] (const MidiBinding* eb,
+                                      MidiBindingTarget ek,
+                                      int eidx,
+                                      juce::String labelSuffix)
+    {
+        if (eb == nullptr) return;
+        const auto boundLabel = "Bound" + labelSuffix + ": " + describeBinding (*eb);
+        m.addItem (boundLabel, false, false, []{});
 
         // Button-mode submenu for discrete (toggle) targets. Lets the
         // user flip a binding from rising-edge (default — fires once on
         // press 127, releases on 0) to fire-on-every-message for
         // latching controllers whose physical press alternates 127/0
         // each click (e.g. Panorama T6 in some modes).
-        if (isToggleTarget (kind))
+        if (isToggleTarget (ek))
         {
-            const auto mode = existing->buttonMode;
+            const auto mode = eb->buttonMode;
             juce::PopupMenu modeMenu;
             modeMenu.addItem ("Press (momentary 127 → 0)",
                                 true, mode == MidiButtonMode::Press,
-                [&session, kind, index]
+                [&session, ek, eidx]
                 {
-                    session.midiBindings.mutate ([kind, index] (std::vector<MidiBinding>& binds)
+                    session.midiBindings.mutate ([ek, eidx] (std::vector<MidiBinding>& binds)
                     {
                         for (auto& x : binds)
-                            if (x.target == kind && x.targetIndex == index)
+                            if (x.target == ek && x.targetIndex == eidx)
                                 x.buttonMode = MidiButtonMode::Press;
                     });
                 });
             modeMenu.addItem ("Toggle (latching 127 ↔ 0)",
                                 true, mode == MidiButtonMode::Toggle,
-                [&session, kind, index]
+                [&session, ek, eidx]
                 {
-                    session.midiBindings.mutate ([kind, index] (std::vector<MidiBinding>& binds)
+                    session.midiBindings.mutate ([ek, eidx] (std::vector<MidiBinding>& binds)
                     {
                         for (auto& x : binds)
-                            if (x.target == kind && x.targetIndex == index)
+                            if (x.target == ek && x.targetIndex == eidx)
                                 x.buttonMode = MidiButtonMode::Toggle;
                     });
                 });
-            m.addSubMenu ("Button mode", modeMenu);
+            m.addSubMenu ("Button mode" + labelSuffix, modeMenu);
         }
 
-        m.addItem ("Forget binding", true, false,
-            [&session, kind, index]
+        m.addItem ("Forget binding" + labelSuffix, true, false,
+            [&session, ek, eidx]
             {
-                session.midiBindings.mutate ([kind, index] (std::vector<MidiBinding>& binds)
+                session.midiBindings.mutate ([ek, eidx] (std::vector<MidiBinding>& binds)
                 {
                     binds.erase (std::remove_if (binds.begin(), binds.end(),
-                        [kind, index] (const MidiBinding& x)
+                        [ek, eidx] (const MidiBinding& x)
                         {
-                            return x.target == kind && x.targetIndex == index;
+                            return x.target == ek && x.targetIndex == eidx;
                         }), binds.end());
                 });
             });
-    }
+    };
+    addExistingControls (existingAbsolute, kind,       index,       " (this track)");
+    addExistingControls (existingBanked,   bankedKind, bankedIndex, " (banked)");
+    (void) existing;   // kept for symmetry / future "any binding?" callers
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&target));
 }
 } // namespace midilearn
@@ -292,19 +417,20 @@ juce::String serializeBindingsPreset (const std::vector<MidiBinding>& binds)
     return juce::JSON::toString (juce::var (root), false /*allOnOneLine*/);
 }
 
-std::vector<MidiBinding> deserializeBindingsPreset (const juce::String& json)
+std::optional<std::vector<MidiBinding>> deserializeBindingsPreset (const juce::String& json)
 {
     // Parses the format produced by serializeBindingsPreset. Returns
-    // empty on a malformed file or version mismatch - the caller surfaces
-    // the failure to the user. Per-entry isValid() filter drops garbage
-    // entries without rejecting the whole preset.
+    // nullopt on a malformed file / wrong schema; returns an empty
+    // vector for a well-formed but intentionally empty preset (valid
+    // "clear all bindings" preset). Per-entry isValid() filter drops
+    // garbage entries without rejecting the whole preset.
     std::vector<MidiBinding> out;
     auto parsed = juce::JSON::parse (json);
-    if (! parsed.isObject()) return out;
+    if (! parsed.isObject()) return std::nullopt;
     auto* root = parsed.getDynamicObject();
-    if (root == nullptr) return out;
+    if (root == nullptr) return std::nullopt;
     const auto arr = root->getProperty ("bindings");
-    if (! arr.isArray()) return out;
+    if (! arr.isArray()) return std::nullopt;
     for (int i = 0; i < arr.size(); ++i)
     {
         auto v = arr[i];

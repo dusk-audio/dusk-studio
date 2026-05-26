@@ -1,4 +1,6 @@
 #include "ChannelStripComponent.h"
+#include "CompBypassLed.h"
+#include "DuskContextMenu.h"
 #include "DuskStudioLookAndFeel.h"
 #include "ChannelEqEditor.h"
 #include "ChannelCompEditor.h"
@@ -14,17 +16,40 @@
 namespace duskstudio
 {
 
-class ChannelStripComponent::CompBypassLed final : public juce::Component,
-                                                       public juce::SettableTooltipClient
+// Custom header button for the COMP section. Acts as both an
+// enable-toggle (left click) and a mode-picker (right click). Single
+// affordance replacing the older COMP label + mode pill + bypass LED
+// triplet — less visual noise, one obvious click target.
+class ChannelStripComponent::CompHeaderButton final : public juce::Component,
+                                                          public juce::SettableTooltipClient
 {
 public:
-    CompBypassLed (std::function<bool()> getEnabled,
-                    std::function<void()> onToggle)
+    CompHeaderButton (std::function<bool()> getEnabled,
+                       std::function<void()> onToggleEnable,
+                       std::function<void()> onPickMode)
         : isEnabledFn (std::move (getEnabled)),
-          toggleFn (std::move (onToggle))
+          toggleFn    (std::move (onToggleEnable)),
+          pickFn      (std::move (onPickMode))
     {
         setMouseCursor (juce::MouseCursor::PointingHandCursor);
-        setTooltip ("Compressor bypass — green when engaged, click to toggle");
+        setTooltip ("Left-click to enable / disable. Right-click to choose mode (OPTO / FET / VCA).");
+    }
+
+    void setLabelText (juce::String t)
+    {
+        if (text != t) { text = std::move (t); repaint(); }
+    }
+
+    // EQ header uses these to surface the active type (Brown / Black)
+    // — see ChannelStripComponent::timerCallback. COMP header leaves
+    // them at defaults.
+    void setChipText (juce::String t)
+    {
+        if (chip != t) { chip = std::move (t); repaint(); }
+    }
+    void setAccentColour (juce::Colour c)
+    {
+        if (accent != c) { accent = c; repaint(); }
     }
 
     void paint (juce::Graphics& g) override
@@ -32,41 +57,78 @@ public:
         const auto r = getLocalBounds().toFloat().reduced (1.0f);
         const bool on = isEnabledFn ? isEnabledFn() : false;
 
-        // Bezel
-        g.setColour (juce::Colour (0xff141416));
-        g.fillEllipse (r);
-        g.setColour (juce::Colour (0xff2a2a2e));
-        g.drawEllipse (r, 1.0f);
+        // Pill background — same dark fill regardless of state.
+        g.setColour (juce::Colour (0xff242428));
+        g.fillRoundedRectangle (r, 4.0f);
+        g.setColour (juce::Colour (0xff3a3a40));
+        g.drawRoundedRectangle (r, 4.0f, 0.8f);
 
-        // Lit core
-        const auto inner = r.reduced (2.0f);
+        // LED on the left, vertically centered. Green when engaged.
+        const float ledSize = juce::jmin (r.getHeight() - 4.0f, 8.0f);
+        const float ledX    = r.getX() + 4.0f;
+        const float ledY    = r.getCentreY() - ledSize / 2.0f;
+        const auto ledRect  = juce::Rectangle<float> (ledX, ledY, ledSize, ledSize);
+        g.setColour (juce::Colour (0xff0a0a0c));
+        g.fillEllipse (ledRect.expanded (1.0f));
+        g.setColour (on ? juce::Colour (0xff60d060) : juce::Colour (0xff2a3028));
+        g.fillEllipse (ledRect);
         if (on)
         {
-            g.setColour (juce::Colour (0xff60d060));
-            g.fillEllipse (inner);
-            // Inner highlight for "lit" feel
-            g.setColour (juce::Colour (0xffa0f0a0).withAlpha (0.6f));
-            g.fillEllipse (inner.reduced (inner.getWidth() * 0.35f,
-                                            inner.getHeight() * 0.35f)
-                                  .translated (-inner.getWidth() * 0.12f,
-                                                 -inner.getHeight() * 0.12f));
+            g.setColour (juce::Colour (0xffa0f0a0).withAlpha (0.55f));
+            g.fillEllipse (ledRect.reduced (ledSize * 0.35f, ledSize * 0.35f)
+                                    .translated (-ledSize * 0.10f, -ledSize * 0.10f));
         }
-        else
+
+        // Optional right-side chip (EQ type indicator).
+        const float chipReserve = chip.isNotEmpty() ? 18.0f : 0.0f;
+        if (chip.isNotEmpty())
         {
-            g.setColour (juce::Colour (0xff2a3028));
-            g.fillEllipse (inner);
+            const auto chipR = juce::Rectangle<float> (
+                r.getRight() - chipReserve - 2.0f,
+                r.getY() + 3.0f,
+                chipReserve, r.getHeight() - 6.0f);
+            const auto chipFill = accent.isTransparent()
+                                       ? juce::Colour (0xff2a2a32)
+                                       : accent;
+            g.setColour (chipFill);
+            g.fillRoundedRectangle (chipR, 2.5f);
+            g.setColour (juce::Colour (0xff0a0a0c));
+            g.drawRoundedRectangle (chipR, 2.5f, 0.6f);
+            g.setColour (juce::Colours::white);
+            g.setFont (juce::Font (juce::FontOptions (9.5f, juce::Font::bold)));
+            g.drawText (chip, chipR, juce::Justification::centred, false);
         }
+
+        // Text always white, centered in the remaining space (offset
+        // right of the LED so the visual centre lands on the pill).
+        g.setColour (juce::Colours::white);
+        g.setFont (juce::Font (juce::FontOptions (10.5f, juce::Font::bold)));
+        auto textBounds = r;
+        textBounds.removeFromLeft (ledSize + 8.0f);
+        textBounds.removeFromRight (4.0f + chipReserve);
+        g.drawText (text, textBounds, juce::Justification::centred, false);
     }
 
-    void mouseDown (const juce::MouseEvent&) override
+    void mouseDown (const juce::MouseEvent& e) override
     {
-        if (toggleFn) toggleFn();
-        repaint();
+        if (e.mods.isPopupMenu())   // right-click
+        {
+            if (pickFn) pickFn();
+        }
+        else                         // left-click
+        {
+            if (toggleFn) toggleFn();
+            repaint();
+        }
     }
 
 private:
     std::function<bool()> isEnabledFn;
     std::function<void()> toggleFn;
+    std::function<void()> pickFn;
+    juce::String text { "COMP" };
+    juce::String chip;                                  // empty = no chip
+    juce::Colour accent { juce::Colours::transparentBlack };
 };
 
 namespace
@@ -202,11 +264,11 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     };
     addAndMakeVisible (nameLabel);
 
-    // ── HPF row label (now the first row inside the EQ block, styled like
-    // the band row labels: centred, 12 pt bold, accent colour) ──
+    // ── Top filter section: HPF + LPF, white-faced (SSL 9000 J grammar).
+    const auto filterWhite = juce::Colour (sslEqColors::kFilterWhite);
     hpfLabel.setText ("HPF", juce::dontSendNotification);
     hpfLabel.setJustificationType (juce::Justification::centred);
-    hpfLabel.setColour (juce::Label::textColourId, juce::Colour (sslEqColors::kHpfBlue).brighter (0.2f));
+    hpfLabel.setColour (juce::Label::textColourId, filterWhite);
     hpfLabel.setFont (juce::Font (juce::FontOptions (12.0f, juce::Font::bold)));
     addAndMakeVisible (hpfLabel);
 
@@ -214,7 +276,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     hpfKnob.setSkewFactorFromMidPoint (80.0);
     hpfKnob.setDoubleClickReturnValue (true, ChannelStripParams::kHpfOffHz);
     hpfKnob.setTooltip ("HPF cutoff (turn fully down to bypass)");
-    styleCompactKnob (hpfKnob, juce::Colour (sslEqColors::kHpfBlue));
+    styleCompactKnob (hpfKnob, filterWhite);
     enableValueLabel (hpfKnob, "", 0);
     hpfKnob.textFromValueFunction = [] (double v) -> juce::String
     {
@@ -226,48 +288,78 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     hpfKnob.addMouseListener (this, false);
     addAndMakeVisible (hpfKnob);
 
-    // ── EQ region ──
-    eqHeaderLabel.setText ("EQ", juce::dontSendNotification);
-    eqHeaderLabel.setJustificationType (juce::Justification::centredLeft);
-    eqHeaderLabel.setColour (juce::Label::textColourId, juce::Colour (0xffd0d0d0));
-    eqHeaderLabel.setFont (juce::Font (juce::FontOptions (10.5f, juce::Font::bold)));
-    addAndMakeVisible (eqHeaderLabel);
+    lpfLabel.setText ("LPF", juce::dontSendNotification);
+    lpfLabel.setJustificationType (juce::Justification::centred);
+    lpfLabel.setColour (juce::Label::textColourId, filterWhite);
+    lpfLabel.setFont (juce::Font (juce::FontOptions (12.0f, juce::Font::bold)));
+    addAndMakeVisible (lpfLabel);
 
-    eqTypeButton.setClickingTogglesState (true);
-    eqTypeButton.setToggleState (track.strip.eqBlackMode.load (std::memory_order_relaxed),
-                                  juce::dontSendNotification);
-    eqTypeButton.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff5a3a20));   // brown
-    eqTypeButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff202020));   // black
-    eqTypeButton.setColour (juce::TextButton::textColourOffId,  juce::Colours::white);
-    eqTypeButton.setColour (juce::TextButton::textColourOnId,   juce::Colours::white);
-    eqTypeButton.setTooltip ("Brown (E-series) / Black (G-series)");
-    eqTypeButton.onClick = [this]
+    lpfKnob.setRange (ChannelStripParams::kLpfMinHz, ChannelStripParams::kLpfMaxHz, 1.0);
+    lpfKnob.setSkewFactorFromMidPoint (8000.0);
+    lpfKnob.setDoubleClickReturnValue (true, ChannelStripParams::kLpfOffHz);
+    lpfKnob.setTooltip ("LPF cutoff (turn fully up to bypass)");
+    styleCompactKnob (lpfKnob, filterWhite);
+    enableValueLabel (lpfKnob, "", 0);
+    lpfKnob.textFromValueFunction = [] (double v) -> juce::String
     {
-        const bool isBlack = eqTypeButton.getToggleState();
-        track.strip.eqBlackMode.store (isBlack, std::memory_order_relaxed);
-        refreshEqTypeButton();
+        if (v >= ChannelStripParams::kLpfOffHz - 0.5) return "OFF";
+        return formatFrequency (v);
     };
-    refreshEqTypeButton();
-    addAndMakeVisible (eqTypeButton);
+    lpfKnob.setValue (track.strip.lpfFreq.load (std::memory_order_relaxed), juce::dontSendNotification);
+    lpfKnob.onValueChange = [this] { onLpfKnobChanged(); };
+    addAndMakeVisible (lpfKnob);
+
+    // ── EQ type chip (E/G) — small toggle that lives mid-strip between
+    // the HM and LM rows in the freq column. Replaces the chip that
+    // used to sit on the EQ header pill so the type indicator is more
+    // prominent on the EQ panel itself.
+    eqTypeChip.setMouseClickGrabsKeyboardFocus (false);
+    eqTypeChip.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff5a3a20));   // brown default
+    eqTypeChip.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff202024));   // black when G
+    eqTypeChip.setColour (juce::TextButton::textColourOffId,  juce::Colours::white);
+    eqTypeChip.setColour (juce::TextButton::textColourOnId,   juce::Colours::white);
+    eqTypeChip.setClickingTogglesState (true);
+    eqTypeChip.setTooltip ("EQ type: E (Brown) / G (Black)");
+    eqTypeChip.setToggleState (track.strip.eqBlackMode.load (std::memory_order_relaxed),
+                                 juce::dontSendNotification);
+    eqTypeChip.setButtonText (eqTypeChip.getToggleState() ? "G" : "E");
+    eqTypeChip.onClick = [this]
+    {
+        const bool nowBlack = eqTypeChip.getToggleState();
+        track.strip.eqBlackMode.store (nowBlack, std::memory_order_relaxed);
+        eqTypeChip.setButtonText (nowBlack ? "G" : "E");
+    };
+    addAndMakeVisible (eqTypeChip);
+
+    // ── EQ region ──
+    // Single EQ header button — same grammar as COMP. Left-click
+    // toggles eqEnabled; right-click pops the EQ-type picker
+    // (Brown E / Black G). Built-in green LED illuminates when
+    // engaged (auto-armed on first knob touch); text always white.
+    // Replaces the prior [LED] + label + [E/G pill] triple.
+    eqHeaderBtn = std::make_unique<CompHeaderButton> (
+        [this] { return track.strip.eqEnabled.load (std::memory_order_relaxed); },
+        [this]
+        {
+            const bool now = ! track.strip.eqEnabled.load (std::memory_order_relaxed);
+            track.strip.eqEnabled.store (now, std::memory_order_release);
+            if (eqHeaderBtn != nullptr) eqHeaderBtn->repaint();
+        },
+        [this] { showEqTypeMenu(); });
+    eqHeaderBtn->setLabelText ("EQ");
+    eqHeaderBtn->setTooltip ("Left-click to enable / disable. Right-click to choose type (Brown E / Black G).");
+    addAndMakeVisible (eqHeaderBtn.get());
 
     // ── COMP region ──
-    // Header acts as both the mode picker AND the on/off indicator. Text
-    // shows the active mode (OPTO/FET/VCA). Click opens a popup menu with
-    // Off / Opto / FET / VCA. Background fills gold when the comp is
-    // engaged, sits dark when bypassed. Touching any knob auto-engages.
-    compModeButton.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff202024));
-    compModeButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xffd09060));
-    compModeButton.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xffd09060));
-    compModeButton.setColour (juce::TextButton::textColourOnId,   juce::Colour (0xff121214));
-    compModeButton.setTooltip ("Compressor mode (click to pick: Off / Opto / FET / VCA). "
-                                "Lit gold when the comp is engaged.");
-    compModeButton.onClick = [this] { showCompModeMenu(); };
-    addAndMakeVisible (compModeButton);
-
-    compBypassLed = std::make_unique<CompBypassLed> (
+    // Single COMP header button: left-click enables/disables, right-
+    // click opens the mode picker. Shows "COMP" until the user picks
+    // a mode, then shows the mode name (OPTO/FET/VCA). Built-in green
+    // LED illuminates when the comp is engaged. Text always white.
+    compModeButton = std::make_unique<CompHeaderButton> (
         [this] { return track.strip.compEnabled.load (std::memory_order_relaxed); },
-        [this] { setCompEnabled (! track.strip.compEnabled.load (std::memory_order_relaxed)); });
-    addAndMakeVisible (compBypassLed.get());
+        [this] { setCompEnabled (! track.strip.compEnabled.load (std::memory_order_relaxed)); },
+        [this] { showCompModeMenu(); });
+    addAndMakeVisible (compModeButton.get());
 
     refreshCompModeButtonState();
     refreshCompKnobVisibility();
@@ -302,9 +394,18 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     setupCompKnob (optoPeakRedKnob, optoPeakRedLabel, "PEAK",
                    0.0, 100.0, 30.0, 0.0, "Peak Reduction (%)",
                    track.strip.compOptoPeakRed, "", 0);
-    setupCompKnob (optoGainKnob, optoGainLabel, "GAIN",
-                   0.0, 100.0, 50.0, 0.0, "Output gain (% - 50 = unity)",
+    setupCompKnob (optoGainKnob, optoGainLabel, "MAK",
+                   0.0, 100.0, 50.0, 0.0, "Output gain (50 % = unity = 0 dB)",
                    track.strip.compOptoGain, "", 0);
+    // Display the OPTO gain in dB (matches the popup editor's GAIN knob).
+    // Storage stays in percent (0..100, 50 = unity) per the donor's
+    // opto_gain parameter contract: dB = (pct - 50) / 2.5.
+    optoGainKnob.textFromValueFunction = [] (double pct) -> juce::String
+    {
+        const double db = (pct - 50.0) / 2.5;
+        return juce::String (db, 1) + " dB";
+    };
+    optoGainKnob.updateText();
     // Comp threshold + makeup right-click hooks. Each per-mode "threshold-
     // ish" / "makeup-ish" knob routes to the same logical MIDI Learn
     // target so one binding tracks the user's mode switches.
@@ -335,16 +436,16 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     // ── FET knobs (1176: in/out/atk/rel + ratio button row) ──
     setupCompKnob (fetInputKnob,   fetInputLabel,   "IN",
                    -20.0, 40.0, 0.0, 0.0, "Input drive (dB)",
-                   track.strip.compFetInput, "", 1);
-    setupCompKnob (fetOutputKnob,  fetOutputLabel,  "OUT",
+                   track.strip.compFetInput, " dB", 1);
+    setupCompKnob (fetOutputKnob,  fetOutputLabel,  "MAK",
                    -20.0, 20.0, 0.0, 0.0, "Output gain (dB)",
-                   track.strip.compFetOutput, "", 1);
+                   track.strip.compFetOutput, " dB", 1);
     setupCompKnob (fetAttackKnob,  fetAttackLabel,  "ATK",
                    0.02, 80.0, 0.2, 0.5, "Attack (ms)",
-                   track.strip.compFetAttack, "", 2);
+                   track.strip.compFetAttack, " ms", 2);
     setupCompKnob (fetReleaseKnob, fetReleaseLabel, "REL",
                    50.0, 1100.0, 400.0, 300.0, "Release (ms)",
-                   track.strip.compFetRelease, "", 0);
+                   track.strip.compFetRelease, " ms", 0);
     fetInputKnob .addMouseListener (this, false);
     fetOutputKnob.addMouseListener (this, false);
     addAndMakeVisible (fetInputKnob);   addAndMakeVisible (fetInputLabel);
@@ -392,13 +493,14 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
                    track.strip.compVcaRatio, ":1", 1);
     setupCompKnob (vcaAttackKnob,  vcaAttackLabel,  "ATK",
                    0.1, 50.0, 1.0, 5.0, "Attack (ms)",
-                   track.strip.compVcaAttack, "", 1);
+                   track.strip.compVcaAttack, " ms", 1);
     setupCompKnob (vcaReleaseKnob, vcaReleaseLabel, "REL",
                    10.0, 5000.0, 100.0, 200.0, "Release (ms)",
-                   track.strip.compVcaRelease, "", 0);
-    setupCompKnob (vcaOutputKnob,  vcaOutputLabel,  "OUT",
+                   track.strip.compVcaRelease, " ms", 0);
+    setupCompKnob (vcaOutputKnob,  vcaOutputLabel,  "MAK",
                    -20.0, 20.0, 0.0, 0.0, "Output gain (dB)",
-                   track.strip.compVcaOutput, "", 1);
+                   track.strip.compVcaOutput, " dB", 1);
+
     vcaOutputKnob.addMouseListener (this, false);
     addAndMakeVisible (vcaRatioKnob);    addAndMakeVisible (vcaRatioLabel);
     addAndMakeVisible (vcaAttackKnob);   addAndMakeVisible (vcaAttackLabel);
@@ -407,6 +509,48 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
 
     // Vertical comp metering with threshold drag-handle (Mixbus-style).
     compMeter = std::make_unique<CompMeterStrip> (track);
+    // Experimental track-3 fader-side layout: hide the IN bar (the main
+    // level meter already shows it) but keep the threshold-drag triangle
+    // handle so the engineer can still set the comp threshold from the
+    // strip. GR bar stays slim — column width sized accordingly below.
+    if (usesFaderThresholdLayout())
+    {
+        compMeter->setShowInputBar (false);
+        compMeter->setHandleVisible (true);   // pure-GR + handle stays
+        // Handle on the RIGHT side of the GR bar — keeps the bar's left
+        // edge clean against the main meter glued to it on the left.
+        compMeter->setHandleOnRight (true);
+        // Lock the threshold-drag range to the level-meter scale's visible
+        // range (no +6 headroom, no +12 VCA neutral extension) so the
+        // triangle handle's y position is 1:1 with the fader scale: drag
+        // to -18 dB and the handle sits on the "-18" tick of the fader
+        // scale. VCA's +12 "no compression" neutral can still be reached
+        // via the COMP editor's threshold rotary if needed.
+        compMeter->setRangeDb (-60.0f, 0.0f);
+        // Note: fader-side overrides (NoTextBox + restricted range) are
+        // applied AFTER the default fader setup further down in the
+        // ctor (search for "Track-3 fader overrides") — otherwise the
+        // default block clobbers them.
+        // Drop unit suffixes on the single-row FET / VCA comp knobs so
+        // the value text ("0.0", "0.20", "400", "4.0") fits in the narrow
+        // 4-knob cell width. Units already implied by the RAT/OUT/ATK/REL
+        // header labels.
+        for (auto* k : { &fetOutputKnob, &fetAttackKnob, &fetReleaseKnob,
+                         &vcaRatioKnob, &vcaAttackKnob, &vcaReleaseKnob, &vcaOutputKnob })
+        {
+            k->setTextValueSuffix ("");
+            k->updateText();
+        }
+    }
+    // Track-3 always shows the AUX-sends row beneath COMP, regardless of
+    // mixingMode (which gates aux visibility on other strips). Forced
+    // visible at ctor so the row appears on the first paint.
+    if (usesFaderThresholdLayout())
+    {
+        for (auto& l : auxIndexLabels) l.setVisible (true);
+        for (auto& k : auxKnobs)       if (k != nullptr) k->setVisible (true);
+        for (auto& l : auxKnobLabels)  l.setVisible (true);
+    }
     addAndMakeVisible (compMeter.get());
 
     startTimerHz (30);  // input + GR meter refresh on the main strip
@@ -435,9 +579,14 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         {
             auto* atomicPtr = spec.gainPtr (track.strip);
             auto* knob = row.gain.get();
-            knob->onValueChange = [knob, atomicPtr]
+            auto* eqEnabledPtr = &track.strip.eqEnabled;
+            knob->onValueChange = [knob, atomicPtr, eqEnabledPtr]
             {
                 atomicPtr->store ((float) knob->getValue(), std::memory_order_relaxed);
+                // Auto-arm: touching any EQ-band knob engages the EQ.
+                // Off by default (Session.h) so the LED only lights once
+                // the engineer actually shapes the sound.
+                eqEnabledPtr->store (true, std::memory_order_release);
             };
         }
         // Mouse listener so the strip's mouseDown handler can route a
@@ -476,9 +625,11 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
             {
                 auto* atomicPtr = spec.qPtr (track.strip);
                 auto* knob = row.q.get();
-                knob->onValueChange = [knob, atomicPtr]
+                auto* eqEnabledPtr = &track.strip.eqEnabled;
+                knob->onValueChange = [knob, atomicPtr, eqEnabledPtr]
                 {
                     atomicPtr->store ((float) knob->getValue(), std::memory_order_relaxed);
+                    eqEnabledPtr->store (true, std::memory_order_release);
                 };
             }
             addAndMakeVisible (row.q.get());
@@ -492,9 +643,11 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         {
             auto* atomicPtr = spec.freqPtr (track.strip);
             auto* knob = row.freq.get();
-            knob->onValueChange = [knob, atomicPtr]
+            auto* eqEnabledPtr = &track.strip.eqEnabled;
+            knob->onValueChange = [knob, atomicPtr, eqEnabledPtr]
             {
                 atomicPtr->store ((float) knob->getValue(), std::memory_order_relaxed);
+                eqEnabledPtr->store (true, std::memory_order_release);
             };
         }
         addAndMakeVisible (row.freq.get());
@@ -545,6 +698,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         return (v < 0 ? "L" : "R") + juce::String (pct);
     };
     panKnob.setValue (track.strip.pan.load (std::memory_order_relaxed), juce::dontSendNotification);
+    panKnob.updateText();   // force "C" / "L<pct>" / "R<pct>" via textFromValueFunction at init
     panKnob.onValueChange = [this]
     {
         track.strip.pan.store ((float) panKnob.getValue(), std::memory_order_relaxed);
@@ -566,6 +720,11 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     // No "dB" suffix - strip is narrow enough that "0.0 dB" truncates.
     // The dB scale column to the right of the meter makes the unit obvious.
     faderSlider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 50, 16);
+    // Borderless value box — matches the rotary-knob textbox grammar so the
+    // fader number reads as text-only instead of a framed pill.
+    faderSlider.setColour (juce::Slider::textBoxBackgroundColourId, juce::Colours::transparentBlack);
+    faderSlider.setColour (juce::Slider::textBoxOutlineColourId,    juce::Colours::transparentBlack);
+    faderSlider.setColour (juce::Slider::textBoxTextColourId,       juce::Colour (0xffd8d8d8));
     faderSlider.setTooltip ("Channel fader (dB) - double-click to reset to 0 dB");
     faderSlider.onValueChange = [this]
     {
@@ -635,6 +794,58 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     faderSlider.addMouseListener (this, false);
     addAndMakeVisible (faderSlider);
 
+    // Track-3 fader overrides — applied AFTER the default range / textbox
+    // setup above so they aren't clobbered. Restricts range to the
+    // visible scale (-90 .. +6) and uses the on-fader labels instead of
+    // a textbox.
+    if (usesFaderThresholdLayout())
+    {
+        faderSlider.getProperties().set ("dusk_drawFaderScaleLabels", true);
+        // NO textbox inside the slider — at min value the cap (36 px tall)
+        // would always overlap a textbox hosted inside the slider's
+        // bounds (textbox is 14 px tall, can't escape the cap geometry).
+        // Use a separate faderValueLabel positioned below the slider in
+        // resized(), updated from onValueChange below.
+        faderSlider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+        faderSlider.setRange (-90.0, 6.0, 0.1);
+        faderSlider.setSkewFactorFromMidPoint (-12.0);
+        const float curDb = track.strip.faderDb.load (std::memory_order_relaxed);
+        faderSlider.setValue (juce::jlimit (-90.0, 6.0, (double) curDb),
+                                 juce::dontSendNotification);
+
+        // Configure the standalone value readout.
+        faderValueLabel.setJustificationType (juce::Justification::centred);
+        faderValueLabel.setColour (juce::Label::textColourId,
+                                     juce::Colour (0xffd8d8d8));
+        faderValueLabel.setColour (juce::Label::backgroundColourId,
+                                     juce::Colours::transparentBlack);
+        faderValueLabel.setColour (juce::Label::outlineColourId,
+                                     juce::Colours::transparentBlack);
+        faderValueLabel.setFont (juce::Font (juce::FontOptions (
+            juce::Font::getDefaultMonospacedFontName(), 14.0f, juce::Font::bold)));
+        auto formatDb = [] (double db) -> juce::String
+        {
+            return (db <= -89.95) ? juce::String ("off")
+                                  : juce::String (db, 1);
+        };
+        faderValueLabel.setText (formatDb (faderSlider.getValue()),
+                                   juce::dontSendNotification);
+        addAndMakeVisible (faderValueLabel);
+
+        // Update the standalone label whenever the slider value changes
+        // (drag, automation, programmatic setValue). Chain onto the
+        // existing onValueChange handler set earlier in the ctor —
+        // capture it so the original behaviour (atom store, group
+        // propagation) still runs.
+        const auto previousOnChange = faderSlider.onValueChange;
+        faderSlider.onValueChange = [this, previousOnChange, formatDb]
+        {
+            if (previousOnChange) previousOnChange();
+            faderValueLabel.setText (formatDb (faderSlider.getValue()),
+                                       juce::dontSendNotification);
+        };
+    }
+
     muteButton.setClickingTogglesState (true);
     muteButton.setColour (juce::TextButton::buttonOnColourId, juce::Colours::orangered);
     muteButton.setToggleState (track.strip.mute.load (std::memory_order_relaxed), juce::dontSendNotification);
@@ -700,6 +911,10 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
                                 "fader+pan moves; TOUCH replays until you grab a "
                                 "control, then captures while held.");
     autoModeButton.onClick = [this] { showAutoModeMenu(); };
+    // Borderless: same grammar as the other strip labels — text only,
+    // mode colour applied to the text via refreshAutoModeButton().
+    autoModeButton.setColour (juce::TextButton::buttonColourId,   juce::Colours::transparentBlack);
+    autoModeButton.setColour (juce::TextButton::buttonOnColourId, juce::Colours::transparentBlack);
     addAndMakeVisible (autoModeButton);
     refreshAutoModeButton();
     displayedLiveFaderDb = track.strip.liveFaderDb.load (std::memory_order_relaxed);
@@ -708,7 +923,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     // ── Peak input level readout ──
     inputPeakLabel.setJustificationType (juce::Justification::centred);
     inputPeakLabel.setColour (juce::Label::textColourId, juce::Colour (0xffd0d0d0));
-    inputPeakLabel.setColour (juce::Label::backgroundColourId, juce::Colour (0xff0a0a0c));
+    inputPeakLabel.setColour (juce::Label::backgroundColourId, juce::Colours::transparentBlack);
     // No outline - the label sat next to the fader's value textbox and the
     // 1 px border drew on top of the textbox edge, looking like overlap.
     inputPeakLabel.setColour (juce::Label::outlineColourId,    juce::Colours::transparentBlack);
@@ -723,7 +938,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     // comp-section indicator distinct from the input level.
     grPeakLabel.setJustificationType (juce::Justification::centred);
     grPeakLabel.setColour (juce::Label::textColourId,        juce::Colour (0xffe0c050));
-    grPeakLabel.setColour (juce::Label::backgroundColourId,  juce::Colour (0xff0a0a0c));
+    grPeakLabel.setColour (juce::Label::backgroundColourId,  juce::Colours::transparentBlack);
     grPeakLabel.setColour (juce::Label::outlineColourId,     juce::Colours::transparentBlack);
     grPeakLabel.setFont (juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(),
                                                           12.0f, juce::Font::bold)));
@@ -731,6 +946,38 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     grPeakLabel.setTooltip ("Gain reduction in dB (negative = comp pulling down). "
                              "Goes inert when the comp is bypassed.");
     addAndMakeVisible (grPeakLabel);
+
+    // Track-3 fader-side GR numeric readout — mirrors grPeakLabel's
+    // styling so it reads as the same UI element, just attached to the
+    // fader-side slim LED instead of the COMP section. Hidden by default;
+    // resized() flips it on when the layout is active.
+    grReadoutLabel.setJustificationType (juce::Justification::centred);
+    grReadoutLabel.setColour (juce::Label::textColourId,        juce::Colour (0xffe0c050));
+    grReadoutLabel.setColour (juce::Label::backgroundColourId,  juce::Colours::transparentBlack);
+    grReadoutLabel.setColour (juce::Label::outlineColourId,     juce::Colours::transparentBlack);
+    grReadoutLabel.setFont (juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(),
+                                                              12.0f, juce::Font::bold)));
+    grReadoutLabel.setMinimumHorizontalScale (1.0f);
+    grReadoutLabel.setText ("0.0", juce::dontSendNotification);
+    grReadoutLabel.setTooltip ("Gain reduction in dB. Inert while the comp is bypassed.");
+    grReadoutLabel.setVisible (false);
+    addAndMakeVisible (grReadoutLabel);
+
+    // Track-3 fader-side layout: the bottom-row readouts live in a far
+    // narrower column than the default kPeakColumnW slot, so the 12-pt
+    // monospaced font (chosen for the wider default layout) truncates
+    // "-13.5"/"-inf" with an ellipsis. Override AFTER the default setup
+    // so these stick; small font + permissive horizontal scale so JUCE
+    // squishes to fit instead of clipping.
+    if (usesFaderThresholdLayout())
+    {
+        const juce::Font readoutFont (juce::FontOptions (
+            juce::Font::getDefaultMonospacedFontName(), 11.0f, juce::Font::bold));
+        inputPeakLabel.setFont (readoutFont);
+        inputPeakLabel.setMinimumHorizontalScale (0.40f);
+        grReadoutLabel.setFont (readoutFont);
+        grReadoutLabel.setMinimumHorizontalScale (0.40f);
+    }
 
     // "THR" label sits above CompMeterStrip's drag handle so the engineer
     // sees what the triangle pointer controls. Same gold tone as the COMP
@@ -966,11 +1213,38 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     for (int i = 0; i < ChannelStripParams::kNumAuxSends; ++i)
     {
         auto& lbl = auxIndexLabels[(size_t) i];
-        lbl.setText (juce::String ("AUX") + juce::String (i + 1), juce::dontSendNotification);
+        // Read the current aux-lane name from session (defaults to "AUX 1"
+        // .. "AUX 4" on a fresh session — see Session::Session()).
+        lbl.setText (session.auxLane (i).name, juce::dontSendNotification);
         lbl.setJustificationType (juce::Justification::centred);
         lbl.setColour (juce::Label::textColourId, kAuxColours[i].brighter (0.2f));
         lbl.setFont (juce::Font (juce::FontOptions (8.5f, juce::Font::bold)));
-        addChildComponent (lbl);
+        lbl.setMinimumHorizontalScale (0.5f);     // shrink-to-fit on narrow columns
+        lbl.setTooltip ("Double-click to rename this AUX send (e.g. \"Reverb\", \"Delay\"). "
+                          "Renames the aux lane globally so all channel strips show the same name.");
+        lbl.setEditable (false, true, false);
+        lbl.setColour (juce::Label::backgroundWhenEditingColourId, juce::Colour (0xff202024));
+        lbl.setColour (juce::Label::textWhenEditingColourId,       juce::Colours::white);
+        lbl.onTextChange = [this, i]
+        {
+            auto& lblRef = auxIndexLabels[(size_t) i];
+            auto txt = lblRef.getText().trim();
+            if (txt.isEmpty())
+            {
+                // Empty rename — revert to the existing session name.
+                lblRef.setText (session.auxLane (i).name, juce::dontSendNotification);
+                return;
+            }
+            constexpr int kAuxNameMaxChars = 12;
+            if (txt.length() > kAuxNameMaxChars)
+                txt = txt.substring (0, kAuxNameMaxChars);
+            session.auxLane (i).name = txt;
+            lblRef.setText (txt, juce::dontSendNotification);
+        };
+        if (usesFaderThresholdLayout())
+            addAndMakeVisible (lbl);
+        else
+            addChildComponent (lbl);
     }
 
     auto formatAuxSend = [] (float dB)
@@ -1026,14 +1300,20 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         // Route right-clicks on the aux knob through the strip's mouseDown
         // so MIDI Learn picks up `e.eventComponent == auxKnobs[i].get()`.
         knob->addMouseListener (this, false);
-        addChildComponent (knob.get());
+        if (usesFaderThresholdLayout())
+            addAndMakeVisible (knob.get());
+        else
+            addChildComponent (knob.get());
         auxKnobs[(size_t) i] = std::move (knob);
 
         auxKnobLabels[(size_t) i].setJustificationType (juce::Justification::centred);
         auxKnobLabels[(size_t) i].setFont (juce::Font (juce::FontOptions (9.0f, juce::Font::bold)));
         auxKnobLabels[(size_t) i].setColour (juce::Label::textColourId, kAuxColours[i].brighter (0.2f));
         auxKnobLabels[(size_t) i].setText (formatAuxSend (initial), juce::dontSendNotification);
-        addChildComponent (auxKnobLabels[(size_t) i]);
+        if (usesFaderThresholdLayout())
+            addAndMakeVisible (auxKnobLabels[(size_t) i]);
+        else
+            addChildComponent (auxKnobLabels[(size_t) i]);
     }
 
     // Insert slot button. Empty state shows "Insert"; plugin loaded
@@ -1049,10 +1329,21 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         "open the routing editor."));
     pluginSlotButton.onClick = [this]
     {
-        if (! pluginSlot.isLoaded())
-            openPluginPicker();
-        else
+        if (pluginSlot.isLoaded())
+        {
             togglePluginEditor();
+            return;
+        }
+        // Empty slot may already be in Hardware mode (user picked HW
+        // earlier, then clicked the slot again to revisit routing).
+        // Route straight to the HW editor instead of showing the
+        // insert-kind chooser again.
+        const auto mode = engine.getChannelStrip (trackIndex)
+                                  .insertMode.load (std::memory_order_acquire);
+        if (mode == ChannelStrip::kInsertHardware)
+            openHardwareInsertEditor();
+        else
+            openPluginPicker();
     };
     pluginSlotButton.onRightClick = [this] (const juce::MouseEvent&)
     {
@@ -1061,19 +1352,24 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     addAndMakeVisible (pluginSlotButton);
 
     // Compact-mode placeholder buttons. Hidden by default; setCompactMode(true)
-    // makes them visible and hides the full inline EQ + COMP controls.
+    // makes them visible and hides the full inline EQ + COMP + AUX controls.
     styleCompactSectionButton (eqCompactButton,   juce::Colour (fourKColors::kLfGreen));
     styleCompactSectionButton (compCompactButton, juce::Colour (fourKColors::kCompGold));
+    styleCompactSectionButton (auxCompactButton,  juce::Colour (0xff9080c0));   // SEND violet
     eqCompactButton  .setButtonText ("EQ");
     compCompactButton.setButtonText ("COMP");
+    auxCompactButton .setButtonText ("AUX");
     eqCompactButton  .setTooltip ("Click to open the EQ editor (click again to close). "
                                     "Button is illuminated when the section is enabled.");
     compCompactButton.setTooltip ("Click to open the compressor editor (click again to close). "
                                     "Button is illuminated when the section is enabled.");
+    auxCompactButton .setTooltip ("Click to open the AUX sends panel (click again to close).");
     eqCompactButton  .onClick = [this] { openEqEditorPopup(); };
     compCompactButton.onClick = [this] { openCompEditorPopup(); };
+    auxCompactButton .onClick = [this] { openAuxEditorPopup(); };
     addChildComponent (eqCompactButton);    // hidden until compact mode flips on
     addChildComponent (compCompactButton);
+    addChildComponent (auxCompactButton);
 
     // Accessibility floor (deeper a11y pass — names every user-driven
     // control on the strip so screen readers announce intent, not just
@@ -1088,7 +1384,8 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     monitorButton.setTitle ("Track " + tn + " input monitor");
     printButton .setTitle ("Track " + tn + " print effects on record");
     hpfKnob     .setTitle ("Track " + tn + " high-pass filter frequency");
-    eqTypeButton.setTitle ("Track " + tn + " EQ type");
+    lpfKnob     .setTitle ("Track " + tn + " low-pass filter frequency");
+    if (eqHeaderBtn != nullptr) eqHeaderBtn->setTitle ("Track " + tn + " EQ enable / type");
     pluginSlotButton.setTitle ("Track " + tn + " insert slot");
     for (size_t i = 0; i < auxKnobs.size(); ++i)
         if (auxKnobs[i] != nullptr)
@@ -1108,6 +1405,11 @@ ChannelStripComponent::~ChannelStripComponent()
     // lingering through the next message-loop tick.
     if (auto* eq   = activeEqBox.getComponent())   eq->dismiss();
     if (auto* cmp  = activeCompBox.getComponent()) cmp->dismiss();
+    if (auto* aux  = activeAuxBox.getComponent())  aux->dismiss();
+    // I/O popup holds references to this strip's modeSelector / inputSelector
+    // children — must dismiss before the strip dies so the CallOutBox + its
+    // re-parented controls tear down cleanly.
+    if (auto* io   = activeIoBox.getComponent())   io->dismiss();
     // Drop the cached editor BEFORE the strip's PluginSlot destructs,
     // since the editor's destructor calls editorBeingDeleted on its
     // owning AudioProcessor. dropPluginEditor() also closes the modal.
@@ -1190,8 +1492,10 @@ void ChannelStripComponent::setEqSectionVisible (bool visible)
 {
     hpfKnob.setVisible (visible);
     hpfLabel.setVisible (visible);
-    eqHeaderLabel.setVisible (visible);
-    eqTypeButton.setVisible (visible);
+    lpfKnob.setVisible (visible);
+    lpfLabel.setVisible (visible);
+    eqTypeChip.setVisible (visible);
+    if (eqHeaderBtn != nullptr) eqHeaderBtn->setVisible (visible);
     for (auto& row : eqRows)
     {
         if (row.gain) row.gain->setVisible (visible);
@@ -1206,8 +1510,7 @@ void ChannelStripComponent::setEqSectionVisible (bool visible)
 
 void ChannelStripComponent::setCompSectionVisible (bool visible)
 {
-    compModeButton.setVisible (visible);
-    if (compBypassLed != nullptr) compBypassLed->setVisible (visible);
+    if (compModeButton != nullptr) compModeButton->setVisible (visible);
     optoPeakRedKnob .setVisible (visible);  optoPeakRedLabel.setVisible (visible);
     optoGainKnob    .setVisible (visible);  optoGainLabel   .setVisible (visible);
     optoLimitButton .setVisible (visible);
@@ -1239,6 +1542,13 @@ void ChannelStripComponent::setCompSectionVisible (bool visible)
     }
 }
 
+void ChannelStripComponent::setAuxSectionVisible (bool visible)
+{
+    for (auto& l : auxIndexLabels)  l.setVisible (visible);
+    for (auto& k : auxKnobs)        if (k != nullptr) k->setVisible (visible);
+    for (auto& l : auxKnobLabels)   l.setVisible (visible);
+}
+
 void ChannelStripComponent::setCompactMode (bool compact)
 {
     if (compactMode == compact) return;
@@ -1248,6 +1558,21 @@ void ChannelStripComponent::setCompactMode (bool compact)
     setCompSectionVisible (! compact);
     eqCompactButton  .setVisible (compact);
     compCompactButton.setVisible (compact);
+
+    // AUX row only exists when mixingMode is on OR this is track-3's always-
+    // visible fader-side layout. In compact mode the inline knobs collapse
+    // to a single AUX button regardless of which path put them on screen.
+    const bool auxRowAvailable = mixingMode || usesFaderThresholdLayout();
+    if (compact && auxRowAvailable)
+    {
+        setAuxSectionVisible (false);
+        auxCompactButton.setVisible (true);
+    }
+    else
+    {
+        auxCompactButton.setVisible (false);
+        setAuxSectionVisible (auxRowAvailable);
+    }
 
     resized();
     repaint();
@@ -1271,9 +1596,17 @@ void ChannelStripComponent::setMixingMode (bool mixing)
     armButton          .setVisible (! mixing);
     printButton        .setVisible (! mixing);
 
-    for (auto& l : auxIndexLabels)  l.setVisible (mixing);
-    for (auto& k : auxKnobs)        if (k != nullptr) k->setVisible (mixing);
-    for (auto& l : auxKnobLabels)   l.setVisible (mixing);
+    const bool showAux = mixing || usesFaderThresholdLayout();
+    if (showAux && compactMode)
+    {
+        setAuxSectionVisible (false);
+        auxCompactButton.setVisible (true);
+    }
+    else
+    {
+        setAuxSectionVisible (showAux);
+        auxCompactButton.setVisible (false);
+    }
 
     if (mixing)
         refreshInputSelectorVisibility();   // not needed since selectors are hidden,
@@ -1289,7 +1622,7 @@ void ChannelStripComponent::setMixingMode (bool mixing)
 //   • Click while the OTHER popup is open → close the other, open this one
 // The mutual-exclusion path lets the user move quickly between EQ and COMP
 // without first having to dismiss the open dialog manually.
-void ChannelStripComponent::openPluginPicker()
+void ChannelStripComponent::openPluginPicker (bool useChooser)
 {
     // MIDI tracks need an instrument plugin (synth / sampler) - the strip
     // routes per-track MIDI events into the slot. Mono / Stereo tracks
@@ -1308,10 +1641,13 @@ void ChannelStripComponent::openPluginPicker()
             self->openHardwareInsertEditor();
     };
 
-    pluginpicker::openPickerMenu (pluginSlot,
-                                    pluginSlotButton,
-                                    activePluginChooser,
-                                    [safe]
+    // Two-step flow: chooser modal first (Hardware / Soundfont / Plugin)
+    // so the plugin list isn't the user's only path. Picking "Plugin"
+    // from the chooser routes to the existing openPickerMenu — same
+    // callbacks below. The right-click "Replace plugin..." path passes
+    // useChooser=false: the user is already committed to a plugin, so
+    // skip the chooser and jump straight to the plugin list.
+    auto onChange = [safe]
                                     {
                                         auto* self = safe.getComponent();
                                         if (self == nullptr) return;
@@ -1361,10 +1697,31 @@ void ChannelStripComponent::openPluginPicker()
                                                     ss->openPluginEditor();
                                             });
                                         });
-                                    },
-                                    kind,
-                                    juce::Point<int> { -1, -1 },
-                                    std::move (openHwEditor));
+                                    };
+
+    if (useChooser)
+    {
+        pluginpicker::openInsertChooser (pluginSlot,
+                                          pluginSlotButton,
+                                          activePluginChooser,
+                                          std::move (onChange),
+                                          kind,
+                                          std::move (openHwEditor));
+    }
+    else
+    {
+        // Replace-plugin path: skip the chooser, suppress the picker's
+        // own secondary buttons (HW + Soundfont) since the user has
+        // already committed to "this is a plugin".
+        pluginpicker::openPickerMenu (pluginSlot,
+                                       pluginSlotButton,
+                                       activePluginChooser,
+                                       std::move (onChange),
+                                       kind,
+                                       { -1, -1 },
+                                       /*onPickHardwareInsert*/ {},
+                                       /*suppressSecondaryButtons*/ true);
+    }
 }
 
 void ChannelStripComponent::openHardwareInsertEditor()
@@ -1437,7 +1794,7 @@ void ChannelStripComponent::showPluginSlotMenu()
     }
 
     juce::Component::SafePointer<ChannelStripComponent> safe (this);
-    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&pluginSlotButton),
+    showContextMenu (menu, pluginSlotButton,
         [safe] (int result)
         {
             auto* self = safe.getComponent();
@@ -1445,7 +1802,7 @@ void ChannelStripComponent::showPluginSlotMenu()
             switch (result)
             {
                 case 2001: self->togglePluginEditor();             break;
-                case 2002: self->openPluginPicker();               break;
+                case 2002: self->openPluginPicker (/*useChooser*/ false); break;
                 case 2003: self->unloadPluginSlot();               break;
                 case 2004: self->pluginSlot.clearAutoBypass();     break;
                 case 2005:
@@ -1461,7 +1818,7 @@ void ChannelStripComponent::showPluginSlotMenu()
                         MidiBindingTarget::TrackPluginParam,
                         self->trackIndex);
                     break;
-                case 2010: self->openPluginPicker();               break;
+                case 2010: self->openPluginPicker (/*useChooser*/ false); break;
                 default: break;
             }
         });
@@ -1553,224 +1910,25 @@ void ChannelStripComponent::togglePluginEditor()
         openPluginEditor();
 }
 
-// Top-level window that wraps a plugin's editor with its own native
-// peer (X11 Window / Wayland surface) so the plugin can render via its
-// own renderer (GL / Cairo / VSTGUI). Owned by ChannelStripComponent;
-// closeButtonPressed forwards back so the strip can drop our unique_ptr
-// when the user clicks X.
-class ChannelStripComponent::PluginEditorWindow final : public juce::DocumentWindow,
-                                                          private juce::ComponentListener
-{
-public:
-    // Body is taken as a juce::Component& rather than the more specific
-    // AudioProcessorEditor& so this same wrapper can host either:
-    //  - in-process: the plugin's own AudioProcessorEditor (which IS a
-    //    Component);
-    //  - OOP (Linux+DUSKSTUDIO_HAS_OOP_PLUGINS): a juce::XEmbedComponent
-    //    wrapping the X11 Window the dusk-studio-plugin-host child reported.
-    // The implementation only relies on Component-level API
-    // (getWidth/getHeight/setSize/setContentNonOwned).
-    PluginEditorWindow (const juce::String& title,
-                        juce::Component& editor,
-                        std::function<void()> onCloseButton,
-                        AudioEngine* engineForTransport = nullptr)
-        : juce::DocumentWindow (([&]
-                                  {
-                                      // Plugin editors are X11 children
-                                      // (VST3 X11EmbedWindowID, LV2
-                                      // LV2_UI__X11UI, JUCE-plugin
-                                      // X11-windowed renderer). XEmbed
-                                      // can't reparent into a wl_surface,
-                                      // so this wrapper must be an X11
-                                      // toplevel even when the rest of
-                                      // Dusk Studio is on Wayland. The flag
-                                      // is consumed by the very next
-                                      // createNewPeer call (triggered
-                                      // by addToDesktop=true below).
-                                      duskstudio::platform::preferX11ForNextNativeWindow();
-                                      return title;
-                                  })(),
-                                  juce::Colour (0xff202024),
-                                  juce::DocumentWindow::closeButton,
-                                  /*addToDesktop*/ true),
-          onClose (std::move (onCloseButton)),
-          enginePtr (engineForTransport),
-          trackedEditor (&editor)
-    {
-        setUsingNativeTitleBar (true);
-        editor.addComponentListener (this);
-
-        // Force a size on the editor BEFORE we touch the window so the
-        // window can be sized correctly even before content-set. Some
-        // plugin editors construct at 0×0 and only set their final size
-        // in the next resized() pass triggered by parent attachment.
-        const int ew = juce::jmax (200, editor.getWidth());
-        const int eh = juce::jmax (200, editor.getHeight());
-        editor.setSize (ew, eh);
-
-        // isResizable() lives on AudioProcessorEditor, not Component.
-        // The OOP path passes an XEmbedComponent (Component, no
-        // isResizable) so query through a dynamic_cast — diagnostic
-        // prints a -1 for the OOP/non-APE case.
-        const int isResz = [&]() -> int
-        {
-            if (auto* ape = dynamic_cast<juce::AudioProcessorEditor*> (&editor))
-                return ape->isResizable() ? 1 : 0;
-            return -1;
-        }();
-        std::fprintf (stderr,
-                      "[Dusk Studio/PluginEditor] Opening \"%s\" editor: editor=%dx%d resizable=%d\n",
-                      title.toRawUTF8(), ew, eh, isResz);
-
-        // Size the WINDOW first (so its X11 peer is allocated at the
-        // right geometry), then map it. We deliberately do NOT call
-        // setContentNonOwned yet - on Linux, JUCE's VST3PluginWindow
-        // owns an XEmbedComponent whose host X11 window is parented to
-        // root at construction. The reparent into our peer happens in
-        // VST3PluginWindow::componentVisibilityChanged ->
-        // attachPluginWindow. If we attach the editor BEFORE our
-        // DocumentWindow's peer is fully realized, the reparent fires
-        // against a not-yet-mapped window and the plugin's child X11
-        // window stays at root - the visible result is a blank/white
-        // editor interior. Defer the content-set to after setVisible
-        // has propagated through one message loop tick.
-        setSize (ew, eh);
-        setResizable (false, false);
-        centreAroundComponent (nullptr, ew, eh);
-        setVisible (true);
-
-        juce::Component::SafePointer<PluginEditorWindow> attachThis (this);
-        juce::Component::SafePointer<juce::Component> attachEditor (&editor);
-        juce::MessageManager::callAsync ([attachThis, attachEditor]
-        {
-            auto* self = attachThis.getComponent();
-            auto* ed   = attachEditor.getComponent();
-            if (self == nullptr || ed == nullptr) return;
-            // editor is a juce::Component but JUCE wants AudioProcessorEditor*
-            // for setContentNonOwned. Both signatures accept a Component*
-            // since AudioProcessorEditor IS a Component.
-            self->setContentNonOwned (ed, /*resizeToFitContent*/ true);
-        });
-
-        // Staged re-fits. LV2 plugin UIs (Antress 4K_EQ being the canonical
-        // offender) finalize their preferred geometry after the first few
-        // X11 idle pumps - the bounds reported at createEditorIfNeeded()
-        // time are stale. ComponentListener catches resizes that go through
-        // Editor::setSize but plugins that grow their internal X11 widget
-        // without re-issuing ui_resize don't trigger that path. Re-pull
-        // the editor's current size and inflate the window to match at
-        // 100 / 350 / 800 ms; cheap, no Timer churn, covers slow plugins.
-        for (int delayMs : { 100, 350, 800 })
-        {
-            juce::Component::SafePointer<PluginEditorWindow> refit (this);
-            juce::Component::SafePointer<juce::Component> rEditor (&editor);
-            juce::Timer::callAfterDelay (delayMs, [refit, rEditor]
-            {
-                auto* self = refit.getComponent();
-                auto* ed   = rEditor.getComponent();
-                if (self == nullptr || ed == nullptr) return;
-                const int ew = ed->getWidth();
-                const int eh = ed->getHeight();
-                if (ew <= 0 || eh <= 0) return;
-                auto* content = self->getContentComponent();
-                if (content == nullptr) return;
-                if (content->getWidth() == ew && content->getHeight() == eh) return;
-                self->setContentComponentSize (ew, eh);
-            });
-        }
-
-        // Same foreground-promotion as DuskStudioApp's MainWindow: without
-        // it Mutter on Linux/XWayland may open this editor iconified,
-        // leaving the user to Alt+Tab to find it. No-op on Mac/Win.
-        juce::Component::SafePointer<PluginEditorWindow> safeThis (this);
-        juce::MessageManager::callAsync ([safeThis]
-        {
-            if (auto* self = safeThis.getComponent())
-                if (auto* peer = self->getPeer())
-                    duskstudio::platform::bringWindowToFront (*peer);
-        });
-
-        // Release the latched X11 preference so subsequent unrelated
-        // top-level windows (e.g. another plugin editor opened later
-        // for a different strip) start from the platform default.
-        duskstudio::platform::clearPreferX11ForNativeWindow();
-    }
-
-    ~PluginEditorWindow() override
-    {
-        // SafePointer auto-nulls when the borrowed editor destructs, so
-        // this is a no-op in the "unloadPluginSlot tore the editor down
-        // before our deferred reset landed" case that previously UAF'd.
-        if (auto* ed = trackedEditor.getComponent())
-            ed->removeComponentListener (this);
-    }
-
-    void closeButtonPressed() override
-    {
-        // Detach the borrowed editor before we go away so this window's
-        // destructor doesn't touch it, then ask the host to drop us.
-        if (auto* ed = trackedEditor.getComponent())
-            ed->removeComponentListener (this);
-        trackedEditor = nullptr;
-        setContentNonOwned (nullptr, false);
-        // EWMH-activate a sibling top-level so mutter's focus_window is
-        // off this peer before the deferred destroy lands - else
-        // meta_window_unmanage asserts on a focused xdg_toplevel.
-        duskstudio::platform::prepareForTopLevelDestruction (*this);
-        if (onClose) onClose();
-    }
-
-    // Transport keys still work when a plugin editor has window focus.
-    // Without this the user has to click back into the main window
-    // before Space starts/stops playback. We only handle the most
-    // common transport bindings here (Space = play/stop, R = record,
-    // C = metronome) and route everything else through the default so
-    // the plugin's own UI keeps its hotkeys.
-    bool keyPressed (const juce::KeyPress& k) override
-    {
-        if (enginePtr == nullptr) return false;
-        const bool noMods = ! k.getModifiers().isAnyModifierKeyDown();
-        if (noMods && k == juce::KeyPress::spaceKey)
-        {
-            auto& transport = enginePtr->getTransport();
-            if (transport.isStopped()) enginePtr->play();
-            else                       enginePtr->stop();
-            return true;
-        }
-        return false;
-    }
-
-    // Plugin editors that finalize their size after construction (LV2 X11
-    // UIs whose actual widget size is reported only once the LV2 UI has
-    // realized — Antress 4K_EQ and similar) self-resize on a later tick.
-    // Without this listener, the wrapper window stays at the initial
-    // construction-time size and the user has to drag-resize. Re-inflate
-    // the window to fit whenever the borrowed editor reports a size
-    // change.
-    void componentMovedOrResized (juce::Component& c, bool /*wasMoved*/, bool wasResized) override
-    {
-        if (! wasResized) return;
-        if (&c != trackedEditor.getComponent()) return;
-        const int ew = c.getWidth();
-        const int eh = c.getHeight();
-        if (ew <= 0 || eh <= 0) return;
-        setContentComponentSize (ew, eh);
-    }
-
-private:
-    std::function<void()> onClose;
-    AudioEngine* enginePtr = nullptr;
-    juce::Component::SafePointer<juce::Component> trackedEditor;
-};
 
 bool ChannelStripComponent::isPluginEditorOpen() const noexcept
 {
-    return pluginEditorWindow != nullptr || pluginGenericEditorModal.isOpen();
+    return pluginEditorModal.isOpen();
 }
 
 void ChannelStripComponent::openPluginEditor()
 {
     if (isPluginEditorOpen()) return;
+
+    juce::Component::SafePointer<ChannelStripComponent> safe (this);
+    auto* parent = getTopLevelComponent();
+    if (parent == nullptr) parent = this;
+
+    auto onClose = [safe]
+    {
+        if (auto* self = safe.getComponent())
+            self->closePluginEditor();
+    };
 
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
     if (pluginSlot.isRemote())
@@ -1778,8 +1936,8 @@ void ChannelStripComponent::openPluginEditor()
         // OOP path: ask the child to show the editor + report its
         // native window handle. The child owns the editor's lifecycle;
         // we either embed the handle (Linux XEmbed) or let it float
-        // as its own top-level window (Win/Mac — cross-process HWND /
-        // NSView embedding is a polish item, not a 1.0 blocker).
+        // as its own top-level window (Mac — cross-process NSView
+        // embedding is a polish item, not a 1.0 blocker).
         std::uint64_t windowId = 0;
         int w = 0, h = 0;
         if (! pluginSlot.showRemoteEditor (windowId, w, h)) return;
@@ -1788,11 +1946,9 @@ void ChannelStripComponent::openPluginEditor()
        #if JUCE_LINUX
         if (remoteEditorEmbed == nullptr)
         {
-            // XEmbedComponent's allowEmbedding ctor: takes a Window
-            // (unsigned long) and adopts it as the foreign client.
-            // wantsKeyboardFocus = true so plugin GUIs receive key
-            // events; allowForeignWidgetToResizeComponent = false so
-            // the parent (PluginEditorWindow) controls sizing.
+            // XEmbedComponent ctor: takes a Window (unsigned long) and
+            // adopts it as the foreign client.
+            // wantsKeyboardFocus = true so plugin GUIs receive key events.
             remoteEditorEmbed = std::make_unique<juce::XEmbedComponent> (
                 (unsigned long) windowId,
                 /*wantsKeyboardFocus*/ true,
@@ -1800,50 +1956,20 @@ void ChannelStripComponent::openPluginEditor()
             remoteEditorEmbed->setSize (juce::jmax (200, w),
                                           juce::jmax (200, h));
         }
-
-        juce::Component::SafePointer<ChannelStripComponent> safe (this);
-        pluginEditorWindow = std::make_unique<PluginEditorWindow> (
-            pluginSlot.getLoadedName(),
-            *remoteEditorEmbed,
-            [safe]
-            {
-                juce::MessageManager::callAsync ([safe]
-                {
-                    if (auto* self = safe.getComponent())
-                        self->closePluginEditor();
-                });
-            },
-            &engine);
+        pluginEditorModal.showBorrowed (*parent, *remoteEditorEmbed, onClose);
        #else
-        // Win/Mac OOP. Try real embed via the platform-specific foreign-
-        // window wrapper (HWND SetParent on Windows; nullptr on Mac for
-        // now). Fall through to the float-as-toplevel path if the
-        // factory returns nullptr — that's still better than the OOP
-        // editor being inaccessible.
         auto embed = duskstudio::platform::createForeignNativeWindowEmbed (windowId);
         if (embed != nullptr)
         {
             embed->setSize (juce::jmax (200, w), juce::jmax (200, h));
-            juce::Component::SafePointer<ChannelStripComponent> safe (this);
-            pluginEditorWindow = std::make_unique<PluginEditorWindow> (
-                pluginSlot.getLoadedName(),
-                *embed,
-                [safe]
-                {
-                    juce::MessageManager::callAsync ([safe]
-                    {
-                        if (auto* self = safe.getComponent())
-                            self->closePluginEditor();
-                    });
-                },
-                &engine);
+            pluginEditorModal.showBorrowed (*parent, *embed, onClose);
             remoteForeignEmbed = std::move (embed);
         }
         else
         {
-            // Floating-window fallback (Mac): the child opened a native-
-            // titlebar top-level already; subsequent clicks re-fire
-            // ShowEditor and the child raises the existing window.
+            // Mac OOP without embed: child opened a native-titlebar
+            // top-level itself; subsequent clicks re-fire ShowEditor and
+            // the child raises the existing window.
             juce::ignoreUnused (w, h);
         }
        #endif
@@ -1860,14 +1986,11 @@ void ChannelStripComponent::openPluginEditor()
     if (pluginEditor == nullptr)
     {
         // LV2 plugin editors eager-create an embedded X11 sub-window
-        // inside their Editor constructor (juce_LV2PluginFormat.cpp
-        // Inner::Inner → addToDesktop(0)). On the JUCE-wayland fork
-        // that addToDesktop call lands on a Wayland peer by default,
-        // which then can't host an X11 child window. The X11 latch
-        // routes the nested peer creation to LinuxComponentPeer (X11)
-        // so the LV2's reparent target is a valid X11 host. No-op for
-        // non-LV2 paths. Skipped entirely when there's no native UI
-        // (we fall back to GenericAudioProcessorEditor below).
+        // inside their Editor constructor. X11 latch routes the nested
+        // peer creation to LinuxComponentPeer (X11) so the reparent
+        // target is a valid X11 host. clearPreferX11ForNativeWindow is
+        // a no-op on Linux (sticky-on) but kept for cross-platform
+        // symmetry.
         std::unique_ptr<juce::AudioProcessorEditor> fresh;
         if (instance->hasEditor())
         {
@@ -1881,58 +2004,15 @@ void ChannelStripComponent::openPluginEditor()
         pluginEditorOwner = instance;
     }
 
-    juce::Component::SafePointer<ChannelStripComponent> safe (this);
-
-    // Generic fallback editor: host inside the main window as an
-    // EmbeddedModal so combobox / popup peers share the main wl_surface.
-    // Wrapping a JUCE-native editor in an X11 PluginEditorWindow makes
-    // PopupMenu peer creation fall back to Wayland, which the JUCE-
-    // wayland fork can't create from an X11 parent — combo dropdowns
-    // never open. Native plugin editors still need the X11 wrapper.
-    if (dynamic_cast<juce::GenericAudioProcessorEditor*> (pluginEditor.get()) != nullptr)
-    {
-        auto* parent = findParentComponentOfClass<juce::Component>();
-        if (parent == nullptr) parent = this;
-        pluginGenericEditorModal.showBorrowed (*parent, *pluginEditor,
-            [safe]
-            {
-                if (auto* self = safe.getComponent())
-                    self->closePluginEditor();
-            });
-        return;
-    }
-
-    pluginEditorWindow = std::make_unique<PluginEditorWindow> (
-        pluginSlot.getLoadedName(),
-        *pluginEditor,
-        [safe]
-        {
-            // Defer the unique_ptr reset to the next message-loop tick
-            // so we don't destruct the window from inside its own
-            // closeButtonPressed callback (which is a JUCE no-no).
-            juce::MessageManager::callAsync ([safe]
-            {
-                if (auto* self = safe.getComponent())
-                    self->pluginEditorWindow.reset();
-            });
-        },
-        &engine);
+    pluginEditorModal.showBorrowed (*parent, *pluginEditor, onClose);
 }
 
 void ChannelStripComponent::closePluginEditor()
 {
-    if (pluginGenericEditorModal.isOpen())
-    {
-        pluginGenericEditorModal.close();
-        return;
-    }
-
    #if DUSKSTUDIO_HAS_OOP_PLUGINS && ! JUCE_LINUX
     // Mac OOP floating-window path (no embed available): the editor
-    // window lives in the child process and the parent has no
-    // pluginEditorWindow wrapper to tear down — just send HideEditor.
-    // Windows embed succeeded path falls through to the standard
-    // teardown below (pluginEditorWindow + remoteForeignEmbed exist).
+    // window lives in the child process; the parent has no modal body
+    // to tear down — just send HideEditor.
     if (pluginSlot.isRemote() && remoteForeignEmbed == nullptr)
     {
         pluginSlot.hideRemoteEditor();
@@ -1940,20 +2020,7 @@ void ChannelStripComponent::closePluginEditor()
     }
    #endif
 
-    if (pluginEditorWindow == nullptr) return;
-    pluginEditorWindow->setContentNonOwned (nullptr, false);
-    duskstudio::platform::prepareForTopLevelDestruction (*pluginEditorWindow);
-
-    // Defer the wrapper's destruction one message-loop tick so mutter
-    // gets a chance to retarget focus_window from the EWMH activate
-    // above. Synchronous reset() races mutter's compositor loop and
-    // trips meta_window_unmanage.
-    juce::Component::SafePointer<ChannelStripComponent> safe (this);
-    juce::MessageManager::callAsync ([safe]
-    {
-        if (auto* self = safe.getComponent())
-            self->pluginEditorWindow.reset();
-    });
+    pluginEditorModal.close();
 
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
     if (pluginSlot.isRemote())
@@ -2013,6 +2080,27 @@ namespace
 // (+ MIDI activity LED) into a single column. When the popup closes the
 // widgets become orphans; ChannelStripComponent retains ownership and
 // state lives on Track atoms, so reopening the popup just re-parents.
+// CallOutBox subclass that ignores dismissal attempts while a nested
+// JUCE PopupMenu (e.g. a child ComboBox's dropdown) is the topmost
+// modal. The stock CallOutBox dismisses on any input outside its own
+// screen bounds — and the native ComboBox popup renders OUTSIDE those
+// bounds, so clicking Mono/Stereo/MIDI items in the IO popup's combo
+// otherwise closes the whole IO modal before the selection lands.
+class StickyCallOutBox : public juce::CallOutBox
+{
+public:
+    StickyCallOutBox (juce::Component& content,
+                       juce::Rectangle<int> areaToPointTo,
+                       juce::Component* parent)
+        : juce::CallOutBox (content, areaToPointTo, parent) {}
+
+    void inputAttemptWhenModal() override
+    {
+        if (juce::Component::getCurrentlyModalComponent() != this) return;
+        juce::CallOutBox::inputAttemptWhenModal();
+    }
+};
+
 class IoConfigPopup : public juce::Component
 {
 public:
@@ -2101,9 +2189,17 @@ void ChannelStripComponent::openIoConfigPopup()
     if (topLevel == nullptr) topLevel = this;
     const auto anchor = topLevel->getLocalArea (this, ioConfigButton.getBounds());
 
-    auto& box = juce::CallOutBox::launchAsynchronously (std::move (panel), anchor, topLevel);
-    box.setDismissalMouseClicksAreAlwaysConsumed (false);
-    activeIoBox = &box;
+    // Replicate juce::CallOutBox::launchAsynchronously, but with the
+    // StickyCallOutBox subclass that holds itself open while a child
+    // ComboBox's native PopupMenu is the topmost modal.
+    auto* box = new StickyCallOutBox (*panel, anchor, topLevel);
+    box->setDismissalMouseClicksAreAlwaysConsumed (false);
+    box->setVisible (true);
+    box->enterModalState (true,
+        juce::ModalCallbackFunction::create (
+            [owned = std::move (panel)] (int) mutable { owned.reset(); }),
+        /*deleteWhenDismissed*/ true);
+    activeIoBox = box;
 }
 
 void ChannelStripComponent::refreshIoConfigButton()
@@ -2209,6 +2305,172 @@ void ChannelStripComponent::openCompEditorPopup()
     activeCompBox = &box;
 }
 
+namespace
+{
+// Compact-mode popup body for the AUX sends. Mirrors the inline 4-knob row's
+// behaviour: same param atoms (track.strip.auxSendDb), same colour grammar,
+// same off-sentinel mapping. Sized so the 4 knobs sit at a comfortable
+// editing diameter — bigger than the inline strip's 24 px rotaries.
+class AuxSendsCompactPanel : public juce::Component, private juce::Timer
+{
+public:
+    AuxSendsCompactPanel (Track& t, Session& s) : track (t), sessionRef (s)
+    {
+        startTimerHz (15);   // poll the session aux names so an edit here
+                              // syncs with renames elsewhere on the strip.
+        static const juce::Colour colours[ChannelStripParams::kNumAuxSends] = {
+            juce::Colour (0xff5a8ad0), juce::Colour (0xff9080c0),
+            juce::Colour (0xffe0c050), juce::Colour (0xff60c060),
+        };
+        auto formatAuxSend = [] (float dB) -> juce::String
+        {
+            if (dB <= ChannelStripParams::kAuxSendMinDb + 0.01f)
+                return juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x92"));   // "−"
+            if (std::abs (dB) >= 10.0f) return juce::String ((int) std::round (dB));
+            return juce::String (dB, 1);
+        };
+
+        for (int i = 0; i < ChannelStripParams::kNumAuxSends; ++i)
+        {
+            auto& k = knobs[(size_t) i];
+            k.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
+            k.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+            k.setRange (ChannelStripParams::kAuxSendMinDb,
+                          ChannelStripParams::kAuxSendMaxDb, 0.1);
+            k.setSkewFactorFromMidPoint (-12.0);
+            k.setColour (juce::Slider::rotarySliderFillColourId,    colours[i]);
+            k.setColour (juce::Slider::rotarySliderOutlineColourId, juce::Colour (0xff404048));
+            k.setDoubleClickReturnValue (true, ChannelStripParams::kAuxSendOffDb);
+            k.setTooltip ("AUX " + juce::String (i + 1) + " send level. "
+                            "Double-click for OFF.");
+
+            const float initial = track.strip.auxSendDb[(size_t) i].load (std::memory_order_relaxed);
+            k.setValue (initial <= ChannelStripParams::kAuxSendMinDb + 0.01f
+                            ? ChannelStripParams::kAuxSendOffDb : initial,
+                          juce::dontSendNotification);
+
+            k.onValueChange = [this, i, formatAuxSend]
+            {
+                const float v = (float) knobs[(size_t) i].getValue();
+                const float stored = (v <= ChannelStripParams::kAuxSendMinDb + 0.01f)
+                                            ? ChannelStripParams::kAuxSendOffDb : v;
+                track.strip.auxSendDb[(size_t) i].store (stored, std::memory_order_relaxed);
+                valueLabels[(size_t) i].setText (formatAuxSend (stored), juce::dontSendNotification);
+            };
+            k.onDragStart = [this, i]
+            {
+                track.strip.auxSendTouched[(size_t) i].store (true, std::memory_order_release);
+            };
+            k.onDragEnd = [this, i]
+            {
+                track.strip.auxSendTouched[(size_t) i].store (false, std::memory_order_release);
+            };
+            addAndMakeVisible (k);
+
+            auto& il = indexLabels[(size_t) i];
+            il.setText (sessionRef.auxLane (i).name, juce::dontSendNotification);
+            il.setJustificationType (juce::Justification::centred);
+            il.setFont (juce::Font (juce::FontOptions (11.0f, juce::Font::bold)));
+            il.setColour (juce::Label::textColourId, colours[i].brighter (0.2f));
+            il.setMinimumHorizontalScale (0.5f);
+            il.setTooltip ("Double-click to rename this AUX send.");
+            il.setEditable (false, true, false);
+            il.setColour (juce::Label::backgroundWhenEditingColourId, juce::Colour (0xff202024));
+            il.setColour (juce::Label::textWhenEditingColourId,       juce::Colours::white);
+            il.onTextChange = [this, i]
+            {
+                auto& lbl = indexLabels[(size_t) i];
+                auto txt = lbl.getText().trim();
+                if (txt.isEmpty())
+                {
+                    lbl.setText (sessionRef.auxLane (i).name, juce::dontSendNotification);
+                    return;
+                }
+                constexpr int kAuxNameMaxChars = 12;
+                if (txt.length() > kAuxNameMaxChars)
+                    txt = txt.substring (0, kAuxNameMaxChars);
+                sessionRef.auxLane (i).name = txt;
+                lbl.setText (txt, juce::dontSendNotification);
+            };
+            addAndMakeVisible (il);
+
+            auto& vl = valueLabels[(size_t) i];
+            vl.setJustificationType (juce::Justification::centred);
+            vl.setFont (juce::Font (juce::FontOptions (11.0f, juce::Font::bold)));
+            vl.setColour (juce::Label::textColourId, juce::Colour (0xffd8d8d8));
+            vl.setText (formatAuxSend (initial), juce::dontSendNotification);
+            addAndMakeVisible (vl);
+        }
+
+        setSize (260, 130);
+    }
+
+    void resized() override
+    {
+        auto area = getLocalBounds().reduced (10);
+        const int colW = area.getWidth() / ChannelStripParams::kNumAuxSends;
+        for (int i = 0; i < ChannelStripParams::kNumAuxSends; ++i)
+        {
+            auto col = juce::Rectangle<int> (area.getX() + i * colW, area.getY(),
+                                                colW, area.getHeight());
+            indexLabels[(size_t) i].setBounds (col.removeFromTop (14));
+            valueLabels[(size_t) i].setBounds (col.removeFromBottom (14));
+            const int knobSize = juce::jmin (col.getWidth() - 4, col.getHeight() - 4);
+            const int kx = col.getCentreX() - knobSize / 2;
+            const int ky = col.getCentreY() - knobSize / 2;
+            knobs[(size_t) i].setBounds (kx, ky, knobSize, knobSize);
+        }
+    }
+
+    void timerCallback() override
+    {
+        for (int i = 0; i < ChannelStripParams::kNumAuxSends; ++i)
+        {
+            auto& lbl = indexLabels[(size_t) i];
+            const auto& laneName = sessionRef.auxLane (i).name;
+            if (! lbl.isBeingEdited() && lbl.getText (false) != laneName)
+                lbl.setText (laneName, juce::dontSendNotification);
+        }
+    }
+
+private:
+    Track&   track;
+    Session& sessionRef;
+    std::array<juce::Slider, ChannelStripParams::kNumAuxSends> knobs;
+    std::array<juce::Label,  ChannelStripParams::kNumAuxSends> indexLabels;
+    std::array<juce::Label,  ChannelStripParams::kNumAuxSends> valueLabels;
+};
+} // namespace
+
+void ChannelStripComponent::openAuxEditorPopup()
+{
+    if (auto* existing = activeAuxBox.getComponent())
+    {
+        existing->dismiss();
+        return;
+    }
+    // Mutual exclusion with the EQ / COMP popups.
+    if (auto* otherBox = activeEqBox.getComponent())   otherBox->dismiss();
+    if (auto* otherBox = activeCompBox.getComponent()) otherBox->dismiss();
+
+    auto panel = std::make_unique<AuxSendsCompactPanel> (track, session);
+
+    auto* topLevel = getTopLevelComponent();
+    if (topLevel == nullptr) topLevel = this;
+    const auto anchor = topLevel->getLocalArea (this, auxCompactButton.getBounds());
+
+    attachDimOverlay();
+    auto& box = juce::CallOutBox::launchAsynchronously (
+        std::move (panel), anchor, topLevel);
+    box.setDismissalMouseClicksAreAlwaysConsumed (true);
+    {
+        const auto rightFit = topLevel->getLocalBounds()
+                                  .withTrimmedLeft (anchor.getRight());
+        box.updatePosition (anchor, rightFit);
+    }
+    activeAuxBox = &box;
+}
+
 void ChannelStripComponent::attachDimOverlay()
 {
     if (activeDimOverlay != nullptr) return;
@@ -2222,6 +2484,7 @@ void ChannelStripComponent::attachDimOverlay()
     {
         if (auto* eq  = activeEqBox.getComponent())   eq->dismiss();
         if (auto* cmp = activeCompBox.getComponent()) cmp->dismiss();
+        if (auto* aux = activeAuxBox.getComponent())  aux->dismiss();
     };
     topLevel->addAndMakeVisible (activeDimOverlay.get());
     // CallOutBox::launchAsynchronously adds the box to the desktop / top
@@ -2247,11 +2510,23 @@ void ChannelStripComponent::timerCallback()
         && nameLabel.getText (false) != track.name)
         nameLabel.setText (track.name, juce::dontSendNotification);
 
-    // Tear down the dim overlay once both popups have closed. Polling at
+    // Aux send name sync — when another strip (or the AuxLaneComponent
+    // header) renames an aux lane, every strip's matching label must
+    // update so the rename reads as global.
+    for (int i = 0; i < ChannelStripParams::kNumAuxSends; ++i)
+    {
+        auto& lbl = auxIndexLabels[(size_t) i];
+        const auto& laneName = session.auxLane (i).name;
+        if (! lbl.isBeingEdited() && lbl.getText (false) != laneName)
+            lbl.setText (laneName, juce::dontSendNotification);
+    }
+
+    // Tear down the dim overlay once all popups have closed. Polling at
     // 30 Hz is cheaper than wiring a ComponentListener on each CallOutBox.
     if (activeDimOverlay != nullptr
         && activeEqBox.getComponent() == nullptr
-        && activeCompBox.getComponent() == nullptr)
+        && activeCompBox.getComponent() == nullptr
+        && activeAuxBox.getComponent() == nullptr)
     {
         detachDimOverlay();
     }
@@ -2274,6 +2549,24 @@ void ChannelStripComponent::timerCallback()
     // every tick - knob visibility only changes on explicit mode swaps,
     // so we skip that work here.
     refreshCompModeButtonState();
+    if (eqHeaderBtn != nullptr)
+    {
+        // Surface the active EQ type on the header so the user can
+        // Type cue now lives on the dedicated eqTypeChip mid-strip
+        // (between HM and LM rows). Just repaint the header so its LED
+        // tracks atom changes from external mutation paths.
+        eqHeaderBtn->repaint();
+    }
+    // Sync the dedicated E/G chip's label + toggle state from the atom
+    // so external writes (popup editor type picker) reflect inline.
+    {
+        const bool isBlack = track.strip.eqBlackMode.load (std::memory_order_relaxed);
+        if (eqTypeChip.getToggleState() != isBlack)
+        {
+            eqTypeChip.setToggleState (isBlack, juce::dontSendNotification);
+            eqTypeChip.setButtonText (isBlack ? "G" : "E");
+        }
+    }
 
     // Sync the inline COMP knobs with their underlying atoms so writes
     // from the meter-strip threshold drag or the popout editor reflect
@@ -2306,16 +2599,14 @@ void ChannelStripComponent::timerCallback()
     // popup. Bullet character + brighter background when on.
     if (compactMode)
     {
-        // Channel-strip EQ has no master on/off - it's "active" when the
-        // HPF is engaged or any of the four bands has a non-trivial gain.
+        // Channel-strip EQ illuminates when the user has explicitly
+        // enabled the 4-band EQ (auto-armed on first knob touch, also
+        // user-toggleable via the LED in the EQ header) OR when HPF is
+        // engaged (HPF has its own atomic gate independent of eqEnabled).
         // Comp has a real on/off atom.
         const auto& sp = track.strip;
-        const bool anyBandActive =
-               std::abs (sp.lfGainDb.load (std::memory_order_relaxed)) > 0.1f
-            || std::abs (sp.lmGainDb.load (std::memory_order_relaxed)) > 0.1f
-            || std::abs (sp.hmGainDb.load (std::memory_order_relaxed)) > 0.1f
-            || std::abs (sp.hfGainDb.load (std::memory_order_relaxed)) > 0.1f;
-        const bool eqOn   = sp.hpfEnabled.load (std::memory_order_relaxed) || anyBandActive;
+        const bool eqOn   = sp.eqEnabled.load (std::memory_order_relaxed)
+                          || sp.hpfEnabled.load (std::memory_order_relaxed);
         const bool compOn = sp.compEnabled.load (std::memory_order_relaxed);
 
         const auto eqAccent   = juce::Colour (fourKColors::kLfGreen);
@@ -2425,6 +2716,26 @@ void ChannelStripComponent::timerCallback()
     {
         grPeakLabel.setText ("0.0", juce::dontSendNotification);
         grPeakLabel.setColour (juce::Label::textColourId, juce::Colour (0xff606064));
+    }
+
+    // Track-3 fader-side GR readout: numeric value sitting below the slim
+    // GR LED. Inert grey when bypassed or no compression; gold when active.
+    if (usesFaderThresholdLayout())
+    {
+        const bool engaged = track.strip.compEnabled.load (std::memory_order_relaxed);
+        if (engaged && displayedGrDb <= -0.05f)
+        {
+            grReadoutLabel.setText (juce::String (displayedGrDb, 1),
+                                      juce::dontSendNotification);
+            grReadoutLabel.setColour (juce::Label::textColourId,
+                                        juce::Colour (0xffe0c050));
+        }
+        else
+        {
+            grReadoutLabel.setText ("0.0", juce::dontSendNotification);
+            grReadoutLabel.setColour (juce::Label::textColourId,
+                                        juce::Colour (0xff606064));
+        }
     }
 
     // Motor-fader / motor-pan animation: when the audio engine is feeding
@@ -2643,7 +2954,7 @@ void ChannelStripComponent::showAutoModeMenu()
     menu.addItem (2, "Read",  true, cur == (int) AutomationMode::Read);
     menu.addItem (3, "Write", true, cur == (int) AutomationMode::Write);
     menu.addItem (4, "Touch", true, cur == (int) AutomationMode::Touch);
-    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&autoModeButton),
+    showContextMenu (menu, autoModeButton,
         [safeThis = juce::Component::SafePointer<ChannelStripComponent> (this)]
         (int chosen)
         {
@@ -2694,8 +3005,12 @@ void ChannelStripComponent::refreshAutoModeButton()
 {
     const int m = track.automationMode.load (std::memory_order_relaxed);
     const char* label = "OFF";
-    juce::Colour bg (0xff222226);
-    juce::Colour fg (0xff909094);
+    // Off state has no fill — reads as a plain text label so the bottom
+    // of the strip doesn't get crowded with a boxed "OFF" pill. Armed
+    // modes keep their semantic colours (green/red/amber) since the
+    // fill IS the indicator that automation is live.
+    juce::Colour bg = juce::Colours::transparentBlack;
+    juce::Colour fg (0xff707074);
     switch (m)
     {
         case (int) AutomationMode::Read:
@@ -2913,7 +3228,7 @@ void ChannelStripComponent::showColourMenu()
     presetCopy.reserve (std::size (presets));
     for (auto& p : presets) presetCopy.emplace_back (juce::String (p.first), p.second);
 
-    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
+    showContextMenu (menu, *this,
         [safe, presetCopy] (int result)
         {
             if (result <= 0) return;
@@ -2924,7 +3239,7 @@ void ChannelStripComponent::showColourMenu()
                 self->nameLabel.showEditor();
                 return;
             }
-            if (result == 1010) { self->openPluginPicker();      return; }
+            if (result == 1010) { self->openPluginPicker (/*useChooser*/ false); return; }
             if (result == 1011) { self->unloadPluginSlot();      return; }
             if (result == 1012) { self->pluginSlot.clearAutoBypass(); return; }
             if (result >= 2000 && result < 2000 + Session::kNumTracks)
@@ -3055,18 +3370,32 @@ void ChannelStripComponent::onHpfKnobChanged()
     track.strip.hpfFreq.store (freq, std::memory_order_relaxed);
     // Bypass the HPF DSP entirely when the knob is at the floor - saves
     // 16 channels worth of biquad cost when nobody's using HPF.
-    track.strip.hpfEnabled.store (freq > ChannelStripParams::kHpfOffHz + 0.5f,
-                                   std::memory_order_relaxed);
+    const bool hpfOn = freq > ChannelStripParams::kHpfOffHz + 0.5f;
+    track.strip.hpfEnabled.store (hpfOn, std::memory_order_relaxed);
+    // Auto-arm the EQ header LED whenever the HPF is engaged — band-
+    // knob touches do the same via the EQ rows' onValueChange paths.
+    if (hpfOn)
+        track.strip.eqEnabled.store (true, std::memory_order_release);
 }
 
-void ChannelStripComponent::refreshEqTypeButton()
+void ChannelStripComponent::onLpfKnobChanged()
 {
-    eqTypeButton.setButtonText (eqTypeButton.getToggleState() ? "G" : "E");
+    const float freq = (float) lpfKnob.getValue();
+    track.strip.lpfFreq.store (freq, std::memory_order_relaxed);
+    // At max → bypass the LPF DSP. Same per-channel cost optimisation
+    // as HPF — donor BritishEQProcessor skips its LPF biquad when the
+    // enabled flag is false.
+    const bool lpfOn = freq < ChannelStripParams::kLpfOffHz - 0.5f;
+    track.strip.lpfEnabled.store (lpfOn, std::memory_order_relaxed);
+    if (lpfOn)
+        track.strip.eqEnabled.store (true, std::memory_order_release);
 }
 
 void ChannelStripComponent::setCompMode (int modeIndex)
 {
     track.strip.compMode.store (modeIndex, std::memory_order_relaxed);
+    // First explicit pick locks the button into showing the mode name.
+    track.strip.compModePicked.store (true, std::memory_order_relaxed);
     refreshCompModeButtonState();
     refreshCompKnobVisibility();
     resized();  // mode swap reshapes the comp body
@@ -3074,18 +3403,18 @@ void ChannelStripComponent::setCompMode (int modeIndex)
 
 void ChannelStripComponent::refreshCompModeButtonState()
 {
+    if (compModeButton == nullptr) return;
+    // Label tracks: disabled → "COMP" (section header, prompts the user
+    // to click). Enabled → active mode name (OPTO/FET/VCA) so the user
+    // can read the current topology at a glance without right-clicking
+    // for the mode menu. The LED on the left of the pill also indicates
+    // engaged state — keeping the mode in the text makes the topology
+    // explicit even when scanning across strips.
+    const bool enabled = track.strip.compEnabled.load (std::memory_order_relaxed);
     const int m = juce::jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
     const char* names[] = { "OPTO", "FET", "VCA" };
-    if (compModeButton.getButtonText() != names[m])
-        compModeButton.setButtonText (names[m]);
-
-    // Illuminate the button when the comp is engaged so the user gets a
-    // single-glance "is it on?" cue without a separate LED widget.
-    const bool on = track.strip.compEnabled.load (std::memory_order_relaxed);
-    if (compModeButton.getToggleState() != on)
-        compModeButton.setToggleState (on, juce::dontSendNotification);
-
-    if (compBypassLed != nullptr) compBypassLed->repaint();
+    compModeButton->setLabelText (enabled ? juce::String (names[m]) : juce::String ("COMP"));
+    compModeButton->repaint();   // refresh LED state too
 }
 
 void ChannelStripComponent::refreshCompKnobVisibility()
@@ -3096,11 +3425,17 @@ void ChannelStripComponent::refreshCompKnobVisibility()
 
     const int m = juce::jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
     const bool isOpto = (m == 0), isFet = (m == 1), isVca = (m == 2);
-    optoPeakRedKnob.setVisible (isOpto);  optoPeakRedLabel.setVisible (isOpto);
+
+    // OPTO peak-reduction + FET input + VCA threshold are all set via
+    // the triangle drag handle on the GR meter strip. No "main amount"
+    // knob is shown for any mode — the per-mode knobs in the right-side
+    // grid are the remaining mode-specific controls only.
+    optoPeakRedKnob.setVisible (false);  optoPeakRedLabel.setVisible (false);
+    fetInputKnob   .setVisible (false);  fetInputLabel   .setVisible (false);
+
     optoGainKnob   .setVisible (isOpto);  optoGainLabel   .setVisible (isOpto);
     optoLimitButton.setVisible (isOpto);
 
-    fetInputKnob   .setVisible (isFet);   fetInputLabel   .setVisible (isFet);
     fetOutputKnob  .setVisible (isFet);   fetOutputLabel  .setVisible (isFet);
     fetAttackKnob  .setVisible (isFet);   fetAttackLabel  .setVisible (isFet);
     fetReleaseKnob .setVisible (isFet);   fetReleaseLabel .setVisible (isFet);
@@ -3121,7 +3456,7 @@ void ChannelStripComponent::showCompModeMenu()
     menu.addItem (2, "OPTO - program-dependent, smooth", true, m == 0);
     menu.addItem (3, "FET - fast attack, gritty under load", true, m == 1);
     menu.addItem (4, "VCA - clean, predictable", true, m == 2);
-    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&compModeButton),
+    showContextMenu (menu, *compModeButton,
         [safeThis = juce::Component::SafePointer<ChannelStripComponent> (this)]
         (int chosen)
         {
@@ -3129,6 +3464,29 @@ void ChannelStripComponent::showCompModeMenu()
             if (self == nullptr) return;
             if (chosen >= 2 && chosen <= 4)
                 self->setCompMode (chosen - 2);
+        });
+}
+
+void ChannelStripComponent::showEqTypeMenu()
+{
+    // EQ type picker — right-click on the EQ header button. Mirrors
+    // showCompModeMenu's grammar (ticked current choice). Two types
+    // for the British EQ donor: Brown (E-series) vs Black (G-series).
+    const bool isBlack = track.strip.eqBlackMode.load (std::memory_order_relaxed);
+    juce::PopupMenu menu;
+    menu.addItem (1, "Brown - E-series, classic",   true, ! isBlack);
+    menu.addItem (2, "Black - G-series, modern",    true,   isBlack);
+    showContextMenu (menu, *eqHeaderBtn,
+        [safeThis = juce::Component::SafePointer<ChannelStripComponent> (this)]
+        (int chosen)
+        {
+            auto* self = safeThis.getComponent();
+            if (self == nullptr) return;
+            if (chosen == 1 || chosen == 2)
+            {
+                self->track.strip.eqBlackMode.store (chosen == 2, std::memory_order_relaxed);
+                if (self->eqHeaderBtn != nullptr) self->eqHeaderBtn->repaint();
+            }
         });
 }
 
@@ -3317,16 +3675,69 @@ void ChannelStripComponent::paint (juce::Graphics& g)
             // sees the meter is now stereo.
             g.setColour (juce::Colour (0xffa0a0a8));
             g.setFont (juce::Font (juce::FontOptions (7.5f, juce::Font::bold)));
-            g.drawText ("L", juce::Rectangle<float> (barL.getX(), barL.getY() - 9.0f,
+            // Push the caption down past the pan slice (kPanLabelH +
+            // kPanBlockH from resized()) so it lands at the visual top of
+            // the meter bar instead of the strip-wide top of the column,
+            // where it floats inside the COMP section.
+            constexpr float kPanReserve = 11.0f + 40.0f;
+            const float captionY = barL.getY() + kPanReserve - 9.0f;
+            g.drawText ("L", juce::Rectangle<float> (barL.getX(), captionY,
                                                        barL.getWidth(), 8.0f),
                           juce::Justification::centred, false);
-            g.drawText ("R", juce::Rectangle<float> (barR.getX(), barR.getY() - 9.0f,
+            g.drawText ("R", juce::Rectangle<float> (barR.getX(), captionY,
                                                        barR.getWidth(), 8.0f),
                           juce::Justification::centred, false);
         }
         else
         {
             drawBar (inputMeterArea.toFloat(), displayedInputDb, inputPeakHoldDb);
+        }
+    }
+
+    // Track-3 fader scale labels — drawn here (not in the LookAndFeel)
+    // so they can extend into the strip area to the LEFT of the slider
+    // bounds. LookAndFeel only draws the ticks for this layout.
+    if (usesFaderThresholdLayout())
+    {
+        const auto& range = faderSlider.getNormalisableRange();
+        const auto sliderB = faderSlider.getBounds().toFloat();
+        const float trackCx = sliderB.getCentreX();
+        // trackW = jmin(4, sliderW*0.18) inside the LookAndFeel; mirror so
+        // labels sit just left of the tick stub.
+        const float trackW  = juce::jmin (4.0f, sliderB.getWidth() * 0.18f);
+        const float trackLx = trackCx - trackW * 0.5f;
+
+        for (const auto& t : kFaderTicks)
+        {
+            if (t.db < range.start - 0.01f || t.db > range.end + 0.01f) continue;
+            const float y = faderYForDb (faderSlider, t.db);
+            const bool isZero   = (std::abs (t.db) < 0.01f);
+            const bool isBottom = (t.db <= -89.0f);
+
+            g.setColour (isZero ? juce::Colour (0xffffffff)
+                                : juce::Colour (0xffb8b8c0));
+            // Uniform font for every label so weight differences don't
+            // throw off the visual right-alignment — the brighter colour
+            // alone marks 0 dB.
+            const juce::Font font (juce::FontOptions (10.5f, juce::Font::plain));
+            g.setFont (font);
+            constexpr float kSharedXOver  = 24.0f;
+            const float labelRight = trackLx - kSharedXOver - 6.0f;
+            const juce::String label = isBottom ? juce::String ("off")
+                                                : juce::String (t.label);
+            // Visible glyph spans (baseline - ascent) to (baseline + descent).
+            // For visible centre == tick y → baseline = y + (ascent - descent)/2.
+            // Empirical -2 px bias compensates for JUCE FreeType's tendency
+            // to include a small amount of line-leading inside ascent on
+            // X11; without it the glyph centre drifts ~2 px below the tick.
+            const float ascent  = font.getAscent();
+            const float descent = font.getDescent();
+            const float baselineY = y + (ascent - descent) * 0.5f - 2.0f;
+            const float textW = juce::GlyphArrangement::getStringWidth (font, label);
+            g.drawSingleLineText (label,
+                                    juce::roundToInt (labelRight - textW),
+                                    juce::roundToInt (baselineY),
+                                    juce::Justification::left);
         }
     }
 
@@ -3338,18 +3749,48 @@ void ChannelStripComponent::paint (juce::Graphics& g)
     {
         const auto scale = meterScaleArea;
         const auto& range = faderSlider.getNormalisableRange();
-        for (const auto& t : kFaderTicks)
+        // Map scale labels to the METER's dB-to-Y curve (using kFloorDb /
+        // kCeilingDb, same dbToFrac the bar fill uses) instead of the
+        // FADER's skewed slider track. They sit next to the LED bar so the
+        // user reads the scale as the meter's level scale — not the
+        // fader's position scale — and they need to line up with the bar
+        // fill height, not the slider thumb position.
+        const auto meterRect = inputMeterArea.toFloat();
+        if (! meterRect.isEmpty())
         {
-            if (t.db < range.start - 0.01f || t.db > range.end + 0.01f) continue;
-            const float y = faderYForDb (faderSlider, t.db);
-            const bool isZero = (std::abs (t.db) < 0.01f);
-            g.setColour (isZero ? juce::Colour (0xffffffff) : juce::Colour (0xffc0c0c8));
-            g.setFont (juce::Font (juce::FontOptions (isZero ? 11.5f : 10.5f,
-                                                        isZero ? juce::Font::bold
-                                                                : juce::Font::plain)));
-            const auto rect = juce::Rectangle<float> ((float) scale.getX(), y - 7.0f,
-                                                        (float) scale.getWidth(), 14.0f);
-            g.drawText (t.label, rect, juce::Justification::centredRight, false);
+            // Hardware-fader style: a horizontal tick line on the LEFT
+            // side of the scale column (pointing toward the meter) with
+            // the number right-aligned next to it. "-90 dB" becomes "off"
+            // at the bottom of the range to match the analogue grammar.
+            for (const auto& t : kFaderTicks)
+            {
+                if (t.db < kFloorDb - 0.01f || t.db > kCeilingDb + 0.01f) continue;
+                const float frac = dbToFrac (t.db);
+                const float y = meterRect.getBottom() - 1.0f
+                                  - frac * (meterRect.getHeight() - 2.0f);
+                if (y - 7.0f > (float) scale.getBottom()) continue;
+
+                const bool isZero    = (std::abs (t.db) < 0.01f);
+                const bool isBottom  = (t.db <= -89.0f);
+                const float tickLen  = isZero ? 10.0f : (isBottom ? 6.0f : 8.0f);
+                const float tickX0   = (float) scale.getX();
+                const float tickX1   = tickX0 + tickLen;
+                const float lineW    = isZero ? 1.2f : 0.7f;
+                g.setColour (isZero ? juce::Colour (0xffe8e8ec)
+                                    : juce::Colour (0xff707078));
+                g.drawLine (tickX0, y, tickX1, y, lineW);
+
+                g.setColour (isZero ? juce::Colour (0xffffffff)
+                                    : juce::Colour (0xffc0c0c8));
+                g.setFont (juce::Font (juce::FontOptions (isZero ? 10.5f : 9.5f,
+                                                            isZero ? juce::Font::bold
+                                                                    : juce::Font::plain)));
+                const auto labelRect = juce::Rectangle<float> (tickX1 + 1.0f, y - 7.0f,
+                                                                 (float) scale.getRight() - (tickX1 + 1.0f),
+                                                                 14.0f);
+                const juce::String label = isBottom ? juce::String ("off") : juce::String (t.label);
+                g.drawText (label, labelRect, juce::Justification::centredLeft, false);
+            }
         }
     }
 }
@@ -3394,7 +3835,7 @@ void ChannelStripComponent::resized()
     // Plugin-slot button right below the IN/ARM/PRINT row. Always visible -
     // available in both compact and full modes since it's independent of the
     // EQ/COMP collapse.
-    pluginSlotButton.setBounds (area.removeFromTop (20).reduced (2, 0));
+    pluginSlotButton.setBounds (area.removeFromTop (18).reduced (2, 0));
     area.removeFromTop (3);
 
     // In compact mode the EQ + COMP sections collapse to two narrow buttons
@@ -3430,29 +3871,52 @@ void ChannelStripComponent::resized()
     constexpr int kQKnobSize   = 26;                                  // Q matches gain/freq per user directive
     constexpr int kQBlockH     = kQKnobSize + kValueLabelH;           // 40
     constexpr int kFreqYStagger = 2;                                  // tighter SSL nudge - was 4
-    constexpr int kEqHeaderH   = 12;  // tighter - pulls HPF closer to the EQ label
-    constexpr int kEqHpfRowH   = kKnobBlockH;                         // 42 - no extra padding
-    constexpr int kEqShelfRowH = kKnobBlockH + kFreqYStagger + 2;     // 46 - tighter than before
-    constexpr int kEqBellRowH  = kKnobBlockH + kQBlockH;              // 82
+    constexpr int kEqHeaderH   = 16;  // matches COMP header row height for visual parity
+    constexpr int kFilterLabelH = 10;                                 // small HPF/LPF captions above the white knobs
+    constexpr int kEqHpfRowH    = kFilterLabelH + kKnobBlockH;        // 52 - label strip + knob row
+    constexpr int kEqShelfRowH  = kKnobBlockH + kFreqYStagger + 2;    // 46 - tighter than before
+    constexpr int kEqBellRowH   = kKnobBlockH + kQBlockH;             // 82
+    constexpr int kEqTypeChipH  = 16;                                 // E/G chip slot between HM (row 1) and LM (row 2)
 
     // 1 HPF row + 2 shelf rows (HF, LF) + 2 bell rows (HM, LM). No vertical
     // reduce - every pixel of EQ height is used so the knobs hug the header.
-    eqArea = area.removeFromTop (kEqHeaderH + kEqHpfRowH + 2 * kEqShelfRowH + 2 * kEqBellRowH);
+    eqArea = area.removeFromTop (kEqHeaderH + kEqHpfRowH
+                                    + 2 * kEqShelfRowH + 2 * kEqBellRowH
+                                    + kEqTypeChipH);
     {
         auto s = eqArea.reduced (3, 0);
-        auto header = s.removeFromTop (kEqHeaderH);
-        eqHeaderLabel.setBounds (header.removeFromLeft (header.getWidth() - 26));
-        eqTypeButton.setBounds  (header.reduced (1, 1));
+        const auto header = s.removeFromTop (kEqHeaderH);
+        // Single CompHeaderButton-style EQ header. Left-click toggles
+        // eqEnabled (LED reflects state); right-click pops the
+        // Brown/Black type picker. Bounds = full header for the same
+        // visual rhythm as the COMP header button.
+        if (eqHeaderBtn != nullptr) eqHeaderBtn->setBounds (header);
 
         constexpr int kRowLabelW = 28;
 
-        // HPF row - single centred knob, hugging the top of the EQ block.
+        // Filter row — HPF | LPF aligned with the band-row columns
+        // below. Label strip on top (centred captions over each knob),
+        // knob strip below sized identically to band gain/freq knobs
+        // (same colW, same kKnobBlockH) so the white knobs read as the
+        // same size as the coloured ones.
         {
-            auto row = s.removeFromTop (kEqHpfRowH);
-            hpfLabel.setBounds (row.removeFromLeft (kRowLabelW));
-            const int knobBoundsW = juce::jmin (60, row.getWidth());
-            const int hpfX = row.getX() + (row.getWidth() - knobBoundsW) / 2;
-            hpfKnob.setBounds (hpfX, row.getY(), knobBoundsW, kKnobBlockH);
+            constexpr int kFilterLabelH = 10;
+            auto labelRow = s.removeFromTop (kFilterLabelH);
+            auto knobRow  = s.removeFromTop (kKnobBlockH);
+
+            // Skip kRowLabelW on the left so the filter columns line
+            // up with the band rows' gain/freq columns (which also
+            // carve out kRowLabelW for the "HF"/"HM"/etc row labels).
+            labelRow.removeFromLeft (kRowLabelW);
+            knobRow .removeFromLeft (kRowLabelW);
+            const int colW = knobRow.getWidth() / 2;
+            const int leftX  = knobRow.getX();
+            const int rightX = leftX + colW;
+
+            hpfLabel.setBounds (leftX,  labelRow.getY(), colW, kFilterLabelH);
+            lpfLabel.setBounds (rightX, labelRow.getY(), colW, kFilterLabelH);
+            hpfKnob .setBounds (leftX,  knobRow.getY(),  colW, kKnobBlockH);
+            lpfKnob .setBounds (rightX, knobRow.getY(),  colW, kKnobBlockH);
         }
 
         // Band rows. Knobs are top-aligned within each row (no leading
@@ -3462,6 +3926,13 @@ void ChannelStripComponent::resized()
             const bool hasQ = eqRows[i].q != nullptr;
             const int rowH = hasQ ? kEqBellRowH : kEqShelfRowH;
             auto row = s.removeFromTop (rowH);
+            // LM row (i == 2) shifted up a few pixels so it sits closer
+            // to the HM row above. Overlaps the bottom of HM's Q value
+            // label slot — that slot has padding so visible text isn't
+            // clipped. Pure visual lift; rowH still reserves the same
+            // vertical chunk so downstream rows (LF) stay put.
+            if (i == 2)
+                row.translate (0, -6);
             // Row-label area, vertically aligned to the rotary's centre so
             // "HM" / "LM" / etc sit next to the actual knob, not centred
             // within the row's full height (which puts them next to the
@@ -3502,6 +3973,18 @@ void ChannelStripComponent::resized()
                 const int qY    = gainY + kKnobBlockH;
                 eqRows[i].q->setBounds (qX, qY, qW, kQBlockH);
             }
+
+            // E/G type chip slot between HM (i==1) and LM (i==2),
+            // positioned in the freq column so it sits between the
+            // HM freq knob above and the LM freq knob below — the
+            // user-requested mid-strip prominence.
+            if (i == 1)
+            {
+                auto chipSlot = s.removeFromTop (kEqTypeChipH);
+                const int chipW  = juce::jmin (colW - 8, 28);
+                const int chipX  = rightX + (colW - chipW) / 2;
+                eqTypeChip.setBounds (chipX, chipSlot.getY() + 1, chipW, kEqTypeChipH - 2);
+            }
         }
     }
     area.removeFromTop (3);
@@ -3513,50 +3996,60 @@ void ChannelStripComponent::resized()
     //             the RIGHT. Putting the meter inside the comp section
     //             (rather than next to the fader) keeps all comp UI grouped
     //             and frees up the fader column for a taller fader.
+    // COMP knob diameter matches EQ (26 px) so the two sections read
+    // as the same visual rhythm down the strip. Body height tightens
+    // proportionally — the previous +18 px slack was for the larger
+    // 32 px experiment; reduced to +4 to absorb the per-knob hint
+    // labels (Fst/Slo under ATK/REL).
     constexpr int kCompKnobSize     = 26;
     constexpr int kCompKnobBlockH   = kCompKnobSize + kValueLabelH + 2;
     constexpr int kCompKnobLabelH   = 10;
-    constexpr int kCompKnobRowH     = kCompKnobLabelH + kCompKnobBlockH;  // ~52
+    constexpr int kCompKnobRowH     = kCompKnobLabelH + kCompKnobBlockH;
     constexpr int kCompKnobGap      = 4;
-    constexpr int kCompMeterW       = 26;   // CompMeterStrip handle + 2 bars
+    constexpr int kCompMeterW       = 36;   // handle + IN bar + dB scale + GR bar
     constexpr int kCompMeterGap     = 4;
 
-    // Every mode now fits in 2 rows - Opto pairs PEAK+GAIN with LIMIT shrunk
-    // to a small toggle on row 2; FET squeezes IN/OUT/RATIO across row 1 with
-    // ATK/REL on row 2; VCA stays at RAT/OUT + ATK/REL. Body height is fixed
-    // so the strip layout doesn't shift when the user switches modes.
-    constexpr int kCompBodyH = 2 * kCompKnobRowH + kCompKnobGap;
-    compArea = area.removeFromTop (16 + 2 + kCompBodyH + 4);
+    // Body height = standard 2 × knob row + gap, plus a small extra
+    // strip kept at 0 — the Fst/Slo hint labels under ATK/REL were
+    // removed; the value-label rendering inside each knob block now
+    // gets the full block height with no extra padding.
+    constexpr int kCompBodyExtraH = 0;
+    constexpr int kCompBodyH = 2 * kCompKnobRowH + kCompKnobGap + kCompBodyExtraH;
+    // Track-3 collapses every comp mode to a single-row body: FET/VCA
+    // pack 4 knobs side-by-side; OPTO packs GAIN + LIMIT side-by-side.
+    // Half the vertical space of the default 2-row layout.
+    const bool track3OneRowComp = usesFaderThresholdLayout();
+    const int effectiveCompBodyH = track3OneRowComp ? kCompKnobRowH : kCompBodyH;
+    compArea = area.removeFromTop (16 + 2 + effectiveCompBodyH + 4);
     {
         auto s = compArea.reduced (3, 2);
 
-        // Header row: bypass LED on the left, comp-mode button taking
-        // the rest. Putting the LED in the lower-left of the body would
-        // overlap the leftmost knob's value text in FET / VCA modes
-        // (knob row spans full width and value labels sit at the
-        // bottom). Header row is the only horizontal strip that stays
-        // free of knob real estate across all three modes.
+        // Header row: single centered COMP button. Left-click toggles
+        // enabled; right-click pops the mode picker. Built-in LED +
+        // label.
         auto headerRow = s.removeFromTop (16);
-        constexpr int kLedSize  = 10;
-        constexpr int kLedSpace = 14;
-        if (compBypassLed != nullptr)
-        {
-            compBypassLed->setBounds (
-                headerRow.getX(),
-                headerRow.getY() + (headerRow.getHeight() - kLedSize) / 2,
-                kLedSize, kLedSize);
-        }
-        headerRow.removeFromLeft (kLedSpace);
-        compModeButton.setBounds (headerRow);
+        if (compModeButton != nullptr)
+            compModeButton->setBounds (headerRow);
         s.removeFromTop (2);
 
-        // Body: split into knob area (left) + meter strip (right). Meter
-        // shows pre-comp input level, GR, and the threshold drag handle.
-        auto body = s.removeFromTop (kCompBodyH);
-        auto meterRect = body.removeFromRight (kCompMeterW);
-        body.removeFromRight (kCompMeterGap);
-        if (compMeter != nullptr)
-            compMeter->setBounds (meterRect);
+        // Body: GR meter strip (handle + IN + dB scale + GR) on the
+        // LEFT — matches Mixbus's threshold-fader-on-the-left grammar.
+        // Remaining width on the right holds the mode-specific knob
+        // grid. The "main amount" param (OPTO peak red / FET input /
+        // VCA threshold) is set by dragging the triangle handle on the
+        // meter strip — no dedicated knob or slider for it.
+        auto body = s.removeFromTop (effectiveCompBodyH);
+        // Track 3 (experimental): the CompMeterStrip moves to a slim
+        // column next to the fader, so the COMP section's body uses the
+        // full width for the mode-specific knob grid. compMeter's bounds
+        // are set later in the fader-column block.
+        if (! usesFaderThresholdLayout())
+        {
+            auto meterRect = body.removeFromLeft (kCompMeterW);
+            body.removeFromLeft (kCompMeterGap);
+            if (compMeter != nullptr)
+                compMeter->setBounds (meterRect);
+        }
 
         auto layoutKnobCell = [&] (juce::Rectangle<int> cell,
                                     juce::Slider& knob, juce::Label& label)
@@ -3568,45 +4061,88 @@ void ChannelStripComponent::resized()
         const int currentMode = juce::jlimit (0, 2,
             track.strip.compMode.load (std::memory_order_relaxed));
 
-        if (currentMode == 0)  // Opto: PEAK + GAIN on row 1, LIMIT toggle on row 2
+        if (currentMode == 0)  // OPTO: GAIN knob top, LIMIT toggle bottom
         {
-            auto row1 = body.removeFromTop (kCompKnobRowH);
-            body.removeFromTop (kCompKnobGap);
-            auto row2 = body.removeFromTop (kCompKnobRowH);
-            const int colW = row1.getWidth() / 2;
-            layoutKnobCell (row1.removeFromLeft (colW), optoPeakRedKnob, optoPeakRedLabel);
-            layoutKnobCell (row1,                       optoGainKnob,    optoGainLabel);
-            const int limW = juce::jmin (54, row2.getWidth());
-            optoLimitButton.setBounds (row2.getX() + (row2.getWidth() - limW) / 2,
-                                        row2.getY() + (row2.getHeight() - 18) / 2,
-                                        limW, 18);
+            if (usesFaderThresholdLayout())
+            {
+                // Track-3 OPTO single-row: GAIN cell on the LEFT half,
+                // LIMIT toggle vertically centred in the RIGHT half.
+                // Matches the 1-row footprint used by FET/VCA so the
+                // strip's COMP section height is mode-independent.
+                auto row     = body.removeFromTop (kCompKnobRowH);
+                const int colW = row.getWidth() / 2;
+                auto gainCell  = row.removeFromLeft (colW);
+                layoutKnobCell (gainCell, optoGainKnob, optoGainLabel);
+                const int limW = juce::jmin (54, row.getWidth());
+                optoLimitButton.setBounds (
+                    row.getX() + (row.getWidth() - limW) / 2,
+                    row.getY() + (row.getHeight() - 18) / 2,
+                    limW, 18);
+            }
+            else
+            {
+                auto row1 = body.removeFromTop (kCompKnobRowH);
+                body.removeFromTop (kCompKnobGap);
+                auto row2 = body.removeFromTop (kCompKnobRowH);
+                layoutKnobCell (row1, optoGainKnob, optoGainLabel);
+                const int limW = juce::jmin (54, row2.getWidth());
+                optoLimitButton.setBounds (row2.getX() + (row2.getWidth() - limW) / 2,
+                                            row2.getY() + (row2.getHeight() - 18) / 2,
+                                            limW, 18);
+            }
         }
-        else if (currentMode == 1)  // FET: IN/OUT/RATIO row 1, ATK/REL row 2
+        else if (currentMode == 1)  // FET
         {
-            auto row1 = body.removeFromTop (kCompKnobRowH);
-            body.removeFromTop (kCompKnobGap);
-            auto row2 = body.removeFromTop (kCompKnobRowH);
-            const int col3W = row1.getWidth() / 3;
-            layoutKnobCell (row1.removeFromLeft (col3W), fetInputKnob,   fetInputLabel);
-            layoutKnobCell (row1.removeFromLeft (col3W), fetRatioKnob,   fetRatioLabel);
-            layoutKnobCell (row1,                        fetOutputKnob,  fetOutputLabel);
-            const int col2W = row2.getWidth() / 2;
-            layoutKnobCell (row2.removeFromLeft (col2W), fetAttackKnob,  fetAttackLabel);
-            layoutKnobCell (row2,                        fetReleaseKnob, fetReleaseLabel);
+            if (track3OneRowComp)
+            {
+                // RAT / ATK / REL / MAK — matches the bus comp's single-row
+                // order so every comp in the mixer reads identically.
+                auto row = body.removeFromTop (kCompKnobRowH);
+                const int colW = row.getWidth() / 4;
+                layoutKnobCell (row.removeFromLeft (colW), fetRatioKnob,   fetRatioLabel);
+                layoutKnobCell (row.removeFromLeft (colW), fetAttackKnob,  fetAttackLabel);
+                layoutKnobCell (row.removeFromLeft (colW), fetReleaseKnob, fetReleaseLabel);
+                layoutKnobCell (row,                        fetOutputKnob,  fetOutputLabel);
+            }
+            else
+            {
+                auto row1 = body.removeFromTop (kCompKnobRowH);
+                body.removeFromTop (kCompKnobGap);
+                auto row2 = body.removeFromTop (kCompKnobRowH);
+                const int colW = row1.getWidth() / 2;
+                layoutKnobCell (row1.removeFromLeft (colW), fetRatioKnob,   fetRatioLabel);
+                layoutKnobCell (row1,                       fetOutputKnob,  fetOutputLabel);
+                layoutKnobCell (row2.removeFromLeft (colW), fetAttackKnob,  fetAttackLabel);
+                layoutKnobCell (row2,                        fetReleaseKnob, fetReleaseLabel);
+            }
         }
-        else  // VCA: 4 knobs in 2×2 (threshold lives on the meter-strip handle)
+        else  // VCA
         {
-            auto row1 = body.removeFromTop (kCompKnobRowH);
-            body.removeFromTop (kCompKnobGap);
-            auto row2 = body.removeFromTop (kCompKnobRowH);
-            const int colW = row1.getWidth() / 2;
-            layoutKnobCell (row1.removeFromLeft (colW), vcaRatioKnob,   vcaRatioLabel);
-            layoutKnobCell (row1,                       vcaOutputKnob,  vcaOutputLabel);
-            layoutKnobCell (row2.removeFromLeft (colW), vcaAttackKnob,  vcaAttackLabel);
-            layoutKnobCell (row2,                       vcaReleaseKnob, vcaReleaseLabel);
+            if (track3OneRowComp)
+            {
+                // RAT / ATK / REL / MAK — matches the bus comp's single-row
+                // order so every comp in the mixer reads identically.
+                auto row = body.removeFromTop (kCompKnobRowH);
+                const int colW = row.getWidth() / 4;
+                layoutKnobCell (row.removeFromLeft (colW), vcaRatioKnob,   vcaRatioLabel);
+                layoutKnobCell (row.removeFromLeft (colW), vcaAttackKnob,  vcaAttackLabel);
+                layoutKnobCell (row.removeFromLeft (colW), vcaReleaseKnob, vcaReleaseLabel);
+                layoutKnobCell (row,                        vcaOutputKnob,  vcaOutputLabel);
+            }
+            else
+            {
+                auto row1 = body.removeFromTop (kCompKnobRowH);
+                body.removeFromTop (kCompKnobGap);
+                auto row2 = body.removeFromTop (kCompKnobRowH);
+                const int colW = row1.getWidth() / 2;
+                layoutKnobCell (row1.removeFromLeft (colW), vcaRatioKnob,   vcaRatioLabel);
+                layoutKnobCell (row1,                       vcaOutputKnob,  vcaOutputLabel);
+                layoutKnobCell (row2.removeFromLeft (colW), vcaAttackKnob,  vcaAttackLabel);
+                layoutKnobCell (row2,                        vcaReleaseKnob, vcaReleaseLabel);
+            }
         }
     }
-    area.removeFromTop (3);
+    area.removeFromTop (usesFaderThresholdLayout() ? 6 : 3);
     }   // end of else (! compactMode)
 
     // ── AUX sends (Mixing stage only). Single row of 4 knobs with a slight
@@ -3615,7 +4151,13 @@ void ChannelStripComponent::resized()
     //    width that wouldn't allow 4 knobs at the same Y without crowding the
     //    value labels. Sits between COMP and PAN to match signal-flow order:
     //    EQ → COMP → SENDS → PAN → fader.
-    if (mixingMode)
+    if ((mixingMode || usesFaderThresholdLayout()) && compactMode)
+    {
+        auxCompactButton.setBounds (area.removeFromTop (24).reduced (2, 0));
+        area.removeFromTop (4);
+        auxRowArea = juce::Rectangle<int>();
+    }
+    else if (mixingMode || usesFaderThresholdLayout())
     {
         constexpr int kAuxKnobSize  = 24;
         constexpr int kAuxStaggerY  = 10;     // odd knobs offset down by this much
@@ -3672,18 +4214,14 @@ void ChannelStripComponent::resized()
     // The horizontal BUSES region used to live here. Bus toggles now sit in
     // a vertical column to the left of the fader (laid out below).
 
-    {
-        // Pan section: small "PAN" header above a compact red knob.
-        constexpr int kPanKnobSize = 26;
-        constexpr int kPanBlockH = kPanKnobSize + 12 + 2;
-        constexpr int kPanLabelH = 11;
-        auto panArea = area.removeFromTop (kPanLabelH + kPanBlockH + 2);
-        panLabel.setBounds (panArea.removeFromTop (kPanLabelH));
-        panKnob.setBounds (panArea.getX(), panArea.getY(), panArea.getWidth(), kPanBlockH);
-    }
-    area.removeFromTop (2);
+    // Pan section is laid out together with the fader (see below) so
+    // the knob can be horizontally centered over the FADER COLUMN
+    // (busColumn + faderArea, excluding the right-side peak column),
+    // not over the strip itself. Centering over the strip puts the
+    // knob offset to the right of the visible fader because the peak
+    // column eats 31-37 px from the right edge.
 
-    auto buttons = area.removeFromBottom (24);
+    auto buttons = area.removeFromBottom (20);
     const int btnW = buttons.getWidth() / 3;
     muteButton .setBounds (buttons.removeFromLeft (btnW).reduced (1));
     soloButton .setBounds (buttons.removeFromLeft (btnW).reduced (1));
@@ -3712,7 +4250,10 @@ void ChannelStripComponent::resized()
     const int     kPeakColumnW     = kMeterScaleWidth + kMeterGap + kMeterWidth;
 
     auto faderArea = area;
-    if (faderArea.getHeight() > kMaxFaderHeight + kPeakLabelH + 2)
+    // Track 3 wants the full remaining vertical real estate for its
+    // fader column — skip the kMaxFaderHeight cap that other strips use.
+    if (! usesFaderThresholdLayout()
+        && faderArea.getHeight() > kMaxFaderHeight + kPeakLabelH + 2)
         faderArea = faderArea.removeFromBottom (kMaxFaderHeight + kPeakLabelH + 2);
 
     // Vertical bus-assign column on the LEFT of the fader, mirroring the
@@ -3725,10 +4266,51 @@ void ChannelStripComponent::resized()
     auto busColumn = faderArea.removeFromLeft (kBusColumnW);
     faderArea.removeFromLeft (kBusColumnGap);
 
-    auto meterColumn = faderArea.removeFromRight (kMeterWidth);
-    faderArea.removeFromRight (kMeterGap);
-    auto scaleColumn = faderArea.removeFromRight (kMeterScaleWidth);
-    faderArea.removeFromRight (kMeterGap);
+    // Track-3 layout: scale column moves to the FAR RIGHT (right of the
+    // main level meter), with the slim GR LED hugging the meter's LEFT
+    // edge. Default layout keeps scale between fader and meter (original
+    // grammar).
+    juce::Rectangle<int> meterColumn, scaleColumn;
+    juce::Rectangle<int> faderCompMeterCol;
+    if (usesFaderThresholdLayout())
+    {
+        // Track-3 layout (right → left): GR LED hugs the right side of
+        // the main level meter (1 px gap — reads as one continuous pair),
+        // both glued IMMEDIATELY to the right of the fader. compMeter
+        // internally flips its handle to the RIGHT (see setHandleOnRight)
+        // so the triangle points LEFT at the GR bar instead of poking
+        // into the meter column. Add a right-edge pad so the LED cluster
+        // sits closer to the cap. kFaderLeftShift consumes empty space
+        // on the LEFT of the fader column so cap + PAN knob centre under
+        // the LIMIT button (which is centred on the strip), not biased
+        // left toward the bus-assign column.
+        constexpr int kGrLedW          = 20;   // GR bar + handle
+        constexpr int kMeterToGrGap    = 1;
+        constexpr int kFaderToMeterGap = 1;
+        constexpr int kRightPad        = 14;
+        // Math: bus column (18) + gap (3) on the LEFT versus right pad
+        // (14) + GR (20) + meter (14) + 2 gaps (2) on the RIGHT = 21 vs
+        // 50, asymmetric by 29 px. Shifting the fader area's left edge
+        // by 29 puts faderArea.centreX on strip.centreX → cap + PAN knob
+        // line up with the strip-centred GAIN / LIMIT controls above.
+        constexpr int kFaderLeftShift  = 29;
+        scaleColumn = juce::Rectangle<int>();
+        faderArea.removeFromRight (kRightPad);
+        faderCompMeterCol = faderArea.removeFromRight (kGrLedW);
+        faderArea.removeFromRight (kMeterToGrGap);
+        meterColumn = faderArea.removeFromRight (kMeterWidth);
+        faderArea.removeFromRight (kFaderToMeterGap);
+        faderArea.removeFromLeft (kFaderLeftShift);
+        grScaleArea = juce::Rectangle<int>();
+    }
+    else
+    {
+        grScaleArea = juce::Rectangle<int>();
+        meterColumn = faderArea.removeFromRight (kMeterWidth);
+        faderArea.removeFromRight (kMeterGap);
+        scaleColumn = faderArea.removeFromRight (kMeterScaleWidth);
+        faderArea.removeFromRight (kMeterGap);
+    }
 
     // Position the 4 bus buttons vertically centred within busColumn.
     {
@@ -3744,22 +4326,122 @@ void ChannelStripComponent::resized()
 
     // Peak readout beneath the meter column. GR readout retired - the GR bar
     // inside the COMP section is the canonical readout now.
-    const int peakRight = meterColumn.getRight();
-    const int peakLeft  = peakRight - kPeakColumnW;
-    auto peakArea = juce::Rectangle<int> (peakLeft, meterColumn.getBottom() - kPeakLabelH,
-                                           kPeakColumnW, kPeakLabelH);
-    inputPeakLabel.setBounds (peakArea);
     grPeakLabel  .setVisible (false);
 
-    meterColumn = meterColumn.withTrimmedBottom (kPeakLabelH + 2);
-    scaleColumn = scaleColumn.withTrimmedBottom (kPeakLabelH + 2);
+    if (usesFaderThresholdLayout())
+    {
+        // Track-3 mimics Mixbus's meter-spanning-the-fader-scale grammar
+        // — no numeric peak readout sits below the meter; the LED itself
+        // is the readout.
+        inputPeakLabel.setVisible (false);
+        grReadoutLabel.setVisible (false);
+    }
+    else
+    {
+        const int peakRight = meterColumn.getRight();
+        const int peakLeft  = peakRight - kPeakColumnW;
+        inputPeakLabel.setBounds (juce::Rectangle<int> (peakLeft,
+                                                          meterColumn.getBottom() - kPeakLabelH,
+                                                          kPeakColumnW, kPeakLabelH));
+        grReadoutLabel.setVisible (false);
+    }
+
+    // Track-3: trim only enough to leave the slider's 6-px track padding
+    // so the meter bottom lands exactly on the "off" tick. Default layout
+    // still reserves the peak-readout label space below the meter.
+    const int bottomTrim = usesFaderThresholdLayout() ? 6 : (kPeakLabelH + 2);
+    meterColumn = meterColumn.withTrimmedBottom (bottomTrim);
+    scaleColumn = scaleColumn.withTrimmedBottom (bottomTrim);
 
     // Hide the legacy "THR" header - threshold drag now lives in the COMP
     // section's meter strip, so the header next to the fader is misleading.
     threshMeterLabel.setVisible (false);
 
-    inputMeterArea = meterColumn;
-    meterScaleArea = scaleColumn;
-    faderSlider.setBounds (faderArea);
+    // Pan section pinned to the TOP of the fader column. Knob is
+    // centered on the fader's x-centre (faderArea after busColumn +
+    // peakColumn carve-outs) — NOT the strip centre — so it visually
+    // sits over the slider thumb's track.
+    constexpr int kPanKnobSize = 26;
+    constexpr int kPanValueH   = 12;
+    constexpr int kPanBlockH   = kPanKnobSize + kPanValueH + 2;
+    constexpr int kPanLabelH   = 11;
+    constexpr int kPanBlockW   = 56;
+    // Slider geometry relative to faderArea (pre-pan-removal) top:
+    //   sliderTop = panSlice (= kPanLabelH + kPanBlockH) + kPanFaderGap [+ track-3 extra trim]
+    //   +6 tick   = sliderTop + kFaderTrackPad (LookAndFeel pads sliderBounds
+    //               by kFaderTrackPad top + bottom so the cap fully fits)
+    // Meter LED + GR LED tops pin to the +6 tick. kPanFaderGap is the
+    // visible gap between pan-knob's "C" textbox bottom and the cap-at-max
+    // top — small positive value leaves a clean separator without the cap
+    // reaching into the pan area.
+    constexpr int kPanFaderGap     = 4;
+    constexpr int kTrack3ExtraTrim = 0;    // no additional withTrimmedTop — slider eats reclaimed space
+    const int sliderTopRelative = kPanLabelH + kPanBlockH
+                                 + (usesFaderThresholdLayout() ? kTrack3ExtraTrim : 0)
+                                 + kPanFaderGap;
+    const int topTrim = sliderTopRelative + (int) duskstudio::kFaderTrackPad;
+    inputMeterArea = meterColumn.withTrimmedTop (topTrim);
+    meterScaleArea = scaleColumn.withTrimmedTop (topTrim);
+
+    auto panSlice = faderArea.removeFromTop (kPanLabelH + kPanBlockH);
+    const int faderCentreX = panSlice.getCentreX();      // centre of fader column
+    const int knobX        = faderCentreX - kPanBlockW / 2;
+    const int labelBlockW  = juce::jmax (kPanBlockW, 40);
+    panLabel.setBounds (faderCentreX - labelBlockW / 2,
+                          panSlice.getY(),
+                          labelBlockW, kPanLabelH);
+    panKnob.setBounds (knobX, panSlice.getY() + kPanLabelH,
+                          kPanBlockW, kPanBlockH);
+
+    // Slider top sits kPanFaderGap below the pan slice so the cap at max
+    // value has a small clean gap below the pan-knob "C" textbox instead
+    // of overlapping it.
+    auto sliderBounds = faderArea.withTrimmedTop (kPanFaderGap);
+    if (usesFaderThresholdLayout())
+    {
+        // Cap (36 px tall) centres on the value Y. Trim top so cap.top
+        // at max value clears the PAN knob above. Trim bottom enough
+        // that the cap at min sits comfortably above the standalone
+        // value label hosted below the slider.
+        sliderBounds = sliderBounds.withTrimmedTop (kTrack3ExtraTrim).withTrimmedBottom (26);
+
+        // Reserve a slot AT the slider's bottom edge for faderValueLabel.
+        // The label sits just below the cap's lowest position so the
+        // engineer always sees the current value as a separate readout.
+        const int kFaderValueH = 18;
+        faderValueLabel.setBounds (sliderBounds.getX(),
+                                      sliderBounds.getBottom() + 6,
+                                      sliderBounds.getWidth(),
+                                      kFaderValueH);
+    }
+    faderSlider.setBounds (sliderBounds);
+
+    // Track 3 (experimental): place the hoisted CompMeterStrip in its
+    // fader-column slot. Vertically constrained to the trimmed meter
+    // column rect so the handle / IN bar / GR bar share the same Y
+    // extent as the main level meter to the right.
+    if (usesFaderThresholdLayout() && compMeter != nullptr
+        && ! faderCompMeterCol.isEmpty())
+    {
+        // Anchor the GR LED's bar top (grBarArea.top, which sits 10 px below
+        // compMeter.top to leave room for the "GR" caption) on the LEVEL
+        // METER's 0 dB tick — so the threshold-drag triangle's MAX position
+        // lines up with the visible "0" mark on the fader scale instead of
+        // floating between "0" and "+6".
+        // Level-meter mapping: kFloorDb=-60, kCeilingDb=+6, draw range is
+        // inputMeterArea.height - 2 px (see drawBar in paint()).
+        constexpr float kLevelMeterFloorDb   = -60.0f;
+        constexpr float kLevelMeterCeilingDb =  +6.0f;
+        constexpr float kZeroDbFrac = (0.0f - kLevelMeterFloorDb)
+                                    / (kLevelMeterCeilingDb - kLevelMeterFloorDb);
+        const int zeroY = inputMeterArea.getBottom() - 1
+                        - juce::roundToInt (kZeroDbFrac * (float) (inputMeterArea.getHeight() - 2));
+        constexpr int kGrCaptionReserve = 10;   // matches CompMeterStrip::resized's hasCaptions branch
+        const int compTop = zeroY - kGrCaptionReserve;
+        auto compRect = faderCompMeterCol
+                            .withY (compTop)
+                            .withHeight (inputMeterArea.getBottom() - compTop);
+        compMeter->setBounds (compRect);
+    }
 }
 } // namespace duskstudio

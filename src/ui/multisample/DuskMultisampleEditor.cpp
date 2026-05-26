@@ -1,4 +1,5 @@
 #include "DuskMultisampleEditor.h"
+#include "../DuskFileBrowser.h"
 #include "../../engine/multisample/DuskMultisampleProcessor.h"
 
 namespace duskstudio
@@ -125,29 +126,23 @@ void DuskMultisampleEditor::timerCallback()
 
 void DuskMultisampleEditor::openFileChooser()
 {
-    // Standalone non-native chooser — JUCE creates its own top-level
-    // dialog window which stays in front of the DAW. Native GTK lost
-    // stacking on Wayland; non-native + parentComponent crashed
-    // Mutter via the JUCE-wayland fork's modal-child path.
-    fileChooser = std::make_unique<juce::FileChooser> (
-        "Load soundfont (.sfz)",
-        juce::File::getSpecialLocation (juce::File::userHomeDirectory),
-        "*.sfz;*.sf2",
-        /*useOSNativeDialogBox*/ false);
-
-    const auto flags = juce::FileBrowserComponent::openMode
-                       | juce::FileBrowserComponent::canSelectFiles;
-    // SafePointer guards against the user dismissing the chooser
-    // after this editor has already been destroyed (plugin removed
-    // / track torn down). Without it, the async callback would
-    // invoke methods on a deallocated `this`.
+    // In-window Dusk-native browser — no standalone window, no
+    // Wayland positioning workarounds. SafePointer still guards the
+    // async result against tear-down (plugin removed / track torn
+    // down while the dialog is open).
     juce::Component::SafePointer<DuskMultisampleEditor> safe (this);
-    fileChooser->launchAsync (flags, [safe] (const juce::FileChooser& fc)
+    filebrowser::open (*this, {
+        /*title*/                  "Load soundfont (.sfz / .sf2)",
+        /*initialFileOrDirectory*/ juce::File::getSpecialLocation (juce::File::userHomeDirectory),
+        /*filePatternsAllowed*/    "*.sfz;*.sf2",
+        /*mode*/                   filebrowser::Mode::Open,
+        /*warnAboutOverwriting*/   false,
+        /*selectDirectories*/      false,
+    },
+    [safe] (juce::File file)
     {
         auto* self = safe.getComponent();
-        if (self == nullptr) return;
-        const auto file = fc.getResult();
-        if (! file.existsAsFile()) return;
+        if (self == nullptr || ! file.existsAsFile()) return;
         if (file.getFileExtension().toLowerCase() == ".sf2")
         {
             self->filePathLabel.setText ("(SF2 support lands in 1.0)",

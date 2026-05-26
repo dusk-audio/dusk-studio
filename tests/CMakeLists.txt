@@ -37,6 +37,8 @@ add_executable(dusk-studio-tests
     multisample_state_roundtrip.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/multisample/DuskMultisampleProcessor.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/multisample/DuskMultisampleEditor.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/DuskFileBrowser.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/DimOverlay.cpp
     ${CMAKE_SOURCE_DIR}/src/dsp/BrickwallLimiter.cpp
     ${CMAKE_SOURCE_DIR}/src/dsp/HardwareInsertSlot.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/FileImporter.cpp
@@ -128,6 +130,50 @@ if (_duskstudio_ipc_test_enabled)
         target_link_libraries(dusk-studio-tests PRIVATE synchronization)
     endif()
     add_dependencies(dusk-studio-tests dusk-studio-plugin-host)
+endif()
+
+# UniversalCompressor (multi-comp donor) tests — gated on the donor being
+# available. Mirrors the main app's DUSK_PLUGINS_PATH wiring exactly so the
+# tests link against the same DSP code paths the channel strip uses.
+if(DEFINED DUSK_PLUGINS_PATH)
+    target_sources(dusk-studio-tests PRIVATE
+        comp_static_curve.cpp
+        comp_timing.cpp
+        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/multicomp.cpp"
+        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/AnalogLookAndFeel.cpp"
+        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/EnhancedCompressorEditor.cpp"
+        "${DUSK_PLUGINS_PATH}/plugins/shared/LEDMeter.cpp")
+
+    # Same AnalogVUMeter rename the main app applies — keeps the donor
+    # untouched while preventing a global-namespace collision when other
+    # donors with the same class name get linked in.
+    set_source_files_properties(
+        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/multicomp.cpp"
+        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/AnalogLookAndFeel.cpp"
+        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/EnhancedCompressorEditor.cpp"
+        PROPERTIES
+        COMPILE_DEFINITIONS "AnalogVUMeter=MultiCompAnalogVUMeter")
+
+    target_include_directories(dusk-studio-tests SYSTEM PRIVATE
+        "${DUSK_PLUGINS_PATH}/plugins/shared"
+        "${DUSK_PLUGINS_PATH}/plugins/shared/AnalogEmulation"
+        "${DUSK_PLUGINS_PATH}/plugins/shared/channel-comp"
+        "${DUSK_PLUGINS_PATH}/plugins/multi-q"
+        "${DUSK_PLUGINS_PATH}/plugins/multi-comp"
+        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/HardwareEmulation")
+
+    target_compile_definitions(dusk-studio-tests PRIVATE
+        DUSKSTUDIO_HAS_DUSK_DSP=1
+        # Projucer-style macros the donor sources reference unguarded.
+        # Mirror the main app's defaults (CMakeLists.txt:710) — the values
+        # are not load-bearing for tests; they just need to exist.
+        JucePlugin_VersionString="${PROJECT_VERSION}"
+        JucePlugin_Name="DuskStudio_Comp_Tests"
+        JucePlugin_Manufacturer="Marc Korte"
+        JucePlugin_IsMidiEffect=0
+        JucePlugin_IsSynth=0
+        JucePlugin_WantsMidiInput=0
+        JucePlugin_ProducesMidiOutput=0)
 endif()
 
 list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)

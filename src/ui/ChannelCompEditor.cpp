@@ -30,6 +30,37 @@ void styleLabel (juce::Label& l, const juce::String& text)
     l.setColour (juce::Label::textColourId, juce::Colour (0xffb07050));
     l.setFont (juce::Font (juce::FontOptions (11.0f, juce::Font::bold)));
 }
+
+// Per-mode attack / release knob ranges and log-skew midpoints. The hardware
+// reference units have very different timing characters: an 1176 spends most
+// of its useful attack travel in the 20 µs..1 ms region (impossible to dial
+// in on a linear slider), whereas a VCA-style mix-bus comp lives in the
+// 1..30 ms range. Without per-mode skew the bottom 80 % of the FET attack
+// knob is dead travel.
+void applyTimingRanges (juce::Slider& attack, juce::Slider& release, int mode)
+{
+    switch (mode)
+    {
+        case 1:  // FET — 1176-shaped: 0.02..80 ms attack, 50..1100 ms release
+            attack .setRange (0.02, 80.0,   0.01);
+            attack .setSkewFactorFromMidPoint (0.8);    // midpoint = 0.8 ms (1176 sweet spot)
+            release.setRange (50.0, 1100.0, 1.0);
+            release.setSkewFactorFromMidPoint (200.0);
+            break;
+
+        case 2:  // VCA — dbx/SSL-shaped: 0.1..50 ms attack, 10..5000 ms release
+            attack .setRange (0.1,  50.0,   0.01);
+            attack .setSkewFactorFromMidPoint (3.0);
+            release.setRange (10.0, 5000.0, 1.0);
+            release.setSkewFactorFromMidPoint (200.0);
+            break;
+
+        default:
+            // OPTO hides these knobs entirely; ranges left at the values
+            // styleKnob applied at construction.
+            break;
+    }
+}
 } // namespace
 
 ChannelCompEditor::ChannelCompEditor (Track& t) : track (t)
@@ -68,17 +99,52 @@ ChannelCompEditor::ChannelCompEditor (Track& t) : track (t)
     addAndMakeVisible (modeVca);
     refreshModeButtons();
 
+    // VCA knee toggle. Same gold styling as the mode buttons but standalone
+    // (not part of the mode radio group); writes the OverEasy session atom.
+    vcaOverEasyBtn.setClickingTogglesState (true);
+    vcaOverEasyBtn.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff181820));
+    vcaOverEasyBtn.setColour (juce::TextButton::buttonOnColourId, juce::Colour (fourKColors::kCompGold));
+    vcaOverEasyBtn.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xffd09060));
+    vcaOverEasyBtn.setColour (juce::TextButton::textColourOnId,   juce::Colour (0xff121214));
+    vcaOverEasyBtn.setTooltip ("OverEasy: dbx-style soft (parabolic) knee. Off = hard knee.");
+    vcaOverEasyBtn.setToggleState (track.strip.compVcaOverEasy.load (std::memory_order_relaxed),
+                                    juce::dontSendNotification);
+    vcaOverEasyBtn.onClick = [this]
+    {
+        track.strip.compVcaOverEasy.store (vcaOverEasyBtn.getToggleState(),
+                                            std::memory_order_relaxed);
+    };
+    addAndMakeVisible (vcaOverEasyBtn);
+
+    // VCA detector mode toggle — when ON, switches the donor's RMS detector
+    // to a fixed 10 ms TC (dbx 160 spec). When OFF, the level-adaptive
+    // 35 ms → 5 ms curve (donor default).
+    vcaDetectorBtn.setClickingTogglesState (true);
+    vcaDetectorBtn.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff181820));
+    vcaDetectorBtn.setColour (juce::TextButton::buttonOnColourId, juce::Colour (fourKColors::kCompGold));
+    vcaDetectorBtn.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xffd09060));
+    vcaDetectorBtn.setColour (juce::TextButton::textColourOnId,   juce::Colour (0xff121214));
+    vcaDetectorBtn.setTooltip ("Classic: fixed 10 ms RMS TC (dbx 160 spec). Off = adaptive 35→5 ms.");
+    vcaDetectorBtn.setToggleState (track.strip.compVcaDetectorClassic.load (std::memory_order_relaxed),
+                                    juce::dontSendNotification);
+    vcaDetectorBtn.onClick = [this]
+    {
+        track.strip.compVcaDetectorClassic.store (vcaDetectorBtn.getToggleState(),
+                                                    std::memory_order_relaxed);
+    };
+    addAndMakeVisible (vcaDetectorBtn);
+
     const auto gold = juce::Colour (fourKColors::kCompGold);
     styleKnob (threshKnob,  gold, ChannelStripParams::kCompThreshMin,  ChannelStripParams::kCompThreshMax,  -12.0,  -24.0, " dB", 1);
+    // threshKnob stays hidden in the new layout — threshold (and the
+    // OPTO peak-reduction / FET input equivalents) are set via the
+    // triangle handle on the GR meter strip. The knob is kept as a
+    // backing value-source for syncKnobsFromMode / writeThresholdToMode
+    // but never added to the visible component tree.
     styleKnob (ratioKnob,   gold, ChannelStripParams::kCompRatioMin,   ChannelStripParams::kCompRatioMax,    4.0,    4.0, ":1",  1);
     styleKnob (attackKnob,  gold, ChannelStripParams::kCompAttackMin,  ChannelStripParams::kCompAttackMax,  10.0,   10.0, " ms", 1);
     styleKnob (releaseKnob, gold, ChannelStripParams::kCompReleaseMin, ChannelStripParams::kCompReleaseMax,100.0,  200.0, " ms", 0);
     styleKnob (makeupKnob,  gold, ChannelStripParams::kCompMakeupMin,  ChannelStripParams::kCompMakeupMax,   0.0,    0.0, " dB", 1);
-
-    // Initialise knob values from the per-mode params via the same mapping
-    // used by writeKnobToCompParams() / readKnobFromCompParams(). Done after
-    // setValue calls below.
-    syncKnobsFromMode();
 
     threshKnob.onValueChange  = [this] { writeThresholdToMode(); };
     ratioKnob.onValueChange   = [this] { writeRatioToMode(); };
@@ -86,7 +152,9 @@ ChannelCompEditor::ChannelCompEditor (Track& t) : track (t)
     releaseKnob.onValueChange = [this] { writeReleaseToMode(); };
     makeupKnob.onValueChange  = [this] { writeMakeupToMode(); };
 
-    addAndMakeVisible (threshKnob);  addAndMakeVisible (ratioKnob);
+    // threshKnob deliberately NOT addAndMakeVisible — value is read +
+    // written via the triangle handle, not a knob.
+    addAndMakeVisible (ratioKnob);
     addAndMakeVisible (attackKnob);  addAndMakeVisible (releaseKnob);
     addAndMakeVisible (makeupKnob);
 
@@ -101,7 +169,12 @@ ChannelCompEditor::ChannelCompEditor (Track& t) : track (t)
     addAndMakeVisible (attackLabel);  addAndMakeVisible (releaseLabel);
     addAndMakeVisible (makeupLabel);
 
-    refreshLabelsForMode();   // also calls setSize for the active mode
+    refreshLabelsForMode();   // applies per-mode ranges + sets size
+    // Sync AFTER refreshLabelsForMode so the per-mode slider range (set by
+    // applyTimingRanges) is already in place when the stored atom value is
+    // pushed into the slider — otherwise the default construction range
+    // would clamp values that are valid in the active mode.
+    syncKnobsFromMode();
 
     startTimerHz (30);
 }
@@ -125,9 +198,12 @@ void ChannelCompEditor::refreshLabelsForMode()
 {
     const int m = juce::jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
 
-    // Mode-appropriate labels reflect what each knob actually drives in the
-    // active mode. The underlying knob ranges + onValueChange routing stay
-    // identical - see writeXxxToMode for the per-mode parameter mapping.
+    // Uniform RAT / ATK / REL / MAKEUP labels across every mode. Matches
+    // the inline strip + bus + master comp labels so every comp in the
+    // mixer reads identically. FET still calls this "output gain"
+    // internally and VCA still calls it "makeup gain" — the UX cost of
+    // two different labels for the same control isn't worth the
+    // technical accuracy.
     const char* thresh  = "THRESHOLD";
     const char* ratio   = "RATIO";
     const char* attack  = "ATTACK";
@@ -136,17 +212,13 @@ void ChannelCompEditor::refreshLabelsForMode()
 
     switch (m)
     {
-        case 0:  // Opto: peak-reduction style. Attack/release are fixed by
-                 // the optical model - knobs stay visible but inert.
+        case 0:  // Opto: peak-reduction style. Attack/release/ratio are
+                 // fixed by the optical model — hide those knobs entirely
+                 // (don't show "(fixed)" placeholders).
             thresh  = "PEAK RED";
-            ratio   = "(fixed)";
-            attack  = "(fixed)";
-            release = "(fixed)";
-            makeup  = "GAIN";
             break;
-        case 1:  // FET (1176): drive in, level out.
+        case 1:  // FET (1176): drive in.
             thresh  = "INPUT";
-            makeup  = "OUTPUT";
             break;
         case 2:  // VCA: textbook threshold/ratio/attack/release/makeup.
         default:
@@ -168,27 +240,40 @@ void ChannelCompEditor::refreshLabelsForMode()
     else
         threshKnob.setRange (-60.0, 0.0,  0.1);
 
-    // HIDE knobs that don't drive anything in the active mode rather than
-    // dimming them. Opto's threshold (peak-red) and makeup (gain) are the
-    // only meaningful controls - the optical model's attack/release/ratio
-    // are baked in. FET and VCA expose all 5 knobs.
+    // OPTO hides the fixed knobs (ratio / attack / release) entirely —
+    // showing them greyed out with "(fixed)" labels added visual noise.
+    // FET / VCA expose the full 2×2 grid.
     const bool optoMode = (m == 0);
-    ratioKnob.setVisible   (! optoMode);  ratioLabel.setVisible   (! optoMode);
-    attackKnob.setVisible  (! optoMode);  attackLabel.setVisible  (! optoMode);
-    releaseKnob.setVisible (! optoMode);  releaseLabel.setVisible (! optoMode);
+    ratioKnob  .setVisible (! optoMode);   ratioLabel  .setVisible (! optoMode);
+    attackKnob .setVisible (! optoMode);   attackLabel .setVisible (! optoMode);
+    releaseKnob.setVisible (! optoMode);   releaseLabel.setVisible (! optoMode);
+    ratioKnob  .setEnabled (! optoMode);
+    attackKnob .setEnabled (! optoMode);
+    releaseKnob.setEnabled (! optoMode);
 
-    // Per-mode height. Opto is just two centred knobs; FET/VCA need the
-    // 2x2 + centred Makeup. Calling setSize here propagates a
-    // childBoundsChanged event up to the parent CallOutBox, which
-    // re-layouts itself around the new content rect.
+    // Per-mode timing ranges + log skew. Must run before any setValue() that
+    // pushes a stored atom into the slider — the slider will clamp the
+    // incoming value against whichever range is currently active.
+    applyTimingRanges (attackKnob, releaseKnob, m);
+
+    // OverEasy + detector-mode toggles: VCA only.
+    const bool vcaMode = (m == 2);
+    vcaOverEasyBtn.setVisible (vcaMode);
+    vcaOverEasyBtn.setEnabled (vcaMode);
+    vcaOverEasyBtn.setToggleState (track.strip.compVcaOverEasy.load (std::memory_order_relaxed),
+                                    juce::dontSendNotification);
+    vcaDetectorBtn.setVisible (vcaMode);
+    vcaDetectorBtn.setEnabled (vcaMode);
+    vcaDetectorBtn.setToggleState (track.strip.compVcaDetectorClassic.load (std::memory_order_relaxed),
+                                    juce::dontSendNotification);
+
+    // Uniform height — same grid across every mode, no resize on
+    // mode swap.
     constexpr int kKnobBlockH = 56 + 18 + 4;
     constexpr int kRowGap     = 6;
-    constexpr int kHeaderH    = 24 + 8 + 24 + 12;   // header + gap + mode tabs + gap
+    constexpr int kHeaderH    = 24 + 8 + 24 + 12;
     constexpr int kFooterPad  = 16;
-    const int contentH = optoMode
-        ? (kHeaderH + kKnobBlockH + kRowGap + kKnobBlockH + kFooterPad)            // 2 single rows
-        : (kHeaderH + kKnobBlockH + kRowGap + kKnobBlockH + kRowGap + kKnobBlockH  // pairs + makeup
-                       + kRowGap + kFooterPad);
+    const int contentH = kHeaderH + kKnobBlockH + kRowGap + kKnobBlockH + kFooterPad;
     constexpr int kBaseW = 380;
     setSize (kBaseW, contentH + 24);  // +24 for outer reduce(12)
 
@@ -644,95 +729,117 @@ void ChannelCompEditor::resized()
 {
     auto area = getLocalBounds().reduced (12);
 
-    // Reserve a vertical strip on the right for: threshold drag handle +
-    // IN + GR. Each gets its own column. Handle is narrow (just enough for
-    // the triangle); IN and GR are equal-width meter bars.
+    // Mixbus-style modal layout mirrors the channel-strip COMP section:
+    //   ┌─────────────────────────────────────────┐
+    //   │ onButton                                │  ← header row
+    //   │ [Opto] [FET] [VCA]                       │  ← mode row
+    //   │ ┌────┐ ┌──────────┐ ┌────┐ ┌────┐       │
+    //   │ │THR │ │GR meters │ │RAT │ │OUT │       │
+    //   │ │slid│ │IN  GR    │ │ATK │ │REL │       │
+    //   │ │    │ │          │ │    │ │MAK │       │
+    //   │ └────┘ └──────────┘ └────┘ └────┘       │
+    //   └─────────────────────────────────────────┘
+
     constexpr int kHandleW = 14;
     constexpr int kMeterW = 28;
     constexpr int kMeterGap = 4;
     constexpr int kMeterStripW = kHandleW + kMeterGap + kMeterW * 2 + kMeterGap;
-    constexpr int kMeterTopPadding    = 16;  // leaves room for "IN" / "GR" caption
-    constexpr int kMeterBottomPadding = 14;  // leaves room for value text
+    constexpr int kMeterTopPadding    = 16;
+    constexpr int kMeterBottomPadding = 14;
 
-    auto meterStrip = area.removeFromRight (kMeterStripW + 8);
-    meterStrip.removeFromRight (4);
-
-    area.removeFromRight (8);  // gap between knobs and meter strip
-
+    // Top: ON button + mode row.
     auto header = area.removeFromTop (24);
     onButton.setBounds (header.removeFromRight (60).reduced (1));
     area.removeFromTop (8);
-
     auto modeRow = area.removeFromTop (24);
     const int modeColW = modeRow.getWidth() / 3;
     modeOpto.setBounds (modeRow.removeFromLeft (modeColW).reduced (2, 0));
     modeFet.setBounds  (modeRow.removeFromLeft (modeColW).reduced (2, 0));
     modeVca.setBounds  (modeRow.reduced (2, 0));
-    area.removeFromTop (12);
+    area.removeFromTop (6);
 
-    constexpr int kKnobBlockH = 56 + 18 + 4;
-
-    auto layoutPair = [&] (juce::Slider& kA, juce::Label& lA,
-                            juce::Slider* kB, juce::Label* lB)
+    // VCA knee + detector-mode toggles. Two side-by-side buttons below the
+    // mode row, visible only in VCA mode (space reclaimed otherwise so the
+    // rotaries grid doesn't shift around when switching modes).
+    if (vcaOverEasyBtn.isVisible())
     {
-        auto labelRow = area.removeFromTop (14);
-        auto knobRow  = area.removeFromTop (kKnobBlockH);
-
-        // Single-knob row (kB == null) → centre the one knob across the row.
-        if (kB == nullptr)
-        {
-            const int knobW = juce::jmin (knobRow.getWidth(), kKnobBlockH);
-            const int knobX = knobRow.getX() + (knobRow.getWidth() - knobW) / 2;
-            lA.setBounds (labelRow);
-            kA.setBounds (knobX, knobRow.getY(), knobW, knobRow.getHeight());
-        }
-        else
-        {
-            const int colW = labelRow.getWidth() / 2;
-            lA.setBounds (labelRow.removeFromLeft (colW));
-            lB->setBounds (labelRow);
-            kA.setBounds (knobRow.removeFromLeft (colW).reduced (4));
-            kB->setBounds (knobRow.reduced (4));
-        }
+        auto kneeRow = area.removeFromTop (20);
+        const int colW = kneeRow.getWidth() / 2;
+        vcaOverEasyBtn.setBounds (kneeRow.removeFromLeft (colW).reduced (4, 0));
+        vcaDetectorBtn.setBounds (kneeRow.reduced (4, 0));
         area.removeFromTop (6);
-    };
-
-    const int mode = juce::jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
-    if (mode == 0)
-    {
-        // Opto: only Thresh (PEAK RED) + Makeup (GAIN). Layout as two rows
-        // each centred so the controls feel deliberate, not "missing".
-        layoutPair (threshKnob, threshLabel, nullptr, nullptr);
-        area.removeFromTop (6);
-        layoutPair (makeupKnob, makeupLabel, nullptr, nullptr);
     }
     else
     {
-        // FET / VCA: 2x2 grid of Thresh/Ratio + Atk/Rel, then a centred Makeup.
-        layoutPair (threshKnob, threshLabel,  &ratioKnob,   &ratioLabel);
-        layoutPair (attackKnob, attackLabel,  &releaseKnob, &releaseLabel);
         area.removeFromTop (6);
-        layoutPair (makeupKnob, makeupLabel, nullptr, nullptr);
     }
 
-    // Vertical meters on the right side. Handle | IN | GR, with the
-    // threshold triangle living in the handle column. Reserve top + bottom
-    // padding so the captions / numeric readouts drawn by paint() fit.
+    // BODY: LEFT (meter strip with threshold drag handle) | RIGHT (rotaries grid).
+    // No dedicated threshold knob/slider — the triangle on the meter
+    // handle column drives threshold / peak-red / FET input.
+    constexpr int kColGap = 12;
+
+    auto body = area;
+    auto meterStrip = body.removeFromLeft (kMeterStripW);
+    body.removeFromLeft (kColGap);
+    auto rotariesCol = body;     // remaining width
+
+    // threshLabel is no longer rendered as a column header; hide it.
+    threshLabel.setVisible (false);
+    threshKnob .setVisible (false);
+
+    // ── Meter strip: handle | IN | GR.
     auto handleCol = meterStrip.removeFromLeft (kHandleW);
     meterStrip.removeFromLeft (kMeterGap);
     auto inMeter = meterStrip.removeFromLeft (kMeterW);
     meterStrip.removeFromLeft (kMeterGap);
     auto grMeter = meterStrip.removeFromLeft (kMeterW);
-
-    handleCol = handleCol.withTrimmedTop (kMeterTopPadding)
-                          .withTrimmedBottom (kMeterBottomPadding);
-    inMeter   = inMeter  .withTrimmedTop (kMeterTopPadding)
-                          .withTrimmedBottom (kMeterBottomPadding);
-    grMeter   = grMeter  .withTrimmedTop (kMeterTopPadding)
-                          .withTrimmedBottom (kMeterBottomPadding);
-
+    handleCol = handleCol.withTrimmedTop (kMeterTopPadding).withTrimmedBottom (kMeterBottomPadding);
+    inMeter   = inMeter  .withTrimmedTop (kMeterTopPadding).withTrimmedBottom (kMeterBottomPadding);
+    grMeter   = grMeter  .withTrimmedTop (kMeterTopPadding).withTrimmedBottom (kMeterBottomPadding);
     threshHandleArea = handleCol;
     inputMeterArea   = inMeter;
     grMeterArea      = grMeter;
+
+    // ── Rotaries grid on the right. FET/VCA show 2×2 (RAT/ATK over
+    // REL/MAK). OPTO is sparse: only MAKEUP (rendered as "GAIN" by the
+    // label refresh), centred at the top of the column.
+    const int mode = juce::jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
+    constexpr int kRowLabelH = 14;
+    const int rowH = (rotariesCol.getHeight() - kRowLabelH * 2 - 12) / 2;
+    auto layoutCell = [&] (juce::Rectangle<int> cell,
+                             juce::Slider& k, juce::Label& l)
+    {
+        l.setBounds (cell.removeFromTop (kRowLabelH));
+        k.setBounds (cell.reduced (4));
+    };
+
+    // FET / VCA: full 2×2 grid (RAT / ATK on top, REL / GAIN on bottom).
+    // OPTO: only GAIN visible — centered in the rotaries column. The
+    // visibility flags are driven by refreshLabelsForMode; we just lay
+    // out whichever knobs are visible here.
+    makeupKnob.setVisible (true);   makeupLabel.setVisible (true);
+
+    if (mode == 0)  // OPTO — single GAIN knob, centred vertically.
+    {
+        const int cellH = kRowLabelH + rowH;
+        const int cellW = juce::jmin (rotariesCol.getWidth(), 120);
+        const auto centred = juce::Rectangle<int> (
+            rotariesCol.getCentreX() - cellW / 2,
+            rotariesCol.getCentreY() - cellH / 2,
+            cellW, cellH);
+        layoutCell (centred, makeupKnob, makeupLabel);
+    }
+    else
+    {
+        auto rowTop    = rotariesCol.removeFromTop (kRowLabelH + rowH);
+        rotariesCol.removeFromTop (12);
+        auto rowBottom = rotariesCol.removeFromTop (kRowLabelH + rowH);
+        const int colW = rowTop.getWidth() / 2;
+        layoutCell (rowTop   .removeFromLeft (colW), ratioKnob,   ratioLabel);
+        layoutCell (rowTop,                          attackKnob,  attackLabel);
+        layoutCell (rowBottom.removeFromLeft (colW), releaseKnob, releaseLabel);
+        layoutCell (rowBottom,                        makeupKnob,  makeupLabel);
+    }
 }
 } // namespace duskstudio

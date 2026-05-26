@@ -48,6 +48,12 @@ private:
     juce::TextButton modeOpto  { "Opto" };
     juce::TextButton modeFet   { "FET"  };
     juce::TextButton modeVca   { "VCA"  };
+    // VCA-only knee selector: hard knee (default) vs dbx OverEasy.
+    // Visible / enabled only in VCA mode — see refreshLabelsForMode().
+    juce::TextButton vcaOverEasyBtn { "OverEasy" };
+    // VCA detector mode: ADAPT (level-dependent) vs CLASSIC (fixed 10 ms TC).
+    // Visible / enabled only in VCA mode — see refreshLabelsForMode().
+    juce::TextButton vcaDetectorBtn { "Classic" };
 
     juce::Label  threshLabel,  ratioLabel,  attackLabel,  releaseLabel,  makeupLabel;
     juce::Slider threshKnob, ratioKnob, attackKnob, releaseKnob, makeupKnob;

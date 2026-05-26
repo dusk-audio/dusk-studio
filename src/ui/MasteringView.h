@@ -4,6 +4,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <memory>
 #include "EmbeddedModal.h"
+#include "DuskComboBox.h"
 #include "../engine/AudioEngine.h"
 #include "../session/Session.h"
 
@@ -104,7 +105,7 @@ private:
     juce::TextButton resetLoudness { "Reset I" };
 
     // Streaming-platform target preset. Drives I-LUFS / TP cell coloring.
-    juce::ComboBox masteringTargetCombo;
+    DuskComboBox masteringTargetCombo;
     juce::Label    targetCaption;
 
     // Export footer.

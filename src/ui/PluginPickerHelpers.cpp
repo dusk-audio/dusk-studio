@@ -1,4 +1,5 @@
 #include "PluginPickerHelpers.h"
+#include "DuskFileBrowser.h"
 #include "EmbeddedModal.h"
 #include "PluginPickerPanel.h"
 #include "../engine/PluginManager.h"
@@ -20,6 +21,16 @@ EmbeddedModal& sharedPickerModal()
 // Separate static modal so alerts can stack OVER the picker modal
 // without one clobbering the other.
 EmbeddedModal& sharedAlertModal()
+{
+    static EmbeddedModal m;
+    return m;
+}
+
+// Dedicated chooser modal so the three-button "Hardware / Soundfont /
+// Plugin" picker can close itself BEFORE the next step opens its own
+// modal (which may be the shared picker modal). Stacking on the same
+// static instance would race.
+EmbeddedModal& sharedChooserModal()
 {
     static EmbeddedModal m;
     return m;
@@ -100,6 +111,14 @@ void showDuskAlert (juce::Component& parent,
 {
     auto panel = std::make_unique<DuskAlertPanel> (std::move (title),
                                                      std::move (message));
+    // CONTRACT: onDismiss fires exactly once per show. Two paths exist —
+    // panel.onOK (button click) and show()'s onDismiss (dim-click / Esc).
+    // These are mutually exclusive ONLY because EmbeddedModal::close()
+    // does NOT invoke userOnDismiss; it just tears down the dim /
+    // backdrop / body. If EmbeddedModal::close() is ever changed to fire
+    // userOnDismiss for symmetry, this helper will silently double-fire
+    // onDismiss and any downstream chained callback (e.g. picker reopen)
+    // will run twice. Audit both lambdas if you touch EmbeddedModal.
     panel->onOK = [onDismiss]() mutable
     {
         sharedAlertModal().close();
@@ -190,12 +209,20 @@ void rejectMismatchedKind (PluginSlot& slot, PluginKind kind)
                                   ? "instrument" : "effect";
     const juce::String got    = (kind == PluginKind::Instruments)
                                   ? "effect" : "instrument";
+    const auto msg = "This slot expects an " + wanted + " plugin but the chosen file is an "
+                   + got + ". The slot was left empty. Use a MIDI track for instrument "
+                     "plugins and an audio track for effect plugins.";
+    if (auto* tlw = juce::TopLevelWindow::getActiveTopLevelWindow())
+        if (auto* dw = dynamic_cast<juce::DocumentWindow*> (tlw))
+            if (auto* content = dw->getContentComponent())
+            {
+                showDuskAlert (*content, "Plugin kind mismatch", msg);
+                return;
+            }
+    // Fallback path — no top-level component (shouldn't happen in
+    // normal use). Keep native alert so we don't swallow the warning.
     juce::AlertWindow::showMessageBoxAsync (
-        juce::AlertWindow::WarningIcon,
-        "Plugin kind mismatch",
-        "This slot expects an " + wanted + " plugin but the chosen file is an "
-        + got + ". The slot was left empty. Use a MIDI track for instrument "
-        "plugins and an audio track for effect plugins.");
+        juce::AlertWindow::WarningIcon, "Plugin kind mismatch", msg);
 }
 } // namespace
 
@@ -216,111 +243,92 @@ void openFileChooser (PluginSlot& slot,
     const auto defaultDir = juce::File::getSpecialLocation (juce::File::userHomeDirectory)
                                 .getChildFile (".vst3");
 #endif
-    chooserOwner = std::make_unique<juce::FileChooser> (
-        "Select a plugin",
-        defaultDir,
-        "*.vst3;*.component;*.so;*.lv2");
+    auto* host = parentForLifetime.getComponent();
+    if (host == nullptr) return;
 
-    auto* chooserPtr = chooserOwner.get();
-    chooserPtr->launchAsync (
-        juce::FileBrowserComponent::openMode |
-        juce::FileBrowserComponent::canSelectFiles |
-        juce::FileBrowserComponent::canSelectDirectories,
-        [&slot, &chooserOwner, onChange = std::move (onChange),
-         parentForLifetime, expectedKind] (const juce::FileChooser& chooser)
+    // DuskFileBrowser owns its own lifetime (in-window EmbeddedModal).
+    // The legacy chooserOwner unique_ptr is unused on this path; left
+    // in the signature for source-compat with callers that still hold
+    // it (removed in a follow-up pass).
+    juce::ignoreUnused (chooserOwner);
+
+    filebrowser::open (*host, {
+        /*title*/                  "Select a plugin",
+        /*initialFileOrDirectory*/ defaultDir,
+        /*filePatternsAllowed*/    "*.vst3;*.component;*.so;*.lv2",
+        /*mode*/                   filebrowser::Mode::Open,
+        /*warnAboutOverwriting*/   false,
+        /*selectDirectories*/      true,
+    },
+    [&slot, onChange = std::move (onChange),
+     parentForLifetime, expectedKind] (juce::File file)
+    {
+        if (parentForLifetime.getComponent() == nullptr) return;
+        if (file == juce::File()) return;
+
+        juce::String error;
+        const bool ok = slot.loadFromFile (file, error);
+        if (! ok)
         {
-            // If the owning UI component has been destroyed (user
-            // switched stages / quit) while the OS dialog was open,
-            // the chooserOwner unique_ptr it lives on is also gone.
-            // Bail without touching it. JUCE FileChooser self-cleans
-            // after this callback returns, so the chooser itself is
-            // fine - we just must not deref the now-dead unique_ptr.
-            if (parentForLifetime.getComponent() == nullptr) return;
-            const auto file = chooser.getResult();
-
-            if (file == juce::File())
-            {
-                // User cancelled - drop the chooser and bail. (Reset comes
-                // last because the JUCE FileChooser keeps `chooser` alive
-                // while this lambda runs, but the unique_ptr destruction
-                // schedules its own teardown after we return.)
-                chooserOwner.reset();
-                return;
-            }
-
-            juce::String error;
-            const bool ok = slot.loadFromFile (file, error);
-            chooserOwner.reset();
-            if (! ok)
-            {
-                if (auto* tl = parentForLifetime.getComponent() != nullptr
-                                  ? parentForLifetime.getComponent()->getTopLevelComponent()
-                                  : nullptr)
-                    showDuskAlert (*tl, "Plugin load failed", error);
-                else
-                    showLoadFailureAlertFallback (error);
-                return;
-            }
-            if (! loadedKindMatches (slot, expectedKind))
-            {
-                rejectMismatchedKind (slot, expectedKind);
-                if (onChange) onChange();
-                return;
-            }
+            if (auto* tl = parentForLifetime.getComponent() != nullptr
+                              ? parentForLifetime.getComponent()->getTopLevelComponent()
+                              : nullptr)
+                showDuskAlert (*tl, "Plugin load failed", error);
+            else
+                showLoadFailureAlertFallback (error);
+            return;
+        }
+        if (! loadedKindMatches (slot, expectedKind))
+        {
+            rejectMismatchedKind (slot, expectedKind);
             if (onChange) onChange();
-        });
+            return;
+        }
+        if (onChange) onChange();
+    });
 }
 
 #if DUSKSTUDIO_HAS_MULTISAMPLE
-// Soundfont (SFZ) chooser. Mirrors openFileChooser's lifetime model
-// but filters for .sfz files and loads through the built-in
-// DuskMultisamplePluginFormat — feels native, not like a plugin.
+// Soundfont (SFZ) chooser. Routes through DuskFileBrowser (in-window
+// EmbeddedModal panel) so it shares the same chrome as the plugin
+// browse / session save / bounce dialogs. No standalone window, no
+// XWayland / Mutter positioning workarounds.
 static void openSoundfontFileChooser (PluginSlot& slot,
                                        std::unique_ptr<juce::FileChooser>& chooserOwner,
                                        std::function<void()> onChange,
                                        juce::Component::SafePointer<juce::Component> parentForLifetime)
 {
+    juce::ignoreUnused (chooserOwner);
+    auto* host = parentForLifetime.getComponent();
+    if (host == nullptr) return;
     const auto defaultDir = juce::File::getSpecialLocation (juce::File::userHomeDirectory);
-    // useOSNativeDialogBox = false (JUCE's own FileBrowserComponent
-    // top-level dialog) without a parentComponent. Native GTK dialog
-    // loses stacking against the DAW window on Wayland; non-native
-    // + parent crashed Mutter (JUCE-wayland fork's modal-child
-    // path); standalone top-level non-native works — same shape as
-    // PluginEditorWindow which we already handle on the fork.
-    chooserOwner = std::make_unique<juce::FileChooser> (
-        "Load soundfont (.sfz)",
-        defaultDir,
-        "*.sfz;*.sf2",
-        /*useOSNativeDialogBox*/ false);
-
-    chooserOwner->launchAsync (
-        juce::FileBrowserComponent::openMode |
-        juce::FileBrowserComponent::canSelectFiles,
-        [&slot, &chooserOwner, onChange = std::move (onChange),
-         parentForLifetime] (const juce::FileChooser& chooser)
+    filebrowser::open (*host, {
+        /*title*/                  "Load soundfont (.sfz / .sf2)",
+        /*initialFileOrDirectory*/ defaultDir,
+        /*filePatternsAllowed*/    "*.sfz;*.sf2",
+        /*mode*/                   filebrowser::Mode::Open,
+        /*warnAboutOverwriting*/   false,
+        /*selectDirectories*/      false,
+    },
+    [&slot, onChange = std::move (onChange),
+     parentForLifetime] (juce::File file)
+    {
+        if (parentForLifetime.getComponent() == nullptr) return;
+        if (file == juce::File()) return;
+        juce::String error;
+        const bool ok = slot.loadFromFile (file, error);
+        if (! ok)
         {
-            if (parentForLifetime.getComponent() == nullptr) return;
-            const auto file = chooser.getResult();
-            if (file == juce::File())
-            {
-                chooserOwner.reset();
-                return;
-            }
-            juce::String error;
-            const bool ok = slot.loadFromFile (file, error);
-            chooserOwner.reset();
-            if (! ok)
-            {
-                if (auto* tl = parentForLifetime.getComponent() != nullptr
-                                  ? parentForLifetime.getComponent()->getTopLevelComponent()
-                                  : nullptr)
-                    showDuskAlert (*tl, "Plugin load failed", error);
-                else
-                    showLoadFailureAlertFallback (error);
-                return;
-            }
-            if (onChange) onChange();
-        });
+            if (auto* tl = parentForLifetime.getComponent() != nullptr
+                              ? parentForLifetime.getComponent()->getTopLevelComponent()
+                              : nullptr)
+                showDuskAlert (*tl, "Plugin load failed", error);
+            else
+                showLoadFailureAlertFallback (error);
+            return;
+        }
+        if (onChange) onChange();
+    });
 }
 #endif
 
@@ -330,7 +338,8 @@ void openPickerMenu (PluginSlot& slot,
                       std::function<void()> onChange,
                       PluginKind kind,
                       juce::Point<int> /*screenPosition*/,
-                      std::function<void()> onPickHardwareInsert)
+                      std::function<void()> onPickHardwareInsert,
+                      bool suppressSecondaryButtons)
 {
     auto& manager = slot.getManagerForUi();
 
@@ -388,7 +397,12 @@ void openPickerMenu (PluginSlot& slot,
                            std::move (onChange), safeTarget, kind);
     };
 
-    if (onPickHardwareInsert)
+    // Hardware-insert + soundfont bottom-row buttons are SUPPRESSED when
+    // this picker was reached via the two-step InsertChooser (those
+    // options are already on the chooser's top-level buttons). Other
+    // entry points — Replace plugin..., Scan rescan-reopen — keep them
+    // for ergonomic in-place switching.
+    if (onPickHardwareInsert && ! suppressSecondaryButtons)
     {
         cb.onHardwareInsert = [closeModal, hw = onPickHardwareInsert]() mutable
         {
@@ -398,7 +412,7 @@ void openPickerMenu (PluginSlot& slot,
     }
 
    #if DUSKSTUDIO_HAS_MULTISAMPLE
-    if (kind == PluginKind::Instruments)
+    if (kind == PluginKind::Instruments && ! suppressSecondaryButtons)
     {
         cb.onLoadSoundfont = [closeModal, slotPtr, safeTarget, chooserOwnerPtr,
                                 onChange]() mutable
@@ -460,5 +474,198 @@ void openPickerMenu (PluginSlot& slot,
 
     sharedPickerModal().show (*parent, std::move (panel),
                                 /*onDismiss*/ [] { sharedPickerModal().close(); });
+}
+
+// ── InsertChooserPanel — three big buttons in a stack ────────────────────
+
+namespace
+{
+class InsertChooserPanel final : public juce::Component
+{
+public:
+    InsertChooserPanel (bool showHardware, bool showSoundfont,
+                         std::function<void()> onHw,
+                         std::function<void()> onSf,
+                         std::function<void()> onPlugin,
+                         std::function<void()> onCancel)
+        : onHwFn (std::move (onHw)),
+          onSfFn (std::move (onSf)),
+          onPluginFn (std::move (onPlugin)),
+          onCancelFn (std::move (onCancel)),
+          hwVisible (showHardware),
+          sfVisible (showSoundfont)
+    {
+        setOpaque (true);
+
+        auto style = [] (juce::TextButton& b, juce::Colour fill)
+        {
+            b.setColour (juce::TextButton::buttonColourId,   fill);
+            b.setColour (juce::TextButton::buttonOnColourId, fill.brighter (0.2f));
+            b.setColour (juce::TextButton::textColourOffId,  juce::Colours::white);
+            b.setColour (juce::TextButton::textColourOnId,   juce::Colours::white);
+            b.setMouseClickGrabsKeyboardFocus (false);
+        };
+
+        titleLabel.setText ("Add insert", juce::dontSendNotification);
+        titleLabel.setJustificationType (juce::Justification::centredLeft);
+        titleLabel.setColour (juce::Label::textColourId, juce::Colours::white);
+        titleLabel.setFont (juce::Font (juce::FontOptions (15.0f, juce::Font::bold)));
+        addAndMakeVisible (titleLabel);
+
+        promptLabel.setText ("Pick what kind of insert to load:", juce::dontSendNotification);
+        promptLabel.setJustificationType (juce::Justification::centredLeft);
+        promptLabel.setColour (juce::Label::textColourId, juce::Colour (0xffc0c0c8));
+        promptLabel.setFont (juce::Font (juce::FontOptions (12.0f)));
+        addAndMakeVisible (promptLabel);
+
+        if (hwVisible)
+        {
+            hwBtn.setButtonText ("Hardware Insert");
+            style (hwBtn, juce::Colour (0xff3a5878));
+            hwBtn.onClick = [this] { if (onHwFn) onHwFn(); };
+            addAndMakeVisible (hwBtn);
+        }
+        if (sfVisible)
+        {
+            sfBtn.setButtonText ("Soundfont (.sfz / .sf2)");
+            style (sfBtn, juce::Colour (0xff5a4a78));
+            sfBtn.onClick = [this] { if (onSfFn) onSfFn(); };
+            addAndMakeVisible (sfBtn);
+        }
+        pluginBtn.setButtonText ("Plugin (VST3 / LV2)");
+        style (pluginBtn, juce::Colour (0xff385a38));
+        pluginBtn.onClick = [this] { if (onPluginFn) onPluginFn(); };
+        addAndMakeVisible (pluginBtn);
+
+        cancelBtn.setButtonText ("Cancel");
+        cancelBtn.setColour (juce::TextButton::buttonColourId,  juce::Colour (0xff262630));
+        cancelBtn.setColour (juce::TextButton::textColourOffId, juce::Colour (0xffd0d0d8));
+        cancelBtn.onClick = [this] { if (onCancelFn) onCancelFn(); };
+        addAndMakeVisible (cancelBtn);
+
+        const int visibleBigButtons = 1 + (hwVisible ? 1 : 0) + (sfVisible ? 1 : 0);
+        constexpr int kBigBtnH = 44;
+        constexpr int kGap     = 8;
+        const int total = 16 + 22 + 6 + 18 + 12               // title + prompt + padding
+                        + visibleBigButtons * kBigBtnH
+                        + (visibleBigButtons - 1) * kGap
+                        + 14 + 32 + 16;                        // gap + cancel + bottom padding
+        setSize (380, total);
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        g.fillAll (juce::Colour (0xff1a1a22));
+        g.setColour (juce::Colour (0xff353540));
+        g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (0.5f), 6.0f, 1.0f);
+    }
+
+    void resized() override
+    {
+        auto area = getLocalBounds().reduced (16);
+        titleLabel.setBounds (area.removeFromTop (22));
+        area.removeFromTop (6);
+        promptLabel.setBounds (area.removeFromTop (18));
+        area.removeFromTop (12);
+
+        constexpr int kBigBtnH = 44;
+        constexpr int kGap     = 8;
+        if (hwVisible)
+        {
+            hwBtn.setBounds (area.removeFromTop (kBigBtnH));
+            area.removeFromTop (kGap);
+        }
+        if (sfVisible)
+        {
+            sfBtn.setBounds (area.removeFromTop (kBigBtnH));
+            area.removeFromTop (kGap);
+        }
+        pluginBtn.setBounds (area.removeFromTop (kBigBtnH));
+        area.removeFromTop (14);
+
+        // Cancel pinned to the bottom, slightly narrower so it reads as
+        // secondary action vs the three big choice buttons above.
+        auto cancelRow = area.removeFromTop (32);
+        const int cw = juce::jmin (120, cancelRow.getWidth());
+        cancelBtn.setBounds (cancelRow.withSizeKeepingCentre (cw, 32));
+    }
+
+private:
+    juce::Label titleLabel, promptLabel;
+    juce::TextButton hwBtn, sfBtn, pluginBtn, cancelBtn;
+    std::function<void()> onHwFn, onSfFn, onPluginFn, onCancelFn;
+    bool hwVisible, sfVisible;
+};
+} // namespace
+
+void openInsertChooser (PluginSlot& slot,
+                         juce::Component& target,
+                         std::unique_ptr<juce::FileChooser>& chooserOwner,
+                         std::function<void()> onChange,
+                         PluginKind kind,
+                         std::function<void()> onPickHardwareInsert)
+{
+    auto* parent = target.getTopLevelComponent();
+    if (parent == nullptr) parent = &target;
+
+    juce::Component::SafePointer<juce::Component> safeTarget (&target);
+    auto* slotPtr = &slot;
+    auto* chooserOwnerPtr = &chooserOwner;
+
+    auto closeChooser = [] { sharedChooserModal().close(); };
+
+    // HW insert only makes sense on audio (effects) slots — a MIDI
+    // instrument slot can't route audio out to a physical pair.
+    // Soundfont is shown ALWAYS when the multisample backend is built
+    // in: it loads via the same path as an instrument plugin, and the
+    // engine routes MIDI-driven content even on an audio track (the
+    // user picks the SFZ for a reason — flagging it as "wrong slot"
+    // here hides a valid choice).
+    const bool showHw = (kind == PluginKind::Effects)
+                        && static_cast<bool> (onPickHardwareInsert);
+   #if DUSKSTUDIO_HAS_MULTISAMPLE
+    const bool showSf = true;
+   #else
+    const bool showSf = false;
+   #endif
+
+    auto onHw = [closeChooser, hw = onPickHardwareInsert]() mutable
+    {
+        closeChooser();
+        if (hw) hw();
+    };
+
+    auto onSf = [closeChooser, slotPtr, safeTarget, chooserOwnerPtr,
+                  onChange]() mutable
+    {
+        closeChooser();
+        if (safeTarget.getComponent() == nullptr) return;
+       #if DUSKSTUDIO_HAS_MULTISAMPLE
+        openSoundfontFileChooser (*slotPtr, *chooserOwnerPtr,
+                                     std::move (onChange), safeTarget);
+       #else
+        juce::ignoreUnused (slotPtr, chooserOwnerPtr, onChange);
+       #endif
+    };
+
+    auto onPlugin = [closeChooser, slotPtr, safeTarget, chooserOwnerPtr,
+                       onChange, kind]() mutable
+    {
+        closeChooser();
+        if (auto* t = safeTarget.getComponent())
+            openPickerMenu (*slotPtr, *t, *chooserOwnerPtr,
+                              std::move (onChange), kind, { -1, -1 },
+                              /*onPickHardwareInsert*/ {},
+                              /*suppressSecondaryButtons*/ true);
+    };
+
+    auto onCancel = closeChooser;
+
+    auto panel = std::make_unique<InsertChooserPanel> (
+        showHw, showSf, std::move (onHw), std::move (onSf),
+        std::move (onPlugin), std::move (onCancel));
+
+    sharedChooserModal().show (*parent, std::move (panel),
+                                /*onDismiss*/ [] { sharedChooserModal().close(); });
 }
 } // namespace duskstudio::pluginpicker

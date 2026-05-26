@@ -24,6 +24,10 @@ private:
 
     juce::Label titleLabel;
     juce::TextButton typeButton { "E" };
+    // EQ section ON/OFF toggle — mirrors the strip's EQ-header LED so
+    // the popup can engage or bypass the whole 4-band + HPF/LPF stack
+    // without closing the editor.
+    juce::TextButton enableButton { "EQ" };
 
     struct BandRow
     {
@@ -35,9 +39,10 @@ private:
     };
     std::array<BandRow, 4> rows;
 
-    // HPF row at the top of the popup, mirroring the strip's HPF control.
-    juce::Label hpfLabel;
-    juce::Slider hpfKnob;
+    // HPF + LPF row at the top of the popup, mirroring the strip's
+    // SSL 9000 J white-filter top section.
+    juce::Label hpfLabel, lpfLabel;
+    juce::Slider hpfKnob, lpfKnob;
 
     void refreshTypeButton();
 };

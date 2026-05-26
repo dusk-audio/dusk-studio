@@ -90,12 +90,16 @@ void BusStrip::updateEqParameters() noexcept
     p.hpfEnabled = false; p.hpfFreq = 80.0f;
     p.lpfEnabled = false; p.lpfFreq = 20000.0f;
 
+    // Bus EQ frequencies + gain range mirror Harrison Mixbus: tone-shaping
+    // band centers chosen for subgroup mixing (mud zone, presence, edge)
+    // rather than channel-style extremes. Gain range is restrained to
+    // ±9 dB to encourage musical bus moves over corrective fixes.
     p.lfGain  = paramsRef->eqLfGainDb.load  (std::memory_order_relaxed);
-    p.lfFreq  = 100.0f;
+    p.lfFreq  = 300.0f;
     p.lfBell  = false;  // shelf
 
     p.lmGain  = paramsRef->eqMidGainDb.load (std::memory_order_relaxed);
-    p.lmFreq  = 1000.0f;
+    p.lmFreq  = 800.0f;
     p.lmQ     = 0.7f;
 
     p.hmGain  = 0.0f;  // HM unused; Bus EQ exposes only LF / MID / HF.
@@ -103,7 +107,7 @@ void BusStrip::updateEqParameters() noexcept
     p.hmQ     = 0.7f;
 
     p.hfGain  = paramsRef->eqHfGainDb.load  (std::memory_order_relaxed);
-    p.hfFreq  = 8000.0f;
+    p.hfFreq  = 2000.0f;
     p.hfBell  = false;
 
     p.isBlackMode = false;

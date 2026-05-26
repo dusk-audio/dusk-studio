@@ -227,7 +227,6 @@ PluginPickerPanel::PluginPickerPanel (juce::Array<juce::PluginDescription> descr
     : kind_ (kind), callbacks_ (std::move (cb))
 {
     setOpaque (true);
-    setSize (560, 540);
 
     titleLabel.setText (kind_ == Kind::Instruments ? "Insert instrument" : "Insert effect",
                           juce::dontSendNotification);
@@ -281,13 +280,13 @@ PluginPickerPanel::PluginPickerPanel (juce::Array<juce::PluginDescription> descr
 
     setWantsKeyboardFocus (true);
 
-    // Force layout now. setSize() at the top of the ctor fired resized()
-    // while listBody was still null; EmbeddedModal::show() then sets
-    // bounds without changing the size, so JUCE skips the second
-    // resized() call and listBody never gets its setBounds(). Calling
-    // resized() explicitly here positions everything before the modal
-    // mounts us.
-    resized();
+    // setSize last — all children are now created and addAndMakeVisible'd,
+    // so the resized() that setSize fires lays everything out correctly.
+    // If a child is added after this line, the next setBounds from
+    // EmbeddedModal won't trigger resized() (same size, position-only
+    // change), and the new child renders at (0,0,0,0). Add new children
+    // ABOVE this line.
+    setSize (560, 540);
 }
 
 PluginPickerPanel::~PluginPickerPanel() = default;

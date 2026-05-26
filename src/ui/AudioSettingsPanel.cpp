@@ -281,88 +281,202 @@ AudioSettingsPanel::AudioSettingsPanel (juce::AudioDeviceManager& dm,
     uiScaleHint.setText ("Saved per-machine; takes effect immediately.",
                           juce::dontSendNotification);
     addAndMakeVisible (uiScaleHint);
+
+    scanOnStartupToggle.setToggleState (appconfig::getScanPluginsOnStartup(),
+                                          juce::dontSendNotification);
+    scanOnStartupToggle.setTooltip (
+        "When on, every app launch synchronously scans every "
+        "installed plugin format and refreshes the cached "
+        "KnownPluginList. Saved per-machine; takes effect on next "
+        "launch. Stderr logs an [Dusk Studio] Scan-on-startup line "
+        "with the added / total counts.");
+    scanOnStartupToggle.onClick = [this]
+    {
+        appconfig::setScanPluginsOnStartup (scanOnStartupToggle.getToggleState());
+    };
+    addAndMakeVisible (scanOnStartupToggle);
+
+    // Section header labels — each visually marks one group of settings
+    // rows. paint() draws a thin separator between groups using Ys
+    // captured during resized().
+    auto styleSectionLabel = [] (juce::Label& l)
+    {
+        l.setJustificationType (juce::Justification::centredLeft);
+        l.setColour (juce::Label::textColourId, juce::Colour (0xffe0e0e6));
+        l.setFont (juce::Font (juce::FontOptions (14.0f, juce::Font::bold)));
+    };
+    styleSectionLabel (audioSectionLabel);
+    styleSectionLabel (controlSurfaceSectionLabel);
+    styleSectionLabel (midiBindingsSectionLabel);
+    styleSectionLabel (midiSyncSectionLabel);
+    styleSectionLabel (generalSectionLabel);
+    styleSectionLabel (advancedSectionLabel);
+    addAndMakeVisible (audioSectionLabel);
+    addAndMakeVisible (controlSurfaceSectionLabel);
+    addAndMakeVisible (midiBindingsSectionLabel);
+    addAndMakeVisible (midiSyncSectionLabel);
+    addAndMakeVisible (generalSectionLabel);
+    addAndMakeVisible (advancedSectionLabel);
+
+    tapeStripExpandedToggle.setToggleState (appconfig::getTapeStripExpandedDefault(),
+                                              juce::dontSendNotification);
+    tapeStripExpandedToggle.setTooltip (
+        "When on, the tape SUMMARY strip starts expanded on every "
+        "app launch. Saved per-machine; takes effect on next launch.");
+    tapeStripExpandedToggle.onClick = [this]
+    {
+        appconfig::setTapeStripExpandedDefault (tapeStripExpandedToggle.getToggleState());
+    };
+    addAndMakeVisible (tapeStripExpandedToggle);
+}
+
+void AudioSettingsPanel::paint (juce::Graphics& g)
+{
+    g.setColour (juce::Colour (0xff2a2a32));
+    for (const int y : separatorYs)
+        g.drawHorizontalLine (y, (float) getLocalBounds().getX() + 8,
+                                  (float) getLocalBounds().getRight() - 8);
 }
 
 void AudioSettingsPanel::resized()
 {
-    auto area = getLocalBounds();
+    separatorYs.clear();
 
-    // Bottom row: Periods + Oversampling + Rescan + Self-Test buttons.
-    auto bottom = area.removeFromBottom (32);
+    auto area = getLocalBounds().reduced (12, 8);
+
+    // Layout constants. Top-down so the visual structure matches the
+    // declaration order, and section-header rows / inter-section gaps
+    // are explicit instead of buried in the bottom-up flow.
+    constexpr int kLabelW       = 220;   // wide enough for multi-word labels
+    constexpr int kHeaderH      = 24;
+    constexpr int kHeaderGapBottom = 4;
+    constexpr int kRowH         = 30;
+    constexpr int kRowGap       = 4;
+    constexpr int kSectionGap   = 14;    // vertical breathing room between groups
+    constexpr int kComboW       = 320;
+    constexpr int kAudioBlockH  = 280;   // JUCE AudioDeviceSelectorComponent (device / output / input / channels / SR / buffer)
+
+    auto sectionHeader = [&] (juce::Label& label)
+    {
+        auto row = area.removeFromTop (kHeaderH);
+        label.setBounds (row.reduced (4, 2));
+        area.removeFromTop (kHeaderGapBottom);
+    };
+    auto endSection = [&]
+    {
+        const int sepY = area.getY() + kSectionGap / 2;
+        separatorYs.push_back (sepY);
+        area.removeFromTop (kSectionGap);
+    };
+    auto takeRow = [&] (int h) -> juce::Rectangle<int>
+    {
+        auto row = area.removeFromTop (h);
+        area.removeFromTop (kRowGap);
+        return row;
+    };
+    auto takeStdRow = [&] { return takeRow (kRowH); };
+
+    // ── Audio ────────────────────────────────────────────────────────
+    sectionHeader (audioSectionLabel);
+    auto audioBlock = area.removeFromTop (kAudioBlockH);
+    selector->setBounds (audioBlock);
+    endSection();
+
+    // ── Control Surface (MCU) ────────────────────────────────────────
+    sectionHeader (controlSurfaceSectionLabel);
+    {
+        auto row = takeStdRow();
+        mcuInputLabel .setBounds (row.removeFromLeft (kLabelW).reduced (4, 2));
+        mcuInputCombo .setBounds (row.removeFromLeft (kComboW).reduced (4, 2));
+    }
+    {
+        auto row = takeStdRow();
+        mcuOutputLabel.setBounds (row.removeFromLeft (kLabelW).reduced (4, 2));
+        mcuOutputCombo.setBounds (row.removeFromLeft (kComboW).reduced (4, 2));
+    }
+    endSection();
+
+    // ── MIDI Bindings ────────────────────────────────────────────────
+    sectionHeader (midiBindingsSectionLabel);
+    {
+        auto row = takeStdRow();
+        midiBindingsButton.setBounds (row.removeFromLeft (kLabelW).reduced (4, 2));
+    }
+    endSection();
+
+    // ── MIDI Sync ────────────────────────────────────────────────────
+    sectionHeader (midiSyncSectionLabel);
+    {
+        auto row = takeStdRow();
+        syncSourceLabel.setBounds (row.removeFromLeft (kLabelW).reduced (4, 2));
+        syncSourceCombo.setBounds (row.removeFromLeft (kComboW).reduced (4, 2));
+        syncChaseTransportToggle.setBounds (row.reduced (8, 2));
+    }
+    {
+        auto row = takeStdRow();
+        row.removeFromLeft (kLabelW + kComboW + 8);
+        mtcChaseToggle.setBounds (row.reduced (4, 2));
+    }
+    {
+        auto row = takeStdRow();
+        syncOutputLabel.setBounds (row.removeFromLeft (kLabelW).reduced (4, 2));
+        syncOutputCombo.setBounds (row.removeFromLeft (kComboW).reduced (4, 2));
+        syncEmitClockToggle.setBounds (row.reduced (8, 2));
+    }
+    {
+        auto row = takeStdRow();
+        mtcEmitFrameRateLabel.setBounds (row.removeFromLeft (kLabelW).reduced (4, 2));
+        mtcEmitFrameRateCombo.setBounds (row.removeFromLeft (140).reduced (4, 2));
+        mtcEmitToggle.setBounds (row.reduced (8, 2));
+    }
+    endSection();
+
+    // ── General ──────────────────────────────────────────────────────
+    sectionHeader (generalSectionLabel);
+    {
+        auto row = takeStdRow();
+        row.removeFromLeft (kLabelW);
+        tapeStripExpandedToggle.setBounds (row.reduced (4, 2));
+    }
+    {
+        auto row = takeStdRow();
+        row.removeFromLeft (kLabelW);
+        scanOnStartupToggle.setBounds (row.reduced (4, 2));
+    }
+    {
+        auto row = takeStdRow();
+        uiScaleLabel .setBounds (row.removeFromLeft (kLabelW).reduced (4, 2));
+        uiScaleSlider.setBounds (row.removeFromLeft (260).reduced (4, 2));
+        uiScaleHint  .setBounds (row.reduced (4, 2));
+    }
+    endSection();
+
+    // ── Advanced ─────────────────────────────────────────────────────
+    sectionHeader (advancedSectionLabel);
+    {
+        auto row = takeRow (32);
 #if defined(__linux__)
-    periodsLabel.setBounds       (bottom.removeFromLeft (180).reduced (4, 4));
-    periodsCombo.setBounds       (bottom.removeFromLeft (100).reduced (4, 4));
+        periodsLabel     .setBounds (row.removeFromLeft (kLabelW).reduced (4, 4));
+        periodsCombo     .setBounds (row.removeFromLeft (100).reduced (4, 4));
 #endif
-    oversamplingLabel.setBounds  (bottom.removeFromLeft (160).reduced (4, 4));
-    oversamplingCombo.setBounds  (bottom.removeFromLeft (120).reduced (4, 4));
-    selfTestButton.setBounds     (bottom.removeFromRight (160).reduced (4, 4));
-    rescanButton.setBounds       (bottom.removeFromRight (140).reduced (4, 4));
-
-    // Row above: UI scale slider + hint.
-    auto scaleRow = area.removeFromBottom (28);
-    uiScaleLabel.setBounds  (scaleRow.removeFromLeft (180).reduced (4, 2));
-    uiScaleSlider.setBounds (scaleRow.removeFromLeft (260).reduced (4, 2));
-    uiScaleHint.setBounds   (scaleRow.reduced (4, 2));
-
-    // MTC OUTPUT row: emit toggle + frame-rate dropdown. Sits above
-    // the Clock output row because MTC and Clock multiplex onto the
-    // same Sync Output port — the rate dropdown only makes sense for
-    // MTC, so it lives in the MTC row.
-    auto mtcOutRow = area.removeFromBottom (28);
-    mtcEmitFrameRateLabel.setBounds (mtcOutRow.removeFromLeft (180).reduced (4, 2));
-    mtcEmitFrameRateCombo.setBounds (mtcOutRow.removeFromLeft (140).reduced (4, 2));
-    mtcEmitToggle.setBounds (mtcOutRow.reduced (8, 2));
-
-    // MIDI Clock OUTPUT row (master mode): output picker + emit toggle.
-    auto syncOutRow = area.removeFromBottom (28);
-    syncOutputLabel.setBounds (syncOutRow.removeFromLeft (180).reduced (4, 2));
-    syncOutputCombo.setBounds (syncOutRow.removeFromLeft (300).reduced (4, 2));
-    syncEmitClockToggle.setBounds (syncOutRow.reduced (8, 2));
-
-    // MTC INPUT row: chase toggle only (the picker + frame-rate auto-
-    // detected from incoming QF nibble 7 / full-frame sysex).
-    auto mtcInRow = area.removeFromBottom (28);
-    mtcInRow.removeFromLeft (180 + 300 + 8);   // align with toggle column
-    mtcChaseToggle.setBounds (mtcInRow.reduced (4, 2));
-
-    // MIDI Clock INPUT row: source picker + chase toggle.
-    auto syncRow = area.removeFromBottom (28);
-    syncSourceLabel.setBounds (syncRow.removeFromLeft (180).reduced (4, 2));
-    syncSourceCombo.setBounds (syncRow.removeFromLeft (300).reduced (4, 2));
-    syncChaseTransportToggle.setBounds (syncRow.reduced (8, 2));
-
-    // MCU control surface OUTPUT row: motor faders / LEDs / LCD / meters.
-    auto mcuOutRow = area.removeFromBottom (28);
-    mcuOutputLabel.setBounds (mcuOutRow.removeFromLeft (180).reduced (4, 2));
-    mcuOutputCombo.setBounds (mcuOutRow.removeFromLeft (300).reduced (4, 2));
-
-    // MCU control surface INPUT row: faders / encoders / buttons.
-    auto mcuInRow = area.removeFromBottom (28);
-    mcuInputLabel.setBounds (mcuInRow.removeFromLeft (180).reduced (4, 2));
-    mcuInputCombo.setBounds (mcuInRow.removeFromLeft (300).reduced (4, 2));
-
-    // MIDI Bindings entry button. Right-aligned on its own row so the
-    // sync rows above stay clean.
-    auto bindingsRow = area.removeFromBottom (28);
-    midiBindingsButton.setBounds (
-        bindingsRow.removeFromLeft (180).reduced (4, 2));
-
-    selector->setBounds (area);
+        oversamplingLabel.setBounds (row.removeFromLeft (160).reduced (4, 4));
+        oversamplingCombo.setBounds (row.removeFromLeft (120).reduced (4, 4));
+        selfTestButton   .setBounds (row.removeFromRight (160).reduced (4, 4));
+        rescanButton     .setBounds (row.removeFromRight (140).reduced (4, 4));
+    }
 }
 
 void AudioSettingsPanel::openSelfTest()
 {
-    auto* panel = new SelfTestPanel (engine, deviceManager, session);
+    auto panel = std::make_unique<SelfTestPanel> (engine, deviceManager, session);
     panel->setSize (760, 560);
 
-    juce::DialogWindow::LaunchOptions opts;
-    opts.content.setOwned (panel);
-    opts.dialogTitle = "Audio Pipeline Self-Test";
-    opts.dialogBackgroundColour = juce::Colour (0xff202024);
-    opts.escapeKeyTriggersCloseButton = true;
-    opts.useNativeTitleBar = true;
-    opts.resizable = true;
-    if (auto* dw = opts.launchAsync()) dw->toFront (true);
+    auto* parent = getTopLevelComponent();
+    if (parent == nullptr) parent = this;
+    selfTestModal.show (*parent, std::move (panel),
+                            /*onDismiss*/ {},
+                            /*dismissOnClickOutside*/ true,
+                            /*dismissOnEscape*/        true);
 }
 
 void AudioSettingsPanel::applyUiScaleChange()

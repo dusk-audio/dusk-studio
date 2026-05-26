@@ -75,6 +75,12 @@ struct AutomationLane
 float evaluateLane (const AutomationLane& lane, juce::int64 t,
                     AutomationParam param) noexcept;
 
+// Per-param normalize / denormalize for automation lane storage.
+// Lane points hold the value in normalized 0..1; UI editing converts
+// to the param's natural range (dB / pan / 0|1) for display + clicks.
+float denormalizeAutomationValue (AutomationParam p, float v01) noexcept;
+float normalizeAutomationValue   (AutomationParam p, float denormValue) noexcept;
+
 // Ramer-Douglas-Peucker thin on continuous lanes. `epsilon` is in
 // normalized 0..1 lane storage units (so it's value-range-independent
 // across FaderDb / Pan / AuxSend*); 0.002 = 0.2% of the lane's vertical
@@ -223,6 +229,11 @@ struct ChannelStripParams
     // Maps into BritishEQProcessor::Parameters (multi-q) when read on the audio thread.
     std::atomic<bool>  hpfEnabled { false };
     std::atomic<float> hpfFreq    { 20.0f };
+    // Channel low-pass filter — symmetric counterpart to HPF. Defaults
+    // off (lpfFreq at max → effectively bypass). User-controlled via
+    // the EQ top section alongside HPF in the SSL 9000 J grammar.
+    std::atomic<bool>  lpfEnabled { false };
+    std::atomic<float> lpfFreq    { 20000.0f };
     std::atomic<float> lfGainDb   { 0.0f };
     std::atomic<float> lfFreq     { 100.0f };
     std::atomic<float> lmGainDb   { 0.0f };
@@ -234,15 +245,28 @@ struct ChannelStripParams
     std::atomic<float> hfGainDb   { 0.0f };
     std::atomic<float> hfFreq     { 8000.0f };
     std::atomic<bool>  eqBlackMode { false };  // false = Brown (E-series), true = Black (G-series)
+    // Channel EQ bypass. Defaults false (disabled) — auto-arms on the
+    // first EQ knob adjustment so the LED only lights once the engineer
+    // shapes the sound. The strip's small green LED in the EQ header
+    // mirrors this and toggles on click.
+    std::atomic<bool>  eqEnabled   { false };
 
     // Compressor surface: UniversalCompressor exposes a different parameter
     // set per mode (Opto/FET/VCA model real hardware), so each mode keeps its
     // own atomic state and the UI swaps which controls are visible.
     std::atomic<bool>  compEnabled    { false };
     std::atomic<int>   compMode       { 0 };       // 0=Opto, 1=FET, 2=VCA
+    // True once the user picks a mode from the right-click menu. Until
+    // then the UI button shows "COMP" instead of the default mode name
+    // so brand-new users see a clear "click here to pick" affordance.
+    // DSP still uses compMode regardless — the flag only gates the UI
+    // label.
+    std::atomic<bool>  compModePicked { false };
 
     // Opto (LA-2A style): peak-reduction + gain + optional limit mode.
-    std::atomic<float> compOptoPeakRed { 30.0f };  // 0..100 %
+    // Defaults to 0% peak reduction so a fresh track starts neutral —
+    // user opts in by dragging the meter-strip threshold triangle.
+    std::atomic<float> compOptoPeakRed { 0.0f };   // 0..100 %
     std::atomic<float> compOptoGain    { 50.0f };  // 0..100 % (50 = unity)
     std::atomic<bool>  compOptoLimit   { false };
 
@@ -254,11 +278,22 @@ struct ChannelStripParams
     std::atomic<int>   compFetRatio   { 0 };       // 0=4:1, 1=8:1, 2=12:1, 3=20:1, 4=All
 
     // VCA (classic): the textbook threshold/ratio/attack/release/output.
-    std::atomic<float> compVcaThreshDb { 0.0f };    // -38..12 dB
+    // Default threshold = +12 dB (top of the -38..12 range) so a fresh
+    // track starts neutral (signal never crosses threshold).
+    std::atomic<float> compVcaThreshDb { 12.0f };   // -38..12 dB
     std::atomic<float> compVcaRatio    { 4.0f };    // 1..120
     std::atomic<float> compVcaAttack   { 1.0f };    // 0.1..50 ms
     std::atomic<float> compVcaRelease  { 100.0f };  // 10..5000 ms
     std::atomic<float> compVcaOutput   { 0.0f };    // -20..20 dB
+    // dbx 160X "OverEasy" parabolic soft knee. Defaults OFF (hard knee) to
+    // match prior Dusk Studio behaviour; users opt in for the smoother,
+    // less-pumping curve. Engine path: ChannelStrip writes the donor's
+    // "vca_overeasy" atom from updateCompParameters().
+    std::atomic<bool>  compVcaOverEasy { false };
+    // M3: VCA detector mode. false = "Adaptive" (donor's level-dependent
+    // 35 ms → 5 ms RMS TC, current behaviour). true = "Classic" (fixed
+    // 10 ms TC, dbx 160 spec). Defaults to Adaptive for back-compat.
+    std::atomic<bool>  compVcaDetectorClassic { false };
 
     // Legacy unified threshold - still driven by the comp meter strip's drag
     // handle. Mirrors the *current mode's* primary compression knob so the
@@ -327,6 +362,9 @@ struct ChannelStripParams
     static constexpr float kHpfMinHz   = 20.0f;
     static constexpr float kHpfMaxHz   = 300.0f;
     static constexpr float kHpfOffHz   = 20.0f;   // at min, HPF is effectively bypassed
+    static constexpr float kLpfMinHz   = 3000.0f;
+    static constexpr float kLpfMaxHz   = 20000.0f;
+    static constexpr float kLpfOffHz   = 20000.0f;  // at max, LPF is effectively bypassed
     static constexpr float kLfFreqMin  = 20.0f,   kLfFreqMax = 400.0f;
     static constexpr float kLmFreqMin  = 100.0f,  kLmFreqMax = 4000.0f;
     static constexpr float kHmFreqMin  = 600.0f,  kHmFreqMax = 13000.0f;
@@ -724,7 +762,7 @@ struct Track
 
     // Recording surface
     std::atomic<bool> recordArmed { false };
-    std::atomic<bool> inputMonitor { false };  // off by default - engineer engages IN explicitly when monitoring
+    std::atomic<bool> inputMonitor { false };  // OFF by default — live input NEVER passes through to master without explicit user opt-in (feedback / hearing-safety)
                                               // (track still records and meters when armed)
     std::atomic<bool> printEffects { false };  // when true, the recorded WAV captures the post-EQ/post-comp
                                               // signal - "print effects on the way in". Default off so the
@@ -838,7 +876,7 @@ struct BusParams
 
     // 3-band EQ.
     std::atomic<bool>  eqEnabled  { false };
-    std::atomic<float> eqLfGainDb { 0.0f };  // -15..+15
+    std::atomic<float> eqLfGainDb { 0.0f };  // -9..+9 (Mixbus-style bus EQ — restrained for musical tone shaping)
     std::atomic<float> eqMidGainDb{ 0.0f };
     std::atomic<float> eqHfGainDb { 0.0f };
 
@@ -998,9 +1036,13 @@ struct MasterBusParams
     // Frequencies and bandwidth are set to musical defaults internally.
     std::atomic<bool>  eqEnabled       { false };
     std::atomic<float> eqLfBoost       { 0.0f };   // 0..10 (Pultec gain knob)
+    std::atomic<float> eqLfAtten       { 0.0f };   // 0..10 (LF cut shelf)
+    std::atomic<float> eqLfFreq        { 60.0f };  // Pultec discrete: 20/30/60/100 Hz
     std::atomic<float> eqHfBoost       { 0.0f };   // 0..10
+    std::atomic<float> eqHfBoostFreq   { 8000.0f }; // Pultec discrete: 3k/4k/5k/8k/10k/12k/16k Hz
+    std::atomic<float> eqHfBoostBandwidth { 0.5f }; // 0..10 Pultec Sharp→Broad (Q control on the HF boost peak)
     std::atomic<float> eqHfAtten       { 0.0f };   // 0..10 (HF cut shelf)
-    std::atomic<float> eqTubeDrive     { 0.3f };   // 0..1 (saturation amount)
+    std::atomic<float> eqHfAttenFreq   { 10000.0f }; // Pultec discrete: 5k/10k/20k Hz
     std::atomic<float> eqOutputGainDb  { 0.0f };   // -12..+12 dB
 
     // Master bus compressor - UniversalCompressor in Bus mode (mode index 3).
@@ -1102,7 +1144,7 @@ struct MasteringParams
 class Session
 {
 public:
-    static constexpr int kNumTracks   = 16;
+    static constexpr int kNumTracks   = 24;   // three banks of 8 (1-8 / 9-16 / 17-24)
     static constexpr int kNumBuses    = 4;
     static constexpr int kNumAuxLanes = 4;   // matches ChannelStripParams::kNumAuxSends
     static constexpr int kBankSize    = 8;
@@ -1224,6 +1266,22 @@ public:
     std::atomic<int>   beatUnit          { 4 };
     std::atomic<bool>  metronomeEnabled  { false };
     std::atomic<float> metronomeVolDb    { -12.0f };
+    // Fine-grained metronome behaviour. Reached via the metronome
+    // button's right-click menu in TransportBar. All flags read by
+    // AudioEngine on every block; toggle is hot.
+    //   metronomeClickWhileRecording — emit clicks during a record pass.
+    //   metronomeClickWhilePlaying   — emit clicks during plain playback.
+    //   metronomeOnlyDuringCountIn   — when true, clicks fire ONLY in
+    //     the count-in pre-roll bar and stop the instant the take begins.
+    //     Overrides clickWhileRecording for the post-pre-roll portion.
+    //   metronomePolyphonic          — let a new click trigger before
+    //     the previous one's envelope completes (long click bodies at
+    //     high BPM otherwise step on themselves; off by default to
+    //     match the historical mono behaviour).
+    std::atomic<bool>  metronomeClickWhileRecording { true  };
+    std::atomic<bool>  metronomeClickWhilePlaying   { false };
+    std::atomic<bool>  metronomeOnlyDuringCountIn   { false };
+    std::atomic<bool>  metronomePolyphonic          { false };
 
     // Time display mode: 0 = Bars / Beats / Tick (musical, default),
     // 1 = mm:ss.ms (wall-clock time). One mode applies to every
@@ -1231,6 +1289,11 @@ public:
     // ruler, region editor rulers, status-bar readouts — so the
     // user sees one coherent representation throughout the app.
     std::atomic<int>   timeDisplayMode   { 0 };
+
+    // Persisted UI stage so reopening a saved session lands the user
+    // back in the stage they were on when they hit save. New sessions
+    // default to Recording (0). 0=Recording, 1=Mixing, 2=Aux, 3=Mastering.
+    std::atomic<int>   uiStage           { 0 };
 
     // Count-in (pre-roll). When true, hitting Record shifts the playhead
     // backwards by one bar so the metronome ticks for one bar before
@@ -1294,6 +1357,12 @@ public:
     AtomicSnapshot<std::vector<MidiBinding>> midiBindings;
     std::atomic<int>         pendingTransportAction { (int) PendingTransportAction::None };
     std::atomic<int>         midiLearnPending       { -1 };
+
+    // Active console-view bank index (0..kNumBanks-1). UI thread (ConsoleView::
+    // setBank) writes; audio thread reads to resolve bank-relative MIDI
+    // bindings (TrackFaderBank etc.) into absolute track indices via
+    // `absoluteTrack = activeBank * kBankSize + positionInBank`.
+    std::atomic<int>         activeBank { 0 };
     std::atomic<juce::int64> midiLearnCapture       { 0 };
 
     // External MIDI sync. syncSourceInputIdx selects which entry in the

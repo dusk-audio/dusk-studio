@@ -1,4 +1,5 @@
 #include "ImportTargetPicker.h"
+#include "DuskAlerts.h"
 
 #include <algorithm>
 #include <cmath>
@@ -184,8 +185,6 @@ ImportTargetPicker::ImportTargetPicker (Session& s,
       onCommit (std::move (commit)),
       onCancel (std::move (cancel))
 {
-    setSize (kPanelW, kPanelH);
-
     headerTitle.setText (summary.file.getFileName(), juce::dontSendNotification);
     headerTitle.setColour (juce::Label::textColourId, juce::Colours::white);
     headerTitle.setFont (juce::Font (juce::FontOptions (15.0f, juce::Font::bold)));
@@ -293,6 +292,14 @@ ImportTargetPicker::ImportTargetPicker (Session& s,
     importButton.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
     addAndMakeVisible (cancelButton);
     addAndMakeVisible (importButton);
+
+    // setSize last — all children + listContainer rows are now created
+    // and addAndMakeVisible'd, so the resized() that setSize fires lays
+    // everything out. EmbeddedModal::show will only call setBounds
+    // (position-only on a fixed-size panel), and setBounds with no size
+    // change doesn't trigger resized() — meaning rows would never be
+    // positioned if setSize ran at the top of the ctor.
+    setSize (kPanelW, kPanelH);
 }
 
 ImportTargetPicker::~ImportTargetPicker() = default;
@@ -308,19 +315,68 @@ void ImportTargetPicker::commitSelection()
 {
     if (selectedRowIdx < 0 || selectedRowIdx >= (int) rows.size()) return;
     const auto& r = *rows[(size_t) selectedRowIdx];
-    auto& t = session.track (r.trackIndex);
+    const int trackIndex = r.trackIndex;
+    const bool needsModeFlip = (r.bucket == Bucket::Mismatch);
 
-    if (r.bucket == Bucket::Mismatch)
+    if (! needsModeFlip)
     {
-        const Track::Mode newMode = summary.isMidi
-                                       ? Track::Mode::Midi
-                                       : (summary.numChannels == 2
-                                              ? Track::Mode::Stereo
-                                              : Track::Mode::Mono);
-        t.mode.store ((int) newMode, std::memory_order_relaxed);
+        if (onCommit) onCommit (trackIndex);
+        return;
     }
 
-    if (onCommit) onCommit (r.trackIndex);
+    // Mode-flip needed (e.g. dropping a MIDI file on an audio track,
+    // or vice versa). Explicit confirm so the user doesn't silently
+    // discover their track changed mode after the fact.
+    auto& trackRef = session.track (trackIndex);
+    const auto currentMode = (Track::Mode) trackRef.mode.load (std::memory_order_relaxed);
+    const Track::Mode newMode = summary.isMidi
+                                   ? Track::Mode::Midi
+                                   : (summary.numChannels == 2
+                                          ? Track::Mode::Stereo
+                                          : Track::Mode::Mono);
+
+    auto modeName = [] (Track::Mode m) -> juce::String
+    {
+        switch (m)
+        {
+            case Track::Mode::Midi:   return "MIDI";
+            case Track::Mode::Stereo: return "Stereo";
+            case Track::Mode::Mono:   default: return "Mono";
+        }
+    };
+
+    auto* host = getTopLevelComponent();
+    if (host == nullptr) host = this;
+
+    const auto title   = juce::String ("Switch track to ") + modeName (newMode) + "?";
+    const auto message = juce::String ("Track ") + juce::String (trackIndex + 1)
+                       + " is currently in " + modeName (currentMode)
+                       + " mode. Importing this " + (summary.isMidi ? "MIDI" : "audio")
+                       + " file will switch the track to "
+                       + modeName (newMode) + " mode. Proceed?";
+
+    juce::Component::SafePointer<juce::Component> safeHost (host);
+    Session* sessionPtr = &session;
+    auto commitCb       = onCommit;
+    auto isMidiCopy     = summary.isMidi;
+    auto numChCopy      = summary.numChannels;
+    showDuskConfirm (*host, title, message,
+                       /*primary*/   "Switch",
+                       /*onPrimary*/ [safeHost, sessionPtr, trackIndex, commitCb,
+                                       isMidiCopy, numChCopy]
+                       {
+                           if (safeHost.getComponent() == nullptr || sessionPtr == nullptr) return;
+                           const Track::Mode m = isMidiCopy
+                                                    ? Track::Mode::Midi
+                                                    : (numChCopy == 2
+                                                            ? Track::Mode::Stereo
+                                                            : Track::Mode::Mono);
+                           sessionPtr->track (trackIndex).mode.store ((int) m,
+                                                                        std::memory_order_relaxed);
+                           if (commitCb) commitCb (trackIndex);
+                       },
+                       /*secondary*/   "Cancel",
+                       /*onSecondary*/ {});
 }
 
 void ImportTargetPicker::paint (juce::Graphics& g)

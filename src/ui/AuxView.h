@@ -4,6 +4,7 @@
 #include <array>
 #include <memory>
 #include "../session/Session.h"
+#include "EmbeddedModal.h"
 
 namespace duskstudio
 {
@@ -20,7 +21,8 @@ class AuxLaneComponent;
 // The selected lane persists for the life of the AuxView (set on
 // construction, retained across hide/show cycles when the user toggles
 // between stages).
-class AuxView final : public juce::Component
+class AuxView final : public juce::Component,
+                       private juce::Timer
 {
 public:
     AuxView (Session& session, AudioEngine& engine);
@@ -29,13 +31,20 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
 
+    void mouseDoubleClick (const juce::MouseEvent&) override;
+
     int  getActiveLane() const noexcept { return activeLaneIndex; }
     void setActiveLane (int index);
 
 private:
+    void timerCallback() override;
+    void promptRenameLane (int index);
+
     int activeLaneIndex = 0;
+    Session* sessionPtr = nullptr;
 
     std::array<juce::TextButton, Session::kNumAuxLanes>            selectorButtons;
     std::array<std::unique_ptr<AuxLaneComponent>, Session::kNumAuxLanes> lanes;
+    EmbeddedModal renameModal;
 };
 } // namespace duskstudio

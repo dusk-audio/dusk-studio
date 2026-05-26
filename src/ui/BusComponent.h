@@ -4,6 +4,9 @@
 #include <memory>
 #include "../session/Session.h"
 #include "AnalogVuMeter.h"
+#include "CompMeterStrip.h"
+#include "CompHeaderButton.h"
+#include "EmbeddedModal.h"
 
 namespace duskstudio
 {
@@ -22,8 +25,16 @@ public:
     // alongside setStripsCompactMode.
     void setCompactVu (bool compact);
 
+    // Collapses the EQ + COMP sections into small placeholder buttons
+    // (matching ChannelStripComponent's compact-mode behaviour) so the
+    // bus + master strips visually shrink alongside the channel strips
+    // when the tape SUMMARY view consumes vertical room. Toggled by
+    // ConsoleView::applyCompactState.
+    void setCompactMode (bool compact);
+
 private:
     bool compactVu = false;
+    bool compactMode = false;
     void timerCallback() override;
     void showColourMenu();
     void applyBusColour (juce::Colour c);
@@ -32,29 +43,39 @@ private:
     Session& sessionRef;
     int busIndex;
     juce::Label nameLabel;
-    juce::Rectangle<int> fxArea;     // unused for now; reserved for future inline DSP UI
 
     // 3-band EQ controls (LF / MID / HF gains, fixed musical frequencies).
-    juce::TextButton eqButton  { "EQ" };
+    // Header is a CompHeaderButton (LED + label pill) so the EQ section
+    // shares its visual grammar with the COMP header above and with the
+    // channel-strip EQ header — single look across the desk.
+    std::unique_ptr<CompHeaderButton> eqHeaderBtn;
     juce::Slider     eqLfGain  { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
     juce::Slider     eqMidGain { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
     juce::Slider     eqHfGain  { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
     juce::Label      eqLfLbl, eqMidLbl, eqHfLbl;
 
-    // Bus compressor controls.
-    juce::TextButton compButton { "COMP" };
-    juce::Slider     compThresh  { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
+    // Bus compressor controls. Shell mirrors the channel-strip COMP
+    // section visually: a single CompHeaderButton on top, a CompMeterStrip
+    // on the left, and the parameter knob grid on the right. The DSP
+    // underneath is still a fixed SSL-style glue topology — no mode
+    // picker, so the header button only toggles enable.
+    std::unique_ptr<CompHeaderButton> compHeaderBtn;
+    std::unique_ptr<CompMeterStrip>   compMeter;
     juce::Slider     compRatio   { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
     juce::Slider     compAttack  { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
     juce::Slider     compRelease { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
     juce::Slider     compMakeup  { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
-    juce::Label      compThrLbl, compRatLbl, compAtkLbl, compRelLbl, compMakLbl;
+    juce::Label      compRatLbl, compAtkLbl, compRelLbl, compMakLbl;
 
     // Pan knob.
     juce::Slider panKnob { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
     juce::Label  panLbl;
 
     juce::Slider     faderSlider { juce::Slider::LinearVertical, juce::Slider::TextBoxBelow };
+    // Standalone fader value readout below the slider — mirrors the channel
+    // strip's fader-side grammar so the bus value sits in the same place /
+    // font weight as a track's value.
+    juce::Label      faderValueLabel;
     juce::TextButton muteButton { "M" };
     juce::TextButton soloButton { "S" };
 
@@ -82,6 +103,20 @@ private:
     // share one visual grammar.
     juce::Rectangle<int> eqArea;
     juce::Rectangle<int> compArea;
+    // Compact-mode placeholder buttons. Hidden when compactMode=false;
+    // visible (and the section knobs hidden) when true. Decorative —
+    // click does nothing (tooltip explains the SUMMARY toggle owns the
+    // expand/collapse). Mirrors ChannelStripComponent's eqCompactButton
+    // / compCompactButton grammar.
+    juce::TextButton eqCompactButton  { "EQ"   };
+    juce::TextButton compCompactButton { "COMP" };
+    // Compact-mode popups: clicking the placeholder button shows a
+    // mini-editor mirroring the bus's EQ / COMP knobs so the user can
+    // tweak without expanding the strip back to full mode.
+    EmbeddedModal eqEditorModal;
+    EmbeddedModal compEditorModal;
+    void openEqEditorPopup();
+    void openCompEditorPopup();
     juce::Label outputPeakLabel;
     juce::Label grPeakLabel;
     float displayedOutputLDb = -100.0f;

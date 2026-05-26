@@ -64,6 +64,15 @@ public:
     // hidden so it doesn't clash with the buttons sitting on top of it.
     void setHintVisible (bool visible);
 
+    // X position (parent-local within this bar) of the tuner button.
+    // MainComponent uses this to centre the SNAP/zoom cluster overlay
+    // in the gap between the rightmost bank tab and the tuner —
+    // hard-coding tuner X from the outside is fragile because the
+    // right-anchored cluster (BPM / tap / time-sig / mode toggles)
+    // shifts the tuner left by ~376 px in expanded mode and ~280 px in
+    // compact mode.
+    int getTunerLeftX() const noexcept { return tuneButton.getX(); }
+
     // Below this transport-bar width, the right-side toggles collapse to
     // short labels (SNAP→S, SUMMARY→chevron), the clock label shrinks,
     // and MainComponent shrinks the bank-button overlay to match. The
@@ -151,6 +160,10 @@ private:
     // Right-click on the PUNCH toggle opens a popup with pre-roll /
     // post-roll value pickers + an explanation banner.
     void showPunchSettingsMenu();
+    // Right-click on the metronome CLICK button — toggles four flags
+    // (click-while-recording / only-during-count-in / click-while-
+    // playing / polyphonic).
+    void showMetronomeSettingsMenu();
 
     // Tap-tempo state. Each click stamps now() into the ring; on each
     // subsequent click within the kTapTimeoutMs window we average the

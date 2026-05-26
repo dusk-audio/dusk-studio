@@ -39,6 +39,15 @@ public:
     // Message thread: close readers.
     void stopPlayback();
 
+    // Message thread: hot-update per-region gain + mute on the live
+    // stream snapshot without rebuilding readers — used when the
+    // transport is rolling and a Normalize / gain-handle drag / mute
+    // toggle / region-properties change shouldn't have to wait for
+    // stop+play. Matches streams to AudioRegion entries by index +
+    // (file, timelineStart, lengthInSamples) so structural changes
+    // (split / join / move) fall through to the next preparePlayback.
+    void refreshLiveRegionParams();
+
     // Audio thread: mix all active regions' audio for `trackIndex` at the
     // given playhead into the output buffer(s). `outL` is always written
     // (cleared first). `outR` is optional — pass nullptr for mono tracks.
@@ -64,6 +73,10 @@ private:
         // itself an AudioFormatReader, so readForTrack's read() call site is
         // unchanged. Disk I/O happens on bufferingThread.
         std::unique_ptr<juce::BufferingAudioReader> reader;
+        // Identity for refreshLiveRegionParams() — matches the
+        // AudioRegion that produced this stream so the live-update
+        // path can find the right entry when transport is rolling.
+        juce::File  sourceFile;
         juce::int64 timelineStart   = 0;
         juce::int64 lengthInSamples = 0;
         juce::int64 sourceOffset    = 0;
@@ -86,12 +99,17 @@ private:
                                            // 2 = stereo region (read L+R from file).
         // Linear gain factor (dB-converted at preparePlayback so the
         // audio thread doesn't pay for the conversion per sample). 1.0 = unity.
+        // refreshLiveRegionParams() may overwrite this from the message
+        // thread while the audio thread reads it; the field is a plain
+        // float intentionally so RegionStream stays movable (atomics
+        // aren't move-constructible) — the write is naturally-aligned
+        // and hardware-atomic on every supported target, and a one-block
+        // stale read is benign for a gain ramp.
         float       gainLinear      = 1.0f;
-        // Snapshot of AudioRegion::muted at preparePlayback time.
-        // readForTrack skips muted streams entirely. Toggling
-        // AudioRegion::muted while playing takes effect on the next
-        // stop+play (i.e. next preparePlayback call); rebuild
-        // mid-play is unsafe.
+        // Snapshot of AudioRegion::muted. Updated live by
+        // refreshLiveRegionParams(); see the gainLinear note above for
+        // the message/audio-thread race rationale. readForTrack skips
+        // muted streams entirely.
         bool        muted           = false;
     };
 

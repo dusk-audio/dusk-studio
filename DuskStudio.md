@@ -104,7 +104,7 @@ The `AudioRegion` struct in the Session Model carries `sourceLength` (so trim is
 
 Modeled after the Tascam Model 2400 layout:
 
-* **16 channel strips** (left to right, organized as two banks of 8 to match standard control surfaces — Mackie Control, FaderPort 16, X-Touch Compact, etc.), each containing:
+* **24 channel strips** (left to right, organized as three banks of 8 — 1-8 / 9-16 / 17-24 — to match standard control surfaces. Mackie Control, FaderPort 16, X-Touch Compact, etc., all map cleanly across the banks via the BANK 1 / BANK 2 / BANK 3 switch), each containing:
   * Input selector (Mono/Stereo/MIDI toggle at top)
   * LED meter (peak + RMS, along the top or side of the strip)
   * HPF knob
@@ -463,7 +463,7 @@ private:
 };
 ```
 
-**Important**: the DSP classes from 4K EQ and Multi-Comp use oversampling internally. Keep this — it's what makes them sound good. The fixed topology means you can budget the CPU precisely: 16 channels × (EQ + Comp with oversampling) = known cost. On a modern x86_64 laptop this lands comfortably under 30% CPU at 256 samples / 48 kHz with all 16 channels active.
+**Important**: the DSP classes from 4K EQ and Multi-Comp use oversampling internally. Keep this — it's what makes them sound good. The fixed topology means you can budget the CPU precisely: 24 channels × (EQ + Comp with oversampling) = known cost. On a modern x86_64 laptop this lands comfortably under ~45% CPU at 256 samples / 48 kHz with all 24 channels active (linear scale-up from the 16-channel ~30% baseline).
 
 Master bus chain similarly extracts DSP from Multi-Q (Pultec mode) and TapeMachine.
 
@@ -901,7 +901,7 @@ Execute these in order. Each phase produces a usable, testable artifact. Do NOT 
 Build a JUCE standalone app that:
 
 * Opens the default audio device (JACK/PipeWire)
-* Shows 16 channel strips with HPF, 4-band EQ, compressor, send knobs, pan, fader
+* Shows 24 channel strips with HPF, 4-band EQ, compressor, send knobs, pan, fader
 * Routes audio inputs through the channel strips and sums to master output
 * Shows LED meters on each channel and the master bus
 * Includes the 4 aux bus strips with EQ + compressor
@@ -989,7 +989,7 @@ Add to Phase 3:
 
 ## **Key Constraints (Enforce These)**
 
-1. **16 channels maximum.** Do not make this configurable. The constraint is the feature. (16 is chosen so that two banks of 8 map cleanly onto every standard control surface — Mackie Control, FaderPort 16, X-Touch Compact, BCF2000 — and to match the MIDI port channel count.)
+1. **24 channels maximum.** Do not make this configurable. The constraint is the feature. (24 is chosen so that three banks of 8 — 1-8 / 9-16 / 17-24 — map cleanly onto every standard control surface — Mackie Control, FaderPort 16, X-Touch Compact, BCF2000. Bank-switching is built into the control-surface protocol; on screen the full 24 strips remain visible.)
 2. **Fixed signal chain.** No reordering EQ/comp. No adding/removing processors. No plugin chains on channels.
 3. **No waveform editing.** Regions can be moved, split, and deleted. No fades, no time-stretching, no pitch-shifting, no crossfade editing.
 4. **Console-style automation only.** Fader, pan, mute, and send levels can be automated — but ONLY via Write mode (move the control during playback and it records the gesture). No pencil-drawing automation curves. No breakpoint editing. This is how motorized faders work on a real console: you ride the fader, the console remembers. See the Automation section above for full spec.

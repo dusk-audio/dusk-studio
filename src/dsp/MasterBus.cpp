@@ -118,13 +118,13 @@ void MasterBus::updateEqParameters() noexcept
     // is reliable - see ChannelStrip equivalent for full reasoning.
     TubeEQProcessor::Parameters p {};
     p.lfBoostGain      = paramsRef->eqLfBoost.load (std::memory_order_relaxed);
-    p.lfBoostFreq      = 60.0f;
-    p.lfAttenGain      = 0.0f;
+    p.lfBoostFreq      = paramsRef->eqLfFreq.load (std::memory_order_relaxed);
+    p.lfAttenGain      = paramsRef->eqLfAtten.load (std::memory_order_relaxed);
     p.hfBoostGain      = paramsRef->eqHfBoost.load (std::memory_order_relaxed);
-    p.hfBoostFreq      = 8000.0f;
-    p.hfBoostBandwidth = 0.5f;
+    p.hfBoostFreq      = paramsRef->eqHfBoostFreq.load (std::memory_order_relaxed);
+    p.hfBoostBandwidth = paramsRef->eqHfBoostBandwidth.load (std::memory_order_relaxed);
     p.hfAttenGain      = paramsRef->eqHfAtten.load (std::memory_order_relaxed);
-    p.hfAttenFreq      = 10000.0f;
+    p.hfAttenFreq      = paramsRef->eqHfAttenFreq.load (std::memory_order_relaxed);
     p.midEnabled       = false;  // Mid Dip/Peak section disabled at master - Pultec users
                                   // typically reach for tube drive instead at the master bus.
     p.midLowFreq = 500.0f;  p.midLowPeak = 0.0f;
@@ -132,7 +132,14 @@ void MasterBus::updateEqParameters() noexcept
     p.midHighFreq = 3000.0f; p.midHighPeak = 0.0f;
     p.inputGain  = 0.0f;
     p.outputGain = paramsRef->eqOutputGainDb.load (std::memory_order_relaxed);
-    p.tubeDrive  = paramsRef->eqTubeDrive.load (std::memory_order_relaxed);
+    // Fixed tube drive calibrated to ~-70 dB H2 at 0 dBFS sine input, matching
+    // a UAD EQP-1A at +0 dB. With the donor TubeEQTubeStage polynomial
+    // (H2 ≈ b·drive·DRIVE_SCALE·A/2, b=0.015, DRIVE_SCALE=2), drive=0.02 yields
+    // 0.015·0.04·0.5 = 3e-4 → 20·log10(3e-4) ≈ -70.5 dB H2 at 0 dBFS. H3 sits
+    // ~50 dB below (polynomial physics, H3 ∝ drive²·A²). The legacy user-
+    // facing Drive knob is gone — the master tube stage is now a fixed
+    // "warm but not saturated" character, like a real EQP-1A at unity.
+    p.tubeDrive  = 0.02f;
     p.bypass     = ! paramsRef->eqEnabled.load (std::memory_order_relaxed);
     if (std::memcmp (&p, &lastTubeEqParams, sizeof (p)) != 0)
     {

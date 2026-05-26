@@ -13,7 +13,19 @@ namespace
 void rebuildPlaybackIfStopped (AudioEngine& engine)
 {
     if (engine.getTransport().getState() == Transport::State::Stopped)
+    {
         engine.getPlaybackEngine().preparePlayback();
+    }
+    else
+    {
+        // Transport rolling: full preparePlayback would tear down
+        // readers mid-stream. Push the latest gain / mute through
+        // the lightweight live-refresh path instead so Normalize +
+        // gain-handle drags become audible immediately. Structural
+        // changes (move / trim / split / join) won't take effect
+        // until the next Stop+Play, by design.
+        engine.getPlaybackEngine().refreshLiveRegionParams();
+    }
 }
 
 bool indexValid (Session& s, int trackIdx, int regionIdx)
@@ -737,6 +749,47 @@ bool JoinRegionsAction::undo()
     {
         if (idx < 0 || idx > (int) regs.size()) return false;
         regs.insert (regs.begin() + idx, reg);
+    }
+    rebuildPlaybackIfStopped (engine);
+    return true;
+}
+
+// ── RecordCommitAction ───────────────────────────────────────────────────
+
+RecordCommitAction::RecordCommitAction (Session& s, AudioEngine& e,
+                                          std::vector<TrackDiff> d)
+    : session (s), engine (e), diffs (std::move (d)) {}
+
+bool RecordCommitAction::perform()
+{
+    // The first perform() is the UndoManager's bookkeeping replay of
+    // the commit RecordManager already applied to session state — no
+    // need to write the after-state again. Subsequent calls (redo
+    // after an undo) actually mutate state.
+    if (! firstPerformDone)
+    {
+        firstPerformDone = true;
+        return true;
+    }
+    for (const auto& d : diffs)
+    {
+        if (d.trackIndex < 0 || d.trackIndex >= Session::kNumTracks) continue;
+        session.track (d.trackIndex).regions = d.audioAfter;
+        session.track (d.trackIndex).midiRegions.mutate (
+            [&d] (std::vector<MidiRegion>& mregs) { mregs = d.midiAfter; });
+    }
+    rebuildPlaybackIfStopped (engine);
+    return true;
+}
+
+bool RecordCommitAction::undo()
+{
+    for (const auto& d : diffs)
+    {
+        if (d.trackIndex < 0 || d.trackIndex >= Session::kNumTracks) continue;
+        session.track (d.trackIndex).regions = d.audioBefore;
+        session.track (d.trackIndex).midiRegions.mutate (
+            [&d] (std::vector<MidiRegion>& mregs) { mregs = d.midiBefore; });
     }
     rebuildPlaybackIfStopped (engine);
     return true;

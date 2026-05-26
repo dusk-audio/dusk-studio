@@ -2,6 +2,8 @@
 #include "../session/MarkerEditActions.h"
 #include "../session/RegionEditActions.h"
 #include "../session/SnapHelpers.h"
+#include "DuskAlerts.h"
+#include "DuskContextMenu.h"
 
 namespace duskstudio
 {
@@ -109,6 +111,15 @@ double TapeStrip::pixelsPerSecond() const noexcept
     auto col = tracksColumnBounds();
     if (col.getWidth() <= 0) return 0.0;
     const double autoFit = (double) col.getWidth() / maxSeconds;
+
+    // While recording, force fit-to-window so the growing playhead +
+    // freshly-captured audio stay on screen instead of running off the
+    // right edge at whatever userZoomFactor was selected pre-record.
+    // User's zoom factor is preserved and re-applied the moment STOP
+    // fires (recording flag clears).
+    if (engine.getTransport().isRecording())
+        return autoFit;
+
     return autoFit * (double) juce::jlimit (0.1f, 32.0f, userZoomFactor);
 }
 
@@ -358,23 +369,15 @@ void TapeStrip::rebuildPlaybackIfStopped()
 
 void TapeStrip::resized()
 {
-    // Zoom HUD: right-aligned in the ruler band.
-    auto r = rulerBounds().reduced (2);
-    constexpr int kBtnW = 32;
-    constexpr int kFitW = 36;
-    constexpr int kGap  = 2;
-    auto place = [&] (juce::TextButton& b, int w)
-    {
-        b.setBounds (r.removeFromRight (w));
-        r.removeFromRight (kGap);
-    };
-    place (zoomFitButton, kFitW);
-    place (zoomInButton,  kBtnW);
-    place (zoomOutButton, kBtnW);
-    // SNAP sits left of the zoom cluster. Slightly wider since the
-    // label is 4 characters; matches the SNAP width that used to live
-    // on the transport bar.
-    place (snapToggle, 48);
+    // SNAP + zoom buttons moved to MainComponent's header row so they
+    // sit between the bank tabs and the tuner button. The TapeStrip
+    // retains the button members + onClick wiring (MainComponent
+    // forwards through TapeStrip's public zoom/snap helpers) but hides
+    // them here so the ruler band reads cleanly.
+    snapToggle    .setVisible (false);
+    zoomOutButton .setVisible (false);
+    zoomInButton  .setVisible (false);
+    zoomFitButton .setVisible (false);
 }
 
 void TapeStrip::timerCallback()
@@ -428,6 +431,16 @@ void TapeStrip::timerCallback()
     const int oldX = xForSample (lastPlayhead < 0 ? 0 : lastPlayhead);
     const int newX = xForSample (now);
     lastPlayhead = now;
+
+    // During recording, pixelsPerSecond auto-shrinks every frame as the
+    // playhead grows, so the bar grid + existing regions also shift —
+    // a thin-band playhead repaint isn't enough. Full repaint keeps
+    // ruler labels + region waveforms aligned with the live playhead.
+    if (nowRec)
+    {
+        repaint();
+        return;
+    }
 
     // Repaint a thin vertical band covering both the old and new playhead
     // positions plus a few pixels of margin so we don't see ghosting.
@@ -622,10 +635,16 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
                      clickedSample]
                     {
                         if (safeThis == nullptr) return;
+                        // Snap the spawn position to the grid when SNAP
+                        // is on so newly-added markers land on bar/beat
+                        // lines (mirrors the drag-snap path below).
+                        const auto sr = safeThis->engine.getCurrentSampleRate();
+                        const auto spawn = snap::snapAbsoluteToGrid (
+                            clickedSample, safeThis->session, sr);
                         auto& um = safeThis->engine.getUndoManager();
                         um.beginNewTransaction ("Add marker");
                         um.perform (new AddMarkerAction (
-                            safeThis->session, clickedSample));
+                            safeThis->session, spawn));
                         safeThis->repaint();
                     });
         if (! session.getMarkers().empty())
@@ -660,8 +679,7 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
         // Anchor the menu at the cursor instead of the TapeStrip's
         // top-left corner. Same fix as the plugin picker.
         const auto cursor = e.getScreenPosition();
-        m.showMenuAsync (juce::PopupMenu::Options()
-                            .withTargetScreenArea (juce::Rectangle<int> (cursor.x, cursor.y, 1, 1)),
+        showContextMenu (m, *this, cursor,
                           [safeThis = juce::Component::SafePointer<TapeStrip> (this)] (int)
                           {
                               if (safeThis != nullptr) safeThis->repaint();
@@ -1029,19 +1047,15 @@ void TapeStrip::mouseDrag (const juce::MouseEvent& e)
             && markerDrag.index >= 0
             && markerDrag.index < (int) session.getMarkers().size())
         {
-            // Snap-to-beat when session.snapToGrid is on. Same model
-            // as the audio + MIDI region drags above: round the
-            // delta against origin so the marker lands on a beat
-            // boundary, not the absolute target. Mid-beat origins
-            // therefore stay mid-beat on small drags and re-align
-            // only on bigger movements.
+            // Snap to absolute grid lines when SNAP is on. Markers don't
+            // carry a meaningful "mid-beat origin" semantic (unlike a
+            // region's fade-in offset) so delta-against-origin snap left
+            // an off-grid marker stuck at off-grid positions forever.
+            // Absolute snap means the marker lands ON the bar / beat the
+            // user is dragging it toward.
             juce::int64 newPos = juce::jmax ((juce::int64) 0, cur);
-            if (session.snapToGrid)
-            {
-                const auto delta = snap::snapDeltaToGrid (cur - markerDrag.mouseDownSample,
-                                                          session, engine.getCurrentSampleRate());
-                newPos = juce::jmax ((juce::int64) 0, markerDrag.originSample + delta);
-            }
+            newPos = snap::snapAbsoluteToGrid (newPos, session,
+                                                engine.getCurrentSampleRate());
             session.getMarkers()[(size_t) markerDrag.index].timelineSamples = newPos;
             repaint();
         }
@@ -1395,6 +1409,10 @@ void TapeStrip::mouseUp (const juce::MouseEvent& e)
         constexpr juce::int64 kMinUsefulRangeSamples = 1024;
         if (b - a <= kMinUsefulRangeSamples)
         {
+            // Click without a drag = seek the playhead to the clicked
+            // position. Drag-to-create-range still triggers the
+            // loop/punch popup below.
+            engine.getTransport().setPlayhead (juce::jmax ((juce::int64) 0, a));
             rulerSelection = {};
             repaint();
             return;
@@ -1432,9 +1450,7 @@ void TapeStrip::mouseUp (const juce::MouseEvent& e)
                     });
         // Menu-dismiss callback catches escape / click-outside (no item
         // chosen) so the grey highlight still goes away in those paths.
-        m.showMenuAsync (juce::PopupMenu::Options()
-                            .withTargetScreenArea (
-                                juce::Rectangle<int> (cursor.x, cursor.y, 1, 1)),
+        showContextMenu (m, *this, cursor,
                           [safeThis = juce::Component::SafePointer<TapeStrip> (this)] (int)
                           {
                               if (safeThis == nullptr) return;
@@ -1518,6 +1534,29 @@ void TapeStrip::mouseDoubleClick (const juce::MouseEvent& e)
 {
     // Right-click double doesn't make sense for create-region.
     if (e.mods.isRightButtonDown()) return;
+
+    // Marker double-click: rename. Mirrors the right-click "Rename" item
+    // — same modal, same undo-less rename path (session.renameMarker
+    // mutates the marker list in place).
+    if (const int markerIdx = hitTestMarker (e.x, e.y); markerIdx >= 0)
+    {
+        const auto& markers = session.getMarkers();
+        if (markerIdx >= (int) markers.size()) return;
+        const juce::String current = markers[(size_t) markerIdx].name;
+        auto* host = getTopLevelComponent();
+        if (host == nullptr) host = this;
+        juce::Component::SafePointer<TapeStrip> safeThis (this);
+        showDuskTextInput (*host, "Rename marker", "New name:", current,
+            [safeThis, markerIdx] (const juce::String& newName)
+            {
+                if (safeThis == nullptr) return;
+                const auto trimmed = newName.trim();
+                if (trimmed.isEmpty()) return;
+                safeThis->session.renameMarker (markerIdx, trimmed);
+                safeThis->repaint();
+            });
+        return;
+    }
 
     auto col = tracksColumnBounds();
     if (! col.contains (e.x, e.y)) return;
@@ -1753,6 +1792,18 @@ void TapeStrip::showRegionContextMenu (const RegionHit& hit, juce::Point<int> sc
     juce::PopupMenu m;
     m.addSectionHeader (juce::String::formatted ("Track %d region %d",
                                                   hit.track + 1, hit.regionIdx + 1));
+    m.addItem ("Loop region",
+                [safeThis = juce::Component::SafePointer<TapeStrip> (this),
+                 regionStart = region.timelineStart,
+                 regionEnd]
+                {
+                    if (safeThis == nullptr) return;
+                    auto& tr = safeThis->engine.getTransport();
+                    tr.setLoopRange (regionStart, regionEnd);
+                    tr.setLoopEnabled (true);
+                    tr.setPlayhead (regionStart);
+                    safeThis->repaint();
+                });
     m.addItem ("Split at playhead", playheadInside,
                 false /*ticked*/,
                 [safeThis = juce::Component::SafePointer<TapeStrip> (this),
@@ -2021,9 +2072,7 @@ void TapeStrip::showRegionContextMenu (const RegionHit& hit, juce::Point<int> sc
                     safeThis->repaint();
                 });
 
-    m.showMenuAsync (juce::PopupMenu::Options()
-                        .withTargetScreenArea (
-                            juce::Rectangle<int> (screenPos.x, screenPos.y, 1, 1)),
+    showContextMenu (m, *this, screenPos,
         [safeThis = juce::Component::SafePointer<TapeStrip> (this), hitCopy = hit]
         (int chosen)
         {
@@ -2075,6 +2124,21 @@ void TapeStrip::showMidiRegionContextMenu (int trackIdx, int regionIdx,
     juce::PopupMenu m;
     m.addSectionHeader (juce::String::formatted ("Track %d MIDI region %d",
                                                   trackIdx + 1, regionIdx + 1));
+
+    m.addItem ("Loop region",
+                [safeThis = juce::Component::SafePointer<TapeStrip> (this),
+                 regionStart = region.timelineStart,
+                 regionEnd   = region.timelineStart + region.lengthInSamples]
+                {
+                    if (safeThis == nullptr) return;
+                    auto& tr = safeThis->engine.getTransport();
+                    tr.setLoopRange (regionStart, regionEnd);
+                    tr.setLoopEnabled (true);
+                    tr.setPlayhead (regionStart);
+                    safeThis->repaint();
+                });
+
+    m.addSeparator();
 
     // Rename / clear-label. AlertWindow modal text input, same flow
     // as the audio version. Mutation goes through
@@ -2237,9 +2301,7 @@ void TapeStrip::showMidiRegionContextMenu (int trackIdx, int regionIdx,
     }
     m.addSubMenu ("Color", colourSub);
 
-    m.showMenuAsync (juce::PopupMenu::Options()
-                        .withTargetScreenArea (
-                            juce::Rectangle<int> (screenPos.x, screenPos.y, 1, 1)),
+    showContextMenu (m, *this, screenPos,
         [safeThis = juce::Component::SafePointer<TapeStrip> (this),
          trackIdx, regionIdx]
         (int chosen)
@@ -2295,6 +2357,32 @@ void TapeStrip::paint (juce::Graphics& g)
 
             const double endSec = (double) col.getWidth() / px;
             const int lastBar = (int) std::ceil (endSec / secsPerBar);
+
+            // Beat sub-ticks: only drawn when each beat would render at
+            // least ~6 px apart so they don't smear into a grey band at
+            // low zoom. Drawn first (dimmer, shorter) so the bar ticks
+            // overpaint them at every bar's first beat.
+            const double pxPerBeat = pxPerBar / (double) bpb;
+            if (pxPerBeat >= 6.0 && barStep == 1)
+            {
+                g.setColour (juce::Colour (0xff3a3a40));
+                const float beatY0 = (float) ruler.getY() + (float) kRulerTickBandH * 0.55f;
+                const float beatY1 = (float) ruler.getY() + (float) kRulerTickBandH;
+                for (int bar = 0; bar <= lastBar; ++bar)
+                {
+                    for (int beat = 1; beat < bpb; ++beat)
+                    {
+                        const double sec = (double) bar * secsPerBar
+                                         + (double) beat * (secsPerBar / (double) bpb);
+                        const int x = col.getX() + (int) (sec * px);
+                        if (x < col.getX() || x > col.getRight()) continue;
+                        g.drawVerticalLine (x, beatY0, beatY1);
+                    }
+                }
+                // Restore bar-tick colour for the loop below.
+                g.setColour (juce::Colour (0xff707074));
+            }
+
             for (int bar = 0; bar <= lastBar; bar += barStep)
             {
                 const int x = col.getX() + (int) ((double) bar * secsPerBar * px);

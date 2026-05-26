@@ -1,4 +1,5 @@
 #include "AuxLaneComponent.h"
+#include "DuskContextMenu.h"
 #include "HardwareInsertEditor.h"
 #include "PlatformWindowing.h"
 #include "PluginPickerHelpers.h"
@@ -192,9 +193,22 @@ AuxLaneComponent::AuxLaneComponent (AuxLane& l, AuxLaneStrip& s, int idx,
     nameLabel.setColour (juce::Label::textWhenEditingColourId,       juce::Colours::white);
     nameLabel.onTextChange = [this]
     {
-        const auto txt = nameLabel.getText().trim();
-        if (txt.isEmpty()) nameLabel.setText (lane.name, juce::dontSendNotification);
-        else lane.name = txt;
+        auto txt = nameLabel.getText().trim();
+        if (txt.isEmpty())
+        {
+            nameLabel.setText (lane.name, juce::dontSendNotification);
+            return;
+        }
+        // Cap aux name length — channel strips render this same name above
+        // their AUX1-4 send knobs in a narrow column; keeping the cap here
+        // ensures the channel-strip displays stay readable.
+        constexpr int kAuxNameMaxChars = 12;
+        if (txt.length() > kAuxNameMaxChars)
+        {
+            txt = txt.substring (0, kAuxNameMaxChars);
+            nameLabel.setText (txt, juce::dontSendNotification);
+        }
+        lane.name = txt;
     };
     addAndMakeVisible (nameLabel);
 
@@ -250,7 +264,8 @@ AuxLaneComponent::AuxLaneComponent (AuxLane& l, AuxLaneStrip& s, int idx,
     // Automation mode button: cycles Off / R / W / T via popup menu.
     // Sits below the mute button on the strip.
     autoModeButton.setTooltip ("Automation mode: Off / Read / Write / Touch");
-    autoModeButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff222226));
+    autoModeButton.setColour (juce::TextButton::buttonColourId, juce::Colours::transparentBlack);
+    autoModeButton.setColour (juce::TextButton::textColourOffId, juce::Colour (0xff909094));
     autoModeButton.onClick = [this] { showAutoModeMenu(); };
     {
         const int amode = lane.params.automationMode.load (std::memory_order_relaxed);
@@ -398,11 +413,13 @@ void AuxLaneComponent::showAutoModeMenu()
     add ((int) AutomationMode::Read,  "Read");
     add ((int) AutomationMode::Write, "Write");
     add ((int) AutomationMode::Touch, "Touch");
-    m.showMenuAsync (juce::PopupMenu::Options{}.withTargetComponent (&autoModeButton),
-                       [this] (int picked)
+    juce::Component::SafePointer<AuxLaneComponent> safe (this);
+    showContextMenu (m, autoModeButton,
+                       [safe] (int picked)
     {
-        if (picked <= 0) return;
-        setAutoMode ((AutomationMode) (picked - 1));
+        auto* self = safe.getComponent();
+        if (self == nullptr || picked <= 0) return;
+        self->setAutoMode ((AutomationMode) (picked - 1));
     });
 }
 

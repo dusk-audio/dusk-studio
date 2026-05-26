@@ -1,4 +1,6 @@
 #include "MidiBindingsPanel.h"
+#include "DuskAlerts.h"
+#include "DuskFileBrowser.h"
 #include "../engine/AudioEngine.h"
 #include "../session/Session.h"
 #include "../session/MidiBindings.h"
@@ -164,82 +166,66 @@ void MidiBindingsPanel::exportPreset()
     // final path; we just seed the dialog with something sensible.
     const auto defaultDir = juce::File::getSpecialLocation (
         juce::File::userDocumentsDirectory);
-    exportChooser = std::make_unique<juce::FileChooser> (
-        "Save MIDI bindings preset",
-        defaultDir.getChildFile ("dusk-studio-bindings.json"),
-        "*.json");
     juce::Component::SafePointer<MidiBindingsPanel> safe (this);
-    exportChooser->launchAsync (
-        juce::FileBrowserComponent::saveMode
-            | juce::FileBrowserComponent::canSelectFiles
-            | juce::FileBrowserComponent::warnAboutOverwriting,
-        [safe] (const juce::FileChooser& fc)
+    filebrowser::open (*this, {
+        /*title*/                  "Save MIDI bindings preset",
+        /*initialFileOrDirectory*/ defaultDir.getChildFile ("dusk-studio-bindings.json"),
+        /*filePatternsAllowed*/    "*.json",
+        /*mode*/                   filebrowser::Mode::Save,
+        /*warnAboutOverwriting*/   true,
+        /*selectDirectories*/      false,
+    },
+    [safe] (juce::File file)
+    {
+        auto* self = safe.getComponent();
+        if (self == nullptr || file == juce::File()) return;
+        const auto json = serializeBindingsPreset (
+            self->session.midiBindings.current());
+        auto target = file.hasFileExtension ("json")
+                        ? file : file.withFileExtension ("json");
+        if (! target.replaceWithText (json))
         {
-            auto* self = safe.getComponent();
-            if (self == nullptr) return;
-            const auto file = fc.getResult();
-            if (file == juce::File()) { self->exportChooser.reset(); return; }
-            const auto json = serializeBindingsPreset (
-                self->session.midiBindings.current());
-            // Append .json if the user typed a bare name.
-            auto target = file.hasFileExtension ("json")
-                            ? file : file.withFileExtension ("json");
-            if (! target.replaceWithText (json))
-            {
-                juce::AlertWindow::showAsync (
-                    juce::MessageBoxOptions()
-                        .withIconType (juce::MessageBoxIconType::WarningIcon)
-                        .withTitle ("Export failed")
-                        .withMessage ("Could not write to " + target.getFullPathName())
-                        .withButton ("OK"),
-                    nullptr);
-            }
-            self->exportChooser.reset();
-        });
+            if (auto* tlw = self->getTopLevelComponent())
+                showDuskAlert (*tlw, "Export failed",
+                                  "Could not write to " + target.getFullPathName());
+        }
+    });
 }
 
 void MidiBindingsPanel::importPreset()
 {
     const auto defaultDir = juce::File::getSpecialLocation (
         juce::File::userDocumentsDirectory);
-    importChooser = std::make_unique<juce::FileChooser> (
-        "Load MIDI bindings preset",
-        defaultDir,
-        "*.json");
     juce::Component::SafePointer<MidiBindingsPanel> safe (this);
-    importChooser->launchAsync (
-        juce::FileBrowserComponent::openMode
-            | juce::FileBrowserComponent::canSelectFiles,
-        [safe] (const juce::FileChooser& fc)
+    filebrowser::open (*this, {
+        /*title*/                  "Load MIDI bindings preset",
+        /*initialFileOrDirectory*/ defaultDir,
+        /*filePatternsAllowed*/    "*.json",
+        /*mode*/                   filebrowser::Mode::Open,
+        /*warnAboutOverwriting*/   false,
+        /*selectDirectories*/      false,
+    },
+    [safe] (juce::File file)
+    {
+        auto* self = safe.getComponent();
+        if (self == nullptr || file == juce::File()) return;
+        const auto json = file.loadFileAsString();
+        auto parsed = deserializeBindingsPreset (json);
+        if (! parsed.has_value())
         {
-            auto* self = safe.getComponent();
-            if (self == nullptr) return;
-            const auto file = fc.getResult();
-            if (file == juce::File()) { self->importChooser.reset(); return; }
-            const auto json = file.loadFileAsString();
-            auto parsed = deserializeBindingsPreset (json);
-            if (parsed.empty())
+            if (auto* tlw = self->getTopLevelComponent())
+                showDuskAlert (*tlw, "Import failed",
+                                  "Could not read bindings from " + file.getFullPathName()
+                                      + ". File is missing or malformed.");
+            return;
+        }
+        // An empty parsed vector is a valid "clear all bindings" preset.
+        self->session.midiBindings.mutate (
+            [&parsed] (std::vector<MidiBinding>& binds)
             {
-                juce::AlertWindow::showAsync (
-                    juce::MessageBoxOptions()
-                        .withIconType (juce::MessageBoxIconType::WarningIcon)
-                        .withTitle ("Import failed")
-                        .withMessage ("Could not read bindings from " + file.getFullPathName()
-                                    + ". File may be missing, empty, or malformed.")
-                        .withButton ("OK"),
-                    nullptr);
-                self->importChooser.reset();
-                return;
-            }
-            // Replace semantics. Atomic snapshot publish so the audio
-            // thread sees the new set whole, not mid-transition.
-            self->session.midiBindings.mutate (
-                [&parsed] (std::vector<MidiBinding>& binds)
-                {
-                    binds = parsed;
-                });
-            self->rebuildRows();
-            self->importChooser.reset();
-        });
+                binds = *parsed;
+            });
+        self->rebuildRows();
+    });
 }
 } // namespace duskstudio

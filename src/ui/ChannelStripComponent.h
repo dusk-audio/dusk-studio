@@ -7,6 +7,7 @@
 #include <memory>
 #include "CompMeterStrip.h"
 #include "EmbeddedModal.h"
+#include "DuskComboBox.h"
 #include "../session/Session.h"
 
 namespace duskstudio
@@ -40,8 +41,8 @@ public:
     // ChannelStripComponents pick up the change via their existing
     // 30 Hz timer that polls faderDb and pushes it to their slider.
     float                            faderDragAnchorDb = 0.0f;
-    std::array<float, 16>            peerAnchorsDb {};   // key = trackIndex
-    std::array<bool,  16>            peerActive    {};   // true = peer in group
+    std::array<float, Session::kNumTracks> peerAnchorsDb {};   // key = trackIndex
+    std::array<bool,  Session::kNumTracks> peerActive    {};   // true = peer in group
 
     // Compact mode hides the inline EQ + COMP controls and replaces each
     // section with a single small button that opens the corresponding
@@ -112,10 +113,24 @@ private:
     juce::Rectangle<int> eqArea, compArea;
 
     juce::Slider hpfKnob   { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
+    juce::Slider lpfKnob   { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
     juce::Label  hpfLabel;
+    juce::Label  lpfLabel;
+    // EQ type chip (E / G) — small toggle parked between the HM and
+    // LM rows in the freq column. Replaces the chip that used to sit
+    // on the EQ header pill; living mid-strip makes the type cue read
+    // even when the user's eye is on the band rows.
+    juce::TextButton eqTypeChip { "E" };
 
-    juce::Label  eqHeaderLabel;
-    juce::TextButton eqTypeButton { "B" };
+    // EQ header button. Same grammar as the COMP header — left-click
+    // toggles eqEnabled (auto-armed on first knob touch; the LED inside
+    // the button reflects state). Right-click pops the EQ-type picker
+    // (Brown E / Black G). The label stays "EQ" regardless of mode so
+    // the section header reads consistently; the active mode is shown
+    // as a ticked item in the right-click menu. Replaces the prior
+    // [LED] + label + [E/G pill] triple.
+    class CompHeaderButton;   // nested type defined in .cpp (already used by COMP).
+    std::unique_ptr<CompHeaderButton> eqHeaderBtn;
     struct BandRow
     {
         std::unique_ptr<juce::Slider> gain;
@@ -140,14 +155,16 @@ private:
     // click and detach the visual state from the underlying compEnabled
     // atom. The button's onClick opens the mode menu; compEnabled is
     // mutated separately via setCompEnabled / armCompOnUserEdit.
-    juce::TextButton compModeButton  { "OPTO" };
+    // Custom button replacing the old separate label + mode button +
+    // bypass LED triple. Centered at the top of the COMP section. Left-
+    // click toggles compEnabled. Right-click pops the mode-picker
+    // menu. Small green LED on the left inside the button illuminates
+    // when compEnabled; text is white regardless of state so the comp
+    // section reads consistently whether on or off.
+    std::unique_ptr<CompHeaderButton> compModeButton;
 
-    // Round LED in the lower-left of the comp section. Lights green when
-    // the compressor is engaged, dim grey when bypassed. Click toggles
-    // compEnabled — replaces the old "Bypass" menu item on the mode
-    // dropdown so the dropdown stays mode-only.
-    class CompBypassLed;
-    std::unique_ptr<CompBypassLed> compBypassLed;
+    // Standalone CompBypassLed dropped — its function moved into
+    // CompHeaderButton (the dot inside the header button).
 
     // Opto (LA-2A): peak-reduction knob + gain knob + LIMIT toggle.
     juce::Slider     optoPeakRedKnob { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
@@ -169,9 +186,17 @@ private:
     juce::Slider     vcaAttackKnob  { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
     juce::Slider     vcaReleaseKnob { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
     juce::Slider     vcaOutputKnob  { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
+
     juce::Label      vcaRatioLabel, vcaAttackLabel, vcaReleaseLabel, vcaOutputLabel;
 
     std::unique_ptr<CompMeterStrip> compMeter;
+
+    // Fader-side layout flag — when true, the COMP section's CompMeterStrip
+    // is hoisted out into a slim vertical column alongside the fader
+    // (handle + IN bar + GR LED), freeing the COMP section to show only
+    // the knob grid. Originally gated to track 3 as a visual test; now
+    // enabled for all strips after the layout was finalised.
+    bool usesFaderThresholdLayout() const { return true; }
 
     std::array<std::unique_ptr<juce::TextButton>, ChannelStripParams::kNumBuses> busButtons;
 
@@ -180,8 +205,20 @@ private:
     juce::Slider faderSlider { juce::Slider::LinearVertical, juce::Slider::TextBoxBelow };
     juce::Rectangle<int> inputMeterArea;
     juce::Rectangle<int> meterScaleArea;
+    // Track-3 fader-side layout: slim column LEFT of the GR LED that
+    // paints vertical GR-scale labels (0 .. -24 dB). Empty on every
+    // other strip.
+    juce::Rectangle<int> grScaleArea;
     juce::Label inputPeakLabel;
     juce::Label grPeakLabel;       // GR readout (dB), sits to the right of inputPeakLabel
+    // Track-3 fader-side layout only: numeric GR readout below the slim
+    // GR LED (e.g. "-3.0"). Hidden / unused on every other strip.
+    juce::Label grReadoutLabel;
+    // Track-3 only: standalone fader value readout (e.g. "-6.0"). The
+    // slider runs in NoTextBox mode so the cap at min value doesn't
+    // overlap the textbox area that would otherwise be hosted inside
+    // the slider's bounds.
+    juce::Label faderValueLabel;
     juce::Label threshMeterLabel;  // "THR" header above CompMeterStrip's drag handle
     juce::TextButton muteButton    { "M" };
     juce::TextButton soloButton    { "S" };
@@ -213,12 +250,12 @@ private:
     juce::TextButton armButton     { "ARM" };
     juce::TextButton monitorButton { "IN"  };
     juce::TextButton printButton   { "PRINT" };  // print EQ/comp to recording
-    juce::ComboBox   modeSelector;          // Mono / Stereo / MIDI
-    juce::ComboBox   inputSelector;         // mono / stereo-L / (hidden in MIDI)
-    juce::ComboBox   inputSelectorR;        // stereo-R (visible only in stereo mode)
-    juce::ComboBox   midiInputSelector;     // MIDI input port (visible only in MIDI mode)
-    juce::ComboBox   midiChannelSelector;   // Omni / Ch 1..16 filter (MIDI mode only)
-    juce::ComboBox   midiOutputSelector;    // External MIDI output port (MIDI mode only)
+    DuskComboBox   modeSelector;          // Mono / Stereo / MIDI
+    DuskComboBox   inputSelector;         // mono / stereo-L / (hidden in MIDI)
+    DuskComboBox   inputSelectorR;        // stereo-R (visible only in stereo mode)
+    DuskComboBox   midiInputSelector;     // MIDI input port (visible only in MIDI mode)
+    DuskComboBox   midiChannelSelector;   // Omni / Ch 1..16 filter (MIDI mode only)
+    DuskComboBox   midiOutputSelector;    // External MIDI output port (MIDI mode only)
 
     // Compact header that replaces the inline mode/input/midi rows. Shows a
     // one-line summary of the track's I/O (e.g. "Mono · In 1" or "MIDI Ch 5
@@ -253,12 +290,12 @@ private:
     juce::Rectangle<int> auxRowArea;
 
     void onHpfKnobChanged();
+    void onLpfKnobChanged();
     void onInputSelectorChanged();
     void onTrackModeChanged();
     void refreshInputSelectorVisibility();
     void showColourMenu();
     void applyTrackColour (juce::Colour c);
-    void refreshEqTypeButton();
     void setCompMode (int modeIndex);
     // Cheap state-only refresh: button text + toggle illumination. Called
     // every timer tick + after any compMode/compEnabled mutation.
@@ -268,6 +305,9 @@ private:
     // when the section's visibility flips - NOT from the 30 Hz timer.
     void refreshCompKnobVisibility();
     void showCompModeMenu();
+    // Right-click handler on the EQ header button — pops the EQ-type
+    // picker (Brown E / Black G), same grammar as showCompModeMenu.
+    void showEqTypeMenu();
     void armCompOnUserEdit();
     // Toggle comp on/off + refresh mode-button illumination. Used by the
     // right-click context menu since the button itself is the mode picker.
@@ -277,7 +317,12 @@ private:
     // PluginKind based on track mode (Instruments for Midi, Effects for
     // Mono/Stereo). The shared helper handles the menu, the scan dialog,
     // and the browse-for-file fallback.
-    void openPluginPicker();
+    // useChooser=true (default): shows the 3-button "Add insert"
+    // chooser first (Hardware / Soundfont / Plugin) — entry point for
+    // empty-slot clicks. false: skip the chooser, jump straight to the
+    // plugin list — used by the right-click "Replace plugin..." action
+    // where the user has already committed to the plugin path.
+    void openPluginPicker (bool useChooser = true);
     void unloadPluginSlot();
     void refreshPluginSlotButton();
 
@@ -297,34 +342,19 @@ private:
     void openPluginEditor();
     void closePluginEditor();
     std::unique_ptr<juce::FileChooser> activePluginChooser;
-    // Plugin editor uses an EmbeddedModal (centred overlay + dim backdrop on
-    // the parent, Esc / click-outside dismiss) instead of a native top-level
-    // DialogWindow. Lifetime is tied to this strip - the modal closes when
-    // the strip is destroyed, before the underlying PluginSlot tears down.
-    // Plugin editors need a NATIVE window peer to render correctly -
-    // many plugins (e.g. MininnDrum, anything VSTGUI-based, anything
-    // using its own GL context) draw a white / blank surface when
-    // hosted as a child of another JUCE Component because the
-    // Component shares its parent's peer. So plugin editors are the
-    // explicit exception to the embedded-modal rule (memory:
-    // feedback_modal_preference) and get a real top-level window with
-    // its own peer.
-    //
-    // The window is rebuilt on every open (cheap) but the inner
-    // AudioProcessorEditor is cached in `pluginEditor` so the plugin's
-    // own GL / Cairo / native resources aren't torn down per close.
-    // That's what stops Diva and similar plugins from crashing the
-    // compositor on rapid open/close cycles.
-    class PluginEditorWindow;
-    std::unique_ptr<PluginEditorWindow> pluginEditorWindow;
+    // Plugin editor is hosted inline as an EmbeddedModal (centred over
+    // MainComponent, dim backdrop, click-outside / Esc dismiss). The
+    // editor body is held in `pluginEditor` (in-process) or one of the
+    // remote-embed pointers below (OOP); EmbeddedModal::showBorrowed
+    // doesn't own the body, so opening/closing the modal preserves the
+    // plugin's GL / Cairo / native resources across cycles. Both
+    // generic-fallback editors and native plugin editors now share this
+    // single modal — main window peer is X11 on Linux so the plugin's
+    // X11 sub-window can reparent into the modal's wrapper Component
+    // without needing its own top-level peer.
+    EmbeddedModal pluginEditorModal;
     std::unique_ptr<juce::AudioProcessorEditor> pluginEditor;
     juce::AudioProcessor* pluginEditorOwner = nullptr;
-    // Generic-fallback editors (plugins with no native UI) host inside
-    // the main window as an EmbeddedModal so combobox / popup peers
-    // share the main wl_surface — avoids the mixed X11/Wayland popup
-    // breakage that happens when a JUCE-native editor is wrapped in an
-    // X11 PluginEditorWindow.
-    EmbeddedModal pluginGenericEditorModal;
 
    #if JUCE_LINUX && DUSKSTUDIO_HAS_OOP_PLUGINS
     // OOP-mode editor embedding. The plugin's editor lives in the
@@ -361,12 +391,17 @@ private:
     bool compactMode = false;
     juce::TextButton eqCompactButton   { "EQ" };
     juce::TextButton compCompactButton { "COMP" };
-    // EQ + Comp use CallOutBox (in-window overlay, click-outside-to-dismiss
-    // with the click consumed so the trigger button doesn't bounce-reopen).
+    juce::TextButton auxCompactButton  { "AUX" };
+    // EQ + Comp + Aux all use CallOutBox (in-window overlay, click-outside-
+    // to-dismiss with the click consumed so the trigger button doesn't
+    // bounce-reopen).
     juce::Component::SafePointer<juce::CallOutBox> activeEqBox;
     juce::Component::SafePointer<juce::CallOutBox> activeCompBox;
+    juce::Component::SafePointer<juce::CallOutBox> activeAuxBox;
     void openEqEditorPopup();
     void openCompEditorPopup();
+    void openAuxEditorPopup();
+    void setAuxSectionVisible (bool visible);
 
     // Translucent shade attached to the top-level component while either
     // popup is open. timerCallback removes it once both popups are gone.

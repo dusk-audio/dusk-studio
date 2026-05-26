@@ -430,7 +430,10 @@ private:
     bool        lastChaseEnabled    = false;
     int         mtcDriftWindowFrames = 0;
     juce::int64 lastSeenMtcFrames    = -1;
-    std::atomic<Stage> stage { Stage::Mixing };
+    // New sessions land in Recording — that's the workflow start
+    // state (set up inputs, arm tracks, record takes) before mixing.
+    // Saved sessions overwrite this via session.uiStage on load.
+    std::atomic<Stage> stage { Stage::Recording };
 
     std::array<ChannelStrip, Session::kNumTracks> strips;
     std::array<BusStrip,  Session::kNumBuses> busStrips;

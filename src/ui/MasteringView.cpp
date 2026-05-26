@@ -1,5 +1,6 @@
 #include "MasteringView.h"
 #include "BounceDialog.h"
+#include "DuskFileBrowser.h"
 #include "MasteringEqEditor.h"
 #include "MasteringLimiterEditor.h"
 #include "../engine/BounceEngine.h"
@@ -670,15 +671,16 @@ void MasteringView::doLoadPrompt()
     if (! startDir.isDirectory())
         startDir = session.getSessionDirectory();
 
-    fileChooser = std::make_unique<juce::FileChooser> (
-        "Load mix to master", startDir, "*.wav;*.aiff;*.flac");
-
-    const auto chooserFlags = juce::FileBrowserComponent::openMode
-                            | juce::FileBrowserComponent::canSelectFiles;
-
-    fileChooser->launchAsync (chooserFlags, [this] (const juce::FileChooser& fc)
+    filebrowser::open (*this, {
+        /*title*/                  "Load mix to master",
+        /*initialFileOrDirectory*/ startDir,
+        /*filePatternsAllowed*/    "*.wav;*.aiff;*.flac",
+        /*mode*/                   filebrowser::Mode::Open,
+        /*warnAboutOverwriting*/   false,
+        /*selectDirectories*/      false,
+    },
+    [this] (juce::File chosen)
     {
-        const auto chosen = fc.getResult();
         if (chosen != juce::File()) loadFile (chosen);
     });
 }

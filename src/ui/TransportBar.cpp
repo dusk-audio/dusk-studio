@@ -1,4 +1,6 @@
 #include "TransportBar.h"
+#include "DuskAlerts.h"
+#include "DuskContextMenu.h"
 #include <algorithm>
 
 namespace duskstudio
@@ -505,14 +507,18 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
 
     // Metronome toggle + BPM editable display.
     clickToggle.setClickingTogglesState (true);
-    clickToggle.setTooltip ("Toggle the metronome click. The click is mixed into the "
-                             "master output but never recorded - it's a monitoring aid.");
+    clickToggle.setTooltip ("Left-click: toggle metronome on/off. Right-click: choose when the click fires (recording / count-in / playing / polyphonic).");
     clickToggle.setToggleState (engine.getSession().metronomeEnabled.load(),
                                   juce::dontSendNotification);
     clickToggle.onClick = [this]
     {
         engine.getSession().metronomeEnabled.store (clickToggle.getToggleState());
     };
+    // Right-click → behaviour menu (Click while recording / Only during
+    // count-in / Click while playing / Polyphonic clicks). Routed via
+    // addMouseListener so TransportBar::mouseDown sees popup events on
+    // clickToggle without subclassing the button.
+    clickToggle.addMouseListener (this, false);
     addAndMakeVisible (clickToggle);
 
     countInToggle.setTooltip ("Count-in: when on, hitting Record rolls the playhead "
@@ -838,13 +844,8 @@ void TransportBar::surfaceRecordSetupFailures()
         "other armed tracks are recording normally; the listed tracks "
         "are NOT capturing audio. Stop the transport and check the "
         "session folder before continuing.";
-    juce::AlertWindow::showAsync (
-        juce::MessageBoxOptions()
-            .withIconType (juce::MessageBoxIconType::WarningIcon)
-            .withTitle ("Recording setup failed")
-            .withMessage (body)
-            .withButton ("OK"),
-        nullptr);
+    if (auto* tlw = getTopLevelComponent())
+        showDuskAlert (*tlw, "Recording setup failed", body);
 }
 
 void TransportBar::notifyRecordStopped()
@@ -868,13 +869,8 @@ void TransportBar::notifyRecordStopped()
     body += "\nCheck the session's audio folder for free space and the "
             "session log for I/O details before continuing.";
 
-    juce::AlertWindow::showAsync (
-        juce::MessageBoxOptions()
-            .withIconType (juce::MessageBoxIconType::WarningIcon)
-            .withTitle ("Recording errors")
-            .withMessage (body)
-            .withButton ("OK"),
-        nullptr);
+    if (auto* tlw = getTopLevelComponent())
+        showDuskAlert (*tlw, "Recording errors", body);
 }
 
 void TransportBar::refreshButtonStates()
@@ -1041,6 +1037,14 @@ void TransportBar::mouseDown (const juce::MouseEvent& e)
         showPunchSettingsMenu();
         return;
     }
+    // Right-click on the metronome (CLICK) button opens the behaviour
+    // menu — when the click fires (recording / count-in / playing) +
+    // polyphonic toggle. Plain click stays as on/off.
+    if (e.eventComponent == &clickToggle && e.mods.isPopupMenu())
+    {
+        showMetronomeSettingsMenu();
+        return;
+    }
     // Right-click on clock flips the time-display mode. Always
     // available — including in compact mode where the dedicated
     // timeFormatToggle button is hidden to avoid bank-button collision.
@@ -1124,7 +1128,29 @@ void TransportBar::showPunchSettingsMenu()
     m.addSubMenu ("Pre-roll: "  + formatSecs (pre),  preMenu);
     m.addItem ("Stop after punch-out (auto-stop)",     false, false, []{});
     m.addSubMenu ("Post-roll: " + formatSecs (post), postMenu);
-    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&punchButton));
+    showContextMenu (m, punchButton);
+}
+
+void TransportBar::showMetronomeSettingsMenu()
+{
+    auto& s = engine.getSession();
+    const bool whileRec   = s.metronomeClickWhileRecording.load (std::memory_order_relaxed);
+    const bool onlyCount  = s.metronomeOnlyDuringCountIn  .load (std::memory_order_relaxed);
+    const bool whilePlay  = s.metronomeClickWhilePlaying  .load (std::memory_order_relaxed);
+    const bool poly       = s.metronomePolyphonic         .load (std::memory_order_relaxed);
+
+    juce::PopupMenu m;
+    m.addSectionHeader ("Click behaviour");
+    m.addItem ("Click while recording",  true, whileRec,
+                [&s, whileRec] { s.metronomeClickWhileRecording.store (! whileRec, std::memory_order_relaxed); });
+    m.addItem ("Only during count-in",   true, onlyCount,
+                [&s, onlyCount] { s.metronomeOnlyDuringCountIn.store (! onlyCount, std::memory_order_relaxed); });
+    m.addItem ("Click while playing",    true, whilePlay,
+                [&s, whilePlay] { s.metronomeClickWhilePlaying.store (! whilePlay, std::memory_order_relaxed); });
+    m.addSeparator();
+    m.addItem ("Polyphonic clicks",      true, poly,
+                [&s, poly] { s.metronomePolyphonic.store (! poly, std::memory_order_relaxed); });
+    showContextMenu (m, clickToggle);
 }
 
 void TransportBar::onTap()
@@ -1198,29 +1224,26 @@ void TransportBar::applyTimeSig (int numerator, int denominator)
 void TransportBar::promptCustomTimeSig()
 {
     auto& s = engine.getSession();
-    auto* aw = new juce::AlertWindow ("Custom time signature",
-                                        "Enter numerator (beats per bar) and "
-                                        "denominator (beat unit). Denominator "
-                                        "must be a power of two (1, 2, 4, 8, "
-                                        "16, 32).",
-                                        juce::MessageBoxIconType::QuestionIcon);
-    aw->addTextEditor ("num", juce::String (s.beatsPerBar.load (std::memory_order_relaxed)),
-                        "Numerator");
-    aw->addTextEditor ("den", juce::String (s.beatUnit   .load (std::memory_order_relaxed)),
-                        "Denominator");
-    aw->addButton ("Apply",  1, juce::KeyPress (juce::KeyPress::returnKey));
-    aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    const auto current = juce::String (s.beatsPerBar.load (std::memory_order_relaxed))
+                       + "/"
+                       + juce::String (s.beatUnit   .load (std::memory_order_relaxed));
+    auto* tlw = getTopLevelComponent();
+    if (tlw == nullptr) return;
 
     juce::Component::SafePointer<TransportBar> safe (this);
-    aw->enterModalState (true,
-        juce::ModalCallbackFunction::create ([safe, aw] (int result)
-        {
-            std::unique_ptr<juce::AlertWindow> owner (aw);
-            if (safe == nullptr || result == 0) return;
-            const int n = owner->getTextEditorContents ("num").getIntValue();
-            const int d = owner->getTextEditorContents ("den").getIntValue();
-            safe->applyTimeSig (n, d);
-        }), false);
+    showDuskTextInput (*tlw, "Custom time signature",
+                          "Enter N/D — numerator first, then denominator "
+                          "(power of two: 1, 2, 4, 8, 16, 32).",
+                          current,
+                          [safe] (const juce::String& text)
+                          {
+                              if (safe == nullptr) return;
+                              const auto slash = text.indexOfChar ('/');
+                              if (slash <= 0) return;
+                              const int n = text.substring (0, slash).getIntValue();
+                              const int d = text.substring (slash + 1).getIntValue();
+                              safe->applyTimeSig (n, d);
+                          });
 }
 
 void TransportBar::showTimeSigMenu()
@@ -1253,7 +1276,7 @@ void TransportBar::showTimeSigMenu()
     m.addItem (kCustomId, "Custom...");
 
     juce::Component::SafePointer<TransportBar> safe (this);
-    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&timeSigButton),
+    showContextMenu (m, timeSigButton,
         [safe, presets] (int chosen)
         {
             if (safe == nullptr || chosen <= 0) return;
@@ -1325,28 +1348,24 @@ void TransportBar::confirmAndApplyBpm (float newBpm, float oldBpm)
     // Capture by value so the lambda doesn't hold a dangling reference
     // if the TransportBar is destroyed before the user clicks.
     juce::Component::SafePointer<TransportBar> safe (this);
-    juce::AlertWindow::showAsync (
-        juce::MessageBoxOptions()
-            .withIconType (juce::MessageBoxIconType::QuestionIcon)
-            .withTitle ("Confirm tempo change")
-            .withMessage (body)
-            .withButton ("Apply")
-            .withButton ("Cancel"),
-        [safe, newBpm, oldBpm] (int result)
-        {
-            if (safe == nullptr) return;
-            if (result == 1)  // first button: Apply
-            {
-                applyTempoChange (safe->engine.getSession(), newBpm,
-                                    safe->engine.getCurrentSampleRate());
-                safe->bpmValue.setText (juce::String ((int) newBpm),
-                                          juce::dontSendNotification);
-            }
-            else              // 0 = Cancel / dialog dismissed
-            {
-                safe->bpmValue.setText (juce::String ((int) oldBpm),
-                                          juce::dontSendNotification);
-            }
-        });
+    auto* tlw = getTopLevelComponent();
+    if (tlw == nullptr) return;
+    showDuskConfirm (*tlw, "Confirm tempo change", body,
+                       /*primary*/   "Apply",
+                       /*onPrimary*/ [safe, newBpm]
+                       {
+                           if (safe == nullptr) return;
+                           applyTempoChange (safe->engine.getSession(), newBpm,
+                                               safe->engine.getCurrentSampleRate());
+                           safe->bpmValue.setText (juce::String ((int) newBpm),
+                                                     juce::dontSendNotification);
+                       },
+                       /*secondary*/   "Cancel",
+                       /*onSecondary*/ [safe, oldBpm]
+                       {
+                           if (safe == nullptr) return;
+                           safe->bpmValue.setText (juce::String ((int) oldBpm),
+                                                     juce::dontSendNotification);
+                       });
 }
 } // namespace duskstudio
