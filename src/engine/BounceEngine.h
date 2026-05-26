@@ -10,45 +10,31 @@ namespace duskstudio
 class AudioEngine;
 class Session;
 
-// Offline master-mix bounce. Runs the engine in non-realtime mode by
-// detaching it from the AudioDeviceManager and driving its audio callback
-// in a tight loop, capturing the master output to a WAV file. Realtime
-// playback is paused for the duration; the engine is re-attached when the
-// render completes (or is cancelled).
-//
-// Threading: BounceEngine creates and owns a worker thread (juce::Thread)
-// that runs the actual render loop. The message thread can poll progress
-// and request cancellation; the engine sits unused until render completes.
-//
-// Phase 3 spec calls out three modes (Master mix / Stems / Render in
-// place). MVP implements Master mix + Stems; render-in-place is still
-// a follow-up.
+// Offline bounce. Detaches the engine from AudioDeviceManager and drives
+// audioDeviceIOCallbackWithContext in a tight loop on its own worker
+// thread. Real-time playback pauses for the duration. Render-in-place
+// is still a follow-up.
 class BounceEngine final : private juce::Thread
 {
 public:
-    // What signal flow to capture.
-    //   MasterMix   - the live track / aux / master path. Length comes
-    //                 from the longest region on any track + tail.
-    //   Stems       - one WAV per track that has content or is armed;
-    //                 each rendered through the FULL track→aux→master
-    //                 chain with every other track soloed-off so plugin /
-    //                 bus-comp / mastering processing matches the master
-    //                 mix exactly. Per-track files written next to the
-    //                 chosen output as `<base>_<NN>_<sanitized-name>.wav`.
-    //                 Original track solo state is snapshotted and
-    //                 restored on finish / cancel / error.
-    //   MasteringChain - the loaded mastering player → MasteringChain
-    //                 path. Length comes from the player's source file
-    //                 length + tail. Engine stage is set to Mastering
-    //                 for the duration of the render.
+    // MasterMix   : full track / aux / master path. Length = longest
+    //               region end + tail.
+    // Stems       : one WAV per track with content or armed. Each
+    //               renders through the full chain with every other
+    //               track soloed-off so plugin / bus-comp / mastering
+    //               processing matches the master mix exactly. Files
+    //               written as `<base>_<NN>_<sanitized-name>.wav`
+    //               next to base. Original solo state restored on
+    //               finish / cancel / error.
+    // MasteringChain : MasteringPlayer -> MasteringChain. Length =
+    //               player's source file + tail. Engine stage forced
+    //               to Mastering for the render.
     enum class Mode { MasterMix, Stems, MasteringChain };
 
-    // Builds the per-stem output path: `<dir>/<base>_<NN>_<safe>.wav`,
-    // where NN is the 1-based track index zero-padded to two digits and
-    // `safe` is the track name with characters illegal for the host
-    // filesystem replaced. Empty / default names fall back to `track`.
-    // Defined inline so the unit test can link against the helper
-    // without pulling in AudioEngine + Session + the full bounce loop.
+    // <dir>/<base>_<NN>_<safe>.wav. Empty / default ("5") track names
+    // fall back to "track" so the user doesn't open 24 files called
+    // mix_05_5.wav. Inline so the unit test links without dragging in
+    // AudioEngine + Session + the bounce loop.
     static juce::File stemOutputFile (const juce::File& base,
                                         int trackIndexZeroBased,
                                         const juce::String& trackName)
@@ -58,10 +44,6 @@ public:
         if (stem.isEmpty()) stem = "bounce";
 
         auto safeName = trackName.trim();
-        // Default track names are the 1-based index as a string. Treat
-        // that (or empty) as no-name and fall back to a generic stem
-        // suffix so the user doesn't open 24 files called
-        // `mix_05_5.wav`.
         if (safeName.isEmpty() || safeName == juce::String (trackIndexZeroBased + 1))
             safeName = "track";
 
@@ -76,17 +58,9 @@ public:
                    juce::AudioDeviceManager& deviceManager) noexcept;
     ~BounceEngine() override;
 
-    // Configure + start a render. Returns false immediately if a render is
-    // already in flight. The render runs on a background thread; poll
-    // isRendering() / getProgress() / getLastError() on the message thread.
-    //
-    // outputFile  - destination WAV. Will be overwritten if it exists.
-    // sampleRate  - render rate. Pass <= 0 to use the engine's current rate.
-    // blockSize   - render block size. 1024 is a good default - bigger
-    //               than realtime to amortise overhead.
-    // tailSeconds - extra silence appended after the last region's end so
-    //               reverb/comp/EQ tails decay naturally. Default 5 s.
-    // mode        - which signal path to capture. Defaults to MasterMix.
+    // False if a render is already in flight. sampleRate <= 0 uses
+    // engine's current rate. blockSize 1024 amortises overhead vs
+    // realtime. tail = silence appended so reverb/comp tails decay.
     bool start (const juce::File& outputFile,
                 double sampleRate = 0.0,
                 int blockSize = 1024,
@@ -97,29 +71,24 @@ public:
 
     bool         isRendering() const noexcept { return rendering.load (std::memory_order_relaxed); }
     float        getProgress() const noexcept { return progress.load (std::memory_order_relaxed); }
-    // Stems-mode only: 1-based index of the track currently being
-    // rendered (1..numTracksToRender). 0 before the first stem starts.
-    // Always 0 in Master / Mastering modes.
+    // Stems mode: 1-based current stem (1..total). 0 before first stem
+    // or in Master / Mastering modes.
     int          getCurrentStemIndex() const noexcept
         { return currentStemIndex.load (std::memory_order_relaxed); }
     int          getTotalStemsToRender() const noexcept
         { return totalStemsToRender.load (std::memory_order_relaxed); }
     juce::String getLastError() const
     {
-        // juce::String is reference-counted; copying it concurrently with the
-        // worker's assignment in run() would race on the refcount. The lock
-        // serialises the copy with run()'s writes.
+        // juce::String is refcounted; concurrent copy races the refcount.
         const juce::ScopedLock lock (lastErrorLock);
         return lastError;
     }
     juce::int64  getRenderedSamples() const noexcept { return renderedSamples.load (std::memory_order_relaxed); }
 
-    // Optional callbacks for the UI. Both called on the worker thread -
-    // marshal to the message thread (juce::MessageManager::callAsync) if
-    // touching UI state from these.
+    // Called on the worker thread. Use MessageManager::callAsync for UI.
     std::function<void()>                  onStarted;
-    std::function<void(float)>             onProgressUpdated;  // 0..1
-    std::function<void(bool, juce::String)> onFinished;        // (success, errorOrEmpty)
+    std::function<void(float)>             onProgressUpdated;
+    std::function<void(bool, juce::String)> onFinished;
 
 private:
     void run() override;
@@ -146,15 +115,10 @@ private:
 
     juce::int64 computeBounceLength (double sampleRate, double tail) const;
 
-    // Stems entry point — owns its own writer + solo-snapshot. Returns
-    // true on success, false on early failure (no tracks to render,
-    // writer setup failed, or cancellation). Always restores the
-    // original solo state before returning.
+    // Always restores original solo state before returning.
     bool runStemsMode();
-    // Renders one stem to `outFile` driving the engine's audio callback
-    // for the full bounce length. `stemFractionStart` and
-    // `stemFractionWidth` slice the overall progress bar so the UI sees
-    // monotonic 0..1 across all stems.
+    // stemFractionStart + stemFractionWidth slice the progress bar so
+    // the UI sees monotonic 0..1 across all stems.
     bool renderOneStem (const juce::File& outFile,
                           juce::int64 lenSamples,
                           float stemFractionStart,
