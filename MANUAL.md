@@ -137,171 +137,171 @@ This chapter is a visual reference. Every numbered callout on the figures below 
 
 ![The main window, six horizontal bands.](docs/images/np-01-main-window.png)
 
-| # | Name | Description |
-|---|------|-------------|
-| 1 | Menu bar | `File` and `Settings` menus only. No tabs, no hidden submenus. |
-| 2 | Stage selector | Four buttons: **RECORDING**, **MIXING**, **AUX**, **MASTERING**. Picks which view fills the console area. |
-| 3 | Bank selector | `1-8`, `9-16`, `17-24`. Only visible when the window is too narrow to show all 24 channel strips at once. |
-| 4 | Transport bar | Play, record, loop, punch, BPM, time signature, clock, tuner. See the next figure for the inventory. |
-| 5 | Tape strip toggle | `▾ SUMMARY` / `▴ TAPE`. Collapses or expands the timeline view below the bar. |
-| 6 | Console view | Holds 24 channel strips, 4 buses, and the master strip. Replaced by the aux lane or mastering chain when those stages are active. |
+| #   | Name              | Description                                                                                                                       |
+| --- | ----------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Menu bar          | `File` and `Settings` menus only. No tabs, no hidden submenus.                                                                    |
+| 2   | Stage selector    | Four buttons: **RECORDING**, **MIXING**, **AUX**, **MASTERING**. Picks which view fills the console area.                         |
+| 3   | Bank selector     | `1-8`, `9-16`, `17-24`. Only visible when the window is too narrow to show all 24 channel strips at once.                         |
+| 4   | Transport bar     | Play, record, loop, punch, BPM, time signature, clock, tuner. See the next figure for the inventory.                              |
+| 5   | Tape strip toggle | `▾ TIMELINE` / `▴ TAPE`. Collapses or expands the timeline view below the bar.                                                     |
+| 6   | Console view      | Holds 24 channel strips, 4 buses, and the master strip. Replaced by the aux lane or mastering chain when those stages are active. |
 
 ## The transport bar
 
 ![Transport bar callouts.](docs/images/np-02-transport-bar.png)
 
-| # | Name | Description |
-|---|------|-------------|
-| 1 | Stop | Halts playback or recording, returns the playhead to bar 1. |
-| 2 | Rewind | Short press jumps to the previous marker or bar 1; hold for 10× scrub backwards. |
-| 3 | Play | Toggles playback. Snaps to loop start if loop is on and the playhead is outside. |
-| 4 | Forward | Short press jumps to the next marker; hold for 10× scrub forwards. |
-| 5 | Record | Toggles record. Requires at least one armed track. |
-| 6 | Loop | Toggles loop playback between the loop brackets. |
-| 7 | Punch | Toggles automatic punch in / punch out using the punch brackets. |
-| 8 | Virtual keyboard | Opens the on-screen MIDI keyboard overlay. |
-| 9 | Metronome | Click on / off. Right-click for the click settings. |
-| 10 | C/I | Count-in toggle. One bar of click before record starts. |
-| 11 | BPM | Click to type a tempo; drag to nudge. |
-| 12 | TAP | Tap repeatedly to set the tempo from your wrist. |
-| 13 | Time signature | Click to choose. Custom signatures supported. |
-| 14 | Clock display | Bars.Beats.Ticks or mm:ss.mmm; right-click to flip. |
-| 15 | Tuner | Opens the chromatic tuner against the selected input. |
-| 16 | SUMMARY / TAPE | Same as the tape strip toggle below the bar. |
-| 17 | SNAP | Global grid snap toggle for region edits. |
-| 18 | − / + / Fit | Timeline zoom out / in / fit-to-window. |
+| #   | Name             | Description                                                                      |
+| --- | ---------------- | -------------------------------------------------------------------------------- |
+| 1   | Stop             | Halts playback or recording, returns the playhead to bar 1.                      |
+| 2   | Rewind           | Short press jumps to the previous marker or bar 1; hold for 10× scrub backwards. |
+| 3   | Play             | Toggles playback. Snaps to loop start if loop is on and the playhead is outside. |
+| 4   | Forward          | Short press jumps to the next marker; hold for 10× scrub forwards.               |
+| 5   | Record           | Toggles record. Requires at least one armed track.                               |
+| 6   | Loop             | Toggles loop playback between the loop brackets.                                 |
+| 7   | Punch            | Toggles automatic punch in / punch out using the punch brackets.                 |
+| 8   | Virtual keyboard | Opens the on-screen MIDI keyboard overlay.                                       |
+| 9   | Metronome        | Click on / off. Right-click for the click settings.                              |
+| 10  | C/I              | Count-in toggle. One bar of click before record starts.                          |
+| 11  | BPM              | Click to type a tempo; drag to nudge.                                            |
+| 12  | TAP              | Tap repeatedly to set the tempo from your wrist.                                 |
+| 13  | Time signature   | Click to choose. Custom signatures supported.                                    |
+| 14  | Clock display    | Bars.Beats.Ticks or mm:ss.mmm; right-click to flip.                              |
+| 15  | Tuner            | Opens the chromatic tuner against the selected input.                            |
+| 16  | TIMELINE / TAPE   | Same as the tape strip toggle below the bar.                                     |
+| 17  | SNAP             | Global grid snap toggle for region edits.                                        |
+| 18  | − / + / Fit      | Timeline zoom out / in / fit-to-window.                                          |
 
-In compact mode (window narrower than 1850 px) labels shorten; `SNAP` becomes `S`, `SUMMARY` becomes `▾`, and the time-format toggle hides — right-click the clock display to flip format instead.
+In compact mode (window narrower than 1850 px) labels shorten; `SNAP` becomes `S`, `TIMELINE` becomes `▾`, and the time-format toggle hides — right-click the clock display to flip format instead.
 
 ## The channel strip — MIXING stage
 
 ![Channel strip with all mixing-stage controls labelled.](docs/images/np-03-channel-strip-mixing.png)
 
-| # | Name | Description |
-|---|------|-------------|
-| 1 | Name | Click to rename; right-click for the colour palette. |
-| 2 | Insert slot | One plugin or one hardware insert. 20 ms equal-power crossfade between modes. |
-| 3 | HPF | High-pass filter, 20–300 Hz. LED green when on. |
-| 4 | LPF | Low-pass filter, 3 kHz–20 kHz. |
-| 5 | 4-band EQ | LF (shelf) / LM (peak) / HM (peak) / HF (shelf). Right-click header to flip between SSL E and G saturation. |
-| 6 | Compressor | Opto / FET / VCA, right-click header to switch. GR meter to the left. |
-| 7 | Aux 1 send | Post-fader by default; right-click to flip pre-fader. |
-| 8 | Aux 2 send | |
-| 9 | Aux 3 send | |
-| 10 | Aux 4 send | |
-| 11 | Pan | Equal-power, 3 dB centre dip. |
-| 12 | Fader | −∞ to +12 dB. Click the dB readout to type; right-click for MIDI Learn. |
-| 13 | Mute / Solo / Phase | M (red), S (blue), Ø (yellow). Solo is solo-in-place and additive. |
-| 14 | Bus assigns | Right-click the fader area for the bus menu. |
-| 15 | Meters | Input meter (left of fader) + GR meter (right of comp). |
+| #   | Name                | Description                                                                                                 |
+| --- | ------------------- | ----------------------------------------------------------------------------------------------------------- |
+| 1   | Name                | Click to rename; right-click for the colour palette.                                                        |
+| 2   | Insert slot         | One plugin or one hardware insert. 20 ms equal-power crossfade between modes.                               |
+| 3   | HPF                 | High-pass filter, 20–300 Hz. LED green when on.                                                             |
+| 4   | LPF                 | Low-pass filter, 3 kHz–20 kHz.                                                                              |
+| 5   | 4-band EQ           | LF (shelf) / LM (peak) / HM (peak) / HF (shelf). Right-click header to flip between SSL E and G saturation. |
+| 6   | Compressor          | Opto / FET / VCA, right-click header to switch. GR meter to the left.                                       |
+| 7   | Aux 1 send          | Post-fader by default; right-click to flip pre-fader.                                                       |
+| 8   | Aux 2 send          |                                                                                                             |
+| 9   | Aux 3 send          |                                                                                                             |
+| 10  | Aux 4 send          |                                                                                                             |
+| 11  | Pan                 | Equal-power, 3 dB centre dip.                                                                               |
+| 12  | Fader               | −∞ to +12 dB. Click the dB readout to type; right-click for MIDI Learn.                                     |
+| 13  | Mute / Solo / Phase | M (red), S (blue), Ø (yellow). Solo is solo-in-place and additive.                                          |
+| 14  | Bus assigns         | Right-click the fader area for the bus menu.                                                                |
+| 15  | Meters              | Input meter (left of fader) + GR meter (right of comp).                                                     |
 
 ## The channel strip — RECORDING stage
 
 ![Same strip in RECORDING stage with the input block visible.](docs/images/np-04-channel-strip-recording.png)
 
-| # | Name | Description |
-|---|------|-------------|
-| 1 | Mode | **Mono**, **Stereo**, or **MIDI**. |
-| 2 | Input picker | Audio device input (mono / stereo), or MIDI port (MIDI). `−2: follow track index` matches input N to track N. |
-| 3 | ARM / IN / PRINT | ARM marks for record. IN enables input monitoring. PRINT commits EQ + comp + insert to the recorded file. |
-| 4 | Activity LED | Blinks green when MIDI arrives on the chosen channel (MIDI mode only). |
+| #   | Name             | Description                                                                                                   |
+| --- | ---------------- | ------------------------------------------------------------------------------------------------------------- |
+| 1   | Mode             | **Mono**, **Stereo**, or **MIDI**.                                                                            |
+| 2   | Input picker     | Audio device input (mono / stereo), or MIDI port (MIDI). `−2: follow track index` matches input N to track N. |
+| 3   | ARM / IN / PRINT | ARM marks for record. IN enables input monitoring. PRINT commits EQ + comp + insert to the recorded file.     |
+| 4   | Activity LED     | Blinks green when MIDI arrives on the chosen channel (MIDI mode only).                                        |
 
 ## The bus strip
 
 ![Bus strip callouts.](docs/images/np-05-bus-strip.png)
 
-| # | Name | Description |
-|---|------|-------------|
-| 1 | Name | Right-click to rename. |
-| 2 | 3-band EQ | LF shelf / MID peak / HF shelf, ±9 dB per band. |
-| 3 | Bus compressor | SSL-style glue. Threshold, ratio, attack, release, auto-release, makeup. |
-| 4 | Pan | Same equal-power law as channel strips. |
-| 5 | Fader | −∞ to +12 dB. |
-| 6 | Mute / Solo | Same additive solo-in-place rule as channels. |
-| 7 | Peak meter | Post-fader L/R. |
-| 8 | VU meter | 300 ms RMS, matched to the tape sat's internal VU integrator. |
+| #   | Name           | Description                                                              |
+| --- | -------------- | ------------------------------------------------------------------------ |
+| 1   | Name           | Right-click to rename.                                                   |
+| 2   | 3-band EQ      | LF shelf / MID peak / HF shelf, ±9 dB per band.                          |
+| 3   | Bus compressor | SSL-style glue. Threshold, ratio, attack, release, auto-release, makeup. |
+| 4   | Pan            | Same equal-power law as channel strips.                                  |
+| 5   | Fader          | −∞ to +12 dB.                                                            |
+| 6   | Mute / Solo    | Same additive solo-in-place rule as channels.                            |
+| 7   | Peak meter     | Post-fader L/R.                                                          |
+| 8   | VU meter       | 300 ms RMS, matched to the tape sat's internal VU integrator.            |
 
 ## The master strip
 
 ![Master strip callouts.](docs/images/np-06-master-strip.png)
 
-| # | Name | Description |
-|---|------|-------------|
-| 1 | Pultec EQ | Tube-saturated low + high program EQ. Right-click for the modal editor. |
-| 2 | Master bus compressor | Identical DSP to the bus comp, typically used slower. |
-| 3 | Tape saturation | Reel-to-reel model. HQ toggles 4× internal oversampling. Right-click for the tape-machine modal. |
-| 4 | Master fader | −∞ to +12 dB. |
-| 5 | Mono | Sums L+R to mono on both legs for phase / single-speaker checks. |
-| 6 | Peak meters | Post-output L/R. |
-| 7 | VU meters | Post-output 300 ms RMS. |
-| 8 | GR meter | Master compressor gain reduction. |
+| #   | Name                  | Description                                                                                      |
+| --- | --------------------- | ------------------------------------------------------------------------------------------------ |
+| 1   | Pultec EQ             | Tube-saturated low + high program EQ. Right-click for the modal editor.                          |
+| 2   | Master bus compressor | Identical DSP to the bus comp, typically used slower.                                            |
+| 3   | Tape saturation       | Reel-to-reel model. HQ toggles 4× internal oversampling. Right-click for the tape-machine modal. |
+| 4   | Master fader          | −∞ to +12 dB.                                                                                    |
+| 5   | Mono                  | Sums L+R to mono on both legs for phase / single-speaker checks.                                 |
+| 6   | Peak meters           | Post-output L/R.                                                                                 |
+| 7   | VU meters             | Post-output 300 ms RMS.                                                                          |
+| 8   | GR meter              | Master compressor gain reduction.                                                                |
 
 ## The AUX view
 
 ![One aux lane shown full-width.](docs/images/np-07-aux-view.png)
 
-| # | Name | Description |
-|---|------|-------------|
-| 1 | Lane selector | Aux 1 / 2 / 3 / 4 buttons across the top. |
-| 2 | Name | Double-click the lane title to rename. |
-| 3 | Mute / Return fader | Mute the entire lane; fader sets return-into-master level. |
-| 4 | Insert slot | One plugin or one hardware insert per lane. |
-| 5 | Output meter | Pre-master return level. |
-| 6 | Sources panel | Every channel currently sending to this aux, with its send level and a small meter. |
+| #   | Name                | Description                                                                         |
+| --- | ------------------- | ----------------------------------------------------------------------------------- |
+| 1   | Lane selector       | Aux 1 / 2 / 3 / 4 buttons across the top.                                           |
+| 2   | Name                | Double-click the lane title to rename.                                              |
+| 3   | Mute / Return fader | Mute the entire lane; fader sets return-into-master level.                          |
+| 4   | Insert slot         | One plugin or one hardware insert per lane.                                         |
+| 5   | Output meter        | Pre-master return level.                                                            |
+| 6   | Sources panel       | Every channel currently sending to this aux, with its send level and a small meter. |
 
 ## The MASTERING view
 
 ![Mastering chain.](docs/images/np-08-mastering-view.png)
 
-| # | Name | Description |
-|---|------|-------------|
-| 1 | File picker | Load any stereo WAV; **Load latest mixdown** grabs the newest bounce in the session folder. |
-| 2 | Transport | Play / stop / loop on the loaded file. Recording is disabled in this stage. |
-| 3 | Waveform | Stereo overview with the playhead. |
-| 4 | 5-band digital EQ | Low shelf / 3 peaks / high shelf, ±15 dB per band. |
-| 5 | Bus compressor | Same UniversalCompressor as elsewhere, tuned to mastering defaults. |
-| 6 | Brickwall limiter | Sample-peak (see the mastering chapter for the ISP note). |
-| 7 | Loudness panel | Momentary / short-term / integrated LUFS + True Peak (4× oversampled, BS.1770). |
-| 8 | Export master… | Renders the chain offline to a stereo file. |
+| #   | Name              | Description                                                                                 |
+| --- | ----------------- | ------------------------------------------------------------------------------------------- |
+| 1   | File picker       | Load any stereo WAV; **Load latest mixdown** grabs the newest bounce in the session folder. |
+| 2   | Transport         | Play / stop / loop on the loaded file. Recording is disabled in this stage.                 |
+| 3   | Waveform          | Stereo overview with the playhead.                                                          |
+| 4   | 5-band digital EQ | Low shelf / 3 peaks / high shelf, ±15 dB per band.                                          |
+| 5   | Bus compressor    | Same UniversalCompressor as elsewhere, tuned to mastering defaults.                         |
+| 6   | Brickwall limiter | Sample-peak (see the mastering chapter for the ISP note).                                   |
+| 7   | Loudness panel    | Momentary / short-term / integrated LUFS + True Peak (4× oversampled, BS.1770).             |
+| 8   | Export master…    | Renders the chain offline to a stereo file.                                                 |
 
 ## The tape strip
 
 ![Tape strip with regions, markers, and brackets.](docs/images/np-09-tape-strip.png)
 
-| # | Name | Description |
-|---|------|-------------|
-| 1 | Ruler | Bars and beats. Right-click for snap denomination. |
-| 2 | Region | Audio or MIDI clip. Drag to move, drag the edges to trim. |
-| 3 | Region edge handle | Trim handle. Hold Cmd to nudge by snap. |
-| 4 | Marker | Drop with **M**, drag to move, right-click to rename or delete. |
-| 5 | Loop bracket | Set with **[** / **]**; enable loop with **L**. |
-| 6 | Punch bracket | Set with **Shift+[** / **Shift+]**; enable punch with **P**. |
-| 7 | Snap toggle | Global on/off mirrored from the transport bar's SNAP button. |
+| #   | Name               | Description                                                     |
+| --- | ------------------ | --------------------------------------------------------------- |
+| 1   | Ruler              | Bars and beats. Right-click for snap denomination.              |
+| 2   | Region             | Audio or MIDI clip. Drag to move, drag the edges to trim.       |
+| 3   | Region edge handle | Trim handle. Hold Cmd to nudge by snap.                         |
+| 4   | Marker             | Drop with **M**, drag to move, right-click to rename or delete. |
+| 5   | Loop bracket       | Set with **[** / **]**; enable loop with **L**.                 |
+| 6   | Punch bracket      | Set with **Shift+[** / **Shift+]**; enable punch with **P**.    |
+| 7   | Snap toggle        | Global on/off mirrored from the transport bar's SNAP button.    |
 
 ## The audio region editor
 
 ![Region editor modal.](docs/images/np-10-region-editor.png)
 
-| # | Name | Description |
-|---|------|-------------|
-| 1 | Waveform | Region content, with the source-file context dimmed before / after trim points. |
-| 2 | Fade handle | Drag in from each edge to set fade-in or fade-out length. |
-| 3 | Trim handle | Region in / out trims (non-destructive). |
-| 4 | Gain slider | ±24 dB region gain. |
-| 5 | Edit-mode toolbar | Grab / Range / Cut / Grid / Draw. Cycle with **G**. |
+| #   | Name              | Description                                                                     |
+| --- | ----------------- | ------------------------------------------------------------------------------- |
+| 1   | Waveform          | Region content, with the source-file context dimmed before / after trim points. |
+| 2   | Fade handle       | Drag in from each edge to set fade-in or fade-out length.                       |
+| 3   | Trim handle       | Region in / out trims (non-destructive).                                        |
+| 4   | Gain slider       | ±24 dB region gain.                                                             |
+| 5   | Edit-mode toolbar | Grab / Range / Cut / Grid / Draw. Cycle with **G**.                             |
 
 ## The piano roll
 
 ![Piano roll modal.](docs/images/np-11-piano-roll.png)
 
-| # | Name | Description |
-|---|------|-------------|
-| 1 | Keyboard | Click a key to audition the pitch. Scale-highlight non-scale keys dim. |
-| 2 | Note grid | Click an empty cell to create a note at the active velocity. |
-| 3 | Selected note | Velocity shown next to the head. Drag to move; drag edges to trim. |
-| 4 | Velocity strip | Drag the per-note bars to set velocity per note. |
-| 5 | CC lane | Pick a controller with **L**; draw events with the mouse. |
-| 6 | Scale highlight | Set root + mode with **S**. Non-scale notes are dimmed in both keyboard and grid. |
+| #   | Name            | Description                                                                       |
+| --- | --------------- | --------------------------------------------------------------------------------- |
+| 1   | Keyboard        | Click a key to audition the pitch. Scale-highlight non-scale keys dim.            |
+| 2   | Note grid       | Click an empty cell to create a note at the active velocity.                      |
+| 3   | Selected note   | Velocity shown next to the head. Drag to move; drag edges to trim.                |
+| 4   | Velocity strip  | Drag the per-note bars to set velocity per note.                                  |
+| 5   | CC lane         | Pick a controller with **L**; draw events with the mouse.                         |
+| 6   | Scale highlight | Set root + mode with **S**. Non-scale notes are dimmed in both keyboard and grid. |
 
 \newpage
 
@@ -387,7 +387,7 @@ The window is structured as a stack of horizontal bands.
 ├───────────────────────────────────────────────────────┤
 │ ◀◀  ▶  ▶▶  ●  ⟳  ◉   CLK ♩=120 4/4 00:01:23  SNAP ⊕⊖│  Transport bar
 ├───────────────────────────────────────────────────────┤
-│  ▾ SUMMARY                                            │  Tape strip toggle
+│  ▾ TIMELINE                                            │  Tape strip toggle
 ├───────────────────────────────────────────────────────┤
 │                                                       │
 │      [ ConsoleView, AuxView, or MasteringView ]       │
@@ -427,14 +427,14 @@ From left to right:
 - **Time signature**. Click to choose from common signatures or enter a custom one.
 - **Clock display**. Shows the current playhead position. Right-click to flip between **Bars.Beats.Ticks** (e.g. `5.2.120`) and **mm:ss.mmm** (e.g. `01:23.456`).
 - **Tuner**. Opens a chromatic tuner that listens to the selected input.
-- **▾ SUMMARY / ▴ TAPE**. Collapses or expands the tape strip below the console.
+- **▾ TIMELINE / ▴ TAPE**. Collapses or expands the tape strip below the console.
 
 On the right end of the transport bar:
 
 - **SNAP**. Global grid snap toggle. When on, region drags, trims, and pastes snap to the snap denomination set in the edit-mode toolbar.
 - **−** / **+** / **Fit**. Timeline zoom out, in, and fit-to-window.
 
-In compact mode (window narrower than 1850 pixels), labels shorten: `SNAP` becomes `S`, `SUMMARY` becomes `▾`, and the time-format toggle hides — right-click the clock display to flip format instead.
+In compact mode (window narrower than 1850 pixels), labels shorten: `SNAP` becomes `S`, `TIMELINE` becomes `▾`, and the time-format toggle hides — right-click the clock display to flip format instead.
 
 \newpage
 
@@ -448,6 +448,7 @@ Every track is processed by an identical channel strip. The order is fixed; you 
              compressor (:561, :582, :697, :717) →
              pan + fader + bus/master/aux branching (:796–:861).
      Verify on any DSP-order change. -->
+
 ```
 input → phase invert → insert (plugin OR hardware) → HPF → 4-band EQ →
 LPF → compressor → pan → fader ─┬─► master    (when no bus is assigned)
@@ -518,12 +519,12 @@ A British-style SSL-grammar EQ. Left-click the **EQ** header to enable; the LED 
 
 The four bands are:
 
-| Band | Type | Freq range | Default freq | Gain | Q range |
-|------|------|------------|--------------|------|---------|
-| **LF** | Low shelf | 20–400 Hz | 100 Hz | ±15 dB | n/a |
-| **LM** | Peaking | 100 Hz–4 kHz | 600 Hz | ±15 dB | 0.4–4.0 |
-| **HM** | Peaking | 600 Hz–13 kHz | 2 kHz | ±15 dB | 0.4–4.0 |
-| **HF** | High shelf | 1–20 kHz | 8 kHz | ±15 dB | n/a |
+| Band   | Type       | Freq range    | Default freq | Gain   | Q range |
+| ------ | ---------- | ------------- | ------------ | ------ | ------- |
+| **LF** | Low shelf  | 20–400 Hz     | 100 Hz       | ±15 dB | n/a     |
+| **LM** | Peaking    | 100 Hz–4 kHz  | 600 Hz       | ±15 dB | 0.4–4.0 |
+| **HM** | Peaking    | 600 Hz–13 kHz | 2 kHz        | ±15 dB | 0.4–4.0 |
+| **HF** | High shelf | 1–20 kHz      | 8 kHz        | ±15 dB | n/a     |
 
 Each knob is a rotary slider. Drag up to increase, down to decrease. Use a vertical drag for gain, a horizontal drag for frequency. There are no numeric text boxes on the knobs; the values display below.
 
@@ -630,6 +631,7 @@ Between the channel strips and the master strip are four bus strips. They are sm
 <!-- Source: src/dsp/BusStrip.cpp::processInPlace
      EQ (:195, :214) → comp (:204, :223) → pan × fader (:236–:240).
      Mute is applied at AudioEngine sum-into-master, not inside BusStrip. -->
+
 ```
 bus input (sum of assigned channels) → 3-band EQ → bus compressor →
 pan → fader → master   (mute and solo gate the sum into master)
@@ -675,6 +677,7 @@ The rightmost strip. Receives the sum of every channel that is not routed exclus
 <!-- Source: src/dsp/MasterBus.cpp::processInPlace
      Pultec EQ (:218, :242) → bus comp (:227, :251) →
      tape (:277) → fader (:296) → mono sum (:299–:303). -->
+
 ```
 master input → Pultec EQ → master bus compressor → tape saturation → master fader → mono sum → output
 ```
@@ -751,6 +754,7 @@ Each lane is divided into three columns:
 Each aux lane has one insert slot. Click **+ Plugin** to open the picker. Right-click for **Add / Replace / Remove / Edit / Configure as hardware insert**. The slot can hold a plugin or a hardware insert, mutually exclusive, with a 20 ms crossfade between modes.
 
 Common uses:
+
 - Reverb on aux 1.
 - Tape delay on aux 2.
 - Mid-side analog summing through a hardware EQ on aux 3.
@@ -791,13 +795,13 @@ Three columns of DSP, each with its own enable toggle:
 
 A clean linear-phase-style mastering EQ.
 
-| Band | Type | Default freq | Gain | Q |
-|------|------|--------------|------|---|
-| 0 | Low shelf | 80 Hz | ±15 dB | n/a |
-| 1 | Peaking | 250 Hz | ±15 dB | 0.4–4.0 |
-| 2 | Peaking | 1 kHz | ±15 dB | 0.4–4.0 |
-| 3 | Peaking | 4 kHz | ±15 dB | 0.4–4.0 |
-| 4 | High shelf | 12 kHz | ±15 dB | n/a |
+| Band | Type       | Default freq | Gain   | Q       |
+| ---- | ---------- | ------------ | ------ | ------- |
+| 0    | Low shelf  | 80 Hz        | ±15 dB | n/a     |
+| 1    | Peaking    | 250 Hz       | ±15 dB | 0.4–4.0 |
+| 2    | Peaking    | 1 kHz        | ±15 dB | 0.4–4.0 |
+| 3    | Peaking    | 4 kHz        | ±15 dB | 0.4–4.0 |
+| 4    | High shelf | 12 kHz       | ±15 dB | n/a     |
 
 ### Bus compressor
 
@@ -931,7 +935,7 @@ If something goes wrong mid-take (ring-buffer overrun on a stressed disk, MIDI F
 
 ![Tape strip with regions, markers, and a loop bracket.](docs/images/np-09-tape-strip.png)
 
-The tape strip is Dusk Studio's timeline view. It is collapsed by default. Click **▾ SUMMARY** at the top right of the transport bar (or the small drawer-handle below the bar) to expand it.
+The tape strip is Dusk Studio's timeline view. It is collapsed by default. Click **▾ TIMELINE** at the top right of the transport bar (or the small drawer-handle below the bar) to expand it.
 
 When expanded, the channel strips automatically compact so that the timeline gets vertical space. EQ and compressor controls collapse into header buttons; click a header to open a modal editor with the full controls.
 
@@ -1141,6 +1145,7 @@ The CC lane is also resizable.
 - **L**: cycles the active CC controller in the CC lane (1, 7, 11, 64, 74).
 
 The note-creation grid is set from the toolbar dropdown; there is no keyboard shortcut to cycle it.
+
 - **C**: cycles the note colour mode (Pitch, Velocity, Channel).
 
 ## Zoom and scroll
@@ -1572,107 +1577,107 @@ Shortcuts use **Cmd** on macOS and **Ctrl** on Linux and Windows unless noted.
 
 ## File
 
-| Shortcut | Action |
-|----------|--------|
-| **Cmd+S** | Save session |
-| **Cmd+Shift+S** | Save As… |
-| **Cmd+O** | Open session… |
-| **Cmd+B** | Bounce… |
+| Shortcut        | Action        |
+| --------------- | ------------- |
+| **Cmd+S**       | Save session  |
+| **Cmd+Shift+S** | Save As…      |
+| **Cmd+O**       | Open session… |
+| **Cmd+B**       | Bounce…       |
 
 ## Edit
 
-| Shortcut | Action |
-|----------|--------|
-| **Cmd+Z** | Undo |
-| **Cmd+Shift+Z** / **Cmd+Y** | Redo |
-| **Cmd+C** | Copy selected region |
-| **Cmd+X** | Cut selected region |
-| **Cmd+V** | Paste at playhead |
-| **Cmd+D** | Duplicate selected region |
-| **Delete** / **Backspace** | Delete selected region |
-| **T** | Split selected region at playhead |
-| **Cmd+←** | Nudge selected region one beat earlier |
-| **Cmd+→** | Nudge selected region one beat later |
-| **Cmd+Shift+←** | Nudge by one bar (earlier) |
-| **Cmd+Shift+→** | Nudge by one bar (later) |
-| **Alt+T** | Cycle to next take on selected region |
-| **Alt+Shift+T** | Cycle to previous take |
+| Shortcut                    | Action                                 |
+| --------------------------- | -------------------------------------- |
+| **Cmd+Z**                   | Undo                                   |
+| **Cmd+Shift+Z** / **Cmd+Y** | Redo                                   |
+| **Cmd+C**                   | Copy selected region                   |
+| **Cmd+X**                   | Cut selected region                    |
+| **Cmd+V**                   | Paste at playhead                      |
+| **Cmd+D**                   | Duplicate selected region              |
+| **Delete** / **Backspace**  | Delete selected region                 |
+| **T**                       | Split selected region at playhead      |
+| **Cmd+←**                   | Nudge selected region one beat earlier |
+| **Cmd+→**                   | Nudge selected region one beat later   |
+| **Cmd+Shift+←**             | Nudge by one bar (earlier)             |
+| **Cmd+Shift+→**             | Nudge by one bar (later)               |
+| **Alt+T**                   | Cycle to next take on selected region  |
+| **Alt+Shift+T**             | Cycle to previous take                 |
 
 ## Transport
 
-| Shortcut | Action |
-|----------|--------|
-| **Space** | Play / Stop |
-| **R** | Record (requires armed track) |
-| **Home** | Seek to start |
-| **.** | Stop and seek to start |
-| **L** | Toggle loop |
-| **P** | Toggle punch |
-| **C** | Toggle metronome |
-| **M** | Drop marker at playhead |
-| **[** | Set loop start at playhead |
-| **]** | Set loop end at playhead |
-| **Shift+[** | Set punch in at playhead |
-| **Shift+]** | Set punch out at playhead |
-| **K** | Toggle virtual MIDI keyboard |
+| Shortcut    | Action                        |
+| ----------- | ----------------------------- |
+| **Space**   | Play / Stop                   |
+| **R**       | Record (requires armed track) |
+| **Home**    | Seek to start                 |
+| **.**       | Stop and seek to start        |
+| **L**       | Toggle loop                   |
+| **P**       | Toggle punch                  |
+| **C**       | Toggle metronome              |
+| **M**       | Drop marker at playhead       |
+| **[**       | Set loop start at playhead    |
+| **]**       | Set loop end at playhead      |
+| **Shift+[** | Set punch in at playhead      |
+| **Shift+]** | Set punch out at playhead     |
+| **K**       | Toggle virtual MIDI keyboard  |
 
 ## Tracks
 
-| Shortcut | Action |
-|----------|--------|
-| **A** | Toggle ARM on selected track |
-| **S** | Toggle SOLO on selected track |
-| **X** | Toggle MUTE on selected track |
+| Shortcut | Action                        |
+| -------- | ----------------------------- |
+| **A**    | Toggle ARM on selected track  |
+| **S**    | Toggle SOLO on selected track |
+| **X**    | Toggle MUTE on selected track |
 
 ## Timeline
 
-| Shortcut | Action |
-|----------|--------|
-| **=** / **+** | Zoom in |
-| **−** | Zoom out |
-| **0** | Zoom fit |
-| **Cmd+wheel** | Zoom around cursor |
-| **Shift+wheel** | Horizontal scroll |
-| **Middle-mouse drag** | Pan |
+| Shortcut              | Action             |
+| --------------------- | ------------------ |
+| **=** / **+**         | Zoom in            |
+| **−**                 | Zoom out           |
+| **0**                 | Zoom fit           |
+| **Cmd+wheel**         | Zoom around cursor |
+| **Shift+wheel**       | Horizontal scroll  |
+| **Middle-mouse drag** | Pan                |
 
 ## Region editor
 
-| Shortcut | Action |
-|----------|--------|
-| **S** / **Cmd+E** | Split at edit cursor |
-| **G** | Cycle edit mode (Grab / Range / Cut / Grid / Draw) |
-| **Cmd+]** / **Cmd+[** | Next / previous region |
-| **Esc** | Close modal |
+| Shortcut              | Action                                             |
+| --------------------- | -------------------------------------------------- |
+| **S** / **Cmd+E**     | Split at edit cursor                               |
+| **G**                 | Cycle edit mode (Grab / Range / Cut / Grid / Draw) |
+| **Cmd+]** / **Cmd+[** | Next / previous region                             |
+| **Esc**               | Close modal                                        |
 
 ## Piano roll
 
 The piano roll modal captures its own keypresses first (see `PianoRollComponent::keyPressed`); the table below is the full set.
 
-| Shortcut | Action |
-|----------|--------|
-| **↑** / **↓** | Transpose selected notes ±1 semitone |
-| **←** / **→** | Nudge selected notes ±1 grid step |
-| **Q** | Quantize popup |
-| **S** | Scale picker popup |
-| **V** | Velocity popup (set / humanise) |
-| **G** | Glue selected same-pitch contiguous notes |
-| **L** | Cycle active CC controller in CC lane (1 / 7 / 11 / 64 / 74) |
-| **C** | Cycle colour mode (Pitch / Velocity / Channel) |
-| **Cmd+A** | Select all notes in region |
-| **Cmd+C** / **Cmd+X** / **Cmd+V** | Copy / cut / paste selected notes |
-| **Cmd+D** | Duplicate selected notes |
-| **Cmd+Z** | Undo last note edit |
-| **Cmd+←** / **Cmd+→** | Pan the view horizontally |
-| **Home** / **End** | Jump view to region start / end |
-| **Cmd+]** / **Cmd+[** | Next / previous MIDI region |
-| **Esc** | Close modal |
+| Shortcut                          | Action                                                       |
+| --------------------------------- | ------------------------------------------------------------ |
+| **↑** / **↓**                     | Transpose selected notes ±1 semitone                         |
+| **←** / **→**                     | Nudge selected notes ±1 grid step                            |
+| **Q**                             | Quantize popup                                               |
+| **S**                             | Scale picker popup                                           |
+| **V**                             | Velocity popup (set / humanise)                              |
+| **G**                             | Glue selected same-pitch contiguous notes                    |
+| **L**                             | Cycle active CC controller in CC lane (1 / 7 / 11 / 64 / 74) |
+| **C**                             | Cycle colour mode (Pitch / Velocity / Channel)               |
+| **Cmd+A**                         | Select all notes in region                                   |
+| **Cmd+C** / **Cmd+X** / **Cmd+V** | Copy / cut / paste selected notes                            |
+| **Cmd+D**                         | Duplicate selected notes                                     |
+| **Cmd+Z**                         | Undo last note edit                                          |
+| **Cmd+←** / **Cmd+→**             | Pan the view horizontally                                    |
+| **Home** / **End**                | Jump view to region start / end                              |
+| **Cmd+]** / **Cmd+[**             | Next / previous MIDI region                                  |
+| **Esc**                           | Close modal                                                  |
 
 ## Window
 
-| Shortcut | Action |
-|----------|--------|
-| **F11** | Toggle fullscreen |
-| **Esc** | Close current modal |
+| Shortcut | Action              |
+| -------- | ------------------- |
+| **F11**  | Toggle fullscreen   |
+| **Esc**  | Close current modal |
 
 ## Notes on shortcut design
 
@@ -1944,141 +1949,141 @@ The hardware-insert ping reports its result inline on the editor (not a modal), 
 
 ## Channel strip
 
-| Block | Param | Range | Default |
-|-------|-------|-------|---------|
-| Phase | Invert | Off / On | Off |
-| Insert | Mode | Empty / Plugin / Hardware | Plugin |
-| HPF | Enable | Off / On | Off |
-| HPF | Frequency | 20–300 Hz | 20 Hz |
-| LPF | Enable | Off / On | Off |
-| LPF | Frequency | 3–20 kHz | 20 kHz |
-| EQ | Enable | Off / On | Off |
-| EQ | Mode | E (brown) / G (black) | E |
-| EQ LF | Frequency | 20–400 Hz | 100 Hz |
-| EQ LF | Gain | ±15 dB | 0 dB |
-| EQ LM | Frequency | 100 Hz–4 kHz | 600 Hz |
-| EQ LM | Gain | ±15 dB | 0 dB |
-| EQ LM | Q | 0.4–4.0 | 0.7 |
-| EQ HM | Frequency | 600 Hz–13 kHz | 2 kHz |
-| EQ HM | Gain | ±15 dB | 0 dB |
-| EQ HM | Q | 0.4–4.0 | 0.7 |
-| EQ HF | Frequency | 1–20 kHz | 8 kHz |
-| EQ HF | Gain | ±15 dB | 0 dB |
-| Comp | Enable | Off / On | Off |
-| Comp | Mode | Opto / FET / VCA | Opto |
-| Opto | Peak reduction | 0–100% | 0% |
-| Opto | Gain | 0–100% | 50% |
-| Opto | Limit | Off / On | Off |
-| FET | Input | −20 to +40 dB | 0 dB |
-| FET | Output | −20 to +20 dB | 0 dB |
-| FET | Attack | 0.02–80 ms | 0.2 ms |
-| FET | Release | 50–1100 ms | 400 ms |
-| FET | Ratio | 4:1 / 8:1 / 12:1 / 20:1 / All | 4:1 |
-| VCA | Threshold | −38 to +12 dB | +12 dB |
-| VCA | Ratio | 1:1–120:1 | 4:1 |
-| VCA | Attack | 0.1–50 ms | 1 ms |
-| VCA | Release | 10–5000 ms | 100 ms |
-| VCA | Output | −20 to +20 dB | 0 dB |
-| VCA | Soft knee | Off / On | Off |
-| VCA | Detector | Adaptive / Classic | Adaptive |
-| Comp | Makeup | −12 to +24 dB | 0 dB |
-| Send 1–4 | Level | −60 to +6 dB (or OFF) | OFF |
-| Send 1–4 | Pre/Post | Pre / Post | Post |
-| Pan | Position | −1.0 to +1.0 | 0 |
-| Fader | Level | −∞ to +12 dB | 0 dB |
-| Mute | On/Off | Off / On | Off |
-| Solo | On/Off | Off / On | Off |
-| Bus 1–4 | Assign | Off / On | Off |
+| Block    | Param          | Range                         | Default  |
+| -------- | -------------- | ----------------------------- | -------- |
+| Phase    | Invert         | Off / On                      | Off      |
+| Insert   | Mode           | Empty / Plugin / Hardware     | Plugin   |
+| HPF      | Enable         | Off / On                      | Off      |
+| HPF      | Frequency      | 20–300 Hz                     | 20 Hz    |
+| LPF      | Enable         | Off / On                      | Off      |
+| LPF      | Frequency      | 3–20 kHz                      | 20 kHz   |
+| EQ       | Enable         | Off / On                      | Off      |
+| EQ       | Mode           | E (brown) / G (black)         | E        |
+| EQ LF    | Frequency      | 20–400 Hz                     | 100 Hz   |
+| EQ LF    | Gain           | ±15 dB                        | 0 dB     |
+| EQ LM    | Frequency      | 100 Hz–4 kHz                  | 600 Hz   |
+| EQ LM    | Gain           | ±15 dB                        | 0 dB     |
+| EQ LM    | Q              | 0.4–4.0                       | 0.7      |
+| EQ HM    | Frequency      | 600 Hz–13 kHz                 | 2 kHz    |
+| EQ HM    | Gain           | ±15 dB                        | 0 dB     |
+| EQ HM    | Q              | 0.4–4.0                       | 0.7      |
+| EQ HF    | Frequency      | 1–20 kHz                      | 8 kHz    |
+| EQ HF    | Gain           | ±15 dB                        | 0 dB     |
+| Comp     | Enable         | Off / On                      | Off      |
+| Comp     | Mode           | Opto / FET / VCA              | Opto     |
+| Opto     | Peak reduction | 0–100%                        | 0%       |
+| Opto     | Gain           | 0–100%                        | 50%      |
+| Opto     | Limit          | Off / On                      | Off      |
+| FET      | Input          | −20 to +40 dB                 | 0 dB     |
+| FET      | Output         | −20 to +20 dB                 | 0 dB     |
+| FET      | Attack         | 0.02–80 ms                    | 0.2 ms   |
+| FET      | Release        | 50–1100 ms                    | 400 ms   |
+| FET      | Ratio          | 4:1 / 8:1 / 12:1 / 20:1 / All | 4:1      |
+| VCA      | Threshold      | −38 to +12 dB                 | +12 dB   |
+| VCA      | Ratio          | 1:1–120:1                     | 4:1      |
+| VCA      | Attack         | 0.1–50 ms                     | 1 ms     |
+| VCA      | Release        | 10–5000 ms                    | 100 ms   |
+| VCA      | Output         | −20 to +20 dB                 | 0 dB     |
+| VCA      | Soft knee      | Off / On                      | Off      |
+| VCA      | Detector       | Adaptive / Classic            | Adaptive |
+| Comp     | Makeup         | −12 to +24 dB                 | 0 dB     |
+| Send 1–4 | Level          | −60 to +6 dB (or OFF)         | OFF      |
+| Send 1–4 | Pre/Post       | Pre / Post                    | Post     |
+| Pan      | Position       | −1.0 to +1.0                  | 0        |
+| Fader    | Level          | −∞ to +12 dB                  | 0 dB     |
+| Mute     | On/Off         | Off / On                      | Off      |
+| Solo     | On/Off         | Off / On                      | Off      |
+| Bus 1–4  | Assign         | Off / On                      | Off      |
 
 ## Bus strip
 
-| Block | Param | Range | Default |
-|-------|-------|-------|---------|
-| EQ | Enable | Off / On | Off |
-| EQ LF | Gain | ±9 dB | 0 dB |
-| EQ MID | Gain | ±9 dB | 0 dB |
-| EQ HF | Gain | ±9 dB | 0 dB |
-| Comp | Enable | Off / On | Off |
-| Comp | Threshold | −30 to +15 dB | 0 dB |
-| Comp | Ratio | 1:1–10:1 | 4:1 |
-| Comp | Attack | 0.1–50 ms | 10 ms |
-| Comp | Release | 50–1000 ms | 100 ms |
-| Comp | Auto release | Off / On | On |
-| Comp | Makeup | −10 to +20 dB | 0 dB |
-| Pan | Position | −1.0 to +1.0 | 0 |
-| Fader | Level | −∞ to +12 dB | 0 dB |
-| Mute | On/Off | Off / On | Off |
-| Solo | On/Off | Off / On | Off |
+| Block  | Param        | Range         | Default |
+| ------ | ------------ | ------------- | ------- |
+| EQ     | Enable       | Off / On      | Off     |
+| EQ LF  | Gain         | ±9 dB         | 0 dB    |
+| EQ MID | Gain         | ±9 dB         | 0 dB    |
+| EQ HF  | Gain         | ±9 dB         | 0 dB    |
+| Comp   | Enable       | Off / On      | Off     |
+| Comp   | Threshold    | −30 to +15 dB | 0 dB    |
+| Comp   | Ratio        | 1:1–10:1      | 4:1     |
+| Comp   | Attack       | 0.1–50 ms     | 10 ms   |
+| Comp   | Release      | 50–1000 ms    | 100 ms  |
+| Comp   | Auto release | Off / On      | On      |
+| Comp   | Makeup       | −10 to +20 dB | 0 dB    |
+| Pan    | Position     | −1.0 to +1.0  | 0       |
+| Fader  | Level        | −∞ to +12 dB  | 0 dB    |
+| Mute   | On/Off       | Off / On      | Off     |
+| Solo   | On/Off       | Off / On      | Off     |
 
 ## Aux return lane
 
-| Block | Param | Range | Default |
-|-------|-------|-------|---------|
-| Insert | Mode | Empty / Plugin / Hardware | Plugin |
-| Return fader | Level | −∞ to +12 dB | 0 dB |
-| Mute | On/Off | Off / On | Off |
+| Block        | Param  | Range                     | Default |
+| ------------ | ------ | ------------------------- | ------- |
+| Insert       | Mode   | Empty / Plugin / Hardware | Plugin  |
+| Return fader | Level  | −∞ to +12 dB              | 0 dB    |
+| Mute         | On/Off | Off / On                  | Off     |
 
 ## Master bus
 
-| Block | Param | Range | Default |
-|-------|-------|-------|---------|
-| Tape | Enable | Off / On | Off |
-| Tape | HQ (4× OS) | Off / On | Off |
-| Pultec | Enable | Off / On | Off |
-| Pultec | LF Boost | 0–10 | 0 |
-| Pultec | LF Atten | 0–10 | 0 |
-| Pultec | LF Freq | 20 / 30 / 60 / 100 Hz | 60 Hz |
-| Pultec | HF Boost | 0–10 | 0 |
-| Pultec | HF Freq | 3, 4, 5, 8, 10, 12, 16 kHz | 8 kHz |
-| Pultec | HF Bandwidth | 0–10 | 0.5 |
-| Pultec | HF Atten | 0–10 | 0 |
-| Pultec | HF Atten Freq | 5, 10, 20 kHz | 10 kHz |
-| Pultec | Output gain | ±12 dB | 0 dB |
-| Comp | Enable | Off / On | Off |
-| Comp | Threshold | −30 to +15 dB | 0 dB |
-| Comp | Ratio | 1:1–10:1 | 4:1 |
-| Comp | Attack | 0.1–50 ms | 10 ms |
-| Comp | Release | 50–1000 ms | 100 ms |
-| Comp | Auto release | Off / On | On |
-| Comp | Makeup | −10 to +20 dB | 0 dB |
-| Master fader | Level | −∞ to +12 dB | 0 dB |
-| Mono | Off / On | Off / On | Off |
+| Block        | Param         | Range                      | Default |
+| ------------ | ------------- | -------------------------- | ------- |
+| Tape         | Enable        | Off / On                   | Off     |
+| Tape         | HQ (4× OS)    | Off / On                   | Off     |
+| Pultec       | Enable        | Off / On                   | Off     |
+| Pultec       | LF Boost      | 0–10                       | 0       |
+| Pultec       | LF Atten      | 0–10                       | 0       |
+| Pultec       | LF Freq       | 20 / 30 / 60 / 100 Hz      | 60 Hz   |
+| Pultec       | HF Boost      | 0–10                       | 0       |
+| Pultec       | HF Freq       | 3, 4, 5, 8, 10, 12, 16 kHz | 8 kHz   |
+| Pultec       | HF Bandwidth  | 0–10                       | 0.5     |
+| Pultec       | HF Atten      | 0–10                       | 0       |
+| Pultec       | HF Atten Freq | 5, 10, 20 kHz              | 10 kHz  |
+| Pultec       | Output gain   | ±12 dB                     | 0 dB    |
+| Comp         | Enable        | Off / On                   | Off     |
+| Comp         | Threshold     | −30 to +15 dB              | 0 dB    |
+| Comp         | Ratio         | 1:1–10:1                   | 4:1     |
+| Comp         | Attack        | 0.1–50 ms                  | 10 ms   |
+| Comp         | Release       | 50–1000 ms                 | 100 ms  |
+| Comp         | Auto release  | Off / On                   | On      |
+| Comp         | Makeup        | −10 to +20 dB              | 0 dB    |
+| Master fader | Level         | −∞ to +12 dB               | 0 dB    |
+| Mono         | Off / On      | Off / On                   | Off     |
 
 ## Mastering chain
 
-| Block | Param | Range | Default |
-|-------|-------|-------|---------|
-| EQ | Enable | Off / On | Off |
-| EQ band 0 | Low shelf, 80 Hz, ±15 dB | | 0 dB |
-| EQ band 1 | Peaking, 250 Hz, ±15 dB, Q 0.4–4 | | 0 dB, Q 1.0 |
-| EQ band 2 | Peaking, 1 kHz, ±15 dB, Q 0.4–4 | | 0 dB, Q 1.0 |
-| EQ band 3 | Peaking, 4 kHz, ±15 dB, Q 0.4–4 | | 0 dB, Q 1.0 |
-| EQ band 4 | High shelf, 12 kHz, ±15 dB | | 0 dB |
-| Comp | Enable | Off / On | Off |
-| Comp | Threshold | −30 to +15 dB | 0 dB |
-| Comp | Ratio | 1:1–10:1 | 2:1 |
-| Comp | Attack | 0.1–50 ms | 30 ms |
-| Comp | Release | 50–1000 ms | 250 ms |
-| Comp | Auto release | Off / On | On |
-| Comp | Makeup | −10 to +20 dB | 0 dB |
-| Limiter | Enable | Off / On | On |
-| Limiter | Ceiling | −20 to 0 dB | −0.3 dB |
-| Limiter | Drive | 0 to +20 dB | 0 dB |
-| Limiter | Release | 50–300 ms | 100 ms |
+| Block     | Param                            | Range         | Default     |
+| --------- | -------------------------------- | ------------- | ----------- |
+| EQ        | Enable                           | Off / On      | Off         |
+| EQ band 0 | Low shelf, 80 Hz, ±15 dB         |               | 0 dB        |
+| EQ band 1 | Peaking, 250 Hz, ±15 dB, Q 0.4–4 |               | 0 dB, Q 1.0 |
+| EQ band 2 | Peaking, 1 kHz, ±15 dB, Q 0.4–4  |               | 0 dB, Q 1.0 |
+| EQ band 3 | Peaking, 4 kHz, ±15 dB, Q 0.4–4  |               | 0 dB, Q 1.0 |
+| EQ band 4 | High shelf, 12 kHz, ±15 dB       |               | 0 dB        |
+| Comp      | Enable                           | Off / On      | Off         |
+| Comp      | Threshold                        | −30 to +15 dB | 0 dB        |
+| Comp      | Ratio                            | 1:1–10:1      | 2:1         |
+| Comp      | Attack                           | 0.1–50 ms     | 30 ms       |
+| Comp      | Release                          | 50–1000 ms    | 250 ms      |
+| Comp      | Auto release                     | Off / On      | On          |
+| Comp      | Makeup                           | −10 to +20 dB | 0 dB        |
+| Limiter   | Enable                           | Off / On      | On          |
+| Limiter   | Ceiling                          | −20 to 0 dB   | −0.3 dB     |
+| Limiter   | Drive                            | 0 to +20 dB   | 0 dB        |
+| Limiter   | Release                          | 50–300 ms     | 100 ms      |
 
 \newpage
 
 # Appendix B — File formats
 
-| Artifact | Format |
-|----------|--------|
-| Session | JSON, atomic write |
-| Recorded audio | 24-bit PCM WAV, session sample rate |
-| Imported audio | re-encoded to 24-bit WAV in session/audio/ |
-| Recorded MIDI | embedded in session.json (note + CC arrays per region) |
-| Plugin scan cache | XML, per-user config directory |
-| MIDI bindings export | JSON |
-| Bounce | WAV (16, 24, or 32-bit float), chosen at bounce time |
+| Artifact             | Format                                                 |
+| -------------------- | ------------------------------------------------------ |
+| Session              | JSON, atomic write                                     |
+| Recorded audio       | 24-bit PCM WAV, session sample rate                    |
+| Imported audio       | re-encoded to 24-bit WAV in session/audio/             |
+| Recorded MIDI        | embedded in session.json (note + CC arrays per region) |
+| Plugin scan cache    | XML, per-user config directory                         |
+| MIDI bindings export | JSON                                                   |
+| Bounce               | WAV (16, 24, or 32-bit float), chosen at bounce time   |
 
 \newpage
 

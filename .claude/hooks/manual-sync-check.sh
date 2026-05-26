@@ -22,8 +22,11 @@ if ! echo "$cmd" | grep -qE '(^|[^a-zA-Z])(git[[:space:]]+commit|git[[:space:]]+
   exit 0
 fi
 
-project_root="/home/marc/projects/DuskStudio"
-if [ -d "$project_root" ]; then
+project_root=$(echo "$input" | jq -r '.cwd // ""')
+if [ -z "$project_root" ] || [ ! -d "$project_root" ]; then
+  project_root=$(git rev-parse --show-toplevel 2>/dev/null || true)
+fi
+if [ -n "$project_root" ] && [ -d "$project_root" ]; then
   cd "$project_root"
 fi
 
