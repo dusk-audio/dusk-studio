@@ -181,8 +181,16 @@ private:
     struct AudioInFlightScope
     {
         std::atomic<int>& c;
+        // acq_rel on the increment: release publishes the bump to the
+        // message thread's drain spin AND acquire prevents subsequent
+        // reads (active flag, writer / midiCapture pointers) from being
+        // reordered before the bump — without acquire those reads could
+        // observe a torn / freed object the message thread had already
+        // started tearing down. Release on the decrement is enough: it
+        // orders this thread's earlier accesses before the drain sees
+        // the count drop to zero.
         AudioInFlightScope (std::atomic<int>& a) noexcept : c (a)
-            { c.fetch_add (1, std::memory_order_release); }
+            { c.fetch_add (1, std::memory_order_acq_rel); }
         ~AudioInFlightScope() noexcept
             { c.fetch_sub (1, std::memory_order_release); }
     };

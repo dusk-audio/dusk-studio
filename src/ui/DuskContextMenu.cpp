@@ -81,7 +81,10 @@ public:
             total += r.isSep ? kSepH : (r.isHeader ? kHeaderH : kRowH);
 
         // Width: max of measured text widths + padding for tick + arrow.
-        const juce::Font font { juce::FontOptions (14.0f) };
+        // Font size MUST match the row-paint font (16 pt, see paint())
+        // — measuring at a smaller size undercounts and truncates the
+        // last few characters (the "About Dusk Studio" → "Studi" bug).
+        const juce::Font font { juce::FontOptions (16.0f) };
         int maxText = 0;
         for (const auto& r : rowsData)
             maxText = juce::jmax (maxText, (int) std::ceil (font.getStringWidthFloat (r.text)));

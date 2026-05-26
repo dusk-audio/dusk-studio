@@ -2111,7 +2111,7 @@ void MainComponent::openBounceStemsDialog()
         /*initialFileOrDirectory*/ defaultFile,
         /*filePatternsAllowed*/    "*.wav",
         /*mode*/                   filebrowser::Mode::Save,
-        /*warnAboutOverwriting*/   false,
+        /*warnAboutOverwriting*/   true,
         /*selectDirectories*/      false,
     },
     [this] (juce::File out)

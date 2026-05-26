@@ -51,6 +51,11 @@ public:
     float getShortTermLufs() const noexcept   { return shortTermLufs.load (std::memory_order_relaxed); }
     float getIntegratedLufs() const noexcept  { return integratedLufs.load (std::memory_order_relaxed); }
     float getTruePeakDb() const noexcept      { return truePeakDb.load (std::memory_order_relaxed); }
+    // True once the block-history ring has hit kMaxHistoryBlocks (1 hour
+    // at 100 ms per block). After that the integrated reading stops
+    // absorbing new blocks. UI surfaces this so the user knows the
+    // integrated value is frozen rather than silently inaccurate.
+    bool isIntegratedCapped() const noexcept  { return integratedCapped.load (std::memory_order_relaxed); }
 
 private:
     void finishBlock();
@@ -95,5 +100,10 @@ private:
     std::atomic<float> shortTermLufs   { -100.0f };
     std::atomic<float> integratedLufs  { -100.0f };
     std::atomic<float> truePeakDb      { -100.0f };
+    // Set once when blockHistory hits kMaxHistoryBlocks; the integrated
+    // reading stops absorbing new blocks past that point. Audio thread
+    // sets via relaxed store on the first overflow, UI polls via the
+    // public accessor.
+    std::atomic<bool>  integratedCapped { false };
 };
 } // namespace duskstudio

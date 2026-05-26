@@ -88,6 +88,7 @@ void LoudnessMeter::reset()
     shortTermLufs.store (-100.0f, std::memory_order_relaxed);
     integratedLufs.store (-100.0f, std::memory_order_relaxed);
     truePeakDb.store    (-100.0f, std::memory_order_relaxed);
+    integratedCapped.store (false, std::memory_order_relaxed);
 }
 
 void LoudnessMeter::finishBlock()
@@ -96,7 +97,11 @@ void LoudnessMeter::finishBlock()
     // channels, normalized by samples × 2 channels of weight 1.0).
     const double ms = blockSumSquared / juce::jmax (1, blockSize);
     if (blockHistory.size() < (size_t) kMaxHistoryBlocks)
+    {
         blockHistory.push_back (ms);
+        if (blockHistory.size() == (size_t) kMaxHistoryBlocks)
+            integratedCapped.store (true, std::memory_order_relaxed);
+    }
 
     momentaryRingMS [(size_t) (ringWritePos % kMomentaryBlocks)] = ms;
     shortTermRingMS [(size_t) (ringWritePos % kShortTermBlocks)] = ms;

@@ -611,7 +611,7 @@ Below the fader:
 
 ## Bus assigns
 
-Each channel can be routed to any combination of the four mix buses. Right-click the fader area for a bus-assign menu. Bus routing is independent of the master send — a channel always reaches the master regardless of its bus assigns.
+Each channel can be routed to any combination of the four mix buses. Right-click the fader area for a bus-assign menu. Bus routing is **exclusive with the master send**: as soon as a channel is assigned to one or more buses, its direct send to master is removed and the signal reaches master only via the bus (which sums into master through its own fader and processing). With every bus deassigned, the channel sends directly to master as normal. This prevents the same signal arriving at master twice (once direct, once via the bus) and the +3 dB doubling that would otherwise occur.
 
 ## Meters
 
@@ -1197,7 +1197,7 @@ Right-click a send knob to toggle pre/post.
 
 ## Bus routing
 
-Right-click anywhere in the channel strip's fader area for the bus-assign menu. Assigning to a bus does **not** unassign from the master — the bus routing is additive. To remove a channel from the master mix entirely while still sending to a bus, mute the channel and rely on the bus mute being off.
+Right-click anywhere in the channel strip's fader area for the bus-assign menu. Assigning to a bus **replaces** the channel's direct send to master — the channel reaches master only through the bus once assigned, and the bus's own fader, EQ, and compressor sit in series with the signal. Deassign every bus to send directly to master again. This exclusive routing prevents the same channel arriving at master twice (which would produce a +3 dB doubling).
 
 ## Solo and PFL
 

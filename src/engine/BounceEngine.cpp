@@ -354,10 +354,12 @@ bool BounceEngine::renderOneStem (const juce::File& outFile,
     engine.getPlaybackEngine().stopPlayback();
     writer.reset();  // flush + close
 
-    if (cancelRequested.load (std::memory_order_relaxed))
+    if (cancelRequested.load (std::memory_order_relaxed) || ! ok)
     {
         // Drop the partial stem — a half-rendered file is more
-        // confusing than no file when the user cancels.
+        // confusing than no file when the user cancels or the writer
+        // fails mid-render. Delete is performed AFTER writer.reset()
+        // above so the file handle is closed before we unlink.
         outFile.deleteFile();
         return false;
     }

@@ -65,9 +65,20 @@ void AuxLaneStrip::processStereoBlock (float* L, float* R, int numSamples,
     // blockSize and the audio thread refuses to allocate, so a host that
     // hands us numSamples > scratch capacity must skip the whole block —
     // partial processing would desync the meter / smoother bookkeeping
-    // between the slot loop and the return-gain pass below.
+    // between the slot loop and the return-gain pass below. L/R is the
+    // lane accumulator with channel-strip sends already summed in, so
+    // we MUST clear it (otherwise the unprocessed sum leaks into master
+    // un-EQ'd / un-comp'd) and drop the meter to -inf so the UI doesn't
+    // hold a stale reading from the previous block.
     jassert (numSamples <= (int) insertScratchL.size());
-    if (numSamples > (int) insertScratchL.size()) return;
+    if (numSamples > (int) insertScratchL.size())
+    {
+        std::memset (L, 0, sizeof (float) * (size_t) numSamples);
+        std::memset (R, 0, sizeof (float) * (size_t) numSamples);
+        paramsRef->meterPostL.store (-100.0f, std::memory_order_relaxed);
+        paramsRef->meterPostR.store (-100.0f, std::memory_order_relaxed);
+        return;
+    }
 
     // Mute path: clear in-place so the engine's accumulator into master
     // sees silence (the lane's buffer is reused across blocks). Reads

@@ -23,6 +23,11 @@ if ! command -v pandoc >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! command -v xelatex >/dev/null 2>&1; then
+  echo "error: xelatex not on PATH (install texlive-xetex / mactex-no-gui)" >&2
+  exit 1
+fi
+
 pandoc "${SRC}" \
   --output="${OUT}" \
   --pdf-engine=xelatex \
