@@ -1139,7 +1139,7 @@ void MainComponent::resized()
     {
         if (tapeStrip != nullptr && tapeStripExpanded)
         {
-            tapeStrip->setBounds (area.removeFromTop (TapeStrip::naturalHeight()));
+            tapeStrip->setBounds (area.removeFromTop (tapeStrip->naturalHeight()));
             area.removeFromTop (4);
         }
 

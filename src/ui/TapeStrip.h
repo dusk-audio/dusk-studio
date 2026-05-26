@@ -46,8 +46,15 @@ public:
     static constexpr int kTrackRowH   = 14;
     static constexpr int kRowGap      = 1;
 
-    // Total pixel height of the strip when sized to the natural row count.
-    static int naturalHeight();
+    // Total pixel height of the strip sized to the CURRENT row count.
+    // Rows visible = armed tracks ∪ tracks with audio/midi content (plus
+    // every track when SHOW ALL is on). Empty unarmed tracks collapse so
+    // a 24-track session doesn't burn half the screen on empty rows.
+    int naturalHeight() const noexcept;
+    // Conservative upper bound: every track visible. Used by layout code
+    // that needs a static size estimate before a TapeStrip instance
+    // exists.
+    static int maxNaturalHeight() noexcept;
 
     // Clipboard / selection-driven editing surface, called from
     // MainComponent's keyboard handler. Each returns true if the operation
@@ -139,7 +146,20 @@ private:
     juce::Rectangle<int> labelColumnBounds() const noexcept;
     juce::Rectangle<int> rulerBounds() const noexcept;
     juce::Rectangle<int> tracksColumnBounds() const noexcept;
+    // Returns the row rect for `trackIdx` (a Session-track index 0..N-1)
+    // when that track is currently visible, or an empty rect when the
+    // track is collapsed out of view. Callers that iterate must respect
+    // the empty-rect contract so hit tests / painters skip hidden rows.
     juce::Rectangle<int> rowBounds (int trackIdx) const noexcept;
+
+    // Rebuilds `visibleTrackOrder` from session state (armed flag + region
+    // counts) and the SHOW ALL override. Cheap (24 iterations). Called
+    // from resized(), timer-driven state polling, and the SHOW ALL click
+    // handler. If the visible set actually changed we relayout + repaint.
+    void rebuildVisibleTrackOrder();
+    // Visual position (0..visibleTrackOrder.size()-1) of a Session-track
+    // index, or -1 if the track is collapsed.
+    int  visualRowForTrack (int trackIdx) const noexcept;
 
     double pixelsPerSecond() const noexcept;
     juce::int64 sampleAtX (int x) const noexcept;
@@ -207,6 +227,22 @@ private:
     juce::TextButton zoomInButton  { "+" };
     juce::TextButton zoomFitButton { "Fit" };
     juce::TextButton snapToggle    { "SNAP" };
+    // SHOW ALL toggle in the ruler band — when on, every Session track
+    // gets a row regardless of armed / content state. Off by default
+    // (rows collapse to armed ∪ has-content so 24-track sessions don't
+    // burn vertical space on empty rows).
+    juce::TextButton showAllToggle { "ALL" };
+    bool showAllTracks = false;
+    // Current visible row order. Session-track indices in display order
+    // (top → bottom). Empty entries do NOT appear here — index in this
+    // vector IS the visual row, the value at that index is the actual
+    // Session track. Rebuilt by rebuildVisibleTrackOrder().
+    std::vector<int> visibleTrackOrder;
+    // Cache of the last computed armed-or-has-content set + show-all
+    // flag, so timer-driven re-checks can skip the relayout when nothing
+    // changed. Compare-and-rebuild pattern.
+    std::array<bool, Session::kNumTracks> lastTrackHadContent {};
+    std::array<bool, Session::kNumTracks> lastTrackArmed      {};
 
     // Caches so the timer can detect track color / name changes and repaint.
     // Without these, the strip's only repaint trigger is playhead motion, so

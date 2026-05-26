@@ -44,6 +44,29 @@ TapeStrip::TapeStrip (Session& s, AudioEngine& e) : session (s), engine (e)
         engine.getSession().snapToGrid = snapToggle.getToggleState();
     };
     addAndMakeVisible (snapToggle);
+
+    showAllToggle.setClickingTogglesState (true);
+    showAllToggle.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff282830));
+    showAllToggle.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff1f3a52));
+    showAllToggle.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xff909094));
+    showAllToggle.setColour (juce::TextButton::textColourOnId,   juce::Colour (0xff7fb6e6));
+    showAllToggle.setMouseClickGrabsKeyboardFocus (false);
+    showAllToggle.setWantsKeyboardFocus (false);
+    showAllToggle.setTooltip ("Show every track row, including empty unarmed tracks.");
+    showAllToggle.setToggleState (showAllTracks, juce::dontSendNotification);
+    showAllToggle.onClick = [this]
+    {
+        showAllTracks = showAllToggle.getToggleState();
+        // Force a rebuild — content/armed bitmasks haven't changed but
+        // the show-all override has.
+        visibleTrackOrder.clear();
+        rebuildVisibleTrackOrder();
+    };
+    addAndMakeVisible (showAllToggle);
+
+    // Seed the visible list so naturalHeight() returns something sane
+    // before the first resized()/timer tick.
+    rebuildVisibleTrackOrder();
 }
 
 TapeStrip::~TapeStrip()
@@ -59,12 +82,66 @@ void TapeStrip::changeListenerCallback (juce::ChangeBroadcaster*)
     // now point at a region that has been deleted or shifted, so clear
     // both primary and additional.
     clearAllSelections();
+    // Region count may have changed (paste/cut/undo/redo) — recompute
+    // the visible row set so tracks that just gained or lost content
+    // appear / disappear without the user toggling SHOW ALL.
+    rebuildVisibleTrackOrder();
     repaint();
 }
 
-int TapeStrip::naturalHeight()
+int TapeStrip::naturalHeight() const noexcept
+{
+    const int rows = juce::jmax (1, (int) visibleTrackOrder.size());
+    return kRulerH + rows * (kTrackRowH + kRowGap) + 6;
+}
+
+int TapeStrip::maxNaturalHeight() noexcept
 {
     return kRulerH + Session::kNumTracks * (kTrackRowH + kRowGap) + 6;
+}
+
+void TapeStrip::rebuildVisibleTrackOrder()
+{
+    std::array<bool, Session::kNumTracks> hasContent {};
+    std::array<bool, Session::kNumTracks> armed      {};
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        const auto& tr = session.track (t);
+        hasContent[(size_t) t] = ! tr.regions.empty()
+                                || ! tr.midiRegions.current().empty();
+        armed[(size_t) t] = tr.recordArmed.load (std::memory_order_relaxed);
+    }
+
+    const bool stateChanged = (hasContent != lastTrackHadContent)
+                            || (armed != lastTrackArmed)
+                            || visibleTrackOrder.empty();
+    if (! stateChanged) return;
+    lastTrackHadContent = hasContent;
+    lastTrackArmed      = armed;
+
+    visibleTrackOrder.clear();
+    visibleTrackOrder.reserve ((size_t) Session::kNumTracks);
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        if (showAllTracks || hasContent[(size_t) t] || armed[(size_t) t])
+            visibleTrackOrder.push_back (t);
+    }
+    // Never present a zero-row strip — fall back to track 0 so the ruler
+    // doesn't sit on empty space and the user has somewhere to drop files.
+    if (visibleTrackOrder.empty())
+        visibleTrackOrder.push_back (0);
+
+    // Ask the parent to relayout so the strip's own height shrinks /
+    // grows to match the new row count.
+    if (auto* p = getParentComponent()) p->resized();
+    repaint();
+}
+
+int TapeStrip::visualRowForTrack (int trackIdx) const noexcept
+{
+    for (size_t i = 0; i < visibleTrackOrder.size(); ++i)
+        if (visibleTrackOrder[i] == trackIdx) return (int) i;
+    return -1;
 }
 
 juce::Rectangle<int> TapeStrip::labelColumnBounds() const noexcept
@@ -88,8 +165,10 @@ juce::Rectangle<int> TapeStrip::tracksColumnBounds() const noexcept
 
 juce::Rectangle<int> TapeStrip::rowBounds (int trackIdx) const noexcept
 {
+    const int visualRow = visualRowForTrack (trackIdx);
+    if (visualRow < 0) return {};
     auto col = tracksColumnBounds();
-    const int y = col.getY() + trackIdx * (kTrackRowH + kRowGap);
+    const int y = col.getY() + visualRow * (kTrackRowH + kRowGap);
     return juce::Rectangle<int> (col.getX(), y, col.getWidth(), kTrackRowH);
 }
 
@@ -378,6 +457,21 @@ void TapeStrip::resized()
     zoomOutButton .setVisible (false);
     zoomInButton  .setVisible (false);
     zoomFitButton .setVisible (false);
+
+    // Recompute the visible row set in case session content changed
+    // since the last layout pass (file drop, take commit, arm toggle).
+    rebuildVisibleTrackOrder();
+
+    // SHOW ALL toggle pinned to the right edge of the label column at
+    // the top — lives in unused real estate above the row labels, fits
+    // in the kRulerH band so it doesn't compete with the time ruler.
+    constexpr int kShowAllH = 14;
+    constexpr int kShowAllW = 38;
+    constexpr int kShowAllPad = 2;
+    showAllToggle.setBounds (kShowAllPad,
+                              kShowAllPad,
+                              juce::jmin (kShowAllW, kTrackLabelW - 2 * kShowAllPad),
+                              kShowAllH);
 }
 
 void TapeStrip::timerCallback()
@@ -422,6 +516,12 @@ void TapeStrip::timerCallback()
         lastIsRecording = nowRec;
         stateChanged = true;
     }
+
+    // Poll arm-flag changes — the user can toggle ARM from the channel
+    // strip at any time, and that flips a row into / out of the visible
+    // set. rebuildVisibleTrackOrder() compares against cached state and
+    // only triggers a relayout when something actually changed.
+    rebuildVisibleTrackOrder();
 
     if (stateChanged) repaint();
 
