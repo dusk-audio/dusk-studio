@@ -6,11 +6,9 @@
 
 namespace duskstudio
 {
-// Circular icon button used for the transport row (Stop / Play / Record).
-// Replaces the text-only buttons with a real-mixer look: a dark filled disc
-// with a coloured rim that lights up when the button is the active state,
-// and a vector icon (square / triangle / disc) drawn in the centre. Reuses
-// JUCE's Button base for click/hover/state plumbing.
+// Real-mixer look — dark disc with coloured rim that lights up when
+// the button is the active state, vector icon (square / triangle /
+// disc) centred. Reuses Button base for click/hover/state.
 class TransportIconButton final : public juce::Button
 {
 public:
@@ -19,24 +17,16 @@ public:
 
     TransportIconButton (const juce::String& name, Icon icon, juce::Colour activeColour);
 
-    // Swap which glyph the button paints. Used by timeFormatToggle so the
-    // button can flip between a clock and a bar/beat icon as the user
-    // cycles modes without rebuilding the button.
+    // Used by timeFormatToggle to flip clock <-> bar/beat without rebuilding.
     void setIcon (Icon newIcon) noexcept { iconType = newIcon; repaint(); }
 
     void paintButton (juce::Graphics&, bool isMouseOver, bool isButtonDown) override;
 
-    // True while held since the most recent mouseDown. Used by the
-    // TransportBar's scrub timer to drive 10x playhead motion. Public so
-    // the timer can poll it without friending the bar; the read is cheap
-    // (a single member access) and it's set by JUCE's standard
-    // Button::isDown() infrastructure that we shadow here.
+    // Polled by the scrub timer for 10× playhead motion. Public so the
+    // timer doesn't need to friend the bar.
     bool isHeldDown() const noexcept { return heldDown; }
 
 protected:
-    // Track held-state on top of JUCE's stateChanged so we can poll
-    // synchronously from a timer without needing Button::isDown which
-    // queries via the underlying state machine.
     void buttonStateChanged() override;
 
 private:
@@ -54,60 +44,42 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
     // Catches right-clicks routed up from child buttons via
-    // addMouseListener. Currently used by the jumpback button to surface
-    // its preset menu on a secondary click.
+    // addMouseListener — jumpback button's preset menu uses this.
     void mouseDown (const juce::MouseEvent&) override;
 
-    // MainComponent overlays the stage + bank buttons on top of this bar so
-    // it can show all the controls in a single row. When that overlay is
-    // active the hintLabel ("Arm a track and press REC to record...") is
-    // hidden so it doesn't clash with the buttons sitting on top of it.
+    // Hidden when MainComponent overlays stage + bank buttons on top.
     void setHintVisible (bool visible);
 
-    // X position (parent-local within this bar) of the tuner button.
-    // MainComponent uses this to centre the SNAP/zoom cluster overlay
-    // in the gap between the rightmost bank tab and the tuner —
-    // hard-coding tuner X from the outside is fragile because the
-    // right-anchored cluster (BPM / tap / time-sig / mode toggles)
-    // shifts the tuner left by ~376 px in expanded mode and ~280 px in
-    // compact mode.
+    // Hard-coding tuner X from outside is fragile — the right-anchored
+    // cluster (BPM / tap / time-sig / mode toggles) shifts the tuner
+    // left by ~376 px in expanded mode and ~280 px in compact mode.
     int getTunerLeftX() const noexcept { return tuneButton.getX(); }
 
-    // Right edge of the timecode label, in TransportBar-local coords.
-    // MainComponent uses this to clamp the centered stage-tab overlay so
-    // RECORDING/MIXING/AUX/MASTERING never slide left over the clock at
-    // wide window widths.
+    // MainComponent clamps the centered stage-tab overlay against this
+    // so RECORDING/MIXING/AUX/MASTERING never slide left over the clock.
     int getClockRightX() const noexcept { return clockLabel.getRight(); }
 
-    // Below this transport-bar width, the right-side toggles collapse to
-    // short labels (SNAP→S, TIMELINE→chevron), the clock label shrinks,
-    // and MainComponent shrinks the bank-button overlay to match. The
-    // threshold is calibrated to fire just above the OS-enforced resize
-    // floor (ConsoleView::minimumContentWidth()+24, ~1790 px) so compact
-    // mode actually engages on smaller displays — the previous 1600 px
-    // value never triggered because the user couldn't drag below 1790.
+    // Below this width SNAP->S, TIMELINE->chevron, clock shrinks,
+    // MainComponent's bank overlay shrinks to match. Calibrated to
+    // fire just above the OS-enforced resize floor (~1790 px) — the
+    // previous 1600 never triggered.
     static constexpr int kCompactTransportWidth = 1850;
 
-    // Public surface for any stop path outside this component (hotkeys
-    // in MainComponent, external transport calls, MIDI bindings). After
-    // engine.stop() drains the take, RecordManager populates
-    // getLastRecordErrors() with per-track mid-take failures: WAV write
-    // returned false (disk full / writer error) or the MIDI FIFO ran out
-    // of capacity and dropped events. Surfaces as an AlertWindow so the
-    // user knows the take is partial / corrupt before relying on it.
-    // Safe no-op when no errors are pending.
+    // After engine.stop() drains, RecordManager populates
+    // getLastRecordErrors with mid-take failures (WAV write returned
+    // false / MIDI FIFO overflow). Surfaces as AlertWindow so the user
+    // knows the take is partial before relying on it. Safe no-op when
+    // no errors are pending.
     void notifyRecordStopped();
 
 private:
     void timerCallback() override;
     void refreshButtonStates();
 
-    // After engine.record() returns, RecordManager populates
-    // getLastSetupFailures() with the indices of armed tracks whose
-    // WAV writer couldn't be set up (disk full, permission denied,
-    // missing audio dir, format error). This surfaces those failures
-    // as an AlertWindow listing affected tracks so the user doesn't
-    // think a silently-dropped take was captured.
+    // After engine.record(), RecordManager populates getLastSetupFailures
+    // with armed tracks whose writer couldn't be set up (disk full,
+    // permission denied, missing audio dir). AlertWindow lists them so
+    // the user doesn't think a silently-dropped take was captured.
     void surfaceRecordSetupFailures();
 
     AudioEngine& engine;
@@ -128,11 +100,8 @@ private:
     TransportIconButton keyboardButton { "VKB",    TransportIconButton::Icon::Keyboard,
                                           juce::Colour (0xff7fa0d0) };
 
-    // Brief-press vs hold dispatch for REW / FFWD.
-    //   < kHoldThresholdMs   -> brief press; fires the marker-jump or
-    //                            stop-modifier intent on mouse-up.
-    //   >= kHoldThresholdMs  -> hold; the scrub timer drives the playhead
-    //                            until the button releases.
+    // < threshold = brief press (marker jump / stop modifier on mouse-up).
+    // >= threshold = hold (scrub timer drives playhead until release).
     static constexpr int kHoldThresholdMs   = 180;
     static constexpr float kScrubMultiplier = 10.0f;
     juce::int64 rewPressedAtMs  = 0;
@@ -140,9 +109,6 @@ private:
     bool        rewIsScrubbing  = false;
     bool        ffwdIsScrubbing = false;
     juce::int64 lastScrubTickMs = 0;
-    // SNAP relocated to TapeStrip's zoom HUD - the gesture controls
-    // that govern arrangement-surface behaviour all live on that
-    // surface now.
     TransportIconButton clickToggle { "Metronome",
                                           TransportIconButton::Icon::Metronome,
                                           juce::Colour (0xff60c060) };
@@ -150,9 +116,8 @@ private:
     juce::Label      bpmCaption;
     juce::Label      bpmValue;
     juce::TextButton tapButton      { "TAP" };
-    // Time signature picker. Label format "N/M" - clicks open a popup
-    // with the common-time presets plus a Custom... entry that brings up
-    // an AlertWindow numerator/denominator input pair.
+    // "N/M". Click opens common-time presets + Custom... for an
+    // AlertWindow numerator/denominator input.
     juce::TextButton timeSigButton  { "4/4" };
     void showTimeSigMenu();
     void promptCustomTimeSig();
@@ -163,70 +128,52 @@ private:
                                           juce::Colour (0xff70d0a0) };
 
     void syncCompactLabels (bool compact);
-    // Right-click on the PUNCH toggle opens a popup with pre-roll /
-    // post-roll value pickers + an explanation banner.
+    // Right-click PUNCH opens pre-roll / post-roll pickers + an
+    // explanation banner.
     void showPunchSettingsMenu();
-    // Right-click on the metronome CLICK button — toggles four flags
-    // (click-while-recording / only-during-count-in / click-while-
-    // playing / polyphonic).
+    // Right-click metronome toggles four flags (click-while-recording /
+    // only-during-count-in / click-while-playing / polyphonic).
     void showMetronomeSettingsMenu();
 
-    // Tap-tempo state. Each click stamps now() into the ring; on each
-    // subsequent click within the kTapTimeoutMs window we average the
-    // inter-tap interval over the last kTapWindow stamps and write the
-    // resulting BPM to the session. A tap after the timeout resets the
-    // ring (the user's starting a new pulse). Message-thread-only state.
+    // Each click stamps now() into the ring; within kTapTimeoutMs we
+    // average the last kTapWindow inter-tap intervals into the session
+    // BPM. After timeout the ring resets (user's starting a new pulse).
     static constexpr int kTapWindow      = 4;
     static constexpr int kTapTimeoutMs   = 2000;
     std::array<juce::int64, kTapWindow> tapStamps {};
     int  tapStampCount = 0;
     void onTap();
 
-    // Confirmation surface for a BPM change. Tallies tempo-locked MIDI
-    // regions, float MIDI regions, and automation points across every
-    // track/aux/master lane; when the totals are non-zero an
-    // AlertWindow summarises the retime impact before applyTempoChange
-    // is called. If the totals are all zero the BPM change applies
-    // directly without prompting. `oldBpm` is restored to the displayed
-    // value on cancel so the spinner doesn't lie about the active
-    // tempo.
+    // Tallies tempo-locked + float MIDI regions + automation points
+    // across every lane. Non-zero totals = AlertWindow before applying.
+    // Zero totals apply directly. oldBpm restored on cancel so the
+    // spinner doesn't lie about the active tempo.
     void confirmAndApplyBpm (float newBpm, float oldBpm);
 
-    juce::TextButton tapeToggle    { juce::CharPointer_UTF8 ("\xe2\x96\xbe TIMELINE") };  // "▾ TIMELINE" - toggles the tape-strip arrangement view
+    juce::TextButton tapeToggle    { juce::CharPointer_UTF8 ("\xe2\x96\xbe TIMELINE") };  // "▾ TIMELINE"
     juce::Label      clockLabel;
-    // Flips session.timeDisplayMode between Bars/Beats and mm:ss.ms.
-    // The toggle's label always shows the FORMAT THE USER WILL SEE
-    // NEXT (so a user looking at bars sees "TIME" on the button).
-    // Hidden in compact mode to avoid colliding with MainComponent's
-    // bank-button overlay; right-click on clockLabel is the always-
-    // available fallback.
-    // Icon swaps between a bar/beat glyph (when in Time mode — clicking
-    // returns to Bars) and a clock glyph (when in Bars mode — clicking
-    // switches to Time). Visual flips inverse of the active mode so the
-    // icon always shows "what you'll get on click", matching the text
-    // convention this replaced.
+    // Label always shows the format the user will get on click (so
+    // looking at bars shows "TIME"). Hidden in compact mode — right-
+    // click on clockLabel is the always-available fallback.
+    // Icon flips inverse of active mode so it shows "what you'll get
+    // on click".
     TransportIconButton timeFormatToggle { "Time/Bars toggle",
                                               TransportIconButton::Icon::TimeClock,
                                               juce::Colour (0xff7080a0) };
-    // Action stored so the clock's right-click handler can fire the
-    // same code path as the button's onClick.
+    // Clock's right-click fires the same code path as the button's
+    // onClick.
     std::function<void()> flipTimeModeOnClock { [] {} };
     juce::Label      hintLabel;
 
 public:
-    // Set by MainComponent to receive toggle clicks. Fires after the button's
-    // toggle state has flipped - the new collapsed/expanded state is the
-    // boolean argument (true = expanded).
+    // Set by MainComponent. Fires after toggle flip; bool = new state.
     std::function<void (bool)> onTapeStripToggle;
 
-    // Fired when the TUNE button is clicked. MainComponent owns the
-    // overlay (similar to the piano roll modal) so this stays decoupled
-    // from any specific track-selection lookup.
+    // MainComponent owns the tuner overlay (similar to piano roll
+    // modal) so this stays decoupled from track-selection lookup.
     std::function<void()> onTunerToggle;
 
-    // Fired when the keyboard icon is clicked (or the K hotkey is pressed
-    // and routed back through MainComponent). MainComponent owns the
-    // VirtualKeyboardComponent embedded modal.
+    // MainComponent owns the VirtualKeyboardComponent embedded modal.
     std::function<void()> onVirtualKeyboardToggle;
 
     void setTapeStripExpanded (bool expanded);
