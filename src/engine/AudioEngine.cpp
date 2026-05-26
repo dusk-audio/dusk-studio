@@ -25,7 +25,7 @@ AudioEngine::AudioEngine (Session& sessionToBindTo) : session (sessionToBindTo)
     // their lifetime is bounded by the engine's.
     mcuController->setSink ([this] (const juce::MidiBuffer& buf)
     {
-        const int outIdx = session.mcu.resolvedOutputIdx.load (std::memory_order_acquire);
+        const int outIdx = session.mcu.resolvedOutputIdx.load (std::memory_order_relaxed);
         if (outIdx >= 0) sendMidiToOutput (outIdx, buf);
     });
     mcuController->setTransportProvider ([this] { return &transport; });
@@ -909,9 +909,25 @@ void AudioEngine::stageTestMidiInjection (int inputIdx, juce::MidiBuffer events)
     // SPSC: wait for any previously staged buffer to be consumed before we
     // touch testInjectMidi. The synchronous self-test caller drives the
     // audio callback after every stage, so this normally observes false on
-    // the first load - the spin is just defensive against future callers.
-    while (testInjectReady.load (std::memory_order_acquire))
+    // the first load - the bounded spin is just defensive against future
+    // callers that forget to pump the callback between stages. Bound it
+    // so a misuse can't hang the message thread; on timeout we drop the
+    // pending buffer (the test will surface the dropped injection as a
+    // failure rather than freezing the UI).
+    constexpr int kMaxYieldIterations = 5000;
+    for (int n = 0; n < kMaxYieldIterations
+                     && testInjectReady.load (std::memory_order_acquire); ++n)
         std::this_thread::yield();
+    // If the audio thread still holds the slot after the bounded spin,
+    // bail without swapping — touching testInjectMidi while the audio
+    // thread is mid-read races on the MidiBuffer state. The dropped
+    // injection surfaces as a test failure; that's strictly better than
+    // a release-build data race.
+    if (testInjectReady.load (std::memory_order_acquire))
+    {
+        jassertfalse;
+        return;
+    }
 
     testInjectMidi.swapWith (events);
     testInjectInputIdx.store (inputIdx, std::memory_order_relaxed);
@@ -1046,6 +1062,13 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                                                     const juce::AudioIODeviceCallbackContext&)
 {
     juce::ScopedNoDenormals noDenormals;
+
+    // Empty callbacks happen during device transitions (JUCE/JACK both
+    // can send numSamples==0). Skip the entire pipeline — MIDI parsing,
+    // automation routing, strip DSP, master bus, recording — so we don't
+    // burn cycles or risk corrupting downstream invariants (smoothers,
+    // playhead) on a zero-length block.
+    if (numSamples <= 0) return;
 
     const auto callbackStart = juce::Time::getHighResolutionTicks();
 

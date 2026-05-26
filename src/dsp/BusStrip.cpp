@@ -224,11 +224,9 @@ void BusStrip::processInPlace (float* L, float* R, int numSamples) noexcept
         }
     }
 
-    {
-        if (paramsRef != nullptr)
-            paramsRef->meterGrDb.store (busComp.getGainReduction(),
-                                         std::memory_order_relaxed);
-    }
+    if (paramsRef != nullptr)
+        paramsRef->meterGrDb.store (busComp.getGainReduction(),
+                                     std::memory_order_relaxed);
 #endif
 
     float postPeakL = 0.0f, postPeakR = 0.0f;
