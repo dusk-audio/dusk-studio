@@ -32,7 +32,7 @@ Dusk Studio includes:
 - A dedicated mastering stage with 5-band digital EQ, multiband compressor, brick-wall limiter, and BS.1770 loudness metering.
 - VST3, LV2, and AU plugin hosting, with optional out-of-process sandboxing for crash isolation.
 - External hardware insert per channel and per aux, with automatic latency measurement.
-- A multi-sampler (sfizz) that plays `.sfz` and `.sf2` SoundFont files on MIDI tracks.
+- A multi-sampler that plays `.sfz` files via sfizz, and `.sf2` SoundFont files via FluidSynth (when `DUSKSTUDIO_HAS_SF2` was enabled at build time), on MIDI tracks.
 - MIDI Clock and MIDI Time Code chase and emit.
 - Mackie Control surface support (tested against Tascam DP-24SD).
 - A piano roll for MIDI editing and an audio region editor with non-destructive trim, fade, and gain.
@@ -48,6 +48,260 @@ Dusk Studio includes:
 - No tabs, no hidden panes, no project-explorer-trees-within-trees.
 
 If a feature would not have existed on a $2000 hardware portastudio, it is not in Dusk Studio.
+
+\newpage
+
+# Quick Guide
+
+This chapter walks an empty session all the way to a finished bounce. If you have never opened Dusk Studio before, follow it in order. If you are returning, skim the headings.
+
+## 1. Install and first launch
+
+Install per your platform. On first launch, Dusk Studio opens a blank session called `Untitled` and the **Startup** dialog asks whether you want to create a new session in a chosen folder or open a recent one. Pick **New**, name your session, and click through.
+
+![First-launch window with the Startup dialog visible.](docs/images/qg-01-startup.png)
+
+The main window is laid out top to bottom: menu bar, stage selector (RECORDING / MIXING / AUX / MASTERING), bank selector, transport bar, tape strip toggle, console. The console fills the rest of the window with 24 channel strips, 4 buses, and the master.
+
+## 2. Pick an audio device
+
+Open **Settings → Audio…**. Choose your interface, sample rate, and block size. 48 kHz at 256 samples is a safe default; drop to 128 if your hardware can keep up and you need lower monitoring latency.
+
+![Audio device panel with a real interface selected.](docs/images/qg-02-audio-settings.png)
+
+On Linux, PipeWire and JACK both appear as "JACK"; pick whichever owns your interface. On macOS, both Core Audio devices and any AVB / aggregate devices show up. On Windows, ASIO drivers appear ahead of WASAPI.
+
+If your interface has more than two inputs, the channel pickers on each track's input block will populate automatically; no extra routing dialog is needed.
+
+## 3. Arm a track and check levels
+
+Switch to **RECORDING** stage. Click the **ARM** button on track 1. The button lights red and the **Input** picker becomes active. Leave the input on `−2: follow track index` if your guitar is plugged into interface input 1, or pick a specific input if it is somewhere else.
+
+Click **IN** to enable input monitoring. Play the source and watch the input meter on the strip. Use the gain knob on your interface (not the channel fader) to push peaks to roughly −12 dBFS. The strip's clip indicator at the top of the input meter lights red and holds for one second any time you cross 0 dBFS — back off.
+
+![Channel strip 1 armed, input picked, monitor on.](docs/images/qg-03-arm-track.png)
+
+If you want to track _through_ the channel's EQ and compressor, also engage **PRINT**. The recorded file will contain the post-effects signal. With PRINT off (the default) you can tweak EQ and compression after the take without re-recording.
+
+## 4. Record
+
+Hit **R** or click the transport's record button. Playback starts, the record indicator flashes, and a region begins drawing into the tape strip on track 1. Stop with **Space** when you are done.
+
+![Mid-record: levels lit, region drawing in the tape strip.](docs/images/qg-04-record-rolling.png)
+
+If you do not like the take, **Cmd+Z** undoes the recording. The take is preserved in the region's take history (up to 20 takes per region) — right-click the region and pick a previous take to swap it back in.
+
+## 5. Overdub
+
+Disarm track 1. Arm track 2, pick the right input, and record over the playback of track 1. Repeat for as many tracks as you need; Dusk Studio can record 8 inputs at once.
+
+![Tracks 1 (with a region) and 2 (mid-record) on the tape strip.](docs/images/qg-05-overdub.png)
+
+To punch in over a specific section of an already-recorded track, set the punch in and out points (**Shift+[** and **Shift+]**), engage **P** for punch mode, arm the track, and press record before the punch in point. Dusk Studio will start recording at the punch in point and stop at the punch out point automatically.
+
+## 6. Mix
+
+Switch to **MIXING** stage. The input block on each strip collapses into a small `I/O` button, and the aux send knobs replace it. Now you have full visibility of:
+
+- Insert slot (one plugin or one hardware insert per channel).
+- HPF / LPF.
+- 4-band EQ.
+- Compressor (Opto / FET / VCA, picked by right-click on the COMP header).
+- Four aux sends (post-fader by default; right-click any send knob to flip pre-fader).
+- Pan and fader.
+- Bus assigns (right-click the fader area).
+
+![MIXING stage on track 1 — sends visible above the EQ block.](docs/images/qg-06-mixing-stage.png)
+
+Mix top-down: shape EQ first, then ride the compressor, then balance with faders. Save your aux sends for finishing touches (reverb on aux 1, tape delay on aux 2, etc.).
+
+For console-style automation, click the small mode label below a fader to cycle through OFF / READ / WRITE / TOUCH. WRITE records every move while the transport rolls; TOUCH only writes while you are physically touching the control.
+
+## 7. Bounce
+
+When the mix is where you want it, hit **Cmd+B** to open the bounce dialog. Pick a filename, sample rate, and bit depth. The bounce renders offline as fast as the CPU allows and lands in the session folder by default.
+
+![Bounce dialog with a destination filename.](docs/images/qg-07-bounce-dialog.png)
+
+If you want the bounce to also pass through a mastering chain (5-band EQ, multiband compressor, brickwall limiter, LUFS metering), switch to **MASTERING** stage, click **Load latest mixdown** to pull in the bounce you just made, dial the chain in, then **Export master…** to render the final file.
+
+That is the whole loop: arm → record → overdub → mix → bounce. Everything below in this manual is a deeper reference on one of those steps.
+
+\newpage
+
+# Names and Functions of Parts
+
+This chapter is a visual reference. Every numbered callout on the figures below corresponds to a row in the table beneath the figure. If you are looking for "what does this knob do", this is the chapter to skim.
+
+## The main window
+
+![The main window, six horizontal bands.](docs/images/np-01-main-window.png)
+
+| # | Name | Description |
+|---|------|-------------|
+| 1 | Menu bar | `File` and `Settings` menus only. No tabs, no hidden submenus. |
+| 2 | Stage selector | Four buttons: **RECORDING**, **MIXING**, **AUX**, **MASTERING**. Picks which view fills the console area. |
+| 3 | Bank selector | `1-8`, `9-16`, `17-24`. Only visible when the window is too narrow to show all 24 channel strips at once. |
+| 4 | Transport bar | Play, record, loop, punch, BPM, time signature, clock, tuner. See the next figure for the inventory. |
+| 5 | Tape strip toggle | `▾ SUMMARY` / `▴ TAPE`. Collapses or expands the timeline view below the bar. |
+| 6 | Console view | Holds 24 channel strips, 4 buses, and the master strip. Replaced by the aux lane or mastering chain when those stages are active. |
+
+## The transport bar
+
+![Transport bar callouts.](docs/images/np-02-transport-bar.png)
+
+| # | Name | Description |
+|---|------|-------------|
+| 1 | Stop | Halts playback or recording, returns the playhead to bar 1. |
+| 2 | Rewind | Short press jumps to the previous marker or bar 1; hold for 10× scrub backwards. |
+| 3 | Play | Toggles playback. Snaps to loop start if loop is on and the playhead is outside. |
+| 4 | Forward | Short press jumps to the next marker; hold for 10× scrub forwards. |
+| 5 | Record | Toggles record. Requires at least one armed track. |
+| 6 | Loop | Toggles loop playback between the loop brackets. |
+| 7 | Punch | Toggles automatic punch in / punch out using the punch brackets. |
+| 8 | Virtual keyboard | Opens the on-screen MIDI keyboard overlay. |
+| 9 | Metronome | Click on / off. Right-click for the click settings. |
+| 10 | C/I | Count-in toggle. One bar of click before record starts. |
+| 11 | BPM | Click to type a tempo; drag to nudge. |
+| 12 | TAP | Tap repeatedly to set the tempo from your wrist. |
+| 13 | Time signature | Click to choose. Custom signatures supported. |
+| 14 | Clock display | Bars.Beats.Ticks or mm:ss.mmm; right-click to flip. |
+| 15 | Tuner | Opens the chromatic tuner against the selected input. |
+| 16 | SUMMARY / TAPE | Same as the tape strip toggle below the bar. |
+| 17 | SNAP | Global grid snap toggle for region edits. |
+| 18 | − / + / Fit | Timeline zoom out / in / fit-to-window. |
+
+In compact mode (window narrower than 1850 px) labels shorten; `SNAP` becomes `S`, `SUMMARY` becomes `▾`, and the time-format toggle hides — right-click the clock display to flip format instead.
+
+## The channel strip — MIXING stage
+
+![Channel strip with all mixing-stage controls labelled.](docs/images/np-03-channel-strip-mixing.png)
+
+| # | Name | Description |
+|---|------|-------------|
+| 1 | Name | Click to rename; right-click for the colour palette. |
+| 2 | Insert slot | One plugin or one hardware insert. 20 ms equal-power crossfade between modes. |
+| 3 | HPF | High-pass filter, 20–300 Hz. LED green when on. |
+| 4 | LPF | Low-pass filter, 3 kHz–20 kHz. |
+| 5 | 4-band EQ | LF (shelf) / LM (peak) / HM (peak) / HF (shelf). Right-click header to flip between SSL E and G saturation. |
+| 6 | Compressor | Opto / FET / VCA, right-click header to switch. GR meter to the left. |
+| 7 | Aux 1 send | Post-fader by default; right-click to flip pre-fader. |
+| 8 | Aux 2 send | |
+| 9 | Aux 3 send | |
+| 10 | Aux 4 send | |
+| 11 | Pan | Equal-power, 3 dB centre dip. |
+| 12 | Fader | −∞ to +12 dB. Click the dB readout to type; right-click for MIDI Learn. |
+| 13 | Mute / Solo / Phase | M (red), S (blue), Ø (yellow). Solo is solo-in-place and additive. |
+| 14 | Bus assigns | Right-click the fader area for the bus menu. |
+| 15 | Meters | Input meter (left of fader) + GR meter (right of comp). |
+
+## The channel strip — RECORDING stage
+
+![Same strip in RECORDING stage with the input block visible.](docs/images/np-04-channel-strip-recording.png)
+
+| # | Name | Description |
+|---|------|-------------|
+| 1 | Mode | **Mono**, **Stereo**, or **MIDI**. |
+| 2 | Input picker | Audio device input (mono / stereo), or MIDI port (MIDI). `−2: follow track index` matches input N to track N. |
+| 3 | ARM / IN / PRINT | ARM marks for record. IN enables input monitoring. PRINT commits EQ + comp + insert to the recorded file. |
+| 4 | Activity LED | Blinks green when MIDI arrives on the chosen channel (MIDI mode only). |
+
+## The bus strip
+
+![Bus strip callouts.](docs/images/np-05-bus-strip.png)
+
+| # | Name | Description |
+|---|------|-------------|
+| 1 | Name | Right-click to rename. |
+| 2 | 3-band EQ | LF shelf / MID peak / HF shelf, ±9 dB per band. |
+| 3 | Bus compressor | SSL-style glue. Threshold, ratio, attack, release, auto-release, makeup. |
+| 4 | Pan | Same equal-power law as channel strips. |
+| 5 | Fader | −∞ to +12 dB. |
+| 6 | Mute / Solo | Same additive solo-in-place rule as channels. |
+| 7 | Peak meter | Post-fader L/R. |
+| 8 | VU meter | 300 ms RMS, matched to the tape sat's internal VU integrator. |
+
+## The master strip
+
+![Master strip callouts.](docs/images/np-06-master-strip.png)
+
+| # | Name | Description |
+|---|------|-------------|
+| 1 | Pultec EQ | Tube-saturated low + high program EQ. Right-click for the modal editor. |
+| 2 | Master bus compressor | Identical DSP to the bus comp, typically used slower. |
+| 3 | Tape saturation | Reel-to-reel model. HQ toggles 4× internal oversampling. Right-click for the tape-machine modal. |
+| 4 | Master fader | −∞ to +12 dB. |
+| 5 | Mono | Sums L+R to mono on both legs for phase / single-speaker checks. |
+| 6 | Peak meters | Post-output L/R. |
+| 7 | VU meters | Post-output 300 ms RMS. |
+| 8 | GR meter | Master compressor gain reduction. |
+
+## The AUX view
+
+![One aux lane shown full-width.](docs/images/np-07-aux-view.png)
+
+| # | Name | Description |
+|---|------|-------------|
+| 1 | Lane selector | Aux 1 / 2 / 3 / 4 buttons across the top. |
+| 2 | Name | Double-click the lane title to rename. |
+| 3 | Mute / Return fader | Mute the entire lane; fader sets return-into-master level. |
+| 4 | Insert slot | One plugin or one hardware insert per lane. |
+| 5 | Output meter | Pre-master return level. |
+| 6 | Sources panel | Every channel currently sending to this aux, with its send level and a small meter. |
+
+## The MASTERING view
+
+![Mastering chain.](docs/images/np-08-mastering-view.png)
+
+| # | Name | Description |
+|---|------|-------------|
+| 1 | File picker | Load any stereo WAV; **Load latest mixdown** grabs the newest bounce in the session folder. |
+| 2 | Transport | Play / stop / loop on the loaded file. Recording is disabled in this stage. |
+| 3 | Waveform | Stereo overview with the playhead. |
+| 4 | 5-band digital EQ | Low shelf / 3 peaks / high shelf, ±15 dB per band. |
+| 5 | Bus compressor | Same UniversalCompressor as elsewhere, tuned to mastering defaults. |
+| 6 | Brickwall limiter | Sample-peak (see the mastering chapter for the ISP note). |
+| 7 | Loudness panel | Momentary / short-term / integrated LUFS + True Peak (4× oversampled, BS.1770). |
+| 8 | Export master… | Renders the chain offline to a stereo file. |
+
+## The tape strip
+
+![Tape strip with regions, markers, and brackets.](docs/images/np-09-tape-strip.png)
+
+| # | Name | Description |
+|---|------|-------------|
+| 1 | Ruler | Bars and beats. Right-click for snap denomination. |
+| 2 | Region | Audio or MIDI clip. Drag to move, drag the edges to trim. |
+| 3 | Region edge handle | Trim handle. Hold Cmd to nudge by snap. |
+| 4 | Marker | Drop with **M**, drag to move, right-click to rename or delete. |
+| 5 | Loop bracket | Set with **[** / **]**; enable loop with **L**. |
+| 6 | Punch bracket | Set with **Shift+[** / **Shift+]**; enable punch with **P**. |
+| 7 | Snap toggle | Global on/off mirrored from the transport bar's SNAP button. |
+
+## The audio region editor
+
+![Region editor modal.](docs/images/np-10-region-editor.png)
+
+| # | Name | Description |
+|---|------|-------------|
+| 1 | Waveform | Region content, with the source-file context dimmed before / after trim points. |
+| 2 | Fade handle | Drag in from each edge to set fade-in or fade-out length. |
+| 3 | Trim handle | Region in / out trims (non-destructive). |
+| 4 | Gain slider | ±24 dB region gain. |
+| 5 | Edit-mode toolbar | Grab / Range / Cut / Grid / Draw. Cycle with **G**. |
+
+## The piano roll
+
+![Piano roll modal.](docs/images/np-11-piano-roll.png)
+
+| # | Name | Description |
+|---|------|-------------|
+| 1 | Keyboard | Click a key to audition the pitch. Scale-highlight non-scale keys dim. |
+| 2 | Note grid | Click an empty cell to create a note at the active velocity. |
+| 3 | Selected note | Velocity shown next to the head. Drag to move; drag edges to trim. |
+| 4 | Velocity strip | Drag the per-note bars to set velocity per note. |
+| 5 | CC lane | Pick a controller with **L**; draw events with the mouse. |
+| 6 | Scale highlight | Set root + mode with **S**. Non-scale notes are dimmed in both keyboard and grid. |
 
 \newpage
 
@@ -67,10 +321,10 @@ On first launch Dusk Studio opens a blank session named `Untitled`. The window i
 
 - A thin menu bar (File and Settings).
 - A row of large coloured buttons for the four stages: **RECORDING**, **MIXING**, **AUX**, **MASTERING**.
-- A bank selector (only visible when the window is too narrow to show all 16 channel strips at once).
+- A bank selector (only visible when the window is too narrow to show all 24 channel strips at once).
 - The transport bar.
 - The tape strip (the timeline view), collapsed by default.
-- The console view, showing 16 channel strips, 4 buses, and the master strip.
+- The console view, showing 24 channel strips (in three banks of 8), 4 buses, and the master strip.
 
 Press **RECORDING** to focus the channel strips on input routing and arm controls. Press **MIXING** to focus them on send levels and inserts. Press **AUX** to see the four aux lanes, their inserts, and their send sources. Press **MASTERING** to load a finished mix and run it through the mastering chain.
 
@@ -188,10 +442,24 @@ In compact mode (window narrower than 1850 pixels), labels shorten: `SNAP` becom
 
 Every track is processed by an identical channel strip. The order is fixed; you cannot reorder blocks. From top to bottom of the signal flow:
 
+<!-- Source: src/dsp/ChannelStrip.cpp::processAndAccumulate
+     Stages: phase invert (:471, :628) → insert (:487, :643) →
+             EQ incl. HPF + LPF (:533, :572, :678, :707) →
+             compressor (:561, :582, :697, :717) →
+             pan + fader + bus/master/aux branching (:796–:861).
+     Verify on any DSP-order change. -->
 ```
-input → phase invert → insert (plugin OR hardware) → HPF → LPF →
-4-band EQ → compressor → aux sends → pan → fader → mute/solo gate → bus assigns → master
+input → phase invert → insert (plugin OR hardware) → HPF → 4-band EQ →
+LPF → compressor → pan → fader ─┬─► master    (when no bus is assigned)
+                                 ├─► bus 1..4  (exclusive with master:
+                                 │              a bus assignment removes
+                                 │              the direct master send)
+                                 └─► aux 1..4 sends
+                                       (each send is independently pre-fader
+                                       or post-fader)
 ```
+
+Mute, Solo, and the input-monitor (IN) toggle gate the entire accumulation — when the track is muted or soloed-out, nothing reaches master, bus, or aux.
 
 This is the order the audio actually flows. On screen, controls are arranged for ergonomics — the fader is at the bottom, the EQ in the middle — but the underlying chain never changes.
 
@@ -359,8 +627,12 @@ Between the channel strips and the master strip are four bus strips. They are sm
 
 ## Signal flow
 
+<!-- Source: src/dsp/BusStrip.cpp::processInPlace
+     EQ (:195, :214) → comp (:204, :223) → pan × fader (:236–:240).
+     Mute is applied at AudioEngine sum-into-master, not inside BusStrip. -->
 ```
-bus input → 3-band EQ → bus compressor → pan → fader → mute/solo gate → master
+bus input (sum of assigned channels) → 3-band EQ → bus compressor →
+pan → fader → master   (mute and solo gate the sum into master)
 ```
 
 ## 3-band EQ
@@ -375,7 +647,7 @@ A simplified British EQ with three bands at fixed musical defaults. Gain range i
 
 An SSL-style glue compressor.
 
-- **Threshold**: −30 to 0 dB.
+- **Threshold**: −30 to +15 dB.
 - **Ratio**: 1:1 to 10:1. 4:1 is the default.
 - **Attack**: 0.1 to 50 ms.
 - **Release**: 50 to 1000 ms.
@@ -400,8 +672,11 @@ The rightmost strip. Receives the sum of every channel that is not routed exclus
 
 ## Signal flow
 
+<!-- Source: src/dsp/MasterBus.cpp::processInPlace
+     Pultec EQ (:218, :242) → bus comp (:227, :251) →
+     tape (:277) → fader (:296) → mono sum (:299–:303). -->
 ```
-master input → tape saturation → Pultec EQ → master bus compressor → master fader → mono sum → output
+master input → Pultec EQ → master bus compressor → tape saturation → master fader → mono sum → output
 ```
 
 ## Tape saturation
@@ -489,6 +764,8 @@ Lists every channel that is sending to this aux, with its send level and a small
 
 # The mastering stage
 
+![Mastering chain with EQ, comp, and limiter engaged.](docs/images/mm-02-mastering-chain.png)
+
 The **MASTERING** stage is a separate signal path. It does not play your tracks; it plays a single stereo audio file through a dedicated mastering chain. Switching into or out of MASTERING force-stops the transport, because the mix engine and the mastering engine cannot run simultaneously.
 
 ## Loading a mix
@@ -528,13 +805,13 @@ The same UniversalCompressor in Bus mode as the channel / master compressors, bu
 
 ### Brickwall limiter
 
-A true-peak brickwall limiter. **Enabled by default.**
+A sample-peak brickwall limiter. **Enabled by default.** (The True-Peak readout in the loudness panel _is_ 4× oversampled per BS.1770; the limiter that engages on the signal is not — see below.)
 
 - **Ceiling**: −20 to 0 dB. Default **−0.3 dB** (matches the headroom expected by most streaming platforms).
 - **Drive**: 0 to +20 dB pre-limiter gain. Drives the input harder for more limiting.
 - **Release**: 50 to 300 ms.
 
-The limiter handles inter-sample peaks by oversampling its detection 4× per ITU BS.1770.
+The limiter detects sample peaks only. Inter-sample-peak (true-peak) detection per ITU BS.1770 is planned but not implemented in v1; reserve a little extra headroom in the ceiling if you are mastering for lossy delivery.
 
 ## Loudness metering
 
@@ -554,6 +831,8 @@ A streaming-platform preset picker (Spotify, Apple Music, YouTube, Netflix, etc.
 \newpage
 
 # Recording
+
+![Eight tracks armed simultaneously in RECORDING stage.](docs/images/rec-01-arm-multiple.png)
 
 The recording workflow in Dusk Studio is intentionally simple. There are five steps.
 
@@ -649,6 +928,8 @@ If something goes wrong mid-take (ring-buffer overrun on a stressed disk, MIDI F
 \newpage
 
 # The tape strip
+
+![Tape strip with regions, markers, and a loop bracket.](docs/images/np-09-tape-strip.png)
 
 The tape strip is Dusk Studio's timeline view. It is collapsed by default. Click **▾ SUMMARY** at the top right of the transport bar (or the small drawer-handle below the bar) to expand it.
 
@@ -747,6 +1028,8 @@ Drop audio or MIDI files onto the tape strip. If you drop one file, the **Import
 
 # The audio region editor
 
+![Region editor modal over a region with fades.](docs/images/ed-04-region-editor-modal.png)
+
 Double-click an audio region in the tape strip to open the audio region editor as a centred modal. Press **Esc** or click outside to close.
 
 ## What's editable
@@ -794,6 +1077,8 @@ Below the toolbar:
 \newpage
 
 # The piano roll
+
+![Piano roll with notes, a CC ramp, and scale highlight.](docs/images/ed-05-piano-roll-full.png)
 
 Double-click a MIDI region to open the piano roll as a centred modal.
 
@@ -853,7 +1138,9 @@ The CC lane is also resizable.
 
 - **Q**: opens a quantize popup. Pick the grid resolution and the strength (0 = none, 1 = full).
 - **S**: opens a scale picker. Pick a root and a scale (Major, Minor, modes). Non-scale notes display dimmed.
-- **L**: cycles the note-creation grid (Grid, Free, Triplet, Dotted).
+- **L**: cycles the active CC controller in the CC lane (1, 7, 11, 64, 74).
+
+The note-creation grid is set from the toolbar dropdown; there is no keyboard shortcut to cycle it.
 - **C**: cycles the note colour mode (Pitch, Velocity, Channel).
 
 ## Zoom and scroll
@@ -875,6 +1162,8 @@ Open the virtual keyboard from the transport bar (the keyboard icon, or **K**). 
 \newpage
 
 # Mixing
+
+![A fader's automation mode label, cycling READ / WRITE / TOUCH.](docs/images/mm-01-automation-modes.png)
 
 Mixing is the act of balancing your tracks, shaping them with EQ and dynamics, placing them in the stereo field, and gluing the whole thing together on the buses and master.
 
@@ -932,14 +1221,16 @@ Dusk Studio's automation is intentionally console-style: you ride the controls a
 
 # Plugins
 
+![Plugin picker mid-scan.](docs/images/pl-01-plugin-picker.png)
+
 ## Plugin formats
 
 Dusk Studio scans and hosts:
 
 - **VST3** on Linux, macOS, and Windows.
-- **LV2** on Linux and macOS.
+- **LV2** on Linux.
 - **AU** on macOS only.
-- **Native multi-sampler** (`.sfz` and `.sf2` files) on all platforms.
+- **Native multi-sampler** (`.sfz` files always; `.sf2` files when FluidSynth was available at build time) on all platforms.
 
 There is no VST2 support.
 
@@ -1024,6 +1315,8 @@ The loaded file path is saved with the session.
 
 # Hardware inserts
 
+![Hardware insert editor with input/output pickers and the Ping button.](docs/images/pl-04-hw-insert.png)
+
 A hardware insert routes a channel or aux's signal out through one of your audio interface's outputs, into an external piece of gear (a compressor, EQ, tape echo, guitar pedalboard, anything), and back in through one of the interface's inputs. The returned signal continues through the channel's chain as if the hardware were a plugin.
 
 ## Configuring an insert
@@ -1054,11 +1347,13 @@ Run the ping after any change to your interface routing or your external gear's 
 
 ## Latency compensation
 
-The measured latency is reported to Dusk Studio's plugin delay compensation system. Every track that does not have an insert (and the aux returns, and the master) is delayed by the longest insert latency in the session so that everything stays sample-accurate.
+The measured latency is stored per insert and applied as an internal delay line inside the hardware insert slot itself, so that the signal returning from external gear lines up with where it left the channel. Cross-track delay compensation (delaying tracks without inserts by the longest insert latency in the session) is not yet implemented in v1; instrument plugins with reported latency are compensated on their own track only.
 
 \newpage
 
 # Sync to external gear
+
+![MTC frame-rate dropdown showing all four rates.](docs/images/sync-02-mtc-rates.png)
 
 ## MIDI Clock
 
@@ -1120,6 +1415,8 @@ Once connected:
 
 # MIDI bindings
 
+![MIDI Bindings panel populated with several learned bindings.](docs/images/sync-01-mcu-bindings.png)
+
 In addition to MCU support, any control in Dusk Studio can be bound to a MIDI CC, note, or pitch-bend from any controller.
 
 ## Learning a binding
@@ -1158,8 +1455,7 @@ Right-click the binding in the MIDI Bindings panel to change its mode.
 - **Per-bus**: Fader, Pan, Mute, Solo.
 - **Per-aux**: Fader, Mute.
 - **Master**: Fader.
-
-Aux sends are not yet wired as bindable targets in v1.
+- **Per-track aux send**: send level for each of the four aux destinations.
 
 ## The MIDI Bindings panel
 
@@ -1180,6 +1476,8 @@ At the bottom:
 \newpage
 
 # Saving and loading sessions
+
+![Session folder contents on disk.](docs/images/ses-02-session-folder.png)
 
 ## Where sessions live
 
@@ -1219,7 +1517,7 @@ A session captures everything user-visible:
 - Regions: file paths, timeline positions, lengths, source offsets, fades, gains, labels, colours, locks, mutes, take history.
 - Mixer: aux lane names and contents, bus parameters, master parameters.
 - Plugins: descriptions and state blobs for every loaded plugin.
-- Transport: loop and punch points, current playhead, BPM, time signature.
+- Transport: loop and punch points, BPM, time signature. (The playhead position itself is not persisted; sessions reopen at bar 1.)
 - Markers: positions, names, colours.
 - MIDI bindings.
 - MIDI sync source/output, MCU port identifiers.
@@ -1238,6 +1536,8 @@ For larger archives, `tar czf` the folder and store the tarball.
 \newpage
 
 # Bouncing and exporting
+
+![Bounce dialog with destination filename and format options.](docs/images/bnc-01-bounce-dialog.png)
 
 ## Bouncing the mix
 
@@ -1262,7 +1562,7 @@ When the bounce completes, the audio device is automatically re-attached.
 
 ## Where bounces go
 
-By default, bounces are written to `MySession/bounces/`. The most-recent bounce is what the mastering stage's **Load latest mixdown** button picks up.
+By default, bounces are written to the session folder itself (the same directory that holds `session.json`). The bounce dialog opens a file browser there so you can rename or redirect each export. The most-recent bounce in the session folder is what the mastering stage's **Load latest mixdown** button picks up.
 
 \newpage
 
@@ -1339,22 +1639,31 @@ Shortcuts use **Cmd** on macOS and **Ctrl** on Linux and Windows unless noted.
 
 | Shortcut | Action |
 |----------|--------|
-| **S** | Split at edit cursor |
+| **S** / **Cmd+E** | Split at edit cursor |
 | **G** | Cycle edit mode (Grab / Range / Cut / Grid / Draw) |
 | **Cmd+]** / **Cmd+[** | Next / previous region |
 | **Esc** | Close modal |
 
 ## Piano roll
 
+The piano roll modal captures its own keypresses first (see `PianoRollComponent::keyPressed`); the table below is the full set.
+
 | Shortcut | Action |
 |----------|--------|
-| **↑** / **↓** | Transpose ±1 semitone |
-| **←** / **→** | Nudge ±1 grid step |
+| **↑** / **↓** | Transpose selected notes ±1 semitone |
+| **←** / **→** | Nudge selected notes ±1 grid step |
 | **Q** | Quantize popup |
 | **S** | Scale picker popup |
-| **L** | Cycle note-entry grid |
+| **V** | Velocity popup (set / humanise) |
+| **G** | Glue selected same-pitch contiguous notes |
+| **L** | Cycle active CC controller in CC lane (1 / 7 / 11 / 64 / 74) |
 | **C** | Cycle colour mode (Pitch / Velocity / Channel) |
-| **Cmd+0** | Zoom fit |
+| **Cmd+A** | Select all notes in region |
+| **Cmd+C** / **Cmd+X** / **Cmd+V** | Copy / cut / paste selected notes |
+| **Cmd+D** | Duplicate selected notes |
+| **Cmd+Z** | Undo last note edit |
+| **Cmd+←** / **Cmd+→** | Pan the view horizontally |
+| **Home** / **End** | Jump view to region start / end |
 | **Cmd+]** / **Cmd+[** | Next / previous MIDI region |
 | **Esc** | Close modal |
 
@@ -1364,6 +1673,12 @@ Shortcuts use **Cmd** on macOS and **Ctrl** on Linux and Windows unless noted.
 |----------|--------|
 | **F11** | Toggle fullscreen |
 | **Esc** | Close current modal |
+
+## Notes on shortcut design
+
+- Shortcuts that would conflict with a focused text field always defer to the text field. You can edit a track label or type into the BPM spinner without accidentally arming a track or starting playback.
+- **M** drops a marker at the playhead, not mute; per-track mute is **X** to avoid the clash with the marker action.
+- Plain **B** is unused; **Cmd+B** triggers Bounce (Logic convention).
 
 \newpage
 
@@ -1414,6 +1729,8 @@ Shortcuts use **Cmd** on macOS and **Ctrl** on Linux and Windows unless noted.
 
 # Troubleshooting
 
+![A plugin slot showing the `⚠ (offline)` state after the original plugin couldn't be re-instantiated.](docs/images/ts-02-plugin-offline.png)
+
 ## "Plugin crashed — reload to recover"
 
 A plugin running in the OOP sandbox has exited. The slot is auto-bypassed and the plugin's state is preserved.
@@ -1463,6 +1780,163 @@ The hardware-insert latency ping could not find a correlation peak.
 
 - If you moved or renamed individual files in the `audio/` folder, the regions that reference them will be silent. Restore the file names.
 - If you moved the session folder to another machine, the relative paths inside `session.json` should still resolve because every reference is relative to the session folder.
+
+\newpage
+
+# Messages
+
+A dictionary of every alert, confirmation, and inline status banner Dusk Studio can show. Use this chapter as a reference when a dialog you don't recognise appears, or when you want to know exactly what each button does.
+
+The format for each entry:
+
+- **Title** — the dialog's title bar text.
+- **When** — what action or condition triggers it.
+- **Text** — the verbatim message body. Bracketed `[fields]` are filled in at runtime.
+- **Buttons** — the user options. The leftmost button is the default for Esc / click-outside.
+- **Action** — what to do next.
+
+## Recording
+
+### Recording setup failed
+
+- **When**: One or more armed tracks couldn't start recording (disk full, write permission missing, corrupted audio folder).
+- **Text**: "These armed tracks could not start recording: Tracks [list]. Common causes: disk full, missing write permission on the session's audio folder, or a corrupted audio directory. The other armed tracks are recording normally; the listed tracks are NOT capturing audio. Stop the transport and check the session folder before continuing."
+- **Buttons**: OK.
+- **Action**: Stop playback. Free disk space, fix permissions, or repair the audio folder, then re-arm.
+
+### Recording errors
+
+- **When**: A take finishes, but at least one track had a write error or MIDI overflow mid-take.
+- **Text**: "The last take captured with errors. Listed tracks may be partial or missing audio / MIDI data: [per-track byte/event counts]. Check the session's audio folder for free space and the session log for I/O details before continuing."
+- **Buttons**: OK.
+- **Action**: Check disk space and the session log. The partial take is preserved in take history; you can roll back to a previous take and re-record the bad ones.
+
+## Session
+
+### Recover from autosave?
+
+- **When**: App startup finds an autosave file newer than `session.json`, meaning Dusk Studio probably crashed.
+- **Text**: "An autosave file is newer than the saved session at [path]. Autosave: [time]. Saved: [time]. Dusk Studio probably exited unexpectedly. Recover the newer autosave, or load the saved session and discard it?"
+- **Buttons**: **Recover autosave** / **Load saved session** / **Cancel**.
+- **Action**: Recover unless you remember explicitly discarding work since the last save.
+
+### Save changes before quitting?
+
+- **When**: You quit with unsaved changes.
+- **Text**: "Your session has unsaved changes since the last manual save. If you don't save, the autosave will still be available the next time you open this session."
+- **Buttons**: **Save** / **Don't Save** / **Cancel**.
+- **Action**: Save unless you specifically want to discard. The autosave file remains as a safety net regardless.
+
+### Save failed
+
+- **When**: `session.json` couldn't be written (disk full, permission denied, folder moved out from under the app).
+- **Text**: "Dusk Studio could not write the session file: [path]. Common causes: disk full, missing write permission, or the parent folder was moved since the session was opened. The session is unchanged in memory; try Save As to a different location."
+- **Buttons**: OK.
+- **Action**: Use **Save As…** to land the session somewhere writable. Do not quit before saving — your in-memory state is intact.
+
+### Clean out
+
+Three variants:
+
+- **No audio directory**: "This session has no audio directory yet, so there's nothing to clean." — Buttons: OK.
+- **No unreferenced files**: "No unreferenced files found. The audio directory is already clean." — Buttons: OK.
+- **Confirm delete**: "Found [N] unreferenced .wav file(s) totalling [size] MB. These were created by past record passes that no longer have any region or take pointing at them. Deleting cannot be undone." — Buttons: **Delete** (destructive, red) / **Cancel**.
+- **Action**: Confirm only if you have backed up anything you might still want.
+
+### Optimize automation
+
+Two variants:
+
+- **Automation active**: "Stop playback before optimising automation. The optimiser rewrites every lane's point data; running it while the audio thread may be reading the lanes is unsafe." (Or the equivalent "Set every strip's automation mode to Off before optimising. …" when the transport is stopped but lanes are still in Read/Touch.) — Buttons: OK.
+- **Success**: "Thinned [before] automation points down to [after]." — Buttons: OK.
+- **Action**: Stop playback and set all strips to **Off** mode, then retry.
+
+### Missing plugins
+
+- **When**: Session load found plugin references that can't be instantiated on this machine.
+- **Text**: "[N] plugin instance(s) are missing on this host: [per-plugin: location — plugin name]. Check that the plugins are still installed for the right format (VST3 / LV2) and that this binary can find them, then reload the session."
+- **Buttons**: OK.
+- **Action**: Install the missing plugins (or the right plugin format) and reload the session. Saved state for offline plugins is preserved on disk; it round-trips through the next save.
+
+### About Dusk Studio
+
+- **When**: Help → About.
+- **Text**: "Dusk Studio [version]. Portastudio-style DAW. Built [date] [time]."
+- **Buttons**: OK (or click outside / Esc).
+
+## Import / Export
+
+### Import
+
+- **Stop playback**: "Stop playback before importing files." — Buttons: OK.
+- **Unsupported format**: "Unsupported or unreadable audio file: [filename]" — Buttons: OK.
+- **Decode failure**: "[error message from file decoder]" — Buttons: OK.
+- **MIDI unreadable**: "Could not read MIDI file." — Buttons: OK.
+- **MIDI batch failure**: "[error message from MIDI importer]" — Buttons: OK.
+
+### Switch track to [mode]?
+
+- **When**: You drop a file whose channel layout or MIDI/audio status differs from the destination track's current mode.
+- **Text**: "Track [N] is currently in [current mode] mode. Importing this [file type] file will switch the track to [target mode] mode. Proceed?"
+- **Buttons**: **Switch** / **Cancel**.
+- **Action**: Confirm if you intended a mode change; otherwise cancel and pick a different destination.
+
+### MIDI bindings export / import failed
+
+- **Export**: "Could not write to [path]" — disk full or permission denied.
+- **Import**: "Could not read bindings from [path]. File is missing or malformed." — bad JSON or missing file.
+- **Buttons**: OK.
+
+## Plugins
+
+### Plugin kind mismatch
+
+- **When**: You try to drop an instrument plugin onto an effect slot or vice versa.
+- **Text**: "This slot expects an [instrument/effect] plugin but the chosen file is an [effect/instrument]. The slot was left empty. Use a MIDI track for instrument plugins and an audio track for effect plugins."
+- **Buttons**: OK.
+
+### Plugin load failed
+
+- **When**: The picked plugin file failed to instantiate or parse.
+- **Text**: "[plugin-supplied error message, or 'Unknown error']"
+- **Buttons**: OK.
+- **Action**: Reinstall the plugin or pick a different one. Check the session log for the underlying error.
+
+### Plugin scan complete
+
+- **When**: The scanner finishes (startup-auto or manual).
+- **Text**: "Added [N] plugin(s) to the picker. (Total known: [M])"
+- **Buttons**: OK.
+
+### Plugin slot labels (inline, not a dialog)
+
+- `⚠ <name> (crashed)` — the plugin has crashed. Right-click → **Re-enable plugin (crashed)** to retry.
+- `<name> (stalled)` — the plugin exceeded its CPU budget for several consecutive blocks and was auto-bypassed. Right-click → **Re-enable plugin (auto-bypassed)** to retry.
+
+## Hardware insert
+
+The hardware-insert ping reports its result inline on the editor (not a modal), colour-coded:
+
+- **No input signal** (red): "No input signal - check routing / device." — capture stall, no audio came back at all.
+- **Ping failed** (red): "Ping failed - check level / cables." — audio came back but cross-correlation found no clear peak.
+- **Success** (green): "Detected: [N] sam ([X.X] ms)" — measurement succeeded; latency is filled in.
+
+## Tempo
+
+### Confirm tempo change
+
+- **When**: You change BPM while the session contains tempo-locked MIDI regions, floating MIDI regions, or automation points.
+- **Text**: "Change tempo from [old] to [new] BPM? [impact summary]. Audio regions and markers are NOT retimed."
+- **Buttons**: **Apply** / **Cancel**.
+- **Action**: Confirm only after reviewing what will be retimed. Audio regions stay put at their sample positions, so a tempo change can break time alignment between audio and MIDI; redo the audio takes if necessary.
+
+## Startup
+
+### Empty recents
+
+- **When**: First launch or after the recents list has been cleared.
+- **Text**: "No recent sessions yet." (inline label in the Startup dialog, not a modal).
+- **Action**: Choose **New** or **Open** from the same dialog.
 
 \newpage
 
@@ -1525,7 +1999,7 @@ The hardware-insert latency ping could not find a correlation peak.
 | EQ MID | Gain | ±9 dB | 0 dB |
 | EQ HF | Gain | ±9 dB | 0 dB |
 | Comp | Enable | Off / On | Off |
-| Comp | Threshold | −30 to 0 dB | 0 dB |
+| Comp | Threshold | −30 to +15 dB | 0 dB |
 | Comp | Ratio | 1:1–10:1 | 4:1 |
 | Comp | Attack | 0.1–50 ms | 10 ms |
 | Comp | Release | 50–1000 ms | 100 ms |
@@ -1561,7 +2035,7 @@ The hardware-insert latency ping could not find a correlation peak.
 | Pultec | HF Atten Freq | 5, 10, 20 kHz | 10 kHz |
 | Pultec | Output gain | ±12 dB | 0 dB |
 | Comp | Enable | Off / On | Off |
-| Comp | Threshold | −30 to 0 dB | 0 dB |
+| Comp | Threshold | −30 to +15 dB | 0 dB |
 | Comp | Ratio | 1:1–10:1 | 4:1 |
 | Comp | Attack | 0.1–50 ms | 10 ms |
 | Comp | Release | 50–1000 ms | 100 ms |
@@ -1581,7 +2055,7 @@ The hardware-insert latency ping could not find a correlation peak.
 | EQ band 3 | Peaking, 4 kHz, ±15 dB, Q 0.4–4 | | 0 dB, Q 1.0 |
 | EQ band 4 | High shelf, 12 kHz, ±15 dB | | 0 dB |
 | Comp | Enable | Off / On | Off |
-| Comp | Threshold | −30 to 0 dB | 0 dB |
+| Comp | Threshold | −30 to +15 dB | 0 dB |
 | Comp | Ratio | 1:1–10:1 | 2:1 |
 | Comp | Attack | 0.1–50 ms | 30 ms |
 | Comp | Release | 50–1000 ms | 250 ms |
