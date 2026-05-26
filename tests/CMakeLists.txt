@@ -35,6 +35,7 @@ add_executable(dusk-studio-tests
     ${CMAKE_SOURCE_DIR}/src/engine/McuReceiver.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/McuController.cpp
     multisample_state_roundtrip.cpp
+    bounce_stem_filename.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/multisample/DuskMultisampleProcessor.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/multisample/DuskMultisampleEditor.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/DuskFileBrowser.cpp

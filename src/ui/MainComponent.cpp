@@ -2096,6 +2096,39 @@ void MainComponent::openBounceDialog()
     });
 }
 
+void MainComponent::openBounceStemsDialog()
+{
+    // Pick a base WAV; per-stem filenames derive from it via
+    // BounceEngine::stemOutputFile (<base>_<NN>_<sanitized-track>.wav).
+    // Sit alongside the master mix so the user can find them together.
+    auto defaultDir = session.getSessionDirectory();
+    if (! defaultDir.isDirectory())
+        defaultDir = juce::File::getSpecialLocation (juce::File::userMusicDirectory);
+    const auto defaultFile = defaultDir.getChildFile ("stems.wav");
+
+    filebrowser::open (*this, {
+        /*title*/                  "Bounce stems (one WAV per track)",
+        /*initialFileOrDirectory*/ defaultFile,
+        /*filePatternsAllowed*/    "*.wav",
+        /*mode*/                   filebrowser::Mode::Save,
+        /*warnAboutOverwriting*/   false,
+        /*selectDirectories*/      false,
+    },
+    [this] (juce::File out)
+    {
+        if (out == juce::File()) return;
+        auto outFile = out;
+        if (! outFile.hasFileExtension ("wav"))
+            outFile = outFile.withFileExtension ("wav");
+
+        auto panel = std::make_unique<BounceDialog> (engine, session,
+                                                       engine.getDeviceManager(), outFile,
+                                                       BounceEngine::Mode::Stems);
+        panel->setSize (520, 200);
+        bounceModal.show (*this, std::move (panel));
+    });
+}
+
 // True when the track's name is empty or still the default "N" string.
 // Used by the import flow to decide whether to auto-rename the track to
 // the imported file's basename (preserves user-renamed tracks).
@@ -2615,6 +2648,7 @@ enum MenuItemId
     kMenuFileBounce   = 1011,
     kMenuFileCleanOut = 1012,
     kMenuFileOptimizeAutomation = 1013,
+    kMenuFileBounceStems        = 1014,
     kMenuFileQuit     = 1099,
     // Reserved range for template entries (one per SessionTemplate enum
     // value, indexed off this base). Stays well above the file-action IDs
@@ -2657,6 +2691,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelMenuIndex,
         menu.addSeparator();
         menu.addItem (kMenuFileMixdown, "Mixdown");
         menu.addItem (kMenuFileBounce,  "Bounce...");
+        menu.addItem (kMenuFileBounceStems, "Bounce stems...");
         menu.addSeparator();
         menu.addItem (kMenuFileCleanOut, "Clean out unreferenced files...");
         menu.addItem (kMenuFileOptimizeAutomation, "Optimize automation...");
@@ -2696,6 +2731,7 @@ void MainComponent::menuItemSelected (int menuItemID, int /*topLevelMenuIndex*/)
         case kMenuFileImportMidi:  importMidiPrompt();  break;
         case kMenuFileMixdown: doMixdown();             break;
         case kMenuFileBounce:  openBounceDialog();      break;
+        case kMenuFileBounceStems: openBounceStemsDialog(); break;
         case kMenuFileCleanOut: cleanOutUnreferencedFiles(); break;
         case kMenuFileOptimizeAutomation:
         {

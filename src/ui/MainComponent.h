@@ -74,6 +74,7 @@ public:
 private:
     void openAudioSettings();
     void openBounceDialog();
+    void openBounceStemsDialog();
     void cleanOutUnreferencedFiles();
     void launchStartupDialog();
     void switchToStage (AudioEngine::Stage);

@@ -17,7 +17,9 @@ BounceDialog::BounceDialog (AudioEngine& e,
     titleLabel.setColour (juce::Label::textColourId, juce::Colour (0xffe8e8e8));
     titleLabel.setText (renderMode == BounceEngine::Mode::MasteringChain
                           ? "Exporting master..."
-                          : "Bouncing master mix...",
+                          : (renderMode == BounceEngine::Mode::Stems
+                              ? "Bouncing stems..."
+                              : "Bouncing master mix..."),
                          juce::dontSendNotification);
     addAndMakeVisible (titleLabel);
 
@@ -116,6 +118,19 @@ void BounceDialog::timerCallback()
     progressValue = (double) bounceEngine->getProgress();
     progressBar.repaint();
 
+    if (renderMode == BounceEngine::Mode::Stems && bounceEngine->isRendering())
+    {
+        const int idx   = bounceEngine->getCurrentStemIndex();
+        const int total = bounceEngine->getTotalStemsToRender();
+        if (idx > 0 && total > 0)
+        {
+            statusLabel.setText ("Rendering stem " + juce::String (idx)
+                                  + " of " + juce::String (total)
+                                  + " → " + outputFile.getParentDirectory().getFullPathName(),
+                                  juce::dontSendNotification);
+        }
+    }
+
     if (! bounceEngine->isRendering() && ! finished)
     {
         finished = true;
@@ -125,8 +140,19 @@ void BounceDialog::timerCallback()
         if (succeeded)
         {
             titleLabel.setText ("Bounce complete", juce::dontSendNotification);
-            statusLabel.setText ("Wrote " + outputFile.getFullPathName(),
-                                 juce::dontSendNotification);
+            if (renderMode == BounceEngine::Mode::Stems)
+            {
+                const int total = bounceEngine->getTotalStemsToRender();
+                statusLabel.setText ("Wrote " + juce::String (total) + " stem"
+                                      + juce::String (total == 1 ? "" : "s")
+                                      + " to " + outputFile.getParentDirectory().getFullPathName(),
+                                      juce::dontSendNotification);
+            }
+            else
+            {
+                statusLabel.setText ("Wrote " + outputFile.getFullPathName(),
+                                      juce::dontSendNotification);
+            }
             progressValue = 1.0;
             progressBar.repaint();
         }
