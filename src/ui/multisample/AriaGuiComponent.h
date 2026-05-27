@@ -1,8 +1,7 @@
 #pragma once
 
-#include "../../engine/multisample/AriaGui.h"
-
 #include <juce_gui_basics/juce_gui_basics.h>
+#include "../../engine/multisample/AriaGui.h"
 
 #include <memory>
 #include <unordered_map>

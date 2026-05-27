@@ -139,9 +139,10 @@ bool SplitRegionAction::undo()
     auto& regs = session.track (trackIdx).regions;
 
     // Remove the right half (idx+1) and restore the left to its full extent.
-    // After the bounds check below, regionIdx < initial_size - 1, so post-
-    // erase regionIdx < new_size: a second check would be unreachable.
-    if (regionIdx + 1 >= (int) regs.size()) return false;
+    // Guard both ends: a negative regionIdx would erase/index out of range,
+    // and the upper bound ensures the right half exists. After this,
+    // regionIdx is in [0, size-2], so the post-erase access stays in range.
+    if (regionIdx < 0 || regionIdx + 1 >= (int) regs.size()) return false;
     regs.erase (regs.begin() + regionIdx + 1);
     regs[(size_t) regionIdx] = originalState;
 

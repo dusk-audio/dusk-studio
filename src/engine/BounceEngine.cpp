@@ -74,7 +74,12 @@ bool BounceEngine::start (const juce::File& outFile, double sr, int bs, double t
             const bool armed = tr.recordArmed.load (std::memory_order_relaxed);
             if (hasContent || armed) ++stems;
         }
-        if (stems == 0) return false;  // nothing to render
+        if (stems == 0)
+        {
+            const juce::ScopedLock lock (lastErrorLock);
+            lastError = "No tracks with content or armed for recording";
+            return false;
+        }
     }
     totalStemsToRender.store (stems, std::memory_order_relaxed);
     currentStemIndex  .store (0,     std::memory_order_relaxed);

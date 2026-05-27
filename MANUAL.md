@@ -449,7 +449,7 @@ Every track is processed by an identical channel strip. The order is fixed; you 
              pan + fader + bus/master/aux branching (:796–:861).
      Verify on any DSP-order change. -->
 
-```
+```text
 input → phase invert → insert (plugin OR hardware) → HPF → 4-band EQ →
 LPF → compressor → pan → fader ─┬─► master    (when no bus is assigned)
                                  ├─► bus 1..4  (exclusive with master:
@@ -632,7 +632,7 @@ Between the channel strips and the master strip are four bus strips. They are sm
      EQ (:195, :214) → comp (:204, :223) → pan × fader (:236–:240).
      Mute is applied at AudioEngine sum-into-master, not inside BusStrip. -->
 
-```
+```text
 bus input (sum of assigned channels) → 3-band EQ → bus compressor →
 pan → fader → master   (mute and solo gate the sum into master)
 ```
@@ -678,7 +678,7 @@ The rightmost strip. Receives the sum of every channel that is not routed exclus
      Pultec EQ (:218, :242) → bus comp (:227, :251) →
      tape (:277) → fader (:296) → mono sum (:299–:303). -->
 
-```
+```text
 master input → Pultec EQ → master bus compressor → tape saturation → master fader → mono sum → output
 ```
 

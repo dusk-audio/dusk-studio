@@ -23,6 +23,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          # Test CI never pushes — don't leave the token in git config.
+          persist-credentials: false
 
       - name: Clone JUCE 8.0.4 (upstream)
         run: |

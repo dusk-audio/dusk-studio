@@ -63,6 +63,9 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          # Release pushes via the RELEASES_REPO_TOKEN PAT, not the
+          # persisted GITHUB_TOKEN — don't leave it in git config.
+          persist-credentials: false
 
       - name: Clone JUCE 8.0.4 (upstream)
         # Same upstream JUCE the Linux CI uses. No SIMD<long long> patch
@@ -153,7 +156,9 @@ jobs:
         run: |
           set -euo pipefail
           ( cd build && cpack -G DragNDrop -C Release )
-          DMG="$(ls build/*.dmg | head -1)"
+          shopt -s nullglob
+          dmgs=(build/*.dmg)
+          DMG="${dmgs[0]:-}"
           [[ -n "$DMG" ]] || { echo "::error::cpack produced no .dmg" >&2; exit 1; }
           # Mark it clearly as an unsigned build.
           base="$(basename "$DMG" .dmg)"

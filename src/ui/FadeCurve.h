@@ -2,6 +2,7 @@
 
 #include <juce_graphics/juce_graphics.h>
 #include "../session/Session.h"
+#include <cmath>
 
 namespace duskstudio::fadeviz
 {

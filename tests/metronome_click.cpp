@@ -10,6 +10,7 @@
 
 #include "dsp/Metronome.h"
 
+#include <algorithm>
 #include <cmath>
 #include <vector>
 
