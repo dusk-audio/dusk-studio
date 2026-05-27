@@ -1,21 +1,7 @@
-// PitchDetector.h — autocorrelation-based monophonic pitch detector.
-//
-// Lightweight pitch tracker tuned for guitar. Runs once per audio block
-// (allocation-free, ~10 µs typical). Buffers the last ~46 ms of input in
-// a circular buffer and searches for the lag that maximises the
-// autocorrelation; the lag-to-frequency conversion uses parabolic
-// interpolation between adjacent integer lags for sub-sample accuracy.
-//
-// Range: ~50 Hz - 1500 Hz (covers low-B/drop-A through high-E + harmonics).
-// If the input level is below kSilenceThreshold, the detector reports 0 Hz
-// so the UI can show a "no signal" state instead of garbage at the noise
-// floor.
-//
-// API contract:
-//   prepare()       — allocates the circular buffer (NOT realtime-safe)
-//   pushBlock()     — appends samples, runs detection, updates lastHz/Level
-//   getLatestHz()   — reads the most recent detected frequency
-//   getLatestLevel()— input RMS level in linear amplitude
+// YIN/CMNDF monophonic pitch detector tuned for guitar. ~10 µs/block,
+// allocation-free. Range ~50-1500 Hz. Below kSilenceThreshold reports
+// 0 Hz so the UI can show "no signal" instead of noise-floor garbage.
+// prepare() is NOT realtime-safe; pushBlock is.
 
 #pragma once
 
@@ -42,14 +28,13 @@ public:
                             static_cast<int> (std::ceil  (sampleRate /   50.0)));
     }
 
-    // Append one block, run a single detection at the end of it.
-    // Allocation-free; safe to call from the audio thread.
+    // Audio-thread safe.
     void pushBlock (const float* samples, int numSamples)
     {
         const int N = static_cast<int> (history_.size());
         if (N <= 0) return;
 
-        // 1) Append into circular buffer + accumulate RMS.
+        // Append + RMS.
         double sumSq = 0.0;
         for (int i = 0; i < numSamples; ++i)
         {
@@ -62,45 +47,31 @@ public:
             ? static_cast<float> (std::sqrt (sumSq / static_cast<double> (numSamples)))
             : 0.0f;
 
-        // 2) Skip detection on silence.
         if (latestLevel_ < kSilenceThreshold)
         {
             latestHz_ = 0.0f;
             return;
         }
 
-        // 3) Linearise the circular buffer into a stack-friendly read order
-        //    (newest sample at index N-1) by indexing through the ring.
-        // 4) Compute autocorrelation r(τ) for τ in [minLag, maxLag],
-        //    using the latest N samples. r(τ) = Σ x[k]·x[k+τ].
-        // 5) Find the τ with the largest r(τ) AFTER the first descending
-        //    region — this avoids picking τ=0 (the trivial maximum).
-        //
-        // Using a difference-function variant (more robust than raw
-        // autocorrelation for fundamentals near the buffer's lower edge):
-        //   d(τ) = Σ (x[k] - x[k+τ])²  — small at the period
-        //   The CMNDF (cumulative-mean-normalised difference function) gives
-        //   the YIN algorithm's robustness without a ton of extra cost.
+        // YIN-style: d(τ) = Σ (x[k] - x[k+τ])² with running cumulative-
+        // mean normalisation (CMNDF). Frame length = N - maxLag so
+        // x[k+τ] never wraps past the latest write.
         const int historyLen = N;
-        // Use the most recent (historyLen - maxLag) samples as the analysis
-        // frame so x[k+τ] never wraps past the latest write.
         const int frameLen = historyLen - maxLag_;
 
         auto readAt = [&] (int idx) noexcept -> float
         {
-            // idx is "samples ago, where 0 = oldest"; map to circular pos.
-            // The OLDEST sample is at writePos_ (since the buffer is full
-            // after the first prepare()-sized push).
+            // idx = "samples ago, 0=oldest". Buffer full after first
+            // prepare()-sized push, oldest sits at writePos_.
             int p = writePos_ + idx;
             if (p >= historyLen) p -= historyLen;
             return history_[static_cast<size_t> (p)];
         };
 
-        // Difference function with running cumulative-mean normalisation.
         float runningCMND = 0.0f;
         int   bestTau    = -1;
         float bestValue  = std::numeric_limits<float>::max();
-        constexpr float kCMNDThreshold = 0.15f; // YIN's "harmonic threshold"
+        constexpr float kCMNDThreshold = 0.15f;  // YIN's harmonic threshold
 
         for (int tau = minLag_; tau <= maxLag_; ++tau)
         {
@@ -120,8 +91,7 @@ public:
             {
                 bestValue = cmnd;
                 bestTau   = tau;
-                // Early-out as soon as we're confident.
-                break;
+                break;  // confident enough
             }
             if (cmnd < bestValue)
             {
@@ -136,12 +106,10 @@ public:
             return;
         }
 
-        // 6) Parabolic interpolation between τ-1, τ, τ+1 for sub-sample
-        //    accuracy on the cents reading.
+        // Parabolic interp between τ-1, τ, τ+1 for sub-sample accuracy.
         float fracTau = static_cast<float> (bestTau);
         if (bestTau > minLag_ && bestTau < maxLag_)
         {
-            // Re-evaluate d at the three neighbours.
             auto diffAt = [&] (int tau) noexcept
             {
                 float dd = 0.0f;

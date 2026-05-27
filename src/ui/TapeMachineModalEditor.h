@@ -6,28 +6,19 @@
 
 namespace duskstudio
 {
-// Hosts a TapeMachine plugin editor inside Dusk Studio's gear modal and trims
-// down the parts of its UI that don't belong in the embedded context:
+// Hosts a TapeMachine plugin editor in our gear modal + masks/repositions
+// the parts that don't belong in the embedded context:
+//   - Painted nameplate / subtitle / "Dusk Audio" footer covered by
+//     opaque masks (can't suppress donor paint without modding source).
+//   - HQ oversampling combo/label hidden — global oversampling comes
+//     from Audio Settings; per-plugin would fight the host.
+//   - Corner resize handle hidden — modal sized once on open.
+//   - Preset combo + Save/Del recentered (donor pins flush right).
+//   - Signal Path + EQ Std recentered under the 3-col row above.
 //
-//   • Painted "TapeMachine" nameplate + "Vintage Tape Emulation" subtitle
-//     are covered by an opaque header overlay; the painted "Dusk Audio"
-//     footer is covered by a matching footer overlay. We can't suppress
-//     the editor's paint() without modifying donor sources, so we mask.
-//   • HQ oversampling combo + label are hidden — global oversampling
-//     comes from Audio Settings, so a per-plugin override would just
-//     fight the host's setting.
-//   • The corner resize handle is hidden — the modal is sized once when
-//     it opens; resize gestures don't make sense inside a centered modal.
-//   • Preset selector + Save / Del buttons are recentered horizontally
-//     in the header (donor pins them flush right; we want them on-axis).
-//   • Signal Path + EQ Std selectors are recentered under the 3-column
-//     row above (donor places them in the leftmost two of three columns,
-//     which looks lopsided once the row only has two items).
-//
-// Located by traversal — the donor's children don't have stable IDs, so
-// we match by combo items / button text / label text. After the donor's
-// resized() runs (triggered by our editor->setBounds), we apply the
-// overrides on top.
+// Located by traversal (donor children have no stable IDs) — matched
+// by combo items / button text / label text. Overrides applied after
+// donor's resized() runs.
 class TapeMachineModalEditor final : public juce::Component
 {
 public:
@@ -45,11 +36,8 @@ public:
         }
         addAndMakeVisible (headerMask);
         addAndMakeVisible (footerMask);
-        // Reparent the preset cluster onto the wrapper, AFTER the masks, so
-        // it ends up on top in z-order. Without this the full-width header
-        // mask covers the painted nameplate AND the cluster — the cluster
-        // becomes invisible "dead space" in the header. Bounds are set
-        // each resized() pass.
+        // Reparent AFTER the masks so it ends up topmost in z-order —
+        // otherwise the header mask covers the cluster too.
         if (presetCombo != nullptr) addAndMakeVisible (presetCombo.getComponent());
         if (saveBtn     != nullptr) addAndMakeVisible (saveBtn.getComponent());
         if (delBtn      != nullptr) addAndMakeVisible (delBtn.getComponent());
@@ -62,13 +50,9 @@ public:
         ownedEditor->setBounds (getLocalBounds());
         applyChildOverrides (*ownedEditor);
 
-        // Donor's own resized() runs DURING ownedEditor->setBounds and
-        // sometimes cascades async layout that re-pins the preset
-        // cluster to the right edge after applyChildOverrides finishes
-        // synchronously. Re-run the recenter on the next message-loop
-        // tick so we win the final position. Cheap (one setBounds per
-        // cached pointer) and harmless if the donor already left them
-        // where we put them.
+        // Donor's resized cascades async layout that sometimes re-pins
+        // the cluster to the right edge after our sync override runs.
+        // Re-run on next tick so we win the final position.
         juce::Component::SafePointer<TapeMachineModalEditor> safe (this);
         juce::MessageManager::callAsync ([safe]
         {
@@ -96,10 +80,8 @@ private:
         Mask()
         {
             setOpaque (true);
-            // Header mask sits over the preset cluster after recentering, so
-            // it MUST pass clicks through to the children below it (which
-            // are the editor's preset combo + Save / Del buttons re-parented
-            // by our overrides). Footer mask doesn't need clicks either way.
+            // MUST pass clicks through — header mask sits over the
+            // recentered preset cluster.
             setInterceptsMouseClicks (false, false);
         }
         void paint (juce::Graphics& g) override
@@ -107,8 +89,6 @@ private:
             g.fillAll (juce::Colour (0xff181818));
         }
     };
-
-    // ─── Hides ──────────────────────────────────────────────────────────
 
     static void hideHqControls (juce::Component& root)
     {
@@ -156,25 +136,17 @@ private:
                 child->setVisible (false);
     }
 
-    // ─── Overrides applied after donor resized() ─────────────────────────
-
     void applyChildOverrides (juce::Component& editor)
     {
         recenterPresetCluster();
         recenterRowTwoSelectors (editor);
     }
 
-    // Identifies the preset combo + Save / Del buttons by content. Called
-    // once at construction; pointers cached for resized() to reposition.
-    //
-    // Detection is structural, not item-count-based: the previous heuristic
-    // ("ComboBox with > 6 items") relied on the donor having finished
-    // populating its factory list before our ctor ran. If the donor was
-    // still empty / async-loading, the preset combo wasn't identified and
-    // recentering silently skipped. Now we find Save/Del by text first,
-    // then pick the ComboBox horizontally adjacent to (and left of) Save
-    // on the same Y row — works regardless of whether the dropdown has any
-    // items in it at the moment.
+    // Structural detection — find Save/Del by text, then pick the
+    // ComboBox horizontally adjacent and left of Save on the same row.
+    // Item-count heuristic ("ComboBox with > 6 items") was unreliable —
+    // depended on the donor finishing its async factory-list populate
+    // before our ctor ran.
     void findPresetCluster (juce::Component& editor)
     {
         for (auto* child : editor.getChildren())
@@ -207,10 +179,8 @@ private:
         }
     }
 
-    // Lays out the cached cluster centered horizontally in the wrapper's
-    // header band. Run AFTER the donor's resized() (which would otherwise
-    // pin them flush right). Reserves Del's slot even when Del is hidden,
-    // so toggling Del's visibility doesn't shift Save/preset off-center.
+    // Reserves Del's slot even when hidden so toggling Del's visibility
+    // doesn't shift Save/preset off-center.
     void recenterPresetCluster()
     {
         if (presetCombo.getComponent() == nullptr || ownedEditor == nullptr) return;
@@ -235,10 +205,8 @@ private:
         if (delBtn.getComponent()  != nullptr) delBtn ->setBounds (x, y, delW,  rowH);
     }
 
-    // Donor places the second selector row (Signal Path + EQ Std) in the
-    // leftmost two of three columns, leaving the right column empty. Slide
-    // the pair right by half a column-width so they sit centered under
-    // the row above (Machine / Speed / Tape Type).
+    // Donor puts row 2 (Signal Path + EQ Std) in cols 0-1 of 3, leaving
+    // col 2 empty. Slide by half a column-width to centre under row 1.
     static void recenterRowTwoSelectors (juce::Component& editor)
     {
         juce::ComboBox* signalCombo = nullptr;
@@ -262,16 +230,13 @@ private:
         }
         if (signalCombo == nullptr || eqStdCombo == nullptr) return;
 
-        // Half-column shift: combo width is roughly colW = rowW/3, so a
-        // half-column shift is half the combo's own width.
+        // colW ≈ rowW/3 so half-column = half the combo's width.
         const int shiftCombo = signalCombo->getWidth() / 2;
         signalCombo->setBounds (signalCombo->getBounds().translated (shiftCombo, 0));
         eqStdCombo ->setBounds (eqStdCombo ->getBounds().translated (shiftCombo, 0));
 
-        // Their two stacked labels travel with the combos — shift by the
-        // same delta the combos moved (combo width / 2), not the label's
-        // own width, so labels stay centered over their combos when label
-        // and combo widths differ.
+        // Labels shift by the same combo delta (not label width) so
+        // they stay centred over their combos when widths differ.
         for (auto* child : editor.getChildren())
         {
             auto* lbl = dynamic_cast<juce::Label*> (child);
@@ -285,15 +250,11 @@ private:
     std::unique_ptr<juce::AudioProcessorEditor> ownedEditor;
     Mask headerMask;
     Mask footerMask;
-    // findPresetCluster runs once at construction; the SafePointers below
-    // do NOT trigger re-discovery if the donor rebuilds its child tree.
-    // We rely on TapeMachine's editor not swapping these controls out at
-    // runtime (it doesn't today). The SafePointers exist so a deleted
-    // component is observed as nullptr instead of dangling — if the donor
-    // ever starts rebuilding, the cluster simply disappears from the
-    // header until the modal is reopened, with no crash. Add a
-    // ComponentListener (componentChildrenChanged → re-run findPresetCluster
-    // + recenterPresetCluster) here if that assumption ever breaks.
+    // findPresetCluster runs once. SafePointers don't re-discover if
+    // the donor rebuilds its child tree (it doesn't today). A deleted
+    // component reads as nullptr — cluster vanishes from the header
+    // until reopened, no crash. Add a ComponentListener
+    // (componentChildrenChanged -> re-run discovery) if this breaks.
     juce::Component::SafePointer<juce::ComboBox>   presetCombo;
     juce::Component::SafePointer<juce::TextButton> saveBtn;
     juce::Component::SafePointer<juce::TextButton> delBtn;
