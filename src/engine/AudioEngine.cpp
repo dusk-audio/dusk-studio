@@ -14,57 +14,35 @@ namespace duskstudio
 {
 AudioEngine::AudioEngine (Session& sessionToBindTo) : session (sessionToBindTo)
 {
-    // Construct the MCU receiver + controller once the session ref is
-    // bound. Held by unique_ptr so the AudioEngine header stays free
-    // of the McuReceiver / McuController definitions (and the JUCE
-    // Timer base class).
+    // Held by unique_ptr so AudioEngine.h stays free of McuReceiver /
+    // McuController definitions.
     mcuReceiver   = std::make_unique<McuReceiver>   (session);
     mcuController = std::make_unique<McuController> (session);
-    // Wire the controller's emit sink + transport provider. Both
-    // captures use `this` because AudioEngine owns the controller -
-    // their lifetime is bounded by the engine's.
     mcuController->setSink ([this] (const juce::MidiBuffer& buf)
     {
         const int outIdx = session.mcu.resolvedOutputIdx.load (std::memory_order_relaxed);
         if (outIdx >= 0) sendMidiToOutput (outIdx, buf);
     });
     mcuController->setTransportProvider ([this] { return &transport; });
-    // Cap the undo stack. Each RegionEditAction's getSizeInUnits is 1
-    // (Split = 2, Clone = 4) so 500 covers thousands of typical edits
-    // while bounding memory under a multi-hour edit session — without
-    // this, the stack grows unbounded and the destructor walks the
-    // whole list on app exit. minimumTransactionsToKeep = 50 means
-    // the most recent 50 are always retained even if their total
-    // exceeds 500 units.
+    // 500 units covers thousands of edits while bounding memory under
+    // multi-hour sessions; without this the stack grows unbounded.
+    // 50 minimum kept even when total exceeds the cap.
     undoManager.setMaxNumberOfStoredUnits (500, 50);
 
-    // Build the playhead now that all the atom addresses (transport,
-    // session.tempoBpm, currentSampleRate) are stable. Hosted plugins
-    // get this via setPlayHead so tempo-synced features (LFOs, arps,
-    // delays, transport-driven UIs) read the live session BPM and
-    // playhead position.
+    // Hosted plugins get this via setPlayHead so tempo-synced features
+    // (LFOs, arps, delays) read live session BPM + playhead.
     playHead = std::make_unique<DuskStudioPlayHead> (transport,
                                                   &session.tempoBpm,
                                                   &currentSampleRate);
 
-    // Sentinel for "no previous input" - the first audio block will compare
-    // the current midiInputIndex against this and (correctly) emit a flush
-    // if a device is already selected, which is harmless when no notes are
-    // held yet.
+    // -1 sentinel so the first block sees a "swap" if a device is
+    // already selected (harmless flush — no notes held yet).
     lastMidiInputIndex.fill (-1);
 
     for (int i = 0; i < Session::kNumTracks; ++i)
     {
         strips[(size_t) i].bind (session.track (i).strip);
-        // Each channel strip gets a reference to the shared PluginManager
-        // so its PluginSlot can resolve plugin files. Call must happen
-        // before any audio processing - the slot is bypassed until a
-        // plugin is actually loaded, so binding here costs nothing.
         strips[(size_t) i].bindPluginManager (pluginManager);
-        // Hardware-insert side of the channel insert slot. The slot is
-        // pre-allocated; this just latches a pointer to the per-track
-        // HardwareInsertParams so the audio thread can read routing /
-        // gain / dry-wet lock-free.
         strips[(size_t) i].bindHardwareInsert (session.track (i).hardwareInsert);
     }
     for (int i = 0; i < Session::kNumBuses; ++i)
@@ -72,12 +50,7 @@ AudioEngine::AudioEngine (Session& sessionToBindTo) : session (sessionToBindTo)
     for (int i = 0; i < Session::kNumAuxLanes; ++i)
     {
         auxLaneStrips[(size_t) i].bind (session.auxLane (i).params);
-        // Lanes host plugins (reverb / delay / etc.) so they need the
-        // shared PluginManager to resolve files into AudioPluginInstances.
         auxLaneStrips[(size_t) i].bindPluginManager (pluginManager);
-        // Hardware-insert side of each lane slot. One bind per slot
-        // index so the audio thread can read each slot's routing /
-        // gain / dry-wet without indirection.
         for (int s = 0; s < AuxLaneParams::kMaxLanePlugins; ++s)
             auxLaneStrips[(size_t) i].bindHardwareInsert (
                 s, session.auxLane (i).hardwareInserts[(size_t) s]);
@@ -85,20 +58,15 @@ AudioEngine::AudioEngine (Session& sessionToBindTo) : session (sessionToBindTo)
     master.bind (session.master());
     masteringChain.bind (session.mastering());
 
-    // Linux: pre-register Dusk Studio's ALSA backend + JACK BEFORE
-    // initialiseWithDefaultDevices. JUCE's createDeviceTypesIfNeeded only
-    // auto-registers its defaults (which would re-add the stock ALSA path
-    // we don't want) when availableDeviceTypes is empty; pre-adding ours
-    // makes that branch a no-op. We then explicitly call scanForDevices
-    // on each pre-registered type so init's pickCurrentDeviceTypeWithDevices
-    // pass can query device counts without tripping our hasScanned
-    // assertions. The dropdown now shows two backends: "ALSA" (ours) and
-    // "JACK" - no double-listing.
-    //
-    // On macOS / Windows we let JUCE auto-register its native backends
-    // (CoreAudio / WASAPI / ASIO / JACK-if-installed) the standard way -
-    // DUSKSTUDIO_HAS_ALSA isn't defined there so the pre-registration
-    // path is skipped entirely.
+    // Linux: pre-register Dusk Studio's ALSA + JACK BEFORE
+    // initialiseWithDefaultDevices so JUCE's createDeviceTypesIfNeeded
+    // branch is a no-op (it only auto-registers defaults when the type
+    // list is empty, which would re-add the stock ALSA path). Explicit
+    // scanForDevices so init's pickCurrentDeviceTypeWithDevices doesn't
+    // trip hasScanned assertions. Dropdown ends up with "ALSA" (ours)
+    // + "JACK", no double-listing.
+    // macOS / Windows let JUCE auto-register natives — DUSKSTUDIO_HAS_ALSA
+    // isn't defined there.
    #if defined(DUSKSTUDIO_HAS_ALSA)
     if (auto* jackType = juce::AudioIODeviceType::createAudioIODeviceType_JACK())
         deviceManager.addAudioDeviceType (std::unique_ptr<juce::AudioIODeviceType> (jackType));
@@ -118,10 +86,8 @@ AudioEngine::AudioEngine (Session& sessionToBindTo) : session (sessionToBindTo)
 
     deviceManager.addAudioCallback (this);
 
-    // MIDI input wiring. Build the per-input collector list once at startup.
-    // addMidiInputDeviceCallback with an empty deviceIdentifier means "every
-    // enabled input fans out to this callback" — handleIncomingMidiMessage
-    // routes by source pointer.
+    // Empty deviceIdentifier = "every enabled input fans out to this
+    // callback"; handleIncomingMidiMessage routes by source pointer.
     rebuildMidiInputBank();
     rebuildMidiOutputBank();
     deviceManager.addMidiInputDeviceCallback ({}, this);
@@ -129,15 +95,10 @@ AudioEngine::AudioEngine (Session& sessionToBindTo) : session (sessionToBindTo)
 
 void AudioEngine::refreshMidiInputs()
 {
-    // Detach both callbacks so neither the audio thread nor the MIDI
-    // thread can be inside the engine while we mutate the device /
-    // collector / buffer vectors. JUCE's removeAudioCallback joins the
-    // audio thread before returning, and removeMidiInputDeviceCallback
-    // joins on the MIDI dispatch side. This is the cheapest correct
-    // synchronisation for a rare user-triggered event - mutating the
-    // vectors lock-free under callback would require a snapshot pattern
-    // throughout the audio path that costs more than it's worth for a
-    // hot-plug refresh.
+    // Detach both callbacks — JUCE's remove* joins the audio + MIDI
+    // dispatch sides before returning. Cheapest correct sync for a
+    // rare hot-plug event; lock-free vector mutation would cost more
+    // throughout the audio path than it's worth.
     deviceManager.removeAudioCallback (this);
     deviceManager.removeMidiInputDeviceCallback ({}, this);
 
@@ -191,33 +152,22 @@ void AudioEngine::refreshMidiInputs()
         }
     }
 
-    // The output bank was rebuilt with all-null entries (lazy open). Re-
-    // open whichever ports tracks are currently routed to so playback
-    // doesn't silently drop notes after a hot-plug refresh. Must run
-    // BEFORE re-attaching the audio/MIDI callbacks - otherwise the audio
-    // thread can iterate midiOutputs while ensureMidiOutputOpen() mutates
-    // it.
+    // Must run BEFORE re-attaching callbacks — otherwise the audio
+    // thread iterates midiOutputs while ensureMidiOutputOpen mutates it.
     openConfiguredMidiOutputs();
 
     deviceManager.addMidiInputDeviceCallback ({}, this);
     deviceManager.addAudioCallback (this);
 
-    // Wake any UI listeners (each ChannelStripComponent's MIDI dropdown)
-    // so they rebuild their item list and re-select via identifier.
     sendChangeMessage();
 }
 
 void AudioEngine::rebuildMidiInputBank()
 {
-    // Snapshot the available MIDI inputs and prepare a parallel collector
-    // list. Index alignment with `midiInputDevices` is what
-    // `Track::midiInputIndex` references (-1 = none, 0..N = this list).
-    //
-    // Safe to mutate the three vectors here ONLY when both the audio and
-    // MIDI callbacks are detached. The constructor's first call satisfies
-    // that (callbacks aren't registered yet); refreshMidiInputs() does the
-    // remove-then-call-then-add dance. Calling this with callbacks active
-    // races the audio + MIDI threads and is undefined behaviour.
+    // Safe to mutate ONLY with both callbacks detached. Ctor's first
+    // call satisfies that (callbacks not yet registered);
+    // refreshMidiInputs does remove-then-call-then-add. Callbacks
+    // active during mutation = UB.
     midiInputDevices = juce::MidiInput::getAvailableDevices();
     midiInputCollectors.clear();
     midiInputCollectors.reserve ((size_t) midiInputDevices.size() + 1);
@@ -226,13 +176,9 @@ void AudioEngine::rebuildMidiInputBank()
     {
         auto col = std::make_unique<juce::MidiMessageCollector>();
         if (sr > 0.0) col->reset (sr);
-        // Enabling the device routes its messages to handleIncomingMidiMessage
-        // via the empty-id callback registration in the ctor.
-        // setMidiInputDeviceEnabled returns void, so we re-query the manager
-        // to verify the enable took. Failure usually means the OS denied
-        // access (e.g. another app exclusively owns the port); log so the
-        // user can diagnose missing MIDI input rather than silently leaving
-        // the dropdown showing a non-functioning device.
+        // setMidiInputDeviceEnabled returns void — re-query to verify.
+        // Failure usually = OS denied access (another app exclusively
+        // owns the port). Log so the user can diagnose missing input.
         const auto& devId = midiInputDevices[i].identifier;
         deviceManager.setMidiInputDeviceEnabled (devId, true);
         if (! deviceManager.isMidiInputDeviceEnabled (devId))
@@ -246,12 +192,10 @@ void AudioEngine::rebuildMidiInputBank()
         midiInputCollectors.push_back (std::move (col));
     }
 
-    // Append the synthetic VKB device after real hardware so its index is
-    // stable across hot-plug (real devices come and go; the VKB is always
-    // last). Identifier is fixed so saved sessions resolve back to it on
-    // load. The collector is not bound to any OS device — VKB UI calls
-    // addMessageToQueue on it directly; the audio thread drains it as
-    // perInputMidi[virtualKeyboardCollectorIndex].
+    // Appended after real hardware so the VKB's index is stable across
+    // hot-plug. Fixed identifier so saved sessions resolve back to it.
+    // Not bound to any OS device — VKB UI addMessageToQueues directly;
+    // audio drains it as perInputMidi[virtualKeyboardCollectorIndex].
     juce::MidiDeviceInfo virtualKb { "Virtual Keyboard (Dusk Studio)", "Dusk Studio:virtual-keyboard" };
     midiInputDevices.add (virtualKb);
     {
@@ -263,9 +207,8 @@ void AudioEngine::rebuildMidiInputBank()
 
     perInputMidi.assign ((size_t) midiInputDevices.size(), juce::MidiBuffer{});
 
-    // Resolve session.syncSourceInputIdentifier -> syncSourceInputIdx.
-    // Done on every rebuild so a hot-plug doesn't strand the index at
-    // a stale slot. Empty identifier or no match -> -1 (no sync).
+    // Re-resolve on every rebuild so a hot-plug doesn't strand the
+    // index at a stale slot. Empty / no match = -1 (no sync).
     int resolvedSyncIdx = -1;
     const auto& wantedId = session.syncSourceInputIdentifier;
     if (wantedId.isNotEmpty())
@@ -281,8 +224,7 @@ void AudioEngine::rebuildMidiInputBank()
     }
     session.syncSourceInputIdx.store (resolvedSyncIdx, std::memory_order_release);
 
-    // MCU input: same identifier->index resolve. -1 = MCU surface off
-    // (the audio callback will skip MCU decode for this block).
+    // Same resolve pattern. -1 = MCU surface off.
     int resolvedMcuInputIdx = -1;
     const auto& wantedMcuInputId = session.mcu.inputIdentifier;
     if (wantedMcuInputId.isNotEmpty())
@@ -312,26 +254,19 @@ juce::MidiMessageCollector* AudioEngine::getVirtualKeyboardCollector() noexcept
 
 void AudioEngine::rebuildMidiOutputBank()
 {
-    // Tear down any existing outputs first (closes the OS handles and
-    // joins each MidiOutput's background thread). Mutating midiOutputs
-    // here is only safe when the audio callback is detached - the audio
-    // thread iterates this vector while sending events.
+    // Mutating midiOutputs is safe only with audio callback detached
+    // (audio iterates while sending).
     midiOutputs.clear();
 
-    // Enumerate, but do NOT open. Eagerly opening every available output
-    // at startup blocks the message thread on each ALSA snd_seq_connect_to
-    // and spawns one delivery thread per port - on a system with USB MIDI
-    // gear that can stall the MainWindow's setVisible(true) for seconds
-    // (or indefinitely if a port misbehaves). Most sessions use zero or
-    // one output; opening on demand via ensureMidiOutputOpen() pays only
-    // for what's actually routed.
+    // Enumerate but don't open — eager open at startup blocks the
+    // message thread on each snd_seq_connect_to and spawns one thread
+    // per port; stalls MainWindow::setVisible(true) for seconds on
+    // systems with USB MIDI. Open on demand via ensureMidiOutputOpen.
     midiOutputDevices = juce::MidiOutput::getAvailableDevices();
-    midiOutputs.resize ((size_t) midiOutputDevices.size());  // all nullptr
+    midiOutputs.resize ((size_t) midiOutputDevices.size());
 
-    // Resolve session.syncOutputIdentifier -> syncOutputIdx + eagerly
-    // open the chosen port so the first clock byte the audio thread
-    // emits doesn't have to wait on a synchronous ALSA connect. Empty
-    // identifier or no match -> -1 (no emission).
+    // Eager-open the chosen sync port so the first clock byte the
+    // audio thread emits doesn't wait on a sync ALSA connect.
     int resolvedSyncOutIdx = -1;
     const auto& wantedOutId = session.syncOutputIdentifier;
     if (wantedOutId.isNotEmpty())
@@ -348,9 +283,8 @@ void AudioEngine::rebuildMidiOutputBank()
     }
     session.syncOutputIdx.store (resolvedSyncOutIdx, std::memory_order_release);
 
-    // MCU output: same identifier->index resolve + eager-open so the
-    // McuController's first 30 Hz tick doesn't race with ALSA's
-    // synchronous snd_seq_connect.
+    // Same eager-open pattern — McuController's first 30 Hz tick
+    // doesn't race ALSA's sync connect.
     int resolvedMcuOutIdx = -1;
     const auto& wantedMcuOutId = session.mcu.outputIdentifier;
     if (wantedMcuOutId.isNotEmpty())
@@ -387,8 +321,8 @@ bool AudioEngine::ensureMidiOutputOpen (int index)
                       midiOutputDevices[index].identifier.toRawUTF8());
         return false;
     }
-    // Start the background-delivery thread so audio-thread sends via
-    // sendBlockOfMessages enqueue without blocking on the OS port.
+    // Background thread so audio-thread sendBlockOfMessages enqueues
+    // without blocking on the OS port.
     out->startBackgroundThread();
     midiOutputs[(size_t) index] = std::move (out);
     return true;
@@ -400,13 +334,11 @@ bool AudioEngine::sendMidiToOutput (int index, const juce::MidiBuffer& events) n
         return false;
     auto* out = midiOutputs[(size_t) index].get();
     if (out == nullptr) return false;
-    // sendBlockOfMessages takes an absolute ms-since-epoch base; passing
-    // Time::getMillisecondCounterHiRes() means "deliver as soon as the
-    // background thread can". Used by the McuController's 30 Hz feedback
-    // emit; lower latency than buffering for the next audio block.
+    // Absolute ms-since-epoch base; getMillisecondCounterHiRes = "ASAP".
+    // Lower latency than buffering for the next audio block.
     out->sendBlockOfMessages (events,
                                 juce::Time::getMillisecondCounterHiRes(),
-                                /* sampleRate (used only for time stamps) */ 48000.0);
+                                /* sampleRate for time stamps only */ 48000.0);
     return true;
 }
 
@@ -424,8 +356,7 @@ void AudioEngine::handleIncomingMidiMessage (juce::MidiInput* source,
                                                 const juce::MidiMessage& message)
 {
     if (source == nullptr) return;
-    // Identify the source's index in our parallel list. JUCE guarantees
-    // identifier stability for a given device across the session.
+    // JUCE guarantees identifier stability per device per session.
     const auto& sourceId = source->getIdentifier();
     for (int i = 0; i < midiInputDevices.size(); ++i)
     {
@@ -441,10 +372,8 @@ void AudioEngine::handleIncomingMidiMessage (juce::MidiInput* source,
 
 int AudioEngine::getBackendXRunCount() const noexcept
 {
-    // const_cast: AudioDeviceManager::getCurrentAudioDevice is non-const for
-    // historical reasons, but the read here is benign - getXRunCount itself
-    // is noexcept and just returns an internal counter on the patched JUCE
-    // ALSA backend (and on JACK).
+    // const_cast: getCurrentAudioDevice is non-const for historical
+    // reasons. Benign — getXRunCount is noexcept and returns a counter.
     if (auto* dev = const_cast<juce::AudioDeviceManager&> (deviceManager).getCurrentAudioDevice())
         return dev->getXRunCount();
     return 0;
@@ -455,11 +384,10 @@ void AudioEngine::setStage (Stage s) noexcept
     const auto current = stage.load (std::memory_order_relaxed);
     if (current == s) return;
 
-    // Recording / Mixing / Aux share the live track-to-master signal flow -
-    // only the visible UI changes between them, so playback / recording
-    // continue uninterrupted across those stage swaps. Mastering swaps to a
-    // wholly separate path (stereo file → MasteringChain → output), so
-    // transport must be force-stopped when crossing into or out of it.
+    // Recording/Mixing/Aux share live track-to-master flow — only UI
+    // changes across those swaps. Mastering = wholly separate path
+    // (stereo file -> MasteringChain -> output) so transport must be
+    // force-stopped when crossing into or out of it.
     const bool crossesMastering = (current == Stage::Mastering)
                                  || (s == Stage::Mastering);
     if (crossesMastering)
@@ -486,14 +414,10 @@ void AudioEngine::play()
 {
     if (transport.isPlaying() || transport.isRecording()) return;
 
-    // When loop is enabled and the playhead sits outside the loop range,
-    // snap to loopStart so playback always begins inside the loop. The
-    // audio-callback wraparound (in audioDeviceIOCallbackWithContext)
-    // already handles `playhead >= loopEnd` by snapping back, which is
-    // why pressing Play with the playhead AFTER the loop "just works".
-    // The before-loop case has no symmetric guard there - linear playback
-    // would audibly run through the pre-loop area until reaching loopEnd.
-    // Snapping here at Play-press matches the intent of "loop is engaged".
+    // The audio callback already wraps playhead >= loopEnd back, but
+    // has no symmetric guard for before-loop — linear playback would
+    // audibly run through the pre-loop area. Snap at Play-press so
+    // "loop engaged" actually means "play inside the loop".
     if (transport.isLoopEnabled())
     {
         const auto lStart = transport.getLoopStart();
@@ -523,11 +447,9 @@ void AudioEngine::stop()
         activeRecordStart.store (std::numeric_limits<juce::int64>::min(),
                                   std::memory_order_relaxed);
 
-        // Wrap the committed take in an UndoableAction so Ctrl+Z reverts
-        // it. RecordManager has already mutated session state; the action
-        // captures the before/after snapshot it produced. perform()'s
-        // first call is a no-op (state already applied), subsequent
-        // perform() calls (redo after undo) re-apply the after-state.
+        // RecordManager already mutated state; action captures the
+        // before/after snapshot. First perform() is a no-op (state
+        // already applied); redo-after-undo re-applies after-state.
         const auto& diff = recordManager.getLastCommitDiff();
         if (! diff.empty())
         {
@@ -556,14 +478,9 @@ void AudioEngine::record()
         return;
     }
 
-    // Defensive resync of the armedTrackCount fast-path counter. The
-    // counter is normally maintained by Session::setTrackArmed, but a
-    // couple of code paths (notably RegionEditActions clone/restore)
-    // wrote recordArmed directly and left the counter stale - which
-    // would then make anyTrackArmed() incorrectly return false and
-    // silently bail out of recording. Cheap to recompute - one pass
-    // over 16 tracks. Also helps surface user-visible "I armed the
-    // track but record won't engage" symptoms.
+    // Defensive resync — some paths (RegionEditActions clone/restore)
+    // write recordArmed directly and leave the counter stale, making
+    // anyTrackArmed() incorrectly false. Cheap (24-track scan).
     session.recomputeRtCounters();
     if (! session.anyTrackArmed())
     {
@@ -580,12 +497,10 @@ void AudioEngine::record()
         return;
     }
 
-    // With punch enabled, the captured WAV's first audible sample is at
-    // punchIn - so the recorded region's timelineStart must be punchIn,
-    // not the playhead at Record-press. The audio thread skips writes
-    // until the playhead reaches punchIn, so the WAV time-zero lines up.
-    // If the playhead is already inside the punch window (or past it) we
-    // fall back to the current playhead so we don't truncate the take.
+    // With punch on, the WAV's first audible sample is at punchIn so
+    // the region's timelineStart must be punchIn. Audio thread skips
+    // writes until playhead reaches punchIn so WAV time-zero lines up.
+    // Inside / past the window = fall back to playhead (no truncation).
     juce::int64 startSample = transport.getPlayhead();
     if (transport.isPunchEnabled()
         && transport.getPunchOut() > transport.getPunchIn()
@@ -599,15 +514,12 @@ void AudioEngine::record()
 
     activeRecordStart.store (startSample, std::memory_order_relaxed);
 
-    // Stamp the take's start sample as the session's "last record point"
-    // so STOP+FFWD can return the user to where they last started a take.
-    // Persisted via the serializer; survives reload.
+    // STOP+FFWD jumps the user back to their last take start. Persisted.
     session.lastRecordPointSamples.store (startSample, std::memory_order_relaxed);
 
-    // Count-in pre-roll: roll the playhead back one bar so the metronome
-    // ticks a full bar before the take begins. Audio between the pre-roll
-    // start and `startSample` is gated out of the recorder by the audio
-    // callback, so the WAV's first sample still maps to `startSample`.
+    // Roll playhead back one bar; audio between pre-roll start and
+    // startSample is gated out of the recorder so WAV time-zero still
+    // maps to startSample.
     if (session.countInEnabled.load (std::memory_order_relaxed))
     {
         const float bpm     = session.tempoBpm.load    (std::memory_order_relaxed);
@@ -620,13 +532,8 @@ void AudioEngine::record()
         }
     }
 
-    // Punch pre-roll: when punch is enabled and preRollSeconds > 0, roll
-    // the playhead back so the user hears existing material BEFORE the
-    // punch-in window. Same gate logic as count-in - the audio callback's
-    // punch window already prevents committing audio before punchIn so
-    // the WAV time-zero still maps to startSample. Stacks with count-in
-    // (whichever rolls back further wins) since they're independent
-    // pre-rolls solving different problems.
+    // Hear existing material BEFORE punch-in. Same gating as count-in.
+    // Stacks with count-in (whichever rolls back further wins).
     if (transport.isPunchEnabled())
     {
         const float pre = session.preRollSeconds.load (std::memory_order_relaxed);
