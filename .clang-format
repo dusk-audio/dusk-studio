@@ -1,0 +1,39 @@
+# Dusk Studio house style — matches the existing hand-maintained
+# JUCE-flavoured formatting. Run `clang-format -i <file>` or wire into
+# an editor-on-save. Not enforced in CI yet; advisory.
+---
+Language: Cpp
+BasedOnStyle: LLVM
+Standard: c++17
+
+# 4-space indent, no tabs.
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 0          # we wrap by hand; don't let the tool reflow
+
+# Braces on their own line (Allman) — matches the codebase.
+BreakBeforeBraces: Allman
+
+# JUCE idiom: space between function name and opening paren, both in
+# declarations and calls — `foo (bar)`, `void prepare (double sr)`.
+SpaceBeforeParens: Always
+
+AccessModifierOffset: -4
+NamespaceIndentation: None
+IndentCaseLabels: false
+PointerAlignment: Left
+ReferenceAlignment: Left
+AlignAfterOpenBracket: Align
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: false
+AllowShortLoopsOnASingleLine: false
+BinPackArguments: true
+BinPackParameters: true
+Cpp11BracedListStyle: false
+FixNamespaceComments: true
+SortIncludes: false      # include order is JUCE -> project -> STL by hand
+KeepEmptyLinesAtTheStartOfBlocks: false
+MaxEmptyLinesToKeep: 1
+SpacesInParentheses: false
+SpaceAfterCStyleCast: true

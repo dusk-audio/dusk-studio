@@ -24,6 +24,21 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# Emit compile_commands.json so clangd / editor tooling resolves JUCE +
+# donor include paths. Symlink it to the repo root once (see
+# scripts/dev.sh) and clangd picks it up automatically.
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+# Use ccache when present — caches object files across rebuilds so a
+# touched header doesn't force a full sfizz/absl/JUCE recompile. No-op
+# when ccache isn't installed.
+find_program(DUSKSTUDIO_CCACHE ccache)
+if(DUSKSTUDIO_CCACHE)
+    set(CMAKE_CXX_COMPILER_LAUNCHER "${DUSKSTUDIO_CCACHE}")
+    set(CMAKE_C_COMPILER_LAUNCHER   "${DUSKSTUDIO_CCACHE}")
+    message(STATUS "ccache enabled: ${DUSKSTUDIO_CCACHE}")
+endif()
+
 # JUCE path resolution. Per-OS defaults so a developer toggling between
 # Mac (upstream JUCE) and Linux (plugdata-team JUCE-wayland fork, required
 # for the wayland-juce8 features) doesn't have to pass -DJUCE_PATH each time.
@@ -652,31 +667,17 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/src/sfizz.h")
     target_sources(DuskStudio PRIVATE
         src/engine/multisample/DuskMultisampleProcessor.cpp
         src/engine/multisample/DuskMultisamplePluginFormat.cpp
-        src/ui/multisample/DuskMultisampleEditor.cpp)
+        src/engine/multisample/AriaBank.cpp
+        src/engine/multisample/AriaGui.cpp
+        src/engine/multisample/Sf2Reader.cpp
+        src/engine/multisample/Sf2ToSfz.cpp
+        src/ui/multisample/DuskMultisampleEditor.cpp
+        src/ui/multisample/AriaGuiComponent.cpp)
 
-    # Optional SF2 (SoundFont 2) backend via libfluidsynth. Detected
-    # at configure time via pkg-config. When found, DUSKSTUDIO_HAS_SF2
-    # is set and DuskMultisampleProcessor routes .sf2 file loads
-    # through FluidSynth instead of erroring with the "Coming in 1.0"
-    # message. SFZ still goes through sfizz; the processor owns one
-    # backend at a time keyed off the file extension.
-    #
-    # Linux ships fluidsynth as a system library on every common
-    # distro. Mac/Win bundling is a 1.0 packaging task — when the
-    # devel package is missing the build falls back to the
-    # SFZ-only path.
-    find_package(PkgConfig QUIET)
-    if(PkgConfig_FOUND)
-        pkg_check_modules(FLUIDSYNTH IMPORTED_TARGET fluidsynth)
-        if(FLUIDSYNTH_FOUND)
-            message(STATUS "Dusk Studio: FluidSynth ${FLUIDSYNTH_VERSION} found - enabling SF2 import")
-            target_link_libraries(DuskStudio PRIVATE PkgConfig::FLUIDSYNTH)
-            target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_SF2=1)
-        else()
-            message(STATUS "Dusk Studio: FluidSynth not found - SF2 import disabled "
-                           "(install fluidsynth-devel / libfluidsynth-dev to enable)")
-        endif()
-    endif()
+    # SF2 (SoundFont 2) playback is native: Sf2Reader + Sf2ToSfz convert
+    # the SoundFont to SFZ + extracted WAVs and run it through the
+    # already-vendored sfizz engine. No fluidsynth dependency, so a
+    # self-contained install plays SF2 with nothing extra to bundle.
 endif()
 
 target_compile_definitions(DuskStudio PRIVATE

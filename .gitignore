@@ -2,6 +2,9 @@ build/
 build-*/
 cmake-build-*/
 .cache/
+# Symlink to build/compile_commands.json for clangd (scripts/dev.sh
+# refreshes it). The real file lives in the gitignored build dir.
+compile_commands.json
 
 # Editor / IDE
 .vscode/
