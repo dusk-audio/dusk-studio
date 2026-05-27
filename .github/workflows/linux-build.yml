@@ -15,6 +15,12 @@ jobs:
     steps:
       - name: Checkout Dusk Studio
         uses: actions/checkout@v4
+        with:
+          # external/sfizz is a submodule; the test binary compiles
+          # DuskMultisampleProcessor.cpp (#include <sfizz.h>), so it must
+          # be present or the build fails with "sfizz.h: No such file".
+          submodules: recursive
+          persist-credentials: false
 
       - name: Install Linux build deps
         run: |
@@ -130,6 +136,12 @@ jobs:
     steps:
       - name: Checkout Dusk Studio
         uses: actions/checkout@v4
+        with:
+          # external/sfizz is a submodule; the test binary compiles
+          # DuskMultisampleProcessor.cpp (#include <sfizz.h>), so it must
+          # be present or the build fails with "sfizz.h: No such file".
+          submodules: recursive
+          persist-credentials: false
 
       - name: Install Linux build deps
         run: |
