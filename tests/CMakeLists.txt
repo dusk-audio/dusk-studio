@@ -16,6 +16,7 @@ add_executable(dusk-studio-tests
     snap_helpers.cpp
     fade_shapes.cpp
     crossfade.cpp
+    fade_curve_path.cpp
     file_importer_audio.cpp
     hardware_insert.cpp
     session_round_trip.cpp
@@ -36,8 +37,18 @@ add_executable(dusk-studio-tests
     ${CMAKE_SOURCE_DIR}/src/engine/McuController.cpp
     multisample_state_roundtrip.cpp
     bounce_stem_filename.cpp
+    metronome_click.cpp
+    ${CMAKE_SOURCE_DIR}/src/dsp/Metronome.cpp
+    aria_gui_parse.cpp
+    sf2_reader_parse.cpp
+    sf2_to_sfz_convert.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/multisample/DuskMultisampleProcessor.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/multisample/AriaBank.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/multisample/AriaGui.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/multisample/Sf2Reader.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/multisample/Sf2ToSfz.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/multisample/DuskMultisampleEditor.cpp
+    ${CMAKE_SOURCE_DIR}/src/ui/multisample/AriaGuiComponent.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/DuskFileBrowser.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/DimOverlay.cpp
     ${CMAKE_SOURCE_DIR}/src/dsp/BrickwallLimiter.cpp
