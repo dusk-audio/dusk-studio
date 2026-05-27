@@ -74,6 +74,11 @@ public:
     // midiInputDevices. nullptr until rebuildMidiInputBank has run.
     juce::MidiMessageCollector* getVirtualKeyboardCollector() noexcept;
 
+    // Index of the virtual keyboard inside midiInputDevices, or -1 if
+    // the bank hasn't been built yet. Used by UI flows that auto-route
+    // the on-screen keyboard to a freshly loaded instrument track.
+    int getVirtualKeyboardInputIndex() const noexcept { return virtualKeyboardCollectorIndex; }
+
     // Lazy-open + start delivery thread. Opening every available output
     // at startup blocks the main thread (snd_seq_connect_to is sync).
     // Message-thread only.

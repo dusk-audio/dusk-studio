@@ -1,0 +1,207 @@
+name: macOS release (signed + notarized)
+
+# Builds a signed, notarized DMG for sale. Runs on the PUBLIC repo, so
+# the macOS runner minutes are free — but the signing secrets are only
+# available to runs on the base repo (tag push / manual dispatch by a
+# collaborator), NEVER to forked-PR runs. A forker can build an unsigned
+# Dusk Studio for themselves; they cannot produce this signed/notarized
+# build without your Developer ID cert. That gap is the product.
+#
+# The DMG is uploaded as a workflow ARTIFACT (visible only to people with
+# repo access, ~90-day retention) — grab it and upload to your paid
+# channel (Gumroad / site / Patreon). It is deliberately NOT attached to
+# a public GitHub Release.
+#
+# Required repository secrets (Settings → Secrets and variables → Actions):
+#   MACOS_CERT_P12_BASE64       Developer ID Application cert + private key,
+#                               exported as .p12 then `base64 -i cert.p12`.
+#   MACOS_CERT_PASSWORD         Password used when exporting the .p12.
+#   MACOS_KEYCHAIN_PASSWORD     Any throwaway string (temp keychain pw).
+#   MACOS_SIGN_IDENTITY         "Developer ID Application: NAME (TEAMID)"
+#                               (exact string from `security find-identity
+#                                -v -p codesigning`).
+#   APPLE_NOTARY_KEY_ID         App Store Connect API key ID.
+#   APPLE_NOTARY_ISSUER_ID      App Store Connect issuer UUID.
+#   APPLE_NOTARY_KEY_P8_BASE64  The AuthKey_XXXX.p8, `base64 -i AuthKey.p8`.
+#   RELEASES_REPO_TOKEN         PAT (fine-grained or classic) with
+#                               contents:write on the PRIVATE releases repo
+#                               below. The signed DMG is pushed there as a
+#                               release asset — NOT to this public repo,
+#                               where artifacts are world-downloadable.
+#
+# Edit RELEASES_REPO (env, below) to your private releases repo.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release:
+    name: Build + sign + notarize (macOS arm64 Release)
+    runs-on: macos-14
+    env:
+      # Your PRIVATE releases repo. The DMG is pushed here, never to this
+      # public repo. Change to your owner/repo.
+      RELEASES_REPO: dusk-audio/dusk-studio-releases
+      # SIGN = true once the Developer ID cert secret exists. Until then
+      # the workflow still runs + ships an UNSIGNED (ad-hoc) dev DMG —
+      # add the Apple secrets later and the same workflow auto-upgrades to
+      # signed + notarized. (secrets can't be read in `if:` directly, so
+      # we surface the presence test as a job env flag here.)
+      SIGN: ${{ secrets.MACOS_CERT_P12_BASE64 != '' }}
+
+    steps:
+      - name: Checkout Dusk Studio (with sfizz submodule)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Clone JUCE 8.0.4 (upstream)
+        # Same upstream JUCE the Linux CI uses. No SIMD<long long> patch
+        # needed here: that bug is x86_64-GCC-specific (SSE header); this
+        # runner is arm64 / clang (NEON header) and the local macOS dev
+        # build compiles clean against upstream without it.
+        run: |
+          git clone --depth 1 --branch 8.0.4 \
+            https://github.com/juce-framework/JUCE.git \
+            "${RUNNER_TEMP}/JUCE"
+
+      - name: Clone Dusk plugins (donor DSP)
+        run: |
+          git clone --depth 1 \
+            https://github.com/dusk-audio/dusk-audio-plugins.git \
+            "${RUNNER_TEMP}/plugins-main"
+
+      - name: Import Developer ID signing certificate
+        if: env.SIGN == 'true'
+        env:
+          CERT_B64:  ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          CERT_PW:   ${{ secrets.MACOS_CERT_PASSWORD }}
+          KC_PW:     ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+        run: |
+          KEYCHAIN="${RUNNER_TEMP}/duskstudio-signing.keychain-db"
+          echo "$CERT_B64" | base64 --decode > "${RUNNER_TEMP}/cert.p12"
+
+          # A dedicated, unlocked keychain set as default so both codesign
+          # and notarytool find the identity + saved notary profile.
+          security create-keychain -p "$KC_PW" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KC_PW" "$KEYCHAIN"
+          security import "${RUNNER_TEMP}/cert.p12" -P "$CERT_PW" \
+            -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          # Let codesign use the key without an interactive prompt.
+          security set-key-partition-list -S apple-tool:,apple: \
+            -k "$KC_PW" "$KEYCHAIN" >/dev/null
+          # Make it the default + keep login keychain in the search list.
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+          security default-keychain -s "$KEYCHAIN"
+          rm -f "${RUNNER_TEMP}/cert.p12"
+
+      - name: Store notarytool credentials
+        if: env.SIGN == 'true'
+        env:
+          KEY_ID:    ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+          KEY_B64:   ${{ secrets.APPLE_NOTARY_KEY_P8_BASE64 }}
+        run: |
+          echo "$KEY_B64" | base64 --decode > "${RUNNER_TEMP}/AuthKey.p8"
+          xcrun notarytool store-credentials duskstudio-notary \
+            --key "${RUNNER_TEMP}/AuthKey.p8" \
+            --key-id "$KEY_ID" \
+            --issuer "$ISSUER_ID"
+          rm -f "${RUNNER_TEMP}/AuthKey.p8"
+
+      - name: Configure (Release)
+        env:
+          # Real Developer ID when the secret is set, else "-" (ad-hoc).
+          SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY || '-' }}
+        run: |
+          # Default single-config generator (Unix Makefiles) — keeps the
+          # build/DuskStudio_artefacts/Release/ path that package-macos.sh
+          # expects, and avoids depending on Ninja being preinstalled.
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
+            -DDUSKSTUDIO_CODESIGN_IDENTITY="${SIGN_IDENTITY}"
+
+      - name: Build (Release)
+        run: cmake --build build -j
+
+      - name: Sign + notarize + DMG
+        if: env.SIGN == 'true'
+        env:
+          CODESIGN_IDENTITY:    ${{ secrets.MACOS_SIGN_IDENTITY }}
+          APPLE_NOTARY_PROFILE: duskstudio-notary
+        run: scripts/package-macos.sh
+
+      - name: Package UNSIGNED dev DMG
+        if: env.SIGN != 'true'
+        # No Developer ID yet: ship an ad-hoc-signed DMG (the CMake build
+        # already ad-hoc-signed the .app via identity "-"). Not notarized,
+        # so end users must right-click -> Open once. Fine for your own +
+        # beta testers; the same workflow auto-notarizes once the Apple
+        # secrets are added.
+        run: |
+          set -euo pipefail
+          ( cd build && cpack -G DragNDrop -C Release )
+          DMG="$(ls build/*.dmg | head -1)"
+          [[ -n "$DMG" ]] || { echo "::error::cpack produced no .dmg" >&2; exit 1; }
+          # Mark it clearly as an unsigned build.
+          base="$(basename "$DMG" .dmg)"
+          mv "$DMG" "./${base}-unsigned.dmg"
+          shasum -a 256 "${base}-unsigned.dmg" | tee SHA256SUMS.macos
+          echo "Unsigned dev DMG: ${base}-unsigned.dmg"
+
+      - name: Publish DMG to the PRIVATE releases repo
+        # NOT actions/upload-artifact: on a public repo those artifacts
+        # are world-downloadable, which would give the paid build away.
+        # Instead push the signed DMG as a release asset in a separate
+        # PRIVATE repo only you can read. Distribute from there (Gumroad /
+        # your store / license link).
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Release tag: the pushed v* tag, or a VERSION-derived tag for a
+          # manual dispatch (run number keeps dispatch builds unique).
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            TAG="${GITHUB_REF_NAME}"
+          else
+            TAG="v$(tr -d '[:space:]' < VERSION)+build.${GITHUB_RUN_NUMBER}"
+          fi
+
+          if [[ "${SIGN}" == "true" ]]; then
+            NOTES="Automated signed + notarized macOS build."
+          else
+            NOTES="UNSIGNED dev build (no Developer ID yet). Right-click the app -> Open to bypass Gatekeeper. Not for sale until notarized."
+          fi
+
+          shopt -s nullglob
+          ASSETS=( *.dmg SHA256SUMS.macos )
+          if [[ ${#ASSETS[@]} -eq 0 ]]; then
+            echo "::error::no DMG produced — packaging step failed" >&2
+            exit 1
+          fi
+
+          # Create the release on first push of this tag, else just add
+          # the assets (idempotent re-run). --clobber overwrites a same-
+          # named asset from a previous attempt.
+          if ! gh release view "$TAG" --repo "$RELEASES_REPO" >/dev/null 2>&1; then
+            gh release create "$TAG" \
+              --repo "$RELEASES_REPO" \
+              --title "Dusk Studio $TAG" \
+              --notes "$NOTES" \
+              "${ASSETS[@]}"
+          else
+            gh release upload "$TAG" --repo "$RELEASES_REPO" --clobber "${ASSETS[@]}"
+          fi
+          echo "Published ${#ASSETS[@]} asset(s) to ${RELEASES_REPO} @ ${TAG}"

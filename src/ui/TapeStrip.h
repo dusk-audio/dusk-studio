@@ -36,7 +36,11 @@ public:
     static constexpr int kRulerTickBandH = 14;
     static constexpr int kRulerPillBandH = 16;
     static constexpr int kRulerH         = kRulerTickBandH + kRulerPillBandH;
-    static constexpr int kTrackRowH   = 14;
+    // Track-row height is vertically zoomable (Cmd+Shift+wheel). Default
+    // matches the original fixed 14 px; clamped to [kRowHMin, kRowHMax].
+    static constexpr int kRowHMin     = 10;
+    static constexpr int kRowHDefault = 14;
+    static constexpr int kRowHMax     = 80;
     static constexpr int kRowGap      = 1;
 
     // Rows = armed ∪ has-content (or every track when SHOW ALL is on).
@@ -102,8 +106,10 @@ private:
     juce::Rectangle<int> rowBounds (int trackIdx) const noexcept;
 
     // Cheap (24 iter). Called from resized(), timer poll, SHOW ALL
-    // click. Relayouts + repaints only on actual change.
-    void rebuildVisibleTrackOrder();
+    // click. Relayouts + repaints only on actual change. relayoutParent
+    // is false when the caller (MainComponent::resized) is already mid-
+    // layout, to avoid re-entrant resized().
+    void rebuildVisibleTrackOrder (bool relayoutParent = true);
     // -1 if collapsed.
     int  visualRowForTrack (int trackIdx) const noexcept;
 
@@ -160,14 +166,36 @@ private:
     juce::TextButton snapToggle    { "SNAP" };
     juce::TextButton showAllToggle { "ALL" };
     bool showAllTracks = false;
+
+    // The track range the console currently shows (the active bank's
+    // strips for this window width). MainComponent pushes this on every
+    // resize + bank change. The timeline always shows these rows so it
+    // mirrors the mixer bank, plus any track with content - so an empty
+    // session on bank 7-12 shows tracks 7-12, not one row + tall faders.
+    int consoleFirstTrack   = 0;
+    int consoleVisibleCount = Session::kNumTracks;
+
+public:
+    // Tell the strip which tracks the console shows (active bank's
+    // [firstTrack, firstTrack+count) for the current width). The timeline
+    // mirrors this range. Safe to call every resize (no-op when same).
+    void setConsoleVisibleRange (int firstTrack, int count);
+
+private:
     // Session-track indices in display order. Index in this vector IS
     // the visual row; value is the Session track. Rebuilt by
     // rebuildVisibleTrackOrder().
     std::vector<int> visibleTrackOrder;
-    // Cache for compare-and-rebuild — timer skips relayout when nothing
-    // changed.
-    std::array<bool, Session::kNumTracks> lastTrackHadContent {};
-    std::array<bool, Session::kNumTracks> lastTrackArmed      {};
+
+    // Vertical zoom: per-track row height (Cmd+Shift+wheel). When the
+    // resulting content is taller than the strip's capped height, rows
+    // scroll vertically by rowScrollY (plain wheel deltaY).
+    int rowHeight  = kRowHDefault;
+    int rowScrollY = 0;
+    // Pixel height of all visible rows at the current rowHeight (content
+    // extent below the ruler). Used to clamp rowScrollY + decide overflow.
+    int rowsContentHeight() const noexcept;
+    void clampRowScroll() noexcept;
 
     // Without these, the strip's only repaint trigger is playhead
     // motion — renaming a track wouldn't reflect until the next play.

@@ -32,7 +32,7 @@ Dusk Studio includes:
 - A dedicated mastering stage with 5-band digital EQ, multiband compressor, brick-wall limiter, and BS.1770 loudness metering.
 - VST3, LV2, and AU plugin hosting, with optional out-of-process sandboxing for crash isolation.
 - External hardware insert per channel and per aux, with automatic latency measurement.
-- A multi-sampler that plays `.sfz` files via sfizz, and `.sf2` SoundFont files via FluidSynth (when `DUSKSTUDIO_HAS_SF2` was enabled at build time), on MIDI tracks.
+- A multi-sampler that plays `.sfz` files and `.sf2` SoundFonts on MIDI tracks, both through the built-in sfizz engine (SF2 files are converted to SFZ on load — no external synth required).
 - MIDI Clock and MIDI Time Code chase and emit.
 - Mackie Control surface support (tested against Tascam DP-24SD).
 - A piano roll for MIDI editing and an audio region editor with non-destructive trim, fade, and gain.
@@ -1235,7 +1235,7 @@ Dusk Studio scans and hosts:
 - **VST3** on Linux, macOS, and Windows.
 - **LV2** on Linux.
 - **AU** on macOS only.
-- **Native multi-sampler** (`.sfz` files always; `.sf2` files when FluidSynth was available at build time) on all platforms.
+- **Native multi-sampler** (`.sfz` and `.sf2` files, both via the built-in sfizz engine — SF2 is converted to SFZ on load) on all platforms.
 
 There is no VST2 support.
 

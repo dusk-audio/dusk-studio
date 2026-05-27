@@ -67,6 +67,13 @@ private:
     AudioRegion*       region();
     const AudioRegion* region() const;
 
+    // Crossfade neighbours of the focused region (sorted by timelineStart).
+    // Sets overlapPrev / overlapNext to the overlap length in samples (0
+    // when none) and the neighbour's complementary fade shape used to
+    // draw the crossing "X" curve. Const + cheap (few regions per track).
+    void overlapNeighbours (juce::int64& overlapPrev, juce::int64& overlapNext,
+                             FadeShape& prevOutShape, FadeShape& nextInShape) const;
+
     juce::AudioFormatManager formatManager;
     // 8 is plenty — we show one region at a time, but cached entries
     // keep take cycling snappy.
@@ -181,6 +188,11 @@ public:
     // MainComponent calls when global hotkey ('G') flips
     // session.editMode while the modal is open.
     void syncEditModeToolbar();
+
+    // Set the mouse cursor to match the active edit mode (hand / scissors
+    // / pencil / crosshair / I-beam). Called on mode change + as the
+    // mouseMove fallback when no handle is under the pointer.
+    void updateModeCursor();
 
     // Two-way: fresh overlap creates/widens auto-fades, vanishing
     // overlap retracts a previously-auto fade to zero. User-pinned

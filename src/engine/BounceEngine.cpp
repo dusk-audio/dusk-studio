@@ -296,6 +296,12 @@ bool BounceEngine::renderOneStem (const juce::File& outFile,
                                      0));
     if (writer == nullptr)
     {
+        // createWriterFor failed AFTER we truncated the file above -
+        // close our handle and drop the now-zeroed file so we don't
+        // leave a 0-byte stem on disk. (createWriterFor only takes
+        // ownership of outStream on success, so resetting here is safe.)
+        outStream.reset();
+        outFile.deleteFile();
         const juce::ScopedLock lock (lastErrorLock);
         lastError = "Could not create WAV writer for stem " + outFile.getFileName();
         return false;

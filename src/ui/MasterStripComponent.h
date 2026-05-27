@@ -95,8 +95,11 @@ private:
     juce::Slider     compMakeup    { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
     juce::Label      compRatLabel, compAtkLabel, compRelLabel, compMakLabel;
 
-    // Compact-mode pill — left-click toggles tapeEnabled, right-click
-    // opens the TapeMachine editor.
+    // Compact-mode pill labelled "TAPE". Click opens the TapeMachine
+    // editor modal (setClickingTogglesState(false) — the click handler
+    // does NOT toggle tapeEnabled). The lit state is driven by the
+    // tapeEnabled atom, which the editor auto-arms on any parameter
+    // change, not by the button click itself.
     juce::TextButton tapeButton { "TAPE" };
     // Expanded-mode header: shared CompHeaderButton (matches EQ/COMP
     // grammar). Right-click opens TapeMachine editor via pickFn.

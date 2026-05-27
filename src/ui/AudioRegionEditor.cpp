@@ -2,6 +2,7 @@
 #include "DuskAlerts.h"
 #include "DuskContextMenu.h"
 #include "EditModeToolbar.h"
+#include "FadeCurve.h"
 #include "../engine/AudioEngine.h"
 #include "../engine/Transport.h"
 #include "../session/RegionEditActions.h"
@@ -24,6 +25,76 @@ const juce::Colour kEditCursor    { 0xffffd060 };
 // Soft cream so it reads against the yellow edit cursor without
 // competing — same colour the piano roll uses for its transport line.
 const juce::Colour kTransportPlayhead { 0xffffe8c0 };
+
+// ── Edit-mode mouse cursors ──────────────────────────────────────────
+// JUCE ships a hand/crosshair/I-beam but no scissors or pencil, so those
+// two are drawn into a small ARGB image once and cached. White glyph
+// with a dark halo so it reads on any waveform colour. Hotspot is the
+// "business end" (blade tip / pencil point).
+juce::Image drawCursorGlyph (std::function<void (juce::Graphics&)> paint)
+{
+    constexpr int kSz = 24;
+    juce::Image img (juce::Image::ARGB, kSz, kSz, true);
+    juce::Graphics g (img);
+    paint (g);
+    return img;
+}
+
+juce::MouseCursor makeScissorsCursor()
+{
+    auto img = drawCursorGlyph ([] (juce::Graphics& g)
+    {
+        juce::Path blades;
+        blades.startNewSubPath (4.0f, 19.0f); blades.lineTo (20.0f, 5.0f);   // blade 1
+        blades.startNewSubPath (11.0f, 19.0f); blades.lineTo (20.0f, 13.0f); // blade 2 (open V)
+        // Finger loops.
+        juce::Path loops;
+        loops.addEllipse (2.0f, 17.0f, 5.0f, 5.0f);
+        loops.addEllipse (9.0f, 17.0f, 5.0f, 5.0f);
+
+        g.setColour (juce::Colours::black.withAlpha (0.7f));
+        g.strokePath (blades, juce::PathStrokeType (3.4f));
+        g.strokePath (loops,  juce::PathStrokeType (3.4f));
+        g.setColour (juce::Colours::white);
+        g.strokePath (blades, juce::PathStrokeType (1.6f));
+        g.strokePath (loops,  juce::PathStrokeType (1.6f));
+    });
+    return juce::MouseCursor (img, 20, 5);   // hotspot at the blade tip
+}
+
+juce::MouseCursor makePencilCursor()
+{
+    auto img = drawCursorGlyph ([] (juce::Graphics& g)
+    {
+        juce::Path body;
+        body.addQuadrilateral (3.0f, 21.0f, 7.0f, 16.0f, 20.0f, 3.0f, 16.0f, 8.0f);
+        juce::Path tip;
+        tip.addTriangle (3.0f, 21.0f, 7.0f, 16.0f, 5.5f, 18.5f);
+
+        g.setColour (juce::Colours::black.withAlpha (0.7f));
+        g.strokePath (body, juce::PathStrokeType (3.0f));
+        g.setColour (juce::Colours::white);
+        g.fillPath (body);
+        g.setColour (juce::Colours::black);
+        g.fillPath (tip);
+    });
+    return juce::MouseCursor (img, 3, 21);   // hotspot at the pencil point
+}
+
+juce::MouseCursor cursorForMode (EditMode m)
+{
+    static const juce::MouseCursor scissors = makeScissorsCursor();
+    static const juce::MouseCursor pencil   = makePencilCursor();
+    switch (m)
+    {
+        case EditMode::Grab:  return juce::MouseCursor::DraggingHandCursor;
+        case EditMode::Range: return juce::MouseCursor::IBeamCursor;
+        case EditMode::Cut:   return scissors;
+        case EditMode::Grid:  return juce::MouseCursor::CrosshairCursor;
+        case EditMode::Draw:  return pencil;
+    }
+    return juce::MouseCursor::NormalCursor;
+}
 
 // Region-properties popup colour palette. Mirrors the palette in
 // [src/ui/TapeStrip.cpp] so all three surfaces (tape strip menu,
@@ -79,6 +150,9 @@ AudioRegionEditor::AudioRegionEditor (Session& s, AudioEngine& e, int t, int r)
     // session.editMode drives both modal mouse handlers and TapeStrip's
     // dispatch, so a pick here is global.
     editModeToolbar = std::make_unique<EditModeToolbar> (engine);
+    // Update the mouse cursor the instant the mode changes, without
+    // waiting for the next mouse move.
+    editModeToolbar->onEditModeChanged = [this] { updateModeCursor(); };
     addAndMakeVisible (editModeToolbar.get());
 
     // Bottom status-bar readouts.
@@ -800,6 +874,54 @@ void AudioRegionEditor::paintWaveform (juce::Graphics& g, juce::Rectangle<int> a
     }
 }
 
+void AudioRegionEditor::overlapNeighbours (juce::int64& overlapPrev,
+                                             juce::int64& overlapNext,
+                                             FadeShape& prevOutShape,
+                                             FadeShape& nextInShape) const
+{
+    overlapPrev = overlapNext = 0;
+    prevOutShape = nextInShape = FadeShape::EqualPower;
+    if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return;
+
+    const auto& regs = session.track (trackIdx).regions;
+    if (regionIdx < 0 || regionIdx >= (int) regs.size()) return;
+
+    std::vector<int> order;
+    order.reserve (regs.size());
+    for (int i = 0; i < (int) regs.size(); ++i) order.push_back (i);
+    std::sort (order.begin(), order.end(), [&] (int a, int b)
+    {
+        return regs[(size_t) a].timelineStart < regs[(size_t) b].timelineStart;
+    });
+
+    auto overlapLen = [&] (const AudioRegion& a, const AudioRegion& b) -> juce::int64
+    {
+        const auto aEnd = a.timelineStart + a.lengthInSamples;
+        if (aEnd <= b.timelineStart) return 0;
+        return juce::jmin (aEnd - b.timelineStart,
+                            juce::jmin (a.lengthInSamples, b.lengthInSamples));
+    };
+
+    int pos = -1;
+    for (size_t i = 0; i < order.size(); ++i)
+        if (order[i] == regionIdx) { pos = (int) i; break; }
+    if (pos < 0) return;
+
+    const auto& self = regs[(size_t) regionIdx];
+    if (pos > 0)
+    {
+        const auto& prev = regs[(size_t) order[(size_t) pos - 1]];
+        overlapPrev  = overlapLen (prev, self);
+        prevOutShape = prev.fadeOutShape;
+    }
+    if (pos + 1 < (int) order.size())
+    {
+        const auto& next = regs[(size_t) order[(size_t) pos + 1]];
+        overlapNext = overlapLen (self, next);
+        nextInShape = next.fadeInShape;
+    }
+}
+
 void AudioRegionEditor::paintFadeEnvelopes (juce::Graphics& g,
                                               juce::Rectangle<int> area)
 {
@@ -807,40 +929,47 @@ void AudioRegionEditor::paintFadeEnvelopes (juce::Graphics& g,
     if (r == nullptr || r->lengthInSamples <= 0) return;
     auto inset = area.reduced (4, 4);
 
-    g.setColour (kFadeStroke.withAlpha (0.9f));
+    const auto curveCol = kFadeStroke.withAlpha (0.9f);
+    const auto fillCol  = juce::Colour (0x18ffffff);   // subtle crossfade tint
 
-    // Sample the configured shape across the fade pixel range so the
-    // painted envelope matches what PlaybackEngine renders. One vertex
-    // per pixel is plenty for the widths we see (8-300 px); cheaper than
-    // a Path::lineTo per sample.
+    // Single-region fade curve (no overlapping neighbour).
     auto strokeFade = [&] (int xStart, int xEnd, FadeShape shape, bool isFadeIn)
     {
         if (xEnd <= xStart) return;
-        const int span = xEnd - xStart;
-        juce::Path p;
-        for (int i = 0; i <= span; ++i)
-        {
-            const float t = (float) i / (float) span;
-            const float gain = applyFadeShape (isFadeIn ? t : 1.0f - t, shape);
-            const float y = (float) inset.getBottom() - gain * (float) inset.getHeight();
-            const float x = (float) (xStart + i);
-            if (i == 0) p.startNewSubPath (x, y);
-            else        p.lineTo          (x, y);
-        }
-        g.strokePath (p, juce::PathStrokeType (1.4f));
+        const juce::Rectangle<float> zone ((float) xStart, (float) inset.getY(),
+                                            (float) (xEnd - xStart), (float) inset.getHeight());
+        g.setColour (curveCol);
+        g.strokePath (fadeviz::buildFadeCurve (zone, shape, isFadeIn),
+                       juce::PathStrokeType (1.4f));
     };
+
+    juce::int64 overlapPrev = 0, overlapNext = 0;
+    FadeShape prevOutShape = FadeShape::EqualPower, nextInShape = FadeShape::EqualPower;
+    overlapNeighbours (overlapPrev, overlapNext, prevOutShape, nextInShape);
 
     if (r->fadeInSamples > 0)
     {
         const int xStart = xForSample (r->sourceOffset, area);
         const int xEnd   = xForSample (r->sourceOffset + r->fadeInSamples, area);
-        strokeFade (xStart, xEnd, r->fadeInShape, /*isFadeIn*/ true);
+        const juce::Rectangle<float> zone ((float) xStart, (float) inset.getY(),
+                                            (float) (xEnd - xStart), (float) inset.getHeight());
+        if (overlapPrev > 0)
+            // Crossfade: this region's fade-in rises while the previous
+            // region's fade-out falls across the same zone -> "X".
+            fadeviz::drawCrossfade (g, zone, prevOutShape, r->fadeInShape, curveCol, fillCol);
+        else
+            strokeFade (xStart, xEnd, r->fadeInShape, /*isFadeIn*/ true);
     }
     if (r->fadeOutSamples > 0)
     {
         const int xStart = xForSample (r->sourceOffset + r->lengthInSamples - r->fadeOutSamples, area);
         const int xEnd   = xForSample (r->sourceOffset + r->lengthInSamples, area);
-        strokeFade (xStart, xEnd, r->fadeOutShape, /*isFadeIn*/ false);
+        const juce::Rectangle<float> zone ((float) xStart, (float) inset.getY(),
+                                            (float) (xEnd - xStart), (float) inset.getHeight());
+        if (overlapNext > 0)
+            fadeviz::drawCrossfade (g, zone, r->fadeOutShape, nextInShape, curveCol, fillCol);
+        else
+            strokeFade (xStart, xEnd, r->fadeOutShape, /*isFadeIn*/ false);
     }
 }
 
@@ -936,7 +1065,19 @@ void AudioRegionEditor::mouseMove (const juce::MouseEvent& e)
         setMouseCursor (juce::MouseCursor::UpDownResizeCursor);
         return;
     }
-    setMouseCursor (juce::MouseCursor::NormalCursor);
+    // No handle under the pointer: inside the waveform the cursor
+    // reflects the active edit mode (hand / scissors / pencil / crosshair
+    // / I-beam); outside it (toolbar / ruler / status row) fall back to
+    // the normal arrow so the edit-mode cursor doesn't bleed over chrome.
+    if (waveArea.contains (e.x, e.y))
+        setMouseCursor (cursorForMode (session.editMode));
+    else
+        setMouseCursor (juce::MouseCursor::NormalCursor);
+}
+
+void AudioRegionEditor::updateModeCursor()
+{
+    setMouseCursor (cursorForMode (session.editMode));
 }
 
 void AudioRegionEditor::mouseDown (const juce::MouseEvent& e)

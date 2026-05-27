@@ -1657,6 +1657,38 @@ void ChannelStripComponent::openPluginPicker (bool useChooser)
                                                   .insertMode.store (ChannelStrip::kInsertPlugin,
                                                                        std::memory_order_release);
 
+                                        // Loading an instrument (soundfont or VST/LV2 synth) on a
+                                        // non-MIDI track leaves the strip silent — instrument
+                                        // ignores audio input, no MIDI source feeds it. Flip the
+                                        // track to MIDI automatically so the user doesn't have to.
+                                        // setSelectedId on the mode selector fires its own change
+                                        // handler which publishes the new mode atomically and
+                                        // refreshes I/O / slot button visibility consistently.
+                                        if (self->pluginSlot.isLoadedPluginInstrument())
+                                        {
+                                            if (self->track.mode.load (std::memory_order_relaxed)
+                                                  != (int) Track::Mode::Midi)
+                                                self->modeSelector.setSelectedId (
+                                                    (int) Track::Mode::Midi + 1,
+                                                    juce::sendNotificationSync);
+
+                                            // No MIDI input bound yet? Route the Virtual
+                                            // Keyboard so the user can immediately audition
+                                            // the freshly loaded instrument without hunting
+                                            // through the input dropdown. ID convention
+                                            // (see rebuildMidiInputDropdown): 1 = (none),
+                                            // 2 + deviceIndex = real input N.
+                                            if (self->track.midiInputIndex.load (
+                                                    std::memory_order_relaxed) < 0)
+                                            {
+                                                const int vkbIdx =
+                                                    self->engine.getVirtualKeyboardInputIndex();
+                                                if (vkbIdx >= 0)
+                                                    self->midiInputSelector.setSelectedId (
+                                                        2 + vkbIdx, juce::sendNotificationSync);
+                                            }
+                                        }
+
                                         // Close the modal synchronously so the cached editor
                                         // (still bound to the just-replaced processor) gets
                                         // detached from the parent component before the next

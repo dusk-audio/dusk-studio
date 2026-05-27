@@ -1151,7 +1151,26 @@ void MainComponent::resized()
     {
         if (tapeStrip != nullptr && tapeStripExpanded)
         {
-            tapeStrip->setBounds (area.removeFromTop (tapeStrip->naturalHeight()));
+            // Mirror the timeline's rows to the console's ACTIVE BANK
+            // range for this window width, so the timeline tracks the
+            // visible mixer strips (switch to bank 7-12 -> timeline shows
+            // 7-12) and an empty session fills that same track count
+            // instead of one row + over-tall faders. Set BEFORE
+            // naturalHeight().
+            if (consoleView != nullptr)
+            {
+                const int bank = consoleView->getBank();
+                const auto [first1, last1] =
+                    ConsoleView::rangeForBankAtWidth (bank, area.getWidth());
+                tapeStrip->setConsoleVisibleRange (first1 - 1, last1 - first1 + 1);
+            }
+            // Cap the strip at ~half the available height so vertical
+            // zoom (taller rows) can't swallow the console - past the cap
+            // the rows scroll inside the strip. Console keeps a usable
+            // minimum.
+            const int wanted = tapeStrip->naturalHeight();
+            const int cap    = juce::jmax (120, area.getHeight() / 2);
+            tapeStrip->setBounds (area.removeFromTop (juce::jmin (wanted, cap)));
             area.removeFromTop (4);
         }
 
@@ -2121,11 +2140,52 @@ void MainComponent::openBounceStemsDialog()
         if (! outFile.hasFileExtension ("wav"))
             outFile = outFile.withFileExtension ("wav");
 
-        auto panel = std::make_unique<BounceDialog> (engine, session,
-                                                       engine.getDeviceManager(), outFile,
-                                                       BounceEngine::Mode::Stems);
-        panel->setSize (520, 200);
-        bounceModal.show (*this, std::move (panel));
+        // Preflight: the base WAV is never written for stems - the real
+        // targets are the derived <base>_<NN>_<track>.wav files. Compute
+        // them for the tracks that will actually render (same predicate
+        // as BounceEngine) and warn if any already exist, so the file
+        // browser's base-file overwrite check doesn't give false comfort.
+        juce::StringArray conflicts;
+        for (int t = 0; t < Session::kNumTracks; ++t)
+        {
+            const auto& tr = session.track (t);
+            const bool hasContent = ! tr.regions.empty()
+                                  || ! tr.midiRegions.current().empty();
+            const bool armed = tr.recordArmed.load (std::memory_order_relaxed);
+            if (! (hasContent || armed)) continue;
+            const auto sf = BounceEngine::stemOutputFile (outFile, t, tr.name);
+            if (sf.existsAsFile())
+                conflicts.add (sf.getFileName());
+        }
+
+        auto launch = [this, outFile]
+        {
+            auto panel = std::make_unique<BounceDialog> (engine, session,
+                                                           engine.getDeviceManager(), outFile,
+                                                           BounceEngine::Mode::Stems);
+            panel->setSize (520, 200);
+            bounceModal.show (*this, std::move (panel));
+        };
+
+        if (conflicts.isEmpty())
+        {
+            launch();
+            return;
+        }
+
+        const auto msg = "These stem files already exist and will be overwritten:\n\n"
+                       + conflicts.joinIntoString ("\n")
+                       + "\n\nContinue?";
+        juce::Component::SafePointer<MainComponent> safe (this);
+        juce::AlertWindow::showOkCancelBox (
+            juce::MessageBoxIconType::WarningIcon,
+            "Overwrite stems?", msg, "Overwrite", "Cancel", this,
+            juce::ModalCallbackFunction::create (
+                [safe, launch] (int result) mutable
+                {
+                    if (result == 1 && safe.getComponent() != nullptr)
+                        launch();
+                }));
     });
 }
 

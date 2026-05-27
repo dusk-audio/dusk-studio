@@ -2196,23 +2196,38 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
             // Live monitoring path - only meaningful on MIDI tracks; effect
             // inserts on Mono / Stereo strips don't consume per-track MIDI
             // (their pluginMidiScratch is built fresh inside the strip).
-            // Gating here skips a per-block allocation+copy on every audio
-            // track that has a midiInputIndex set.
-            const int midiIdx = session.track (t).midiInputIndex.load (std::memory_order_relaxed);
-            if (midiIdx >= 0 && midiIdx < (int) perInputMidi.size()
-                && ! perInputMidi[(size_t) midiIdx].isEmpty())
+            const int chFilter = session.track (t)
+                                    .midiChannel.load (std::memory_order_relaxed);
+
+            auto pullInput = [&] (int srcIdx)
             {
-                const int chFilter = session.track (t)
-                                        .midiChannel.load (std::memory_order_relaxed);
-                for (const auto meta : perInputMidi[(size_t) midiIdx])
+                if (srcIdx < 0 || srcIdx >= (int) perInputMidi.size()) return;
+                if (perInputMidi[(size_t) srcIdx].isEmpty()) return;
+                for (const auto meta : perInputMidi[(size_t) srcIdx])
                 {
                     const auto m = meta.getMessage();
                     if (chFilter == 0 || m.getChannel() == chFilter)
                         perTrackMidiScratch.addEvent (m, meta.samplePosition);
                 }
-                if (! perTrackMidiScratch.isEmpty())
-                    session.track (t).midiActivity.store (true, std::memory_order_relaxed);
-            }
+            };
+
+            // The track's explicitly-selected MIDI input.
+            const int midiIdx = session.track (t).midiInputIndex.load (std::memory_order_relaxed);
+            pullInput (midiIdx);
+
+            // A record-armed MIDI track ALWAYS auditions the on-screen
+            // keyboard, even when its explicit input isn't the VK. This
+            // makes the keyboard "just work" no matter how the instrument
+            // was loaded (editor Browse, session restore, picker) - the
+            // user expects an armed instrument track to play from the
+            // virtual keyboard. Skip when the explicit input already IS
+            // the VK so events aren't doubled.
+            const bool trackArmed = session.track (t).recordArmed.load (std::memory_order_relaxed);
+            if (trackArmed && virtualKeyboardCollectorIndex != midiIdx)
+                pullInput (virtualKeyboardCollectorIndex);
+
+            if (! perTrackMidiScratch.isEmpty())
+                session.track (t).midiActivity.store (true, std::memory_order_relaxed);
         }
 
         // Recording capture has to happen BEFORE the strip's instrument

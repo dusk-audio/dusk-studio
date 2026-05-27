@@ -56,8 +56,11 @@ jobs:
         # we apply them here so upstream JUCE builds cleanly.
         run: |
           file="${RUNNER_TEMP}/JUCE-wayland/modules/juce_dsp/native/juce_SIMDNativeOps_sse.h"
+          # Tolerant match: a closing brace then a // comment mentioning
+          # both "juce" and "dsp" — survives upstream whitespace / comment
+          # rewording that an exact-string match would silently miss.
           awk '
-            /^} \/\/ namespace juce::dsp/ && !done {
+            /^}[[:space:]]*\/\/.*juce.*dsp/ && !done {
               print "#if defined (__GNUC__) && defined (__SIZEOF_LONG__) && __SIZEOF_LONG__ == 8 && !defined (_WIN32)"
               print "template <> struct SIMDNativeOps<long long> : SIMDNativeOps<int64_t> {};"
               print "template <> struct SIMDNativeOps<unsigned long long> : SIMDNativeOps<uint64_t> {};"
@@ -67,7 +70,13 @@ jobs:
             { print }
           ' "$file" > "$file.new" && mv "$file.new" "$file"
           echo "Patched: $file"
-          grep -n "SIMDNativeOps<long long>" "$file" || echo "WARNING: alias not present after patch"
+          # Fail fast: a missing alias means upstream moved the anchor and
+          # the patch no-op'd. Catching it here beats a cryptic incomplete-
+          # type compile error 10 minutes into the build.
+          if ! grep -q "SIMDNativeOps<long long>" "$file"; then
+            echo "ERROR: SIMDNativeOps<long long> alias not present after patch — the awk anchor likely no longer matches upstream JUCE." >&2
+            exit 1
+          fi
 
       - name: Clone Dusk plugins (donor DSP)
         run: |
@@ -145,7 +154,7 @@ jobs:
         run: |
           file="${RUNNER_TEMP}/JUCE-wayland/modules/juce_dsp/native/juce_SIMDNativeOps_sse.h"
           awk '
-            /^} \/\/ namespace juce::dsp/ && !done {
+            /^}[[:space:]]*\/\/.*juce.*dsp/ && !done {
               print "#if defined (__GNUC__) && defined (__SIZEOF_LONG__) && __SIZEOF_LONG__ == 8 && !defined (_WIN32)"
               print "template <> struct SIMDNativeOps<long long> : SIMDNativeOps<int64_t> {};"
               print "template <> struct SIMDNativeOps<unsigned long long> : SIMDNativeOps<uint64_t> {};"
@@ -154,6 +163,10 @@ jobs:
             }
             { print }
           ' "$file" > "$file.new" && mv "$file.new" "$file"
+          if ! grep -q "SIMDNativeOps<long long>" "$file"; then
+            echo "ERROR: SIMDNativeOps<long long> alias not present after patch — the awk anchor likely no longer matches upstream JUCE." >&2
+            exit 1
+          fi
 
       - name: Clone Dusk plugins (donor DSP)
         run: |

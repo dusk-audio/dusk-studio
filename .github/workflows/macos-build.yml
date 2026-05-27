@@ -1,0 +1,60 @@
+name: macOS build
+
+# Public test CI for macOS: compiles Release + runs the Catch2 suite. No
+# signing, no secrets, NO artifact upload — same no-free-binaries policy
+# as the Linux job. Its job is to catch macOS build/test breakage on
+# every push so a release tag isn't the first time the code compiles on
+# Mac. Signed/notarized builds are produced by macos-release.yml.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build + tests (clang Release, macOS arm64)
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout Dusk Studio (with sfizz submodule)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Clone JUCE 8.0.4 (upstream)
+        run: |
+          git clone --depth 1 --branch 8.0.4 \
+            https://github.com/juce-framework/JUCE.git \
+            "${RUNNER_TEMP}/JUCE"
+
+      - name: Clone Dusk plugins (donor DSP)
+        run: |
+          git clone --depth 1 \
+            https://github.com/dusk-audio/dusk-audio-plugins.git \
+            "${RUNNER_TEMP}/plugins-main"
+
+      - name: Configure (Release)
+        run: |
+          cmake -S . -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main"
+
+      - name: Build (Release)
+        run: cmake --build build -j
+
+      - name: Smoke launch (--version)
+        run: build/DuskStudio_artefacts/Release/DuskStudio.app/Contents/MacOS/DuskStudio --version
+
+      - name: Configure + build + run tests
+        run: |
+          cmake -S . -B build-tests \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DDUSKSTUDIO_BUILD_TESTS=ON \
+            -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main"
+          cmake --build build-tests --target dusk-studio-tests -j
+          ctest --test-dir build-tests --output-on-failure

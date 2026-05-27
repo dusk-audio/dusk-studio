@@ -3,8 +3,11 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <memory>
+
 namespace duskstudio
 {
+class AriaGuiComponent;
 class DuskMultisampleProcessor;
 
 // Phase 1 editor for the native Multisample instrument. Minimal
@@ -46,6 +49,29 @@ private:
 
     juce::Label    zoneCountLabel   { {}, "Regions: 0" };
 
+    // SF2 program switcher: visible only when an .sf2 with >1 preset is
+    // loaded (SF2 has no ARIA skin, so it sits in the default layout).
+    juce::Label    sf2PresetLabel   { {}, "Preset" };
+    juce::ComboBox sf2PresetSelector;
+
+    // ARIA bank program switcher: visible when the loaded .sfz belongs
+    // to a multi-program ARIA bank (e.g. Swirly's 8 kits). Sits in a
+    // thin row above the rendered ARIA skin.
+    juce::Label              ariaProgramLabel { {}, "Program" };
+    juce::ComboBox           ariaProgramSelector;
+    std::vector<juce::File>  ariaProgramFiles;   // parallel to selector items
+
     std::unique_ptr<juce::FileChooser> fileChooser;
+
+    // Skin = the per-soundfont custom UI (when the loaded .sfz ships
+    // an ARIA bank.xml + GUI XML). nullptr = fall back to the
+    // 3-knob default. Rebuilt whenever the loaded file path changes OR
+    // the same file's on-disk mtime changes (Reload after an external
+    // edit re-loads the same path, so a path-only check would miss it).
+    std::unique_ptr<AriaGuiComponent> ariaSkin;
+    juce::String                      currentSkinPath;
+    juce::Time                        currentSkinModTime;
+
+    void rebuildSkin();
 };
 } // namespace duskstudio

@@ -1,11 +1,8 @@
 #include "DuskMultisampleProcessor.h"
+#include "Sf2ToSfz.h"
 #include "../../ui/multisample/DuskMultisampleEditor.h"
 
 #include <sfizz.h>
-
-#if DUSKSTUDIO_HAS_SF2
- #include <fluidsynth.h>
-#endif
 
 namespace duskstudio
 {
@@ -13,16 +10,11 @@ struct DuskMultisampleProcessor::Impl
 {
     sfizz_synth_t* synth { nullptr };
 
-   #if DUSKSTUDIO_HAS_SF2
-    // FluidSynth side. Only one backend is active at a time (keyed off
-    // file extension at load); the other stays nulled. sfSynth + sf2Id
-    // are kept on the message thread for load/unload and read on the
-    // audio thread for noteon/render. FluidSynth is internally
-    // thread-safe.
-    fluid_settings_t* sfSettings { nullptr };
-    fluid_synth_t*    sfSynth    { nullptr };
-    int               sf2Id      { -1 };
-   #endif
+    // SF2 playback: convert the SoundFont to SFZ + extracted WAVs and
+    // run it through the sfizz engine (no fluidsynth dependency). This
+    // dir holds the extracted samples for the currently loaded SF2;
+    // deleted on reload / clear / destruction.
+    juce::File sf2TempDir;
 };
 
 DuskMultisampleProcessor::DuskMultisampleProcessor()
@@ -39,18 +31,84 @@ DuskMultisampleProcessor::DuskMultisampleProcessor()
     // sfizz allocates per-voice state lazily on prepareToPlay, so the
     // ctor is cheap. Polyphony default (128 voices on v1.2) is fine
     // until step 5's editor exposes a slider override.
+
+    // -1 = "CC never set by the UI" so widgets fall back to their own
+    // default instead of snapping to 0.
+    for (auto& c : ccCache)
+        c.store (-1.0f, std::memory_order_relaxed);
+}
+
+void DuskMultisampleProcessor::setHDCC (int cc, float normValue)
+{
+    if (cc < 0 || cc >= kNumHdcc) return;
+    const float v = juce::jlimit (0.0f, 1.0f, normValue);
+    ccCache[(size_t) cc].store (v, std::memory_order_relaxed);
+
+    // Queue for the audio thread. If the FIFO is momentarily full
+    // (user spamming a control faster than the audio block rate), drop
+    // the oldest-unread by simply not writing - the cache still holds
+    // the latest value and the next change re-queues it.
+    const auto scope = ccFifo.write (1);
+    if (scope.blockSize1 > 0)
+        ccQueue[(size_t) scope.startIndex1] = { cc, v };
+    else if (scope.blockSize2 > 0)
+        ccQueue[(size_t) scope.startIndex2] = { cc, v };
+}
+
+float DuskMultisampleProcessor::getHDCC (int cc) const noexcept
+{
+    if (cc < 0 || cc >= kNumHdcc) return -1.0f;
+    return ccCache[(size_t) cc].load (std::memory_order_relaxed);
+}
+
+juce::File DuskMultisampleProcessor::getControlImagePath() const
+{
+    if (impl == nullptr || impl->synth == nullptr || loadedFilePath.isEmpty())
+        return {};
+
+    // Round-trip the '/image' OSC query through a transient sfizz client.
+    // The reply arrives synchronously in the receive callback.
+    juce::String rel;
+    auto* client = sfizz_create_client (&rel);
+    sfizz_set_receive_callback (client,
+        [] (void* data, int, const char* /*path*/, const char* sig, const sfizz_arg_t* args)
+        {
+            if (data != nullptr && sig != nullptr && sig[0] == 's'
+                && args != nullptr && args[0].s != nullptr)
+                *static_cast<juce::String*> (data) = juce::String::fromUTF8 (args[0].s);
+        });
+    sfizz_send_message (impl->synth, client, 0, "/image", "", nullptr);
+    sfizz_delete_client (client);
+
+    if (rel.isEmpty()) return {};
+    if (juce::File::isAbsolutePath (rel))
+        return juce::File (rel);
+    // Relative to the loaded .sfz's directory.
+    return juce::File (loadedFilePath).getParentDirectory().getChildFile (rel);
+}
+
+std::vector<std::pair<int, juce::String>> DuskMultisampleProcessor::getControlCcLabels() const
+{
+    std::vector<std::pair<int, juce::String>> out;
+    if (impl == nullptr || impl->synth == nullptr) return out;
+    const unsigned n = sfizz_get_num_cc_labels (impl->synth);
+    out.reserve (n);
+    for (unsigned i = 0; i < n; ++i)
+    {
+        const int cc = sfizz_get_cc_label_number (impl->synth, (int) i);
+        const char* t = sfizz_get_cc_label_text (impl->synth, (int) i);
+        if (cc >= 0 && t != nullptr)
+            out.emplace_back (cc, juce::String::fromUTF8 (t));
+    }
+    return out;
 }
 
 DuskMultisampleProcessor::~DuskMultisampleProcessor()
 {
     if (impl != nullptr && impl->synth != nullptr)
         sfizz_free (impl->synth);
-   #if DUSKSTUDIO_HAS_SF2
-    if (impl != nullptr && impl->sfSynth != nullptr)
-        delete_fluid_synth (impl->sfSynth);
-    if (impl != nullptr && impl->sfSettings != nullptr)
-        delete_fluid_settings (impl->sfSettings);
-   #endif
+    if (impl != nullptr && impl->sf2TempDir != juce::File())
+        impl->sf2TempDir.deleteRecursively();
 }
 
 void DuskMultisampleProcessor::prepareToPlay (double sampleRate, int blockSize)
@@ -63,10 +121,6 @@ void DuskMultisampleProcessor::prepareToPlay (double sampleRate, int blockSize)
         sfizz_set_sample_rate (impl->synth, (float) sampleRate);
         sfizz_set_samples_per_block (impl->synth, blockSize);
     }
-   #if DUSKSTUDIO_HAS_SF2
-    if (impl->sfSynth != nullptr)
-        fluid_synth_set_sample_rate (impl->sfSynth, (float) sampleRate);
-   #endif
 }
 
 void DuskMultisampleProcessor::releaseResources()
@@ -88,7 +142,10 @@ bool DuskMultisampleProcessor::reloadCurrentFile (juce::String& errorMessage)
         errorMessage = "No file loaded";
         return false;
     }
-    return loadSfzFile (juce::File (loadedFilePath), errorMessage);
+    const juce::File f (loadedFilePath);
+    return f.getFileExtension().toLowerCase() == ".sf2"
+             ? loadSf2File (f, errorMessage)
+             : loadSfzFile (f, errorMessage);
 }
 
 void DuskMultisampleProcessor::clearLoadedFile()
@@ -99,13 +156,15 @@ void DuskMultisampleProcessor::clearLoadedFile()
         // sfizz_load_string with empty body unloads the current file.
         sfizz_load_string (impl->synth, "", "");
     }
-   #if DUSKSTUDIO_HAS_SF2
-    if (impl->sfSynth != nullptr && impl->sf2Id >= 0)
+    if (impl->sf2TempDir != juce::File())
     {
-        fluid_synth_sfunload (impl->sfSynth, impl->sf2Id, 1);
-        impl->sf2Id = -1;
+        impl->sf2TempDir.deleteRecursively();
+        impl->sf2TempDir = juce::File();
     }
-   #endif
+    // Drop SF2 preset state too so the editor's program switcher doesn't
+    // show stale presets from the just-unloaded SoundFont.
+    sf2PresetNames.clear();
+    sf2PresetIndex = -1;
     loadedFilePath.clear();
     lastLoadError.clear();
 }
@@ -113,8 +172,7 @@ void DuskMultisampleProcessor::clearLoadedFile()
 bool DuskMultisampleProcessor::loadSf2File (const juce::File& sf2,
                                               juce::String& errorMessage)
 {
-   #if DUSKSTUDIO_HAS_SF2
-    if (impl == nullptr)
+    if (impl == nullptr || impl->synth == nullptr)
     {
         errorMessage = "Internal: processor not initialised";
         return false;
@@ -125,92 +183,71 @@ bool DuskMultisampleProcessor::loadSf2File (const juce::File& sf2,
         return false;
     }
 
-    // Unload any previous SFZ on this slot (one backend at a time).
-    if (impl->synth != nullptr)
-        sfizz_load_string (impl->synth, "", "");
+    // Cache the preset name list (cheap metadata parse, no sample
+    // extraction) so the editor can offer a program switcher.
+    sf2PresetNames.clear();
+    if (auto parsed = readSf2 (sf2); parsed.ok)
+        for (const auto& p : parsed.presets)
+            sf2PresetNames.add (p.name);
 
-    // Lazy-init FluidSynth on first SF2 load. Settings live for the
-    // life of the processor; synth is recreated only if reset is
-    // needed (re-load reuses the existing synth via sfunload+sfload).
-    if (impl->sfSettings == nullptr)
-    {
-        impl->sfSettings = new_fluid_settings();
-        if (impl->sfSettings == nullptr)
-        {
-            errorMessage = "fluid_settings_new failed";
-            return false;
-        }
-        fluid_settings_setnum (impl->sfSettings, "synth.sample-rate", currentSampleRate);
-        // Drop reverb / chorus by default — Dusk Studio's bus + aux
-        // chain provides those; SF2's built-in effects add unwanted
-        // colour and cost CPU.
-        fluid_settings_setint (impl->sfSettings, "synth.reverb.active", 0);
-        fluid_settings_setint (impl->sfSettings, "synth.chorus.active", 0);
-        // Default polyphony — overridden if the user sets a value.
-        fluid_settings_setint (impl->sfSettings, "synth.polyphony",
-                                 overrides.polyphony.load (std::memory_order_relaxed));
-    }
-    if (impl->sfSynth == nullptr)
-    {
-        impl->sfSynth = new_fluid_synth (impl->sfSettings);
-        if (impl->sfSynth == nullptr)
-        {
-            errorMessage = "new_fluid_synth failed";
-            return false;
-        }
-        fluid_synth_set_sample_rate (impl->sfSynth, (float) currentSampleRate);
-    }
+    return applySf2Preset (sf2, 0, errorMessage);
+}
 
-    // Unload any previous SF2 before loading the new one.
-    if (impl->sf2Id >= 0)
+bool DuskMultisampleProcessor::loadSf2Preset (int presetIndex,
+                                                juce::String& errorMessage)
+{
+    if (loadedFilePath.isEmpty()
+        || juce::File (loadedFilePath).getFileExtension().toLowerCase() != ".sf2")
     {
-        fluid_synth_sfunload (impl->sfSynth, impl->sf2Id, 1);
-        impl->sf2Id = -1;
-    }
-    const auto path = sf2.getFullPathName().toStdString();
-    impl->sf2Id = fluid_synth_sfload (impl->sfSynth, path.c_str(), /*reset_presets*/ 1);
-    if (impl->sf2Id == FLUID_FAILED)
-    {
-        errorMessage = "fluid_synth_sfload failed for " + sf2.getFileName();
-        lastLoadError = errorMessage;
+        errorMessage = "No SF2 loaded";
         return false;
     }
-    // Select a starting preset on channel 0. GM banks have (0, 0) as
-    // "Acoustic Grand Piano" so it's the common default, but custom
-    // SF2s often only define a single preset at some other (bank,
-    // program) pair — selecting (0, 0) on those would silently load
-    // nothing. Iterate the soundfont's presets and pick the first
-    // available; fall back to (0, 0) if iteration returns nothing
-    // (unusual but harmless).
+    return applySf2Preset (juce::File (loadedFilePath), presetIndex, errorMessage);
+}
+
+bool DuskMultisampleProcessor::applySf2Preset (const juce::File& sf2,
+                                                 int presetIndex,
+                                                 juce::String& errorMessage)
+{
+    // Native SF2 -> SFZ: convert one preset into an SFZ body plus a dir
+    // of extracted WAVs, then load it through sfizz. No fluidsynth.
+    auto newDir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                      .getChildFile ("DuskStudio")
+                      .getChildFile ("sf2_" + juce::String::toHexString (
+                          juce::Random::getSystemRandom().nextInt64()));
+
+    auto conv = convertSf2Preset (sf2, presetIndex, newDir);
+    if (! conv.ok)
     {
-        int chosenBank = 0, chosenProgram = 0;
-        if (auto* sfont = fluid_synth_get_sfont_by_id (impl->sfSynth, impl->sf2Id))
-        {
-            fluid_sfont_iteration_start (sfont);
-            if (auto* preset = fluid_sfont_iteration_next (sfont))
-            {
-                chosenBank    = fluid_preset_get_banknum (preset);
-                chosenProgram = fluid_preset_get_num (preset);
-            }
-        }
-        fluid_synth_program_select (impl->sfSynth, /*chan*/ 0,
-                                      impl->sf2Id, chosenBank, chosenProgram);
+        errorMessage = conv.error;
+        lastLoadError = errorMessage;
+        newDir.deleteRecursively();
+        return false;
     }
 
-    // Push current polyphony in case setPolyphony() ran before this
-    // SF2 instance came up (e.g. setStateInformation order).
-    fluid_synth_set_polyphony (impl->sfSynth,
-                                 overrides.polyphony.load (std::memory_order_relaxed));
+    // sfizz roots relative sample= names at the SFZ path's parent dir,
+    // so point the virtual SFZ inside the temp dir holding the WAVs.
+    const auto virtualSfz = newDir.getChildFile ("preset.sfz");
+    const auto body       = conv.sfzText.toStdString();
+    const auto pathStr    = virtualSfz.getFullPathName().toStdString();
+    if (! sfizz_load_string (impl->synth, pathStr.c_str(), body.c_str()))
+    {
+        errorMessage = "sfizz rejected the converted SF2 preset";
+        lastLoadError = errorMessage;
+        newDir.deleteRecursively();
+        return false;
+    }
 
+    // New sample set is live - drop the previous load's temp dir.
+    if (impl->sf2TempDir != juce::File() && impl->sf2TempDir != newDir)
+        impl->sf2TempDir.deleteRecursively();
+    impl->sf2TempDir = newDir;
+
+    sf2PresetIndex = juce::jlimit (0, juce::jmax (0, sf2PresetNames.size() - 1),
+                                    presetIndex);
     loadedFilePath = sf2.getFullPathName();
     lastLoadError.clear();
     return true;
-   #else
-    juce::ignoreUnused (sf2);
-    errorMessage = "SF2 support not compiled in (install fluidsynth-devel "
-                   "and reconfigure CMake to enable)";
-    return false;
-   #endif
 }
 
 void DuskMultisampleProcessor::setPolyphony (int newPolyphony)
@@ -229,10 +266,6 @@ void DuskMultisampleProcessor::setPolyphony (int newPolyphony)
         sfizz_set_num_voices (impl->synth, clamped);
         lastAppliedPolyphony = clamped;
     }
-   #if DUSKSTUDIO_HAS_SF2
-    if (impl != nullptr && impl->sfSynth != nullptr)
-        fluid_synth_set_polyphony (impl->sfSynth, clamped);
-   #endif
 }
 
 bool DuskMultisampleProcessor::loadSfzFile (const juce::File& sfz,
@@ -256,15 +289,17 @@ bool DuskMultisampleProcessor::loadSfzFile (const juce::File& sfz,
         lastLoadError = errorMessage;
         return false;
     }
-   #if DUSKSTUDIO_HAS_SF2
-    // One backend at a time — unload any previous SF2 so processBlock
-    // takes the sfizz path.
-    if (impl->sfSynth != nullptr && impl->sf2Id >= 0)
+    // Drop any SF2-extracted temp samples - this slot is now a plain
+    // SFZ load and the previous SF2's WAVs are no longer referenced.
+    if (impl->sf2TempDir != juce::File())
     {
-        fluid_synth_sfunload (impl->sfSynth, impl->sf2Id, 1);
-        impl->sf2Id = -1;
+        impl->sf2TempDir.deleteRecursively();
+        impl->sf2TempDir = juce::File();
     }
-   #endif
+    // Clear SF2 preset state — an SFZ load has no presets, and leaving
+    // the previous SF2's list around would show a stale program switcher.
+    sf2PresetNames.clear();
+    sf2PresetIndex = -1;
     loadedFilePath = sfz.getFullPathName();
     lastLoadError.clear();
     return true;
@@ -282,72 +317,6 @@ void DuskMultisampleProcessor::processBlock (juce::AudioBuffer<float>& buf,
         buf.clear();
         return;
     }
-
-   #if DUSKSTUDIO_HAS_SF2
-    // FluidSynth path takes precedence when an SF2 is loaded. Channel
-    // 0 is the active GM-style channel; we don't multiplex MIDI
-    // channels yet (the multi-channel preset assign is a 1.0 feature).
-    //
-    // RT-safety caveat: FluidSynth's noteon/off/cc/pitch_bend/write_float
-    // take internal mutexes. Strictly that violates the CLAUDE.md
-    // audio-thread rules; in practice these are short uncontended
-    // locks (FluidSynth's voice/audio threads are serialized through
-    // them) and the only contention would be a concurrent message-
-    // thread program_select / sfload, which happens at most once per
-    // user-driven plugin load. Accepting this trade-off for the SF2
-    // beta path; a lock-free MIDI ring + render queue lands with the
-    // 1.0 polish pass if it ever shows up in profiles.
-    if (impl->sfSynth != nullptr && impl->sf2Id >= 0)
-    {
-        // Apply master tune offset. fluid_synth_set_gen with
-        // GEN_FINETUNE expects cents on channel-level; 0 cents = no
-        // detune. Cheap enough to push on every block (no internal
-        // realloc); only push on change.
-        const float tune = overrides.masterTuneCents.load (std::memory_order_relaxed);
-        if (tune != lastAppliedTuneCents)
-        {
-            fluid_synth_set_gen (impl->sfSynth, /*chan*/ 0, GEN_FINETUNE, tune);
-            lastAppliedTuneCents = tune;
-        }
-
-        for (const auto meta : midi)
-        {
-            const auto m = meta.getMessage();
-            if (m.isNoteOn())
-                fluid_synth_noteon (impl->sfSynth, /*chan*/ 0,
-                                     m.getNoteNumber(), m.getVelocity());
-            else if (m.isNoteOff())
-                fluid_synth_noteoff (impl->sfSynth, 0, m.getNoteNumber());
-            else if (m.isController())
-                fluid_synth_cc (impl->sfSynth, 0,
-                                 m.getControllerNumber(), m.getControllerValue());
-            else if (m.isPitchWheel())
-                fluid_synth_pitch_bend (impl->sfSynth, 0, m.getPitchWheelValue());
-            else if (m.isChannelPressure())
-                fluid_synth_channel_pressure (impl->sfSynth, 0,
-                                                m.getChannelPressureValue());
-        }
-        // FluidSynth writes into caller-provided L/R buffers with
-        // arbitrary stride. JUCE's AudioBuffer is contiguous per
-        // channel — pass stride 1.
-        float* l = buf.getWritePointer (0);
-        float* r = (buf.getNumChannels() > 1) ? buf.getWritePointer (1) : l;
-        fluid_synth_write_float (impl->sfSynth, numSamples,
-                                   l, 0, 1,
-                                   r, 0, 1);
-        // Apply master volume in dB from overrides. FluidSynth's
-        // synth.gain is linear 0..10, but mutating it per-block via
-        // fluid_settings_setnum is heavy; cheaper to scale the output
-        // buffer here.
-        const float volDb = overrides.masterVolDb.load (std::memory_order_relaxed);
-        if (std::abs (volDb) > 0.001f)
-        {
-            const float gain = std::pow (10.0f, volDb * 0.05f);
-            buf.applyGain (gain);
-        }
-        return;
-    }
-   #endif
 
     if (impl->synth == nullptr)
     {
@@ -376,6 +345,27 @@ void DuskMultisampleProcessor::processBlock (juce::AudioBuffer<float>& buf,
             const float a4 = 440.0f * std::pow (2.0f, tune / 1200.0f);
             sfizz_set_tuning_frequency (impl->synth, a4);
             lastAppliedTuneCents = tune;
+        }
+    }
+
+    // Drain UI-driven CC changes (ARIA custom-UI knobs/faders) queued
+    // by setHDCC on the message thread. sfizz_send_hdcc is the RT-side
+    // entry point; delay 0 applies at block start.
+    {
+        const auto ready = ccFifo.getNumReady();
+        if (ready > 0)
+        {
+            const auto scope = ccFifo.read (ready);
+            for (int i = 0; i < scope.blockSize1; ++i)
+            {
+                const auto& c = ccQueue[(size_t) (scope.startIndex1 + i)];
+                sfizz_send_hdcc (impl->synth, 0, c.cc, c.value);
+            }
+            for (int i = 0; i < scope.blockSize2; ++i)
+            {
+                const auto& c = ccQueue[(size_t) (scope.startIndex2 + i)];
+                sfizz_send_hdcc (impl->synth, 0, c.cc, c.value);
+            }
         }
     }
 
@@ -422,6 +412,26 @@ void DuskMultisampleProcessor::getStateInformation (juce::MemoryBlock& block)
     state.setProperty ("polyphony",
                         overrides.polyphony.load (std::memory_order_relaxed),
                         nullptr);
+    state.setProperty ("sf2Preset", sf2PresetIndex, nullptr);
+
+    // Persist any CC the UI has set (custom-UI knob/fader positions).
+    // Only non-default (>= 0) entries are written so the blob stays
+    // small. Each is a <cc n=".." v=".."/> child.
+    juce::ValueTree ccTree ("cc");
+    for (int i = 0; i < kNumHdcc; ++i)
+    {
+        const float v = ccCache[(size_t) i].load (std::memory_order_relaxed);
+        if (v >= 0.0f)
+        {
+            juce::ValueTree e ("c");
+            e.setProperty ("n", i, nullptr);
+            e.setProperty ("v", v, nullptr);
+            ccTree.appendChild (e, nullptr);
+        }
+    }
+    if (ccTree.getNumChildren() > 0)
+        state.appendChild (ccTree, nullptr);
+
     juce::MemoryOutputStream stream (block, false);
     state.writeToStream (stream);
 }
@@ -463,6 +473,33 @@ void DuskMultisampleProcessor::setStateInformation (const void* data, int size)
             std::memory_order_relaxed);
     if (state.hasProperty ("polyphony"))
         setPolyphony (juce::jlimit (1, 256, (int) state.getProperty ("polyphony")));
+
+    // Restore the SF2 preset selection (no-op for SFZ). Must run after
+    // the file load above so the SF2 name list + sfizz state exist.
+    // idx == 0 is deliberately skipped: loadSf2File already loaded
+    // preset 0, so re-loading it would be redundant work. Only a
+    // non-default saved preset needs an explicit switch.
+    if (state.hasProperty ("sf2Preset"))
+    {
+        const int idx = (int) state.getProperty ("sf2Preset");
+        if (idx > 0 && idx < sf2PresetNames.size())
+        {
+            juce::String err;
+            loadSf2Preset (idx, err);
+        }
+    }
+
+    // Restore custom-UI CC positions. Re-applies through setHDCC so the
+    // values reach sfizz on the next audio block + the cache is correct
+    // for the editor's widget read-back.
+    if (auto ccTree = state.getChildWithName ("cc"); ccTree.isValid())
+    {
+        for (int i = 0; i < ccTree.getNumChildren(); ++i)
+        {
+            const auto e = ccTree.getChild (i);
+            setHDCC ((int) e.getProperty ("n"), (float) e.getProperty ("v"));
+        }
+    }
 }
 
 juce::AudioProcessorEditor* DuskMultisampleProcessor::createEditor()

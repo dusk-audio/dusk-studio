@@ -1,5 +1,8 @@
 #include "DuskMultisampleEditor.h"
+#include "AriaGuiComponent.h"
 #include "../DuskFileBrowser.h"
+#include "../../engine/multisample/AriaBank.h"
+#include "../../engine/multisample/AriaGui.h"
 #include "../../engine/multisample/DuskMultisampleProcessor.h"
 
 namespace duskstudio
@@ -18,7 +21,7 @@ DuskMultisampleEditor::DuskMultisampleEditor (DuskMultisampleProcessor& proc)
     filePathLabel.setJustificationType (juce::Justification::centredLeft);
     addAndMakeVisible (filePathLabel);
 
-    browseButton.setTooltip ("Open an .sfz file. SF2 support lands in Dusk Studio 1.0.");
+    browseButton.setTooltip ("Open an .sfz, .sf2, or ARIA .bank.xml soundfont.");
     browseButton.onClick = [this] { openFileChooser(); };
     addAndMakeVisible (browseButton);
 
@@ -86,6 +89,38 @@ DuskMultisampleEditor::DuskMultisampleEditor (DuskMultisampleProcessor& proc)
     zoneCountLabel.setColour (juce::Label::textColourId, juce::Colour (0xff707074));
     addAndMakeVisible (zoneCountLabel);
 
+    sf2PresetLabel.setJustificationType (juce::Justification::centredLeft);
+    sf2PresetLabel.setColour (juce::Label::textColourId, juce::Colour (0xff909094));
+    sf2PresetLabel.setFont (juce::Font (juce::FontOptions (12.0f)));
+    addChildComponent (sf2PresetLabel);
+    sf2PresetSelector.setTooltip ("Switch between the SoundFont's presets.");
+    sf2PresetSelector.onChange = [this]
+    {
+        const int idx = sf2PresetSelector.getSelectedId() - 1;   // IDs are 1-based
+        if (idx < 0 || idx >= processor.getSf2PresetNames().size()) return;
+        juce::String err;
+        if (! processor.loadSf2Preset (idx, err))
+            filePathLabel.setText ("(" + err + ")", juce::dontSendNotification);
+    };
+    addChildComponent (sf2PresetSelector);
+
+    ariaProgramLabel.setJustificationType (juce::Justification::centredLeft);
+    ariaProgramLabel.setColour (juce::Label::textColourId, juce::Colour (0xff909094));
+    ariaProgramLabel.setFont (juce::Font (juce::FontOptions (12.0f)));
+    addChildComponent (ariaProgramLabel);
+    ariaProgramSelector.setTooltip ("Switch between the bank's programs.");
+    ariaProgramSelector.onChange = [this]
+    {
+        const int idx = ariaProgramSelector.getSelectedId() - 1;
+        if (idx < 0 || idx >= (int) ariaProgramFiles.size()) return;
+        juce::String err;
+        if (! processor.loadSfzFile (ariaProgramFiles[(size_t) idx], err))
+            filePathLabel.setText ("(" + err + ")", juce::dontSendNotification);
+        // loadedFilePath changes → timerCallback rebuilds the skin for
+        // the newly selected program on the next tick.
+    };
+    addChildComponent (ariaProgramSelector);
+
     // 4 Hz refresh - just enough that file-path / zone-count update
     // promptly after a load without flooding paint.
     startTimerHz (4);
@@ -122,6 +157,126 @@ void DuskMultisampleEditor::timerCallback()
     const bool fileLoaded = processor.hasLoadedFile();
     reloadButton.setEnabled (fileLoaded);
     clearButton .setEnabled (fileLoaded);
+
+    // Skin lives or dies with the loaded file path. Rebuild on a path
+    // change (load, clear, different file, state restore) OR on a same-
+    // path mtime change — Reload after an external edit re-loads the
+    // same path, which a path-only check would miss.
+    const auto modTime = path.isNotEmpty() ? juce::File (path).getLastModificationTime()
+                                            : juce::Time();
+    if (path != currentSkinPath || modTime != currentSkinModTime)
+    {
+        currentSkinPath    = path;
+        currentSkinModTime = modTime;
+        rebuildSkin();
+    }
+}
+
+void DuskMultisampleEditor::rebuildSkin()
+{
+    // Tear down the old skin first so its LookAndFeels detach cleanly
+    // before any new children allocate.
+    if (ariaSkin != nullptr)
+    {
+        removeChildComponent (ariaSkin.get());
+        ariaSkin.reset();
+    }
+
+    ariaProgramFiles.clear();
+    int ariaSelectedProgram = -1;
+
+    const auto path = processor.getLoadedFilePath();
+    if (path.isNotEmpty())
+    {
+        const juce::File sfz (path);
+        if (auto bank = AriaBank::tryLoadFromSfz (sfz);
+            bank.has_value() && bank->selectedIndex >= 0
+            && (size_t) bank->selectedIndex < bank->programs.size())
+        {
+            // Remember the whole program list so the switcher can load
+            // any sibling program; preselect the one we just opened.
+            ariaProgramSelector.clear (juce::dontSendNotification);
+            for (size_t i = 0; i < bank->programs.size(); ++i)
+            {
+                ariaProgramFiles.push_back (bank->programs[i].sfzFile);
+                ariaProgramSelector.addItem (bank->programs[i].name, (int) i + 1);
+            }
+            ariaSelectedProgram = bank->selectedIndex;
+
+            const auto& prog = bank->programs[(size_t) bank->selectedIndex];
+            if (prog.guiFile.existsAsFile())
+            {
+                if (auto doc = AriaGuiDoc::parse (prog.guiFile); doc.has_value())
+                {
+                    ariaSkin = std::make_unique<AriaGuiComponent> (processor, std::move (*doc));
+                    addAndMakeVisible (*ariaSkin);
+                }
+            }
+        }
+
+        // Stock auto-skin fallback: no ARIA bank GUI, but the .sfz
+        // declares <control> image= + label_cc&. Build a synthetic skin
+        // (background + auto-laid-out labelled knobs bound to those CCs).
+        if (ariaSkin == nullptr)
+        {
+            const auto img    = processor.getControlImagePath();
+            const auto labels = processor.getControlCcLabels();
+            if (img.existsAsFile() && ! labels.empty())
+            {
+                auto doc = AriaGuiDoc::buildAutoSkin (img, labels);
+                ariaSkin = std::make_unique<AriaGuiComponent> (processor, std::move (doc));
+                addAndMakeVisible (*ariaSkin);
+            }
+        }
+    }
+
+    // 3-knob default visible only when no skin took over.
+    const bool showDefaults = (ariaSkin == nullptr);
+    volSlider .setVisible (showDefaults);
+    volLabel  .setVisible (showDefaults);
+    tuneSlider.setVisible (showDefaults);
+    tuneLabel .setVisible (showDefaults);
+    polySlider.setVisible (showDefaults);
+    polyLabel .setVisible (showDefaults);
+    zoneCountLabel.setVisible (showDefaults);
+
+    // SF2 program switcher: populate + show when the loaded SF2 has
+    // more than one preset. (SF2 never has an ARIA skin, so it always
+    // rides in the default layout.)
+    const auto& presets = processor.getSf2PresetNames();
+    const bool showSf2Presets = showDefaults && presets.size() > 1;
+    if (showSf2Presets)
+    {
+        sf2PresetSelector.clear (juce::dontSendNotification);
+        for (int i = 0; i < presets.size(); ++i)
+            sf2PresetSelector.addItem (presets[i], i + 1);   // IDs 1-based
+        sf2PresetSelector.setSelectedId (juce::jmax (1, processor.getSf2PresetIndex() + 1),
+                                          juce::dontSendNotification);
+    }
+    sf2PresetLabel   .setVisible (showSf2Presets);
+    sf2PresetSelector.setVisible (showSf2Presets);
+
+    // ARIA bank program switcher: show when the skin belongs to a
+    // multi-program bank. Sits in a thin row above the skin.
+    const bool showAriaPrograms = (ariaSkin != nullptr) && ariaProgramFiles.size() > 1;
+    if (showAriaPrograms)
+        ariaProgramSelector.setSelectedId (ariaSelectedProgram + 1, juce::dontSendNotification);
+    ariaProgramLabel   .setVisible (showAriaPrograms);
+    ariaProgramSelector.setVisible (showAriaPrograms);
+
+    if (ariaSkin != nullptr)
+    {
+        const auto natW = ariaSkin->nativeSize().getWidth();
+        const auto natH = ariaSkin->nativeSize().getHeight();
+        // Header (62) + optional program-switcher row (28) + skin + 12.
+        const int progRow = showAriaPrograms ? 28 : 0;
+        setSize (juce::jmax (natW + 24, 520), 62 + progRow + natH + 12);
+    }
+    else
+    {
+        setSize (520, 260);
+    }
+    resized();
 }
 
 void DuskMultisampleEditor::openFileChooser()
@@ -132,9 +287,9 @@ void DuskMultisampleEditor::openFileChooser()
     // down while the dialog is open).
     juce::Component::SafePointer<DuskMultisampleEditor> safe (this);
     filebrowser::open (*this, {
-        /*title*/                  "Load soundfont (.sfz / .sf2)",
+        /*title*/                  "Load soundfont (.sfz / .sf2 / .bank.xml)",
         /*initialFileOrDirectory*/ juce::File::getSpecialLocation (juce::File::userHomeDirectory),
-        /*filePatternsAllowed*/    "*.sfz;*.sf2",
+        /*filePatternsAllowed*/    "*.sfz;*.sf2;*.bank.xml",
         /*mode*/                   filebrowser::Mode::Open,
         /*warnAboutOverwriting*/   false,
         /*selectDirectories*/      false,
@@ -143,12 +298,45 @@ void DuskMultisampleEditor::openFileChooser()
     {
         auto* self = safe.getComponent();
         if (self == nullptr || ! file.existsAsFile()) return;
-        if (file.getFileExtension().toLowerCase() == ".sf2")
+
+        const auto fileName = file.getFileName().toLowerCase();
+
+        if (fileName.endsWith (".sf2"))
         {
-            self->filePathLabel.setText ("(SF2 support lands in 1.0)",
-                                          juce::dontSendNotification);
+            juce::String err;
+            if (! self->processor.loadSf2File (file, err))
+                self->filePathLabel.setText ("(" + err + ")", juce::dontSendNotification);
+            else
+                self->timerCallback();
             return;
         }
+
+        // ARIA bank manifest - find the first program's .sfz inside the
+        // bank and load that. Phase 4 adds the program switcher; for now
+        // pick the first valid AriaProgram so the user can audition the
+        // pack without drilling into Programs/ themselves.
+        if (fileName.endsWith (".bank.xml"))
+        {
+            // tryLoadFromSfz walks up from the passed file's directory
+            // looking for *.bank.xml - passing the bank file itself
+            // works because its parent dir contains it.
+            auto bankOpt = AriaBank::tryLoadFromSfz(file);
+            if (! bankOpt.has_value() || bankOpt->programs.empty())
+            {
+                self->filePathLabel.setText ("(bank manifest had no programs)",
+                                              juce::dontSendNotification);
+                return;
+            }
+            const auto& first = bankOpt->programs.front();
+            juce::String err;
+            if (! self->processor.loadSfzFile (first.sfzFile, err))
+                self->filePathLabel.setText ("(" + err + ")",
+                                              juce::dontSendNotification);
+            else
+                self->timerCallback();
+            return;
+        }
+
         juce::String err;
         if (! self->processor.loadSfzFile (file, err))
             self->filePathLabel.setText ("(" + err + ")", juce::dontSendNotification);
@@ -186,6 +374,36 @@ void DuskMultisampleEditor::resized()
     // File path row.
     filePathLabel.setBounds (area.removeFromTop (22));
     area.removeFromTop (8);
+
+    if (ariaSkin != nullptr)
+    {
+        // Optional program-switcher row above the skin.
+        if (ariaProgramSelector.isVisible())
+        {
+            auto progRow = area.removeFromTop (24);
+            ariaProgramLabel.setBounds (progRow.removeFromLeft (64));
+            ariaProgramSelector.setBounds (progRow.removeFromLeft (juce::jmin (260, progRow.getWidth())));
+            area.removeFromTop (4);
+        }
+
+        // Centre the ARIA skin in the remaining area at its native
+        // pixel size. ARIA GUIs are pixel-fixed (Sforzando convention);
+        // scaling would render fuzzy filmstrips.
+        const auto nat = ariaSkin->nativeSize();
+        const int  cx  = area.getCentreX() - nat.getWidth()  / 2;
+        const int  cy  = area.getY();
+        ariaSkin->setBounds (cx, cy, nat.getWidth(), nat.getHeight());
+        return;
+    }
+
+    // SF2 preset switcher row (only visible for multi-preset SF2s).
+    if (sf2PresetSelector.isVisible())
+    {
+        auto presetRow = area.removeFromTop (24);
+        sf2PresetLabel.setBounds (presetRow.removeFromLeft (50));
+        sf2PresetSelector.setBounds (presetRow);
+        area.removeFromTop (8);
+    }
 
     // Knob row: 3 knobs evenly spaced.
     auto knobRow = area.removeFromTop (90);
