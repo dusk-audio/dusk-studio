@@ -51,6 +51,9 @@ jobs:
       # Your PRIVATE releases repo. The DMG is pushed here, never to this
       # public repo. Change to your owner/repo.
       RELEASES_REPO: dusk-audio/dusk-studio-releases
+      # ccache obj cache (auto-detected by CMakeLists.txt). Stable dir for
+      # the actions/cache key below — release builds reuse the same cache.
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
       # SIGN = true once the Developer ID cert secret exists. Until then
       # the workflow still runs + ships an UNSIGNED (ad-hoc) dev DMG —
       # add the Apple secrets later and the same workflow auto-upgrades to
@@ -66,6 +69,17 @@ jobs:
           # Release pushes via the RELEASES_REPO_TOKEN PAT, not the
           # persisted GITHUB_TOKEN — don't leave it in git config.
           persist-credentials: false
+
+      - name: Install ninja + ccache
+        run: brew install ninja ccache
+
+      - name: Cache ccache objects
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-macos-release-${{ github.sha }}
+          restore-keys: |
+            ccache-macos-release-
 
       - name: Clone JUCE 8.0.4 (upstream)
         # Same upstream JUCE the Linux CI uses. No SIMD<long long> patch
@@ -127,10 +141,11 @@ jobs:
           # Real Developer ID when the secret is set, else "-" (ad-hoc).
           SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY || '-' }}
         run: |
-          # Default single-config generator (Unix Makefiles) — keeps the
-          # build/DuskStudio_artefacts/Release/ path that package-macos.sh
-          # expects, and avoids depending on Ninja being preinstalled.
-          cmake -S . -B build \
+          # Ninja single-config generator — still produces the
+          # build/DuskStudio_artefacts/Release/ path package-macos.sh
+          # expects (CMAKE_BUILD_TYPE=Release pins it), just faster than
+          # Makefiles. Ninja installed in the step above.
+          cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
