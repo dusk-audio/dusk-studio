@@ -38,6 +38,22 @@ bool RecordManager::startRecording (double sampleRate, juce::int64 startSample)
 {
     if (active.load (std::memory_order_relaxed))
         return true;
+
+    // Pairs with the bail-without-teardown path in stopRecording. If
+    // the prior take's audio thread is still inside writeInputBlock /
+    // writeMidiBlock with cached pointers into writers[] / midiCaptures
+    // [], overwriting those slots here would UAF. Refuse to arm until
+    // the audio thread drains. In practice this fires only after a
+    // real-time-priority disaster on the prior take.
+    if (audioInFlight.load (std::memory_order_acquire) > 0)
+    {
+        std::fprintf (stderr,
+                      "[Dusk Studio/RecordManager] startRecording: prior take's audio "
+                      "thread still in-flight (audioInFlight=%d); refusing to arm.\n",
+                      audioInFlight.load (std::memory_order_relaxed));
+        return false;
+    }
+
     if (! session.anyTrackArmed())
     {
         std::fprintf (stderr, "[Dusk Studio/RecordManager] startRecording: anyTrackArmed=false; aborting.\n");
@@ -198,19 +214,18 @@ void RecordManager::stopRecording (juce::int64 endSample)
     // Cap at kMaxSpinIterations so a stuck / detached audio thread cannot
     // hang the message thread forever. At a ~1 µs yield cost this is
     // ~1 ms worst-case latency — orders of magnitude over a sane audio
-    // block. If we exceed the cap, log + break: teardown of writers /
-    // midiCaptures then proceeds even though a stale audio-thread reader
-    // may still be live. Acceptable because:
-    //   • active = false was already published with release ordering
-    //     above, so the audio thread's next entry sees it and bails.
-    //   • The only window for UAF is one in-flight call that started
-    //     BEFORE we stored false. The AudioInFlightScope dtor will run
-    //     when that call returns, by which time we'll have nulled the
-    //     writer slots — the call already passed its null-check before
-    //     entering, but the existing `slot->writer == nullptr` guards in
-    //     writeInputBlock cover the freshly-nulled case for the NEXT
-    //     call. A worst-case data race writes one stale block to a
-    //     ThreadedWriter mid-destruction; we accept that over a deadlock.
+    // block. If we exceed the cap, BAIL the entire teardown: writers[]
+    // and midiCaptures[] stay populated, no regions get committed for
+    // this take. The audio thread may still be inside writeInputBlock
+    // / writeMidiBlock with cached pointers into those slots; tearing
+    // them down here would UAF.
+    //
+    // Recovery: the next startRecording gates itself on audioInFlight
+    // == 0 before overwriting writers[]. If the audio thread eventually
+    // unstuck (transient scheduling glitch), the slot is reclaimed
+    // there. If permanently stuck (real-time priority lost, OS bug),
+    // the slot stays leaked until ~RecordManager — better than a UAF
+    // crash mid-session.
     constexpr int kMaxSpinIterations = 1000;
     int spinIters = 0;
     while (audioInFlight.load (std::memory_order_acquire) > 0)
@@ -218,11 +233,13 @@ void RecordManager::stopRecording (juce::int64 endSample)
         if (++spinIters > kMaxSpinIterations)
         {
             std::fprintf (stderr,
-                          "[Dusk Studio/RecordManager] stopRecording: audioInFlight=%d after %d "
-                          "yields; forcing teardown. Audio thread may be stalled.\n",
+                          "[Dusk Studio/RecordManager] stopRecording: audioInFlight=%d "
+                          "after %d yields; BAILING teardown to avoid UAF. Take "
+                          "is dropped; writer slots leak until audio thread "
+                          "drains (next startRecording will reclaim).\n",
                           audioInFlight.load (std::memory_order_relaxed),
                           kMaxSpinIterations);
-            break;
+            return;
         }
         std::this_thread::yield();
     }

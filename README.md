@@ -1,43 +1,49 @@
 # Dusk Studio
 
 [![Linux build](https://github.com/dusk-audio/dusk-studio/actions/workflows/linux-build.yml/badge.svg)](https://github.com/dusk-audio/dusk-studio/actions/workflows/linux-build.yml)
-[![Linux arm64](https://github.com/dusk-audio/dusk-studio/actions/workflows/linux-build-arm64.yml/badge.svg)](https://github.com/dusk-audio/dusk-studio/actions/workflows/linux-build-arm64.yml)
 [![macOS build](https://github.com/dusk-audio/dusk-studio/actions/workflows/macos-build.yml/badge.svg)](https://github.com/dusk-audio/dusk-studio/actions/workflows/macos-build.yml)
 [![Windows build](https://github.com/dusk-audio/dusk-studio/actions/workflows/windows-build.yml/badge.svg)](https://github.com/dusk-audio/dusk-studio/actions/workflows/windows-build.yml)
-[![Linux sanitizer](https://github.com/dusk-audio/dusk-studio/actions/workflows/linux-sanitizer.yml/badge.svg)](https://github.com/dusk-audio/dusk-studio/actions/workflows/linux-sanitizer.yml)
+[![Windows tests](https://github.com/dusk-audio/dusk-studio/actions/workflows/windows-tests.yml/badge.svg)](https://github.com/dusk-audio/dusk-studio/actions/workflows/windows-tests.yml)
+[![Linux sanitizer (TSan)](https://github.com/dusk-audio/dusk-studio/actions/workflows/linux-sanitizer.yml/badge.svg)](https://github.com/dusk-audio/dusk-studio/actions/workflows/linux-sanitizer.yml)
 
-A deliberately constrained, portastudio-style DAW for Linux (macOS + Windows in beta). Built for engineers who want to **record, mix, and master without leaving the application** — no plugin paralysis, no menu diving, no infinite-options sprawl.
+A deliberately constrained, portastudio-style DAW for Linux, macOS, and Windows. Built for engineers who want to **record, mix, and master without leaving the application** — no plugin paralysis, no menu diving, no infinite-options sprawl.
 
 > *"If it wouldn't exist as a physical control on a $2000 hardware recorder, it probably doesn't belong here."*
 
-JUCE 8 / C++17. PipeWire (primary) via JUCE's JACK backend on Linux; native ALSA backend with USB hot-unplug recovery; macOS CoreAudio + Windows WASAPI / ASIO via JUCE. Authoritative spec: [DuskStudio.md](DuskStudio.md). User guide: [docs/USER_GUIDE.md](docs/USER_GUIDE.md).
+JUCE 8 / C++17. PipeWire (primary) via JUCE's JACK backend on Linux; native ALSA backend with USB hot-unplug recovery; macOS CoreAudio + Windows WASAPI / ASIO via JUCE. Authoritative spec: [DuskStudio.md](DuskStudio.md). User manual: [MANUAL.md](MANUAL.md).
 
 ## Status
 
-**Alpha — Patreon-gated binaries.** Phase A (data safety) + Phase B (hardening) + Phase C smalls (license, Windows fsync, accessibility floor) shipped. Cross-platform plugin-host isolation, macOS notarisation, and Windows MSI still ahead of 1.0.
+**Alpha — Patreon-gated binaries.** Feature backlog effectively closed: every spec phase, Tascam DP-24SD parity, MTC + MIDI Clock sync, cross-platform OOP plugin host (audio on all three OSes; editor embedded on Linux + Windows, in-process shell on macOS), and the rename to Dusk Studio have shipped. Remaining 1.0 work is packaging (Windows MSI is wired; macOS notarisation deferred until paid Apple Dev cert), deeper accessibility, and cross-process NSView embedding research.
 
 | Stage | Status |
 |---|---|
-| Live mixer (16 ch + 4 aux + master, EQ + comp on each) | Working |
+| Live mixer (24 ch in 3 banks of 8 + 4 aux + 4 mix buses + master) | Working |
 | Multitrack recording / playback with disk-full + MIDI-overflow detection | Working |
-| Atomic session save + autosave with content-hash dirty check | Working |
-| Plugin hosting (per-channel VST3 / LV2) | Working |
+| Atomic session save + 30 s autosave with content-hash dirty check | Working |
+| Plugin hosting (per-channel VST3 / LV2 / AU + per-aux return) | Working |
+| Native soundfonts (`.sfz` + `.sf2` via sfizz, no external synth) | Working |
 | Plugin offline-state preservation (missing plugin doesn't wipe save) | Working |
-| Out-of-process plugin host (crash isolation, **Linux only**) | Working |
-| Mastering view (waveform + EQ + multiband comp + L4-style limiter) | Working |
-| Bounce / mixdown export | Working |
+| Out-of-process plugin host — audio (Linux + macOS + Windows) | Working |
+| Out-of-process plugin host — editor embed (Linux XEmbed, Windows SetParent, macOS in-process shell) | Working |
+| Mastering view (waveform + 5-band EQ + multiband comp + brick-wall limiter + BS.1770) | Working |
+| Bounce / mixdown export (master or stems) | Working |
 | Aux sends + reverb / delay returns | Working |
-| External hardware inserts (with auto-latency ping) | Working |
-| MIDI tracks + instrument plugins | Working |
-| Take cycling + comping (option A — cycle previousTakes) | Working |
-| Console automation (Write / Read / Touch, per-param lanes) | Working |
-| MIDI Clock sync (slave + master) | Working |
+| External hardware inserts (per channel + per aux, with auto-latency ping) | Working |
+| MIDI tracks + instrument plugins + piano roll editor | Working |
+| Audio region editor (non-destructive trim / fade / gain) + 20-take history | Working |
+| Take cycling + comping (cycle previousTakes — Option A) | Working |
+| Console automation (Write / Read / Touch on channels + aux + master) | Working |
+| MIDI Clock sync + MTC slave + master | Working |
 | MIDI bindings + MIDI Learn (transport / strip / sends / EQ / comp / plugin params) | Working |
+| Mackie Control surface (tested against Tascam DP-24SD) | Working |
 | Multi-file audio + MIDI import with target-track picker | Working |
-| MTC (SMPTE quarter-frame) | Deferred — picture-sync workflows only |
-| OOP plugin host on macOS + Windows | 1.0 blocker |
+| Cross-process NSView embed (macOS editor) | Research |
+| Windows MSI installer | Working (CI publishes to private releases repo) |
+| macOS signed + notarised DMG | Deferred (paid Apple Dev cert) |
+| Deeper a11y (full screen-reader labels + keyboard-only mixer nav) | Floor only |
 
-65 Catch2 unit tests pass under Release + ASAN+UBSan. Linux + macOS + Windows builds + tests are run on every push.
+144 Catch2 unit tests across 34 files. Linux + macOS + Windows builds run on every push; Windows tests run on every push; Linux ThreadSanitizer runs on every PR + push.
 
 ## Why
 
@@ -47,9 +53,9 @@ Most DAWs are built for production studios with infinite track counts and infini
 
 These are not implementation details — they're the product. Anything that violates them is wrong.
 
-1. **16 channels maximum.** Fixed. Two banks of 8 to match standard control surfaces.
-2. **Fixed signal chain.** No reordering EQ / comp. Channel-strip processing order is the same on every track, every time. Each channel gets **one optional insert slot** (a single VST3 / LV2 plugin **or** a hardware insert — never a chain), at a fixed position in the strip; aux returns get one plugin slot each.
-3. **No waveform editing.** Region-level move / split / delete / trim only. (Draw mode exists only inside the MIDI piano roll.)
+1. **24 channels maximum.** Fixed. Three banks of 8 to match standard control surfaces (each bank drives 8 strips on the surface; all 24 are visible on screen).
+2. **Fixed signal chain.** No reordering EQ / comp. Channel-strip processing order is the same on every track, every time. Each channel gets **one optional insert slot** (a single VST3 / LV2 / AU plugin **or** a hardware insert — never a chain), at a fixed position in the strip; aux returns get one plugin slot each.
+3. **No waveform editing.** Region-level move / split / delete / trim / fade / gain only. (Draw mode exists only inside the MIDI piano roll.)
 4. **Console-style automation only.** Write / Read / Touch via gesture; no curve drawing.
 5. **Everything visible within a stage.** Four workflow stages match the portastudio layout (Recording / Mixing / Aux / Mastering); within each stage there are no tabs and no hidden panels. The MIDI piano roll, plugin editors, and audio-settings dialog are embedded modals over the current stage.
 6. **No preferences sprawl.** A single Audio Settings panel covers audio device + buffer + oversampling + MIDI sync (Clock in / out, chase, emit) + MIDI bindings + UI scale. No per-feature settings menus, no global preferences window.
@@ -58,18 +64,19 @@ These are not implementation details — they're the product. Anything that viol
 ## Architecture
 
 ```
-Channel 1-16 ──────────────→ 4 Aux Buses ──→ Master ──→ Output
-   HPF                          EQ              Pultec EQ
-   4-band EQ                    Comp            Bus Comp
-   FET/Opto Comp                Insert slot     Tape Saturation
-   Insert slot (plugin or HW)   Fader           Fader
-   Pan + Sends
-   Fader
-   Mute / Solo / Ø
+Channels 1-24 ───────────────→ 4 Aux Buses ──→ 4 Mix Buses ──→ Master ──→ Output
+   Phase / Polarity              EQ              3-band EQ        Pultec EQ
+   Insert (plugin or HW)         Comp            SSL Bus Comp     Bus Comp
+   HPF + LPF                     Fader                            Tape Saturation
+   4-band EQ                                                      Fader
+   Compressor (Opto/FET/VCA)
+   Aux sends (4) + Pan
+   Fader / Mute / Solo
 ```
 
-- **DSP** is extracted from the Dusk Audio plugin suite (4K EQ, Multi-Comp FET/Opto, Multi-Q Pultec, TapeMachine, shared AnalogEmulation) so the mixer and the standalone plugins share a single DSP source of truth.
-- **Plugin host**: VST3 + LV2 (yabridge-friendly) on every channel strip; aux buses host reverb / delay returns.
+- **DSP** is extracted from the Dusk Audio plugin suite (4K EQ, Multi-Comp FET/Opto/VCA, Multi-Q Pultec, TapeMachine, shared AnalogEmulation) so the mixer and the standalone plugins share a single DSP source of truth.
+- **Plugin host**: VST3 + LV2 + AU on every channel strip; aux returns host reverb / delay; per-platform IPC backend (Linux `shm` + `eventfd`, macOS `shm_open` + `os_sync_wait_on_address`, Windows `CreateFileMapping` + `WaitOnAddress`) keeps a crashing plugin from taking the host down.
+- **Soundfonts**: `.sfz` and `.sf2` play through the built-in [sfizz](https://github.com/dusk-audio/sfizz) engine (SF2 → SFZ on load). No external synth required.
 
 ## Repository
 
@@ -77,18 +84,20 @@ Channel 1-16 ──────────────→ 4 Aux Buses ──→
 src/
   dsp/         # ChannelStrip, AuxBusStrip, MasterBus, BrickwallLimiter, etc.
   engine/      # AudioEngine, RecordManager, PlaybackEngine, BounceEngine, MasteringChain
+    ipc/       # OOP plugin host: PluginHostMain, RemotePluginConnection
+      platform/# Linux / macOS / Windows IPC backends (shm + sync + process)
   session/     # Session model + JSON serialisation
   ui/          # MainComponent, ConsoleView, channel/aux/master strips, mastering view
   util/        # CrashHandler (FileLogger + signal-handler reports)
-tests/         # Catch2 unit tests (session, recording, MIDI, IPC, DSP)
-packaging/     # .desktop, AppStream, MIME — for AppImage builds
-docs/          # User guide + onboarding docs
-DuskStudio.md       # authoritative product spec
+tests/         # 144 Catch2 unit tests (session, recording, MIDI, IPC, DSP)
+packaging/     # .desktop, AppStream, MIME, macOS bundle — for AppImage + DMG builds
+DuskStudio.md  # authoritative product spec
+MANUAL.md      # end-user manual (Pandoc-buildable to PDF via packaging/build-pdf.sh)
 ```
 
 ## Builds & contributing
 
-Precompiled binaries delivered via Patreon (Linux AppImage today; macOS + Windows when the cross-platform plugin host lands). Self-build is fully supported and equivalent at the source level — no support tier for self-builders.
+Precompiled binaries delivered via Patreon (Linux AppImage + Windows MSI today via the private releases repo; macOS DMG deferred until the paid Apple Developer cert lands). Self-build is fully supported and equivalent at the source level — no support tier for self-builders.
 
 | Platform | Doc |
 |----------|-----|
@@ -96,11 +105,11 @@ Precompiled binaries delivered via Patreon (Linux AppImage today; macOS + Window
 | Windows | [BUILDING-WINDOWS.md](BUILDING-WINDOWS.md) |
 | macOS | Mirror of Linux flow; upstream JUCE 8.0.4 + sibling `plugins-main`. Smoke-built per push on `macos-14` (Apple Silicon Sonoma) — see [.github/workflows/macos-build.yml](.github/workflows/macos-build.yml). |
 | AppImage packaging (Linux) | [packaging/README.md](packaging/README.md) |
-| User guide / troubleshooting | [docs/USER_GUIDE.md](docs/USER_GUIDE.md) |
+| End-user manual / troubleshooting | [MANUAL.md](MANUAL.md) |
 
 After a build, sanity check with `Dusk Studio --version` — prints app + JUCE + platform string and exits 0. Useful as a paste-target for Patreon support DMs.
 
-CI runs on every push to `main` against Linux (Ubuntu 22.04 GCC), macOS (14 Apple Silicon), and Windows (Server 2022 MSVC). Linux sanitizer (ASAN+UBSan) runs nightly and on engine/dsp/session paths.
+CI runs on every push to `main` against Linux (Ubuntu 22.04 GCC), macOS (14 Apple Silicon, Ninja + ccache), and Windows (Server 2022 MSVC). Windows tests (`windows-tests.yml`) exercise the Catch2 suite on every PR. Linux ThreadSanitizer (`linux-sanitizer.yml`) runs the Catch2 suite under TSan on every PR + push. Tagged releases (`v*`) trigger the Windows MSI workflow (publishes to private releases repo) and the macOS signed + notarised DMG workflow (when the Developer ID cert is configured).
 
 ## License
 
@@ -111,9 +120,10 @@ Dusk Studio ships under a **dual access model**:
 
 - **Source**: GPL-3.0. Clone, audit, build, modify, redistribute — all
   fine under GPL terms.
-- **Patreon binaries**: precompiled Linux AppImages (and eventually
-  macOS / Windows installers) delivered to supporters. The payment is
-  for packaging, signing, and support access — the source remains
-  open. Self-builders get no support, but the code is the same.
+- **Patreon binaries**: precompiled Linux AppImages + Windows MSIs
+  delivered to supporters today (macOS DMGs land once the Apple
+  Developer cert is in hand). The payment is for packaging, signing,
+  and support access — the source remains open. Self-builders get no
+  support, but the code is the same.
 - **Paid 1.0 ($29)**: same source, same GPL. Buys you the signed
   installer + access to bug triage.

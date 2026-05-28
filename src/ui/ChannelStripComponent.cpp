@@ -2018,15 +2018,32 @@ void ChannelStripComponent::openPluginEditor()
                               syncErr.toRawUTF8());
             }
 
-            if (auto* shellEditor = pluginSlot.createShellEditor())
+            // Take ownership of the raw editor immediately so a factory
+            // return-nullptr (bad_alloc on the wrapper, or a future
+            // failure branch in createInProcessEditorHost) doesn't leak
+            // the editor. JUCE's contract: deleting an AudioProcessor
+            // Editor fires AudioProcessor::editorBeingDeleted on the
+            // shell instance, which is the correct cleanup path for an
+            // editor we never wrapped. On success we .release() the
+            // unique_ptr — ownership transfers into the wrapper's own
+            // unique_ptr<AudioProcessorEditor> member.
+            std::unique_ptr<juce::AudioProcessorEditor> shellEditor (
+                pluginSlot.createShellEditor());
+            if (shellEditor != nullptr)
             {
-                embed = duskstudio::platform::createInProcessEditorHost (shellEditor);
-                // Register the wrapper with PluginSlot so it can refuse
-                // a second concurrent editor + defer shell release
-                // until this wrapper destructs. SafePointer auto-nulls
-                // on wrapper dtor — no explicit "released" callback
-                // needed.
-                pluginSlot.notifyShellEditorWrapper (embed.get());
+                embed = duskstudio::platform::createInProcessEditorHost (shellEditor.get());
+                if (embed != nullptr)
+                {
+                    shellEditor.release();  // ownership now in wrapper
+                    // Register the wrapper with PluginSlot so it can
+                    // refuse a second concurrent editor + defer shell
+                    // release until this wrapper destructs. SafePointer
+                    // auto-nulls on wrapper dtor — no explicit "released"
+                    // callback needed.
+                    pluginSlot.notifyShellEditorWrapper (embed.get());
+                }
+                // else: shellEditor's unique_ptr dtor runs at scope exit,
+                // deleting the JUCE editor and firing editorBeingDeleted.
             }
         }
         else if (shellErr.isNotEmpty())
