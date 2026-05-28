@@ -1413,15 +1413,49 @@ void PluginSlot::timerCallback()
     // here so JUCE_ASSERT_MESSAGE_THREAD in applyParamWriteOnMessageThread
     // is satisfied by construction.
     const int avail = paramFifo.getNumReady();
-    if (avail == 0) return;
+    if (avail > 0)
+    {
+        int s1 = 0, sz1 = 0, s2 = 0, sz2 = 0;
+        paramFifo.prepareToRead (avail, s1, sz1, s2, sz2);
+        for (int i = 0; i < sz1; ++i)
+            applyParamWriteOnMessageThread (paramQueue[(size_t) (s1 + i)]);
+        for (int i = 0; i < sz2; ++i)
+            applyParamWriteOnMessageThread (paramQueue[(size_t) (s2 + i)]);
+        paramFifo.finishedRead (sz1 + sz2);
+    }
 
-    int s1 = 0, sz1 = 0, s2 = 0, sz2 = 0;
-    paramFifo.prepareToRead (avail, s1, sz1, s2, sz2);
-    for (int i = 0; i < sz1; ++i)
-        applyParamWriteOnMessageThread (paramQueue[(size_t) (s1 + i)]);
-    for (int i = 0; i < sz2; ++i)
-        applyParamWriteOnMessageThread (paramQueue[(size_t) (s2 + i)]);
-    paramFifo.finishedRead (sz1 + sz2);
+   #if JUCE_MAC && DUSKSTUDIO_HAS_OOP_PLUGINS
+    // 3c-4: detect OOP child crash and tear down the parameter mirror.
+    // Without this, every subsequent ShellParamListener fire would
+    // call ownedRemote->setRemoteParam which silently returns false
+    // (peer closed). The user would see the shell editor responding
+    // but no DSP would update — confusing. Better: detach the
+    // listener + clear the sink so the editor functions locally
+    // without pretending to drive a dead DSP.
+    //
+    // The shell instance + editor + wrapper stay alive. The audio
+    // path's existing reaper (pollRemoteReaper) already auto-bypasses
+    // the slot so the transport keeps rolling. The shell editor goes
+    // "dark" in the sense that knob moves are no-ops, matching
+    // user expectation for a degraded slot.
+    //
+    // Idempotent: if shellParamListener is already null (post-teardown
+    // or never installed), the early-return below skips repeated work.
+    if (shellInstanceForEditor != nullptr
+        && shellParamListener != nullptr
+        && ownedRemote != nullptr
+        && ownedRemote->isCrashed())
+    {
+        for (auto* param : shellInstanceForEditor->getParameters())
+            if (param != nullptr) param->removeListener (shellParamListener.get());
+        shellParamListener.reset();
+        ownedRemote->setParamChangedSink ({});
+        std::fprintf (stderr,
+                      "[Dusk Studio/PluginSlot] OOP child crashed; mirror "
+                      "detached, shell editor degraded to local-only. "
+                      "Reload the plugin to recover.\n");
+    }
+   #endif
 }
 
 void PluginSlot::applyParamWriteOnMessageThread (const ParamWrite& pw) noexcept
@@ -1533,6 +1567,13 @@ void PluginSlot::ShellParamListener::parameterValueChanged (int paramIndex, floa
     // with the release store the mirror-apply path does.
     if (slot.applyingFromMirror.load (std::memory_order_acquire)) return;
     if (slot.ownedRemote == nullptr) return;
+    // 3c-4 fast-path crash check. setRemoteParam would return false
+    // anyway (peer closed → write fails) but isCrashed() short-circuits
+    // before touching controlMutex, so a knob drag against a dead
+    // child doesn't pay the lock-acquire cost per listener fire. The
+    // 30 Hz timerCallback will detach this listener on the next tick;
+    // until then any in-flight callbacks bail here.
+    if (slot.ownedRemote->isCrashed()) return;
     // Fire-and-forget over the existing 3c-3a control channel. Returns
     // false only on socket peer-close (child died); in that case the
     // OOP slot has already been auto-bypassed by the reaper, so the

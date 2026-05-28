@@ -257,19 +257,60 @@ struct HostState
 // applyingFromMirror is checked first so a parent → child SetParam
 // doesn't echo back as a push (handleSetParamAsync sets the flag
 // across its setValueNotifyingHost call).
+//
+// 3c-4 rate-limit: high-density modulation matrices (LFO rates, FM
+// depth automation, complex MPE controllers) can fire hundreds of
+// listener callbacks per audio block. Saturating the control socket
+// stutters the parent's message thread because callAsync queues
+// build up faster than the message loop drains. Per-param
+// deduplication + a min-interval gate caps the push rate at ~200 Hz
+// per param — well above any human-perceptible knob-twiddle rate,
+// well below the worst-case automation flood.
 class ChildParamListener final : public juce::AudioProcessorParameter::Listener
 {
 public:
-    explicit ChildParamListener (HostState& h) noexcept : host (h) {}
+    explicit ChildParamListener (HostState& h, int numParams) noexcept
+        : host (h),
+          lastSentValue ((std::size_t) juce::jmax (0, numParams),
+                          std::numeric_limits<float>::lowest()),
+          lastSentTime  ((std::size_t) juce::jmax (0, numParams),
+                          std::chrono::steady_clock::time_point{})
+    {}
+
     void parameterValueChanged (int paramIndex, float newValue) override
     {
         if (host.applyingFromMirror.load (std::memory_order_acquire)) return;
+        if (paramIndex < 0 || (std::size_t) paramIndex >= lastSentValue.size()) return;
+
+        // Both gates must trip simultaneously to drop the frame:
+        //   • Value moved less than kMinDelta (deduplication of the
+        //     "host re-asserts the same value" automation pattern).
+        //   • Less than kMinInterval since the prior push for THIS
+        //     param (coalesces an LFO sweep into ~200 Hz updates).
+        // After kMinInterval, even a tiny delta gets through so the
+        // parent's shell editor settles to truth.
+        constexpr float kMinDelta = 1.0e-4f;
+        constexpr auto  kMinInterval = std::chrono::milliseconds (5);
+
+        const auto now = std::chrono::steady_clock::now();
+        const auto& lastT = lastSentTime [(std::size_t) paramIndex];
+        const float delta = std::fabs (newValue - lastSentValue[(std::size_t) paramIndex]);
+        const bool tooSoon = (now - lastT) < kMinInterval;
+
+        if (delta < kMinDelta && tooSoon) return;
+
+        lastSentValue[(std::size_t) paramIndex] = newValue;
+        lastSentTime [(std::size_t) paramIndex] = now;
+
         const auto seq = host.outboundParamSeq.fetch_add (1, std::memory_order_acq_rel) + 1;
         (void) pushParamChangedFromChild (host.channel, paramIndex, newValue, seq);
     }
     void parameterGestureChanged (int, bool) override {}
+
 private:
     HostState& host;
+    std::vector<float>                                  lastSentValue;
+    std::vector<std::chrono::steady_clock::time_point>  lastSentTime;
 };
 #endif
 
@@ -370,8 +411,16 @@ std::uint32_t handleLoadPlugin (HostState& host,
     // editor reflects it via PluginSlot::applyShellParamFromChild.
     // applyingFromMirror gates the listener so SetParam echoes from
     // the parent don't loop back.
-    if (host.paramListener == nullptr)
-        host.paramListener = std::make_unique<ChildParamListener> (host);
+    //
+    // Listener gets a fresh state vector sized to this plugin's
+    // parameter count so the 3c-4 rate-limit dedup tracks each
+    // param independently. A subsequent LoadPlugin (slot replace)
+    // reaches handleRelease first → detach + reset listener → fresh
+    // sizing on the next load. Plugins with thousands of params
+    // (Diva, Massive X) pay ~12 bytes per param of tracking state —
+    // bounded + bounded-lifetime.
+    const int paramCount = host.ownedInstance->getParameters().size();
+    host.paramListener = std::make_unique<ChildParamListener> (host, paramCount);
     for (auto* p : host.ownedInstance->getParameters())
         if (p != nullptr) p->addListener (host.paramListener.get());
    #endif

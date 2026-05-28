@@ -7,12 +7,57 @@
 #include <cstdio>
 #include <cstring>
 
+#if defined(_WIN32)
+ #define WIN32_LEAN_AND_MEAN
+ #define NOMINMAX
+ #include <windows.h>
+#else
+ #include <sys/socket.h>
+#endif
+
 #include <juce_events/juce_events.h>
 
 namespace duskstudio::ipc
 {
 namespace
 {
+// 3c-4 Windows-wake helper. Cancels any in-flight blocking I/O on the
+// control channel so the reader thread's readExact returns immediately
+// rather than waiting for kernel-level cancellation on disconnect.
+//
+// On Windows the previous shape relied on closing the HANDLE while the
+// reader was mid-ReadFile, which behaves "implementation-defined"
+// (ReadFile can return INVALID_HANDLE_VALUE / ERROR_INVALID_HANDLE but
+// some pipe configurations sit blocked until the kernel-side IRP is
+// torn down). CancelIoEx is the documented way: it cancels pending
+// operations on the calling thread's behalf without closing the handle,
+// so the close that follows is benign.
+//
+// On Linux + macOS, shutdown(fd, SHUT_RD) wakes the blocked read with
+// EOF semantics — the standard portable way to unblock a thread sitting
+// on read(socketpair_fd, ...). Safe to call before the actual close.
+//
+// Idempotent: invalid handle → no-op success.
+void wakeReaderForShutdown (platform::NativeHandle& ch) noexcept
+{
+   #if defined(_WIN32)
+    if (ch.h == nullptr || ch.h == reinterpret_cast<void*> (-1)) return;
+    // CancelIoEx returns FALSE on Win 7+ if no pending I/O — that's not
+    // an error condition for our use case, so the return value is
+    // ignored. The handle pointer doubles as both SOCKET and HANDLE on
+    // Windows; either type is valid for CancelIoEx.
+    (void) ::CancelIoEx (ch.h, nullptr);
+   #else
+    if (ch.fd < 0) return;
+    // SHUT_RD: future reads return 0 (EOF). The reader's readExact
+    // returns false on the next iteration. EBADF / ENOTSOCK from a
+    // non-socket fd is harmless — disconnect immediately proceeds to
+    // closeHandle. Return value intentionally unused.
+    (void) ::shutdown (ch.fd, SHUT_RD);
+   #endif
+}
+
+
 // Send a control request: [header][payload]. Returns true on success.
 // Caller (sendAndAwaitReply / setRemoteParam) holds controlMutex so
 // concurrent senders can't interleave bytes on the socket.
@@ -491,14 +536,20 @@ void RemotePluginConnection::startReaderThread()
 void RemotePluginConnection::stopReaderThread() noexcept
 {
     if (! readerStarted) return;
-    // Wake any sender currently blocked on replyCv. The reader's own
-    // readExact unblocks via peer-close (child termination in
-    // disconnect) or via the socket being closed from disconnect.
+    // Wake any sender currently blocked on replyCv first.
     {
         std::lock_guard<std::mutex> lk (controlMutex);
         readerExited.store (true, std::memory_order_release);
         replyCv.notify_all();
     }
+    // 3c-4: explicitly wake the reader thread. Before this call the
+    // reader could be sitting in a blocking readExact even after the
+    // child terminated — on Windows the close-during-blocking-ReadFile
+    // race left the reader stuck until the kernel finished tearing
+    // down the IRP, sometimes seconds. Now CancelIoEx (Win) /
+    // shutdown(SHUT_RD) (POSIX) returns the reader from its syscall
+    // in O(microseconds) so the join below completes promptly.
+    wakeReaderForShutdown (controlChannel);
     if (readerThread.joinable())
         readerThread.join();
     readerStarted = false;
