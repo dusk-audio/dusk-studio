@@ -1820,6 +1820,99 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                             session.master().faderDb.store (db, std::memory_order_relaxed);
                             break;
                         }
+
+                        // ── H3 expansion dispatch (Phase 5b) ────────────
+                        // Per-track discrete toggles. `pressed` covers
+                        // both Press (rising-edge from upstream) and
+                        // Toggle (every-message from upstream) button
+                        // modes — the binding-decoder normalises both
+                        // into a single rising edge here.
+                        case MidiBindingTarget::TrackEqEnabled:
+                            if (pressed && b.targetIndex >= 0
+                                && b.targetIndex < Session::kNumTracks)
+                            {
+                                auto& a = session.track (b.targetIndex).strip.eqEnabled;
+                                a.store (! a.load (std::memory_order_relaxed),
+                                          std::memory_order_relaxed);
+                            }
+                            break;
+                        case MidiBindingTarget::TrackCompEnabled:
+                            if (pressed && b.targetIndex >= 0
+                                && b.targetIndex < Session::kNumTracks)
+                            {
+                                auto& a = session.track (b.targetIndex).strip.compEnabled;
+                                a.store (! a.load (std::memory_order_relaxed),
+                                          std::memory_order_relaxed);
+                            }
+                            break;
+                        case MidiBindingTarget::TrackInsertBypass:
+                            // Bypasses the per-channel HARDWARE insert. The
+                            // channel-strip mixer routes around the
+                            // hardware-insert slot when enabled=false; the
+                            // plugin slot is a separate gate (bypassed
+                            // through the slot's own bypassed flag, not
+                            // this MIDI target).
+                            if (pressed && b.targetIndex >= 0
+                                && b.targetIndex < Session::kNumTracks)
+                            {
+                                auto& a = session.track (b.targetIndex)
+                                              .hardwareInsert.enabled;
+                                a.store (! a.load (std::memory_order_relaxed),
+                                          std::memory_order_relaxed);
+                            }
+                            break;
+
+                        // ── Bus EQ gain (packed bus * kBusEqBands + band) ─
+                        case MidiBindingTarget::BusEqGain:
+                        {
+                            const int bus  = unpackBusEqBus  (b.targetIndex);
+                            const int band = unpackBusEqBand (b.targetIndex);
+                            if (bus < 0 || bus >= Session::kNumBuses) break;
+                            // -9..+9 dB matches BusParams::eqLfGainDb's
+                            // doc comment ("Mixbus-style, musical").
+                            const float db = -9.0f + frac * 18.0f;
+                            auto& strip = session.bus (bus).strip;
+                            switch (band)
+                            {
+                                case 0: strip.eqLfGainDb .store (db, std::memory_order_relaxed); break;
+                                case 1: strip.eqMidGainDb.store (db, std::memory_order_relaxed); break;
+                                case 2: strip.eqHfGainDb .store (db, std::memory_order_relaxed); break;
+                                default: break;
+                            }
+                            break;
+                        }
+
+                        // ── Master section (one master — targetIndex unused) ──
+                        case MidiBindingTarget::MasterEqLfBoost:
+                            // Pultec low-boost: 0..10 (per
+                            // MasterBusParams::eqLfBoost doc comment).
+                            session.master().eqLfBoost.store (
+                                frac * 10.0f, std::memory_order_relaxed);
+                            break;
+                        case MidiBindingTarget::MasterEqHfBoost:
+                            session.master().eqHfBoost.store (
+                                frac * 10.0f, std::memory_order_relaxed);
+                            break;
+                        case MidiBindingTarget::MasterCompThresh:
+                            // -38..+12 dB matches the channel-strip
+                            // VCA threshold range so a learned CC feels
+                            // identical when re-bound to the master.
+                            session.master().compThreshDb.store (
+                                -38.0f + frac * 50.0f, std::memory_order_relaxed);
+                            break;
+                        case MidiBindingTarget::MasterCompMakeup:
+                            // -20..+20 dB matches the per-track comp
+                            // makeup range.
+                            session.master().compMakeupDb.store (
+                                -20.0f + frac * 40.0f, std::memory_order_relaxed);
+                            break;
+                        case MidiBindingTarget::MasterCompRatio:
+                            // 1..20:1 covers gentle bus glue through
+                            // brick-wall summing.
+                            session.master().compRatio.store (
+                                1.0f + frac * 19.0f, std::memory_order_relaxed);
+                            break;
+
                         case MidiBindingTarget::None:
                             break;
                     }
