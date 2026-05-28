@@ -1,0 +1,116 @@
+name: Windows tests
+
+# Runs the Catch2 test binary on Windows so the cross-platform IPC stub
+# round-trip + (future) other Windows-relevant tests are exercised on
+# every PR. Distinct from windows-build.yml, which only fires on v*
+# tag push and exists to package + publish the signed MSI to the
+# private releases repo. Bundling tests into the release-packaging
+# workflow would mean tests run once per ship, not per PR — which
+# defeats the regression-net purpose.
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Catch2 tests (MSVC x64 Release, Windows latest)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Dusk Studio
+        uses: actions/checkout@v4
+        with:
+          # external/sfizz is a submodule; without recursive checkout the
+          # CMake configure step fails ("external/sfizz/src/sfizz.h not
+          # found"). Nested sfizz deps (abseil, st_audiofile) also need
+          # to be present for the static link to succeed.
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Clone JUCE 8.0.4
+        shell: bash
+        run: |
+          git clone --depth 1 --branch 8.0.4 \
+            https://github.com/juce-framework/JUCE.git \
+            "${RUNNER_TEMP}/JUCE"
+
+      - name: Clone Dusk plugins (donor DSP)
+        shell: bash
+        run: |
+          git clone --depth 1 \
+            https://github.com/dusk-audio/dusk-audio-plugins.git \
+            "${RUNNER_TEMP}/plugins"
+
+      - name: Fetch Steinberg ASIO SDK
+        # Test binary itself doesn't use ASIO, but the top-level CMake
+        # configure pass evaluates the main DuskStudio target which
+        # references ASIOSDK_PATH on Windows. Same fetch as
+        # windows-build.yml so the configure step succeeds; we never
+        # build the DuskStudio target in this workflow.
+        shell: bash
+        run: |
+          curl -sSL -o "${RUNNER_TEMP}/asiosdk.zip" https://download.steinberg.net/sdk_downloads/asiosdk_2.3.3_2019-06-14.zip
+          7z x -y "${RUNNER_TEMP}/asiosdk.zip" -o"${RUNNER_TEMP}/asiosdk-extract" > /dev/null
+          inner_dirs=("${RUNNER_TEMP}"/asiosdk-extract/asiosdk_*/)
+          if (( ${#inner_dirs[@]} != 1 )) || [ ! -d "${inner_dirs[0]}" ]; then
+              echo "ASIO SDK extract: expected exactly one asiosdk_* directory, got ${#inner_dirs[@]}" >&2
+              ls -la "${RUNNER_TEMP}/asiosdk-extract" >&2 || true
+              exit 1
+          fi
+          mv "${inner_dirs[0]}"/* "${RUNNER_TEMP}/asiosdk-extract/"
+          rmdir "${inner_dirs[0]}" || true
+          if [ ! -f "${RUNNER_TEMP}/asiosdk-extract/common/iasiodrv.h" ]; then
+              echo "ASIO SDK extract: missing common/iasiodrv.h after move" >&2
+              exit 1
+          fi
+          echo "ASIOSDK_PATH=${RUNNER_TEMP}/asiosdk-extract" >> "$GITHUB_ENV"
+
+      - name: Configure tests (CMake / Visual Studio 17 2022 / x64)
+        shell: bash
+        run: |
+          cmake -S . -B build-tests \
+            -G "Visual Studio 17 2022" -A x64 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DDUSKSTUDIO_BUILD_TESTS=ON \
+            -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
+            -DASIOSDK_PATH="${ASIOSDK_PATH}"
+
+      - name: Build test binary
+        # Build only the test target. The Catch2 binary depends on
+        # dusk-studio-plugin-host via add_dependencies in
+        # tests/CMakeLists.txt, so the host binary is built transitively
+        # and ends up next to the test exe (RUNTIME_OUTPUT_DIRECTORY in
+        # the top-level CMakeLists). DUSKSTUDIO_PLUGIN_HOST_PATH is
+        # baked in via a generator expression at configure time so the
+        # test resolves the host path without any runtime hunting.
+        shell: bash
+        run: cmake --build build-tests --config Release --target dusk-studio-tests -j
+
+      - name: Run IPC stub tests
+        # Narrow filter so this workflow surfaces only the IPC regression
+        # net — donor-DSP failures (pre-existing UniversalCompressor
+        # static-curve assertions tracked separately) and other test
+        # cases that happen to compile on Windows aren't this job's
+        # responsibility. To broaden coverage later, drop the -R arg.
+        #
+        # Loopback / firewall: the Windows IPC layer uses named pipes
+        # (\\.\pipe\dusk-studio-ipc-*) + CreateFileMapping + WaitOnAddress.
+        # None of those traverse a network adapter, so no firewall
+        # exception is needed. GitHub-hosted windows-latest runners
+        # permit anonymous named-pipe IPC inside the runner session
+        # without elevation.
+        shell: bash
+        run: |
+          ctest --test-dir build-tests --output-on-failure -C Release -R "ipc-stub"

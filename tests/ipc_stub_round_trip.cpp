@@ -1,18 +1,17 @@
-// Linux-only IPC round-trip regression test. Verifies that:
-//   • RemotePluginConnection can fork+exec the dusk-studio-plugin-host child in
+// Cross-platform IPC round-trip regression test. Verifies that:
+//   • RemotePluginConnection can spawn the dusk-studio-plugin-host child in
 //     --ipc-stub mode (the dependency-light Phase 1 echo loop).
-//   • processBlockSync round-trips audio buffers through SHM + futex pair
-//     without timing out.
+//   • processBlockSync round-trips audio buffers through the platform's
+//     shared-memory + wait-on-address pair without timing out.
 //   • The stub's echo is byte-exact (output equals input) — catches any
 //     SHM offset / channel-stride drift between parent and child.
 //
-// Compiled only on Linux. The IPC primitives use memfd_create + futex
-// which don't exist on macOS / Windows. CMakeLists conditionally adds
-// this source + RemotePluginConnection.cpp + a dependency on the
-// dusk-studio-plugin-host binary so $<TARGET_FILE:dusk-studio-plugin-host> resolves
-// at build time.
-
-#if defined(__linux__)
+// Platforms: Linux (memfd_create + futex), Windows (CreateFileMapping +
+// WaitOnAddress), macOS 14.4+ (shm_open + os_sync_wait_on_address). The
+// transport differences are hidden behind RemotePluginConnection, so this
+// file uses only platform-agnostic APIs. tests/CMakeLists.txt gates the
+// translation unit on _duskstudio_ipc_test_enabled, which mirrors the
+// three platform gates in the top-level CMakeLists' OOP block.
 
 #include <catch2/catch_test_macros.hpp>
 #include "engine/ipc/RemotePluginConnection.h"
@@ -32,7 +31,7 @@ constexpr long long kTimeoutNs = 100'000'000LL;  // 100 ms
 } // namespace
 
 TEST_CASE ("ipc-stub: connect, round-trip 32 blocks, byte-exact echo",
-            "[ipc][linux]")
+            "[ipc]")
 {
     duskstudio::ipc::RemotePluginConnection conn;
 
@@ -75,7 +74,7 @@ TEST_CASE ("ipc-stub: connect, round-trip 32 blocks, byte-exact echo",
     REQUIRE_FALSE (conn.isCrashed());
 }
 
-TEST_CASE ("ipc-stub: rejects oversize block", "[ipc][linux]")
+TEST_CASE ("ipc-stub: rejects oversize block", "[ipc]")
 {
     duskstudio::ipc::RemotePluginConnection conn;
 
@@ -90,5 +89,3 @@ TEST_CASE ("ipc-stub: rejects oversize block", "[ipc][linux]")
     REQUIRE_FALSE (conn.processBlockSync (in, 1, 1, 4096, midi, 1'000'000LL));
     REQUIRE_FALSE (conn.isCrashed());  // bad-input rejection isn't a crash
 }
-
-#endif // __linux__
