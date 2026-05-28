@@ -135,18 +135,26 @@ void showDuskAlert (juce::Component& parent,
                                 });
 }
 
-// Fallback for callsites that have no parent component handy. Keeps the
-// flow alive (better than swallowing the error silently) but the
-// long-term direction is to plumb a parent everywhere.
+// Fallback for callsites that pass no parent component. First tries to
+// route through the active top-level's content via showDuskAlert
+// (eliminates the X11/Wayland stacking-context bugs native popups
+// have on Linux); only falls through to the logger if no top-level
+// is available, which is a "shouldn't happen in normal use" state.
+// No more native juce::AlertWindow on this path.
 void showLoadFailureAlertFallback (const juce::String& message)
 {
-    juce::AlertWindow::showAsync (
-        juce::MessageBoxOptions()
-            .withIconType (juce::MessageBoxIconType::WarningIcon)
-            .withTitle ("Plugin load failed")
-            .withMessage (message.isEmpty() ? "Unknown error" : message)
-            .withButton ("OK"),
-        nullptr);
+    const auto msg = message.isEmpty() ? juce::String ("Unknown error") : message;
+    if (auto* tlw = juce::TopLevelWindow::getActiveTopLevelWindow())
+        if (auto* dw = dynamic_cast<juce::DocumentWindow*> (tlw))
+            if (auto* content = dw->getContentComponent())
+            {
+                showDuskAlert (*content, "Plugin load failed", msg);
+                return;
+            }
+    juce::Logger::writeToLog ("[Dusk Studio/PluginPicker] Plugin load failed: " + msg);
+    std::fprintf (stderr,
+                  "[Dusk Studio/PluginPicker] Plugin load failed (no parent): %s\n",
+                  msg.toRawUTF8());
 }
 } // namespace
 
@@ -169,27 +177,28 @@ void runScanModal (PluginManager& manager, juce::Component* parent,
     {
         showDuskAlert (*parent, "Plugin scan complete", std::move (message),
                           std::move (onAlertDismiss));
+        return;
     }
-    else
-    {
-        // Fallback for callers without a parent component handy. JUCE
-        // AlertWindow remains a native popup; eventually every callsite
-        // should plumb a parent and this branch can be removed. Pass the
-        // dismiss callback through ModalCallbackFunction so it fires when
-        // the user actually closes the alert, not immediately on
-        // schedule.
-        juce::AlertWindow::showAsync (
-            juce::MessageBoxOptions()
-                .withIconType (juce::MessageBoxIconType::InfoIcon)
-                .withTitle ("Plugin scan complete")
-                .withMessage (message)
-                .withButton ("OK"),
-            juce::ModalCallbackFunction::create (
-                [cb = std::move (onAlertDismiss)] (int /*result*/) mutable
-                {
-                    if (cb) cb();
-                }));
-    }
+
+    // Fallback: caller passed no parent. Find any active top-level's
+    // content Component + route through the embedded alert so we don't
+    // drop a native popup onto the XWayland-flaky stack. If no top-level
+    // exists at all (shouldn't happen in normal use — message-thread
+    // entry implies the main window is up), log + fire the dismiss
+    // synchronously so callers waiting on the chain don't stall.
+    if (auto* tlw = juce::TopLevelWindow::getActiveTopLevelWindow())
+        if (auto* dw = dynamic_cast<juce::DocumentWindow*> (tlw))
+            if (auto* content = dw->getContentComponent())
+            {
+                showDuskAlert (*content, "Plugin scan complete", std::move (message),
+                                  std::move (onAlertDismiss));
+                return;
+            }
+    juce::Logger::writeToLog ("[Dusk Studio/PluginPicker] " + message);
+    std::fprintf (stderr,
+                  "[Dusk Studio/PluginPicker] Plugin scan complete (no parent): %s\n",
+                  message.toRawUTF8());
+    if (onAlertDismiss) onAlertDismiss();
 }
 
 namespace
@@ -222,10 +231,13 @@ void rejectMismatchedKind (PluginSlot& slot, PluginKind kind)
                 showDuskAlert (*content, "Plugin kind mismatch", msg);
                 return;
             }
-    // Fallback path — no top-level component (shouldn't happen in
-    // normal use). Keep native alert so we don't swallow the warning.
-    juce::AlertWindow::showMessageBoxAsync (
-        juce::AlertWindow::WarningIcon, "Plugin kind mismatch", msg);
+    // No top-level component available (shouldn't happen in normal
+    // use). Log loudly instead of dropping a native juce::AlertWindow
+    // — those break window stacking on XWayland.
+    juce::Logger::writeToLog ("[Dusk Studio/PluginPicker] Plugin kind mismatch: " + msg);
+    std::fprintf (stderr,
+                  "[Dusk Studio/PluginPicker] Plugin kind mismatch (no parent): %s\n",
+                  msg.toRawUTF8());
 }
 } // namespace
 

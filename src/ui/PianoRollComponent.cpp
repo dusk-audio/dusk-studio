@@ -1,6 +1,7 @@
 #include "PianoRollComponent.h"
 #include "DuskContextMenu.h"
 #include "EditModeToolbar.h"
+#include "EmbeddedModal.h"
 #include "../engine/AudioEngine.h"
 #include "../engine/Transport.h"
 #include "../session/RegionEditActions.h"
@@ -12,6 +13,126 @@ namespace duskstudio
 {
 namespace
 {
+// Process-wide static modal for the piano roll's text-input dialogs
+// (region label rename). Mirrors the sharedAlertModal pattern in
+// PluginPickerHelpers — one in-window EmbeddedModal at a time, no
+// per-call instance tracking, idempotent close.
+EmbeddedModal& sharedPianoRollTextInputModal()
+{
+    static EmbeddedModal m;
+    return m;
+}
+
+// Dusk-styled text-input panel — title + prompt + TextEditor + OK /
+// Cancel. Replaces juce::AlertWindow + addTextEditor for the piano
+// roll's rename flow so the dialog renders inside the main window's
+// component tree and doesn't drop a native popup onto the X11 /
+// Wayland stack.
+class TextInputPanel final : public juce::Component
+{
+public:
+    TextInputPanel (juce::String title, juce::String prompt,
+                      juce::String initial,
+                      std::function<void (juce::String)> onAccept)
+        : titleStr (std::move (title)),
+          promptStr (std::move (prompt)),
+          onAcceptFn (std::move (onAccept))
+    {
+        setOpaque (true);
+        editor.setText (initial, false);
+        editor.setSelectAllWhenFocused (true);
+        editor.setColour (juce::TextEditor::backgroundColourId, juce::Colour (0xff15151c));
+        editor.setColour (juce::TextEditor::outlineColourId,    juce::Colour (0xff3a3a42));
+        editor.setColour (juce::TextEditor::textColourId,       juce::Colours::white);
+        editor.setColour (juce::TextEditor::highlightColourId,  juce::Colour (0xff5a4880));
+        editor.onReturnKey = [this] { commit(); };
+        editor.onEscapeKey = [this] { dismiss(); };
+        addAndMakeVisible (editor);
+
+        auto style = [] (juce::TextButton& b, juce::Colour fill)
+        {
+            b.setColour (juce::TextButton::buttonColourId,   fill);
+            b.setColour (juce::TextButton::buttonOnColourId, fill.brighter (0.15f));
+            b.setColour (juce::TextButton::textColourOffId,  juce::Colours::white);
+            b.setColour (juce::TextButton::textColourOnId,   juce::Colours::white);
+            b.setMouseClickGrabsKeyboardFocus (false);
+        };
+        style (okBtn,     juce::Colour (0xff5a4880));
+        style (cancelBtn, juce::Colour (0xff262630));
+        okBtn.onClick     = [this] { commit(); };
+        cancelBtn.onClick = [this] { dismiss(); };
+        addAndMakeVisible (okBtn);
+        addAndMakeVisible (cancelBtn);
+
+        setSize (420, 160);
+        setWantsKeyboardFocus (true);
+    }
+
+    // Set BEFORE EmbeddedModal::show so the panel can close the modal
+    // on accept/cancel without holding a back-reference to the modal.
+    std::function<void()> onDismissFn;
+
+    void paint (juce::Graphics& g) override
+    {
+        g.fillAll (juce::Colour (0xff1a1a22));
+        auto r = getLocalBounds().reduced (18);
+        g.setColour (juce::Colours::white);
+        g.setFont (juce::Font (juce::FontOptions (14.5f, juce::Font::bold)));
+        g.drawText (titleStr, r.removeFromTop (22),
+                     juce::Justification::topLeft, false);
+        r.removeFromTop (6);
+        g.setColour (juce::Colour (0xffc0c0c8));
+        g.setFont (juce::Font (juce::FontOptions (12.0f)));
+        g.drawText (promptStr, r.removeFromTop (18),
+                     juce::Justification::topLeft, false);
+    }
+
+    void resized() override
+    {
+        auto r = getLocalBounds().reduced (18);
+        r.removeFromTop (22 + 6 + 18 + 8);  // title + prompt + padding
+        editor.setBounds (r.removeFromTop (26));
+        r.removeFromTop (14);
+        auto buttons = r.removeFromTop (28);
+        cancelBtn.setBounds (buttons.removeFromRight (90));
+        buttons.removeFromRight (8);
+        okBtn    .setBounds (buttons.removeFromRight (90));
+    }
+
+    void visibilityChanged() override
+    {
+        if (isVisible())
+            editor.grabKeyboardFocus();
+    }
+
+private:
+    void commit()
+    {
+        if (onAcceptFn) onAcceptFn (editor.getText());
+        dismiss();
+    }
+    void dismiss() { if (onDismissFn) onDismissFn(); }
+
+    juce::String titleStr, promptStr;
+    juce::TextEditor editor;
+    juce::TextButton okBtn     { "OK" };
+    juce::TextButton cancelBtn { "Cancel" };
+    std::function<void (juce::String)> onAcceptFn;
+};
+
+void showEmbeddedTextInput (juce::Component& parent,
+                              juce::String title, juce::String prompt,
+                              juce::String initialValue,
+                              std::function<void (juce::String)> onAccept)
+{
+    auto panel = std::make_unique<TextInputPanel> (std::move (title),
+                                                      std::move (prompt),
+                                                      std::move (initialValue),
+                                                      std::move (onAccept));
+    panel->onDismissFn = [] { sharedPianoRollTextInputModal().close(); };
+    sharedPianoRollTextInputModal().show (parent, std::move (panel),
+        /*onDismiss*/ [] { sharedPianoRollTextInputModal().close(); });
+}
 const juce::Colour kBgDark        { 0xff181820 };
 const juce::Colour kRowWhite      { 0xff1c1c24 };
 const juce::Colour kRowBlack      { 0xff141418 };
@@ -3125,9 +3246,11 @@ void PianoRollComponent::showRegionPropertiesPopup()
     m.addSectionHeader (juce::String::formatted ("Track %d  MIDI region %d",
                                                     trackIdx + 1, regionIdx + 1));
 
-    // Rename / label - AlertWindow modal text input. Same shape as
-    // the audio editor's region-properties popup so users see one
-    // consistent gesture across both region types.
+    // Rename / label — embedded text-input modal (H2 sweep). Same
+    // shape as the audio editor's region-properties popup so users
+    // see one consistent gesture across both region types. The panel
+    // renders inside the main window's component tree via Embedded
+    // Modal — no native juce::AlertWindow on the X11 / Wayland stack.
     const auto currentLabel = r->label;
     const juce::String renameLabel = currentLabel.isEmpty()
         ? juce::String ("Add label...")
@@ -3138,27 +3261,20 @@ void PianoRollComponent::showRegionPropertiesPopup()
                 {
                     auto* self = safe.getComponent();
                     if (self == nullptr) return;
-                    auto window = std::make_shared<juce::AlertWindow> (
-                        "MIDI region label",
+                    auto* host = self->getTopLevelComponent();
+                    if (host == nullptr) host = self;
+                    showEmbeddedTextInput (*host, "MIDI region label",
                         "Type a label for this region:",
-                        juce::AlertWindow::NoIcon);
-                    window->addTextEditor ("text", currentLabel,
-                                              juce::String(), false);
-                    window->addButton ("OK",     1,
-                                          juce::KeyPress (juce::KeyPress::returnKey));
-                    window->addButton ("Cancel", 0,
-                                          juce::KeyPress (juce::KeyPress::escapeKey));
-                    auto* raw = window.get();
-                    raw->enterModalState (true, juce::ModalCallbackFunction::create (
-                        [safe, holder = window] (int result) mutable
+                        currentLabel,
+                        [safe] (juce::String newLabel)
                         {
                             auto* s = safe.getComponent();
-                            if (result != 1 || s == nullptr) return;
+                            if (s == nullptr) return;
                             auto* rr = s->region();
                             if (rr == nullptr) return;
                             const MidiRegion before = *rr;
                             MidiRegion after = before;
-                            after.label = holder->getTextEditorContents ("text");
+                            after.label = std::move (newLabel);
                             auto& um = s->engine.getUndoManager();
                             um.beginNewTransaction ("Rename MIDI region");
                             um.perform (new MidiRegionEditAction (s->session, s->engine,
@@ -3166,7 +3282,7 @@ void PianoRollComponent::showRegionPropertiesPopup()
                                                                     before, after));
                             s->refreshStatusBarReadouts();
                             s->repaint();
-                        }), false);
+                        });
                 });
 
     m.addSeparator();

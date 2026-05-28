@@ -4,10 +4,137 @@
 #include "../session/SnapHelpers.h"
 #include "DuskAlerts.h"
 #include "DuskContextMenu.h"
+#include "EmbeddedModal.h"
 #include "FadeCurve.h"
 
 namespace duskstudio
 {
+namespace
+{
+// Process-wide static modal for the tape strip's text-input dialogs
+// (marker rename, audio region label, MIDI region label). One in-
+// window EmbeddedModal at a time across all three sites; close() is
+// idempotent so re-entry is safe.
+EmbeddedModal& sharedTapeStripTextInputModal()
+{
+    static EmbeddedModal m;
+    return m;
+}
+
+// Dusk-styled text-input panel — title + prompt + TextEditor + OK /
+// Cancel. Replaces juce::AlertWindow + addTextEditor for every
+// rename flow that lived on this strip so the dialog renders inside
+// the main window's component tree (no native popups on the
+// X11 / Wayland stack). Duplicated body across TapeStrip /
+// PianoRollComponent rather than centralised because per the H2
+// scope we touch only these two files; the duplication is ~70 LOC
+// and worth promoting to a shared header in a follow-up pass.
+class TextInputPanel final : public juce::Component
+{
+public:
+    TextInputPanel (juce::String title, juce::String prompt,
+                      juce::String initial, juce::String acceptLabel,
+                      std::function<void (juce::String)> onAccept)
+        : titleStr (std::move (title)),
+          promptStr (std::move (prompt)),
+          onAcceptFn (std::move (onAccept))
+    {
+        setOpaque (true);
+        editor.setText (initial, false);
+        editor.setSelectAllWhenFocused (true);
+        editor.setColour (juce::TextEditor::backgroundColourId, juce::Colour (0xff15151c));
+        editor.setColour (juce::TextEditor::outlineColourId,    juce::Colour (0xff3a3a42));
+        editor.setColour (juce::TextEditor::textColourId,       juce::Colours::white);
+        editor.setColour (juce::TextEditor::highlightColourId,  juce::Colour (0xff5a4880));
+        editor.onReturnKey = [this] { commit(); };
+        editor.onEscapeKey = [this] { dismiss(); };
+        addAndMakeVisible (editor);
+
+        auto style = [] (juce::TextButton& b, juce::Colour fill)
+        {
+            b.setColour (juce::TextButton::buttonColourId,   fill);
+            b.setColour (juce::TextButton::buttonOnColourId, fill.brighter (0.15f));
+            b.setColour (juce::TextButton::textColourOffId,  juce::Colours::white);
+            b.setColour (juce::TextButton::textColourOnId,   juce::Colours::white);
+            b.setMouseClickGrabsKeyboardFocus (false);
+        };
+        okBtn.setButtonText (acceptLabel.isEmpty() ? juce::String ("OK") : acceptLabel);
+        style (okBtn,     juce::Colour (0xff5a4880));
+        style (cancelBtn, juce::Colour (0xff262630));
+        okBtn.onClick     = [this] { commit(); };
+        cancelBtn.onClick = [this] { dismiss(); };
+        addAndMakeVisible (okBtn);
+        addAndMakeVisible (cancelBtn);
+
+        setSize (420, 160);
+        setWantsKeyboardFocus (true);
+    }
+
+    std::function<void()> onDismissFn;
+
+    void paint (juce::Graphics& g) override
+    {
+        g.fillAll (juce::Colour (0xff1a1a22));
+        auto r = getLocalBounds().reduced (18);
+        g.setColour (juce::Colours::white);
+        g.setFont (juce::Font (juce::FontOptions (14.5f, juce::Font::bold)));
+        g.drawText (titleStr, r.removeFromTop (22),
+                     juce::Justification::topLeft, false);
+        r.removeFromTop (6);
+        g.setColour (juce::Colour (0xffc0c0c8));
+        g.setFont (juce::Font (juce::FontOptions (12.0f)));
+        g.drawText (promptStr, r.removeFromTop (18),
+                     juce::Justification::topLeft, false);
+    }
+
+    void resized() override
+    {
+        auto r = getLocalBounds().reduced (18);
+        r.removeFromTop (22 + 6 + 18 + 8);
+        editor.setBounds (r.removeFromTop (26));
+        r.removeFromTop (14);
+        auto buttons = r.removeFromTop (28);
+        cancelBtn.setBounds (buttons.removeFromRight (90));
+        buttons.removeFromRight (8);
+        okBtn    .setBounds (buttons.removeFromRight (90));
+    }
+
+    void visibilityChanged() override
+    {
+        if (isVisible()) editor.grabKeyboardFocus();
+    }
+
+private:
+    void commit()
+    {
+        if (onAcceptFn) onAcceptFn (editor.getText());
+        dismiss();
+    }
+    void dismiss() { if (onDismissFn) onDismissFn(); }
+
+    juce::String titleStr, promptStr;
+    juce::TextEditor editor;
+    juce::TextButton okBtn { "OK" };
+    juce::TextButton cancelBtn { "Cancel" };
+    std::function<void (juce::String)> onAcceptFn;
+};
+
+void showEmbeddedTextInput (juce::Component& parent,
+                              juce::String title, juce::String prompt,
+                              juce::String initialValue,
+                              juce::String acceptLabel,
+                              std::function<void (juce::String)> onAccept)
+{
+    auto panel = std::make_unique<TextInputPanel> (std::move (title),
+                                                      std::move (prompt),
+                                                      std::move (initialValue),
+                                                      std::move (acceptLabel),
+                                                      std::move (onAccept));
+    panel->onDismissFn = [] { sharedTapeStripTextInputModal().close(); };
+    sharedTapeStripTextInputModal().show (parent, std::move (panel),
+        /*onDismiss*/ [] { sharedTapeStripTextInputModal().close(); });
+}
+} // namespace
 TapeStrip::TapeStrip (Session& s, AudioEngine& e) : session (s), engine (e)
 {
     setOpaque (true);
@@ -745,24 +872,18 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
                             if (safeThis == nullptr) return;
                             const auto& m2 = safeThis->session.getMarkers();
                             if (hoveredMarkerIdx < 0 || hoveredMarkerIdx >= (int) m2.size()) return;
-                            auto* aw = new juce::AlertWindow ("Rename marker",
-                                                                  "New name:",
-                                                                  juce::AlertWindow::NoIcon);
-                            aw->addTextEditor ("name", m2[(size_t) hoveredMarkerIdx].name);
-                            aw->addButton ("Rename", 1, juce::KeyPress (juce::KeyPress::returnKey));
-                            aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
-                            aw->enterModalState (true,
-                                juce::ModalCallbackFunction::create (
-                                    [safeThis, hoveredMarkerIdx, aw] (int result)
-                                    {
-                                        std::unique_ptr<juce::AlertWindow> guard (aw);
-                                        if (result != 1 || safeThis == nullptr) return;
-                                        const auto newName = aw->getTextEditorContents ("name").trim();
-                                        if (newName.isEmpty()) return;
-                                        safeThis->session.renameMarker (hoveredMarkerIdx, newName);
-                                        safeThis->repaint();
-                                    }),
-                                false);
+                            auto* host = safeThis->getTopLevelComponent();
+                            if (host == nullptr) host = safeThis.getComponent();
+                            showEmbeddedTextInput (*host, "Rename marker", "New name:",
+                                m2[(size_t) hoveredMarkerIdx].name, "Rename",
+                                [safeThis, hoveredMarkerIdx] (juce::String newName)
+                                {
+                                    if (safeThis == nullptr) return;
+                                    const auto trimmed = newName.trim();
+                                    if (trimmed.isEmpty()) return;
+                                    safeThis->session.renameMarker (hoveredMarkerIdx, trimmed);
+                                    safeThis->repaint();
+                                });
                         });
             m.addItem ("Delete \"" + mk.name + "\"",
                         [safeThis = juce::Component::SafePointer<TapeStrip> (this),
@@ -2035,22 +2156,14 @@ void TapeStrip::showRegionContextMenu (const RegionHit& hit, juce::Point<int> sc
                  hitCopy = hit, currentLabel]
                 {
                     if (safeThis == nullptr) return;
-                    auto window = std::make_shared<juce::AlertWindow> (
-                        "Region label",
+                    auto* host = safeThis->getTopLevelComponent();
+                    if (host == nullptr) host = safeThis.getComponent();
+                    showEmbeddedTextInput (*host, "Region label",
                         "Type a label for this region:",
-                        juce::AlertWindow::NoIcon);
-                    window->addTextEditor ("text", currentLabel,
-                                              juce::String(), false);
-                    window->addButton ("OK",     1,
-                                          juce::KeyPress (juce::KeyPress::returnKey));
-                    window->addButton ("Cancel", 0,
-                                          juce::KeyPress (juce::KeyPress::escapeKey));
-                    auto* raw = window.get();
-                    raw->enterModalState (true, juce::ModalCallbackFunction::create (
-                        [safeThis, hitCopy, holder = window] (int result) mutable
+                        currentLabel, "OK",
+                        [safeThis, hitCopy] (juce::String newLabel)
                         {
-                            if (result != 1 || safeThis == nullptr) return;
-                            const auto newLabel = holder->getTextEditorContents ("text");
+                            if (safeThis == nullptr) return;
                             auto& regs = safeThis->session.track (hitCopy.track).regions;
                             if (hitCopy.regionIdx < 0
                                 || hitCopy.regionIdx >= (int) regs.size()) return;
@@ -2058,9 +2171,9 @@ void TapeStrip::showRegionContextMenu (const RegionHit& hit, juce::Point<int> sc
                             if (current.label == newLabel) return;
                             AudioRegion afterState  = current;
                             AudioRegion beforeState = current;
-                            afterState.label = newLabel;
+                            afterState.label = std::move (newLabel);
                             auto& um = safeThis->engine.getUndoManager();
-                            um.beginNewTransaction (newLabel.isEmpty()
+                            um.beginNewTransaction (afterState.label.isEmpty()
                                                        ? "Clear region label"
                                                        : "Rename region");
                             um.perform (new RegionEditAction (
@@ -2068,7 +2181,7 @@ void TapeStrip::showRegionContextMenu (const RegionHit& hit, juce::Point<int> sc
                                 hitCopy.track, hitCopy.regionIdx,
                                 beforeState, afterState));
                             safeThis->repaint();
-                        }), false);
+                        });
                 });
 
     m.addSeparator();
@@ -2327,28 +2440,20 @@ void TapeStrip::showMidiRegionContextMenu (int trackIdx, int regionIdx,
                  trackIdx, regionIdx, currentLabel]
                 {
                     if (safeThis == nullptr) return;
-                    auto window = std::make_shared<juce::AlertWindow> (
-                        "MIDI region label",
+                    auto* host = safeThis->getTopLevelComponent();
+                    if (host == nullptr) host = safeThis.getComponent();
+                    showEmbeddedTextInput (*host, "MIDI region label",
                         "Type a label for this region:",
-                        juce::AlertWindow::NoIcon);
-                    window->addTextEditor ("text", currentLabel,
-                                              juce::String(), false);
-                    window->addButton ("OK",     1,
-                                          juce::KeyPress (juce::KeyPress::returnKey));
-                    window->addButton ("Cancel", 0,
-                                          juce::KeyPress (juce::KeyPress::escapeKey));
-                    auto* raw = window.get();
-                    raw->enterModalState (true, juce::ModalCallbackFunction::create (
-                        [safeThis, trackIdx, regionIdx, holder = window] (int result) mutable
+                        currentLabel, "OK",
+                        [safeThis, trackIdx, regionIdx] (juce::String newLabel)
                         {
-                            if (result != 1 || safeThis == nullptr) return;
-                            const auto newLabel = holder->getTextEditorContents ("text");
+                            if (safeThis == nullptr) return;
                             auto& live = safeThis->session.track (trackIdx)
                                             .midiRegions.currentMutable();
                             if (regionIdx < 0 || regionIdx >= (int) live.size()) return;
-                            live[(size_t) regionIdx].label = newLabel;
+                            live[(size_t) regionIdx].label = std::move (newLabel);
                             safeThis->repaint();
-                        }), false);
+                        });
                 });
 
     m.addSeparator();

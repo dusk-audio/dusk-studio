@@ -276,6 +276,8 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     hpfKnob.setSkewFactorFromMidPoint (80.0);
     hpfKnob.setDoubleClickReturnValue (true, ChannelStripParams::kHpfOffHz);
     hpfKnob.setTooltip ("HPF cutoff (turn fully down to bypass)");
+    hpfKnob.setTitle ("High-pass frequency");
+    hpfKnob.setHelpText ("Channel high-pass filter cutoff, in hertz; OFF when fully down.");
     styleCompactKnob (hpfKnob, filterWhite);
     enableValueLabel (hpfKnob, "", 0);
     hpfKnob.textFromValueFunction = [] (double v) -> juce::String
@@ -298,6 +300,8 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     lpfKnob.setSkewFactorFromMidPoint (8000.0);
     lpfKnob.setDoubleClickReturnValue (true, ChannelStripParams::kLpfOffHz);
     lpfKnob.setTooltip ("LPF cutoff (turn fully up to bypass)");
+    lpfKnob.setTitle ("Low-pass frequency");
+    lpfKnob.setHelpText ("Channel low-pass filter cutoff, in hertz; OFF when fully up.");
     styleCompactKnob (lpfKnob, filterWhite);
     enableValueLabel (lpfKnob, "", 0);
     lpfKnob.textFromValueFunction = [] (double v) -> juce::String
@@ -377,6 +381,14 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         k.setColour (juce::Slider::rotarySliderFillColourId, juce::Colour (fourKColors::kCompGold));
         k.setColour (juce::Slider::rotarySliderOutlineColourId, juce::Colour (0xff404048));
         k.setTooltip (tooltip);
+        // Accessibility (H4): tooltip drives the help text spoken on
+        // focus/hover; labelText (e.g. "PEAK", "ATK") becomes the
+        // role-name spoken before the value (e.g. "PEAK 30 percent").
+        // textFromValueFunction (or the suffix + decimals fed to
+        // enableValueLabel) supplies the spoken value via JUCE's
+        // default AccessibilityHandler on juce::Slider.
+        k.setTitle (labelText);
+        k.setHelpText (tooltip);
         enableValueLabel (k, valueSuffix, decimals);
         k.onValueChange = [this, &k, &target]
         {
@@ -462,6 +474,8 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     fetRatioKnob.setColour (juce::Slider::rotarySliderFillColourId, juce::Colour (fourKColors::kCompGold));
     fetRatioKnob.setColour (juce::Slider::rotarySliderOutlineColourId, juce::Colour (0xff404048));
     fetRatioKnob.setTooltip ("FET Ratio (4 / 8 / 12 / 20 / All-buttons)");
+    fetRatioKnob.setTitle ("FET ratio");
+    fetRatioKnob.setHelpText ("FET compressor ratio: 4 to 1, 8 to 1, 12 to 1, 20 to 1, or All-buttons-in mode.");
     enableValueLabel (fetRatioKnob, "", 0);
     fetRatioKnob.textFromValueFunction = [] (double v) -> juce::String
     {
@@ -690,6 +704,8 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     panKnob.setRange (-1.0, 1.0, 0.001);
     panKnob.setDoubleClickReturnValue (true, 0.0);
     panKnob.setColour (juce::Slider::rotarySliderFillColourId, juce::Colour (0xffc04040));  // red pan
+    panKnob.setTitle ("Pan");
+    panKnob.setHelpText ("Stereo pan; L100 to R100, C is centre.");
     enableValueLabel (panKnob, "", 0);
     panKnob.textFromValueFunction = [] (double v) -> juce::String
     {
@@ -717,6 +733,17 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     faderSlider.setSkewFactorFromMidPoint (-12.0);
     faderSlider.setValue (track.strip.faderDb.load (std::memory_order_relaxed), juce::dontSendNotification);
     faderSlider.setDoubleClickReturnValue (true, 0.0);
+    faderSlider.setTitle ("Channel fader");
+    faderSlider.setHelpText ("Channel level in decibels; double-click to reset to 0 dB.");
+    // Domain-specific text for screen readers + the visible textbox.
+    // JUCE's default AccessibilityHandler on juce::Slider calls
+    // getCurrentValueAsText() → textFromValueFunction, so the announced
+    // value matches what's drawn ("-4.2 dB" rather than raw "-4.2").
+    faderSlider.textFromValueFunction = [] (double v) -> juce::String
+    {
+        if (v <= ChannelStripParams::kFaderMinDb + 0.05) return "-INF dB";
+        return juce::String (v, 1) + " dB";
+    };
     // No "dB" suffix - strip is narrow enough that "0.0 dB" truncates.
     // The dB scale column to the right of the meter makes the unit obvious.
     faderSlider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 50, 16);
