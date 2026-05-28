@@ -5,10 +5,8 @@
 
 namespace duskstudio
 {
-// Standard fader scale ticks - the dB values that get a horizontal mark on
-// every vertical fader's track and a numeric label in the strip's scale
-// column. Shared between the LookAndFeel's track drawing and the strip
-// paint() functions so the labels and ticks always line up.
+// Shared by LookAndFeel track drawing + strip paint() so labels and
+// ticks always line up.
 struct FaderTick { float db; const char* label; };
 inline constexpr std::array<FaderTick, 9> kFaderTicks {{
     {  6.0f,  "+6" },
@@ -22,30 +20,21 @@ inline constexpr std::array<FaderTick, 9> kFaderTicks {{
     { -90.0f, "90" },
 }};
 
-// Track padding above/below the visible scale. Set to the fader cap's
-// half-height (cap = 36 px tall, see drawLinearSlider) so the cap at min
-// or max sits entirely within the slider's bounds — no clipping into the
-// pan knob above or the textBoxBelow value label.
+// = cap half-height (cap 36 px in drawLinearSlider) so the cap at min /
+// max sits entirely inside the slider's bounds.
 inline constexpr float kFaderTrackPad = 18.0f;
 
-// Y-coord, in the FADER's PARENT coordinate system, for a given dB value.
-// fader.getBounds() returns parent-relative bounds, so the result is meant
-// to be drawn from the parent's paint() (next to the fader). Do NOT call
-// from inside the slider's own paint() or after g.setOrigin() shifts the
-// graphics origin - the math won't match. Uses the slider's NormalisableRange
-// so SkewFactorFromMidPoint(-12) etc. are respected, and the 6-px padding
-// matches drawLinearSlider's track-padding so labels align with the ticks.
-// Slider::valueToProportionOfLength is non-const in JUCE (mutable cache),
-// so the parameter is non-const here too even though we don't mutate it.
-// Not noexcept - valueToProportionOfLength can call user-supplied
-// NormalisableRange lambdas which JUCE doesn't promise are noexcept.
+// PARENT-coord Y for a given dB. Call from the parent's paint(), NOT
+// from the slider's own paint() or after g.setOrigin() — math won't
+// match. Honours NormalisableRange skew. Non-const + non-noexcept
+// because valueToProportionOfLength caches internally and can call
+// user-supplied lambdas.
 inline float faderYForDb (juce::Slider& fader, float dB)
 {
     const auto b = fader.getBounds();
     const float prop = (float) fader.valueToProportionOfLength (dB);
-    // Mirror DuskStudioLookAndFeel::getSliderLayout (no minYSpace reduce
-    // — we override the V2 default 8 px reduce so the visual track and
-    // the drag math share the same Y range). Just carve any textbox.
+    // Mirror getSliderLayout — we override V2's 8 px reduce so visual
+    // track and drag math share the same Y. Just carve the textbox.
     const auto pos = fader.getTextBoxPosition();
     const int textBoxH = (pos == juce::Slider::TextBoxAbove
                           || pos == juce::Slider::TextBoxBelow)
@@ -56,12 +45,8 @@ inline float faderYForDb (juce::Slider& fader, float dB)
     return trackY + trackH - kFaderTrackPad - prop * (trackH - kFaderTrackPad * 2.0f);
 }
 
-// Console-style rotary knob look: dark grey body with a soft inner gradient
-// plus a colored "cap" indicator that points to the current value, modelled
-// on the SSL 4K / Harrison Mixbus knob aesthetic.
-//
-// Per-knob accent comes from the slider's `rotarySliderFillColourId` - set
-// that to the band/section color and the cap takes it.
+// SSL 4K / Harrison Mixbus knob aesthetic. Per-knob accent =
+// rotarySliderFillColourId on the slider.
 class DuskStudioLookAndFeel final : public juce::LookAndFeel_V4
 {
 public:
@@ -74,12 +59,8 @@ public:
         setColour (juce::Slider::backgroundColourId,          juce::Colour (0xff1a1a1c));
     }
 
-    // ComboBox + PopupMenu fonts. JUCE's defaults clamp the combo font at
-    // 15 px and the popup-menu font at 17 px - on dense console-style UIs
-    // both feel cramped, especially the long MIDI device names ("PANORAMA
-    // T6 Plugin" etc.) which truncate to "PANO..." in the closed combo.
-    // Explicit overrides make the closed combo legible and the open
-    // dropdown's items comfortable to read.
+    // JUCE defaults clamp combo at 15 px / popup at 17 px — long MIDI
+    // device names truncate ("PANO..."). Bump to 16 / 18.5 px.
     juce::Font getComboBoxFont (juce::ComboBox&) override
     {
         return juce::Font (juce::FontOptions (16.0f));
@@ -89,31 +70,18 @@ public:
         return juce::Font (juce::FontOptions (18.5f));
     }
 
-    // Anchor tooltips to the TOP-CENTER of the active main window
-    // (instead of JUCE's default "follow the cursor"). With dense
-    // dynamic UIs (compressor mode picker, EQ band cells, etc.) the
-    // cursor-follow tooltip kept landing over controls the user was
-    // about to interact with. Top-center is a stable, predictable
-    // location — engineers know where to look without the tooltip
-    // ever obscuring the very element it's describing.
+    // Anchor in the top menu-bar row (same row as File/Settings) so
+    // tooltips never overlap the control they describe. JUCE's default
+    // cursor-follow kept landing over UI the user was about to click.
     juce::Rectangle<int> getTooltipBounds (const juce::String& tipText,
                                               juce::Point<int> /*screenPos*/,
                                               juce::Rectangle<int> parentArea) override
     {
-        // Anchor the tooltip in the top menu-bar row (same row as
-        // File / Settings) so the help text sits in the empty black
-        // strip beside the loaded-session label — high-visibility,
-        // never overlaps the control being described, and stays put
-        // as the cursor moves. Forced single-line: measure the tip
-        // text without wrap and size the rect to the natural width.
-        //
-        // Coordinate space: when the TooltipWindow has a parent
-        // Component (MainComponent owns ours), `parentArea` is in
-        // local-to-parent coords, NOT screen coords. Use parentArea
-        // directly — TopLevelWindow::getScreenBounds() returns the
-        // WRONG space and the resulting Y gets clamped back inside
-        // parentArea, which is why the tooltip lands below the tab
-        // row instead of in the menu bar.
+        // Force single-line — measure without wrap. parentArea is in
+        // local-to-parent (MainComponent owns the TooltipWindow), NOT
+        // screen coords; TopLevelWindow::getScreenBounds returns the
+        // wrong space and the resulting Y gets clamped back inside
+        // parentArea (tooltip lands below the tab row otherwise).
         constexpr float kFontPx = 13.0f;
         const juce::Font font { juce::FontOptions (kFontPx) };
         const auto flat = tipText.replaceCharacter ('\n', ' ');
@@ -132,13 +100,9 @@ public:
     void drawTooltip (juce::Graphics& g, const juce::String& text,
                        int width, int height) override
     {
-        // JUCE's LookAndFeel_V4::drawTooltip routes through an internal
-        // LayoutHelpers::layoutTooltipText that hard-caps the TextLayout
-        // wrap width at ~400 px, so long tooltips wrap to 2-3 lines and
-        // their lower lines get clipped against the menu-bar row's
-        // single-line height. Render the layout ourselves with
-        // word-wrap disabled so the tooltip stays on one line at the
-        // full `width` getTooltipBounds reserved for it.
+        // V4 routes through layoutTooltipText which hard-caps TextLayout
+        // wrap at ~400 px → long tips wrap to 2-3 lines and clip against
+        // the menu row's single-line height. Render with word-wrap off.
         const juce::Rectangle<float> bounds (0.0f, 0.0f, (float) width, (float) height);
         g.setColour (findColour (juce::TooltipWindow::backgroundColourId));
         g.fillRect (bounds);
@@ -157,19 +121,15 @@ public:
         layout.draw (g, bounds);
     }
 
-    // Override LookAndFeel_V2::getSliderLayout's default 8 px top/bottom
-    // reduce on vertical sliders. Default reduce makes the slider's drag
-    // math (mouse-Y → value) span a SMALLER rect than the visual track
-    // drawn by drawLinearSlider (which uses its own padTopBot=6), so the
-    // cap couldn't reach the visible bottom tick. With this override the
-    // visual + drag math share identical bounds and the cap can travel
-    // the full range from "+6" tick at the top to "off" tick at the bottom.
+    // Override V2's 8 px top/bottom reduce — default reduce makes the
+    // drag math span a smaller rect than the visual track, so the cap
+    // couldn't reach the bottom tick. Visual + drag math now identical.
     juce::Slider::SliderLayout getSliderLayout (juce::Slider& slider) override
     {
         juce::Slider::SliderLayout layout;
         layout.sliderBounds = slider.getLocalBounds();
-        // Carve textbox from one edge if attached (preserves the V2
-        // behaviour the rest of the UI relies on).
+        // Carve textbox from one edge (preserves V2 behaviour the
+        // rest of the UI relies on).
         const auto pos = slider.getTextBoxPosition();
         const int textBoxH = (pos == juce::Slider::TextBoxAbove
                                || pos == juce::Slider::TextBoxBelow)
@@ -193,14 +153,10 @@ public:
         {
             layout.textBoxBounds = layout.sliderBounds.removeFromLeft (textBoxW);
         }
-        // For LINEAR VERTICAL sliders, carve kFaderTrackPad from the top and
-        // bottom of layout.sliderBounds. JUCE's getPositionOfValue uses this
-        // rect to compute sliderPos — at min/max the cap centres on the
-        // sliderBounds edge. Without this carve the cap (36 px tall, drawn
-        // centred on sliderPos) would clip half its height at the slider's
-        // top/bottom. With the carve the sliderPos travel range lands the
-        // cap entirely inside the slider's actual component bounds (so it
-        // can also visually overlap an adjacent pan knob via z-order).
+        // Vertical sliders: carve kFaderTrackPad so the 36 px cap
+        // (drawn centred on sliderPos) doesn't clip half its height
+        // at the slider top/bottom. Carved range = full cap travel
+        // inside component bounds.
         const auto style = slider.getSliderStyle();
         if (style == juce::Slider::LinearVertical
             || style == juce::Slider::LinearBarVertical)
@@ -212,9 +168,8 @@ public:
         return layout;
     }
 
-    // Console-style fader cap for vertical linear sliders. The fader rides on
-    // a thin centered track; the thumb is a wide horizontal cap with a soft
-    // gradient and grip lines, modelled on a real motorized fader handle.
+    // Motorized fader handle look: thin centred track + tall narrow
+    // cap with brushed-satin gradient + grip grooves.
     void drawLinearSlider (juce::Graphics& g,
                            int x, int y, int width, int height,
                            float sliderPos, float minSliderPos, float maxSliderPos,
@@ -232,17 +187,14 @@ public:
         const auto bounds = juce::Rectangle<int> (x, y, width, height).toFloat();
         const float cx = bounds.getCentreX();
 
-        // Track - thin vertical channel with a faint unity-gain mark.
-        // bounds here is layout.sliderBounds, which getSliderLayout already
-        // shrank by kFaderTrackPad top + bottom so JUCE's sliderPos travel
-        // range matches the cap geometry. No extra inset needed.
+        // bounds = layout.sliderBounds (already shrunk by kFaderTrackPad
+        // in getSliderLayout). No extra inset needed.
         const float trackW = juce::jmin (4.0f, bounds.getWidth() * 0.18f);
         const auto trackRect = juce::Rectangle<float> (cx - trackW * 0.5f, bounds.getY(),
                                                         trackW, bounds.getHeight());
         g.setColour (juce::Colour (0xff0a0a0c));
         g.fillRoundedRectangle (trackRect, trackW * 0.5f);
-        // Inner shadow at the top so the track reads as recessed into the
-        // strip - a subtle vertical fade just inside the top edge.
+        // Recessed look — vertical fade just inside the top edge.
         {
             juce::ColourGradient innerShadow (juce::Colour (0x80000000),
                                                 trackRect.getX(), trackRect.getY(),
@@ -255,18 +207,15 @@ public:
         g.setColour (juce::Colour (0xff2a2a2e));
         g.drawRoundedRectangle (trackRect, trackW * 0.5f, 0.6f);
 
-        // dB tick marks across the track. The 0 dB / unity mark gets a
-        // brighter, slightly longer line; the others are dim guides for
-        // setting levels by ear. Range-aware via NormalisableRange so the
-        // skew (e.g. SkewFactorFromMidPoint(-12)) places ticks correctly.
+        // dB ticks. 0 dB gets a brighter / longer line. Range-aware via
+        // NormalisableRange so SkewFactorFromMidPoint(-12) places ticks
+        // correctly.
         const auto range = slider.getNormalisableRange();
-        const float padTopBot = 0.0f;   // bounds is already the inset track rect (see getSliderLayout)
+        const float padTopBot = 0.0f;   // bounds already inset
         const float trackH = bounds.getHeight() - padTopBot * 2.0f;
-        // Per-slider opt-in: faders that want hardware-style scale labels
-        // drawn alongside the ticks set the "dusk_drawFaderScaleLabels"
-        // property. When true, the ticks extend further out and the dB
-        // number is drawn on the LEFT of the tick line ("off" replaces
-        // "90" at the bottom for that hardware-fader grammar).
+        // Per-slider opt-in via "dusk_drawFaderScaleLabels" property —
+        // hardware-fader grammar: ticks extend further, dB drawn left of
+        // tick, "off" replaces "90" at the bottom.
         const bool drawScaleLabels = (bool) slider.getProperties()
             .getWithDefault ("dusk_drawFaderScaleLabels", false);
 
@@ -284,20 +233,14 @@ public:
                          trackRect.getRight() + xOver, tickY,
                          isZero ? 1.2f : 0.7f);
 
-            // Label text is intentionally NOT drawn here. The slider's
-            // bounds are too narrow on the channel strip to host labels
-            // without clipping; the strip paints them itself in its own
-            // paint() using faderYForDb for vertical alignment.
+            // Labels not drawn here — strip is too narrow without
+            // clipping; strip's own paint() uses faderYForDb.
         }
 
-        // Cap — tall, narrow, satin metal with horizontal grip grooves.
-        // Portrait orientation matches the reference hardware fader cap.
-        // Width capped at ~20 px so it stays slim against the thin track.
+        // Cap CENTRE sits exactly on the value's Y — hardware-fader
+        // grammar (cap straddles the value line).
         const float capW = juce::jmin (bounds.getWidth() - 6.0f, 20.0f);
         const float capH = 36.0f;
-        // Cap CENTRE sits exactly on the value's Y — at max value cap
-        // centres on the top tick, at min on the bottom tick. Matches
-        // standard hardware-fader grammar (cap straddles the value line).
         const float capCy = sliderPos;
         const auto cap = juce::Rectangle<float> (cx - capW * 0.5f,
                                                    capCy - capH * 0.5f,
@@ -308,9 +251,8 @@ public:
                             juce::Point<int> (0, 2))
             .drawForRectangle (g, cap.toNearestInt());
 
-        // Brushed-satin gradient: bright at top + bottom, mid-grey in the
-        // middle so the cap reads as a metal cylinder catching light from
-        // above and below the centre grip lines.
+        // Brushed satin: bright top + bottom, mid-grey middle so the
+        // cap reads as a metal cylinder catching light around the grip.
         juce::ColourGradient body (juce::Colour (0xffe2dccb), cap.getX(), cap.getY(),
                                     juce::Colour (0xffb8b0a0), cap.getX(), cap.getBottom(), false);
         body.addColour (0.30, juce::Colour (0xffcfc8b8));
@@ -406,8 +348,7 @@ public:
     }
 };
 
-// 4K-derived band/section accent colors. Re-used wherever we need the
-// canonical SSL palette. Names also drive the track colour-picker labels.
+// 4K band/section palette. Names also drive the track colour-picker labels.
 namespace fourKColors
 {
     inline constexpr juce::uint32 kHpfBlue   = 0xff4a7c9e;
@@ -421,18 +362,18 @@ namespace fourKColors
     inline constexpr juce::uint32 kMasterTan = 0xffd0a060;
 }
 
-// SSL 9000J band colours - used only for the EQ knob bodies. Kept in a
-// separate namespace so the track colour-picker (driven by fourKColors) keeps
-// matching its labels (Red / Orange / Amber / Green).
+// SSL 9000J palette — EQ knob bodies only. Separate namespace so the
+// track colour-picker (driven by fourKColors) keeps its labels (Red /
+// Orange / Amber / Green).
 namespace sslEqColors
 {
     inline constexpr juce::uint32 kHfRed   = 0xffc44444;
     inline constexpr juce::uint32 kHmGreen = 0xff5fa55f;
     inline constexpr juce::uint32 kLmBlue  = 0xff5878b0;
     inline constexpr juce::uint32 kLfBlack = 0xff353538;
-    inline constexpr juce::uint32 kHpfBlue = 0xff4a7c9e;   // legacy, retained for any callsite still using it
-    // SSL 9000 J top-section filter knobs are white-faced. HPF + LPF
-    // share this colour so the user reads them as a pair.
+    inline constexpr juce::uint32 kHpfBlue = 0xff4a7c9e;
+    // 9000J top-section filter knobs are white-faced — HPF + LPF
+    // share this so they read as a pair.
     inline constexpr juce::uint32 kFilterWhite = 0xffe0e0e4;
 }
 } // namespace duskstudio

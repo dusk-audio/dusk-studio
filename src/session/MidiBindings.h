@@ -6,108 +6,90 @@
 
 namespace duskstudio
 {
-// MIDI controller infrastructure. Lets the user bind an external CC or note
-// to a target inside Dusk Studio (transport, fader, mute, solo, arm, master fader)
-// via a "MIDI Learn" workflow. Bindings persist in the session JSON so a
-// user's pedal / fader-bank setup travels with the project.
+// MIDI Learn bindings — bind external CC/Note/PB/MMC to a Dusk Studio
+// target (transport / fader / mute / solo / arm / etc). Persist in
+// session JSON so the user's controller setup travels with the project.
 //
-// v1 scope (this file):
-//   • CC and Note triggers. NRPN / pitch-bend out of scope.
-//   • Per-track + per-master targets. Buses / aux sends not yet wired.
-//   • Note triggers fire on press only (NoteOn velocity > 0). Note Off and
-//     CC release are ignored - latching foot-switches would need a release
-//     mode and we ship without that for now.
+// v1: CC + Note + PB + MMC. NRPN out of scope. Notes fire on press only
+// (NoteOn vel > 0); latching foot-switches with explicit release mode
+// are deferred.
 
 enum class MidiBindingTrigger : int
 {
-    CC         = 0,   // dataNumber = controller number (0..127)
-    Note       = 1,   // dataNumber = note number (0..127)
-    PitchBend  = 2,   // dataNumber unused (pitch-bend is per-channel only).
-                      // 14-bit value 0..16383 — used for MCU-style fader
-                      // controllers (Mackie / X-Touch / Panorama T6 etc).
-    MmcCommand = 3,   // dataNumber = MMC command code (juce::MidiMessage::
-                      //   MidiMachineControlCommand: 1=stop, 2=play, 3=def-play,
-                      //   4=ffwd, 5=rew, 6=recStart, 7=recStop, 9=pause).
-                      // Channel unused (MMC is sysex, no channel). Always
-                      // treated as a one-shot press; value ignored.
+    CC         = 0,
+    Note       = 1,
+    PitchBend  = 2,   // dataNumber unused (per-channel). 14-bit 0..16383 —
+                      // for MCU-style fader controllers.
+    MmcCommand = 3,   // dataNumber = MMC code (1=stop, 2=play, 3=def-play,
+                      // 4=ffwd, 5=rew, 6=recStart, 7=recStop, 9=pause).
+                      // Sysex → no channel. One-shot press.
 };
 
-// Discrete-target trigger behaviour. Two flavours of hardware button
-// produce different CC patterns that look the same on the wire:
-//   • Momentary (B-type): each physical press sends 127 then 0.
-//     Rising-edge detection (val ≥ 64) fires once per click — correct.
-//   • Latching/Toggle (D-type): each physical press alternates 127/0.
-//     Rising-edge fires every other click — needs to fire on every
-//     received message to toggle once per click.
-// We can't tell them apart from the MIDI stream, so the user picks via
-// the right-click menu. Default = Press (covers the common case).
+// Same wire stream from two different hardware button styles:
+//   Momentary (B-type) : each press sends 127 then 0 — rising edge fires
+//     once. Default.
+//   Latching (D-type)  : each press alternates 127/0 — rising edge
+//     fires every other click. Must fire on EVERY received message to
+//     toggle once per click.
+// User picks via right-click menu (can't tell them apart from the wire).
 enum class MidiButtonMode : int
 {
-    Press  = 0,    // Rising edge only (val ≥ 64). Momentary / B-type.
-    Toggle = 1,    // Fire on every received message. Latching / D-type.
+    Press  = 0,    // Rising edge only (val >= 64). Momentary.
+    Toggle = 1,    // Fire on every message. Latching.
 };
 
 enum class MidiBindingTarget : int
 {
-    None = 0,                // sentinel; never appears in a stored binding
+    None = 0,
 
     TransportPlay     = 1,
     TransportStop     = 2,
     TransportRecord   = 3,
-    TransportToggle   = 4,   // play if stopped, stop if rolling
+    TransportToggle   = 4,
 
-    TrackFader        = 100, // continuous; CC value 0..127 -> faderDb range
-    TrackPan          = 101, // continuous; -1..+1
-    TrackMute         = 102, // discrete on press
-    TrackSolo         = 103, // discrete on press
-    TrackArm          = 104, // discrete on press
-    TrackAuxSend      = 105, // continuous; targetIndex packs track + aux
-                              // (track * kNumAuxSends + auxIdx)
-    TrackHpfFreq      = 106, // continuous; targetIndex = track
-    TrackEqGain       = 107, // continuous; targetIndex packs track + band
-                              // (track * 4 + band, band 0=LF 1=LM 2=HM 3=HF)
-    // Mode-aware compressor bindings. The strip has 3 comp models
-    // (Opto/FET/VCA); each has its own threshold + makeup knob with a
-    // different range. These targets bind the LOGICAL knob: the apply
-    // path reads `compMode` per block and writes to the matching
-    // per-mode atom so a single binding survives mode flips.
-    TrackCompThresh   = 108, // continuous; targetIndex = track
-    TrackCompMakeup   = 109, // continuous; targetIndex = track
-    TrackPluginParam  = 110, // continuous; targetIndex = track,
-                              // paramIndex (separate field) = plugin
-                              // parameter slot in the loaded instance.
+    TrackFader        = 100,
+    TrackPan          = 101,
+    TrackMute         = 102,
+    TrackSolo         = 103,
+    TrackArm          = 104,
+    TrackAuxSend      = 105, // targetIndex = track * kNumAuxSends + auxIdx
+    TrackHpfFreq      = 106,
+    TrackEqGain       = 107, // targetIndex = track * 4 + band (0=LF 1=LM 2=HM 3=HF)
+    // Comp targets bind the LOGICAL knob — apply path reads compMode and
+    // writes the matching per-mode atom so a single binding survives
+    // mode flips (Opto/FET/VCA all have different ranges).
+    TrackCompThresh   = 108,
+    TrackCompMakeup   = 109,
+    TrackPluginParam  = 110, // paramIndex (separate field) = plugin slot.
 
-    // Bank-relative track targets — targetIndex is a POSITION 0..kBankSize-1
-    // (or packed pos*N+sub for AuxSend/EqGain). Resolved on the audio
-    // thread via `absoluteTrack = session.activeBank * kBankSize + pos`.
-    // Lets a single 8-fader / 8-button controller drive whichever 8 of
-    // the 24 tracks are currently in the active bank. See the per-target
-    // apply-path branch in AudioEngine.cpp for details.
+    // Bank-relative — targetIndex is a POSITION 0..kBankSize-1 (or
+    // packed pos*N+sub). Resolved at audio time via
+    //   absoluteTrack = activeBank * kBankSize + pos.
+    // Lets one 8-fader controller drive whichever 8 of the 24 tracks
+    // are in the active bank.
     TrackFaderBank        = 130,
     TrackPanBank          = 131,
     TrackMuteBank         = 132,
     TrackSoloBank         = 133,
     TrackArmBank          = 134,
-    TrackAuxSendBank      = 135, // targetIndex = pos * kNumAuxSends + auxIdx
+    TrackAuxSendBank      = 135, // pos * kNumAuxSends + auxIdx
     TrackHpfFreqBank      = 136,
-    TrackEqGainBank       = 137, // targetIndex = pos * kPackedEqBands + band
+    TrackEqGainBank       = 137, // pos * kPackedEqBands + band
     TrackCompThreshBank   = 138,
     TrackCompMakeupBank   = 139,
-    TrackPluginParamBank  = 140, // paramIndex still in MidiBinding::paramIndex
+    TrackPluginParamBank  = 140,
 
-    BusFader          = 150, // continuous; targetIndex = bus 0..kNumBuses-1
-    BusPan            = 151, // continuous; -1..+1
-    BusMute           = 152, // discrete on press
-    BusSolo           = 153, // discrete on press
+    BusFader          = 150,
+    BusPan            = 151,
+    BusMute           = 152,
+    BusSolo           = 153,
 
-    AuxLaneFader      = 160, // continuous; targetIndex = lane 0..kNumAuxLanes-1
-    AuxLaneMute       = 161, // discrete on press
+    AuxLaneFader      = 160,
+    AuxLaneMute       = 161,
 
-    MasterFader       = 200, // continuous
+    MasterFader       = 200,
 };
 
-// True when the target's value is set continuously from the CC value
-// (0..127). False = discrete on-press toggle / trigger.
 constexpr bool isContinuousTarget (MidiBindingTarget t) noexcept
 {
     return t == MidiBindingTarget::TrackFader
@@ -132,8 +114,6 @@ constexpr bool isContinuousTarget (MidiBindingTarget t) noexcept
         || t == MidiBindingTarget::MasterFader;
 }
 
-// True for the bank-relative variants — apply path resolves via
-// session.activeBank * kBankSize + position.
 constexpr bool isBankRelativeTarget (MidiBindingTarget t) noexcept
 {
     return t == MidiBindingTarget::TrackFaderBank
@@ -149,9 +129,6 @@ constexpr bool isBankRelativeTarget (MidiBindingTarget t) noexcept
         || t == MidiBindingTarget::TrackPluginParamBank;
 }
 
-// True when the target needs a strip index. Track + bus targets both
-// use targetIndex; the apply path disambiguates via the enum value.
-// False = global target (transport / master / etc.).
 constexpr bool needsTrackIndex (MidiBindingTarget t) noexcept
 {
     return t == MidiBindingTarget::TrackFader
@@ -161,7 +138,6 @@ constexpr bool needsTrackIndex (MidiBindingTarget t) noexcept
         || t == MidiBindingTarget::TrackArm;
 }
 
-// True when the target needs a bus index (0..kNumBuses-1).
 constexpr bool needsBusIndex (MidiBindingTarget t) noexcept
 {
     return t == MidiBindingTarget::BusFader
@@ -170,25 +146,21 @@ constexpr bool needsBusIndex (MidiBindingTarget t) noexcept
         || t == MidiBindingTarget::BusSolo;
 }
 
-// True when the target needs an aux-lane index (0..kNumAuxLanes-1).
 constexpr bool needsAuxLaneIndex (MidiBindingTarget t) noexcept
 {
     return t == MidiBindingTarget::AuxLaneFader
         || t == MidiBindingTarget::AuxLaneMute;
 }
 
-// True when the target packs two indices (track + aux-lane) into
-// targetIndex via packTrackAux(). The apply path decodes back to the
-// (track, aux) pair before reading the right atom.
+// Only the absolute-track variant. TrackAuxSendBank uses a smaller
+// (kBankSize-based) range that callers bounds-check separately.
 constexpr bool needsPackedTrackAuxIndex (MidiBindingTarget t) noexcept
 {
     return t == MidiBindingTarget::TrackAuxSend;
 }
 
-// Packing helpers for TrackAuxSend. Bus + aux range fits within the
-// 0..255 budget for targetIndex (kNumTracks=24 x kNumAuxSends=4 = 96).
-// kNumAuxSendsLanes is the multiplier - hard-coded so the helper stays
-// header-only (Session.h pulls in too much).
+// 24 × 4 = 96, fits in targetIndex. Header-only — Session.h pulls in
+// too much.
 constexpr int kPackedAuxLanes = 4;
 constexpr int packTrackAux (int track, int aux) noexcept
 {
@@ -197,8 +169,7 @@ constexpr int packTrackAux (int track, int aux) noexcept
 constexpr int unpackTrackAuxTrack (int packed) noexcept { return packed / kPackedAuxLanes; }
 constexpr int unpackTrackAuxLane  (int packed) noexcept { return packed % kPackedAuxLanes; }
 
-// Same packing shape for TrackEqGain: 4 bands per track (LF / LM / HM / HF).
-// Range fits in targetIndex (kNumTracks 16 * 4 = 64).
+// 24 × 4 = 96, fits in targetIndex.
 constexpr int kPackedEqBands = 4;
 constexpr int packTrackEqBand (int track, int band) noexcept
 {
@@ -207,7 +178,6 @@ constexpr int packTrackEqBand (int track, int band) noexcept
 constexpr int unpackTrackEqTrack (int packed) noexcept { return packed / kPackedEqBands; }
 constexpr int unpackTrackEqBand  (int packed) noexcept { return packed % kPackedEqBands; }
 
-// True when the target packs a (track, band) pair like TrackEqGain.
 constexpr bool needsPackedTrackEqIndex (MidiBindingTarget t) noexcept
 {
     return t == MidiBindingTarget::TrackEqGain;
@@ -219,17 +189,13 @@ struct MidiBinding
     int dataNumber = 0;              // CC# or note# (0..127)
     MidiBindingTrigger trigger = MidiBindingTrigger::CC;
     MidiBindingTarget  target  = MidiBindingTarget::None;
-    int targetIndex = 0;             // track index for per-strip targets
-    // Secondary index used only for TrackPluginParam: which parameter
-    // slot inside the loaded plugin instance. Filled at learn-resolve
-    // time from PluginSlot::getLastTouchedParamIndex. Zero / unused
-    // for every other target.
+    int targetIndex = 0;
+    // TrackPluginParam only — which parameter slot in the plugin.
+    // Filled at learn-resolve from PluginSlot::getLastTouchedParamIndex.
     int paramIndex = 0;
-    // For discrete (button) targets only — see MidiButtonMode doc.
-    // Ignored for continuous targets.
+    // Discrete (button) targets only.
     MidiButtonMode buttonMode = MidiButtonMode::Press;
 
-    // True when this binding is live (target != None and dataNumber valid).
     bool isValid() const noexcept
     {
         return target != MidiBindingTarget::None
@@ -237,17 +203,13 @@ struct MidiBinding
             && channel   >= 0 && channel    <= 16;
     }
 
-    // Equality on (channel, dataNumber, trigger). Used for "is this MIDI
-    // event one this binding cares about" matching at the audio thread,
-    // and for de-duping in the learn workflow (a learn capture replaces
-    // any pre-existing binding on the same source).
+    // Per-trigger matching:
+    //   CC / Note  : channel (0 = wildcard) + dataNumber
+    //   PitchBend  : channel only (no dataNumber)
+    //   MmcCommand : dataNumber only (sysex, no channel)
     bool sourceMatches (int ch, int dn, MidiBindingTrigger tg) const noexcept
     {
         if (trigger != tg) return false;
-        // Per-trigger matching shape:
-        //  CC / Note:  dataNumber + channel (channel == 0 is wildcard)
-        //  PitchBend:  channel only (no dataNumber concept)
-        //  MmcCommand: dataNumber only (sysex, no channel)
         if (trigger == MidiBindingTrigger::PitchBend)
             return channel == 0 || channel == ch;
         if (dataNumber != dn) return false;
@@ -257,10 +219,8 @@ struct MidiBinding
     }
 };
 
-// Pending-transport-action signal: audio thread sets one of these when a
-// binding hits a transport target; message-thread timer drains it and
-// calls the corresponding engine method (engine.play / stop / record are
-// not RT-safe). Stored as int in std::atomic<int> on Session.
+// Audio thread sets when a binding hits transport; message-thread timer
+// drains (engine.play/stop/record aren't RT-safe).
 enum class PendingTransportAction : int
 {
     None    = 0,
@@ -270,11 +230,7 @@ enum class PendingTransportAction : int
     Toggle  = 4,
 };
 
-// Learn-pending signal: UI sets a target descriptor; audio thread sees a
-// MIDI message and stamps a capture; message-thread timer drains the
-// capture and appends a binding. Packed into a single atomic<int> with
-// the target enum in the high bits and the track index (0..255 - the
-// mask is 0xff; only 0..15 are actually used today) in the low 8.
+// Packed into atomic<int>: target enum high bits, track index low 8.
 // -1 = no learn pending.
 constexpr int packLearnTarget (MidiBindingTarget t, int idx) noexcept
 {
@@ -290,14 +246,12 @@ constexpr int unpackLearnTargetIndex (int packed) noexcept
     return packed < 0 ? 0 : (packed & 0xff);
 }
 
-// Captured MIDI source from the audio thread, drained on the message
-// thread. Atomically packed into a single int64: 8 bits trigger + 8 bits
-// channel + 8 bits dataNumber + 1 bit "valid". The audio thread CAS-stores
-// this only when learnPending is set; the message thread loads it,
-// processes, and clears.
+// Audio→message handoff. Packed int64: 8b trigger + 8b channel + 8b
+// dataNumber + 1b valid. Audio CAS-stores when learnPending; message
+// loads + clears.
 constexpr juce::int64 packLearnCapture (MidiBindingTrigger tg, int ch, int dn) noexcept
 {
-    return ((juce::int64) 1 << 32)         // valid flag
+    return ((juce::int64) 1 << 32)
          | ((juce::int64) (int) tg << 16)
          | ((juce::int64) (ch & 0xff) << 8)
          | ((juce::int64) (dn & 0xff));
@@ -319,37 +273,23 @@ constexpr int unpackLearnCaptureDataNumber (juce::int64 packed) noexcept
     return (int) (packed & 0xff);
 }
 
-// Display label for a target - used by the right-click menu and the
-// "MIDI: Ch 1 CC 23" readout. Track-targeted entries don't include the
-// index here; the menu builder appends it.
 const char* nameForTarget (MidiBindingTarget t) noexcept;
 
-// Full human-readable description of a binding's TARGET, including
-// resolved indices (e.g. "Track 3 fader", "Bus 2 mute", "AUX 1 return",
-// "Track 4 EQ LM gain"). For TrackPluginParam, looks up the loaded
-// plugin via the engine and resolves the paramIndex to a parameter
-// name when possible; falls back to "Track N plugin param M" when no
-// plugin is loaded or the index is out of range. Engine reference
-// optional - pass nullptr for callers that don't need plugin-param
-// resolution (the rest still resolves cleanly).
+// Resolves indices ("Track 3 fader", "Bus 2 mute", "Track 4 EQ LM gain").
+// For TrackPluginParam, looks up the loaded plugin and resolves
+// paramIndex to a parameter name; nullptr engine falls back to "Track N
+// plugin param M".
 class AudioEngine;
 juce::String describeBindingTarget (const MidiBinding& b,
                                      const AudioEngine* engine);
 
-// Source description: "Ch - CC 23", "Ch 1 Note 60", etc. Single line,
-// channel "-" for omni.
+// "Ch - CC 23", "Ch 1 Note 60", etc.
 juce::String describeBindingSource (const MidiBinding& b);
 
-// JSON serialize / deserialize for a bindings preset file. Same wire
-// format the session serializer uses for the embedded `midi_bindings`
-// array, wrapped in a top-level object with a `format_version` field so
-// future schema changes can detect old files. UI uses these to export
-// the current binding set to a .json file for sharing across sessions
-// / machines and to import one back.
+// Preset .json: top-level object with `format_version` + `midi_bindings`
+// array (matches the embedded session form). std::nullopt = malformed /
+// wrong schema; empty vector = well-formed "clear all".
 juce::String serializeBindingsPreset (const std::vector<MidiBinding>& binds);
-// Returns std::nullopt when the JSON is malformed / wrong schema.
-// Returns an empty vector when the preset is well-formed but intentionally
-// empty (a valid "clear all bindings" preset).
 std::optional<std::vector<MidiBinding>> deserializeBindingsPreset (const juce::String& json);
 
 class Session;
@@ -361,16 +301,13 @@ namespace duskstudio
 {
 namespace midilearn
 {
-// Shared helper - shows a right-click menu on `target` for the given
-// (target, index) pair. Three items: "MIDI Learn" sets the learn-pending
-// atom; "MIDI: Ch X CC/Note Y" is informational and shows the current
-// binding when one exists; "Forget binding" removes it. Centralised so
-// every surface (TransportBar, ChannelStripComponent, MasterStripComponent)
-// reads identically and stays in sync as the binding model evolves.
+// Right-click menu on `target` for (kind, index): "MIDI Learn" sets the
+// learn-pending atom; "MIDI: Ch X CC/Note Y" is informational; "Forget
+// binding" removes it. Centralised so TransportBar / ChannelStripComponent
+// / MasterStripComponent all read identically.
 void showLearnMenu (juce::Component& target,
                     Session& session,
                     MidiBindingTarget kind,
                     int index = 0);
 } // namespace midilearn
 } // namespace duskstudio
-

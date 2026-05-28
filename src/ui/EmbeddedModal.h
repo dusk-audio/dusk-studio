@@ -7,41 +7,29 @@
 
 namespace duskstudio
 {
-// Small helper that wraps the recurring "DimOverlay + centred panel"
-// pattern used by the piano roll, tuner, and (post-conversion) audio
-// settings / mixdown / bounce / channel plugin editor.
+// Wraps the "DimOverlay + centred panel" pattern used by piano roll,
+// tuner, audio settings, mixdown, bounce, plugin editor.
 //
-// One ModalHost member on the host component. show() takes ownership of
-// the panel body, displays the dim overlay + body sized to the host, and
-// wires Esc / click-outside dismiss. close() tears it all down. The panel
-// body can call host.closeModal() through an onDismiss callback when it
-// has its own Cancel/Close button.
+// show() takes ownership, sizes the body to its current getWidth/Height,
+// centres it, wires Esc / click-outside dismiss. close() tears down.
+// Body can call host.closeModal() via onDismiss if it has its own
+// Cancel button.
 //
-// The body is sized to its current `getWidth()` / `getHeight()` and
-// centred. Pre-sizing on the body before calling show() is the caller's
-// job - matches how juce::DialogWindow already worked.
-//
-// EmbeddedModal paints its own opaque rounded-panel backdrop behind the
-// body so panels that don't fill their own background (e.g. raw juce::
-// Component subclasses without paint() / setOpaque) still render solid
-// instead of letting the channel strips bleed through.
+// Paints its own opaque rounded backdrop behind the body so panels
+// without solid background don't bleed channel strips through.
 class EmbeddedModal final : private juce::KeyListener
 {
 public:
     EmbeddedModal()  = default;
     ~EmbeddedModal() override { close(); }
 
-    // Show `body` centred over `parent`. The modal takes ownership of
-    // `body`; closing the modal destructs it.
+    // Modal takes ownership of body; close destructs it.
     //
-    // `dismissOnClickOutside`: true → clicking the dim fires onDismiss;
-    // false → dim is a no-op (decision modals — user must hit an
-    // explicit action button on the body).
-    // `dismissOnEscape`: true → Esc fires onDismiss; false → Esc is
-    // swallowed (focus-locked decision modals like save-before-quit
-    // where the user MUST make a choice).
-    // Defaults preserve the historical "Esc + click-outside both
-    // dismiss" plugin-modal semantic.
+    // dismissOnClickOutside=false : dim is a no-op (decision modals
+    //   need explicit button).
+    // dismissOnEscape=false : Esc swallowed (focus-locked decision
+    //   modals like save-before-quit).
+    // Defaults preserve "Esc + click-outside both dismiss".
     void show (juce::Component& parent,
                std::unique_ptr<juce::Component> body,
                std::function<void()> onDismiss = {},
@@ -58,18 +46,13 @@ public:
         if (dismissOnClickOutside)
             dim_->onClick = [this]
             {
-                // Copy userOnDismiss to a local std::function BEFORE
-                // invoking it. The user's callback may call close() on
-                // this modal, and close() resets `userOnDismiss = {}`
-                // which destroys the running closure (with its captures)
-                // mid-call — use-after-free SIGABRT on Linux/XWayland.
-                // The local copy keeps the closure alive until cb
-                // returns and goes out of scope.
+                // Local copy BEFORE invoking — the user's callback may
+                // close() this modal, which resets userOnDismiss = {}
+                // and destroys the closure (with captures) mid-call.
+                // SIGABRT on Linux/XWayland without this.
                 if (auto cb = userOnDismiss) cb();
                 else                          close();
             };
-        // else: leave dim_->onClick null - click on the dim is a no-op,
-        // forcing the user to explicit-action the body (Cancel / Import).
         parent.addAndMakeVisible (dim_.get());
 
         const auto bounds = parent.getLocalBounds();
@@ -79,23 +62,17 @@ public:
             juce::jmin (w, bounds.getWidth()  - 16),
             juce::jmin (h, bounds.getHeight() - 16));
 
-        // Backdrop sized slightly larger than the body so its rounded
-        // corners frame the panel. Added BEFORE the body so the body
-        // paints on top of it.
+        // Slightly larger than body so rounded corners frame the panel.
+        // Added BEFORE body so body paints on top.
         backdrop_ = std::make_unique<Backdrop>();
         backdrop_->setBounds (bodyBounds.expanded (kBackdropMargin));
         parent.addAndMakeVisible (backdrop_.get());
 
         body_->setBounds (bodyBounds);
         parent.addAndMakeVisible (body_.get());
-        // Force the modal triple to the front of the parent's child list
-        // so it paints over any fullscreen stage view (AuxView,
-        // MasteringView) that may have been added later than the modal
-        // chain expects. addAndMakeVisible alone WAS topmost-at-add-time,
-        // but a stage swap that re-adds a fullscreen view after the
-        // modal is opened (or any other late toFront() inside a child)
-        // can demote the modal — explicit toFront here is cheap
-        // insurance.
+        // Force topmost — a stage swap that re-adds a fullscreen view
+        // (AuxView, MasteringView) after the modal opens can demote it.
+        // addAndMakeVisible alone is only topmost-at-add-time.
         dim_     ->toFront (false);
         backdrop_->toFront (false);
         body_    ->toFront (true);
@@ -104,14 +81,11 @@ public:
         body_->addKeyListener (this);
     }
 
-    // Show a body the modal does NOT own. The caller keeps the body
-    // alive across show / close cycles. Used for plugin editors -
-    // tearing down a plugin's editor window on every close races the
-    // host WM and (on XWayland with OpenGL-heavy plugin GUIs) can crash
-    // the compositor. Keeping the editor alive and only adding /
-    // removing it as a child is significantly more stable.
-    //
-    // Same Esc / click-outside semantics as the owning show().
+    // Body NOT owned — caller keeps alive across show/close cycles.
+    // Used for plugin editors: tearing down a plugin's editor window on
+    // every close races the WM and on XWayland with GL-heavy GUIs can
+    // crash the compositor. Keeping the editor alive and add/removing
+    // it as a child is significantly more stable.
     void showBorrowed (juce::Component& parent,
                        juce::Component& body,
                        std::function<void()> onDismiss = {})
@@ -143,9 +117,6 @@ public:
 
         body.setBounds (bodyBounds);
         parent.addAndMakeVisible (&body);
-        // Same toFront insurance as the owning show() path — guarantees
-        // the modal chain paints over any fullscreen stage view
-        // (AuxView, MasteringView) regardless of when they were added.
         dim_     ->toFront (false);
         backdrop_->toFront (false);
         body.toFront (true);
@@ -154,27 +125,22 @@ public:
         body.addKeyListener (this);
     }
 
-    // Tear-down. Idempotent. Safe to call when nothing is open.
-    // For owning show(), destructs the body. For showBorrowed(), just
-    // removes the body from the parent without destructing it.
+    // Idempotent. For owning show, destructs body; for showBorrowed,
+    // just removes from parent.
     //
     // CONTRACT: close() does NOT invoke userOnDismiss. Only Esc and
-    // dim-click invoke the user callback. Helpers (e.g. DuskAlerts'
-    // OK button) rely on this — they wire their action button to
-    // close() AND their own follow-up, then trust that close() won't
-    // also fire userOnDismiss and double-invoke the follow-up. If that
-    // contract ever changes, audit every caller of close() before doing
-    // so or each one will silent-double-fire its dismiss path.
+    // dim-click do. Helpers (DuskAlerts' OK button) rely on this —
+    // they wire their action button to close() AND their follow-up,
+    // trusting close() won't double-fire. Audit every caller before
+    // changing this contract.
     //
-    // Safe to call from inside a callback owned by the body (e.g. a
-    // button's onClick). The synchronous path detaches the body /
-    // backdrop / dim from the parent (so the user sees the modal
-    // disappear immediately), then defers ~Body to the next message-
-    // loop tick via callAsync. Without that defer, body_.reset() would
-    // run ~Button → ~std::function while the button's onClick lambda is
-    // still on the stack — a use-after-free that has been observed to
-    // corrupt JUCE's message-thread state and trigger compositor
-    // crashes on the next X11 round-trip.
+    // Safe from inside a body's callback (button onClick): synchronous
+    // path detaches body/backdrop/dim from parent so the modal
+    // disappears immediately, then defers destruction to the next
+    // message-loop tick via callAsync. Without that, body_.reset()
+    // would run ~Button -> ~std::function while the button's onClick
+    // lambda is still on the stack — observed to corrupt JUCE's
+    // message-thread state and crash compositors on next X11 round.
     void close()
     {
         if (host == nullptr) return;
@@ -189,17 +155,11 @@ public:
 
         if (body_ != nullptr)
         {
-            // Hand ownership to a callAsync lambda - the body destructs
-            // when that lambda is invoked (and then destroyed) on the
-            // next message-loop tick, AFTER the current button-callback
-            // stack has fully unwound. We don't capture `this` because
-            // the EmbeddedModal itself may have been destructed by the
-            // time the message-loop processes the call (e.g. on app
-            // shutdown). Self-contained ownership = safe across every
-            // teardown order.
-            //
-            // shared_ptr (not unique_ptr) so the capturing lambda is
-            // copyable - std::function requires copy-constructible
+            // Hand to a callAsync lambda — destructs on the next tick
+            // after the current button-callback stack unwinds. Don't
+            // capture `this` — EmbeddedModal itself may be destructed
+            // by then (app shutdown). shared_ptr (not unique) so the
+            // capture is copyable — std::function needs copyable
             // callables on libc++ (macOS).
             std::shared_ptr<juce::Component> trash (body_.release());
             juce::MessageManager::callAsync (
@@ -207,12 +167,10 @@ public:
         }
         borrowedBody_ = nullptr;
 
-        // Defer dim + backdrop destruction the same way as body. close()
-        // can be invoked from inside dim->onClick (DuskComboBox's
-        // onDismiss path), and synchronously destroying the dim while
-        // its handler is still on the stack is a use-after-free that
-        // SIGABRTs on Linux/XWayland. Hand each off to its own callAsync
-        // trash lambda so they outlive the current callback.
+        // Defer dim + backdrop the same way. close() can be invoked
+        // from inside dim->onClick (DuskComboBox); synchronously
+        // destroying the dim while its handler is on the stack is a
+        // UAF that SIGABRTs on Linux/XWayland.
         if (backdrop_ != nullptr)
         {
             std::shared_ptr<juce::Component> trash (backdrop_.release());
@@ -225,15 +183,12 @@ public:
             juce::MessageManager::callAsync (
                 [trash]() mutable { (void) trash; });
         }
-        // Restore keyboard focus to the top-level (= MainComponent, which
-        // has setWantsKeyboardFocus(true) and owns the transport-key
-        // handler). Deferred via callAsync so this runs AFTER the dim /
-        // backdrop / body trash lambdas above have torn the modal down
-        // on the next message-loop tick — grabbing focus while a
-        // soon-to-be-destroyed child still holds it is unsafe. Without
-        // this restore, every popup-style modal (comp mode picker, colour
-        // menus, menu-bar items, etc.) leaves focus orphaned and the
-        // spacebar / R hotkeys silently die until the user clicks the UI.
+        // Restore keyboard focus to top-level (MainComponent owns the
+        // transport-key handler). Deferred so this runs AFTER the
+        // trash lambdas tear the modal down — grabbing focus while a
+        // soon-to-be-destroyed child holds it is unsafe. Without this,
+        // every popup leaves focus orphaned and spacebar / R silently
+        // die until the user clicks the UI.
         if (auto* top = host->getTopLevelComponent())
         {
             juce::Component::SafePointer<juce::Component> safeTop (top);
@@ -249,24 +204,15 @@ public:
 
     bool isOpen() const noexcept { return body_ != nullptr || borrowedBody_ != nullptr; }
 
-    // Body access for typed callers - useful when a host needs to push
-    // updates into the panel (e.g. polling a meter). Returns nullptr
-    // when nothing is open.
     juce::Component* getBody() const noexcept
     {
         return body_ != nullptr ? body_.get() : borrowedBody_;
     }
 
-    // Move body AND its backdrop together to a parent-local top-left
-    // position. Callers that want the panel anchored to a click /
-    // control (DuskContextMenu, DuskComboBox) call this AFTER show()
-    // has already centred it. Without moving the backdrop, the centred
-    // backdrop stays put and renders as a stray blank panel where the
-    // body used to be.
-    //
-    // The dim_ overlay intentionally stays full-window — it covers the
-    // entire parent so any anchored body still gets click-outside
-    // dismiss everywhere off the body's rounded panel.
+    // DuskContextMenu / DuskComboBox call this AFTER show() to anchor
+    // to a click/control. Backdrop moves with the body so it doesn't
+    // render as a stray blank panel where the body used to be. dim_
+    // intentionally stays full-window for click-outside coverage.
     void repositionBody (juce::Point<int> topLeftInParent)
     {
         auto* body = getBody();
@@ -282,21 +228,17 @@ private:
     {
         if (k == juce::KeyPress::escapeKey)
         {
-            if (! escapeDismisses) return true;  // swallow Esc on focus-locked decision modals
-            // See dim onClick — local copy keeps the callback's closure
-            // alive across close() (which resets userOnDismiss).
+            if (! escapeDismisses) return true;  // swallow on focus-locked modals
+            // Local copy keeps the closure alive across close().
             if (auto cb = userOnDismiss) cb();
             else                          close();
             return true;
         }
-        // Forward the DAW's global transport hotkeys (spacebar, R) to the
-        // top-level component regardless of whether the body is borrowed
-        // (plugin editor) or owned (Dusk-native panel). Any modal body
-        // we show — alerts, pickers, editors, the tape modal — grabs
-        // keyboard focus on display, so without this hop the transport
-        // keys would silently die inside the modal. Text-input children
-        // (juce::TextEditor) consume space before this listener ever
-        // fires, so this doesn't interfere with typing.
+        // Forward global transport hotkeys (spacebar, R) to top-level
+        // regardless of borrowed/owned. Modal bodies grab keyboard
+        // focus on display, so without this hop the keys would
+        // silently die. TextEditor children consume space before this
+        // ever fires, so typing isn't affected.
         const bool isTransportKey = k == juce::KeyPress::spaceKey
                                      || k.getKeyCode() == 'R'
                                      || k.getKeyCode() == 'r';
@@ -308,8 +250,6 @@ private:
         return false;
     }
 
-    // Opaque rounded panel painted behind the body. Sized via
-    // bodyBounds.expanded(kBackdropMargin) so its corners frame the body.
     class Backdrop final : public juce::Component
     {
     public:
@@ -334,6 +274,6 @@ private:
     std::unique_ptr<juce::Component> body_;
     juce::Component* borrowedBody_ = nullptr;
     std::function<void()> userOnDismiss;
-    bool escapeDismisses = true;  // set by show()'s dismissOnEscape param
+    bool escapeDismisses = true;
 };
 } // namespace duskstudio

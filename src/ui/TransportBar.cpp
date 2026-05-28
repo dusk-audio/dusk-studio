@@ -482,7 +482,7 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
     // toggles the embedded VKB modal owned by MainComponent.
     loopButton.setClickingTogglesState (true);
     loopButton.setTooltip ("Loop the timeline between IN and OUT during playback (L). "
-                            "Right-click the ruler in the SUMMARY view to set the points.");
+                            "Right-click the ruler in the TIMELINE view to set the points.");
     loopButton.setToggleState (engine.getTransport().isLoopEnabled(), juce::dontSendNotification);
     loopButton.onClick = [this]
     {
@@ -588,12 +588,12 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
     tapeToggle.setToggleState (true, juce::dontSendNotification);   // expanded by default
     // Initial text - syncCompactLabels() in resized() rewrites this whenever
     // the transport-bar width crosses the compact breakpoint.
-    tapeToggle.setButtonText (juce::CharPointer_UTF8 ("\xe2\x96\xbe SUMMARY")); // "▾ SUMMARY"
+    tapeToggle.setButtonText (juce::CharPointer_UTF8 ("\xe2\x96\xbe TIMELINE")); // "▾ TIMELINE"
     tapeToggle.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff202024));
     tapeToggle.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff2a3a48));
     tapeToggle.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xff7090a8));
     tapeToggle.setColour (juce::TextButton::textColourOnId,   juce::Colour (0xffd0e0f0));
-    tapeToggle.setTooltip ("Show / hide the SUMMARY arrangement view");
+    tapeToggle.setTooltip ("Show / hide the TIMELINE arrangement view");
     tapeToggle.onClick = [this]
     {
         // Re-render the label in whatever form (full / compact) the bar
@@ -611,8 +611,8 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
 void TransportBar::setTapeStripExpanded (bool expanded)
 {
     tapeToggle.setToggleState (expanded, juce::dontSendNotification);
-    tapeToggle.setButtonText (expanded ? juce::CharPointer_UTF8 ("\xe2\x96\xbe SUMMARY")
-                                        : juce::CharPointer_UTF8 ("\xe2\x96\xb8 SUMMARY"));
+    tapeToggle.setButtonText (expanded ? juce::CharPointer_UTF8 ("\xe2\x96\xbe TIMELINE")
+                                        : juce::CharPointer_UTF8 ("\xe2\x96\xb8 TIMELINE"));
 }
 
 bool TransportBar::isTapeStripExpanded() const
@@ -1090,8 +1090,8 @@ void TransportBar::syncCompactLabels (bool compact)
     else
     {
         tapeToggle .setButtonText (tapeExpanded
-            ? juce::CharPointer_UTF8 ("\xe2\x96\xbe SUMMARY")    // "▾ SUMMARY"
-            : juce::CharPointer_UTF8 ("\xe2\x96\xb8 SUMMARY")); // "▸ SUMMARY"
+            ? juce::CharPointer_UTF8 ("\xe2\x96\xbe TIMELINE")    // "▾ TIMELINE"
+            : juce::CharPointer_UTF8 ("\xe2\x96\xb8 TIMELINE")); // "▸ TIMELINE"
     }
 }
 
@@ -1272,7 +1272,10 @@ void TransportBar::showTimeSigMenu()
                     true, ticked);
     }
     m.addSeparator();
-    constexpr int kCustomId = 100;
+    // static: referenced inside the context-menu lambda below; static
+    // storage duration avoids MSVC C3493 (implicit-capture) without the
+    // explicit capture that clang flags as -Wunused-lambda-capture.
+    static constexpr int kCustomId = 100;
     m.addItem (kCustomId, "Custom...");
 
     juce::Component::SafePointer<TransportBar> safe (this);

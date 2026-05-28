@@ -25,6 +25,11 @@ void AuxLaneStrip::prepare (double sampleRate, int blockSize)
     }
     insertScratchL.assign ((size_t) juce::jmax (1, blockSize), 0.0f);
     insertScratchR.assign ((size_t) juce::jmax (1, blockSize), 0.0f);
+
+    // Pre-size the MIDI scratch so the audio thread's plugin-output
+    // addEvent calls (PluginSlot / RemotePluginConnection deserialise)
+    // can't grow it. 4 KB matches the channel-strip allotment.
+    pluginMidiScratch.ensureSize (4096);
 }
 
 void AuxLaneStrip::bindHardwareInsert (int slotIdx, const HardwareInsertParams& params) noexcept
@@ -56,13 +61,24 @@ void AuxLaneStrip::processStereoBlock (float* L, float* R, int numSamples,
     if (numSamples == 0) return;
     if (paramsRef == nullptr) return;
 
-    // Defensive clamp - insertScratchL/R are sized to prepare()'s blockSize.
-    // The audio host can hand us oversized blocks during transitions; we
-    // refuse to allocate on the audio thread, so we cap the work we do here
-    // and warn in debug builds. PluginSlot::processStereoBlock above is
-    // already block-size-tolerant.
+    // Oversized-block bail. insertScratchL/R are sized to prepare()'s
+    // blockSize and the audio thread refuses to allocate, so a host that
+    // hands us numSamples > scratch capacity must skip the whole block —
+    // partial processing would desync the meter / smoother bookkeeping
+    // between the slot loop and the return-gain pass below. L/R is the
+    // lane accumulator with channel-strip sends already summed in, so
+    // we MUST clear it (otherwise the unprocessed sum leaks into master
+    // un-EQ'd / un-comp'd) and drop the meter to -inf so the UI doesn't
+    // hold a stale reading from the previous block.
     jassert (numSamples <= (int) insertScratchL.size());
-    const int safeSamples = juce::jmin (numSamples, (int) insertScratchL.size());
+    if (numSamples > (int) insertScratchL.size())
+    {
+        std::memset (L, 0, sizeof (float) * (size_t) numSamples);
+        std::memset (R, 0, sizeof (float) * (size_t) numSamples);
+        paramsRef->meterPostL.store (-100.0f, std::memory_order_relaxed);
+        paramsRef->meterPostR.store (-100.0f, std::memory_order_relaxed);
+        return;
+    }
 
     // Mute path: clear in-place so the engine's accumulator into master
     // sees silence (the lane's buffer is reused across blocks). Reads
@@ -109,33 +125,28 @@ void AuxLaneStrip::processStereoBlock (float* L, float* R, int numSamples,
         }
 
         // Pre-insert stash for the crossfade gate.
-        std::memcpy (insertScratchL.data(), L, sizeof (float) * (size_t) safeSamples);
-        std::memcpy (insertScratchR.data(), R, sizeof (float) * (size_t) safeSamples);
+        std::memcpy (insertScratchL.data(), L, sizeof (float) * (size_t) numSamples);
+        std::memcpy (insertScratchR.data(), R, sizeof (float) * (size_t) numSamples);
 
         if (activeInsertMode[sIdx] == kInsertPlugin)
         {
-            slots[sIdx].processStereoBlock (L, R, safeSamples, pluginMidiScratch);
+            slots[sIdx].processStereoBlock (L, R, numSamples, pluginMidiScratch);
         }
         else if (activeInsertMode[sIdx] == kInsertHardware)
         {
-            hardwareSlots[sIdx].processStereoBlock (L, R, safeSamples,
+            hardwareSlots[sIdx].processStereoBlock (L, R, numSamples,
                                                      deviceInputs, numDeviceInputs,
                                                      deviceOutputs, numDeviceOutputs);
         }
 
         // Blend pre vs post by the gate. An empty slot collapses to pre
         // entirely once the gate has ramped down.
-        for (int i = 0; i < safeSamples; ++i)
+        for (int i = 0; i < numSamples; ++i)
         {
             const float g = activeInsertGain[sIdx].getNextValue();
             L[i] = (1.0f - g) * insertScratchL[(size_t) i] + g * L[i];
             R[i] = (1.0f - g) * insertScratchR[(size_t) i] + g * R[i];
         }
-        // Smoother tail-advance on oversized host blocks so the gate's
-        // counter stays aligned with the lane's return-gain smoother (which
-        // ticks numSamples times further down).
-        for (int i = safeSamples; i < numSamples; ++i)
-            activeInsertGain[sIdx].getNextValue();
     }
 
     // Return level + meter peak.

@@ -1532,7 +1532,7 @@ void ChannelStripComponent::setCompSectionVisible (bool visible)
                                             // meter bar already shows GR clearly
 
     // Re-apply the per-mode filter so only the active mode's knobs are
-    // shown. Without this, flipping out of SUMMARY (or any path that
+    // shown. Without this, flipping out of TIMELINE (or any path that
     // re-shows the section) leaves all 13 per-mode knobs visible at the
     // same physical positions and they overlap.
     if (visible)
@@ -1656,6 +1656,38 @@ void ChannelStripComponent::openPluginPicker (bool useChooser)
                                         self->engine.getChannelStrip (self->trackIndex)
                                                   .insertMode.store (ChannelStrip::kInsertPlugin,
                                                                        std::memory_order_release);
+
+                                        // Loading an instrument (soundfont or VST/LV2 synth) on a
+                                        // non-MIDI track leaves the strip silent — instrument
+                                        // ignores audio input, no MIDI source feeds it. Flip the
+                                        // track to MIDI automatically so the user doesn't have to.
+                                        // setSelectedId on the mode selector fires its own change
+                                        // handler which publishes the new mode atomically and
+                                        // refreshes I/O / slot button visibility consistently.
+                                        if (self->pluginSlot.isLoadedPluginInstrument())
+                                        {
+                                            if (self->track.mode.load (std::memory_order_relaxed)
+                                                  != (int) Track::Mode::Midi)
+                                                self->modeSelector.setSelectedId (
+                                                    (int) Track::Mode::Midi + 1,
+                                                    juce::sendNotificationSync);
+
+                                            // No MIDI input bound yet? Route the Virtual
+                                            // Keyboard so the user can immediately audition
+                                            // the freshly loaded instrument without hunting
+                                            // through the input dropdown. ID convention
+                                            // (see rebuildMidiInputDropdown): 1 = (none),
+                                            // 2 + deviceIndex = real input N.
+                                            if (self->track.midiInputIndex.load (
+                                                    std::memory_order_relaxed) < 0)
+                                            {
+                                                const int vkbIdx =
+                                                    self->engine.getVirtualKeyboardInputIndex();
+                                                if (vkbIdx >= 0)
+                                                    self->midiInputSelector.setSelectedId (
+                                                        2 + vkbIdx, juce::sendNotificationSync);
+                                            }
+                                        }
 
                                         // Close the modal synchronously so the cached editor
                                         // (still bound to the just-replaced processor) gets
@@ -2594,7 +2626,7 @@ void ChannelStripComponent::timerCallback()
         syncKnob (vcaOutputKnob,   sp.compVcaOutput.load   (std::memory_order_relaxed));
     }
 
-    // SUMMARY-mode compact buttons get an on-air indicator so the user
+    // TIMELINE-mode compact buttons get an on-air indicator so the user
     // knows whether EQ / COMP is engaged without having to open the
     // popup. Bullet character + brighter background when on.
     if (compactMode)
@@ -3840,13 +3872,16 @@ void ChannelStripComponent::resized()
 
     // In compact mode the EQ + COMP sections collapse to two narrow buttons
     // so the fader / bus assigns / meter / M-S-Ø stay visible when the
-    // SUMMARY view is consuming half the window. Click either button to
+    // TIMELINE view is consuming half the window. Click either button to
     // open the full editor as a popup.
     if (compactMode)
     {
-        eqCompactButton  .setBounds (area.removeFromTop (24).reduced (2, 0));
+        // Match bus + master compact pill sizing (20h × reduced(4,0))
+        // so the three strip types read with the same compact grammar.
+        constexpr int kCompactBtnH = 20;
+        eqCompactButton  .setBounds (area.removeFromTop (kCompactBtnH).reduced (4, 0));
         area.removeFromTop (4);
-        compCompactButton.setBounds (area.removeFromTop (24).reduced (2, 0));
+        compCompactButton.setBounds (area.removeFromTop (kCompactBtnH).reduced (4, 0));
         area.removeFromTop (8);
         eqArea   = juce::Rectangle<int>();
         compArea = juce::Rectangle<int>();
@@ -4153,7 +4188,9 @@ void ChannelStripComponent::resized()
     //    EQ → COMP → SENDS → PAN → fader.
     if ((mixingMode || usesFaderThresholdLayout()) && compactMode)
     {
-        auxCompactButton.setBounds (area.removeFromTop (24).reduced (2, 0));
+        // Match the EQ + COMP compact pill geometry (20h × reduced(4,0))
+        // so the three stacked pills read as one cohesive group.
+        auxCompactButton.setBounds (area.removeFromTop (20).reduced (4, 0));
         area.removeFromTop (4);
         auxRowArea = juce::Rectangle<int>();
     }
@@ -4256,20 +4293,17 @@ void ChannelStripComponent::resized()
         && faderArea.getHeight() > kMaxFaderHeight + kPeakLabelH + 2)
         faderArea = faderArea.removeFromBottom (kMaxFaderHeight + kPeakLabelH + 2);
 
-    // Vertical bus-assign column on the LEFT of the fader, mirroring the
-    // meter column on the right. Tascam Model 2400 layout - the bus toggles
-    // sit alongside the fader where the engineer's fingers naturally rest.
-    constexpr int kBusColumnW   = 18;  // narrower - saves horizontal space for the fader
+    // Vertical bus-assign column. Lives on the LEFT of the fader by default
+    // (Tascam Model 2400 grammar — buttons under the engineer's left hand).
+    // At narrow strip widths it migrates to the RIGHT side, past the meter
+    // cluster, so it can't visually overlap the fader cap when the strip
+    // is squeezed below its design min width.
+    constexpr int kBusColumnW   = 18;
     constexpr int kBusColumnGap = 3;
-    constexpr int kBusButtonH   = 20;  // shorter - sits alongside the fader without stealing height
+    constexpr int kBusButtonH   = 20;
     constexpr int kBusButtonGap = 2;
-    auto busColumn = faderArea.removeFromLeft (kBusColumnW);
-    faderArea.removeFromLeft (kBusColumnGap);
+    juce::Rectangle<int> busColumn;
 
-    // Track-3 layout: scale column moves to the FAR RIGHT (right of the
-    // main level meter), with the slim GR LED hugging the meter's LEFT
-    // edge. Default layout keeps scale between fader and meter (original
-    // grammar).
     juce::Rectangle<int> meterColumn, scaleColumn;
     juce::Rectangle<int> faderCompMeterCol;
     if (usesFaderThresholdLayout())
@@ -4279,8 +4313,7 @@ void ChannelStripComponent::resized()
         // both glued IMMEDIATELY to the right of the fader. compMeter
         // internally flips its handle to the RIGHT (see setHandleOnRight)
         // so the triangle points LEFT at the GR bar instead of poking
-        // into the meter column. Add a right-edge pad so the LED cluster
-        // sits closer to the cap. kFaderLeftShift consumes empty space
+        // into the meter column. kFaderLeftShift consumes empty space
         // on the LEFT of the fader column so cap + PAN knob centre under
         // the LIMIT button (which is centred on the strip), not biased
         // left toward the bus-assign column.
@@ -4288,23 +4321,54 @@ void ChannelStripComponent::resized()
         constexpr int kMeterToGrGap    = 1;
         constexpr int kFaderToMeterGap = 1;
         constexpr int kRightPad        = 14;
-        // Math: bus column (18) + gap (3) on the LEFT versus right pad
-        // (14) + GR (20) + meter (14) + 2 gaps (2) on the RIGHT = 21 vs
-        // 50, asymmetric by 29 px. Shifting the fader area's left edge
-        // by 29 puts faderArea.centreX on strip.centreX → cap + PAN knob
-        // line up with the strip-centred GAIN / LIMIT controls above.
         constexpr int kFaderLeftShift  = 29;
+        constexpr int kFaderColMinReserve = 22;
+
+        // Wide-layout fader-column width prediction: bus on the LEFT, full
+        // leftShift, full right-side cluster carved from the right.
+        const int wideRightStack = kRightPad + kGrLedW + kMeterToGrGap
+                                  + kMeterWidth + kFaderToMeterGap;
+        const int faderColWideW  = faderArea.getWidth() - kBusColumnW
+                                  - kBusColumnGap - wideRightStack
+                                  - kFaderLeftShift;
+        const bool narrowMode = (faderColWideW < kFaderColMinReserve);
+
         scaleColumn = juce::Rectangle<int>();
-        faderArea.removeFromRight (kRightPad);
-        faderCompMeterCol = faderArea.removeFromRight (kGrLedW);
-        faderArea.removeFromRight (kMeterToGrGap);
-        meterColumn = faderArea.removeFromRight (kMeterWidth);
-        faderArea.removeFromRight (kFaderToMeterGap);
-        faderArea.removeFromLeft (kFaderLeftShift);
         grScaleArea = juce::Rectangle<int>();
+        if (narrowMode)
+        {
+            // Bus migrates to the FAR RIGHT past the meter cluster; no
+            // leftShift needed since the fader column starts at the strip
+            // edge. Cap drifts slightly left of strip centre but can no
+            // longer overlap the bus buttons — the right-side stack is the
+            // ONLY thing carved from the strip, fader gets all remaining
+            // width.
+            faderArea.removeFromRight (kRightPad);
+            busColumn = faderArea.removeFromRight (kBusColumnW);
+            faderArea.removeFromRight (kBusColumnGap);
+            faderCompMeterCol = faderArea.removeFromRight (kGrLedW);
+            faderArea.removeFromRight (kMeterToGrGap);
+            meterColumn = faderArea.removeFromRight (kMeterWidth);
+            faderArea.removeFromRight (kFaderToMeterGap);
+        }
+        else
+        {
+            // Wide path: bus on the LEFT, full leftShift centres the cap on
+            // strip centre under the strip-centred GAIN / LIMIT controls.
+            busColumn = faderArea.removeFromLeft (kBusColumnW);
+            faderArea.removeFromLeft (kBusColumnGap);
+            faderArea.removeFromRight (kRightPad);
+            faderCompMeterCol = faderArea.removeFromRight (kGrLedW);
+            faderArea.removeFromRight (kMeterToGrGap);
+            meterColumn = faderArea.removeFromRight (kMeterWidth);
+            faderArea.removeFromRight (kFaderToMeterGap);
+            faderArea.removeFromLeft (kFaderLeftShift);
+        }
     }
     else
     {
+        busColumn = faderArea.removeFromLeft (kBusColumnW);
+        faderArea.removeFromLeft (kBusColumnGap);
         grScaleArea = juce::Rectangle<int>();
         meterColumn = faderArea.removeFromRight (kMeterWidth);
         faderArea.removeFromRight (kMeterGap);

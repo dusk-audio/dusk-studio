@@ -24,6 +24,31 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# MSVC C runtime: static (/MT) for the whole tree. Vendored sfizz forces
+# the static runtime on itself (cmake/SfizzConfig.cmake), so DuskStudio +
+# JUCE must match or the link fails with LNK2038 "RuntimeLibrary mismatch
+# (MT_StaticRelease vs MD_DynamicRelease)". Static also makes the MSI
+# self-contained — no vc_redist dependency on the target machine. Relies
+# on CMP0091=NEW (guaranteed by cmake_minimum_required 3.22).
+if(MSVC)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
+# Emit compile_commands.json so clangd / editor tooling resolves JUCE +
+# donor include paths. Symlink it to the repo root once (see
+# scripts/dev.sh) and clangd picks it up automatically.
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+# Use ccache when present — caches object files across rebuilds so a
+# touched header doesn't force a full sfizz/absl/JUCE recompile. No-op
+# when ccache isn't installed.
+find_program(DUSKSTUDIO_CCACHE ccache)
+if(DUSKSTUDIO_CCACHE)
+    set(CMAKE_CXX_COMPILER_LAUNCHER "${DUSKSTUDIO_CCACHE}")
+    set(CMAKE_C_COMPILER_LAUNCHER   "${DUSKSTUDIO_CCACHE}")
+    message(STATUS "ccache enabled: ${DUSKSTUDIO_CCACHE}")
+endif()
+
 # JUCE path resolution. Per-OS defaults so a developer toggling between
 # Mac (upstream JUCE) and Linux (plugdata-team JUCE-wayland fork, required
 # for the wayland-juce8 features) doesn't have to pass -DJUCE_PATH each time.
@@ -652,31 +677,17 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/sfizz/src/sfizz.h")
     target_sources(DuskStudio PRIVATE
         src/engine/multisample/DuskMultisampleProcessor.cpp
         src/engine/multisample/DuskMultisamplePluginFormat.cpp
-        src/ui/multisample/DuskMultisampleEditor.cpp)
+        src/engine/multisample/AriaBank.cpp
+        src/engine/multisample/AriaGui.cpp
+        src/engine/multisample/Sf2Reader.cpp
+        src/engine/multisample/Sf2ToSfz.cpp
+        src/ui/multisample/DuskMultisampleEditor.cpp
+        src/ui/multisample/AriaGuiComponent.cpp)
 
-    # Optional SF2 (SoundFont 2) backend via libfluidsynth. Detected
-    # at configure time via pkg-config. When found, DUSKSTUDIO_HAS_SF2
-    # is set and DuskMultisampleProcessor routes .sf2 file loads
-    # through FluidSynth instead of erroring with the "Coming in 1.0"
-    # message. SFZ still goes through sfizz; the processor owns one
-    # backend at a time keyed off the file extension.
-    #
-    # Linux ships fluidsynth as a system library on every common
-    # distro. Mac/Win bundling is a 1.0 packaging task — when the
-    # devel package is missing the build falls back to the
-    # SFZ-only path.
-    find_package(PkgConfig QUIET)
-    if(PkgConfig_FOUND)
-        pkg_check_modules(FLUIDSYNTH IMPORTED_TARGET fluidsynth)
-        if(FLUIDSYNTH_FOUND)
-            message(STATUS "Dusk Studio: FluidSynth ${FLUIDSYNTH_VERSION} found - enabling SF2 import")
-            target_link_libraries(DuskStudio PRIVATE PkgConfig::FLUIDSYNTH)
-            target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_SF2=1)
-        else()
-            message(STATUS "Dusk Studio: FluidSynth not found - SF2 import disabled "
-                           "(install fluidsynth-devel / libfluidsynth-dev to enable)")
-        endif()
-    endif()
+    # SF2 (SoundFont 2) playback is native: Sf2Reader + Sf2ToSfz convert
+    # the SoundFont to SFZ + extracted WAVs and run it through the
+    # already-vendored sfizz engine. No fluidsynth dependency, so a
+    # self-contained install plays SF2 with nothing extra to bundle.
 endif()
 
 target_compile_definitions(DuskStudio PRIVATE
@@ -846,6 +857,17 @@ set(CPACK_RPM_PACKAGE_GROUP         "Applications/Multimedia")
 # GUID lets newer installers replace older ones in-place.
 set(CPACK_WIX_UPGRADE_GUID          "8F2C9C3E-5F4B-4D9E-B7A1-3E7E8D9F0C12")
 set(CPACK_WIX_PRODUCT_GUID          "*")  # generated per build per WIX best practice
+
+# The WIX generator only accepts a .txt or .rtf license and derives the
+# type from the extension; the repo's LICENSE is extensionless (fine for
+# deb/rpm/dmg) so cpack -G WIX dies with "unsupported WiX License file
+# extension ''". Stage a .txt copy and point the license at it on Windows
+# only — cpack converts the .txt to RTF for the installer's EULA page.
+if(WIN32)
+    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
+                   "${CMAKE_CURRENT_BINARY_DIR}/LICENSE.txt" COPYONLY)
+    set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_BINARY_DIR}/LICENSE.txt")
+endif()
 
 # macOS DMG: cpack -G DragNDrop. scripts/package-macos.sh chains
 # codesign + notarytool because cpack doesn't notarize.

@@ -20,7 +20,7 @@ public:
     void resized() override;
     void mouseDown (const juce::MouseEvent& e) override;
 
-    // Shrinks the VU meter's vertical footprint when the tape SUMMARY
+    // Shrinks the VU meter's vertical footprint when the tape TIMELINE
     // is expanded - frees pixels for the fader. Toggled by ConsoleView
     // alongside setStripsCompactMode.
     void setCompactVu (bool compact);
@@ -28,13 +28,18 @@ public:
     // Collapses the EQ + COMP sections into small placeholder buttons
     // (matching ChannelStripComponent's compact-mode behaviour) so the
     // bus + master strips visually shrink alongside the channel strips
-    // when the tape SUMMARY view consumes vertical room. Toggled by
+    // when the tape TIMELINE view consumes vertical room. Toggled by
     // ConsoleView::applyCompactState.
     void setCompactMode (bool compact);
 
 private:
     bool compactVu = false;
     bool compactMode = false;
+    // Cached state for the compact-mode pill colour gating so the 30 Hz
+    // timer only repaints the pills when their on/off state actually
+    // flipped. -1 forces the first tick to refresh.
+    int lastCompactEqOn   = -1;
+    int lastCompactCompOn = -1;
     void timerCallback() override;
     void showColourMenu();
     void applyBusColour (juce::Colour c);
@@ -105,7 +110,7 @@ private:
     juce::Rectangle<int> compArea;
     // Compact-mode placeholder buttons. Hidden when compactMode=false;
     // visible (and the section knobs hidden) when true. Decorative —
-    // click does nothing (tooltip explains the SUMMARY toggle owns the
+    // click does nothing (tooltip explains the TIMELINE toggle owns the
     // expand/collapse). Mirrors ChannelStripComponent's eqCompactButton
     // / compCompactButton grammar.
     juce::TextButton eqCompactButton  { "EQ"   };

@@ -1,22 +1,42 @@
-name: Windows build (manual)
+name: Windows build
 
-# Manual-trigger only. The repo's other CI workflows live in
-# `.github/workflows.disabled/` and stay off per the no-free-binaries
-# policy; this one is the exception, intended for hand-offs to testers
-# who need an MSI installer.
+# Builds the WIX MSI installer and publishes it to the PRIVATE releases
+# repo — NEVER as a public workflow artifact. On a public repo,
+# actions/upload-artifact outputs are world-downloadable for ~90 days,
+# which would give the paid build away; the DMG, MSI, and any future
+# binary all route to dusk-audio/dusk-studio-releases (private) instead,
+# matching macos-release.yml. The source stays open; the binaries are
+# the product.
 #
-# Trigger via the "Actions" tab → "Windows build (manual)" → "Run workflow".
-# When complete, the run page exposes a downloadable artifact zip
-# containing the WIX MSI installer. Anyone with a GitHub account who can
-# see the public repo can download the artifact for ~90 days (default
-# retention). For wider distribution, attach the MSI to a GitHub Release.
+# Triggers:
+#   - push of a v* tag  → publishes the MSI onto the SAME private release
+#                          the mac DMG lands on (shared tag, distinct asset
+#                          names), so one tag yields a cross-platform set.
+#   - workflow_dispatch  → publishes a build-numbered pre-release for
+#                          hand-offs to testers.
+#
+# The MSI is currently UNSIGNED (no Authenticode cert yet) — testers see a
+# SmartScreen prompt. Statically linked CRT, so no vc_redist needed.
 on:
+  push:
+    tags: ['v*']
   workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-build-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
     name: Build + package (MSVC x64 Release, ASIO enabled)
     runs-on: windows-latest
+    env:
+      # PRIVATE releases repo — the MSI is pushed here, never to this
+      # public repo. Same target as macos-release.yml.
+      RELEASES_REPO: dusk-audio/dusk-studio-releases
 
     steps:
       - name: Checkout Dusk Studio
@@ -27,6 +47,9 @@ jobs:
           # not found"). Nested sfizz deps (abseil, st_audiofile, etc)
           # also need to be present for the static link to succeed.
           submodules: recursive
+          # Publish goes through RELEASES_REPO_TOKEN, not the persisted
+          # GITHUB_TOKEN — don't leave it in git config.
+          persist-credentials: false
 
       - name: Clone JUCE 8.0.4
         shell: bash
@@ -99,26 +122,60 @@ jobs:
         shell: pwsh
         working-directory: build
         run: |
-          # Cover every MSI cpack produced (cpack normally emits one,
-          # but a future multi-component package or per-arch split
-          # could produce more — match what the upload-artifact step
-          # globs in build/*.msi).
-          if (Test-Path sha256.txt) { Remove-Item sha256.txt }
+          # Cover every MSI cpack produced (cpack normally emits one, but
+          # a future multi-component package or per-arch split could
+          # produce more). SHA256SUMS.windows is named to not collide with
+          # the mac SHA256SUMS.macos when both land on one release tag.
+          if (Test-Path SHA256SUMS.windows) { Remove-Item SHA256SUMS.windows }
           $msis = Get-ChildItem *.msi
           if (-not $msis) { throw "No MSI produced by cpack" }
           foreach ($msi in $msis) {
             $hash = (Get-FileHash -Algorithm SHA256 $msi.FullName).Hash
-            "$hash  $($msi.Name)" | Out-File -FilePath sha256.txt -Encoding ascii -Append
-            Write-Host "SHA256: $hash"
-            Write-Host "File:   $($msi.Name)"
+            "$hash  $($msi.Name)" | Out-File -FilePath SHA256SUMS.windows -Encoding ascii -Append
+            Write-Host "SHA256: $hash  $($msi.Name)"
           }
 
-      - name: Upload MSI + checksum
-        uses: actions/upload-artifact@v4
-        with:
-          name: dusk-studio-windows-x64
-          path: |
-            build/*.msi
-            build/sha256.txt
-          if-no-files-found: error
-          retention-days: 90
+      - name: Publish MSI to the PRIVATE releases repo
+        shell: bash
+        working-directory: build
+        # NOT actions/upload-artifact: on a public repo those artifacts
+        # are world-downloadable, which would give the paid build away.
+        # Push the MSI as a release asset in the private releases repo
+        # only collaborators can read (gh is preinstalled on
+        # windows-latest). A v* tag shares its release with the mac DMG;
+        # asset names differ (*.msi / SHA256SUMS.windows vs *.dmg /
+        # SHA256SUMS.macos) so they coexist under one tag.
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Tag: the pushed v* tag, else a VERSION-derived build tag for a
+          # manual dispatch (run number keeps dispatch builds unique).
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            TAG="${GITHUB_REF_NAME}"
+            NOTES="Automated Windows build."
+          else
+            TAG="v$(tr -d '[:space:]' < ../VERSION)+build.${GITHUB_RUN_NUMBER}"
+            NOTES="UNSIGNED Windows dev build (no Authenticode cert yet). SmartScreen may warn — choose More info -> Run anyway. Statically linked, no vc_redist needed. Not for sale until signed."
+          fi
+
+          shopt -s nullglob
+          ASSETS=( *.msi SHA256SUMS.windows )
+          if [[ ${#ASSETS[@]} -eq 0 ]]; then
+            echo "::error::no MSI produced — packaging step failed" >&2
+            exit 1
+          fi
+
+          # Create the release on first push of this tag, else just add
+          # the assets (idempotent re-run). --clobber overwrites a same-
+          # named asset from a previous attempt.
+          if ! gh release view "$TAG" --repo "$RELEASES_REPO" >/dev/null 2>&1; then
+            gh release create "$TAG" \
+              --repo "$RELEASES_REPO" \
+              --title "Dusk Studio $TAG" \
+              --notes "$NOTES" \
+              "${ASSETS[@]}"
+          else
+            gh release upload "$TAG" --repo "$RELEASES_REPO" --clobber "${ASSETS[@]}"
+          fi
+          echo "Published ${#ASSETS[@]} asset(s) to ${RELEASES_REPO} @ ${TAG}"

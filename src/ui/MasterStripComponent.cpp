@@ -984,7 +984,7 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
 
     // Default mode is regular (compactMode = false). Hide the compact
     // tapeButton initially so the header CompHeaderButton owns the
-    // slot. setCompactMode swaps the two whenever the SUMMARY tape
+    // slot. setCompactMode swaps the two whenever the TIMELINE tape
     // strip toggles.
     tapeButton.setVisible (false);
 
@@ -1154,19 +1154,29 @@ void MasterStripComponent::timerCallback()
 {
     // Compact-mode button illumination — same grammar as bus + channel
     // strips. EQ + COMP pills light up when their corresponding
-    // section is engaged so SUMMARY users still see at-a-glance state.
+    // section is engaged so TIMELINE users still see at-a-glance state.
     if (compactMode)
     {
         const auto eqAccent   = juce::Colour (0xff5fc46f);
         const auto compAccent = juce::Colour (0xffe0c050);
-        const bool eqOn   = params.eqEnabled  .load (std::memory_order_relaxed);
-        const bool compOn = params.compEnabled.load (std::memory_order_relaxed);
-        eqCompactButton  .setColour (juce::TextButton::buttonColourId,
-                                       eqOn   ? eqAccent.darker (0.55f)   : juce::Colour (0xff282830));
-        compCompactButton.setColour (juce::TextButton::buttonColourId,
-                                       compOn ? compAccent.darker (0.55f) : juce::Colour (0xff282830));
-        eqCompactButton  .repaint();
-        compCompactButton.repaint();
+        const int eqOn   = params.eqEnabled  .load (std::memory_order_relaxed) ? 1 : 0;
+        const int compOn = params.compEnabled.load (std::memory_order_relaxed) ? 1 : 0;
+        if (eqOn != lastCompactEqOn)
+        {
+            lastCompactEqOn = eqOn;
+            eqCompactButton.setColour (juce::TextButton::buttonColourId,
+                                         eqOn != 0 ? eqAccent.darker (0.55f)
+                                                    : juce::Colour (0xff282830));
+            eqCompactButton.repaint();
+        }
+        if (compOn != lastCompactCompOn)
+        {
+            lastCompactCompOn = compOn;
+            compCompactButton.setColour (juce::TextButton::buttonColourId,
+                                           compOn != 0 ? compAccent.darker (0.55f)
+                                                        : juce::Colour (0xff282830));
+            compCompactButton.repaint();
+        }
     }
 
     // Output peak per channel - fast attack, slow release; with peak-hold.
@@ -1584,6 +1594,13 @@ void MasterStripComponent::setCompactMode (bool compact)
     if (compactMode == compact) return;
     compactMode = compact;
 
+    // Reset the gated-repaint sentinels so the next timer tick republishes
+    // the pill colours after re-entering compact mode (matches the
+    // BusComponent fix — without this a previous cache value would
+    // suppress the first refresh when EQ/COMP state hasn't flipped).
+    lastCompactEqOn   = -1;
+    lastCompactCompOn = -1;
+
     const bool sec = ! compact;
     if (eqHeaderBtn != nullptr) eqHeaderBtn->setVisible (sec);
     eqLfBoost   .setVisible (sec);  eqLfBoostLabel.setVisible (sec);
@@ -1644,7 +1661,7 @@ void MasterStripComponent::resized()
 
     // Analog VU meter at the top - same proportions as the bus strips so
     // the meter row reads consistently across the console. Shrink both
-    // dimensions in compact mode (SUMMARY tape strip expanded) so the
+    // dimensions in compact mode (TIMELINE tape strip expanded) so the
     // dial keeps its 12:7 aspect ratio instead of stretching wide and
     // flat with a tiny dial inside.
     if (vuMeter != nullptr)
@@ -1782,7 +1799,13 @@ void MasterStripComponent::resized()
     // opens editor, atom drives lit state); regular mode swaps in
     // tapeHeaderBtn (CompHeaderButton with green LED, matches the EQ
     // / COMP header grammar). Visibility set in setCompactMode.
-    auto buttonRow = area.removeFromTop (22).reduced (2, 0);
+    // Compact size matches the master EQ + COMP pills above
+    // (20h × reduced(4,0)) so the three-pill stack reads as one
+    // visual unit; non-compact tapeHeaderBtn keeps its taller native
+    // header dimensions for the LED + label pairing.
+    const int tapeRowH = compactMode ? 20 : 22;
+    const int tapeReduceX = compactMode ? 4 : 2;
+    auto buttonRow = area.removeFromTop (tapeRowH).reduced (tapeReduceX, 0);
     if (compactMode)                              tapeButton.setBounds (buttonRow);
     else if (tapeHeaderBtn != nullptr)            tapeHeaderBtn->setBounds (buttonRow);
 

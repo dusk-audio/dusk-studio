@@ -6,7 +6,7 @@
 namespace duskstudio
 {
 // Translucent black overlay used to "dim" the rest of the UI behind a modal
-// surface (CallOutBox popups in SUMMARY mode, the TapeMachine gear modal,
+// surface (CallOutBox popups in TIMELINE mode, the TapeMachine gear modal,
 // etc.). Sits as a sibling of the modal in the top-level component, sized
 // to the parent's local bounds.
 //

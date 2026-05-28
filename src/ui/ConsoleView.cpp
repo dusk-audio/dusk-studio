@@ -325,7 +325,7 @@ void ConsoleView::resized()
     x += kSectionGap;
     masterStrip->setBounds (x, y, masterW, h);
 
-    // Auto-engage SUMMARY when the strip's vertical space is too short for
+    // Auto-engage TIMELINE when the strip's vertical space is too short for
     // the fader (EQ + COMP eat fixed pixels), or when the strip width has
     // been pushed well below the kMin floor by the secondary scaling pass.
     // Recomputed every layout pass; fires only when the auto flag actually
@@ -354,7 +354,7 @@ void ConsoleView::applyCompactState()
         if (strip != nullptr)
             strip->setCompactMode (compact);
     // Bus + master strips collapse their EQ + COMP sections AND shrink
-    // their VU meters when the tape SUMMARY consumes vertical room, so
+    // their VU meters when the tape TIMELINE consumes vertical room, so
     // the whole console reads as a single compact-state grammar across
     // channels / buses / master.
     for (auto& bus : busStrips)

@@ -11,8 +11,8 @@
 #include "EmbeddedModal.h"
 
 // Forward decl unconditional; the definition is only #included from the
-// .cpp when DUSKSTUDIO_HAS_DUSK_DSP is set. The pointer parameter stays valid
-// either way (passed as nullptr when the donor isn't available).
+// .cpp when DUSKSTUDIO_HAS_DUSK_DSP is set. Pointer parameter stays
+// valid either way (nullptr without donor).
 class TapeMachineAudioProcessor;
 
 namespace duskstudio
@@ -23,12 +23,8 @@ class MasterStripComponent final : public juce::Component,
                                      public juce::AudioProcessorListener
 {
 public:
-    // tapeProcessor is a borrowed pointer to the master-bus TapeMachine
-    // instance owned by AudioEngine; the gear button uses it to spawn the
-    // editor. Nullable when the donor DSP is disabled (DUSKSTUDIO_HAS_DUSK_DSP=0).
-    // sessionRef is the live session, used by the right-click MIDI Learn
-    // menu on the master fader. engineRef is needed so the automation
-    // capture path can read the transport state (playhead + isPlaying).
+    // tapeProcessor is borrowed from AudioEngine; gear button spawns
+    // its editor. Nullable when DUSKSTUDIO_HAS_DUSK_DSP=0.
     explicit MasterStripComponent (MasterBusParams& paramsRef,
                                    class Session& sessionRef,
                                    AudioEngine& engineRef,
@@ -39,26 +35,23 @@ public:
     void resized() override;
     void mouseDown (const juce::MouseEvent& e) override;
 
-    // AudioProcessorListener — registered on the donor TapeMachine so
-    // any parameter change in the editor auto-arms tapeEnabled (same
-    // UX as EQ / COMP arm-on-touch). Fires from any thread; impl
-    // defers to the message thread before touching UI.
+    // Registered on the donor TapeMachine so any editor change auto-arms
+    // tapeEnabled (matches EQ / COMP arm-on-touch). Fires from any
+    // thread; defers to message before touching UI.
     void audioProcessorParameterChanged (juce::AudioProcessor*, int, float) override;
     void audioProcessorChanged          (juce::AudioProcessor*,
                                            const juce::AudioProcessorListener::ChangeDetails&) override;
 
-    // Shrinks the VU meter's vertical footprint when the tape SUMMARY
-    // is expanded. Toggled by ConsoleView alongside setStripsCompactMode.
     void setCompactVu (bool compact);
-
-    // Collapses the EQ + COMP sections into compact placeholder buttons
-    // (same grammar as BusComponent + ChannelStripComponent) when the
-    // tape SUMMARY consumes vertical room. Toggled by ConsoleView.
     void setCompactMode (bool compact);
 
 private:
     bool compactVu = false;
     bool compactMode = false;
+    // Gate the compact-pill repaint on actual state change so the
+    // 30 Hz timer doesn't burn a repaint per tick.
+    int lastCompactEqOn   = -1;
+    int lastCompactCompOn = -1;
     void timerCallback() override;
 
     MasterBusParams& params;
@@ -67,15 +60,10 @@ private:
 
     juce::Label nameLabel;
 
-    // Pultec-style Tube EQ. Inline surface mirrors the popup editor so
-    // a user dialling on the strip and a user opening the modal see the
-    // same controls (LF + HF gain shelves, atten shelves, and discrete
-    // Pultec-position freq pickers via DuskComboBox).
-    //
-    // Header pill uses the shared CompHeaderButton (green LED on left,
-    // bold white label) so the master EQ header reads the same as the
-    // channel + bus EQ headers. Left-click toggles eqEnabled; no
-    // right-click pickFn (no mode picker — single Pultec topology).
+    // Pultec-style Tube EQ. Inline matches the popup editor so on-strip
+    // dialling and modal-open dialling see the same controls.
+    // Header pill = shared CompHeaderButton (green LED + bold label).
+    // Single Pultec topology — no right-click mode picker.
     std::unique_ptr<CompHeaderButton> eqHeaderBtn;
     juce::Slider     eqLfBoost   { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
     juce::Slider     eqLfAtten   { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
@@ -83,27 +71,22 @@ private:
     juce::Slider     eqHfAtten   { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
     juce::Label      eqLfBoostLabel, eqLfAttenLabel;
     juce::Label      eqHfBoostLabel, eqHfAttenLabel;
-    // OUT trim removed — atom (eqOutputGainDb) stays at default 0 dB
-    // and continues to feed the donor TubeEQProcessor's outputGain, but
-    // there's no UI knob: the master fader is the canonical output-
-    // level control and the extra knob was wasting vertical room that
-    // the fader needs more.
-    // Freq pickers inline — stepped rotary knobs (dented) that snap to
-    // the Pultec discrete positions. Range is the index 0..N-1; the
-    // textFromValueFunction renders the corresponding Hz / kHz label
-    // in the textbox below the knob. HF Bandwidth lives in the popup
-    // editor only — set-once setup control, doesn't earn permanent
-    // strip real estate.
+    // OUT trim removed — eqOutputGainDb atom stays at 0 dB and still
+    // feeds the donor TubeEQ's outputGain, but no UI knob. Master fader
+    // is the canonical output-level control.
+    // Stepped (dented) rotary knobs that snap to Pultec discrete
+    // positions. Value is the index 0..N-1; textFromValueFunction
+    // renders the Hz/kHz label. HF Bandwidth lives only in the popup
+    // (set-once, doesn't earn strip space).
     juce::Slider     eqLfFreqKnob       { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
     juce::Slider     eqHfBoostFreqKnob  { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
     juce::Slider     eqHfAttenFreqKnob  { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
     juce::Label      eqLfFreqLabel;
     juce::Label      eqHfBoostFreqLabel, eqHfAttenFreqLabel;
 
-    // Master bus compressor. Same shell as channel + bus strips:
-    // CompHeaderButton on top, CompMeterStrip (with triangle-handle
-    // threshold) on the LEFT, knob grid on the RIGHT. No mode picker —
-    // the master comp is a fixed SSL-style glue topology.
+    // Same shell as channel + bus strips: CompHeaderButton top,
+    // CompMeterStrip (triangle-handle threshold) left, knob grid right.
+    // Fixed SSL-style glue topology — no mode picker.
     std::unique_ptr<CompHeaderButton> compHeaderBtn;
     std::unique_ptr<CompMeterStrip>   compMeter;
     juce::Slider     compRatio     { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
@@ -112,17 +95,14 @@ private:
     juce::Slider     compMakeup    { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
     juce::Label      compRatLabel, compAtkLabel, compRelLabel, compMakLabel;
 
-    // TAPE pill — plain juce::TextButton styled to match the compact
-    // EQ / COMP pills (tinted background, centred bold label, lit
-    // when tape is enabled). Left-click toggles tapeEnabled; right-
-    // click opens the full TapeMachine editor via the strip's
-    // mouseDown handler (addMouseListener route).
+    // Compact-mode pill labelled "TAPE". Click opens the TapeMachine
+    // editor modal (setClickingTogglesState(false) — the click handler
+    // does NOT toggle tapeEnabled). The lit state is driven by the
+    // tapeEnabled atom, which the editor auto-arms on any parameter
+    // change, not by the button click itself.
     juce::TextButton tapeButton { "TAPE" };
-    // Regular (expanded) mode: TAPE header uses the shared
-    // CompHeaderButton (green LED + bold label) to read with the same
-    // grammar as the EQ + COMP headers. Left-click toggles enable;
-    // right-click opens the full TapeMachine editor via pickFn. The
-    // compact-mode tapeButton above stays for the compact strip pill.
+    // Expanded-mode header: shared CompHeaderButton (matches EQ/COMP
+    // grammar). Right-click opens TapeMachine editor via pickFn.
     std::unique_ptr<CompHeaderButton> tapeHeaderBtn;
     ::TapeMachineAudioProcessor* tapeProcessorPtr = nullptr;
     void openTapeMachineModal();
@@ -130,48 +110,30 @@ private:
     juce::Component::SafePointer<juce::Component> tapeMachineModal;
 
     juce::Slider faderSlider { juce::Slider::LinearVertical, juce::Slider::TextBoxBelow };
-    // Standalone fader-value readout below the slider — mirrors the
-    // channel + bus strip's fader-side grammar.
     juce::Label  faderValueLabel;
     juce::TextButton autoModeButton { "Off" };
 
-    // Master mute + mono-sum buttons. Mute zeros the bus; mono sums
-    // L+R*0.5 into both channels for mono-compat checks. The
-    // monoStereoButton's runtime label flips between "STEREO" (default)
-    // and "MONO" (mono-sum on); the constructor sets the initial text
-    // from the params.monoSum atom, so the inline literal here only
-    // matters until that runs.
+    // Mute zeros the bus. monoStereoButton label flips STEREO (default)
+    // / MONO (mono-sum on) at runtime; ctor sets initial text from
+    // params.monoSum.
     juce::TextButton muteButton       { "M" };
     juce::TextButton monoStereoButton { "STEREO" };
 
-    // Throttled motor-fader display state.
     float displayedLiveFaderDb { 0.0f };
 
     void showAutoModeMenu();
     void setAutoMode (AutomationMode m);
     void captureFaderWritePoint (float denormDb);
 
-    // Analog VU meter at the top of the strip - same look as the bus VUs
-    // so the user reads master level the same way they read bus level.
     std::unique_ptr<AnalogVuMeter> vuMeter;
 
-    // Output stereo meter (post-master peak in dB, L/R split) + GR readout.
-    // The meter sits to the RIGHT of the fader to match the channel-strip
-    // layout. Two columns (L | R) live inside meterArea; we cache smoothed
-    // and peak-hold values per channel.
     juce::Rectangle<int> meterArea;
-    // Slim vertical bar showing the master bus comp's gain reduction.
-    // Sits between the fader and the L/R output bars so the user can see
-    // the compressor's contribution to the final signal at a glance.
+    // Slim GR bar between fader and L/R output bars — comp's
+    // contribution to the final signal at a glance.
     juce::Rectangle<int> grMeterArea;
     juce::Rectangle<int> faderScaleArea;
-    // Framed bands for the EQ + COMP sections - same grammar as the
-    // channel + bus strips.
     juce::Rectangle<int> eqArea;
     juce::Rectangle<int> compArea;
-    // Compact-mode placeholder buttons. Hidden when compactMode=false;
-    // visible (sections hidden) when true. Decorative — tooltip points
-    // at SUMMARY toggle as the expand/collapse owner.
     juce::TextButton eqCompactButton  { "EQ"   };
     juce::TextButton compCompactButton { "COMP" };
     EmbeddedModal eqEditorModal;

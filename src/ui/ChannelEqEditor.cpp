@@ -293,7 +293,7 @@ void ChannelEqEditor::resized()
     typeButton  .setBounds (header.removeFromRight (40));
     area.removeFromTop (8);
 
-    // Layout matches the inline strip's EQ section so the SUMMARY popup
+    // Layout matches the inline strip's EQ section so the TIMELINE popup
     // is visually identical: HPF row at top (single centred knob), then
     // each band row. Shelves (HF, LF) are gain | freq pairs; bell bands
     // (HM, LM) stack gain on top-left + Q below it on the left, with the

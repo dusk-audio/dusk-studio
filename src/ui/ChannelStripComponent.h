@@ -27,45 +27,34 @@ public:
     void resized() override;
     void mouseDown (const juce::MouseEvent& e) override;
 
-    // Click-to-focus hook. Fired when the user clicks anywhere on the
-    // strip (or any of its children, via the wide click-target). The
-    // host (MainComponent) wires this to the TapeStrip selection so
-    // keyboard shortcuts (A / S / X) target the strip the user just
-    // touched, even when no region has been clicked.
+    // Wired to TapeStrip selection so A/S/X target the just-touched strip
+    // even when no region was clicked.
     std::function<void (int trackIndex)> onTrackFocusRequested;
 
-    // Fader-group drag state. Captured at onDragStart for every track
-    // in the same group as this strip, then on each onValueChange the
-    // delta against this strip's anchor is added to each peer's anchor
-    // and stored in their faderDb atom. Cleared at onDragEnd. The peer
-    // ChannelStripComponents pick up the change via their existing
-    // 30 Hz timer that polls faderDb and pushes it to their slider.
+    // Fader-group drag. Captured at onDragStart for every track in this
+    // group, then on each onValueChange the delta against this strip's
+    // anchor is added to each peer's anchor and stored in faderDb.
+    // Cleared at onDragEnd. Peers' 30 Hz timer pushes faderDb back to
+    // their slider.
     float                            faderDragAnchorDb = 0.0f;
-    std::array<float, Session::kNumTracks> peerAnchorsDb {};   // key = trackIndex
-    std::array<bool,  Session::kNumTracks> peerActive    {};   // true = peer in group
+    std::array<float, Session::kNumTracks> peerAnchorsDb {};
+    std::array<bool,  Session::kNumTracks> peerActive    {};
 
-    // Compact mode hides the inline EQ + COMP controls and replaces each
-    // section with a single small button that opens the corresponding
-    // editor as a modal popup. Used when the SUMMARY (tape-strip) view is
-    // expanded, so the fader / bus assigns / meters / M-S-Ø stay visible
-    // even on a screen the SUMMARY ate half of.
+    // Hides inline EQ + COMP, swaps in popup-launcher buttons. Used
+    // when TIMELINE expands so fader / bus / meters / M-S-Ø stay
+    // visible.
     void setCompactMode (bool compact);
     bool isCompactMode() const noexcept { return compactMode; }
 
-    // Mixing-stage flag - swaps the input/IN/ARM/PRINT block at the top of
-    // the strip for a row of 4 AUX send knobs (one per aux bus). The aux
-    // strips host reverb / delay / etc. plugin chains; these knobs are how
-    // each channel feeds them.
+    // Swaps the input/IN/ARM/PRINT row at the top for 4 AUX send knobs.
     void setMixingMode (bool mixing);
     bool isMixingMode() const noexcept { return mixingMode; }
 
 private:
     void timerCallback() override;
-    // Fired by AudioEngine after refreshMidiInputs() rebuilds the device
-    // bank. Repopulates this strip's MIDI input dropdown so the new
-    // device list is visible and re-resolves the selection via the
-    // saved identifier (so a device that's still present stays selected
-    // even if its index in the list changed).
+    // AudioEngine fires after refreshMidiInputs rebuilds the device
+    // bank. Repopulate dropdowns + re-resolve via saved identifier so
+    // a still-present device stays selected even if its index changed.
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
     void rebuildMidiInputDropdown();
     void rebuildMidiOutputDropdown();
@@ -73,26 +62,21 @@ private:
     int trackIndex;
     Track& track;
     Session& session;
-    class PluginSlot& pluginSlot;  // owned by the AudioEngine's ChannelStrip
-    AudioEngine& engine;            // for transport playhead + isPlaying queries
-                                    // during Write capture (3c-ii)
-    std::array<juce::uint32, ChannelStripParams::kNumBuses> lastBusColours {};  // for change detection in timerCallback
-    float displayedGrDb = 0.0f;     // smoothed GR for the comp meter
-    float displayedInputDb = -100.0f; // smoothed input level (L) for the level meter
-    float inputPeakHoldDb = -100.0f;  // brief peak hold marker (L)
+    class PluginSlot& pluginSlot;
+    AudioEngine& engine;
+    std::array<juce::uint32, ChannelStripParams::kNumBuses> lastBusColours {};
+    float displayedGrDb = 0.0f;
+    float displayedInputDb = -100.0f;
+    float inputPeakHoldDb = -100.0f;
     int   inputPeakHoldFrames = 0;
-    float displayedInputRDb = -100.0f;   // R-channel smoothed level (stereo mode)
+    float displayedInputRDb = -100.0f;
     float inputPeakHoldRDb  = -100.0f;
     int   inputPeakHoldRFrames = 0;
 
     juce::Label nameLabel;
 
-    // Per-channel insert plugin slot. Sits between the input row and the
-    // EQ section. Click-left to load (or replace) a plugin via file chooser;
-    // click-right to unload. Plugin name is shown on the button when loaded.
-    // Custom subclass that adds a right-click context menu so the user can
-    // change/remove the loaded plugin without having to right-click the
-    // strip body (which used to be the only path - undiscoverable).
+    // Right-click context menu — used to be only via strip-body
+    // right-click (undiscoverable).
     struct PluginSlotButton final : public juce::TextButton
     {
         using juce::TextButton::TextButton;
@@ -102,13 +86,13 @@ private:
             if (e.mods.isPopupMenu() && onRightClick)
             {
                 onRightClick (e);
-                return;   // do NOT pass to base - we don't want a stuck "down" state
+                return;   // skip base — don't want a stuck "down" state.
             }
             juce::TextButton::mouseDown (e);
         }
     };
     PluginSlotButton pluginSlotButton { "+ Plugin" };
-    juce::String     lastSlotName;          // for change detection in timerCallback
+    juce::String     lastSlotName;
 
     juce::Rectangle<int> eqArea, compArea;
 
@@ -116,63 +100,40 @@ private:
     juce::Slider lpfKnob   { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
     juce::Label  hpfLabel;
     juce::Label  lpfLabel;
-    // EQ type chip (E / G) — small toggle parked between the HM and
-    // LM rows in the freq column. Replaces the chip that used to sit
-    // on the EQ header pill; living mid-strip makes the type cue read
-    // even when the user's eye is on the band rows.
+    // Small EQ-type toggle parked between HM and LM rows. Mid-strip so
+    // the type cue reads even when the eye is on band rows.
     juce::TextButton eqTypeChip { "E" };
 
-    // EQ header button. Same grammar as the COMP header — left-click
-    // toggles eqEnabled (auto-armed on first knob touch; the LED inside
-    // the button reflects state). Right-click pops the EQ-type picker
-    // (Brown E / Black G). The label stays "EQ" regardless of mode so
-    // the section header reads consistently; the active mode is shown
-    // as a ticked item in the right-click menu. Replaces the prior
-    // [LED] + label + [E/G pill] triple.
-    class CompHeaderButton;   // nested type defined in .cpp (already used by COMP).
+    // Same grammar as the COMP header. Left = toggle eqEnabled. Right
+    // = type picker. Label stays "EQ" regardless of mode.
+    class CompHeaderButton;   // defined in .cpp (shared with COMP)
     std::unique_ptr<CompHeaderButton> eqHeaderBtn;
     struct BandRow
     {
         std::unique_ptr<juce::Slider> gain;
         std::unique_ptr<juce::Slider> freq;
-        std::unique_ptr<juce::Slider> q;     // populated for bell-only mid bands (HM/LM); nullptr for shelf bands (HF/LF)
+        // populated only for mid (HM/LM) bell bands; nullptr for HF/LF shelves.
+        std::unique_ptr<juce::Slider> q;
         juce::Label labelLeft, labelRight;
         juce::Label rowLabel;
-        juce::Label qLabel;   // "Q" header above the Q knob (bell bands only)
+        juce::Label qLabel;
     };
     std::array<BandRow, 4> eqRows;
 
-    // COMP section. UniversalCompressor exposes a different control set per
-    // mode (Opto/FET/VCA model real hardware), so the strip holds the union
-    // of all three and shows only the ones for the current mode. The header
-    // button shows the active mode (OPTO/FET/VCA) and opens a popup picker
-    // on click. It also illuminates (background fills gold) when the comp
-    // is engaged - touching any knob auto-engages the comp.
-    //
-    // NOTE: illumination relies on the LookAndFeel reading getToggleState()
-    // independently of setClickingTogglesState. We do NOT call
-    // setClickingTogglesState(true) - that would flip the state on every
-    // click and detach the visual state from the underlying compEnabled
-    // atom. The button's onClick opens the mode menu; compEnabled is
-    // mutated separately via setCompEnabled / armCompOnUserEdit.
-    // Custom button replacing the old separate label + mode button +
-    // bypass LED triple. Centered at the top of the COMP section. Left-
-    // click toggles compEnabled. Right-click pops the mode-picker
-    // menu. Small green LED on the left inside the button illuminates
-    // when compEnabled; text is white regardless of state so the comp
-    // section reads consistently whether on or off.
+    // Holds the union of all three modes' params; shows only the
+    // current mode. Illumination relies on LookAndFeel reading
+    // getToggleState — we do NOT setClickingTogglesState(true) (that
+    // would flip on every click and detach visual from compEnabled).
+    // onClick opens the mode menu; compEnabled mutated separately.
     std::unique_ptr<CompHeaderButton> compModeButton;
 
-    // Standalone CompBypassLed dropped — its function moved into
-    // CompHeaderButton (the dot inside the header button).
-
-    // Opto (LA-2A): peak-reduction knob + gain knob + LIMIT toggle.
+    // Opto (LA-2A): peak-red + gain + LIMIT.
     juce::Slider     optoPeakRedKnob { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
     juce::Slider     optoGainKnob    { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
     juce::Label      optoPeakRedLabel, optoGainLabel;
     juce::TextButton optoLimitButton { "LIMIT" };
 
-    // FET (1176): input + output + attack + release + ratio knob (5-step).
+    // FET (1176): input + output + attack + release + ratio (5-step).
     juce::Slider     fetInputKnob   { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
     juce::Slider     fetOutputKnob  { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
     juce::Slider     fetAttackKnob  { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
@@ -180,8 +141,8 @@ private:
     juce::Slider     fetRatioKnob   { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
     juce::Label      fetInputLabel, fetOutputLabel, fetAttackLabel, fetReleaseLabel, fetRatioLabel;
 
-    // VCA (classic): threshold via meter-strip drag handle (NOT a knob);
-    // ratio + attack + release + output as knobs.
+    // VCA (classic): threshold via meter-strip drag handle (not a
+    // knob); ratio + attack + release + output as knobs.
     juce::Slider     vcaRatioKnob   { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
     juce::Slider     vcaAttackKnob  { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
     juce::Slider     vcaReleaseKnob { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox };
@@ -191,11 +152,9 @@ private:
 
     std::unique_ptr<CompMeterStrip> compMeter;
 
-    // Fader-side layout flag — when true, the COMP section's CompMeterStrip
-    // is hoisted out into a slim vertical column alongside the fader
-    // (handle + IN bar + GR LED), freeing the COMP section to show only
-    // the knob grid. Originally gated to track 3 as a visual test; now
-    // enabled for all strips after the layout was finalised.
+    // CompMeterStrip hoisted into a slim column alongside the fader
+    // (handle + IN bar + GR LED) so the COMP section shows only the
+    // knob grid.
     bool usesFaderThresholdLayout() const { return true; }
 
     std::array<std::unique_ptr<juce::TextButton>, ChannelStripParams::kNumBuses> busButtons;
@@ -205,70 +164,53 @@ private:
     juce::Slider faderSlider { juce::Slider::LinearVertical, juce::Slider::TextBoxBelow };
     juce::Rectangle<int> inputMeterArea;
     juce::Rectangle<int> meterScaleArea;
-    // Track-3 fader-side layout: slim column LEFT of the GR LED that
-    // paints vertical GR-scale labels (0 .. -24 dB). Empty on every
-    // other strip.
     juce::Rectangle<int> grScaleArea;
     juce::Label inputPeakLabel;
-    juce::Label grPeakLabel;       // GR readout (dB), sits to the right of inputPeakLabel
-    // Track-3 fader-side layout only: numeric GR readout below the slim
-    // GR LED (e.g. "-3.0"). Hidden / unused on every other strip.
+    juce::Label grPeakLabel;
     juce::Label grReadoutLabel;
-    // Track-3 only: standalone fader value readout (e.g. "-6.0"). The
-    // slider runs in NoTextBox mode so the cap at min value doesn't
-    // overlap the textbox area that would otherwise be hosted inside
-    // the slider's bounds.
+    // Slider runs NoTextBox so the cap at min value doesn't overlap
+    // the textbox area.
     juce::Label faderValueLabel;
-    juce::Label threshMeterLabel;  // "THR" header above CompMeterStrip's drag handle
+    juce::Label threshMeterLabel;
     juce::TextButton muteButton    { "M" };
     juce::TextButton soloButton    { "S" };
-    juce::TextButton phaseButton   { juce::CharPointer_UTF8 ("\xc3\x98") };  // Ø - phase invert
+    juce::TextButton phaseButton   { juce::CharPointer_UTF8 ("\xc3\x98") };  // Ø
 
-    // Automation mode cycle: OFF (dark) <-> READ (green). Phase 3c-i wires
-    // only Off/Read; the underlying enum already covers Write/Touch which
-    // 3c-ii will surface here. The label updates to mirror the current
-    // mode (e.g. "OFF", "READ"). Right-click reserved for future per-param
-    // mode picker (also 3c-ii).
+    // 3c-i wires Off/Read; Write/Touch surfaced in 3c-ii. Label mirrors
+    // current mode.
     juce::TextButton autoModeButton { "OFF" };
     void showAutoModeMenu();
     void setAutoMode (AutomationMode mode);
     void refreshAutoModeButton();
-    // Append (normalized) `denormValue` to track.automationLanes[param]
-    // at the current transport playhead. Maintains strict ascending
-    // ordering so evaluateLane's binary search stays correct. Same-
-    // sample writes coalesce; loop wraparound truncates future points.
+    // Strict ascending order — evaluateLane's binary search depends on
+    // it. Same-sample writes coalesce; loop wraparound truncates future
+    // points.
     void captureWritePoint (AutomationParam param, float denormValue);
-    // Last live fader dB rendered into the slider, polled in timerCallback
-    // from track.strip.liveFaderDb. We avoid driving setValue every tick
-    // by gating on a small delta - prevents UI churn when manual mode just
-    // mirrors the user's setpoint and nothing is moving.
+    // Gated by small delta so the timer doesn't churn setValue when
+    // manual mode just mirrors the user's setpoint.
     float displayedLiveFaderDb = 0.0f;
-    // Same idea for the pan knob - polled from track.strip.livePan.
     float displayedLivePan = 0.0f;
-    // And for each aux send knob - polled from track.strip.liveAuxSendDb[i].
     std::array<float, ChannelStripParams::kNumAuxSends> displayedLiveAuxSendDb {};
     juce::TextButton armButton     { "ARM" };
     juce::TextButton monitorButton { "IN"  };
-    juce::TextButton printButton   { "PRINT" };  // print EQ/comp to recording
+    juce::TextButton printButton   { "PRINT" };
     DuskComboBox   modeSelector;          // Mono / Stereo / MIDI
-    DuskComboBox   inputSelector;         // mono / stereo-L / (hidden in MIDI)
-    DuskComboBox   inputSelectorR;        // stereo-R (visible only in stereo mode)
-    DuskComboBox   midiInputSelector;     // MIDI input port (visible only in MIDI mode)
-    DuskComboBox   midiChannelSelector;   // Omni / Ch 1..16 filter (MIDI mode only)
-    DuskComboBox   midiOutputSelector;    // External MIDI output port (MIDI mode only)
+    DuskComboBox   inputSelector;
+    DuskComboBox   inputSelectorR;
+    DuskComboBox   midiInputSelector;
+    DuskComboBox   midiChannelSelector;
+    DuskComboBox   midiOutputSelector;
 
-    // Compact header that replaces the inline mode/input/midi rows. Shows a
-    // one-line summary of the track's I/O (e.g. "Mono · In 1" or "MIDI Ch 5
-    // → Diva") and opens an InputConfigPanel popup when clicked. Saves ~60
-    // px vertical per strip; the 6 ComboBoxes above live as members so the
-    // popup can re-parent them on open and they keep their wiring + state.
+    // Compact summary button replacing the inline mode/input/midi rows
+    // (~60 px saved). Opens InputConfigPanel popup; the 6 dropdowns
+    // above live as members so the popup re-parents them on open
+    // without losing wiring / state.
     juce::TextButton ioConfigButton;
     void openIoConfigPopup();
     void refreshIoConfigButton();
     juce::Component::SafePointer<juce::CallOutBox> activeIoBox;
-    // Small painted dot, repainted by the strip's existing 30 Hz timer when
-    // the engine sets track.midiActivity (clear-on-read). Sits next to the
-    // MIDI selectors when the track is in MIDI mode.
+    // Repainted by the 30 Hz timer when engine sets track.midiActivity
+    // (clear-on-read).
     struct MidiActivityLed : juce::Component
     {
         bool lit = false;
@@ -276,13 +218,9 @@ private:
     };
     MidiActivityLed midiActivityLed;
 
-    // Aux send knobs (visible only in Mixing stage). Each sends a copy of
-    // the channel signal into the matching AUX strip's plugin chain. The
-    // PRE/POST tap point is per-channel-per-aux (auxSendPreFader[i]) and
-    // gets its UI in Phase D.
-    // One small index label ("1".."4") per aux send, coloured per
-    // kAuxColours so the user can tell at a glance which knob feeds AUX
-    // N without looking up the colour against the AUX-page tab strip.
+    // PRE/POST toggle per channel-per-aux is auxSendPreFader[i].
+    // Index labels coloured per aux so the user can identify N at a
+    // glance without the AUX-page tab strip.
     std::array<juce::Label, ChannelStripParams::kNumAuxSends> auxIndexLabels;
     std::array<std::unique_ptr<juce::Slider>, ChannelStripParams::kNumAuxSends> auxKnobs;
     std::array<juce::Label,                  ChannelStripParams::kNumAuxSends> auxKnobLabels;
@@ -297,104 +235,72 @@ private:
     void showColourMenu();
     void applyTrackColour (juce::Colour c);
     void setCompMode (int modeIndex);
-    // Cheap state-only refresh: button text + toggle illumination. Called
-    // every timer tick + after any compMode/compEnabled mutation.
+    // Cheap: button text + illumination. Called every tick + after any
+    // compMode / compEnabled mutation.
     void refreshCompModeButtonState();
-    // Heavy visibility refresh: shows the active mode's per-mode knobs +
-    // hides the other modes'. Only invoked after a real mode change or
-    // when the section's visibility flips - NOT from the 30 Hz timer.
+    // Heavy: shows current mode's knobs + hides others. Only on real
+    // mode change or visibility flip — NOT from the 30 Hz timer.
     void refreshCompKnobVisibility();
     void showCompModeMenu();
-    // Right-click handler on the EQ header button — pops the EQ-type
-    // picker (Brown E / Black G), same grammar as showCompModeMenu.
     void showEqTypeMenu();
     void armCompOnUserEdit();
-    // Toggle comp on/off + refresh mode-button illumination. Used by the
-    // right-click context menu since the button itself is the mode picker.
+    // Right-click context menu uses this since the button itself is
+    // the mode picker.
     void setCompEnabled (bool enabled);
 
-    // Plugin slot UX. Delegates to pluginpicker::openPickerMenu, passing
-    // PluginKind based on track mode (Instruments for Midi, Effects for
-    // Mono/Stereo). The shared helper handles the menu, the scan dialog,
-    // and the browse-for-file fallback.
-    // useChooser=true (default): shows the 3-button "Add insert"
-    // chooser first (Hardware / Soundfont / Plugin) — entry point for
-    // empty-slot clicks. false: skip the chooser, jump straight to the
-    // plugin list — used by the right-click "Replace plugin..." action
-    // where the user has already committed to the plugin path.
+    // useChooser=true: shows 3-button Add Insert chooser (Hardware /
+    // Soundfont / Plugin) first. false: jump to plugin list (used by
+    // Replace plugin... where the user already committed to plugin).
     void openPluginPicker (bool useChooser = true);
     void unloadPluginSlot();
     void refreshPluginSlotButton();
 
-    // External Hardware Insert UX. The picker calls back into
-    // openHardwareInsertEditor on selection; that flips the strip's
-    // insertMode to Hardware (via AudioEngine::getChannelStrip(t)
-    // .insertMode.store) and shows HardwareInsertEditor inside an
-    // EmbeddedModal owned by this strip.
+    // Flips insertMode to Hardware and shows HardwareInsertEditor in
+    // an EmbeddedModal owned by this strip.
     void openHardwareInsertEditor();
     EmbeddedModal hardwareInsertModal;
-    // Right-click context menu for the plugin slot button. Mirrors the
-    // plugin items inside showColourMenu() but is reachable directly from
-    // the slot button so users don't have to discover the strip-body
-    // right-click. Shown by PluginSlotButton::onRightClick.
     void showPluginSlotMenu();
-    void togglePluginEditor();              // open if closed, close if open
+    void togglePluginEditor();
     void openPluginEditor();
     void closePluginEditor();
     std::unique_ptr<juce::FileChooser> activePluginChooser;
-    // Plugin editor is hosted inline as an EmbeddedModal (centred over
-    // MainComponent, dim backdrop, click-outside / Esc dismiss). The
-    // editor body is held in `pluginEditor` (in-process) or one of the
-    // remote-embed pointers below (OOP); EmbeddedModal::showBorrowed
-    // doesn't own the body, so opening/closing the modal preserves the
-    // plugin's GL / Cairo / native resources across cycles. Both
-    // generic-fallback editors and native plugin editors now share this
-    // single modal — main window peer is X11 on Linux so the plugin's
-    // X11 sub-window can reparent into the modal's wrapper Component
-    // without needing its own top-level peer.
+    // Editor hosted inline as an EmbeddedModal (centred, dim backdrop,
+    // click-out / Esc dismiss). showBorrowed doesn't own the body so
+    // GL / Cairo / native resources survive close/reopen cycles. Both
+    // generic-fallback and native editors share this modal — X11 sub-
+    // window reparents into the modal wrapper without its own top-
+    // level peer.
     EmbeddedModal pluginEditorModal;
     std::unique_ptr<juce::AudioProcessorEditor> pluginEditor;
     juce::AudioProcessor* pluginEditorOwner = nullptr;
 
    #if JUCE_LINUX && DUSKSTUDIO_HAS_OOP_PLUGINS
-    // OOP-mode editor embedding. The plugin's editor lives in the
-    // dusk-studio-plugin-host child; we wrap its X11 Window ID in a JUCE
-    // XEmbedComponent and feed THAT into PluginEditorWindow as the
-    // body. Lifetime mirrors `pluginEditor` (in-process counterpart):
-    // built lazily on first open, kept across close/reopen cycles so
-    // the child's GUI resources aren't torn down per close, dropped
-    // when the slot is unloaded.
+    // OOP: child plugin's X11 Window wrapped in XEmbedComponent fed
+    // to PluginEditorWindow as the body. Lifetime matches pluginEditor.
     std::unique_ptr<juce::XEmbedComponent> remoteEditorEmbed;
    #endif
    #if DUSKSTUDIO_HAS_OOP_PLUGINS && ! JUCE_LINUX
-    // Windows OOP editor embedding via SetParent. macOS keeps this
-    // null and falls through to the floating-window path. Lifetime
-    // tied to pluginEditorWindow — ~ForeignHwndEmbed re-parents the
-    // child HWND back to desktop so the OOP host can hide it cleanly.
+    // Windows OOP via SetParent. macOS keeps null and falls through to
+    // floating-window path. ~ForeignHwndEmbed re-parents back to
+    // desktop so OOP host can hide cleanly.
     std::unique_ptr<juce::Component> remoteForeignEmbed;
    #endif
 
     bool isPluginEditorOpen() const noexcept;
 
 public:
-    // Public so the host (MainComponent / ConsoleView) can force-close
-    // all plugin editor windows on app shutdown BEFORE the channel-strip
-    // chain destructs. Tearing down a plugin editor's native X11 window
-    // during Mutter's own cascade-shutdown of our main window race-
-    // crashes the compositor on Linux/Wayland; closing them first, with
-    // the audio engine still alive, side-steps the race.
+    // Public so host (MainComponent / ConsoleView) can force-close all
+    // editors on shutdown BEFORE the chain destructs. Tearing down a
+    // plugin's native X11 window during Mutter's cascade-shutdown of
+    // the main window race-crashes the compositor on Linux/Wayland.
     void dropPluginEditor();
 
 private:
 
-    // Compact-mode plumbing.
     bool compactMode = false;
     juce::TextButton eqCompactButton   { "EQ" };
     juce::TextButton compCompactButton { "COMP" };
     juce::TextButton auxCompactButton  { "AUX" };
-    // EQ + Comp + Aux all use CallOutBox (in-window overlay, click-outside-
-    // to-dismiss with the click consumed so the trigger button doesn't
-    // bounce-reopen).
     juce::Component::SafePointer<juce::CallOutBox> activeEqBox;
     juce::Component::SafePointer<juce::CallOutBox> activeCompBox;
     juce::Component::SafePointer<juce::CallOutBox> activeAuxBox;
@@ -403,15 +309,12 @@ private:
     void openAuxEditorPopup();
     void setAuxSectionVisible (bool visible);
 
-    // Translucent shade attached to the top-level component while either
-    // popup is open. timerCallback removes it once both popups are gone.
+    // Translucent shade on the top-level while either popup is open.
+    // Removed by timerCallback once both are gone.
     std::unique_ptr<class DimOverlay> activeDimOverlay;
     void attachDimOverlay();
     void detachDimOverlay();
 
-    // Apply visibility to every EQ child / every COMP child in one shot -
-    // the strip has a lot of controls split across the two sections so we
-    // gather them here rather than scattering setVisible calls.
     void setEqSectionVisible (bool visible);
     void setCompSectionVisible (bool visible);
 };

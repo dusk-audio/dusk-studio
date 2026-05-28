@@ -331,7 +331,7 @@ MainComponent::MainComponent()
         tapeStripExpanded = expanded;
         if (tapeStrip != nullptr) tapeStrip->setVisible (expanded);
         // Collapse each track strip's EQ + COMP into popup buttons while the
-        // SUMMARY view is up - without this the fader and bus assigns get
+        // TIMELINE view is up - without this the fader and bus assigns get
         // pushed off the bottom of the strip and become unusable.
         if (consoleView != nullptr) consoleView->setStripsCompactMode (expanded);
         resized();
@@ -1050,7 +1050,19 @@ void MainComponent::resized()
                                      + (numBanks - 1) * kBankBtnGap)
                                 : 0;
     const int groupW       = stageBlockW + bankClusterW;
-    const int stageX       = rowBounds.getX() + (rowBounds.getWidth() - groupW) / 2;
+    int stageX             = rowBounds.getX() + (rowBounds.getWidth() - groupW) / 2;
+
+    // Pure window-width centering walks over the transport bar's clock /
+    // timecode label at wide widths (the transport cluster is left-anchored,
+    // the stage tabs centre on the FULL row). Clamp the centred group so
+    // its left edge sits at least `kStageClockGap` past the clock's right
+    // edge — matches the gap conventions used elsewhere in this row.
+    if (transportBar != nullptr)
+    {
+        constexpr int kStageClockGap = 12;
+        const int clockRight = rowBounds.getX() + transportBar->getClockRightX();
+        stageX = juce::jmax (stageX, clockRight + kStageClockGap);
+    }
 
     recordingStageBtn.setBounds (stageX,                stageY, stageW, kStageBtnH);
     mixingStageBtn   .setBounds (stageX + stageW,       stageY, stageW, kStageBtnH);
@@ -1139,7 +1151,26 @@ void MainComponent::resized()
     {
         if (tapeStrip != nullptr && tapeStripExpanded)
         {
-            tapeStrip->setBounds (area.removeFromTop (TapeStrip::naturalHeight()));
+            // Mirror the timeline's rows to the console's ACTIVE BANK
+            // range for this window width, so the timeline tracks the
+            // visible mixer strips (switch to bank 7-12 -> timeline shows
+            // 7-12) and an empty session fills that same track count
+            // instead of one row + over-tall faders. Set BEFORE
+            // naturalHeight().
+            if (consoleView != nullptr)
+            {
+                const int bank = consoleView->getBank();
+                const auto [first1, last1] =
+                    ConsoleView::rangeForBankAtWidth (bank, area.getWidth());
+                tapeStrip->setConsoleVisibleRange (first1 - 1, last1 - first1 + 1);
+            }
+            // Cap the strip at ~half the available height so vertical
+            // zoom (taller rows) can't swallow the console - past the cap
+            // the rows scroll inside the strip. Console keeps a usable
+            // minimum.
+            const int wanted = tapeStrip->naturalHeight();
+            const int cap    = juce::jmax (120, area.getHeight() / 2);
+            tapeStrip->setBounds (area.removeFromTop (juce::jmin (wanted, cap)));
             area.removeFromTop (4);
         }
 
@@ -1318,7 +1349,7 @@ void MainComponent::launchStartupDialog()
 
     // Centered on the main window. The dialog is plain dark — no native
     // title bar — to match the embedded-modal aesthetic shared with the
-    // TapeMachine gear modal and the SUMMARY EQ/COMP popups.
+    // TapeMachine gear modal and the TIMELINE EQ/COMP popups.
     const auto bounds = getLocalBounds()
                             .withSizeKeepingCentre (startupDialog->getWidth(),
                                                        startupDialog->getHeight());
@@ -2084,6 +2115,80 @@ void MainComponent::openBounceDialog()
     });
 }
 
+void MainComponent::openBounceStemsDialog()
+{
+    // Pick a base WAV; per-stem filenames derive from it via
+    // BounceEngine::stemOutputFile (<base>_<NN>_<sanitized-track>.wav).
+    // Sit alongside the master mix so the user can find them together.
+    auto defaultDir = session.getSessionDirectory();
+    if (! defaultDir.isDirectory())
+        defaultDir = juce::File::getSpecialLocation (juce::File::userMusicDirectory);
+    const auto defaultFile = defaultDir.getChildFile ("stems.wav");
+
+    filebrowser::open (*this, {
+        /*title*/                  "Bounce stems (one WAV per track)",
+        /*initialFileOrDirectory*/ defaultFile,
+        /*filePatternsAllowed*/    "*.wav",
+        /*mode*/                   filebrowser::Mode::Save,
+        /*warnAboutOverwriting*/   true,
+        /*selectDirectories*/      false,
+    },
+    [this] (juce::File out)
+    {
+        if (out == juce::File()) return;
+        auto outFile = out;
+        if (! outFile.hasFileExtension ("wav"))
+            outFile = outFile.withFileExtension ("wav");
+
+        // Preflight: the base WAV is never written for stems - the real
+        // targets are the derived <base>_<NN>_<track>.wav files. Compute
+        // them for the tracks that will actually render (same predicate
+        // as BounceEngine) and warn if any already exist, so the file
+        // browser's base-file overwrite check doesn't give false comfort.
+        juce::StringArray conflicts;
+        for (int t = 0; t < Session::kNumTracks; ++t)
+        {
+            const auto& tr = session.track (t);
+            const bool hasContent = ! tr.regions.empty()
+                                  || ! tr.midiRegions.current().empty();
+            const bool armed = tr.recordArmed.load (std::memory_order_relaxed);
+            if (! (hasContent || armed)) continue;
+            const auto sf = BounceEngine::stemOutputFile (outFile, t, tr.name);
+            if (sf.existsAsFile())
+                conflicts.add (sf.getFileName());
+        }
+
+        auto launch = [this, outFile]
+        {
+            auto panel = std::make_unique<BounceDialog> (engine, session,
+                                                           engine.getDeviceManager(), outFile,
+                                                           BounceEngine::Mode::Stems);
+            panel->setSize (520, 200);
+            bounceModal.show (*this, std::move (panel));
+        };
+
+        if (conflicts.isEmpty())
+        {
+            launch();
+            return;
+        }
+
+        const auto msg = "These stem files already exist and will be overwritten:\n\n"
+                       + conflicts.joinIntoString ("\n")
+                       + "\n\nContinue?";
+        juce::Component::SafePointer<MainComponent> safe (this);
+        juce::AlertWindow::showOkCancelBox (
+            juce::MessageBoxIconType::WarningIcon,
+            "Overwrite stems?", msg, "Overwrite", "Cancel", this,
+            juce::ModalCallbackFunction::create (
+                [safe, launch] (int result) mutable
+                {
+                    if (result == 1 && safe.getComponent() != nullptr)
+                        launch();
+                }));
+    });
+}
+
 // True when the track's name is empty or still the default "N" string.
 // Used by the import flow to decide whether to auto-rename the track to
 // the imported file's basename (preserves user-renamed tracks).
@@ -2603,6 +2708,7 @@ enum MenuItemId
     kMenuFileBounce   = 1011,
     kMenuFileCleanOut = 1012,
     kMenuFileOptimizeAutomation = 1013,
+    kMenuFileBounceStems        = 1014,
     kMenuFileQuit     = 1099,
     // Reserved range for template entries (one per SessionTemplate enum
     // value, indexed off this base). Stays well above the file-action IDs
@@ -2645,6 +2751,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelMenuIndex,
         menu.addSeparator();
         menu.addItem (kMenuFileMixdown, "Mixdown");
         menu.addItem (kMenuFileBounce,  "Bounce...");
+        menu.addItem (kMenuFileBounceStems, "Bounce stems...");
         menu.addSeparator();
         menu.addItem (kMenuFileCleanOut, "Clean out unreferenced files...");
         menu.addItem (kMenuFileOptimizeAutomation, "Optimize automation...");
@@ -2684,6 +2791,7 @@ void MainComponent::menuItemSelected (int menuItemID, int /*topLevelMenuIndex*/)
         case kMenuFileImportMidi:  importMidiPrompt();  break;
         case kMenuFileMixdown: doMixdown();             break;
         case kMenuFileBounce:  openBounceDialog();      break;
+        case kMenuFileBounceStems: openBounceStemsDialog(); break;
         case kMenuFileCleanOut: cleanOutUnreferencedFiles(); break;
         case kMenuFileOptimizeAutomation:
         {

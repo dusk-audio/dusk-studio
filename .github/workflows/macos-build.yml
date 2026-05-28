@@ -1,0 +1,93 @@
+name: macOS build
+
+# Public test CI for macOS: compiles Release + runs the Catch2 suite. No
+# signing, no secrets, NO artifact upload — same no-free-binaries policy
+# as the Linux job. Its job is to catch macOS build/test breakage on
+# every push so a release tag isn't the first time the code compiles on
+# Mac. Signed/notarized builds are produced by macos-release.yml.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# A new push to the same ref cancels an in-flight run — the macOS runner
+# is slow (~40 min cold) so don't let stale runs queue up behind it.
+concurrency:
+  group: macos-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build + tests (clang Release, macOS arm64)
+    runs-on: macos-14
+    env:
+      # CMakeLists.txt auto-detects ccache (find_program -> sets
+      # CMAKE_CXX_COMPILER_LAUNCHER), so just installing it + caching its
+      # dir across runs is enough — no CMake change. Stable dir for the
+      # actions/cache key below.
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+
+    steps:
+      - name: Checkout Dusk Studio (with sfizz submodule)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          # Test CI never pushes — don't leave the token in git config.
+          persist-credentials: false
+
+      - name: Install ninja + ccache
+        # Ninja: parallel, low-overhead generator (much faster than the
+        # default Makefiles on this many TUs). ccache: object cache that
+        # survives across runs via the actions/cache step below, so an
+        # unchanged TU isn't recompiled on the next push.
+        run: brew install ninja ccache
+
+      - name: Cache ccache objects
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-macos-14-${{ github.sha }}
+          restore-keys: |
+            ccache-macos-14-
+
+      - name: Clone JUCE 8.0.4 (upstream)
+        run: |
+          git clone --depth 1 --branch 8.0.4 \
+            https://github.com/juce-framework/JUCE.git \
+            "${RUNNER_TEMP}/JUCE"
+
+      - name: Clone Dusk plugins (donor DSP)
+        run: |
+          git clone --depth 1 \
+            https://github.com/dusk-audio/dusk-audio-plugins.git \
+            "${RUNNER_TEMP}/plugins-main"
+
+      - name: Configure (Release)
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main"
+
+      - name: Build (Release)
+        run: cmake --build build -j
+
+      - name: Smoke launch (--version)
+        run: build/DuskStudio_artefacts/Release/DuskStudio.app/Contents/MacOS/DuskStudio --version
+
+      - name: Configure + build + run tests
+        run: |
+          cmake -S . -B build-tests -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DDUSKSTUDIO_BUILD_TESTS=ON \
+            -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main"
+          cmake --build build-tests --target dusk-studio-tests -j
+          ctest --test-dir build-tests --output-on-failure
+
+      - name: ccache stats
+        if: always()
+        run: ccache -s

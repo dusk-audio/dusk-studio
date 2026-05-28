@@ -75,7 +75,7 @@ private:
 };
 
 // Adds a fresh empty MidiRegion to a MIDI track at a given timeline
-// sample. Used by the SUMMARY-view double-click-to-create gesture so a
+// sample. Used by the TIMELINE-view double-click-to-create gesture so a
 // user can hand-author MIDI without first having to record. Undo
 // removes the region; redo re-inserts at the same position. Note pile
 // stays empty - the user adds notes via the piano roll separately.

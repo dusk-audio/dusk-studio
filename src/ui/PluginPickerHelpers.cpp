@@ -4,6 +4,9 @@
 #include "PluginPickerPanel.h"
 #include "../engine/PluginManager.h"
 #include "../engine/PluginSlot.h"
+#if DUSKSTUDIO_HAS_MULTISAMPLE
+ #include "../engine/multisample/AriaBank.h"
+#endif
 
 namespace duskstudio::pluginpicker
 {
@@ -303,9 +306,9 @@ static void openSoundfontFileChooser (PluginSlot& slot,
     if (host == nullptr) return;
     const auto defaultDir = juce::File::getSpecialLocation (juce::File::userHomeDirectory);
     filebrowser::open (*host, {
-        /*title*/                  "Load soundfont (.sfz / .sf2)",
+        /*title*/                  "Load soundfont (.sfz / .sf2 / .bank.xml)",
         /*initialFileOrDirectory*/ defaultDir,
-        /*filePatternsAllowed*/    "*.sfz;*.sf2",
+        /*filePatternsAllowed*/    "*.sfz;*.sf2;*.bank.xml",
         /*mode*/                   filebrowser::Mode::Open,
         /*warnAboutOverwriting*/   false,
         /*selectDirectories*/      false,
@@ -315,8 +318,32 @@ static void openSoundfontFileChooser (PluginSlot& slot,
     {
         if (parentForLifetime.getComponent() == nullptr) return;
         if (file == juce::File()) return;
+
+        // ARIA bank manifest - resolve to the first program's .sfz so
+        // PluginSlot::loadFromFile (which routes through
+        // DuskMultisamplePluginFormat and only accepts .sfz / .sf2) has
+        // something it can consume. Program switcher comes later.
+        juce::File fileToLoad = file;
+        if (file.getFileName().toLowerCase().endsWith (".bank.xml"))
+        {
+            auto bankOpt = AriaBank::tryLoadFromSfz (file);
+            if (! bankOpt.has_value() || bankOpt->programs.empty())
+            {
+                if (auto* tl = parentForLifetime.getComponent() != nullptr
+                                  ? parentForLifetime.getComponent()->getTopLevelComponent()
+                                  : nullptr)
+                    showDuskAlert (*tl, "Bank load failed",
+                                    "Bank manifest had no programs.");
+                else
+                    showLoadFailureAlertFallback ("Bank load failed: "
+                                                   "bank manifest had no programs.");
+                return;
+            }
+            fileToLoad = bankOpt->programs.front().sfzFile;
+        }
+
         juce::String error;
-        const bool ok = slot.loadFromFile (file, error);
+        const bool ok = slot.loadFromFile (fileToLoad, error);
         if (! ok)
         {
             if (auto* tl = parentForLifetime.getComponent() != nullptr
@@ -527,7 +554,7 @@ public:
         }
         if (sfVisible)
         {
-            sfBtn.setButtonText ("Soundfont (.sfz / .sf2)");
+            sfBtn.setButtonText ("Soundfont (.sfz / .sf2 / .bank.xml)");
             style (sfBtn, juce::Colour (0xff5a4a78));
             sfBtn.onClick = [this] { if (onSfFn) onSfFn(); };
             addAndMakeVisible (sfBtn);

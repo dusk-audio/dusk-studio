@@ -43,6 +43,13 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     insertScratchL.assign ((size_t) juce::jmax (1, blockSize), 0.0f);
     insertScratchR.assign ((size_t) juce::jmax (1, blockSize), 0.0f);
 
+    // Pre-size the MIDI scratch buffers so the audio thread's addEvent /
+    // processBlock calls never grow them. 4 KB covers ~400-800 typical
+    // channel-voice messages per block; far above any sane density even
+    // for instrument plugins generating dense controller streams.
+    pluginMidiScratch.ensureSize (4096);
+    compMidiScratch  .ensureSize (4096);
+
     // Plugin slot - prepared at the same SR/BS so the audio thread never
     // sees an unprepared instance. If the slot has no plugin loaded, this
     // is essentially a no-op; if a plugin is loaded across a device-rate
@@ -469,18 +476,18 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         // against the pre-insert copy so mode flips are click-free and an
         // empty slot just bypasses both.
         //
-        // Defensive clamp - insertScratchL/R are sized to prepare()'s
-        // blockSize. Audio hosts can hand us oversized blocks during
-        // transitions; we refuse to allocate on the audio thread.
+        // The early-return at the top of this function bails on numSamples
+        // larger than tempMono / insertScratchL (sized identically at
+        // prepare()), so the assertion below is the invariant guard for
+        // debug builds; release relies on the bail.
         jassert (numSamples <= (int) insertScratchL.size());
-        const int safeSamples = juce::jmin (numSamples, (int) insertScratchL.size());
 
         std::memcpy (insertScratchL.data(), tempMono.data(),
-                      sizeof (float) * (size_t) safeSamples);
+                      sizeof (float) * (size_t) numSamples);
         if (activeInsertMode == kInsertPlugin)
         {
             pluginMidiScratch.clear();
-            pluginSlot.processMonoBlock (tempMono.data(), safeSamples, pluginMidiScratch);
+            pluginSlot.processMonoBlock (tempMono.data(), numSamples, pluginMidiScratch);
         }
         else if (activeInsertMode == kInsertHardware)
         {
@@ -489,26 +496,22 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             // inherently stereo (it routes to a physical input pair) so
             // the average is the most faithful mono interpretation.
             std::memcpy (insertScratchR.data(), tempMono.data(),
-                          sizeof (float) * (size_t) safeSamples);
+                          sizeof (float) * (size_t) numSamples);
             hardwareSlot.processStereoBlock (tempMono.data(), insertScratchR.data(),
-                                              safeSamples,
+                                              numSamples,
                                               deviceInputs, numDeviceInputs,
                                               deviceOutputs, numDeviceOutputs);
-            for (int i = 0; i < safeSamples; ++i)
+            for (int i = 0; i < numSamples; ++i)
                 tempMono[(size_t) i] = 0.5f
                     * (tempMono[(size_t) i] + insertScratchR[(size_t) i]);
         }
         // Crossfade pre-insert vs post-insert by the gate.
-        for (int i = 0; i < safeSamples; ++i)
+        for (int i = 0; i < numSamples; ++i)
         {
             const float g = activeInsertGain.getNextValue();
             tempMono[(size_t) i] = (1.0f - g) * insertScratchL[(size_t) i]
                                    +        g  * tempMono[(size_t) i];
         }
-        // Smoother tail-advance for oversized host blocks - see the matching
-        // stereo path below for the rationale.
-        for (int i = safeSamples; i < numSamples; ++i)
-            activeInsertGain.getNextValue();
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
         if (oversamplerStages > 0 && oversamplerMono != nullptr)
@@ -628,42 +631,34 @@ void ChannelStrip::processAndAccumulate (const float* inL,
                 juce::FloatVectorOperations::negate (R, R, numSamples);
             }
 
-            // Defensive clamp - insertScratchL/R sized at prepare() to
-            // blockSize. Audio hosts can hand us oversized blocks during
-            // transitions; the audio thread refuses to allocate.
+            // Invariant guard: tempStereoBuffer + insertScratchL/R sized
+            // identically at prepare(); the early-return at the top of this
+            // function bails on oversized blocks before this point.
             jassert (numSamples <= (int) insertScratchL.size());
-            const int safeSamples = juce::jmin (numSamples, (int) insertScratchL.size());
 
             // Stash pre-insert for the crossfade gate.
-            std::memcpy (insertScratchL.data(), L, sizeof (float) * (size_t) safeSamples);
-            std::memcpy (insertScratchR.data(), R, sizeof (float) * (size_t) safeSamples);
+            std::memcpy (insertScratchL.data(), L, sizeof (float) * (size_t) numSamples);
+            std::memcpy (insertScratchR.data(), R, sizeof (float) * (size_t) numSamples);
 
             if (activeInsertMode == kInsertPlugin)
             {
                 pluginMidiScratch.clear();
-                pluginSlot.processStereoBlock (L, R, safeSamples, pluginMidiScratch);
+                pluginSlot.processStereoBlock (L, R, numSamples, pluginMidiScratch);
             }
             else if (activeInsertMode == kInsertHardware)
             {
-                hardwareSlot.processStereoBlock (L, R, safeSamples,
+                hardwareSlot.processStereoBlock (L, R, numSamples,
                                                   deviceInputs, numDeviceInputs,
                                                   deviceOutputs, numDeviceOutputs);
             }
             // Crossfade pre vs post by the gate (empty mode collapses to
             // pre, plugin/hardware ramp from pre to their processed output).
-            for (int i = 0; i < safeSamples; ++i)
+            for (int i = 0; i < numSamples; ++i)
             {
                 const float g = activeInsertGain.getNextValue();
                 L[i] = (1.0f - g) * insertScratchL[(size_t) i] + g * L[i];
                 R[i] = (1.0f - g) * insertScratchR[(size_t) i] + g * R[i];
             }
-            // Tick the smoother across the tail of an oversized block so its
-            // internal counter stays aligned with the rest of the chain
-            // (EQ / Comp / fader smoothers all advance per-sample over the
-            // full numSamples below). Without this the crossfade smoother
-            // drifts behind on every clamped block.
-            for (int i = safeSamples; i < numSamples; ++i)
-                activeInsertGain.getNextValue();
         }
 
 #if DUSKSTUDIO_HAS_DUSK_DSP

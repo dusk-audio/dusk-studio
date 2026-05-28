@@ -252,12 +252,9 @@ void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
         }
     }
 
-    {
-
-        if (paramsRef != nullptr)
-            paramsRef->meterGrDb.store (busComp.getGainReduction(),
-                                         std::memory_order_relaxed);
-    }
+    if (paramsRef != nullptr)
+        paramsRef->meterGrDb.store (busComp.getGainReduction(),
+                                     std::memory_order_relaxed);
 #endif
 
 #if DUSKSTUDIO_HAS_DUSK_DSP

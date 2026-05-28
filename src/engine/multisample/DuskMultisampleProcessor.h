@@ -58,11 +58,20 @@ public:
     // pattern moves the loaded processor into place once this returns.
     bool loadSfzFile (const juce::File& sfz, juce::String& errorMessage);
 
-    // Load an .sf2 (SoundFont 2) file. Routes through libfluidsynth
-    // when DUSKSTUDIO_HAS_SF2 is defined (set by CMake when
-    // pkg-config finds fluidsynth at build time); returns a clear
-    // error otherwise.
+    // Load an .sf2 (SoundFont 2) file. Converts the first preset to SFZ
+    // + extracted WAVs (Sf2Reader + Sf2ToSfz) and plays it through the
+    // vendored sfizz engine - no fluidsynth dependency. Caches the
+    // preset name list for the editor's program switcher.
     bool loadSf2File (const juce::File& sf2, juce::String& errorMessage);
+
+    // Switch the loaded SF2 to another preset (re-converts + reloads).
+    // No-op error when the current file isn't an SF2.
+    bool loadSf2Preset (int presetIndex, juce::String& errorMessage);
+
+    // Preset names of the loaded SF2 (empty for SFZ / no file). The
+    // editor populates its program dropdown from this.
+    const juce::StringArray& getSf2PresetNames() const noexcept { return sf2PresetNames; }
+    int getSf2PresetIndex() const noexcept { return sf2PresetIndex; }
 
     // True if a soundfont has been loaded. Used by editor UI to show
     // "(no file)" vs the loaded file name.
@@ -110,12 +119,51 @@ public:
     Overrides& getOverrides() noexcept { return overrides; }
     const Overrides& getOverrides() const noexcept { return overrides; }
 
+    // ── High-definition CC control (drives ARIA custom-UI widgets) ──
+    // setHDCC is called from the message thread (editor widget drag);
+    // it caches the value + queues it lock-free for the audio thread,
+    // which drains the queue at block top and calls sfizz_send_hdcc.
+    // cc is 0..kNumHdcc-1 (sfizz's extended CC space). normValue 0..1.
+    static constexpr int kNumHdcc = 512;
+    void  setHDCC (int cc, float normValue);
+    // Last value set for this CC, or -1 if never set (widget then uses
+    // its own default). Read on the message thread by the editor.
+    float getHDCC (int cc) const noexcept;
+
+    // Control-block metadata for the stock auto-skin (non-ARIA SFZ that
+    // declares `image=` + `label_cc&`). Queried via sfizz's messaging
+    // API. Message-thread only.
+    //   getControlImagePath -> resolved absolute path of <control> image=,
+    //                          or empty File when none / not loaded.
+    //   getControlCcLabels  -> (cc number, label) pairs from label_cc&.
+    juce::File getControlImagePath() const;
+    std::vector<std::pair<int, juce::String>> getControlCcLabels() const;
+
 private:
+    // Convert + load one preset of an SF2 through sfizz. Shared by
+    // loadSf2File (index 0 + name caching) and loadSf2Preset (switch).
+    bool applySf2Preset (const juce::File& sf2, int presetIndex,
+                          juce::String& errorMessage);
+
     double currentSampleRate { 48000.0 };
     int    currentBlockSize  { 512 };
     juce::String loadedFilePath;     // empty when no file loaded
     juce::String lastLoadError;      // most recent setState / load failure
     Overrides overrides;
+
+    // SF2 program switcher state: cached preset names + the active one.
+    juce::StringArray sf2PresetNames;
+    int               sf2PresetIndex { 0 };
+
+    // CC control plumbing. ccCache holds the last value the UI set per
+    // CC (-1 = unset) for read-back + state save. ccFifo carries
+    // (cc,value) changes from the message thread to the audio thread,
+    // drained at the top of processBlock. SPSC: editor pushes, audio
+    // drains.
+    struct CcChange { int cc; float value; };
+    std::array<std::atomic<float>, kNumHdcc> ccCache;
+    juce::AbstractFifo            ccFifo { 2048 };
+    std::array<CcChange, 2048>    ccQueue;
 
     // Cached "last applied" override values so processBlock only
     // hits sfizz's setter when the user has actually moved a knob.

@@ -190,7 +190,10 @@ void AuxView::promptRenameLane (int index)
     if (sessionPtr == nullptr) return;
     if (index < 0 || index >= Session::kNumAuxLanes) return;
 
-    constexpr int kAuxNameMaxChars = 12;
+    // static: referenced inside the rename lambda below. A function-local
+    // automatic constexpr would trip MSVC's C3493 (implicit-capture error)
+    // there; static storage duration sidesteps capture on every compiler.
+    static constexpr int kAuxNameMaxChars = 12;
     auto* host = getTopLevelComponent();
     if (host == nullptr) host = this;
 

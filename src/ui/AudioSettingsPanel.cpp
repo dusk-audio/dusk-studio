@@ -321,7 +321,7 @@ AudioSettingsPanel::AudioSettingsPanel (juce::AudioDeviceManager& dm,
     tapeStripExpandedToggle.setToggleState (appconfig::getTapeStripExpandedDefault(),
                                               juce::dontSendNotification);
     tapeStripExpandedToggle.setTooltip (
-        "When on, the tape SUMMARY strip starts expanded on every "
+        "When on, the TIMELINE tape strip starts expanded on every "
         "app launch. Saved per-machine; takes effect on next launch.");
     tapeStripExpandedToggle.onClick = [this]
     {

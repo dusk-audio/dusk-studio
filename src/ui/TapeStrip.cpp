@@ -4,6 +4,7 @@
 #include "../session/SnapHelpers.h"
 #include "DuskAlerts.h"
 #include "DuskContextMenu.h"
+#include "FadeCurve.h"
 
 namespace duskstudio
 {
@@ -44,6 +45,29 @@ TapeStrip::TapeStrip (Session& s, AudioEngine& e) : session (s), engine (e)
         engine.getSession().snapToGrid = snapToggle.getToggleState();
     };
     addAndMakeVisible (snapToggle);
+
+    showAllToggle.setClickingTogglesState (true);
+    showAllToggle.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff282830));
+    showAllToggle.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff1f3a52));
+    showAllToggle.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xff909094));
+    showAllToggle.setColour (juce::TextButton::textColourOnId,   juce::Colour (0xff7fb6e6));
+    showAllToggle.setMouseClickGrabsKeyboardFocus (false);
+    showAllToggle.setWantsKeyboardFocus (false);
+    showAllToggle.setTooltip ("Show every track row, including empty unarmed tracks.");
+    showAllToggle.setToggleState (showAllTracks, juce::dontSendNotification);
+    showAllToggle.onClick = [this]
+    {
+        showAllTracks = showAllToggle.getToggleState();
+        // Force a rebuild — content/armed bitmasks haven't changed but
+        // the show-all override has.
+        visibleTrackOrder.clear();
+        rebuildVisibleTrackOrder();
+    };
+    addAndMakeVisible (showAllToggle);
+
+    // Seed the visible list so naturalHeight() returns something sane
+    // before the first resized()/timer tick.
+    rebuildVisibleTrackOrder();
 }
 
 TapeStrip::~TapeStrip()
@@ -59,12 +83,109 @@ void TapeStrip::changeListenerCallback (juce::ChangeBroadcaster*)
     // now point at a region that has been deleted or shifted, so clear
     // both primary and additional.
     clearAllSelections();
+    // Region count may have changed (paste/cut/undo/redo) — recompute
+    // the visible row set so tracks that just gained or lost content
+    // appear / disappear without the user toggling SHOW ALL.
+    rebuildVisibleTrackOrder();
     repaint();
 }
 
-int TapeStrip::naturalHeight()
+int TapeStrip::rowsContentHeight() const noexcept
 {
-    return kRulerH + Session::kNumTracks * (kTrackRowH + kRowGap) + 6;
+    const int rows = juce::jmax (1, (int) visibleTrackOrder.size());
+    return rows * (rowHeight + kRowGap);
+}
+
+int TapeStrip::naturalHeight() const noexcept
+{
+    // Layout height = bank-fit at the DEFAULT row height, independent of
+    // the vertical-zoom row height. Zooming taller rows does NOT grow the
+    // strip (so the mixer faders never shrink) - the extra content scrolls
+    // inside this fixed band instead.
+    const int rows = juce::jmax (1, (int) visibleTrackOrder.size());
+    return kRulerH + rows * (kRowHDefault + kRowGap) + 6;
+}
+
+void TapeStrip::clampRowScroll() noexcept
+{
+    const int band = juce::jmax (0, getHeight() - kRulerH);
+    const int maxScroll = juce::jmax (0, rowsContentHeight() - band);
+    rowScrollY = juce::jlimit (0, maxScroll, rowScrollY);
+}
+
+int TapeStrip::maxNaturalHeight() noexcept
+{
+    return kRulerH + Session::kNumTracks * (kRowHDefault + kRowGap) + 6;
+}
+
+void TapeStrip::setConsoleVisibleRange (int firstTrack, int count)
+{
+    firstTrack = juce::jlimit (0, Session::kNumTracks - 1, firstTrack);
+    count      = juce::jlimit (1, Session::kNumTracks - firstTrack, count);
+    if (firstTrack == consoleFirstTrack && count == consoleVisibleCount) return;
+    consoleFirstTrack   = firstTrack;
+    consoleVisibleCount = count;
+    // MainComponent calls this from inside its own resized(); don't
+    // re-enter the parent layout - it sizes us via naturalHeight() right
+    // after this returns.
+    rebuildVisibleTrackOrder (/*relayoutParent*/ false);
+}
+
+void TapeStrip::rebuildVisibleTrackOrder (bool relayoutParent)
+{
+    // Membership rule:
+    //   • ALL toggle  -> every track (0..23).
+    //   • otherwise   -> the console's active bank range (so the timeline
+    //                    mirrors the visible mixer strips - switch to
+    //                    bank 7-12 and the timeline shows tracks 7-12),
+    //                    UNIONed with any track that has audio/MIDI
+    //                    content or is record-armed (so recorded material
+    //                    is never hidden). Empty session => just the bank
+    //                    range, filling the same row count the mixer shows.
+    std::vector<int> next;
+    if (showAllTracks)
+    {
+        for (int t = 0; t < Session::kNumTracks; ++t) next.push_back (t);
+    }
+    else
+    {
+        std::array<bool, Session::kNumTracks> keep {};
+        for (int t = 0; t < Session::kNumTracks; ++t)
+        {
+            const auto& tr = session.track (t);
+            keep[(size_t) t] = ! tr.regions.empty()
+                             || ! tr.midiRegions.current().empty()
+                             || tr.recordArmed.load (std::memory_order_relaxed);
+        }
+        // Mirror the console's visible bank range.
+        const int last = juce::jmin (Session::kNumTracks,
+                                      consoleFirstTrack + consoleVisibleCount);
+        for (int t = consoleFirstTrack; t < last; ++t)
+            keep[(size_t) t] = true;
+
+        for (int t = 0; t < Session::kNumTracks; ++t)
+            if (keep[(size_t) t]) next.push_back (t);
+    }
+    if (next.empty()) next.push_back (0);
+
+    if (next == visibleTrackOrder) return;   // nothing changed
+    visibleTrackOrder = std::move (next);
+
+    // Fewer rows now (bank flip / content removed) can leave rowScrollY
+    // pointing past the shrunken content — pull it back into range.
+    clampRowScroll();
+
+    // Grow / shrink the strip's own height to match the row count.
+    if (relayoutParent)
+        if (auto* p = getParentComponent()) p->resized();
+    repaint();
+}
+
+int TapeStrip::visualRowForTrack (int trackIdx) const noexcept
+{
+    for (size_t i = 0; i < visibleTrackOrder.size(); ++i)
+        if (visibleTrackOrder[i] == trackIdx) return (int) i;
+    return -1;
 }
 
 juce::Rectangle<int> TapeStrip::labelColumnBounds() const noexcept
@@ -88,9 +209,11 @@ juce::Rectangle<int> TapeStrip::tracksColumnBounds() const noexcept
 
 juce::Rectangle<int> TapeStrip::rowBounds (int trackIdx) const noexcept
 {
+    const int visualRow = visualRowForTrack (trackIdx);
+    if (visualRow < 0) return {};
     auto col = tracksColumnBounds();
-    const int y = col.getY() + trackIdx * (kTrackRowH + kRowGap);
-    return juce::Rectangle<int> (col.getX(), y, col.getWidth(), kTrackRowH);
+    const int y = col.getY() + visualRow * (rowHeight + kRowGap) - rowScrollY;
+    return juce::Rectangle<int> (col.getX(), y, col.getWidth(), rowHeight);
 }
 
 double TapeStrip::pixelsPerSecond() const noexcept
@@ -378,6 +501,23 @@ void TapeStrip::resized()
     zoomOutButton .setVisible (false);
     zoomInButton  .setVisible (false);
     zoomFitButton .setVisible (false);
+
+    // Recompute the visible row set in case session content changed
+    // since the last layout pass (file drop, take commit, arm toggle).
+    // relayoutParent=false: we're already inside resized(), so a parent
+    // relayout here would re-enter this method.
+    rebuildVisibleTrackOrder (/*relayoutParent*/ false);
+
+    // SHOW ALL toggle pinned to the right edge of the label column at
+    // the top — lives in unused real estate above the row labels, fits
+    // in the kRulerH band so it doesn't compete with the time ruler.
+    constexpr int kShowAllH = 14;
+    constexpr int kShowAllW = 38;
+    constexpr int kShowAllPad = 2;
+    showAllToggle.setBounds (kShowAllPad,
+                              kShowAllPad,
+                              juce::jmin (kShowAllW, kTrackLabelW - 2 * kShowAllPad),
+                              kShowAllH);
 }
 
 void TapeStrip::timerCallback()
@@ -422,6 +562,12 @@ void TapeStrip::timerCallback()
         lastIsRecording = nowRec;
         stateChanged = true;
     }
+
+    // Poll arm-flag changes — the user can toggle ARM from the channel
+    // strip at any time, and that flips a row into / out of the visible
+    // set. rebuildVisibleTrackOrder() compares against cached state and
+    // only triggers a relayout when something actually changed.
+    rebuildVisibleTrackOrder();
 
     if (stateChanged) repaint();
 
@@ -1752,16 +1898,42 @@ void TapeStrip::mouseExit (const juce::MouseEvent&)
 void TapeStrip::mouseWheelMove (const juce::MouseEvent& e,
                                   const juce::MouseWheelDetails& w)
 {
-    // Cmd/Ctrl + wheel = horizontal zoom anchored on the cursor sample,
-    // matching the audio + piano-roll editor wheel-zoom convention.
+    // Cmd/Ctrl + Shift + wheel = VERTICAL zoom (track row height). Cmd
+    // alone is already horizontal zoom (matches the audio / piano-roll
+    // editors), so vertical takes the Shift modifier.
+    if ((e.mods.isCommandDown() || e.mods.isCtrlDown()) && e.mods.isShiftDown())
+    {
+        const int delta = (w.deltaY > 0.0f) ? 4 : -4;
+        const int nh    = juce::jlimit (kRowHMin, kRowHMax, rowHeight + delta);
+        if (nh != rowHeight)
+        {
+            rowHeight = nh;
+            // The strip's band height is fixed (bank-fit at default row
+            // height) so the mixer faders never move; taller rows just
+            // scroll inside it. No parent relayout needed.
+            clampRowScroll();
+            repaint();
+        }
+        return;
+    }
+    // Cmd/Ctrl + wheel = horizontal zoom anchored on the cursor sample.
     if (e.mods.isCommandDown() || e.mods.isCtrlDown())
     {
         const float factor = w.deltaY > 0.0f ? 1.15f : (1.0f / 1.15f);
         zoomByFactor (factor, e.x);
         return;
     }
-    // Plain wheel = horizontal scroll when zoomed > 1; absorb otherwise
-    // so the parent doesn't accidentally scroll the console behind us.
+    // Plain wheel: vertical scroll first when rows overflow the (capped)
+    // strip height, else horizontal scroll when zoomed in. Absorb either
+    // way so the console behind us doesn't scroll.
+    const int band = juce::jmax (0, getHeight() - kRulerH);
+    if (rowsContentHeight() > band && std::abs (w.deltaY) > 0.001f)
+    {
+        rowScrollY -= (int) std::round (w.deltaY * (float) (rowHeight + kRowGap) * 3.0f);
+        clampRowScroll();
+        repaint();
+        return;
+    }
     if (userZoomFactor > 1.0f)
     {
         const double sr = engine.getCurrentSampleRate();
@@ -2417,13 +2589,27 @@ void TapeStrip::paint (juce::Graphics& g)
         }
     }
 
+    // Clip the row/region drawing below the ruler so vertically-scrolled
+    // rows (rowScrollY > 0) can't overpaint the time ruler. Scoped to the
+    // track-content block ONLY — the separator, loop/punch pills + marker
+    // flags below it live in the ruler band and must stay unclipped.
+    {
+    juce::Graphics::ScopedSaveState rowClip (g);
+    g.reduceClipRegion (0, kRulerH, getWidth(),
+                         juce::jmax (0, getHeight() - kRulerH));
+
     // ── Track rows ──
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         auto row = rowBounds (t);
 
-        // Row background - slightly darker every other row.
-        g.setColour (t % 2 == 0 ? juce::Colour (0xff141418) : juce::Colour (0xff101014));
+        // Row background - slightly darker every other row. Shade by the
+        // VISUAL row, not the track index: when tracks are hidden the
+        // visible rows pack together, and t % 2 would give two adjacent
+        // visible rows the same shade. visualRowForTrack returns -1 for
+        // hidden tracks (row is then empty, so fillRect is a no-op).
+        const int visualRow = visualRowForTrack (t);
+        g.setColour (visualRow % 2 == 0 ? juce::Colour (0xff141418) : juce::Colour (0xff101014));
         g.fillRect (row);
 
         // Track label on the left (color stripe + name from session, falling
@@ -2675,6 +2861,49 @@ void TapeStrip::paint (juce::Graphics& g)
             }
         }
 
+        // Crossfade overlay pass. Region bodies are opaque, so an
+        // earlier region's fade-out is occluded by the later region that
+        // overlaps it - the "X" never shows. Here, after all bodies on
+        // the track are painted, walk time-sorted adjacent pairs and, for
+        // each overlap, shade the zone + draw the outgoing region's
+        // fade-out crossing the incoming region's fade-in.
+        {
+            std::vector<int> order;
+            order.reserve (regions.size());
+            for (int i = 0; i < (int) regions.size(); ++i) order.push_back (i);
+            std::sort (order.begin(), order.end(), [&] (int a, int b)
+            {
+                return regions[(size_t) a].timelineStart
+                     < regions[(size_t) b].timelineStart;
+            });
+
+            const auto xfFill  = juce::Colour (0x22ffffff);
+            const auto xfCurve = juce::Colours::yellow.withAlpha (0.9f);
+
+            for (size_t i = 0; i + 1 < order.size(); ++i)
+            {
+                const auto& a = regions[(size_t) order[i]];       // outgoing
+                const auto& b = regions[(size_t) order[i + 1]];   // incoming
+                const auto aEnd = a.timelineStart + a.lengthInSamples;
+                if (aEnd <= b.timelineStart) continue;            // no overlap
+
+                const auto ovStart = b.timelineStart;
+                const auto ovEnd   = juce::jmin (aEnd, b.timelineStart + b.lengthInSamples);
+                if (ovEnd <= ovStart) continue;
+
+                const int zx0 = xForSample (ovStart);
+                const int zx1 = xForSample (ovEnd);
+                juce::Rectangle<int> zoneI (zx0, row.getY() + 1,
+                                             juce::jmax (1, zx1 - zx0), row.getHeight() - 2);
+                zoneI = zoneI.getIntersection (col.withTrimmedTop (1).withTrimmedBottom (1));
+                if (zoneI.isEmpty()) continue;
+
+                fadeviz::drawCrossfade (g, zoneI.toFloat(),
+                                         a.fadeOutShape, b.fadeInShape,
+                                         xfCurve, xfFill, 1.2f);
+            }
+        }
+
         // MIDI regions on this track. Same anchor + bounds math as audio
         // regions; the inside paints a stylised note-pile (small dots at
         // each note's start position, vertically distributed by pitch)
@@ -2899,6 +3128,8 @@ void TapeStrip::paint (juce::Graphics& g)
             }
         }
     }
+
+    }   // end row-clip scope — ruler-band chrome below stays unclipped
 
     // ── Vertical separator between labels and tracks ──
     g.setColour (juce::Colour (0xff2a2a32));

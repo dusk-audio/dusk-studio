@@ -375,54 +375,80 @@ void VirtualKeyboardComponent::paint (juce::Graphics& g)
             isHeld[(size_t) slot.note] = true;
     if (mouseHeld.note >= 0) isHeld[(size_t) mouseHeld.note] = true;
 
-    // First pass: white keys + their letter labels.
+    // Path with only its bottom corners rounded — the Logic / hardware
+    // key silhouette (square shoulders at the top, rounded toe).
+    auto bottomRoundedKey = [] (juce::Rectangle<float> r, float radius)
+    {
+        radius = juce::jmin (radius, r.getWidth() * 0.5f, r.getHeight() * 0.5f);
+        juce::Path p;
+        p.startNewSubPath (r.getX(), r.getY());
+        p.lineTo (r.getRight(), r.getY());
+        p.lineTo (r.getRight(), r.getBottom() - radius);
+        p.quadraticTo (r.getRight(), r.getBottom(), r.getRight() - radius, r.getBottom());
+        p.lineTo (r.getX() + radius, r.getBottom());
+        p.quadraticTo (r.getX(), r.getBottom(), r.getX(), r.getBottom() - radius);
+        p.closeSubPath();
+        return p;
+    };
+
+    const juce::Colour kActive   (0xff4a90d8);   // Logic-style blue
+    const juce::Colour kActiveLo (0xff3a78b8);
+
+    // First pass: white keys. Subtle top-to-bottom gradient + a darker
+    // toe band, square shoulders, rounded toe — reads like a real key.
     float x = kb.getX();
     for (int m = firstNote; m <= lastNote; ++m)
     {
         if (isBlackKey (m)) continue;
 
         juce::Rectangle<float> r (x, kb.getY(), wkW - 1.0f, wkH);
-
         const bool active = isHeld[(size_t) m];
-        if (active)
-            g.setColour (juce::Colour (0xff5fa0d0));
-        else
-            g.setColour (juce::Colour (0xfff0f0f0));
-        g.fillRoundedRectangle (r, 2.0f);
+        auto path = bottomRoundedKey (r, 4.0f);
 
-        g.setColour (juce::Colour (0xff404048));
-        g.drawRoundedRectangle (r, 2.0f, 0.8f);
+        juce::ColourGradient grad (
+            active ? kActive            : juce::Colour (0xffe6e7ea), r.getX(), r.getY(),
+            active ? kActiveLo          : juce::Colour (0xfffdfdfe), r.getX(), r.getBottom(),
+            false);
+        // Brightest band sits ~70% down, like a key catching light.
+        grad.addColour (0.62, active ? juce::Colour (0xff5fa0e0) : juce::Colour (0xffffffff));
+        g.setGradientFill (grad);
+        g.fillPath (path);
 
-        // Octave label (C with octave number) on every C, painted at
-        // the very bottom of the key.
+        // Toe shadow — a thin darker strip at the very bottom for depth.
+        g.setColour ((active ? kActiveLo : juce::Colour (0xffcccdd2)).withAlpha (0.9f));
+        g.fillRect (r.getX(), r.getBottom() - 3.0f, r.getWidth(), 3.0f);
+
+        // Hairline edge.
+        g.setColour (juce::Colour (0xff303036));
+        g.strokePath (path, juce::PathStrokeType (0.8f));
+
         const int pc = ((m % 12) + 12) % 12;
         auto labelArea = r;
+
+        // Octave label bottom-left on every C, Logic-style.
         if (pc == 0)
         {
-            g.setColour (juce::Colour (0xff707078));
+            g.setColour (active ? juce::Colour (0xffe8f0fa) : juce::Colour (0xff6a6a72));
             g.setFont (juce::Font (juce::FontOptions (10.0f)));
             g.drawText (juce::MidiMessage::getMidiNoteName (m, true, true, 4),
-                        labelArea.removeFromBottom (14.0f),
-                        juce::Justification::centred);
+                        r.reduced (4.0f, 3.0f).removeFromBottom (12.0f),
+                        juce::Justification::bottomLeft);
         }
 
-        // Typing-keyboard letter painted ON the key (large, dark on
-        // white). Only shown when this note maps to a letter under the
-        // current centreNote shift.
+        // Typing-keyboard letter on the key.
         const auto letter = letterForNote (m);
         if (letter.isNotEmpty())
         {
-            g.setColour (active ? juce::Colour (0xff203a50)
-                                 : juce::Colour (0xff404048));
+            g.setColour (active ? juce::Colour (0xff10283e) : juce::Colour (0xff707078));
             g.setFont (juce::Font (juce::FontOptions (13.0f, juce::Font::bold)));
-            // Above the C-label if present, otherwise centred-bottom.
-            auto letterArea = labelArea.removeFromBottom (18.0f);
-            g.drawText (letter, letterArea, juce::Justification::centred);
+            g.drawText (letter, labelArea.removeFromBottom (32.0f).removeFromTop (18.0f),
+                        juce::Justification::centred);
         }
         x += wkW;
     }
 
-    // Second pass: black keys overlaid + their letter labels.
+    // Second pass: black keys — beveled 3D look (lighter top cap, near-
+    // black body, rounded toe), overlaid on the white keys.
     x = kb.getX();
     for (int m = firstNote; m <= lastNote; ++m)
     {
@@ -430,22 +456,33 @@ void VirtualKeyboardComponent::paint (juce::Graphics& g)
         {
             const float bx = x - bkW * 0.5f;
             juce::Rectangle<float> r (bx, kb.getY(), bkW, bkH);
-
             const bool active = isHeld[(size_t) m];
-            g.setColour (active ? juce::Colour (0xff5fa0d0).darker (0.20f)
-                                : juce::Colour (0xff181820));
-            g.fillRoundedRectangle (r, 2.0f);
-            g.setColour (juce::Colour (0xff000000));
-            g.drawRoundedRectangle (r, 2.0f, 0.6f);
+            auto path = bottomRoundedKey (r, 3.0f);
 
-            // Letter on black key — white text, bold, near the bottom
-            // so it doesn't compete with the white keys' visual mass
-            // above.
+            juce::ColourGradient grad (
+                active ? kActiveLo          : juce::Colour (0xff45454d), r.getX(), r.getY(),
+                active ? kActive.darker (0.3f) : juce::Colour (0xff0b0b0f), r.getX(), r.getBottom(),
+                false);
+            grad.addColour (0.10, active ? kActive : juce::Colour (0xff2a2a30));
+            g.setGradientFill (grad);
+            g.fillPath (path);
+
+            // Glossy top cap — a slightly inset lighter rectangle near
+            // the top edge gives the raised, beveled appearance.
+            auto cap = r.reduced (r.getWidth() * 0.18f, 0.0f)
+                          .withHeight (r.getHeight() * 0.16f)
+                          .translated (0.0f, r.getHeight() * 0.06f);
+            g.setColour ((active ? juce::Colour (0xff8fc0f0)
+                                  : juce::Colour (0xff6a6a74)).withAlpha (0.55f));
+            g.fillRoundedRectangle (cap, 1.5f);
+
+            g.setColour (juce::Colour (0xff000000));
+            g.strokePath (path, juce::PathStrokeType (0.8f));
+
             const auto letter = letterForNote (m);
             if (letter.isNotEmpty())
             {
-                g.setColour (active ? juce::Colour (0xffe0e0e8)
-                                     : juce::Colour (0xffb0b0b8));
+                g.setColour (active ? juce::Colour (0xffeaf2fc) : juce::Colour (0xffc0c0c8));
                 g.setFont (juce::Font (juce::FontOptions (11.0f, juce::Font::bold)));
                 g.drawText (letter, r.removeFromBottom (16.0f),
                              juce::Justification::centred);
