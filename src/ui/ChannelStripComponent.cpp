@@ -2002,6 +2002,22 @@ void ChannelStripComponent::openPluginEditor()
         juce::String shellErr;
         if (pluginSlot.ensureShellInstanceForEditor (shellErr))
         {
+            // First-open state sync (3c-3b). Pulls the child's live
+            // AudioProcessor state and applies it to the shell BEFORE
+            // we hand the editor off to the modal. Without this the
+            // shell editor would show its default state, not the
+            // running DSP's state — confusing UX after a session
+            // reload + immediate editor open. Failure logs + continues;
+            // the user can still drive the mirror by moving knobs.
+            juce::String syncErr;
+            if (! pluginSlot.syncShellStateFromChild (syncErr))
+            {
+                std::fprintf (stderr,
+                              "[Dusk Studio/ChannelStripComponent] shell state-sync "
+                              "failed: %s — shell editor opens with defaults.\n",
+                              syncErr.toRawUTF8());
+            }
+
             if (auto* shellEditor = pluginSlot.createShellEditor())
             {
                 embed = duskstudio::platform::createInProcessEditorHost (shellEditor);

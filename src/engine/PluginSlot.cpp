@@ -1500,7 +1500,98 @@ bool PluginSlot::ensureShellInstanceForEditor (juce::String& err)
         fresh->prepareToPlay (preparedSampleRate, preparedBlockSize);
 
     shellInstanceForEditor = std::move (fresh);
+
+    // 3c-3b: install the shell-side parameter listener + register the
+    // ParamChangedFromChild sink on ownedRemote. Both sides of the
+    // mirror are wired before the editor opens — the next user knob
+    // move on the shell sends SetParam to the child, and any child-
+    // initiated change (host automation, preset reload) arrives back
+    // via the sink. applyingFromMirror breaks the listener loop.
+    shellParamListener = std::make_unique<ShellParamListener> (*this);
+    for (auto* param : shellInstanceForEditor->getParameters())
+        if (param != nullptr) param->addListener (shellParamListener.get());
+
+    if (ownedRemote != nullptr)
+    {
+        ownedRemote->setParamChangedSink (
+            [this] (int paramIndex, float value01, std::uint32_t /*seq*/)
+            {
+                // Already on the message thread — RemotePluginConnection's
+                // reader marshalled here via juce::MessageManager::callAsync.
+                applyShellParamFromChild (paramIndex, value01);
+            });
+    }
+
     err.clear();
+    return true;
+}
+
+void PluginSlot::ShellParamListener::parameterValueChanged (int paramIndex, float newValue)
+{
+    // Loop breaker: if we're inside applyShellParamFromChild /
+    // syncShellStateFromChild, skip the outbound echo. Acquire pairs
+    // with the release store the mirror-apply path does.
+    if (slot.applyingFromMirror.load (std::memory_order_acquire)) return;
+    if (slot.ownedRemote == nullptr) return;
+    // Fire-and-forget over the existing 3c-3a control channel. Returns
+    // false only on socket peer-close (child died); in that case the
+    // OOP slot has already been auto-bypassed by the reaper, so the
+    // dropped write is harmless.
+    (void) slot.ownedRemote->setRemoteParam (paramIndex, newValue);
+}
+
+void PluginSlot::applyShellParamFromChild (int paramIndex, float value01) noexcept
+{
+    JUCE_ASSERT_MESSAGE_THREAD;
+    if (shellInstanceForEditor == nullptr) return;
+    const auto& params = shellInstanceForEditor->getParameters();
+    if (paramIndex < 0 || paramIndex >= params.size()) return;
+    auto* param = params[paramIndex];
+    if (param == nullptr) return;
+
+    applyingFromMirror.store (true, std::memory_order_release);
+    param->setValueNotifyingHost (juce::jlimit (0.0f, 1.0f, value01));
+    applyingFromMirror.store (false, std::memory_order_release);
+}
+
+bool PluginSlot::syncShellStateFromChild (juce::String& err)
+{
+    JUCE_ASSERT_MESSAGE_THREAD;
+    err.clear();
+
+    if (shellInstanceForEditor == nullptr)
+    {
+        err = "shell instance not loaded";
+        return false;
+    }
+    if (ownedRemote == nullptr)
+    {
+        // No OOP connection (e.g. in-process fallback). Nothing to
+        // sync; shell state is authoritative.
+        return true;
+    }
+
+    std::vector<std::uint8_t> blob;
+    std::string serr;
+    if (! ownedRemote->getState (blob, serr))
+    {
+        err = juce::String ("child getState failed: ") + serr;
+        return false;
+    }
+    if (blob.empty())
+    {
+        // Child has no state to share (just-loaded plugin at defaults).
+        // Shell already at defaults too. Nothing to do.
+        return true;
+    }
+
+    // Apply with the loop breaker engaged. setStateInformation may fire
+    // dozens of parameter listeners synchronously; echoing every one
+    // back to the child would saturate the control socket + briefly
+    // pin the child's setValueNotifyingHost on the JUCE message thread.
+    applyingFromMirror.store (true, std::memory_order_release);
+    shellInstanceForEditor->setStateInformation (blob.data(), (int) blob.size());
+    applyingFromMirror.store (false, std::memory_order_release);
     return true;
 }
 
@@ -1542,6 +1633,23 @@ void PluginSlot::releaseShellInstance()
                       "wrapper still outstanding; deferring shell teardown.\n");
         return;
     }
+
+    // Detach the parameter listener + clear the ParamChangedFromChild
+    // sink BEFORE destroying the AudioProcessor. JUCE's listener list
+    // lives inside each parameter; destroying the processor while a
+    // listener is registered dangles the parameter's listener-list
+    // entry. Clearing the sink stops any in-flight callAsync lambda
+    // from invoking the listener on a freed processor — the lambda
+    // re-reads paramChangedSink_ under controlMutex at dispatch time,
+    // so this clear races safely with a queued push.
+    if (shellParamListener != nullptr)
+    {
+        for (auto* param : shellInstanceForEditor->getParameters())
+            if (param != nullptr) param->removeListener (shellParamListener.get());
+        shellParamListener.reset();
+    }
+    if (ownedRemote != nullptr)
+        ownedRemote->setParamChangedSink ({});
 
     shellInstanceForEditor->releaseResources();
     shellInstanceForEditor.reset();

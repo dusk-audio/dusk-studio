@@ -192,6 +192,10 @@ int runIpcStub (int argc, const char* const* argv) noexcept
 
 // --- Phase 2 host mode ---------------------------------------------------
 
+#if JUCE_MAC
+class ChildParamListener;  // forward — defined below HostState
+#endif
+
 struct HostState
 {
     ipcp::SharedMemory shm;
@@ -211,6 +215,24 @@ struct HostState
 
     std::atomic<bool> shouldQuit { false };
 
+   #if JUCE_MAC
+    // Mirror state (3c-3b, Mac-only — Linux/Windows children don't
+    // have a parent-side shell editor to mirror to, so installing
+    // listeners + pushing back over the socket would be pure waste).
+    //
+    // applyingFromMirror: set across handleSetParamAsync's
+    // setValueNotifyingHost so the child-side listener doesn't echo
+    // the parent's own update back as a ParamChangedFromChild push.
+    //
+    // outboundParamSeq: monotonic counter stamped into every push.
+    // Parent doesn't yet use it (loop-breaker is the flag); allocated
+    // for future inflight-tracking. Increment + read under no lock —
+    // listener fires sequentially per plugin contract.
+    std::atomic<bool>         applyingFromMirror { false };
+    std::atomic<std::uint32_t> outboundParamSeq  { 0 };
+    std::unique_ptr<ChildParamListener> paramListener;
+   #endif
+
     // Editor embedding (Phase 4). The plugin's editor lives in this
     // process; the parent either embeds our native window (Linux XEmbed)
     // or lets it float as a native-titlebar toplevel (Win/Mac — see
@@ -222,6 +244,34 @@ struct HostState
     std::unique_ptr<juce::DocumentWindow>     editorWindow;
     juce::AudioProcessorEditor*               editor { nullptr };
 };
+
+#if JUCE_MAC
+// Listener installed on every parameter of the loaded DSP instance.
+// Fires on whichever thread the plugin chose to call setValueNotifying
+// Host on — host automation lanes (audio worker), preset-load
+// callbacks (message thread), MIDI-mapped controllers (sockThread via
+// our SetParam → callAsync path). pushParamChangedFromChild takes
+// channelWriteMutex internally so concurrent writes can't byte-
+// interleave with the sockThread's reply traffic.
+//
+// applyingFromMirror is checked first so a parent → child SetParam
+// doesn't echo back as a push (handleSetParamAsync sets the flag
+// across its setValueNotifyingHost call).
+class ChildParamListener final : public juce::AudioProcessorParameter::Listener
+{
+public:
+    explicit ChildParamListener (HostState& h) noexcept : host (h) {}
+    void parameterValueChanged (int paramIndex, float newValue) override
+    {
+        if (host.applyingFromMirror.load (std::memory_order_acquire)) return;
+        const auto seq = host.outboundParamSeq.fetch_add (1, std::memory_order_acq_rel) + 1;
+        (void) pushParamChangedFromChild (host.channel, paramIndex, newValue, seq);
+    }
+    void parameterGestureChanged (int, bool) override {}
+private:
+    HostState& host;
+};
+#endif
 
 bool parsePluginDescriptionXml (const juce::String& xml,
                                   juce::PluginDescription& out)
@@ -311,6 +361,21 @@ std::uint32_t handleLoadPlugin (HostState& host,
     host.currentBlockSize  = hdr.blockSize;
     host.currentInstance.store (host.ownedInstance.get(),
                                   std::memory_order_release);
+
+   #if JUCE_MAC
+    // Mac-only: install the mirror listener on every parameter so any
+    // plugin-initiated change (host automation, preset reload, MIDI
+    // CC routed to this instance, modulator output) is pushed back
+    // to the parent as ParamChangedFromChild. The parent's shell
+    // editor reflects it via PluginSlot::applyShellParamFromChild.
+    // applyingFromMirror gates the listener so SetParam echoes from
+    // the parent don't loop back.
+    if (host.paramListener == nullptr)
+        host.paramListener = std::make_unique<ChildParamListener> (host);
+    for (auto* p : host.ownedInstance->getParameters())
+        if (p != nullptr) p->addListener (host.paramListener.get());
+   #endif
+
     return 0;
 }
 
@@ -336,6 +401,16 @@ std::uint32_t handleRelease (HostState& host)
     {
         if (host.ownedInstance != nullptr)
         {
+           #if JUCE_MAC
+            // Detach the mirror listener BEFORE releaseResources +
+            // instance reset. JUCE stores listeners on the parameter
+            // objects (which live inside the AudioProcessor); not
+            // removing here would dangle the listener pointer if
+            // anything else still referenced the parameter list.
+            if (host.paramListener != nullptr)
+                for (auto* p : host.ownedInstance->getParameters())
+                    if (p != nullptr) p->removeListener (host.paramListener.get());
+           #endif
             host.ownedInstance->releaseResources();
             host.ownedInstance.reset();
         }
@@ -501,7 +576,19 @@ void handleSetParamAsync (HostState& host,
         const auto& params = instance->getParameters();
         if ((int) p.paramIndex >= params.size()) return;
         if (auto* param = params[(int) p.paramIndex])
+        {
+           #if JUCE_MAC
+            // Loop breaker: prevent the Mac child-side listener from
+            // echoing this change back to the parent as a
+            // ParamChangedFromChild push. Set / clear bracket the
+            // synchronous listener-fire chain inside JUCE.
+            host.applyingFromMirror.store (true, std::memory_order_release);
+           #endif
             param->setValueNotifyingHost (std::min (1.0f, std::max (0.0f, p.value)));
+           #if JUCE_MAC
+            host.applyingFromMirror.store (false, std::memory_order_release);
+           #endif
+        }
     });
 }
 

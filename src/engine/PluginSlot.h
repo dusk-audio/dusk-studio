@@ -184,12 +184,24 @@ public:
     // refuse a second concurrent editor + defer releaseShellInstance
     // until the wrapper destructs.
     //
-    // All three methods: message thread only. AudioProcessor lifecycle
+    // All five methods: message thread only. AudioProcessor lifecycle
     // is not RT-safe.
     bool ensureShellInstanceForEditor (juce::String& err);
     juce::AudioProcessorEditor* createShellEditor();
     void notifyShellEditorWrapper (juce::Component* wrapper) noexcept;
     void releaseShellInstance();
+
+    // 3c-3b first-open state sync. Fetches the child's current
+    // AudioProcessor state via the existing GetState IPC and applies
+    // it to the shell instance via setStateInformation BEFORE the
+    // editor wrapper is shown. Guarantees the parent-process editor
+    // reflects what the OOP DSP is actually running. Skips silently
+    // (returns true) if the child has no state to share (empty blob).
+    //
+    // applyingFromMirror is held for the duration of setState
+    // Information so the shell parameter listener doesn't echo every
+    // freshly-applied param back to the child as a SetParam.
+    bool syncShellStateFromChild (juce::String& err);
    #endif
 
 private:
@@ -294,6 +306,32 @@ private:
     // state without an explicit notification channel.
     std::unique_ptr<juce::AudioPluginInstance>    shellInstanceForEditor;
     juce::Component::SafePointer<juce::Component> outstandingShellWrapper;
+
+    // Loop breaker: set while a remote-originated change is being
+    // applied to the shell instance. The shell parameter listener
+    // checks this on entry and skips its outbound setRemoteParam echo
+    // when set. Atomic because the listener can fire on whichever
+    // thread JUCE pumps it; the mirror-apply path is message-thread,
+    // so a release store on entry pairs with the listener's acquire
+    // load.
+    std::atomic<bool> applyingFromMirror { false };
+
+    class ShellParamListener final : public juce::AudioProcessorParameter::Listener
+    {
+    public:
+        explicit ShellParamListener (PluginSlot& s) noexcept : slot (s) {}
+        void parameterValueChanged (int paramIndex, float newValue) override;
+        void parameterGestureChanged (int, bool) override {}
+    private:
+        PluginSlot& slot;
+    };
+    std::unique_ptr<ShellParamListener> shellParamListener;
+
+    // Called by the ParamChangedSink the parent registered on
+    // ownedRemote — runs on the message thread (callAsync marshalled).
+    // Sets applyingFromMirror across the setValueNotifyingHost call so
+    // the shell listener doesn't bounce the change back.
+    void applyShellParamFromChild (int paramIndex, float value01) noexcept;
    #endif
 
     // SPSC param-write queue. Producer = audio thread (setParamNormalised);
