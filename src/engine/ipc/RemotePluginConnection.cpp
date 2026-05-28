@@ -519,8 +519,10 @@ bool RemotePluginConnection::setRemoteParam (int paramIndex, float value01) noex
 
 void RemotePluginConnection::setParamChangedSink (ParamChangedSink sink)
 {
-    std::lock_guard<std::mutex> lk (controlMutex);
-    paramChangedSink_ = std::move (sink);
+    // Mutate the shared SinkState under its own mutex (independent of
+    // controlMutex — that one guards the reply-correlation queue only).
+    std::lock_guard<std::mutex> lk (sinkState_->mutex);
+    sinkState_->sink = std::move (sink);
 }
 
 // --- Reader-thread infrastructure ---------------------------------------
@@ -573,19 +575,27 @@ void RemotePluginConnection::readerLoop()
             // Async push from child. Marshal to the JUCE message thread
             // via callAsync — never invoke the sink directly here (we're
             // on the reader thread, sink callers may touch UI / JUCE
-            // listener state). The sink itself is read inside the lambda
-            // under controlMutex so a setParamChangedSink swap between
-            // read and dispatch is honoured.
+            // listener state).
+            //
+            // Lifetime: capture the SinkState shared_ptr BY VALUE. The
+            // lambda no longer references `this`, so if the parent's
+            // RemotePluginConnection is destroyed before this lambda
+            // dispatches (e.g. PluginSlot::unload tears down the
+            // connection between read and message-loop tick), the
+            // shared_ptr keeps the SinkState alive until the lambda
+            // runs + the last reference drops. No UAF on controlMutex
+            // or paramChangedSink_.
             if (payload.size() == sizeof (ParamChangedPayload))
             {
                 ParamChangedPayload p {};
                 std::memcpy (&p, payload.data(), sizeof (p));
-                juce::MessageManager::callAsync ([this, p]
+                auto state = sinkState_;
+                juce::MessageManager::callAsync ([state, p]
                 {
                     ParamChangedSink localSink;
                     {
-                        std::lock_guard<std::mutex> lk (controlMutex);
-                        localSink = paramChangedSink_;
+                        std::lock_guard<std::mutex> lk (state->mutex);
+                        localSink = state->sink;
                     }
                     if (localSink)
                         localSink ((int) p.paramIndex, p.value, p.sequenceNumber);

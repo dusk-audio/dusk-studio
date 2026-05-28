@@ -269,38 +269,54 @@ struct HostState
 class ChildParamListener final : public juce::AudioProcessorParameter::Listener
 {
 public:
-    explicit ChildParamListener (HostState& h, int numParams) noexcept
+    explicit ChildParamListener (HostState& h, int numParams)
         : host (h),
-          lastSentValue ((std::size_t) juce::jmax (0, numParams),
-                          std::numeric_limits<float>::lowest()),
-          lastSentTime  ((std::size_t) juce::jmax (0, numParams),
-                          std::chrono::steady_clock::time_point{})
-    {}
+          lastSentValue ((std::size_t) juce::jmax (0, numParams)),
+          lastSentTimeNs ((std::size_t) juce::jmax (0, numParams))
+    {
+        // Seed both vectors to "never sent" sentinels. atomic<float>
+        // has no value-init for non-trivial init, hence the explicit
+        // store loop.
+        for (auto& v : lastSentValue)  v.store (std::numeric_limits<float>::lowest(),
+                                                  std::memory_order_relaxed);
+        for (auto& t : lastSentTimeNs) t.store (0, std::memory_order_relaxed);
+    }
 
     void parameterValueChanged (int paramIndex, float newValue) override
     {
         if (host.applyingFromMirror.load (std::memory_order_acquire)) return;
         if (paramIndex < 0 || (std::size_t) paramIndex >= lastSentValue.size()) return;
 
-        // Both gates must trip simultaneously to drop the frame:
-        //   • Value moved less than kMinDelta (deduplication of the
-        //     "host re-asserts the same value" automation pattern).
-        //   • Less than kMinInterval since the prior push for THIS
-        //     param (coalesces an LFO sweep into ~200 Hz updates).
-        // After kMinInterval, even a tiny delta gets through so the
-        // parent's shell editor settles to truth.
+        // Per-parameter dedup state is std::atomic<...> so that a
+        // plugin firing parameterValueChanged from multiple threads
+        // simultaneously (rare but real for sloppy hosts and
+        // modulation matrices that touch the same param from worker
+        // + message thread) does not race-tear lastSentValue /
+        // lastSentTimeNs. ThreadSanitizer would flag the previous
+        // non-atomic shape; relaxed ordering is sufficient because
+        // each slot tracks its own state — no cross-param invariant
+        // depends on these reads/writes happening in any particular
+        // order.
         constexpr float kMinDelta = 1.0e-4f;
-        constexpr auto  kMinInterval = std::chrono::milliseconds (5);
+        constexpr std::int64_t kMinIntervalNs =
+            std::chrono::duration_cast<std::chrono::nanoseconds> (
+                std::chrono::milliseconds (5)).count();
 
-        const auto now = std::chrono::steady_clock::now();
-        const auto& lastT = lastSentTime [(std::size_t) paramIndex];
-        const float delta = std::fabs (newValue - lastSentValue[(std::size_t) paramIndex]);
-        const bool tooSoon = (now - lastT) < kMinInterval;
+        const auto nowNs = std::chrono::steady_clock::now()
+                              .time_since_epoch().count();
+        const auto lastNs = lastSentTimeNs[(std::size_t) paramIndex]
+                                  .load (std::memory_order_relaxed);
+        const float lastV = lastSentValue[(std::size_t) paramIndex]
+                                  .load (std::memory_order_relaxed);
+        const float delta = std::fabs (newValue - lastV);
+        const bool tooSoon = (nowNs - lastNs) < kMinIntervalNs;
 
         if (delta < kMinDelta && tooSoon) return;
 
-        lastSentValue[(std::size_t) paramIndex] = newValue;
-        lastSentTime [(std::size_t) paramIndex] = now;
+        lastSentValue[(std::size_t) paramIndex]
+            .store (newValue, std::memory_order_relaxed);
+        lastSentTimeNs[(std::size_t) paramIndex]
+            .store (nowNs, std::memory_order_relaxed);
 
         const auto seq = host.outboundParamSeq.fetch_add (1, std::memory_order_acq_rel) + 1;
         (void) pushParamChangedFromChild (host.channel, paramIndex, newValue, seq);
@@ -309,8 +325,8 @@ public:
 
 private:
     HostState& host;
-    std::vector<float>                                  lastSentValue;
-    std::vector<std::chrono::steady_clock::time_point>  lastSentTime;
+    std::vector<std::atomic<float>>        lastSentValue;
+    std::vector<std::atomic<std::int64_t>> lastSentTimeNs;
 };
 #endif
 

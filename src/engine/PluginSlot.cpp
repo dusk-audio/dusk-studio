@@ -128,12 +128,45 @@ PluginSlot::~PluginSlot()
    #if JUCE_MAC && DUSKSTUDIO_HAS_OOP_PLUGINS
     // Release the Mac shell instance before tearing down the OOP child.
     // releaseShellInstance refuses if a wrapper is still outstanding;
-    // we issue a stderr line + skip the release in that case rather than
-    // destroying the AudioProcessor under a live editor (would dangle
-    // the editor's processor reference and crash on the next event).
-    // The wrapper itself is owned upstream (by ChannelStripComponent's
-    // pluginEditorModal); its dtor runs when that owner releases it.
+    // when that happens we cannot let the shellInstanceForEditor unique
+    // _ptr's member dtor run at the end of ~PluginSlot — that would
+    // destroy the AudioProcessor while the wrapper's editor still
+    // holds a non-owning reference to it, dangling the editor's
+    // processor pointer on the next AppKit event.
+    //
+    // Detect refusal by checking whether shellInstanceForEditor is
+    // still non-null after the call. In that case detach the listener
+    // (so the dangling processor isn't dereferenced from a fire-on-
+    // shutdown listener callback) and intentionally LEAK the
+    // AudioProcessor via .release(). The wrapper continues to hold a
+    // reference to a leaked-but-still-mapped processor; the OS reclaims
+    // its memory at process exit. Acceptable in the dtor path — the
+    // alternative is a UAF.
     releaseShellInstance();
+    if (shellInstanceForEditor != nullptr)
+    {
+        std::fprintf (stderr,
+                      "[Dusk Studio/PluginSlot] ~PluginSlot: shell wrapper still "
+                      "outstanding; detaching listener + leaking shell "
+                      "AudioProcessor to avoid dangling its editor's processor "
+                      "pointer.\n");
+        if (shellParamListener != nullptr)
+        {
+            for (auto* param : shellInstanceForEditor->getParameters())
+                if (param != nullptr) param->removeListener (shellParamListener.get());
+            shellParamListener.reset();
+        }
+        // Critical: the sink lambda captures `this` (PluginSlot). After
+        // this dtor returns, that lambda would UAF on the dead slot.
+        // Clear the sink so any pending callAsync queued by the
+        // RemotePluginConnection reader dispatches with an empty local
+        // sink and no-ops. The shared SinkState keeps the cleared
+        // function alive for any in-flight lambda; PluginSlot itself
+        // is safely no longer referenced.
+        if (ownedRemote != nullptr)
+            ownedRemote->setParamChangedSink ({});
+        (void) shellInstanceForEditor.release();
+    }
    #endif
 
     // Audio thread should already be detached by the time this runs (the
@@ -431,6 +464,21 @@ bool PluginSlot::loadFromFile (const juce::File& pluginFile, juce::String& error
         return false;
     }
 
+    // Invalidate any audio-thread-queued ParamWrites still in the FIFO —
+    // their paramIndex targeted the now-deposed plugin. Release pairs
+    // with the audio-thread acquire load in setParamNormalised so the
+    // bump is observed before the next stamp.
+    currentLoadEpoch.fetch_add (1, std::memory_order_release);
+
+   #if JUCE_MAC && DUSKSTUDIO_HAS_OOP_PLUGINS
+    // Drop any cached shell instance from a prior plugin so the Mac
+    // shell-editor doesn't keep driving the new plugin's DSP with
+    // stale param indices. If a wrapper is still outstanding the
+    // releaseShellInstance refusal-log fires; ~PluginSlot handles the
+    // tail leak.
+    releaseShellInstance();
+   #endif
+
     // Park the audio thread first. Detach the current instance, then
     // rotate the prior plugin through the two-deep keep-alive ring so
     // its destructor is deferred by TWO swaps (see previousInstances
@@ -512,6 +560,21 @@ bool PluginSlot::loadFromDescription (const juce::PluginDescription& desc,
         errorMessage = "PluginSlot has no PluginManager bound - call setManager() first";
         return false;
     }
+
+    // Bump first so any audio-thread setParamNormalised currently mid-
+    // push stamps the NEW epoch (a write racing the swap is for the
+    // freshly-loaded plugin; the drain compares epochs and applies it).
+    // A write that completed BEFORE the bump carries the OLD epoch
+    // and gets dropped at drain.
+    currentLoadEpoch.fetch_add (1, std::memory_order_release);
+
+   #if JUCE_MAC && DUSKSTUDIO_HAS_OOP_PLUGINS
+    // Drop any cached shell instance + listener so user knob moves on
+    // a still-visible editor don't fan out to the new OOP child's
+    // mismatched param table. Refusal-on-outstanding-wrapper is
+    // handled by ~PluginSlot's leak-tail.
+    releaseShellInstance();
+   #endif
 
     // Normalize the path - cached KnownPluginList descriptions on Linux
     // carry the inner-.so path which findFormatForDescription rejects.
@@ -672,6 +735,10 @@ bool PluginSlot::loadFromDescription (const juce::PluginDescription& desc,
 
 void PluginSlot::unload()
 {
+    // Invalidate any audio-thread-queued ParamWrites for the deposed
+    // plugin. Release pairs with the audio-thread acquire load.
+    currentLoadEpoch.fetch_add (1, std::memory_order_release);
+
    #if JUCE_MAC && DUSKSTUDIO_HAS_OOP_PLUGINS
     // Track-unload is an explicit user action and the modal-editor close
     // protocol (closePluginEditor → modal close → wrapper dtor) is
@@ -855,6 +922,15 @@ bool PluginSlot::restoreFromSavedState (const juce::String& descriptionXml,
         unload();
         return true;
     }
+
+    // Session-load is a plugin swap from the user's point of view —
+    // bump the epoch + invalidate Mac shell the same way as
+    // loadFromDescription.
+    currentLoadEpoch.fetch_add (1, std::memory_order_release);
+
+   #if JUCE_MAC && DUSKSTUDIO_HAS_OOP_PLUGINS
+    releaseShellInstance();
+   #endif
 
     // Stash the inputs up front. On any failure path below the slot
     // ends up empty, but these copies survive so getDescriptionXmlForSave
@@ -1401,8 +1477,11 @@ void PluginSlot::setParamNormalised (int paramIndex, float value01) noexcept
     }
 
     const int slot = (sz1 > 0) ? s1 : s2;
-    paramQueue[(size_t) slot] = ParamWrite { paramIndex,
-                                              juce::jlimit (0.0f, 1.0f, value01) };
+    paramQueue[(size_t) slot] = ParamWrite {
+        paramIndex,
+        juce::jlimit (0.0f, 1.0f, value01),
+        currentLoadEpoch.load (std::memory_order_acquire)
+    };
     paramFifo.finishedWrite (1);
 }
 
@@ -1467,13 +1546,36 @@ void PluginSlot::applyParamWriteOnMessageThread (const ParamWrite& pw) noexcept
     // exactly the regression Phase 2 is meant to prevent.
     JUCE_ASSERT_MESSAGE_THREAD;
 
-    auto* p = currentInstance.load (std::memory_order_acquire);
-    if (p == nullptr) return;
+    // Discard writes queued against a prior plugin load. The audio
+    // thread stamped pw.loadEpoch from currentLoadEpoch at push time;
+    // any unload / load / restore on the message thread fetch_add's
+    // currentLoadEpoch, so a stale entry's epoch lags behind and is
+    // dropped here. Without this, paramIndex 5 queued for plugin A
+    // would apply to plugin B's param 5 after a hot-swap.
+    if (pw.loadEpoch != currentLoadEpoch.load (std::memory_order_acquire))
+        return;
 
-    const auto& params = p->getParameters();
-    if (pw.paramIndex < 0 || pw.paramIndex >= params.size()) return;
-    if (auto* param = params[pw.paramIndex])
-        param->setValueNotifyingHost (pw.value);
+    if (pw.paramIndex < 0) return;
+
+    if (auto* p = currentInstance.load (std::memory_order_acquire))
+    {
+        const auto& params = p->getParameters();
+        if (pw.paramIndex >= params.size()) return;
+        if (auto* param = params[pw.paramIndex])
+            param->setValueNotifyingHost (pw.value);
+        return;
+    }
+
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS
+    // In-process instance not present — this slot is OOP-routed.
+    // Forward the write across the IPC control channel; the child
+    // applies it on its DSP-side instance via the existing
+    // SetParam → callAsync → setValueNotifyingHost path. Acquire
+    // load pairs with the message-thread release stores in
+    // loadFromDescription / unload that swap currentRemote.
+    if (auto* r = currentRemote.load (std::memory_order_acquire))
+        (void) r->setRemoteParam (pw.paramIndex, pw.value);
+   #endif
 }
 
 #if JUCE_MAC && DUSKSTUDIO_HAS_OOP_PLUGINS

@@ -241,11 +241,24 @@ private:
     ControlMsgHeader            replyHeader {};
     std::vector<std::uint8_t>   replyPayload;
 
-    // Stored under controlMutex so it's safe to swap from the message
-    // thread while the reader thread is mid-frame. The dispatched
-    // callAsync lambda re-reads the sink at invoke time so a sink
-    // cleared between read and dispatch correctly drops the push.
-    ParamChangedSink            paramChangedSink_;
+    // Sink state lives in a separately-allocated shared object so a
+    // callAsync lambda queued by the reader thread can outlive the
+    // RemotePluginConnection itself without deref'ing freed memory.
+    // The lambda captures sinkState_ BY VALUE (shared_ptr copy →
+    // atomic ref-count bump); the dispatch path therefore does not
+    // touch `this`. If the connection destroys before the lambda
+    // fires, sinkState_ keeps the SinkState alive until the last
+    // pending lambda runs + releases its copy.
+    //
+    // sinkState_ itself is initialised in-class + never reassigned,
+    // so reading it from the reader thread without sync is data-race-
+    // free (no concurrent writer).
+    struct SinkState
+    {
+        std::mutex       mutex;
+        ParamChangedSink sink;
+    };
+    std::shared_ptr<SinkState> sinkState_ { std::make_shared<SinkState>() };
 
     // Internal helpers (defined in the .cpp). startReaderThread is only
     // valid in --ipc-host mode; stop is idempotent.

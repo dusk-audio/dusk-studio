@@ -343,16 +343,27 @@ private:
     // gives ~85× headroom for chord-strike-plus-drag scenarios).
     //
     // ParamWrite is a trivial POD so the in-place store on the audio
-    // thread is a single 64-bit write + an atomic finishedWrite — no
-    // ctor, no dtor, no allocation.
+    // thread is a single 12-byte write + an atomic finishedWrite — no
+    // ctor, no dtor, no allocation. loadEpoch is stamped from
+    // currentLoadEpoch at push time so the drain can discard entries
+    // queued against a now-replaced plugin instance.
     struct ParamWrite
     {
-        int   paramIndex = -1;
-        float value      = 0.0f;
+        int           paramIndex = -1;
+        float         value      = 0.0f;
+        std::uint32_t loadEpoch  = 0;
     };
     static constexpr int kParamFifoCapacity = 256;
     juce::AbstractFifo                       paramFifo { kParamFifoCapacity };
     std::array<ParamWrite, kParamFifoCapacity> paramQueue {};
+
+    // Bumped on every load / unload / restore. Audio thread reads it
+    // when stamping a queued ParamWrite; message-thread drain discards
+    // any entry whose loadEpoch != currentLoadEpoch (stale, target
+    // plugin no longer matches the slot's current instance). Acquire
+    // ordering on the audio-thread read pairs with the release fetch_add
+    // performed by the message-thread mutators.
+    std::atomic<std::uint32_t> currentLoadEpoch { 0 };
 
     // Drains paramFifo on the message thread. Called by juce::Timer at
     // 30 Hz; cheap when empty (one atomic load + branch).
