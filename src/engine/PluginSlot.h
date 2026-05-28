@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_audio_processors/juce_audio_processors.h>
+#include <juce_events/juce_events.h>
 #include <array>
 #include <atomic>
 
@@ -19,11 +20,16 @@ class PluginManager;
 // Instance pointer is atomic; old instances are released on the message
 // thread after swap because the destructor isn't RT-safe. Audio thread
 // sees either nullptr (bypass) or a fully-prepared instance.
-class PluginSlot
+//
+// PluginSlot inherits juce::Timer so the audio-thread param-write path
+// (setParamNormalised → SPSC FIFO push) can be drained on the message
+// thread without ever blocking, allocating, or invoking JUCE parameter
+// setters from the render context. See timerCallback() + paramFifo.
+class PluginSlot : private juce::Timer
 {
 public:
-    PluginSlot() = default;
-    ~PluginSlot();
+    PluginSlot();
+    ~PluginSlot() override;
 
     // Pointer so the slot can sit inside default-constructed containers.
     // Must be set before any load.
@@ -131,6 +137,11 @@ public:
         return lastTouchedParamIndex.load (std::memory_order_relaxed);
     }
 
+    // Audio-thread entry. Lock-free push into the SPSC paramFifo; the
+    // actual JUCE parameter setter runs on the message thread inside
+    // timerCallback(). FIFO-full = silent drop (extremely rare; the
+    // 256-deep ring covers a full second of 30 Hz drains under steady-
+    // state knob-twiddle traffic).
     void setParamNormalised (int paramIndex, float value01) noexcept;
 
     // Session save/restore. Both NON-CONST: they atomically park
@@ -249,5 +260,35 @@ private:
     // macOS has no OOP impl yet but offline restore is cross-platform.
     juce::String offlineDescriptionXml;
     juce::String offlineStateBase64;
+
+    // SPSC param-write queue. Producer = audio thread (setParamNormalised);
+    // Consumer = message thread (timerCallback). Pre-sized at construction
+    // so no audio-thread allocation. Capacity must be a power of two for
+    // juce::AbstractFifo's bitwise wrap, AND comfortably above the burst
+    // size a user can generate by dragging a knob inside a single 30 Hz
+    // drain interval (33 ms × 100 Hz controller stream ≈ 3 events; 256
+    // gives ~85× headroom for chord-strike-plus-drag scenarios).
+    //
+    // ParamWrite is a trivial POD so the in-place store on the audio
+    // thread is a single 64-bit write + an atomic finishedWrite — no
+    // ctor, no dtor, no allocation.
+    struct ParamWrite
+    {
+        int   paramIndex = -1;
+        float value      = 0.0f;
+    };
+    static constexpr int kParamFifoCapacity = 256;
+    juce::AbstractFifo                       paramFifo { kParamFifoCapacity };
+    std::array<ParamWrite, kParamFifoCapacity> paramQueue {};
+
+    // Drains paramFifo on the message thread. Called by juce::Timer at
+    // 30 Hz; cheap when empty (one atomic load + branch).
+    void timerCallback() override;
+
+    // Message-thread-only. Applies one queued ParamWrite to the live
+    // plugin instance. JUCE_ASSERT_MESSAGE_THREAD enforces the contract
+    // so any future caller that tries to invoke this from the audio
+    // thread trips in debug + selftest builds.
+    void applyParamWriteOnMessageThread (const ParamWrite& pw) noexcept;
 };
 } // namespace duskstudio

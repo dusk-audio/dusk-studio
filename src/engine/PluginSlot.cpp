@@ -106,8 +106,25 @@ void logLoadedPlugin (const juce::AudioPluginInstance& instance)
 }
 } // namespace
 
+PluginSlot::PluginSlot()
+{
+    // Drain the param-write SPSC FIFO at 30 Hz on the message thread.
+    // The rate is the same the meter UI ticks at — fine-grained enough
+    // that an automated controller stream feels live, cheap enough that
+    // an idle slot pays one atomic-load + branch per tick. Started here
+    // (not lazily) so the queue is live from the moment the audio
+    // callback could push into it; the engine constructs every
+    // PluginSlot on the message thread with MessageManager already up.
+    startTimerHz (30);
+}
+
 PluginSlot::~PluginSlot()
 {
+    // Stop our own timer FIRST. juce::Timer's dtor also stopTimer's, but
+    // doing it explicitly here closes the window where a tick could fire
+    // mid-destruction and observe a half-torn currentInstance / ownedRemote.
+    stopTimer();
+
     // Audio thread should already be detached by the time this runs (the
     // owning ChannelStrip destructs after its AudioEngine has released the
     // device callback). Belt-and-suspenders: clear the atomic first so
@@ -1328,16 +1345,80 @@ void PluginSlot::processStereoBlock (float* L, float* R, int numSamples,
 
 void PluginSlot::setParamNormalised (int paramIndex, float value01) noexcept
 {
-    // Audio-thread entry. Read the current instance via acquire so we
-    // don't race the load/unload swap. setValue (not
-    // setValueNotifyingHost) avoids the host-notify path's listener
-    // calls from the audio thread - the plugin will pick up the new
-    // value on its next processBlock either way.
+    // Audio-thread entry. Lock-free SPSC push into paramFifo; the actual
+    // JUCE setValueNotifyingHost call runs on the message thread inside
+    // timerCallback().
+    //
+    // Why we DON'T call param->setValue here, even though the comment
+    // history said it was "safe enough": JUCE param setters can fire
+    // synchronous listener callbacks (parameter UI components, host
+    // automation listeners, the plugin's own internal listeners) and may
+    // acquire internal locks inside the plugin's parameter management
+    // code. Real plugins observed in the wild (Diva, Massive X, Spitfire
+    // BBC SO) take std::mutex / WaitableEvent inside their parameter-
+    // change paths. Calling setValue from the audio thread therefore
+    // violates the project-wide "no locks on the audio thread" rule
+    // (CLAUDE.md §"Audio thread rules") even when the underlying
+    // assignment looks atomic.
+    //
+    // Negative paramIndex = silent no-op; bounds against params.size()
+    // also runs on the message-thread drain to guard against a hot-swap
+    // shrinking the parameter list between push and apply.
+    if (paramIndex < 0) return;
+
+    int s1 = 0, sz1 = 0, s2 = 0, sz2 = 0;
+    paramFifo.prepareToWrite (1, s1, sz1, s2, sz2);
+    if (sz1 + sz2 == 0)
+    {
+        // FIFO full. Drop the write — protecting the audio thread from
+        // blocking is more important than a single missed param update,
+        // and the 30 Hz drain catches up within one tick once the queue
+        // pressure subsides. With 256 entries this branch is only
+        // reachable if the audio thread is producing > 7680 writes/s
+        // sustained (256 × 30 Hz), which no realistic MIDI controller
+        // can do.
+        return;
+    }
+
+    const int slot = (sz1 > 0) ? s1 : s2;
+    paramQueue[(size_t) slot] = ParamWrite { paramIndex,
+                                              juce::jlimit (0.0f, 1.0f, value01) };
+    paramFifo.finishedWrite (1);
+}
+
+void PluginSlot::timerCallback()
+{
+    // Message thread. Drain every pending ParamWrite into the live
+    // plugin instance. Bounded loop — caller (juce::Timer) marshals us
+    // here so JUCE_ASSERT_MESSAGE_THREAD in applyParamWriteOnMessageThread
+    // is satisfied by construction.
+    const int avail = paramFifo.getNumReady();
+    if (avail == 0) return;
+
+    int s1 = 0, sz1 = 0, s2 = 0, sz2 = 0;
+    paramFifo.prepareToRead (avail, s1, sz1, s2, sz2);
+    for (int i = 0; i < sz1; ++i)
+        applyParamWriteOnMessageThread (paramQueue[(size_t) (s1 + i)]);
+    for (int i = 0; i < sz2; ++i)
+        applyParamWriteOnMessageThread (paramQueue[(size_t) (s2 + i)]);
+    paramFifo.finishedRead (sz1 + sz2);
+}
+
+void PluginSlot::applyParamWriteOnMessageThread (const ParamWrite& pw) noexcept
+{
+    // This is the ONE place where a JUCE parameter setter is invoked.
+    // The assertion fires in any debug build (and therefore under
+    // DUSKSTUDIO_RUN_SELFTEST=1, which the test runner builds as Debug)
+    // if a future change ever routes the call from the audio thread —
+    // exactly the regression Phase 2 is meant to prevent.
+    JUCE_ASSERT_MESSAGE_THREAD;
+
     auto* p = currentInstance.load (std::memory_order_acquire);
     if (p == nullptr) return;
+
     const auto& params = p->getParameters();
-    if (paramIndex < 0 || paramIndex >= params.size()) return;
-    if (auto* param = params[paramIndex])
-        param->setValue (juce::jlimit (0.0f, 1.0f, value01));
+    if (pw.paramIndex < 0 || pw.paramIndex >= params.size()) return;
+    if (auto* param = params[pw.paramIndex])
+        param->setValueNotifyingHost (pw.value);
 }
 } // namespace duskstudio
