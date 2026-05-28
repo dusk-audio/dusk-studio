@@ -24,6 +24,16 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# MSVC C runtime: static (/MT) for the whole tree. Vendored sfizz forces
+# the static runtime on itself (cmake/SfizzConfig.cmake), so DuskStudio +
+# JUCE must match or the link fails with LNK2038 "RuntimeLibrary mismatch
+# (MT_StaticRelease vs MD_DynamicRelease)". Static also makes the MSI
+# self-contained — no vc_redist dependency on the target machine. Relies
+# on CMP0091=NEW (guaranteed by cmake_minimum_required 3.22).
+if(MSVC)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
 # Emit compile_commands.json so clangd / editor tooling resolves JUCE +
 # donor include paths. Symlink it to the repo root once (see
 # scripts/dev.sh) and clangd picks it up automatically.
