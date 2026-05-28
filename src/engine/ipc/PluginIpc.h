@@ -59,10 +59,41 @@ enum class OpCode : std::uint32_t
     Release          = 4,   // payload: empty.
     GetState         = 5,   // payload: empty. reply: state size; bytes are at kStateOffset.
     SetState         = 6,   // payload: state size; bytes at kStateOffset.
-    SetParam         = 7,   // payload: paramIndex (uint32) + value (float).
+    SetParam         = 7,   // payload: SetParamPayload. ONE-SHOT — child sends NO reply.
+                            //          The reader loop must not enqueue a reply slot.
     ShowEditor       = 8,   // Phase 3.
     HideEditor       = 9,   // Phase 3.
     ResizeEditor     = 10,  // Phase 3.
+
+    // Async push from child to parent (3c-3 mac shell-editor mirror).
+    // Sent UNSOLICITED by the child whenever a parameter on its DSP-side
+    // instance changes (host automation, MIDI-mapped controller move,
+    // preset load). The parent's reader thread demuxes this opcode out
+    // of the sync reply path and dispatches the payload onto the parent's
+    // registered ParamChangedSink via juce::MessageManager::callAsync.
+    // ONE-SHOT — parent sends NO reply.
+    ParamChangedFromChild = 11,
+};
+
+// Wire payload for OpCode::SetParam (parent → child). Fixed 8 bytes today;
+// 3c-3b may extend with a sequence number once the loop-breaker mechanism
+// is chosen.
+struct SetParamPayload
+{
+    std::uint32_t paramIndex;
+    float         value;
+};
+
+// Wire payload for OpCode::ParamChangedFromChild (child → parent).
+// sequenceNumber is included so the parent-side loop-breaker (3c-3b) can
+// drop echo-back frames whose seq matches a SetParam the parent itself
+// originated. 3c-3a wires only the protocol; the parent's sink will
+// observe seq but not yet act on it.
+struct ParamChangedPayload
+{
+    std::uint32_t paramIndex;
+    float         value;
+    std::uint32_t sequenceNumber;
 };
 
 // Wire-record header. Followed on the wire by `payloadLen` bytes.

@@ -41,6 +41,7 @@
 #include <atomic>
 #include <chrono>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -54,6 +55,17 @@ namespace
 using namespace duskstudio::ipc;
 namespace ipcp = duskstudio::ipc::platform;
 
+// Single mutex guards every outbound write on the control socket so the
+// sockThread's sync-RPC replies cannot interleave with the async push
+// path (pushParamChangedFromChild — called from a JUCE parameter listener
+// that may fire on any thread, including the audio worker via the
+// plugin's own callbacks).
+std::mutex& channelWriteMutex()
+{
+    static std::mutex m;
+    return m;
+}
+
 bool sendControlReply (ipcp::NativeHandle& ch, std::uint32_t op,
                           std::uint32_t status, const void* payload,
                           std::uint32_t payloadLen) noexcept
@@ -63,9 +75,38 @@ bool sendControlReply (ipcp::NativeHandle& ch, std::uint32_t op,
     hdr.op         = op;
     hdr.status     = status;
     hdr.payloadLen = payloadLen;
+    std::lock_guard<std::mutex> lk (channelWriteMutex());
     if (! ipcp::writeExact (ch, &hdr, sizeof (hdr))) return false;
     if (payloadLen > 0 && ! ipcp::writeExact (ch, payload, payloadLen))
         return false;
+    return true;
+}
+
+// One-shot outbound push. Stubbed entry point — 3c-3b installs the
+// parameter listener on the child's DSP instance and calls this when
+// the plugin changes a value (host automation, MIDI-mapped controller,
+// preset reload). Wire format matches duskstudio::ipc::ParamChangedPayload.
+// Returns false on socket write failure (peer closed); 3c-3b will
+// surface this as a recoverable-by-relink condition.
+[[maybe_unused]] bool pushParamChangedFromChild (ipcp::NativeHandle& ch,
+                                                    int paramIndex, float value01,
+                                                    std::uint32_t sequenceNumber) noexcept
+{
+    if (paramIndex < 0) return false;
+    ParamChangedPayload p {};
+    p.paramIndex     = (std::uint32_t) paramIndex;
+    p.value          = std::min (1.0f, std::max (0.0f, value01));
+    p.sequenceNumber = sequenceNumber;
+
+    ControlMsgHeader hdr {};
+    hdr.totalLen   = (std::uint32_t) sizeof (hdr) + (std::uint32_t) sizeof (p);
+    hdr.op         = (std::uint32_t) OpCode::ParamChangedFromChild;
+    hdr.status     = 0;
+    hdr.payloadLen = (std::uint32_t) sizeof (p);
+
+    std::lock_guard<std::mutex> lk (channelWriteMutex());
+    if (! ipcp::writeExact (ch, &hdr, sizeof (hdr))) return false;
+    if (! ipcp::writeExact (ch, &p, sizeof (p)))    return false;
     return true;
 }
 
@@ -435,6 +476,35 @@ std::uint32_t handleResizeEditor (HostState& host,
     return 0;
 }
 
+// Inbound SetParam from parent (3c-3a). Marshals onto the JUCE message
+// thread via callAsync so setValueNotifyingHost runs where JUCE expects
+// (the same thread that owns the editor + listener machinery). We
+// intentionally do NOT take a MessageManagerLock on the sockThread —
+// blocking the sockThread until the message thread is free has caused
+// a teardown-time deadlock in prior phases (sockThread holds lock,
+// message thread tries to join sockThread during shutdown).
+//
+// One-shot: NO reply is written, matching the parent's setRemoteParam
+// fire-and-forget contract. SetParam frames are demuxed by opcode in
+// the sockThread switch below.
+void handleSetParamAsync (HostState& host,
+                            const std::vector<std::uint8_t>& payload)
+{
+    if (payload.size() != sizeof (SetParamPayload)) return;
+    SetParamPayload p {};
+    std::memcpy (&p, payload.data(), sizeof (p));
+
+    juce::MessageManager::callAsync ([&host, p]
+    {
+        auto* instance = host.currentInstance.load (std::memory_order_acquire);
+        if (instance == nullptr) return;
+        const auto& params = instance->getParameters();
+        if ((int) p.paramIndex >= params.size()) return;
+        if (auto* param = params[(int) p.paramIndex])
+            param->setValueNotifyingHost (std::min (1.0f, std::max (0.0f, p.value)));
+    });
+}
+
 void audioWorkerLoop (HostState& host) noexcept
 {
     juce::MidiBuffer midiScratch;
@@ -598,6 +668,15 @@ int runIpcHost (int argc, const char* const* argv) noexcept
             std::vector<std::uint8_t> reply;
             std::uint32_t status = 0;
 
+            // SetParam is one-shot per the protocol contract — no reply
+            // is written. Skip the switch + sendControlReply path
+            // entirely and continue to the next inbound frame.
+            if ((OpCode) hdr.op == OpCode::SetParam)
+            {
+                handleSetParamAsync (host, payload);
+                continue;
+            }
+
             switch ((OpCode) hdr.op)
             {
                 case OpCode::Ping:           break;
@@ -609,6 +688,11 @@ int runIpcHost (int argc, const char* const* argv) noexcept
                 case OpCode::ShowEditor:     status = handleShowEditor (host, reply); break;
                 case OpCode::HideEditor:     status = handleHideEditor (host); break;
                 case OpCode::ResizeEditor:   status = handleResizeEditor (host, payload); break;
+                case OpCode::SetParam:       continue;  // handled above
+                case OpCode::ParamChangedFromChild:
+                    // Push frames are child → parent only; receiving one
+                    // here means the parent shipped junk. Drop + continue.
+                    continue;
                 default:                     status = 99; break;
             }
 

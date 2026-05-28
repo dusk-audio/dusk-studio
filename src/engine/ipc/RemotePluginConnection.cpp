@@ -3,14 +3,19 @@
 #include "platform/IpcSync.h"
 
 #include <cerrno>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
+
+#include <juce_events/juce_events.h>
 
 namespace duskstudio::ipc
 {
 namespace
 {
 // Send a control request: [header][payload]. Returns true on success.
+// Caller (sendAndAwaitReply / setRemoteParam) holds controlMutex so
+// concurrent senders can't interleave bytes on the socket.
 bool sendControl (platform::NativeHandle& ch, OpCode op,
                     const void* payload, std::uint32_t payloadLen) noexcept
 {
@@ -21,18 +26,6 @@ bool sendControl (platform::NativeHandle& ch, OpCode op,
     hdr.payloadLen = payloadLen;
     if (! platform::writeExact (ch, &hdr, sizeof (hdr))) return false;
     if (payloadLen > 0 && ! platform::writeExact (ch, payload, payloadLen))
-        return false;
-    return true;
-}
-
-bool recvControl (platform::NativeHandle& ch,
-                    ControlMsgHeader& hdrOut,
-                    std::vector<std::uint8_t>& payloadOut) noexcept
-{
-    if (! platform::readExact (ch, &hdrOut, sizeof (hdrOut))) return false;
-    payloadOut.resize (hdrOut.payloadLen);
-    if (hdrOut.payloadLen > 0
-        && ! platform::readExact (ch, payloadOut.data(), hdrOut.payloadLen))
         return false;
     return true;
 }
@@ -94,6 +87,18 @@ bool RemotePluginConnection::connect (const std::string& hostExecutablePath,
         disconnect();
         return false;
     }
+    // Disable the kernel-level timeout now that the handshake is past.
+    // Sync RPCs use replyCv.wait_until for per-call timeouts; reader
+    // thread must be able to block indefinitely on an idle socket.
+    platform::setReadTimeout (controlChannel, 0);
+
+    // --- ipc-host only: start the demultiplexing reader thread -------
+    // The --ipc-stub child never writes a control frame after 'k', so
+    // a reader thread there would block forever on readExact. The
+    // self-test connects with extraArg=="--ipc-stub" and would
+    // otherwise leak a permanently-blocked thread per connection.
+    if (extraArg == "--ipc-host")
+        startReaderThread();
 
     return true;
 }
@@ -222,29 +227,69 @@ bool RemotePluginConnection::processBlockSync (const float* const* inChannels,
     return true;
 }
 
-bool RemotePluginConnection::ping (int timeoutMs, std::string& errorOut)
+bool RemotePluginConnection::sendAndAwaitReply (OpCode op,
+                                                  const void* payload,
+                                                  std::uint32_t payloadLen,
+                                                  ControlMsgHeader& hdrOut,
+                                                  std::vector<std::uint8_t>& replyOut,
+                                                  std::string& errorOut,
+                                                  int timeoutMs)
 {
     if (! platform::isValid (controlChannel)) { errorOut = "not connected"; return false; }
 
-    platform::setReadTimeout (controlChannel, timeoutMs);
+    std::unique_lock<std::mutex> lk (controlMutex);
 
-    if (! sendControl (controlChannel, OpCode::Ping, nullptr, 0))
+    if (readerExited.load (std::memory_order_acquire))
     {
-        errorOut = std::string ("Ping write failed: ") + std::strerror (errno);
+        errorOut = "reader thread has exited";
         return false;
     }
+
+    // Clear stale slot in case a prior call timed out without consuming
+    // its reply. If a late reply for that previous call lands AFTER we
+    // send, we'd misattribute — but: the message thread is single, so
+    // a timeout means the caller already returned and no other call
+    // can be in flight. Discarding the prior slot is correct.
+    replyReady   = false;
+    replyHeader  = {};
+    replyPayload.clear();
+
+    if (! sendControl (controlChannel, op, payload, payloadLen))
+    {
+        errorOut = std::string ("control send failed: ") + std::strerror (errno);
+        return false;
+    }
+
+    const auto deadline = std::chrono::steady_clock::now()
+                            + std::chrono::milliseconds (timeoutMs);
+    while (! replyReady && ! readerExited.load (std::memory_order_acquire))
+    {
+        if (replyCv.wait_until (lk, deadline) == std::cv_status::timeout)
+        {
+            errorOut = "reply timeout";
+            return false;
+        }
+    }
+
+    if (! replyReady)
+    {
+        errorOut = "reader thread exited before reply arrived";
+        return false;
+    }
+
+    hdrOut   = replyHeader;
+    replyOut = std::move (replyPayload);
+    replyReady = false;
+    return true;
+}
+
+bool RemotePluginConnection::ping (int timeoutMs, std::string& errorOut)
+{
     ControlMsgHeader hdr {};
-    std::vector<std::uint8_t> payload;
-    if (! recvControl (controlChannel, hdr, payload))
-    {
-        errorOut = std::string ("Ping read failed: ") + std::strerror (errno);
+    std::vector<std::uint8_t> reply;
+    if (! sendAndAwaitReply (OpCode::Ping, nullptr, 0, hdr, reply, errorOut, timeoutMs))
         return false;
-    }
-    if (hdr.status != 0)
-    {
-        errorOut = "Ping reply status != 0";
-        return false;
-    }
+    if (hdr.status != 0) { errorOut = "Ping reply status != 0"; return false; }
     return true;
 }
 
@@ -253,8 +298,6 @@ bool RemotePluginConnection::loadPlugin (const std::string& pluginDescriptionXml
                                           int& numInOut, int& numOutOut,
                                           int& latencyOut, std::string& errorOut)
 {
-    if (! platform::isValid (controlChannel)) { errorOut = "not connected"; return false; }
-
     PrepareToPlayPayload header {};
     header.sampleRate = sampleRate;
     header.blockSize  = (std::int32_t) blockSize;
@@ -266,22 +309,13 @@ bool RemotePluginConnection::loadPlugin (const std::string& pluginDescriptionXml
     std::memcpy (payload.data() + sizeof (header),
                   pluginDescriptionXml.data(), pluginDescriptionXml.size());
 
-    platform::setReadTimeout (controlChannel, 30000);
-
-    if (! sendControl (controlChannel, OpCode::LoadPlugin,
-                        payload.data(), (std::uint32_t) payload.size()))
-    {
-        errorOut = std::string ("LoadPlugin write failed: ") + std::strerror (errno);
-        return false;
-    }
-
     ControlMsgHeader hdr {};
     std::vector<std::uint8_t> reply;
-    if (! recvControl (controlChannel, hdr, reply))
-    {
-        errorOut = std::string ("LoadPlugin read failed: ") + std::strerror (errno);
+    if (! sendAndAwaitReply (OpCode::LoadPlugin,
+                              payload.data(), (std::uint32_t) payload.size(),
+                              hdr, reply, errorOut, 30000))
         return false;
-    }
+
     if (hdr.status != 0)
     {
         errorOut = reply.empty()
@@ -306,41 +340,25 @@ bool RemotePluginConnection::loadPlugin (const std::string& pluginDescriptionXml
 bool RemotePluginConnection::prepareToPlay (double sampleRate, int blockSize,
                                               std::string& errorOut)
 {
-    if (! platform::isValid (controlChannel)) { errorOut = "not connected"; return false; }
     PrepareToPlayPayload p {};
     p.sampleRate = sampleRate;
     p.blockSize  = (std::int32_t) blockSize;
-    if (! sendControl (controlChannel, OpCode::PrepareToPlay, &p, sizeof (p)))
-    {
-        errorOut = std::string ("PrepareToPlay write failed: ") + std::strerror (errno);
-        return false;
-    }
     ControlMsgHeader hdr {};
     std::vector<std::uint8_t> reply;
-    if (! recvControl (controlChannel, hdr, reply))
-    {
-        errorOut = std::string ("PrepareToPlay read failed: ") + std::strerror (errno);
+    if (! sendAndAwaitReply (OpCode::PrepareToPlay, &p, sizeof (p),
+                               hdr, reply, errorOut, 10000))
         return false;
-    }
     if (hdr.status != 0) { errorOut = "PrepareToPlay status != 0"; return false; }
     return true;
 }
 
 bool RemotePluginConnection::release (std::string& errorOut)
 {
-    if (! platform::isValid (controlChannel)) { errorOut = "not connected"; return false; }
-    if (! sendControl (controlChannel, OpCode::Release, nullptr, 0))
-    {
-        errorOut = std::string ("Release write failed: ") + std::strerror (errno);
-        return false;
-    }
     ControlMsgHeader hdr {};
     std::vector<std::uint8_t> reply;
-    if (! recvControl (controlChannel, hdr, reply))
-    {
-        errorOut = std::string ("Release read failed: ") + std::strerror (errno);
+    if (! sendAndAwaitReply (OpCode::Release, nullptr, 0,
+                               hdr, reply, errorOut, 5000))
         return false;
-    }
     if (hdr.status != 0) { errorOut = "Release status != 0"; return false; }
     return true;
 }
@@ -348,19 +366,11 @@ bool RemotePluginConnection::release (std::string& errorOut)
 bool RemotePluginConnection::getState (std::vector<std::uint8_t>& blobOut,
                                          std::string& errorOut)
 {
-    if (! platform::isValid (controlChannel)) { errorOut = "not connected"; return false; }
-    if (! sendControl (controlChannel, OpCode::GetState, nullptr, 0))
-    {
-        errorOut = std::string ("GetState write failed: ") + std::strerror (errno);
-        return false;
-    }
     ControlMsgHeader hdr {};
     std::vector<std::uint8_t> reply;
-    if (! recvControl (controlChannel, hdr, reply))
-    {
-        errorOut = std::string ("GetState read failed: ") + std::strerror (errno);
+    if (! sendAndAwaitReply (OpCode::GetState, nullptr, 0,
+                               hdr, reply, errorOut, 30000))
         return false;
-    }
     if (hdr.status != 0) { errorOut = "GetState status != 0"; return false; }
     if (reply.size() != sizeof (std::uint32_t))
     {
@@ -379,7 +389,6 @@ bool RemotePluginConnection::getState (std::vector<std::uint8_t>& blobOut,
 bool RemotePluginConnection::setState (const std::uint8_t* data, std::size_t size,
                                          std::string& errorOut)
 {
-    if (! platform::isValid (controlChannel)) { errorOut = "not connected"; return false; }
     if (size > kStateBytes)
     {
         errorOut = "state blob exceeds staging area";
@@ -387,18 +396,11 @@ bool RemotePluginConnection::setState (const std::uint8_t* data, std::size_t siz
     }
     std::memcpy (static_cast<char*> (shm.data()) + kStateOffset, data, size);
     const std::uint32_t sz = (std::uint32_t) size;
-    if (! sendControl (controlChannel, OpCode::SetState, &sz, sizeof (sz)))
-    {
-        errorOut = std::string ("SetState write failed: ") + std::strerror (errno);
-        return false;
-    }
     ControlMsgHeader hdr {};
     std::vector<std::uint8_t> reply;
-    if (! recvControl (controlChannel, hdr, reply))
-    {
-        errorOut = std::string ("SetState read failed: ") + std::strerror (errno);
+    if (! sendAndAwaitReply (OpCode::SetState, &sz, sizeof (sz),
+                               hdr, reply, errorOut, 30000))
         return false;
-    }
     if (hdr.status != 0) { errorOut = "SetState status != 0"; return false; }
     return true;
 }
@@ -408,19 +410,11 @@ bool RemotePluginConnection::showEditor (std::uint64_t& windowIdOut,
                                             std::string& errorOut)
 {
     windowIdOut = 0; widthOut = 0; heightOut = 0;
-    if (! platform::isValid (controlChannel)) { errorOut = "not connected"; return false; }
-    if (! sendControl (controlChannel, OpCode::ShowEditor, nullptr, 0))
-    {
-        errorOut = std::string ("ShowEditor write failed: ") + std::strerror (errno);
-        return false;
-    }
     ControlMsgHeader hdr {};
     std::vector<std::uint8_t> reply;
-    if (! recvControl (controlChannel, hdr, reply))
-    {
-        errorOut = std::string ("ShowEditor read failed: ") + std::strerror (errno);
+    if (! sendAndAwaitReply (OpCode::ShowEditor, nullptr, 0,
+                               hdr, reply, errorOut, 10000))
         return false;
-    }
     if (hdr.status != 0) { errorOut = "ShowEditor status != 0"; return false; }
     if (reply.size() != sizeof (ShowEditorReply))
     {
@@ -437,43 +431,142 @@ bool RemotePluginConnection::showEditor (std::uint64_t& windowIdOut,
 
 bool RemotePluginConnection::hideEditor (std::string& errorOut)
 {
-    if (! platform::isValid (controlChannel)) { errorOut = "not connected"; return false; }
-    if (! sendControl (controlChannel, OpCode::HideEditor, nullptr, 0))
-    {
-        errorOut = std::string ("HideEditor write failed: ") + std::strerror (errno);
-        return false;
-    }
     ControlMsgHeader hdr {};
     std::vector<std::uint8_t> reply;
-    if (! recvControl (controlChannel, hdr, reply))
-    {
-        errorOut = std::string ("HideEditor read failed: ") + std::strerror (errno);
+    if (! sendAndAwaitReply (OpCode::HideEditor, nullptr, 0,
+                               hdr, reply, errorOut, 5000))
         return false;
-    }
     if (hdr.status != 0) { errorOut = "HideEditor status != 0"; return false; }
     return true;
 }
 
 bool RemotePluginConnection::resizeEditor (int width, int height, std::string& errorOut)
 {
-    if (! platform::isValid (controlChannel)) { errorOut = "not connected"; return false; }
     ResizeEditorPayload p {};
     p.width  = (std::int32_t) width;
     p.height = (std::int32_t) height;
-    if (! sendControl (controlChannel, OpCode::ResizeEditor, &p, sizeof (p)))
-    {
-        errorOut = std::string ("ResizeEditor write failed: ") + std::strerror (errno);
-        return false;
-    }
     ControlMsgHeader hdr {};
     std::vector<std::uint8_t> reply;
-    if (! recvControl (controlChannel, hdr, reply))
-    {
-        errorOut = std::string ("ResizeEditor read failed: ") + std::strerror (errno);
+    if (! sendAndAwaitReply (OpCode::ResizeEditor, &p, sizeof (p),
+                               hdr, reply, errorOut, 5000))
         return false;
-    }
     if (hdr.status != 0) { errorOut = "ResizeEditor status != 0"; return false; }
     return true;
+}
+
+// --- Parameter mirror (3c-3a) -------------------------------------------
+
+bool RemotePluginConnection::setRemoteParam (int paramIndex, float value01) noexcept
+{
+    if (! platform::isValid (controlChannel)) return false;
+    if (paramIndex < 0) return false;
+
+    SetParamPayload p {};
+    p.paramIndex = (std::uint32_t) paramIndex;
+    p.value      = std::min (1.0f, std::max (0.0f, value01));
+
+    std::lock_guard<std::mutex> lk (controlMutex);
+    if (readerExited.load (std::memory_order_acquire)) return false;
+    // Fire-and-forget: child suppresses the reply for SetParam (per
+    // PluginIpc.h opcode contract), so we do not wait on replyCv.
+    return sendControl (controlChannel, OpCode::SetParam, &p, sizeof (p));
+}
+
+void RemotePluginConnection::setParamChangedSink (ParamChangedSink sink)
+{
+    std::lock_guard<std::mutex> lk (controlMutex);
+    paramChangedSink_ = std::move (sink);
+}
+
+// --- Reader-thread infrastructure ---------------------------------------
+
+void RemotePluginConnection::startReaderThread()
+{
+    if (readerStarted) return;
+    readerExited.store (false, std::memory_order_release);
+    readerThread = std::thread ([this] { readerLoop(); });
+    readerStarted = true;
+}
+
+void RemotePluginConnection::stopReaderThread() noexcept
+{
+    if (! readerStarted) return;
+    // Wake any sender currently blocked on replyCv. The reader's own
+    // readExact unblocks via peer-close (child termination in
+    // disconnect) or via the socket being closed from disconnect.
+    {
+        std::lock_guard<std::mutex> lk (controlMutex);
+        readerExited.store (true, std::memory_order_release);
+        replyCv.notify_all();
+    }
+    if (readerThread.joinable())
+        readerThread.join();
+    readerStarted = false;
+}
+
+void RemotePluginConnection::readerLoop()
+{
+    while (! readerExited.load (std::memory_order_acquire))
+    {
+        ControlMsgHeader hdr {};
+        if (! platform::readExact (controlChannel, &hdr, sizeof (hdr)))
+            break;  // EOF / peer closed / EBADF on disconnect
+
+        std::vector<std::uint8_t> payload (hdr.payloadLen);
+        if (hdr.payloadLen > 0
+            && ! platform::readExact (controlChannel, payload.data(), hdr.payloadLen))
+            break;
+
+        if (hdr.op == (std::uint32_t) OpCode::ParamChangedFromChild)
+        {
+            // Async push from child. Marshal to the JUCE message thread
+            // via callAsync — never invoke the sink directly here (we're
+            // on the reader thread, sink callers may touch UI / JUCE
+            // listener state). The sink itself is read inside the lambda
+            // under controlMutex so a setParamChangedSink swap between
+            // read and dispatch is honoured.
+            if (payload.size() == sizeof (ParamChangedPayload))
+            {
+                ParamChangedPayload p {};
+                std::memcpy (&p, payload.data(), sizeof (p));
+                juce::MessageManager::callAsync ([this, p]
+                {
+                    ParamChangedSink localSink;
+                    {
+                        std::lock_guard<std::mutex> lk (controlMutex);
+                        localSink = paramChangedSink_;
+                    }
+                    if (localSink)
+                        localSink ((int) p.paramIndex, p.value, p.sequenceNumber);
+                });
+            }
+            continue;
+        }
+
+        // Anything else is a sync-RPC reply. Park it for the waiting
+        // sender. Single in-flight RPC is the invariant (message thread
+        // is JUCE-single-threaded), so overwriting an unconsumed reply
+        // would be a bug — we still publish to avoid deadlocking, and
+        // drop the prior unread slot on the floor with a stderr line.
+        std::lock_guard<std::mutex> lk (controlMutex);
+        if (replyReady)
+            std::fprintf (stderr,
+                          "[Dusk Studio/RemotePluginConnection] reader: "
+                          "dropping unread reply slot (op=%u) — caller "
+                          "did not consume the previous reply.\n",
+                          (unsigned) replyHeader.op);
+        replyHeader = hdr;
+        replyPayload = std::move (payload);
+        replyReady = true;
+        replyCv.notify_all();
+    }
+
+    // Exiting — either peer-closed (child terminated) or disconnect
+    // explicitly requested. Wake any sender waiting on replyCv so it
+    // returns with an error rather than blocking forever.
+    std::lock_guard<std::mutex> lk (controlMutex);
+    readerExited.store (true, std::memory_order_release);
+    replyCv.notify_all();
 }
 
 bool RemotePluginConnection::pollReaper() noexcept
@@ -486,6 +579,22 @@ bool RemotePluginConnection::pollReaper() noexcept
 
 void RemotePluginConnection::disconnect()
 {
+    // Order matters:
+    //   1. Signal SHM teardown + ask the child to exit. The child's
+    //      sockThread closes its socket end on the way out, which makes
+    //      our reader's readExact return false.
+    //   2. stopReaderThread joins after readerExited/replyCv have been
+    //      published — any sender currently in CV wait wakes up and
+    //      returns with an error.
+    //   3. Close our half of the control channel.
+    //   4. shm.close drops the mmap.
+    //
+    // Closing the channel BEFORE joining the reader is the standard
+    // race: on Linux closing the fd while another thread is mid-read
+    // returns EBADF and the read fails (well-defined since 2.6.31).
+    // On macOS the close-during-blocking-read behaviour is the same;
+    // on Windows the equivalent is CancelIoEx — out of scope for
+    // 3c-3a but documented as a 3c-4 hardening item.
     if (child.isAlive())
     {
         if (shm.isMapped())
@@ -496,6 +605,7 @@ void RemotePluginConnection::disconnect()
         }
         child.terminate (500);
     }
+    stopReaderThread();
     platform::closeHandle (controlChannel);
     shm.close();
 }

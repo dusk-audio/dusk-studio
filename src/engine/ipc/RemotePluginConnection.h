@@ -5,8 +5,12 @@
 #include "platform/IpcProcess.h"
 #include "platform/IpcShm.h"
 #include <atomic>
+#include <condition_variable>
 #include <cstdint>
+#include <functional>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <juce_audio_basics/juce_audio_basics.h>  // juce::MidiBuffer
@@ -102,6 +106,33 @@ public:
     // callback. Width/height are the inner content size in points.
     bool resizeEditor (int width, int height, std::string& errorOut);
 
+    // --- Parameter mirror (3c-3a, --ipc-host mode only) ------------------
+    // Parent → child one-shot SetParam send. The child applies the new
+    // value to its DSP-side instance via juce::MessageManager::callAsync.
+    // No reply is expected; this returns false only if the socket write
+    // itself fails (peer-closed, EBADF, etc.).
+    //
+    // Message thread only. RT-unsafe (acquires controlMutex + a socket
+    // write syscall). PluginSlot's Phase-2 SPSC FIFO already deferred
+    // audio-thread param writes to the message thread, so the only
+    // realistic caller here is the parent's shell-editor parameter
+    // listener (wired in 3c-3b).
+    bool setRemoteParam (int paramIndex, float value01) noexcept;
+
+    // Subscribe to async ParamChangedFromChild pushes from the child.
+    // Invoked on the JUCE message thread (the reader thread marshals
+    // every push via MessageManager::callAsync — no MessageManagerLock,
+    // no audio-thread reentry, no blocking).
+    //
+    // The sink may be replaced or cleared (pass {}) at any time from
+    // the message thread; the change is published under controlMutex
+    // so an in-flight push that has already been read off the socket
+    // and is sitting in a callAsync queue will invoke whichever sink
+    // is set at dispatch time (including null = drop).
+    using ParamChangedSink = std::function<void (int paramIndex, float value01,
+                                                   std::uint32_t sequenceNumber)>;
+    void setParamChangedSink (ParamChangedSink sink);
+
     // Send the audio + MIDI buffers in shared memory, signal the child,
     // wait up to `timeoutNs` nanoseconds for the reply. On timeout the
     // connection's `crashed` flag is set and the function returns false
@@ -183,5 +214,55 @@ private:
     std::uint32_t   localSeq { 0 };
     std::atomic<std::uint64_t> roundTrips { 0 };
     std::atomic<bool> crashed { false };
+
+    // --- 3c-3a control-plane demuxer state -------------------------------
+    // The reader thread blocks on readExact(controlChannel, ...), peels
+    // one frame off, then either:
+    //   • routes ParamChangedFromChild pushes through callAsync to
+    //     paramChangedSink_;
+    //   • parks every other opcode in {replyHeader, replyPayload, reply
+    //     Ready} as the next sync-RPC reply and signals replyCv.
+    //
+    // Started ONLY in --ipc-host mode (extraArg). The --ipc-stub child
+    // never sends a frame after the 'k' handshake; spinning a reader on
+    // it would block forever and burn a thread per slot.
+    std::thread             readerThread;
+    bool                    readerStarted { false };
+    std::atomic<bool>       readerExited  { false };
+
+    // controlMutex covers both the outbound write ordering AND the
+    // reply state. One mutex is enough because the message thread is
+    // the only caller of sync RPCs (JUCE single-threads it). The reader
+    // thread takes the mutex only briefly to publish a reply / exit
+    // flag, so the contention window is tiny.
+    mutable std::mutex          controlMutex;
+    std::condition_variable     replyCv;
+    bool                        replyReady { false };
+    ControlMsgHeader            replyHeader {};
+    std::vector<std::uint8_t>   replyPayload;
+
+    // Stored under controlMutex so it's safe to swap from the message
+    // thread while the reader thread is mid-frame. The dispatched
+    // callAsync lambda re-reads the sink at invoke time so a sink
+    // cleared between read and dispatch correctly drops the push.
+    ParamChangedSink            paramChangedSink_;
+
+    // Internal helpers (defined in the .cpp). startReaderThread is only
+    // valid in --ipc-host mode; stop is idempotent.
+    void startReaderThread();
+    void stopReaderThread() noexcept;
+    void readerLoop();
+
+    // Replaces the old "sendControl + recvControl" pair for every sync
+    // RPC. Holds controlMutex across the write + CV wait so a reply
+    // arriving while we're mid-write can't be lost. timeoutMs caps the
+    // wait; on expiry the function returns false with errorOut set
+    // (the connection is NOT marked crashed — caller decides).
+    bool sendAndAwaitReply (OpCode op,
+                              const void* payload, std::uint32_t payloadLen,
+                              ControlMsgHeader& hdrOut,
+                              std::vector<std::uint8_t>& replyOut,
+                              std::string& errorOut,
+                              int timeoutMs);
 };
 } // namespace duskstudio::ipc
