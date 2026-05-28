@@ -22,6 +22,7 @@ add_executable(dusk-studio-tests
     session_round_trip.cpp
     session_corrupted_recovery.cpp
     session_format_version.cpp
+    session_schema_migration.cpp
     recording_byte_accuracy.cpp
     midi_fifo_overflow.cpp
     midi_time_code_decode.cpp

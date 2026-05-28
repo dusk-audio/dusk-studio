@@ -22,7 +22,8 @@ namespace
 // Loader rejects sessions with version > kFormatVersion (newer Dusk Studio
 // can read older files via migrateSession; older Dusk Studio refusing
 // newer files is safer than silently dropping fields).
-constexpr int kFormatVersion = 1;
+constexpr int kFormatVersion = 2;
+} // namespace
 
 // Forward-migrate `root` from a known older version to kFormatVersion
 // by mutating in place. Add cases as the format evolves:
@@ -30,11 +31,13 @@ constexpr int kFormatVersion = 1;
 //   case 2: do_v2_to_v3 (root); ++v; break;
 // Each case MUST do its own ++v before break — the loop relies on the
 // case body advancing the version. Without it the loop would spin
-// forever on the same version. Today's body is a no-op because the
-// current schema is v1 (loop predicate v < kFormatVersion is false on
-// entry).
+// forever on the same version.
 // Returns true on success, false if a step refuses to migrate.
-static bool migrateSession (juce::var& root, int from)
+//
+// Non-static + lives in namespace duskstudio so the Catch2 suite can
+// forward-declare + exercise the migration loop directly (see
+// tests/session_schema_migration.cpp). H1 schema-test hook.
+bool migrateSession (juce::var& root, int from)
 {
     int v = from;
     while (v < kFormatVersion)
@@ -42,7 +45,20 @@ static bool migrateSession (juce::var& root, int from)
         const int before = v;
         switch (v)
         {
-            // case 1: do_v1_to_v2 (root); ++v; break;
+            case 1:
+                // v1 → v2: no field changes. v1 sessions are
+                // forward-compatible with v2 readers because v2 didn't
+                // add or remove any keys — it just claimed the version
+                // marker as a forward-compat anchor so the migrator
+                // loop has an actual case to exercise. Bumping the
+                // version field is the only mutation; the rest of the
+                // tree is identical. Future schema changes get their
+                // case here.
+                if (root.isObject())
+                    root.getDynamicObject()->setProperty ("version", 2);
+                ++v;
+                break;
+
             default:
                 std::fprintf (stderr,
                               "[Dusk Studio/SessionSerializer] no migrator from v%d to v%d\n",
@@ -62,6 +78,9 @@ static bool migrateSession (juce::var& root, int from)
     juce::ignoreUnused (root);
     return true;
 }
+
+namespace
+{
 
 // Force the kernel page cache for `path` out to physical storage. Without
 // this, a system crash between the temp-file write and the rename below

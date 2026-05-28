@@ -1559,11 +1559,20 @@ void MainComponent::writeAutosave()
     // Strip volatile plugin / tape APVTS state before comparing - donor
     // getStateInformation drifts between calls even with no user change,
     // which would otherwise fire an autosave write every tick on idle
-    // sessions. lastSaved/lastWritten stripped versions are cached on
-    // assignment so only the current snapshot is stripped per tick.
+    // sessions.
+    //
+    // M8: hash-based dedup. Hash the stripped JSON ONCE per tick + compare
+    // against the 32-bit fingerprint cached at last-save / last-autosave
+    // assignment. Avoids re-running a juce::String equality scan over the
+    // full serialised tree (potentially hundreds of KB) on every tick.
+    // juce::DefaultHashFunctions::generateHash is the JUCE-canonical fast
+    // hash used by HashMap; collision risk on a real session string is
+    // statistically negligible. Worst-case missed-write recovers next tick.
     const auto stripped = stripVolatileStateForDirtyCompare (json);
-    if (stripped == lastSavedSessionJsonStripped)    return;
-    if (stripped == lastWrittenAutosaveJsonStripped) return;
+    const auto strippedHash = (std::uint32_t) (juce::uint32)
+        juce::DefaultHashFunctions::generateHash (stripped, 0x7fffffff);
+    if (strippedHash == lastSavedSessionStrippedHash)    return;
+    if (strippedHash == lastWrittenAutosaveStrippedHash) return;
 
     const auto target = getAutosaveFileFor (dir);
     if (! SessionSerializer::writeAtomic (target, json))
@@ -1576,14 +1585,18 @@ void MainComponent::writeAutosave()
 
 void MainComponent::setLastSavedSessionJson (const juce::String& json)
 {
-    lastSavedSessionJson         = json;
-    lastSavedSessionJsonStripped = stripVolatileStateForDirtyCompare (json);
+    lastSavedSessionJson = json;
+    const auto stripped  = stripVolatileStateForDirtyCompare (json);
+    lastSavedSessionStrippedHash = (std::uint32_t) (juce::uint32)
+        juce::DefaultHashFunctions::generateHash (stripped, 0x7fffffff);
 }
 
 void MainComponent::setLastWrittenAutosaveJson (const juce::String& json)
 {
-    lastWrittenAutosaveJson         = json;
-    lastWrittenAutosaveJsonStripped = stripVolatileStateForDirtyCompare (json);
+    lastWrittenAutosaveJson = json;
+    const auto stripped     = stripVolatileStateForDirtyCompare (json);
+    lastWrittenAutosaveStrippedHash = (std::uint32_t) (juce::uint32)
+        juce::DefaultHashFunctions::generateHash (stripped, 0x7fffffff);
 }
 
 void MainComponent::timerCallback()

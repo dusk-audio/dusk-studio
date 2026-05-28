@@ -131,15 +131,20 @@ private:
     void deleteAutosaveFor   (const juce::File& sessionDir) const;
     static constexpr int kAutosaveIntervalMs = 30000;
 
-    // Compare against both so autosave mtime doesn't creep past
-    // session.json on an unchanged session. Stored verbatim (no hash);
-    // session JSON is at most a few hundred KB.
+    // Full JSON kept for quit-prompt diff + recovery; the heavy compare
+    // path uses the hash fields below.
     juce::String lastSavedSessionJson;
     juce::String lastWrittenAutosaveJson;
-    // Stripped (volatile-plugin-state nulled) caches — avoid re-running
-    // stripVolatileState 3× per 30 Hz tick.
-    juce::String lastSavedSessionJsonStripped;
-    juce::String lastWrittenAutosaveJsonStripped;
+    // M8 fingerprint: cached hash of the volatile-state-stripped JSON
+    // so writeAutosave's dedup is a single 32-bit compare instead of a
+    // full juce::String equality scan against a possibly-MB-sized
+    // serialisation. juce::DefaultHashFunctions::generateHash returns
+    // an int; we store as uint32 to avoid the sign bit. 0 = unseen
+    // sentinel (legitimate hash collisions at 0 are vanishingly rare;
+    // the worst-case false positive is a missed autosave on the first
+    // tick after load, recovered on the next).
+    std::uint32_t lastSavedSessionStrippedHash    { 0 };
+    std::uint32_t lastWrittenAutosaveStrippedHash { 0 };
     void setLastSavedSessionJson (const juce::String& json);
     void setLastWrittenAutosaveJson (const juce::String& json);
 
