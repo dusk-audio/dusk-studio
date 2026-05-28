@@ -1234,7 +1234,11 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
     // so receiver + emitter share a sample-time origin (matters when
     // a user has Dusk Studio as both slave AND master - rare but possible
     // via a MIDI thru).
-    const int syncOutIdx = session.syncOutputIdx.load (std::memory_order_relaxed);
+    // acquire pairs with release stores in AudioEngine::rebuildMidiOutputBank
+    // and AudioSettingsPanel: any state the writer published before flipping
+    // the index (the opened juce::MidiOutput inside midiOutputs[idx] and its
+    // background-thread state) is visible here before we route bytes to it.
+    const int syncOutIdx = session.syncOutputIdx.load (std::memory_order_acquire);
     if (syncOutIdx != lastSyncOutputIdx)
     {
         midiClockEmitter.reset();

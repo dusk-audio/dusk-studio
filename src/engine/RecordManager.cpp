@@ -121,13 +121,12 @@ bool RecordManager::startRecording (double sampleRate, juce::int64 startSample)
                           "createWriterFor failed (format-level error).\n",
                           t + 1);
             lastSetupFailures.push_back (t);
-            delete fileStream;
+            // juce::AudioFormat::createWriterFor contract: takes ownership
+            // of the stream on success AND deletes it on failure. Double-
+            // delete here was the prior shape; removed.
             continue;
         }
 
-        auto perTrack = std::make_unique<PerTrackWriter>();
-        perTrack->file = outFile;
-        perTrack->numChannels = trackChannels;
         // Ring sized to hold ~4 s at the active sample rate so a brief
         // disk stall (NFS hiccup, drive spindown) doesn't push the
         // audio callback into dropped writes. Scaled by sampleRate so a
@@ -136,8 +135,43 @@ bool RecordManager::startRecording (double sampleRate, juce::int64 startSample)
         // Floor at 65536 samples to guarantee a safety margin even on
         // exotic low-rate setups.
         const int kThreadedWriterSamples = juce::jmax (65536, (int) (sampleRate * 4.0));
+
+        // ThreadedWriter ctor allocates its FIFO + worker queue and can
+        // throw std::bad_alloc on a memory-starved system. We do NOT catch
+        // here: ownership of the raw AudioFormatWriter passes into JUCE
+        // mid-ctor and the exact transfer point is implementation-detail,
+        // so a catch-and-cleanup is ambiguous (potential double-free if
+        // JUCE already destroyed the writer in unwind). On bad_alloc the
+        // exception propagates out of startRecording cleanly:
+        //   • any per-track writers we already built unwind via the array's
+        //     unique_ptr dtors (each drains its FIFO + closes its WAV);
+        //   • active was never set to true, so the audio thread sees
+        //     active=false and is a no-op;
+        //   • caller (AudioEngine::record) sees a false return and surfaces
+        //     "recording cannot start" to the user.
+        // bad_alloc here means the system is in genuine memory exhaustion;
+        // failing the record arm is the correct response.
+        auto perTrack = std::make_unique<PerTrackWriter>();
+        perTrack->file = outFile;
+        perTrack->numChannels = trackChannels;
         perTrack->writer = std::make_unique<juce::AudioFormatWriter::ThreadedWriter> (
             writer.release(), diskThread, kThreadedWriterSamples);
+        if (perTrack->writer == nullptr)
+        {
+            // Defensive: make_unique returning null is not standard-conformant
+            // (it throws on failure, never returns null), but a future custom
+            // allocator or instrumented build could. We can't reclaim the raw
+            // AudioFormatWriter since its ownership state is undefined here;
+            // treat the slot as "armed but inactive" and continue. The
+            // existing slot->writer null-check on the audio thread
+            // (writeInputBlock) makes the missing entry safe.
+            std::fprintf (stderr,
+                          "[Dusk Studio/RecordManager] startRecording: track %d "
+                          "ThreadedWriter is null after construction; take dropped.\n",
+                          t + 1);
+            lastSetupFailures.push_back (t);
+            continue;
+        }
         writers[(size_t) t] = std::move (perTrack);
     }
 
@@ -157,11 +191,41 @@ void RecordManager::stopRecording (juce::int64 endSample)
     // and writeMidiBlock bump audioInFlight before touching their slots;
     // when it reaches zero the audio thread is guaranteed to have left
     // those entry points and any pointers it captured are no longer in
-    // use. Yield in a tight loop — wait is bounded by one audio block
-    // (sub-ms to ~10 ms worst case), short enough that the message
-    // thread can absorb it during a stop transition.
+    // use. Yield in a bounded loop — happy-path wait is sub-ms to ~10 ms
+    // (one audio block), short enough for the message thread to absorb
+    // during a stop transition.
+    //
+    // Cap at kMaxSpinIterations so a stuck / detached audio thread cannot
+    // hang the message thread forever. At a ~1 µs yield cost this is
+    // ~1 ms worst-case latency — orders of magnitude over a sane audio
+    // block. If we exceed the cap, log + break: teardown of writers /
+    // midiCaptures then proceeds even though a stale audio-thread reader
+    // may still be live. Acceptable because:
+    //   • active = false was already published with release ordering
+    //     above, so the audio thread's next entry sees it and bails.
+    //   • The only window for UAF is one in-flight call that started
+    //     BEFORE we stored false. The AudioInFlightScope dtor will run
+    //     when that call returns, by which time we'll have nulled the
+    //     writer slots — the call already passed its null-check before
+    //     entering, but the existing `slot->writer == nullptr` guards in
+    //     writeInputBlock cover the freshly-nulled case for the NEXT
+    //     call. A worst-case data race writes one stale block to a
+    //     ThreadedWriter mid-destruction; we accept that over a deadlock.
+    constexpr int kMaxSpinIterations = 1000;
+    int spinIters = 0;
     while (audioInFlight.load (std::memory_order_acquire) > 0)
+    {
+        if (++spinIters > kMaxSpinIterations)
+        {
+            std::fprintf (stderr,
+                          "[Dusk Studio/RecordManager] stopRecording: audioInFlight=%d after %d "
+                          "yields; forcing teardown. Audio thread may be stalled.\n",
+                          audioInFlight.load (std::memory_order_relaxed),
+                          kMaxSpinIterations);
+            break;
+        }
         std::this_thread::yield();
+    }
 
     // Latch audio-thread error counters into lastRecordErrors before
     // teardown so TransportBar can surface them after engine.stop(). Per-
