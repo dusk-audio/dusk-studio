@@ -858,6 +858,17 @@ set(CPACK_RPM_PACKAGE_GROUP         "Applications/Multimedia")
 set(CPACK_WIX_UPGRADE_GUID          "8F2C9C3E-5F4B-4D9E-B7A1-3E7E8D9F0C12")
 set(CPACK_WIX_PRODUCT_GUID          "*")  # generated per build per WIX best practice
 
+# The WIX generator only accepts a .txt or .rtf license and derives the
+# type from the extension; the repo's LICENSE is extensionless (fine for
+# deb/rpm/dmg) so cpack -G WIX dies with "unsupported WiX License file
+# extension ''". Stage a .txt copy and point the license at it on Windows
+# only — cpack converts the .txt to RTF for the installer's EULA page.
+if(WIN32)
+    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
+                   "${CMAKE_CURRENT_BINARY_DIR}/LICENSE.txt" COPYONLY)
+    set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_BINARY_DIR}/LICENSE.txt")
+endif()
+
 # macOS DMG: cpack -G DragNDrop. scripts/package-macos.sh chains
 # codesign + notarytool because cpack doesn't notarize.
 set(CPACK_DMG_FORMAT                "UDZO")
