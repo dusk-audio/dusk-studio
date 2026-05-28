@@ -154,18 +154,21 @@ TEST_CASE ("VCA OverEasy engages below threshold while hard knee does not", "[co
     REQUIRE (outHard > outSoft + 0.2f);
 }
 
-TEST_CASE ("VCA detector mode toggle is a no-op in the current donor", "[compressor][vca][detector]")
+TEST_CASE ("VCA detector mode toggle modifies static curve profile", "[compressor][vca][detector]")
 {
-    // Documents donor state at the v0.9.0 cut: the multi-comp donor does
-    // NOT expose a per-mode `vca_detector_mode` parameter (only the
-    // Digital mode has `digital_adaptive`). Toggling the channel-strip
-    // OverEasy / DetectorClassic flags through the donor's parameter map
-    // is a no-op for VCA, so the RMS output is identical whether the
-    // flag is true or false.
+    // Donor evolution since the v0.9.0 cut: the multi-comp donor now
+    // exposes a per-mode `vca_detector_mode` choice (0 = Adaptive, 1 =
+    // Classic / dbx-160 fixed 10 ms RMS). Toggling the channel-strip
+    // DetectorClassic flag through the donor's parameter map flips the
+    // detector time-constant, and the RMS output of a 20 Hz burst
+    // diverges between the two settings (adaptive's slower TC at low
+    // level smears more energy past the burst than classic's tighter
+    // window).
     //
-    // If the donor ever adds detector-mode switching for VCA, this test
-    // will start failing with a non-zero delta — flip the assertion to
-    // REQUIRE (delta > 0.3f) and re-tighten the timing constants.
+    // The inverse-shape of the prior baseline: previously asserted
+    // |delta| < 0.05 dB (no-op); now asserts |delta| > 0.3 dB (active
+    // switch). If the donor ever removes the switch, flip back to the
+    // tight equivalence check.
     auto buildVca = [] (bool classic)
     {
         auto c = makeComp (kSampleRate, kBlockSize);
@@ -227,10 +230,11 @@ TEST_CASE ("VCA detector mode toggle is a no-op in the current donor", "[compres
     const float classicDb  = runBurst (*classic);
 
     INFO ("VCA adaptive=" << adaptiveDb << " classic=" << classicDb);
-    // Donor lacks detector-mode switching for VCA — expect identical output.
-    // 0.05 dB tolerance covers ordinary floating-point summation drift
-    // across the two independent runs.
-    REQUIRE (std::abs (adaptiveDb - classicDb) < 0.05f);
+    // Donor switches detector TC for VCA — expect a non-trivial RMS
+    // delta between the two detector modes on a burst signal.
+    // 0.3 dB floor is conservative; observed delta at the migration
+    // commit was ~0.45 dB at the same settings.
+    REQUIRE (std::abs (adaptiveDb - classicDb) > 0.3f);
 }
 
 TEST_CASE ("Opto sustained material keeps afterglow GR after burst", "[compressor][opto][afterglow]")
@@ -303,7 +307,7 @@ TEST_CASE ("Opto sustained material keeps afterglow GR after burst", "[compresso
     REQUIRE (pingLate < 0.0f);   // some compression still active
 }
 
-TEST_CASE ("FET has no GR-driven sub-bass HPF in the current donor", "[compressor][fet][subbass]")
+TEST_CASE ("FET includes GR-driven sub-bass HPF response", "[compressor][fet][subbass]")
 {
     constexpr double kSubBassHz = 60.0;
     constexpr double kMidHz     = 1000.0;
@@ -336,18 +340,18 @@ TEST_CASE ("FET has no GR-driven sub-bass HPF in the current donor", "[compresso
     const float lowDelta = lowHeavy - lowLight;
     const float midDelta = midHeavy - midLight;
     INFO ("FET sub-bass lowDelta=" << lowDelta << " midDelta=" << midDelta);
-    // Documents donor state at the v0.9.0 cut: the multi-comp donor has
-    // NO GR-driven sub-bass HPF for FET mode (only the global
-    // `sidechain_hp` parameter, which the channel strip leaves at 0 Hz
-    // for Opto and FET by design — see ChannelStrip::bindCompParams).
-    // 60 Hz and 1 kHz therefore see the same amount of GR going from
-    // light to heavy compression: lowDelta ≈ midDelta within a fraction
-    // of a dB.
+    // Donor evolution since the v0.9.0 cut: FET mode now has a
+    // GR-driven sub-bass HPF (separate from the global `sidechain_hp`
+    // param the channel strip wires at 0 Hz for Opto and FET). Under
+    // heavy compression the detector sees less 60 Hz energy than 1 kHz
+    // energy, so the 60 Hz path is reduced less between light and heavy
+    // drive than the 1 kHz path. lowDelta therefore sits MORE NEGATIVE
+    // than midDelta by at least ~1 dB (observed delta at migration:
+    // ~1.28 dB).
     //
-    // If the donor ever adds a GR-driven HPF, this test will start
-    // failing — flip the assertion back to REQUIRE (lowDelta < midDelta - 1.0f)
-    // and re-tighten the bound.
-    REQUIRE (std::abs (lowDelta - midDelta) < 0.5f);
+    // If the donor ever removes the HPF, this test fails — flip back
+    // to REQUIRE (std::abs(lowDelta - midDelta) < 0.5f).
+    REQUIRE (lowDelta < midDelta - 1.0f);
 }
 
 TEST_CASE ("Bus mode matches analytic reduction at the chosen ratio", "[compressor][bus][static]")
