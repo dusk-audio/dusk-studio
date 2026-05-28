@@ -23,6 +23,7 @@ add_executable(dusk-studio-tests
     session_corrupted_recovery.cpp
     session_format_version.cpp
     session_schema_migration.cpp
+    dsp_components_test.cpp
     recording_byte_accuracy.cpp
     midi_fifo_overflow.cpp
     midi_time_code_decode.cpp

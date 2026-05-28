@@ -128,6 +128,30 @@ juce::String describeBindingTarget (const MidiBinding& b,
         case MidiBindingTarget::AuxLaneFader:    return "AUX " + trk() + " return";
         case MidiBindingTarget::AuxLaneMute:     return "AUX " + trk() + " mute";
         case MidiBindingTarget::MasterFader:     return "Master fader";
+
+        // H3 expansion (Phase 5a). describeBindingTarget mirrors the
+        // grammar of the existing track / bus / master labels so the
+        // bindings panel + right-click menu read consistently.
+        case MidiBindingTarget::TrackEqEnabled:     return "Track " + trk() + " EQ on/off";
+        case MidiBindingTarget::TrackCompEnabled:   return "Track " + trk() + " comp on/off";
+        case MidiBindingTarget::TrackInsertBypass:  return "Track " + trk() + " insert bypass";
+
+        case MidiBindingTarget::BusEqGain:
+        {
+            const int bus  = unpackBusEqBus  (b.targetIndex);
+            const int band = unpackBusEqBand (b.targetIndex);
+            static const char* kBusBandNames[] = { "LF", "MID", "HF" };
+            const char* bandName = (band >= 0 && band < kBusEqBands)
+                                       ? kBusBandNames[band] : "?";
+            return "Bus " + juce::String (bus + 1)
+                 + " EQ " + juce::String (bandName) + " gain";
+        }
+
+        case MidiBindingTarget::MasterEqLfBoost:    return "Master EQ low boost";
+        case MidiBindingTarget::MasterEqHfBoost:    return "Master EQ high boost";
+        case MidiBindingTarget::MasterCompThresh:   return "Master comp threshold";
+        case MidiBindingTarget::MasterCompMakeup:   return "Master comp makeup";
+        case MidiBindingTarget::MasterCompRatio:    return "Master comp ratio";
     }
     return "(unknown target)";
 }
@@ -170,6 +194,18 @@ const char* nameForTarget (MidiBindingTarget t) noexcept
         case MidiBindingTarget::AuxLaneFader:    return "AUX return";
         case MidiBindingTarget::AuxLaneMute:     return "AUX mute";
         case MidiBindingTarget::MasterFader:     return "Master fader";
+
+        // H3 expansion (Phase 5a). Short category names for the
+        // bindings-panel section headers + the right-click menu.
+        case MidiBindingTarget::TrackEqEnabled:     return "Track EQ on/off";
+        case MidiBindingTarget::TrackCompEnabled:   return "Track comp on/off";
+        case MidiBindingTarget::TrackInsertBypass:  return "Track insert bypass";
+        case MidiBindingTarget::BusEqGain:          return "Bus EQ gain";
+        case MidiBindingTarget::MasterEqLfBoost:    return "Master EQ low boost";
+        case MidiBindingTarget::MasterEqHfBoost:    return "Master EQ high boost";
+        case MidiBindingTarget::MasterCompThresh:   return "Master comp threshold";
+        case MidiBindingTarget::MasterCompMakeup:   return "Master comp makeup";
+        case MidiBindingTarget::MasterCompRatio:    return "Master comp ratio";
     }
     return "?";
 }

@@ -88,7 +88,41 @@ enum class MidiBindingTarget : int
     AuxLaneMute       = 161,
 
     MasterFader       = 200,
+
+    // ── H3 expansion (Phase 5a) ───────────────────────────────────────
+    // Discrete toggles (buttons).
+    TrackEqEnabled       = 210, // targetIndex = track
+    TrackCompEnabled     = 211, // targetIndex = track
+    TrackInsertBypass    = 212, // targetIndex = track — bypasses the
+                                 // per-channel hardware insert slot.
+
+    // Continuous bus EQ. targetIndex = bus * kBusEqBands + band.
+    // BusStrip exposes LF / MID / HF gains (3-band). Frequencies are
+    // fixed by BusStrip's tone-shaping spec — gain is the only knob
+    // user-mapped from a CC.
+    BusEqGain            = 220,
+
+    // Master EQ — Pultec-style. Two main user knobs (low boost, high
+    // boost). targetIndex unused.
+    MasterEqLfBoost      = 230,
+    MasterEqHfBoost      = 231,
+
+    // Master compressor (Bus mode). targetIndex unused; one master.
+    MasterCompThresh     = 240,
+    MasterCompMakeup     = 241,
+    MasterCompRatio      = 242,
 };
+
+// Helpers for the bus EQ packed index. Bus count × band count fits well
+// inside targetIndex's 32-bit range; mirror the TrackEq pack/unpack
+// pattern so future bus-aware targets stay consistent.
+constexpr int kBusEqBands = 3;        // LF / MID / HF
+constexpr int packBusEqBand (int bus, int band) noexcept
+{
+    return bus * kBusEqBands + band;
+}
+constexpr int unpackBusEqBus  (int packed) noexcept { return packed / kBusEqBands; }
+constexpr int unpackBusEqBand (int packed) noexcept { return packed % kBusEqBands; }
 
 constexpr bool isContinuousTarget (MidiBindingTarget t) noexcept
 {
@@ -111,7 +145,14 @@ constexpr bool isContinuousTarget (MidiBindingTarget t) noexcept
         || t == MidiBindingTarget::BusFader
         || t == MidiBindingTarget::BusPan
         || t == MidiBindingTarget::AuxLaneFader
-        || t == MidiBindingTarget::MasterFader;
+        || t == MidiBindingTarget::MasterFader
+        // H3 expansion: continuous bus + master targets.
+        || t == MidiBindingTarget::BusEqGain
+        || t == MidiBindingTarget::MasterEqLfBoost
+        || t == MidiBindingTarget::MasterEqHfBoost
+        || t == MidiBindingTarget::MasterCompThresh
+        || t == MidiBindingTarget::MasterCompMakeup
+        || t == MidiBindingTarget::MasterCompRatio;
 }
 
 constexpr bool isBankRelativeTarget (MidiBindingTarget t) noexcept
@@ -135,7 +176,11 @@ constexpr bool needsTrackIndex (MidiBindingTarget t) noexcept
         || t == MidiBindingTarget::TrackPan
         || t == MidiBindingTarget::TrackMute
         || t == MidiBindingTarget::TrackSolo
-        || t == MidiBindingTarget::TrackArm;
+        || t == MidiBindingTarget::TrackArm
+        // H3 expansion: per-track discrete toggles.
+        || t == MidiBindingTarget::TrackEqEnabled
+        || t == MidiBindingTarget::TrackCompEnabled
+        || t == MidiBindingTarget::TrackInsertBypass;
 }
 
 constexpr bool needsBusIndex (MidiBindingTarget t) noexcept
@@ -181,6 +226,12 @@ constexpr int unpackTrackEqBand  (int packed) noexcept { return packed % kPacked
 constexpr bool needsPackedTrackEqIndex (MidiBindingTarget t) noexcept
 {
     return t == MidiBindingTarget::TrackEqGain;
+}
+
+// H3: BusEqGain stores bus * kBusEqBands + band in targetIndex.
+constexpr bool needsPackedBusEqIndex (MidiBindingTarget t) noexcept
+{
+    return t == MidiBindingTarget::BusEqGain;
 }
 
 struct MidiBinding
