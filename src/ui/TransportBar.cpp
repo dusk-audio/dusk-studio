@@ -1272,7 +1272,10 @@ void TransportBar::showTimeSigMenu()
                     true, ticked);
     }
     m.addSeparator();
-    constexpr int kCustomId = 100;
+    // static: referenced inside the context-menu lambda below; static
+    // storage duration avoids MSVC C3493 (implicit-capture) without the
+    // explicit capture that clang flags as -Wunused-lambda-capture.
+    static constexpr int kCustomId = 100;
     m.addItem (kCustomId, "Custom...");
 
     juce::Component::SafePointer<TransportBar> safe (this);
