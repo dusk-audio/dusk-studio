@@ -2,6 +2,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_events/juce_events.h>
+#include <juce_gui_basics/juce_gui_basics.h>
 #include <array>
 #include <atomic>
 
@@ -167,6 +168,30 @@ public:
     bool         isOffline() const noexcept;
     juce::String getOfflineName() const;
 
+   #if JUCE_MAC && DUSKSTUDIO_HAS_OOP_PLUGINS
+    // Mac dual-load shell-instance API. Loads a parent-process copy of
+    // the plugin solely to host its editor in the main app window while
+    // the OOP child handles DSP. processBlock is NEVER called on the
+    // shell instance; prepareToPlay is invoked so editor layout
+    // matches the engine's current SR/BS, that's it.
+    //
+    // Architectural note: PluginSlot returns a raw juce::AudioProcessor
+    // Editor* rather than calling duskstudio::platform::createInProcess
+    // EditorHost itself because CLAUDE.md forbids src/engine/ including
+    // src/ui/. The factory call lives in ChannelStripComponent (which
+    // is allowed to include both the engine + UI layer). The
+    // notifyShellEditorWrapper call closes the loop so PluginSlot can
+    // refuse a second concurrent editor + defer releaseShellInstance
+    // until the wrapper destructs.
+    //
+    // All three methods: message thread only. AudioProcessor lifecycle
+    // is not RT-safe.
+    bool ensureShellInstanceForEditor (juce::String& err);
+    juce::AudioProcessorEditor* createShellEditor();
+    void notifyShellEditorWrapper (juce::Component* wrapper) noexcept;
+    void releaseShellInstance();
+   #endif
+
 private:
     PluginManager* manager = nullptr;
 
@@ -260,6 +285,16 @@ private:
     // macOS has no OOP impl yet but offline restore is cross-platform.
     juce::String offlineDescriptionXml;
     juce::String offlineStateBase64;
+
+   #if JUCE_MAC && DUSKSTUDIO_HAS_OOP_PLUGINS
+    // Mac dual-load shell-instance state. Loaded lazily on first editor
+    // open; lives independent of ownedRemote (which holds the OOP child
+    // connection). outstandingShellWrapper auto-nulls when the wrapper
+    // Component destructs, so PluginSlot can detect the editor-closed
+    // state without an explicit notification channel.
+    std::unique_ptr<juce::AudioPluginInstance>    shellInstanceForEditor;
+    juce::Component::SafePointer<juce::Component> outstandingShellWrapper;
+   #endif
 
     // SPSC param-write queue. Producer = audio thread (setParamNormalised);
     // Consumer = message thread (timerCallback). Pre-sized at construction

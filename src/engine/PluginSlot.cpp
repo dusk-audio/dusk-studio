@@ -125,6 +125,17 @@ PluginSlot::~PluginSlot()
     // mid-destruction and observe a half-torn currentInstance / ownedRemote.
     stopTimer();
 
+   #if JUCE_MAC && DUSKSTUDIO_HAS_OOP_PLUGINS
+    // Release the Mac shell instance before tearing down the OOP child.
+    // releaseShellInstance refuses if a wrapper is still outstanding;
+    // we issue a stderr line + skip the release in that case rather than
+    // destroying the AudioProcessor under a live editor (would dangle
+    // the editor's processor reference and crash on the next event).
+    // The wrapper itself is owned upstream (by ChannelStripComponent's
+    // pluginEditorModal); its dtor runs when that owner releases it.
+    releaseShellInstance();
+   #endif
+
     // Audio thread should already be detached by the time this runs (the
     // owning ChannelStrip destructs after its AudioEngine has released the
     // device callback). Belt-and-suspenders: clear the atomic first so
@@ -661,6 +672,15 @@ bool PluginSlot::loadFromDescription (const juce::PluginDescription& desc,
 
 void PluginSlot::unload()
 {
+   #if JUCE_MAC && DUSKSTUDIO_HAS_OOP_PLUGINS
+    // Track-unload is an explicit user action and the modal-editor close
+    // protocol (closePluginEditor → modal close → wrapper dtor) is
+    // assumed to have run by now. releaseShellInstance refuses + logs
+    // if the wrapper is still alive; the shell instance then sticks
+    // around until the next unload / dtor when the wrapper has died.
+    releaseShellInstance();
+   #endif
+
     // Same deferred-destruction pattern as the load* functions: move
     // the current owner into previousInstance so its destructor only
     // fires on the NEXT swap (or this PluginSlot's destruction). Direct
@@ -1421,4 +1441,110 @@ void PluginSlot::applyParamWriteOnMessageThread (const ParamWrite& pw) noexcept
     if (auto* param = params[pw.paramIndex])
         param->setValueNotifyingHost (pw.value);
 }
+
+#if JUCE_MAC && DUSKSTUDIO_HAS_OOP_PLUGINS
+bool PluginSlot::ensureShellInstanceForEditor (juce::String& err)
+{
+    JUCE_ASSERT_MESSAGE_THREAD;
+
+    if (shellInstanceForEditor != nullptr)
+    {
+        err.clear();
+        return true;  // idempotent — already loaded for this slot
+    }
+
+    if (manager == nullptr)
+    {
+        err = "PluginSlot has no PluginManager bound";
+        return false;
+    }
+    if (savedDescriptionXml.isEmpty())
+    {
+        err = "No plugin loaded — nothing to host in the shell";
+        return false;
+    }
+
+    // Parse the saved description (populated by loadFromDescription's
+    // OOP path) and load a fresh in-process instance against the same
+    // file. The instance is editor-only: prepareToPlay is called so
+    // the editor's bounds + initial parameter snapshot match the
+    // engine's current SR/BS, but processBlock is NEVER invoked on
+    // this instance — DSP runs in the OOP child.
+    auto xml = juce::XmlDocument::parse (savedDescriptionXml);
+    if (xml == nullptr)
+    {
+        err = "Saved plugin description is not valid XML";
+        return false;
+    }
+    juce::PluginDescription desc;
+    if (! desc.loadFromXml (*xml))
+    {
+        err = "Saved plugin description failed to deserialise";
+        return false;
+    }
+
+    auto fresh = manager->createPluginInstance (desc,
+                                                  preparedSampleRate > 0.0
+                                                       ? preparedSampleRate : 48000.0,
+                                                  preparedBlockSize  > 0
+                                                       ? preparedBlockSize  : 512,
+                                                  err);
+    if (fresh == nullptr)
+        return false;
+
+    fresh->setPlayConfigDetails (fresh->getTotalNumInputChannels(),
+                                   fresh->getTotalNumOutputChannels(),
+                                   preparedSampleRate > 0.0 ? preparedSampleRate : 48000.0,
+                                   preparedBlockSize  > 0 ? preparedBlockSize  : 512);
+    if (preparedSampleRate > 0.0)
+        fresh->prepareToPlay (preparedSampleRate, preparedBlockSize);
+
+    shellInstanceForEditor = std::move (fresh);
+    err.clear();
+    return true;
+}
+
+juce::AudioProcessorEditor* PluginSlot::createShellEditor()
+{
+    JUCE_ASSERT_MESSAGE_THREAD;
+
+    if (shellInstanceForEditor == nullptr) return nullptr;
+
+    // Refuse a second concurrent editor: JUCE's createEditorIfNeeded
+    // would hand the same pointer to two unique_ptr-owning wrappers,
+    // resulting in a double-free when the second wrapper destructs.
+    if (outstandingShellWrapper.getComponent() != nullptr) return nullptr;
+
+    return shellInstanceForEditor->createEditorIfNeeded();
+}
+
+void PluginSlot::notifyShellEditorWrapper (juce::Component* wrapper) noexcept
+{
+    JUCE_ASSERT_MESSAGE_THREAD;
+    outstandingShellWrapper = wrapper;  // SafePointer auto-nulls on wrapper dtor
+}
+
+void PluginSlot::releaseShellInstance()
+{
+    JUCE_ASSERT_MESSAGE_THREAD;
+
+    if (shellInstanceForEditor == nullptr) return;
+
+    if (outstandingShellWrapper.getComponent() != nullptr)
+    {
+        // Wrapper is still alive — its inner unique_ptr<editor> holds a
+        // reference to this AudioProcessor. Destroying the processor here
+        // would dangle the editor's processor pointer and crash on the
+        // next AppKit event. Skip + log; the next unload / dtor will
+        // re-try once the wrapper has died.
+        std::fprintf (stderr,
+                      "[Dusk Studio/PluginSlot] releaseShellInstance: editor "
+                      "wrapper still outstanding; deferring shell teardown.\n");
+        return;
+    }
+
+    shellInstanceForEditor->releaseResources();
+    shellInstanceForEditor.reset();
+}
+#endif
 } // namespace duskstudio

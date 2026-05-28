@@ -1990,19 +1990,36 @@ void ChannelStripComponent::openPluginEditor()
         }
         pluginEditorModal.showBorrowed (*parent, *remoteEditorEmbed, onClose);
        #elif JUCE_MAC
-        // Mac OOP: dual-load shell pattern (3c plan). DSP stays in the
-        // child; the editor will eventually live in this process via an
-        // in-process shell instance owned by PluginSlot. Sub-phase 3c-1
-        // is structural plumbing only — shellEditor is always nullptr
-        // until 3c-2 wires PluginSlot::ensureShellInstanceForEditor +
-        // createShellEditorComponent. windowId from showRemoteEditor is
-        // intentionally unused on Mac because the child's native window
-        // is NOT what we embed; the parent's shell-instance editor is.
+        // Mac OOP: dual-load shell pattern (3c-2). DSP stays in the
+        // child; the editor lives in this process via PluginSlot's
+        // shell instance. windowId from showRemoteEditor is unused on
+        // Mac because the child's native window is NOT what we embed;
+        // the parent's shell-instance editor is. The IPC ShowEditor
+        // call still ran above for symmetry + so future param-mirror
+        // (3c-3) state-sync IPC can piggyback on it.
         juce::ignoreUnused (windowId);
-        juce::AudioProcessorEditor* shellEditor = nullptr;  // 3c-2 hook
         std::unique_ptr<juce::Component> embed;
-        if (shellEditor != nullptr)
-            embed = duskstudio::platform::createInProcessEditorHost (shellEditor);
+        juce::String shellErr;
+        if (pluginSlot.ensureShellInstanceForEditor (shellErr))
+        {
+            if (auto* shellEditor = pluginSlot.createShellEditor())
+            {
+                embed = duskstudio::platform::createInProcessEditorHost (shellEditor);
+                // Register the wrapper with PluginSlot so it can refuse
+                // a second concurrent editor + defer shell release
+                // until this wrapper destructs. SafePointer auto-nulls
+                // on wrapper dtor — no explicit "released" callback
+                // needed.
+                pluginSlot.notifyShellEditorWrapper (embed.get());
+            }
+        }
+        else if (shellErr.isNotEmpty())
+        {
+            std::fprintf (stderr,
+                          "[Dusk Studio/ChannelStripComponent] Mac shell-editor "
+                          "load failed: %s — falling back to floating child window.\n",
+                          shellErr.toRawUTF8());
+        }
         if (embed != nullptr)
         {
             embed->setSize (juce::jmax (200, w), juce::jmax (200, h));
@@ -2011,9 +2028,9 @@ void ChannelStripComponent::openPluginEditor()
         }
         else
         {
-            // Fallback (and current 3c-1 behaviour): child opened its
-            // own native-titlebar top-level. Subsequent clicks re-fire
-            // ShowEditor and the child raises the existing window.
+            // Fallback: child opened its own native-titlebar top-level.
+            // Subsequent clicks re-fire ShowEditor and the child raises
+            // the existing window.
             juce::ignoreUnused (w, h);
         }
        #else
