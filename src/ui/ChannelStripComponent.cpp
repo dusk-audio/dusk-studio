@@ -1989,7 +1989,38 @@ void ChannelStripComponent::openPluginEditor()
                                           juce::jmax (200, h));
         }
         pluginEditorModal.showBorrowed (*parent, *remoteEditorEmbed, onClose);
+       #elif JUCE_MAC
+        // Mac OOP: dual-load shell pattern (3c plan). DSP stays in the
+        // child; the editor will eventually live in this process via an
+        // in-process shell instance owned by PluginSlot. Sub-phase 3c-1
+        // is structural plumbing only — shellEditor is always nullptr
+        // until 3c-2 wires PluginSlot::ensureShellInstanceForEditor +
+        // createShellEditorComponent. windowId from showRemoteEditor is
+        // intentionally unused on Mac because the child's native window
+        // is NOT what we embed; the parent's shell-instance editor is.
+        juce::ignoreUnused (windowId);
+        juce::AudioProcessorEditor* shellEditor = nullptr;  // 3c-2 hook
+        std::unique_ptr<juce::Component> embed;
+        if (shellEditor != nullptr)
+            embed = duskstudio::platform::createInProcessEditorHost (shellEditor);
+        if (embed != nullptr)
+        {
+            embed->setSize (juce::jmax (200, w), juce::jmax (200, h));
+            pluginEditorModal.showBorrowed (*parent, *embed, onClose);
+            remoteForeignEmbed = std::move (embed);
+        }
+        else
+        {
+            // Fallback (and current 3c-1 behaviour): child opened its
+            // own native-titlebar top-level. Subsequent clicks re-fire
+            // ShowEditor and the child raises the existing window.
+            juce::ignoreUnused (w, h);
+        }
        #else
+        // Windows: cross-process HWND reparenting via SetParent
+        // (ForeignHwndEmbed). The child created its window with
+        // WS_OVERLAPPEDWINDOW; the wrapper strips chrome bits on attach
+        // and SetParent's the HWND back to desktop on destruct.
         auto embed = duskstudio::platform::createForeignNativeWindowEmbed (windowId);
         if (embed != nullptr)
         {
@@ -1999,9 +2030,8 @@ void ChannelStripComponent::openPluginEditor()
         }
         else
         {
-            // Mac OOP without embed: child opened a native-titlebar
-            // top-level itself; subsequent clicks re-fire ShowEditor and
-            // the child raises the existing window.
+            // Embed creation failed (HWND no longer valid, etc.) — let
+            // the child's floating window stand in.
             juce::ignoreUnused (w, h);
         }
        #endif

@@ -138,4 +138,27 @@ void clearPreferX11ForNativeWindow();
 //          its own research project; the Mac OOP editor stays floating.
 std::unique_ptr<juce::Component> createForeignNativeWindowEmbed (
     std::uint64_t nativeHandle);
+
+#if JUCE_MAC
+// macOS-only: wraps a parent-process juce::AudioProcessorEditor inside
+// a juce::Component. The editor's processor is the in-process "shell"
+// instance owned by PluginSlot; DSP runs in the OOP child via IPC.
+//
+// Linux + Windows do NOT declare this overload — they reparent the
+// child's native editor window into the parent process via XEmbed
+// (Linux) or SetParent (Windows) and have no need for a parent-side
+// shell instance. Call sites must gate on JUCE_MAC before invoking.
+//
+// Sub-phase 3c-1: stub returns nullptr so existing Mac OOP behaviour
+// (child opens its own floating native-titlebar top-level) is
+// preserved unchanged. Sub-phase 3c-2 wires the real shell-editor
+// pickup + InProcessEditorHost wrapper.
+//
+// Threading: message thread only. The shell editor's AppKit NSView
+// lives in the parent process so addAndMakeVisible / addToDesktop on
+// the returned Component runs on JUCE's main MessageManager dispatch
+// the same way every other parent-side editor does.
+std::unique_ptr<juce::Component> createInProcessEditorHost (
+    juce::AudioProcessorEditor* shellEditor) noexcept;
+#endif
 } // namespace duskstudio::platform
