@@ -785,9 +785,42 @@ endif()
 # undefined-behaviour from a long-running session's worth of edits.
 # Not for production builds — overhead is ~2× CPU and ~3× memory.
 option(DUSKSTUDIO_ENABLE_ASAN "Enable AddressSanitizer + UBSan" OFF)
+
+# ThreadSanitizer. Off by default; opt-in via -DDUSKSTUDIO_ENABLE_TSAN=ON.
+# Verifies the lock-free atomic / SPSC FIFO / message-thread-only-mutation
+# invariants the engine relies on (see CLAUDE.md "Audio thread rules").
+# CI runs the test binary under TSan in a separate job from ASan because:
+#   • TSan and ASan use the same shadow-memory machinery and refuse to
+#     co-exist in a single binary (the runtime aborts immediately).
+#   • TSan's overhead (~5–15× CPU, ~5–10× memory) makes a combined run
+#     untenable on a 2-core GitHub runner.
+# Same build-wide application as ASan: instrumented code can't link
+# against uninstrumented dependencies cleanly.
+option(DUSKSTUDIO_ENABLE_TSAN "Enable ThreadSanitizer (TSan)" OFF)
+
+if(DUSKSTUDIO_ENABLE_TSAN AND DUSKSTUDIO_ENABLE_ASAN)
+    # Compiler-runtime constraint, not a Dusk Studio choice — the
+    # instrumentation libraries (libasan / libtsan) can't share a
+    # process. Fail at configure time so the user sees the cause
+    # rather than a runtime abort after a 5-minute build.
+    message(FATAL_ERROR
+        "DUSKSTUDIO_ENABLE_TSAN and DUSKSTUDIO_ENABLE_ASAN are mutually "
+        "exclusive — ThreadSanitizer and AddressSanitizer cannot share "
+        "the same binary. Pick one for this configure, and run a "
+        "separate build directory for the other.")
+endif()
+
 if(DUSKSTUDIO_ENABLE_ASAN AND NOT MSVC)
     add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
     add_link_options(-fsanitize=address,undefined)
+endif()
+
+if(DUSKSTUDIO_ENABLE_TSAN AND NOT MSVC)
+    # -g forces full DWARF for inlined frames so TSan stack traces resolve
+    # to file:line. RelWithDebInfo would carry -g already; Debug + this
+    # combo is robust across both build types.
+    add_compile_options(-fsanitize=thread -fno-omit-frame-pointer -g)
+    add_link_options(-fsanitize=thread)
 endif()
 
 option(DUSKSTUDIO_BUILD_TESTS "Build Dusk Studio unit tests with Catch2" OFF)

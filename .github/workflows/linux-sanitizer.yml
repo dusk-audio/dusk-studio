@@ -1,0 +1,122 @@
+name: Linux sanitizer (TSan)
+
+# Validates the lock-free atomic / SPSC FIFO / message-thread-only
+# discipline in the engine (CLAUDE.md "Audio thread rules") by running
+# the Catch2 test binary under ThreadSanitizer. Runs on every PR + push
+# to main so a regression in the engine's RT-safety contract trips CI
+# rather than landing silently.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  tsan-tests:
+    name: Catch2 tests (TSan, Ubuntu 22.04)
+    runs-on: ubuntu-22.04
+
+    env:
+      # second_deadlock_stack=1 — capture both lock-acquire sites when a
+      #   lock-order inversion is detected (default = caller-side only,
+      #   which makes inversions hard to diagnose).
+      # halt_on_error=1 — stop at the first race so the log isn't flooded
+      #   with cascading reports.
+      # exitcode=66 — any TSan-detected race exits the runtime with 66;
+      #   ctest sees the non-zero status and fails the job. Distinct from
+      #   the default 1 so a "TSan tripped" failure is visually distinct
+      #   from an ordinary REQUIRE() miss in the build log.
+      # external_symbolizer_path — let the runtime pick llvm-symbolizer
+      #   from PATH; without this the stack frames are hex offsets only.
+      TSAN_OPTIONS: "second_deadlock_stack=1 halt_on_error=1 exitcode=66"
+
+    steps:
+      - name: Checkout Dusk Studio
+        uses: actions/checkout@v4
+        with:
+          # external/sfizz is a submodule consumed by the test binary
+          # (DuskMultisampleProcessor.cpp includes <sfizz.h>).
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Install Linux build deps
+        # Same set as linux-build.yml's tests job. xvfb stays even though
+        # the Catch2 binary itself is headless because some narrow-linked
+        # units pull in juce_gui_basics for jassert helpers and the
+        # initialiser path touches X11. Cheap to keep, prevents flaky
+        # startup failures on a future test that does need a display.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config \
+            llvm \
+            libasound2-dev libjack-jackd2-dev \
+            ladspa-sdk \
+            libcurl4-openssl-dev libfreetype-dev libfontconfig1-dev \
+            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
+            libxinerama-dev libxrandr-dev libxrender-dev libxss-dev \
+            libwebkit2gtk-4.0-dev libglu1-mesa-dev xvfb \
+            libwayland-dev libxkbcommon-dev libdecor-0-dev
+
+      - name: Clone JUCE 8.0.4 (upstream)
+        # Same upstream + same SIMD<long long> patch as linux-build.yml.
+        # See that workflow's clone step for the rationale.
+        run: |
+          git clone --depth 1 --branch 8.0.4 \
+            https://github.com/juce-framework/JUCE.git \
+            "${RUNNER_TEMP}/JUCE-wayland"
+
+      - name: Patch JUCE — SIMDNativeOps<long long> alias for x86_64 Linux
+        run: |
+          file="${RUNNER_TEMP}/JUCE-wayland/modules/juce_dsp/native/juce_SIMDNativeOps_sse.h"
+          awk '
+            /^}[[:space:]]*\/\/.*juce.*dsp/ && !done {
+              print "#if defined (__GNUC__) && defined (__SIZEOF_LONG__) && __SIZEOF_LONG__ == 8 && !defined (_WIN32)"
+              print "template <> struct SIMDNativeOps<long long> : SIMDNativeOps<int64_t> {};"
+              print "template <> struct SIMDNativeOps<unsigned long long> : SIMDNativeOps<uint64_t> {};"
+              print "#endif"
+              done = 1
+            }
+            { print }
+          ' "$file" > "$file.new" && mv "$file.new" "$file"
+          if ! grep -q "SIMDNativeOps<long long>" "$file"; then
+            echo "ERROR: SIMDNativeOps<long long> alias not present after patch — the awk anchor likely no longer matches upstream JUCE." >&2
+            exit 1
+          fi
+
+      - name: Clone Dusk plugins (donor DSP)
+        run: |
+          git clone --depth 1 \
+            https://github.com/dusk-audio/dusk-audio-plugins.git \
+            "${RUNNER_TEMP}/plugins-main"
+
+      - name: Configure tests (TSan, RelWithDebInfo)
+        # RelWithDebInfo preserves -O2 (so the optimiser-driven memory
+        # ordering the engine relies on is the one TSan inspects) plus
+        # -g (so race reports resolve to file:line). Debug would be
+        # easier to read but inhibits the inlining + reordering that's
+        # the actual production codegen.
+        run: |
+          cmake -S . -B build-tsan -G Ninja \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DDUSKSTUDIO_BUILD_TESTS=ON \
+            -DDUSKSTUDIO_ENABLE_TSAN=ON \
+            -DDUSKSTUDIO_SKIP_FORK_CHECK=ON \
+            -DJUCE_PATH="${RUNNER_TEMP}/JUCE-wayland" \
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main"
+
+      - name: Build tests (TSan)
+        run: cmake --build build-tsan --target dusk-studio-tests -j
+
+      - name: Run tests under TSan
+        # Excluded tests are pre-existing donor-DSP regressions tracked
+        # separately (UniversalCompressor static-curve assertions that
+        # fail on the current donor revision, unrelated to RT-safety).
+        # Re-enable by deleting the -E argument once the donor lands the
+        # fix. TSan itself fires via TSAN_OPTIONS=exitcode=66 above —
+        # any race makes ctest see a non-zero status and fail this step.
+        run: |
+          ctest --test-dir build-tsan --output-on-failure \
+                -E "VCA detector mode toggle is a no-op|FET has no GR-driven sub-bass HPF"
