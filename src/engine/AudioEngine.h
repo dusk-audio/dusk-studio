@@ -30,7 +30,8 @@ namespace duskstudio
 // Owns Transport, recording, playback, plugin host.
 class AudioEngine final : public juce::AudioIODeviceCallback,
                             public juce::MidiInputCallback,
-                            public juce::ChangeBroadcaster
+                            public juce::ChangeBroadcaster,
+                            public juce::ChangeListener
 {
 public:
     // Recording / Mixing / Aux share the live track-to-master path; only
@@ -234,6 +235,26 @@ public:
     // tick. nullptr during selftest static-init.
     class McuController* getMcuController() noexcept { return mcuController.get(); }
 
+    // H5: UI sink invoked when the active audio device disappears
+    // unexpectedly (hot-unplug, OS audio service restart). Sink runs
+    // on the message thread — engine marshals via callAsync from the
+    // ChangeListener path. UI typically surfaces a non-blocking
+    // EmbeddedModal banner with a route to Audio Settings.
+    //
+    // Set at startup (MainComponent), nullable. Message-thread-only;
+    // engine never invokes from the audio thread.
+    using DeviceLostAlertSink = std::function<void (juce::String)>;
+    void setDeviceLostAlertSink (DeviceLostAlertSink sink) noexcept
+    {
+        onDeviceLostAlert_ = std::move (sink);
+    }
+
+    // juce::ChangeListener — fires on the message thread when
+    // AudioDeviceManager's device list / current device changes.
+    // We use it to detect hot-unplug (current device became nullptr
+    // while we had one). Message-thread-only.
+    void changeListenerCallback (juce::ChangeBroadcaster* source) override;
+
 private:
     Session& session;
     juce::AudioDeviceManager deviceManager;
@@ -353,6 +374,15 @@ private:
     double secondsPerTick { 0.0 };
 
     std::atomic<bool>   usableOutputs     { true };
+
+    // H5 hot-unplug detector: set in audioDeviceAboutToStart, cleared
+    // when changeListenerCallback observes a now-null current device.
+    // Atomic so audioDeviceAboutToStart (audio device thread) and
+    // changeListenerCallback (message thread) don't race on the flag
+    // itself. Acquire / release across the threads.
+    std::atomic<bool>   hadLiveDevice_    { false };
+
+    DeviceLostAlertSink onDeviceLostAlert_;
 
     // First sample committed to disk. Under count-in the playhead is
     // rolled back before this; writes are skipped until it catches up.

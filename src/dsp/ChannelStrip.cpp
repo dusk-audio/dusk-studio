@@ -101,6 +101,15 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     // (sampleRate, blockSize), preserving the legacy path.
     eq.prepare (prepSr, prepBs, 2);
     eq.reset();
+    // H8 idempotence: re-clear the memcmp cache + the false→true edge
+    // detector so a re-prepare (sample-rate change, oversampling toggle,
+    // mid-session blockSize bump) forces a fresh setParameters call
+    // against the now-reset filter state. Without this, lastEqParams
+    // could hold the SAME params as the live paramsRef → memcmp returns
+    // 0 → setParameters skipped → filters keep their zero coefficients
+    // post-reset → silent EQ.
+    lastEqParams  = {};
+    prevEqEnabled = true;
 
     // Force the full multi-comp processing path (sidechain HP, true-peak,
     // transient shaper, stereo linking, auto-makeup, bypass-fade, lookahead)
@@ -110,6 +119,14 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     compressor.setInternalOversamplingEnabled (false);
     compressor.setPlayConfigDetails (2, 2, prepSr, juce::jmax (1, prepBs));
     compressor.prepareToPlay (prepSr, juce::jmax (1, prepBs));
+    // H8 belt-and-braces: explicit reset() after prepareToPlay so any
+    // detector / envelope state cached across the prior session
+    // (different sample rate, different block size) is wiped to
+    // initial conditions. Some donor builds reset internal state
+    // inside prepareToPlay, some do not — calling reset() makes the
+    // behaviour deterministic across donor revisions and rules out
+    // NaN-prone detectors firing on the first post-prepare block.
+    compressor.reset();
     bindCompParams();
 
     // SmoothedValue ramp at the OVERSAMPLED sample rate (the rate the

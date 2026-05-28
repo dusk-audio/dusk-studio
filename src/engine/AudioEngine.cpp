@@ -86,6 +86,12 @@ AudioEngine::AudioEngine (Session& sessionToBindTo) : session (sessionToBindTo)
 
     deviceManager.addAudioCallback (this);
 
+    // H5: subscribe to AudioDeviceManager change broadcasts so we can
+    // detect hot-unplug (current device becomes null while we had
+    // one). Fires on the message thread per JUCE's ChangeBroadcaster
+    // contract.
+    deviceManager.addChangeListener (this);
+
     // Empty deviceIdentifier = "every enabled input fans out to this
     // callback"; handleIncomingMidiMessage routes by source pointer.
     rebuildMidiInputBank();
@@ -406,6 +412,7 @@ AudioEngine::~AudioEngine()
 {
     if (transport.isRecording())
         recordManager.stopRecording (transport.getPlayhead());
+    deviceManager.removeChangeListener (this);
     deviceManager.removeAudioCallback (this);
     deviceManager.closeAudioDevice();
 }
@@ -770,6 +777,14 @@ void AudioEngine::consumePluginStateAfterLoad()
 
 void AudioEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
 {
+    // H5: mark we now have a live device so the next
+    // changeListenerCallback observing a null current device can
+    // distinguish hot-unplug from steady-state "device was never up".
+    // Release ordering so the message-thread reader in
+    // changeListenerCallback sees the bump before it inspects
+    // getCurrentAudioDevice().
+    hadLiveDevice_.store (true, std::memory_order_release);
+
     // Detect the silent-failure mode where a per-device ALSA name resolves
     // to 0 active output channels (PipeWire's ALSA shim does this for the
     // surround/front entries - JUCE accepts the asymmetric setup, the
@@ -951,7 +966,12 @@ void AudioEngine::audioDeviceStopped()
     // pre-disconnect "Recording".
     if (recordManager.isActive())
         recordManager.stopRecording (transport.getPlayhead());
-    if (transport.getState() == Transport::State::Recording)
+    // H5: force-stop the transport on ANY device loss (not just
+    // Recording). A hot-unplug while playing leaves the transport
+    // in Playing with no device to render — user gets a silent
+    // running transport which is confusing. Stop it explicitly so
+    // the next device come-up doesn't pick up mid-play.
+    if (transport.isPlaying() || transport.isRecording())
         transport.setState (Transport::State::Stopped);
 
     currentSampleRate.store (0.0, std::memory_order_relaxed);
@@ -959,6 +979,65 @@ void AudioEngine::audioDeviceStopped()
     // Reset to the optimistic default so a transient "no device open" state
     // doesn't stick a NO OUTPUTS warning on the UI.
     usableOutputs.store (true, std::memory_order_relaxed);
+}
+
+void AudioEngine::changeListenerCallback (juce::ChangeBroadcaster* source)
+{
+    // H5 hot-unplug detector. AudioDeviceManager broadcasts change
+    // messages whenever its device list / current-device state
+    // changes; we ignore broadcasts from any OTHER source (the
+    // engine itself broadcasts via its ChangeBroadcaster base; we
+    // don't want to react to our own messages).
+    if (source != &deviceManager) return;
+
+    // The hot-unplug signal is "we had a live device, now the
+    // current device is null." User-driven settings changes also
+    // close the device, but they're followed by addAudioCallback /
+    // audioDeviceAboutToStart for the new selection within the same
+    // dispatch loop tick — hadLiveDevice_ would still be true and
+    // we'd false-alarm. To avoid that, we re-check after a one-shot
+    // callAsync defer: if a new device came up in the meantime,
+    // hadLiveDevice_ is true AND getCurrentAudioDevice() is non-null,
+    // so we bail. If still null, real loss; fire the alert.
+    if (! hadLiveDevice_.load (std::memory_order_acquire)) return;
+    if (deviceManager.getCurrentAudioDevice() != nullptr) return;
+
+    // Defer one tick so a settings-driven device swap can complete
+    // before we decide it's a hot-unplug. The audioDeviceAboutToStart
+    // for the new device will republish hadLiveDevice_ = true and
+    // the deferred check below sees getCurrentAudioDevice() != null,
+    // bailing without spurious alert.
+    juce::MessageManager::callAsync ([this]
+    {
+        if (deviceManager.getCurrentAudioDevice() != nullptr) return;
+        if (! hadLiveDevice_.load (std::memory_order_acquire)) return;
+
+        // Confirmed loss. Clear the flag so a subsequent change
+        // broadcast for the same loss doesn't re-fire.
+        hadLiveDevice_.store (false, std::memory_order_release);
+
+        std::fprintf (stderr,
+                      "[Dusk Studio/AudioEngine] hot-unplug detected — no current "
+                      "audio device. Transport stopped.\n");
+
+        // audioDeviceStopped already force-stopped transport +
+        // recording; this is belt-and-braces in case the order of
+        // callbacks differs across backends. setState is no-op when
+        // already Stopped.
+        if (transport.isPlaying() || transport.isRecording())
+        {
+            if (transport.isRecording())
+                recordManager.stopRecording (transport.getPlayhead());
+            transport.setState (Transport::State::Stopped);
+        }
+
+        if (onDeviceLostAlert_)
+        {
+            onDeviceLostAlert_ (
+                "The active audio device has disconnected. Open Audio Settings to "
+                "select a new device.");
+        }
+    });
 }
 
 void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputChannelData,
