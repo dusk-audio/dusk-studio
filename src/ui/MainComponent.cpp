@@ -610,6 +610,38 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         return true;
     }
 
+    // ── Bank switching: Cmd/Ctrl + 1/2/3 selects banks 1-8 / 9-16 / 17-24.
+    // Maps to ConsoleView::setBank which also publishes the active bank
+    // to the audio thread so bank-relative MIDI bindings retarget.
+    if (cmd && ! shift && consoleView != nullptr)
+    {
+        const int bankIndex = (code == '1') ? 0
+                            : (code == '2') ? 1
+                            : (code == '3') ? 2
+                                            : -1;
+        if (bankIndex >= 0)
+        {
+            consoleView->setBank (juce::jlimit (0,
+                                                  juce::jmax (0, consoleView->numBanks() - 1),
+                                                  bankIndex));
+            return true;
+        }
+    }
+
+    // ── TIMELINE toggle: Cmd/Ctrl + \ shows / hides the tape strip.
+    // Mirrors the TransportBar's TIMELINE button so the user can flip
+    // the arrangement view without mousing. Backslash is otherwise
+    // unbound; \\ is what Reaper / Pro Tools use for similar toggles.
+    if (cmd && ! shift && key.getTextCharacter() == '\\')
+    {
+        tapeStripExpanded = ! tapeStripExpanded;
+        if (tapeStrip != nullptr) tapeStrip->setVisible (tapeStripExpanded);
+        if (consoleView != nullptr) consoleView->setStripsCompactMode (tapeStripExpanded);
+        if (transportBar != nullptr) transportBar->setTapeToggleVisualState (tapeStripExpanded);
+        resized();
+        return true;
+    }
+
     // ── Take cycling. Alt+T = forward (next take), Alt+Shift+T = backward.
     // Routes through TapeStrip's selection state; no-op when no region
     // is selected or the selection has no take history. T (plain) is

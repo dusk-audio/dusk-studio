@@ -60,7 +60,11 @@ juce::MouseCursor cursorForEditMode (EditMode m)
     static const juce::MouseCursor pencil   = makePencilCursor();
     switch (m)
     {
-        case EditMode::Grab:  return juce::MouseCursor::DraggingHandCursor;
+        // PointingHandCursor renders as a hand glyph on every OS we
+        // ship (macOS / Windows / Linux X11). DraggingHandCursor
+        // becomes the X11 "fleur" 4-arrow on Linux — not a hand —
+        // which made Grab mode look like Move mode on Linux.
+        case EditMode::Grab:  return juce::MouseCursor::PointingHandCursor;
         case EditMode::Range: return juce::MouseCursor::IBeamCursor;
         case EditMode::Cut:   return scissors;
         case EditMode::Grid:  return juce::MouseCursor::CrosshairCursor;

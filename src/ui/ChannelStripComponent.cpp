@@ -1308,7 +1308,17 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         knob->setRange (ChannelStripParams::kAuxSendMinDb, ChannelStripParams::kAuxSendMaxDb, 0.1);
         knob->setSkewFactorFromMidPoint (-12.0);   // detail near unity
         knob->setColour (juce::Slider::rotarySliderFillColourId,    kAuxColours[i]);
-        knob->setColour (juce::Slider::rotarySliderOutlineColourId, juce::Colour (0xff404048));
+        // Pre-fader sends get a bright amber outline as a glanceable
+        // indicator that the send taps signal before the fader. Post-
+        // fader keeps the dim default outline so a strip with all-post
+        // sends looks visually quiet.
+        {
+            const bool initialPre = track.strip.auxSendPreFader[(size_t) i]
+                                          .load (std::memory_order_relaxed);
+            knob->setColour (juce::Slider::rotarySliderOutlineColourId,
+                              initialPre ? juce::Colour (0xffffc060)
+                                         : juce::Colour (0xff404048));
+        }
         knob->setDoubleClickReturnValue (true, ChannelStripParams::kAuxSendOffDb);
         knob->setTooltip ("AUX " + juce::String (i + 1) + " send level. "
                           "Right-click for PRE/POST toggle + MIDI Learn.");
@@ -2386,6 +2396,19 @@ void ChannelStripComponent::refreshAuxSendLabel (int auxIdx)
     if (isPre) text += " PRE";
 
     auxKnobLabels[(size_t) auxIdx].setText (text, juce::dontSendNotification);
+
+    // Outline-colour cue mirrors the PRE text — bright amber ring when
+    // pre-fader, dim default when post. Updated here (not just in ctor)
+    // so the right-click PRE/POST toggle reflects on the knob ring
+    // without needing a strip rebuild.
+    if (auxIdx < (int) auxKnobs.size() && auxKnobs[(size_t) auxIdx] != nullptr)
+    {
+        auxKnobs[(size_t) auxIdx]->setColour (
+            juce::Slider::rotarySliderOutlineColourId,
+            isPre ? juce::Colour (0xffffc060)
+                  : juce::Colour (0xff404048));
+        auxKnobs[(size_t) auxIdx]->repaint();
+    }
 }
 
 void ChannelStripComponent::refreshPrintButtonForMode()
@@ -2549,7 +2572,13 @@ public:
                           ChannelStripParams::kAuxSendMaxDb, 0.1);
             k.setSkewFactorFromMidPoint (-12.0);
             k.setColour (juce::Slider::rotarySliderFillColourId,    colours[i]);
-            k.setColour (juce::Slider::rotarySliderOutlineColourId, juce::Colour (0xff404048));
+            {
+                const bool initialPre = track.strip.auxSendPreFader[(size_t) i]
+                                              .load (std::memory_order_relaxed);
+                k.setColour (juce::Slider::rotarySliderOutlineColourId,
+                              initialPre ? juce::Colour (0xffffc060)
+                                          : juce::Colour (0xff404048));
+            }
             k.setDoubleClickReturnValue (true, ChannelStripParams::kAuxSendOffDb);
             k.setTooltip ("AUX " + juce::String (i + 1) + " send level. "
                             "Double-click for OFF.");
@@ -2664,6 +2693,17 @@ public:
             auto& vl = valueLabels[(size_t) i];
             if (vl.getText (false) != txt)
                 vl.setText (txt, juce::dontSendNotification);
+
+            // Outline-colour cue mirrors the PRE text — bright amber
+            // ring when pre-fader, dim default when post.
+            const auto wantOutline = isPre ? juce::Colour (0xffffc060)
+                                            : juce::Colour (0xff404048);
+            auto& kk = knobs[(size_t) i];
+            if (kk.findColour (juce::Slider::rotarySliderOutlineColourId) != wantOutline)
+            {
+                kk.setColour (juce::Slider::rotarySliderOutlineColourId, wantOutline);
+                kk.repaint();
+            }
         }
     }
 
