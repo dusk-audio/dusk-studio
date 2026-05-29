@@ -52,19 +52,56 @@ juce::MouseCursor makePencilCursor()
     });
     return juce::MouseCursor (img, 3, 21);
 }
+
+juce::MouseCursor makeHandCursor()
+{
+    // Custom open-hand glyph for Grab mode. JUCE's built-in
+    // PointingHandCursor / DraggingHandCursor render inconsistently
+    // across Linux X11 cursor themes — some show a finger, some show
+    // the fleur 4-arrow, some show nothing. A custom Image cursor is
+    // theme-immune.
+    auto img = drawCursorGlyph ([] (juce::Graphics& g)
+    {
+        // 4 fingers + thumb on the left. Hotspot = palm centre.
+        juce::Path palm;
+        palm.addRoundedRectangle (6.0f, 10.0f, 12.0f, 11.0f, 2.0f);
+        juce::Path fingers;
+        // Index, middle, ring, pinky — 4 vertical caps above the palm.
+        fingers.addRoundedRectangle ( 7.0f, 4.0f, 2.4f, 8.0f, 1.2f);
+        fingers.addRoundedRectangle (10.0f, 3.0f, 2.4f, 9.0f, 1.2f);
+        fingers.addRoundedRectangle (13.0f, 4.0f, 2.4f, 8.0f, 1.2f);
+        fingers.addRoundedRectangle (16.0f, 6.0f, 2.4f, 6.0f, 1.2f);
+        // Thumb out to the right.
+        juce::Path thumb;
+        thumb.addRoundedRectangle (18.0f, 12.0f, 3.0f, 6.0f, 1.4f);
+
+        // Dark outline first so the white glyph reads against any
+        // background colour.
+        g.setColour (juce::Colours::black.withAlpha (0.75f));
+        g.strokePath (palm,    juce::PathStrokeType (3.4f));
+        g.strokePath (fingers, juce::PathStrokeType (3.4f));
+        g.strokePath (thumb,   juce::PathStrokeType (3.4f));
+        g.setColour (juce::Colours::white);
+        g.fillPath (palm);
+        g.fillPath (fingers);
+        g.fillPath (thumb);
+    });
+    return juce::MouseCursor (img, 12, 12);   // hotspot ≈ palm centre
+}
 } // namespace
 
 juce::MouseCursor cursorForEditMode (EditMode m)
 {
+    static const juce::MouseCursor hand     = makeHandCursor();
     static const juce::MouseCursor scissors = makeScissorsCursor();
     static const juce::MouseCursor pencil   = makePencilCursor();
     switch (m)
     {
-        // PointingHandCursor renders as a hand glyph on every OS we
-        // ship (macOS / Windows / Linux X11). DraggingHandCursor
-        // becomes the X11 "fleur" 4-arrow on Linux — not a hand —
-        // which made Grab mode look like Move mode on Linux.
-        case EditMode::Grab:  return juce::MouseCursor::PointingHandCursor;
+        // Custom hand image — theme-immune across macOS / Windows /
+        // Linux X11. JUCE's built-in PointingHand / DraggingHand
+        // cursors render as fleur (4-arrow) or even plain arrow under
+        // some Linux X11 cursor themes.
+        case EditMode::Grab:  return hand;
         case EditMode::Range: return juce::MouseCursor::IBeamCursor;
         case EditMode::Cut:   return scissors;
         case EditMode::Grid:  return juce::MouseCursor::CrosshairCursor;

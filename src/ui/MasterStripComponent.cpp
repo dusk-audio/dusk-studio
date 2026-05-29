@@ -1857,9 +1857,12 @@ void MasterStripComponent::resized()
                                          kRightStackW);
     area.removeFromLeft (leftPad);
     // Trim meter top so it lines up with the slider's +6 tick — same
-    // grammar as channel + bus strips.
+    // grammar as channel + bus strips. Bottom trimmed to match the
+    // fader's bottom (kFaderValueH + 8 value-label reserve) so the
+    // meter doesn't overhang past the "off" tick.
     const int meterTopY = area.getY() + (int) duskstudio::kFaderTrackPad;
-    meterArea = meterArea.withTop (meterTopY);
+    meterArea = meterArea.withTop (meterTopY)
+                          .withTrimmedBottom (kFaderValueH + 8);
     // Legacy carves cleared — paint() short-circuits on empty rects.
     faderScaleArea = juce::Rectangle<int>();
     grMeterArea    = juce::Rectangle<int>();

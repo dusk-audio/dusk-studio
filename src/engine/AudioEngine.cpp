@@ -474,7 +474,9 @@ void AudioEngine::stop()
     }
 
     playbackEngine.stopPlayback();
-    transport.setPlayhead (0);
+    // Pause-in-place — commercial-DAW behaviour. Spacebar / Stop button
+    // leaves the playhead where it landed; callers that want stop+rewind
+    // (e.g. the '.' hotkey, Home key) call setPlayhead(0) explicitly.
 }
 
 void AudioEngine::record()

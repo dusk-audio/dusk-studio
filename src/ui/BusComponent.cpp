@@ -1049,7 +1049,14 @@ void BusComponent::paint (juce::Graphics& g)
     // Stereo LED meter - two columns side by side inside meterArea.
     if (! meterArea.isEmpty())
     {
-        constexpr float kMinDb = -60.0f, kMaxDb = 6.0f;
+        // Match the fader's range + skewed scale so the LED tick
+        // positions line up with the fader tick labels (+6 / +3 / 0 / 3
+        // / 6 / 12 / 24 / 40 / off). Without the skew the LED's "0 dB"
+        // sat at 91 % of bar height while the fader's "0" tick lived at
+        // 73 % — they read as two different scales for the same signal.
+        constexpr float kMinDb = ChannelStripParams::kFaderMinDb;   // -100
+        constexpr float kMaxDb = ChannelStripParams::kFaderMaxDb;   // +12
+        constexpr float kFaderSkewMidDb = -12.0f;
         constexpr float kBarGap = 1.0f;
 
         auto drawColumn = [&] (juce::Rectangle<float> bar, float displayedDb)
@@ -1065,7 +1072,14 @@ void BusComponent::paint (juce::Graphics& g)
             const juce::Colour kLedRed    (0xffff2020);
             auto fracForDb = [&] (float db)
             {
-                return juce::jlimit (0.0f, 1.0f, (db - kMinDb) / (kMaxDb - kMinDb));
+                // JUCE setSkewFactorFromMidPoint formula —
+                // skewFactor = log(0.5) / log(midFrac).
+                constexpr float midFrac = (kFaderSkewMidDb - kMinDb)
+                                        / (kMaxDb - kMinDb);
+                const float skewFactor = std::log (0.5f) / std::log (midFrac);
+                const float t = juce::jlimit (0.0f, 1.0f,
+                                                  (db - kMinDb) / (kMaxDb - kMinDb));
+                return std::pow (t, skewFactor);
             };
             auto colourForDb = [&] (float db) -> juce::Colour
             {
@@ -1429,9 +1443,15 @@ void BusComponent::resized()
     // Trim meter top so it lines up with the slider's +6 tick — same
     // grammar as channel strips (meter scale = fader scale 1:1, peaks
     // above +6 read as clip, never floating in unlabeled space).
+    // Bottom trimmed by the same amount the slider is (kFaderValueH + 8
+    // reserved for the standalone value label) so the meter's "off" /
+    // -inf bottom lines up with the fader's "off" tick — without this
+    // the meter overhangs the fader by 26 px and looks disconnected
+    // from the strip's level scale.
     const int meterTopY = panSlice.getBottom() + kPanFaderGap
                         + (int) duskstudio::kFaderTrackPad;
-    meterArea = meterArea.withTop (meterTopY);
+    meterArea = meterArea.withTop (meterTopY)
+                          .withTrimmedBottom (kFaderValueH + 8);
     // Mirror padding so the fader's centre lands on the strip's centre.
     constexpr int kRightStackW = kRightPad + kGrLedW + kMeterToGrGap
                                   + kMeterW + kFaderToMeterGap;
