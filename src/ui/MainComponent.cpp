@@ -1345,12 +1345,15 @@ void MainComponent::launchStartupDialog()
     // down the embedded dialog + its dim backdrop together.
     startupDialog->onDismiss    = [this] { dismissStartupDialog(); };
 
-    // Dim backdrop covers the rest of the UI; clicking the dim is a
-    // shortcut for "Continue blank" — the same as the dialog's own Skip
-    // button — so it doesn't trap the user when they want to dismiss.
+    // Dim backdrop covers the rest of the UI and SWALLOWS clicks so the
+    // startup dialog behaves like a modal — clicking the dim or the DAW
+    // behind it must NOT dismiss the dialog (the user lost work that
+    // way: accidental click on the timeline disappeared the picker
+    // mid-choice). Dismissal is only via Quit / Open / NEW / OPEN /
+    // RECENT or Escape on the dialog itself.
     startupDim = std::make_unique<DimOverlay>();
     startupDim->setBounds (getLocalBounds());
-    startupDim->onClick = [this] { dismissStartupDialog(); };
+    startupDim->onClick = [] {};
     addAndMakeVisible (startupDim.get());
 
     // Centered on the main window. The dialog is plain dark — no native
