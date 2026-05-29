@@ -2642,6 +2642,24 @@ public:
             const auto& laneName = sessionRef.auxLane (i).name;
             if (! lbl.isBeingEdited() && lbl.getText (false) != laneName)
                 lbl.setText (laneName, juce::dontSendNotification);
+
+            const float dB    = track.strip.auxSendDb[(size_t) i]
+                                    .load (std::memory_order_relaxed);
+            const bool  isPre = track.strip.auxSendPreFader[(size_t) i]
+                                    .load (std::memory_order_relaxed);
+            juce::String txt;
+            if (dB <= ChannelStripParams::kAuxSendMinDb + 0.01f)
+                txt = juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x92"));
+            else
+            {
+                txt = (std::abs (dB) >= 10.0f)
+                          ? juce::String ((int) std::round (dB))
+                          : juce::String (dB, 1);
+                if (isPre) txt += " PRE";
+            }
+            auto& vl = valueLabels[(size_t) i];
+            if (vl.getText (false) != txt)
+                vl.setText (txt, juce::dontSendNotification);
         }
     }
 
