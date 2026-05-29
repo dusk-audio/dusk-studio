@@ -395,9 +395,12 @@ PianoRollComponent::PianoRollComponent (Session& s, AudioEngine& e, int t, int r
     zoomFitButton.onClick = [this] { zoomFit(); };
 
     // Edit-mode palette (shared with AudioRegionEditor + TapeStrip).
-    // PianoRoll uses Grab vs Draw as the meaningful distinction for
-    // empty-grid clicks; Range / Cut / Grid are inert here.
+    // PianoRoll only supports Grab (select / box-select) and Draw
+    // (the pencil — sole note-creation tool); Range / Cut / Grid are
+    // inert here so we hide them from the palette to keep the pencil
+    // discoverable as THE drawing tool.
     editModeToolbar = std::make_unique<EditModeToolbar> (engine);
+    editModeToolbar->setVisibleModes ({ EditMode::Grab, EditMode::Draw });
     editModeToolbar->onEditModeChanged = [this] { syncEditModeToolbar(); };
     addAndMakeVisible (editModeToolbar.get());
 

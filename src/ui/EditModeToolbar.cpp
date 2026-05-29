@@ -277,6 +277,20 @@ void EditModeToolbar::syncFromSession()
     snapResolutionButton.setButtonText (labelFor (engine.getSession().snapResolution));
 }
 
+void EditModeToolbar::setVisibleModes (juce::Array<EditMode> modes)
+{
+    auto setIf = [&modes] (ModeButton& b)
+    {
+        b.setVisible (modes.contains (b.getMode()));
+    };
+    setIf (grabButton);
+    setIf (rangeButton);
+    setIf (cutButton);
+    setIf (gridButton);
+    setIf (drawButton);
+    resized();
+}
+
 void EditModeToolbar::updateButtonStates()
 {
     const auto current = engine.getSession().editMode;
@@ -307,8 +321,11 @@ void EditModeToolbar::resized()
     auto r = getLocalBounds().reduced (4, 6);
     constexpr int kBtn = 36;
     constexpr int kGap = 3;
+    // Skip hidden buttons so PianoRoll's two-mode palette doesn't leave
+    // gaps where Range / Cut / Grid would be.
     for (auto* b : { &grabButton, &rangeButton, &cutButton, &gridButton, &drawButton })
     {
+        if (! b->isVisible()) continue;
         b->setBounds (r.removeFromLeft (kBtn));
         r.removeFromLeft (kGap);
     }
