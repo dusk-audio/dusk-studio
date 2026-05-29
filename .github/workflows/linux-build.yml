@@ -70,38 +70,45 @@ jobs:
             https://github.com/juce-framework/JUCE.git \
             "${RUNNER_TEMP}/JUCE-wayland"
 
-      - name: Patch JUCE — SIMDNativeOps<long long> alias for x86_64 Linux
-        # Upstream JUCE 8.0.4's juce_SIMDNativeOps_sse.h defines
+      - name: Patch JUCE — SIMDNativeOps<long long> alias for x86_64 + arm64 Linux
+        # Upstream JUCE 8.0.4's per-arch SIMDNativeOps headers
+        # (juce_SIMDNativeOps_sse.h for x86, _neon.h for arm) define
         # SIMDNativeOps<int64_t> but not SIMDNativeOps<long long>. On
-        # GCC x86_64 those are distinct types (long long is 64-bit;
-        # int64_t is the same width but a different name) and JUCE's
-        # template machinery instantiates SIMDRegister<long long> for
-        # any jmax<juce::int64>() call — incomplete type, hard error.
+        # GCC the two are distinct types (long long is 64-bit; int64_t
+        # is the same width but a different name) and JUCE's template
+        # machinery instantiates SIMDRegister<long long> for any
+        # jmax<juce::int64>() call — incomplete type, hard error.
         # The plugdata-team JUCE-wayland fork adds these two aliases;
-        # we apply them here so upstream JUCE builds cleanly.
+        # we apply them here on BOTH the SSE and NEON variants so the
+        # build is clean on amd64 + arm64.
         run: |
-          file="${RUNNER_TEMP}/JUCE-wayland/modules/juce_dsp/native/juce_SIMDNativeOps_sse.h"
-          # Tolerant match: a closing brace then a // comment mentioning
-          # both "juce" and "dsp" — survives upstream whitespace / comment
-          # rewording that an exact-string match would silently miss.
-          awk '
-            /^}[[:space:]]*\/\/.*juce.*dsp/ && !done {
-              print "#if defined (__GNUC__) && defined (__SIZEOF_LONG__) && __SIZEOF_LONG__ == 8 && !defined (_WIN32)"
-              print "template <> struct SIMDNativeOps<long long> : SIMDNativeOps<int64_t> {};"
-              print "template <> struct SIMDNativeOps<unsigned long long> : SIMDNativeOps<uint64_t> {};"
-              print "#endif"
-              done = 1
-            }
-            { print }
-          ' "$file" > "$file.new" && mv "$file.new" "$file"
-          echo "Patched: $file"
-          # Fail fast: a missing alias means upstream moved the anchor and
-          # the patch no-op'd. Catching it here beats a cryptic incomplete-
-          # type compile error 10 minutes into the build.
-          if ! grep -q "SIMDNativeOps<long long>" "$file"; then
-            echo "ERROR: SIMDNativeOps<long long> alias not present after patch — the awk anchor likely no longer matches upstream JUCE." >&2
-            exit 1
-          fi
+          patch_simd_file() {
+            local file="$1"
+            if [ ! -f "$file" ]; then
+              echo "Skipping $file — not present in this JUCE checkout."
+              return 0
+            fi
+            # Tolerant match: a closing brace then a // comment
+            # mentioning both "juce" and "dsp" — survives upstream
+            # whitespace / comment rewording.
+            awk '
+              /^}[[:space:]]*\/\/.*juce.*dsp/ && !done {
+                print "#if defined (__GNUC__) && defined (__SIZEOF_LONG__) && __SIZEOF_LONG__ == 8 && !defined (_WIN32)"
+                print "template <> struct SIMDNativeOps<long long> : SIMDNativeOps<int64_t> {};"
+                print "template <> struct SIMDNativeOps<unsigned long long> : SIMDNativeOps<uint64_t> {};"
+                print "#endif"
+                done = 1
+              }
+              { print }
+            ' "$file" > "$file.new" && mv "$file.new" "$file"
+            echo "Patched: $file"
+            if ! grep -q "SIMDNativeOps<long long>" "$file"; then
+              echo "ERROR: SIMDNativeOps<long long> alias not present after patching $file." >&2
+              return 1
+            fi
+          }
+          patch_simd_file "${RUNNER_TEMP}/JUCE-wayland/modules/juce_dsp/native/juce_SIMDNativeOps_sse.h"
+          patch_simd_file "${RUNNER_TEMP}/JUCE-wayland/modules/juce_dsp/native/juce_SIMDNativeOps_neon.h"
 
       - name: Clone Dusk plugins (donor DSP)
         run: |

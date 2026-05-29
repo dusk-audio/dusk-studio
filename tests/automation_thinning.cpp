@@ -3,12 +3,16 @@
 
 #include "session/Session.h"
 
-// MSVC's <cmath> doesn't expose M_PI by default — needs
-// _USE_MATH_DEFINES to be set BEFORE the include. GCC + Clang
-// (Linux + macOS) expose it unconditionally. Define before the
-// include to keep the constant portable across toolchains.
-#define _USE_MATH_DEFINES
 #include <cmath>
+
+// Catch2's headers transitively include <cmath> BEFORE this file's
+// code runs, which on MSVC means M_PI conditional resolution has
+// already happened without _USE_MATH_DEFINES set. Defining it here
+// is a no-op — too late. Use a portable constant instead so neither
+// toolchain has anything to disagree about.
+#ifndef M_PI
+constexpr double M_PI = 3.14159265358979323846;
+#endif
 
 using Catch::Matchers::WithinAbs;
 

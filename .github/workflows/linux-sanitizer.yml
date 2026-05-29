@@ -28,9 +28,12 @@ jobs:
       #   ctest sees the non-zero status and fails the job. Distinct from
       #   the default 1 so a "TSan tripped" failure is visually distinct
       #   from an ordinary REQUIRE() miss in the build log.
-      # external_symbolizer_path — let the runtime pick llvm-symbolizer
-      #   from PATH; without this the stack frames are hex offsets only.
-      TSAN_OPTIONS: "second_deadlock_stack=1 halt_on_error=1 exitcode=66"
+      # suppressions=...  — point at tools/tsan_suppressions.txt so
+      #   JUCE-internal patterns (WaitableEvent / Thread::notify /
+      #   TimeSliceThread / AbstractFifo) don't false-positive. Dusk
+      #   Studio code stays fully instrumented; only the explicitly-
+      #   listed JUCE entry points are skipped.
+      TSAN_OPTIONS: "second_deadlock_stack=1 halt_on_error=1 exitcode=66 suppressions=${{ github.workspace }}/tools/tsan_suppressions.txt"
 
     steps:
       - name: Checkout Dusk Studio
