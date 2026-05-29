@@ -95,9 +95,6 @@ enum class MidiBindingTarget : int
     TrackCompEnabled     = 211, // targetIndex = track
     TrackInsertBypass    = 212, // targetIndex = track — bypasses the
                                  // per-channel hardware insert slot.
-    TrackAuxSendPrePost  = 213, // targetIndex = packTrackAux(track, aux).
-                                 // Toggles between pre-fader and post-fader
-                                 // routing for that (track, aux) pair.
 
     // Continuous bus EQ. targetIndex = bus * kBusEqBands + band.
     // BusStrip exposes LF / MID / HF gains (3-band). Frequencies are
@@ -204,8 +201,7 @@ constexpr bool needsAuxLaneIndex (MidiBindingTarget t) noexcept
 // (kBankSize-based) range that callers bounds-check separately.
 constexpr bool needsPackedTrackAuxIndex (MidiBindingTarget t) noexcept
 {
-    return t == MidiBindingTarget::TrackAuxSend
-        || t == MidiBindingTarget::TrackAuxSendPrePost;
+    return t == MidiBindingTarget::TrackAuxSend;
 }
 
 // 24 × 4 = 96, fits in targetIndex. Header-only — Session.h pulls in

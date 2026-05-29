@@ -213,12 +213,6 @@ private:
     // the button + swap the tooltip in MIDI mode. Called from the ctor
     // and from applyMode().
     void refreshPrintButtonForMode();
-
-    // Re-renders one aux send's value label (e.g. after a pre/post
-    // toggle from the right-click menu). Reads the current dB +
-    // pre-fader bool from the session atoms and pushes the formatted
-    // text into auxKnobLabels[auxIdx].
-    void refreshAuxSendLabel (int auxIdx);
     juce::Component::SafePointer<juce::CallOutBox> activeIoBox;
     // Repainted by the 30 Hz timer when engine sets track.midiActivity
     // (clear-on-read).

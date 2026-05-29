@@ -1862,20 +1862,6 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                             }
                             break;
 
-                        case MidiBindingTarget::TrackAuxSendPrePost:
-                        {
-                            if (! pressed) break;
-                            const int track = unpackTrackAuxTrack (b.targetIndex);
-                            const int aux   = unpackTrackAuxLane  (b.targetIndex);
-                            if (track < 0 || track >= Session::kNumTracks) break;
-                            if (aux   < 0 || aux   >= ChannelStripParams::kNumAuxSends) break;
-                            auto& a = session.track (track).strip
-                                          .auxSendPreFader[(size_t) aux];
-                            a.store (! a.load (std::memory_order_relaxed),
-                                      std::memory_order_relaxed);
-                            break;
-                        }
-
                         // ── Bus EQ gain (packed bus * kBusEqBands + band) ─
                         case MidiBindingTarget::BusEqGain:
                         {
