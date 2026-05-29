@@ -2723,6 +2723,11 @@ enum MenuItemId
     kMenuFileOptimizeAutomation = 1013,
     kMenuFileBounceStems        = 1014,
     kMenuFileQuit     = 1099,
+    // Reserved range for the "Open Recent" submenu (one entry per
+    // RecentSessions::kMaxEntries slot, indexed off this base). Plus a
+    // clear-all sentinel just above the per-entry range.
+    kMenuFileRecentBase  = 1100,
+    kMenuFileRecentClear = 1180,
     // Reserved range for template entries (one per SessionTemplate enum
     // value, indexed off this base). Stays well above the file-action IDs
     // so future additions don't collide.
@@ -2756,6 +2761,37 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelMenuIndex,
         menu.addSubMenu ("New from template", templates);
 
         menu.addItem (kMenuFileOpen,   "Open...");
+
+        // "Open Recent" submenu: cached on the way out so the click
+        // handler can resolve by index. Capped at RecentSessions::kMaxEntries
+        // (the on-disk file is also capped, so this match isn't load-bearing).
+        menuRecentSessions = RecentSessions::load();
+        juce::PopupMenu recents;
+        if (menuRecentSessions.isEmpty())
+        {
+            recents.addItem (-1, "(none)", false, false);
+        }
+        else
+        {
+            for (int i = 0; i < menuRecentSessions.size()
+                              && i < RecentSessions::kMaxEntries; ++i)
+            {
+                const auto& dir  = menuRecentSessions.getReference (i);
+                const auto  json = dir.getChildFile ("session.json");
+                const auto  parent = dir.getParentDirectory().getFullPathName();
+                // Newest at the top. Disable entries whose session.json
+                // has gone missing — the directory is on the list (load()
+                // only kept it because the dir still exists) but the actual
+                // session file might have been deleted under us.
+                recents.addItem (kMenuFileRecentBase + i,
+                                  dir.getFileName() + "  \xe2\x80\x94  " + parent,
+                                  json.existsAsFile() /*enabled*/);
+            }
+            recents.addSeparator();
+            recents.addItem (kMenuFileRecentClear, "Clear recent sessions");
+        }
+        menu.addSubMenu ("Open Recent", recents);
+
         menu.addItem (kMenuFileSave,   "Save");
         menu.addItem (kMenuFileSaveAs, "Save as...");
         menu.addSeparator();
@@ -2891,7 +2927,24 @@ void MainComponent::menuItemSelected (int menuItemID, int /*topLevelMenuIndex*/)
             showDuskAlert (*this, "About Dusk Studio", body);
             break;
         }
+        case kMenuFileRecentClear:
+            RecentSessions::clear();
+            menuRecentSessions.clear();
+            break;
         default:
+            // "Open Recent" picks live in [kMenuFileRecentBase, +kMaxEntries).
+            // Resolve via the snapshot taken when the menu was built.
+            if (menuItemID >= kMenuFileRecentBase
+                && menuItemID < kMenuFileRecentBase + RecentSessions::kMaxEntries)
+            {
+                const int idx = menuItemID - kMenuFileRecentBase;
+                if (idx >= 0 && idx < menuRecentSessions.size())
+                {
+                    const auto dir = menuRecentSessions.getReference (idx);
+                    loadSessionFromJson (dir.getChildFile ("session.json"));
+                }
+                break;
+            }
             // Template menu items live in [kMenuFileTemplateBase, +kCount).
             if (menuItemID >= kMenuFileTemplateBase
                 && menuItemID < kMenuFileTemplateBase + (int) SessionTemplate::kCount)

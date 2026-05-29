@@ -258,5 +258,11 @@ private:
     std::unique_ptr<class juce::Timer>   tunerPoller;
     void toggleTuner();
     void closeTuner();
+
+    // Snapshot of the recent-sessions list captured when the File menu
+    // opens, so menuItemSelected can resolve an "Open Recent" pick by
+    // index without re-reading the file (and risking a different order
+    // if a save fired between menu-open and click).
+    juce::Array<juce::File> menuRecentSessions;
 };
 } // namespace duskstudio
