@@ -3028,20 +3028,30 @@ void ChannelStripComponent::timerCallback()
                                     track.strip.pan.load (std::memory_order_relaxed));
         }
 
-        // Mute / Solo - discrete params. Sync the button visuals to
-        // liveMute / liveSolo when the audio engine is driving them
-        // (Read or Touch). In Off / Write the button state already
-        // matches the user's clicks and the live atoms mirror them,
-        // so syncing is harmless idempotent in all modes.
+        // Mute / Solo - discrete params. In Off / Write modes the button
+        // is authoritative — read the manual atom so we don't race
+        // against the audio thread's 1-block-stale liveSolo / liveMute
+        // (which used to re-light the button right after the user
+        // clicked, making solo / mute look "stuck"). Only Read / Touch
+        // need the live atom because there the audio engine drives the
+        // value from the automation lane.
+        const int amodeForSyncs = track.automationMode.load (std::memory_order_relaxed);
+        const bool laneDrivesMuteSolo =
+               amodeForSyncs == (int) AutomationMode::Read
+            || amodeForSyncs == (int) AutomationMode::Touch;
         {
-            const bool live = track.strip.liveMute.load (std::memory_order_relaxed);
-            if (muteButton.getToggleState() != live)
-                muteButton.setToggleState (live, juce::dontSendNotification);
+            const bool effective = laneDrivesMuteSolo
+                ? track.strip.liveMute.load (std::memory_order_relaxed)
+                : track.strip.mute    .load (std::memory_order_relaxed);
+            if (muteButton.getToggleState() != effective)
+                muteButton.setToggleState (effective, juce::dontSendNotification);
         }
         {
-            const bool live = track.strip.liveSolo.load (std::memory_order_relaxed);
-            if (soloButton.getToggleState() != live)
-                soloButton.setToggleState (live, juce::dontSendNotification);
+            const bool effective = laneDrivesMuteSolo
+                ? track.strip.liveSolo.load (std::memory_order_relaxed)
+                : track.strip.solo    .load (std::memory_order_relaxed);
+            if (soloButton.getToggleState() != effective)
+                soloButton.setToggleState (effective, juce::dontSendNotification);
         }
         // ARM has no Live atom (no automation lane) — read recordArmed
         // directly. Needed so a MIDI-bound arm toggle reflects on screen.
