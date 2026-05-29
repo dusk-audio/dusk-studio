@@ -972,55 +972,41 @@ int AudioRegionEditor::gainLineY (juce::Rectangle<int> waveArea) const
     return inset.getCentreY() - (int) std::round (frac * spanPx);
 }
 
-void AudioRegionEditor::mouseMove (const juce::MouseEvent& e)
+juce::MouseCursor AudioRegionEditor::cursorForPoint (int x, int y) const
 {
+    // Single source of truth for cursor selection — shared between
+    // mouseMove and updateModeCursor so a toolbar-driven session.editMode
+    // flip can't overwrite a stationary resize cursor.
     const auto waveArea = juce::Rectangle<int> (0, kIconRowHeight + kRulerHeight,
                                                    getWidth(),
                                                    getHeight() - kIconRowHeight - kRulerHeight - kStatusBarH - kScrollBarH);
 
-    if (fadeInHandleRect (waveArea).contains (e.x, e.y)
-        || fadeOutHandleRect (waveArea).contains (e.x, e.y))
-    {
-        setMouseCursor (juce::MouseCursor::LeftRightResizeCursor);
-        return;
-    }
-    if (trimStartRect (waveArea).contains (e.x, e.y)
-        || trimEndRect (waveArea).contains (e.x, e.y))
-    {
-        setMouseCursor (juce::MouseCursor::LeftRightResizeCursor);
-        return;
-    }
-    // Within ±4 px of the gain line → vertical-resize cursor.
-    if (waveArea.contains (e.x, e.y) && std::abs (e.y - gainLineY (waveArea)) <= 4)
-    {
-        setMouseCursor (juce::MouseCursor::UpDownResizeCursor);
-        return;
-    }
-    // No handle under the pointer: inside the waveform the cursor
-    // reflects the active edit mode (hand / scissors / pencil / crosshair
-    // / I-beam); outside it (toolbar / ruler / status row) fall back to
-    // the normal arrow so the edit-mode cursor doesn't bleed over chrome.
-    if (waveArea.contains (e.x, e.y))
-        setMouseCursor (cursorForEditMode (session.editMode));
-    else
-        setMouseCursor (juce::MouseCursor::NormalCursor);
+    if (fadeInHandleRect (waveArea).contains (x, y)
+        || fadeOutHandleRect (waveArea).contains (x, y))
+        return juce::MouseCursor::LeftRightResizeCursor;
+
+    if (trimStartRect (waveArea).contains (x, y)
+        || trimEndRect (waveArea).contains (x, y))
+        return juce::MouseCursor::LeftRightResizeCursor;
+
+    if (waveArea.contains (x, y) && std::abs (y - gainLineY (waveArea)) <= 4)
+        return juce::MouseCursor::UpDownResizeCursor;
+
+    if (waveArea.contains (x, y))
+        return cursorForEditMode (session.editMode);
+
+    return juce::MouseCursor::NormalCursor;
+}
+
+void AudioRegionEditor::mouseMove (const juce::MouseEvent& e)
+{
+    setMouseCursor (cursorForPoint (e.x, e.y));
 }
 
 void AudioRegionEditor::updateModeCursor()
 {
-    // Only paint the edit-mode cursor when the pointer is actually over
-    // the waveform; the toolbar / ruler / status row keep the normal
-    // arrow so a mode flip doesn't bleed the cursor across chrome that
-    // can't act on it. Mirrors the guard in mouseMove.
-    const auto waveArea = juce::Rectangle<int> (
-        0, kIconRowHeight + kRulerHeight,
-        getWidth(),
-        getHeight() - kIconRowHeight - kRulerHeight - kStatusBarH - kScrollBarH);
     const auto p = getMouseXYRelative();
-    if (waveArea.contains (p))
-        setMouseCursor (cursorForEditMode (session.editMode));
-    else
-        setMouseCursor (juce::MouseCursor::NormalCursor);
+    setMouseCursor (cursorForPoint (p.x, p.y));
 }
 
 void AudioRegionEditor::mouseDown (const juce::MouseEvent& e)

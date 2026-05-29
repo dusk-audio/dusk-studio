@@ -194,6 +194,14 @@ public:
     // mouseMove fallback when no handle is under the pointer.
     void updateModeCursor();
 
+    // Resolve the cursor for a given pointer position by consulting the
+    // local hotspot rectangles (fade / trim / gain) FIRST, then falling
+    // back to the edit-mode cursor when inside the waveform, and the
+    // normal arrow elsewhere. Shared between mouseMove and
+    // updateModeCursor so toolbar-driven mode flips can't overwrite a
+    // resize cursor sitting on a handle.
+    juce::MouseCursor cursorForPoint (int x, int y) const;
+
     // Two-way: fresh overlap creates/widens auto-fades, vanishing
     // overlap retracts a previously-auto fade to zero. User-pinned
     // fades (fadeInAuto=false with non-zero length) untouched. Each

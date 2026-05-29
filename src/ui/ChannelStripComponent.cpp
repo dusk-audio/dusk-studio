@@ -1283,17 +1283,20 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
 
     auto formatAuxSend = [] (float dB, bool preFader)
     {
-        if (dB <= ChannelStripParams::kAuxSendMinDb + 0.01f)
-            return juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x92"));   // "−" (U+2212)
+        // Build the base level string (either the "−" sentinel for a
+        // muted send or the dB number), then append " PRE" if the send
+        // is pre-fader regardless of level — a user who's parked the
+        // knob at off still needs to see whether it's PRE so they know
+        // what'll happen when they bump it back up.
         // Tight format: integer when |v| >= 10 ("-12"), else 1 decimal ("0.0").
         // Drops the "dB" suffix so the label fits the narrow column.
-        // Pre-fader sends append a small " PRE" suffix; post-fader shows
-        // the raw level only — post is the default + most common, so we
-        // follow the "show only when meaningful" rule used elsewhere
-        // (pan readout: "C" / "L42" / "R75", never "C 0").
-        juce::String text = (std::abs (dB) >= 10.0f)
-                                ? juce::String ((int) std::round (dB))
-                                : juce::String (dB, 1);
+        juce::String text;
+        if (dB <= ChannelStripParams::kAuxSendMinDb + 0.01f)
+            text = juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x92"));   // "−" (U+2212)
+        else
+            text = (std::abs (dB) >= 10.0f)
+                       ? juce::String ((int) std::round (dB))
+                       : juce::String (dB, 1);
         if (preFader) text += " PRE";
         return text;
     };
@@ -2370,7 +2373,9 @@ void ChannelStripComponent::refreshAuxSendLabel (int auxIdx)
                               .load (std::memory_order_relaxed);
 
     // Inline the formatter — the ctor's `formatAuxSend` lambda is
-    // out of scope here. Same logic, kept terse.
+    // out of scope here. Same logic, kept terse. PRE suffix appended
+    // regardless of level so users can see pre-fader state even when
+    // the send is parked at off.
     juce::String text;
     if (dB <= ChannelStripParams::kAuxSendMinDb + 0.01f)
         text = juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x92"));
@@ -2378,8 +2383,7 @@ void ChannelStripComponent::refreshAuxSendLabel (int auxIdx)
         text = juce::String ((int) std::round (dB));
     else
         text = juce::String (dB, 1);
-    if (isPre && ! text.startsWith (juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x92"))))
-        text += " PRE";
+    if (isPre) text += " PRE";
 
     auxKnobLabels[(size_t) auxIdx].setText (text, juce::dontSendNotification);
 }
@@ -2525,11 +2529,13 @@ public:
         };
         auto formatAuxSend = [] (float dB, bool preFader) -> juce::String
         {
+            juce::String s;
             if (dB <= ChannelStripParams::kAuxSendMinDb + 0.01f)
-                return juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x92"));   // "−"
-            juce::String s = (std::abs (dB) >= 10.0f)
-                                  ? juce::String ((int) std::round (dB))
-                                  : juce::String (dB, 1);
+                s = juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x92"));   // "−"
+            else
+                s = (std::abs (dB) >= 10.0f)
+                        ? juce::String ((int) std::round (dB))
+                        : juce::String (dB, 1);
             if (preFader) s += " PRE";
             return s;
         };
@@ -2651,12 +2657,10 @@ public:
             if (dB <= ChannelStripParams::kAuxSendMinDb + 0.01f)
                 txt = juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x92"));
             else
-            {
                 txt = (std::abs (dB) >= 10.0f)
                           ? juce::String ((int) std::round (dB))
                           : juce::String (dB, 1);
-                if (isPre) txt += " PRE";
-            }
+            if (isPre) txt += " PRE";
             auto& vl = valueLabels[(size_t) i];
             if (vl.getText (false) != txt)
                 vl.setText (txt, juce::dontSendNotification);
@@ -3329,6 +3333,17 @@ void ChannelStripComponent::mouseDown (const juce::MouseEvent& e)
                 const bool isPre = track.strip.auxSendPreFader[(size_t) i]
                                        .load (std::memory_order_relaxed);
 
+                // SafePointer captures: showMenuAsync's lambdas can fire
+                // after the strip is destroyed (e.g. mode flip rebuilds
+                // ConsoleView with the popup still open). Capture a
+                // SafePointer<ChannelStripComponent> instead of raw
+                // `this` so each lambda no-ops cleanly if the strip is
+                // gone — without these guards the lambdas would
+                // dereference `track`, `session`, `auxKnobs`, etc. on
+                // freed memory.
+                juce::Component::SafePointer<ChannelStripComponent> safeThis (this);
+                juce::Component::SafePointer<juce::Slider> safeKnob (auxKnobs[(size_t) i].get());
+
                 juce::PopupMenu m;
                 m.addSectionHeader ("Track " + juce::String (trackIndex + 1)
                                        + " AUX " + juce::String (i + 1) + " send");
@@ -3337,39 +3352,42 @@ void ChannelStripComponent::mouseDown (const juce::MouseEvent& e)
                 // the user knows what clicking will do.
                 const juce::String toggleLabel = isPre ? "Switch to POST-fader"
                                                        : "Switch to PRE-fader";
-                m.addItem (toggleLabel, [this, i]
+                m.addItem (toggleLabel, [safeThis, i]
                 {
-                    auto& a = track.strip.auxSendPreFader[(size_t) i];
+                    auto* self = safeThis.getComponent();
+                    if (self == nullptr) return;
+                    auto& a = self->track.strip.auxSendPreFader[(size_t) i];
                     const bool nowPre = ! a.load (std::memory_order_relaxed);
                     a.store (nowPre, std::memory_order_relaxed);
-                    refreshAuxSendLabel (i);
+                    self->refreshAuxSendLabel (i);
                 });
 
-                m.addItem ("Reset to off", [this, i]
+                m.addItem ("Reset to off", [safeKnob]
                 {
-                    if (auto* knob = auxKnobs[(size_t) i].get())
-                    {
-                        knob->setValue (ChannelStripParams::kAuxSendOffDb,
-                                          juce::sendNotificationSync);
-                    }
+                    if (auto* k = safeKnob.getComponent())
+                        k->setValue (ChannelStripParams::kAuxSendOffDb,
+                                      juce::sendNotificationSync);
                 });
 
                 m.addSeparator();
 
-                juce::Component::SafePointer<juce::Slider> safeKnob (auxKnobs[(size_t) i].get());
-                m.addItem ("MIDI Learn level...", [this, safeKnob, packed]
+                m.addItem ("MIDI Learn level...", [safeThis, safeKnob, packed]
                 {
-                    if (auto* k = safeKnob.getComponent())
-                        midilearn::showLearnMenu (*k, session,
-                                                     MidiBindingTarget::TrackAuxSend,
-                                                     packed);
+                    auto* self = safeThis.getComponent();
+                    auto* k    = safeKnob.getComponent();
+                    if (self == nullptr || k == nullptr) return;
+                    midilearn::showLearnMenu (*k, self->session,
+                                                 MidiBindingTarget::TrackAuxSend,
+                                                 packed);
                 });
-                m.addItem ("MIDI Learn pre/post...", [this, safeKnob, packed]
+                m.addItem ("MIDI Learn pre/post...", [safeThis, safeKnob, packed]
                 {
-                    if (auto* k = safeKnob.getComponent())
-                        midilearn::showLearnMenu (*k, session,
-                                                     MidiBindingTarget::TrackAuxSendPrePost,
-                                                     packed);
+                    auto* self = safeThis.getComponent();
+                    auto* k    = safeKnob.getComponent();
+                    if (self == nullptr || k == nullptr) return;
+                    midilearn::showLearnMenu (*k, self->session,
+                                                 MidiBindingTarget::TrackAuxSendPrePost,
+                                                 packed);
                 });
 
                 m.showMenuAsync (juce::PopupMenu::Options()

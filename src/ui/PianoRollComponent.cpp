@@ -569,12 +569,14 @@ void PianoRollComponent::syncEditModeToolbar()
     if (editModeToolbar != nullptr) editModeToolbar->syncFromSession();
     // Only paint the edit-mode cursor when the pointer is actually inside
     // the note grid; chrome (toolbar / header / keyboard / velocity & CC
-    // strips / scrollbar / status bar) keeps the normal arrow so a mode
-    // flip doesn't bleed the cursor across regions it can't act on.
-    // Mirrors the equivalent guards in mouseMove.
+    // strips / scrollbar / status bar) keeps the normal arrow. Piano roll
+    // only implements Grab (select / move) and Draw (pencil) — Range /
+    // Cut / Grid have no piano-roll click handler, so leave their cursor
+    // at the normal arrow instead of advertising an action that won't
+    // happen. Mirrors the equivalent guard in mouseMove.
     const auto mode = session.editMode;
     const auto p    = getMouseXYRelative();
-    if ((mode == EditMode::Grab || mode == EditMode::Cut)
+    if ((mode == EditMode::Grab || mode == EditMode::Draw)
         && noteGridArea().contains (p))
         setMouseCursor (cursorForEditMode (mode));
     else
@@ -2528,12 +2530,6 @@ void PianoRollComponent::mouseMove (const juce::MouseEvent& e)
         return;
     }
 
-    if (mode == EditMode::Cut)
-    {
-        setMouseCursor (cursorForEditMode (EditMode::Cut));
-        return;
-    }
-
     // Cursor feedback so the user can tell when Alt-on-note will do
     // something different. Without this, the only signal is the
     // resulting drag - too late.
@@ -2541,9 +2537,14 @@ void PianoRollComponent::mouseMove (const juce::MouseEvent& e)
     const int hit = hitTestNote (e.x, e.y, onEdge);
     if (hit < 0)
     {
-        setMouseCursor (mode == EditMode::Grab
-                            ? cursorForEditMode (EditMode::Grab)
-                            : juce::MouseCursor::NormalCursor);
+        // Empty grid: Grab = hand (selection / box-select); Draw =
+        // pencil (next click creates a note); other modes have no
+        // piano-roll behaviour so keep the normal arrow rather than
+        // advertise scissors / I-beam / crosshair that won't act.
+        if (mode == EditMode::Grab || mode == EditMode::Draw)
+            setMouseCursor (cursorForEditMode (mode));
+        else
+            setMouseCursor (juce::MouseCursor::NormalCursor);
         return;
     }
     if (e.mods.isAltDown() && ! onEdge)

@@ -82,10 +82,13 @@ void CompMeterStrip::resetThresholdForMode (Track& t)
             break;
         case 1:
             // FET: threshold knob now writes compFetThresholdDb directly.
-            // 0 dB threshold = nothing above 0 dBFS gets compressed →
-            // effectively neutral. Input drive + output are independent
-            // and must not be reset here.
+            // 0 dB threshold + 0 dB input drive + 0 dB output makeup =
+            // a true "no compression" reset. Mirrors the popup editor's
+            // mouseDoubleClick reset so the inline strip handle and the
+            // editor's reset path produce the same state.
             t.strip.compFetThresholdDb.store (0.0f, std::memory_order_relaxed);
+            t.strip.compFetInput      .store (0.0f, std::memory_order_relaxed);
+            t.strip.compFetOutput     .store (0.0f, std::memory_order_relaxed);
             break;
         case 2:
         default:
