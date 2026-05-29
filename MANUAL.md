@@ -81,7 +81,7 @@ Click **IN** to enable input monitoring. Play the source and watch the input met
 
 ![Channel strip 1 armed, input picked, monitor on.](docs/images/qg-03-arm-track.png)
 
-If you want to track _through_ the channel's EQ and compressor, also engage **PRINT**. The recorded file will contain the post-effects signal. With PRINT off (the default) you can tweak EQ and compression after the take without re-recording.
+If you want to track _through_ the channel's EQ and compressor, also engage **PRINT**. The recorded file will contain the post-effects signal. With PRINT off (the default) you can tweak EQ and compression after the take without re-recording. PRINT applies to **audio tracks only**; MIDI tracks always record raw MIDI events and ignore the PRINT button.
 
 ## 4. Record
 
@@ -549,7 +549,7 @@ This block is only visible in the RECORDING stage. In other stages it collapses 
 
 - **ARM**: light red when on. Marks the track for recording on the next Record press.
 - **IN**: input monitor. When on, you hear the live input through the channel strip. Useful for tracking with effects.
-- **PRINT**: when on, the channel's EQ, compressor, and insert are committed to the recorded file. When off (the default), they are kept live, so you can tweak them after the take.
+- **PRINT** (audio tracks only): when on, the channel's EQ, compressor, and insert are committed to the recorded file. When off (the default), they are kept live, so you can tweak them after the take. MIDI tracks ignore PRINT — they always record raw MIDI events; the instrument plugin's audio is rendered on playback, not on capture, so there is nothing to "print to disk" for a MIDI track.
 
 ## Insert slot
 
