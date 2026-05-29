@@ -136,6 +136,14 @@ juce::String describeBindingTarget (const MidiBinding& b,
         case MidiBindingTarget::TrackCompEnabled:   return "Track " + trk() + " comp on/off";
         case MidiBindingTarget::TrackInsertBypass:  return "Track " + trk() + " insert bypass";
 
+        case MidiBindingTarget::TrackAuxSendPrePost:
+        {
+            const int track = unpackTrackAuxTrack (b.targetIndex);
+            const int aux   = unpackTrackAuxLane  (b.targetIndex);
+            return "Track " + juce::String (track + 1)
+                 + " AUX " + juce::String (aux + 1) + " pre/post";
+        }
+
         case MidiBindingTarget::BusEqGain:
         {
             const int bus  = unpackBusEqBus  (b.targetIndex);
@@ -200,6 +208,7 @@ const char* nameForTarget (MidiBindingTarget t) noexcept
         case MidiBindingTarget::TrackEqEnabled:     return "Track EQ on/off";
         case MidiBindingTarget::TrackCompEnabled:   return "Track comp on/off";
         case MidiBindingTarget::TrackInsertBypass:  return "Track insert bypass";
+        case MidiBindingTarget::TrackAuxSendPrePost: return "AUX send pre/post";
         case MidiBindingTarget::BusEqGain:          return "Bus EQ gain";
         case MidiBindingTarget::MasterEqLfBoost:    return "Master EQ low boost";
         case MidiBindingTarget::MasterEqHfBoost:    return "Master EQ high boost";
