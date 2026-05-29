@@ -1651,13 +1651,25 @@ void MainComponent::timerCallback()
 
 void MainComponent::requestQuit()
 {
-    // Industry-standard dirty-only prompt: nothing changed since the last
-    // manual save (autosave file isn't newer than session.json) → quit
-    // immediately. Otherwise show the Dusk Studio-styled Save / Don't Save /
-    // Cancel modal.
+    // Industry-standard dirty-only prompt. Compare the live serialized
+    // session JSON against the snapshot we took at the last successful
+    // save (or session load) — any single-knob / fader / region edit
+    // diverges the JSON immediately, so this catches changes that the
+    // autosave-timestamp check below would miss (autosave fires every
+    // 30 s; closing within that window with a moved fader used to skip
+    // the prompt and silently lose the change). autosaveIsNewerThan
+    // stays as a belt-and-braces fallback for sessions where we somehow
+    // didn't seed lastSavedSessionJson.
     const auto dir = session.getSessionDirectory();
     const auto sessionJson = dir.getChildFile ("session.json");
-    const bool dirty = (dir != juce::File()) && autosaveIsNewerThan (sessionJson);
+    bool dirty = false;
+    if (dir != juce::File())
+    {
+        const auto currentJson = SessionSerializer::serialize (session);
+        dirty = (! lastSavedSessionJson.isEmpty()
+                  && currentJson != lastSavedSessionJson)
+              || autosaveIsNewerThan (sessionJson);
+    }
 
     if (! dirty)
     {
