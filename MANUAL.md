@@ -315,6 +315,71 @@ In compact mode (window narrower than 1850 px) labels shorten; `SNAP` becomes `S
 
 Any modern multi-core CPU (Intel, AMD, or Apple Silicon) is sufficient for a 24-track session at 48 kHz. The compressor and EQ on every channel are oversampled when the global oversampling factor is raised; expect roughly 2–3× CPU on the mix engine when you select 4× oversampling.
 
+## Installing Dusk Studio
+
+The binaries shipped via Patreon and GitHub Sponsors are **unsigned** for now. Apple Developer ID + Windows Authenticode certs are both deferred — the cost-to-clean-first-launch-UX ratio doesn't favour them at this stage. The result: macOS Gatekeeper and Windows SmartScreen will warn you on first launch. The warning is expected and the bypass is quick — under 30 seconds per OS — but it is required the first time.
+
+The source on GitHub is GPL-3.0; anyone who prefers to skip the warning can build from source.
+
+### Linux (AppImage)
+
+1. Download `DuskStudio-x86_64.AppImage` (or `-aarch64` on Raspberry Pi / ARM64 Linux) from the Patreon post or the private releases repo.
+2. Open a terminal in the download folder and mark it executable:
+   ```bash
+   chmod +x DuskStudio-x86_64.AppImage
+   ```
+3. Double-click to launch, or run it from the terminal:
+   ```bash
+   ./DuskStudio-x86_64.AppImage
+   ```
+
+No signing dance. Linux desktops trust AppImages by default.
+
+### macOS (DMG / .app)
+
+macOS 14 Sonoma and 15 Sequoia ship Gatekeeper at its strictest defaults. Right-click → Open used to bypass; recent macOS releases require a trip to System Settings instead.
+
+1. Double-click the downloaded `DuskStudio.dmg` to mount it.
+2. Drag **Dusk Studio.app** to your `Applications` folder.
+3. The first time you launch the app, macOS will show: *"Dusk Studio.app cannot be opened because the developer cannot be verified."* Click **OK** to dismiss — this step is required so macOS records the block in your security log.
+4. Open **System Settings → Privacy & Security**. Scroll to the bottom.
+5. You will see *"Dusk Studio.app was blocked from use because it is not from an identified developer."* Click **Open Anyway**.
+6. Enter your administrator password when prompted.
+7. macOS shows the warning one more time with an **Open** button — click it.
+8. Subsequent launches work normally; macOS only asks once per build.
+
+If you later install a newer build (different binary hash), the bypass dance repeats once for that new build.
+
+### Windows (MSI installer)
+
+Windows SmartScreen blocks unsigned MSIs by default. The bypass is one click but it's hidden behind a small link.
+
+1. Double-click the downloaded `DuskStudio-{version}.msi`.
+2. SmartScreen shows: *"Windows protected your PC"* with a **Don't run** button.
+3. Click the small **More info** link near the top of the dialog. SmartScreen expands to show *"App: DuskStudio-{version}.msi / Publisher: Unknown publisher"*.
+4. A new **Run anyway** button appears at the bottom — click it.
+5. The MSI installer runs normally. Accept the install location (`C:\Program Files\Dusk Studio` by default) and finish.
+6. Launch Dusk Studio from the Start menu.
+
+Windows SmartScreen treats every new MSI hash as untrusted on first download; reputation builds up across installations over time but reset on every new release. The MORE INFO → RUN ANYWAY two-click bypass is consistent across builds.
+
+### Verifying your download
+
+Every release ships with a `SHA256SUMS.{linux,macos,windows}` file. To verify:
+
+```bash
+# Linux + macOS
+shasum -a 256 -c SHA256SUMS.linux         # or .macos
+```
+
+```pwsh
+# Windows PowerShell
+Get-FileHash -Algorithm SHA256 DuskStudio-*.msi
+# Compare against the published SHA256SUMS.windows.
+```
+
+Verification protects against a bit-flipped download or a man-in-the-middle attack on the release attachment. It does NOT verify authorship; that's what the (currently absent) code-signing certificate would do.
+
 ## First launch
 
 On first launch Dusk Studio opens a blank session named `Untitled`. The window is divided, top to bottom, into:
@@ -1456,11 +1521,13 @@ Right-click the binding in the MIDI Bindings panel to change its mode.
 - **Per-track**: Mute, Solo, Arm, Select.
 - **Per-track continuous**: Fader (dB), Pan.
 - **Per-track DSP**: HPF frequency, EQ band gain (4 bands), compressor threshold, compressor makeup.
+- **Per-track toggles**: EQ on/off, compressor on/off, hardware insert bypass.
 - **Per-track plugin parameter**: any indexed parameter on the loaded plugin.
-- **Per-bus**: Fader, Pan, Mute, Solo.
+- **Per-bus**: Fader, Pan, Mute, Solo, EQ band gain (LF / MID / HF — 3 bands).
 - **Per-aux**: Fader, Mute.
-- **Master**: Fader.
+- **Master**: Fader, EQ low boost (Pultec), EQ high boost (Pultec), compressor threshold, compressor makeup, compressor ratio.
 - **Per-track aux send**: send level for each of the four aux destinations.
+- **Bank-relative variants**: every "Per-track ..." target above has a `(banked)` counterpart that drives the active bank's 8 strips by position rather than absolute track number. One 8-fader controller can therefore drive whichever 8 of the 24 tracks are in the visible bank.
 
 ## The MIDI Bindings panel
 
@@ -1785,6 +1852,39 @@ The hardware-insert latency ping could not find a correlation peak.
 
 - If you moved or renamed individual files in the `audio/` folder, the regions that reference them will be silent. Restore the file names.
 - If you moved the session folder to another machine, the relative paths inside `session.json` should still resolve because every reference is relative to the session folder.
+
+## Audio device disconnected mid-session
+
+If your audio interface goes away while Dusk Studio is running — USB cable yanked, OS audio service restart, exclusive-mode plugin from another app stealing the device — the engine detects the loss within a couple of message-loop ticks and:
+
+- Stops the transport (any in-flight recording is committed safely; no take is lost).
+- Surfaces a banner: *"The active audio device has disconnected. Open Audio Settings to select a new device."*
+- Leaves your session untouched on disk and in memory.
+
+Reconnect the interface (or pick a different device in **Settings → Audio**), and the engine re-prepares every channel strip and aux at the new sample rate / block size automatically. No restart required.
+
+If the disconnect happened during a take, the WAV that was being written is committed up to the last full audio block. The region is added to your timeline at the take start position — same as if you'd pressed Stop manually. The session save / autosave path is independent of the audio device.
+
+# Accessibility
+
+Dusk Studio targets functional accessibility for screen reader users. The 24-channel strip is dense; the goal is for a screen reader to identify each control's role and read its current value without the user having to guess.
+
+## What works today
+
+- Every channel-strip rotary (HPF, LPF, EQ band gain / freq / Q, compressor knobs, pan, fader, aux sends) has an accessibility title and reports its formatted value: `-4.2 dB`, `L42`, `OFF`, `4:1`, etc. VoiceOver on macOS and Orca on Linux speak both the role and the value on focus.
+- Bus strips, aux returns, and the master strip follow the same convention.
+- Help text (the long-form description for each control) is wired from the existing tooltip strings, so the screen reader's verbose-mode readout matches what a sighted user sees on hover.
+- Every text-input dialog (region rename, marker rename, MIDI region label) renders inside the main window via the EmbeddedModal framework — no native popups that escape the screen reader's focus tree.
+
+## What's still rough
+
+- Keyboard-only navigation of the 24-channel mixer is not yet fully smooth. Tab order across all 24 strips works but is verbose. A planned 1.x release adds bank-relative keyboard shortcuts (Cmd-1 through Cmd-8 focus the current bank's 8 strips directly).
+- Region drag-and-drop on the timeline relies on mouse gestures. Region edit actions (split, trim, fade, gain) are all available via the keyboard reference; the drag-to-move case is the gap.
+- Plugin editors are out of Dusk Studio's accessibility control surface. JUCE forwards screen-reader requests to each plugin; vendor accessibility varies.
+
+## Filing issues
+
+If a control has the wrong title, an unreadable value, or doesn't surface to your screen reader at all, please [file an issue on GitHub](https://github.com/dusk-audio/dusk-studio/issues) with your OS + screen reader version. Accessibility regressions are treated as bugs, not feature requests.
 
 \newpage
 

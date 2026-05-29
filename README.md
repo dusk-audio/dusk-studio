@@ -12,9 +12,28 @@ A deliberately constrained, portastudio-style DAW for Linux, macOS, and Windows.
 
 JUCE 8 / C++17. PipeWire (primary) via JUCE's JACK backend on Linux; native ALSA backend with USB hot-unplug recovery; macOS CoreAudio + Windows WASAPI / ASIO via JUCE. Authoritative spec: [DuskStudio.md](DuskStudio.md). User manual: [MANUAL.md](MANUAL.md).
 
+## Get Dusk Studio
+
+GPL source on this repo — build from source and the binary costs you nothing but compile time. If you want a precompiled, supported binary, pick one of the paid tiers below.
+
+| Tier | Price | What you get |
+|---|---|---|
+| **Source** | Free | Clone, build, audit. GPL-3.0. No support tier. |
+| **Patreon Supporter** | from $3 / month | Latest release binaries (Linux AppImage + Windows MSI; macOS DMG when the Apple Dev cert lands) delivered as attachments on each release post. Name in plugin credits. Lapse keeps whatever build you've already downloaded. |
+| **Patreon Patron** | $5 / month | Everything above + early-access beta builds 1–2 weeks ahead of public. |
+| **Patreon Champion** | $10 / month | Everything above + DM support + roadmap-feature votes. |
+| **One-time licence** | **$27** | Current major version (1.x.x). Every 1.x minor + patch update included. 2.0 requires a new purchase (or the lifetime upgrade). |
+| **Lifetime** | $49 | Current major (1.x.x) plus the next major (2.x.x). Two majors of updates for less than two licences. |
+
+*Version-discipline contract: major bumps (1.x → 2.x) mean roadmap-defining shifts — new stages, core-architecture changes. Plugin additions, UI polish, performance work, new DSP modules all stay within the current major.*
+
+Paid via [Patreon](https://www.patreon.com/cw/DuskAudio) (recurring) or [GitHub Sponsors](https://github.com/sponsors/marc-korte) (one-time, $27 + $49 amounts). Buyer gets invited to the private releases repo where every signed binary lands.
+
+**First-time launch:** binaries are unsigned. macOS Gatekeeper + Windows SmartScreen will warn on first launch — see [MANUAL.md § Installing Dusk Studio](MANUAL.md#installing-dusk-studio) for the 30-second bypass per OS.
+
 ## Status
 
-**Alpha — Patreon-gated binaries.** Feature backlog effectively closed: every spec phase, Tascam DP-24SD parity, MTC + MIDI Clock sync, cross-platform OOP plugin host (audio on all three OSes; editor embedded on Linux + Windows, in-process shell on macOS), and the rename to Dusk Studio have shipped. Remaining 1.0 work is packaging (Windows MSI is wired; macOS notarisation deferred until paid Apple Dev cert), deeper accessibility, and cross-process NSView embedding research.
+**v0.10.0-beta.1.** Feature backlog effectively closed: every spec phase, Tascam DP-24SD parity, MTC + MIDI Clock sync, cross-platform OOP plugin host (audio on all three OSes; editor embedded on Linux + Windows, in-process shell on macOS), and the rename to Dusk Studio have shipped. Remaining 1.0 work is the macOS notarised DMG (deferred until paid Apple Dev cert), deeper accessibility, and cross-process NSView embedding research.
 
 | Stage | Status |
 |---|---|
@@ -43,7 +62,11 @@ JUCE 8 / C++17. PipeWire (primary) via JUCE's JACK backend on Linux; native ALSA
 | macOS signed + notarised DMG | Deferred (paid Apple Dev cert) |
 | Deeper a11y (full screen-reader labels + keyboard-only mixer nav) | Floor only |
 
-144 Catch2 unit tests across 34 files. Linux + macOS + Windows builds run on every push; Windows tests run on every push; Linux ThreadSanitizer runs on every PR + push.
+143 Catch2 unit tests across 35 files. Linux (amd64 + arm64) + macOS + Windows builds run on every push; Windows tests run on every push; Linux ThreadSanitizer runs on every PR + push.
+
+## Bug reports
+
+[Open an issue on GitHub.](https://github.com/dusk-audio/dusk-studio/issues) Patreon / paid-tier users can also DM via Patreon; one-time + lifetime licence-holders get a direct support email link in their release-repo invite.
 
 ## Why
 
