@@ -38,7 +38,15 @@ juce::String sanitize(const juce::String& s)
 {
     juce::String out;
     for (auto c : s)
-        out += (juce::CharacterFunctions::isLetterOrDigit(c) ? c : '_');
+    {
+        // Cast the fallback to juce_wchar so both ternary branches share a
+        // single type. Without the cast, arm64 GCC sees juce_wchar (uint32)
+        // + int and flags the operator+= overload set as ambiguous; amd64
+        // GCC is more permissive but the cast is correct on both.
+        const juce::juce_wchar pick = juce::CharacterFunctions::isLetterOrDigit (c)
+                                          ? c : (juce::juce_wchar) '_';
+        out += pick;
+    }
     return out.isEmpty() ? juce::String("s") : out;
 }
 

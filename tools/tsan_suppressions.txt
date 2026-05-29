@@ -11,8 +11,14 @@
 # under heavy contention from juce::Thread::notify(). The pattern is
 # inside JUCE 8.0.4 (juce_WaitableEvent.cpp:71 + juce_Thread.cpp:307)
 # and not something Dusk Studio code controls. Upstream issue.
+#
+# Both `mutex:` (double-lock) and `deadlock:` (lock-order-inversion)
+# suppression types needed — TSan reports the same JUCE pattern as
+# either category depending on which thread hits it first.
 mutex:juce::WaitableEvent::signal
 mutex:juce::Thread::notify
+deadlock:juce::WaitableEvent::signal
+deadlock:juce::Thread::notify
 
 # JUCE's TimeSliceThread + ThreadedWriter pairing (used by Record
 # Manager) ride the same notify path and trip the same warning. The
@@ -20,6 +26,7 @@ mutex:juce::Thread::notify
 # the bounded spin + null guards in src/engine/RecordManager.cpp
 # (Phase 1).
 mutex:juce::TimeSliceThread
+deadlock:juce::TimeSliceThread
 
 # juce::AbstractFifo's internal compare-exchange occasionally fires
 # a TSan "data race" between the producer's relaxed store + the
