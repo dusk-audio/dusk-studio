@@ -1325,8 +1325,9 @@ void MainComponent::launchStartupDialog()
     auto recents = RecentSessions::load();
 
     startupDialog = std::make_unique<StartupDialog> (recents);
-    startupDialog->setSize (560, juce::jlimit (220, 520,
-                                                 140 + (recents.isEmpty() ? 60 : recents.size() * 30)));
+    // Fixed size — the table scrolls internally when the list grows past
+    // what fits, so we don't need to grow the dialog with row count.
+    startupDialog->setSize (720, 460);
 
     startupDialog->onOpenRecent = [this] (juce::File dir)
     {
@@ -1335,6 +1336,11 @@ void MainComponent::launchStartupDialog()
     startupDialog->onNewSession = [this] { newSessionPrompt(); };
     startupDialog->onOpenFile   = [this] { openFromFilePrompt(); };
     startupDialog->onSkip       = [] {};  // nothing - the bootstrap default dir stays
+    startupDialog->onQuit       = []
+    {
+        if (auto* app = juce::JUCEApplicationBase::getInstance())
+            app->systemRequestedQuit();
+    };
     // closeDialog calls onDismiss after each action; the host (us) tears
     // down the embedded dialog + its dim backdrop together.
     startupDialog->onDismiss    = [this] { dismissStartupDialog(); };

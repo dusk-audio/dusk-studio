@@ -1,128 +1,324 @@
 #include "StartupDialog.h"
 
+#include <juce_audio_formats/juce_audio_formats.h>
+
 namespace duskstudio
 {
 namespace
 {
-void styleHeaderButton (juce::TextButton& b)
+const juce::Colour kBg        { 0xff202024 };
+const juce::Colour kSidebarBg { 0xff181820 };
+const juce::Colour kBorder    { 0xff32323a };
+const juce::Colour kSelection { 0xff305a82 };
+const juce::Colour kTextHi    { 0xffe8e8e8 };
+const juce::Colour kTextMid   { 0xffb0b0b8 };
+const juce::Colour kTextLo    { 0xff707078 };
+const juce::Colour kAccent    { 0xff80b0ff };
+
+void styleSidebarTab (juce::TextButton& b, bool active)
 {
-    b.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff2a2a30));
-    b.setColour (juce::TextButton::textColourOffId, juce::Colour (0xffe0e0e0));
+    b.setColour (juce::TextButton::buttonColourId,
+                  active ? juce::Colour (0xff282830) : kSidebarBg);
+    b.setColour (juce::TextButton::textColourOffId,
+                  active ? kAccent : kTextMid);
+    b.setColour (juce::TextButton::textColourOnId, kAccent);
 }
 
-void styleRecentButton (juce::TextButton& b)
+void styleFooterButton (juce::TextButton& b, bool primary)
 {
-    b.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff181820));
-    b.setColour (juce::TextButton::textColourOffId, juce::Colour (0xffd0d0d0));
+    b.setColour (juce::TextButton::buttonColourId,
+                  primary ? juce::Colour (0xff305a82) : juce::Colour (0xff2a2a30));
+    b.setColour (juce::TextButton::textColourOffId, kTextHi);
+}
+
+juce::String formatSampleRate (double sr)
+{
+    if (sr <= 0.0) return {};
+    // Whole-kHz when round (48000 -> "48 kHz"); else one decimal
+    // (44100 -> "44.1 kHz").
+    const double khz = sr / 1000.0;
+    if (std::abs (khz - std::round (khz)) < 0.05)
+        return juce::String ((int) std::round (khz)) + " kHz";
+    return juce::String (khz, 1) + " kHz";
+}
+
+juce::String formatBitDepth (int bits, bool isFloat)
+{
+    if (bits <= 0) return {};
+    return juce::String (bits) + "-bit" + (isFloat ? " float" : juce::String());
+}
+
+juce::String formatLastModified (juce::Time t)
+{
+    if (t.toMilliseconds() == 0) return {};
+    // Match Ardour: "YYYY-MM-DD HH:MM".
+    return t.formatted ("%Y-%m-%d %H:%M");
+}
+
+// Pull sample rate + bit depth from the first audio file in <dir>/audio/.
+// Cheap header read, no full file scan. Empty strings if we can't tell —
+// session.json doesn't store sample-rate at the session level so this is
+// the best we can do without an in-progress engine.
+void inferAudioFormat (const juce::File& sessionDir,
+                        juce::String& sampleRateOut,
+                        juce::String& bitDepthOut)
+{
+    sampleRateOut = {};
+    bitDepthOut   = {};
+    const auto audioDir = sessionDir.getChildFile ("audio");
+    if (! audioDir.isDirectory()) return;
+
+    juce::Array<juce::File> files;
+    audioDir.findChildFiles (files, juce::File::findFiles, false, "*.wav");
+    if (files.isEmpty())
+        audioDir.findChildFiles (files, juce::File::findFiles, false, "*.flac;*.aiff;*.aif");
+    if (files.isEmpty()) return;
+
+    juce::AudioFormatManager fm;
+    fm.registerBasicFormats();
+    std::unique_ptr<juce::AudioFormatReader> reader
+        (fm.createReaderFor (files.getReference (0)));
+    if (reader == nullptr) return;
+
+    sampleRateOut = formatSampleRate (reader->sampleRate);
+    bitDepthOut   = formatBitDepth ((int) reader->bitsPerSample,
+                                       reader->usesFloatingPointData);
 }
 } // namespace
 
 StartupDialog::StartupDialog (juce::Array<juce::File> r)
-    : recents (std::move (r))
 {
-    titleLabel.setText ("Dusk Studio", juce::dontSendNotification);
-    titleLabel.setFont (juce::Font (juce::FontOptions (20.0f, juce::Font::bold)));
-    titleLabel.setColour (juce::Label::textColourId, juce::Colour (0xffe8e8e8));
-    addAndMakeVisible (titleLabel);
-
-    recentsHeading.setText ("Recent sessions", juce::dontSendNotification);
-    recentsHeading.setFont (juce::Font (juce::FontOptions (12.0f, juce::Font::bold)));
-    recentsHeading.setColour (juce::Label::textColourId, juce::Colour (0xff909098));
-    addAndMakeVisible (recentsHeading);
-
-    emptyRecentsLabel.setText ("No recent sessions yet.", juce::dontSendNotification);
-    emptyRecentsLabel.setFont (juce::Font (juce::FontOptions (12.0f)));
-    emptyRecentsLabel.setColour (juce::Label::textColourId, juce::Colour (0xff707078));
-    emptyRecentsLabel.setJustificationType (juce::Justification::centredLeft);
-    addAndMakeVisible (emptyRecentsLabel);
-    emptyRecentsLabel.setVisible (recents.isEmpty());
-
-    rebuildRecentButtons();
-
-    styleHeaderButton (newSessionButton);
-    styleHeaderButton (openFileButton);
-    styleHeaderButton (skipButton);
-
-    newSessionButton.onClick = [this]
+    rows.reserve ((size_t) r.size());
+    for (auto& dir : r)
     {
-        if (onNewSession) onNewSession();
-        closeDialog (1);
+        RecentRow row;
+        row.dir          = dir;
+        row.name         = dir.getFileName();
+        row.lastModified = formatLastModified (dir.getLastModificationTime());
+        inferAudioFormat (dir, row.sampleRate, row.bitDepth);
+        rows.push_back (std::move (row));
+    }
+
+    brandLabel.setText ("DUSK", juce::dontSendNotification);
+    brandLabel.setFont (juce::Font (juce::FontOptions (28.0f, juce::Font::bold)));
+    brandLabel.setColour (juce::Label::textColourId, kAccent);
+    brandLabel.setJustificationType (juce::Justification::centred);
+    addAndMakeVisible (brandLabel);
+
+    tableHeading.setText ("Recent Sessions", juce::dontSendNotification);
+    tableHeading.setFont (juce::Font (juce::FontOptions (16.0f, juce::Font::bold)));
+    tableHeading.setColour (juce::Label::textColourId, kTextHi);
+    tableHeading.setJustificationType (juce::Justification::centredLeft);
+    addAndMakeVisible (tableHeading);
+
+    emptyLabel.setText ("No recent sessions yet.", juce::dontSendNotification);
+    emptyLabel.setFont (juce::Font (juce::FontOptions (13.0f)));
+    emptyLabel.setColour (juce::Label::textColourId, kTextLo);
+    emptyLabel.setJustificationType (juce::Justification::centred);
+    addAndMakeVisible (emptyLabel);
+    emptyLabel.setVisible (rows.empty());
+
+    styleSidebarTab (recentTab, true);
+    styleSidebarTab (openTab,   false);
+    styleSidebarTab (newTab,    false);
+
+    recentTab.setConnectedEdges (juce::Button::ConnectedOnBottom);
+    openTab.setConnectedEdges   (juce::Button::ConnectedOnTop | juce::Button::ConnectedOnBottom);
+    newTab.setConnectedEdges    (juce::Button::ConnectedOnTop);
+
+    recentTab.onClick = [this]
+    {
+        // RECENT just focuses the table — no-op if it's already visible.
+        table.grabKeyboardFocus();
     };
-    openFileButton.onClick = [this]
+    openTab.onClick = [this]
     {
         if (onOpenFile) onOpenFile();
         closeDialog (1);
     };
-    skipButton.onClick = [this]
+    newTab.onClick = [this]
+    {
+        if (onNewSession) onNewSession();
+        closeDialog (1);
+    };
+    addAndMakeVisible (recentTab);
+    addAndMakeVisible (openTab);
+    addAndMakeVisible (newTab);
+
+    table.setModel (this);
+    table.setColour (juce::ListBox::backgroundColourId, kBg);
+    table.setRowHeight (24);
+    table.setHeader (std::make_unique<juce::TableHeaderComponent>());
+
+    auto& header = table.getHeader();
+    using Flags = juce::TableHeaderComponent;
+    header.addColumn ("Session Name",   kColName,       240, 120, -1,
+                       Flags::defaultFlags & ~Flags::sortable);
+    header.addColumn ("Sample Rate",    kColSampleRate, 100, 80,  -1,
+                       Flags::defaultFlags & ~Flags::sortable);
+    header.addColumn ("File Resolution", kColBitDepth,  120, 80,  -1,
+                       Flags::defaultFlags & ~Flags::sortable);
+    header.addColumn ("Last Modified",  kColModified,   140, 100, -1,
+                       Flags::defaultFlags & ~Flags::sortable);
+    header.setStretchToFitActive (true);
+    table.setColour (juce::TableHeaderComponent::backgroundColourId, kSidebarBg);
+    table.setColour (juce::TableHeaderComponent::textColourId,       kTextMid);
+    table.setColour (juce::TableHeaderComponent::outlineColourId,    kBorder);
+    addAndMakeVisible (table);
+
+    // Auto-select the newest session so Enter / "Open" works without an
+    // extra click — matches Ardour's behaviour.
+    if (! rows.empty())
+        table.selectRow (0);
+
+    styleFooterButton (quitButton, false);
+    styleFooterButton (openButton, true);
+    openButton.setEnabled (! rows.empty());
+
+    quitButton.onClick = [this]
+    {
+        if (onQuit) onQuit();
+        closeDialog (0);
+    };
+    openButton.onClick = [this] { openSelectedRow(); };
+    addAndMakeVisible (quitButton);
+    addAndMakeVisible (openButton);
+
+    setWantsKeyboardFocus (true);
+}
+
+bool StartupDialog::keyPressed (const juce::KeyPress& key)
+{
+    if (key.isKeyCode (juce::KeyPress::escapeKey))
     {
         if (onSkip) onSkip();
         closeDialog (0);
-    };
-
-    addAndMakeVisible (newSessionButton);
-    addAndMakeVisible (openFileButton);
-    addAndMakeVisible (skipButton);
+        return true;
+    }
+    if (key.isKeyCode (juce::KeyPress::returnKey))
+    {
+        openSelectedRow();
+        return true;
+    }
+    return false;
 }
 
-void StartupDialog::rebuildRecentButtons()
+void StartupDialog::openSelectedRow()
 {
-    recentButtons.clear();
-    for (auto& dir : recents)
+    const int row = table.getSelectedRow();
+    if (row < 0 || row >= (int) rows.size()) return;
+    const auto dir = rows[(size_t) row].dir;
+    if (onOpenRecent) onOpenRecent (dir);
+    closeDialog (1);
+}
+
+int StartupDialog::getNumRows()
+{
+    return (int) rows.size();
+}
+
+void StartupDialog::paintRowBackground (juce::Graphics& g, int /*rowNumber*/,
+                                          int width, int height, bool rowIsSelected)
+{
+    if (rowIsSelected)
+        g.fillAll (kSelection);
+    else
+        g.fillAll (kBg);
+    juce::ignoreUnused (width, height);
+}
+
+void StartupDialog::paintCell (juce::Graphics& g, int rowNumber, int columnId,
+                                  int width, int height, bool rowIsSelected)
+{
+    if (rowNumber < 0 || rowNumber >= (int) rows.size()) return;
+    const auto& row = rows[(size_t) rowNumber];
+
+    juce::String text;
+    switch (columnId)
     {
-        auto* b = recentButtons.add (new juce::TextButton);
-        styleRecentButton (*b);
-        // Folder name first (most identifying), then the parent path so two
-        // sessions called "Mix" in different parents are distinguishable.
-        const auto display = dir.getFileName()
-                              + "  -  "
-                              + dir.getParentDirectory().getFullPathName();
-        b->setButtonText (display);
-        b->setTooltip (dir.getFullPathName());
-        b->setConnectedEdges (juce::Button::ConnectedOnTop | juce::Button::ConnectedOnBottom);
-        b->onClick = [this, dir]
-        {
-            if (onOpenRecent) onOpenRecent (dir);
-            closeDialog (1);
-        };
-        addAndMakeVisible (b);
+        case kColName:       text = row.name;         break;
+        case kColSampleRate: text = row.sampleRate;   break;
+        case kColBitDepth:   text = row.bitDepth;     break;
+        case kColModified:   text = row.lastModified; break;
+        default: break;
     }
+    if (text.isEmpty())
+        text = juce::String (juce::CharPointer_UTF8 ("\xe2\x80\x94"));  // em dash
+
+    g.setColour (rowIsSelected ? kTextHi : kTextMid);
+    g.setFont (juce::Font (juce::FontOptions (13.0f)));
+    g.drawText (text, 8, 0, width - 16, height,
+                  juce::Justification::centredLeft, true);
+}
+
+void StartupDialog::cellDoubleClicked (int /*rowNumber*/, int /*columnId*/,
+                                          const juce::MouseEvent&)
+{
+    openSelectedRow();
+}
+
+void StartupDialog::selectedRowsChanged (int /*lastRowSelected*/)
+{
+    openButton.setEnabled (table.getSelectedRow() >= 0);
 }
 
 void StartupDialog::paint (juce::Graphics& g)
 {
-    g.fillAll (juce::Colour (0xff202024));
+    g.fillAll (kBg);
+
+    // Sidebar background — separate column from the table body.
+    const int sidebarW = 100;
+    auto sidebar = getLocalBounds().removeFromLeft (sidebarW);
+    g.setColour (kSidebarBg);
+    g.fillRect (sidebar);
+    g.setColour (kBorder);
+    g.drawVerticalLine (sidebarW - 1, 0.0f, (float) getHeight());
+
+    // Footer divider.
+    constexpr int footerH = 52;
+    g.setColour (kBorder);
+    g.drawHorizontalLine (getHeight() - footerH,
+                             (float) sidebarW, (float) getWidth());
+
+    // Window frame.
+    g.setColour (kBorder);
+    g.drawRect (getLocalBounds(), 1);
 }
 
 void StartupDialog::resized()
 {
-    auto area = getLocalBounds().reduced (16);
+    auto bounds = getLocalBounds();
 
-    titleLabel.setBounds (area.removeFromTop (28));
-    area.removeFromTop (8);
-    recentsHeading.setBounds (area.removeFromTop (18));
-    area.removeFromTop (4);
+    // Sidebar.
+    const int sidebarW = 100;
+    auto sidebar = bounds.removeFromLeft (sidebarW).reduced (8, 12);
+    brandLabel.setBounds (sidebar.removeFromTop (40));
+    sidebar.removeFromTop (16);
+    recentTab.setBounds (sidebar.removeFromTop (36));
+    openTab  .setBounds (sidebar.removeFromTop (36));
+    newTab   .setBounds (sidebar.removeFromTop (36));
 
-    auto bottomBar = area.removeFromBottom (32);
-    skipButton.setBounds       (bottomBar.removeFromRight (130));
-    bottomBar.removeFromRight (8);
-    openFileButton.setBounds   (bottomBar.removeFromRight (90));
-    bottomBar.removeFromRight (8);
-    newSessionButton.setBounds (bottomBar.removeFromRight (130));
+    // Footer.
+    constexpr int footerH = 52;
+    auto footer = bounds.removeFromBottom (footerH).reduced (16, 10);
+    openButton.setBounds (footer.removeFromRight (90));
+    footer.removeFromRight (8);
+    quitButton.setBounds (footer.removeFromRight (90));
 
-    area.removeFromBottom (12);
+    // Main panel: heading + table.
+    auto main = bounds.reduced (16, 12);
+    tableHeading.setBounds (main.removeFromTop (22));
+    main.removeFromTop (8);
 
-    if (recentButtons.isEmpty())
+    if (rows.empty())
     {
-        emptyRecentsLabel.setBounds (area.removeFromTop (22));
+        emptyLabel.setBounds (main);
+        table.setVisible (false);
     }
     else
     {
-        constexpr int rowH = 28;
-        for (auto* b : recentButtons)
-        {
-            b->setBounds (area.removeFromTop (rowH));
-            area.removeFromTop (2);
-        }
+        table.setVisible (true);
+        table.setBounds (main);
     }
 }
 
@@ -132,9 +328,6 @@ void StartupDialog::closeDialog (int returnCode)
     // overlay. juce::DialogWindow hosts (legacy path) reach the dialog via
     // exitModalState; kept here so the dialog still works either way.
     juce::ignoreUnused (returnCode);
-    // Move the callback into a local before invoking — host's onDismiss
-    // typically deletes `this`, after which touching any member (including
-    // returning to a member function frame that re-reads `this`) is UB.
     if (auto cb = std::move (onDismiss))
     {
         cb();
