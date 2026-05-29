@@ -198,11 +198,15 @@ struct ChannelStripParams
     std::atomic<bool>  compOptoLimit   { false };
 
     // FET (1176 style).
-    std::atomic<float> compFetInput   { 0.0f };    // -20..40 dB
+    std::atomic<float> compFetInput   { 0.0f };    // -20..40 dB (drive into detection)
     std::atomic<float> compFetOutput  { 0.0f };    // -20..20 dB
     std::atomic<float> compFetAttack  { 0.2f };    // 0.02..80 ms
     std::atomic<float> compFetRelease { 400.0f };  // 50..1100 ms
     std::atomic<int>   compFetRatio   { 0 };       // 0=4:1, 1=8:1, 2=12:1, 3=20:1, 4=All
+    // Adjustable FET threshold — donor's original was a hardcoded -10
+    // dBFS; defaulting here to the same value preserves saved-state
+    // behaviour for sessions written before fet_threshold existed.
+    std::atomic<float> compFetThresholdDb { -10.0f }; // -40..0 dB
 
     // VCA (textbook).
     std::atomic<float> compVcaThreshDb { 12.0f };   // -38..12 dB

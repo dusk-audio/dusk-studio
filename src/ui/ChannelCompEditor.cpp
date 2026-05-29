@@ -217,8 +217,7 @@ void ChannelCompEditor::refreshLabelsForMode()
                  // (don't show "(fixed)" placeholders).
             thresh  = "PEAK RED";
             break;
-        case 1:  // FET (1176): drive in.
-            thresh  = "INPUT";
+        case 1:  // FET (1176): real threshold (donor fet_threshold).
             break;
         case 2:  // VCA: textbook threshold/ratio/attack/release/makeup.
         default:
@@ -231,14 +230,12 @@ void ChannelCompEditor::refreshLabelsForMode()
     releaseLabel.setText (release, juce::dontSendNotification);
     makeupLabel .setText (makeup,  juce::dontSendNotification);
 
-    // Per-mode threshold knob range. FET's "INPUT" knob is drive (0..40 dB)
-    // into the DSP's fixed -10 dBFS detection threshold — the real 1176
-    // has no threshold control. Opto / VCA use the generic -60..0 dB
-    // threshold scale.
-    if (m == 1)
-        threshKnob.setRange (0.0,   40.0, 0.1);
-    else
-        threshKnob.setRange (-60.0, 0.0,  0.1);
+    // Per-mode threshold knob range. FET, Opto and VCA all share the
+    // generic threshold scale now that the donor exposes a real
+    // fet_threshold param (-40..0 dB). FET still has its full character
+    // (transformer saturation, harmonic generators) — only the previously
+    // fixed -10 dBFS detection threshold is now user-controllable.
+    threshKnob.setRange (-60.0, 0.0, 0.1);
 
     // OPTO hides the fixed knobs (ratio / attack / release) entirely —
     // showing them greyed out with "(fixed)" labels added visual noise.
@@ -323,12 +320,14 @@ void ChannelCompEditor::writeThresholdToMode()
         }
         case 1: // FET
         {
-            // INPUT knob writes drive directly into the FET's fixed-threshold
-            // detector — matches hardware 1176 (no threshold control). Output
-            // is independent; no chain coupling so dragging INPUT doesn't
-            // mysteriously change output level.
-            const float drive = juce::jlimit (0.0f, 40.0f, threshDb);
-            track.strip.compFetInput.store (drive, std::memory_order_relaxed);
+            // Adjustable threshold (donor's fet_threshold param). Original
+            // 1176 hardware had no threshold control — the input knob
+            // drove signal into a fixed -10 dBFS detector. We now expose a
+            // real threshold so the FET's UX matches Opto / VCA; the
+            // characteristic saturation / transformer colouration is still
+            // baked into the donor's FET stage.
+            track.strip.compFetThresholdDb.store (juce::jlimit (-40.0f, 0.0f, threshDb),
+                                                    std::memory_order_relaxed);
             break;
         }
         case 2: // VCA: direct
@@ -452,9 +451,9 @@ void ChannelCompEditor::syncKnobsFromMode()
         }
         case 1: // FET
         {
-            // INPUT knob mirrors compFetInput drive directly (0..40 dB).
-            // OUTPUT knob mirrors compFetOutput directly — both independent.
-            threshKnob.setValue (track.strip.compFetInput.load  (std::memory_order_relaxed),
+            // THRESHOLD knob now mirrors compFetThresholdDb directly
+            // (-40..0 dB). Output / attack / release / ratio unchanged.
+            threshKnob.setValue (track.strip.compFetThresholdDb.load (std::memory_order_relaxed),
                                     juce::dontSendNotification);
             // Map the discrete FET ratio index back to the unified ratio knob's
             // continuous scale. Mirrors the inverse of writeRatioToMode():
@@ -588,8 +587,7 @@ void ChannelCompEditor::paint (juce::Graphics& g)
             }
             case 1:
             {
-                const float drive = track.strip.compFetInput.load (std::memory_order_relaxed);
-                thresh = -drive;
+                thresh = track.strip.compFetThresholdDb.load (std::memory_order_relaxed);
                 break;
             }
             case 2:
@@ -655,8 +653,8 @@ void writeThresholdForMode (Track& t, float threshDb)
         }
         case 1:
         {
-            const float drive = juce::jlimit (0.0f, 40.0f, -threshDb);
-            t.strip.compFetInput.store (drive, std::memory_order_relaxed);
+            t.strip.compFetThresholdDb.store (juce::jlimit (-40.0f, 0.0f, threshDb),
+                                                std::memory_order_relaxed);
             break;
         }
         case 2:
@@ -716,8 +714,9 @@ void ChannelCompEditor::mouseDoubleClick (const juce::MouseEvent& e)
     switch (mode)
     {
         case 0:  track.strip.compOptoPeakRed.store (0.0f, std::memory_order_relaxed); break;
-        case 1:  track.strip.compFetInput   .store (0.0f, std::memory_order_relaxed);
-                  track.strip.compFetOutput  .store (0.0f, std::memory_order_relaxed); break;
+        case 1:  track.strip.compFetThresholdDb.store (0.0f, std::memory_order_relaxed);
+                  track.strip.compFetInput      .store (0.0f, std::memory_order_relaxed);
+                  track.strip.compFetOutput     .store (0.0f, std::memory_order_relaxed); break;
         case 2:
         default: track.strip.compVcaThreshDb.store (12.0f, std::memory_order_relaxed); break;
     }

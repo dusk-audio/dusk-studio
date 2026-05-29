@@ -145,6 +145,7 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
         seedComp (smoothedFetOutput,   paramsRef->compFetOutput  .load (std::memory_order_relaxed));
         seedComp (smoothedFetAttack,   paramsRef->compFetAttack  .load (std::memory_order_relaxed));
         seedComp (smoothedFetRelease,  paramsRef->compFetRelease .load (std::memory_order_relaxed));
+        seedComp (smoothedFetThreshold,paramsRef->compFetThresholdDb.load (std::memory_order_relaxed));
         seedComp (smoothedVcaThresh,   paramsRef->compVcaThreshDb.load (std::memory_order_relaxed));
         seedComp (smoothedVcaRatio,    paramsRef->compVcaRatio   .load (std::memory_order_relaxed));
         seedComp (smoothedVcaAttack,   paramsRef->compVcaAttack  .load (std::memory_order_relaxed));
@@ -170,11 +171,12 @@ void ChannelStrip::bindCompParams()
     compOptoPeakRedAtom = apvts.getRawParameterValue ("opto_peak_reduction");
     compOptoGainAtom    = apvts.getRawParameterValue ("opto_gain");
     compOptoLimitAtom   = apvts.getRawParameterValue ("opto_limit");
-    compFetInputAtom    = apvts.getRawParameterValue ("fet_input");
-    compFetOutputAtom   = apvts.getRawParameterValue ("fet_output");
-    compFetAttackAtom   = apvts.getRawParameterValue ("fet_attack");
-    compFetReleaseAtom  = apvts.getRawParameterValue ("fet_release");
-    compFetRatioAtom    = apvts.getRawParameterValue ("fet_ratio");
+    compFetInputAtom     = apvts.getRawParameterValue ("fet_input");
+    compFetOutputAtom    = apvts.getRawParameterValue ("fet_output");
+    compFetAttackAtom    = apvts.getRawParameterValue ("fet_attack");
+    compFetReleaseAtom   = apvts.getRawParameterValue ("fet_release");
+    compFetRatioAtom     = apvts.getRawParameterValue ("fet_ratio");
+    compFetThresholdAtom = apvts.getRawParameterValue ("fet_threshold");
     compVcaThreshAtom   = apvts.getRawParameterValue ("vca_threshold");
     compVcaRatioAtom    = apvts.getRawParameterValue ("vca_ratio");
     compVcaAttackAtom   = apvts.getRawParameterValue ("vca_attack");
@@ -310,6 +312,7 @@ void ChannelStrip::updateCompParameters() noexcept
     smoothedFetOutput  .setTargetValue (paramsRef->compFetOutput  .load (std::memory_order_relaxed));
     smoothedFetAttack  .setTargetValue (paramsRef->compFetAttack  .load (std::memory_order_relaxed));
     smoothedFetRelease .setTargetValue (paramsRef->compFetRelease .load (std::memory_order_relaxed));
+    smoothedFetThreshold.setTargetValue (paramsRef->compFetThresholdDb.load (std::memory_order_relaxed));
     smoothedVcaThresh  .setTargetValue (paramsRef->compVcaThreshDb.load (std::memory_order_relaxed));
     smoothedVcaRatio   .setTargetValue (paramsRef->compVcaRatio   .load (std::memory_order_relaxed));
     smoothedVcaAttack  .setTargetValue (paramsRef->compVcaAttack  .load (std::memory_order_relaxed));
@@ -342,6 +345,7 @@ void ChannelStrip::publishSmoothedCompParams (int numSamples) noexcept
     step (smoothedFetOutput,   compFetOutputAtom);
     step (smoothedFetAttack,   compFetAttackAtom);
     step (smoothedFetRelease,  compFetReleaseAtom);
+    step (smoothedFetThreshold,compFetThresholdAtom);
     step (smoothedVcaThresh,   compVcaThreshAtom);
     step (smoothedVcaRatio,    compVcaRatioAtom);
     step (smoothedVcaAttack,   compVcaAttackAtom);
