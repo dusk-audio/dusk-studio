@@ -190,6 +190,17 @@ juce_add_gui_app(DuskStudio
     MICROPHONE_PERMISSION_ENABLED TRUE
     MICROPHONE_PERMISSION_TEXT    "Dusk Studio needs microphone access to record audio from your inputs.")
 
+# Runtime app icon. macOS gets it from the .icns in the .app bundle and
+# Windows from the .ico baked into the PE resource (both via ICON_BIG above),
+# but Linux has no automatic _NET_WM_ICON wiring — JUCE 8 doesn't call
+# setIcon on the main peer for you. Embed the PNG and call setIcon
+# explicitly in DuskStudioApp::MainWindow so the WM / taskbar / Alt-Tab
+# render the brand icon regardless of install layout.
+if(EXISTS "${DUSKSTUDIO_ICON_PATH}")
+    juce_add_binary_data(DuskStudioBinaryIcon SOURCES "${DUSKSTUDIO_ICON_PATH}")
+    target_link_libraries(DuskStudio PRIVATE DuskStudioBinaryIcon)
+endif()
+
 # macOS code signing. Ad-hoc by default (works for local dev launch +
 # satisfies the runtime-loadable plugin requirement that the host be
 # at least ad-hoc signed). For distribution: set
