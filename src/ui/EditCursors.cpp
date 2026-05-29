@@ -90,6 +90,23 @@ juce::MouseCursor makeHandCursor()
 }
 } // namespace
 
+void inheritCursorOnDescendants (juce::Component& root)
+{
+    for (auto* child : root.getChildren())
+    {
+        if (child == nullptr) continue;
+        // JUCE's default-constructed MouseCursor compares as NormalCursor
+        // (null cursorHandle). Replace it with ParentCursor so the
+        // editor's setMouseCursor reaches through. Children that already
+        // picked a non-default cursor (Slider rotary, MIDI Learn buttons,
+        // fade resize handles, text-input labels) keep theirs.
+        if (child->getMouseCursor() == juce::MouseCursor::NormalCursor)
+            child->setMouseCursor (juce::MouseCursor::ParentCursor);
+
+        inheritCursorOnDescendants (*child);
+    }
+}
+
 juce::MouseCursor cursorForEditMode (EditMode m)
 {
     static const juce::MouseCursor hand     = makeHandCursor();

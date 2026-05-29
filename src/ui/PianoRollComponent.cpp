@@ -425,6 +425,11 @@ PianoRollComponent::PianoRollComponent (Session& s, AudioEngine& e, int t, int r
     // the app. Runs unconditionally; the timer body is a no-op when
     // the transport hasn't moved.
     startTimerHz (30);
+
+    // Force default-cursored child labels / buttons to defer to this
+    // editor's stored cursor — see EditCursors.h comment for the
+    // JUCE-default-NormalCursor-shadows-parent bug.
+    inheritCursorOnDescendants (*this);
 }
 
 PianoRollComponent::~PianoRollComponent()
@@ -487,6 +492,7 @@ void PianoRollComponent::resized()
                                      juce::jmax (1, getWidth() - kKeyboardWidth),
                                      kScrollBarH);
     syncScrollBarRange();
+    inheritCursorOnDescendants (*this);
 }
 
 void PianoRollComponent::syncScrollBarRange()
@@ -2296,6 +2302,32 @@ void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
         rubberBand = juce::Rectangle<int> (e.x, e.y, 0, 0);
         dragMode   = DragMode::BoxSelect;
         repaint();
+        return;
+    }
+
+    // Range mode: empty-grid click starts a time-range selection,
+    // reusing the same range bookkeeping the ruler-click path at the
+    // top of this function already drives. Without this branch a
+    // Range-mode click on the note grid was falling through to the
+    // note-creation block below — drawing a note on every click.
+    if (session.editMode == EditMode::Range)
+    {
+        rangeStartTick = juce::jmax<juce::int64> (0, tickForX (e.x));
+        rangeEndTick   = rangeStartTick;
+        rangeActive    = false;
+        dragMode       = DragMode::RangeSelect;
+        repaint();
+        return;
+    }
+
+    // Cut / Grid have no piano-roll click handler (the class-level
+    // comment at line 398-399 documents this). Eat the click so the
+    // note-creation fall-through below doesn't accidentally drop a
+    // note when the user just wanted to pick a mode and the mouse
+    // happens to be over the grid.
+    if (session.editMode == EditMode::Cut
+        || session.editMode == EditMode::Grid)
+    {
         return;
     }
 

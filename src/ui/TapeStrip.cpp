@@ -197,6 +197,11 @@ TapeStrip::TapeStrip (Session& s, AudioEngine& e) : session (s), engine (e)
     // Seed the visible list so naturalHeight() returns something sane
     // before the first resized()/timer tick.
     rebuildVisibleTrackOrder();
+
+    // Force default-cursored child labels / buttons to defer to this
+    // strip's stored cursor — see EditCursors.h for the
+    // JUCE-default-NormalCursor-shadows-parent bug.
+    inheritCursorOnDescendants (*this);
 }
 
 TapeStrip::~TapeStrip()
@@ -647,6 +652,7 @@ void TapeStrip::resized()
                               kShowAllPad,
                               juce::jmin (kShowAllW, kTrackLabelW - 2 * kShowAllPad),
                               kShowAllH);
+    inheritCursorOnDescendants (*this);
 }
 
 void TapeStrip::timerCallback()

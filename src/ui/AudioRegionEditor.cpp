@@ -264,6 +264,13 @@ AudioRegionEditor::AudioRegionEditor (Session& s, AudioEngine& e, int t, int r)
     // it running unconditionally keeps the start-of-playback latency
     // at one tick (~33 ms) without burning CPU at idle.
     startTimerHz (30);
+
+    // Force default-cursored child labels / buttons to defer to this
+    // editor's stored cursor — without this the JUCE default null-handle
+    // cursor (which compares as NormalCursor, NOT ParentCursor)
+    // silently shadows the editor's Grab / Cut cursor any time the
+    // mouse hovers a label or readout sitting over the waveform.
+    inheritCursorOnDescendants (*this);
 }
 
 AudioRegionEditor::~AudioRegionEditor()
@@ -340,6 +347,11 @@ void AudioRegionEditor::resized()
         getHeight() - kIconRowHeight - kRulerHeight - kStatusBarH - kScrollBarH);
     zoomFitToArea (waveArea);
     syncScrollBarRange();
+
+    // Re-apply cursor inheritance — covers any child added or relaid out
+    // after the ctor (the dynamic IconRow + status-bar widgets all
+    // reposition here).
+    inheritCursorOnDescendants (*this);
 }
 
 void AudioRegionEditor::syncScrollBarRange()
