@@ -945,11 +945,14 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     addAndMakeVisible (compRatLabel); addAndMakeVisible (compAtkLabel);
     addAndMakeVisible (compRelLabel); addAndMakeVisible (compMakLabel);
 
-    // TAPE pill — follows the same rule as EQ / COMP compact pills:
-    // click opens the popup editor; visual lit state reflects the
-    // tapeEnabled atom; the engine auto-arms tape on any parameter
-    // change inside the popup (see audioProcessorParameterChanged
-    // below, registered as listener on tapeProcessorPtr).
+    // TAPE pill — left-click toggles tapeEnabled (gives the timeline
+    // compact view a way to bypass without expanding the strip);
+    // right-click opens the popup editor. Lit state reflects the
+    // tapeEnabled atom (synced from timerCallback) so the engine's
+    // auto-arm-on-edit still shows up here. Matches the expanded-
+    // mode CompHeaderButton's left/right grammar — different from
+    // EQ / COMP compact pills, which only have the popup editor as
+    // their bypass route via the in-popup enable LED.
     {
         const auto tapeAccent = juce::Colour (0xffd0a060);
         tapeButton.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff282830));
@@ -957,11 +960,20 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
         tapeButton.setColour (juce::TextButton::textColourOffId,  tapeAccent.withMultipliedBrightness (0.8f));
         tapeButton.setColour (juce::TextButton::textColourOnId,   juce::Colours::white);
         tapeButton.setMouseClickGrabsKeyboardFocus (false);
-        tapeButton.setClickingTogglesState (false);   // click opens editor; lit state driven by atom
+        tapeButton.setClickingTogglesState (false);   // toggle path goes through the atom, not the button state
         tapeButton.setToggleState (params.tapeEnabled.load (std::memory_order_relaxed),
                                     juce::dontSendNotification);
-        tapeButton.setTooltip ("Open the master tape machine editor. The tape engages automatically when you change any parameter.");
-        tapeButton.onClick = [this] { openTapeMachineModal(); };
+        tapeButton.setTooltip ("Left-click: bypass / engage tape. Right-click: open editor.");
+        tapeButton.onClick = [this]
+        {
+            const bool now = ! params.tapeEnabled.load (std::memory_order_relaxed);
+            params.tapeEnabled.store (now, std::memory_order_relaxed);
+            tapeButton.setToggleState (now, juce::dontSendNotification);
+        };
+        tapeButton.onRightClick = [this] (const juce::MouseEvent&)
+        {
+            openTapeMachineModal();
+        };
         addAndMakeVisible (tapeButton);
     }
 

@@ -95,12 +95,28 @@ private:
     juce::Slider     compMakeup    { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
     juce::Label      compRatLabel, compAtkLabel, compRelLabel, compMakLabel;
 
-    // Compact-mode pill labelled "TAPE". Click opens the TapeMachine
-    // editor modal (setClickingTogglesState(false) — the click handler
-    // does NOT toggle tapeEnabled). The lit state is driven by the
-    // tapeEnabled atom, which the editor auto-arms on any parameter
-    // change, not by the button click itself.
-    juce::TextButton tapeButton { "TAPE" };
+    // Compact-mode pill labelled "TAPE". Left-click toggles tapeEnabled
+    // (so the timeline / compact view still has a way to bypass tape
+    // without expanding the master strip), right-click opens the
+    // TapeMachine editor modal — symmetric with the expanded-mode
+    // CompHeaderButton's left/right behaviour. The lit state is driven
+    // by the tapeEnabled atom (synced from the 30 Hz timer) so the
+    // editor's auto-arm is still reflected here.
+    struct TapePillButton final : public juce::TextButton
+    {
+        using juce::TextButton::TextButton;
+        std::function<void(const juce::MouseEvent&)> onRightClick;
+        void mouseDown (const juce::MouseEvent& e) override
+        {
+            if (e.mods.isPopupMenu() && onRightClick)
+            {
+                onRightClick (e);
+                return;
+            }
+            juce::TextButton::mouseDown (e);
+        }
+    };
+    TapePillButton tapeButton { "TAPE" };
     // Expanded-mode header: shared CompHeaderButton (matches EQ/COMP
     // grammar). Right-click opens TapeMachine editor via pickFn.
     std::unique_ptr<CompHeaderButton> tapeHeaderBtn;
