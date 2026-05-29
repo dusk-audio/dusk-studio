@@ -111,11 +111,19 @@ StartupDialog::StartupDialog (juce::Array<juce::File> r)
         BinaryData::dsicon_png, BinaryData::dsicon_pngSize);
     if (img.isValid())
     {
-        brandIcon.setImage (img, juce::RectanglePlacement::centred
-                                  | juce::RectanglePlacement::onlyReduceInSize);
+        // centred + fillDestination — source PNG is square so aspect
+        // ratio is preserved; without fillDestination the icon was
+        // shrinking to leave large empty margins inside its slot.
+        brandIcon.setImage (img, juce::RectanglePlacement::centred);
     }
    #endif
     addAndMakeVisible (brandIcon);
+
+    brandWordmark.setText ("DUSK STUDIO", juce::dontSendNotification);
+    brandWordmark.setFont (juce::Font (juce::FontOptions (10.0f, juce::Font::bold)));
+    brandWordmark.setColour (juce::Label::textColourId, kTextMid);
+    brandWordmark.setJustificationType (juce::Justification::centred);
+    addAndMakeVisible (brandWordmark);
 
     tableHeading.setText ("Recent Sessions", juce::dontSendNotification);
     tableHeading.setFont (juce::Font (juce::FontOptions (16.0f, juce::Font::bold)));
@@ -304,7 +312,9 @@ void StartupDialog::resized()
     // Sidebar.
     const int sidebarW = 100;
     auto sidebar = bounds.removeFromLeft (sidebarW).reduced (8, 12);
-    brandIcon.setBounds (sidebar.removeFromTop (72));
+    brandIcon.setBounds     (sidebar.removeFromTop (80));
+    sidebar.removeFromTop (4);
+    brandWordmark.setBounds (sidebar.removeFromTop (14));
     sidebar.removeFromTop (16);
     recentTab.setBounds (sidebar.removeFromTop (36));
     openTab  .setBounds (sidebar.removeFromTop (36));

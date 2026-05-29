@@ -2768,10 +2768,13 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelMenuIndex,
 
         menu.addItem (kMenuFileOpen,   "Open...");
 
-        // "Open Recent" submenu: cached on the way out so the click
+        // "Recent Sessions" submenu: cached on the way out so the click
         // handler can resolve by index. Capped at RecentSessions::kMaxEntries
         // (the on-disk file is also capped, so this match isn't load-bearing).
         menuRecentSessions = RecentSessions::load();
+        juce::Logger::writeToLog ("[Dusk Studio/MainComponent] Recent Sessions submenu: "
+                                     + juce::String (menuRecentSessions.size())
+                                     + " entries from RecentSessions::load()");
         juce::PopupMenu recents;
         if (menuRecentSessions.isEmpty())
         {
@@ -2782,21 +2785,23 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelMenuIndex,
             for (int i = 0; i < menuRecentSessions.size()
                               && i < RecentSessions::kMaxEntries; ++i)
             {
-                const auto& dir  = menuRecentSessions.getReference (i);
-                const auto  json = dir.getChildFile ("session.json");
+                const auto& dir    = menuRecentSessions.getReference (i);
+                const auto  json   = dir.getChildFile ("session.json");
                 const auto  parent = dir.getParentDirectory().getFullPathName();
-                // Newest at the top. Disable entries whose session.json
-                // has gone missing — the directory is on the list (load()
-                // only kept it because the dir still exists) but the actual
-                // session file might have been deleted under us.
+                // Always enabled — load() already pruned dirs that have
+                // disappeared, and a missing session.json inside a
+                // surviving dir is rare enough that we'd rather let the
+                // user click + see the error than greyout an entry that
+                // looks broken without explanation. The click handler
+                // shows the alert if loadSessionFromJson fails.
                 recents.addItem (kMenuFileRecentBase + i,
-                                  dir.getFileName() + "  \xe2\x80\x94  " + parent,
-                                  json.existsAsFile() /*enabled*/);
+                                  dir.getFileName() + "  \xe2\x80\x94  " + parent);
+                juce::ignoreUnused (json);
             }
             recents.addSeparator();
             recents.addItem (kMenuFileRecentClear, "Clear recent sessions");
         }
-        menu.addSubMenu ("Open Recent", recents);
+        menu.addSubMenu ("Recent Sessions", recents);
 
         menu.addItem (kMenuFileSave,   "Save");
         menu.addItem (kMenuFileSaveAs, "Save as...");
