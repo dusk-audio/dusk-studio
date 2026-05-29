@@ -208,11 +208,6 @@ private:
     juce::TextButton ioConfigButton;
     void openIoConfigPopup();
     void refreshIoConfigButton();
-    // PRINT only commits post-effects audio. MIDI tracks render audio
-    // at playback time, not at capture, so PRINT is a no-op. Grey out
-    // the button + swap the tooltip in MIDI mode. Called from the ctor
-    // and from applyMode().
-    void refreshPrintButtonForMode();
     juce::Component::SafePointer<juce::CallOutBox> activeIoBox;
     // Repainted by the 30 Hz timer when engine sets track.midiActivity
     // (clear-on-read).

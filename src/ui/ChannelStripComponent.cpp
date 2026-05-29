@@ -1064,13 +1064,6 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         track.printEffects.store (printButton.getToggleState(), std::memory_order_relaxed);
     };
     addAndMakeVisible (printButton);
-    // Mode-aware enabled state. PRINT only commits post-effects
-    // audio; on a MIDI track the audio source is the instrument
-    // plugin rendered at playback time, not at capture, so PRINT
-    // is a no-op there. Grey out + swap the tooltip so the user
-    // doesn't waste a click. Re-run on every applyMode() so a
-    // mode flip toggles the disabled state.
-    refreshPrintButtonForMode();
 
     // ── Input selector ──
     // -2 = follow track index; -1 = none; 0..N = explicit input. We populate
@@ -2348,25 +2341,6 @@ void ChannelStripComponent::openIoConfigPopup()
     activeIoBox = box;
 }
 
-void ChannelStripComponent::refreshPrintButtonForMode()
-{
-    const bool isMidi = (track.mode.load (std::memory_order_relaxed)
-                        == (int) Track::Mode::Midi);
-    printButton.setEnabled (! isMidi);
-    if (isMidi)
-        printButton.setTooltip ("PRINT does not apply to MIDI tracks — they "
-                                  "record raw note events. The instrument "
-                                  "plugin's audio is rendered on playback, "
-                                  "not on capture, so there is nothing to "
-                                  "commit. Use Bounce to render a MIDI take "
-                                  "to disk.");
-    else
-        printButton.setTooltip ("PRINT - when on, the recorded WAV captures "
-                                  "the post-EQ/post-comp signal (effects baked "
-                                  "in). Off = clean input recorded; effects "
-                                  "only at playback.");
-}
-
 void ChannelStripComponent::refreshIoConfigButton()
 {
     const int mode = juce::jlimit (0, 2, track.mode.load (std::memory_order_relaxed));
@@ -3466,7 +3440,6 @@ void ChannelStripComponent::onTrackModeChanged()
     refreshInputSelectorVisibility();
     refreshPluginSlotButton();
     refreshIoConfigButton();
-    refreshPrintButtonForMode();
     // If the I/O popup is open it needs to grow / shrink (rows differ
     // per mode: 2 for audio, 4 for MIDI). Setting the content's size
     // triggers CallOutBox's auto-reflow — it repositions itself to
