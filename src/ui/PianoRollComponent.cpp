@@ -1,5 +1,6 @@
 #include "PianoRollComponent.h"
 #include "DuskContextMenu.h"
+#include "EditCursors.h"
 #include "EditModeToolbar.h"
 #include "EmbeddedModal.h"
 #include "../engine/AudioEngine.h"
@@ -397,6 +398,7 @@ PianoRollComponent::PianoRollComponent (Session& s, AudioEngine& e, int t, int r
     // PianoRoll uses Grab vs Draw as the meaningful distinction for
     // empty-grid clicks; Range / Cut / Grid are inert here.
     editModeToolbar = std::make_unique<EditModeToolbar> (engine);
+    editModeToolbar->onEditModeChanged = [this] { syncEditModeToolbar(); };
     addAndMakeVisible (editModeToolbar.get());
 
     addAndMakeVisible (toggleCcButton);
@@ -565,6 +567,11 @@ void PianoRollComponent::layoutIconRow (juce::Rectangle<int> area)
 void PianoRollComponent::syncEditModeToolbar()
 {
     if (editModeToolbar != nullptr) editModeToolbar->syncFromSession();
+    const auto mode = session.editMode;
+    if (mode == EditMode::Grab || mode == EditMode::Cut)
+        setMouseCursor (cursorForEditMode (mode));
+    else
+        setMouseCursor (juce::MouseCursor::NormalCursor);
 }
 
 void PianoRollComponent::layoutStatusBar (juce::Rectangle<int> area)
@@ -2473,6 +2480,8 @@ void PianoRollComponent::mouseDrag (const juce::MouseEvent& e)
 
 void PianoRollComponent::mouseMove (const juce::MouseEvent& e)
 {
+    const auto mode = session.editMode;
+
     // Resize-handle hover feedback for the velocity / cc lane top edges.
     // The handle is the kStripResizeGrabPx-tall strip above each lane.
     const int ccTop  = getHeight() - kStatusBarH - ccStripH;
@@ -2491,6 +2500,12 @@ void PianoRollComponent::mouseMove (const juce::MouseEvent& e)
         }
     }
 
+    if (mode == EditMode::Cut)
+    {
+        setMouseCursor (cursorForEditMode (EditMode::Cut));
+        return;
+    }
+
     // Cursor feedback so the user can tell when Alt-on-note will do
     // something different. Without this, the only signal is the
     // resulting drag - too late.
@@ -2498,7 +2513,9 @@ void PianoRollComponent::mouseMove (const juce::MouseEvent& e)
     const int hit = hitTestNote (e.x, e.y, onEdge);
     if (hit < 0)
     {
-        setMouseCursor (juce::MouseCursor::NormalCursor);
+        setMouseCursor (mode == EditMode::Grab
+                            ? cursorForEditMode (EditMode::Grab)
+                            : juce::MouseCursor::NormalCursor);
         return;
     }
     if (e.mods.isAltDown() && ! onEdge)

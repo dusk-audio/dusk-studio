@@ -606,7 +606,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         session.editMode = EditMode::Grab;
         if (audioEditor != nullptr) audioEditor->syncEditModeToolbar();
         if (pianoRoll   != nullptr) pianoRoll->syncEditModeToolbar();
-        if (tapeStrip   != nullptr) tapeStrip->repaint();
+        if (tapeStrip   != nullptr) { tapeStrip->refreshModeCursor(); tapeStrip->repaint(); }
         return true;
     }
 

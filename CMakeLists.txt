@@ -301,6 +301,7 @@ target_sources(DuskStudio PRIVATE
     src/ui/DuskComboBox.cpp
     src/ui/DuskContextMenu.cpp
     src/ui/DuskFileBrowser.cpp
+    src/ui/EditCursors.cpp
     src/ui/AuxView.cpp
     src/ui/BusComponent.cpp
     src/ui/BounceDialog.cpp

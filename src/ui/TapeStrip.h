@@ -49,6 +49,8 @@ public:
     // TapeStrip instance exists.
     static int maxNaturalHeight() noexcept;
 
+    void refreshModeCursor();
+
     // Called from MainComponent's keyboard handler. Returns true if the
     // op happened (caller decides whether to swallow the keypress).
     // All edits route through engine's UndoManager.
@@ -350,5 +352,9 @@ private:
     // coords so painter + intersection test share frame of reference.
     bool                  rubberBandActive = false;
     juce::Rectangle<int>  rubberBand;
+
+    // Reaper-style vertical guide drawn at the fade boundary while the
+    // user drags a fade-in or fade-out handle. -1 = inactive.
+    int                   fadeGuideX = -1;
 };
 } // namespace duskstudio

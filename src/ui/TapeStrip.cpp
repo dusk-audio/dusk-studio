@@ -4,6 +4,7 @@
 #include "../session/SnapHelpers.h"
 #include "DuskAlerts.h"
 #include "DuskContextMenu.h"
+#include "EditCursors.h"
 #include "EmbeddedModal.h"
 #include "FadeCurve.h"
 
@@ -140,6 +141,7 @@ TapeStrip::TapeStrip (Session& s, AudioEngine& e) : session (s), engine (e)
     setOpaque (true);
     startTimerHz (30);
     engine.getUndoManager().addChangeListener (this);
+    refreshModeCursor();
 
     auto wireZoom = [this] (juce::TextButton& b, const juce::String& tip,
                               std::function<void()> click)
@@ -1478,6 +1480,7 @@ void TapeStrip::mouseDrag (const juce::MouseEvent& e)
             r.fadeInSamples = juce::jlimit ((juce::int64) 0,
                                               maxFadeIn,
                                               drag.origFadeIn + deltaSamples);
+            fadeGuideX = xForSample (r.timelineStart + r.fadeInSamples);
             break;
         }
         case RegionOp::FadeOut:
@@ -1489,6 +1492,8 @@ void TapeStrip::mouseDrag (const juce::MouseEvent& e)
             r.fadeOutSamples = juce::jlimit ((juce::int64) 0,
                                                maxFadeOut,
                                                drag.origFadeOut - deltaSamples);
+            fadeGuideX = xForSample (r.timelineStart
+                                      + r.lengthInSamples - r.fadeOutSamples);
             break;
         }
         case RegionOp::AdjustGain:
@@ -1793,6 +1798,7 @@ void TapeStrip::mouseUp (const juce::MouseEvent& e)
     }
 
     drag = {};
+    fadeGuideX = -1;
     rebuildPlaybackIfStopped();
     repaint();
 }
@@ -1937,6 +1943,20 @@ void TapeStrip::mouseDoubleClick (const juce::MouseEvent& e)
 
 void TapeStrip::mouseMove (const juce::MouseEvent& e)
 {
+    const auto mode = session.editMode;
+    if (mode == EditMode::Cut)
+    {
+        const auto hit = hitTestRegion (e.x, e.y);
+        if (hit.track != hoveredTrack || hit.regionIdx != hoveredRegion)
+        {
+            hoveredTrack  = hit.track;
+            hoveredRegion = hit.regionIdx;
+            repaint();
+        }
+        setMouseCursor (cursorForEditMode (EditMode::Cut));
+        return;
+    }
+
     // Cursor feedback so the user can tell where edges/body are without
     // clicking blindly.
     if (hitTestMarker (e.x, e.y) >= 0)
@@ -1985,14 +2005,16 @@ void TapeStrip::mouseMove (const juce::MouseEvent& e)
         case RegionOp::Move:
             // Alt over the body promotes Move -> AdjustGain on click;
             // signal that with an up/down resize cursor so the user
-            // doesn't drag horizontally and accidentally move. Plain
-            // hover stays the normal arrow — the body is selectable
-            // and draggable, but a dragging-hand cursor on every
-            // region read as "always grabbing something" and clashed
-            // with the actual drag-in-progress cursor.
+            // doesn't drag horizontally and accidentally move. In Grab
+            // mode the plain hover shows the hand cursor so the active
+            // tool is always visible; other modes stay on the normal
+            // arrow so a dragging-hand cursor doesn't compete with the
+            // actual drag-in-progress cursor.
             setMouseCursor (e.mods.isAltDown()
                               ? juce::MouseCursor::UpDownResizeCursor
-                              : juce::MouseCursor::NormalCursor);
+                              : (mode == EditMode::Grab
+                                    ? cursorForEditMode (EditMode::Grab)
+                                    : juce::MouseCursor::NormalCursor));
             break;
         case RegionOp::AdjustGain:
             setMouseCursor (juce::MouseCursor::UpDownResizeCursor);
@@ -2001,9 +2023,20 @@ void TapeStrip::mouseMove (const juce::MouseEvent& e)
             setMouseCursor (juce::MouseCursor::PointingHandCursor);
             break;
         case RegionOp::None:
-            setMouseCursor (juce::MouseCursor::NormalCursor);
+            setMouseCursor (mode == EditMode::Grab
+                                ? cursorForEditMode (EditMode::Grab)
+                                : juce::MouseCursor::NormalCursor);
             break;
     }
+}
+
+void TapeStrip::refreshModeCursor()
+{
+    const auto mode = session.editMode;
+    if (mode == EditMode::Grab || mode == EditMode::Cut)
+        setMouseCursor (cursorForEditMode (mode));
+    else
+        setMouseCursor (juce::MouseCursor::NormalCursor);
 }
 
 void TapeStrip::mouseExit (const juce::MouseEvent&)
@@ -3370,6 +3403,16 @@ void TapeStrip::paint (juce::Graphics& g)
     {
         g.setColour (juce::Colour (0xffe04040));
         g.drawVerticalLine (phX, 0.0f, (float) getHeight());
+    }
+
+    // ── Fade alignment guide (Reaper-style) ──
+    // Cyan vertical at the fade boundary while the user drags a fade
+    // handle; gives the user a precise visual reference against the
+    // waveform/grid behind the fade. Cleared on mouseUp.
+    if (fadeGuideX >= col.getX() && fadeGuideX <= col.getRight())
+    {
+        g.setColour (juce::Colour (0xff5ad6e0).withAlpha (0.85f));
+        g.drawVerticalLine (fadeGuideX, (float) kRulerH, (float) getHeight());
     }
 
     // ── Rubber-band overlay (Shift/Cmd + drag box-select) ──

@@ -1,6 +1,7 @@
 #include "AudioRegionEditor.h"
 #include "DuskAlerts.h"
 #include "DuskContextMenu.h"
+#include "EditCursors.h"
 #include "EditModeToolbar.h"
 #include "FadeCurve.h"
 #include "../engine/AudioEngine.h"
@@ -25,76 +26,6 @@ const juce::Colour kEditCursor    { 0xffffd060 };
 // Soft cream so it reads against the yellow edit cursor without
 // competing — same colour the piano roll uses for its transport line.
 const juce::Colour kTransportPlayhead { 0xffffe8c0 };
-
-// ── Edit-mode mouse cursors ──────────────────────────────────────────
-// JUCE ships a hand/crosshair/I-beam but no scissors or pencil, so those
-// two are drawn into a small ARGB image once and cached. White glyph
-// with a dark halo so it reads on any waveform colour. Hotspot is the
-// "business end" (blade tip / pencil point).
-juce::Image drawCursorGlyph (std::function<void (juce::Graphics&)> paint)
-{
-    constexpr int kSz = 24;
-    juce::Image img (juce::Image::ARGB, kSz, kSz, true);
-    juce::Graphics g (img);
-    paint (g);
-    return img;
-}
-
-juce::MouseCursor makeScissorsCursor()
-{
-    auto img = drawCursorGlyph ([] (juce::Graphics& g)
-    {
-        juce::Path blades;
-        blades.startNewSubPath (4.0f, 19.0f); blades.lineTo (20.0f, 5.0f);   // blade 1
-        blades.startNewSubPath (11.0f, 19.0f); blades.lineTo (20.0f, 13.0f); // blade 2 (open V)
-        // Finger loops.
-        juce::Path loops;
-        loops.addEllipse (2.0f, 17.0f, 5.0f, 5.0f);
-        loops.addEllipse (9.0f, 17.0f, 5.0f, 5.0f);
-
-        g.setColour (juce::Colours::black.withAlpha (0.7f));
-        g.strokePath (blades, juce::PathStrokeType (3.4f));
-        g.strokePath (loops,  juce::PathStrokeType (3.4f));
-        g.setColour (juce::Colours::white);
-        g.strokePath (blades, juce::PathStrokeType (1.6f));
-        g.strokePath (loops,  juce::PathStrokeType (1.6f));
-    });
-    return juce::MouseCursor (img, 20, 5);   // hotspot at the blade tip
-}
-
-juce::MouseCursor makePencilCursor()
-{
-    auto img = drawCursorGlyph ([] (juce::Graphics& g)
-    {
-        juce::Path body;
-        body.addQuadrilateral (3.0f, 21.0f, 7.0f, 16.0f, 20.0f, 3.0f, 16.0f, 8.0f);
-        juce::Path tip;
-        tip.addTriangle (3.0f, 21.0f, 7.0f, 16.0f, 5.5f, 18.5f);
-
-        g.setColour (juce::Colours::black.withAlpha (0.7f));
-        g.strokePath (body, juce::PathStrokeType (3.0f));
-        g.setColour (juce::Colours::white);
-        g.fillPath (body);
-        g.setColour (juce::Colours::black);
-        g.fillPath (tip);
-    });
-    return juce::MouseCursor (img, 3, 21);   // hotspot at the pencil point
-}
-
-juce::MouseCursor cursorForMode (EditMode m)
-{
-    static const juce::MouseCursor scissors = makeScissorsCursor();
-    static const juce::MouseCursor pencil   = makePencilCursor();
-    switch (m)
-    {
-        case EditMode::Grab:  return juce::MouseCursor::DraggingHandCursor;
-        case EditMode::Range: return juce::MouseCursor::IBeamCursor;
-        case EditMode::Cut:   return scissors;
-        case EditMode::Grid:  return juce::MouseCursor::CrosshairCursor;
-        case EditMode::Draw:  return pencil;
-    }
-    return juce::MouseCursor::NormalCursor;
-}
 
 // Region-properties popup colour palette. Mirrors the palette in
 // [src/ui/TapeStrip.cpp] so all three surfaces (tape strip menu,
@@ -1070,14 +1001,14 @@ void AudioRegionEditor::mouseMove (const juce::MouseEvent& e)
     // / I-beam); outside it (toolbar / ruler / status row) fall back to
     // the normal arrow so the edit-mode cursor doesn't bleed over chrome.
     if (waveArea.contains (e.x, e.y))
-        setMouseCursor (cursorForMode (session.editMode));
+        setMouseCursor (cursorForEditMode (session.editMode));
     else
         setMouseCursor (juce::MouseCursor::NormalCursor);
 }
 
 void AudioRegionEditor::updateModeCursor()
 {
-    setMouseCursor (cursorForMode (session.editMode));
+    setMouseCursor (cursorForEditMode (session.editMode));
 }
 
 void AudioRegionEditor::mouseDown (const juce::MouseEvent& e)
@@ -1666,6 +1597,7 @@ void AudioRegionEditor::mouseDrag (const juce::MouseEvent& e)
                 juce::jmax<juce::int64> (0, r->lengthInSamples - r->fadeOutSamples),
                 sample - r->sourceOffset);
             r->fadeInSamples = fadeIn;
+            snapGuideTimelineSample = r->timelineStart + r->fadeInSamples;
             break;
         }
         case DragMode::FadeOut:
@@ -1677,6 +1609,8 @@ void AudioRegionEditor::mouseDrag (const juce::MouseEvent& e)
                 juce::jmax<juce::int64> (0, r->lengthInSamples - r->fadeInSamples),
                 endAbs - sample);
             r->fadeOutSamples = fadeOut;
+            snapGuideTimelineSample = r->timelineStart
+                                          + r->lengthInSamples - r->fadeOutSamples;
             break;
         }
         case DragMode::Gain:
