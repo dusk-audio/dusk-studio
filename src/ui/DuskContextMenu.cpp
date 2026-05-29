@@ -28,14 +28,16 @@ struct Row
     bool         isTicked  = false;
     bool         isEnabled = true;
     // Per-item callback fired on pick. juce::PopupMenu::Item stores
-    // this in `action`; we copy the pointer so the panel can invoke
-    // it without keeping the source PopupMenu alive.
+    // this in `action`; we copy the function object so the panel can
+    // invoke it without keeping the source PopupMenu alive.
     std::function<void()> action;
-    // Submenu pointer (owned by the source PopupMenu; valid for the
-    // duration of the show — caller is expected to keep the menu
-    // alive until the modal closes, which matches juce::PopupMenu's
-    // own contract).
-    const juce::PopupMenu* subMenu = nullptr;
+    // Submenu rows pre-walked at walkMenu time. The original
+    // juce::PopupMenu is typically a stack local (menu-bar idiom is
+    // `auto menu = model->getMenuForIndex(); showContextMenu(menu);`)
+    // and gets destroyed before the user expands the submenu, so we
+    // capture submenu items by value here. shared_ptr keeps Row
+    // cheaply copyable.
+    std::shared_ptr<std::vector<Row>> subMenuRows;
 };
 
 std::vector<Row> walkMenu (const juce::PopupMenu& menu)
@@ -53,7 +55,8 @@ std::vector<Row> walkMenu (const juce::PopupMenu& menu)
         r.isTicked = item.isTicked;
         r.isEnabled = item.isEnabled;
         r.action   = item.action;
-        r.subMenu  = item.subMenu.get();
+        if (item.subMenu != nullptr)
+            r.subMenuRows = std::make_shared<std::vector<Row>> (walkMenu (*item.subMenu));
         rows.push_back (std::move (r));
     }
     return rows;
@@ -143,7 +146,7 @@ public:
                 g.setColour (juce::Colour (0xff60d060));
                 g.fillEllipse ((float) 8, (float) y + (float) kRowH * 0.5f - 3.5f, 7.0f, 7.0f);
             }
-            if (r.subMenu != nullptr)
+            if (r.subMenuRows != nullptr)
             {
                 // Right-pointing arrow indicator.
                 g.setColour (juce::Colour (0xffa0a0a8));
@@ -179,7 +182,7 @@ public:
         const auto& r = rowsData[(size_t) row];
         if (r.isSep || r.isHeader || ! r.isEnabled) return;
 
-        if (r.subMenu != nullptr)
+        if (r.subMenuRows != nullptr)
         {
             openSubmenu (row, e.getScreenPosition());
             return;
@@ -242,16 +245,16 @@ private:
 void DuskContextMenuPanel::openSubmenu (int row, juce::Point<int> screenPos)
 {
     if (row < 0 || row >= (int) rowsData.size()) return;
-    const auto* sub = rowsData[(size_t) row].subMenu;
+    const auto& sub = rowsData[(size_t) row].subMenuRows;
     if (sub == nullptr) return;
 
     auto* host = getTopLevelComponent();
     if (host == nullptr) host = this;
 
-    // Walk submenu items; pass through to a fresh panel inside the
-    // submenu modal. Onpick chains to the parent's onPick so the
-    // caller's result handler sees the chosen sub-item ID.
-    auto subRows = walkMenu (*sub);
+    // Submenu rows were already deep-walked at parent-walk time so
+    // we don't need to re-walk a juce::PopupMenu here (the original
+    // is typically a stack local that's long dead by now).
+    auto subRows = *sub;
     auto chainOnPick = onPickFn;
     auto subPanel = std::make_unique<DuskContextMenuPanel> (
         std::move (subRows),
