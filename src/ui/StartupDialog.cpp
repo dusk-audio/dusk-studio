@@ -2,6 +2,13 @@
 
 #include <juce_audio_formats/juce_audio_formats.h>
 
+#if __has_include("BinaryData.h")
+ #include "BinaryData.h"
+ #define DUSKSTUDIO_HAS_BINARY_ICON 1
+#else
+ #define DUSKSTUDIO_HAS_BINARY_ICON 0
+#endif
+
 namespace duskstudio
 {
 namespace
@@ -99,11 +106,16 @@ StartupDialog::StartupDialog (juce::Array<juce::File> r)
         rows.push_back (std::move (row));
     }
 
-    brandLabel.setText ("DUSK", juce::dontSendNotification);
-    brandLabel.setFont (juce::Font (juce::FontOptions (28.0f, juce::Font::bold)));
-    brandLabel.setColour (juce::Label::textColourId, kAccent);
-    brandLabel.setJustificationType (juce::Justification::centred);
-    addAndMakeVisible (brandLabel);
+   #if DUSKSTUDIO_HAS_BINARY_ICON
+    const auto img = juce::ImageCache::getFromMemory (
+        BinaryData::dsicon_png, BinaryData::dsicon_pngSize);
+    if (img.isValid())
+    {
+        brandIcon.setImage (img, juce::RectanglePlacement::centred
+                                  | juce::RectanglePlacement::onlyReduceInSize);
+    }
+   #endif
+    addAndMakeVisible (brandIcon);
 
     tableHeading.setText ("Recent Sessions", juce::dontSendNotification);
     tableHeading.setFont (juce::Font (juce::FontOptions (16.0f, juce::Font::bold)));
@@ -292,7 +304,7 @@ void StartupDialog::resized()
     // Sidebar.
     const int sidebarW = 100;
     auto sidebar = bounds.removeFromLeft (sidebarW).reduced (8, 12);
-    brandLabel.setBounds (sidebar.removeFromTop (40));
+    brandIcon.setBounds (sidebar.removeFromTop (72));
     sidebar.removeFromTop (16);
     recentTab.setBounds (sidebar.removeFromTop (36));
     openTab  .setBounds (sidebar.removeFromTop (36));

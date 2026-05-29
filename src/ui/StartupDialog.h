@@ -64,7 +64,7 @@ private:
     };
     std::vector<RecentRow> rows;
 
-    juce::Label   brandLabel;
+    juce::ImageComponent brandIcon;
     juce::Label   tableHeading;
     juce::Label   emptyLabel;
 
