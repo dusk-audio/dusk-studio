@@ -567,11 +567,28 @@ void PianoRollComponent::layoutIconRow (juce::Rectangle<int> area)
 void PianoRollComponent::syncEditModeToolbar()
 {
     if (editModeToolbar != nullptr) editModeToolbar->syncFromSession();
+    // Only paint the edit-mode cursor when the pointer is actually inside
+    // the note grid; chrome (toolbar / header / keyboard / velocity & CC
+    // strips / scrollbar / status bar) keeps the normal arrow so a mode
+    // flip doesn't bleed the cursor across regions it can't act on.
+    // Mirrors the equivalent guards in mouseMove.
     const auto mode = session.editMode;
-    if (mode == EditMode::Grab || mode == EditMode::Cut)
+    const auto p    = getMouseXYRelative();
+    if ((mode == EditMode::Grab || mode == EditMode::Cut)
+        && noteGridArea().contains (p))
         setMouseCursor (cursorForEditMode (mode));
     else
         setMouseCursor (juce::MouseCursor::NormalCursor);
+}
+
+juce::Rectangle<int> PianoRollComponent::noteGridArea() const noexcept
+{
+    const int topBandH = kToolbarHeight + kHeaderHeight;
+    const int gridH    = juce::jmax (0,
+                              getHeight() - topBandH - velocityStripH - ccStripH
+                                - kStatusBarH - kScrollBarH);
+    const int gridW    = juce::jmax (0, getWidth() - kKeyboardWidth);
+    return { kKeyboardWidth, topBandH, gridW, gridH };
 }
 
 void PianoRollComponent::layoutStatusBar (juce::Rectangle<int> area)
@@ -2498,6 +2515,17 @@ void PianoRollComponent::mouseMove (const juce::MouseEvent& e)
             setMouseCursor (juce::MouseCursor::UpDownResizeCursor);
             return;
         }
+    }
+
+    // Chrome (keyboard column / ruler / velocity strip / cc strip /
+    // status bar) keeps the normal arrow regardless of edit mode so
+    // mode-flips don't show a hand / scissors over UI that can't act
+    // on a grid click.
+    const auto grid = noteGridArea();
+    if (! grid.contains (e.x, e.y))
+    {
+        setMouseCursor (juce::MouseCursor::NormalCursor);
+        return;
     }
 
     if (mode == EditMode::Cut)

@@ -314,6 +314,10 @@ public:
     // while the modal is open so the toolbar repaints.
     void syncEditModeToolbar();
 private:
+    // Note grid (excludes toolbar / ruler / keyboard column / velocity +
+    // CC strips / scrollbar / status bar). Used to gate edit-mode cursor
+    // overrides so the toolbar / status bar / etc. keep the normal arrow.
+    juce::Rectangle<int> noteGridArea() const noexcept;
 
     void layoutIconRow (juce::Rectangle<int> area);
 

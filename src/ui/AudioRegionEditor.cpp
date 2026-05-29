@@ -1008,7 +1008,19 @@ void AudioRegionEditor::mouseMove (const juce::MouseEvent& e)
 
 void AudioRegionEditor::updateModeCursor()
 {
-    setMouseCursor (cursorForEditMode (session.editMode));
+    // Only paint the edit-mode cursor when the pointer is actually over
+    // the waveform; the toolbar / ruler / status row keep the normal
+    // arrow so a mode flip doesn't bleed the cursor across chrome that
+    // can't act on it. Mirrors the guard in mouseMove.
+    const auto waveArea = juce::Rectangle<int> (
+        0, kIconRowHeight + kRulerHeight,
+        getWidth(),
+        getHeight() - kIconRowHeight - kRulerHeight - kStatusBarH - kScrollBarH);
+    const auto p = getMouseXYRelative();
+    if (waveArea.contains (p))
+        setMouseCursor (cursorForEditMode (session.editMode));
+    else
+        setMouseCursor (juce::MouseCursor::NormalCursor);
 }
 
 void AudioRegionEditor::mouseDown (const juce::MouseEvent& e)
