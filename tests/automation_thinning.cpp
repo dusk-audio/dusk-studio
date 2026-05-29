@@ -3,6 +3,11 @@
 
 #include "session/Session.h"
 
+// MSVC's <cmath> doesn't expose M_PI by default — needs
+// _USE_MATH_DEFINES to be set BEFORE the include. GCC + Clang
+// (Linux + macOS) expose it unconditionally. Define before the
+// include to keep the constant portable across toolchains.
+#define _USE_MATH_DEFINES
 #include <cmath>
 
 using Catch::Matchers::WithinAbs;

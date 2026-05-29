@@ -9,8 +9,27 @@ on:
 
 jobs:
   build:
-    name: Build Dusk Studio (GCC Release, Ubuntu 22.04)
-    runs-on: ubuntu-22.04
+    name: Build Dusk Studio (GCC Release, Ubuntu 22.04, ${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      # fail-fast: false so arm64 failures don't kill the amd64 build (or
+      # vice versa). Pi users + amd64 users are two distinct audiences;
+      # one regressing shouldn't deny the other their CI artifact.
+      fail-fast: false
+      matrix:
+        include:
+          # amd64 — primary desktop Linux. Existing behaviour.
+          - arch: amd64
+            runner: ubuntu-22.04
+          # arm64 — Raspberry Pi 4 / 5 + Apple-silicon Linux VMs.
+          # GitHub's ubuntu-22.04-arm runner has been GA on public
+          # repos since 2025-01. Same Ubuntu image as amd64 so the
+          # apt package set + JUCE patches mostly carry over; the
+          # SIMD<long long> alias patch is x86-SSE-only and no-ops
+          # on arm64 (the awk script's match-then-insert is a soft
+          # gate; arm64 build doesn't compile juce_SIMDNativeOps_sse).
+          - arch: arm64
+            runner: ubuntu-22.04-arm
 
     steps:
       - name: Checkout Dusk Studio

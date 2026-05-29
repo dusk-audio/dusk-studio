@@ -2,6 +2,15 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+// Forward-decl in the juce namespace so createInProcessEditorHost's
+// AudioProcessorEditor* parameter (Mac-only) doesn't force every
+// includer to pull juce_audio_processors. Linux + Windows transitively
+// include it via other engine headers; Apple clang on macOS does not
+// and chokes on the bare juce::AudioProcessorEditor reference. Forward-
+// decl is cheaper than the full include AND keeps this header's
+// dependency surface narrow.
+namespace juce { class AudioProcessorEditor; }
+
 namespace duskstudio::platform
 {
 // Cross-platform window-management primitives. Per-platform
