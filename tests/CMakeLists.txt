@@ -9,6 +9,7 @@ FetchContent_MakeAvailable(Catch2)
 
 add_executable(dusk-studio-tests
     smoke_brickwall_limiter.cpp
+    plugin_scan_protocol.cpp
     session_tick_conversion.cpp
     atomic_park.cpp
     embedded_modal_close_safety.cpp

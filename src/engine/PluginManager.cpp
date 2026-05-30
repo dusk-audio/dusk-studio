@@ -5,17 +5,13 @@
   #include "multisample/DuskMultisamplePluginFormat.h"
 #endif
 
-#include <cstring>
+#include "ipc/PluginScanProtocol.h"
 
 namespace duskstudio
 {
 #if DUSKSTUDIO_HAS_OOP_PLUGINS
 namespace
 {
-// Keep byte-identical to the copies in PluginHostMain.cpp's runScan.
-constexpr const char* kScanPayloadBegin = "==DUSK_SCAN_BEGIN==";
-constexpr const char* kScanPayloadEnd   = "==DUSK_SCAN_END==";
-
 // A plugin can take a few seconds to instantiate on a cold cache; give a
 // generous ceiling and treat anything past it as a hang.
 constexpr int kScanTimeoutMs = 30000;
@@ -83,7 +79,7 @@ public:
             juce::Thread::sleep (5);
         }
 
-        const juce::String payload = extractPayload (captured.toString());
+        const juce::String payload = scanproto::extractPayload (captured.toString());
 
         if (payload.isEmpty())
         {
@@ -93,14 +89,7 @@ public:
             return false;
         }
 
-        if (auto xml = juce::parseXML (payload))
-            for (auto* e : xml->getChildIterator())
-            {
-                auto desc = std::make_unique<juce::PluginDescription>();
-                if (desc->loadFromXml (*e))
-                    result.add (desc.release());
-            }
-
+        scanproto::parsePayload (payload, result);
         return ! result.isEmpty();
     }
 
@@ -109,16 +98,6 @@ private:
     {
         const auto n = f.getName();
         return n == "VST3" || n == "LV2" || n == "AudioUnit" || n == "VST";
-    }
-
-    static juce::String extractPayload (const juce::String& s)
-    {
-        const int b = s.indexOf (kScanPayloadBegin);
-        if (b < 0) return {};
-        const int from = b + (int) std::strlen (kScanPayloadBegin);
-        const int e = s.indexOf (from, kScanPayloadEnd);
-        if (e < 0) return {};
-        return s.substring (from, e).trim();
     }
 
     juce::String           hostExecutable;

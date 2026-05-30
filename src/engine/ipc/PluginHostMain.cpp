@@ -32,6 +32,7 @@
 //                          thread isn't gated on control-plane traffic.
 
 #include "PluginIpc.h"
+#include "PluginScanProtocol.h"
 #include "../JuceCompat.h"
 #include "platform/IpcChannel.h"
 #include "platform/IpcShm.h"
@@ -892,11 +893,6 @@ int runIpcHost (int argc, const char* const* argv) noexcept
 // code, which runs BEFORE we print kScanPayloadBegin, so the parent's
 // extract-between-sentinels parse skips it.
 //
-// These two literals MUST stay byte-identical to the copies in
-// PluginManager.cpp's OutOfProcessPluginScanner.
-constexpr const char* kScanPayloadBegin = "==DUSK_SCAN_BEGIN==";
-constexpr const char* kScanPayloadEnd   = "==DUSK_SCAN_END==";
-
 int runScan (int argc, const char* const* argv) noexcept
 {
     int scanIdx = -1;
@@ -936,19 +932,7 @@ int runScan (int argc, const char* const* argv) noexcept
     juce::OwnedArray<juce::PluginDescription> found;
     chosen->findAllTypesForFile (found, fileOrId);   // may crash/hang — that is the point
 
-    juce::XmlElement root ("PLUGINS");
-    for (auto* d : found)
-        if (d != nullptr)
-            root.addChildElement (d->createXml().release());
-
-    const juce::String payload = root.toString (juce::XmlElement::TextFormat().singleLine());
-
-    std::fputs (kScanPayloadBegin, stdout);
-    std::fputc ('\n', stdout);
-    std::fputs (payload.toRawUTF8(), stdout);
-    std::fputc ('\n', stdout);
-    std::fputs (kScanPayloadEnd, stdout);
-    std::fputc ('\n', stdout);
+    std::fputs (duskstudio::scanproto::makePayload (found).toRawUTF8(), stdout);
     std::fflush (stdout);
     return 0;
 }
