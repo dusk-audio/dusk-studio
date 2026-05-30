@@ -233,6 +233,10 @@ jobs:
           }
 
       - name: Publish MSI to the PRIVATE releases repo
+        # Only publish on a real release tag. Manual/branch dispatches are
+        # for build validation — publishing a build.N pre-release on each
+        # would pollute the private releases repo (and use the stale VERSION).
+        if: ${{ github.ref_type == 'tag' }}
         shell: bash
         # MSI + SHA256SUMS.windows live at the repo root after
         # package-windows.ps1 moves them there (not build/).
@@ -253,7 +257,7 @@ jobs:
             TAG="${GITHUB_REF_NAME}"
             NOTES="Automated Windows build."
           else
-            TAG="v$(tr -d '[:space:]' < ../VERSION)+build.${GITHUB_RUN_NUMBER}"
+            TAG="v$(tr -d '[:space:]' < VERSION)+build.${GITHUB_RUN_NUMBER}"
             NOTES="UNSIGNED Windows dev build (no Authenticode cert yet). SmartScreen may warn — choose More info -> Run anyway. Statically linked, no vc_redist needed. Not for sale until signed."
           fi
 
