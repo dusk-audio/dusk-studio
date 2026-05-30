@@ -326,7 +326,7 @@ void ChannelCompEditor::writeThresholdToMode()
             // real threshold so the FET's UX matches Opto / VCA; the
             // characteristic saturation / transformer colouration is still
             // baked into the donor's FET stage.
-            track.strip.compFetThresholdDb.store (juce::jlimit (-40.0f, 0.0f, threshDb),
+            track.strip.compFetThresholdDb.store (juce::jlimit (-60.0f, 0.0f, threshDb),
                                                     std::memory_order_relaxed);
             break;
         }
@@ -653,7 +653,7 @@ void writeThresholdForMode (Track& t, float threshDb)
         }
         case 1:
         {
-            t.strip.compFetThresholdDb.store (juce::jlimit (-40.0f, 0.0f, threshDb),
+            t.strip.compFetThresholdDb.store (juce::jlimit (-60.0f, 0.0f, threshDb),
                                                 std::memory_order_relaxed);
             break;
         }

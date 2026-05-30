@@ -206,7 +206,7 @@ struct ChannelStripParams
     // Adjustable FET threshold — donor's original was a hardcoded -10
     // dBFS; defaulting here to the same value preserves saved-state
     // behaviour for sessions written before fet_threshold existed.
-    std::atomic<float> compFetThresholdDb { -10.0f }; // -40..0 dB
+    std::atomic<float> compFetThresholdDb { -10.0f }; // -60..0 dB
 
     // VCA (textbook).
     std::atomic<float> compVcaThreshDb { 12.0f };   // -38..12 dB

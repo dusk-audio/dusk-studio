@@ -191,6 +191,10 @@ private:
     float displayedLiveFaderDb = 0.0f;
     float displayedLivePan = 0.0f;
     std::array<float, ChannelStripParams::kNumAuxSends> displayedLiveAuxSendDb {};
+    // Tracks the last preFader state we rendered so an external flip
+    // (MIDI binding TrackAuxSendPrePost, undo, session reload) triggers
+    // a refresh of the label / outline ring on the strip's timer tick.
+    std::array<bool,  ChannelStripParams::kNumAuxSends> displayedAuxPreFader {};
     juce::TextButton armButton     { "ARM" };
     juce::TextButton monitorButton { "IN"  };
     juce::TextButton printButton   { "PRINT" };

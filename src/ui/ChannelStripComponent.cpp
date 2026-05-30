@@ -3125,6 +3125,18 @@ void ChannelStripComponent::timerCallback()
                 displayedLiveAuxSendDb[(size_t) i] = live;
             }
 
+            // External pre/post flips (TrackAuxSendPrePost MIDI binding,
+            // undo, session reload) update the atom without touching the
+            // UI — poll it here so the " PRE" label suffix + amber
+            // outline ring stay in sync without needing a strip rebuild.
+            const bool curPre = track.strip.auxSendPreFader[(size_t) i]
+                                      .load (std::memory_order_relaxed);
+            if (curPre != displayedAuxPreFader[(size_t) i])
+            {
+                displayedAuxPreFader[(size_t) i] = curPre;
+                refreshAuxSendLabel (i);
+            }
+
             const bool capturing = playing && (isWrite || (isTouch && touched));
             if (capturing)
             {

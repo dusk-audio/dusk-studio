@@ -34,7 +34,7 @@ void CompMeterStrip::writeThresholdForMode (Track& t, float threshDb)
         }
         case 1:
         {
-            t.strip.compFetThresholdDb.store (juce::jlimit (-40.0f, 0.0f, threshDb),
+            t.strip.compFetThresholdDb.store (juce::jlimit (-60.0f, 0.0f, threshDb),
                                                 std::memory_order_relaxed);
             break;
         }
