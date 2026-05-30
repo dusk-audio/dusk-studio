@@ -366,10 +366,43 @@ endif()
 #   3. sibling directory ../asiosdk   (mirrors the JUCE / plugins pattern)
 # The SDK's `common/` folder must contain iasiodrv.h. When found, JUCE_ASIO
 # is set so juce_audio_devices' juce_ASIO_windows.cpp compiles in the
-# driver class; the audio settings panel then shows ASIO devices alongside
-# WASAPI / DirectSound. Missing SDK is non-fatal - the build falls back to
-# the JUCE-default WASAPI/DirectSound backends and prints a status note.
+# driver class; the AudioEngine then registers ASIO ahead of WASAPI so it
+# becomes the default backend (see AudioEngine ctor).
+#
+# ASIO is the only low-latency path JUCE offers on Windows (no WDM-KS), so a
+# shipping build MUST have it — a WASAPI-only Windows binary is what makes
+# pro-audio users walk. DUSKSTUDIO_REQUIRE_ASIO turns a missing SDK into a
+# hard configure error. It auto-enables whenever a release-class build is
+# possible: single-config Ninja/Make Release (CMAKE_BUILD_TYPE), and the
+# Visual Studio multi-config generator whenever Release is among the
+# buildable configs (the common case). A deliberate ASIO-less dev build
+# passes -DDUSKSTUDIO_REQUIRE_ASIO=OFF; without the SDK it then warns and
+# falls back to WASAPI exclusive / shared.
+option(DUSKSTUDIO_REQUIRE_ASIO
+       "Fail the Windows build if the ASIO SDK is not found (shipping builds)" OFF)
 if(WIN32)
+    set(_asio_required ${DUSKSTUDIO_REQUIRE_ASIO})
+    # Decide whether a release-class build is possible with this generator.
+    # Single-config (Ninja/Make): the type is fixed at configure time, so read
+    # CMAKE_BUILD_TYPE. Multi-config (Visual Studio): the type is chosen at
+    # BUILD time and CMAKE_BUILD_TYPE is empty, so a genex like $<CONFIG:Release>
+    # can't drive a configure-time message(FATAL_ERROR). Instead, if Release is
+    # among the buildable configs we fail closed — a VS build must not be able
+    # to silently produce a WASAPI-only shipping binary. Override with
+    # -DDUSKSTUDIO_REQUIRE_ASIO=OFF for a deliberate ASIO-less dev build.
+    get_property(_is_multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+    if(_is_multi_config)
+        if("Release"        IN_LIST CMAKE_CONFIGURATION_TYPES
+           OR "RelWithDebInfo" IN_LIST CMAKE_CONFIGURATION_TYPES
+           OR "MinSizeRel"     IN_LIST CMAKE_CONFIGURATION_TYPES)
+            set(_asio_required ON)
+        endif()
+    elseif(CMAKE_BUILD_TYPE STREQUAL "Release"
+           OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo"
+           OR CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
+        set(_asio_required ON)
+    endif()
+
     set(_asio_candidate "")
     if(DEFINED ASIOSDK_PATH AND EXISTS "${ASIOSDK_PATH}/common/iasiodrv.h")
         set(_asio_candidate "${ASIOSDK_PATH}")
@@ -378,13 +411,23 @@ if(WIN32)
     elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../asiosdk/common/iasiodrv.h")
         set(_asio_candidate "${CMAKE_CURRENT_SOURCE_DIR}/../asiosdk")
     endif()
+
     if(NOT "${_asio_candidate}" STREQUAL "")
         message(STATUS "Dusk Studio: ASIO SDK found at ${_asio_candidate} - enabling JUCE_ASIO")
         target_include_directories(DuskStudio PRIVATE "${_asio_candidate}/common")
         target_compile_definitions(DuskStudio PRIVATE JUCE_ASIO=1)
+    elseif(_asio_required)
+        message(FATAL_ERROR
+            "Dusk Studio: ASIO SDK is required for this build but was not found.\n"
+            "  A Windows release binary without ASIO is not shippable (WASAPI-only latency).\n"
+            "  Fix one of:\n"
+            "    - download Steinberg's ASIO SDK and pass -DASIOSDK_PATH=<dir> (its common/ must hold iasiodrv.h)\n"
+            "    - set the ASIOSDK_PATH environment variable, or place the SDK at ../asiosdk\n"
+            "    - for a deliberate dev build without ASIO, pass -DDUSKSTUDIO_REQUIRE_ASIO=OFF and a non-release CMAKE_BUILD_TYPE")
     else()
-        message(STATUS "Dusk Studio: ASIO SDK not found (set -DASIOSDK_PATH=... or place at ../asiosdk to enable). "
-                       "Falling back to WASAPI / DirectSound.")
+        message(WARNING
+            "Dusk Studio: ASIO SDK not found - falling back to WASAPI exclusive/shared. "
+            "Fine for dev builds; shipping Windows builds must include ASIO (set -DASIOSDK_PATH=...).")
     endif()
 endif()
 
@@ -487,7 +530,9 @@ if(_duskstudio_oop_enabled)
     target_compile_definitions (dusk-studio-plugin-host PRIVATE
         JUCE_PLUGINHOST_VST3=1
         JUCE_PLUGINHOST_LV2=1
-        JUCE_PLUGINHOST_AU=0
+        # Match the main app: the child must host/scan AU on macOS too,
+        # otherwise --scan can't sandbox AudioUnit discovery there.
+        JUCE_PLUGINHOST_AU=$<IF:$<PLATFORM_ID:Darwin>,1,0>
         $<$<BOOL:${DUSKSTUDIO_JUCE_HAS_FREE_ADD_FORMATS}>:DUSKSTUDIO_JUCE_HAS_FREE_ADD_FORMATS=1>
         JUCE_DONT_DECLARE_PROJECTINFO=1
         JUCE_USE_CURL=0
