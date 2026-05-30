@@ -338,6 +338,7 @@ target_sources(DuskStudio PRIVATE
     src/ui/PianoRollComponent.cpp
     src/ui/PluginPickerHelpers.cpp
     src/ui/PluginPickerPanel.cpp
+    src/ui/PluginScanModal.cpp
     src/ui/SystemStatusBar.cpp
     src/ui/EditModeToolbar.cpp
     src/ui/TapeStrip.cpp

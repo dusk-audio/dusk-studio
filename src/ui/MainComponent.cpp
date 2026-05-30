@@ -6,6 +6,7 @@
 #include "DuskFileBrowser.h"
 #include "AuxView.h"
 #include "BounceDialog.h"
+#include "PluginScanModal.h"
 #include "ConsoleView.h"
 #include "CursorOverlay.h"
 #include "DimOverlay.h"
@@ -286,19 +287,10 @@ MainComponent::MainComponent()
     session.stopBehavior.store ((int) appconfig::getStopBehavior(),
                                   std::memory_order_relaxed);
 
-    // seconds with a full plugin folder. Logs the result so the user
-    // sees the validation in stderr without an extra modal.
-    if (appconfig::getScanPluginsOnStartup())
-    {
-        auto& mgr = engine.getPluginManager();
-        const int added = mgr.scanInstalledPlugins();
-        const int total = mgr.getEffectDescriptions().size()
-                         + mgr.getInstrumentDescriptions().size();
-        std::fprintf (stderr,
-                      "[Dusk Studio] Scan-on-startup: added %d new plugins "
-                      "(%d total).\n", added, total);
-        std::fflush (stderr);
-    }
+    // Plugin scan-on-startup is deferred (see resized() ->
+    // maybeStartStartupPluginScan): it runs on a background thread behind a
+    // progress modal once the window is on screen, so a full plugin folder
+    // doesn't make the app look frozen on launch.
 
     // Default to a session under ~/Music/Dusk Studio/Untitled. The user can change
     // this later via a session-management UI; for the recorder MVP this is
@@ -1023,8 +1015,51 @@ void MainComponent::syncBankButtons (int desiredCount)
     }
 }
 
+void MainComponent::maybeStartStartupPluginScan()
+{
+    if (startupScanTriggered) return;
+    startupScanTriggered = true;   // fire exactly once, whatever the toggle says
+
+    if (! appconfig::getScanPluginsOnStartup())
+        return;
+
+    // Defer one tick: don't build/show a modal from inside resized() (it would
+    // re-enter layout). By the next message-loop tick the window is shown and
+    // sized, so the EmbeddedModal centres over real bounds.
+    juce::Component::SafePointer<MainComponent> safe (this);
+    juce::MessageManager::callAsync ([safe]
+    {
+        auto* self = safe.getComponent();
+        if (self == nullptr) return;
+
+        auto& mgr = self->engine.getPluginManager();
+        auto body = std::make_unique<PluginScanModal> (mgr, [safe] (int added)
+        {
+            auto* s = safe.getComponent();
+            if (s == nullptr) return;
+            s->scanModal.close();
+            auto& m = s->engine.getPluginManager();
+            const int total = m.getEffectDescriptions().size()
+                            + m.getInstrumentDescriptions().size();
+            std::fprintf (stderr,
+                          "[Dusk Studio] Scan-on-startup: added %d new plugins (%d total).\n",
+                          added, total);
+            std::fflush (stderr);
+        });
+
+        // Locked modal (no click-outside / Esc dismiss): it closes itself when
+        // the scan completes.
+        self->scanModal.show (*self, std::move (body), /*onDismiss*/ {},
+                              /*dismissOnClickOutside*/ false,
+                              /*dismissOnEscape*/ false);
+    });
+}
+
 void MainComponent::resized()
 {
+    // Kick the deferred scan-on-startup once the window has real bounds.
+    maybeStartStartupPluginScan();
+
     if (cursorOverlay != nullptr)
         cursorOverlay->setBounds (getLocalBounds());
 

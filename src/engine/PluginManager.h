@@ -1,6 +1,8 @@
 #pragma once
 
 #include <juce_audio_processors/juce_audio_processors.h>
+#include <atomic>
+#include <functional>
 
 namespace duskstudio
 {
@@ -57,8 +59,19 @@ public:
     juce::File getDeadMansPedalFile() const;
 
     // Scans default install locations across every supported format.
-    // Synchronous, 10-30 s first run. UI should show a modal.
+    // Synchronous, 10-30 s first run — run it on a background thread (see
+    // PluginScanModal) and surface progress, otherwise the app looks frozen.
     int scanInstalledPlugins();
+
+    // Progress-reporting variant. onProgress(fraction 0..1, currentPluginName)
+    // is invoked on the CALLING thread once per scanned file; return false from
+    // it to stop early. `abort`, if non-null, is polled mid-file (between the
+    // child-process reads) so a cancel / app-shutdown doesn't wait out a slow
+    // plugin's full 30 s timeout. Safe to call from a background thread:
+    // KnownPluginList serialises its own mutations and nothing else touches it
+    // during a scan.
+    int scanInstalledPlugins (std::function<bool (float, const juce::String&)> onProgress,
+                              const std::atomic<bool>* abort = nullptr);
 
 private:
     juce::AudioPluginFormatManager formatManager;

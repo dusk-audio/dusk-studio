@@ -203,6 +203,14 @@ private:
     EmbeddedModal recoveryModal;
     EmbeddedModal virtualKeyboardModal;
     EmbeddedModal importTargetModal;
+    EmbeddedModal scanModal;
+
+    // Scan-on-startup runs asynchronously behind a progress modal. Triggered
+    // from the first resized() (the window is sized + on screen by then),
+    // guarded so it fires exactly once.
+    bool startupScanTriggered = false;
+    void maybeStartStartupPluginScan();
+
     void toggleVirtualKeyboard();
 
     // True once the audio callback is removed for shutdown — makes

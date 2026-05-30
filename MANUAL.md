@@ -1314,7 +1314,7 @@ Plugin scan results are cached in:
 - macOS: `~/Library/Application Support/Dusk Studio/plugin-cache.xml`
 - Windows: `%APPDATA%\Dusk Studio\plugin-cache.xml`
 
-To re-scan on every launch, enable **Settings → General → Scan plugins on startup**.
+To re-scan on every launch, enable **Settings → General → Scan plugins on startup**. The startup scan runs in the background behind a progress window (it shows the plugin currently being scanned and a progress bar), so the app stays responsive instead of appearing to hang while a large collection is scanned.
 
 ## Loading a plugin
 

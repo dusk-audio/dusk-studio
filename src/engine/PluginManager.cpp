@@ -24,8 +24,9 @@ constexpr int kScanTimeoutMs = 30000;
 class OutOfProcessPluginScanner final : public juce::KnownPluginList::CustomScanner
 {
 public:
-    OutOfProcessPluginScanner (juce::String hostExe, juce::KnownPluginList& list)
-        : hostExecutable (std::move (hostExe)), knownList (list) {}
+    OutOfProcessPluginScanner (juce::String hostExe, juce::KnownPluginList& list,
+                               const std::atomic<bool>* abortFlag)
+        : hostExecutable (std::move (hostExe)), knownList (list), abort (abortFlag) {}
 
     bool findPluginTypesFor (juce::AudioPluginFormat& format,
                              juce::OwnedArray<juce::PluginDescription>& result,
@@ -57,6 +58,7 @@ public:
         // single getMillisecondCounter() wrap (every ~49 days of uptime), so
         // compare the interval rather than an absolute deadline.
         const juce::uint32 startMs = juce::Time::getMillisecondCounter();
+        bool aborted = false;
 
         for (;;)
         {
@@ -71,6 +73,15 @@ public:
                 break;
             }
 
+            // Cancel / app-shutdown: kill the child immediately rather than
+            // waiting out its timeout. Not a crash, so don't blacklist.
+            if (abort != nullptr && abort->load (std::memory_order_relaxed))
+            {
+                proc.kill();
+                aborted = true;
+                break;
+            }
+
             if (juce::Time::getMillisecondCounter() - startMs >= (juce::uint32) kScanTimeoutMs)
             {
                 proc.kill();
@@ -78,6 +89,8 @@ public:
             }
             juce::Thread::sleep (5);
         }
+
+        if (aborted) return false;
 
         const juce::String payload = scanproto::extractPayload (captured.toString());
 
@@ -100,8 +113,9 @@ private:
         return n == "VST3" || n == "LV2" || n == "AudioUnit" || n == "VST";
     }
 
-    juce::String           hostExecutable;
-    juce::KnownPluginList&  knownList;
+    juce::String                 hostExecutable;
+    juce::KnownPluginList&        knownList;
+    const std::atomic<bool>*      abort;   // polled mid-file; null = never aborts
 };
 } // namespace
 #endif // DUSKSTUDIO_HAS_OOP_PLUGINS
@@ -161,6 +175,13 @@ void PluginManager::saveCache() const
 
 int PluginManager::scanInstalledPlugins()
 {
+    return scanInstalledPlugins (nullptr, nullptr);
+}
+
+int PluginManager::scanInstalledPlugins (
+    std::function<bool (float, const juce::String&)> onProgress,
+    const std::atomic<bool>* abort)
+{
     const auto deadMansPedalFile = getDeadMansPedalFile();
 
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
@@ -173,7 +194,9 @@ int PluginManager::scanInstalledPlugins()
     if (sandboxScan)
         knownPluginList.setCustomScanner (
             std::make_unique<OutOfProcessPluginScanner> (hostExe.getFullPathName(),
-                                                         knownPluginList));
+                                                         knownPluginList, abort));
+   #else
+    juce::ignoreUnused (abort);
    #endif
 
     // Quarantine anything a previous run was probing when it died: a file left
@@ -183,8 +206,13 @@ int PluginManager::scanInstalledPlugins()
             knownPluginList, deadMansPedalFile);
 
     int added = 0;
-    for (auto* format : formatManager.getFormats())
+    const auto& formats = formatManager.getFormats();
+    const int   numFormats = formats.size();
+    bool aborted = false;
+
+    for (int fi = 0; fi < numFormats && ! aborted; ++fi)
     {
+        auto* format = formats[fi];
         if (format == nullptr) continue;
 
         // Default search paths per format - JUCE pulls these from the OS
@@ -203,9 +231,27 @@ int PluginManager::scanInstalledPlugins()
         const int prevCount = knownPluginList.getNumTypes();
         while (scanner.scanNextFile (/*dontRescanIfAlreadyInList*/ true,
                                        pluginBeingScanned))
-            ;
+        {
+            if (onProgress != nullptr)
+            {
+                // Overall fraction: completed formats + this format's own
+                // 0..1 progress, divided by the format count.
+                const float frac = numFormats > 0
+                    ? ((float) fi + scanner.getProgress()) / (float) numFormats
+                    : 0.0f;
+                if (! onProgress (frac, pluginBeingScanned)) { aborted = true; break; }
+            }
+            if (abort != nullptr && abort->load (std::memory_order_relaxed))
+            {
+                aborted = true;
+                break;
+            }
+        }
         added += knownPluginList.getNumTypes() - prevCount;
     }
+
+    if (onProgress != nullptr)
+        onProgress (1.0f, {});
 
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
     // Release the child-launching scanner — load-time instantiation must stay
