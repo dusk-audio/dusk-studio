@@ -144,6 +144,33 @@ jobs:
           "SIGNING_PFX_PATH=$pfxPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           Write-Host "Signing cert decoded to $pfxPath"
 
+      - name: Set up WiX Toolset v3 (CPack -G WIX needs candle/light)
+        # GitHub's windows runner image migration (windows-latest ->
+        # windows-2025) dropped the pre-installed WiX 3 toolset that CPack's
+        # WIX generator relies on. Without candle.exe / light.exe, cpack -G WIX
+        # exits 0 but emits no .msi, and the SHA256 step then throws
+        # "No MSI produced by cpack". Install WiX 3.x (the `wixtoolset` choco
+        # package is the 3.x line; WiX 4+ ships as a separate dotnet tool and
+        # is not compatible with CPack's WIX generator) and expose it to the
+        # packaging step via the WIX env var (CPACK_WIX_ROOT defaults to it)
+        # plus PATH.
+        shell: pwsh
+        run: |
+          choco install wixtoolset -y --no-progress
+          if ($LASTEXITCODE -ne 0) { throw "WiX install failed (exit $LASTEXITCODE)" }
+          $wixRoot = Get-ChildItem "C:\Program Files (x86)" -Directory -Filter "WiX Toolset v3.*" |
+                     Sort-Object Name -Descending | Select-Object -First 1
+          if (-not $wixRoot) { throw "WiX Toolset v3 not found after install" }
+          $wixBin = Join-Path $wixRoot.FullName "bin"
+          if (-not (Test-Path (Join-Path $wixBin "candle.exe"))) {
+              throw "candle.exe missing in $wixBin"
+          }
+          # WIX env var must end in a backslash: CPack reads it as
+          # CPACK_WIX_ROOT and appends "bin\candle.exe".
+          "WIX=$($wixRoot.FullName)\" | Out-File -FilePath $env:GITHUB_ENV  -Append -Encoding utf8
+          $wixBin                     | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          Write-Host "WiX ready: $wixBin"
+
       - name: Package MSI via CPack WIX (signs binaries + MSI when cert present)
         shell: pwsh
         # Delegates the cpack + signtool dance to the cross-platform
