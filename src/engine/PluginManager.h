@@ -51,6 +51,11 @@ public:
     // successful add; loaded best-effort at construction.
     juce::File getCacheFile() const;
 
+    // Dead-man's-pedal alongside the cache. PluginDirectoryScanner records
+    // the file it is about to probe here and clears it on success, so a scan
+    // that crashes the whole app quarantines the culprit on the next run.
+    juce::File getDeadMansPedalFile() const;
+
     // Scans default install locations across every supported format.
     // Synchronous, 10-30 s first run. UI should show a modal.
     int scanInstalledPlugins();
