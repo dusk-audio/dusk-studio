@@ -1071,8 +1071,8 @@ void BusComponent::paint (juce::Graphics& g)
             {
                 // JUCE setSkewFactorFromMidPoint formula —
                 // skewFactor = log(0.5) / log(midFrac).
-                constexpr float midFrac = (kFaderSkewMidDb - kMinDb)
-                                        / (kMaxDb - kMinDb);
+                const float midFrac = (kFaderSkewMidDb - kMinDb)
+                                    / (kMaxDb - kMinDb);
                 const float skewFactor = std::log (0.5f) / std::log (midFrac);
                 const float t = juce::jlimit (0.0f, 1.0f,
                                                   (db - kMinDb) / (kMaxDb - kMinDb));
