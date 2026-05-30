@@ -10,6 +10,7 @@
 #include "CursorOverlay.h"
 #include "DimOverlay.h"
 #include "DuskAlerts.h"
+#include "EmbeddedModal.h"
 #include "PianoRollComponent.h"
 #include "PlatformWindowing.h"
 #include "AudioRegionEditor.h"
@@ -515,6 +516,12 @@ MainComponent::MainComponent()
     // this just ensures clicks on empty canvas land here.
     setWantsKeyboardFocus (true);
 
+    // Register as the global focus-restore target for EmbeddedModal.
+    // Every embedded popup / alert / combo / context menu calls back
+    // here on close so transport-key hotkeys (spacebar, R) keep
+    // working without the user needing to click the canvas first.
+    EmbeddedModal::focusRestoreTarget() = this;
+
     // Defer the startup dialog to the next message-loop tick so the main
     // window paints first - otherwise the dialog can pop up over a blank
     // canvas. SafePointer guards the case where the user closes the app
@@ -548,35 +555,12 @@ MainComponent::MainComponent()
 
     // Cross-OS cursor overlay. Mounted last so it sits above every
     // other MainComponent child + paints the Grab / Cut / Draw glyph
-    // at the mouse position. The editors return NoCursor for those
-    // modes so the native cursor is hidden — only our painted glyph
-    // shows. Resolver checks which editor (if any) the mouse is over
-    // and returns the matching EditMode (or nullopt to paint nothing).
+    // at the mouse position. The editors push their local mouse
+    // position to it via callbacks (component-to-component conversion
+    // via the JUCE tree — Wayland's screen coords are broken for
+    // Desktop::getMousePosition / Component::getScreenPosition, so
+    // we cannot rely on screen-space polling).
     cursorOverlay = std::make_unique<CursorOverlay>();
-    cursorOverlay->setResolver ([this] (juce::Point<int> globalPos) -> std::optional<EditMode>
-    {
-        const auto mode = session.editMode;
-        if (mode != EditMode::Grab && mode != EditMode::Cut && mode != EditMode::Draw)
-            return std::nullopt;
-
-        auto isOverComponentContent = [globalPos] (juce::Component* c) -> bool
-        {
-            if (c == nullptr || ! c->isShowing()) return false;
-            const auto local = c->getLocalPoint (nullptr, globalPos);
-            return c->getLocalBounds().contains (local);
-        };
-
-        // The piano-roll modal hosts notes; the audio-region editor
-        // hosts the waveform; the tape strip is the always-visible
-        // arrangement view. Any one being under the mouse activates
-        // the overlay glyph.
-        if (isOverComponentContent (audioEditor.get())
-            || isOverComponentContent (pianoRoll  .get())
-            || isOverComponentContent (tapeStrip  .get()))
-            return mode;
-
-        return std::nullopt;
-    });
     addAndMakeVisible (cursorOverlay.get());
 
     // Autosave heartbeat. Writes session.json.autosave next to the canonical
@@ -1285,9 +1269,49 @@ void MainComponent::openAudioSettings()
     // MIDI Bindings + MIDI Sync + General + Advanced, each with a
     // section header + separator) fits without any group being clipped.
     // The Audio block hosts JUCE's AudioDeviceSelectorComponent in a
-    // fixed 280 px slot — see AudioSettingsPanel::resized.
-    panel->setSize (820, 920);
-    audioSettingsModal.show (*this, std::move (panel));
+    // fixed 360 px slot — see AudioSettingsPanel::resized.
+    constexpr int kPanelW = 820;
+    // Content height with the bumped 360 px audio block + every
+    // section ends just past 1020 px — anything less clips the
+    // Advanced row (ALSA periods / oversampling / self-test / rescan)
+    // off the bottom even with a scroll wrapper, because the viewport
+    // never sees the missing pixels.
+    constexpr int kPanelH = 1060;
+    panel->setSize (kPanelW, kPanelH);
+
+    // Wrap the panel in a Viewport so the full content is reachable on
+    // displays shorter than kPanelH (1080p with bars, smaller laptop
+    // screens, scaled UI). Without this, the Advanced section's ALSA
+    // periods / oversampling / self-test controls clip off the bottom
+    // edge with no way to reach them.
+    class ScrollingHost final : public juce::Component
+    {
+    public:
+        ScrollingHost (std::unique_ptr<juce::Component> content,
+                        int contentW, int contentH)
+        {
+            content->setSize (contentW, contentH);
+            viewport.setViewedComponent (content.release(), /*deleteWhenRemoved*/ true);
+            viewport.setScrollBarsShown (true, false);
+            addAndMakeVisible (viewport);
+        }
+        void resized() override { viewport.setBounds (getLocalBounds()); }
+    private:
+        juce::Viewport viewport;
+    };
+
+    // Reserve room for the dim/backdrop margin + transport row + menu
+    // bar that frame the modal — without this, the centred modal
+    // overflows the visible canvas at the bottom and the Advanced
+    // section gets clipped even though the host theoretically "fits"
+    // inside MainComponent's bounds.
+    const int availH = juce::jmax (300, getHeight() - 200);
+    const int hostH  = juce::jmin (kPanelH, availH);
+    const int sbW    = juce::Component().getLookAndFeel().getDefaultScrollbarWidth();
+    auto host = std::make_unique<ScrollingHost> (std::move (panel),
+                                                   kPanelW, kPanelH);
+    host->setSize (kPanelW + sbW + 4, hostH);
+    audioSettingsModal.show (*this, std::move (host));
 }
 
 void MainComponent::switchToStage (AudioEngine::Stage s)
@@ -3185,6 +3209,15 @@ void MainComponent::openPianoRoll (int trackIdx, int regionIdx)
 
     pianoRoll->setBounds (rollBounds);
     pianoRoll->onCloseRequested = [this] { closePianoRoll(); };
+    pianoRoll->onMouseMovedForCursor =
+        [this] (juce::Component& src, juce::Point<int> localInSrc, EditMode m,
+                juce::Range<int> cutLine)
+        {
+            if (cursorOverlay != nullptr)
+                cursorOverlay->setMousePosition (src, localInSrc, m, cutLine);
+        };
+    pianoRoll->onMouseExitedForCursor =
+        [this] { if (cursorOverlay != nullptr) cursorOverlay->clearMousePosition(); };
     pianoRoll->onNavigateToRegion = [this] (int t, int newIdx)
     {
         // Close + reopen on the new region. Same-track only; the
@@ -3198,6 +3231,13 @@ void MainComponent::openPianoRoll (int trackIdx, int regionIdx)
 
 void MainComponent::closePianoRoll()
 {
+    // Clear the shared CursorOverlay first — JUCE doesn't fire
+    // mouseExit on a component being removed, so the editor's
+    // onMouseExitedForCursor callback won't run on its own. Without
+    // this, the painted glyph stays stuck at the last position and
+    // (on Linux) the native cursor stays hidden because the
+    // setNativeCursorVisible(true) transition never fires.
+    if (cursorOverlay != nullptr) cursorOverlay->clearMousePosition();
     if (pianoRoll != nullptr) removeChildComponent (pianoRoll.get());
     if (pianoRollDim != nullptr) removeChildComponent (pianoRollDim.get());
     pianoRoll.reset();
@@ -3238,6 +3278,15 @@ void MainComponent::openAudioEditor (int trackIdx, int regionIdx)
 
     audioEditor->setBounds (editorBounds);
     audioEditor->onCloseRequested = [this] { closeAudioEditor(); };
+    audioEditor->onMouseMovedForCursor =
+        [this] (juce::Component& src, juce::Point<int> localInSrc, EditMode m,
+                juce::Range<int> cutLine)
+        {
+            if (cursorOverlay != nullptr)
+                cursorOverlay->setMousePosition (src, localInSrc, m, cutLine);
+        };
+    audioEditor->onMouseExitedForCursor =
+        [this] { if (cursorOverlay != nullptr) cursorOverlay->clearMousePosition(); };
     audioEditor->onNavigateToRegion = [this] (int t, int newIdx)
     {
         closeAudioEditor();
@@ -3249,6 +3298,10 @@ void MainComponent::openAudioEditor (int trackIdx, int regionIdx)
 
 void MainComponent::closeAudioEditor()
 {
+    // Same reasoning as closePianoRoll — clear the overlay first so
+    // the painted glyph + Linux native-cursor hide don't outlive the
+    // editor.
+    if (cursorOverlay != nullptr) cursorOverlay->clearMousePosition();
     if (audioEditor    != nullptr) removeChildComponent (audioEditor.get());
     if (audioEditorDim != nullptr) removeChildComponent (audioEditorDim.get());
     audioEditor.reset();

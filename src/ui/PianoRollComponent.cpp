@@ -2372,6 +2372,8 @@ void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
 
 void PianoRollComponent::mouseDrag (const juce::MouseEvent& e)
 {
+    pushCursorPosition (e.x, e.y);
+
     auto* r = region();
     if (r == nullptr) return;
 
@@ -2533,8 +2535,29 @@ void PianoRollComponent::mouseDrag (const juce::MouseEvent& e)
     }
 }
 
+void PianoRollComponent::pushCursorPosition (int x, int y)
+{
+    if (! (onMouseMovedForCursor && onMouseExitedForCursor)) return;
+
+    const auto grid = noteGridArea();
+    const auto m    = session.editMode;
+    const bool inContent = grid.contains (x, y);
+    // Only Grab + Draw get a glyph on the piano-roll grid. Range / Cut
+    // / Grid stay on the platform cursor.
+    const bool wantsGlyph = inContent && (m == EditMode::Grab || m == EditMode::Draw);
+    if (wantsGlyph) onMouseMovedForCursor (*this, juce::Point<int> (x, y), m, {});
+    else            onMouseExitedForCursor();
+}
+
+void PianoRollComponent::mouseExit (const juce::MouseEvent&)
+{
+    if (onMouseExitedForCursor) onMouseExitedForCursor();
+}
+
 void PianoRollComponent::mouseMove (const juce::MouseEvent& e)
 {
+    pushCursorPosition (e.x, e.y);
+
     const auto mode = session.editMode;
 
     // Resize-handle hover feedback for the velocity / cc lane top edges.

@@ -106,6 +106,17 @@ private:
 void bringWindowToFront (juce::ComponentPeer&)             {}
 void flushWindowOperations()                                {}
 void prepareNativePeerForChildAttach (juce::ComponentPeer&) {}
+
+// macOS: setMouseCursor(NoCursor) reliably hides the native cursor.
+// Component-level wiring already handles it; this stub is here so the
+// cross-OS PlatformWindowing surface compiles. CursorOverlay calls
+// this only when its glyph activates so [NSCursor unhide] cleanly
+// restores when overlay clears.
+void setNativeCursorVisibleOnPeer (juce::ComponentPeer&, bool visible)
+{
+    if (visible) [NSCursor unhide];
+    else         [NSCursor hide];
+}
 void prepareForTopLevelDestruction (juce::Component& topLevel)
 {
     // macOS doesn't have Mutter's focused-window-destroy assertion,

@@ -98,6 +98,16 @@ private:
 void bringWindowToFront (juce::ComponentPeer&)             {}
 void flushWindowOperations()                                {}
 void prepareNativePeerForChildAttach (juce::ComponentPeer&) {}
+
+// Windows: ShowCursor TRUE/FALSE is process-global and counter-based.
+// One pair of unbalanced calls per overlay-show / overlay-hide keeps
+// the count where we want it (negative = hidden). Native cursor hides
+// reliably here via JUCE's setMouseCursor(NoCursor) too, so the
+// platform helper just calls ShowCursor as a belt-and-braces fallback.
+void setNativeCursorVisibleOnPeer (juce::ComponentPeer&, bool visible)
+{
+    ::ShowCursor (visible ? TRUE : FALSE);
+}
 void prepareForTopLevelDestruction (juce::Component& topLevel)
 {
     // Win32 doesn't have the focused-window-destroy assertion either,

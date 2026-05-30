@@ -491,7 +491,7 @@ public:
 
         if (! inputMeterArea.isEmpty() && ! threshHandleArea.isEmpty())
         {
-            const float thresh = juce::jlimit (-30.0f, 0.0f,
+            const float thresh = juce::jlimit (-60.0f, 0.0f,
                 params.compThreshDb.load (std::memory_order_relaxed));
             const float frac = (thresh - (-60.0f)) / 60.0f;
             const auto inBar = inputMeterArea.toFloat();
@@ -630,7 +630,7 @@ private:
                             / (float) height;
         const float dbOnInAxis = juce::jlimit (-60.0f, 0.0f,
             -60.0f + juce::jlimit (0.0f, 1.0f, relY) * 60.0f);
-        params.compThreshDb.store (juce::jlimit (-30.0f, 0.0f, dbOnInAxis),
+        params.compThreshDb.store (juce::jlimit (-60.0f, 0.0f, dbOnInAxis),
                                      std::memory_order_relaxed);
     }
 
@@ -850,7 +850,7 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     compSrc.getThresholdDb = [this] { return params.compThreshDb.load (std::memory_order_relaxed); };
     compSrc.setThresholdDb = [this] (float db)
                               {
-                                  params.compThreshDb.store (juce::jlimit (-30.0f, 0.0f, db),
+                                  params.compThreshDb.store (juce::jlimit (-60.0f, 0.0f, db),
                                                               std::memory_order_relaxed);
                               };
     compSrc.resetThreshold = [this]
@@ -1456,8 +1456,13 @@ void MasterStripComponent::paint (juce::Graphics& g)
     // Stereo LED meter - two vertical bars (L | R) inside meterArea.
     if (! meterArea.isEmpty())
     {
-        constexpr float kMinDb = -60.0f, kMaxDb = 6.0f;
         constexpr float kBarGap = 1.0f;
+
+        // Meter dB → y uses the fader's NormalisableRange (same skew,
+        // same range) so "0 dB" on the meter lands at exactly the same
+        // Y as the fader's "0" tick. Linear -60..+6 was the prior
+        // approach and produced a visible scale mismatch with the fader.
+        const auto& faderRange = faderSlider.getNormalisableRange();
 
         auto drawColumn = [&] (juce::Rectangle<float> bar, float displayedDb)
         {
@@ -1472,7 +1477,11 @@ void MasterStripComponent::paint (juce::Graphics& g)
             const juce::Colour kLedRed    (0xffff2020);
             auto fracForDb = [&] (float db)
             {
-                return juce::jlimit (0.0f, 1.0f, (db - kMinDb) / (kMaxDb - kMinDb));
+                const double clamped = juce::jlimit ((double) faderRange.start,
+                                                      (double) faderRange.end,
+                                                      (double) db);
+                return (float) juce::jlimit (0.0, 1.0,
+                                              faderRange.convertTo0to1 (clamped));
             };
             auto colourForDb = [&] (float db) -> juce::Colour
             {
@@ -1867,6 +1876,16 @@ void MasterStripComponent::resized()
     faderScaleArea = juce::Rectangle<int>();
     grMeterArea    = juce::Rectangle<int>();
 
+    // Right-bias the slider bounds inside the fader column so the cap
+    // sits visually adjacent to the level meter — matches the
+    // cap-to-LED distance the channel strip has by construction (its
+    // kMeterScaleWidth column eats interior width). Without this
+    // narrowing, the cap floats in the centre of a wide column with a
+    // large empty gap to the meter that reads as "disconnected".
+    constexpr int kFaderColW = 50;
+    if (area.getWidth() > kFaderColW)
+        area = area.removeFromRight (kFaderColW);
+
     // Slider bottom trimmed for the standalone value label.
     auto sliderBounds = area.withTrimmedBottom (kFaderValueH + 8);
     faderSlider.setBounds (sliderBounds);
@@ -1881,12 +1900,12 @@ void MasterStripComponent::resized()
     // + bus strips.
     if (compMeter != nullptr)
     {
-        constexpr float kLevelMeterFloorDb   = -60.0f;
-        constexpr float kLevelMeterCeilingDb =  +6.0f;
-        constexpr float kZeroDbFrac = (0.0f - kLevelMeterFloorDb)
-                                    / (kLevelMeterCeilingDb - kLevelMeterFloorDb);
+        // Match the level-meter draw mapping (fader's NormalisableRange)
+        // so the GR threshold handle anchors on the visible 0 dB tick.
+        const auto& faderRange = faderSlider.getNormalisableRange();
+        const float zeroFrac = (float) faderRange.convertTo0to1 (0.0);
         const int zeroY = meterArea.getBottom() - 1
-                        - juce::roundToInt (kZeroDbFrac * (float) (meterArea.getHeight() - 2));
+                        - juce::roundToInt (zeroFrac * (float) (meterArea.getHeight() - 2));
         constexpr int kGrCaptionReserve = 10;
         const int compTop = zeroY - kGrCaptionReserve;
         compMeter->setBounds (compMeterCol.withY (compTop)

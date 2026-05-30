@@ -461,6 +461,49 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         return;
     }
 
+    // Per-track silent-skip — when the audio source is dead silent AND
+    // there's no insert plugin that could produce tail / generated
+    // audio, the whole HPF / 4-band EQ / comp / sends chain is a no-op
+    // worth dodging. 24 strips × full DSP per block is an xrun-class
+    // cost on ALSA's tight scheduling window; PipeWire's slack hides
+    // it. Mirrors the aux-lane silent skip in
+    // AudioEngine.cpp:audioDeviceIOCallbackWithContext (the canonical
+    // freeze-smoothers / reset-meter pattern). Constraints:
+    //   - MIDI tracks excluded (instrument plugin generates audio
+    //     from MIDI even with no audio input).
+    //   - Tracks with an insert plugin excluded (plugin tail / latency
+    //     compensation would suffer from skipped blocks).
+    //   - `needsProcessedMono` (recorder-print path) already handled
+    //     above; tracks armed-with-print stay on the full pass.
+    if (! isMidi && activeInsertMode == kInsertEmpty)
+    {
+        const auto peakAbs = [] (const float* buf, int n) -> float
+        {
+            if (buf == nullptr || n <= 0) return 0.0f;
+            const auto rng = juce::FloatVectorOperations::findMinAndMax (buf, n);
+            return juce::jmax (std::abs (rng.getStart()), std::abs (rng.getEnd()));
+        };
+        const float peakL = peakAbs (inL, numSamples);
+        const float peakR = (stereo && inR != nullptr) ? peakAbs (inR, numSamples) : 0.0f;
+        if (peakL <= 1e-6f && peakR <= 1e-6f)
+        {
+           #if DUSKSTUDIO_HAS_DUSK_DSP
+            // No comp ran this block, so the GR meter would otherwise pin
+            // at the last reduction value. Force it to 0 so a silent track
+            // reads no gain reduction — same intent as the bypass path that
+            // zeroes the GR atom after the comp pass below.
+            currentGrDb.store (0.0f, std::memory_order_relaxed);
+           #endif
+            // Smoothers stay FROZEN on skip (no setTargetValue,
+            // no getNextValue) — when audio returns, they pick up
+            // at the configured value with no click. The track's
+            // input meter is written by AudioEngine before this
+            // call and already reflects -inf for silent input, so
+            // no meter reset is required here.
+            return;
+        }
+    }
+
     updateGainTargets();
     updateEqParameters();
     updateCompParameters();

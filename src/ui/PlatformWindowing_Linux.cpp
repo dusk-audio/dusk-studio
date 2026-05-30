@@ -63,6 +63,32 @@ juce::ComponentPeer* pickSiblingFocusTargetPeer (juce::Component& departing)
 }
 } // namespace
 
+void setNativeCursorVisibleOnPeer (juce::ComponentPeer& peer, bool visible)
+{
+    auto* d = juceDisplay();
+    if (d == nullptr) return;
+    const auto win = (::Window) (uintptr_t) peer.getNativeHandle();
+    if (win == 0) return;
+
+    // Cache one invisible 1x1 pixmap cursor for the process — JUCE's
+    // setMouseCursor(NoCursor) and image-cursor paths both go through
+    // routes that get dropped on this hybrid X11/Wayland setup, so we
+    // do XDefineCursor directly here. XUndefineCursor restores the
+    // parent window's cursor (the WM's default arrow).
+    static ::Cursor invisible = 0;
+    if (invisible == 0)
+    {
+        ::Pixmap blank = ::XCreatePixmap (d, win, 1, 1, 1);
+        ::XColor xc{};
+        invisible = ::XCreatePixmapCursor (d, blank, blank, &xc, &xc, 0, 0);
+        ::XFreePixmap (d, blank);
+    }
+
+    if (visible) ::XUndefineCursor (d, win);
+    else         ::XDefineCursor   (d, win, invisible);
+    ::XFlush (d);
+}
+
 void bringWindowToFront (juce::ComponentPeer& peer)
 {
     auto* d = juceDisplay();

@@ -1013,22 +1013,80 @@ juce::MouseCursor AudioRegionEditor::cursorForPoint (int x, int y) const
         // correctly without the overlay.
         const auto m = session.editMode;
         if (m == EditMode::Grab || m == EditMode::Cut || m == EditMode::Draw)
-            return juce::MouseCursor::NoCursor;
+            return invisibleCursor();
         return cursorForEditMode (m);
     }
 
     return juce::MouseCursor::NormalCursor;
 }
 
+void AudioRegionEditor::pushCursorPosition (int x, int y)
+{
+    if (! (onMouseMovedForCursor && onMouseExitedForCursor)) return;
+
+    const auto waveArea = juce::Rectangle<int> (0, kIconRowHeight + kRulerHeight,
+                                                   getWidth(),
+                                                   getHeight() - kIconRowHeight - kRulerHeight - kStatusBarH - kScrollBarH);
+    const auto m = session.editMode;
+    const bool inContent = waveArea.contains (x, y);
+    const bool wantsGlyph = inContent
+                           && (m == EditMode::Grab || m == EditMode::Cut || m == EditMode::Draw);
+
+    // In Cut mode the dashed cut-line + scissor variant only fires
+    // when the cursor X is over the REGION's painted audio range
+    // (between its timelineStart and timelineStart + lengthInSamples
+    // mapped through xForTimelineSample). Empty area before / after
+    // the region — scrolled past the audio block — gets the plain
+    // scissor with no dashed line.
+    juce::Range<int> cutLine;
+    int visualX = x;
+    if (wantsGlyph && m == EditMode::Cut)
+    {
+        if (const auto* r = region())
+        {
+            const int xStart = xForTimelineSample (r->timelineStart, waveArea);
+            const int xEnd   = xForTimelineSample (r->timelineStart + r->lengthInSamples,
+                                                     waveArea);
+            const auto regionX = juce::Range<int> (juce::jmin (xStart, xEnd),
+                                                     juce::jmax (xStart, xEnd));
+            if (regionX.contains (x))
+            {
+                cutLine = juce::Range<int> (waveArea.getY(), waveArea.getBottom());
+
+                // Snap the visual cursor X to the same grid the cut
+                // commits to (snapTimelineSampleToGrid). Without this
+                // the scissor renders at the raw cursor X while the
+                // actual split lands at the nearest grid line — user
+                // reads it as "the cut happened left of the scissor".
+                if (session.snapToGrid)
+                {
+                    const auto rawT     = timelineSampleForX (x, waveArea);
+                    const auto snappedT = snapTimelineSampleToGrid (rawT, /*bypass*/ false);
+                    visualX = xForTimelineSample (snappedT, waveArea);
+                }
+            }
+        }
+    }
+
+    if (wantsGlyph) onMouseMovedForCursor (*this, juce::Point<int> (visualX, y), m, cutLine);
+    else            onMouseExitedForCursor();
+}
+
 void AudioRegionEditor::mouseMove (const juce::MouseEvent& e)
 {
     setMouseCursor (cursorForPoint (e.x, e.y));
+    pushCursorPosition (e.x, e.y);
 }
 
 void AudioRegionEditor::updateModeCursor()
 {
     const auto p = getMouseXYRelative();
     setMouseCursor (cursorForPoint (p.x, p.y));
+}
+
+void AudioRegionEditor::mouseExit (const juce::MouseEvent&)
+{
+    if (onMouseExitedForCursor) onMouseExitedForCursor();
 }
 
 void AudioRegionEditor::mouseDown (const juce::MouseEvent& e)
@@ -1418,6 +1476,8 @@ void AudioRegionEditor::mouseDown (const juce::MouseEvent& e)
 
 void AudioRegionEditor::mouseDrag (const juce::MouseEvent& e)
 {
+    pushCursorPosition (e.x, e.y);
+
     auto* r = region();
     if (r == nullptr || dragMode == DragMode::None) return;
     const auto waveArea = juce::Rectangle<int> (0, kIconRowHeight + kRulerHeight,

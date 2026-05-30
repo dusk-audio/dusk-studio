@@ -337,10 +337,8 @@ public:
         // Threshold triangle handle, drawn on the LEFT of the IN meter.
         if (! inputMeterArea.isEmpty() && ! threshHandleArea.isEmpty())
         {
-            const float thresh = juce::jlimit (-30.0f, 0.0f,
+            const float thresh = juce::jlimit (-60.0f, 0.0f,
                 bus.strip.compThreshDb.load (std::memory_order_relaxed));
-            // Map -30..0 onto the IN bar's -60..0 axis so the triangle
-            // sits at the right vertical position.
             const float frac = (thresh - (-60.0f)) / 60.0f;
             const auto inBar = inputMeterArea.toFloat();
             const float y = inBar.getBottom() - 2.0f - frac * (inBar.getHeight() - 4.0f);
@@ -479,10 +477,9 @@ private:
         if (height <= 0) return;
         const float relY = (float) (inputMeterArea.getBottom() - 2 - y)
                             / (float) height;
-        // IN bar axis is -60..0, but bus threshold is clamped to -30..0.
         const float dbOnInAxis = juce::jlimit (-60.0f, 0.0f,
             -60.0f + juce::jlimit (0.0f, 1.0f, relY) * 60.0f);
-        bus.strip.compThreshDb.store (juce::jlimit (-30.0f, 0.0f, dbOnInAxis),
+        bus.strip.compThreshDb.store (juce::jlimit (-60.0f, 0.0f, dbOnInAxis),
                                         std::memory_order_relaxed);
     }
 
@@ -582,7 +579,7 @@ BusComponent::BusComponent (Bus& b, Session& s, int idx)
     //     left-click toggles enable). No mode picker (bus comp is a
     //     fixed SSL-style glue topology, not OPTO/FET/VCA).
     //   - CompMeterStrip on the LEFT (handle + IN bar + dB scale + GR
-    //     bar). Threshold drag writes bus.strip.compThreshDb (-30..0).
+    //     bar). Threshold drag writes bus.strip.compThreshDb (-60..0).
     //   - Knob grid on the RIGHT: RAT / ATK + REL / MAK across two rows.
     //     The standalone THR knob is gone — threshold is set via the
     //     triangle handle on the meter.
@@ -607,7 +604,7 @@ BusComponent::BusComponent (Bus& b, Session& s, int idx)
     compSrc.getThresholdDb = [this] { return bus.strip.compThreshDb.load (std::memory_order_relaxed); };
     compSrc.setThresholdDb = [this] (float db)
                               {
-                                  bus.strip.compThreshDb.store (juce::jlimit (-30.0f, 0.0f, db),
+                                  bus.strip.compThreshDb.store (juce::jlimit (-60.0f, 0.0f, db),
                                                                   std::memory_order_relaxed);
                               };
     compSrc.resetThreshold = [this]
@@ -1458,6 +1455,15 @@ void BusComponent::resized()
     const int leftPad = juce::jlimit (0, juce::jmax (0, area.getWidth() - 20),
                                          kRightStackW);
     area.removeFromLeft (leftPad);
+    // Right-bias the slider bounds inside the fader column so the cap
+    // sits visually adjacent to the level meter — matches the
+    // cap-to-LED distance the channel strip has by construction.
+    // Without this narrowing, the cap floats in the centre of a wide
+    // column with a large empty gap to the meter that reads as
+    // "disconnected".
+    constexpr int kFaderColW = 50;
+    if (area.getWidth() > kFaderColW)
+        area = area.removeFromRight (kFaderColW);
     // Scale labels no longer use a dedicated carved column — they're drawn
     // in paint() to the left of the fader track via kSharedXOver math.
     faderScaleArea = juce::Rectangle<int>();
@@ -1493,12 +1499,12 @@ void BusComponent::resized()
     // Mirrors ChannelStripComponent's same-name math.
     if (compMeter != nullptr)
     {
-        constexpr float kLevelMeterFloorDb   = -60.0f;
-        constexpr float kLevelMeterCeilingDb =  +6.0f;
-        constexpr float kZeroDbFrac = (0.0f - kLevelMeterFloorDb)
-                                    / (kLevelMeterCeilingDb - kLevelMeterFloorDb);
+        // Match the level-meter draw mapping (fader's NormalisableRange)
+        // so the GR threshold handle anchors on the visible 0 dB tick.
+        const auto& faderRange = faderSlider.getNormalisableRange();
+        const float zeroFrac = (float) faderRange.convertTo0to1 (0.0);
         const int zeroY = meterArea.getBottom() - 1
-                        - juce::roundToInt (kZeroDbFrac * (float) (meterArea.getHeight() - 2));
+                        - juce::roundToInt (zeroFrac * (float) (meterArea.getHeight() - 2));
         constexpr int kGrCaptionReserve = 10;
         const int compTop = zeroY - kGrCaptionReserve;
         compMeter->setBounds (compMeterCol.withY (compTop)

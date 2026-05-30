@@ -1,8 +1,6 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
-#include <functional>
-#include <optional>
 
 #include "../session/Session.h"
 
@@ -30,28 +28,39 @@ namespace duskstudio
 // on their content area while in Grab / Cut / Draw mode, otherwise
 // the native cursor will show through the transparent overlay and
 // the user sees both at once.
-class CursorOverlay final : public juce::Component,
-                              private juce::Timer
+class CursorOverlay final : public juce::Component
 {
 public:
-    // Returns the EditMode glyph to paint at the given GLOBAL screen
-    // position, or std::nullopt to paint nothing (no overlay glyph;
-    // native cursor takes over).
-    using Resolver = std::function<std::optional<EditMode> (juce::Point<int> globalMousePos)>;
-
     CursorOverlay();
     ~CursorOverlay() override = default;
 
-    void setResolver (Resolver r);
-
     void paint (juce::Graphics&) override;
 
-private:
-    void timerCallback() override;
+    // Editors call this from their own mouseMove with (e.x, e.y) in
+    // their own local coords + the wanted glyph mode. The overlay
+    // converts to its own local via JUCE's tree-based getLocalPoint
+    // (component-to-component, NOT screen-based — Wayland has broken
+    // screen coords). Call with EditMode::Grab/Cut/Draw when over a
+    // content area; call clearMousePosition() on mouseExit / when the
+    // editor's content area shouldn't show a glyph.
+    //
+    // cutLineYInSource: in Cut mode, the Y range in `source`-local
+    // coords across which a vertical dashed cut line should be drawn
+    // (paired with the half-scissor variant). Pass an empty range
+    // (default) to keep the cursor on the full-scissor glyph with no
+    // line.
+    void setMousePosition (juce::Component& source,
+                            juce::Point<int> localInSource,
+                            EditMode mode,
+                            juce::Range<int> cutLineYInSource = {});
+    void clearMousePosition();
 
-    Resolver         resolver;
+private:
+    void setNativeCursorVisible (bool visible);
+
     juce::Point<int> lastLocal   { -1000, -1000 };
     bool             lastPainting = false;
     EditMode         lastMode     = EditMode::Grab;
+    juce::Range<int> lastCutLineY { };          // empty = no dashed line, full scissor
 };
 } // namespace duskstudio

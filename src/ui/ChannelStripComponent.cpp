@@ -5,6 +5,7 @@
 #include "ChannelEqEditor.h"
 #include "ChannelCompEditor.h"
 #include "DimOverlay.h"
+#include "EmbeddedModal.h"
 #include "HardwareInsertEditor.h"
 #include "PluginPickerHelpers.h"
 #include "../engine/AudioEngine.h"
@@ -367,6 +368,8 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
 
     refreshCompModeButtonState();
     refreshCompKnobVisibility();
+    lastAppliedCompMode = juce::jlimit (0, 2,
+        track.strip.compMode.load (std::memory_order_relaxed));
 
     auto setupCompKnob = [this] (juce::Slider& k, juce::Label& label, const juce::String& labelText,
                               double rangeMin, double rangeMax, double defaultVal,
@@ -2047,6 +2050,11 @@ void ChannelStripComponent::openPluginEditor()
                 /*allowForeignWidgetToResizeComponent*/ false);
             remoteEditorEmbed->setSize (juce::jmax (200, w),
                                           juce::jmax (200, h));
+            // Tag so EmbeddedModal hides this XEmbed window for the
+            // lifetime of any subsequent settings / quit modal — native
+            // X11 z-order otherwise paints the plugin window above the
+            // JUCE-rendered modal.
+            remoteEditorEmbed->getProperties().set ("dusk_pluginEditor", true);
         }
         pluginEditorModal.showBorrowed (*parent, *remoteEditorEmbed, onClose);
        #elif JUCE_MAC
@@ -2116,6 +2124,11 @@ void ChannelStripComponent::openPluginEditor()
         if (embed != nullptr)
         {
             embed->setSize (juce::jmax (200, w), juce::jmax (200, h));
+            // Tag so a later settings / quit modal hides the shell-editor
+            // wrapper too (same reason as the Linux XEmbed + in-process
+            // paths). Defensive today — createInProcessEditorHost is a Mac
+            // stub returning nullptr — but correct once the shell host lands.
+            embed->getProperties().set ("dusk_pluginEditor", true);
             pluginEditorModal.showBorrowed (*parent, *embed, onClose);
             remoteForeignEmbed = std::move (embed);
         }
@@ -2123,7 +2136,11 @@ void ChannelStripComponent::openPluginEditor()
         {
             // Fallback: child opened its own native-titlebar top-level.
             // Subsequent clicks re-fire ShowEditor and the child raises
-            // the existing window.
+            // the existing window. NOTE: this floating window lives in the
+            // child process and is NOT a child of our parent, so EmbeddedModal
+            // cannot hide it under a settings/quit modal — that needs an
+            // explicit IPC HideEditor/ShowEditor round-trip driven by modal
+            // open/close, deferred to the tracked NSView-embed work.
             juce::ignoreUnused (w, h);
         }
        #else
@@ -2135,6 +2152,10 @@ void ChannelStripComponent::openPluginEditor()
         if (embed != nullptr)
         {
             embed->setSize (juce::jmax (200, w), juce::jmax (200, h));
+            // Tag so a later settings / quit modal hides the reparented HWND
+            // wrapper too — native window z-order otherwise paints the plugin
+            // above the JUCE-rendered modal.
+            embed->getProperties().set ("dusk_pluginEditor", true);
             pluginEditorModal.showBorrowed (*parent, *embed, onClose);
             remoteForeignEmbed = std::move (embed);
         }
@@ -2175,6 +2196,11 @@ void ChannelStripComponent::openPluginEditor()
         pluginEditor      = std::move (fresh);
         pluginEditorOwner = instance;
     }
+
+    // Tag so EmbeddedModal hides the editor when a settings / quit /
+    // alert modal opens. In-process plugin editors with GL contexts or
+    // foreign-window embeds can paint above the modal otherwise.
+    pluginEditor->getProperties().set ("dusk_pluginEditor", true);
 
     pluginEditorModal.showBorrowed (*parent, *pluginEditor, onClose);
 }
@@ -2371,6 +2397,7 @@ void ChannelStripComponent::openIoConfigPopup()
         juce::ModalCallbackFunction::create (
             [owned = std::move (panel)] (int) mutable { owned.reset(); }),
         /*deleteWhenDismissed*/ true);
+    attachTransportKeyForwarder (*box);
     activeIoBox = box;
 }
 
@@ -2490,6 +2517,7 @@ void ChannelStripComponent::openEqEditorPopup()
     auto& box = juce::CallOutBox::launchAsynchronously (
         std::move (panel), anchor, topLevel);
     box.setDismissalMouseClicksAreAlwaysConsumed (true);
+    attachTransportKeyForwarder (box);
     // Force the popup to fire from the RIGHT side of the button by
     // restricting the available fit-area to the strip's right edge onward.
     // Without this, JUCE's CallOutBox picks whichever side has the most
@@ -2524,6 +2552,7 @@ void ChannelStripComponent::openCompEditorPopup()
     auto& box = juce::CallOutBox::launchAsynchronously (
         std::move (panel), anchor, topLevel);
     box.setDismissalMouseClicksAreAlwaysConsumed (true);
+    attachTransportKeyForwarder (box);
     // Force right-side placement (same logic as the EQ popup).
     {
         const auto rightFit = topLevel->getLocalBounds()
@@ -2737,6 +2766,7 @@ void ChannelStripComponent::openAuxEditorPopup()
     auto& box = juce::CallOutBox::launchAsynchronously (
         std::move (panel), anchor, topLevel);
     box.setDismissalMouseClicksAreAlwaysConsumed (true);
+    attachTransportKeyForwarder (box);
     {
         const auto rightFit = topLevel->getLocalBounds()
                                   .withTrimmedLeft (anchor.getRight());
@@ -2820,9 +2850,23 @@ void ChannelStripComponent::timerCallback()
     // Sync the inline COMP mode button with the underlying atoms so it
     // reflects writes from other surfaces (meter-strip threshold drag,
     // popup editor's ON toggle, MIDI binding, etc.). State-only refresh
-    // every tick - knob visibility only changes on explicit mode swaps,
-    // so we skip that work here.
+    // every tick is cheap; the heavier knob-visibility filter only
+    // fires when compMode actually changed since the last apply
+    // (catches session-load + MIDI-binding mode swaps that bypass the
+    // popup-menu callback).
     refreshCompModeButtonState();
+    {
+        const int liveMode = juce::jlimit (0, 2,
+            track.strip.compMode.load (std::memory_order_relaxed));
+        if (liveMode != lastAppliedCompMode)
+        {
+            lastAppliedCompMode = liveMode;
+            refreshCompKnobVisibility();
+            resized();   // re-layout so the new mode's knobs land in
+                          // their cells instead of the prior mode's
+                          // stale positions.
+        }
+    }
     if (eqHeaderBtn != nullptr)
     {
         // Surface the active EQ type on the header so the user can
@@ -3920,10 +3964,20 @@ void ChannelStripComponent::paint (juce::Graphics& g)
     //    level so the engineer always sees what's hitting the strip.
     //    Threshold + GR meters live INSIDE the COMP section now, so this is
     //    just a clean input bar with a peak-hold tick.
-    constexpr float kFloorDb   = -60.0f;
-    constexpr float kCeilingDb =  +6.0f;   // match kFaderTicks's top label
+    //
+    // The LED's dB-to-y mapping uses the fader's NormalisableRange — same
+    // skew, same range — so the meter's "0 dB" line sits at exactly the
+    // same Y as the fader's "0" tick. Linear (-60..+6) was the prior
+    // approach and put 0 dB at 91 % of bar height while the fader's "0"
+    // tick (with SkewFactorFromMidPoint(-12) on a -100..+12 range) lived
+    // at ~96 % — they read as two different scales for the same signal.
+    const auto& faderRange = faderSlider.getNormalisableRange();
     auto dbToFrac = [&] (float db) {
-        return juce::jlimit (0.0f, 1.0f, (db - kFloorDb) / (kCeilingDb - kFloorDb));
+        const double clamped = juce::jlimit ((double) faderRange.start,
+                                              (double) faderRange.end,
+                                              (double) db);
+        return (float) juce::jlimit (0.0, 1.0,
+                                      faderRange.convertTo0to1 (clamped));
     };
 
     if (! inputMeterArea.isEmpty())
@@ -4124,7 +4178,8 @@ void ChannelStripComponent::paint (juce::Graphics& g)
             // at the bottom of the range to match the analogue grammar.
             for (const auto& t : kFaderTicks)
             {
-                if (t.db < kFloorDb - 0.01f || t.db > kCeilingDb + 0.01f) continue;
+                if (t.db < (float) faderRange.start - 0.01f
+                    || t.db > (float) faderRange.end + 0.01f) continue;
                 const float frac = dbToFrac (t.db);
                 const float y = meterRect.getBottom() - 1.0f
                                   - frac * (meterRect.getHeight() - 2.0f);
@@ -4161,7 +4216,7 @@ void ChannelStripComponent::resized()
     area.removeFromTop (6);
 
     nameLabel.setBounds (area.removeFromTop (20));
-    area.removeFromTop (3);
+    area.removeFromTop (2);
 
     // Mixing stage swaps the tracking-only block (mode + input + IN/ARM/PRINT)
     // for a row of 4 AUX send knobs. Recording/Mastering keep the original
@@ -4179,7 +4234,7 @@ void ChannelStripComponent::resized()
         constexpr int kIoButtonH = 18;
         constexpr int kIoRowH    = 18;
         constexpr int kIoGap     = 3;
-        constexpr int kIoRegionH = kIoButtonH + kIoGap + kIoRowH + 2;
+        constexpr int kIoRegionH = kIoButtonH + kIoGap + kIoRowH;
         auto ioRegion = area.removeFromTop (kIoRegionH);
 
         ioConfigButton.setBounds (ioRegion.removeFromTop (kIoButtonH));
@@ -4196,7 +4251,7 @@ void ChannelStripComponent::resized()
     // available in both compact and full modes since it's independent of the
     // EQ/COMP collapse.
     pluginSlotButton.setBounds (area.removeFromTop (18).reduced (2, 0));
-    area.removeFromTop (3);
+    area.removeFromTop (2);
 
     // In compact mode the EQ + COMP sections collapse to two narrow buttons
     // so the fader / bus assigns / meter / M-S-Ø stay visible when the
@@ -4220,25 +4275,25 @@ void ChannelStripComponent::resized()
     // ── EQ block ─ SSL 9000J / E-EQ inspired layout.
     //   • Each band is a 2-column pair: GAIN on the left, FREQ on the right
     //     (same Y, prominent same-size knobs).
-    //   • Bell bands (HM, LM) add a smaller Q knob STACKED BELOW the gain in
+    //   • Bell bands (HM, LM) add a Q knob STACKED BELOW the gain in
     //     the same left column - no third column competing for horizontal
-    //     space, freq stays at full size on the right.
+    //     space, freq stays on the right.
     //   • HPF lives at the top of the block as a single centred knob.
     //   • Shelf rows are short; bell rows are taller (gain block + Q block).
-    // All primary knobs share the pan-knob diameter (26 px) - frees vertical
-    // space for the fader and keeps the strip readable at 16-track widths.
-    // Q stays smaller (20 px) since it's a subordinate control on bell bands.
-    constexpr int kKnobSize    = 26;
-    constexpr int kValueLabelH = 14;
-    constexpr int kKnobBlockH  = kKnobSize + kValueLabelH + 2;        // 42
-    constexpr int kQKnobSize   = 26;                                  // Q matches gain/freq per user directive
-    constexpr int kQBlockH     = kQKnobSize + kValueLabelH;           // 40
+    // Every EQ knob shares the AUX-send diameter (24 px) - uniform sizing
+    // keeps the block compact for the fader and reads consistently with the
+    // SEND row below. Q matches gain/freq; no subordinate-size knob.
+    constexpr int kKnobSize    = 24;
+    constexpr int kValueLabelH = 12;
+    constexpr int kKnobBlockH  = kKnobSize + kValueLabelH + 2;        // 38
+    constexpr int kQKnobSize   = 24;
+    constexpr int kQBlockH     = kQKnobSize + kValueLabelH;           // 36
     constexpr int kFreqYStagger = 2;                                  // tighter SSL nudge - was 4
     constexpr int kEqHeaderH   = 16;  // matches COMP header row height for visual parity
     constexpr int kFilterLabelH = 10;                                 // small HPF/LPF captions above the white knobs
-    constexpr int kEqHpfRowH    = kFilterLabelH + kKnobBlockH;        // 52 - label strip + knob row
-    constexpr int kEqShelfRowH  = kKnobBlockH + kFreqYStagger + 2;    // 46 - tighter than before
-    constexpr int kEqBellRowH   = kKnobBlockH + kQBlockH;             // 82
+    constexpr int kEqHpfRowH    = kFilterLabelH + kKnobBlockH;        // 48 - label strip + knob row
+    constexpr int kEqShelfRowH  = kKnobBlockH + kFreqYStagger + 2;    // 42 - tighter than before
+    constexpr int kEqBellRowH   = kKnobBlockH + kQBlockH;             // 74
     constexpr int kEqTypeChipH  = 16;                                 // E/G chip slot between HM (row 1) and LM (row 2)
 
     // 1 HPF row + 2 shelf rows (HF, LF) + 2 bell rows (HM, LM). No vertical
@@ -4359,12 +4414,9 @@ void ChannelStripComponent::resized()
     //             the RIGHT. Putting the meter inside the comp section
     //             (rather than next to the fader) keeps all comp UI grouped
     //             and frees up the fader column for a taller fader.
-    // COMP knob diameter matches EQ (26 px) so the two sections read
-    // as the same visual rhythm down the strip. Body height tightens
-    // proportionally — the previous +18 px slack was for the larger
-    // 32 px experiment; reduced to +4 to absorb the per-knob hint
-    // labels (Fst/Slo under ATK/REL).
-    constexpr int kCompKnobSize     = 26;
+    // COMP knob diameter matches EQ + AUX (24 px) so every knob down the
+    // strip reads as one visual rhythm.
+    constexpr int kCompKnobSize     = 24;
     constexpr int kCompKnobBlockH   = kCompKnobSize + kValueLabelH + 2;
     constexpr int kCompKnobLabelH   = 10;
     constexpr int kCompKnobRowH     = kCompKnobLabelH + kCompKnobBlockH;
@@ -4820,14 +4872,16 @@ void ChannelStripComponent::resized()
         // METER's 0 dB tick — so the threshold-drag triangle's MAX position
         // lines up with the visible "0" mark on the fader scale instead of
         // floating between "0" and "+6".
-        // Level-meter mapping: kFloorDb=-60, kCeilingDb=+6, draw range is
-        // inputMeterArea.height - 2 px (see drawBar in paint()).
-        constexpr float kLevelMeterFloorDb   = -60.0f;
-        constexpr float kLevelMeterCeilingDb =  +6.0f;
-        constexpr float kZeroDbFrac = (0.0f - kLevelMeterFloorDb)
-                                    / (kLevelMeterCeilingDb - kLevelMeterFloorDb);
+        // Use the SAME dB-to-Y mapping the level-meter draw uses
+        // (faderSlider.getNormalisableRange()) so the GR threshold
+        // handle sits on the visible 0 dB tick. Linear -60..+6 was
+        // wrong once the level meter moved to the fader's skewed
+        // range — handle stayed at the old ~91% position while the
+        // visible 0 tick had moved to ~96%.
+        const auto& faderRange = faderSlider.getNormalisableRange();
+        const float zeroFrac = (float) faderRange.convertTo0to1 (0.0);
         const int zeroY = inputMeterArea.getBottom() - 1
-                        - juce::roundToInt (kZeroDbFrac * (float) (inputMeterArea.getHeight() - 2));
+                        - juce::roundToInt (zeroFrac * (float) (inputMeterArea.getHeight() - 2));
         constexpr int kGrCaptionReserve = 10;   // matches CompMeterStrip::resized's hasCaptions branch
         const int compTop = zeroY - kGrCaptionReserve;
         auto compRect = faderCompMeterCol

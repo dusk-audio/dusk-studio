@@ -373,7 +373,15 @@ void AudioSettingsPanel::resized()
     constexpr int kRowGap       = 4;
     constexpr int kSectionGap   = 14;    // vertical breathing room between groups
     constexpr int kComboW       = 320;
-    constexpr int kAudioBlockH  = 280;   // JUCE AudioDeviceSelectorComponent (device / output / input / channels / SR / buffer)
+    // JUCE's AudioDeviceSelectorComponent doesn't expose a preferred
+    // height; we have to budget enough room for the tallest backend.
+    // ALSA pre-2.0 lays out an extra "Sample rate" + "Audio buffer"
+    // row pair AFTER the channel lists; JACK / PipeWire skip those
+    // and end much shorter. 360 px fits ALSA cleanly without leaving
+    // a huge gap under the shorter backends — the section separator
+    // line + the next section header sit at fixed Y immediately
+    // below this block, so under-budget is far worse than over.
+    constexpr int kAudioBlockH  = 360;
 
     auto sectionHeader = [&] (juce::Label& label)
     {

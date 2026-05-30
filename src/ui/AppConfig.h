@@ -54,4 +54,15 @@ enum class StopBehavior : int
 };
 StopBehavior getStopBehavior();
 void         setStopBehavior (StopBehavior b);
+
+// Virtual-keyboard centre note (MIDI 0..120). Default 36 (C2) — sits
+// near the lower half of the bass register so the visible 2-octave
+// window (centre-12..centre+12) covers C1..C3 by default, matching
+// typical bassline / synth-bass authoring on a 49-key controller.
+// Persisted per-machine so the user's chosen octave survives session
+// changes (each time they open the VKB it lands back on the note they
+// last shifted it to).
+constexpr int kVkbCentreDefault = 36;
+int  getVkbCentreNote();
+void setVkbCentreNote (int midiNote);
 } // namespace duskstudio::appconfig

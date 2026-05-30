@@ -12,47 +12,88 @@ namespace duskstudio
 // native cursor would.
 void paintScissorsGlyph (juce::Graphics& g, float cx, float cy)
 {
-    // makeScissorsCursor hotspot = (20, 5). Translate so the path's
-    // (20, 5) lands at (cx, cy).
-    const float ox = cx - 20.0f;
-    const float oy = cy - 5.0f;
-
+    // Full open-X with ring-loop handles at the bottom corners.
+    // Sized so the full glyph (path + halo stroke) fits strictly
+    // inside a 24×24 box centred on the hotspot at (cx, cy). a +
+    // loopR + halo half-stroke must stay ≤ 12 (the half-extent of
+    // 24×24).
+    constexpr float a       = 8.0f;
+    constexpr float loopR   = 2.5f;
     juce::Path blades;
-    blades.startNewSubPath (ox + 4.0f,  oy + 19.0f); blades.lineTo (ox + 20.0f, oy + 5.0f);
-    blades.startNewSubPath (ox + 11.0f, oy + 19.0f); blades.lineTo (ox + 20.0f, oy + 13.0f);
-    juce::Path loops;
-    loops.addEllipse (ox + 2.0f, oy + 17.0f, 5.0f, 5.0f);
-    loops.addEllipse (ox + 9.0f, oy + 17.0f, 5.0f, 5.0f);
+    blades.startNewSubPath (cx - a, cy - a); blades.lineTo (cx + a, cy + a);
+    blades.startNewSubPath (cx + a, cy - a); blades.lineTo (cx - a, cy + a);
 
-    g.setColour (juce::Colours::black.withAlpha (0.7f));
-    g.strokePath (blades, juce::PathStrokeType (3.4f));
-    g.strokePath (loops,  juce::PathStrokeType (3.4f));
+    juce::Path loops;
+    loops.addEllipse (cx - a - loopR, cy + a - loopR, loopR * 2.0f, loopR * 2.0f);
+    loops.addEllipse (cx + a - loopR, cy + a - loopR, loopR * 2.0f, loopR * 2.0f);
+
+    const auto bladeHalo  = juce::PathStrokeType (2.6f, juce::PathStrokeType::curved,
+                                                    juce::PathStrokeType::rounded);
+    const auto bladeInner = juce::PathStrokeType (1.4f, juce::PathStrokeType::curved,
+                                                    juce::PathStrokeType::rounded);
+    const auto loopHalo   = juce::PathStrokeType (2.6f);
+    const auto loopInner  = juce::PathStrokeType (1.4f);
+
+    g.setColour (juce::Colours::black.withAlpha (0.85f));
+    g.strokePath (blades, bladeHalo);
+    g.strokePath (loops,  loopHalo);
+
     g.setColour (juce::Colours::white);
-    g.strokePath (blades, juce::PathStrokeType (1.6f));
-    g.strokePath (loops,  juce::PathStrokeType (1.6f));
+    g.strokePath (blades, bladeInner);
+    g.strokePath (loops,  loopInner);
 }
 
 void paintPencilGlyph (juce::Graphics& g, float cx, float cy)
 {
-    // makePencilCursor hotspot = (3, 21).
-    const float ox = cx - 3.0f;
-    const float oy = cy - 21.0f;
+    // Pro Tools-style pencil: a slim rectangular body rotated ~45°
+    // (eraser-end at upper-right, lead-end at lower-left), with a
+    // perpendicular ferrule band near the eraser and a darker
+    // triangular tip at the lead end. Strictly fits inside a 24×24
+    // box with the lead tip at (cx, cy) so the glyph never extends
+    // past the cursor's canvas.
+    //
+    // Hotspot = the lead tip ⇒ position the glyph so its (3, 21) grid
+    // coordinate lands at (cx, cy). kSize ≤ 24 keeps the (20, 5)
+    // eraser corner within (cx + 17, cy - 16) of the hotspot — under
+    // the 24-px canvas budget once the 1.6 px halo is included.
+    constexpr float kGrid = 24.0f;
+    constexpr float kSize = 22.0f;
+    const float ox = cx - (3.0f / kGrid) * kSize;
+    const float oy = cy - (21.0f / kGrid) * kSize;
+    auto sx = [&] (float u) { return ox + (u / kGrid) * kSize; };
+    auto sy = [&] (float u) { return oy + (u / kGrid) * kSize; };
 
+    // Body quadrilateral. Vertex order traces:
+    //   tip-bottom (3,21) → tip-top (7,16) → eraser-top (20,5)
+    //   → eraser-bottom (17,8). Closed quad = full pencil silhouette.
     juce::Path body;
-    body.addQuadrilateral (ox + 3.0f,  oy + 21.0f,
-                            ox + 7.0f,  oy + 16.0f,
-                            ox + 20.0f, oy + 3.0f,
-                            ox + 16.0f, oy + 8.0f);
-    juce::Path tip;
-    tip.addTriangle (ox + 3.0f, oy + 21.0f,
-                      ox + 7.0f, oy + 16.0f,
-                      ox + 5.5f, oy + 18.5f);
+    body.addQuadrilateral (sx (3.0f),  sy (21.0f),
+                            sx (7.0f),  sy (16.0f),
+                            sx (20.0f), sy ( 5.0f),
+                            sx (17.0f), sy ( 8.0f));
 
-    g.setColour (juce::Colours::black.withAlpha (0.7f));
-    g.strokePath (body, juce::PathStrokeType (3.0f));
+    // Filled triangle at the lead end (sharpened tip). Same colour
+    // as the body so the whole pencil reads as a single white
+    // silhouette with a black halo for contrast.
+    juce::Path tip;
+    tip.addTriangle (sx (3.0f),  sy (21.0f),
+                      sx (7.0f),  sy (16.0f),
+                      sx (5.5f), sy (18.5f));
+
+    const auto bodyHaloStroke = juce::PathStrokeType (2.4f,
+                                                        juce::PathStrokeType::curved,
+                                                        juce::PathStrokeType::rounded);
+
+    // Halo: black stroke around the body silhouette so the all-white
+    // pencil reads on any background.
+    g.setColour (juce::Colours::black.withAlpha (0.85f));
+    g.strokePath (body, bodyHaloStroke);
+
+    // All-white pencil: body + tip in the same colour. Halo gives
+    // the shape; the lead tip stays visible as a slight protrusion
+    // beyond the quad's tip corner.
     g.setColour (juce::Colours::white);
     g.fillPath (body);
-    g.setColour (juce::Colours::black);
     g.fillPath (tip);
 }
 
@@ -125,6 +166,20 @@ void inheritCursorOnDescendants (juce::Component& root)
 
         inheritCursorOnDescendants (*child);
     }
+}
+
+juce::MouseCursor invisibleCursor()
+{
+    static const juce::MouseCursor c = [] {
+        // 2x2 fully-transparent ARGB image. Goes through the same X11
+        // XCreatePixmapCursor / NSCursor with empty image / Win32
+        // CreateCursor with empty AND mask path that all our custom
+        // image cursors use — so it works wherever the image-cursor
+        // path works (i.e. anywhere our scissors/hand cursors render).
+        juce::Image img (juce::Image::ARGB, 2, 2, true);
+        return juce::MouseCursor (img, 0, 0);
+    }();
+    return c;
 }
 
 juce::MouseCursor cursorForEditMode (EditMode m)

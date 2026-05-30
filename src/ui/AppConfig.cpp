@@ -8,6 +8,7 @@ constexpr const char* kKeyUiScale            = "ui_scale";
 constexpr const char* kKeyScanOnStartup      = "scan_plugins_on_startup";
 constexpr const char* kKeyTapeStripExpanded  = "tape_strip_expanded_default";
 constexpr const char* kKeyStopBehavior       = "stop_behavior";
+constexpr const char* kKeyVkbCentreNote      = "vkb_centre_note";
 
 juce::File getStorePath()
 {
@@ -120,5 +121,17 @@ StopBehavior getStopBehavior()
 void setStopBehavior (StopBehavior b)
 {
     writeKey (kKeyStopBehavior, juce::String ((int) b));
+}
+
+int getVkbCentreNote()
+{
+    const auto raw = readKey (kKeyVkbCentreNote);
+    if (raw.isEmpty()) return kVkbCentreDefault;
+    return juce::jlimit (0, 120, raw.getIntValue());
+}
+
+void setVkbCentreNote (int midiNote)
+{
+    writeKey (kKeyVkbCentreNote, juce::String (juce::jlimit (0, 120, midiNote)));
 }
 } // namespace duskstudio::appconfig

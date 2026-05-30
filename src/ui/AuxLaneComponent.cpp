@@ -704,6 +704,12 @@ void AuxLaneComponent::attachEditorForSlot (int slotIdx)
     if (ui.editor == nullptr) return;
     if (ui.editor->getParentComponent() == this) return;
 
+    // Tag so EmbeddedModal::show can find + hide this plugin editor
+    // for the lifetime of any modal. Plugin editors (OOP / XEmbed / GL)
+    // sometimes render above JUCE's modal layer and steal click input;
+    // setVisible(false) for the modal's duration forces them under.
+    ui.editor->getProperties().set ("dusk_pluginEditor", true);
+
     addAndMakeVisible (*ui.editor);
     layoutEditorForSlot (slotIdx);
 

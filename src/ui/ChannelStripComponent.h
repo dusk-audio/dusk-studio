@@ -256,6 +256,13 @@ private:
     // Heavy: shows current mode's knobs + hides others. Only on real
     // mode change or visibility flip — NOT from the 30 Hz timer.
     void refreshCompKnobVisibility();
+
+    // Last compMode value the UI's knob-visibility filter was applied
+    // for. The 30 Hz tick compares against the atom and calls
+    // refreshCompKnobVisibility() ONLY when they differ — catches
+    // session-load mode changes (which previously left every mode's
+    // knobs overlapping in the comp section).
+    int lastAppliedCompMode = -1;
     void showCompModeMenu();
     void showEqTypeMenu();
     void armCompOnUserEdit();

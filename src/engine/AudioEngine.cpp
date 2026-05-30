@@ -802,6 +802,19 @@ void AudioEngine::consumePluginStateAfterLoad()
                     "Aux " + juce::String (a + 1) + " / slot " + juce::String (s + 1),
                     parsePluginName (descXml) });
             }
+            else
+            {
+                // Flip the lane's slot to Plugin mode — the crossfade
+                // gate defaults to kInsertEmpty after prepare(), which
+                // routes audio AROUND the plugin (gate at 0 = pre-only
+                // pass-through). Without this, a session reload leaves
+                // the plugin instance live but starved: meters dark,
+                // AUX output is just the raw send sum.
+                auxLaneStrips[(size_t) a]
+                    .insertMode[(size_t) s]
+                    .store (AuxLaneStrip::kInsertPlugin,
+                             std::memory_order_release);
+            }
         }
     }
 
