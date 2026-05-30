@@ -133,7 +133,7 @@ jobs:
         shell: pwsh
         run: |
           $pfxPath = Join-Path $env:RUNNER_TEMP "dusk-signing.pfx"
-          [System.IO.File]::WriteAllBytes (
+          [System.IO.File]::WriteAllBytes(
               $pfxPath,
               [System.Convert]::FromBase64String($env:SIGNING_CERT_BASE64))
           # Restrict ACL so any concurrent process on the runner can't
@@ -178,7 +178,7 @@ jobs:
               # ensure the bytes-on-disk don't survive in a journaled
               # filesystem free-list snapshot. Cheap (PFX is a few KB).
               $sz = (Get-Item $pfx).Length
-              [System.IO.File]::WriteAllBytes ($pfx, (New-Object byte[] $sz))
+              [System.IO.File]::WriteAllBytes($pfx, (New-Object byte[] $sz))
               Remove-Item $pfx -Force
               Write-Host "Signing cert wiped + removed: $pfx"
           } else {
