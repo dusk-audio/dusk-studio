@@ -99,15 +99,40 @@ void paintGridGlyph (juce::Graphics& g, juce::Rectangle<float> r)
 
 void paintDrawGlyph (juce::Graphics& g, juce::Rectangle<float> r)
 {
-    // Pencil pointing top-right.
-    const float x0 = r.getX() + 5.0f;
-    const float y0 = r.getBottom() - 5.0f;
-    const float x1 = r.getRight() - 5.0f;
-    const float y1 = r.getY() + 5.0f;
-    juce::Path p;
-    p.startNewSubPath (x0, y0); p.lineTo (x1, y1);
-    p.startNewSubPath (x1 - 4.0f, y1 + 1.0f); p.lineTo (x1, y1); p.lineTo (x1 - 1.0f, y1 + 4.0f);
-    g.strokePath (p, juce::PathStrokeType (1.6f));
+    // Proper pencil: tip + sharpened wood + body + eraser. Same
+    // diagonal orientation as the cursor glyph (tip bottom-left,
+    // eraser top-right) so the toolbar icon matches the in-use
+    // cursor at a glance.
+    const auto cell = r.reduced (4.0f);
+
+    // Path coords are in a 24-unit square so the shape scales cleanly
+    // to whichever button size the toolbar uses.
+    auto scaleX = [&] (float u) { return cell.getX() + (u / 24.0f) * cell.getWidth(); };
+    auto scaleY = [&] (float u) { return cell.getY() + (u / 24.0f) * cell.getHeight(); };
+
+    juce::Path body;
+    body.addQuadrilateral (scaleX (3.0f),  scaleY (21.0f),
+                            scaleX (7.0f),  scaleY (17.0f),
+                            scaleX (20.0f), scaleY (4.0f),
+                            scaleX (16.0f), scaleY (8.0f));
+
+    juce::Path tip;
+    tip.addTriangle (scaleX (3.0f),  scaleY (21.0f),
+                      scaleX (7.0f),  scaleY (17.0f),
+                      scaleX (5.5f),  scaleY (18.5f));
+
+    juce::Path eraser;
+    eraser.addQuadrilateral (scaleX (16.0f), scaleY (8.0f),
+                              scaleX (20.0f), scaleY (4.0f),
+                              scaleX (22.5f), scaleY (6.5f),
+                              scaleX (18.5f), scaleY (10.5f));
+
+    g.fillPath (body);
+    g.fillPath (eraser);
+    g.fillPath (tip);
+    // Thin outline so the shape stays crisp at small button sizes.
+    g.strokePath (body,   juce::PathStrokeType (0.8f));
+    g.strokePath (eraser, juce::PathStrokeType (0.8f));
 }
 } // namespace
 
