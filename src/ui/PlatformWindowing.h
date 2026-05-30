@@ -50,8 +50,10 @@ void bringWindowToFront (juce::ComponentPeer& peer);
 // pixmap cursor; XUndefineCursor on show. Bypasses JUCE's
 // setMouseCursor pipeline (which on this hybrid Wayland/X11 setup
 // dispatches to the wrong path).
-// macOS / Windows: setMouseCursor (NoCursor) on the peer is reliable
-// there, so the stub just forwards.
+// macOS: [NSCursor hide] / [NSCursor unhide] in PlatformWindowing_Mac.mm.
+// Windows: ShowCursor(FALSE) / ShowCursor(TRUE) in
+// PlatformWindowing_Windows.cpp. Both use the platform-native cursor
+// calls directly rather than forwarding to the peer's setMouseCursor.
 //
 // Must be called on the message thread.
 void setNativeCursorVisibleOnPeer (juce::ComponentPeer& peer, bool visible);
