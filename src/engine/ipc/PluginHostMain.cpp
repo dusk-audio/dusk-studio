@@ -908,8 +908,12 @@ int runScan (int argc, const char* const* argv) noexcept
     // The parent always passes the format name and the file/identifier as two
     // separate StringArray elements, so each arrives as exactly one argv slot
     // (no re-splitting on spaces needed).
-    const juce::String formatName (juce::CharPointer_UTF8 (argv[scanIdx + 1]));
-    const juce::String fileOrId   (juce::CharPointer_UTF8 (argv[scanIdx + 2]));
+    // Brace-init, not paren-init: MSVC parses
+    // `const String x (CharPointer_UTF8 (argv[i]))` as a function declaration
+    // (most-vexing-parse), then fails because argv[i] isn't a constant array
+    // bound. Braces can't be a parameter list, so they disambiguate.
+    const juce::String formatName { juce::CharPointer_UTF8 (argv[scanIdx + 1]) };
+    const juce::String fileOrId   { juce::CharPointer_UTF8 (argv[scanIdx + 2]) };
 
     // Some formats post messages to themselves while probing; give them a
     // MessageManager to dispatch to.

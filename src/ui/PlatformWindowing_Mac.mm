@@ -1,5 +1,6 @@
 #include "PlatformWindowing.h"
 #include <juce_audio_processors/juce_audio_processors.h>
+#import <AppKit/AppKit.h>   // NSCursor (hide/unhide) — not pulled in transitively
 
 // Stubs for now. The Mac/Win equivalents of the Linux fixes haven't
 // surfaced yet because the user smoke-tests on Linux only - but the
