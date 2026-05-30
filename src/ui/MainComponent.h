@@ -230,6 +230,11 @@ private:
     std::unique_ptr<class DimOverlay>    startupDim;
     void dismissStartupDialog();
 
+    // Cross-OS cursor overlay — paints Grab / Cut / Draw glyphs at the
+    // mouse position via a 60 Hz JUCE timer, bypassing the platform
+    // cursor pipeline entirely. See CursorOverlay.h for the design.
+    std::unique_ptr<class CursorOverlay> cursorOverlay;
+
     // Constructed on demand on MidiRegion click; dismissed by clicking
     // backdrop or Esc. The roll is the single visible exception to
     // "no tabs / no hidden panels" per DuskStudio.md. Tracked indices

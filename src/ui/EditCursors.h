@@ -7,6 +7,15 @@ namespace duskstudio
 {
 juce::MouseCursor cursorForEditMode (EditMode m);
 
+// Direct glyph paint helpers — used both by the native MouseCursor
+// image-builders below AND by the CursorOverlay component that bypasses
+// the platform cursor pipeline. Each paints the glyph centred at (cx,
+// cy) in the supplied Graphics context, sized to fit a 24×24 cursor box.
+// Hotspot semantics mirror the cursor-image builders.
+void paintHandGlyph     (juce::Graphics& g, float cx, float cy);
+void paintScissorsGlyph (juce::Graphics& g, float cx, float cy);
+void paintPencilGlyph   (juce::Graphics& g, float cx, float cy);
+
 // JUCE's default-constructed MouseCursor compares as NormalCursor (NOT
 // ParentCursor), so a parent's setMouseCursor is silently shadowed by
 // every label / static child the mouse hovers. Walk the tree and flip

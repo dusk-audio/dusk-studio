@@ -7,6 +7,7 @@
 #include "AuxView.h"
 #include "BounceDialog.h"
 #include "ConsoleView.h"
+#include "CursorOverlay.h"
 #include "DimOverlay.h"
 #include "DuskAlerts.h"
 #include "PianoRollComponent.h"
@@ -545,6 +546,39 @@ MainComponent::MainComponent()
         });
     }
 
+    // Cross-OS cursor overlay. Mounted last so it sits above every
+    // other MainComponent child + paints the Grab / Cut / Draw glyph
+    // at the mouse position. The editors return NoCursor for those
+    // modes so the native cursor is hidden — only our painted glyph
+    // shows. Resolver checks which editor (if any) the mouse is over
+    // and returns the matching EditMode (or nullopt to paint nothing).
+    cursorOverlay = std::make_unique<CursorOverlay>();
+    cursorOverlay->setResolver ([this] (juce::Point<int> globalPos) -> std::optional<EditMode>
+    {
+        const auto mode = session.editMode;
+        if (mode != EditMode::Grab && mode != EditMode::Cut && mode != EditMode::Draw)
+            return std::nullopt;
+
+        auto isOverComponentContent = [globalPos] (juce::Component* c) -> bool
+        {
+            if (c == nullptr || ! c->isShowing()) return false;
+            const auto local = c->getLocalPoint (nullptr, globalPos);
+            return c->getLocalBounds().contains (local);
+        };
+
+        // The piano-roll modal hosts notes; the audio-region editor
+        // hosts the waveform; the tape strip is the always-visible
+        // arrangement view. Any one being under the mouse activates
+        // the overlay glyph.
+        if (isOverComponentContent (audioEditor.get())
+            || isOverComponentContent (pianoRoll  .get())
+            || isOverComponentContent (tapeStrip  .get()))
+            return mode;
+
+        return std::nullopt;
+    });
+    addAndMakeVisible (cursorOverlay.get());
+
     // Autosave heartbeat. Writes session.json.autosave next to the canonical
     // session.json every kAutosaveIntervalMs (30 s) so a crash loses at most
     // ~30 s of work. The write is atomic (temp + rename), so even a kill
@@ -1007,6 +1041,9 @@ void MainComponent::syncBankButtons (int desiredCount)
 
 void MainComponent::resized()
 {
+    if (cursorOverlay != nullptr)
+        cursorOverlay->setBounds (getLocalBounds());
+
     auto area = getLocalBounds().reduced (8);
 
     // Slim menu-bar row at the very top. The menu bar grows to fit its

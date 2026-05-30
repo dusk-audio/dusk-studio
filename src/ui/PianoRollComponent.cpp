@@ -587,7 +587,8 @@ void PianoRollComponent::syncEditModeToolbar()
     const auto p    = getMouseXYRelative();
     if ((mode == EditMode::Grab || mode == EditMode::Draw)
         && noteGridArea().contains (p))
-        setMouseCursor (cursorForEditMode (mode));
+        // CursorOverlay paints the actual glyph; hide the native cursor.
+        setMouseCursor (juce::MouseCursor::NoCursor);
     else
         setMouseCursor (juce::MouseCursor::NormalCursor);
 }
@@ -2573,11 +2574,12 @@ void PianoRollComponent::mouseMove (const juce::MouseEvent& e)
     if (hit < 0)
     {
         // Empty grid: Grab = hand (selection / box-select); Draw =
-        // pencil (next click creates a note); other modes have no
-        // piano-roll behaviour so keep the normal arrow rather than
-        // advertise scissors / I-beam / crosshair that won't act.
+        // pencil (next click creates a note). CursorOverlay paints
+        // both glyphs; hide the native cursor so we don't show two.
+        // Other modes are inert on the piano-roll grid — show the
+        // normal arrow.
         if (mode == EditMode::Grab || mode == EditMode::Draw)
-            setMouseCursor (cursorForEditMode (mode));
+            setMouseCursor (juce::MouseCursor::NoCursor);
         else
             setMouseCursor (juce::MouseCursor::NormalCursor);
         return;

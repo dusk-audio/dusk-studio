@@ -1005,7 +1005,17 @@ juce::MouseCursor AudioRegionEditor::cursorForPoint (int x, int y) const
         return juce::MouseCursor::UpDownResizeCursor;
 
     if (waveArea.contains (x, y))
-        return cursorForEditMode (session.editMode);
+    {
+        // For Grab / Cut / Draw the CursorOverlay paints the glyph
+        // directly at the mouse position; hide the native cursor so
+        // both don't show at once. Range (IBeam) + Grid (Crosshair)
+        // stay native — they're standard OS cursors that render
+        // correctly without the overlay.
+        const auto m = session.editMode;
+        if (m == EditMode::Grab || m == EditMode::Cut || m == EditMode::Draw)
+            return juce::MouseCursor::NoCursor;
+        return cursorForEditMode (m);
+    }
 
     return juce::MouseCursor::NormalCursor;
 }

@@ -1966,7 +1966,7 @@ void TapeStrip::mouseMove (const juce::MouseEvent& e)
             hoveredRegion = hit.regionIdx;
             repaint();
         }
-        setMouseCursor (cursorForEditMode (EditMode::Cut));
+        setMouseCursor (juce::MouseCursor::NoCursor);
         return;
     }
 
@@ -2026,7 +2026,7 @@ void TapeStrip::mouseMove (const juce::MouseEvent& e)
             setMouseCursor (e.mods.isAltDown()
                               ? juce::MouseCursor::UpDownResizeCursor
                               : (mode == EditMode::Grab
-                                    ? cursorForEditMode (EditMode::Grab)
+                                    ? juce::MouseCursor::NoCursor
                                     : juce::MouseCursor::NormalCursor));
             break;
         case RegionOp::AdjustGain:
@@ -2037,7 +2037,7 @@ void TapeStrip::mouseMove (const juce::MouseEvent& e)
             break;
         case RegionOp::None:
             setMouseCursor (mode == EditMode::Grab
-                                ? cursorForEditMode (EditMode::Grab)
+                                ? juce::MouseCursor::NoCursor
                                 : juce::MouseCursor::NormalCursor);
             break;
     }
@@ -2047,7 +2047,8 @@ void TapeStrip::refreshModeCursor()
 {
     const auto mode = session.editMode;
     if (mode == EditMode::Grab || mode == EditMode::Cut)
-        setMouseCursor (cursorForEditMode (mode));
+        // CursorOverlay paints the glyph; hide the native cursor.
+        setMouseCursor (juce::MouseCursor::NoCursor);
     else
         setMouseCursor (juce::MouseCursor::NormalCursor);
 }
