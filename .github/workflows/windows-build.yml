@@ -214,7 +214,10 @@ jobs:
 
       - name: Compute SHA256 of MSI(s)
         shell: pwsh
-        working-directory: build
+        # No working-directory: package-windows.ps1 moves the finished MSI and
+        # writes SHA256SUMS.windows to the repo root (not build/), so operate
+        # there. (This recomputes the sums the script already produced — same
+        # format — which is harmless.)
         run: |
           # Cover every MSI cpack produced (cpack normally emits one, but
           # a future multi-component package or per-arch split could
@@ -231,7 +234,8 @@ jobs:
 
       - name: Publish MSI to the PRIVATE releases repo
         shell: bash
-        working-directory: build
+        # MSI + SHA256SUMS.windows live at the repo root after
+        # package-windows.ps1 moves them there (not build/).
         # NOT actions/upload-artifact: on a public repo those artifacts
         # are world-downloadable, which would give the paid build away.
         # Push the MSI as a release asset in the private releases repo
