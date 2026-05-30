@@ -1336,7 +1336,9 @@ At the bottom of the picker are alternative buttons:
 
 ## Opening the editor
 
-Click the loaded plugin's slot to open its editor. The editor appears as a centred modal with a dimmed backdrop. Press **Esc** or click outside to dismiss. There is no floating-window option in v1.
+Click the loaded plugin's slot to open its editor. The editor appears as a centred modal with a dimmed backdrop; press **Esc** or click outside to dismiss. There is no user option to detach it into a floating window.
+
+This holds on all platforms, including the macOS out-of-process sandbox. Rather than reparenting the sandbox child's native window into the main window (cross-process NSView embedding, which Dusk Studio deliberately does not use), macOS hosts the editor **in-process** against a lightweight "shell" instance of the plugin while the plugin's DSP keeps running in the sandbox child; knob moves are mirrored between the shell editor and the running child in both directions. If the plugin cannot be instantiated in-process for editing (its file has moved, or it refuses a second instance), the editor falls back to a floating window owned by the sandbox child — that fallback window is not dimmed by other modals and is closed from its own controls.
 
 ## Out-of-process sandboxing
 
@@ -1346,7 +1348,7 @@ OOP is supported on:
 
 - **Linux**: always.
 - **Windows**: always.
-- **macOS**: requires macOS 14.4 or later.
+- **macOS**: requires macOS 14.4 or later. The plugin **editor** is hosted in-process via a shell instance and embeds as a centred modal like the other platforms — see *Opening the editor* above.
 
 OOP is enabled per-session by setting the environment variable `DUSKSTUDIO_USE_OOP_PLUGINS=1` before launching Dusk Studio. A future release will expose this as a per-plugin or per-session UI toggle.
 
