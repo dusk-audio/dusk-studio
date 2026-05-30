@@ -76,6 +76,36 @@ AudioEngine::AudioEngine (Session& sessionToBindTo) : session (sessionToBindTo)
         if (t != nullptr) t->scanForDevices();
    #endif
 
+   #if JUCE_WINDOWS
+    // Windows backend preference. initialiseWithDefaultDevices' default pick
+    // (AudioDeviceManager::pickCurrentDeviceTypeWithDevices) lands on the
+    // FIRST registered type that has devices, and createDeviceTypesIfNeeded
+    // only auto-registers JUCE's defaults when the list is empty. So
+    // pre-registering in preference order both chooses the default backend
+    // and prevents double-listing — same mechanism as the Linux block above.
+    //
+    // Order: ASIO (lowest latency; only compiled in when the SDK was present
+    // at build time) -> WASAPI exclusive (low-latency, no SDK needed: our
+    // fallback for machines with no ASIO driver) -> WASAPI shared -> DirectSound.
+    // ASIO with no installed driver enumerates zero devices, so the pick falls
+    // through to WASAPI exclusive automatically.
+   #if JUCE_ASIO
+    if (auto* asio = juce::AudioIODeviceType::createAudioIODeviceType_ASIO())
+        deviceManager.addAudioDeviceType (std::unique_ptr<juce::AudioIODeviceType> (asio));
+   #endif
+    if (auto* wasapiExclusive = juce::AudioIODeviceType::createAudioIODeviceType_WASAPI (
+            juce::WASAPIDeviceMode::exclusive))
+        deviceManager.addAudioDeviceType (std::unique_ptr<juce::AudioIODeviceType> (wasapiExclusive));
+    if (auto* wasapiShared = juce::AudioIODeviceType::createAudioIODeviceType_WASAPI (
+            juce::WASAPIDeviceMode::shared))
+        deviceManager.addAudioDeviceType (std::unique_ptr<juce::AudioIODeviceType> (wasapiShared));
+    if (auto* directSound = juce::AudioIODeviceType::createAudioIODeviceType_DirectSound())
+        deviceManager.addAudioDeviceType (std::unique_ptr<juce::AudioIODeviceType> (directSound));
+
+    for (auto* t : deviceManager.getAvailableDeviceTypes())
+        if (t != nullptr) t->scanForDevices();
+   #endif
+
     if (const auto err = deviceManager.initialiseWithDefaultDevices (16, 2);
         err.isNotEmpty())
     {
