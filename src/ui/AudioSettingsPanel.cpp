@@ -328,6 +328,25 @@ AudioSettingsPanel::AudioSettingsPanel (juce::AudioDeviceManager& dm,
         appconfig::setTapeStripExpandedDefault (tapeStripExpandedToggle.getToggleState());
     };
     addAndMakeVisible (tapeStripExpandedToggle);
+
+    addAndMakeVisible (stopBehaviorLabel);
+    stopBehaviorCombo.addItem ("Stay where it is (pause)",      1);
+    stopBehaviorCombo.addItem ("Return to start (rewind to 0)", 2);
+    stopBehaviorCombo.addItem ("Return to last clicked point",  3);
+    stopBehaviorCombo.setTooltip (
+        "What the playhead does on Stop. \"Stay\" matches the commercial-"
+        "DAW pause-in-place. \"Return to start\" rewinds every time. "
+        "\"Last clicked\" jumps to the most recent ruler click so Stop -> "
+        "Play recycles a region you just auditioned.");
+    stopBehaviorCombo.setSelectedId ((int) appconfig::getStopBehavior() + 1,
+                                       juce::dontSendNotification);
+    stopBehaviorCombo.onChange = [this]
+    {
+        const auto v = (appconfig::StopBehavior) (stopBehaviorCombo.getSelectedId() - 1);
+        appconfig::setStopBehavior (v);
+        engine.getSession().stopBehavior.store ((int) v, std::memory_order_relaxed);
+    };
+    addAndMakeVisible (stopBehaviorCombo);
 }
 
 void AudioSettingsPanel::paint (juce::Graphics& g)
@@ -437,6 +456,11 @@ void AudioSettingsPanel::resized()
         auto row = takeStdRow();
         row.removeFromLeft (kLabelW);
         tapeStripExpandedToggle.setBounds (row.reduced (4, 2));
+    }
+    {
+        auto row = takeStdRow();
+        stopBehaviorLabel.setBounds (row.removeFromLeft (kLabelW).reduced (4, 2));
+        stopBehaviorCombo.setBounds (row.reduced (4, 2));
     }
     {
         auto row = takeStdRow();

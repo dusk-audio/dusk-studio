@@ -7,6 +7,7 @@ namespace
 constexpr const char* kKeyUiScale            = "ui_scale";
 constexpr const char* kKeyScanOnStartup      = "scan_plugins_on_startup";
 constexpr const char* kKeyTapeStripExpanded  = "tape_strip_expanded_default";
+constexpr const char* kKeyStopBehavior       = "stop_behavior";
 
 juce::File getStorePath()
 {
@@ -105,5 +106,19 @@ bool getTapeStripExpandedDefault()
 void setTapeStripExpandedDefault (bool expanded)
 {
     writeKey (kKeyTapeStripExpanded, expanded ? "1" : "0");
+}
+
+StopBehavior getStopBehavior()
+{
+    const auto raw = readKey (kKeyStopBehavior);
+    if (raw.isEmpty()) return StopBehavior::PauseInPlace;
+    const int v = raw.getIntValue();
+    if (v >= 0 && v <= 2) return (StopBehavior) v;
+    return StopBehavior::PauseInPlace;
+}
+
+void setStopBehavior (StopBehavior b)
+{
+    writeKey (kKeyStopBehavior, juce::String ((int) b));
 }
 } // namespace duskstudio::appconfig

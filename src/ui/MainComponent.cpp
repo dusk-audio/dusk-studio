@@ -277,6 +277,13 @@ MainComponent::MainComponent()
 
     // Optional plugin scan on launch. Per-machine setting (AppConfig);
     // default off. Synchronous — blocks the message thread for a few
+    // Push the user's persisted Stop-behavior preference into the session
+    // atom so AudioEngine::stop reads the right policy on the first Stop
+    // after launch. The AudioSettingsPanel combo updates this same atom
+    // when the user changes the dropdown.
+    session.stopBehavior.store ((int) appconfig::getStopBehavior(),
+                                  std::memory_order_relaxed);
+
     // seconds with a full plugin folder. Logs the result so the user
     // sees the validation in stderr without an extra modal.
     if (appconfig::getScanPluginsOnStartup())

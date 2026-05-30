@@ -916,6 +916,18 @@ public:
     // 0=Recording, 1=Mixing, 2=Aux, 3=Mastering.
     std::atomic<int>   uiStage           { 0 };
 
+    // Tape-head behaviour on Stop, mirroring the appconfig enum:
+    //   0 = PauseInPlace (default, leave the playhead where it landed)
+    //   1 = ReturnToZero (rewind to 0 on every Stop)
+    //   2 = ReturnToLastClicked (jump to lastClickedTimelineSample)
+    // Pushed from MainComponent at startup + whenever the user changes
+    // the Settings dropdown. AudioEngine::stop reads this on Stop.
+    std::atomic<int>      stopBehavior              { 0 };
+    // Last position the user clicked on the tape-strip ruler (samples).
+    // -1 = never clicked / unknown — engine treats as PauseInPlace fall-
+    // back when ReturnToLastClicked is selected.
+    std::atomic<juce::int64> lastClickedTimelineSample { -1 };
+
     // Shifts playhead back one bar so metronome ticks pre-roll before
     // capture. WAV's first sample still maps to playhead-at-Record-press.
     std::atomic<bool>  countInEnabled    { false };

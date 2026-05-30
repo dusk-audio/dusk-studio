@@ -99,40 +99,29 @@ void paintGridGlyph (juce::Graphics& g, juce::Rectangle<float> r)
 
 void paintDrawGlyph (juce::Graphics& g, juce::Rectangle<float> r)
 {
-    // Proper pencil: tip + sharpened wood + body + eraser. Same
-    // diagonal orientation as the cursor glyph (tip bottom-left,
-    // eraser top-right) so the toolbar icon matches the in-use
-    // cursor at a glance.
-    const auto cell = r.reduced (4.0f);
-
-    // Path coords are in a 24-unit square so the shape scales cleanly
-    // to whichever button size the toolbar uses.
+    // Minimal Logic-style pencil: a thick diagonal stroke from top-
+    // right (eraser end) to bottom-left (tip), with a small filled
+    // triangle at the bottom-left forming the sharpened lead.
+    const auto cell = r.reduced (5.0f);
     auto scaleX = [&] (float u) { return cell.getX() + (u / 24.0f) * cell.getWidth(); };
     auto scaleY = [&] (float u) { return cell.getY() + (u / 24.0f) * cell.getHeight(); };
 
+    // Body — single fat diagonal line.
     juce::Path body;
-    body.addQuadrilateral (scaleX (3.0f),  scaleY (21.0f),
-                            scaleX (7.0f),  scaleY (17.0f),
-                            scaleX (20.0f), scaleY (4.0f),
-                            scaleX (16.0f), scaleY (8.0f));
+    body.startNewSubPath (scaleX (6.0f),  scaleY (18.0f));
+    body.lineTo          (scaleX (20.0f), scaleY (4.0f));
+    g.strokePath (body, juce::PathStrokeType (2.4f,
+                                                juce::PathStrokeType::curved,
+                                                juce::PathStrokeType::butt));
 
+    // Filled triangle tip at the bottom-left end. The diagonal line
+    // ends just past the triangle's apex so the tip reads as a
+    // continuation rather than a stuck-on attachment.
     juce::Path tip;
     tip.addTriangle (scaleX (3.0f),  scaleY (21.0f),
-                      scaleX (7.0f),  scaleY (17.0f),
-                      scaleX (5.5f),  scaleY (18.5f));
-
-    juce::Path eraser;
-    eraser.addQuadrilateral (scaleX (16.0f), scaleY (8.0f),
-                              scaleX (20.0f), scaleY (4.0f),
-                              scaleX (22.5f), scaleY (6.5f),
-                              scaleX (18.5f), scaleY (10.5f));
-
-    g.fillPath (body);
-    g.fillPath (eraser);
+                      scaleX (6.5f),  scaleY (17.0f),
+                      scaleX (8.0f),  scaleY (20.5f));
     g.fillPath (tip);
-    // Thin outline so the shape stays crisp at small button sizes.
-    g.strokePath (body,   juce::PathStrokeType (0.8f));
-    g.strokePath (eraser, juce::PathStrokeType (0.8f));
 }
 } // namespace
 

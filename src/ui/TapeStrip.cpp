@@ -784,6 +784,11 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
         rulerSelection.active        = true;
         rulerSelection.originSample  = sampleAtX (e.x);
         rulerSelection.currentSample = rulerSelection.originSample;
+        // Remember this click so a future Stop in "Return to last
+        // clicked" mode lands here. Stored on the session so the engine
+        // (no UI dep) can read it without crossing the layer boundary.
+        session.lastClickedTimelineSample.store (rulerSelection.originSample,
+                                                   std::memory_order_relaxed);
         repaint();
         return;
     }
@@ -1004,6 +1009,8 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
             rulerSelection.active        = true;
             rulerSelection.originSample  = sampleAtX (e.x);
             rulerSelection.currentSample = rulerSelection.originSample;
+            session.lastClickedTimelineSample.store (rulerSelection.originSample,
+                                                       std::memory_order_relaxed);
             repaint();
             return;
         }

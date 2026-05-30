@@ -474,9 +474,25 @@ void AudioEngine::stop()
     }
 
     playbackEngine.stopPlayback();
-    // Pause-in-place — commercial-DAW behaviour. Spacebar / Stop button
-    // leaves the playhead where it landed; callers that want stop+rewind
-    // (e.g. the '.' hotkey, Home key) call setPlayhead(0) explicitly.
+
+    // Honour the user's Settings choice for Stop behaviour.
+    // 0 = PauseInPlace (leave playhead where it landed)
+    // 1 = ReturnToZero (rewind to origin)
+    // 2 = ReturnToLastClicked (jump to last ruler-click position; falls
+    //     back to pause-in-place when nothing was clicked yet).
+    // Callers that want unconditional stop+rewind (the '.' hotkey, Home
+    // key) still call setPlayhead(0) explicitly after stop().
+    const int behavior = session.stopBehavior.load (std::memory_order_relaxed);
+    if (behavior == 1)
+    {
+        transport.setPlayhead (0);
+    }
+    else if (behavior == 2)
+    {
+        const auto last = session.lastClickedTimelineSample.load (std::memory_order_relaxed);
+        if (last >= 0)
+            transport.setPlayhead (last);
+    }
 }
 
 void AudioEngine::record()
