@@ -236,6 +236,9 @@ private:
     juce::Label        fadeLabel;
     juce::Label        infoLabel;
     // "What am I editing?" without forcing the user to close to check.
+    // trackNameLabel = which TRACK (non-editable, tinted with the track
+    // colour); titleLabel = the region label/filename (editable rename).
+    juce::Label        trackNameLabel;
     juce::Label        titleLabel;
     juce::ToggleButton muteToggle;
     juce::ToggleButton lockToggle;

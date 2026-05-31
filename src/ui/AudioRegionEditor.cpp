@@ -192,6 +192,19 @@ AudioRegionEditor::AudioRegionEditor (Session& s, AudioEngine& e, int t, int r)
     };
     addAndMakeVisible (titleLabel);
 
+    // Which track this region lives on - the full-screen editor otherwise
+    // gives no clue (you see a waveform, not the strip). Tinted with the
+    // track colour and non-editable so it reads as identity, not the
+    // region's editable label.
+    trackNameLabel.setJustificationType (juce::Justification::centredLeft);
+    trackNameLabel.setColour (juce::Label::backgroundColourId, juce::Colour (0xff181820));
+    trackNameLabel.setColour (juce::Label::textColourId, session.track (trackIdx).colour.brighter (0.3f));
+    trackNameLabel.setFont (juce::Font (juce::FontOptions (12.5f, juce::Font::bold)));
+    trackNameLabel.setMinimumHorizontalScale (0.7f);
+    trackNameLabel.setText (session.track (trackIdx).name, juce::dontSendNotification);
+    trackNameLabel.setTooltip ("The track this region belongs to.");
+    addAndMakeVisible (trackNameLabel);
+
     addAndMakeVisible (positionLabel);
     addAndMakeVisible (gainLabel);
     addAndMakeVisible (fadeLabel);
@@ -2683,11 +2696,14 @@ void AudioRegionEditor::layoutIconRow (juce::Rectangle<int> area)
             inner.removeFromLeft (gap);
         }
     }
-    // Title strip occupies what's left of the toolbar band. Stretches
-    // so long region labels / filenames don't get truncated below the
-    // available width.
+    // Track name first, then the region title strip stretches to fill what
+    // remains so long labels / filenames don't truncate.
     if (inner.getWidth() > 0)
+    {
+        const int tnW = juce::jmin (130, inner.getWidth() / 2);
+        trackNameLabel.setBounds (inner.removeFromLeft (tnW).reduced (8, 2));
         titleLabel.setBounds (inner.reduced (8, 2));
+    }
 }
 
 void AudioRegionEditor::syncEditModeToolbar()
@@ -2883,6 +2899,10 @@ void AudioRegionEditor::refreshStatusBarReadouts()
                                           : r->file.getFileName();
             titleLabel.setText (displayTitle, juce::dontSendNotification);
         }
+
+        // Keep the track-name header in sync if the strip is renamed while
+        // the editor is open.
+        trackNameLabel.setText (session.track (trackIdx).name, juce::dontSendNotification);
     }
 }
 
