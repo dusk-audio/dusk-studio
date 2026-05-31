@@ -80,8 +80,7 @@ private:
     // FileChooser -> ImportTargetPicker (24 tracks, smart-sort +
     // recommendation) -> FileImporter on commit. Flips track.mode if
     // needed.
-    void importAudioPrompt();
-    void importMidiPrompt();
+    void importPrompt();
 
     // Shared between File-menu prompts and TapeStrip drag-drop.
     // trackHint >= 0 biases the recommendation when the file matches.

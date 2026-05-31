@@ -2604,49 +2604,23 @@ void MainComponent::runMidiImportFlow (const juce::File& source,
     importTargetModal.show (*this, std::move (picker));
 }
 
-void MainComponent::importAudioPrompt()
+void MainComponent::importPrompt()
 {
     if (! engine.getTransport().isStopped())
     {
-        showImportError ("Import audio", "Stop playback before importing files.");
+        showImportError ("Import", "Stop playback before importing files.");
         return;
     }
 
+    // One picker for both kinds. enqueueImports / openMultiImportPicker route
+    // each chosen file by extension (audio -> reader peek, MIDI -> MidiFile
+    // peek) and the target picker flips a track's mode to match the dropped
+    // file, so a mixed audio+MIDI selection is handled in a single batch.
     const auto startDir = juce::File::getSpecialLocation (juce::File::userMusicDirectory);
     filebrowser::openMulti (*this, {
-        /*title*/                  "Import audio file(s)",
+        /*title*/                  "Import audio or MIDI file(s)",
         /*initialFileOrDirectory*/ startDir,
-        /*filePatternsAllowed*/    "*.wav;*.aiff;*.aif;*.flac",
-        /*mode*/                   filebrowser::Mode::Open,
-        /*warnAboutOverwriting*/   false,
-        /*selectDirectories*/      false,
-    },
-    [safeThis = juce::Component::SafePointer<MainComponent> (this)]
-    (juce::Array<juce::File> chosen)
-    {
-        auto* self = safeThis.getComponent();
-        if (self == nullptr || chosen.isEmpty()) return;
-        const auto t = self->engine.getTransport().getPlayhead();
-        if (chosen.size() > 1)
-            self->openMultiImportPicker (chosen, t);
-        else
-            self->enqueueImports (chosen, t, -1);
-    });
-}
-
-void MainComponent::importMidiPrompt()
-{
-    if (! engine.getTransport().isStopped())
-    {
-        showImportError ("Import MIDI", "Stop playback before importing files.");
-        return;
-    }
-
-    const auto startDir = juce::File::getSpecialLocation (juce::File::userMusicDirectory);
-    filebrowser::openMulti (*this, {
-        /*title*/                  "Import MIDI file(s)",
-        /*initialFileOrDirectory*/ startDir,
-        /*filePatternsAllowed*/    "*.mid;*.midi",
+        /*filePatternsAllowed*/    "*.wav;*.aiff;*.aif;*.flac;*.mid;*.midi",
         /*mode*/                   filebrowser::Mode::Open,
         /*warnAboutOverwriting*/   false,
         /*selectDirectories*/      false,
@@ -2909,8 +2883,7 @@ enum MenuItemId
     kMenuFileOpen     = 1002,
     kMenuFileSave     = 1003,
     kMenuFileSaveAs   = 1004,
-    kMenuFileImportAudio = 1006,
-    kMenuFileImportMidi  = 1007,
+    kMenuFileImport   = 1006,
     kMenuFileMixdown  = 1010,
     kMenuFileBounce   = 1011,
     kMenuFileCleanOut = 1012,
@@ -2994,8 +2967,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelMenuIndex,
         menu.addItem (kMenuFileSave,   "Save");
         menu.addItem (kMenuFileSaveAs, "Save as...");
         menu.addSeparator();
-        menu.addItem (kMenuFileImportAudio, "Import audio...");
-        menu.addItem (kMenuFileImportMidi,  "Import MIDI...");
+        menu.addItem (kMenuFileImport, "Import...");
         menu.addSeparator();
         menu.addItem (kMenuFileMixdown, "Mixdown");
         menu.addItem (kMenuFileBounce,  "Bounce...");
@@ -3035,8 +3007,7 @@ void MainComponent::menuItemSelected (int menuItemID, int /*topLevelMenuIndex*/)
             break;
         }
         case kMenuFileSaveAs: saveAsPrompt();           break;
-        case kMenuFileImportAudio: importAudioPrompt(); break;
-        case kMenuFileImportMidi:  importMidiPrompt();  break;
+        case kMenuFileImport: importPrompt(); break;
         case kMenuFileMixdown: doMixdown();             break;
         case kMenuFileBounce:  openBounceDialog();      break;
         case kMenuFileBounceStems: openBounceStemsDialog(); break;
