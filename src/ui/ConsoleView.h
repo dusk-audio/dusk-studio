@@ -27,14 +27,16 @@ public:
     static constexpr int kMinChannelWidth = 154;
     // Min: single-row 4-knob COMP labels ("4.0:1", "AUTO", "10.0") fit.
     static constexpr int kMinBusWidth     = 172;
-    // Min: master EQ HF row's 4 cells (~70 px each) fit "HF BOOST FREQ".
-    static constexpr int kMinMasterWidth  = 290;
+    // Min: with the Pultec HF split across two 2-cell rows, the widest EQ row
+    // is the LF 3-cell row; "HF− ATTEN FREQ" now gets a half-strip cell so the
+    // floor drops well below the old 4-cell-row constraint.
+    static constexpr int kMinMasterWidth  = 210;
 
     // Ref widths add ~25 px so "VCA 513 ms" / "HF BOOST FREQ" labels
     // never clip in the comfortable-default layout.
     static constexpr int kRefChannelWidth = 188;
     static constexpr int kRefBusWidth     = 192;
-    static constexpr int kRefMasterWidth  = 340;
+    static constexpr int kRefMasterWidth  = 260;
 
     // Auto-compact triggers (TIMELINE mode independent of user toggle):
     //   Height: EQ+COMP eat ~230 px fixed; below this the fader is

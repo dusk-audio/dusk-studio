@@ -1731,14 +1731,18 @@ void MasterStripComponent::resized()
     }
     else
     {
-    // EQ section: 2-row compact stack. HF Bandwidth lives in the popup
-    // editor only (set-once setup control).
-    //   Row 1:  LF BOOST | LF ATTEN | LF FREQ              (3 equal cells)
-    //   Row 2:  HF BOOST | HF BOOST FREQ | HF ATTEN | HF ATTEN FREQ  (4 equal cells)
+    // EQ section: 3-row stack mirroring the Pultec's grouped sections. The HF
+    // controls split across two 2-cell rows (instead of one 4-cell row) so
+    // each cell stays wide enough for the full "HF BOOST FREQ" / "HF− ATTEN
+    // FREQ" labels even at a much narrower strip width. HF Bandwidth lives in
+    // the popup editor only (set-once setup control).
+    //   Row 1:  LF BOOST | LF ATTEN | LF FREQ   (3 equal cells)
+    //   Row 2:  HF BOOST | HF BOOST FREQ        (2 equal cells)
+    //   Row 3:  HF− ATTEN | HF− ATTEN FREQ      (2 equal cells)
     {
         constexpr int kRowGap     = 4;
         constexpr int kBandRowH   = 10 + kKnobBlockH;   // 52
-        constexpr int kEqSectionH = 20 + 2 + 2 * kBandRowH + kRowGap;
+        constexpr int kEqSectionH = 20 + 2 + 3 * kBandRowH + 2 * kRowGap;
         eqArea = area.removeFromTop (kEqSectionH);
         auto s = eqArea;
         if (eqHeaderBtn != nullptr) eqHeaderBtn->setBounds (s.removeFromTop (20).reduced (4, 0));
@@ -1759,17 +1763,25 @@ void MasterStripComponent::resized()
             s.removeFromTop (kRowGap);
         }
 
-        // Row 2: HF BOOST | HF BOOST FREQ | HF ATTEN | HF ATTEN FREQ (4 equal cells).
+        // Row 2: HF BOOST | HF BOOST FREQ (2 equal cells).
         {
             auto lbl  = s.removeFromTop (10);
             auto knob = s.removeFromTop (kKnobBlockH);
-            const int colW = lbl.getWidth() / 4;
+            const int colW = lbl.getWidth() / 2;
             eqHfBoostLabel     .setBounds (lbl .removeFromLeft (colW));
-            eqHfBoostFreqLabel .setBounds (lbl .removeFromLeft (colW));
+            eqHfBoostFreqLabel .setBounds (lbl);
+            eqHfBoost          .setBounds (knob.removeFromLeft (colW));
+            eqHfBoostFreqKnob  .setBounds (knob);
+            s.removeFromTop (kRowGap);
+        }
+
+        // Row 3: HF− ATTEN | HF− ATTEN FREQ (2 equal cells).
+        {
+            auto lbl  = s.removeFromTop (10);
+            auto knob = s.removeFromTop (kKnobBlockH);
+            const int colW = lbl.getWidth() / 2;
             eqHfAttenLabel     .setBounds (lbl .removeFromLeft (colW));
             eqHfAttenFreqLabel .setBounds (lbl);
-            eqHfBoost          .setBounds (knob.removeFromLeft (colW));
-            eqHfBoostFreqKnob  .setBounds (knob.removeFromLeft (colW));
             eqHfAtten          .setBounds (knob.removeFromLeft (colW));
             eqHfAttenFreqKnob  .setBounds (knob);
         }
@@ -1844,50 +1856,44 @@ void MasterStripComponent::resized()
     outputPeakLabel.setVisible (false);
     grPeakLabel    .setVisible (false);
 
-    // Right-side stack — fader-side grammar matching channel + bus strips:
-    //   [right pad] [GR LED (compMeter)] [gap] [level meter] [gap] [fader]
-    // Scale labels drawn by paint() to the LEFT of the slider's track via
-    // kSharedXOver math. No separate carved column.
+    // Centred [fader | level meter | GR LED] cluster — fader-side grammar
+    // matching channel + bus strips, but centred in the (wider) master strip
+    // instead of right-pinned. Scale labels drawn by paint() to the LEFT of
+    // the slider's track via kSharedXOver math. No separate carved column.
     constexpr int kMeterW          = 16;
     constexpr int kGrLedW          = 20;
     constexpr int kMeterToGrGap    = 1;
     constexpr int kFaderToMeterGap = 1;
-    constexpr int kRightPad        = 14;
+    constexpr int kFaderColW       = 50;
     constexpr int kFaderValueH     = 18;   // standalone value label below the slider
 
-    area.removeFromRight (kRightPad);
-    auto compMeterCol = area.removeFromRight (kGrLedW);
-    area.removeFromRight (kMeterToGrGap);
-    meterArea = area.removeFromRight (kMeterW);
-    area.removeFromRight (kFaderToMeterGap);
-    constexpr int kRightStackW = kRightPad + kGrLedW + kMeterToGrGap
-                                  + kMeterW + kFaderToMeterGap;
-    const int leftPad = juce::jlimit (0, juce::jmax (0, area.getWidth() - 24),
-                                         kRightStackW);
-    area.removeFromLeft (leftPad);
-    // Trim meter top so it lines up with the slider's +6 tick — same
-    // grammar as channel + bus strips. Bottom trimmed to match the
-    // fader's bottom (kFaderValueH + 8 value-label reserve) so the
-    // meter doesn't overhang past the "off" tick.
-    const int meterTopY = area.getY() + (int) duskstudio::kFaderTrackPad;
+    // The master strip has no bus column or pan knob to balance against, so
+    // the old right-pinned layout left a large dead gap on the left. Centre
+    // the cluster; lay it out L->R: fader, level meter, GR LED.
+    const int kClusterW = kFaderColW + kFaderToMeterGap + kMeterW
+                        + kMeterToGrGap + kGrLedW;
+    const int leftMargin = juce::jmax (0, (area.getWidth() - kClusterW) / 2);
+    area.removeFromLeft (leftMargin);
+
+    auto faderColArea = area.removeFromLeft (kFaderColW);
+    area.removeFromLeft (kFaderToMeterGap);
+    meterArea = area.removeFromLeft (kMeterW);
+    area.removeFromLeft (kMeterToGrGap);
+    auto compMeterCol = area.removeFromLeft (kGrLedW);
+
+    // Trim meter top so it lines up with the slider's +6 tick — same grammar
+    // as channel + bus strips. Bottom trimmed to match the fader's bottom
+    // (kFaderValueH + 8 value-label reserve) so the meter doesn't overhang
+    // past the "off" tick.
+    const int meterTopY = faderColArea.getY() + (int) duskstudio::kFaderTrackPad;
     meterArea = meterArea.withTop (meterTopY)
                           .withTrimmedBottom (kFaderValueH + 8);
     // Legacy carves cleared — paint() short-circuits on empty rects.
     faderScaleArea = juce::Rectangle<int>();
     grMeterArea    = juce::Rectangle<int>();
 
-    // Right-bias the slider bounds inside the fader column so the cap
-    // sits visually adjacent to the level meter — matches the
-    // cap-to-LED distance the channel strip has by construction (its
-    // kMeterScaleWidth column eats interior width). Without this
-    // narrowing, the cap floats in the centre of a wide column with a
-    // large empty gap to the meter that reads as "disconnected".
-    constexpr int kFaderColW = 50;
-    if (area.getWidth() > kFaderColW)
-        area = area.removeFromRight (kFaderColW);
-
     // Slider bottom trimmed for the standalone value label.
-    auto sliderBounds = area.withTrimmedBottom (kFaderValueH + 8);
+    auto sliderBounds = faderColArea.withTrimmedBottom (kFaderValueH + 8);
     faderSlider.setBounds (sliderBounds);
 
     faderValueLabel.setBounds (sliderBounds.getX(),
