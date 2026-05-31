@@ -62,6 +62,14 @@ public:
     // so audio thread doesn't race the mutation. Message-thread only.
     void refreshMidiInputs();
 
+    // Lightweight: re-map the loaded session's saved per-track MIDI in/out
+    // IDENTIFIERS to runtime INDICES against the EXISTING device banks. No
+    // bank rebuild / callback detach (the physical devices are unchanged since
+    // startup), so it doesn't reconfigure the audio device or churn MIDI
+    // handles. Used on session load; MCU + sync re-resolve runs in
+    // openConfiguredMidiOutputs. Message-thread only.
+    void reresolveTrackMidiFromSession();
+
     const juce::Array<juce::MidiDeviceInfo>& getMidiInputDevices() const noexcept
     {
         return midiInputDevices;

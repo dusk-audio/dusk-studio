@@ -198,6 +198,41 @@ void AudioEngine::refreshMidiInputs()
     sendChangeMessage();
 }
 
+void AudioEngine::reresolveTrackMidiFromSession()
+{
+    // Re-map saved per-track MIDI identifiers to runtime indices against the
+    // EXISTING device banks. Only atomic index stores (the audio thread reads
+    // these), no bank mutation — so no callback detach, no device reconfigure,
+    // no audio glitch. Cheap enough to run on every session load. (The full
+    // refreshMidiInputs hot-plug path would detach/reattach the audio callback
+    // and disable/re-enable every MIDI device — seconds of frozen UI on load.)
+    auto resolveByIdentifier = [] (const juce::Array<juce::MidiDeviceInfo>& devices,
+                                    const juce::String& wantedId)
+    {
+        for (int i = 0; i < devices.size(); ++i)
+            if (devices[i].identifier == wantedId)
+                return i;
+        return -1;
+    };
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        auto& track = session.track (t);
+        if (track.midiInputIdentifier.isNotEmpty())
+            track.midiInputIndex.store (
+                resolveByIdentifier (midiInputDevices, track.midiInputIdentifier),
+                std::memory_order_relaxed);
+        else if (track.midiInputIndex.load (std::memory_order_relaxed) >= midiInputDevices.size())
+            track.midiInputIndex.store (-1, std::memory_order_relaxed);
+
+        if (track.midiOutputIdentifier.isNotEmpty())
+            track.midiOutputIndex.store (
+                resolveByIdentifier (midiOutputDevices, track.midiOutputIdentifier),
+                std::memory_order_relaxed);
+        else if (track.midiOutputIndex.load (std::memory_order_relaxed) >= midiOutputDevices.size())
+            track.midiOutputIndex.store (-1, std::memory_order_relaxed);
+    }
+}
+
 void AudioEngine::rebuildMidiInputBank()
 {
     // Safe to mutate ONLY with both callbacks detached. Ctor's first

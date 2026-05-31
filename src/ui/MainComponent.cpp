@@ -2207,10 +2207,13 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     // restores the saved identifiers (MCU input, sync source, per-track MIDI
     // in) but NOT the runtime index each maps to, so without this the MCU
     // surface (and track MIDI inputs) stay dead until the user re-picks the
-    // device in Settings. refreshMidiInputs walks the live device list and
-    // re-resolves every identifier → index. Same path the Settings rescan +
-    // hot-plug use; safe on the message thread.
-    engine.refreshMidiInputs();
+    // device in Settings. Use the LIGHTWEIGHT per-track re-resolve — the full
+    // refreshMidiInputs() hot-plug path detaches/reattaches the audio callback
+    // and disables/re-enables every MIDI device, which froze the UI for a few
+    // seconds on every load. The physical devices are unchanged since startup,
+    // so the banks are valid; MCU + sync re-resolve happens in
+    // openConfiguredMidiOutputs() below.
+    engine.reresolveTrackMidiFromSession();
 
     // Open MIDI output ports for any tracks the loaded session had
     // routed. Done here (not in the engine constructor) so startup
