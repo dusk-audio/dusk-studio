@@ -613,9 +613,11 @@ struct BusParams
     std::atomic<bool>  solo    { false };
 
     std::atomic<bool>  eqEnabled  { false };
-    std::atomic<float> eqLfGainDb { 0.0f };  // -9..+9 (Mixbus-style, musical)
-    std::atomic<float> eqMidGainDb{ 0.0f };
-    std::atomic<float> eqHfGainDb { 0.0f };
+    // Mixbus mix-bus Tone EQ spec: LF shelf 300 Hz / MID bell 800 Hz Q0.7 /
+    // HF shelf 2 kHz, all +/-9 dB (freqs fixed in BusStrip::updateEqParameters).
+    std::atomic<float> eqLfGainDb { 0.0f };  // -9..+9
+    std::atomic<float> eqMidGainDb{ 0.0f };  // -9..+9
+    std::atomic<float> eqHfGainDb { 0.0f };  // -9..+9
 
     std::atomic<bool>  compEnabled   { false };
     std::atomic<float> compThreshDb  { 0.0f };

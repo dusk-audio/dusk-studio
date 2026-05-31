@@ -161,8 +161,20 @@ void MasterBus::updateCompParameters() noexcept
     storeAtom (compBypassAtom,
                paramsRef->compEnabled.load (std::memory_order_relaxed) ? 0.0f : 1.0f);
     storeAtom (compBusThreshAtom,  paramsRef->compThreshDb.load   (std::memory_order_relaxed));
-    storeAtom (compBusRatioAtom,   paramsRef->compRatio.load      (std::memory_order_relaxed));
-    storeAtom (compBusAttackAtom,  paramsRef->compAttackMs.load   (std::memory_order_relaxed));
+    // bus_ratio / bus_attack are SSL-style stepped Choice params, NOT
+    // continuous. Storing the raw knob value treated it as an out-of-range
+    // index (ratio 4.0 -> 2:1, attack 10 ms -> 30 ms). Map to the nearest
+    // discrete index.  bus_ratio: 0=2:1 1=4:1 2=10:1.  bus_attack: 0=0.1
+    // 1=0.3 2=1 3=3 4=10 5=30 ms.
+    const float ratio  = paramsRef->compRatio.load (std::memory_order_relaxed);
+    storeAtom (compBusRatioAtom, ratio < 3.0f ? 0.0f : (ratio < 7.0f ? 1.0f : 2.0f));
+    const float atkMs  = paramsRef->compAttackMs.load (std::memory_order_relaxed);
+    storeAtom (compBusAttackAtom,
+               atkMs < 0.2f ? 0.0f
+             : (atkMs < 0.6f ? 1.0f
+             : (atkMs < 2.0f ? 2.0f
+             : (atkMs < 6.0f ? 3.0f
+             : (atkMs < 20.0f ? 4.0f : 5.0f)))));
     // The donor's bus_release is a Choice param indexed 0..4 over
     // {0.1s, 0.3s, 0.6s, 1.2s, Auto}. Map Dusk Studio's continuous release knob
     // to the nearest discrete index, or send 4 ("Auto") when the Auto

@@ -92,10 +92,10 @@ void BusStrip::updateEqParameters() noexcept
     p.hpfEnabled = false; p.hpfFreq = 80.0f;
     p.lpfEnabled = false; p.lpfFreq = 20000.0f;
 
-    // Bus EQ frequencies + gain range mirror Harrison Mixbus: tone-shaping
-    // band centers chosen for subgroup mixing (mud zone, presence, edge)
-    // rather than channel-style extremes. Gain range is restrained to
-    // ±9 dB to encourage musical bus moves over corrective fixes.
+    // Bus EQ frequencies + gain range mirror Harrison Mixbus's mix-bus Tone EQ
+    // exactly: LO 300 Hz Q1.0 shelf / MID 800 Hz Q0.7 bell / HI 2 kHz Q1.0
+    // shelf, +/-9 dB — wide, musical tone-shaping for subgroups. (NOT the
+    // narrower Mixbus master-bus EQ, which is 90/300/4000 Hz +/-6 dB.)
     p.lfGain  = paramsRef->eqLfGainDb.load  (std::memory_order_relaxed);
     p.lfFreq  = 300.0f;
     p.lfBell  = false;  // shelf
@@ -129,8 +129,21 @@ void BusStrip::updateCompParameters() noexcept
     storeAtom (compBypassAtom,
                paramsRef->compEnabled.load (std::memory_order_relaxed) ? 0.0f : 1.0f);
     storeAtom (compBusThreshAtom,  paramsRef->compThreshDb.load   (std::memory_order_relaxed));
-    storeAtom (compBusRatioAtom,   paramsRef->compRatio.load      (std::memory_order_relaxed));
-    storeAtom (compBusAttackAtom,  paramsRef->compAttackMs.load   (std::memory_order_relaxed));
+    // The donor's bus_ratio / bus_attack / bus_release are SSL-style stepped
+    // Choice params, NOT continuous. Storing the raw knob value treated it as
+    // an out-of-range index (ratio 4.0 -> 2:1, attack 10 ms -> 30 ms). Map to
+    // the nearest discrete index — same as a real SSL bus comp's stepped knobs.
+    //   bus_ratio:  0=2:1, 1=4:1, 2=10:1
+    //   bus_attack: 0=0.1  1=0.3  2=1  3=3  4=10  5=30  (ms)
+    const float ratio  = paramsRef->compRatio.load (std::memory_order_relaxed);
+    storeAtom (compBusRatioAtom, ratio < 3.0f ? 0.0f : (ratio < 7.0f ? 1.0f : 2.0f));
+    const float atkMs  = paramsRef->compAttackMs.load (std::memory_order_relaxed);
+    storeAtom (compBusAttackAtom,
+               atkMs < 0.2f ? 0.0f
+             : (atkMs < 0.6f ? 1.0f
+             : (atkMs < 2.0f ? 2.0f
+             : (atkMs < 6.0f ? 3.0f
+             : (atkMs < 20.0f ? 4.0f : 5.0f)))));
     // bus_release is a Choice {0.1s, 0.3s, 0.6s, 1.2s, Auto}; see
     // MasterBus::updateCompParameters for the mapping rationale.
     const bool autoRel = paramsRef->compReleaseAuto.load (std::memory_order_relaxed);

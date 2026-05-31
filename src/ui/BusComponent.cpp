@@ -146,9 +146,9 @@ public:
         lf .onValueChange = [this, arm] { bus.strip.eqLfGainDb .store ((float) lf .getValue(), std::memory_order_relaxed); arm(); };
         mid.onValueChange = [this, arm] { bus.strip.eqMidGainDb.store ((float) mid.getValue(), std::memory_order_relaxed); arm(); };
         hf .onValueChange = [this, arm] { bus.strip.eqHfGainDb .store ((float) hf .getValue(), std::memory_order_relaxed); arm(); };
-        lf .setTooltip ("Bus EQ low shelf @ 100 Hz (-15..+15 dB). Double-click to reset; Shift-drag for fine.");
-        mid.setTooltip ("Bus EQ mid bell @ 1 kHz, Q 0.7 (-15..+15 dB). Double-click to reset; Shift-drag for fine.");
-        hf .setTooltip ("Bus EQ high shelf @ 8 kHz (-15..+15 dB). Double-click to reset; Shift-drag for fine.");
+        lf .setTooltip ("Bus EQ low shelf @ 300 Hz (-9..+9 dB). Double-click to reset; Shift-drag for fine.");
+        mid.setTooltip ("Bus EQ mid bell @ 800 Hz, Q 0.7 (-9..+9 dB). Double-click to reset; Shift-drag for fine.");
+        hf .setTooltip ("Bus EQ high shelf @ 2 kHz (-9..+9 dB). Double-click to reset; Shift-drag for fine.");
         addAndMakeVisible (lf); addAndMakeVisible (mid); addAndMakeVisible (hf);
 
         styleEditorLabel (lfLbl,  "LF",  eqGreen);
