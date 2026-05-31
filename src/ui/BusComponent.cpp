@@ -1688,7 +1688,9 @@ void BusComponent::openEqEditorPopup()
     if (compEditorModal.isOpen()) compEditorModal.close();
     auto* host = getTopLevelComponent();
     if (host == nullptr) host = this;
-    eqEditorModal.show (*host, std::make_unique<BusEqEditorPanel> (bus));
+    eqEditorModal.show (*host, std::make_unique<BusEqEditorPanel> (bus),
+                        /*onDismiss*/ {}, /*dismissOnClickOutside*/ true,
+                        /*dismissOnEscape*/ true, kEditorDimAlpha);
 }
 
 void BusComponent::openCompEditorPopup()
@@ -1697,6 +1699,8 @@ void BusComponent::openCompEditorPopup()
     if (eqEditorModal.isOpen()) eqEditorModal.close();
     auto* host = getTopLevelComponent();
     if (host == nullptr) host = this;
-    compEditorModal.show (*host, std::make_unique<BusCompEditorPanel> (bus));
+    compEditorModal.show (*host, std::make_unique<BusCompEditorPanel> (bus),
+                          /*onDismiss*/ {}, /*dismissOnClickOutside*/ true,
+                          /*dismissOnEscape*/ true, kEditorDimAlpha);
 }
 } // namespace duskstudio

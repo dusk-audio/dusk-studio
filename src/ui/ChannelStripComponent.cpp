@@ -2394,7 +2394,24 @@ void ChannelStripComponent::openIoConfigPopup()
     box->setVisible (true);
     box->enterModalState (true,
         juce::ModalCallbackFunction::create (
-            [owned = std::move (panel)] (int) mutable { owned.reset(); }),
+            [owned = std::move (panel)] (int) mutable
+            {
+                owned.reset();
+                // Return keyboard focus to the main view on dismiss. Without
+                // this the CallOutBox's modal exit leaves focus orphaned (on
+                // XWayland the focus traverser doesn't drill back into the
+                // content component), so Space / transport keys die until the
+                // user clicks the canvas. Mirrors EmbeddedModal::close().
+                if (auto* mc = EmbeddedModal::focusRestoreTarget().getComponent())
+                {
+                    mc->grabKeyboardFocus();
+                    juce::Component::SafePointer<juce::Component> safe (mc);
+                    juce::MessageManager::callAsync ([safe]() mutable
+                    {
+                        if (auto* c = safe.getComponent()) c->grabKeyboardFocus();
+                    });
+                }
+            }),
         /*deleteWhenDismissed*/ true);
     attachTransportKeyForwarder (*box);
     activeIoBox = box;
@@ -2781,7 +2798,9 @@ void ChannelStripComponent::attachDimOverlay()
     auto* topLevel = getTopLevelComponent();
     if (topLevel == nullptr) return;
 
-    activeDimOverlay = std::make_unique<DimOverlay>();
+    // Lighter editor dim — the compact COMP/EQ/AUX callouts are processing
+    // editors; keep the strip meters behind readable while auditioning.
+    activeDimOverlay = std::make_unique<DimOverlay> (kEditorDimAlpha);
     activeDimOverlay->setBounds (topLevel->getLocalBounds());
     activeDimOverlay->onClick = [this]
     {
@@ -2798,6 +2817,22 @@ void ChannelStripComponent::attachDimOverlay()
 void ChannelStripComponent::detachDimOverlay()
 {
     activeDimOverlay.reset();
+
+    // The compact COMP/EQ/AUX callouts just closed (only reached once all three
+    // SafePointers are null - see timerCallback). CallOutBox modal exit leaves
+    // keyboard focus orphaned on XWayland, so Space/transport keys die until the
+    // user clicks the UI. Return focus to the main view, same as
+    // openIoConfigPopup's dismissal path. Sync grab + a deferred one because the
+    // box's own teardown can re-steal focus after we return.
+    if (auto* target = EmbeddedModal::focusRestoreTarget().getComponent())
+    {
+        target->grabKeyboardFocus();
+        juce::Component::SafePointer<juce::Component> safe (target);
+        juce::MessageManager::callAsync ([safe]() mutable
+        {
+            if (auto* c = safe.getComponent()) c->grabKeyboardFocus();
+        });
+    }
 }
 
 void ChannelStripComponent::refreshFaderValueLabel()
@@ -3821,16 +3856,16 @@ void ChannelStripComponent::setCompMode (int modeIndex)
 void ChannelStripComponent::refreshCompModeButtonState()
 {
     if (compModeButton == nullptr) return;
-    // Label tracks: disabled → "COMP" (section header, prompts the user
-    // to click). Enabled → active mode name (OPTO/FET/VCA) so the user
-    // can read the current topology at a glance without right-clicking
-    // for the mode menu. The LED on the left of the pill also indicates
-    // engaged state — keeping the mode in the text makes the topology
-    // explicit even when scanning across strips.
+    // Label always carries "COMP" so the section reads as a compressor at a
+    // glance whatever its state: disabled → "COMP"; enabled → "COMP - <mode>"
+    // (OPTO / FET / VCA) so the active topology is explicit without right-
+    // clicking the mode menu. The LED on the left of the pill also shows
+    // engaged state.
     const bool enabled = track.strip.compEnabled.load (std::memory_order_relaxed);
     const int m = juce::jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
     const char* names[] = { "OPTO", "FET", "VCA" };
-    compModeButton->setLabelText (enabled ? juce::String (names[m]) : juce::String ("COMP"));
+    compModeButton->setLabelText (enabled ? juce::String ("COMP - ") + names[m]
+                                          : juce::String ("COMP"));
     compModeButton->repaint();   // refresh LED state too
 }
 

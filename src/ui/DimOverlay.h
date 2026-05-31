@@ -5,6 +5,12 @@
 
 namespace duskstudio
 {
+// Processing-editor dim: lighter than the 0.55 decision-modal default so the
+// strip level / GR meters and neighbouring strips stay readable while you tweak
+// a comp / EQ / plugin editor and audition on a loop. Decision modals
+// (save-before-quit, missing-plugins) keep the heavier default.
+inline constexpr float kEditorDimAlpha = 0.28f;
+
 // Translucent black overlay used to "dim" the rest of the UI behind a modal
 // surface (CallOutBox popups in TIMELINE mode, the TapeMachine gear modal,
 // etc.). Sits as a sibling of the modal in the top-level component, sized

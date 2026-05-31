@@ -9,18 +9,25 @@ namespace duskstudio
 {
 // Global shortcuts that stay live while a modal / popup holds keyboard
 // focus, forwarded to the registered MainComponent. Deliberately limited to
-// transport + playhead navigation + window fullscreen: edit / clipboard /
-// destructive keys (Delete, split, nudge, undo, save, ...) are NOT forwarded
-// because they would act on the arrangement hidden behind the modal — e.g.
-// Delete silently removing a region the user can't even see. A focused child
+// transport + loop/punch + playhead navigation + window fullscreen: edit /
+// clipboard / destructive keys (Delete, split, nudge, undo, save, marker, ...)
+// are NOT forwarded because they would act on the arrangement hidden behind
+// the modal — e.g. Delete silently removing a region the user can't even see.
+// The loop/punch keys ARE forwarded so the engineer can set a loop and audition
+// it while a comp / EQ / plugin editor is open (none of L / P / [ / ] has a
+// Cmd-binding, so forwarding can't trip a destructive op). A focused child
 // that wants one of these keys (TextEditor caret nav) consumes it first, so
 // it never reaches the modal's listener and typing is unaffected.
 inline bool isModalForwardableShortcut (const juce::KeyPress& k) noexcept
 {
-    return k == juce::KeyPress::spaceKey
-        || k.getKeyCode() == 'R' || k.getKeyCode() == 'r'
-        || k == juce::KeyPress::homeKey
-        || k.getTextCharacter() == '.'
+    const int kc = k.getKeyCode();
+    return k == juce::KeyPress::spaceKey                  // play / stop
+        || kc == 'R' || kc == 'r'                         // record
+        || k == juce::KeyPress::homeKey                   // playhead -> 0
+        || k.getTextCharacter() == '.'                    // stop + rewind
+        || kc == 'L' || kc == 'l'                         // loop on/off
+        || kc == 'P' || kc == 'p'                         // punch on/off
+        || kc == '[' || kc == ']'                         // set loop/punch in/out at playhead
         || k == juce::KeyPress::F11Key;
 }
 
@@ -62,12 +69,13 @@ public:
                std::unique_ptr<juce::Component> body,
                std::function<void()> onDismiss = {},
                bool dismissOnClickOutside = true,
-               bool dismissOnEscape = true)
+               bool dismissOnEscape = true,
+               float dimAlpha = 0.55f)   // processing editors pass kEditorDimAlpha
     {
         close();
         host = &parent;
         body_ = std::move (body);
-        dim_ = std::make_unique<DimOverlay>();
+        dim_ = std::make_unique<DimOverlay> (dimAlpha);
         dim_->setBounds (parent.getLocalBounds());
         userOnDismiss = std::move (onDismiss);
         escapeDismisses = dismissOnEscape;
@@ -123,7 +131,9 @@ public:
         close();
         host = &parent;
         borrowedBody_ = &body;
-        dim_ = std::make_unique<DimOverlay>();
+        // showBorrowed is plugin-editors-only — use the lighter editor dim so
+        // the strip meters behind stay readable while auditioning.
+        dim_ = std::make_unique<DimOverlay> (kEditorDimAlpha);
         dim_->setBounds (parent.getLocalBounds());
         userOnDismiss = std::move (onDismiss);
         dim_->onClick = [this]

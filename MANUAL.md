@@ -229,7 +229,7 @@ In compact mode (window narrower than 1850 px) labels shorten; `SNAP` becomes `S
 | --- | --------------------- | ------------------------------------------------------------------------------------------------ |
 | 1   | Pultec EQ             | Tube-saturated low + high program EQ. Right-click for the modal editor.                          |
 | 2   | Master bus compressor | Identical DSP to the bus comp, typically used slower.                                            |
-| 3   | Tape saturation       | Reel-to-reel model. HQ toggles 4× internal oversampling. Right-click for the tape-machine modal. |
+| 3   | Tape saturation       | Reel-to-reel model. HQ toggles 4× internal oversampling. Click for the tape-machine modal; right-click to toggle the tape on/off. |
 | 4   | Master fader          | −∞ to +12 dB.                                                                                    |
 | 5   | Mono                  | Sums L+R to mono on both legs for phase / single-speaker checks.                                 |
 | 6   | Peak meters           | Post-output L/R.                                                                                 |

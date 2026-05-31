@@ -947,35 +947,35 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
         tapeButton.setClickingTogglesState (false);   // toggle path goes through the atom, not the button state
         tapeButton.setToggleState (params.tapeEnabled.load (std::memory_order_relaxed),
                                     juce::dontSendNotification);
-        tapeButton.setTooltip ("Left-click: bypass / engage tape. Right-click: open editor.");
+        tapeButton.setTooltip ("Left-click: open tape editor. Right-click: bypass / engage tape.");
         tapeButton.onClick = [this]
+        {
+            openTapeMachineModal();
+        };
+        tapeButton.onRightClick = [this] (const juce::MouseEvent&)
         {
             const bool now = ! params.tapeEnabled.load (std::memory_order_relaxed);
             params.tapeEnabled.store (now, std::memory_order_relaxed);
             tapeButton.setToggleState (now, juce::dontSendNotification);
         };
-        tapeButton.onRightClick = [this] (const juce::MouseEvent&)
-        {
-            openTapeMachineModal();
-        };
         addAndMakeVisible (tapeButton);
     }
 
-    // Regular-mode TAPE header — CompHeaderButton (green LED + label).
-    // Left-click toggles tapeEnabled; right-click opens the editor via
-    // pickFn. setCompactMode swaps visibility between this header and
-    // the compact tapeButton pill above.
+    // Regular-mode TAPE header — CompHeaderButton (LED + label). Tape has no
+    // inline controls, so its primary action (left-click) OPENS the editor and
+    // right-click toggles enable; the LED still reflects tapeEnabled. setCompactMode
+    // swaps visibility between this header and the compact tapeButton pill above.
     tapeHeaderBtn = std::make_unique<CompHeaderButton> (
-        /*getEnabled*/ [this] { return params.tapeEnabled.load (std::memory_order_relaxed); },
-        /*onToggle*/   [this]
+        /*getEnabled*/            [this] { return params.tapeEnabled.load (std::memory_order_relaxed); },
+        /*onToggle (left-click)*/ [this] { openTapeMachineModal(); },
+        /*onPickMode (right-click)*/ [this]
                         {
                             const bool now = ! params.tapeEnabled.load (std::memory_order_relaxed);
                             params.tapeEnabled.store (now, std::memory_order_relaxed);
                             if (tapeHeaderBtn != nullptr) tapeHeaderBtn->repaint();
-                        },
-        /*onPickMode*/ [this] { openTapeMachineModal(); });
+                        });
     tapeHeaderBtn->setLabelText ("TAPE");
-    tapeHeaderBtn->setTooltip ("Left-click to enable / disable tape saturation. Right-click to open the full tape-machine editor.");
+    tapeHeaderBtn->setTooltip ("Left-click to open the tape-machine editor. Right-click to bypass / engage tape.");
     addAndMakeVisible (tapeHeaderBtn.get());
 
     // Default mode is regular (compactMode = false). Hide the compact
