@@ -1,6 +1,7 @@
 #include "BusComponent.h"
 #include "../engine/AudioEngine.h"
 #include "DuskContextMenu.h"
+#include "SteppedKnob.h"
 #include "CompBypassLed.h"
 #include "DuskStudioLookAndFeel.h"  // fourKColors palette
 #include "../session/MidiBindings.h"
@@ -10,12 +11,6 @@ namespace duskstudio
 {
 namespace
 {
-// SSL-style release knob: top of travel = AUTO. File-scope so the slider
-// callbacks (which outlive the constructor) reference them without
-// having to capture function-local constexpr values - which MSVC
-// rejects under its strict reading of the lambda-capture rules.
-constexpr double kAutoThreshold = 1000.0;
-constexpr double kAutoEps       = 1.0e-3;
 
 void styleSmallKnob (juce::Slider& s, double minV, double maxV, double midPt,
                       double initialV, juce::Colour col, const juce::String& suffix,
@@ -223,41 +218,30 @@ public:
         styleEditorKnob (mak, compGold, -10.0,   20.0,    0.0,    0.0, " dB", 1);
         for (auto* k : { &rat, &atk, &rel, &mak })
             k->setColour (juce::Slider::thumbColourId, juce::Colours::white);
-        rat.setValue (bus.strip.compRatio    .load(), juce::dontSendNotification);
-        atk.setValue (bus.strip.compAttackMs .load(), juce::dontSendNotification);
-        rel.setValue (bus.strip.compReleaseMs.load(), juce::dontSendNotification);
         mak.setValue (bus.strip.compMakeupDb .load(), juce::dontSendNotification);
 
-        rat.setTooltip ("Bus comp ratio (1:1..10:1). Double-click for 4:1; Shift-drag for fine.");
-        atk.setTooltip ("Bus comp attack (0.1..50 ms). Double-click for 5 ms; Shift-drag for fine.");
-        rel.setTooltip ("Bus comp release (50..1000 ms, top = AUTO). Double-click for 200 ms; Shift-drag for fine.");
+        rat.setTooltip ("Bus comp ratio (SSL-stepped: 2:1 / 4:1 / 10:1).");
+        atk.setTooltip ("Bus comp attack (SSL-stepped: 0.1 / 0.3 / 1 / 3 / 10 / 30 ms).");
+        rel.setTooltip ("Bus comp release (SSL-stepped: 0.1 / 0.3 / 0.6 / 1.2 s, top = AUTO).");
         mak.setTooltip ("Bus comp make-up gain (-10..+20 dB). Double-click for 0 dB; Shift-drag for fine.");
-        rat.onValueChange = [this] { bus.strip.compRatio    .store ((float) rat.getValue(), std::memory_order_relaxed); };
-        atk.onValueChange = [this] { bus.strip.compAttackMs .store ((float) atk.getValue(), std::memory_order_relaxed); };
         mak.onValueChange = [this] { bus.strip.compMakeupDb .store ((float) mak.getValue(), std::memory_order_relaxed); };
 
-        rel.textFromValueFunction = [] (double v) -> juce::String
-        {
-            return std::abs (v - kAutoThreshold) <= kAutoEps
-                     ? juce::String ("AUTO") : juce::String ((int) std::round (v)) + " ms";
-        };
-        rel.valueFromTextFunction = [] (const juce::String& s) -> double
-        {
-            if (s.trim().equalsIgnoreCase ("auto")) return kAutoThreshold;
-            const double parsed = (double) s.getDoubleValue();
-            return parsed >= kAutoThreshold - kAutoEps ? kAutoThreshold : parsed;
-        };
-        rel.onValueChange = [this]
-        {
-            const double v = rel.getValue();
-            const bool autoOn = std::abs (v - kAutoThreshold) <= kAutoEps;
-            bus.strip.compReleaseAuto.store (autoOn, std::memory_order_relaxed);
-            if (! autoOn)
-                bus.strip.compReleaseMs.store ((float) v, std::memory_order_relaxed);
-        };
-        if (bus.strip.compReleaseAuto.load (std::memory_order_relaxed))
-            rel.setValue (kAutoThreshold, juce::dontSendNotification);
-        rel.updateText();
+        // Stepped SSL selectors (see the inline-strip comp setup).
+        configureSteppedKnob (rat, sslsteps::ratioValues(), sslsteps::ratioLabels(),
+                              bus.strip.compRatio.load(),
+                              [this] (double v) { bus.strip.compRatio.store ((float) v, std::memory_order_relaxed); });
+        configureSteppedKnob (atk, sslsteps::attackValues(), sslsteps::attackLabels(),
+                              bus.strip.compAttackMs.load(),
+                              [this] (double v) { bus.strip.compAttackMs.store ((float) v, std::memory_order_relaxed); });
+        configureSteppedKnob (rel, sslsteps::releaseValues(), sslsteps::releaseLabels(),
+                              bus.strip.compReleaseAuto.load() ? -1.0 : (double) bus.strip.compReleaseMs.load(),
+                              [this] (double v)
+                              {
+                                  const bool autoOn = v < 0.0;
+                                  bus.strip.compReleaseAuto.store (autoOn, std::memory_order_relaxed);
+                                  if (! autoOn)
+                                      bus.strip.compReleaseMs.store ((float) v, std::memory_order_relaxed);
+                              });
 
         addAndMakeVisible (rat); addAndMakeVisible (atk);
         addAndMakeVisible (rel); addAndMakeVisible (mak);
@@ -466,7 +450,7 @@ private:
         // Smooth GR (fast-down on hit, slow release back to 0).
         const float gr = bus.strip.meterGrDb.load (std::memory_order_relaxed);
         if (gr < displayedGrDb) displayedGrDb = gr;
-        else                     displayedGrDb += (gr - displayedGrDb) * 0.18f;
+        else                     displayedGrDb += (gr - displayedGrDb) * 0.5f;  // ~48 ms recovery (was ~167 ms)
 
         if (! grMeterArea  .isEmpty()) repaint (grMeterArea  .expanded (0, 14));
         if (! inputMeterArea.isEmpty()) repaint (inputMeterArea.expanded (0, 14));
@@ -637,46 +621,35 @@ BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
     styleSmallKnob (compAttack,    0.1,   50.0,    5.0, bus.strip.compAttackMs.load(),  compGold, "",   1);
     styleSmallKnob (compRelease,  50.0, 1000.0,  200.0, bus.strip.compReleaseMs.load(), compGold, "",   0);
     styleSmallKnob (compMakeup,  -10.0,   20.0,    0.0, bus.strip.compMakeupDb.load(),  compGold, "",   1);
-    compRatio  .setTooltip ("Bus comp ratio (1:1..10:1). Double-click for 4:1; Shift-drag for fine.");
-    compAttack .setTooltip ("Bus comp attack (0.1..50 ms). Double-click for 5 ms; Shift-drag for fine.");
-    compRelease.setTooltip ("Bus comp release (50..1000 ms, top = AUTO). Double-click for 200 ms; Shift-drag for fine.");
+    compRatio  .setTooltip ("Bus comp ratio (SSL-stepped: 2:1 / 4:1 / 10:1).");
+    compAttack .setTooltip ("Bus comp attack (SSL-stepped: 0.1 / 0.3 / 1 / 3 / 10 / 30 ms).");
+    compRelease.setTooltip ("Bus comp release (SSL-stepped: 0.1 / 0.3 / 0.6 / 1.2 s, top = AUTO).");
     compMakeup .setTooltip ("Bus comp make-up gain (-10..+20 dB). Double-click for 0 dB; Shift-drag for fine.");
     // White pointer on the powder-blue body — matches the SSL G-bus
     // comp's painted-line indicator. styleSmallKnob's default thumb
     // (fill-brightened) washes out against the light blue.
     for (auto* k : { &compRatio, &compAttack, &compRelease, &compMakeup })
         k->setColour (juce::Slider::thumbColourId, juce::Colours::white);
-    compRatio  .onValueChange = [this] { bus.strip.compRatio    .store ((float) compRatio  .getValue(), std::memory_order_relaxed); };
-    compAttack .onValueChange = [this] { bus.strip.compAttackMs .store ((float) compAttack .getValue(), std::memory_order_relaxed); };
     compMakeup .onValueChange = [this] { bus.strip.compMakeupDb .store ((float) compMakeup .getValue(), std::memory_order_relaxed); };
 
-    // SSL-style release: top of the knob's travel = AUTO. Display reads
-    // "AUTO" only at the top detent; everywhere else shows the ms value.
-    // Threshold is the slider's max with a tiny eps so floating-point
-    // rounding can't accidentally drop a typed 999.8 into AUTO.
-    compRelease.textFromValueFunction = [] (double v) -> juce::String
-    {
-        return std::abs (v - kAutoThreshold) <= kAutoEps
-                 ? juce::String ("AUTO")
-                 : juce::String ((int) std::round (v));
-    };
-    compRelease.valueFromTextFunction = [] (const juce::String& s) -> double
-    {
-        if (s.trim().equalsIgnoreCase ("auto")) return kAutoThreshold;
-        const double parsed = (double) s.getDoubleValue();
-        return parsed >= kAutoThreshold - kAutoEps ? kAutoThreshold : parsed;
-    };
-    compRelease.onValueChange = [this]
-    {
-        const double v = compRelease.getValue();
-        const bool autoOn = std::abs (v - kAutoThreshold) <= kAutoEps;
-        bus.strip.compReleaseAuto.store (autoOn, std::memory_order_relaxed);
-        if (! autoOn)
-            bus.strip.compReleaseMs.store ((float) v, std::memory_order_relaxed);
-    };
-    if (bus.strip.compReleaseAuto.load (std::memory_order_relaxed))
-        compRelease.setValue (kAutoThreshold, juce::dontSendNotification);
-    compRelease.updateText();
+    // Ratio / attack / release are SSL-style stepped selectors — the donor's
+    // bus_* params are Choices, so the knob detents on the real values and the
+    // readout shows them (no more continuous knob landing between steps).
+    configureSteppedKnob (compRatio, sslsteps::ratioValues(), sslsteps::ratioLabels(),
+                          bus.strip.compRatio.load(),
+                          [this] (double v) { bus.strip.compRatio.store ((float) v, std::memory_order_relaxed); });
+    configureSteppedKnob (compAttack, sslsteps::attackValues(), sslsteps::attackLabels(),
+                          bus.strip.compAttackMs.load(),
+                          [this] (double v) { bus.strip.compAttackMs.store ((float) v, std::memory_order_relaxed); });
+    configureSteppedKnob (compRelease, sslsteps::releaseValues(), sslsteps::releaseLabels(),
+                          bus.strip.compReleaseAuto.load() ? -1.0 : (double) bus.strip.compReleaseMs.load(),
+                          [this] (double v)
+                          {
+                              const bool autoOn = v < 0.0;
+                              bus.strip.compReleaseAuto.store (autoOn, std::memory_order_relaxed);
+                              if (! autoOn)
+                                  bus.strip.compReleaseMs.store ((float) v, std::memory_order_relaxed);
+                          });
 
     addAndMakeVisible (compRatio);  addAndMakeVisible (compAttack);
     addAndMakeVisible (compRelease); addAndMakeVisible (compMakeup);
@@ -1044,7 +1017,7 @@ void BusComponent::timerCallback()
 
     const float gr = bus.strip.meterGrDb.load (std::memory_order_relaxed);
     if (gr < displayedGrDb) displayedGrDb = gr;
-    else                    displayedGrDb += (gr - displayedGrDb) * 0.18f;
+    else                    displayedGrDb += (gr - displayedGrDb) * 0.5f;  // ~48 ms recovery (was ~167 ms)
 
     if (displayedGrDb <= -0.05f)
     {

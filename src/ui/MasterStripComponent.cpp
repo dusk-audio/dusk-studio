@@ -5,6 +5,7 @@
 #include "../engine/AudioEngine.h"
 #include "DimOverlay.h"
 #include "DuskStudioLookAndFeel.h"
+#include "SteppedKnob.h"
 #include "TapeMachineModalEditor.h"
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
@@ -151,7 +152,7 @@ public:
         styleEditorKnob (lfAtten,   pultecGold,   0.0,  10.0,   0.0,  3.0, "", 1);
         styleEditorKnob (hfBoost,   pultecGold,   0.0,  10.0,   3.0,  3.0, "", 1);
         styleEditorKnob (hfAtten,   pultecGold,   0.0,  10.0,   3.0,  3.0, "", 1);
-        styleEditorKnob (hfBandwidth, pultecGold, 0.0,  10.0,   5.0,  5.0, "", 1);
+        styleEditorKnob (hfBandwidth, pultecGold, 0.0,  10.0,   0.5,  5.0, "", 1);
         lfBoost     .setValue (params.eqLfBoost         .load(), juce::dontSendNotification);
         lfAtten     .setValue (params.eqLfAtten         .load(), juce::dontSendNotification);
         hfBoost     .setValue (params.eqHfBoost         .load(), juce::dontSendNotification);
@@ -167,7 +168,7 @@ public:
         lfAtten    .setTooltip ("Pultec LF attenuate (0..10). Double-click for 0; Shift-drag for fine.");
         hfBoost    .setTooltip ("Pultec HF boost (0..10). Double-click for 3; Shift-drag for fine.");
         hfAtten    .setTooltip ("Pultec HF attenuate (0..10). Double-click for 3; Shift-drag for fine.");
-        hfBandwidth.setTooltip ("Pultec HF bandwidth (Sharp..Broad, 0..10). Double-click for 5; Shift-drag for fine.");
+        hfBandwidth.setTooltip ("Pultec HF bandwidth (Sharp..Broad, 0..10). Double-click for 0.5; Shift-drag for fine.");
         lfBoost    .onValueChange = [this, arm] { params.eqLfBoost         .store ((float) lfBoost    .getValue(), std::memory_order_relaxed); arm(); };
         lfAtten    .onValueChange = [this, arm] { params.eqLfAtten         .store ((float) lfAtten    .getValue(), std::memory_order_relaxed); arm(); };
         hfBoost    .onValueChange = [this, arm] { params.eqHfBoost         .store ((float) hfBoost    .getValue(), std::memory_order_relaxed); arm(); };
@@ -383,38 +384,30 @@ public:
         styleEditorKnob (mak, compGold, -10.0,   20.0,    0.0,   0.0, " dB", 1);
         for (auto* k : { &rat, &atk, &rel, &mak })
             k->setColour (juce::Slider::thumbColourId, juce::Colours::white);
-        rat.setValue (params.compRatio    .load(), juce::dontSendNotification);
-        atk.setValue (params.compAttackMs .load(), juce::dontSendNotification);
-        rel.setValue (params.compReleaseMs.load(), juce::dontSendNotification);
         mak.setValue (params.compMakeupDb .load(), juce::dontSendNotification);
 
-        rat.setTooltip ("Master bus comp ratio (1:1..10:1). Double-click for 4:1; Shift-drag for fine.");
-        atk.setTooltip ("Master bus comp attack (0.1..50 ms). Double-click for 5 ms; Shift-drag for fine.");
-        rel.setTooltip ("Master bus comp release (50..1000 ms, top = AUTO). Double-click for 200 ms; Shift-drag for fine.");
+        rat.setTooltip ("Master bus comp ratio (SSL-stepped: 2:1 / 4:1 / 10:1).");
+        atk.setTooltip ("Master bus comp attack (SSL-stepped: 0.1 / 0.3 / 1 / 3 / 10 / 30 ms).");
+        rel.setTooltip ("Master bus comp release (SSL-stepped: 0.1 / 0.3 / 0.6 / 1.2 s, top = AUTO).");
         mak.setTooltip ("Master bus comp make-up gain (-10..+20 dB). Double-click for 0 dB; Shift-drag for fine.");
-        rat.onValueChange = [this] { params.compRatio    .store ((float) rat.getValue(), std::memory_order_relaxed); };
-        atk.onValueChange = [this] { params.compAttackMs .store ((float) atk.getValue(), std::memory_order_relaxed); };
         mak.onValueChange = [this] { params.compMakeupDb .store ((float) mak.getValue(), std::memory_order_relaxed); };
 
-        rel.textFromValueFunction = [] (double v) -> juce::String
-        {
-            return v >= 999.5 ? juce::String ("AUTO") : juce::String ((int) std::round (v)) + " ms";
-        };
-        rel.valueFromTextFunction = [] (const juce::String& s) -> double
-        {
-            return s.trim().equalsIgnoreCase ("auto") ? 1000.0 : (double) s.getDoubleValue();
-        };
-        rel.onValueChange = [this]
-        {
-            const double v = rel.getValue();
-            const bool autoOn = v >= 999.5;
-            params.compReleaseAuto.store (autoOn, std::memory_order_relaxed);
-            if (! autoOn)
-                params.compReleaseMs.store ((float) v, std::memory_order_relaxed);
-        };
-        if (params.compReleaseAuto.load (std::memory_order_relaxed))
-            rel.setValue (1000.0, juce::dontSendNotification);
-        rel.updateText();
+        // Stepped SSL selectors — donor bus_* params are Choices.
+        configureSteppedKnob (rat, sslsteps::ratioValues(), sslsteps::ratioLabels(),
+                              params.compRatio.load(),
+                              [this] (double v) { params.compRatio.store ((float) v, std::memory_order_relaxed); });
+        configureSteppedKnob (atk, sslsteps::attackValues(), sslsteps::attackLabels(),
+                              params.compAttackMs.load(),
+                              [this] (double v) { params.compAttackMs.store ((float) v, std::memory_order_relaxed); });
+        configureSteppedKnob (rel, sslsteps::releaseValues(), sslsteps::releaseLabels(),
+                              params.compReleaseAuto.load() ? -1.0 : (double) params.compReleaseMs.load(),
+                              [this] (double v)
+                              {
+                                  const bool autoOn = v < 0.0;
+                                  params.compReleaseAuto.store (autoOn, std::memory_order_relaxed);
+                                  if (! autoOn)
+                                      params.compReleaseMs.store ((float) v, std::memory_order_relaxed);
+                              });
 
         addAndMakeVisible (rat); addAndMakeVisible (atk);
         addAndMakeVisible (rel); addAndMakeVisible (mak);
@@ -615,7 +608,7 @@ private:
 
         const float gr = params.meterGrDb.load (std::memory_order_relaxed);
         if (gr < displayedGrDb) displayedGrDb = gr;
-        else                     displayedGrDb += (gr - displayedGrDb) * 0.18f;
+        else                     displayedGrDb += (gr - displayedGrDb) * 0.5f;  // ~48 ms recovery (was ~167 ms)
 
         if (! grMeterArea  .isEmpty()) repaint (grMeterArea  .expanded (0, 14));
         if (! inputMeterArea.isEmpty()) repaint (inputMeterArea.expanded (0, 14));
@@ -880,41 +873,32 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     styleSmallKnob (compAttack,      0.1, 50.0,    5.0, params.compAttackMs.load(),    compGold, "",   1);
     styleSmallKnob (compRelease,    50.0,1000.0, 200.0, params.compReleaseMs.load(),   compGold, "",   0);
     styleSmallKnob (compMakeup,    -10.0, 20.0,    0.0, params.compMakeupDb.load(),    compGold, "",   1);
-    compRatio  .setTooltip ("Master bus comp ratio (1:1..10:1). Double-click for 4:1; Shift-drag for fine.");
-    compAttack .setTooltip ("Master bus comp attack (0.1..50 ms). Double-click for 5 ms; Shift-drag for fine.");
-    compRelease.setTooltip ("Master bus comp release (50..1000 ms, top = AUTO). Double-click for 200 ms; Shift-drag for fine.");
+    compRatio  .setTooltip ("Master bus comp ratio (SSL-stepped: 2:1 / 4:1 / 10:1).");
+    compAttack .setTooltip ("Master bus comp attack (SSL-stepped: 0.1 / 0.3 / 1 / 3 / 10 / 30 ms).");
+    compRelease.setTooltip ("Master bus comp release (SSL-stepped: 0.1 / 0.3 / 0.6 / 1.2 s, top = AUTO).");
     compMakeup .setTooltip ("Master bus comp make-up gain (-10..+20 dB). Double-click for 0 dB; Shift-drag for fine.");
     for (auto* k : { &compRatio, &compAttack, &compRelease, &compMakeup })
         k->setColour (juce::Slider::thumbColourId, juce::Colours::white);
 
-    compRatio    .onValueChange = [this] { params.compRatio    .store ((float) compRatio    .getValue(), std::memory_order_relaxed); };
-    compAttack   .onValueChange = [this] { params.compAttackMs .store ((float) compAttack   .getValue(), std::memory_order_relaxed); };
     compMakeup   .onValueChange = [this] { params.compMakeupDb .store ((float) compMakeup   .getValue(), std::memory_order_relaxed); };
 
-    // SSL-style release: the top of the knob's travel = AUTO. Below that
-    // the user dials a continuous release in ms; the display reads "AUTO"
-    // only at the very top.
-    compRelease.textFromValueFunction = [] (double v) -> juce::String
-    {
-        return v >= 999.5 ? juce::String ("AUTO") : juce::String ((int) std::round (v));
-    };
-    compRelease.valueFromTextFunction = [] (const juce::String& s) -> double
-    {
-        return s.trim().equalsIgnoreCase ("auto") ? 1000.0 : (double) s.getDoubleValue();
-    };
-    compRelease.onValueChange = [this]
-    {
-        const double v = compRelease.getValue();
-        const bool autoOn = v >= 999.5;
-        params.compReleaseAuto.store (autoOn, std::memory_order_relaxed);
-        if (! autoOn)
-            params.compReleaseMs.store ((float) v, std::memory_order_relaxed);
-    };
-    // Sync initial slider position with the auto flag so the knob lands
-    // at the AUTO detent when sessions saved in Auto mode are restored.
-    if (params.compReleaseAuto.load (std::memory_order_relaxed))
-        compRelease.setValue (1000.0, juce::dontSendNotification);
-    compRelease.updateText();
+    // Ratio / attack / release are SSL-style stepped selectors — the donor's
+    // bus_* params are Choices, so the knob detents on the real values.
+    configureSteppedKnob (compRatio, sslsteps::ratioValues(), sslsteps::ratioLabels(),
+                          params.compRatio.load(),
+                          [this] (double v) { params.compRatio.store ((float) v, std::memory_order_relaxed); });
+    configureSteppedKnob (compAttack, sslsteps::attackValues(), sslsteps::attackLabels(),
+                          params.compAttackMs.load(),
+                          [this] (double v) { params.compAttackMs.store ((float) v, std::memory_order_relaxed); });
+    configureSteppedKnob (compRelease, sslsteps::releaseValues(), sslsteps::releaseLabels(),
+                          params.compReleaseAuto.load() ? -1.0 : (double) params.compReleaseMs.load(),
+                          [this] (double v)
+                          {
+                              const bool autoOn = v < 0.0;
+                              params.compReleaseAuto.store (autoOn, std::memory_order_relaxed);
+                              if (! autoOn)
+                                  params.compReleaseMs.store ((float) v, std::memory_order_relaxed);
+                          });
 
     addAndMakeVisible (compRatio);    addAndMakeVisible (compAttack);
     addAndMakeVisible (compRelease);  addAndMakeVisible (compMakeup);
@@ -1221,7 +1205,7 @@ void MasterStripComponent::timerCallback()
     // Bus-comp GR.
     const float gr = params.meterGrDb.load (std::memory_order_relaxed);
     if (gr < displayedGrDb) displayedGrDb = gr;
-    else                    displayedGrDb += (gr - displayedGrDb) * 0.18f;
+    else                    displayedGrDb += (gr - displayedGrDb) * 0.5f;  // ~48 ms recovery (was ~167 ms)
 
     if (displayedGrDb <= -0.05f)
     {

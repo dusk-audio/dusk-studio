@@ -2970,9 +2970,11 @@ void ChannelStripComponent::timerCallback()
 
     const float gr = track.meterGrDb.load (std::memory_order_relaxed);
     if (gr < displayedGrDb)
-        displayedGrDb = gr;
+        displayedGrDb = gr;                              // instant attack
     else
-        displayedGrDb += (gr - displayedGrDb) * 0.18f;
+        // ~48 ms recovery (was 0.18 = ~167 ms, which masked comp release times
+        // faster than the meter's own ballistic). Truer GR readout.
+        displayedGrDb += (gr - displayedGrDb) * 0.5f;
 
     // Input level meter - fast attack on rise, slow decay; with a peak-hold
     // marker that lingers for ~600 ms before falling. Stereo mode also
