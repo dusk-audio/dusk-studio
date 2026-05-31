@@ -1093,9 +1093,6 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     outputPeakLabel.setText ("-inf", juce::dontSendNotification);
     styleReadout (outputPeakLabel, juce::Colour (0xffd0d0d0));
     addAndMakeVisible (outputPeakLabel);
-    grPeakLabel.setText ("0.0", juce::dontSendNotification);
-    styleReadout (grPeakLabel, juce::Colour (0xff606064));
-    addAndMakeVisible (grPeakLabel);
 
     startTimerHz (30);
 }
@@ -1202,21 +1199,10 @@ void MasterStripComponent::timerCallback()
         maxHold >= -12.0f ? juce::Colour (0xffe0c050) :
                              juce::Colour (0xffd0d0d0));
 
-    // Bus-comp GR.
+    // Bus-comp GR is shown by the graphical GR meter; displayedGrDb feeds it.
     const float gr = params.meterGrDb.load (std::memory_order_relaxed);
     if (gr < displayedGrDb) displayedGrDb = gr;
     else                    displayedGrDb += (gr - displayedGrDb) * 0.5f;  // ~48 ms recovery (was ~167 ms)
-
-    if (displayedGrDb <= -0.05f)
-    {
-        grPeakLabel.setText (juce::String (displayedGrDb, 1), juce::dontSendNotification);
-        grPeakLabel.setColour (juce::Label::textColourId, juce::Colour (0xffe0c050));
-    }
-    else
-    {
-        grPeakLabel.setText ("0.0", juce::dontSendNotification);
-        grPeakLabel.setColour (juce::Label::textColourId, juce::Colour (0xff606064));
-    }
 
     if (! meterArea.isEmpty())
         repaint (meterArea);
@@ -1833,12 +1819,10 @@ void MasterStripComponent::resized()
     // visual break between the comp/tape band and the fader/meter band.
     area.removeFromTop (12);
 
-    // Numeric peak / GR readouts dropped from the strip — the LED
-    // meter + GR bar communicate the same info, and the readouts ate
-    // 18 px of vertical that the fader needs more. Labels still exist
-    // (timer updates them) but are unparented here so they don't draw.
-    outputPeakLabel.setVisible (false);
-    grPeakLabel    .setVisible (false);
+    // Output-peak readout sits under the meter, in the same horizontal band
+    // as the fader's value label, so it costs no extra vertical height. GR
+    // stays graphical - the GR LED bar communicates it without a number.
+    outputPeakLabel.setVisible (true);
 
     // Centred [fader | level meter | GR LED] cluster — fader-side grammar
     // matching channel + bus strips, but centred in the (wider) master strip
@@ -1883,6 +1867,14 @@ void MasterStripComponent::resized()
     faderValueLabel.setBounds (sliderBounds.getX(),
                                  sliderBounds.getBottom() + 6,
                                  sliderBounds.getWidth(),
+                                 kFaderValueH);
+
+    // Output-peak readout centred under the meter cluster (meter + GR LED
+    // columns). Previously never laid out, so it had zero size and the
+    // post-master peak level was invisible on the master strip.
+    outputPeakLabel.setBounds (meterArea.getX(),
+                                 meterArea.getBottom() + 4,
+                                 compMeterCol.getRight() - meterArea.getX(),
                                  kFaderValueH);
 
     // compMeter top aligned with level meter's 0 dB tick (10 px caption

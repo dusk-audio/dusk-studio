@@ -3077,13 +3077,13 @@ void ChannelStripComponent::timerCallback()
     if (! inputMeterArea.isEmpty())  repaint (inputMeterArea);
 
     // Update the numeric readout below the meter.
-    // Integer dB readout — narrow column doesn't fit "-60.0" at a
-    // readable font size; one decimal of precision wasn't actionable
-    // anyway since the meter ballistics smear sub-dB changes.
+    // One-decimal dB readout, matching the bus + master output-peak readouts
+    // so the level number reads identically across every strip type. The
+    // label's minimumHorizontalScale keeps "-12.3" inside the narrow column.
     if (inputPeakHoldDb <= -60.0f)
         inputPeakLabel.setText ("-inf", juce::dontSendNotification);
     else
-        inputPeakLabel.setText (juce::String ((int) std::round (inputPeakHoldDb)),
+        inputPeakLabel.setText (juce::String (inputPeakHoldDb, 1),
                                   juce::dontSendNotification);
 
     // Tint the readout when peaks get hot.

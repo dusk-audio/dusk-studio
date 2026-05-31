@@ -157,7 +157,6 @@ private:
     void openEqEditorPopup();
     void openCompEditorPopup();
     juce::Label outputPeakLabel;
-    juce::Label grPeakLabel;
     float displayedOutputLDb = -100.0f;
     float displayedOutputRDb = -100.0f;
     float displayedGrDb      = 0.0f;

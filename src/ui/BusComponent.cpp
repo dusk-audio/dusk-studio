@@ -806,9 +806,6 @@ BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
     compCompactButton.onClick = [this] { openCompEditorPopup(); };
     addChildComponent (eqCompactButton);
     addChildComponent (compCompactButton);
-    grPeakLabel.setText ("0.0", juce::dontSendNotification);
-    styleReadout (grPeakLabel, juce::Colour (0xff606064));
-    addAndMakeVisible (grPeakLabel);
 
     startTimerHz (30);
 }
@@ -1015,20 +1012,10 @@ void BusComponent::timerCallback()
         maxHold >= -12.0f ? juce::Colour (0xffe0c050) :
                              juce::Colour (0xffd0d0d0));
 
+    // GR is shown by the graphical GR meter; displayedGrDb still feeds it.
     const float gr = bus.strip.meterGrDb.load (std::memory_order_relaxed);
     if (gr < displayedGrDb) displayedGrDb = gr;
     else                    displayedGrDb += (gr - displayedGrDb) * 0.5f;  // ~48 ms recovery (was ~167 ms)
-
-    if (displayedGrDb <= -0.05f)
-    {
-        grPeakLabel.setText (juce::String (displayedGrDb, 1), juce::dontSendNotification);
-        grPeakLabel.setColour (juce::Label::textColourId, juce::Colour (0xffe0c050));
-    }
-    else
-    {
-        grPeakLabel.setText ("0.0", juce::dontSendNotification);
-        grPeakLabel.setColour (juce::Label::textColourId, juce::Colour (0xff606064));
-    }
 
     if (! meterArea.isEmpty())   repaint (meterArea);
     if (! grMeterArea.isEmpty()) repaint (grMeterArea.expanded (2, 10));  // include "GR" caption
@@ -1576,11 +1563,9 @@ void BusComponent::resized()
     autoModeButton.setBounds (autoRow.reduced (1, 0));
     area.removeFromBottom (4);
 
-    // Peak/GR readouts above the meter+fader pair.
+    // Output-peak readout below the meter+fader pair.
     auto peakRow = area.removeFromBottom (14);
-    const int prW = peakRow.getWidth() / 2;
-    outputPeakLabel.setBounds (peakRow.removeFromLeft (prW));
-    grPeakLabel    .setBounds (peakRow);
+    outputPeakLabel.setBounds (peakRow);
     area.removeFromBottom (2);
 
     // Right-side stack — fader-side grammar matching the channel strip:
