@@ -4403,7 +4403,10 @@ void ChannelStripComponent::resized()
     // Plugin-slot button right below the IN/ARM/PRINT row. Always visible -
     // available in both compact and full modes since it's independent of the
     // EQ/COMP collapse.
-    pluginSlotButton.setBounds (area.removeFromTop (18).reduced (2, 0));
+    // reduced(4,0) matches the EQ / COMP / AUX compact buttons below so all
+    // four section buttons share one width - otherwise the wider Insert border
+    // sticks out past them and reads as a double / stacked outline.
+    pluginSlotButton.setBounds (area.removeFromTop (18).reduced (4, 0));
     area.removeFromTop (2);
 
     // In compact mode the EQ + COMP sections collapse to two narrow buttons
