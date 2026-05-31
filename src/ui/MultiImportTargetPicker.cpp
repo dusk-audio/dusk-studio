@@ -144,6 +144,15 @@ struct MultiImportTargetPicker::Row : public juce::Component
         return id <= 1 ? -1 : (id - 2);
     }
 
+    // Programmatic selection (auto-assign). ID 1 = placeholder; a track maps
+    // to index + 2. dontSendNotification so the host refreshes every picker +
+    // the Import-enabled state once after setting all rows, not per row.
+    void setChosenTrack (int trackIdx)
+    {
+        trackPicker.setSelectedId (trackIdx < 0 ? 1 : trackIdx + 2,
+                                    juce::dontSendNotification);
+    }
+
     void paint (juce::Graphics& g) override
     {
         auto r = getLocalBounds().toFloat().reduced (1.0f);
@@ -237,6 +246,14 @@ MultiImportTargetPicker::MultiImportTargetPicker (Session& s,
     cancelButton.onClick = [this] { if (onCancel) onCancel(); };
     addAndMakeVisible (cancelButton);
 
+    autoAssignButton.setColour (juce::TextButton::buttonColourId,  juce::Colour (0xff2a3a48));
+    autoAssignButton.setColour (juce::TextButton::textColourOffId, juce::Colour (0xffd0e0f0));
+    autoAssignButton.setTooltip ("Assign each file to a track in order "
+                                  "(file 1 -> track 1, file 2 -> track 2, ...). "
+                                  "You can still change any row by hand.");
+    autoAssignButton.onClick = [this] { toggleAutoAssign(); };
+    addAndMakeVisible (autoAssignButton);
+
     importButton.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff406030));
     importButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff70b050));
     importButton.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xff707074));
@@ -281,6 +298,8 @@ void MultiImportTargetPicker::resized()
     footer.removeFromTop (8);
     const int btnW = 96;
     cancelButton.setBounds (footer.removeFromLeft  (btnW).reduced (0, 4));
+    footer.removeFromLeft (8);
+    autoAssignButton.setBounds (footer.removeFromLeft (120).reduced (0, 4));
     importButton.setBounds (footer.removeFromRight (btnW).reduced (0, 4));
 
     listViewport.setBounds (area);
@@ -303,6 +322,38 @@ void MultiImportTargetPicker::rebuildImportEnabled()
         if (row->chosenTrack() < 0) { allAssigned = false; break; }
     importButton.setEnabled (allAssigned);
     importButton.setToggleState (allAssigned, juce::dontSendNotification);
+}
+
+void MultiImportTargetPicker::toggleAutoAssign()
+{
+    // Refresh every picker to its full (unfiltered) item set first so the
+    // setChosenTrack below always finds its target item, regardless of any
+    // prior manual picks that had filtered other rows' dropdowns.
+    for (auto& row : rows)
+        row->rebuildPicker ({});
+
+    if (autoAssignActive)
+    {
+        // Second click: clear every row back to the placeholder.
+        for (auto& row : rows)
+            row->setChosenTrack (-1);
+        autoAssignActive = false;
+        autoAssignButton.setButtonText ("Auto-assign");
+    }
+    else
+    {
+        // First click: sequential file i -> track i. Files past the last
+        // track stay unassigned (Import stays disabled until resolved).
+        int nextTrack = 0;
+        for (auto& row : rows)
+            row->setChosenTrack (nextTrack < Session::kNumTracks ? nextTrack++ : -1);
+        autoAssignActive = true;
+        autoAssignButton.setButtonText ("Clear");
+    }
+
+    rebuildAvailableTracks();
+    rebuildImportEnabled();
+    repaint();
 }
 
 void MultiImportTargetPicker::rebuildAvailableTracks()
