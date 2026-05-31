@@ -503,6 +503,14 @@ void AudioSettingsPanel::openSelfTest()
     auto panel = std::make_unique<SelfTestPanel> (engine, deviceManager, session);
     panel->setSize (760, 560);
 
+    // The Close button asks us to dismiss the modal (the panel can't close
+    // itself - it's an EmbeddedModal body, not a DialogWindow).
+    juce::Component::SafePointer<AudioSettingsPanel> safeThis (this);
+    panel->onCloseRequested = [safeThis]
+    {
+        if (auto* s = safeThis.getComponent()) s->selfTestModal.close();
+    };
+
     auto* parent = getTopLevelComponent();
     if (parent == nullptr) parent = this;
     selfTestModal.show (*parent, std::move (panel),

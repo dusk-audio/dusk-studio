@@ -29,8 +29,10 @@ SelfTestPanel::SelfTestPanel (AudioEngine& e,
     copyButton.onClick  = [this] { copyToClipboard(); };
     closeButton.onClick = [this]
     {
-        if (auto* parent = findParentComponentOfClass<juce::DialogWindow>())
-            parent->exitModalState (0);
+        // Hosted in an EmbeddedModal, not a DialogWindow - ask the host to
+        // close it (the old DialogWindow lookup always returned nullptr, so
+        // this button did nothing and only Esc / click-outside dismissed).
+        if (onCloseRequested) onCloseRequested();
     };
     addAndMakeVisible (runButton);
     addAndMakeVisible (copyButton);

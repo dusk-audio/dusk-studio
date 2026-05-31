@@ -18,6 +18,10 @@ public:
                     juce::AudioDeviceManager& dm,
                     Session& session);
 
+    // Wired by the host to tear down the EmbeddedModal hosting this panel.
+    // The panel is NOT a DialogWindow, so it can't dismiss itself.
+    std::function<void()> onCloseRequested;
+
     void resized() override;
     void paint (juce::Graphics&) override;
 
