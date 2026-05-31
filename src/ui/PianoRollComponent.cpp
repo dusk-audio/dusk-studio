@@ -2552,6 +2552,11 @@ void PianoRollComponent::pushCursorPosition (int x, int y)
 {
     if (! (onMouseMovedForCursor && onMouseExitedForCursor)) return;
 
+    // During an active drag (move / resize / box / range / velocity) the
+    // native cursor owns the gesture - clear the overlay glyph rather than
+    // fight it.
+    if (dragMode != DragMode::None) { onMouseExitedForCursor(); return; }
+
     const auto grid = noteGridArea();
     const auto m    = session.editMode;
     const bool inContent = grid.contains (x, y);

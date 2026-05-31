@@ -583,6 +583,14 @@ MainComponent::MainComponent()
     // ~30 s of work. The write is atomic (temp + rename), so even a kill
     // during the timer fire never leaves a half-written autosave.
     startTimer (kAutosaveIntervalMs);
+
+    // Seed the dirty-compare baseline for the bootstrap "Untitled" session so
+    // edits to a brand-new, never-saved session are caught at quit instead of
+    // only after the first 30 s autosave (the quit check skips when this is
+    // empty). saveSessionTo / finishLoadingSessionFrom reseed it on Save As /
+    // load; an async startup-dialog load just overwrites this blank baseline.
+    if (lastSavedSessionJson.isEmpty())
+        lastSavedSessionJson = SessionSerializer::serialize (session);
 }
 
 MainComponent::~MainComponent()

@@ -66,6 +66,9 @@ private:
         // enables the master comp; capture both so the live session is fully
         // restored after a run.
         std::array<bool, ChannelStripParams::kNumBuses> track0BusAssign {};
+        // testBusSoloMutesDirect solos bus 0; capture every bus's solo so a
+        // user's pre-existing bus solo survives a self-test run.
+        std::array<bool, Session::kNumBuses> busSolo {};
         float masterFaderDb     = 0.0f;
         bool  masterTapeEnabled = false;
         bool  masterTapeHQ      = false;

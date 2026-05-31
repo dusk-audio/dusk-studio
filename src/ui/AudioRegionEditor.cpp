@@ -1042,7 +1042,16 @@ void AudioRegionEditor::pushCursorPosition (int x, int y)
                                                    getHeight() - kIconRowHeight - kRulerHeight - kStatusBarH - kScrollBarH);
     const auto m = session.editMode;
     const bool inContent = waveArea.contains (x, y);
-    const bool wantsGlyph = inContent
+    // Over a fade / trim / gain handle the native resize cursor wins (the same
+    // hotspots cursorForPoint resolves first); don't push the overlay glyph
+    // there or both would show at once.
+    const bool overHandle =
+           fadeInHandleRect  (waveArea).contains (x, y)
+        || fadeOutHandleRect (waveArea).contains (x, y)
+        || trimStartRect     (waveArea).contains (x, y)
+        || trimEndRect       (waveArea).contains (x, y)
+        || (inContent && std::abs (y - gainLineY (waveArea)) <= 4);
+    const bool wantsGlyph = inContent && ! overHandle
                            && (m == EditMode::Grab || m == EditMode::Cut || m == EditMode::Draw);
 
     // In Cut mode the dashed cut-line + scissor variant only fires

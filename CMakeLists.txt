@@ -384,6 +384,16 @@ endif()
 # ON = always require, OFF = never require (deliberate ASIO-less dev build).
 set(DUSKSTUDIO_REQUIRE_ASIO "" CACHE STRING
     "Require the ASIO SDK on Windows: ON / OFF / empty=auto (release fails closed)")
+# Validate up front: only "", ON, OFF are meaningful. Without this, a typo
+# like -DDUSKSTUDIO_REQUIRE_ASIO=yes falls through the "NOT ... OFF" branch and
+# is silently treated as "require ASIO". Fail loud instead.
+if(NOT DUSKSTUDIO_REQUIRE_ASIO STREQUAL ""
+   AND NOT DUSKSTUDIO_REQUIRE_ASIO STREQUAL "ON"
+   AND NOT DUSKSTUDIO_REQUIRE_ASIO STREQUAL "OFF")
+    message(FATAL_ERROR
+        "DUSKSTUDIO_REQUIRE_ASIO must be ON, OFF, or empty (auto); got "
+        "'${DUSKSTUDIO_REQUIRE_ASIO}'")
+endif()
 if(WIN32)
     set(_asio_required ${DUSKSTUDIO_REQUIRE_ASIO})
     # Decide whether a release-class build is possible with this generator.

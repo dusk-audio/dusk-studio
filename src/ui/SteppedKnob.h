@@ -51,10 +51,12 @@ inline void configureSteppedKnob (juce::Slider& s,
         const int i = juce::jlimit (0, labels.size() - 1, (int) std::lround (v));
         return labels[i];
     };
-    s.valueFromTextFunction = [labels] (const juce::String& t)
+    s.valueFromTextFunction = [labels, sp = &s] (const juce::String& t)
     {
         const int i = labels.indexOf (t.trim());
-        return (double) juce::jmax (0, i);
+        // Unknown / typo'd text: keep the current value instead of snapping to
+        // index 0, which would silently overwrite the parameter.
+        return i < 0 ? sp->getValue() : (double) i;
     };
     s.onValueChange = [sp = &s, values, store]
     {

@@ -95,13 +95,12 @@ private:
     juce::Slider     compMakeup    { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
     juce::Label      compRatLabel, compAtkLabel, compRelLabel, compMakLabel;
 
-    // Compact-mode pill labelled "TAPE". Left-click toggles tapeEnabled
-    // (so the timeline / compact view still has a way to bypass tape
-    // without expanding the master strip), right-click opens the
-    // TapeMachine editor modal — symmetric with the expanded-mode
-    // CompHeaderButton's left/right behaviour. The lit state is driven
-    // by the tapeEnabled atom (synced from the 30 Hz timer) so the
-    // editor's auto-arm is still reflected here.
+    // Compact-mode pill labelled "TAPE". Left-click opens the TapeMachine
+    // editor modal; right-click toggles tapeEnabled (so the timeline /
+    // compact view can bypass tape without expanding the master strip) -
+    // symmetric with the expanded-mode CompHeaderButton's left/right
+    // behaviour. The lit state is driven by the tapeEnabled atom (synced
+    // from the 30 Hz timer) so the editor's auto-arm is still reflected here.
     struct TapePillButton final : public juce::TextButton
     {
         using juce::TextButton::TextButton;

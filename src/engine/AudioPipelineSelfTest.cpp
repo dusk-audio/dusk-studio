@@ -55,6 +55,8 @@ AudioPipelineSelfTest::SavedState AudioPipelineSelfTest::saveState() const
     for (int b = 0; b < ChannelStripParams::kNumBuses; ++b)
         s.track0BusAssign[(size_t) b] =
             session.track (0).strip.busAssign[(size_t) b].load (std::memory_order_relaxed);
+    for (int b = 0; b < Session::kNumBuses; ++b)
+        s.busSolo[(size_t) b] = session.bus (b).strip.solo.load (std::memory_order_relaxed);
     s.masterFaderDb     = session.master().faderDb.load (std::memory_order_relaxed);
     s.masterTapeEnabled = session.master().tapeEnabled.load (std::memory_order_relaxed);
     s.masterTapeHQ      = session.master().tapeHQ.load (std::memory_order_relaxed);
@@ -85,6 +87,8 @@ void AudioPipelineSelfTest::restoreState (const SavedState& s)
     for (int b = 0; b < ChannelStripParams::kNumBuses; ++b)
         session.track (0).strip.busAssign[(size_t) b].store (
             s.track0BusAssign[(size_t) b], std::memory_order_relaxed);
+    for (int b = 0; b < Session::kNumBuses; ++b)
+        session.bus (b).strip.solo.store (s.busSolo[(size_t) b], std::memory_order_relaxed);
     session.master().faderDb.store     (s.masterFaderDb,     std::memory_order_relaxed);
     session.master().tapeEnabled.store (s.masterTapeEnabled, std::memory_order_relaxed);
     session.master().tapeHQ.store      (s.masterTapeHQ,      std::memory_order_relaxed);
@@ -129,11 +133,13 @@ int AudioPipelineSelfTest::prepareCleanState()
         session.track (t).inputMonitor.store (false, std::memory_order_relaxed);
     }
 
-    // Master: unity fader, tape off (so we test pure master fader; tape
-    // can be tested separately later).
+    // Master: unity fader, tape + comp off (so we test pure master fader;
+    // resetting comp stops testMasterCompNoNoiseFloor's compEnabled=true from
+    // leaking into every later test and skewing their peak measurements).
     session.master().faderDb.store     (0.0f,  std::memory_order_relaxed);
     session.master().tapeEnabled.store (false, std::memory_order_relaxed);
     session.master().tapeHQ.store      (false, std::memory_order_relaxed);
+    session.master().compEnabled.store (false, std::memory_order_relaxed);
 
     // Bulk-write path bypassed the counter-aware setters; resync.
     session.recomputeRtCounters();

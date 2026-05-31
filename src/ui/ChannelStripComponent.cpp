@@ -2726,7 +2726,10 @@ public:
             if (! lbl.isBeingEdited() && lbl.getText (false) != laneName)
                 lbl.setText (laneName, juce::dontSendNotification);
 
-            const float dB    = track.strip.auxSendDb[(size_t) i]
+            // Live value (lane in Read/Touch, setpoint in Off) so the compact
+            // popup's text + knob outline match what's actually being sent,
+            // not the stale setpoint, during automation / MIDI-driven moves.
+            const float dB    = track.strip.liveAuxSendDb[(size_t) i]
                                     .load (std::memory_order_relaxed);
             const bool  isPre = track.strip.auxSendPreFader[(size_t) i]
                                     .load (std::memory_order_relaxed);

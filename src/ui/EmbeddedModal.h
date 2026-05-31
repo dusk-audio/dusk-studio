@@ -380,6 +380,10 @@ private:
                         child->setVisible (false);
                     hiddenForModal_.add (juce::Component::SafePointer<juce::Component> (child));
                 }
+                // Tagged editor: its whole subtree hides with it, so don't
+                // recurse - a nested tagged editor would collect a redundant
+                // hide token and unbalance the reference count.
+                continue;
             }
             walkHidePluginEditors (*child);
         }
