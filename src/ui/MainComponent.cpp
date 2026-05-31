@@ -7,6 +7,8 @@
 #include "AuxView.h"
 #include "BounceDialog.h"
 #include "PluginScanModal.h"
+#include "DuskContextMenu.h"
+#include "../session/MidiBindings.h"
 #include "ConsoleView.h"
 #include "CursorOverlay.h"
 #include "DimOverlay.h"
@@ -513,6 +515,23 @@ MainComponent::MainComponent()
     // here on close so transport-key hotkeys (spacebar, R) keep
     // working without the user needing to click the canvas first.
     EmbeddedModal::focusRestoreTarget() = this;
+
+    // Route the MIDI-Learn right-click menu through our in-window renderer
+    // instead of a native juce::PopupMenu (which flashes / mis-dismisses on
+    // X11 + Wayland). Set once; lives for the app's lifetime.
+    midilearn::setLearnMenuShowHook ([] (const juce::PopupMenu& menu, juce::Component& target)
+    {
+        duskstudio::showContextMenu (menu, target);
+    });
+
+    // Surface a "can't record" reason (no armed track / no device) as an
+    // in-window alert instead of only logging it to stderr. Covers every
+    // record trigger — on-screen Record, the R key, and the MCU Record
+    // button — since they all funnel through engine.record().
+    engine.setRecordBlockedSink ([this] (juce::String msg)
+    {
+        showDuskAlert (*this, "Cannot record", msg);
+    });
 
     // Defer the startup dialog to the next message-loop tick so the main
     // window paints first - otherwise the dialog can pop up over a blank
@@ -2183,6 +2202,15 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     }
     const auto tAfterPlugins = juce::Time::getMillisecondCounterHiRes();
     engine.consumeTransportStateAfterLoad();
+
+    // Re-resolve MIDI input routing from the just-loaded session. The load
+    // restores the saved identifiers (MCU input, sync source, per-track MIDI
+    // in) but NOT the runtime index each maps to, so without this the MCU
+    // surface (and track MIDI inputs) stay dead until the user re-picks the
+    // device in Settings. refreshMidiInputs walks the live device list and
+    // re-resolves every identifier → index. Same path the Settings rescan +
+    // hot-plug use; safe on the message thread.
+    engine.refreshMidiInputs();
 
     // Open MIDI output ports for any tracks the loaded session had
     // routed. Done here (not in the engine constructor) so startup

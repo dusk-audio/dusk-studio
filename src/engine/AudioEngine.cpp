@@ -541,6 +541,9 @@ void AudioEngine::record()
     {
         std::fprintf (stderr, "[Dusk Studio/AudioEngine] record(): no track is armed; "
                               "click ARM on the strip you want to record into.\n");
+        if (onRecordBlocked_)
+            onRecordBlocked_ ("No track is armed.\n\nClick ARM on the strip you want "
+                              "to record into, then press Record again.");
         return;
     }
 
@@ -549,6 +552,9 @@ void AudioEngine::record()
     {
         std::fprintf (stderr, "[Dusk Studio/AudioEngine] record(): no audio device open "
                               "(sample rate is 0); recording cannot start.\n");
+        if (onRecordBlocked_)
+            onRecordBlocked_ ("No audio device is open.\n\nOpen Settings \xE2\x86\x92 Audio "
+                              "and select a device before recording.");
         return;
     }
 

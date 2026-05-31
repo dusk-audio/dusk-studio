@@ -3441,7 +3441,7 @@ void ChannelStripComponent::mouseDown (const juce::MouseEvent& e)
                 const bool isPre = track.strip.auxSendPreFader[(size_t) i]
                                        .load (std::memory_order_relaxed);
 
-                // SafePointer captures: showMenuAsync's lambdas can fire
+                // SafePointer captures: the menu's item lambdas can fire
                 // after the strip is destroyed (e.g. mode flip rebuilds
                 // ConsoleView with the popup still open). Capture a
                 // SafePointer<ChannelStripComponent> instead of raw
@@ -3498,8 +3498,7 @@ void ChannelStripComponent::mouseDown (const juce::MouseEvent& e)
                                                  packed);
                 });
 
-                m.showMenuAsync (juce::PopupMenu::Options()
-                                    .withTargetComponent (*auxKnobs[(size_t) i]));
+                duskstudio::showContextMenu (m, *auxKnobs[(size_t) i]);
                 return;
             }
         }

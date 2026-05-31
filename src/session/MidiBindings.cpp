@@ -223,6 +223,14 @@ namespace midilearn
 {
 namespace
 {
+// Set by the UI layer (setLearnMenuShowHook) to render the learn menu
+// in-window. Null until then → showLearnMenu uses the native popup.
+LearnMenuShowFn& learnMenuShowHook()
+{
+    static LearnMenuShowFn hook;
+    return hook;
+}
+
 juce::String describeBinding (const MidiBinding& b)
 {
     if (b.trigger == MidiBindingTrigger::MmcCommand)
@@ -432,7 +440,18 @@ void showLearnMenu (juce::Component& target,
     addExistingControls (existingAbsolute, kind,       index,       " (this track)");
     addExistingControls (existingBanked,   bankedKind, bankedIndex, " (banked)");
     (void) existing;   // kept for symmetry / future "any binding?" callers
-    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&target));
+
+    // Prefer the UI-provided in-window renderer; fall back to the native
+    // popup only if the hook was never installed.
+    if (auto& hook = learnMenuShowHook())
+        hook (m, target);
+    else
+        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&target));
+}
+
+void setLearnMenuShowHook (LearnMenuShowFn fn)
+{
+    learnMenuShowHook() = std::move (fn);
 }
 } // namespace midilearn
 

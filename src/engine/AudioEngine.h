@@ -249,6 +249,16 @@ public:
         onDeviceLostAlert_ = std::move (sink);
     }
 
+    // Fired when record() refuses to start (no track armed, or no audio
+    // device open) so the UI can show an in-window alert instead of the
+    // failure only reaching stderr. Set at startup (MainComponent), nullable.
+    // Message-thread-only — record() is never called from the audio thread.
+    using RecordBlockedSink = std::function<void (juce::String)>;
+    void setRecordBlockedSink (RecordBlockedSink sink) noexcept
+    {
+        onRecordBlocked_ = std::move (sink);
+    }
+
     // juce::ChangeListener — fires on the message thread when
     // AudioDeviceManager's device list / current device changes.
     // We use it to detect hot-unplug (current device became nullptr
@@ -383,6 +393,7 @@ private:
     std::atomic<bool>   hadLiveDevice_    { false };
 
     DeviceLostAlertSink onDeviceLostAlert_;
+    RecordBlockedSink   onRecordBlocked_;
 
     // First sample committed to disk. Under count-in the playhead is
     // rolled back before this; writes are skipped until it catches up.
