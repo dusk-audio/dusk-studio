@@ -38,6 +38,12 @@ public:
     // MainComponent after session load / undo.
     void syncFromSession();
 
+    // Hide modes that aren't meaningful in the host editor. Default
+    // shows all five; PianoRoll calls with { Grab, Draw } so the
+    // pencil is the obvious note-drawing tool and Range / Cut / Grid
+    // (no-op on the note grid) don't clutter the toolbar.
+    void setVisibleModes (juce::Array<EditMode> modes);
+
 private:
     // Compact rectangular icon button that paints a glyph for an
     // EditMode. Active state shown via a lit-up rim, mirroring

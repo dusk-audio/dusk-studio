@@ -203,6 +203,14 @@ private:
     EmbeddedModal recoveryModal;
     EmbeddedModal virtualKeyboardModal;
     EmbeddedModal importTargetModal;
+    EmbeddedModal scanModal;
+
+    // Scan-on-startup runs asynchronously behind a progress modal. Triggered
+    // from the first resized() (the window is sized + on screen by then),
+    // guarded so it fires exactly once.
+    bool startupScanTriggered = false;
+    void maybeStartStartupPluginScan();
+
     void toggleVirtualKeyboard();
 
     // True once the audio callback is removed for shutdown — makes
@@ -229,6 +237,11 @@ private:
     std::unique_ptr<class StartupDialog> startupDialog;
     std::unique_ptr<class DimOverlay>    startupDim;
     void dismissStartupDialog();
+
+    // Cross-OS cursor overlay — paints Grab / Cut / Draw glyphs at the
+    // mouse position via a 60 Hz JUCE timer, bypassing the platform
+    // cursor pipeline entirely. See CursorOverlay.h for the design.
+    std::unique_ptr<class CursorOverlay> cursorOverlay;
 
     // Constructed on demand on MidiRegion click; dismissed by clicking
     // backdrop or Esc. The roll is the single visible exception to
@@ -258,5 +271,11 @@ private:
     std::unique_ptr<class juce::Timer>   tunerPoller;
     void toggleTuner();
     void closeTuner();
+
+    // Snapshot of the recent-sessions list captured when the File menu
+    // opens, so menuItemSelected can resolve an "Open Recent" pick by
+    // index without re-reading the file (and risking a different order
+    // if a save fired between menu-open and click).
+    juce::Array<juce::File> menuRecentSessions;
 };
 } // namespace duskstudio

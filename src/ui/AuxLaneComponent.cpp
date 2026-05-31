@@ -390,14 +390,22 @@ void AuxLaneComponent::timerCallback()
                                 lane.params.returnLevelDb.load (std::memory_order_relaxed));
     }
 
-    // Mute visual sync — poll liveMute regardless of automation mode so
-    // a MIDI-bound mute toggle (or automation in any mode) updates the
-    // button. The atom mirrors the manual setpoint in Off/Write so this
-    // is idempotent in all modes.
+    // Mute visual sync — read the manual atom in Off / Write so we
+    // don't race against AudioEngine's 1-block-stale liveMute (which
+    // used to re-toggle the button right after the user clicked,
+    // making mute look stuck). Read / Touch still read the live atom
+    // since the engine drives mute from the automation lane there.
+    // Mirrors the track-strip fix in ChannelStripComponent.
     {
-        const bool live = lane.params.liveMute.load (std::memory_order_relaxed);
-        if (muteButton.getToggleState() != live)
-            muteButton.setToggleState (live, juce::dontSendNotification);
+        const int amode = lane.params.automationMode.load (std::memory_order_relaxed);
+        const bool laneDrives =
+               amode == (int) AutomationMode::Read
+            || amode == (int) AutomationMode::Touch;
+        const bool effective = laneDrives
+            ? lane.params.liveMute.load (std::memory_order_relaxed)
+            : lane.params.mute    .load (std::memory_order_relaxed);
+        if (muteButton.getToggleState() != effective)
+            muteButton.setToggleState (effective, juce::dontSendNotification);
     }
 }
 
@@ -695,6 +703,12 @@ void AuxLaneComponent::attachEditorForSlot (int slotIdx)
     auto& ui = slots[(size_t) slotIdx];
     if (ui.editor == nullptr) return;
     if (ui.editor->getParentComponent() == this) return;
+
+    // Tag so EmbeddedModal::show can find + hide this plugin editor
+    // for the lifetime of any modal. Plugin editors (OOP / XEmbed / GL)
+    // sometimes render above JUCE's modal layer and steal click input;
+    // setVisible(false) for the modal's duration forces them under.
+    ui.editor->getProperties().set ("dusk_pluginEditor", true);
 
     addAndMakeVisible (*ui.editor);
     layoutEditorForSlot (slotIdx);

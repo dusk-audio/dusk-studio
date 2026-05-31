@@ -27,6 +27,17 @@
 #endif
 #include "ui/PlatformWindowing.h"
 
+// Embedded brand icon — wired in CMakeLists.txt via juce_add_binary_data.
+// Linux relies on this for runtime _NET_WM_ICON since JUCE 8 has no
+// getApplicationIcon hook; macOS / Windows get it from the bundled
+// .icns / PE .ico but setIcon is harmless there.
+#if __has_include("BinaryData.h")
+ #include "BinaryData.h"
+ #define DUSKSTUDIO_HAS_BINARY_ICON 1
+#else
+ #define DUSKSTUDIO_HAS_BINARY_ICON 0
+#endif
+
 namespace duskstudio
 {
 class DuskStudioApp::MainWindow final : public juce::DocumentWindow
@@ -105,6 +116,17 @@ public:
         addToDesktop (getDesktopWindowStyleFlags());
        #if defined(__linux__)
         duskstudio::platform::clearPreferX11ForNativeWindow();
+       #endif
+
+        // Brand icon on the live peer. macOS / Windows already pick this
+        // up from the bundled .icns / PE .ico, but JUCE 8 does NOT auto-
+        // set _NET_WM_ICON on Linux so the WM / taskbar / Alt-Tab show a
+        // default placeholder unless we call setIcon explicitly.
+       #if DUSKSTUDIO_HAS_BINARY_ICON
+        const auto brandIcon = juce::ImageCache::getFromMemory (
+            BinaryData::dsicon_png, BinaryData::dsicon_pngSize);
+        if (brandIcon.isValid())
+            setIcon (brandIcon);
        #endif
 
         // Hide explicitly so the deferred setVisible(true) below gets

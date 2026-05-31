@@ -1,5 +1,6 @@
 #include "PianoRollComponent.h"
 #include "DuskContextMenu.h"
+#include "EditCursors.h"
 #include "EditModeToolbar.h"
 #include "EmbeddedModal.h"
 #include "../engine/AudioEngine.h"
@@ -394,9 +395,13 @@ PianoRollComponent::PianoRollComponent (Session& s, AudioEngine& e, int t, int r
     zoomFitButton.onClick = [this] { zoomFit(); };
 
     // Edit-mode palette (shared with AudioRegionEditor + TapeStrip).
-    // PianoRoll uses Grab vs Draw as the meaningful distinction for
-    // empty-grid clicks; Range / Cut / Grid are inert here.
+    // PianoRoll only supports Grab (select / box-select) and Draw
+    // (the pencil — sole note-creation tool); Range / Cut / Grid are
+    // inert here so we hide them from the palette to keep the pencil
+    // discoverable as THE drawing tool.
     editModeToolbar = std::make_unique<EditModeToolbar> (engine);
+    editModeToolbar->setVisibleModes ({ EditMode::Grab, EditMode::Draw });
+    editModeToolbar->onEditModeChanged = [this] { syncEditModeToolbar(); };
     addAndMakeVisible (editModeToolbar.get());
 
     addAndMakeVisible (toggleCcButton);
@@ -423,6 +428,11 @@ PianoRollComponent::PianoRollComponent (Session& s, AudioEngine& e, int t, int r
     // the app. Runs unconditionally; the timer body is a no-op when
     // the transport hasn't moved.
     startTimerHz (30);
+
+    // Force default-cursored child labels / buttons to defer to this
+    // editor's stored cursor — see EditCursors.h comment for the
+    // JUCE-default-NormalCursor-shadows-parent bug.
+    inheritCursorOnDescendants (*this);
 }
 
 PianoRollComponent::~PianoRollComponent()
@@ -485,6 +495,7 @@ void PianoRollComponent::resized()
                                      juce::jmax (1, getWidth() - kKeyboardWidth),
                                      kScrollBarH);
     syncScrollBarRange();
+    inheritCursorOnDescendants (*this);
 }
 
 void PianoRollComponent::syncScrollBarRange()
@@ -565,6 +576,31 @@ void PianoRollComponent::layoutIconRow (juce::Rectangle<int> area)
 void PianoRollComponent::syncEditModeToolbar()
 {
     if (editModeToolbar != nullptr) editModeToolbar->syncFromSession();
+    // Only paint the edit-mode cursor when the pointer is actually inside
+    // the note grid; chrome (toolbar / header / keyboard / velocity & CC
+    // strips / scrollbar / status bar) keeps the normal arrow. Piano roll
+    // only implements Grab (select / move) and Draw (pencil) — Range /
+    // Cut / Grid have no piano-roll click handler, so leave their cursor
+    // at the normal arrow instead of advertising an action that won't
+    // happen. Mirrors the equivalent guard in mouseMove.
+    const auto mode = session.editMode;
+    const auto p    = getMouseXYRelative();
+    if ((mode == EditMode::Grab || mode == EditMode::Draw)
+        && noteGridArea().contains (p))
+        // CursorOverlay paints the actual glyph; hide the native cursor.
+        setMouseCursor (juce::MouseCursor::NoCursor);
+    else
+        setMouseCursor (juce::MouseCursor::NormalCursor);
+}
+
+juce::Rectangle<int> PianoRollComponent::noteGridArea() const noexcept
+{
+    const int topBandH = kToolbarHeight + kHeaderHeight;
+    const int gridH    = juce::jmax (0,
+                              getHeight() - topBandH - velocityStripH - ccStripH
+                                - kStatusBarH - kScrollBarH);
+    const int gridW    = juce::jmax (0, getWidth() - kKeyboardWidth);
+    return { kKeyboardWidth, topBandH, gridW, gridH };
 }
 
 void PianoRollComponent::layoutStatusBar (juce::Rectangle<int> area)
@@ -2273,6 +2309,32 @@ void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
         return;
     }
 
+    // Range mode: empty-grid click starts a time-range selection,
+    // reusing the same range bookkeeping the ruler-click path at the
+    // top of this function already drives. Without this branch a
+    // Range-mode click on the note grid was falling through to the
+    // note-creation block below — drawing a note on every click.
+    if (session.editMode == EditMode::Range)
+    {
+        rangeStartTick = juce::jmax<juce::int64> (0, tickForX (e.x));
+        rangeEndTick   = rangeStartTick;
+        rangeActive    = false;
+        dragMode       = DragMode::RangeSelect;
+        repaint();
+        return;
+    }
+
+    // Cut / Grid have no piano-roll click handler (the class-level
+    // comment at line 398-399 documents this). Eat the click so the
+    // note-creation fall-through below doesn't accidentally drop a
+    // note when the user just wanted to pick a mode and the mouse
+    // happens to be over the grid.
+    if (session.editMode == EditMode::Cut
+        || session.editMode == EditMode::Grid)
+    {
+        return;
+    }
+
     MidiNote n;
     n.channel = 1;
     n.noteNumber = noteNumberForY (e.y);
@@ -2310,6 +2372,8 @@ void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
 
 void PianoRollComponent::mouseDrag (const juce::MouseEvent& e)
 {
+    pushCursorPosition (e.x, e.y);
+
     auto* r = region();
     if (r == nullptr) return;
 
@@ -2471,8 +2535,31 @@ void PianoRollComponent::mouseDrag (const juce::MouseEvent& e)
     }
 }
 
+void PianoRollComponent::pushCursorPosition (int x, int y)
+{
+    if (! (onMouseMovedForCursor && onMouseExitedForCursor)) return;
+
+    const auto grid = noteGridArea();
+    const auto m    = session.editMode;
+    const bool inContent = grid.contains (x, y);
+    // Only Grab + Draw get a glyph on the piano-roll grid. Range / Cut
+    // / Grid stay on the platform cursor.
+    const bool wantsGlyph = inContent && (m == EditMode::Grab || m == EditMode::Draw);
+    if (wantsGlyph) onMouseMovedForCursor (*this, juce::Point<int> (x, y), m, {});
+    else            onMouseExitedForCursor();
+}
+
+void PianoRollComponent::mouseExit (const juce::MouseEvent&)
+{
+    if (onMouseExitedForCursor) onMouseExitedForCursor();
+}
+
 void PianoRollComponent::mouseMove (const juce::MouseEvent& e)
 {
+    pushCursorPosition (e.x, e.y);
+
+    const auto mode = session.editMode;
+
     // Resize-handle hover feedback for the velocity / cc lane top edges.
     // The handle is the kStripResizeGrabPx-tall strip above each lane.
     const int ccTop  = getHeight() - kStatusBarH - ccStripH;
@@ -2491,6 +2578,17 @@ void PianoRollComponent::mouseMove (const juce::MouseEvent& e)
         }
     }
 
+    // Chrome (keyboard column / ruler / velocity strip / cc strip /
+    // status bar) keeps the normal arrow regardless of edit mode so
+    // mode-flips don't show a hand / scissors over UI that can't act
+    // on a grid click.
+    const auto grid = noteGridArea();
+    if (! grid.contains (e.x, e.y))
+    {
+        setMouseCursor (juce::MouseCursor::NormalCursor);
+        return;
+    }
+
     // Cursor feedback so the user can tell when Alt-on-note will do
     // something different. Without this, the only signal is the
     // resulting drag - too late.
@@ -2498,7 +2596,15 @@ void PianoRollComponent::mouseMove (const juce::MouseEvent& e)
     const int hit = hitTestNote (e.x, e.y, onEdge);
     if (hit < 0)
     {
-        setMouseCursor (juce::MouseCursor::NormalCursor);
+        // Empty grid: Grab = hand (selection / box-select); Draw =
+        // pencil (next click creates a note). CursorOverlay paints
+        // both glyphs; hide the native cursor so we don't show two.
+        // Other modes are inert on the piano-roll grid — show the
+        // normal arrow.
+        if (mode == EditMode::Grab || mode == EditMode::Draw)
+            setMouseCursor (juce::MouseCursor::NoCursor);
+        else
+            setMouseCursor (juce::MouseCursor::NormalCursor);
         return;
     }
     if (e.mods.isAltDown() && ! onEdge)

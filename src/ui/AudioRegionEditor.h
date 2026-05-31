@@ -41,6 +41,7 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
     void mouseMove      (const juce::MouseEvent&) override;
+    void mouseExit      (const juce::MouseEvent&) override;
     void mouseDown      (const juce::MouseEvent&) override;
     void mouseDrag      (const juce::MouseEvent&) override;
     void mouseUp        (const juce::MouseEvent&) override;
@@ -193,6 +194,33 @@ public:
     // / pencil / crosshair / I-beam). Called on mode change + as the
     // mouseMove fallback when no handle is under the pointer.
     void updateModeCursor();
+
+    // CursorOverlay sink — MainComponent wires this so the editor can
+    // push its local mouse position into the shared overlay (instead
+    // of the overlay polling Desktop::getMousePosition, which is
+    // broken on Wayland).
+    // The juce::Range<int> argument carries the cut-line Y span (in
+    // editor-local coords) used by CursorOverlay's half-scissor variant
+    // in Cut mode. Empty range = no cut line, full-scissor fallback.
+    std::function<void (juce::Component&, juce::Point<int>, EditMode,
+                          juce::Range<int>)> onMouseMovedForCursor;
+    std::function<void()> onMouseExitedForCursor;
+
+    // Push (x, y) into the shared CursorOverlay if it's inside the
+    // waveArea and the active mode wants a glyph (Grab / Cut / Draw).
+    // Called from BOTH mouseMove and mouseDrag — drag fires only
+    // mouseDrag (not mouseMove), so without this the overlay glyph
+    // freezes at the click point while the region drags out from
+    // underneath it.
+    void pushCursorPosition (int x, int y);
+
+    // Resolve the cursor for a given pointer position by consulting the
+    // local hotspot rectangles (fade / trim / gain) FIRST, then falling
+    // back to the edit-mode cursor when inside the waveform, and the
+    // normal arrow elsewhere. Shared between mouseMove and
+    // updateModeCursor so toolbar-driven mode flips can't overwrite a
+    // resize cursor sitting on a handle.
+    juce::MouseCursor cursorForPoint (int x, int y) const;
 
     // Two-way: fresh overlap creates/widens auto-fades, vanishing
     // overlap retracts a previously-auto fade to zero. User-pinned

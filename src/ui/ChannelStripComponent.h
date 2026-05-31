@@ -157,6 +157,13 @@ private:
     // knob grid.
     bool usesFaderThresholdLayout() const { return true; }
 
+    // Refresh the standalone dB readout from the fader slider's current value.
+    // Called from faderSlider.onValueChange (user drag) AND from the 30 Hz
+    // timer after it pulls an external change (MIDI binding / MCU / automation)
+    // into the slider with dontSendNotification — which skips onValueChange,
+    // so the label must be refreshed explicitly or it freezes.
+    void refreshFaderValueLabel();
+
     std::array<std::unique_ptr<juce::TextButton>, ChannelStripParams::kNumBuses> busButtons;
 
     juce::Slider panKnob   { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
@@ -191,6 +198,10 @@ private:
     float displayedLiveFaderDb = 0.0f;
     float displayedLivePan = 0.0f;
     std::array<float, ChannelStripParams::kNumAuxSends> displayedLiveAuxSendDb {};
+    // Tracks the last preFader state we rendered so an external flip
+    // (MIDI binding TrackAuxSendPrePost, undo, session reload) triggers
+    // a refresh of the label / outline ring on the strip's timer tick.
+    std::array<bool,  ChannelStripParams::kNumAuxSends> displayedAuxPreFader {};
     juce::TextButton armButton     { "ARM" };
     juce::TextButton monitorButton { "IN"  };
     juce::TextButton printButton   { "PRINT" };
@@ -208,6 +219,17 @@ private:
     juce::TextButton ioConfigButton;
     void openIoConfigPopup();
     void refreshIoConfigButton();
+    // PRINT only commits post-effects audio. MIDI tracks render audio
+    // at playback time, not at capture, so PRINT is a no-op. Grey out
+    // the button + swap the tooltip in MIDI mode. Called from the ctor
+    // and from applyMode().
+    void refreshPrintButtonForMode();
+
+    // Re-renders one aux send's value label (e.g. after a pre/post
+    // toggle from the right-click menu). Reads the current dB +
+    // pre-fader bool from the session atoms and pushes the formatted
+    // text into auxKnobLabels[auxIdx].
+    void refreshAuxSendLabel (int auxIdx);
     juce::Component::SafePointer<juce::CallOutBox> activeIoBox;
     // Repainted by the 30 Hz timer when engine sets track.midiActivity
     // (clear-on-read).
@@ -241,6 +263,13 @@ private:
     // Heavy: shows current mode's knobs + hides others. Only on real
     // mode change or visibility flip — NOT from the 30 Hz timer.
     void refreshCompKnobVisibility();
+
+    // Last compMode value the UI's knob-visibility filter was applied
+    // for. The 30 Hz tick compares against the atom and calls
+    // refreshCompKnobVisibility() ONLY when they differ — catches
+    // session-load mode changes (which previously left every mode's
+    // knobs overlapping in the comp section).
+    int lastAppliedCompMode = -1;
     void showCompModeMenu();
     void showEqTypeMenu();
     void armCompOnUserEdit();

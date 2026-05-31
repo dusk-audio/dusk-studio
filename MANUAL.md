@@ -399,7 +399,7 @@ Open **Settings → Audio…** to choose your audio device. The panel is divided
 
 ### Audio
 
-- **Device**: lists every backend driver Dusk Studio detected. On Linux, PipeWire and JACK appear as "JACK"; ALSA devices appear separately.
+- **Device**: lists every backend driver Dusk Studio detected. On Linux, PipeWire and JACK appear as "JACK"; ALSA devices appear separately. On Windows, ASIO is preferred and selected by default when an ASIO driver is present; if none is installed, Dusk Studio falls back to "Windows Audio (Exclusive Mode)" for low latency, then shared "Windows Audio", then "DirectSound". Install your interface's ASIO driver (or ASIO4ALL) for best latency.
 - **Sample rate**: any rate the device supports. 44.1 kHz, 48 kHz, 88.2 kHz, 96 kHz are common.
 - **Block size**: smaller blocks give lower latency but cost more CPU per sample. 256 or 512 samples is a good starting point.
 - **Periods (Linux/ALSA only)**: how many buffers the ALSA driver keeps in flight. Two is the lowest-latency safe value; three or more is more robust on a busy machine.
@@ -1314,7 +1314,7 @@ Plugin scan results are cached in:
 - macOS: `~/Library/Application Support/Dusk Studio/plugin-cache.xml`
 - Windows: `%APPDATA%\Dusk Studio\plugin-cache.xml`
 
-To re-scan on every launch, enable **Settings → General → Scan plugins on startup**.
+To re-scan on every launch, enable **Settings → General → Scan plugins on startup**. The startup scan runs in the background behind a progress window (it shows the plugin currently being scanned and a progress bar), so the app stays responsive instead of appearing to hang while a large collection is scanned.
 
 ## Loading a plugin
 
@@ -1336,7 +1336,9 @@ At the bottom of the picker are alternative buttons:
 
 ## Opening the editor
 
-Click the loaded plugin's slot to open its editor. The editor appears as a centred modal with a dimmed backdrop. Press **Esc** or click outside to dismiss. There is no floating-window option in v1.
+Click the loaded plugin's slot to open its editor. The editor appears as a centred modal with a dimmed backdrop; press **Esc** or click outside to dismiss. There is no user option to detach it into a floating window.
+
+This holds on all platforms, including the macOS out-of-process sandbox. Rather than reparenting the sandbox child's native window into the main window (cross-process NSView embedding, which Dusk Studio deliberately does not use), macOS hosts the editor **in-process** against a lightweight "shell" instance of the plugin while the plugin's DSP keeps running in the sandbox child; knob moves are mirrored between the shell editor and the running child in both directions. If the plugin cannot be instantiated in-process for editing (its file has moved, or it refuses a second instance), the editor falls back to a floating window owned by the sandbox child — that fallback window is not dimmed by other modals and is closed from its own controls.
 
 ## Out-of-process sandboxing
 
@@ -1346,7 +1348,7 @@ OOP is supported on:
 
 - **Linux**: always.
 - **Windows**: always.
-- **macOS**: requires macOS 14.4 or later.
+- **macOS**: requires macOS 14.4 or later. The plugin **editor** is hosted in-process via a shell instance and embeds as a centred modal like the other platforms — see *Opening the editor* above.
 
 OOP is enabled per-session by setting the environment variable `DUSKSTUDIO_USE_OOP_PLUGINS=1` before launching Dusk Studio. A future release will expose this as a per-plugin or per-session UI toggle.
 

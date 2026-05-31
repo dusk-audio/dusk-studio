@@ -5,8 +5,121 @@
   #include "multisample/DuskMultisamplePluginFormat.h"
 #endif
 
+#include "ipc/PluginScanProtocol.h"
+
 namespace duskstudio
 {
+#if DUSKSTUDIO_HAS_OOP_PLUGINS
+namespace
+{
+// A plugin can take a few seconds to instantiate on a cold cache; give a
+// generous ceiling and treat anything past it as a hang.
+constexpr int kScanTimeoutMs = 30000;
+
+// Routes third-party-binary plugin discovery through the dusk-studio-plugin-host
+// child so a plugin that segfaults or hangs in findAllTypesForFile takes down
+// only the child, not the app. Installed on knownPluginList for the duration
+// of a scan; PluginDirectoryScanner -> KnownPluginList::scanAndAddFile calls
+// findPluginTypesFor here for each candidate file.
+class OutOfProcessPluginScanner final : public juce::KnownPluginList::CustomScanner
+{
+public:
+    OutOfProcessPluginScanner (juce::String hostExe, juce::KnownPluginList& list,
+                               const std::atomic<bool>* abortFlag)
+        : hostExecutable (std::move (hostExe)), knownList (list), abort (abortFlag) {}
+
+    bool findPluginTypesFor (juce::AudioPluginFormat& format,
+                             juce::OwnedArray<juce::PluginDescription>& result,
+                             const juce::String& fileOrIdentifier) override
+    {
+        // Native (in-house) formats are our own code and can't crash the host,
+        // so scan them in-process. Only third-party binary formats get sandboxed.
+        if (! isSandboxedFormat (format))
+        {
+            format.findAllTypesForFile (result, fileOrIdentifier);
+            return true;
+        }
+
+        juce::ChildProcess proc;
+        const juce::StringArray args { hostExecutable, "--scan",
+                                       format.getName(), fileOrIdentifier };
+
+        if (! proc.start (args, juce::ChildProcess::wantStdOut))
+        {
+            // Couldn't even spawn the sandbox — fall back to in-process rather
+            // than silently dropping a plugin the user has installed.
+            format.findAllTypesForFile (result, fileOrIdentifier);
+            return true;
+        }
+
+        juce::MemoryOutputStream captured;
+        char buf[8192];
+        // Wrap-safe elapsed check: unsigned subtraction is correct across a
+        // single getMillisecondCounter() wrap (every ~49 days of uptime), so
+        // compare the interval rather than an absolute deadline.
+        const juce::uint32 startMs = juce::Time::getMillisecondCounter();
+        bool aborted = false;
+
+        for (;;)
+        {
+            const int n = proc.readProcessOutput (buf, (int) sizeof buf);
+            if (n > 0) { captured.write (buf, (size_t) n); continue; }
+
+            if (! proc.isRunning())
+            {
+                int extra;
+                while ((extra = proc.readProcessOutput (buf, (int) sizeof buf)) > 0)
+                    captured.write (buf, (size_t) extra);
+                break;
+            }
+
+            // Cancel / app-shutdown: kill the child immediately rather than
+            // waiting out its timeout. Not a crash, so don't blacklist.
+            if (abort != nullptr && abort->load (std::memory_order_relaxed))
+            {
+                proc.kill();
+                aborted = true;
+                break;
+            }
+
+            if (juce::Time::getMillisecondCounter() - startMs >= (juce::uint32) kScanTimeoutMs)
+            {
+                proc.kill();
+                break;
+            }
+            juce::Thread::sleep (5);
+        }
+
+        if (aborted) return false;
+
+        const juce::String payload = scanproto::extractPayload (captured.toString());
+
+        if (payload.isEmpty())
+        {
+            // No clean payload => the child crashed or hung. Quarantine the
+            // file so the next scan skips it instead of re-crashing.
+            knownList.addToBlacklist (fileOrIdentifier);
+            return false;
+        }
+
+        scanproto::parsePayload (payload, result);
+        return ! result.isEmpty();
+    }
+
+private:
+    static bool isSandboxedFormat (const juce::AudioPluginFormat& f)
+    {
+        const auto n = f.getName();
+        return n == "VST3" || n == "LV2" || n == "AudioUnit" || n == "VST";
+    }
+
+    juce::String                 hostExecutable;
+    juce::KnownPluginList&        knownList;
+    const std::atomic<bool>*      abort;   // polled mid-file; null = never aborts
+};
+} // namespace
+#endif // DUSKSTUDIO_HAS_OOP_PLUGINS
+
 PluginManager::PluginManager()
 {
     // Registers the platform-default formats: VST3 + LV2 + AU on Linux/macOS.
@@ -38,6 +151,13 @@ juce::File PluginManager::getCacheFile() const
     return cfgDir.getChildFile ("plugin-cache.xml");
 }
 
+juce::File PluginManager::getDeadMansPedalFile() const
+{
+    const auto cache = getCacheFile();
+    if (cache == juce::File()) return {};
+    return cache.getSiblingFile ("plugin-scan-deadmanspedal.txt");
+}
+
 void PluginManager::loadCache()
 {
     const auto cache = getCacheFile();
@@ -55,12 +175,44 @@ void PluginManager::saveCache() const
 
 int PluginManager::scanInstalledPlugins()
 {
-    int added = 0;
-    juce::PropertiesFile::Options unusedDeadEntries;
-    juce::ignoreUnused (unusedDeadEntries);
+    return scanInstalledPlugins (nullptr, nullptr);
+}
 
-    for (auto* format : formatManager.getFormats())
+int PluginManager::scanInstalledPlugins (
+    std::function<bool (float, const juce::String&)> onProgress,
+    const std::atomic<bool>* abort)
+{
+    const auto deadMansPedalFile = getDeadMansPedalFile();
+
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS
+    // Sandbox third-party plugin discovery in the child process when the host
+    // binary is present. A plugin that crashes its scan kills only the child;
+    // we blacklist it and continue. Falls through to in-process scanning if
+    // the binary is missing (e.g. a stripped build).
+    const juce::File hostExe (getHostExecutablePath());
+    const bool sandboxScan = hostExe.existsAsFile();
+    if (sandboxScan)
+        knownPluginList.setCustomScanner (
+            std::make_unique<OutOfProcessPluginScanner> (hostExe.getFullPathName(),
+                                                         knownPluginList, abort));
+   #else
+    juce::ignoreUnused (abort);
+   #endif
+
+    // Quarantine anything a previous run was probing when it died: a file left
+    // in the dead-man's-pedal means the app itself crashed mid-scan on it.
+    if (deadMansPedalFile != juce::File())
+        juce::PluginDirectoryScanner::applyBlacklistingsFromDeadMansPedal (
+            knownPluginList, deadMansPedalFile);
+
+    int added = 0;
+    const auto& formats = formatManager.getFormats();
+    const int   numFormats = formats.size();
+    bool aborted = false;
+
+    for (int fi = 0; fi < numFormats && ! aborted; ++fi)
     {
+        auto* format = formats[fi];
         if (format == nullptr) continue;
 
         // Default search paths per format - JUCE pulls these from the OS
@@ -68,7 +220,6 @@ int PluginManager::scanInstalledPlugins()
         const auto searchPaths = format->getDefaultLocationsToSearch();
         if (searchPaths.getNumPaths() == 0) continue;
 
-        juce::File deadMansPedalFile;  // empty = no crash-recovery shielding
         juce::PluginDirectoryScanner scanner (knownPluginList, *format,
                                                 searchPaths, /*recursive*/ true,
                                                 deadMansPedalFile,
@@ -80,9 +231,34 @@ int PluginManager::scanInstalledPlugins()
         const int prevCount = knownPluginList.getNumTypes();
         while (scanner.scanNextFile (/*dontRescanIfAlreadyInList*/ true,
                                        pluginBeingScanned))
-            ;
+        {
+            if (onProgress != nullptr)
+            {
+                // Overall fraction: completed formats + this format's own
+                // 0..1 progress, divided by the format count.
+                const float frac = numFormats > 0
+                    ? ((float) fi + scanner.getProgress()) / (float) numFormats
+                    : 0.0f;
+                if (! onProgress (frac, pluginBeingScanned)) { aborted = true; break; }
+            }
+            if (abort != nullptr && abort->load (std::memory_order_relaxed))
+            {
+                aborted = true;
+                break;
+            }
+        }
         added += knownPluginList.getNumTypes() - prevCount;
     }
+
+    if (onProgress != nullptr)
+        onProgress (1.0f, {});
+
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS
+    // Release the child-launching scanner — load-time instantiation must stay
+    // in-process and doesn't go through the custom scanner anyway.
+    if (sandboxScan)
+        knownPluginList.setCustomScanner (nullptr);
+   #endif
 
     if (added > 0) saveCache();
     return added;

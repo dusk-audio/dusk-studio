@@ -76,6 +76,36 @@ AudioEngine::AudioEngine (Session& sessionToBindTo) : session (sessionToBindTo)
         if (t != nullptr) t->scanForDevices();
    #endif
 
+   #if JUCE_WINDOWS
+    // Windows backend preference. initialiseWithDefaultDevices' default pick
+    // (AudioDeviceManager::pickCurrentDeviceTypeWithDevices) lands on the
+    // FIRST registered type that has devices, and createDeviceTypesIfNeeded
+    // only auto-registers JUCE's defaults when the list is empty. So
+    // pre-registering in preference order both chooses the default backend
+    // and prevents double-listing — same mechanism as the Linux block above.
+    //
+    // Order: ASIO (lowest latency; only compiled in when the SDK was present
+    // at build time) -> WASAPI exclusive (low-latency, no SDK needed: our
+    // fallback for machines with no ASIO driver) -> WASAPI shared -> DirectSound.
+    // ASIO with no installed driver enumerates zero devices, so the pick falls
+    // through to WASAPI exclusive automatically.
+   #if JUCE_ASIO
+    if (auto* asio = juce::AudioIODeviceType::createAudioIODeviceType_ASIO())
+        deviceManager.addAudioDeviceType (std::unique_ptr<juce::AudioIODeviceType> (asio));
+   #endif
+    if (auto* wasapiExclusive = juce::AudioIODeviceType::createAudioIODeviceType_WASAPI (
+            juce::WASAPIDeviceMode::exclusive))
+        deviceManager.addAudioDeviceType (std::unique_ptr<juce::AudioIODeviceType> (wasapiExclusive));
+    if (auto* wasapiShared = juce::AudioIODeviceType::createAudioIODeviceType_WASAPI (
+            juce::WASAPIDeviceMode::shared))
+        deviceManager.addAudioDeviceType (std::unique_ptr<juce::AudioIODeviceType> (wasapiShared));
+    if (auto* directSound = juce::AudioIODeviceType::createAudioIODeviceType_DirectSound())
+        deviceManager.addAudioDeviceType (std::unique_ptr<juce::AudioIODeviceType> (directSound));
+
+    for (auto* t : deviceManager.getAvailableDeviceTypes())
+        if (t != nullptr) t->scanForDevices();
+   #endif
+
     if (const auto err = deviceManager.initialiseWithDefaultDevices (16, 2);
         err.isNotEmpty())
     {
@@ -474,7 +504,25 @@ void AudioEngine::stop()
     }
 
     playbackEngine.stopPlayback();
-    transport.setPlayhead (0);
+
+    // Honour the user's Settings choice for Stop behaviour.
+    // 0 = PauseInPlace (leave playhead where it landed)
+    // 1 = ReturnToZero (rewind to origin)
+    // 2 = ReturnToLastClicked (jump to last ruler-click position; falls
+    //     back to pause-in-place when nothing was clicked yet).
+    // Callers that want unconditional stop+rewind (the '.' hotkey, Home
+    // key) still call setPlayhead(0) explicitly after stop().
+    const int behavior = session.stopBehavior.load (std::memory_order_relaxed);
+    if (behavior == 1)
+    {
+        transport.setPlayhead (0);
+    }
+    else if (behavior == 2)
+    {
+        const auto last = session.lastClickedTimelineSample.load (std::memory_order_relaxed);
+        if (last >= 0)
+            transport.setPlayhead (last);
+    }
 }
 
 void AudioEngine::record()
@@ -753,6 +801,19 @@ void AudioEngine::consumePluginStateAfterLoad()
                 lastPluginLoadFailures.push_back ({
                     "Aux " + juce::String (a + 1) + " / slot " + juce::String (s + 1),
                     parsePluginName (descXml) });
+            }
+            else
+            {
+                // Flip the lane's slot to Plugin mode — the crossfade
+                // gate defaults to kInsertEmpty after prepare(), which
+                // routes audio AROUND the plugin (gate at 0 = pre-only
+                // pass-through). Without this, a session reload leaves
+                // the plugin instance live but starved: meters dark,
+                // AUX output is just the raw send sum.
+                auxLaneStrips[(size_t) a]
+                    .insertMode[(size_t) s]
+                    .store (AuxLaneStrip::kInsertPlugin,
+                             std::memory_order_release);
             }
         }
     }
@@ -1861,6 +1922,20 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                                           std::memory_order_relaxed);
                             }
                             break;
+
+                        case MidiBindingTarget::TrackAuxSendPrePost:
+                        {
+                            if (! pressed) break;
+                            const int track = unpackTrackAuxTrack (b.targetIndex);
+                            const int aux   = unpackTrackAuxLane  (b.targetIndex);
+                            if (track < 0 || track >= Session::kNumTracks) break;
+                            if (aux   < 0 || aux   >= ChannelStripParams::kNumAuxSends) break;
+                            auto& a = session.track (track).strip
+                                          .auxSendPreFader[(size_t) aux];
+                            a.store (! a.load (std::memory_order_relaxed),
+                                      std::memory_order_relaxed);
+                            break;
+                        }
 
                         // ── Bus EQ gain (packed bus * kBusEqBands + band) ─
                         case MidiBindingTarget::BusEqGain:

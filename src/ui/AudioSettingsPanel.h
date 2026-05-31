@@ -108,6 +108,8 @@ private:
     juce::Label generalSectionLabel       { {}, "General" };
     juce::Label advancedSectionLabel      { {}, "Advanced" };
     juce::ToggleButton tapeStripExpandedToggle { "Expand tape strip by default" };
+    juce::Label        stopBehaviorLabel       { {}, "On Stop:" };
+    juce::ComboBox     stopBehaviorCombo;
 
     // Captured during resized() + drawn by paint() as thin horizontal
     // rules between section groups.

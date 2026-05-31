@@ -42,6 +42,22 @@ namespace duskstudio::platform
 // after addToDesktop / setVisible(true)). No-op if peer is null.
 void bringWindowToFront (juce::ComponentPeer& peer);
 
+// Hide / restore the native mouse cursor for the supplied peer's
+// window. Used by CursorOverlay to suppress the platform cursor while
+// our painted glyph (hand / scissors / pencil) is showing.
+//
+// Linux: XDefineCursor on the peer's X11 window with a 1x1 invisible
+// pixmap cursor; XUndefineCursor on show. Bypasses JUCE's
+// setMouseCursor pipeline (which on this hybrid Wayland/X11 setup
+// dispatches to the wrong path).
+// macOS: [NSCursor hide] / [NSCursor unhide] in PlatformWindowing_Mac.mm.
+// Windows: ShowCursor(FALSE) / ShowCursor(TRUE) in
+// PlatformWindowing_Windows.cpp. Both use the platform-native cursor
+// calls directly rather than forwarding to the peer's setMouseCursor.
+//
+// Must be called on the message thread.
+void setNativeCursorVisibleOnPeer (juce::ComponentPeer& peer, bool visible);
+
 // Block until the windowing system has finished processing every
 // queued operation from this process. Used to space out window-
 // destruction events during shutdown so the compositor isn't asked to

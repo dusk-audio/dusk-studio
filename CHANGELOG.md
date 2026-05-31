@@ -10,7 +10,7 @@ canonical source.
 Architectural-audit sprint: every "Working" cell in the README's
 Status table is now also reviewed for real-time safety, lifecycle
 correctness, cross-platform CI coverage, and documentation parity.
-18 commits since 0.9.0, 143 Catch2 tests green across Linux
+24 commits since 0.9.0, 148 Catch2 tests green across Linux
 (amd64 + arm64), macOS, and Windows.
 
 ### Added
@@ -74,6 +74,22 @@ correctness, cross-platform CI coverage, and documentation parity.
 - **First-time-launch walkthrough** in MANUAL for unsigned
   binaries — per-OS macOS Gatekeeper + Windows SmartScreen
   bypass steps.
+- **Windows ASIO-first device selection** — the AudioEngine
+  pre-registers Windows backends in preference order (ASIO →
+  WASAPI exclusive → WASAPI shared → DirectSound), so the default
+  device lands on the lowest-latency backend that actually has
+  devices. A machine with no ASIO driver falls through to WASAPI
+  exclusive instead of an empty device list — onboard-audio users
+  still get a usable low-latency default.
+- **Out-of-process plugin scanning** — third-party plugin
+  discovery (VST3 / LV2 / AU) runs in the `dusk-studio-plugin-host`
+  child via a new `--scan` mode, so a plugin that crashes or hangs
+  during discovery takes down only the child. The parent times the
+  scan out (30 s), kills a hung child, and blacklists the file, so
+  a single bad plugin can no longer crash the app on first scan.
+  Backed by a dead-man's-pedal that quarantines a culprit if the
+  app itself dies mid-scan. Falls back to in-process scanning when
+  the host binary is absent.
 
 ### Fixed
 
@@ -110,6 +126,28 @@ correctness, cross-platform CI coverage, and documentation parity.
   M_PI undeclared (Catch2 transitive `<cmath>`), MSVC strict
   lambda capture for constexpr locals, donor-version-dependent
   test assertions hidden via Catch2 `[.]` tag.
+- **Gain-reduction meter on silent tracks** — the per-track
+  silent-skip fast path now zeroes the GR meter atom on its early
+  return, so a silent track reads 0 dB reduction instead of
+  holding the last computed value (matches the comp-bypass path).
+- **ALSA RT priority with unlimited RLIMIT_RTPRIO** —
+  `RLIM_INFINITY` previously narrowed to -1 under a signed cast and
+  selected the *lowest* SCHED_RR priority (the opposite of intent);
+  it is now treated as the top priority, with unsigned comparison
+  otherwise, and logged as "infinity"/"unknown" rather than a
+  narrowed int.
+- **Plugin editors hidden under modals (all platforms)** — the
+  macOS shell-editor and Windows foreign-HWND editor wrappers are
+  now tagged so a settings / quit / bounce modal hides them.
+  EmbeddedModal's hide is nesting-safe via a per-editor token, so
+  closing modals out of order no longer re-shows an editor still
+  covered by another modal.
+- **Global shortcuts while a modal is open** — Home
+  (return-to-zero), `.` (stop + rewind) and F11 (fullscreen) now
+  reach the transport from a focused modal or call-out popup,
+  alongside the existing Space / R. Destructive edit keys (Delete,
+  clipboard, split, nudge) remain gated so they can't act on the
+  arrangement hidden behind the modal.
 
 ### Changed
 
@@ -139,6 +177,19 @@ correctness, cross-platform CI coverage, and documentation parity.
   fire until secrets are configured.
 - **Linux arm64 matrix** added to linux-build.yml. Tests still
   amd64-only to keep CI runtime reasonable.
+- **Windows ASIO required for release builds** —
+  `DUSKSTUDIO_REQUIRE_ASIO` turns a missing ASIO SDK into a hard
+  configure error for release-class builds (single-config
+  CMAKE_BUILD_TYPE = Release/RelWithDebInfo/MinSizeRel, and the
+  Visual Studio multi-config generator whenever a release config is
+  buildable), so a shipping Windows binary can't silently fall back
+  to WASAPI-only latency. SDK auto-discovered at `../asiosdk` /
+  `$ASIOSDK_PATH` / `-DASIOSDK_PATH=`; override with
+  `-DDUSKSTUDIO_REQUIRE_ASIO=OFF` for a deliberate ASIO-less dev
+  build (warns + falls back to WASAPI).
+- **Plugin-scan wire protocol** extracted to a shared header
+  (`PluginScanProtocol.h`) consumed by both the host child and the
+  parent, with 5 Catch2 round-trip / crash-path tests.
 
 ## [0.9.0] - 2026-05-21 — beta, road to 1.0
 

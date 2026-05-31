@@ -99,15 +99,29 @@ void paintGridGlyph (juce::Graphics& g, juce::Rectangle<float> r)
 
 void paintDrawGlyph (juce::Graphics& g, juce::Rectangle<float> r)
 {
-    // Pencil pointing top-right.
-    const float x0 = r.getX() + 5.0f;
-    const float y0 = r.getBottom() - 5.0f;
-    const float x1 = r.getRight() - 5.0f;
-    const float y1 = r.getY() + 5.0f;
-    juce::Path p;
-    p.startNewSubPath (x0, y0); p.lineTo (x1, y1);
-    p.startNewSubPath (x1 - 4.0f, y1 + 1.0f); p.lineTo (x1, y1); p.lineTo (x1 - 1.0f, y1 + 4.0f);
-    g.strokePath (p, juce::PathStrokeType (1.6f));
+    // Minimal Logic-style pencil: a thick diagonal stroke from top-
+    // right (eraser end) to bottom-left (tip), with a small filled
+    // triangle at the bottom-left forming the sharpened lead.
+    const auto cell = r.reduced (5.0f);
+    auto scaleX = [&] (float u) { return cell.getX() + (u / 24.0f) * cell.getWidth(); };
+    auto scaleY = [&] (float u) { return cell.getY() + (u / 24.0f) * cell.getHeight(); };
+
+    // Body — single fat diagonal line.
+    juce::Path body;
+    body.startNewSubPath (scaleX (6.0f),  scaleY (18.0f));
+    body.lineTo          (scaleX (20.0f), scaleY (4.0f));
+    g.strokePath (body, juce::PathStrokeType (2.4f,
+                                                juce::PathStrokeType::curved,
+                                                juce::PathStrokeType::butt));
+
+    // Filled triangle tip at the bottom-left end. The diagonal line
+    // ends just past the triangle's apex so the tip reads as a
+    // continuation rather than a stuck-on attachment.
+    juce::Path tip;
+    tip.addTriangle (scaleX (3.0f),  scaleY (21.0f),
+                      scaleX (6.5f),  scaleY (17.0f),
+                      scaleX (8.0f),  scaleY (20.5f));
+    g.fillPath (tip);
 }
 } // namespace
 
@@ -277,6 +291,20 @@ void EditModeToolbar::syncFromSession()
     snapResolutionButton.setButtonText (labelFor (engine.getSession().snapResolution));
 }
 
+void EditModeToolbar::setVisibleModes (juce::Array<EditMode> modes)
+{
+    auto setIf = [&modes] (ModeButton& b)
+    {
+        b.setVisible (modes.contains (b.getMode()));
+    };
+    setIf (grabButton);
+    setIf (rangeButton);
+    setIf (cutButton);
+    setIf (gridButton);
+    setIf (drawButton);
+    resized();
+}
+
 void EditModeToolbar::updateButtonStates()
 {
     const auto current = engine.getSession().editMode;
@@ -307,8 +335,11 @@ void EditModeToolbar::resized()
     auto r = getLocalBounds().reduced (4, 6);
     constexpr int kBtn = 36;
     constexpr int kGap = 3;
+    // Skip hidden buttons so PianoRoll's two-mode palette doesn't leave
+    // gaps where Range / Cut / Grid would be.
     for (auto* b : { &grabButton, &rangeButton, &cutButton, &gridButton, &drawButton })
     {
+        if (! b->isVisible()) continue;
         b->setBounds (r.removeFromLeft (kBtn));
         r.removeFromLeft (kGap);
     }

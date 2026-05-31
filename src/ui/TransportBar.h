@@ -169,6 +169,14 @@ public:
     // Set by MainComponent. Fires after toggle flip; bool = new state.
     std::function<void (bool)> onTapeStripToggle;
 
+    // Sync the TIMELINE button's visual state from outside (keyboard
+    // shortcut path). dontSendNotification — caller updates the rest of
+    // the chain (tapeStrip visibility, console compact mode) directly.
+    void setTapeToggleVisualState (bool expanded) noexcept
+    {
+        tapeToggle.setToggleState (expanded, juce::dontSendNotification);
+    }
+
     // MainComponent owns the tuner overlay (similar to piano roll
     // modal) so this stays decoupled from track-selection lookup.
     std::function<void()> onTunerToggle;

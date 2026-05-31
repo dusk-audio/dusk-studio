@@ -36,4 +36,33 @@ void setScanPluginsOnStartup (bool scan);
 // per-machine.
 bool getTapeStripExpandedDefault();
 void setTapeStripExpandedDefault (bool expanded);
+
+// Tape-head behaviour on Stop. Mirrors the equivalent option in Pro Tools
+// (Operation > Transport > "Audio During Fast Forward / Rewind") and
+// Logic (Preferences > Recording > "Stop returns to playback start").
+// PauseInPlace (default, current behaviour) leaves the playhead where
+// the user stopped — pause-and-resume feels musical. ReturnToZero
+// rewinds to the timeline origin on every Stop. ReturnToLastClicked
+// jumps to the last position the user clicked on the tape strip ruler,
+// so Stop -> Play re-cycles a region the user just auditioned without
+// having to re-click. Persisted per-machine.
+enum class StopBehavior : int
+{
+    PauseInPlace        = 0,
+    ReturnToZero        = 1,
+    ReturnToLastClicked = 2,
+};
+StopBehavior getStopBehavior();
+void         setStopBehavior (StopBehavior b);
+
+// Virtual-keyboard centre note (MIDI 0..120). Default 36 (C2) — sits
+// near the lower half of the bass register so the visible 2-octave
+// window (centre-12..centre+12) covers C1..C3 by default, matching
+// typical bassline / synth-bass authoring on a 49-key controller.
+// Persisted per-machine so the user's chosen octave survives session
+// changes (each time they open the VKB it lands back on the note they
+// last shifted it to).
+constexpr int kVkbCentreDefault = 36;
+int  getVkbCentreNote();
+void setVkbCentreNote (int midiNote);
 } // namespace duskstudio::appconfig

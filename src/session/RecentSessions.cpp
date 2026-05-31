@@ -52,4 +52,11 @@ void RecentSessions::add (const juce::File& sessionDirectory)
     for (auto& f : entries) lines.add (f.getFullPathName());
     getStoreFile().replaceWithText (lines.joinIntoString ("\n"));
 }
+
+void RecentSessions::clear()
+{
+    const auto store = getStoreFile();
+    if (store == juce::File()) return;
+    if (store.existsAsFile()) store.deleteFile();
+}
 } // namespace duskstudio

@@ -145,6 +145,7 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
         seedComp (smoothedFetOutput,   paramsRef->compFetOutput  .load (std::memory_order_relaxed));
         seedComp (smoothedFetAttack,   paramsRef->compFetAttack  .load (std::memory_order_relaxed));
         seedComp (smoothedFetRelease,  paramsRef->compFetRelease .load (std::memory_order_relaxed));
+        seedComp (smoothedFetThreshold,paramsRef->compFetThresholdDb.load (std::memory_order_relaxed));
         seedComp (smoothedVcaThresh,   paramsRef->compVcaThreshDb.load (std::memory_order_relaxed));
         seedComp (smoothedVcaRatio,    paramsRef->compVcaRatio   .load (std::memory_order_relaxed));
         seedComp (smoothedVcaAttack,   paramsRef->compVcaAttack  .load (std::memory_order_relaxed));
@@ -170,11 +171,12 @@ void ChannelStrip::bindCompParams()
     compOptoPeakRedAtom = apvts.getRawParameterValue ("opto_peak_reduction");
     compOptoGainAtom    = apvts.getRawParameterValue ("opto_gain");
     compOptoLimitAtom   = apvts.getRawParameterValue ("opto_limit");
-    compFetInputAtom    = apvts.getRawParameterValue ("fet_input");
-    compFetOutputAtom   = apvts.getRawParameterValue ("fet_output");
-    compFetAttackAtom   = apvts.getRawParameterValue ("fet_attack");
-    compFetReleaseAtom  = apvts.getRawParameterValue ("fet_release");
-    compFetRatioAtom    = apvts.getRawParameterValue ("fet_ratio");
+    compFetInputAtom     = apvts.getRawParameterValue ("fet_input");
+    compFetOutputAtom    = apvts.getRawParameterValue ("fet_output");
+    compFetAttackAtom    = apvts.getRawParameterValue ("fet_attack");
+    compFetReleaseAtom   = apvts.getRawParameterValue ("fet_release");
+    compFetRatioAtom     = apvts.getRawParameterValue ("fet_ratio");
+    compFetThresholdAtom = apvts.getRawParameterValue ("fet_threshold");
     compVcaThreshAtom   = apvts.getRawParameterValue ("vca_threshold");
     compVcaRatioAtom    = apvts.getRawParameterValue ("vca_ratio");
     compVcaAttackAtom   = apvts.getRawParameterValue ("vca_attack");
@@ -310,6 +312,7 @@ void ChannelStrip::updateCompParameters() noexcept
     smoothedFetOutput  .setTargetValue (paramsRef->compFetOutput  .load (std::memory_order_relaxed));
     smoothedFetAttack  .setTargetValue (paramsRef->compFetAttack  .load (std::memory_order_relaxed));
     smoothedFetRelease .setTargetValue (paramsRef->compFetRelease .load (std::memory_order_relaxed));
+    smoothedFetThreshold.setTargetValue (paramsRef->compFetThresholdDb.load (std::memory_order_relaxed));
     smoothedVcaThresh  .setTargetValue (paramsRef->compVcaThreshDb.load (std::memory_order_relaxed));
     smoothedVcaRatio   .setTargetValue (paramsRef->compVcaRatio   .load (std::memory_order_relaxed));
     smoothedVcaAttack  .setTargetValue (paramsRef->compVcaAttack  .load (std::memory_order_relaxed));
@@ -342,6 +345,7 @@ void ChannelStrip::publishSmoothedCompParams (int numSamples) noexcept
     step (smoothedFetOutput,   compFetOutputAtom);
     step (smoothedFetAttack,   compFetAttackAtom);
     step (smoothedFetRelease,  compFetReleaseAtom);
+    step (smoothedFetThreshold,compFetThresholdAtom);
     step (smoothedVcaThresh,   compVcaThreshAtom);
     step (smoothedVcaRatio,    compVcaRatioAtom);
     step (smoothedVcaAttack,   compVcaAttackAtom);
@@ -455,6 +459,49 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             for (auto& s : auxSendGain) s.getNextValue();
         }
         return;
+    }
+
+    // Per-track silent-skip — when the audio source is dead silent AND
+    // there's no insert plugin that could produce tail / generated
+    // audio, the whole HPF / 4-band EQ / comp / sends chain is a no-op
+    // worth dodging. 24 strips × full DSP per block is an xrun-class
+    // cost on ALSA's tight scheduling window; PipeWire's slack hides
+    // it. Mirrors the aux-lane silent skip in
+    // AudioEngine.cpp:audioDeviceIOCallbackWithContext (the canonical
+    // freeze-smoothers / reset-meter pattern). Constraints:
+    //   - MIDI tracks excluded (instrument plugin generates audio
+    //     from MIDI even with no audio input).
+    //   - Tracks with an insert plugin excluded (plugin tail / latency
+    //     compensation would suffer from skipped blocks).
+    //   - `needsProcessedMono` (recorder-print path) already handled
+    //     above; tracks armed-with-print stay on the full pass.
+    if (! isMidi && activeInsertMode == kInsertEmpty)
+    {
+        const auto peakAbs = [] (const float* buf, int n) -> float
+        {
+            if (buf == nullptr || n <= 0) return 0.0f;
+            const auto rng = juce::FloatVectorOperations::findMinAndMax (buf, n);
+            return juce::jmax (std::abs (rng.getStart()), std::abs (rng.getEnd()));
+        };
+        const float peakL = peakAbs (inL, numSamples);
+        const float peakR = (stereo && inR != nullptr) ? peakAbs (inR, numSamples) : 0.0f;
+        if (peakL <= 1e-6f && peakR <= 1e-6f)
+        {
+           #if DUSKSTUDIO_HAS_DUSK_DSP
+            // No comp ran this block, so the GR meter would otherwise pin
+            // at the last reduction value. Force it to 0 so a silent track
+            // reads no gain reduction — same intent as the bypass path that
+            // zeroes the GR atom after the comp pass below.
+            currentGrDb.store (0.0f, std::memory_order_relaxed);
+           #endif
+            // Smoothers stay FROZEN on skip (no setTargetValue,
+            // no getNextValue) — when audio returns, they pick up
+            // at the configured value with no click. The track's
+            // input meter is written by AudioEngine before this
+            // call and already reflects -inf for silent input, so
+            // no meter reset is required here.
+            return;
+        }
     }
 
     updateGainTargets();

@@ -54,9 +54,22 @@ public:
     void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp   (const juce::MouseEvent&) override;
     void mouseMove (const juce::MouseEvent&) override;
+    void mouseExit (const juce::MouseEvent&) override;
     bool keyPressed (const juce::KeyPress&) override;
     void mouseWheelMove (const juce::MouseEvent&,
                           const juce::MouseWheelDetails&) override;
+
+    // CursorOverlay sink — MainComponent wires these so the editor
+    // pushes its local mouse position into the shared overlay (which
+    // bypasses the platform cursor pipeline that fails on this hybrid
+    // X11/Wayland setup). Same pattern as AudioRegionEditor.
+    // The juce::Range<int> argument carries the cut-line Y span (unused
+    // on the piano roll — Cut mode has no glyph here — but the
+    // signature matches AudioRegionEditor's so MainComponent can use
+    // a single forwarder lambda).
+    std::function<void (juce::Component&, juce::Point<int>, EditMode,
+                          juce::Range<int>)> onMouseMovedForCursor;
+    std::function<void()> onMouseExitedForCursor;
 
     static constexpr int kKeyboardWidth     = 76;
     // Matches AudioRegionEditor kIconRowHeight for visual parity.
@@ -314,6 +327,17 @@ public:
     // while the modal is open so the toolbar repaints.
     void syncEditModeToolbar();
 private:
+    // Note grid (excludes toolbar / ruler / keyboard column / velocity +
+    // CC strips / scrollbar / status bar). Used to gate edit-mode cursor
+    // overrides so the toolbar / status bar / etc. keep the normal arrow.
+    juce::Rectangle<int> noteGridArea() const noexcept;
+
+    // Push (x, y) into the shared CursorOverlay if it's inside the
+    // note grid and the active mode wants a glyph (Grab / Draw).
+    // Called from BOTH mouseMove and mouseDrag — drag fires only
+    // mouseDrag, so without this the overlay freezes at the click
+    // point while the note follows the pointer underneath.
+    void pushCursorPosition (int x, int y);
 
     void layoutIconRow (juce::Rectangle<int> area);
 

@@ -1,4 +1,5 @@
 #include "VirtualKeyboardComponent.h"
+#include "AppConfig.h"
 
 namespace duskstudio
 {
@@ -55,6 +56,9 @@ VirtualKeyboardComponent::VirtualKeyboardComponent (AudioEngine& engineRef)
 {
     setWantsKeyboardFocus (true);
 
+    // Restore the last-used centre note (default C2 = MIDI 36 on first run).
+    centreNote = appconfig::getVkbCentreNote();
+
     auto styleHeaderBtn = [] (juce::TextButton& b)
     {
         b.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff262630));
@@ -66,18 +70,8 @@ VirtualKeyboardComponent::VirtualKeyboardComponent (AudioEngine& engineRef)
     styleHeaderBtn (chDownBtn);
     styleHeaderBtn (chUpBtn);
 
-    octDownBtn.onClick = [this]
-    {
-        const int prev = centreNote;
-        centreNote = juce::jlimit (0, 120, centreNote - 12);
-        if (centreNote != prev) { releaseAll(); repaint(); }
-    };
-    octUpBtn.onClick = [this]
-    {
-        const int prev = centreNote;
-        centreNote = juce::jlimit (0, 120, centreNote + 12);
-        if (centreNote != prev) { releaseAll(); repaint(); }
-    };
+    octDownBtn.onClick = [this] { shiftCentre (-12); };
+    octUpBtn  .onClick = [this] { shiftCentre (+12); };
     chDownBtn.onClick = [this]
     {
         const int prev = channel;
@@ -123,20 +117,8 @@ bool VirtualKeyboardComponent::keyPressed (const juce::KeyPress& k)
 {
     const int code = k.getKeyCode();
 
-    if (code == juce::KeyPress::upKey)
-    {
-        const int prev = centreNote;
-        centreNote = juce::jlimit (0, 120, centreNote + 12);
-        if (centreNote != prev) { releaseAll(); repaint(); }
-        return true;
-    }
-    if (code == juce::KeyPress::downKey)
-    {
-        const int prev = centreNote;
-        centreNote = juce::jlimit (0, 120, centreNote - 12);
-        if (centreNote != prev) { releaseAll(); repaint(); }
-        return true;
-    }
+    if (code == juce::KeyPress::upKey)   { shiftCentre (+12); return true; }
+    if (code == juce::KeyPress::downKey) { shiftCentre (-12); return true; }
     if (code == juce::KeyPress::leftKey)
     {
         const int prev = channel;
@@ -198,6 +180,16 @@ void VirtualKeyboardComponent::sendNoteOff (int note, int chan)
     if (onNoteOff) onNoteOff (note, chan);
 }
 
+void VirtualKeyboardComponent::shiftCentre (int semitones)
+{
+    const int prev = centreNote;
+    centreNote = juce::jlimit (0, 120, centreNote + semitones);
+    if (centreNote == prev) return;
+    releaseAll();
+    appconfig::setVkbCentreNote (centreNote);
+    repaint();
+}
+
 void VirtualKeyboardComponent::releaseAll()
 {
     for (auto& slot : held)
@@ -235,7 +227,9 @@ int VirtualKeyboardComponent::noteAtPoint (juce::Point<int> p) const
     if (! keyboardArea.contains (p)) return -1;
 
     const int firstNote = juce::jmax (0, centreNote - 12);
-    const int lastNote  = juce::jmin (127, firstNote + 36);
+    // 2-octave window: one octave below the centre, one above. 24
+    // semitones inclusive = 25 notes (e.g., centre C2 → C1..C3).
+    const int lastNote  = juce::jmin (127, firstNote + 24);
     int numWhite = 0;
     for (int m = firstNote; m <= lastNote; ++m)
         if (! isBlackKey (m)) ++numWhite;
@@ -350,11 +344,14 @@ void VirtualKeyboardComponent::paint (juce::Graphics& g)
     statusRect.removeFromRight (reservedRight);
     g.drawText (status, statusRect, juce::Justification::centredRight);
 
-    // Piano keyboard. Show 3 octaves anchored so centreNote sits at the
-    // start of the middle octave (so the lowest mapped key, Z=centreNote,
-    // is visible with an octave of context below it for orientation).
+    // Piano keyboard. Show 2 octaves anchored so centreNote sits at the
+    // start of the upper octave — one octave of context below (so the
+    // user has bass-side reference) and one octave above where the typed
+    // Z/Q-row letters land. Centre C2 → display C1..C3 by default.
     const int firstNote = juce::jmax (0, centreNote - 12);
-    const int lastNote  = juce::jmin (127, firstNote + 36);
+    // 2-octave window: one octave below the centre, one above. 24
+    // semitones inclusive = 25 notes (e.g., centre C2 → C1..C3).
+    const int lastNote  = juce::jmin (127, firstNote + 24);
     const int numWhite  = [&] {
         int n = 0;
         for (int m = firstNote; m <= lastNote; ++m)

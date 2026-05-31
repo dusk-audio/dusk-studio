@@ -370,7 +370,7 @@ namespace sslEqColors
     inline constexpr juce::uint32 kHfRed   = 0xffc44444;
     inline constexpr juce::uint32 kHmGreen = 0xff5fa55f;
     inline constexpr juce::uint32 kLmBlue  = 0xff5878b0;
-    inline constexpr juce::uint32 kLfBlack = 0xff353538;
+    inline constexpr juce::uint32 kLfBlack = 0xff5a5a62;  // graphite, not true black — legible on the dark EQ panel while staying the darkest band
     inline constexpr juce::uint32 kHpfBlue = 0xff4a7c9e;
     // 9000J top-section filter knobs are white-faced — HPF + LPF
     // share this so they read as a pair.

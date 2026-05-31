@@ -198,11 +198,15 @@ struct ChannelStripParams
     std::atomic<bool>  compOptoLimit   { false };
 
     // FET (1176 style).
-    std::atomic<float> compFetInput   { 0.0f };    // -20..40 dB
+    std::atomic<float> compFetInput   { 0.0f };    // -20..40 dB (drive into detection)
     std::atomic<float> compFetOutput  { 0.0f };    // -20..20 dB
     std::atomic<float> compFetAttack  { 0.2f };    // 0.02..80 ms
     std::atomic<float> compFetRelease { 400.0f };  // 50..1100 ms
     std::atomic<int>   compFetRatio   { 0 };       // 0=4:1, 1=8:1, 2=12:1, 3=20:1, 4=All
+    // Adjustable FET threshold — donor's original was a hardcoded -10
+    // dBFS; defaulting here to the same value preserves saved-state
+    // behaviour for sessions written before fet_threshold existed.
+    std::atomic<float> compFetThresholdDb { -10.0f }; // -60..0 dB
 
     // VCA (textbook).
     std::atomic<float> compVcaThreshDb { 12.0f };   // -38..12 dB
@@ -911,6 +915,18 @@ public:
     // Persisted across saves. New sessions default to Recording (0).
     // 0=Recording, 1=Mixing, 2=Aux, 3=Mastering.
     std::atomic<int>   uiStage           { 0 };
+
+    // Tape-head behaviour on Stop, mirroring the appconfig enum:
+    //   0 = PauseInPlace (default, leave the playhead where it landed)
+    //   1 = ReturnToZero (rewind to 0 on every Stop)
+    //   2 = ReturnToLastClicked (jump to lastClickedTimelineSample)
+    // Pushed from MainComponent at startup + whenever the user changes
+    // the Settings dropdown. AudioEngine::stop reads this on Stop.
+    std::atomic<int>      stopBehavior              { 0 };
+    // Last position the user clicked on the tape-strip ruler (samples).
+    // -1 = never clicked / unknown — engine treats as PauseInPlace fall-
+    // back when ReturnToLastClicked is selected.
+    std::atomic<juce::int64> lastClickedTimelineSample { -1 };
 
     // Shifts playhead back one bar so metronome ticks pre-roll before
     // capture. WAV's first sample still maps to playhead-at-Record-press.

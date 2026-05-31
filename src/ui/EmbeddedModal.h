@@ -7,6 +7,23 @@
 
 namespace duskstudio
 {
+// Global shortcuts that stay live while a modal / popup holds keyboard
+// focus, forwarded to the registered MainComponent. Deliberately limited to
+// transport + playhead navigation + window fullscreen: edit / clipboard /
+// destructive keys (Delete, split, nudge, undo, save, ...) are NOT forwarded
+// because they would act on the arrangement hidden behind the modal — e.g.
+// Delete silently removing a region the user can't even see. A focused child
+// that wants one of these keys (TextEditor caret nav) consumes it first, so
+// it never reaches the modal's listener and typing is unaffected.
+inline bool isModalForwardableShortcut (const juce::KeyPress& k) noexcept
+{
+    return k == juce::KeyPress::spaceKey
+        || k.getKeyCode() == 'R' || k.getKeyCode() == 'r'
+        || k == juce::KeyPress::homeKey
+        || k.getTextCharacter() == '.'
+        || k == juce::KeyPress::F11Key;
+}
+
 // Wraps the "DimOverlay + centred panel" pattern used by piano roll,
 // tuner, audio settings, mixdown, bounce, plugin editor.
 //
@@ -20,6 +37,17 @@ namespace duskstudio
 class EmbeddedModal final : private juce::KeyListener
 {
 public:
+    // Singleton focus-restore target. MainComponent registers itself here
+    // in its ctor; close() grabs focus on it after teardown. Bypasses
+    // JUCE's default-focus-traverser on DocumentWindow (which on the
+    // hybrid X11/Wayland setup doesn't reliably land focus on the
+    // content component, so spacebar / R die after every popup pick).
+    static juce::Component::SafePointer<juce::Component>& focusRestoreTarget()
+    {
+        static juce::Component::SafePointer<juce::Component> target;
+        return target;
+    }
+
     EmbeddedModal()  = default;
     ~EmbeddedModal() override { close(); }
 
@@ -79,6 +107,8 @@ public:
         body_->setWantsKeyboardFocus (true);
         body_->grabKeyboardFocus();
         body_->addKeyListener (this);
+
+        hidePluginEditorsUnder (parent);
     }
 
     // Body NOT owned — caller keeps alive across show/close cycles.
@@ -123,6 +153,8 @@ public:
         body.setWantsKeyboardFocus (true);
         body.grabKeyboardFocus();
         body.addKeyListener (this);
+
+        hidePluginEditorsUnder (parent);
     }
 
     // Idempotent. For owning show, destructs body; for showBorrowed,
@@ -144,6 +176,12 @@ public:
     void close()
     {
         if (host == nullptr) return;
+
+        // Restore any plugin editors we hid in show() before tearing
+        // down the modal body. Done first so their setVisible(true)
+        // doesn't fight with the message-loop teardown path below.
+        restoreHiddenPluginEditors();
+
         if (body_         != nullptr) host->removeChildComponent (body_.get());
         if (borrowedBody_ != nullptr)
         {
@@ -183,21 +221,27 @@ public:
             juce::MessageManager::callAsync (
                 [trash]() mutable { (void) trash; });
         }
-        // Restore keyboard focus to top-level (MainComponent owns the
-        // transport-key handler). Deferred so this runs AFTER the
-        // trash lambdas tear the modal down — grabbing focus while a
-        // soon-to-be-destroyed child holds it is unsafe. Without this,
-        // every popup leaves focus orphaned and spacebar / R silently
-        // die until the user clicks the UI.
-        if (auto* top = host->getTopLevelComponent())
+        // Restore keyboard focus. MainComponent registered itself with
+        // focusRestoreTarget() in its ctor; we grab focus on it both
+        // synchronously (so the very next key event already lands
+        // there) AND deferred (so any focus stolen by JUCE's own modal
+        // teardown / focus-traverser logic gets overridden once the
+        // trash lambdas have run and the modal's children are gone).
+        //
+        // Without this, every popup pick leaves focus orphaned on the
+        // DocumentWindow itself — JUCE's default focus traverser does
+        // NOT reliably drill into the content component on this hybrid
+        // X11/Wayland setup, so spacebar / R silently die until the
+        // user clicks the canvas.
+        if (auto* mc = focusRestoreTarget().getComponent())
+            mc->grabKeyboardFocus();
+
+        auto safeTarget = focusRestoreTarget();
+        juce::MessageManager::callAsync ([safeTarget]() mutable
         {
-            juce::Component::SafePointer<juce::Component> safeTop (top);
-            juce::MessageManager::callAsync ([safeTop]() mutable
-            {
-                if (auto* c = safeTop.getComponent())
-                    c->grabKeyboardFocus();
-            });
-        }
+            if (auto* c = safeTarget.getComponent())
+                c->grabKeyboardFocus();
+        });
         host = nullptr;
         userOnDismiss = {};
     }
@@ -234,18 +278,19 @@ private:
             else                          close();
             return true;
         }
-        // Forward global transport hotkeys (spacebar, R) to top-level
-        // regardless of borrowed/owned. Modal bodies grab keyboard
-        // focus on display, so without this hop the keys would
-        // silently die. TextEditor children consume space before this
-        // ever fires, so typing isn't affected.
-        const bool isTransportKey = k == juce::KeyPress::spaceKey
-                                     || k.getKeyCode() == 'R'
-                                     || k.getKeyCode() == 'r';
-        if (isTransportKey && host != nullptr)
+        // Forward global transport / navigation shortcuts (Space, R, Home,
+        // '.', F11) to MainComponent (registered as the focus-restore target
+        // on app startup). The modal body has keyboard focus, so without this
+        // hop the keys die at the body. Forwarding to MainComponent::keyPressed
+        // directly reaches the handler — forwarding to the top-level
+        // DocumentWindow does NOT, because DocumentWindow's own keyPressed only
+        // handles its title-bar shortcuts. Edit/destructive keys are excluded
+        // (see isModalForwardableShortcut). TextEditor children consume their
+        // keys before this fires, so typing isn't affected.
+        if (isModalForwardableShortcut (k))
         {
-            if (auto* top = host->getTopLevelComponent())
-                return top->keyPressed (k);
+            if (auto* mc = focusRestoreTarget().getComponent())
+                return mc->keyPressed (k);
         }
         return false;
     }
@@ -275,5 +320,115 @@ private:
     juce::Component* borrowedBody_ = nullptr;
     std::function<void()> userOnDismiss;
     bool escapeDismisses = true;
+
+    // Components hidden by hidePluginEditorsUnder() in show(); restored
+    // by restoreHiddenPluginEditors() in close(). Plugin editors (in
+    // particular OOP / XEmbed / GL-rendering hosts) can paint above
+    // JUCE's modal in the native window's z-order regardless of
+    // toFront() — toggling their visibility forces them out of view
+    // for the modal's lifetime.
+    juce::Array<juce::Component::SafePointer<juce::Component>> hiddenForModal_;
+
+    void hidePluginEditorsUnder (juce::Component& root)
+    {
+        restoreHiddenPluginEditors();   // defensive: idempotent show
+        walkHidePluginEditors (root);
+    }
+
+    void walkHidePluginEditors (juce::Component& c)
+    {
+        for (auto* child : c.getChildren())
+        {
+            if (child == nullptr) continue;
+            // Skip the modal's own backdrop / body / dim so we don't
+            // hide the modal itself.
+            if (child == dim_.get() || child == backdrop_.get()
+                || child == body_.get() || child == borrowedBody_)
+                continue;
+            const bool isPluginEditor =
+                (bool) child->getProperties()
+                            .getWithDefault ("dusk_pluginEditor", false);
+            if (isPluginEditor)
+            {
+                // Per-editor hide token (dusk_modalHideCount). Each stacked
+                // modal that covers the editor holds one; the editor stays
+                // hidden until the LAST of them restores. A plain
+                // setVisible(true) on close would re-show an editor still
+                // covered by another modal when modals close out of order.
+                //
+                // Only manage editors that were on-screen when the first
+                // covering modal opened (count == 0 && visible) or that an
+                // outer modal is already managing (count > 0). A genuinely
+                // app-hidden editor (count 0, invisible) is left alone so we
+                // never wrongly re-show it.
+                const int count = (int) child->getProperties()
+                                            .getWithDefault ("dusk_modalHideCount", 0);
+                if (count > 0 || child->isVisible())
+                {
+                    child->getProperties().set ("dusk_modalHideCount", count + 1);
+                    if (count == 0)
+                        child->setVisible (false);
+                    hiddenForModal_.add (juce::Component::SafePointer<juce::Component> (child));
+                }
+            }
+            walkHidePluginEditors (*child);
+        }
+    }
+
+    void restoreHiddenPluginEditors()
+    {
+        for (auto& safe : hiddenForModal_)
+        {
+            if (auto* c = safe.getComponent())
+            {
+                const int count = (int) c->getProperties()
+                                          .getWithDefault ("dusk_modalHideCount", 0);
+                if (count <= 1)
+                {
+                    c->getProperties().remove ("dusk_modalHideCount");
+                    c->setVisible (true);   // last covering modal gone → editor returns
+                }
+                else
+                {
+                    c->getProperties().set ("dusk_modalHideCount", count - 1);
+                }
+            }
+        }
+        hiddenForModal_.clearQuick();
+    }
 };
+
+// Global KeyListener that forwards transport / navigation hotkeys (Space, R,
+// Home, '.', F11 — see isModalForwardableShortcut) to the registered
+// MainComponent regardless of where focus currently sits.
+// Attach to popup top-levels that bypass EmbeddedModal (juce::CallOutBox,
+// e.g., the COMP / EQ / AUX-send compact-mode editors) so the user can
+// play / stop / record / return-to-zero while those modals are open.
+// EmbeddedModal-based popups already forward in their own keyPressed;
+// CallOutBox doesn't.
+class TransportKeyForwarder final : public juce::KeyListener
+{
+public:
+    static TransportKeyForwarder& instance()
+    {
+        static TransportKeyForwarder t;
+        return t;
+    }
+
+    bool keyPressed (const juce::KeyPress& k, juce::Component*) override
+    {
+        if (! isModalForwardableShortcut (k)) return false;
+        if (auto* mc = EmbeddedModal::focusRestoreTarget().getComponent())
+            return mc->keyPressed (k);
+        return false;
+    }
+};
+
+// Convenience — installs the singleton transport-key forwarder on c.
+// No removal step needed: the singleton outlives every component, and
+// JUCE auto-clears the listener list when c is destructed.
+inline void attachTransportKeyForwarder (juce::Component& c)
+{
+    c.addKeyListener (&TransportKeyForwarder::instance());
+}
 } // namespace duskstudio

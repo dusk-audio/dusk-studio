@@ -17,10 +17,10 @@ CompMeterStrip::CompMeterStrip (Source s) : src (std::move (s))
 //
 //   VCA  -> compVcaThreshDb directly (clamped to its -38..12 range)
 //   Opto -> compOptoPeakRed  (knob 0 dB = 0 % reduction, -60 dB = 100 %)
-//   FET  -> compFetInput only (drive into the 1176 detector). Output is
-//           INDEPENDENT — touching threshold no longer chain-moves the
-//           OUTPUT (was a bug where dragging the triangle visibly shifted
-//           the OUT knob). Matches ChannelCompEditor::writeThresholdToMode.
+//   FET  -> compFetThresholdDb (donor's adjustable fet_threshold). Output
+//           knob is independent, drive is independent — touching threshold
+//           sets the real detection threshold, not a drive amount.
+//           Matches ChannelCompEditor::writeThresholdToMode.
 void CompMeterStrip::writeThresholdForMode (Track& t, float threshDb)
 {
     const int mode = juce::jlimit (0, 2, t.strip.compMode.load (std::memory_order_relaxed));
@@ -34,8 +34,8 @@ void CompMeterStrip::writeThresholdForMode (Track& t, float threshDb)
         }
         case 1:
         {
-            const float drive = juce::jlimit (0.0f, 40.0f, -threshDb);
-            t.strip.compFetInput.store (drive, std::memory_order_relaxed);
+            t.strip.compFetThresholdDb.store (juce::jlimit (-60.0f, 0.0f, threshDb),
+                                                std::memory_order_relaxed);
             break;
         }
         case 2:
@@ -57,10 +57,7 @@ float CompMeterStrip::readThresholdForMode (const Track& t)
             return -peakRed * (60.0f / 100.0f);
         }
         case 1:
-        {
-            const float drive = t.strip.compFetInput.load (std::memory_order_relaxed);
-            return -drive;
-        }
+            return t.strip.compFetThresholdDb.load (std::memory_order_relaxed);
         case 2:
         default:
             return t.strip.compVcaThreshDb.load (std::memory_order_relaxed);
@@ -84,10 +81,14 @@ void CompMeterStrip::resetThresholdForMode (Track& t)
             t.strip.compOptoPeakRed.store (0.0f, std::memory_order_relaxed);
             break;
         case 1:
-            // FET: only the INPUT/drive doubles as threshold. OUTPUT is
-            // independent makeup and must not be reset here (matches the
-            // single-axis logic in writeThresholdForMode above).
-            t.strip.compFetInput.store (0.0f, std::memory_order_relaxed);
+            // FET: threshold knob now writes compFetThresholdDb directly.
+            // 0 dB threshold + 0 dB input drive + 0 dB output makeup =
+            // a true "no compression" reset. Mirrors the popup editor's
+            // mouseDoubleClick reset so the inline strip handle and the
+            // editor's reset path produce the same state.
+            t.strip.compFetThresholdDb.store (0.0f, std::memory_order_relaxed);
+            t.strip.compFetInput      .store (0.0f, std::memory_order_relaxed);
+            t.strip.compFetOutput     .store (0.0f, std::memory_order_relaxed);
             break;
         case 2:
         default:

@@ -20,6 +20,7 @@ public:
 
     static juce::Array<juce::File> load();
     static void                    add (const juce::File& sessionDirectory);
+    static void                    clear();
 
 private:
     static juce::File getStoreFile();

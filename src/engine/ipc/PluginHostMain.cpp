@@ -1,5 +1,5 @@
 // dusk-studio-plugin-host - the child binary that owns one out-of-process VST3
-// (or LV2) instance on behalf of Dusk Studio's main process. Two modes:
+// (or LV2) instance on behalf of Dusk Studio's main process. Three modes:
 //
 //   --ipc-stub  : echo input -> output, no JUCE plugin. Exists so the
 //                 IPC self-test can validate shm + sync + spawn plumbing
@@ -8,6 +8,11 @@
 //                 via the format manager, runs processBlock on a worker
 //                 thread, services control RPCs on a separate socket-
 //                 reader thread, runs the JUCE message loop on main.
+//   --scan      : one-shot crash-isolated plugin discovery. Scans a single
+//                 file/identifier for one format, prints its
+//                 PluginDescription(s) as XML to stdout, exits. A plugin
+//                 that crashes the scan takes down only this process; the
+//                 parent blacklists the file and carries on. See runScan.
 //
 // Process layout (--ipc-host):
 //
@@ -27,6 +32,7 @@
 //                          thread isn't gated on control-plane traffic.
 
 #include "PluginIpc.h"
+#include "PluginScanProtocol.h"
 #include "../JuceCompat.h"
 #include "platform/IpcChannel.h"
 #include "platform/IpcShm.h"
@@ -872,6 +878,68 @@ int runIpcHost (int argc, const char* const* argv) noexcept
 
     return 0;
 }
+
+// --- Plugin-scan mode -----------------------------------------------------
+// Crash isolation for plugin discovery. The parent (PluginManager's
+// OutOfProcessPluginScanner) spawns one of these per candidate file:
+//
+//   dusk-studio-plugin-host --scan <formatName> <fileOrIdentifier>
+//
+// We instantiate the plugin just far enough to read its PluginDescription(s)
+// and print them as XML between sentinel markers on stdout. If the plugin
+// segfaults or hangs in findAllTypesForFile, only THIS process dies — the
+// parent times it out / sees the crash, blacklists the file, and keeps
+// running. The plugin's own stdout chatter (if any) is emitted by its init
+// code, which runs BEFORE we print kScanPayloadBegin, so the parent's
+// extract-between-sentinels parse skips it.
+//
+int runScan (int argc, const char* const* argv) noexcept
+{
+    int scanIdx = -1;
+    for (int i = 1; i < argc; ++i)
+        if (std::strcmp (argv[i], "--scan") == 0) { scanIdx = i; break; }
+
+    if (scanIdx < 0 || scanIdx + 2 >= argc)
+    {
+        std::fprintf (stderr, "[dusk-studio-plugin-host] --scan needs <format> <file>\n");
+        return 64;
+    }
+
+    // The parent always passes the format name and the file/identifier as two
+    // separate StringArray elements, so each arrives as exactly one argv slot
+    // (no re-splitting on spaces needed).
+    // Brace-init, not paren-init: MSVC parses
+    // `const String x (CharPointer_UTF8 (argv[i]))` as a function declaration
+    // (most-vexing-parse), then fails because argv[i] isn't a constant array
+    // bound. Braces can't be a parameter list, so they disambiguate.
+    const juce::String formatName { juce::CharPointer_UTF8 (argv[scanIdx + 1]) };
+    const juce::String fileOrId   { juce::CharPointer_UTF8 (argv[scanIdx + 2]) };
+
+    // Some formats post messages to themselves while probing; give them a
+    // MessageManager to dispatch to.
+    juce::ScopedJuceInitialiser_GUI juceInit;
+
+    juce::AudioPluginFormatManager fm;
+    duskstudio::juce_compat::addDefaultFormats (fm);
+
+    juce::AudioPluginFormat* chosen = nullptr;
+    for (auto* f : fm.getFormats())
+        if (f != nullptr && f->getName() == formatName) { chosen = f; break; }
+
+    if (chosen == nullptr)
+    {
+        std::fprintf (stderr, "[dusk-studio-plugin-host] unknown format \"%s\"\n",
+                      formatName.toRawUTF8());
+        return 65;
+    }
+
+    juce::OwnedArray<juce::PluginDescription> found;
+    chosen->findAllTypesForFile (found, fileOrId);   // may crash/hang — that is the point
+
+    std::fputs (duskstudio::scanproto::makePayload (found).toRawUTF8(), stdout);
+    std::fflush (stdout);
+    return 0;
+}
 } // namespace
 
 int main (int argc, char** argv)
@@ -882,16 +950,19 @@ int main (int argc, char** argv)
 
     bool ipcStub = false;
     bool ipcHost = false;
+    bool scan    = false;
     for (int i = 1; i < argc; ++i)
     {
         if (std::strcmp (argv[i], "--ipc-stub") == 0) ipcStub = true;
         if (std::strcmp (argv[i], "--ipc-host") == 0) ipcHost = true;
+        if (std::strcmp (argv[i], "--scan")     == 0) scan    = true;
     }
 
+    if (scan)    return runScan (argc, argv);
     if (ipcStub) return runIpcStub (argc, argv);
     if (ipcHost) return runIpcHost (argc, argv);
 
     std::fprintf (stderr,
-                  "dusk-studio-plugin-host: pass --ipc-stub or --ipc-host.\n");
+                  "dusk-studio-plugin-host: pass --ipc-stub, --ipc-host or --scan.\n");
     return 64;
 }

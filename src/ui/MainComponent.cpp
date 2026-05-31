@@ -6,9 +6,12 @@
 #include "DuskFileBrowser.h"
 #include "AuxView.h"
 #include "BounceDialog.h"
+#include "PluginScanModal.h"
 #include "ConsoleView.h"
+#include "CursorOverlay.h"
 #include "DimOverlay.h"
 #include "DuskAlerts.h"
+#include "EmbeddedModal.h"
 #include "PianoRollComponent.h"
 #include "PlatformWindowing.h"
 #include "AudioRegionEditor.h"
@@ -277,19 +280,17 @@ MainComponent::MainComponent()
 
     // Optional plugin scan on launch. Per-machine setting (AppConfig);
     // default off. Synchronous — blocks the message thread for a few
-    // seconds with a full plugin folder. Logs the result so the user
-    // sees the validation in stderr without an extra modal.
-    if (appconfig::getScanPluginsOnStartup())
-    {
-        auto& mgr = engine.getPluginManager();
-        const int added = mgr.scanInstalledPlugins();
-        const int total = mgr.getEffectDescriptions().size()
-                         + mgr.getInstrumentDescriptions().size();
-        std::fprintf (stderr,
-                      "[Dusk Studio] Scan-on-startup: added %d new plugins "
-                      "(%d total).\n", added, total);
-        std::fflush (stderr);
-    }
+    // Push the user's persisted Stop-behavior preference into the session
+    // atom so AudioEngine::stop reads the right policy on the first Stop
+    // after launch. The AudioSettingsPanel combo updates this same atom
+    // when the user changes the dropdown.
+    session.stopBehavior.store ((int) appconfig::getStopBehavior(),
+                                  std::memory_order_relaxed);
+
+    // Plugin scan-on-startup is deferred (see resized() ->
+    // maybeStartStartupPluginScan): it runs on a background thread behind a
+    // progress modal once the window is on screen, so a full plugin folder
+    // doesn't make the app look frozen on launch.
 
     // Default to a session under ~/Music/Dusk Studio/Untitled. The user can change
     // this later via a session-management UI; for the recorder MVP this is
@@ -507,6 +508,12 @@ MainComponent::MainComponent()
     // this just ensures clicks on empty canvas land here.
     setWantsKeyboardFocus (true);
 
+    // Register as the global focus-restore target for EmbeddedModal.
+    // Every embedded popup / alert / combo / context menu calls back
+    // here on close so transport-key hotkeys (spacebar, R) keep
+    // working without the user needing to click the canvas first.
+    EmbeddedModal::focusRestoreTarget() = this;
+
     // Defer the startup dialog to the next message-loop tick so the main
     // window paints first - otherwise the dialog can pop up over a blank
     // canvas. SafePointer guards the case where the user closes the app
@@ -537,6 +544,16 @@ MainComponent::MainComponent()
             if (safeThis != nullptr) safeThis->launchStartupDialog();
         });
     }
+
+    // Cross-OS cursor overlay. Mounted last so it sits above every
+    // other MainComponent child + paints the Grab / Cut / Draw glyph
+    // at the mouse position. The editors push their local mouse
+    // position to it via callbacks (component-to-component conversion
+    // via the JUCE tree — Wayland's screen coords are broken for
+    // Desktop::getMousePosition / Component::getScreenPosition, so
+    // we cannot rely on screen-space polling).
+    cursorOverlay = std::make_unique<CursorOverlay>();
+    addAndMakeVisible (cursorOverlay.get());
 
     // Autosave heartbeat. Writes session.json.autosave next to the canonical
     // session.json every kAutosaveIntervalMs (30 s) so a crash loses at most
@@ -606,7 +623,39 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         session.editMode = EditMode::Grab;
         if (audioEditor != nullptr) audioEditor->syncEditModeToolbar();
         if (pianoRoll   != nullptr) pianoRoll->syncEditModeToolbar();
-        if (tapeStrip   != nullptr) tapeStrip->repaint();
+        if (tapeStrip   != nullptr) { tapeStrip->refreshModeCursor(); tapeStrip->repaint(); }
+        return true;
+    }
+
+    // ── Bank switching: Cmd/Ctrl + 1/2/3 selects banks 1-8 / 9-16 / 17-24.
+    // Maps to ConsoleView::setBank which also publishes the active bank
+    // to the audio thread so bank-relative MIDI bindings retarget.
+    if (cmd && ! shift && consoleView != nullptr)
+    {
+        const int bankIndex = (code == '1') ? 0
+                            : (code == '2') ? 1
+                            : (code == '3') ? 2
+                                            : -1;
+        if (bankIndex >= 0)
+        {
+            consoleView->setBank (juce::jlimit (0,
+                                                  juce::jmax (0, consoleView->numBanks() - 1),
+                                                  bankIndex));
+            return true;
+        }
+    }
+
+    // ── TIMELINE toggle: Cmd/Ctrl + \ shows / hides the tape strip.
+    // Mirrors the TransportBar's TIMELINE button so the user can flip
+    // the arrangement view without mousing. Backslash is otherwise
+    // unbound; \\ is what Reaper / Pro Tools use for similar toggles.
+    if (cmd && ! shift && key.getTextCharacter() == '\\')
+    {
+        tapeStripExpanded = ! tapeStripExpanded;
+        if (tapeStrip != nullptr) tapeStrip->setVisible (tapeStripExpanded);
+        if (consoleView != nullptr) consoleView->setStripsCompactMode (tapeStripExpanded);
+        if (transportBar != nullptr) transportBar->setTapeToggleVisualState (tapeStripExpanded);
+        resized();
         return true;
     }
 
@@ -966,8 +1015,61 @@ void MainComponent::syncBankButtons (int desiredCount)
     }
 }
 
+void MainComponent::maybeStartStartupPluginScan()
+{
+    if (startupScanTriggered) return;
+    startupScanTriggered = true;   // fire exactly once, whatever the toggle says
+
+    const bool enabled = appconfig::getScanPluginsOnStartup();
+    std::fprintf (stderr, "[Dusk Studio] startup plugin scan: toggle=%s\n",
+                  enabled ? "ON — deferring progress modal" : "off — skipped");
+    std::fflush (stderr);
+    if (! enabled)
+        return;
+
+    // Defer one tick: don't build/show a modal from inside resized() (it would
+    // re-enter layout). By the next message-loop tick the window is shown and
+    // sized, so the EmbeddedModal centres over real bounds.
+    juce::Component::SafePointer<MainComponent> safe (this);
+    juce::MessageManager::callAsync ([safe]
+    {
+        auto* self = safe.getComponent();
+        if (self == nullptr) return;
+
+        std::fprintf (stderr, "[Dusk Studio] startup plugin scan: showing progress modal\n");
+        std::fflush (stderr);
+
+        auto& mgr = self->engine.getPluginManager();
+        auto body = std::make_unique<PluginScanModal> (mgr, [safe] (int added)
+        {
+            auto* s = safe.getComponent();
+            if (s == nullptr) return;
+            s->scanModal.close();
+            auto& m = s->engine.getPluginManager();
+            const int total = m.getEffectDescriptions().size()
+                            + m.getInstrumentDescriptions().size();
+            std::fprintf (stderr,
+                          "[Dusk Studio] Scan-on-startup: added %d new plugins (%d total).\n",
+                          added, total);
+            std::fflush (stderr);
+        });
+
+        // Locked modal (no click-outside / Esc dismiss): it closes itself when
+        // the scan completes.
+        self->scanModal.show (*self, std::move (body), /*onDismiss*/ {},
+                              /*dismissOnClickOutside*/ false,
+                              /*dismissOnEscape*/ false);
+    });
+}
+
 void MainComponent::resized()
 {
+    // Kick the deferred scan-on-startup once the window has real bounds.
+    maybeStartStartupPluginScan();
+
+    if (cursorOverlay != nullptr)
+        cursorOverlay->setBounds (getLocalBounds());
+
     auto area = getLocalBounds().reduced (8);
 
     // Slim menu-bar row at the very top. The menu bar grows to fit its
@@ -1209,9 +1311,49 @@ void MainComponent::openAudioSettings()
     // MIDI Bindings + MIDI Sync + General + Advanced, each with a
     // section header + separator) fits without any group being clipped.
     // The Audio block hosts JUCE's AudioDeviceSelectorComponent in a
-    // fixed 280 px slot — see AudioSettingsPanel::resized.
-    panel->setSize (820, 920);
-    audioSettingsModal.show (*this, std::move (panel));
+    // fixed 360 px slot — see AudioSettingsPanel::resized.
+    constexpr int kPanelW = 820;
+    // Content height with the bumped 360 px audio block + every
+    // section ends just past 1020 px — anything less clips the
+    // Advanced row (ALSA periods / oversampling / self-test / rescan)
+    // off the bottom even with a scroll wrapper, because the viewport
+    // never sees the missing pixels.
+    constexpr int kPanelH = 1060;
+    panel->setSize (kPanelW, kPanelH);
+
+    // Wrap the panel in a Viewport so the full content is reachable on
+    // displays shorter than kPanelH (1080p with bars, smaller laptop
+    // screens, scaled UI). Without this, the Advanced section's ALSA
+    // periods / oversampling / self-test controls clip off the bottom
+    // edge with no way to reach them.
+    class ScrollingHost final : public juce::Component
+    {
+    public:
+        ScrollingHost (std::unique_ptr<juce::Component> content,
+                        int contentW, int contentH)
+        {
+            content->setSize (contentW, contentH);
+            viewport.setViewedComponent (content.release(), /*deleteWhenRemoved*/ true);
+            viewport.setScrollBarsShown (true, false);
+            addAndMakeVisible (viewport);
+        }
+        void resized() override { viewport.setBounds (getLocalBounds()); }
+    private:
+        juce::Viewport viewport;
+    };
+
+    // Reserve room for the dim/backdrop margin + transport row + menu
+    // bar that frame the modal — without this, the centred modal
+    // overflows the visible canvas at the bottom and the Advanced
+    // section gets clipped even though the host theoretically "fits"
+    // inside MainComponent's bounds.
+    const int availH = juce::jmax (300, getHeight() - 200);
+    const int hostH  = juce::jmin (kPanelH, availH);
+    const int sbW    = juce::Component().getLookAndFeel().getDefaultScrollbarWidth();
+    auto host = std::make_unique<ScrollingHost> (std::move (panel),
+                                                   kPanelW, kPanelH);
+    host->setSize (kPanelW + sbW + 4, hostH);
+    audioSettingsModal.show (*this, std::move (host));
 }
 
 void MainComponent::switchToStage (AudioEngine::Stage s)
@@ -1325,8 +1467,9 @@ void MainComponent::launchStartupDialog()
     auto recents = RecentSessions::load();
 
     startupDialog = std::make_unique<StartupDialog> (recents);
-    startupDialog->setSize (560, juce::jlimit (220, 520,
-                                                 140 + (recents.isEmpty() ? 60 : recents.size() * 30)));
+    // Fixed size — the table scrolls internally when the list grows past
+    // what fits, so we don't need to grow the dialog with row count.
+    startupDialog->setSize (720, 460);
 
     startupDialog->onOpenRecent = [this] (juce::File dir)
     {
@@ -1335,16 +1478,24 @@ void MainComponent::launchStartupDialog()
     startupDialog->onNewSession = [this] { newSessionPrompt(); };
     startupDialog->onOpenFile   = [this] { openFromFilePrompt(); };
     startupDialog->onSkip       = [] {};  // nothing - the bootstrap default dir stays
+    startupDialog->onQuit       = []
+    {
+        if (auto* app = juce::JUCEApplicationBase::getInstance())
+            app->systemRequestedQuit();
+    };
     // closeDialog calls onDismiss after each action; the host (us) tears
     // down the embedded dialog + its dim backdrop together.
     startupDialog->onDismiss    = [this] { dismissStartupDialog(); };
 
-    // Dim backdrop covers the rest of the UI; clicking the dim is a
-    // shortcut for "Continue blank" — the same as the dialog's own Skip
-    // button — so it doesn't trap the user when they want to dismiss.
+    // Dim backdrop covers the rest of the UI and SWALLOWS clicks so the
+    // startup dialog behaves like a modal — clicking the dim or the DAW
+    // behind it must NOT dismiss the dialog (the user lost work that
+    // way: accidental click on the timeline disappeared the picker
+    // mid-choice). Dismissal is only via Quit / Open / NEW / OPEN /
+    // RECENT or Escape on the dialog itself.
     startupDim = std::make_unique<DimOverlay>();
     startupDim->setBounds (getLocalBounds());
-    startupDim->onClick = [this] { dismissStartupDialog(); };
+    startupDim->onClick = [] {};
     addAndMakeVisible (startupDim.get());
 
     // Centered on the main window. The dialog is plain dark — no native
@@ -1610,13 +1761,25 @@ void MainComponent::timerCallback()
 
 void MainComponent::requestQuit()
 {
-    // Industry-standard dirty-only prompt: nothing changed since the last
-    // manual save (autosave file isn't newer than session.json) → quit
-    // immediately. Otherwise show the Dusk Studio-styled Save / Don't Save /
-    // Cancel modal.
+    // Industry-standard dirty-only prompt. Compare the live serialized
+    // session JSON against the snapshot we took at the last successful
+    // save (or session load) — any single-knob / fader / region edit
+    // diverges the JSON immediately, so this catches changes that the
+    // autosave-timestamp check below would miss (autosave fires every
+    // 30 s; closing within that window with a moved fader used to skip
+    // the prompt and silently lose the change). autosaveIsNewerThan
+    // stays as a belt-and-braces fallback for sessions where we somehow
+    // didn't seed lastSavedSessionJson.
     const auto dir = session.getSessionDirectory();
     const auto sessionJson = dir.getChildFile ("session.json");
-    const bool dirty = (dir != juce::File()) && autosaveIsNewerThan (sessionJson);
+    bool dirty = false;
+    if (dir != juce::File())
+    {
+        const auto currentJson = SessionSerializer::serialize (session);
+        dirty = (! lastSavedSessionJson.isEmpty()
+                  && currentJson != lastSavedSessionJson)
+              || autosaveIsNewerThan (sessionJson);
+    }
 
     if (! dirty)
     {
@@ -2723,6 +2886,11 @@ enum MenuItemId
     kMenuFileOptimizeAutomation = 1013,
     kMenuFileBounceStems        = 1014,
     kMenuFileQuit     = 1099,
+    // Reserved range for the "Open Recent" submenu (one entry per
+    // RecentSessions::kMaxEntries slot, indexed off this base). Plus a
+    // clear-all sentinel just above the per-entry range.
+    kMenuFileRecentBase  = 1100,
+    kMenuFileRecentClear = 1180,
     // Reserved range for template entries (one per SessionTemplate enum
     // value, indexed off this base). Stays well above the file-action IDs
     // so future additions don't collide.
@@ -2756,6 +2924,42 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelMenuIndex,
         menu.addSubMenu ("New from template", templates);
 
         menu.addItem (kMenuFileOpen,   "Open...");
+
+        // "Recent Sessions" submenu: cached on the way out so the click
+        // handler can resolve by index. Capped at RecentSessions::kMaxEntries
+        // (the on-disk file is also capped, so this match isn't load-bearing).
+        menuRecentSessions = RecentSessions::load();
+        juce::Logger::writeToLog ("[Dusk Studio/MainComponent] Recent Sessions submenu: "
+                                     + juce::String (menuRecentSessions.size())
+                                     + " entries from RecentSessions::load()");
+        juce::PopupMenu recents;
+        if (menuRecentSessions.isEmpty())
+        {
+            recents.addItem (-1, "(none)", false, false);
+        }
+        else
+        {
+            for (int i = 0; i < menuRecentSessions.size()
+                              && i < RecentSessions::kMaxEntries; ++i)
+            {
+                const auto& dir    = menuRecentSessions.getReference (i);
+                const auto  json   = dir.getChildFile ("session.json");
+                const auto  parent = dir.getParentDirectory().getFullPathName();
+                // Always enabled — load() already pruned dirs that have
+                // disappeared, and a missing session.json inside a
+                // surviving dir is rare enough that we'd rather let the
+                // user click + see the error than greyout an entry that
+                // looks broken without explanation. The click handler
+                // shows the alert if loadSessionFromJson fails.
+                recents.addItem (kMenuFileRecentBase + i,
+                                  dir.getFileName() + "  \xe2\x80\x94  " + parent);
+                juce::ignoreUnused (json);
+            }
+            recents.addSeparator();
+            recents.addItem (kMenuFileRecentClear, "Clear recent sessions");
+        }
+        menu.addSubMenu ("Recent Sessions", recents);
+
         menu.addItem (kMenuFileSave,   "Save");
         menu.addItem (kMenuFileSaveAs, "Save as...");
         menu.addSeparator();
@@ -2891,7 +3095,24 @@ void MainComponent::menuItemSelected (int menuItemID, int /*topLevelMenuIndex*/)
             showDuskAlert (*this, "About Dusk Studio", body);
             break;
         }
+        case kMenuFileRecentClear:
+            RecentSessions::clear();
+            menuRecentSessions.clear();
+            break;
         default:
+            // "Open Recent" picks live in [kMenuFileRecentBase, +kMaxEntries).
+            // Resolve via the snapshot taken when the menu was built.
+            if (menuItemID >= kMenuFileRecentBase
+                && menuItemID < kMenuFileRecentBase + RecentSessions::kMaxEntries)
+            {
+                const int idx = menuItemID - kMenuFileRecentBase;
+                if (idx >= 0 && idx < menuRecentSessions.size())
+                {
+                    const auto dir = menuRecentSessions.getReference (idx);
+                    loadSessionFromJson (dir.getChildFile ("session.json"));
+                }
+                break;
+            }
             // Template menu items live in [kMenuFileTemplateBase, +kCount).
             if (menuItemID >= kMenuFileTemplateBase
                 && menuItemID < kMenuFileTemplateBase + (int) SessionTemplate::kCount)
@@ -3030,6 +3251,15 @@ void MainComponent::openPianoRoll (int trackIdx, int regionIdx)
 
     pianoRoll->setBounds (rollBounds);
     pianoRoll->onCloseRequested = [this] { closePianoRoll(); };
+    pianoRoll->onMouseMovedForCursor =
+        [this] (juce::Component& src, juce::Point<int> localInSrc, EditMode m,
+                juce::Range<int> cutLine)
+        {
+            if (cursorOverlay != nullptr)
+                cursorOverlay->setMousePosition (src, localInSrc, m, cutLine);
+        };
+    pianoRoll->onMouseExitedForCursor =
+        [this] { if (cursorOverlay != nullptr) cursorOverlay->clearMousePosition(); };
     pianoRoll->onNavigateToRegion = [this] (int t, int newIdx)
     {
         // Close + reopen on the new region. Same-track only; the
@@ -3043,6 +3273,13 @@ void MainComponent::openPianoRoll (int trackIdx, int regionIdx)
 
 void MainComponent::closePianoRoll()
 {
+    // Clear the shared CursorOverlay first — JUCE doesn't fire
+    // mouseExit on a component being removed, so the editor's
+    // onMouseExitedForCursor callback won't run on its own. Without
+    // this, the painted glyph stays stuck at the last position and
+    // (on Linux) the native cursor stays hidden because the
+    // setNativeCursorVisible(true) transition never fires.
+    if (cursorOverlay != nullptr) cursorOverlay->clearMousePosition();
     if (pianoRoll != nullptr) removeChildComponent (pianoRoll.get());
     if (pianoRollDim != nullptr) removeChildComponent (pianoRollDim.get());
     pianoRoll.reset();
@@ -3083,6 +3320,15 @@ void MainComponent::openAudioEditor (int trackIdx, int regionIdx)
 
     audioEditor->setBounds (editorBounds);
     audioEditor->onCloseRequested = [this] { closeAudioEditor(); };
+    audioEditor->onMouseMovedForCursor =
+        [this] (juce::Component& src, juce::Point<int> localInSrc, EditMode m,
+                juce::Range<int> cutLine)
+        {
+            if (cursorOverlay != nullptr)
+                cursorOverlay->setMousePosition (src, localInSrc, m, cutLine);
+        };
+    audioEditor->onMouseExitedForCursor =
+        [this] { if (cursorOverlay != nullptr) cursorOverlay->clearMousePosition(); };
     audioEditor->onNavigateToRegion = [this] (int t, int newIdx)
     {
         closeAudioEditor();
@@ -3094,6 +3340,10 @@ void MainComponent::openAudioEditor (int trackIdx, int regionIdx)
 
 void MainComponent::closeAudioEditor()
 {
+    // Same reasoning as closePianoRoll — clear the overlay first so
+    // the painted glyph + Linux native-cursor hide don't outlive the
+    // editor.
+    if (cursorOverlay != nullptr) cursorOverlay->clearMousePosition();
     if (audioEditor    != nullptr) removeChildComponent (audioEditor.get());
     if (audioEditorDim != nullptr) removeChildComponent (audioEditorDim.get());
     audioEditor.reset();

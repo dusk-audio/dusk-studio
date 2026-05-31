@@ -61,7 +61,15 @@ private:
 
     AudioEngine& engine;
 
-    int centreNote { 60 };  // C4 — Z plays this; arrow keys shift ±12.
+    // Initialised from appconfig::getVkbCentreNote() in the ctor — the
+    // last-used centre is persisted, so re-opening the VKB lands on the
+    // user's previous octave. Default on first run is C2 (MIDI 36).
+    int centreNote { 36 };
+
+    // Shifts the centre by ±semitones (clamped to MIDI range), releases
+    // any held notes (their slot still refers to the old centre), and
+    // persists the new value so reopening the VKB keeps it.
+    void shiftCentre (int semitones);
     int channel    { 1 };   // 1..16; Left/Right shift.
     int velocity   { 100 };
 

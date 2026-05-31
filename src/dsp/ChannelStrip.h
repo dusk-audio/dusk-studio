@@ -163,6 +163,7 @@ private:
     std::atomic<float>* compFetAttackAtom   = nullptr;
     std::atomic<float>* compFetReleaseAtom  = nullptr;
     std::atomic<float>* compFetRatioAtom    = nullptr;
+    std::atomic<float>* compFetThresholdAtom = nullptr;
     std::atomic<float>* compVcaThreshAtom   = nullptr;
     std::atomic<float>* compVcaRatioAtom    = nullptr;
     std::atomic<float>* compVcaAttackAtom   = nullptr;
@@ -179,6 +180,7 @@ private:
     juce::SmoothedValue<float> smoothedFetOutput;
     juce::SmoothedValue<float> smoothedFetAttack;
     juce::SmoothedValue<float> smoothedFetRelease;
+    juce::SmoothedValue<float> smoothedFetThreshold;
     juce::SmoothedValue<float> smoothedVcaThresh;
     juce::SmoothedValue<float> smoothedVcaRatio;
     juce::SmoothedValue<float> smoothedVcaAttack;

@@ -1,6 +1,7 @@
 #include "AudioRegionEditor.h"
 #include "DuskAlerts.h"
 #include "DuskContextMenu.h"
+#include "EditCursors.h"
 #include "EditModeToolbar.h"
 #include "FadeCurve.h"
 #include "../engine/AudioEngine.h"
@@ -25,76 +26,6 @@ const juce::Colour kEditCursor    { 0xffffd060 };
 // Soft cream so it reads against the yellow edit cursor without
 // competing — same colour the piano roll uses for its transport line.
 const juce::Colour kTransportPlayhead { 0xffffe8c0 };
-
-// ── Edit-mode mouse cursors ──────────────────────────────────────────
-// JUCE ships a hand/crosshair/I-beam but no scissors or pencil, so those
-// two are drawn into a small ARGB image once and cached. White glyph
-// with a dark halo so it reads on any waveform colour. Hotspot is the
-// "business end" (blade tip / pencil point).
-juce::Image drawCursorGlyph (std::function<void (juce::Graphics&)> paint)
-{
-    constexpr int kSz = 24;
-    juce::Image img (juce::Image::ARGB, kSz, kSz, true);
-    juce::Graphics g (img);
-    paint (g);
-    return img;
-}
-
-juce::MouseCursor makeScissorsCursor()
-{
-    auto img = drawCursorGlyph ([] (juce::Graphics& g)
-    {
-        juce::Path blades;
-        blades.startNewSubPath (4.0f, 19.0f); blades.lineTo (20.0f, 5.0f);   // blade 1
-        blades.startNewSubPath (11.0f, 19.0f); blades.lineTo (20.0f, 13.0f); // blade 2 (open V)
-        // Finger loops.
-        juce::Path loops;
-        loops.addEllipse (2.0f, 17.0f, 5.0f, 5.0f);
-        loops.addEllipse (9.0f, 17.0f, 5.0f, 5.0f);
-
-        g.setColour (juce::Colours::black.withAlpha (0.7f));
-        g.strokePath (blades, juce::PathStrokeType (3.4f));
-        g.strokePath (loops,  juce::PathStrokeType (3.4f));
-        g.setColour (juce::Colours::white);
-        g.strokePath (blades, juce::PathStrokeType (1.6f));
-        g.strokePath (loops,  juce::PathStrokeType (1.6f));
-    });
-    return juce::MouseCursor (img, 20, 5);   // hotspot at the blade tip
-}
-
-juce::MouseCursor makePencilCursor()
-{
-    auto img = drawCursorGlyph ([] (juce::Graphics& g)
-    {
-        juce::Path body;
-        body.addQuadrilateral (3.0f, 21.0f, 7.0f, 16.0f, 20.0f, 3.0f, 16.0f, 8.0f);
-        juce::Path tip;
-        tip.addTriangle (3.0f, 21.0f, 7.0f, 16.0f, 5.5f, 18.5f);
-
-        g.setColour (juce::Colours::black.withAlpha (0.7f));
-        g.strokePath (body, juce::PathStrokeType (3.0f));
-        g.setColour (juce::Colours::white);
-        g.fillPath (body);
-        g.setColour (juce::Colours::black);
-        g.fillPath (tip);
-    });
-    return juce::MouseCursor (img, 3, 21);   // hotspot at the pencil point
-}
-
-juce::MouseCursor cursorForMode (EditMode m)
-{
-    static const juce::MouseCursor scissors = makeScissorsCursor();
-    static const juce::MouseCursor pencil   = makePencilCursor();
-    switch (m)
-    {
-        case EditMode::Grab:  return juce::MouseCursor::DraggingHandCursor;
-        case EditMode::Range: return juce::MouseCursor::IBeamCursor;
-        case EditMode::Cut:   return scissors;
-        case EditMode::Grid:  return juce::MouseCursor::CrosshairCursor;
-        case EditMode::Draw:  return pencil;
-    }
-    return juce::MouseCursor::NormalCursor;
-}
 
 // Region-properties popup colour palette. Mirrors the palette in
 // [src/ui/TapeStrip.cpp] so all three surfaces (tape strip menu,
@@ -333,6 +264,13 @@ AudioRegionEditor::AudioRegionEditor (Session& s, AudioEngine& e, int t, int r)
     // it running unconditionally keeps the start-of-playback latency
     // at one tick (~33 ms) without burning CPU at idle.
     startTimerHz (30);
+
+    // Force default-cursored child labels / buttons to defer to this
+    // editor's stored cursor — without this the JUCE default null-handle
+    // cursor (which compares as NormalCursor, NOT ParentCursor)
+    // silently shadows the editor's Grab / Cut cursor any time the
+    // mouse hovers a label or readout sitting over the waveform.
+    inheritCursorOnDescendants (*this);
 }
 
 AudioRegionEditor::~AudioRegionEditor()
@@ -409,6 +347,11 @@ void AudioRegionEditor::resized()
         getHeight() - kIconRowHeight - kRulerHeight - kStatusBarH - kScrollBarH);
     zoomFitToArea (waveArea);
     syncScrollBarRange();
+
+    // Re-apply cursor inheritance — covers any child added or relaid out
+    // after the ctor (the dynamic IconRow + status-bar widgets all
+    // reposition here).
+    inheritCursorOnDescendants (*this);
 }
 
 void AudioRegionEditor::syncScrollBarRange()
@@ -1041,43 +984,109 @@ int AudioRegionEditor::gainLineY (juce::Rectangle<int> waveArea) const
     return inset.getCentreY() - (int) std::round (frac * spanPx);
 }
 
-void AudioRegionEditor::mouseMove (const juce::MouseEvent& e)
+juce::MouseCursor AudioRegionEditor::cursorForPoint (int x, int y) const
 {
+    // Single source of truth for cursor selection — shared between
+    // mouseMove and updateModeCursor so a toolbar-driven session.editMode
+    // flip can't overwrite a stationary resize cursor.
     const auto waveArea = juce::Rectangle<int> (0, kIconRowHeight + kRulerHeight,
                                                    getWidth(),
                                                    getHeight() - kIconRowHeight - kRulerHeight - kStatusBarH - kScrollBarH);
 
-    if (fadeInHandleRect (waveArea).contains (e.x, e.y)
-        || fadeOutHandleRect (waveArea).contains (e.x, e.y))
+    if (fadeInHandleRect (waveArea).contains (x, y)
+        || fadeOutHandleRect (waveArea).contains (x, y))
+        return juce::MouseCursor::LeftRightResizeCursor;
+
+    if (trimStartRect (waveArea).contains (x, y)
+        || trimEndRect (waveArea).contains (x, y))
+        return juce::MouseCursor::LeftRightResizeCursor;
+
+    if (waveArea.contains (x, y) && std::abs (y - gainLineY (waveArea)) <= 4)
+        return juce::MouseCursor::UpDownResizeCursor;
+
+    if (waveArea.contains (x, y))
     {
-        setMouseCursor (juce::MouseCursor::LeftRightResizeCursor);
-        return;
+        // For Grab / Cut / Draw the CursorOverlay paints the glyph
+        // directly at the mouse position; hide the native cursor so
+        // both don't show at once. Range (IBeam) + Grid (Crosshair)
+        // stay native — they're standard OS cursors that render
+        // correctly without the overlay.
+        const auto m = session.editMode;
+        if (m == EditMode::Grab || m == EditMode::Cut || m == EditMode::Draw)
+            return invisibleCursor();
+        return cursorForEditMode (m);
     }
-    if (trimStartRect (waveArea).contains (e.x, e.y)
-        || trimEndRect (waveArea).contains (e.x, e.y))
+
+    return juce::MouseCursor::NormalCursor;
+}
+
+void AudioRegionEditor::pushCursorPosition (int x, int y)
+{
+    if (! (onMouseMovedForCursor && onMouseExitedForCursor)) return;
+
+    const auto waveArea = juce::Rectangle<int> (0, kIconRowHeight + kRulerHeight,
+                                                   getWidth(),
+                                                   getHeight() - kIconRowHeight - kRulerHeight - kStatusBarH - kScrollBarH);
+    const auto m = session.editMode;
+    const bool inContent = waveArea.contains (x, y);
+    const bool wantsGlyph = inContent
+                           && (m == EditMode::Grab || m == EditMode::Cut || m == EditMode::Draw);
+
+    // In Cut mode the dashed cut-line + scissor variant only fires
+    // when the cursor X is over the REGION's painted audio range
+    // (between its timelineStart and timelineStart + lengthInSamples
+    // mapped through xForTimelineSample). Empty area before / after
+    // the region — scrolled past the audio block — gets the plain
+    // scissor with no dashed line.
+    juce::Range<int> cutLine;
+    int visualX = x;
+    if (wantsGlyph && m == EditMode::Cut)
     {
-        setMouseCursor (juce::MouseCursor::LeftRightResizeCursor);
-        return;
+        if (const auto* r = region())
+        {
+            const int xStart = xForTimelineSample (r->timelineStart, waveArea);
+            const int xEnd   = xForTimelineSample (r->timelineStart + r->lengthInSamples,
+                                                     waveArea);
+            const auto regionX = juce::Range<int> (juce::jmin (xStart, xEnd),
+                                                     juce::jmax (xStart, xEnd));
+            if (regionX.contains (x))
+            {
+                cutLine = juce::Range<int> (waveArea.getY(), waveArea.getBottom());
+
+                // Snap the visual cursor X to the same grid the cut
+                // commits to (snapTimelineSampleToGrid). Without this
+                // the scissor renders at the raw cursor X while the
+                // actual split lands at the nearest grid line — user
+                // reads it as "the cut happened left of the scissor".
+                if (session.snapToGrid)
+                {
+                    const auto rawT     = timelineSampleForX (x, waveArea);
+                    const auto snappedT = snapTimelineSampleToGrid (rawT, /*bypass*/ false);
+                    visualX = xForTimelineSample (snappedT, waveArea);
+                }
+            }
+        }
     }
-    // Within ±4 px of the gain line → vertical-resize cursor.
-    if (waveArea.contains (e.x, e.y) && std::abs (e.y - gainLineY (waveArea)) <= 4)
-    {
-        setMouseCursor (juce::MouseCursor::UpDownResizeCursor);
-        return;
-    }
-    // No handle under the pointer: inside the waveform the cursor
-    // reflects the active edit mode (hand / scissors / pencil / crosshair
-    // / I-beam); outside it (toolbar / ruler / status row) fall back to
-    // the normal arrow so the edit-mode cursor doesn't bleed over chrome.
-    if (waveArea.contains (e.x, e.y))
-        setMouseCursor (cursorForMode (session.editMode));
-    else
-        setMouseCursor (juce::MouseCursor::NormalCursor);
+
+    if (wantsGlyph) onMouseMovedForCursor (*this, juce::Point<int> (visualX, y), m, cutLine);
+    else            onMouseExitedForCursor();
+}
+
+void AudioRegionEditor::mouseMove (const juce::MouseEvent& e)
+{
+    setMouseCursor (cursorForPoint (e.x, e.y));
+    pushCursorPosition (e.x, e.y);
 }
 
 void AudioRegionEditor::updateModeCursor()
 {
-    setMouseCursor (cursorForMode (session.editMode));
+    const auto p = getMouseXYRelative();
+    setMouseCursor (cursorForPoint (p.x, p.y));
+}
+
+void AudioRegionEditor::mouseExit (const juce::MouseEvent&)
+{
+    if (onMouseExitedForCursor) onMouseExitedForCursor();
 }
 
 void AudioRegionEditor::mouseDown (const juce::MouseEvent& e)
@@ -1467,6 +1476,8 @@ void AudioRegionEditor::mouseDown (const juce::MouseEvent& e)
 
 void AudioRegionEditor::mouseDrag (const juce::MouseEvent& e)
 {
+    pushCursorPosition (e.x, e.y);
+
     auto* r = region();
     if (r == nullptr || dragMode == DragMode::None) return;
     const auto waveArea = juce::Rectangle<int> (0, kIconRowHeight + kRulerHeight,
@@ -1666,6 +1677,7 @@ void AudioRegionEditor::mouseDrag (const juce::MouseEvent& e)
                 juce::jmax<juce::int64> (0, r->lengthInSamples - r->fadeOutSamples),
                 sample - r->sourceOffset);
             r->fadeInSamples = fadeIn;
+            snapGuideTimelineSample = r->timelineStart + r->fadeInSamples;
             break;
         }
         case DragMode::FadeOut:
@@ -1677,6 +1689,8 @@ void AudioRegionEditor::mouseDrag (const juce::MouseEvent& e)
                 juce::jmax<juce::int64> (0, r->lengthInSamples - r->fadeInSamples),
                 endAbs - sample);
             r->fadeOutSamples = fadeOut;
+            snapGuideTimelineSample = r->timelineStart
+                                          + r->lengthInSamples - r->fadeOutSamples;
             break;
         }
         case DragMode::Gain:

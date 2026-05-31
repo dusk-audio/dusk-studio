@@ -7,6 +7,8 @@
 #include <cstring>
 #include <cstdint>
 #include <sys/resource.h>
+#include <pthread.h>
+#include <sched.h>
 
 namespace duskstudio
 {
@@ -250,7 +252,14 @@ void readInterleavedFloat (const void* src, juce::AudioBuffer<float>& dest,
 // 2 is the Ardour default and the lowest-latency setting that gives the kernel
 // any slack. Range [2, 16]. UI lives in AudioSettingsPanel and updates this
 // before triggering a re-open of the device.
-std::atomic<int> gRequestedPeriods { 2 };
+// Periods = number of buffer fragments the ALSA ring is split into.
+// 2 (the bare minimum) gives the kernel exactly one period of slack
+// before underrun: at 256 samples / 48 kHz that's only ~5 ms total,
+// not enough on Linux even with SCHED_RR when the DSP graph has a few
+// plugins. PipeWire / JACK use 3 internally for the same reason —
+// match them so the default ALSA experience doesn't xrun out of the
+// box. Users who need lower latency can drop to 2 in Audio Settings.
+std::atomic<int> gRequestedPeriods { 3 };
 
 // ----- Sample rate / buffer size candidates ----------------------------------
 //
@@ -763,24 +772,74 @@ void AlsaAudioIODevice::start (juce::AudioIODeviceCallback* newCallback)
         snd_pcm_start (startHandle);
     }
 
-    // Pick a SCHED_RR priority safely below RLIMIT_RTPRIO so pthread_create
-    // doesn't EPERM. Same logic as JUCE's patched ALSA backend.
-    int juceRtPrio = 8;
+    // Pick a SCHED_RR priority near the TOP of the rlimit ceiling.
+    // JUCE's Thread::Priority enum maps [0, 10] to kernel SCHED_RR
+    // priorities; we want the I/O thread at or near 10 so we run at
+    // kernel sched_priority ~80+ — the same range PipeWire / JACK
+    // pick. The previous formula linearly scaled (rl.rlim_cur - 4)
+    // down to [0, 10], which under RLIMIT_RTPRIO=95 resolved to
+    // juce-prio=9 → kernel priority ~9 → constant preemption by any
+    // higher-priority process → DSP load spikes + xruns. We keep a
+    // small headroom under the rlimit so sub-threads or system RT
+    // priorities the kernel reserves can still sit above us.
+    int juceRtPrio = 5;
     struct rlimit rl{};
-    if (getrlimit (RLIMIT_RTPRIO, &rl) == 0 && rl.rlim_cur > 1)
+    const bool haveRtLimit = (getrlimit (RLIMIT_RTPRIO, &rl) == 0);
+    if (haveRtLimit && rl.rlim_cur > 1)
     {
-        const long capped     = (long) rl.rlim_cur - 4;
-        const long juceScale  = (capped * 10 + 49) / 99;
-        juceRtPrio = (int) juce::jlimit ((long) 0, (long) 10, juceScale);
+        // rlim_cur is rlim_t (unsigned). RLIM_INFINITY == (rlim_t) -1 would
+        // narrow to -1 under a signed cast and wrongly fall through to the
+        // lowest priority when the limit is in fact "no limit" — so treat
+        // infinity explicitly as the top priority, and compare with an
+        // unsigned type otherwise.
+        if (rl.rlim_cur == RLIM_INFINITY)
+        {
+            juceRtPrio = 10;
+        }
+        else
+        {
+            const unsigned long long rlim = (unsigned long long) rl.rlim_cur;
+            juceRtPrio = rlim >= 95 ? 10
+                       : rlim >= 50 ?  9
+                       : rlim >= 20 ?  7
+                       :               5;
+        }
     }
 
     const bool gotRT = startRealtimeThread (juce::Thread::RealtimeOptions{}.withPriority (juceRtPrio));
     if (! gotRT)
         startThread (juce::Thread::Priority::high);
 
-    std::fprintf (stderr, "[Dusk Studio/ALSA] thread started: %s (juce-prio=%d, RLIMIT_RTPRIO=%d)\n",
-                  gotRT ? "SCHED_RR" : "Priority::high",
-                  juceRtPrio, (int) rl.rlim_cur);
+    // Resolve and log the actual kernel sched_priority post-attach so
+    // regressions in JUCE's priority mapping are visible without
+    // re-reading source. juce::Thread::getThreadId() returns the
+    // pthread_t cast through a void*; cast it back here.
+    int kernelPrio = -1;
+    juce::String policyStr = "unknown";
+    if (gotRT)
+    {
+        const auto nativeHandle = (pthread_t) (uintptr_t) getThreadId();
+        if (nativeHandle != 0)
+        {
+            int policy = 0;
+            sched_param sp {};
+            if (pthread_getschedparam (nativeHandle, &policy, &sp) == 0)
+            {
+                kernelPrio = sp.sched_priority;
+                policyStr = (policy == SCHED_RR)    ? "SCHED_RR"
+                          : (policy == SCHED_FIFO)  ? "SCHED_FIFO"
+                          : (policy == SCHED_OTHER) ? "SCHED_OTHER"
+                          :                           "SCHED_?";
+            }
+        }
+    }
+    const juce::String rtLimitStr =
+        (! haveRtLimit)                  ? juce::String ("unknown")
+        : (rl.rlim_cur == RLIM_INFINITY) ? juce::String ("infinity")
+        :                                  juce::String ((juce::int64) rl.rlim_cur);
+    std::fprintf (stderr, "[Dusk Studio/ALSA] thread started: %s (juce-prio=%d, kernel-prio=%d, RLIMIT_RTPRIO=%s)\n",
+                  gotRT ? policyStr.toRawUTF8() : "Priority::high",
+                  juceRtPrio, kernelPrio, rtLimitStr.toRawUTF8());
 
     isStarted.store (true, std::memory_order_release);
 }

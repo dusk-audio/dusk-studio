@@ -6,7 +6,8 @@
 # Prerequisites:
 #   • build-linux/ already configured + built (Release).
 #   • linuxdeploy on $PATH.
-#   • packaging/DuskStudio.png present (256x256 PNG, NOT in repo).
+#   • assets/ds-icon.png present (committed; downscaled by linuxdeploy
+#     to the 256x256 hicolor slot).
 #
 # Output:
 #   DuskStudio-<version>-x86_64.AppImage in the repo root.
@@ -29,8 +30,9 @@ if ! command -v linuxdeploy >/dev/null 2>&1; then
     echo "error: linuxdeploy not on PATH - grab from https://github.com/linuxdeploy/linuxdeploy/releases" >&2
     exit 1
 fi
-if [[ ! -f packaging/DuskStudio.png ]]; then
-    echo "error: packaging/DuskStudio.png missing (256x256 brand icon)" >&2
+ICON_SRC="assets/ds-icon.png"
+if [[ ! -f "$ICON_SRC" ]]; then
+    echo "error: $ICON_SRC missing (brand icon)" >&2
     exit 1
 fi
 
@@ -45,14 +47,25 @@ cp "$BINARY"                                       AppDir/usr/bin/DuskStudio
 cp packaging/audio.dusk.studio.desktop             AppDir/usr/share/applications/
 cp packaging/DuskStudio.appdata.xml                AppDir/usr/share/metainfo/
 cp packaging/DuskStudio.mime.xml                   AppDir/usr/share/mime/packages/
-cp packaging/DuskStudio.png                        AppDir/usr/share/icons/hicolor/256x256/apps/
+# .desktop file declares Icon=DuskStudio so the file at the hicolor path
+# must be named DuskStudio.png regardless of the source filename. The
+# 500x500 source gets downscaled by linuxdeploy / freedesktop tooling
+# when the WM picks a smaller cache size.
+cp "$ICON_SRC"                                     AppDir/usr/share/icons/hicolor/256x256/apps/DuskStudio.png
 
 OUTPUT="DuskStudio-${VERSION}-x86_64.AppImage"
 export OUTPUT
+# linuxdeploy derives the AppImage's root icon name from the basename of
+# --icon-file; the .desktop file's Icon= field must match. Copy the
+# source to a basename of "DuskStudio.png" so linuxdeploy + .desktop
+# agree without renaming the committed asset.
+TMP_ICON="$(mktemp -d)/DuskStudio.png"
+cp "$ICON_SRC" "$TMP_ICON"
 linuxdeploy --appdir AppDir \
             --desktop-file packaging/audio.dusk.studio.desktop \
-            --icon-file    packaging/DuskStudio.png \
+            --icon-file    "$TMP_ICON" \
             --output       appimage
+rm -rf "$(dirname "$TMP_ICON")"
 
 echo
 echo "Built: $OUTPUT"
