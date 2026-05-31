@@ -56,6 +56,13 @@ public:
 
     float getCurrentGrDb() const noexcept { return currentGrDb.load (std::memory_order_relaxed); }
 
+    // Post-fader / post-pan output peak (dB) for this block - the track's
+    // contribution to the mix, regardless of bus/master routing. The strip
+    // meter shows this during playback (switches to the pre-fader input meter
+    // when the track is input-monitoring). -100 = silent / skipped.
+    float getOutLDb() const noexcept { return currentOutLDb.load (std::memory_order_relaxed); }
+    float getOutRDb() const noexcept { return currentOutRDb.load (std::memory_order_relaxed); }
+
     // Valid for lastProcessedSamples samples after the most recent
     // processAndAccumulate. nullptr if no DSP ran this block.
     const float* getLastProcessedMono() const noexcept { return lastProcessedPtr; }
@@ -197,6 +204,8 @@ private:
 #endif
 
     std::atomic<float> currentGrDb { 0.0f };
+    std::atomic<float> currentOutLDb { -100.0f };
+    std::atomic<float> currentOutRDb { -100.0f };
     const float* lastProcessedPtr = nullptr;
     const float* lastProcessedR   = nullptr;
     int          lastProcessedSamples = 0;

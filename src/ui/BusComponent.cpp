@@ -1569,9 +1569,10 @@ void BusComponent::resized()
     autoModeButton.setBounds (autoRow.reduced (1, 0));
     area.removeFromBottom (4);
 
-    // Output-peak readout below the meter+fader pair.
+    // Output-peak readout row. Positioned under the meter cluster further
+    // down (once meterArea is known) rather than full-width, so it sits under
+    // the LED, not the fader. Just reserve the row height here.
     auto peakRow = area.removeFromBottom (14);
-    outputPeakLabel.setBounds (peakRow);
     area.removeFromBottom (2);
 
     // Right-side stack — fader-side grammar matching the channel strip:
@@ -1610,6 +1611,11 @@ void BusComponent::resized()
                         + (int) duskstudio::kFaderTrackPad;
     meterArea = meterArea.withTop (meterTopY)
                           .withTrimmedBottom (kFaderValueH + 8);
+    // Centre the output-peak readout under the meter + GR-LED cluster (not the
+    // full strip width, which read as sitting under the fader).
+    outputPeakLabel.setBounds (meterArea.getX(), peakRow.getY(),
+                                compMeterCol.getRight() - meterArea.getX(),
+                                peakRow.getHeight());
     // Mirror padding so the fader's centre lands on the strip's centre.
     constexpr int kRightStackW = kRightPad + kGrLedW + kMeterToGrGap
                                   + kMeterW + kFaderToMeterGap;

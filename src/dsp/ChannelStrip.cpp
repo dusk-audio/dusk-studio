@@ -498,6 +498,9 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             // zeroes the GR atom after the comp pass below.
             currentGrDb.store (0.0f, std::memory_order_relaxed);
            #endif
+            // Silent input -> silent output: the output meter reads -inf too.
+            currentOutLDb.store (-100.0f, std::memory_order_relaxed);
+            currentOutRDb.store (-100.0f, std::memory_order_relaxed);
             // Smoothers stay FROZEN on skip (no setTargetValue,
             // no getNextValue) — when audio returns, they pick up
             // at the configured value with no click. The track's
@@ -843,6 +846,19 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         if (auxSendGain[(size_t) a].isSmoothing())            anyAuxSmoothing = true;
     }
 
+    // Post-fader / post-pan output peak, captured in whichever accumulate path
+    // runs below, then published as the strip's output meter (the UI shows it
+    // during playback). It's the level BEFORE the master/bus routing split, so
+    // it reflects the track's contribution regardless of where it's routed.
+    float outPeakL = 0.0f, outPeakR = 0.0f;
+    const auto publishOutMeter = [this] (float pL, float pR)
+    {
+        currentOutLDb.store (pL > 1e-5f ? juce::Decibels::gainToDecibels (pL, -100.0f) : -100.0f,
+                             std::memory_order_relaxed);
+        currentOutRDb.store (pR > 1e-5f ? juce::Decibels::gainToDecibels (pR, -100.0f) : -100.0f,
+                             std::memory_order_relaxed);
+    };
+
     if (! anyBusActive && ! anyBusSmoothing && ! anyAuxActive && ! anyAuxSmoothing)
     {
         // Master-only fast path - no bus, no aux. The common steady state
@@ -855,9 +871,14 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             const float fg = faderGain.getNextValue();
             const float gL = panGainL.getNextValue() * fg;
             const float gR = panGainR.getNextValue() * fg;
-            masterL[i] += srcL[i] * gL;
-            masterR[i] += srcR[i] * gR;
+            const float oL = srcL[i] * gL;
+            const float oR = srcR[i] * gR;
+            masterL[i] += oL;
+            masterR[i] += oR;
+            outPeakL = juce::jmax (outPeakL, std::abs (oL));
+            outPeakR = juce::jmax (outPeakR, std::abs (oR));
         }
+        publishOutMeter (outPeakL, outPeakR);
         return;
     }
 
@@ -878,6 +899,8 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         const float wetRPre = sR * pR;
         const float wetL = sL * gL;
         const float wetR = sR * gR;
+        outPeakL = juce::jmax (outPeakL, std::abs (wetL));
+        outPeakR = juce::jmax (outPeakR, std::abs (wetR));
 
         // Bus routing is EXCLUSIVE with master routing: a track assigned to
         // any bus must not also hit the master direct, otherwise the signal
@@ -928,5 +951,6 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             }
         }
     }
+    publishOutMeter (outPeakL, outPeakR);
 }
 } // namespace duskstudio

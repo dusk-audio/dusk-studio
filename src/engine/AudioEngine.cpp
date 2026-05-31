@@ -2635,6 +2635,10 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                                                  numCurrentDeviceOutputs);
         session.track (t).meterGrDb.store (strips[(size_t) t].getCurrentGrDb(),
                                             std::memory_order_relaxed);
+        session.track (t).meterOutLDb.store (strips[(size_t) t].getOutLDb(),
+                                              std::memory_order_relaxed);
+        session.track (t).meterOutRDb.store (strips[(size_t) t].getOutRDb(),
+                                              std::memory_order_relaxed);
 
         // Output peak for MIDI tracks: the strip's "input" meter only
         // measures the audio source feeding the strip, which is null on

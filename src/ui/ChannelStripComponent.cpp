@@ -3058,15 +3058,25 @@ void ChannelStripComponent::timerCallback()
         else peakHold = juce::jmax (-100.0f, peakHold - 1.5f);
     };
 
-    const float inputDb = track.meterInputDb.load (std::memory_order_relaxed);
-    smoothMeter (inputDb, displayedInputDb, inputPeakHoldDb, inputPeakHoldFrames);
-
     const bool stereoMode = (track.mode.load (std::memory_order_relaxed)
                               == (int) Track::Mode::Stereo);
+
+    // Meter follows the monitored source: pre-fader INPUT while the track is
+    // input-monitoring (IN engaged, so record levels read correctly), post-
+    // fader OUTPUT otherwise (the track's contribution to the mix). Mono shows
+    // the hotter output channel so a hard pan doesn't read as silence.
+    const bool  inputMon = track.inputMonitor.load (std::memory_order_relaxed);
+    const float outL     = track.meterOutLDb.load (std::memory_order_relaxed);
+    const float outR     = track.meterOutRDb.load (std::memory_order_relaxed);
+    const float lDb = inputMon ? track.meterInputDb.load (std::memory_order_relaxed)
+                               : (stereoMode ? outL : juce::jmax (outL, outR));
+    smoothMeter (lDb, displayedInputDb, inputPeakHoldDb, inputPeakHoldFrames);
+
     if (stereoMode)
     {
-        const float inputRDb = track.meterInputRDb.load (std::memory_order_relaxed);
-        smoothMeter (inputRDb, displayedInputRDb, inputPeakHoldRDb, inputPeakHoldRFrames);
+        const float rDb = inputMon ? track.meterInputRDb.load (std::memory_order_relaxed)
+                                   : outR;
+        smoothMeter (rDb, displayedInputRDb, inputPeakHoldRDb, inputPeakHoldRFrames);
     }
     else
     {

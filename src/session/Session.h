@@ -590,6 +590,11 @@ struct Track
     std::atomic<float> meterInputDb  { -100.0f };
     // Stereo R-input peak. -100 for mono/midi.
     std::atomic<float> meterInputRDb { -100.0f };
+    // Post-fader / post-pan output peak (stereo). The strip meter shows this
+    // during playback; it switches to meterInput* above when the track is
+    // monitoring its input (IN engaged), matching console / DP-24 metering.
+    std::atomic<float> meterOutLDb   { -100.0f };
+    std::atomic<float> meterOutRDb   { -100.0f };
 
     // int (not bool) — 4 states. Lock-free: UI relaxed-stores; audio
     // relaxed-loads. 3c-i wires Off + Read; Write/Touch reserved.

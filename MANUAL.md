@@ -193,7 +193,7 @@ In compact mode (window narrower than 1850 px) labels shorten; `SNAP` becomes `S
 | 12  | Fader               | −∞ to +12 dB. Click the dB readout to type; right-click for MIDI Learn.                                     |
 | 13  | Mute / Solo / Phase | M (red), S (blue), Ø (yellow). Solo is solo-in-place and additive.                                          |
 | 14  | Bus assigns         | Right-click the fader area for the bus menu.                                                                |
-| 15  | Meters              | Input meter (left of fader) + GR meter (right of comp).                                                     |
+| 15  | Meters              | Level meter (left of fader): pre-fader input while monitoring (IN), post-fader output on playback. GR meter (right of comp). |
 | 16  | Fader group         | Right-click the strip → **Fader group…** to join one of 8 groups. A coloured **G1…G8** chip appears in the name row.  |
 
 ### Fader groups
@@ -685,7 +685,7 @@ Each channel can be routed to any combination of the four mix buses. Right-click
 
 ## Meters
 
-- **Input meter** (left of the fader): peak level in dBFS, with a brief peak-hold. Two columns for stereo tracks.
+- **Level meter** (left of the fader): peak level in dBFS, with a brief peak-hold and a numeric readout below it. Two columns for stereo tracks. It follows what you're monitoring — **pre-fader input** while the track is input-monitoring (IN engaged), so you set record levels correctly, and **post-fader output** (the track's contribution to the mix) on playback. Bus and master meters are always post-fader output.
 - **GR meter** (right of the fader): real-time compressor gain reduction.
 
 A short red bar at the top of the input meter indicates a clip on that track. The bar holds for one second before clearing.
