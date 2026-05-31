@@ -368,28 +368,23 @@ void McuReceiver::handleNotePress (int noteNumber, bool pressed) noexcept
                     (juce::int64) 0, std::memory_order_relaxed);
                 return;
             case mcu::btn::FastForward:
-                // No "end of timeline" concept in Dusk Studio; let
-                // FastForward jump to the last record point via the
-                // engine's existing helper. Audio thread can't call
-                // it directly; defer to TransportBar's binding logic
-                // by setting a sentinel that the message-thread timer
-                // catches. For step 2, leave the FFWD button as a
-                // no-op (will be wired in step 3 with the rest of
-                // the transport feedback).
+                // No "end of timeline" concept in Dusk Studio, so FFWD jumps
+                // the playhead to the end of the furthest content. The audio
+                // thread can't walk regions safely / call setPlayhead, so
+                // defer to TransportBar's message-thread drain.
+                session.pendingTransportAction.store (
+                    (int) PendingTransportAction::GoToEnd,
+                    std::memory_order_relaxed);
                 return;
             case mcu::btn::Loop:
-            {
-                auto& t = session.savedLoopEnabled;
-                t = ! t;
-                // The audio thread normally reads loop state from the
-                // Transport directly; flipping a Session::saved* field
-                // wouldn't take effect. TransportBar's binding path
-                // does this through a pending-action sentinel too;
-                // for step 2, the wiring is deliberately simple - the
-                // emit step in 3/4 will pair with the on-screen
-                // toggle's existing Transport API.
+                // Flipping savedLoopEnabled here wouldn't take effect (the
+                // audio thread reads loop state from the Transport directly).
+                // Defer the toggle to the message-thread drain, which owns the
+                // Transport API.
+                session.pendingTransportAction.store (
+                    (int) PendingTransportAction::LoopToggle,
+                    std::memory_order_relaxed);
                 return;
-            }
             default: break;
         }
     }

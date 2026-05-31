@@ -11,6 +11,10 @@ void ConsoleView::dropAllPluginEditors()
 
 ConsoleView::ConsoleView (Session& session, AudioEngine& engine) : sessionRef (session)
 {
+    // Follow the MCU surface's bank (set on the audio thread by the Bank
+    // Left/Right buttons). Fires on the message loop, after this ctor.
+    startTimerHz (20);
+
     for (int i = 0; i < Session::kNumTracks; ++i)
     {
         strips[(size_t) i] = std::make_unique<ChannelStripComponent> (
@@ -147,6 +151,10 @@ void ConsoleView::setBank (int bankIndex)
     // Publish the active bank to the audio thread so bank-relative MIDI
     // bindings (TrackFaderBank etc.) resolve to the visible 8 tracks.
     sessionRef.activeBank.store (bankIndex, std::memory_order_relaxed);
+    // Keep the MCU surface on the same bank: a screen / keyboard (Cmd+1/2/3)
+    // bank change moves which 8 tracks the control surface drives, and the
+    // timer below won't fight it because mcu.bank now matches.
+    sessionRef.mcu.bank.store (bankIndex, std::memory_order_relaxed);
 
     updateBankVisibility();
     resized();
@@ -155,6 +163,17 @@ void ConsoleView::setBank (int bankIndex)
     // to refresh its layout so the toggle states stay in sync.
     if (auto* parent = getParentComponent())
         parent->resized();
+}
+
+void ConsoleView::timerCallback()
+{
+    // The MCU Bank Left/Right buttons write session.mcu.bank on the audio
+    // thread; mirror it into the visible bank here so the on-screen view +
+    // bank-relative bindings follow the surface. setBank no-ops when the
+    // value already matches, so this doesn't churn.
+    const int mcuBank = sessionRef.mcu.bank.load (std::memory_order_relaxed);
+    if (mcuBank != currentBank)
+        setBank (mcuBank);
 }
 
 void ConsoleView::updateBankVisibility()

@@ -12,7 +12,8 @@
 
 namespace duskstudio
 {
-class ConsoleView final : public juce::Component
+class ConsoleView final : public juce::Component,
+                          private juce::Timer
 {
 public:
     // Engine ref so each ChannelStripComponent gets a PluginSlot
@@ -111,5 +112,10 @@ private:
     bool showingAllTracks = false;
 
     void updateBankVisibility();
+
+    // Polls session.mcu.bank so the MCU surface's Bank Left/Right buttons
+    // (handled on the audio thread) drive the visible bank + bank-relative
+    // bindings, keeping the surface and the on-screen view on the same 8.
+    void timerCallback() override;
 };
 } // namespace duskstudio

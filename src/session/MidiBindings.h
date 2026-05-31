@@ -278,11 +278,13 @@ struct MidiBinding
 // drains (engine.play/stop/record aren't RT-safe).
 enum class PendingTransportAction : int
 {
-    None    = 0,
-    Play    = 1,
-    Stop    = 2,
-    Record  = 3,
-    Toggle  = 4,
+    None       = 0,
+    Play       = 1,
+    Stop       = 2,
+    Record     = 3,
+    Toggle     = 4,
+    LoopToggle = 5,   // flip loop on/off (MCU Loop button)
+    GoToEnd    = 6,   // jump playhead to the end of the last content (MCU FFWD)
 };
 
 // Packed into atomic<int>: target enum high bits, track index low 8.
@@ -351,6 +353,7 @@ class Session;
 } // namespace duskstudio
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include <functional>
 
 namespace duskstudio
 {
@@ -364,5 +367,13 @@ void showLearnMenu (juce::Component& target,
                     Session& session,
                     MidiBindingTarget kind,
                     int index = 0);
+
+// The learn menu is built as a juce::PopupMenu but SHOWN through this hook,
+// so the UI layer can render it in-window (DuskContextMenu) rather than a
+// native popup — native popups flash / mis-dismiss / mis-stack on X11 and
+// Wayland. The UI sets this once at startup; if it's left unset, showLearnMenu
+// falls back to juce::PopupMenu::showMenuAsync.
+using LearnMenuShowFn = std::function<void (const juce::PopupMenu&, juce::Component&)>;
+void setLearnMenuShowHook (LearnMenuShowFn fn);
 } // namespace midilearn
 } // namespace duskstudio

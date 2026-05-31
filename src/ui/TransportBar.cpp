@@ -757,6 +757,28 @@ void TransportBar::timerCallback()
                 if (engine.getTransport().isStopped()) engine.play();
                 else                                    { engine.stop(); notifyRecordStopped(); }
                 break;
+            case PendingTransportAction::LoopToggle:
+            {
+                auto& tr = engine.getTransport();
+                tr.setLoopEnabled (! tr.isLoopEnabled());
+                s.savedLoopEnabled = tr.isLoopEnabled();
+                break;
+            }
+            case PendingTransportAction::GoToEnd:
+            {
+                // No fixed timeline end — jump to the end of the furthest
+                // content across all tracks (audio + MIDI regions).
+                juce::int64 end = 0;
+                for (int t = 0; t < Session::kNumTracks; ++t)
+                {
+                    for (const auto& r : s.track (t).regions)
+                        end = juce::jmax (end, r.timelineStart + r.lengthInSamples);
+                    for (const auto& r : s.track (t).midiRegions.current())
+                        end = juce::jmax (end, r.timelineStart + r.lengthInSamples);
+                }
+                engine.getTransport().setPlayhead (end);
+                break;
+            }
             case PendingTransportAction::None:   break;
         }
 
