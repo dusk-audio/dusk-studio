@@ -677,9 +677,17 @@ void PianoRollComponent::refreshStatusBarReadouts()
     const auto* r = region();
     int channel = 1;
     if (r != nullptr && ! r->notes.empty()) channel = r->notes.front().channel;
-    trackLabel.setText ("Track " + juce::String (trackIdx + 1)
-                            + "  -  ch " + juce::String (channel),
+    // Lead with the track NAME (tinted with the track colour) so you can tell
+    // which track you're editing - the full-screen roll otherwise gives no
+    // clue. Unnamed tracks (name still the default number) fall back to
+    // "Track N". Matches the audio region editor's header.
+    const auto& trk = session.track (trackIdx);
+    const auto trackId = (trk.name == juce::String (trackIdx + 1))
+                             ? juce::String ("Track ") + trk.name
+                             : trk.name;
+    trackLabel.setText (trackId + "  -  ch " + juce::String (channel),
                             juce::dontSendNotification);
+    trackLabel.setColour (juce::Label::textColourId, trk.colour.brighter (0.3f));
     if (r != nullptr)
     {
         muteToggle.setToggleState (r->muted,  juce::dontSendNotification);
