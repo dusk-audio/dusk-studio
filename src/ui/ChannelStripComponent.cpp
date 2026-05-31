@@ -868,11 +868,10 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         // capture it so the original behaviour (atom store, group
         // propagation) still runs.
         const auto previousOnChange = faderSlider.onValueChange;
-        faderSlider.onValueChange = [this, previousOnChange, formatDb]
+        faderSlider.onValueChange = [this, previousOnChange]
         {
             if (previousOnChange) previousOnChange();
-            faderValueLabel.setText (formatDb (faderSlider.getValue()),
-                                       juce::dontSendNotification);
+            refreshFaderValueLabel();
         };
     }
 
@@ -2801,6 +2800,14 @@ void ChannelStripComponent::detachDimOverlay()
     activeDimOverlay.reset();
 }
 
+void ChannelStripComponent::refreshFaderValueLabel()
+{
+    const double db = faderSlider.getValue();
+    faderValueLabel.setText (db <= -89.95 ? juce::String ("off")
+                                          : juce::String (db, 1),
+                             juce::dontSendNotification);
+}
+
 void ChannelStripComponent::timerCallback()
 {
     // Plugin-slot button reflects the slot's current load state. Cheap -
@@ -3082,6 +3089,11 @@ void ChannelStripComponent::timerCallback()
             {
                 displayedLiveFaderDb = live;
                 faderSlider.setValue (live, juce::dontSendNotification);
+                // dontSendNotification skips onValueChange, which is what
+                // refreshes the standalone dB readout — do it explicitly so an
+                // external fader move (MIDI binding / MCU / automation) updates
+                // the value shown under the fader, not just the cap position.
+                refreshFaderValueLabel();
             }
             else if (touched)
             {

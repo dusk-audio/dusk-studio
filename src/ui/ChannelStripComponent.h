@@ -157,6 +157,13 @@ private:
     // knob grid.
     bool usesFaderThresholdLayout() const { return true; }
 
+    // Refresh the standalone dB readout from the fader slider's current value.
+    // Called from faderSlider.onValueChange (user drag) AND from the 30 Hz
+    // timer after it pulls an external change (MIDI binding / MCU / automation)
+    // into the slider with dontSendNotification — which skips onValueChange,
+    // so the label must be refreshed explicitly or it freezes.
+    void refreshFaderValueLabel();
+
     std::array<std::unique_ptr<juce::TextButton>, ChannelStripParams::kNumBuses> busButtons;
 
     juce::Slider panKnob   { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
