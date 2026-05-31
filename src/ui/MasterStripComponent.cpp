@@ -369,7 +369,7 @@ public:
         // chassis. Variable name kept for callsite compatibility.
         const auto compGold = juce::Colour (0xff7da8c5);
         styleEditorEnableBtn (enableBtn, compGold);
-        enableBtn.setButtonText ("ON");
+        enableBtn.setButtonText ("COMP");
         enableBtn.setToggleState (params.compEnabled.load (std::memory_order_relaxed),
                                     juce::dontSendNotification);
         enableBtn.onClick = [this]
@@ -1923,7 +1923,21 @@ void MasterStripComponent::openTapeMachineModal()
     // which calls editorBeingDeleted on the processor.
     if (tapeProcessorPtr != nullptr)
         if (auto* editor = tapeProcessorPtr->createEditor())
-            body = new TapeMachineModalEditor (editor);
+        {
+            juce::Component::SafePointer<MasterStripComponent> safeThis (this);
+            body = new TapeMachineModalEditor (editor,
+                [safeThis]
+                {
+                    auto* s = safeThis.getComponent();
+                    return s != nullptr
+                        && s->params.tapeEnabled.load (std::memory_order_relaxed);
+                },
+                [safeThis] (bool on)
+                {
+                    if (auto* s = safeThis.getComponent())
+                        s->params.tapeEnabled.store (on, std::memory_order_relaxed);
+                });
+        }
 #endif
 
     if (body == nullptr)

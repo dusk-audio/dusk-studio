@@ -2,6 +2,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
+#include <functional>
 #include <memory>
 
 namespace duskstudio
@@ -19,11 +20,18 @@ namespace duskstudio
 // Located by traversal (donor children have no stable IDs) — matched
 // by combo items / button text / label text. Overrides applied after
 // donor's resized() runs.
-class TapeMachineModalEditor final : public juce::Component
+class TapeMachineModalEditor final : public juce::Component,
+                                     private juce::Timer
 {
 public:
-    explicit TapeMachineModalEditor (juce::AudioProcessorEditor* editor)
-        : ownedEditor (editor)
+    // getEnabled / setEnabled bridge the tape's bypass to MasterBusParams::
+    // tapeEnabled so the header toggle matches the EQ + COMP editor panels.
+    TapeMachineModalEditor (juce::AudioProcessorEditor* editor,
+                            std::function<bool()>      getEnabled,
+                            std::function<void (bool)> setEnabled)
+        : ownedEditor (editor),
+          getTapeOn (std::move (getEnabled)),
+          setTapeOn (std::move (setEnabled))
     {
         setOpaque (false);
         if (ownedEditor != nullptr)
@@ -41,6 +49,22 @@ public:
         if (presetCombo != nullptr) addAndMakeVisible (presetCombo.getComponent());
         if (saveBtn     != nullptr) addAndMakeVisible (saveBtn.getComponent());
         if (delBtn      != nullptr) addAndMakeVisible (delBtn.getComponent());
+
+        // On/off toggle in the (otherwise masked) header - conformity with
+        // the EQ ("EQ") + COMP ("COMP") editor panels' enable buttons.
+        // Colours mirror styleEditorEnableBtn (file-local in
+        // MasterStripComponent.cpp); copper on-state for the tape accent.
+        enableBtn.setClickingTogglesState (true);
+        enableBtn.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff202024));
+        enableBtn.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xffc08850));
+        enableBtn.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xffd0c0a0));
+        enableBtn.setColour (juce::TextButton::textColourOnId,   juce::Colour (0xff121214));
+        enableBtn.setButtonText ("TAPE");
+        enableBtn.setTooltip ("Engage / bypass the tape machine.");
+        if (getTapeOn) enableBtn.setToggleState (getTapeOn(), juce::dontSendNotification);
+        enableBtn.onClick = [this] { if (setTapeOn) setTapeOn (enableBtn.getToggleState()); };
+        addAndMakeVisible (enableBtn);   // last add -> sits on top of the header mask
+        startTimerHz (20);
     }
 
     void resized() override
@@ -72,9 +96,23 @@ public:
         const int kFooterH = (int) (kFooterBase * scale);
         headerMask.setBounds (0, 0, getWidth(), kHeaderH);
         footerMask.setBounds (0, getHeight() - kFooterH, getWidth(), kFooterH);
+
+        // On/off toggle pinned to the header's left (the preset cluster is
+        // centred, so no collision).
+        const int rowH = (int) (26 * scale);
+        const int btnW = (int) (64 * scale);
+        const int pad  = (int) (8  * scale);
+        enableBtn.setBounds (pad, (kHeaderH - rowH) / 2, btnW, rowH);
     }
 
 private:
+    void timerCallback() override
+    {
+        // Reflect external changes - the engine auto-arms tapeEnabled when a
+        // donor knob is edited, so the toggle must follow without a click.
+        if (getTapeOn) enableBtn.setToggleState (getTapeOn(), juce::dontSendNotification);
+    }
+
     struct Mask : juce::Component
     {
         Mask()
@@ -258,6 +296,10 @@ private:
     juce::Component::SafePointer<juce::ComboBox>   presetCombo;
     juce::Component::SafePointer<juce::TextButton> saveBtn;
     juce::Component::SafePointer<juce::TextButton> delBtn;
+
+    juce::TextButton           enableBtn;
+    std::function<bool()>      getTapeOn;
+    std::function<void (bool)> setTapeOn;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (TapeMachineModalEditor)
 };
