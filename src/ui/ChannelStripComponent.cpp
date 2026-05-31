@@ -2814,6 +2814,16 @@ void ChannelStripComponent::attachDimOverlay()
     // above the dim in z-order — exactly what we want.
 }
 
+int ChannelStripComponent::groupMasterIndex() const noexcept
+{
+    const int gid = track.strip.faderGroupId.load (std::memory_order_relaxed);
+    if (gid == 0) return -1;
+    for (int t = 0; t < Session::kNumTracks; ++t)
+        if (session.track (t).strip.faderGroupId.load (std::memory_order_relaxed) == gid)
+            return t;
+    return -1;
+}
+
 void ChannelStripComponent::detachDimOverlay()
 {
     activeDimOverlay.reset();
@@ -2848,6 +2858,22 @@ void ChannelStripComponent::timerCallback()
     // Plugin-slot button reflects the slot's current load state. Cheap -
     // just an atomic-pointer read + string compare against the cached name.
     refreshPluginSlotButton();
+
+    // Fader-group chip: relayout + repaint only when this strip's group, or
+    // its master status, actually changes - the group can be edited from
+    // another strip's context menu, so polling here keeps every strip's chip
+    // (and which member is master) consistent without a cross-strip signal.
+    {
+        const int gid = track.strip.faderGroupId.load (std::memory_order_relaxed);
+        const bool isMaster = (gid != 0 && groupMasterIndex() == trackIndex);
+        if (gid != lastGroupId || isMaster != lastGroupMaster)
+        {
+            lastGroupId     = gid;
+            lastGroupMaster = isMaster;
+            resized();
+            repaint();
+        }
+    }
 
     // Sync nameLabel with track.name when something external rewrites it
     // (e.g. an audio import auto-renames the track to the file's basename).
@@ -3706,6 +3732,8 @@ void ChannelStripComponent::showColourMenu()
             {
                 const int gid = result - 2100;   // 0 = ungrouped, 1..8
                 self->track.strip.faderGroupId.store (gid, std::memory_order_relaxed);
+                self->resized();   // reserve / release the group-chip slot now
+                self->repaint();
                 return;
             }
             const int idx = result - 1;
@@ -3970,6 +3998,16 @@ static void drawSectionPlaceholder (juce::Graphics& g, juce::Rectangle<int> r,
     g.drawText (label, r.reduced (4, 2), juce::Justification::centredTop, false);
 }
 
+namespace
+{
+// 8 distinct hues for the fader-group chips so grouped strips read as a set.
+juce::Colour groupColour (int gid)
+{
+    const float hue = (float) ((gid - 1) % 8) / 8.0f;   // gid is 1..8
+    return juce::Colour::fromHSV (hue, 0.65f, 0.95f, 1.0f);
+}
+} // namespace
+
 void ChannelStripComponent::paint (juce::Graphics& g)
 {
     auto r = getLocalBounds().toFloat().reduced (1.5f);
@@ -3979,6 +4017,36 @@ void ChannelStripComponent::paint (juce::Graphics& g)
     g.fillRoundedRectangle (r.removeFromTop (4.0f), 2.0f);
     g.setColour (juce::Colour (0xff2a2a2e));
     g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (1.5f), 4.0f, 1.0f);
+
+    // Fader-group chip in the name row's right edge (resized() reserves the
+    // space). Filled for the group master (lowest member index), outlined for
+    // the rest, so grouped strips read as a set and the master is obvious.
+    if (! groupChipBounds.isEmpty())
+    {
+        const int gid = track.strip.faderGroupId.load (std::memory_order_relaxed);
+        if (gid != 0)
+        {
+            const bool isMaster = (groupMasterIndex() == trackIndex);
+            const auto chip = groupChipBounds.toFloat();
+            const auto col  = groupColour (gid);
+            if (isMaster)
+            {
+                g.setColour (col);
+                g.fillRoundedRectangle (chip, 3.0f);
+            }
+            else
+            {
+                g.setColour (col.withAlpha (0.18f));
+                g.fillRoundedRectangle (chip, 3.0f);
+                g.setColour (col);
+                g.drawRoundedRectangle (chip.reduced (0.5f), 3.0f, 1.0f);
+            }
+            g.setFont (juce::Font (juce::FontOptions (9.0f, juce::Font::bold)));
+            g.setColour (isMaster ? juce::Colours::black.withAlpha (0.85f) : col);
+            g.drawText ("G" + juce::String (gid), groupChipBounds,
+                        juce::Justification::centred, false);
+        }
+    }
 
     // EQ region: full background (header + HPF row + 4 band rows)
     if (! eqArea.isEmpty())
@@ -4263,7 +4331,14 @@ void ChannelStripComponent::resized()
     auto area = getLocalBounds().reduced (4);
     area.removeFromTop (6);
 
-    nameLabel.setBounds (area.removeFromTop (20));
+    {
+        auto nameRow = area.removeFromTop (20);
+        if (track.strip.faderGroupId.load (std::memory_order_relaxed) != 0)
+            groupChipBounds = nameRow.removeFromRight (22).reduced (2, 4);
+        else
+            groupChipBounds = {};
+        nameLabel.setBounds (nameRow);
+    }
     area.removeFromTop (2);
 
     // Mixing stage swaps the tracking-only block (mode + input + IN/ARM/PRINT)

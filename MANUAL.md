@@ -194,6 +194,11 @@ In compact mode (window narrower than 1850 px) labels shorten; `SNAP` becomes `S
 | 13  | Mute / Solo / Phase | M (red), S (blue), Ø (yellow). Solo is solo-in-place and additive.                                          |
 | 14  | Bus assigns         | Right-click the fader area for the bus menu.                                                                |
 | 15  | Meters              | Input meter (left of fader) + GR meter (right of comp).                                                     |
+| 16  | Fader group         | Right-click the strip → **Fader group…** to join one of 8 groups. A coloured **G1…G8** chip appears in the name row.  |
+
+### Fader groups
+
+Assign a strip to one of eight fader groups (right-click the strip → **Fader group…** → *Group 1–8*, or *None* to leave). Members of a group move together: dragging any member's fader — or moving it from a control surface or MIDI — shifts every other member by the same dB amount, so the group's relative balance is preserved. The lowest-numbered track in a group is the **master** and shows a filled chip; the rest show an outlined chip in the same colour. Groups link the **fader only** — mute, solo, and pan stay per-track — and a group can span banks and buses. Group membership is saved with the session.
 
 ## The channel strip — RECORDING stage
 

@@ -59,6 +59,10 @@ private:
     void rebuildMidiInputDropdown();
     void rebuildMidiOutputDropdown();
 
+    // Lowest track index sharing this strip's fader group (the group
+    // "master" per DP-24 - it gets the filled chip), or -1 if ungrouped.
+    int groupMasterIndex() const noexcept;
+
     int trackIndex;
     Track& track;
     Session& session;
@@ -172,6 +176,13 @@ private:
     juce::Rectangle<int> inputMeterArea;
     juce::Rectangle<int> meterScaleArea;
     juce::Rectangle<int> grScaleArea;
+    // Fader-group chip drawn in the name row's right edge when grouped.
+    // Empty when ungrouped. lastGroupId / lastGroupMaster are cached so the
+    // 30 Hz timer only relays out + repaints when membership actually changes
+    // (group can change from another strip's context menu).
+    juce::Rectangle<int> groupChipBounds;
+    int  lastGroupId     = 0;
+    bool lastGroupMaster = false;
     juce::Label inputPeakLabel;
     juce::Label grPeakLabel;
     juce::Label grReadoutLabel;
