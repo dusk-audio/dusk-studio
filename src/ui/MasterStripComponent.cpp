@@ -929,9 +929,9 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     addAndMakeVisible (compRatLabel); addAndMakeVisible (compAtkLabel);
     addAndMakeVisible (compRelLabel); addAndMakeVisible (compMakLabel);
 
-    // TAPE pill — left-click toggles tapeEnabled (gives the timeline
-    // compact view a way to bypass without expanding the strip);
-    // right-click opens the popup editor. Lit state reflects the
+    // TAPE pill — left-click opens the popup editor; right-click toggles
+    // tapeEnabled (gives the timeline compact view a way to bypass without
+    // expanding the strip). Lit state reflects the
     // tapeEnabled atom (synced from timerCallback) so the engine's
     // auto-arm-on-edit still shows up here. Matches the expanded-
     // mode CompHeaderButton's left/right grammar — different from

@@ -59,13 +59,17 @@ export OUTPUT
 # --icon-file; the .desktop file's Icon= field must match. Copy the
 # source to a basename of "DuskStudio.png" so linuxdeploy + .desktop
 # agree without renaming the committed asset.
-TMP_ICON="$(mktemp -d)/DuskStudio.png"
+TMP_ICON_DIR="$(mktemp -d)"
+# Remove the temp icon dir on ANY exit. With set -e a linuxdeploy failure
+# bails before a trailing rm would run, so a plain cleanup line would leak
+# the dir; the trap fires on success, error, and interrupt alike.
+trap 'rm -rf "$TMP_ICON_DIR"' EXIT
+TMP_ICON="$TMP_ICON_DIR/DuskStudio.png"
 cp "$ICON_SRC" "$TMP_ICON"
 linuxdeploy --appdir AppDir \
             --desktop-file packaging/audio.dusk.studio.desktop \
             --icon-file    "$TMP_ICON" \
             --output       appimage
-rm -rf "$(dirname "$TMP_ICON")"
 
 echo
 echo "Built: $OUTPUT"

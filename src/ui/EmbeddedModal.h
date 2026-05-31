@@ -20,6 +20,14 @@ namespace duskstudio
 // it never reaches the modal's listener and typing is unaffected.
 inline bool isModalForwardableShortcut (const juce::KeyPress& k) noexcept
 {
+    // Bare transport keys only — a Cmd/Ctrl/Alt chord (e.g. Ctrl+R, Cmd+.)
+    // must NOT be mistaken for the unmodified transport key, otherwise a
+    // host shortcut would silently trigger record / loop / etc. The full
+    // KeyPress comparisons below (spaceKey/homeKey/F11Key) already reject
+    // modifiers; this guards the character-code checks the same way.
+    const auto mods = k.getModifiers();
+    if (mods.isCommandDown() || mods.isCtrlDown() || mods.isAltDown())
+        return false;
     const int kc = k.getKeyCode();
     return k == juce::KeyPress::spaceKey                  // play / stop
         || kc == 'R' || kc == 'r'                         // record

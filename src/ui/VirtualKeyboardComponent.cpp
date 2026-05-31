@@ -57,7 +57,9 @@ VirtualKeyboardComponent::VirtualKeyboardComponent (AudioEngine& engineRef)
     setWantsKeyboardFocus (true);
 
     // Restore the last-used centre note (default C2 = MIDI 36 on first run).
-    centreNote = appconfig::getVkbCentreNote();
+    // Clamp to the same range shiftCentre enforces so a hand-edited / corrupt
+    // config can't seed an out-of-range centre.
+    centreNote = juce::jlimit (0, 120, appconfig::getVkbCentreNote());
 
     auto styleHeaderBtn = [] (juce::TextButton& b)
     {

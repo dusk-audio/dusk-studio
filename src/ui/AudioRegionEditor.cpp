@@ -2925,9 +2925,11 @@ void AudioRegionEditor::refreshStatusBarReadouts()
             titleLabel.setText (displayTitle, juce::dontSendNotification);
         }
 
-        // Keep the track-name header in sync if the strip is renamed while
-        // the editor is open.
-        trackNameLabel.setText (session.track (trackIdx).name, juce::dontSendNotification);
+        // Keep the track-name header in sync if the strip is renamed or
+        // recoloured while the editor is open.
+        const auto& trk = session.track (trackIdx);
+        trackNameLabel.setText (trk.name, juce::dontSendNotification);
+        trackNameLabel.setColour (juce::Label::textColourId, trk.colour.brighter (0.3f));
     }
 }
 

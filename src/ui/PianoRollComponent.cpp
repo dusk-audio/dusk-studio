@@ -2560,9 +2560,14 @@ void PianoRollComponent::pushCursorPosition (int x, int y)
     const auto grid = noteGridArea();
     const auto m    = session.editMode;
     const bool inContent = grid.contains (x, y);
+    // Over a note, mouseMove sets a native resize / drag cursor; suppress the
+    // overlay glyph there so the two don't show at once (empty grid keeps it).
+    bool onEdge = false;
+    const bool overNote = inContent && hitTestNote (x, y, onEdge) >= 0;
     // Only Grab + Draw get a glyph on the piano-roll grid. Range / Cut
     // / Grid stay on the platform cursor.
-    const bool wantsGlyph = inContent && (m == EditMode::Grab || m == EditMode::Draw);
+    const bool wantsGlyph = inContent && ! overNote
+                         && (m == EditMode::Grab || m == EditMode::Draw);
     if (wantsGlyph) onMouseMovedForCursor (*this, juce::Point<int> (x, y), m, {});
     else            onMouseExitedForCursor();
 }

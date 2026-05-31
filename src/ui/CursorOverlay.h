@@ -18,10 +18,12 @@ namespace duskstudio
 //   1. Construct one as a child of MainComponent (or any top-level
 //      component visible above the editor surfaces).
 //   2. setAlwaysOnTop (true), setInterceptsMouseClicks (false, false).
-//   3. setResolver — a callback that, given the GLOBAL mouse position,
-//      returns the EditMode to draw or std::nullopt to draw nothing
-//      (mouse outside an editor surface that supports the tool).
-//   4. The overlay polls the mouse at 60 Hz and repaints on motion.
+//   3. Editor surfaces push their local mouse position in via
+//      setMousePosition (source, localPoint, EditMode, ...) from their
+//      own mouseMove / mouseDrag; the overlay converts to its own coords
+//      through the JUCE component tree (NOT screen space — Wayland's
+//      screen coords are unreliable) and draws that EditMode's glyph, or
+//      nothing after clearMousePosition() on mouseExit.
 //
 // Editor surfaces that want the overlay glyph instead of the native
 // cursor MUST also call setMouseCursor (juce::MouseCursor::NoCursor)

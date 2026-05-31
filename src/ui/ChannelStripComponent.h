@@ -233,7 +233,7 @@ private:
     // PRINT only commits post-effects audio. MIDI tracks render audio
     // at playback time, not at capture, so PRINT is a no-op. Grey out
     // the button + swap the tooltip in MIDI mode. Called from the ctor
-    // and from applyMode().
+    // and from onTrackModeChanged().
     void refreshPrintButtonForMode();
 
     // Re-renders one aux send's value label (e.g. after a pre/post

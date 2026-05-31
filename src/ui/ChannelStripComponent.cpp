@@ -2733,6 +2733,19 @@ public:
                                     .load (std::memory_order_relaxed);
             const bool  isPre = track.strip.auxSendPreFader[(size_t) i]
                                     .load (std::memory_order_relaxed);
+
+            // Mirror the knob to the live value (gated on not-dragging so we
+            // don't fight a user gesture) - the label + outline below follow
+            // liveAuxSendDb, and the knob must too or text and knob desync
+            // during automation / MIDI-driven moves.
+            if (! track.strip.auxSendTouched[(size_t) i].load (std::memory_order_acquire))
+            {
+                const float knobVal = (dB <= ChannelStripParams::kAuxSendMinDb + 0.01f)
+                                          ? ChannelStripParams::kAuxSendOffDb : dB;
+                if (std::abs ((float) knobs[(size_t) i].getValue() - knobVal) > 0.05f)
+                    knobs[(size_t) i].setValue (knobVal, juce::dontSendNotification);
+            }
+
             juce::String txt;
             if (dB <= ChannelStripParams::kAuxSendMinDb + 0.01f)
                 txt = juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x92"));
