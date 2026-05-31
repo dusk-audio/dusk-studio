@@ -104,6 +104,12 @@ int AudioPipelineSelfTest::prepareCleanState()
     t0s.lmGainDb.store     (0.0f,  std::memory_order_relaxed);
     t0s.hmGainDb.store     (0.0f,  std::memory_order_relaxed);
     t0s.hfGainDb.store     (0.0f,  std::memory_order_relaxed);
+    // No bus assignment: track 0 routes DIRECT to master. Every track-0 test
+    // (pass-through unity, mute, bus-solo) assumes this; saveState/restoreState
+    // don't cover busAssign, so enforce it here instead of inheriting whatever
+    // the live session held.
+    for (int b = 0; b < ChannelStripParams::kNumBuses; ++b)
+        t0s.busAssign[(size_t) b].store (false, std::memory_order_relaxed);
 
     // Other tracks: hard mute so they can't contribute to the master mix.
     for (int t = 1; t < Session::kNumTracks; ++t)
@@ -309,11 +315,11 @@ juce::String AudioPipelineSelfTest::testMasterCompNoNoiseFloor()
 
 juce::String AudioPipelineSelfTest::testBusSoloMutesDirect()
 {
-    prepareCleanState();
-    // Solo bus 0 with NO track routed to it. Track 0 is unassigned, so it
-    // takes the direct-to-master path. SIP-style bus solo must mute that
-    // direct track -> master goes silent (the soloed bus is empty). Before
-    // the fix the unassigned track bypassed the bus-solo gate and leaked.
+    prepareCleanState();   // clears track 0's busAssign -> guaranteed direct-to-master
+    // Solo bus 0 with NO track routed to it. Track 0 takes the direct-to-master
+    // path, so SIP-style bus solo must mute it -> master goes silent (the soloed
+    // bus is empty). Before the fix the unassigned track bypassed the bus-solo
+    // gate and leaked.
     session.setBusSoloed (0, true);
 
     auto m = runSynthetic (48000.0, 512, 16, 2, kInputAmpMinusSixDb, kToneHz, 8, 8);
