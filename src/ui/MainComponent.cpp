@@ -557,6 +557,10 @@ MainComponent::MainComponent()
     }
     else if (std::getenv ("DUSKSTUDIO_SKIP_STARTUP_DIALOG") == nullptr)
     {
+        // Set synchronously: the first resized() (which kicks the plugin scan)
+        // runs before this deferred launch, so the scan must already know a
+        // dialog is coming and hold off until it's dismissed.
+        startupDialogPending = true;
         juce::Component::SafePointer<MainComponent> safeThis (this);
         juce::MessageManager::callAsync ([safeThis]
         {
@@ -1037,6 +1041,11 @@ void MainComponent::syncBankButtons (int desiredCount)
 void MainComponent::maybeStartStartupPluginScan()
 {
     if (startupScanTriggered) return;
+    // Defer while the startup dialog is up - dismissStartupDialog() re-invokes
+    // us once the user has picked a session. Don't latch startupScanTriggered
+    // yet, or that later call would no-op. (resized() may call us repeatedly
+    // meanwhile; each just returns here until the dialog closes.)
+    if (startupDialogPending) return;
     startupScanTriggered = true;   // fire exactly once, whatever the toggle says
 
     const bool enabled = appconfig::getScanPluginsOnStartup();
@@ -1540,6 +1549,10 @@ void MainComponent::dismissStartupDialog()
         if (safeThis == nullptr) return;
         safeThis->startupDialog.reset();
         safeThis->startupDim.reset();
+        // Dialog gone - now it's safe to run the startup plugin scan that we
+        // held off in maybeStartStartupPluginScan().
+        safeThis->startupDialogPending = false;
+        safeThis->maybeStartStartupPluginScan();
     });
 }
 
@@ -1794,9 +1807,14 @@ void MainComponent::requestQuit()
     bool dirty = false;
     if (dir != juce::File())
     {
+        // Compare with volatile state stripped (same as the autosave dirty
+        // check) - otherwise refreshed transient fields (playhead, view
+        // state, timestamps) flip the raw JSON and prompt on a clean session.
         const auto currentJson = SessionSerializer::serialize (session);
+        const auto strippedCurrent = stripVolatileStateForDirtyCompare (currentJson);
+        const auto strippedSaved   = stripVolatileStateForDirtyCompare (lastSavedSessionJson);
         dirty = (! lastSavedSessionJson.isEmpty()
-                  && currentJson != lastSavedSessionJson)
+                  && strippedCurrent != strippedSaved)
               || autosaveIsNewerThan (sessionJson);
     }
 

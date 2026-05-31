@@ -208,6 +208,10 @@ private:
     // from the first resized() (the window is sized + on screen by then),
     // guarded so it fires exactly once.
     bool startupScanTriggered = false;
+    // Set synchronously in the ctor when a startup dialog will be shown, so the
+    // resized()-driven scan defers instead of stacking a second modal over it.
+    // dismissStartupDialog() clears it and re-invokes the scan.
+    bool startupDialogPending = false;
     void maybeStartStartupPluginScan();
 
     void toggleVirtualKeyboard();

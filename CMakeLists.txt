@@ -379,8 +379,11 @@ endif()
 # buildable configs (the common case). A deliberate ASIO-less dev build
 # passes -DDUSKSTUDIO_REQUIRE_ASIO=OFF; without the SDK it then warns and
 # falls back to WASAPI exclusive / shared.
-option(DUSKSTUDIO_REQUIRE_ASIO
-       "Fail the Windows build if the ASIO SDK is not found (shipping builds)" OFF)
+# Tri-state so an explicit -DDUSKSTUDIO_REQUIRE_ASIO=OFF is distinguishable
+# from the unset default: "" = auto (release-class builds fail closed),
+# ON = always require, OFF = never require (deliberate ASIO-less dev build).
+set(DUSKSTUDIO_REQUIRE_ASIO "" CACHE STRING
+    "Require the ASIO SDK on Windows: ON / OFF / empty=auto (release fails closed)")
 if(WIN32)
     set(_asio_required ${DUSKSTUDIO_REQUIRE_ASIO})
     # Decide whether a release-class build is possible with this generator.
@@ -389,19 +392,22 @@ if(WIN32)
     # BUILD time and CMAKE_BUILD_TYPE is empty, so a genex like $<CONFIG:Release>
     # can't drive a configure-time message(FATAL_ERROR). Instead, if Release is
     # among the buildable configs we fail closed — a VS build must not be able
-    # to silently produce a WASAPI-only shipping binary. Override with
-    # -DDUSKSTUDIO_REQUIRE_ASIO=OFF for a deliberate ASIO-less dev build.
-    get_property(_is_multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
-    if(_is_multi_config)
-        if("Release"        IN_LIST CMAKE_CONFIGURATION_TYPES
-           OR "RelWithDebInfo" IN_LIST CMAKE_CONFIGURATION_TYPES
-           OR "MinSizeRel"     IN_LIST CMAKE_CONFIGURATION_TYPES)
+    # to silently produce a WASAPI-only shipping binary. An explicit
+    # -DDUSKSTUDIO_REQUIRE_ASIO=OFF opts out (deliberate ASIO-less dev build)
+    # and must win over this auto-detection.
+    if(NOT DUSKSTUDIO_REQUIRE_ASIO STREQUAL "OFF")
+        get_property(_is_multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+        if(_is_multi_config)
+            if("Release"        IN_LIST CMAKE_CONFIGURATION_TYPES
+               OR "RelWithDebInfo" IN_LIST CMAKE_CONFIGURATION_TYPES
+               OR "MinSizeRel"     IN_LIST CMAKE_CONFIGURATION_TYPES)
+                set(_asio_required ON)
+            endif()
+        elseif(CMAKE_BUILD_TYPE STREQUAL "Release"
+               OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo"
+               OR CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
             set(_asio_required ON)
         endif()
-    elseif(CMAKE_BUILD_TYPE STREQUAL "Release"
-           OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo"
-           OR CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
-        set(_asio_required ON)
     endif()
 
     set(_asio_candidate "")

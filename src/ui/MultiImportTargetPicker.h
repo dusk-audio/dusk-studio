@@ -12,9 +12,10 @@ namespace duskstudio
 // Single-modal multi-file import picker. One row per file, each with a
 // track dropdown. "Auto-assign" fills the rows sequentially (file 1 -> track
 // 1, file 2 -> track 2, ...) for the common stems-in-order case; the user can
-// still override any row by hand. Same-track collisions are allowed: the
-// dispatch path stacks both files at the shared timelineStart in selection
-// order.
+// still override any row by hand. Track picks are unique: rebuildPicker()
+// removes a track already chosen by another row from the remaining dropdowns,
+// and auto-assign hands out distinct tracks, so two files can't land on the
+// same track.
 //
 // Lives inside an EmbeddedModal owned by MainComponent. Reuses
 // ImportTargetPicker::FileSummary so the file-peek code stays in one

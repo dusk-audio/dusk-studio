@@ -1065,9 +1065,15 @@ void BusComponent::timerCallback()
                                 bus.strip.pan.load (std::memory_order_relaxed));
     }
     {
-        // Mute reflects liveMute (lane value in Read/Touch, setpoint in Off).
-        // dontSendNotification avoids re-triggering the click capture.
-        const bool m = bus.strip.liveMute.load (std::memory_order_relaxed);
+        // Mute display follows the active source: the lane value in
+        // Read/Touch, the manual setpoint in Off/Write. liveMute trails the
+        // setpoint by a block in Off, so reading it there made the button
+        // look stuck right after a click. dontSendNotification avoids
+        // re-triggering the click capture.
+        const bool laneDriven = (amode == (int) AutomationMode::Read)
+                              || (amode == (int) AutomationMode::Touch);
+        const bool m = laneDriven ? bus.strip.liveMute.load (std::memory_order_relaxed)
+                                   : bus.strip.mute.load (std::memory_order_relaxed);
         if (muteButton.getToggleState() != m)
             muteButton.setToggleState (m, juce::dontSendNotification);
     }

@@ -78,7 +78,11 @@ void setNativeCursorVisibleOnPeer (juce::ComponentPeer& peer, bool visible)
     static ::Cursor invisible = 0;
     if (invisible == 0)
     {
-        ::Pixmap blank = ::XCreatePixmap (d, win, 1, 1, 1);
+        // Explicitly-zeroed 1x1 depth-1 bitmap: XCreatePixmap leaves contents
+        // undefined, and a non-zero mask bit would render a stray cursor
+        // pixel instead of nothing. An all-zero mask draws no pixels.
+        static const char zeroBit = 0;
+        ::Pixmap blank = ::XCreateBitmapFromData (d, win, &zeroBit, 1, 1);
         ::XColor xc{};
         invisible = ::XCreatePixmapCursor (d, blank, blank, &xc, &xc, 0, 0);
         ::XFreePixmap (d, blank);

@@ -12,6 +12,15 @@ CursorOverlay::CursorOverlay()
     setWantsKeyboardFocus (false);
 }
 
+CursorOverlay::~CursorOverlay()
+{
+    // Balance an outstanding hide so the native cursor isn't left invisible
+    // if the overlay is torn down mid-paint (e.g. editor modal closes while
+    // the Grab/Cut/Draw glyph is showing).
+    if (lastPainting)
+        setNativeCursorVisible (true);
+}
+
 void CursorOverlay::setMousePosition (juce::Component& source,
                                         juce::Point<int> localInSource,
                                         EditMode mode,

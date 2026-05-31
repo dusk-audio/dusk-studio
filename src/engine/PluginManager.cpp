@@ -248,9 +248,13 @@ int PluginManager::scanInstalledPlugins (
             }
         }
         added += knownPluginList.getNumTypes() - prevCount;
+        if (aborted) break;   // stop advancing to the next format on abort
     }
 
-    if (onProgress != nullptr)
+    // Don't report 100%/complete if the user aborted - onProgress already
+    // returned false to request the stop, and the caller treats this final
+    // call as "scan finished".
+    if (! aborted && onProgress != nullptr)
         onProgress (1.0f, {});
 
    #if DUSKSTUDIO_HAS_OOP_PLUGINS

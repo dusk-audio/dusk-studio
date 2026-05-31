@@ -32,7 +32,9 @@ class CursorOverlay final : public juce::Component
 {
 public:
     CursorOverlay();
-    ~CursorOverlay() override = default;
+    // Not defaulted: if we're destroyed while hiding the native cursor
+    // (lastPainting), the hide must be balanced or the OS cursor stays gone.
+    ~CursorOverlay() override;
 
     void paint (juce::Graphics&) override;
 

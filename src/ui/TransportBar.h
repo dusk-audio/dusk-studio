@@ -175,6 +175,9 @@ public:
     void setTapeToggleVisualState (bool expanded) noexcept
     {
         tapeToggle.setToggleState (expanded, juce::dontSendNotification);
+        // Refresh the chevron/label too, otherwise a keyboard toggle leaves
+        // the arrow pointing the wrong way until the next resize.
+        syncCompactLabels (getWidth() < kCompactTransportWidth);
     }
 
     // MainComponent owns the tuner overlay (similar to piano roll

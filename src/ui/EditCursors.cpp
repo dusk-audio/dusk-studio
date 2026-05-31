@@ -137,7 +137,11 @@ juce::Image drawCursorImage (float hotX, float hotY,
 
 juce::MouseCursor makeScissorsCursor()
 {
-    return juce::MouseCursor (drawCursorImage (20.0f, 5.0f, &paintScissorsGlyph), 20, 5);
+    // Centre the glyph in the 24x24 image: paintScissorsGlyph draws +/-12 px
+    // around the hotspot (a + loopR + halo half-stroke = 11.8), so (20, 5)
+    // clipped the blades top/right. (12, 12) also puts the cut hotspot on the
+    // blade crossing and matches CursorOverlay's centred draw.
+    return juce::MouseCursor (drawCursorImage (12.0f, 12.0f, &paintScissorsGlyph), 12, 12);
 }
 
 juce::MouseCursor makePencilCursor()
