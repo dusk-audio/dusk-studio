@@ -307,6 +307,33 @@ juce::String AudioPipelineSelfTest::testMasterCompNoNoiseFloor()
         silentL && silentR ? "" : "<-- comp injecting noise into silence!");
 }
 
+juce::String AudioPipelineSelfTest::testBusSoloMutesDirect()
+{
+    prepareCleanState();
+    // Solo bus 0 with NO track routed to it. Track 0 is unassigned, so it
+    // takes the direct-to-master path. SIP-style bus solo must mute that
+    // direct track -> master goes silent (the soloed bus is empty). Before
+    // the fix the unassigned track bypassed the bus-solo gate and leaked.
+    session.setBusSoloed (0, true);
+
+    auto m = runSynthetic (48000.0, 512, 16, 2, kInputAmpMinusSixDb, kToneHz, 8, 8);
+
+    const bool silentL = m.peakL < 1.0e-4f;
+    const bool silentR = m.peakR < 1.0e-4f;
+
+    // Restore — prepareCleanState resets track solos but not bus solos, so
+    // clear it here to avoid bleeding into the next test.
+    session.setBusSoloed (0, false);
+
+    return juce::String::formatted (
+        "%s Bus Solo Mutes Direct (bus 0 soloed + empty, track 0 unassigned)\n"
+        "      Expected silence: a direct-to-master track must not bypass bus solo\n"
+        "      Measured L peak=%.6f, R peak=%.6f %s",
+        fmtPassFail (silentL && silentR).toRawUTF8(),
+        m.peakL, m.peakR,
+        silentL && silentR ? "" : "<-- unassigned track leaking past bus solo!");
+}
+
 juce::String AudioPipelineSelfTest::testChannelRoutingTwoOut()
 {
     prepareCleanState();
@@ -942,6 +969,7 @@ juce::String AudioPipelineSelfTest::runAll()
     report.add (testMuteSilences());
     report.add (testMasterFaderMinusSix());
     report.add (testMasterCompNoNoiseFloor());
+    report.add (testBusSoloMutesDirect());
     report.add (testChannelRoutingTwoOut());
     report.add (testChannelRoutingFourOut());
     report.add (testMasterTapeAddsGain());

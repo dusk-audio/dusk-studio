@@ -2186,7 +2186,26 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         // open the live-input → master path. Disk playback always passes
         // (independent of IN).
         const bool monitorPasses = willReadFromDisk ? true : monitorEnabled;
-        const bool passes = ! muted && (anyChannelSolo ? soloed : true) && monitorPasses;
+
+        // SIP-style bus solo (matches Pro Tools / Logic / Cubase): when any
+        // bus is soloed, a track is audible ONLY if it feeds a soloed bus.
+        // Tracks routed solely to non-soloed buses — and direct-to-master
+        // (unassigned) tracks like a guitar with no bus — are muted entirely,
+        // so their dry, bus, AND aux sends all stop. Aux RETURNS stay
+        // solo-safe (summed unconditionally further down). Without this, an
+        // unassigned track bypassed the bus-solo gate and leaked to master.
+        bool busSoloPasses = true;
+        if (anyBusSolo)
+        {
+            busSoloPasses = false;
+            for (int a = 0; a < Session::kNumBuses; ++a)
+                if (trackParams.busAssign[(size_t) a].load (std::memory_order_relaxed)
+                    && session.bus (a).strip.solo.load (std::memory_order_relaxed))
+                { busSoloPasses = true; break; }
+        }
+
+        const bool passes = ! muted && (anyChannelSolo ? soloed : true)
+                          && monitorPasses && busSoloPasses;
 
         // Resolve the input source for this track.
         const int inputIdx = session.resolveInputForTrack (t);

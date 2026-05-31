@@ -91,6 +91,7 @@ private:
     juce::String testMuteSilences();
     juce::String testMasterFaderMinusSix();
     juce::String testMasterCompNoNoiseFloor(); // comp ON + silent in stays silent (donor analog-noise off)
+    juce::String testBusSoloMutesDirect();      // SIP bus solo: unassigned/direct track muted when a bus is soloed
     juce::String testChannelRoutingTwoOut();
     juce::String testChannelRoutingFourOut();
     juce::String testMasterTapeAddsGain();   // sanity: tape ON should not silently drop signal
