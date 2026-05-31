@@ -808,6 +808,9 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     if (code == 'S' && cmd && ! shift) { menuItemSelected (1003, 0); return true; }   // Save
     if (code == 'S' && cmd &&   shift) { menuItemSelected (1004, 0); return true; }   // Save as
     if (code == 'O' && cmd)            { menuItemSelected (1002, 0); return true; }   // Open
+    if (code == 'N' && cmd && ! shift) { menuItemSelected (1001, 0); return true; }   // New session
+    if (code == 'I' && cmd && ! shift) { menuItemSelected (1006, 0); return true; }   // Import
+    if (code == 'Q' && cmd)            { menuItemSelected (1099, 0); return true; }   // Quit
 
     // ── Bounce: Ctrl/Cmd+B (Logic-style; intuitive "B for Bounce") ──
     if (code == 'B' && cmd) { menuItemSelected (1011, 0); return true; }              // Bounce
@@ -2941,7 +2944,22 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelMenuIndex,
     juce::PopupMenu menu;
     if (topLevelMenuIndex == 0)   // File
     {
-        menu.addItem (kMenuFileNew,    "New session...");
+        // Right-aligned accelerator hints (⌘ on macOS, Ctrl+ elsewhere via
+        // getTextDescriptionWithIcons). The shortcuts are handled in
+        // keyPressed; this just makes them discoverable in the menu.
+        auto addAccel = [&menu] (int id, const juce::String& text,
+                                  int keyCode, int modFlags)
+        {
+            juce::PopupMenu::Item item;
+            item.itemID = id;
+            item.text   = text;
+            item.shortcutKeyDescription = juce::KeyPress (
+                keyCode, juce::ModifierKeys (modFlags), 0).getTextDescriptionWithIcons();
+            menu.addItem (item);
+        };
+
+        addAccel (kMenuFileNew, "New session...", 'N',
+                  juce::ModifierKeys::commandModifier);
 
         // New From Template submenu - drops opinionated track names /
         // colours / modes onto the live session so the user is one
@@ -2953,7 +2971,8 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelMenuIndex,
                                 nameForTemplate ((SessionTemplate) i));
         menu.addSubMenu ("New from template", templates);
 
-        menu.addItem (kMenuFileOpen,   "Open...");
+        addAccel (kMenuFileOpen, "Open...", 'O',
+                  juce::ModifierKeys::commandModifier);
 
         // "Recent Sessions" submenu: cached on the way out so the click
         // handler can resolve by index. Capped at RecentSessions::kMaxEntries
@@ -2990,19 +3009,24 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelMenuIndex,
         }
         menu.addSubMenu ("Recent Sessions", recents);
 
-        menu.addItem (kMenuFileSave,   "Save");
-        menu.addItem (kMenuFileSaveAs, "Save as...");
+        addAccel (kMenuFileSave, "Save", 'S',
+                  juce::ModifierKeys::commandModifier);
+        addAccel (kMenuFileSaveAs, "Save as...", 'S',
+                  juce::ModifierKeys::commandModifier | juce::ModifierKeys::shiftModifier);
         menu.addSeparator();
-        menu.addItem (kMenuFileImport, "Import...");
+        addAccel (kMenuFileImport, "Import...", 'I',
+                  juce::ModifierKeys::commandModifier);
         menu.addSeparator();
         menu.addItem (kMenuFileMixdown, "Mixdown");
-        menu.addItem (kMenuFileBounce,  "Bounce...");
+        addAccel (kMenuFileBounce, "Bounce...", 'B',
+                  juce::ModifierKeys::commandModifier);
         menu.addItem (kMenuFileBounceStems, "Bounce stems...");
         menu.addSeparator();
         menu.addItem (kMenuFileCleanOut, "Clean out unreferenced files...");
         menu.addItem (kMenuFileOptimizeAutomation, "Optimize automation...");
         menu.addSeparator();
-        menu.addItem (kMenuFileQuit, "Quit");
+        addAccel (kMenuFileQuit, "Quit", 'Q',
+                  juce::ModifierKeys::commandModifier);
     }
     else if (topLevelMenuIndex == 1)   // Settings
     {
