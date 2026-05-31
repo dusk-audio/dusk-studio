@@ -79,6 +79,8 @@ void BusStrip::bindCompParams() noexcept
     storeAtom (compMixAtom,         100.0f);
     storeAtom (compBusMixAtom,      100.0f);
     storeAtom (compAutoMakeupAtom,    0.0f);
+    // No injected analog hiss under signal — see MasterBus::bindCompParams.
+    storeAtom (apvts.getRawParameterValue ("noise_enable"), 0.0f);
 }
 
 void BusStrip::updateEqParameters() noexcept

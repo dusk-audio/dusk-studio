@@ -108,6 +108,12 @@ void MasterBus::bindCompParams()
     storeAtom (compMixAtom,         100.0f);
     storeAtom (compBusMixAtom,      100.0f);
     storeAtom (compAutoMakeupAtom,    0.0f);  // Off
+    // The donor's "Analog Noise" feature injects ~-80 dB white noise on every
+    // analog mode (Bus included) and defaults ON. The master chain runs the
+    // comp every block whenever it's engaged, so that hiss would sit on the
+    // output continuously (~-67 dB peak, two channels) and print into bounces.
+    // Force it off — Dusk Studio's master bus is meant to be clean.
+    storeAtom (apvts.getRawParameterValue ("noise_enable"), 0.0f);
 }
 
 void MasterBus::updateEqParameters() noexcept

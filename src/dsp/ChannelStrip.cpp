@@ -188,6 +188,10 @@ void ChannelStrip::bindCompParams()
     // Mix=100% wet, auto-makeup off (we control makeup via per-mode output param).
     storeAtom (compMixAtom,        100.0f);
     storeAtom (compAutoMakeupAtom,   0.0f);  // Choice index 0 = "Off"
+    // Donor's "Analog Noise" injects ~-80 dB white noise on every analog mode
+    // (FET / Opto / VCA) and defaults ON — force it off so an engaged channel
+    // comp doesn't raise the noise floor. See MasterBus::bindCompParams.
+    storeAtom (apvts.getRawParameterValue ("noise_enable"), 0.0f);
 }
 #endif
 

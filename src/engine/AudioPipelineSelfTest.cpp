@@ -282,6 +282,31 @@ juce::String AudioPipelineSelfTest::testMasterFaderMinusSix()
         peakOK ? "" : "<-- master fader not applying expected gain!");
 }
 
+juce::String AudioPipelineSelfTest::testMasterCompNoNoiseFloor()
+{
+    prepareCleanState();
+    // Engage the master bus compressor over SILENT input. The donor comp's
+    // "Analog Noise" feature (~-80 dB white noise, default ON for analog
+    // modes) is now forced off in MasterBus::bindCompParams. Because the
+    // master chain runs the comp every block when engaged, leaving the noise
+    // on printed a continuous ~-67 dB peak floor into the output (and every
+    // bounce). With it disabled, an engaged comp over silence stays silent.
+    session.master().compEnabled.store (true, std::memory_order_relaxed);
+
+    auto m = runSynthetic (48000.0, 512, 16, 2, 0.0f, kToneHz, 12, 8);
+
+    const bool silentL = m.peakL < 1.0e-4f;   // -80 dBFS
+    const bool silentR = m.peakR < 1.0e-4f;
+
+    return juce::String::formatted (
+        "%s Master Comp No Noise Floor (comp ON, silent input)\n"
+        "      Expected peak=0.0 on both channels (donor analog-noise disabled)\n"
+        "      Measured L peak=%.6f (%+.2f dBFS), R peak=%.6f %s",
+        fmtPassFail (silentL && silentR).toRawUTF8(),
+        m.peakL, ampToDb (m.peakL), m.peakR,
+        silentL && silentR ? "" : "<-- comp injecting noise into silence!");
+}
+
 juce::String AudioPipelineSelfTest::testChannelRoutingTwoOut()
 {
     prepareCleanState();
@@ -916,6 +941,7 @@ juce::String AudioPipelineSelfTest::runAll()
     report.add (testPassThroughUnity());
     report.add (testMuteSilences());
     report.add (testMasterFaderMinusSix());
+    report.add (testMasterCompNoNoiseFloor());
     report.add (testChannelRoutingTwoOut());
     report.add (testChannelRoutingFourOut());
     report.add (testMasterTapeAddsGain());
