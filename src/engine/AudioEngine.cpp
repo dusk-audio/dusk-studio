@@ -1686,8 +1686,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                                 // strip. Pitch-bend's 14-bit resolution gives a
                                 // ~128x finer dB step than 7-bit CC.
                                 const float db = -90.0f + frac * (12.0f + 90.0f);
-                                session.track (b.targetIndex).strip.faderDb.store (
-                                    db, std::memory_order_relaxed);
+                                session.setTrackFaderGrouped (b.targetIndex, db);
                             }
                             break;
                         case MidiBindingTarget::TrackPan:

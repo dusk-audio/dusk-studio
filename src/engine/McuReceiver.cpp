@@ -437,7 +437,7 @@ void McuReceiver::process (const juce::MidiBuffer& events,
                 const int bank = session.mcu.bank.load (std::memory_order_relaxed);
                 const int t = bank * mcu::kStripsPerBank + channel;
                 if (t >= 0 && t < Session::kNumTracks)
-                    session.track (t).strip.faderDb.store (db, std::memory_order_relaxed);
+                    session.setTrackFaderGrouped (t, db);
             }
             continue;
         }

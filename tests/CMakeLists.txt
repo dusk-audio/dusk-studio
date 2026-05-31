@@ -32,6 +32,7 @@ add_executable(dusk-studio-tests
     automation_thinning.cpp
     session_midi_tempolock_roundtrip.cpp
     session_apply_tempo_change.cpp
+    session_fader_group.cpp
     transport_state_machine.cpp
     session_mcu_roundtrip.cpp
     mcu_receiver_decode.cpp

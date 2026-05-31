@@ -70,6 +70,40 @@ void Session::setBusSoloed (int busIndex, bool soloed) noexcept
         soloBusCount.fetch_add (soloed ? 1 : -1, std::memory_order_relaxed);
 }
 
+void Session::setTrackFaderGrouped (int ti, float newDb) noexcept
+{
+    if (ti < 0 || ti >= kNumTracks) return;
+    auto& strip = tracks[(size_t) ti].strip;
+    const float clampedNew = juce::jlimit (ChannelStripParams::kFaderMinDb,
+                                           ChannelStripParams::kFaderMaxDb, newDb);
+
+    const int gid = strip.faderGroupId.load (std::memory_order_relaxed);
+    if (gid == 0)
+    {
+        strip.faderDb.store (clampedNew, std::memory_order_relaxed);
+        return;
+    }
+
+    // Delta is computed against this fader's own previous value, so the move
+    // is incremental - unlike the UI drag path there's no gesture anchor to
+    // diff against. Peers shift by the same dB; a peer pinned at a rail just
+    // clamps (matches hardware group behaviour, may break the offset there).
+    const float delta = clampedNew - strip.faderDb.load (std::memory_order_relaxed);
+    strip.faderDb.store (clampedNew, std::memory_order_relaxed);
+    if (delta == 0.0f) return;
+
+    for (int t = 0; t < kNumTracks; ++t)
+    {
+        if (t == ti) continue;
+        auto& peer = tracks[(size_t) t].strip;
+        if (peer.faderGroupId.load (std::memory_order_relaxed) != gid) continue;
+        const float pv = peer.faderDb.load (std::memory_order_relaxed);
+        peer.faderDb.store (juce::jlimit (ChannelStripParams::kFaderMinDb,
+                                          ChannelStripParams::kFaderMaxDb, pv + delta),
+                            std::memory_order_relaxed);
+    }
+}
+
 void Session::setTrackArmed (int trackIndex, bool armed) noexcept
 {
     if (trackIndex < 0 || trackIndex >= kNumTracks) return;

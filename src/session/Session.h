@@ -885,6 +885,14 @@ public:
     // Rebuild counters after a bulk path that wrote atoms directly.
     void recomputeRtCounters() noexcept;
 
+    // Write a new fader dB to track `ti`. If the track belongs to a fader
+    // group, shift every other member by the same dB delta so the group's
+    // relative balance is preserved (DP-24 fader-group behaviour). RT-safe:
+    // atomic loads/stores and a bounded loop only, no alloc/lock - callable
+    // from the audio thread (MCU pitch-bend, MIDI-binding fader). The UI drag
+    // path has its own gesture-anchored propagation and does NOT route here.
+    void setTrackFaderGrouped (int ti, float newDb) noexcept;
+
     // Mirrored to/from Transport by publish/consume bookends. Plain
     // non-atomic — touched only on the message thread between bookends.
     juce::int64 savedLoopStart    = 0;
