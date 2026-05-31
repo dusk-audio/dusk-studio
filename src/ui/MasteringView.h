@@ -111,8 +111,9 @@ private:
     // hosts (title + ON toggle) above it. Without the wrapper there's
     // no way to bypass the comp outside a context menu.
     std::unique_ptr<juce::Component>              compPanelWrapper;
-    juce::Label                                   compPanelTitle;
-    juce::ToggleButton                            compPanelEnable { "ON" };
+    // Shared console chrome for the donor multiband panel — the same LED-pill
+    // header the EQ + limiter editors now use, so all three sections match.
+    std::unique_ptr<class CompHeaderButton>       compHeaderBtn;
 
     EmbeddedModal exportModal;
 };

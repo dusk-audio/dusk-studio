@@ -1,5 +1,6 @@
 #include "MasteringView.h"
 #include "BounceDialog.h"
+#include "CompHeaderButton.h"
 #include "DuskFileBrowser.h"
 #include "MasteringEqEditor.h"
 #include "MasteringLimiterEditor.h"
@@ -335,20 +336,18 @@ MasteringView::MasteringView (Session& s, AudioEngine& e)
     compPanelWrapper->setOpaque (true);
     addAndMakeVisible (compPanelWrapper.get());
 
-    compPanelTitle.setText ("Multiband Comp", juce::dontSendNotification);
-    compPanelTitle.setJustificationType (juce::Justification::centredLeft);
-    compPanelTitle.setFont (juce::Font (juce::FontOptions (13.0f, juce::Font::bold)));
-    compPanelTitle.setColour (juce::Label::textColourId, juce::Colour (0xffe0e0e8));
-    compPanelWrapper->addAndMakeVisible (compPanelTitle);
-
-    compPanelEnable.setColour (juce::ToggleButton::textColourId, juce::Colour (0xffd0d0d0));
-    compPanelEnable.setToggleState (m.compEnabled.load (std::memory_order_relaxed),
-                                      juce::dontSendNotification);
-    compPanelEnable.onClick = [this, &m]
-    {
-        m.compEnabled.store (compPanelEnable.getToggleState(), std::memory_order_relaxed);
-    };
-    compPanelWrapper->addAndMakeVisible (compPanelEnable);
+    compHeaderBtn = std::make_unique<CompHeaderButton> (
+        [this] { return session.mastering().compEnabled.load (std::memory_order_relaxed); },
+        [this]
+        {
+            auto& mp = session.mastering();
+            const bool now = ! mp.compEnabled.load (std::memory_order_relaxed);
+            mp.compEnabled.store (now, std::memory_order_relaxed);
+            if (compHeaderBtn != nullptr) compHeaderBtn->repaint();
+        });
+    compHeaderBtn->setLabelText ("MULTIBAND COMP");
+    compHeaderBtn->setAccentColour (juce::Colour (0xffe0c050));   // gold — comp
+    compPanelWrapper->addAndMakeVisible (compHeaderBtn.get());
 
     // Embed ONLY the donor's MultibandCompressorPanel rather than the full
     // EnhancedCompressorEditor (which carries the mode selector + extra
@@ -421,12 +420,17 @@ void MasteringView::resized()
     place (lufsM,           90,  4);
     place (lufsS,           90,  4);
     place (lufsI,          120,  6);
-    place (resetLoudness,   60,  0);
+    place (resetLoudness,   60, 16);
+    // Target sits with the loudness cluster it governs: the integrated-LUFS
+    // (I) cell glows green when within range of this target.
+    place (targetCaption,   46,  4);
+    place (masteringTargetCombo, 260, 0);
     area.removeFromTop (8);
 
-    // ── Bottom strip (export + L/R meters + target). LUFS readouts
-    //    moved up to the transport row above. ──
-    auto bottom = area.removeFromBottom (66);
+    // ── Bottom strip (export + L/R meters). LUFS readouts + target moved
+    //    up to the transport row above; the reclaimed height goes to the
+    //    plugin panels. ──
+    auto bottom = area.removeFromBottom (32);
     area.removeFromBottom (6);
 
     auto meterRow = bottom.removeFromTop (28);
@@ -435,12 +439,6 @@ void MasteringView::resized()
     meterR.setBounds (meterRow.removeFromRight (140));
     meterRow.removeFromRight (4);
     meterL.setBounds (meterRow.removeFromRight (140));
-    bottom.removeFromTop (4);
-
-    auto targetRow = bottom.removeFromTop (24);
-    targetCaption.setBounds        (targetRow.removeFromLeft (50));
-    targetRow.removeFromLeft (4);
-    masteringTargetCombo.setBounds (targetRow.removeFromLeft (260));
 
     // ── Waveform: a slim band at the top so the plugin row gets the bulk
     //    of the vertical real estate. Fixed height; what's left in `area`
@@ -483,8 +481,7 @@ void MasteringView::resized()
         compPanelWrapper->setBounds (compPanel);
         auto inner = compPanelWrapper->getLocalBounds().reduced (8);
         auto header = inner.removeFromTop (20);
-        compPanelTitle.setBounds (header.removeFromLeft (header.getWidth() - 56));
-        compPanelEnable.setBounds (header.removeFromRight (56));
+        if (compHeaderBtn != nullptr) compHeaderBtn->setBounds (header);
         inner.removeFromTop (4);
         if (compEditor != nullptr)
             compEditor->setBounds (inner);

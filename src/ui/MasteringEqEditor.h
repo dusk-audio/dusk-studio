@@ -2,6 +2,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <array>
+#include <memory>
 #include "../session/Session.h"
 
 namespace duskstudio
@@ -57,8 +58,10 @@ private:
 
     MasteringParams& params;
 
-    juce::Label        titleLabel;
-    juce::ToggleButton enableToggle;
+    // Shared console chrome: LED-pill header (click toggles enable), same
+    // component the channel / bus / master strips use for their EQ + COMP
+    // headers — so the mastering panels read as part of the same desk.
+    std::unique_ptr<class CompHeaderButton> headerBtn;
 
     struct BandUI
     {

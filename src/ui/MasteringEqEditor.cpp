@@ -1,4 +1,5 @@
 #include "MasteringEqEditor.h"
+#include "CompHeaderButton.h"
 #include <cmath>
 
 namespace duskstudio
@@ -66,21 +67,17 @@ MasteringEqEditor::MasteringEqEditor (MasteringParams& p) : params (p)
 {
     setOpaque (true);
 
-    titleLabel.setText ("Digital EQ", juce::dontSendNotification);
-    titleLabel.setJustificationType (juce::Justification::centredLeft);
-    titleLabel.setFont (juce::Font (juce::FontOptions (13.0f, juce::Font::bold)));
-    titleLabel.setColour (juce::Label::textColourId, juce::Colour (0xffe0e0e8));
-    addAndMakeVisible (titleLabel);
-
-    enableToggle.setButtonText ("ON");
-    enableToggle.setColour (juce::ToggleButton::textColourId, juce::Colour (0xffd0d0d0));
-    enableToggle.setToggleState (params.eqEnabled.load (std::memory_order_relaxed),
-                                  juce::dontSendNotification);
-    enableToggle.onClick = [this]
-    {
-        params.eqEnabled.store (enableToggle.getToggleState(), std::memory_order_relaxed);
-    };
-    addAndMakeVisible (enableToggle);
+    headerBtn = std::make_unique<CompHeaderButton> (
+        [this] { return params.eqEnabled.load (std::memory_order_relaxed); },
+        [this]
+        {
+            const bool now = ! params.eqEnabled.load (std::memory_order_relaxed);
+            params.eqEnabled.store (now, std::memory_order_relaxed);
+            if (headerBtn != nullptr) headerBtn->repaint();
+        });
+    headerBtn->setLabelText ("MASTERING EQ");
+    headerBtn->setAccentColour (juce::Colour (0xff5fa8d0));   // blue — transparent EQ
+    addAndMakeVisible (headerBtn.get());
 
     for (int i = 0; i < 5; ++i)
     {
@@ -532,8 +529,7 @@ void MasteringEqEditor::resized()
     auto area = getLocalBounds().reduced (8);
 
     auto header = area.removeFromTop (20);
-    titleLabel.setBounds (header.removeFromLeft (header.getWidth() - 56));
-    enableToggle.setBounds (header.removeFromRight (56));
+    if (headerBtn != nullptr) headerBtn->setBounds (header);
     area.removeFromTop (4);
 
     // Curve plot uses ~55 % of remaining height; the controls row uses the

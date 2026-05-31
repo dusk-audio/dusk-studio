@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include <memory>
 #include "DuskComboBox.h"
 #include "../session/Session.h"
 
@@ -46,8 +47,9 @@ private:
     MasteringParams&  params;
     BrickwallLimiter& limiter;
 
-    juce::Label        titleLabel  { {}, "Limiter" };
-    juce::ToggleButton enableToggle { "ON" };
+    // Shared console chrome — LED-pill header (click toggles enable), same
+    // component the strips use. See MasteringEqEditor.
+    std::unique_ptr<class CompHeaderButton> headerBtn;
 
     juce::Label       modeCaption  { {}, "Mode"   };
     DuskComboBox    modeCombo;
