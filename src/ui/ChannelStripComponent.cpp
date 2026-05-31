@@ -2420,7 +2420,10 @@ void ChannelStripComponent::openIoConfigPopup()
 void ChannelStripComponent::refreshAuxSendLabel (int auxIdx)
 {
     if (auxIdx < 0 || auxIdx >= (int) auxKnobLabels.size()) return;
-    const float dB    = track.strip.auxSendDb[(size_t) auxIdx]
+    // Read the LIVE (animated) value so the label matches the knob, which is
+    // driven from liveAuxSendDb (lane value in Read/Touch, setpoint in Off);
+    // reading auxSendDb left the text stale during automation / MIDI moves.
+    const float dB    = track.strip.liveAuxSendDb[(size_t) auxIdx]
                               .load (std::memory_order_relaxed);
     const bool  isPre = track.strip.auxSendPreFader[(size_t) auxIdx]
                               .load (std::memory_order_relaxed);
@@ -3238,6 +3241,7 @@ void ChannelStripComponent::timerCallback()
                 displayedLiveAuxSendDb[(size_t) i] = live;
                 if (auto* knob = auxKnobs[(size_t) i].get())
                     knob->setValue (live, juce::dontSendNotification);
+                refreshAuxSendLabel (i);   // keep the dB text in step with the live knob
             }
             else if (touched)
             {

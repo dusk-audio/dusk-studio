@@ -1055,7 +1055,14 @@ void AudioRegionEditor::pushCursorPosition (int x, int y)
     int visualX = x;
     if (wantsGlyph && m == EditMode::Cut)
     {
-        if (const auto* r = region())
+        // Cut splits the slice under the cursor (regionIndexAtX), which in the
+        // multi-slice neighbourhood view may not be the focused region - so
+        // preview the hovered slice's bounds, falling back to the focused one.
+        const int hovIdx = regionIndexAtX (x, waveArea);
+        const auto& regs = session.track (trackIdx).regions;
+        const AudioRegion* r = (hovIdx >= 0 && hovIdx < (int) regs.size())
+                                 ? &regs[(size_t) hovIdx] : region();
+        if (r != nullptr)
         {
             const int xStart = xForTimelineSample (r->timelineStart, waveArea);
             const int xEnd   = xForTimelineSample (r->timelineStart + r->lengthInSamples,
@@ -1095,6 +1102,10 @@ void AudioRegionEditor::updateModeCursor()
 {
     const auto p = getMouseXYRelative();
     setMouseCursor (cursorForPoint (p.x, p.y));
+    // Mode changed (toolbar / 'G' hotkey) with no mouse event to follow -
+    // refresh the overlay glyph from the same point so it doesn't show the
+    // previous mode's glyph until the next move.
+    pushCursorPosition (p.x, p.y);
 }
 
 void AudioRegionEditor::mouseExit (const juce::MouseEvent&)

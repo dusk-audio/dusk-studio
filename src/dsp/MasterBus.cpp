@@ -171,9 +171,9 @@ void MasterBus::updateCompParameters() noexcept
     const float atkMs  = paramsRef->compAttackMs.load (std::memory_order_relaxed);
     storeAtom (compBusAttackAtom,
                atkMs < 0.2f ? 0.0f
-             : (atkMs < 0.6f ? 1.0f
+             : (atkMs < 0.65f ? 1.0f
              : (atkMs < 2.0f ? 2.0f
-             : (atkMs < 6.0f ? 3.0f
+             : (atkMs < 6.5f ? 3.0f
              : (atkMs < 20.0f ? 4.0f : 5.0f)))));
     // The donor's bus_release is a Choice param indexed 0..4 over
     // {0.1s, 0.3s, 0.6s, 1.2s, Auto}. Map Dusk Studio's continuous release knob

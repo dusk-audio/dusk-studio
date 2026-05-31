@@ -159,13 +159,18 @@ void MasteringEqEditor::timerCallback()
             changed = true;
     }
     const bool en = params.eqEnabled.load (std::memory_order_relaxed);
-    if (en != lastEnabled) changed = true;
+    const bool enabledChanged = (en != lastEnabled);
+    if (enabledChanged) changed = true;
 
     if (changed)
     {
         rebuildKnobValues();
         if (! curveArea.isEmpty())
             repaint (curveArea);
+        // Header LED reflects eqEnabled; repaint it so MIDI / other-surface
+        // toggles light it, not just local header clicks.
+        if (enabledChanged && headerBtn != nullptr)
+            headerBtn->repaint();
     }
 }
 

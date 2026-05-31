@@ -62,9 +62,14 @@ private:
         std::array<float, Session::kNumTracks> lmGainDb {};
         std::array<float, Session::kNumTracks> hmGainDb {};
         std::array<float, Session::kNumTracks> hfGainDb {};
+        // prepareCleanState clears track 0's busAssign and testMasterComp...
+        // enables the master comp; capture both so the live session is fully
+        // restored after a run.
+        std::array<bool, ChannelStripParams::kNumBuses> track0BusAssign {};
         float masterFaderDb     = 0.0f;
         bool  masterTapeEnabled = false;
         bool  masterTapeHQ      = false;
+        bool  masterCompEnabled = false;
     };
 
     SavedState saveState() const;

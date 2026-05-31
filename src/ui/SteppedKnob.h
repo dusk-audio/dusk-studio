@@ -26,6 +26,12 @@ inline void configureSteppedKnob (juce::Slider& s,
                                   std::function<void (double)> store)
 {
     jassert (! values.empty() && (int) values.size() == labels.size());
+    // Release-safe guard: the jassert above is compiled out in release, so
+    // bail rather than index an empty vector / mismatched labels / call a
+    // null store if a caller ever violates the contract. Leaves the slider
+    // in its prior state (no detents) instead of crashing.
+    if (values.empty() || (int) values.size() != labels.size() || ! store)
+        return;
 
     int initial = 0;
     double best = 1.0e30;

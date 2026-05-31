@@ -7,7 +7,7 @@ namespace duskstudio
 {
 juce::MouseCursor cursorForEditMode (EditMode m);
 
-// True invisible image cursor — 1x1 transparent ARGB image cursor that
+// True invisible image cursor — 2x2 transparent ARGB image cursor that
 // goes through the SAME image-cursor pipeline as our scissors / hand /
 // pencil custom cursors. JUCE's MouseCursor::NoCursor is a special-case
 // enum that hits a different (broken-on-some-Linux-WMs) code path; use

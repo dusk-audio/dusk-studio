@@ -52,9 +52,13 @@ AudioPipelineSelfTest::SavedState AudioPipelineSelfTest::saveState() const
         s.hmGainDb[(size_t) t]     = ts.hmGainDb.load (std::memory_order_relaxed);
         s.hfGainDb[(size_t) t]     = ts.hfGainDb.load (std::memory_order_relaxed);
     }
+    for (int b = 0; b < ChannelStripParams::kNumBuses; ++b)
+        s.track0BusAssign[(size_t) b] =
+            session.track (0).strip.busAssign[(size_t) b].load (std::memory_order_relaxed);
     s.masterFaderDb     = session.master().faderDb.load (std::memory_order_relaxed);
     s.masterTapeEnabled = session.master().tapeEnabled.load (std::memory_order_relaxed);
     s.masterTapeHQ      = session.master().tapeHQ.load (std::memory_order_relaxed);
+    s.masterCompEnabled = session.master().compEnabled.load (std::memory_order_relaxed);
     return s;
 }
 
@@ -78,9 +82,13 @@ void AudioPipelineSelfTest::restoreState (const SavedState& s)
         ts.hmGainDb.store     (s.hmGainDb[(size_t) t],     std::memory_order_relaxed);
         ts.hfGainDb.store     (s.hfGainDb[(size_t) t],     std::memory_order_relaxed);
     }
+    for (int b = 0; b < ChannelStripParams::kNumBuses; ++b)
+        session.track (0).strip.busAssign[(size_t) b].store (
+            s.track0BusAssign[(size_t) b], std::memory_order_relaxed);
     session.master().faderDb.store     (s.masterFaderDb,     std::memory_order_relaxed);
     session.master().tapeEnabled.store (s.masterTapeEnabled, std::memory_order_relaxed);
     session.master().tapeHQ.store      (s.masterTapeHQ,      std::memory_order_relaxed);
+    session.master().compEnabled.store (s.masterCompEnabled, std::memory_order_relaxed);
     // Bulk-write path bypassed the counter-aware setters; resync the RT
     // counters so anyTrackSoloed/Armed reads are correct in the test pass.
     session.recomputeRtCounters();

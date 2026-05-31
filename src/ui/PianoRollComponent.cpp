@@ -585,7 +585,11 @@ void PianoRollComponent::syncEditModeToolbar()
     // happen. Mirrors the equivalent guard in mouseMove.
     const auto mode = session.editMode;
     const auto p    = getMouseXYRelative();
+    // Don't hand the overlay glyph the cursor mid-drag - a move/resize/box
+    // gesture owns a native cursor, and forcing NoCursor here (on a mode
+    // toolbar sync) would flash the overlay over it.
     if ((mode == EditMode::Grab || mode == EditMode::Draw)
+        && dragMode == DragMode::None
         && noteGridArea().contains (p))
         // CursorOverlay paints the actual glyph; hide the native cursor.
         setMouseCursor (juce::MouseCursor::NoCursor);
@@ -2324,6 +2328,7 @@ void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
     // note-creation block below — drawing a note on every click.
     if (session.editMode == EditMode::Range)
     {
+        clearSelection();   // start a fresh time-range with no stale note selection (matches the ruler-start path)
         rangeStartTick = juce::jmax<juce::int64> (0, tickForX (e.x));
         rangeEndTick   = rangeStartTick;
         rangeActive    = false;

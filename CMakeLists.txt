@@ -403,10 +403,16 @@ if(WIN32)
                OR "MinSizeRel"     IN_LIST CMAKE_CONFIGURATION_TYPES)
                 set(_asio_required ON)
             endif()
-        elseif(CMAKE_BUILD_TYPE STREQUAL "Release"
-               OR CMAKE_BUILD_TYPE STREQUAL "RelWithDebInfo"
-               OR CMAKE_BUILD_TYPE STREQUAL "MinSizeRel")
-            set(_asio_required ON)
+        else()
+            # Normalise to lowercase so a lowercase -DCMAKE_BUILD_TYPE=release
+            # still trips the release-class fail-closed (STREQUAL is
+            # case-sensitive and would otherwise miss it).
+            string(TOLOWER "${CMAKE_BUILD_TYPE}" _build_type_lc)
+            if(_build_type_lc STREQUAL "release"
+               OR _build_type_lc STREQUAL "relwithdebinfo"
+               OR _build_type_lc STREQUAL "minsizerel")
+                set(_asio_required ON)
+            endif()
         endif()
     endif()
 
