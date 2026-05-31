@@ -1,6 +1,7 @@
 #include "PluginPickerHelpers.h"
 #include "DuskFileBrowser.h"
 #include "EmbeddedModal.h"
+#include "PluginScanModal.h"
 #include "PluginPickerPanel.h"
 #include "../engine/PluginManager.h"
 #include "../engine/PluginSlot.h"
@@ -158,47 +159,58 @@ void showLoadFailureAlertFallback (const juce::String& message)
 }
 } // namespace
 
+namespace { EmbeddedModal& pluginScanModal() { static EmbeddedModal m; return m; } }
+
 void runScanModal (PluginManager& manager, juce::Component* parent,
                     std::function<void()> onAlertDismiss)
 {
-    // scanInstalledPlugins is synchronous and blocks the message thread,
-    // so a real progress dialog can't repaint while it runs. The previous
-    // JUCE AlertWindow "scanning..." pop was cosmetic - it would freeze
-    // and then disappear. Skip the progress UX entirely; show only the
-    // completion alert as a Dusk in-window modal.
-    const int added = manager.scanInstalledPlugins();
+    // Resolve a host to mount the in-window progress modal over: the caller's
+    // parent, else the active top-level's content component.
+    juce::Component* host = parent;
+    if (host == nullptr)
+        if (auto* tlw = juce::TopLevelWindow::getActiveTopLevelWindow())
+            if (auto* dw = dynamic_cast<juce::DocumentWindow*> (tlw))
+                host = dw->getContentComponent();
 
-    auto message = juce::String::formatted (
-        "Added %d plugin%s to the picker. (Total known: %d)",
-        added, added == 1 ? "" : "s",
-        manager.getKnownPluginList().getNumTypes());
-
-    if (parent != nullptr)
+    if (host == nullptr)
     {
-        showDuskAlert (*parent, "Plugin scan complete", std::move (message),
-                          std::move (onAlertDismiss));
+        // No window to host progress UI (shouldn't happen on a message-thread
+        // entry). Fall back to a blocking scan so the cache still populates,
+        // then fire the follow-up directly.
+        const int added = manager.scanInstalledPlugins();
+        std::fprintf (stderr,
+                      "[Dusk Studio/PluginPicker] Plugin scan complete (no host): added %d\n",
+                      added);
+        if (onAlertDismiss) onAlertDismiss();
         return;
     }
 
-    // Fallback: caller passed no parent. Find any active top-level's
-    // content Component + route through the embedded alert so we don't
-    // drop a native popup onto the XWayland-flaky stack. If no top-level
-    // exists at all (shouldn't happen in normal use — message-thread
-    // entry implies the main window is up), log + fire the dismiss
-    // synchronously so callers waiting on the chain don't stall.
-    if (auto* tlw = juce::TopLevelWindow::getActiveTopLevelWindow())
-        if (auto* dw = dynamic_cast<juce::DocumentWindow*> (tlw))
-            if (auto* content = dw->getContentComponent())
-            {
-                showDuskAlert (*content, "Plugin scan complete", std::move (message),
+    // Async scan on a worker thread behind a live progress modal, so a cold
+    // scan no longer freezes the UI. The modal closes itself when the scan
+    // finishes; a completion alert then carries the reopen-picker follow-up.
+    auto& modal = pluginScanModal();
+    juce::Component::SafePointer<juce::Component> safeHost (host);
+
+    auto body = std::make_unique<PluginScanModal> (manager,
+        [&modal, &manager, safeHost, onAlertDismiss = std::move (onAlertDismiss)]
+        (int added) mutable
+        {
+            modal.close();
+
+            auto message = juce::String::formatted (
+                "Added %d plugin%s to the picker. (Total known: %d)",
+                added, added == 1 ? "" : "s",
+                manager.getKnownPluginList().getNumTypes());
+
+            if (auto* h = safeHost.getComponent())
+                showDuskAlert (*h, "Plugin scan complete", std::move (message),
                                   std::move (onAlertDismiss));
-                return;
-            }
-    juce::Logger::writeToLog ("[Dusk Studio/PluginPicker] " + message);
-    std::fprintf (stderr,
-                  "[Dusk Studio/PluginPicker] Plugin scan complete (no parent): %s\n",
-                  message.toRawUTF8());
-    if (onAlertDismiss) onAlertDismiss();
+            else if (onAlertDismiss)
+                onAlertDismiss();
+        });
+
+    modal.show (*host, std::move (body), /*onDismiss*/ {},
+                /*dismissOnClickOutside*/ false, /*dismissOnEscape*/ false);
 }
 
 namespace
