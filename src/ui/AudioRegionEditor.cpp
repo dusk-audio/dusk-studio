@@ -1051,7 +1051,12 @@ void AudioRegionEditor::pushCursorPosition (int x, int y)
         || trimStartRect     (waveArea).contains (x, y)
         || trimEndRect       (waveArea).contains (x, y)
         || (inContent && std::abs (y - gainLineY (waveArea)) <= 4);
-    const bool wantsGlyph = inContent && ! overHandle
+    // Suppress the glyph during a handle / range / pan drag - those own a
+    // native resize / I-beam cursor. A region MOVE keeps it (the grab glyph
+    // should follow the dragged region); hovering (no drag) keeps it too.
+    const bool dragOwnsCursor = dragMode != DragMode::None
+                             && dragMode != DragMode::MoveRegion;
+    const bool wantsGlyph = inContent && ! overHandle && ! dragOwnsCursor
                            && (m == EditMode::Grab || m == EditMode::Cut || m == EditMode::Draw);
 
     // In Cut mode the dashed cut-line + scissor variant only fires

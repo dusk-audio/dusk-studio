@@ -416,6 +416,12 @@ void ChannelStrip::processAndAccumulate (const float* inL,
     lastProcessedPtr = nullptr;
     lastProcessedR   = nullptr;
     lastProcessedSamples = 0;
+    // Default the output meter to silence; the accumulate paths below overwrite
+    // it with the real post-fader peak. Every early return after this (no input,
+    // oversized block, not-passing skip, silent-input skip) then reads -inf
+    // instead of freezing at the previous block's value.
+    currentOutLDb.store (-100.0f, std::memory_order_relaxed);
+    currentOutRDb.store (-100.0f, std::memory_order_relaxed);
 
     if (numSamples == 0) return;
 
@@ -498,9 +504,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             // zeroes the GR atom after the comp pass below.
             currentGrDb.store (0.0f, std::memory_order_relaxed);
            #endif
-            // Silent input -> silent output: the output meter reads -inf too.
-            currentOutLDb.store (-100.0f, std::memory_order_relaxed);
-            currentOutRDb.store (-100.0f, std::memory_order_relaxed);
+            // Output meter already defaulted to -inf at the top of this call.
             // Smoothers stay FROZEN on skip (no setTargetValue,
             // no getNextValue) — when audio returns, they pick up
             // at the configured value with no click. The track's
