@@ -689,7 +689,7 @@ A short red bar at the top of the input meter indicates a clip on that track. Th
 
 # The bus strips
 
-Between the channel strips and the master strip are four bus strips. They are smaller than the channels but follow a similar grammar.
+Between the channel strips and the master strip are four bus strips. They are smaller than the channels but follow a similar grammar. Like the channel strips, each bus has an automation-mode button (OFF / READ / WRITE / TOUCH) in a thin row above its mute/solo buttons; it automates the bus fader, pan, and mute.
 
 ## Signal flow
 
@@ -1276,14 +1276,14 @@ There is no PFL (pre-fader listen) or AFL (after-fader listen) mode in v1. If yo
 
 ## Automation
 
-Each channel and the master strip have an automation mode button below the fader. Cycle through:
+Each channel strip, each bus, and the master strip have an automation mode button below the fader. Cycle through:
 
 - **OFF**: the fader does what you do. No recording, no playback of past rides.
 - **READ**: previously recorded automation drives the fader during playback. You can move the fader to "preview" but your changes are not recorded.
 - **WRITE**: every fader movement is recorded for as long as the transport rolls. Existing automation in the region played over is overwritten.
 - **TOUCH**: while you are touching the fader, your movement is recorded. When you let go, the automation reverts to the previously recorded value via a short ramp.
 
-The same modes apply to pan, mute, and solo.
+The same modes apply to pan, mute, and solo. On a bus the automatable controls are the fader, pan, and mute (bus solo is manual-only).
 
 Dusk Studio's automation is intentionally console-style: you ride the controls and the program writes what you did. There is no graphical curve editor.
 

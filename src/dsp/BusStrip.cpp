@@ -146,14 +146,19 @@ void BusStrip::updateGainTargets() noexcept
 {
     if (paramsRef == nullptr) return;
 
-    const float faderDb = paramsRef->faderDb.load (std::memory_order_relaxed);
+    // Reads liveFaderDb / livePan (post-automation), not the raw setpoints.
+    // The engine's per-block bus automation routing writes these each block
+    // (Off mirrors the manual value; Read/Touch carry the lane), so the
+    // Off/Read/Write/Touch hand-off stays in the engine and this DSP stays
+    // lane-agnostic — same grammar as MasterBus.
+    const float faderDb = paramsRef->liveFaderDb.load (std::memory_order_relaxed);
     const float gain = (faderDb <= ChannelStripParams::kFaderInfThreshDb)
                        ? 0.0f
                        : juce::Decibels::decibelsToGain (faderDb);
     faderGain.setTargetValue (gain);
 
     // Equal-power L/R balance - pan -1..1 → angle 0..pi/2.
-    const float p     = juce::jlimit (-1.0f, 1.0f, paramsRef->pan.load (std::memory_order_relaxed));
+    const float p     = juce::jlimit (-1.0f, 1.0f, paramsRef->livePan.load (std::memory_order_relaxed));
     const float angle = (p + 1.0f) * (juce::MathConstants<float>::halfPi * 0.5f);
     panGainL.setTargetValue (std::cos (angle) * juce::MathConstants<float>::sqrt2);
     panGainR.setTargetValue (std::sin (angle) * juce::MathConstants<float>::sqrt2);

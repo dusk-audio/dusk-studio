@@ -24,7 +24,7 @@ ConsoleView::ConsoleView (Session& session, AudioEngine& engine) : sessionRef (s
     for (int i = 0; i < Session::kNumBuses; ++i)
     {
         busStrips[(size_t) i] = std::make_unique<BusComponent> (
-            session.bus (i), session, i);
+            session.bus (i), session, engine, i);
         addAndMakeVisible (busStrips[(size_t) i].get());
     }
     masterStrip = std::make_unique<MasterStripComponent> (

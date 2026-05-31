@@ -1,8 +1,10 @@
 #include "BusComponent.h"
+#include "../engine/AudioEngine.h"
 #include "DuskContextMenu.h"
 #include "CompBypassLed.h"
 #include "DuskStudioLookAndFeel.h"  // fourKColors palette
 #include "../session/MidiBindings.h"
+#include <algorithm>
 
 namespace duskstudio
 {
@@ -494,8 +496,8 @@ private:
 };
 } // namespace
 
-BusComponent::BusComponent (Bus& b, Session& s, int idx)
-    : bus (b), sessionRef (s), busIndex (idx)
+BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
+    : bus (b), sessionRef (s), engine (e), busIndex (idx)
 {
     nameLabel.setText (bus.name, juce::dontSendNotification);
     nameLabel.setJustificationType (juce::Justification::centred);
@@ -698,6 +700,8 @@ BusComponent::BusComponent (Bus& b, Session& s, int idx)
     panKnob.updateText();
     panKnob.setTooltip ("Bus pan (L100..C..R100). Double-click for centre; Shift-drag for fine.");
     panKnob.onValueChange = [this] { bus.strip.pan.store ((float) panKnob.getValue(), std::memory_order_relaxed); };
+    panKnob.onDragStart   = [this] { bus.strip.panTouched.store (true,  std::memory_order_release); };
+    panKnob.onDragEnd     = [this] { bus.strip.panTouched.store (false, std::memory_order_release); };
     addAndMakeVisible (panKnob);
     // Match the channel-strip PAN label (10.5 pt bold) instead of the
     // smaller 8.5 pt used by the bus's L/M/H knob captions — PAN sits
@@ -730,6 +734,8 @@ BusComponent::BusComponent (Bus& b, Session& s, int idx)
         bus.strip.faderDb.store (v, std::memory_order_relaxed);
         faderValueLabel.setText (formatFaderDb (v), juce::dontSendNotification);
     };
+    faderSlider.onDragStart = [this] { bus.strip.faderTouched.store (true,  std::memory_order_release); };
+    faderSlider.onDragEnd   = [this] { bus.strip.faderTouched.store (false, std::memory_order_release); };
     addAndMakeVisible (faderSlider);
 
     // Standalone fader-value readout below the slider (matches channel
@@ -746,7 +752,17 @@ BusComponent::BusComponent (Bus& b, Session& s, int idx)
     muteButton.setClickingTogglesState (true);
     muteButton.setColour (juce::TextButton::buttonOnColourId, juce::Colours::orangered);
     muteButton.setToggleState (bus.strip.mute.load (std::memory_order_relaxed), juce::dontSendNotification);
-    muteButton.onClick = [this] { bus.strip.mute.store (muteButton.getToggleState(), std::memory_order_release); };
+    muteButton.onClick = [this]
+    {
+        const bool newState = muteButton.getToggleState();
+        bus.strip.mute.store (newState, std::memory_order_release);
+        const int m = bus.strip.automationMode.load (std::memory_order_relaxed);
+        const bool capturing = engine.getTransport().isPlaying()
+                             && (m == (int) AutomationMode::Write
+                                 || m == (int) AutomationMode::Touch);
+        if (capturing)
+            captureWritePoint (AutomationParam::Mute, newState ? 1.0f : 0.0f);
+    };
     addAndMakeVisible (muteButton);
 
     soloButton.setClickingTogglesState (true);
@@ -758,6 +774,18 @@ BusComponent::BusComponent (Bus& b, Session& s, int idx)
         sessionRef.setBusSoloed (busIndex, soloButton.getToggleState());
     };
     addAndMakeVisible (soloButton);
+
+    // Automation-mode button — same grammar as the channel strips: borderless
+    // text, mode colour applied via refreshAutoModeButton(), in-window menu.
+    autoModeButton.setTooltip ("Automation mode (click to pick: Off / Read / Write / Touch). "
+                                "READ replays the recorded ride; WRITE captures fader / pan / "
+                                "mute moves; TOUCH replays until you grab a control, then "
+                                "captures while held.");
+    autoModeButton.onClick = [this] { showAutoModeMenu(); };
+    autoModeButton.setColour (juce::TextButton::buttonColourId,   juce::Colours::transparentBlack);
+    autoModeButton.setColour (juce::TextButton::buttonOnColourId, juce::Colours::transparentBlack);
+    addAndMakeVisible (autoModeButton);
+    refreshAutoModeButton();
 
     // Mouse listeners so the strip's mouseDown sees right-clicks on each
     // child (e.eventComponent identifies which control was hit). Matches
@@ -819,6 +847,145 @@ BusComponent::~BusComponent()
     // own destructor calls stopTimer too but that's the BASE-class
     // destructor - it runs AFTER derived-class members destruct.
     stopTimer();
+}
+
+void BusComponent::captureWritePoint (AutomationParam param, float denormValue)
+{
+    // Denormalize -> 0..1 lane storage. Mirrors ChannelStripComponent's
+    // capture; buses only automate FaderDb / Pan / Mute.
+    auto normalize = [] (AutomationParam p, float v) -> float
+    {
+        switch (p)
+        {
+            case AutomationParam::FaderDb:
+            {
+                const float lo = ChannelStripParams::kFaderMinDb;
+                const float hi = ChannelStripParams::kFaderMaxDb;
+                return juce::jlimit (0.0f, 1.0f, (v - lo) / (hi - lo));
+            }
+            case AutomationParam::Pan:
+                return juce::jlimit (0.0f, 1.0f, (v + 1.0f) * 0.5f);
+            case AutomationParam::Mute:
+                return v >= 0.5f ? 1.0f : 0.0f;
+            // Buses don't automate solo or aux sends.
+            case AutomationParam::Solo:
+            case AutomationParam::AuxSend1:
+            case AutomationParam::AuxSend2:
+            case AutomationParam::AuxSend3:
+            case AutomationParam::AuxSend4:
+            case AutomationParam::kCount:
+                break;
+        }
+        return 0.0f;
+    };
+
+    auto& lane = bus.strip.automationLanes[(size_t) param];
+    AutomationPoint pt;
+    pt.timeSamples   = engine.getTransport().getPlayhead();
+    pt.value         = normalize (param, denormValue);
+    pt.recordedAtBPM = sessionRef.tempoBpm.load (std::memory_order_relaxed);
+
+    // Pre-filter: drop near-identical continuous samples close in time
+    // (timer noise when the control hasn't moved). Discrete params keep
+    // every transition.
+    if (isContinuousParam (param) && ! lane.points.empty())
+    {
+        constexpr float kDeltaEps = 0.001f;
+        constexpr juce::int64 kMaxSpanSamples = 22050;   // ~500 ms @ 44.1 k
+        const auto& last = lane.points.back();
+        if (std::abs (pt.value - last.value) < kDeltaEps
+            && pt.timeSamples >= last.timeSamples
+            && (pt.timeSamples - last.timeSamples) < kMaxSpanSamples)
+            return;
+    }
+
+    // Keep the ascending-time invariant evaluateLane's binary search needs.
+    // A backward playhead (loop wrap / rewind) truncates the now-future tail
+    // then appends; a same-sample hit replaces in place.
+    if (! lane.points.empty() && lane.points.back().timeSamples >= pt.timeSamples)
+    {
+        if (lane.points.back().timeSamples > pt.timeSamples)
+        {
+            auto cutoff = std::lower_bound (lane.points.begin(), lane.points.end(),
+                pt.timeSamples,
+                [] (const AutomationPoint& a, juce::int64 t) { return a.timeSamples < t; });
+            lane.points.erase (cutoff, lane.points.end());
+        }
+        if (! lane.points.empty() && lane.points.back().timeSamples == pt.timeSamples)
+        {
+            lane.points.back() = pt;
+            return;
+        }
+    }
+    lane.points.push_back (pt);
+}
+
+void BusComponent::showAutoModeMenu()
+{
+    const int cur = bus.strip.automationMode.load (std::memory_order_relaxed);
+    juce::PopupMenu menu;
+    menu.addItem (1, "Off",   true, cur == (int) AutomationMode::Off);
+    menu.addItem (2, "Read",  true, cur == (int) AutomationMode::Read);
+    menu.addItem (3, "Write", true, cur == (int) AutomationMode::Write);
+    menu.addItem (4, "Touch", true, cur == (int) AutomationMode::Touch);
+    showContextMenu (menu, autoModeButton,
+        [safeThis = juce::Component::SafePointer<BusComponent> (this)] (int chosen)
+        {
+            auto* self = safeThis.getComponent();
+            if (self == nullptr || chosen < 1 || chosen > 4) return;
+            const AutomationMode picked[] = {
+                AutomationMode::Off, AutomationMode::Read,
+                AutomationMode::Write, AutomationMode::Touch
+            };
+            self->setAutoMode (picked[chosen - 1]);
+        });
+}
+
+void BusComponent::setAutoMode (AutomationMode mode)
+{
+    // release-store so the audio thread's acquire-load of the new mode sees
+    // every lane append made during the Write/Touch pass that just ended.
+    bus.strip.automationMode.store ((int) mode, std::memory_order_release);
+
+    // Read disables the automated controls (fader / pan / mute). Solo isn't
+    // automated, so it stays interactive in every mode.
+    const bool interactive = mode != AutomationMode::Read;
+    faderSlider.setEnabled (interactive);
+    panKnob    .setEnabled (interactive);
+    muteButton .setEnabled (interactive);
+
+    refreshAutoModeButton();
+}
+
+void BusComponent::refreshAutoModeButton()
+{
+    const int m = bus.strip.automationMode.load (std::memory_order_relaxed);
+    const char* label = "OFF";
+    juce::Colour bg = juce::Colours::transparentBlack;
+    juce::Colour fg (0xff707074);
+    switch (m)
+    {
+        case (int) AutomationMode::Read:
+            label = "READ";
+            bg = juce::Colour (0xff20603a);   // muted green
+            fg = juce::Colour (0xffd0e8d0);
+            break;
+        case (int) AutomationMode::Write:
+            label = "WRITE";
+            bg = juce::Colour (0xff803020);   // muted red
+            fg = juce::Colour (0xfff0d0c8);
+            break;
+        case (int) AutomationMode::Touch:
+            label = "TOUCH";
+            bg = juce::Colour (0xff806020);   // muted amber
+            fg = juce::Colour (0xfff0e0c0);
+            break;
+        case (int) AutomationMode::Off:
+        default: break;
+    }
+    autoModeButton.setButtonText (label);
+    autoModeButton.setColour (juce::TextButton::buttonColourId, bg);
+    autoModeButton.setColour (juce::TextButton::textColourOffId, fg);
 }
 
 void BusComponent::timerCallback()
@@ -893,30 +1060,54 @@ void BusComponent::timerCallback()
     if (! meterArea.isEmpty())   repaint (meterArea);
     if (! grMeterArea.isEmpty()) repaint (grMeterArea.expanded (2, 10));  // include "GR" caption
 
-    // Visual sync for MIDI-bound controls. Buses don't have automation
-    // lanes (deferred per the project spec) so there's no liveFaderDb to
-    // poll — read the setpoint atoms directly. Gate on the user not
-    // currently dragging that specific control so we never fight a
-    // user gesture.
+    // Motor-fader / motor-pan animation + Write/Touch capture — same grammar
+    // as ChannelStripComponent. We poll the live* atoms (the engine writes
+    // them every block: Off mirrors the setpoint, so MIDI-bound moves still
+    // sync here; Read/Touch-untouched carry the lane value). Gate the visual
+    // update on the user NOT grabbing that control so we never fight a
+    // gesture. Capture appends to the lane when playing in Write, or in Touch
+    // while the control is held.
+    const int  amode   = bus.strip.automationMode.load (std::memory_order_relaxed);
+    const bool isWrite  = amode == (int) AutomationMode::Write;
+    const bool isTouch  = amode == (int) AutomationMode::Touch;
+    const bool playing  = engine.getTransport().isPlaying();
     {
-        const float setp = bus.strip.faderDb.load (std::memory_order_relaxed);
-        if (! faderSlider.isMouseButtonDown()
-            && std::abs (setp - (float) faderSlider.getValue()) > 0.05f)
+        const float live    = bus.strip.liveFaderDb.load (std::memory_order_relaxed);
+        const bool  touched = bus.strip.faderTouched.load (std::memory_order_relaxed);
+        if (! touched && std::abs (live - displayedLiveFaderDb) > 0.05f)
         {
-            faderSlider.setValue (setp, juce::dontSendNotification);
-            faderValueLabel.setText ((setp <= -89.95f) ? juce::String ("off")
-                                                       : juce::String (setp, 1),
+            displayedLiveFaderDb = live;
+            faderSlider.setValue (live, juce::dontSendNotification);
+            faderValueLabel.setText ((live <= -89.95f) ? juce::String ("off")
+                                                        : juce::String (live, 1),
                                        juce::dontSendNotification);
         }
+        else if (touched)
+            displayedLiveFaderDb = live;
+
+        if (playing && (isWrite || (isTouch && touched)))
+            captureWritePoint (AutomationParam::FaderDb,
+                                bus.strip.faderDb.load (std::memory_order_relaxed));
     }
     {
-        const float setp = bus.strip.pan.load (std::memory_order_relaxed);
-        if (! panKnob.isMouseButtonDown()
-            && std::abs (setp - (float) panKnob.getValue()) > 0.005f)
-            panKnob.setValue (setp, juce::dontSendNotification);
+        const float live    = bus.strip.livePan.load (std::memory_order_relaxed);
+        const bool  touched = bus.strip.panTouched.load (std::memory_order_relaxed);
+        if (! touched && std::abs (live - displayedLivePan) > 0.005f)
+        {
+            displayedLivePan = live;
+            panKnob.setValue (live, juce::dontSendNotification);
+        }
+        else if (touched)
+            displayedLivePan = live;
+
+        if (playing && (isWrite || (isTouch && touched)))
+            captureWritePoint (AutomationParam::Pan,
+                                bus.strip.pan.load (std::memory_order_relaxed));
     }
     {
-        const bool m = bus.strip.mute.load (std::memory_order_relaxed);
+        // Mute reflects liveMute (lane value in Read/Touch, setpoint in Off).
+        // dontSendNotification avoids re-triggering the click capture.
+        const bool m = bus.strip.liveMute.load (std::memory_order_relaxed);
         if (muteButton.getToggleState() != m)
             muteButton.setToggleState (m, juce::dontSendNotification);
     }
@@ -1405,6 +1596,12 @@ void BusComponent::resized()
     muteButton.setBounds (buttons.removeFromLeft (buttons.getWidth() / 2).reduced (2));
     soloButton.setBounds (buttons.reduced (2));
     area.removeFromBottom (2);
+
+    // Automation-mode row directly above M/S — thin full-width row, same
+    // 16 px grammar as the channel strips.
+    auto autoRow = area.removeFromBottom (16);
+    autoModeButton.setBounds (autoRow.reduced (1, 0));
+    area.removeFromBottom (4);
 
     // Peak/GR readouts above the meter+fader pair.
     auto peakRow = area.removeFromBottom (14);

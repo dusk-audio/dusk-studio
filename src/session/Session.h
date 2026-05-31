@@ -627,6 +627,25 @@ struct BusParams
     std::atomic<bool>  compReleaseAuto { true };
     std::atomic<float> compMakeupDb  { 0.0f };
 
+    // Audio reads THESE (post-automation) so the Off/Read/Write/Touch
+    // hand-off lives in the engine; BusStrip::updateGainTargets and the
+    // engine's mute gate stay lane-agnostic. Only FaderDb / Pan / Mute are
+    // meaningful for a bus (no aux sends; solo isn't automated). UI's timer
+    // polls live* for motor-fader/pan animation in Read mode.
+    mutable std::atomic<float> liveFaderDb { 0.0f };
+    mutable std::atomic<float> livePan     { 0.0f };
+    mutable std::atomic<bool>  liveMute    { false };
+
+    // True while the user has the fader / pan grabbed (drag-start..end).
+    std::atomic<bool> faderTouched { false };
+    std::atomic<bool> panTouched   { false };
+
+    // Same shape as ChannelStripParams for code reuse; only the FaderDb /
+    // Pan / Mute lanes get populated. Sync via release/acquire on
+    // automationMode and each *Touched flag (see the per-track block).
+    std::atomic<int> automationMode { 0 };  // AutomationMode cast
+    std::array<AutomationLane, kNumAutomationParams> automationLanes {};
+
     // dB = peak-of-block (LED). RMS = linear amplitude smoothed at
     // 300 ms tau (analog VU, matches TapeMachine's internal integrator).
     mutable std::atomic<float> meterPostBusLDb  { -100.0f };

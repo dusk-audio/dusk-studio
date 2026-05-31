@@ -524,6 +524,32 @@ juce::DynamicObject::Ptr busToObject (const Bus& a)
     obj->setProperty ("comp_release_auto", a.strip.compReleaseAuto.load());
     obj->setProperty ("comp_makeup_db",   a.strip.compMakeupDb.load());
 
+    // Automation: same shape as tracks — mode + one array per non-empty lane.
+    // Only FaderDb / Pan / Mute are populated for a bus, but we iterate all
+    // params for symmetry (empty lanes are skipped).
+    obj->setProperty ("automation_mode", a.strip.automationMode.load (std::memory_order_relaxed));
+    juce::DynamicObject::Ptr autoObj = new juce::DynamicObject();
+    bool anyLane = false;
+    for (int p = 0; p < kNumAutomationParams; ++p)
+    {
+        const auto& lane = a.strip.automationLanes[(size_t) p];
+        if (lane.points.empty()) continue;
+        juce::Array<juce::var> pts;
+        pts.ensureStorageAllocated ((int) lane.points.size());
+        for (const auto& pt : lane.points)
+        {
+            auto* pObj = new juce::DynamicObject();
+            pObj->setProperty ("t",   (juce::int64) pt.timeSamples);
+            pObj->setProperty ("v",   (double) pt.value);
+            pObj->setProperty ("bpm", (double) pt.recordedAtBPM);
+            pts.add (juce::var (pObj));
+        }
+        autoObj->setProperty (automationParamKey ((AutomationParam) p), pts);
+        anyLane = true;
+    }
+    if (anyLane)
+        obj->setProperty ("automation", juce::var (autoObj.get()));
+
     return obj;
 }
 
@@ -933,6 +959,40 @@ void restoreBus (Bus& a, const juce::var& v)
     if (v.hasProperty ("comp_release_ms")) a.strip.compReleaseMs.store ((float) (double) v["comp_release_ms"]);
     if (v.hasProperty ("comp_release_auto")) a.strip.compReleaseAuto.store ((bool) v["comp_release_auto"]);
     if (v.hasProperty ("comp_makeup_db"))  a.strip.compMakeupDb .store ((float) (double) v["comp_makeup_db"]);
+
+    // Automation — mirror restoreTrack: clear lanes, rebuild from JSON, then
+    // release-store the mode so the audio thread never reads a half-rebuilt
+    // lane vector. Only FaderDb / Pan / Mute lanes are ever populated.
+    for (auto& lane : a.strip.automationLanes)
+        lane.points.clear();
+    if (auto autoVar = v["automation"]; autoVar.isObject())
+    {
+        for (int p = 0; p < kNumAutomationParams; ++p)
+        {
+            const char* key = automationParamKey ((AutomationParam) p);
+            auto pts = autoVar[key];
+            if (! pts.isArray()) continue;
+            auto& lane = a.strip.automationLanes[(size_t) p];
+            lane.points.reserve ((size_t) pts.size());
+            for (int k = 0; k < pts.size(); ++k)
+            {
+                auto pv = pts[k];
+                if (! pv.isObject()) continue;
+                AutomationPoint pt;
+                pt.timeSamples   = (juce::int64) pv["t"];
+                pt.value         = juce::jlimit (0.0f, 1.0f, (float) (double) pv["v"]);
+                pt.recordedAtBPM = pv.hasProperty ("bpm")
+                    ? (float) (double) pv["bpm"]
+                    : 120.0f;
+                lane.points.push_back (pt);
+            }
+            std::sort (lane.points.begin(), lane.points.end(),
+                [] (const AutomationPoint& x, const AutomationPoint& y)
+                { return x.timeSamples < y.timeSamples; });
+        }
+    }
+    if (v.hasProperty ("automation_mode"))
+        a.strip.automationMode.store ((int) v["automation_mode"], std::memory_order_release);
 }
 } // namespace
 

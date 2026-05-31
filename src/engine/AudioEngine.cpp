@@ -2690,7 +2690,46 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
     for (int a = 0; a < Session::kNumBuses; ++a)
     {
         const auto& params = session.bus (a).strip;
-        const bool muted   = params.mute.load (std::memory_order_relaxed);
+
+        // Bus automation routing — mirror of the per-track / per-aux blocks.
+        // Drive liveFaderDb / livePan / liveMute from the lane in Read or
+        // (Touch && !touched) mode; pass the manual setpoint through
+        // otherwise. BusStrip::updateGainTargets reads liveFaderDb / livePan;
+        // the mute gate below reads liveMute. Solo isn't automated.
+        {
+            const int amode = params.automationMode.load (std::memory_order_acquire);
+            {
+                const auto& lane = params.automationLanes[(size_t) AutomationParam::FaderDb];
+                const bool touched = params.faderTouched.load (std::memory_order_acquire);
+                const bool readsLane = amode == (int) AutomationMode::Read
+                                     || (amode == (int) AutomationMode::Touch && ! touched);
+                const float v = (readsLane && ! lane.points.empty())
+                    ? evaluateLane (lane, blockStartSamples, AutomationParam::FaderDb)
+                    : params.faderDb.load (std::memory_order_relaxed);
+                params.liveFaderDb.store (v, std::memory_order_relaxed);
+            }
+            {
+                const auto& lane = params.automationLanes[(size_t) AutomationParam::Pan];
+                const bool touched = params.panTouched.load (std::memory_order_acquire);
+                const bool readsLane = amode == (int) AutomationMode::Read
+                                     || (amode == (int) AutomationMode::Touch && ! touched);
+                const float v = (readsLane && ! lane.points.empty())
+                    ? evaluateLane (lane, blockStartSamples, AutomationParam::Pan)
+                    : params.pan.load (std::memory_order_relaxed);
+                params.livePan.store (v, std::memory_order_relaxed);
+            }
+            {
+                const auto& lane = params.automationLanes[(size_t) AutomationParam::Mute];
+                const bool readsLane = amode == (int) AutomationMode::Read
+                                     || amode == (int) AutomationMode::Touch;
+                const bool effective = (readsLane && ! lane.points.empty())
+                    ? (evaluateLane (lane, blockStartSamples, AutomationParam::Mute) >= 0.5f)
+                    : params.mute.load (std::memory_order_relaxed);
+                params.liveMute.store (effective, std::memory_order_relaxed);
+            }
+        }
+
+        const bool muted   = params.liveMute.load (std::memory_order_relaxed);
         const bool soloed  = params.solo.load (std::memory_order_relaxed);
         const bool passes  = ! muted && (anyBusSolo ? soloed : true);
 

@@ -10,10 +10,13 @@
 
 namespace duskstudio
 {
+class AudioEngine;
+
 class BusComponent final : public juce::Component, private juce::Timer
 {
 public:
-    BusComponent (Bus& busRef, class Session& sessionRef, int busIndex);
+    BusComponent (Bus& busRef, class Session& sessionRef,
+                  class AudioEngine& engineRef, int busIndex);
     ~BusComponent() override;
 
     void paint (juce::Graphics&) override;
@@ -46,6 +49,7 @@ private:
 
     Bus& bus;
     Session& sessionRef;
+    AudioEngine& engine;
     int busIndex;
     juce::Label nameLabel;
 
@@ -84,12 +88,19 @@ private:
     juce::TextButton muteButton { "M" };
     juce::TextButton soloButton { "S" };
 
-    // Bus subgroup automation is not in 1.0 scope - spec lists per-track,
-    // per-aux, and master as the automatable surfaces (BusParams has no
-    // automationMode field, no AudioEngine routing path). A bottom-row
-    // auto button is omitted here for consistency with what the engine
-    // actually supports; channel + aux + master strips all show the
-    // button because their DSP honours the mode atom.
+    // Automation-mode button — thin full-width row above M/S, exactly like
+    // the channel strips. Cycles Off/Read/Write/Touch via an in-window menu;
+    // the engine's per-block bus automation routing honours the mode for the
+    // fader, pan, and mute.
+    juce::TextButton autoModeButton { "OFF" };
+    void showAutoModeMenu();
+    void setAutoMode (AutomationMode mode);
+    void refreshAutoModeButton();
+    void captureWritePoint (AutomationParam param, float denormValue);
+    // Last-displayed live values so the motor-fader/pan timer only calls
+    // setValue when the automated value actually moved.
+    float displayedLiveFaderDb = 0.0f;
+    float displayedLivePan      = 0.0f;
 
     // Analog VU meter at the top of the strip. Reads the bus's post-DSP
     // peak atoms; its internal Timer applies VU ballistics and repaints
