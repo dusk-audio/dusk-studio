@@ -1020,7 +1020,11 @@ void MainComponent::maybeStartStartupPluginScan()
     if (startupScanTriggered) return;
     startupScanTriggered = true;   // fire exactly once, whatever the toggle says
 
-    if (! appconfig::getScanPluginsOnStartup())
+    const bool enabled = appconfig::getScanPluginsOnStartup();
+    std::fprintf (stderr, "[Dusk Studio] startup plugin scan: toggle=%s\n",
+                  enabled ? "ON — deferring progress modal" : "off — skipped");
+    std::fflush (stderr);
+    if (! enabled)
         return;
 
     // Defer one tick: don't build/show a modal from inside resized() (it would
@@ -1031,6 +1035,9 @@ void MainComponent::maybeStartStartupPluginScan()
     {
         auto* self = safe.getComponent();
         if (self == nullptr) return;
+
+        std::fprintf (stderr, "[Dusk Studio] startup plugin scan: showing progress modal\n");
+        std::fflush (stderr);
 
         auto& mgr = self->engine.getPluginManager();
         auto body = std::make_unique<PluginScanModal> (mgr, [safe] (int added)

@@ -59,6 +59,14 @@ private:
     double             progressValue { 0.0 };   // bound to progressBar
     bool               finishedFired { false };
 
+    // Keep the completion state on screen for a beat so a fast (warm-cache)
+    // scan doesn't just flash and vanish — otherwise an enabled scan-on-startup
+    // looks like nothing happened.
+    bool          completeShown { false };
+    juce::uint32  completeAtMs  { 0 };
+    juce::uint32  startedAtMs   { 0 };
+    static constexpr int kMinVisibleMs = 900;
+
     std::unique_ptr<Worker> worker;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PluginScanModal)

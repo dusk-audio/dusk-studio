@@ -1,5 +1,6 @@
 #include "PluginScanModal.h"
 #include "../engine/PluginManager.h"
+#include <cstdio>
 
 namespace duskstudio
 {
@@ -26,6 +27,10 @@ PluginScanModal::PluginScanModal (PluginManager& mgr,
     progressBar.setColour (juce::ProgressBar::foregroundColourId, juce::Colour (0xff5fa8ff));
     addAndMakeVisible (progressBar);
 
+    startedAtMs = juce::Time::getMillisecondCounter();
+    std::fprintf (stderr, "[Dusk Studio] PluginScanModal: created, starting worker thread\n");
+    std::fflush (stderr);
+
     worker = std::make_unique<Worker> (*this);
     worker->startThread();
 
@@ -48,6 +53,9 @@ PluginScanModal::~PluginScanModal()
 
 void PluginScanModal::Worker::run()
 {
+    std::fprintf (stderr, "[Dusk Studio] plugin-scan worker: started\n");
+    std::fflush (stderr);
+
     const int added = owner.manager.scanInstalledPlugins (
         [this] (float frac, const juce::String& name) -> bool
         {
@@ -62,6 +70,9 @@ void PluginScanModal::Worker::run()
 
     owner.addedCount.store (added, std::memory_order_relaxed);
     owner.scanDone.store (true, std::memory_order_release);
+
+    std::fprintf (stderr, "[Dusk Studio] plugin-scan worker: done, %d added\n", added);
+    std::fflush (stderr);
 }
 
 void PluginScanModal::timerCallback()
@@ -69,15 +80,21 @@ void PluginScanModal::timerCallback()
     progressValue = (double) progress.load (std::memory_order_relaxed);
     progressBar.repaint();
 
-    juce::String name;
-    { const juce::ScopedLock sl (nameLock); name = currentName; }
-    if (name.isNotEmpty())
-        statusLabel.setText (name, juce::dontSendNotification);
-
-    if (scanDone.load (std::memory_order_acquire) && ! finishedFired)
+    // While still scanning, show the plugin currently being probed.
+    if (! completeShown)
     {
-        finishedFired = true;
-        stopTimer();
+        juce::String name;
+        { const juce::ScopedLock sl (nameLock); name = currentName; }
+        if (name.isNotEmpty())
+            statusLabel.setText (name, juce::dontSendNotification);
+    }
+
+    // First tick that observes completion: switch to the "complete" state and
+    // start the minimum-visible timer (do NOT close yet).
+    if (scanDone.load (std::memory_order_acquire) && ! completeShown)
+    {
+        completeShown = true;
+        completeAtMs  = juce::Time::getMillisecondCounter();
 
         const int added = addedCount.load (std::memory_order_relaxed);
         titleLabel.setText ("Plugin scan complete", juce::dontSendNotification);
@@ -86,9 +103,17 @@ void PluginScanModal::timerCallback()
                              juce::dontSendNotification);
         progressValue = 1.0;
         progressBar.repaint();
+    }
 
+    // Hold the completion state briefly so a warm-cache scan doesn't just
+    // flash, then close.
+    if (completeShown && ! finishedFired
+        && juce::Time::getMillisecondCounter() - completeAtMs >= (juce::uint32) kMinVisibleMs)
+    {
+        finishedFired = true;
+        stopTimer();
         if (onFinished)
-            onFinished (added);   // caller closes the modal; our dtor joins the (done) worker
+            onFinished (addedCount.load (std::memory_order_relaxed));   // caller closes; dtor joins the (done) worker
     }
 }
 
