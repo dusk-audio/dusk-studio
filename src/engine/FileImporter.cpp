@@ -180,24 +180,18 @@ AudioImportResult importAudio (const AudioImportRequest& req)
         outBuf.clear();
         for (int c = 0; c < req.targetChannels; ++c)
         {
-            const int written = resampleChannel (conformed.getReadPointer (c),
-                                                   (int) srcLength, srcSampleRate,
-                                                   outBuf.getWritePointer (c),
-                                                   (int) outLength, sessionSr);
-            // CatmullRomInterpolator can return fewer samples than asked
-            // when the input runs out before producing every output slot
-            // (boundary case at the tail). The remaining range was
-            // pre-cleared by setSize+clear above; pad with the last
-            // produced sample so the trailing zeros don't read as an
-            // audible click on playback.
-            jassert (written <= (int) outLength);
-            if (written > 0 && written < (int) outLength)
-            {
-                auto* w = outBuf.getWritePointer (c);
-                const float pad = w[written - 1];
-                for (int i = written; i < (int) outLength; ++i)
-                    w[i] = pad;
-            }
+            // CatmullRomInterpolator fully fills all `outLength` output samples
+            // (outLength was derived as srcLength/ratio, so the input is exactly
+            // enough). Its return value is the number of INPUT samples CONSUMED
+            // (~= srcLength), NOT the output count — for any upsample that's
+            // always < outLength, so the old "pad the tail" path overwrote the
+            // last ~8% of correctly-resampled audio with a held sample (imports
+            // went silent at ~92% of their length). Discard the return; any
+            // <=2-sample tail boundary stays as the pre-cleared zeros.
+            resampleChannel (conformed.getReadPointer (c),
+                             (int) srcLength, srcSampleRate,
+                             outBuf.getWritePointer (c),
+                             (int) outLength, sessionSr);
         }
     }
 

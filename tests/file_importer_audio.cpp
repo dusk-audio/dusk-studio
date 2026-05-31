@@ -133,6 +133,52 @@ TEST_CASE ("FileImporter: 44.1k mono -> 48k session preserves length", "[FileImp
     REQUIRE (res.region.numChannels == 1);
 }
 
+TEST_CASE ("FileImporter: 44.1k -> 48k upsample fills the tail with audio, not a held sample", "[FileImporter]")
+{
+    // Regression: importAudio mistook CatmullRomInterpolator::process()'s return
+    // (number of INPUT samples consumed, ~= srcLength) for the produced-output
+    // count. On any upsample that's always < outLength, so it padded the last
+    // ~8% of the output with a held sample — imported audio went silent/DC at
+    // ~92% of its length (a ~5 min file died at ~4:30). Length stayed correct,
+    // so the existing length test missed it; assert the TAIL is still live.
+    TempScope tmp;
+    const auto src = tmp.dir.getChildFile ("source.wav");
+    constexpr double kSrcSr  = 44100.0;
+    constexpr int    kSrcLen = (int) kSrcSr;   // 1 second
+    constexpr double kFreq   = 440.0;
+    writeTestWav (src, kSrcSr, 1, kSrcLen, [&] (int, int n)
+    {
+        return 0.5f * (float) std::sin (2.0 * kPi * kFreq * (double) n / kSrcSr);
+    });
+
+    duskstudio::fileimport::AudioImportRequest req;
+    req.source            = src;
+    req.audioDir          = tmp.dir;
+    req.trackIndex        = 0;
+    req.sessionSampleRate = 48000.0;
+    req.targetChannels    = 1;
+    req.timelineStart     = 0;
+
+    const auto res = duskstudio::fileimport::importAudio (req);
+    REQUIRE (res.ok);
+
+    const auto rb = readWav (res.region.file);
+    const int n = rb.buffer.getNumSamples();
+    REQUIRE (n > 2000);
+
+    // Last ~1000 samples sit deep in the old frozen-pad zone (pad began at
+    // ~44100/48000). A live 440 Hz sine there spans several cycles, so
+    // peak-to-peak ~= 2*amp; a held sample would be ~0.
+    const auto* p = rb.buffer.getReadPointer (0);
+    float lo = p[n - 1], hi = p[n - 1];
+    for (int i = n - 1000; i < n; ++i)
+    {
+        lo = std::min (lo, p[i]);
+        hi = std::max (hi, p[i]);
+    }
+    REQUIRE ((hi - lo) > 0.5f);
+}
+
 TEST_CASE ("FileImporter: 96k mono -> 48k session preserves length", "[FileImporter]")
 {
     TempScope tmp;
