@@ -203,6 +203,12 @@ int PluginManager::scanInstalledPlugins (
     juce::ignoreUnused (abort);
    #endif
 
+    // Snapshot the blacklist size BEFORE applying the dead-man's-pedal so a
+    // recovery that only re-quarantines a prior crash (added == 0, no new
+    // scanner blacklisting) still counts as a change and persists - otherwise
+    // the next launch re-probes and re-crashes on the same file.
+    const int blacklistBefore = knownPluginList.getBlacklistedFiles().size();
+
     // Quarantine anything a previous run was probing when it died: a file left
     // in the dead-man's-pedal means the app itself crashed mid-scan on it.
     if (deadMansPedalFile != juce::File())
@@ -210,10 +216,6 @@ int PluginManager::scanInstalledPlugins (
             knownPluginList, deadMansPedalFile);
 
     int added = 0;
-    // Snapshot the blacklist size so a scan that only quarantines a crashing
-    // plugin (added == 0) still persists - otherwise the next launch re-probes
-    // and re-crashes on the same file.
-    const int blacklistBefore = knownPluginList.getBlacklistedFiles().size();
     const auto& formats = formatManager.getFormats();
     const int   numFormats = formats.size();
     bool aborted = false;

@@ -93,15 +93,23 @@ void SystemStatusBar::timerCallback()
         }
     }
 
+    // DSP warn colour (same formula paint() uses). Track it separately so the
+    // colour repaints when warn flips even if the dspInfo string is unchanged —
+    // e.g. cpu crossing 0.85 within the same rounded "85%".
+    const bool dspWarn = lastCpuUsage > 0.85
+                      || (lastEngineXruns + lastBackendXruns) > 0;
+
     if (audioInfo     != paintedAudioInfo
         || dspInfo    != paintedDspInfo
         || chordInfo  != paintedChordInfo
-        || lastAudioWarn != paintedAudioWarn)
+        || lastAudioWarn != paintedAudioWarn
+        || dspWarn    != paintedDspWarn)
     {
         paintedAudioInfo = audioInfo;
         paintedDspInfo   = dspInfo;
         paintedChordInfo = chordInfo;
         paintedAudioWarn = lastAudioWarn;
+        paintedDspWarn   = dspWarn;
         repaint();
     }
 }

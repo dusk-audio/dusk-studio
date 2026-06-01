@@ -37,6 +37,15 @@ inline void configureSteppedKnob (juce::Slider& s,
     double best = 1.0e30;
     for (size_t i = 0; i < values.size(); ++i)
     {
+        // The AUTO sentinel (-1.0) is not a real value on the dB/ms axis, so it
+        // must only be chosen by an exact match, never by distance — otherwise a
+        // small real value (e.g. a 40 ms release) sits closer to -1 than to the
+        // first real step and wrongly selects AUTO.
+        if (values[i] == -1.0)
+        {
+            if (current == -1.0) { initial = (int) i; break; }
+            continue;
+        }
         const double d = std::abs (values[i] - current);
         if (d < best) { best = d; initial = (int) i; }
     }

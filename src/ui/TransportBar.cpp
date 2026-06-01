@@ -610,9 +610,11 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
 
 void TransportBar::setTapeStripExpanded (bool expanded)
 {
-    tapeToggle.setToggleState (expanded, juce::dontSendNotification);
-    tapeToggle.setButtonText (expanded ? juce::CharPointer_UTF8 ("\xe2\x96\xbe TIMELINE")
-                                        : juce::CharPointer_UTF8 ("\xe2\x96\xb8 TIMELINE"));
+    // Single source of truth: setTapeToggleVisualState sets the state + runs
+    // syncCompactLabels, which picks the right chevron/label for the current
+    // compact mode (this used to hard-set the full label, drifting from the
+    // compact path).
+    setTapeToggleVisualState (expanded);
 }
 
 bool TransportBar::isTapeStripExpanded() const

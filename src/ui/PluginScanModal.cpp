@@ -32,7 +32,14 @@ PluginScanModal::PluginScanModal (PluginManager& mgr,
     std::fflush (stderr);
 
     worker = std::make_unique<Worker> (*this);
-    worker->startThread();
+    if (! worker->startThread())
+    {
+        // Thread launch failed — mark the scan done so the timer's completion
+        // path fires and the modal closes instead of hanging on "Scanning...".
+        std::fprintf (stderr, "[Dusk Studio] PluginScanModal: worker thread failed to start\n");
+        std::fflush (stderr);
+        scanDone.store (true, std::memory_order_release);
+    }
 
     startTimerHz (20);
 }

@@ -1956,7 +1956,17 @@ void MasterStripComponent::openTapeMachineModal()
 
     tapeMachineDim = std::make_unique<DimOverlay>();
     tapeMachineDim->setBounds (topLevel->getLocalBounds());
-    tapeMachineDim->onClick = [this] { openTapeMachineModal(); };
+    // Defer the close: openTapeMachineModal() resets tapeMachineDim, which would
+    // destroy this DimOverlay while its own onClick is on the stack (UAF). Run it
+    // on the next message-loop tick, after the click handler unwinds.
+    tapeMachineDim->onClick = [this]
+    {
+        juce::Component::SafePointer<MasterStripComponent> safe (this);
+        juce::MessageManager::callAsync ([safe]
+        {
+            if (auto* s = safe.getComponent()) s->openTapeMachineModal();
+        });
+    };
     topLevel->addAndMakeVisible (tapeMachineDim.get());
 
     body->setBounds (topLevel->getLocalBounds()

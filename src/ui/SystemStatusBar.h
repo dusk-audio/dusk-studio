@@ -51,5 +51,6 @@ private:
     juce::String paintedDspInfo;
     juce::String paintedChordInfo;
     bool         paintedAudioWarn = false;
+    bool         paintedDspWarn   = false;
 };
 } // namespace duskstudio

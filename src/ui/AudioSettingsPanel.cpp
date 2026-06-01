@@ -339,8 +339,11 @@ AudioSettingsPanel::AudioSettingsPanel (juce::AudioDeviceManager& dm,
         "DAW pause-in-place. \"Return to start\" rewinds every time. "
         "\"Last clicked\" jumps to the most recent ruler click so Stop -> "
         "Play recycles a region you just auditioned.");
-    stopBehaviorCombo.setSelectedId ((int) appconfig::getStopBehavior() + 1,
-                                       juce::dontSendNotification);
+    // Clamp the stored value so a stale/corrupt config can't select an ID the
+    // combo doesn't have (which renders it blank).
+    const int storedStop = juce::jlimit (0, stopBehaviorCombo.getNumItems() - 1,
+                                         (int) appconfig::getStopBehavior());
+    stopBehaviorCombo.setSelectedId (storedStop + 1, juce::dontSendNotification);
     stopBehaviorCombo.onChange = [this]
     {
         // The combo only carries IDs 1..3, but guard the cast so a future item

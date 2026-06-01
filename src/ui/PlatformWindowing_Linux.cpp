@@ -83,10 +83,15 @@ void setNativeCursorVisibleOnPeer (juce::ComponentPeer& peer, bool visible)
         // pixel instead of nothing. An all-zero mask draws no pixels.
         static const char zeroBit = 0;
         ::Pixmap blank = ::XCreateBitmapFromData (d, win, &zeroBit, 1, 1);
+        if (blank == 0) return;   // allocation failed - skip the override rather than feed a null pixmap
         ::XColor xc{};
         invisible = ::XCreatePixmapCursor (d, blank, blank, &xc, &xc, 0, 0);
         ::XFreePixmap (d, blank);
     }
+
+    // If the cursor never got created (pixmap failure above), leave the native
+    // cursor alone instead of defining None.
+    if (invisible == 0) return;
 
     if (visible) ::XUndefineCursor (d, win);
     else         ::XDefineCursor   (d, win, invisible);
