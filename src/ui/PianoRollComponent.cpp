@@ -808,15 +808,26 @@ void PianoRollComponent::paintLoopPunchBrackets (juce::Graphics& g,
     };
     auto drawPair = [&] (juce::int64 a, juce::int64 b, juce::Colour col, bool enabled)
     {
-        if (b <= a) return;
+        if (b < a) return;
         const int xa = xForSample (a);
         const int xb = xForSample (b);
-        if (xb < grid.getX() || xa > grid.getRight()) return;
         juce::Graphics::ScopedSaveState saved (g);
         g.reduceClipRegion (juce::Rectangle<int> (grid.getX(), ruler.getY(),
                                                   grid.getWidth(),
                                                   grid.getBottom() - ruler.getY()));
         const float alpha = enabled ? 1.0f : 0.4f;
+        // Zero-width = a single in/out point set, partner not placed (e.g. right
+        // after Shift+[ before Shift+]). Draw one edge marker for feedback; a>0
+        // guard keeps an unset (0,0) range invisible.
+        if (b == a)
+        {
+            if (a <= 0 || xa < grid.getX() || xa > grid.getRight()) return;
+            g.setColour (col.withAlpha (0.9f * alpha));
+            g.drawVerticalLine (xa, (float) ruler.getY(), (float) grid.getBottom());
+            g.fillRect (xa, ruler.getY(), 6, 3); g.fillRect (xa, ruler.getBottom() - 3, 6, 3);
+            return;
+        }
+        if (xb < grid.getX() || xa > grid.getRight()) return;
         g.setColour (col.withAlpha (0.08f * alpha));
         g.fillRect (juce::Rectangle<int> (xa, grid.getY(),
                                           juce::jmax (1, xb - xa), grid.getHeight()));
@@ -2409,7 +2420,7 @@ void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
     }
 
     // Cut / Grid have no piano-roll click handler (the class-level
-    // comment at line 398-399 documents this). Eat the click so the
+    // comment at lines 398-401 documents this). Eat the click so the
     // note-creation fall-through below doesn't accidentally drop a
     // note when the user just wanted to pick a mode and the mouse
     // happens to be over the grid.
@@ -2928,17 +2939,28 @@ bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
             navigateRegion (-1);
             return true;
         }
-        // Loop / punch against the edit cursor. Bare [ / ] set the loop
-        // in/out; Shift+[ / Shift+] set the punch in/out; L / P toggle the
-        // respective enable. Mirrors the audio region editor, but the roll
-        // works in ticks so the cursor maps through the region anchor.
-        const int  kc = k.getKeyCode();
-        const bool sh = k.getModifiers().isShiftDown();
-        if (! cmdOrCtrl && ! k.getModifiers().isAltDown()
-            && (kc == '[' || kc == ']' || kc == 'L' || kc == 'P'))
+        // Loop enable toggles on Cmd/Ctrl+L — bare 'L' is taken by the CC-
+        // controller cycle further down, so the loop toggle takes the modifier.
+        if (cmdOrCtrl && k.getKeyCode() == 'L')
         {
             auto& transport = engine.getTransport();
-            if (kc == 'L' && ! sh) { transport.setLoopEnabled  (! transport.isLoopEnabled());  repaint(); return true; }
+            transport.setLoopEnabled (! transport.isLoopEnabled());
+            repaint();
+            return true;
+        }
+        // Loop / punch points against the edit cursor. Bare [ / ] set the loop
+        // in/out; Shift+[ / Shift+] set the punch in/out; bare P toggles punch.
+        // Mirrors the audio region editor, but the roll works in ticks so the
+        // cursor maps through the region anchor.
+        // On Linux/X11 getKeyCode() returns the SHIFTED glyph, so Shift+[ comes
+        // through as '{' and Shift+] as '}' — fold them back to [ / ].
+        const int  rawKc = k.getKeyCode();
+        const int  kc = (rawKc == '{') ? '[' : (rawKc == '}') ? ']' : rawKc;
+        const bool sh = k.getModifiers().isShiftDown();
+        if (! cmdOrCtrl && ! k.getModifiers().isAltDown()
+            && (kc == '[' || kc == ']' || kc == 'P'))
+        {
+            auto& transport = engine.getTransport();
             if (kc == 'P' && ! sh) { transport.setPunchEnabled (! transport.isPunchEnabled()); repaint(); return true; }
             if (const auto* r = region(); r != nullptr && (kc == '[' || kc == ']'))
             {

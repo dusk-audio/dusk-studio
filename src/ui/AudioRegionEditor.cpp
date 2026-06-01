@@ -624,13 +624,25 @@ void AudioRegionEditor::paintLoopPunchBrackets (juce::Graphics& g,
     auto& transport = engine.getTransport();
     auto drawPair = [&] (juce::int64 a, juce::int64 b, juce::Colour col, bool enabled)
     {
-        if (b <= a) return;
+        if (b < a) return;
         const int xa = xForTimelineSample (a, wave);
         const int xb = xForTimelineSample (b, wave);
-        if (xb < wave.getX() || xa > wave.getRight()) return;   // fully off-screen
         const float alpha = enabled ? 1.0f : 0.4f;
         const int top = ruler.getY();
         const int bot = wave.getBottom();
+        // Zero-width = a single in/out point set, partner not placed (e.g. right
+        // after Shift+[ before Shift+]). Draw one edge marker for feedback; a>0
+        // guard keeps an unset (0,0) range invisible.
+        if (b == a)
+        {
+            if (a <= 0 || xa < wave.getX() || xa > wave.getRight()) return;
+            g.setColour (col.withAlpha (0.9f * alpha));
+            g.drawVerticalLine (xa, (float) top, (float) bot);
+            g.fillRect (xa, ruler.getY(), 6, 3);
+            g.fillRect (xa, ruler.getBottom() - 3, 6, 3);
+            return;
+        }
+        if (xb < wave.getX() || xa > wave.getRight()) return;   // fully off-screen
         g.setColour (col.withAlpha (0.08f * alpha));
         g.fillRect (juce::Rectangle<int> (xa, wave.getY(),
                                             juce::jmax (1, xb - xa), wave.getHeight()));
@@ -1038,6 +1050,25 @@ juce::MouseCursor AudioRegionEditor::cursorForPoint (int x, int y) const
     const auto waveArea = juce::Rectangle<int> (0, kIconRowHeight + kRulerHeight,
                                                    getWidth(),
                                                    getHeight() - kIconRowHeight - kRulerHeight - kStatusBarH - kScrollBarH);
+
+    // Loop / punch edge handles live in the ruler band; hovering one shows the
+    // resize cursor (mirrors the mouseDown hit-test, same x-axis as the wave).
+    {
+        const auto rulerArea = juce::Rectangle<int> (0, kIconRowHeight,
+                                                        getWidth(), kRulerHeight);
+        if (rulerArea.contains (x, y))
+        {
+            auto& transport = engine.getTransport();
+            const int tol = 6;
+            auto nearX = [&] (juce::int64 s)
+                { return std::abs (x - xForTimelineSample (s, waveArea)) <= tol; };
+            if ((transport.getLoopEnd() > transport.getLoopStart()
+                    && (nearX (transport.getLoopStart()) || nearX (transport.getLoopEnd())))
+                || (transport.getPunchOut() > transport.getPunchIn()
+                    && (nearX (transport.getPunchIn()) || nearX (transport.getPunchOut()))))
+                return juce::MouseCursor::LeftRightResizeCursor;
+        }
+    }
 
     if (fadeInHandleRect (waveArea).contains (x, y)
         || fadeOutHandleRect (waveArea).contains (x, y))
@@ -2317,9 +2348,12 @@ bool AudioRegionEditor::keyPressed (const juce::KeyPress& k)
     // at the edit cursor, Shift+[ ] = punch in/out, L / P toggle. Handled here
     // (not forwarded to MainComponent) so the points land on the editor's edit
     // cursor instead of the transport playhead, which this view doesn't track.
-    // Uses getKeyCode (Shift maps '[' -> '{' for getTextCharacter).
     {
-        const int  kc = k.getKeyCode();
+        const int  rawKc = k.getKeyCode();
+        // On Linux/X11 getKeyCode() returns the SHIFTED glyph (XLookupString
+        // applies modifiers), so Shift+[ arrives as '{' and Shift+] as '}'.
+        // Fold them back so the punch (Shift+bracket) shortcuts fire.
+        const int  kc = (rawKc == '{') ? '[' : (rawKc == '}') ? ']' : rawKc;
         const bool sh = k.getModifiers().isShiftDown();
         if (! cmdOrCtrl && ! k.getModifiers().isAltDown()
             && (kc == '[' || kc == ']' || kc == 'L' || kc == 'P'))

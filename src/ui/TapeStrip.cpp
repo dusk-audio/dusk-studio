@@ -3296,9 +3296,41 @@ void TapeStrip::paint (juce::Graphics& g)
                            juce::Colour colour, bool enabled,
                            const juce::String& pillLabel)
     {
-        if (end <= start) return;
+        if (end < start) return;
         const int x0Raw = xForSample (start);
         const int x1Raw = xForSample (end);
+
+        // Zero-width = a single in/out point set, partner not yet placed (e.g.
+        // right after Shift+[ before Shift+] lands). Draw a single bracket
+        // marker so the user gets immediate feedback. Guard start>0 so an unset
+        // (0,0) range stays invisible.
+        if (end == start)
+        {
+            if (start > 0 && x0Raw >= col.getX() && x0Raw <= col.getRight())
+            {
+                constexpr int kBarH = 4;
+                g.setColour (colour.withAlpha (enabled ? 1.0f : 0.7f));
+                g.fillRect (x0Raw, kRulerH, 1, getHeight() - kRulerH);        // thin stem
+                g.fillRect (x0Raw - 1, ruler.getBottom() - kBarH, 3, kBarH);  // bracket foot
+                if (pillLabel.isNotEmpty())
+                {
+                    g.setFont (juce::Font (juce::FontOptions (10.5f, juce::Font::bold)));
+                    const int textW = juce::jmax (40,
+                        g.getCurrentFont().getStringWidth (pillLabel) + 10);
+                    const int pillH = kRulerPillBandH - 2;
+                    const int pillY = ruler.getY() + kRulerTickBandH;
+                    const int pillX = juce::jlimit (col.getX(), col.getRight() - textW,
+                                                    x0Raw - textW / 2);
+                    juce::Rectangle<int> r (pillX, pillY, textW, pillH);
+                    g.setColour (colour.withAlpha (enabled ? 1.0f : 0.7f));
+                    g.fillRoundedRectangle (r.toFloat(), 3.0f);
+                    g.setColour (juce::Colours::white);
+                    g.drawText (pillLabel, r, juce::Justification::centred, false);
+                }
+            }
+            return;
+        }
+
         const int x0 = juce::jmax (col.getX(),     x0Raw);
         const int x1 = juce::jmin (col.getRight(), x1Raw);
         if (x1 <= x0) return;
