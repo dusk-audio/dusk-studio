@@ -108,22 +108,13 @@ void bringWindowToFront (juce::ComponentPeer&)             {}
 void flushWindowOperations()                                {}
 void prepareNativePeerForChildAttach (juce::ComponentPeer&) {}
 
-// macOS: setMouseCursor(NoCursor) reliably hides the native cursor.
-// Component-level wiring already handles it; this stub is here so the
-// cross-OS PlatformWindowing surface compiles. CursorOverlay calls
-// this only when its glyph activates so [NSCursor unhide] cleanly
-// restores when overlay clears.
-void setNativeCursorVisibleOnPeer (juce::ComponentPeer&, bool visible)
+// macOS: no-op. JUCE's setMouseCursor(NoCursor) on the component under the
+// overlay glyph already hides the native cursor reliably, and that's the sole
+// owner of cursor visibility. Driving AppKit's process-global [NSCursor hide]/
+// [unhide] counter from here too only risks unbalancing it against JUCE, so we
+// stay out of it entirely. CursorOverlay still calls this, harmlessly.
+void setNativeCursorVisibleOnPeer (juce::ComponentPeer&, bool /*visible*/)
 {
-    // [NSCursor hide]/[unhide] push/pop a PROCESS-GLOBAL counter, so calling
-    // them on every overlay show/hide across windows can leave the count
-    // unbalanced (cursor stuck hidden). The cursor is global, not per-peer —
-    // track the applied state and only transition on a real change.
-    static bool nativeCursorVisible = true;   // message thread only
-    if (visible == nativeCursorVisible) return;
-    nativeCursorVisible = visible;
-    if (visible) [NSCursor unhide];
-    else         [NSCursor hide];
 }
 void prepareForTopLevelDestruction (juce::Component& topLevel)
 {

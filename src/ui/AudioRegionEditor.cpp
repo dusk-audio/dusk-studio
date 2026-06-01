@@ -2352,8 +2352,10 @@ bool AudioRegionEditor::keyPressed (const juce::KeyPress& k)
         const int  rawKc = k.getKeyCode();
         // On Linux/X11 getKeyCode() returns the SHIFTED glyph (XLookupString
         // applies modifiers), so Shift+[ arrives as '{' and Shift+] as '}'.
-        // Fold them back so the punch (Shift+bracket) shortcuts fire.
-        const int  kc = (rawKc == '{') ? '[' : (rawKc == '}') ? ']' : rawKc;
+        // Fold those back, and uppercase letters so the L/P toggles fire
+        // regardless of platform letter-case (toUpperCase no-ops the brackets).
+        const int  kc = (rawKc == '{') ? '[' : (rawKc == '}') ? ']'
+                      : (int) juce::CharacterFunctions::toUpperCase ((juce::juce_wchar) rawKc);
         const bool sh = k.getModifiers().isShiftDown();
         if (! cmdOrCtrl && ! k.getModifiers().isAltDown()
             && (kc == '[' || kc == ']' || kc == 'L' || kc == 'P'))

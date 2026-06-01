@@ -1601,6 +1601,12 @@ void MainComponent::dismissStartupDialog()
         if (safeThis == nullptr) return;
         safeThis->startupDialog.reset();
         safeThis->startupDim.reset();
+        // The dialog held keyboard focus; with it gone, pull focus back to the
+        // main canvas so transport / edit shortcuts work without a stray click
+        // first (StartupDialog isn't an EmbeddedModal, so there's no
+        // focusRestoreTarget hand-back to lean on).
+        if (! safeThis->startupQuitRequested && safeThis->isShowing())
+            safeThis->grabKeyboardFocus();
         // Dialog gone - now it's safe to run the startup plugin scan that we
         // held off in maybeStartStartupPluginScan(). Skip it entirely when the
         // dismissal came from Quit: the app is shutting down, no point scanning.

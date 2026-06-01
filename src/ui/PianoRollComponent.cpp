@@ -587,10 +587,15 @@ void PianoRollComponent::syncEditModeToolbar()
     const auto p    = getMouseXYRelative();
     // Don't hand the overlay glyph the cursor mid-drag - a move/resize/box
     // gesture owns a native cursor, and forcing NoCursor here (on a mode
-    // toolbar sync) would flash the overlay over it.
+    // toolbar sync) would flash the overlay over it. Also skip when the pointer
+    // is over a note/edge: mouseMove suppresses the overlay glyph there, so
+    // hiding the native cursor would leave NO cursor at all until the next move.
+    bool onEdge = false;
+    const bool overNote = noteGridArea().contains (p) && hitTestNote (p.x, p.y, onEdge) >= 0;
     if ((mode == EditMode::Grab || mode == EditMode::Draw)
         && dragMode == DragMode::None
-        && noteGridArea().contains (p))
+        && noteGridArea().contains (p)
+        && ! overNote)
         // CursorOverlay paints the actual glyph; hide the native cursor.
         setMouseCursor (juce::MouseCursor::NoCursor);
     else

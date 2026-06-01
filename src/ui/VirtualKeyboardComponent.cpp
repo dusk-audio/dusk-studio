@@ -229,9 +229,10 @@ int VirtualKeyboardComponent::noteAtPoint (juce::Point<int> p) const
     if (! keyboardArea.contains (p)) return -1;
 
     const int firstNote = juce::jmax (0, centreNote - 12);
-    // 2-octave window: one octave below the centre, one above. 24
-    // semitones inclusive = 25 notes (e.g., centre C2 → C1..C3).
-    const int lastNote  = juce::jmin (127, firstNote + 24);
+    // One octave of bass context below the centre, then up to the top typed key
+    // (centreNote + 28 = the 'P' key in the I9O0P top row) so every typeable
+    // note is on-screen + labelled. Must match paint() exactly.
+    const int lastNote  = juce::jmin (127, centreNote + 28);
     int numWhite = 0;
     for (int m = firstNote; m <= lastNote; ++m)
         if (! isBlackKey (m)) ++numWhite;
@@ -351,9 +352,10 @@ void VirtualKeyboardComponent::paint (juce::Graphics& g)
     // user has bass-side reference) and one octave above where the typed
     // Z/Q-row letters land. Centre C2 → display C1..C3 by default.
     const int firstNote = juce::jmax (0, centreNote - 12);
-    // 2-octave window: one octave below the centre, one above. 24
-    // semitones inclusive = 25 notes (e.g., centre C2 → C1..C3).
-    const int lastNote  = juce::jmin (127, firstNote + 24);
+    // One octave of bass context below the centre, then up to the top typed key
+    // (centreNote + 28 = the 'P' key in the I9O0P top row) so every typeable
+    // note is on-screen + labelled. Must match noteAtPoint() exactly.
+    const int lastNote  = juce::jmin (127, centreNote + 28);
     const int numWhite  = [&] {
         int n = 0;
         for (int m = firstNote; m <= lastNote; ++m)
