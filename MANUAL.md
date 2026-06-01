@@ -27,8 +27,8 @@ Dusk Studio includes:
 - 24 tracks of audio or MIDI recording, organised as three banks of 8.
 - A fixed channel signal chain: phase, insert, HPF, LPF, 4-band EQ, compressor (Opto/FET/VCA), aux sends, pan, fader.
 - Four aux return lanes, each with one plugin or hardware insert slot.
-- Four mix buses, each with a 3-band EQ and SSL-style bus compressor.
-- A master bus with tape saturation, Pultec-style EQ, bus compressor, and mono-sum check.
+- Four mix buses, each with a 3-band EQ and console-style bus compressor.
+- A master bus with tape saturation, a tube program EQ, bus compressor, and mono-sum check.
 - A dedicated mastering stage with 5-band digital EQ, multiband compressor, brick-wall limiter, and BS.1770 loudness metering.
 - VST3, LV2, and AU plugin hosting, with optional out-of-process sandboxing for crash isolation.
 - External hardware insert per channel and per aux, with automatic latency measurement.
@@ -183,7 +183,7 @@ In compact mode (window narrower than 1850 px) labels shorten; `SNAP` becomes `S
 | 2   | Insert slot         | One plugin or one hardware insert. 20 ms equal-power crossfade between modes.                               |
 | 3   | HPF                 | High-pass filter, 20–300 Hz. LED green when on.                                                             |
 | 4   | LPF                 | Low-pass filter, 3 kHz–20 kHz.                                                                              |
-| 5   | 4-band EQ           | LF (shelf) / LM (peak) / HM (peak) / HF (shelf). Right-click header to flip between SSL E and G saturation. |
+| 5   | 4-band EQ           | LF (shelf) / LM (peak) / HM (peak) / HF (shelf). Right-click header to flip between E and G saturation characters. |
 | 6   | Compressor          | Opto / FET / VCA, right-click header to switch. GR meter to the left.                                       |
 | 7   | Aux 1 send          | Post-fader by default; right-click to flip pre-fader.                                                       |
 | 8   | Aux 2 send          |                                                                                                             |
@@ -219,7 +219,7 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 | --- | -------------- | ------------------------------------------------------------------------ |
 | 1   | Name           | Right-click to rename.                                                   |
 | 2   | 3-band EQ      | LF shelf / MID peak / HF shelf, ±9 dB per band.                          |
-| 3   | Bus compressor | SSL-style glue. Threshold, ratio, attack, release, auto-release, makeup. |
+| 3   | Bus compressor | Console-style glue. Threshold, ratio, attack, release, auto-release, makeup. |
 | 4   | Pan            | Same equal-power law as channel strips.                                  |
 | 5   | Fader          | −∞ to +12 dB.                                                            |
 | 6   | Mute / Solo    | Same additive solo-in-place rule as channels.                            |
@@ -232,9 +232,9 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 
 | #   | Name                  | Description                                                                                      |
 | --- | --------------------- | ------------------------------------------------------------------------------------------------ |
-| 1   | Pultec EQ             | Tube-saturated low + high program EQ. Right-click for the modal editor.                          |
+| 1   | Program EQ            | Tube-saturated low + high program EQ. Right-click for the modal editor.                          |
 | 2   | Master bus compressor | Identical DSP to the bus comp, typically used slower.                                            |
-| 3   | Tape saturation       | Reel-to-reel model. HQ toggles 4× internal oversampling. Click for the tape-machine modal; right-click to toggle the tape on/off. |
+| 3   | Tape saturation       | Reel-to-reel model. Oversampling follows the global Effect Oversampling setting (Audio settings). Click for the tape-machine modal; right-click to toggle the tape on/off. |
 | 4   | Master fader          | −∞ to +12 dB.                                                                                    |
 | 5   | Mono                  | Sums L+R to mono on both legs for phase / single-speaker checks.                                 |
 | 6   | Peak meters           | Post-output L/R.                                                                                 |
@@ -263,7 +263,7 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 | 1   | File picker       | Load any stereo WAV; **Load latest mixdown** grabs the newest bounce in the session folder. |
 | 2   | Transport         | Play / stop / loop on the loaded file. Recording is disabled in this stage.                 |
 | 3   | Waveform          | Stereo overview with the playhead.                                                          |
-| 4   | 5-band digital EQ | Low shelf / 3 peaks / high shelf, ±15 dB per band.                                          |
+| 4   | 5-band digital EQ | Low shelf / 3 peaks / high shelf, ±12 dB per band.                                          |
 | 5   | Bus compressor    | Same UniversalCompressor as elsewhere, tuned to mastering defaults.                         |
 | 6   | Brickwall limiter | Sample-peak (see the mastering chapter for the ISP note).                                   |
 | 7   | Loudness panel    | Momentary / short-term / integrated LUFS + True Peak (4× oversampled, BS.1770).             |
@@ -582,10 +582,12 @@ Useful for taming hi-hat bleed, cymbal harshness on a mic that's picking up too 
 
 ## 4-band parametric EQ
 
-A British-style SSL-grammar EQ. Left-click the **EQ** header to enable; the LED lights green. Right-click to choose the saturation character:
+![The channel EQ editor — HPF, LPF, and four parametric bands.](docs/images/fx-01-eq.png)
 
-- **E** (brown, default): SSL E-series character, slightly more aggressive midrange.
-- **G** (black): SSL G-series character, smoother high band.
+A British console-style 4-band EQ. Left-click the **EQ** header to enable; the LED lights green. Right-click to choose the saturation character:
+
+- **E** (brown, default): brown character — slightly more aggressive midrange.
+- **G** (black): black character — smoother high band.
 
 The four bands are:
 
@@ -602,31 +604,30 @@ EQ in Dusk Studio does **not cramp** near Nyquist; the British EQ does its own i
 
 ## Compressor
 
+![The channel compressor editor in VCA mode.](docs/images/fx-02-comp.png)
+
 The channel compressor has three mutually-exclusive modes. Settings are remembered per mode — switch from FET back to Opto and your Opto settings are exactly as you left them.
 
 Left-click the **COMP** header to enable. Right-click to pick **Opto**, **FET**, or **VCA**.
 
-### Opto (LA-2A style)
+All three modes share one set of knobs — **THRESHOLD, RATIO, ATTACK, RELEASE, MAKEUP** — that route to the right underlying parameter for whichever mode is active. Set the **threshold** by dragging the triangle handle on the gain-reduction meter strip (this also engages the compressor); the remaining knobs sit in a 2×2 grid below the header. The **MAKEUP** knob is the shared makeup gain (−12 to +24 dB) and is available in every mode. Knob ranges retune per mode, as listed below.
 
-A program-dependent optical compressor with two main controls.
+### Opto (optical style)
 
-- **Peak Reduction**: 0 to 100%. How much the optical cell pulls the signal down on peaks.
-- **Gain**: 0 to 100%. 50% is unity. Compensates for level loss.
-- **Limit**: toggles a hard ceiling on the output.
+A program-dependent optical compressor. Only **threshold** (shown as **PEAK RED**) and **MAKEUP** are adjustable — ratio, attack, and release are fixed by the optical model and are hidden in this mode.
 
 The Opto's character is slow attack, slow release, and a frequency-dependent gain reduction curve that is gentle in the lows and firmer in the mids and highs. Good on vocals, bass, and any source where you want compression to be felt but not heard.
 
-### FET (1176 style)
+### FET (classic FET style)
 
-A fast solid-state compressor with five controls.
+A fast solid-state compressor. The full grid is available:
 
-- **Input**: −20 to +40 dB. Pre-compression gain. More input drives the compressor harder.
-- **Output**: −20 to +20 dB. Post-compression makeup.
+- **Threshold**: −60 to 0 dB.
+- **Ratio**: a stepped selector — **4:1**, **8:1**, **12:1**, **20:1**, **All** (the all-ratios-engaged "all-in" mode — extremely aggressive, almost a distortion effect).
 - **Attack**: 0.02 to 80 ms.
 - **Release**: 50 to 1100 ms.
-- **Ratio**: a discrete selector with five positions: **4:1**, **8:1**, **12:1**, **20:1**, **All** (the "all-buttons-in" mode of the original 1176 — extremely aggressive, almost a distortion effect).
 
-The FET is the right tool for drums, electric guitar, and anything where you want compression to be heard. The "All" setting is famously useful on parallel drum buses.
+Classic FET compressors had no threshold control; Dusk Studio's FET exposes one so its UX matches the other modes, while the characteristic transformer/harmonic colour stays baked into the model. The FET is the right tool for drums, electric guitar, and anything where you want compression to be heard. The "All" setting is famously useful on parallel drum buses.
 
 ### VCA (Classic 160-style)
 
@@ -636,13 +637,10 @@ A clean, fast, full-featured compressor.
 - **Ratio**: 1:1 to 120:1.
 - **Attack**: 0.1 to 50 ms.
 - **Release**: 10 to 5000 ms.
-- **Output**: −20 to +20 dB makeup.
-- **Soft knee**: when on, the OverEasy-style parabolic knee replaces the hard knee.
+- **Soft Knee**: when on, a parabolic (soft) knee replaces the hard knee.
 - **Detector**: **Adaptive** (default, level-dependent RMS time constant from 35 ms down to 5 ms) or **Classic** (fixed 10 ms RMS).
 
-The sidechain has a built-in 60 Hz high-pass filter in VCA mode (so bass doesn't pump the compressor); Opto and FET have it disabled by default to preserve their period-correct character.
-
-All three modes share a unified **makeup gain** parameter (−12 to +24 dB) that is read and written across modes for consistency.
+The soft-knee and detector toggles appear only in VCA mode. The sidechain has a built-in 60 Hz high-pass filter in VCA mode (so bass doesn't pump the compressor); Opto and FET have it disabled by default to preserve their period-correct character.
 
 The gain-reduction meter (the thin vertical bar to the left of the comp section) shows real-time reduction in dB, regardless of mode.
 
@@ -717,7 +715,7 @@ A simplified British EQ with three bands at fixed musical defaults. Gain range i
 
 ## Bus compressor
 
-An SSL-style glue compressor.
+A console-style glue compressor.
 
 - **Threshold**: −30 to +15 dB.
 - **Ratio**: 1:1 to 10:1. 4:1 is the default.
@@ -745,28 +743,28 @@ The rightmost strip. Receives the sum of every channel that is not routed exclus
 ## Signal flow
 
 <!-- Source: src/dsp/MasterBus.cpp::processInPlace
-     Pultec EQ (:218, :242) → bus comp (:227, :251) →
+     program EQ (:218, :242) → bus comp (:227, :251) →
      tape (:277) → fader (:296) → mono sum (:299–:303). -->
 
 ```text
-master input → Pultec EQ → master bus compressor → tape saturation → master fader → mono sum → output
+master input → program EQ → master bus compressor → tape saturation → master fader → mono sum → output
 ```
 
 ## Tape saturation
 
 Models a small reel-to-reel tape machine.
 
-- **Enable**: click the **TAPE** header.
-- **HQ**: right-click the header to toggle 4× internal oversampling. Use HQ on the master bounce; the native rate is fine for live mixing.
-- **Drive and bias**: not user-controllable in v1 — fixed to a musically useful setting. To tweak more deeply, right-click and choose **Open editor** for the full tape-machine modal.
+- **Open the editor**: left-click the **TAPE** header to open the full tape-machine modal editor, where drive, saturation, and tape-character controls live.
+- **Bypass / engage**: right-click the **TAPE** header to toggle the tape stage in or out of the signal path.
+- **Oversampling**: tape oversampling follows the engine-wide **Effect Oversampling** setting in the Audio Device panel — it is not a per-stage toggle.
 
 Tape saturation is the right tool to glue a mix together. A light application thickens the low-mids, rounds the transients, and adds a touch of harmonic colour.
 
-## Pultec-style EQ
+## Program EQ
 
-A program-EQ inspired by the Pultec EQP-1A.
+A passive-style tube program equaliser.
 
-- **LF Boost** and **LF Atten**: a low shelf with separately controllable boost and cut. The famous "Pultec trick" — boost and cut at the same low frequency — creates a notch above the boost band and a slight bass lift.
+- **LF Boost** and **LF Atten**: a low shelf with separately controllable boost and cut. The classic boost-and-cut trick — boosting and cutting at the same low frequency — creates a notch above the boost band and a slight bass lift.
 - **LF Boost Freq**: 20, 30, 60, or 100 Hz.
 - **HF Boost**: a peaking boost band, 0–10 scale.
 - **HF Boost Freq**: 3, 4, 5, 8, 10, 12, or 16 kHz.
@@ -775,7 +773,7 @@ A program-EQ inspired by the Pultec EQP-1A.
 - **HF Atten Freq**: 5, 10, or 20 kHz.
 - **Output**: ±12 dB.
 
-The Pultec is tube-saturated; pushing the boosts harder adds harmonic content rather than just a clean gain change.
+The program EQ is tube-saturated; pushing the boosts harder adds harmonic content rather than just a clean gain change.
 
 ## Master bus compressor
 
@@ -867,11 +865,11 @@ A clean linear-phase-style mastering EQ.
 
 | Band | Type       | Default freq | Gain   | Q       |
 | ---- | ---------- | ------------ | ------ | ------- |
-| 0    | Low shelf  | 80 Hz        | ±15 dB | n/a     |
-| 1    | Peaking    | 250 Hz       | ±15 dB | 0.4–4.0 |
-| 2    | Peaking    | 1 kHz        | ±15 dB | 0.4–4.0 |
-| 3    | Peaking    | 4 kHz        | ±15 dB | 0.4–4.0 |
-| 4    | High shelf | 12 kHz       | ±15 dB | n/a     |
+| 0    | Low shelf  | 80 Hz        | ±12 dB | n/a     |
+| 1    | Peaking    | 250 Hz       | ±12 dB | 0.4–4.0 |
+| 2    | Peaking    | 1 kHz        | ±12 dB | 0.4–4.0 |
+| 3    | Peaking    | 4 kHz        | ±12 dB | 0.4–4.0 |
+| 4    | High shelf | 12 kHz       | ±12 dB | n/a     |
 
 ### Bus compressor
 
@@ -881,7 +879,7 @@ The same UniversalCompressor in Bus mode as the channel / master compressors, bu
 
 A sample-peak brickwall limiter. **Enabled by default.** (The True-Peak readout in the loudness panel _is_ 4× oversampled per BS.1770; the limiter that engages on the signal is not — see below.)
 
-- **Ceiling**: −20 to 0 dB. Default **−0.3 dB** (matches the headroom expected by most streaming platforms).
+- **Ceiling**: −12 to 0 dB. Default **−0.3 dB** (matches the headroom expected by most streaming platforms).
 - **Drive**: 0 to +20 dB pre-limiter gain. Drives the input harder for more limiting.
 - **Release**: 50 to 300 ms.
 
@@ -900,7 +898,7 @@ A streaming-platform preset picker (Spotify, Apple Music, YouTube, Netflix, etc.
 
 ## Exporting the master
 
-**Export master…** opens a bounce dialog: pick the destination file, sample rate, and bit depth (16, 24, or 32 float), and click **Bounce**. The mastering chain renders offline as fast as the CPU allows.
+**Export master…** renders the mastering chain offline to `master.wav` in the session folder. A progress dialog shows the output path and a bar; the render runs as fast as the CPU allows and you can cancel mid-render. The output is **stereo 24-bit WAV at the current device sample rate** (Dusk Studio does not offer per-export format options in v1).
 
 \newpage
 
@@ -934,7 +932,7 @@ Click **IN** to monitor the live input through the channel strip. When the IN li
 
 ## Print mode
 
-When you record an audio take, you choose whether to print the EQ and compressor to disk or keep them live. Click **PRINT** to commit them; leave it off to record dry and shape the take later. The default is off (dry recording), which is the more flexible choice — it lets you re-EQ and re-compress in mixing without re-recording.
+When you record an audio take, you choose whether to print the channel processing — EQ, compressor, **and any insert plugin** — to disk or keep it live. Click **PRINT** to commit it; leave it off to record dry and shape the take later. The default is off (dry recording), which is the more flexible choice — it lets you re-EQ, re-compress, and re-process in mixing without re-recording.
 
 ## Count-in
 
@@ -948,7 +946,7 @@ To overdub a specific section without erasing material before or after:
 
 1. Set the **punch in** and **punch out** points by clicking the timeline ruler at the desired in and out positions, holding **Shift**.
 2. Click the **Punch** button on the transport bar.
-3. Right-click the **Punch** button to set the pre-roll seconds — how much existing material plays back before the punch-in.
+3. Right-click the **Punch** button to set the **pre-roll** seconds (how much existing material plays back before the punch-in) and the **post-roll** seconds (how long the transport keeps rolling past the punch-out before auto-stopping). Post-roll defaults to 0 (off).
 4. Press Record. Playback begins at the pre-roll position. Recording begins exactly at the punch-in sample and ends exactly at the punch-out sample. The audio before and after is untouched.
 
 When the new take begins, a 64-sample raised-cosine fade-in shapes its edge against the existing material. When the new take ends, a 64-sample fade-out shapes the other edge. The result is a click-free splice.
@@ -1058,14 +1056,17 @@ Position the playhead and press **T** to split the selected region at the playhe
 
 A right-click on any region shows a context menu:
 
-- **Split** at click position.
-- **Colour**: 12 hues.
+- **Loop region**: set the transport loop to span the region's boundaries.
+- **Split at playhead**.
+- **Join selected regions** (enabled when two or more regions are selected): glue them into one.
 - **Label**: type a custom name.
 - **Mute** the region (silences it without deleting it).
 - **Lock** the region (prevents accidental edits).
-- **Reverse** (audio only; destructive).
-- **Normalize** (audio only; non-destructive — adjusts the region's gain to peak-align at 0 dB).
+- **Takes** submenu (when more than one take exists on the region).
+- **Color**: a palette of 8 accent hues plus **Reset to track colour**.
 - **Delete**.
+
+Reverse and Normalize are not on this menu — they live in the audio region editor (double-click the region).
 
 ### Take cycling
 
@@ -1139,7 +1140,7 @@ Below the toolbar:
 
 - **Click on the waveform**: place the edit cursor. The cursor snaps to the grid if Snap is on.
 - **Drag the fade-in disc** (top-left): extend the fade-in length.
-- **Right-click the fade-in disc**: choose **Linear**, **Exponential**, or **Logarithmic** curve.
+- **Right-click the fade-in disc**: choose the curve shape — **Linear**, **Equal-power**, **S-curve**, **Exponential**, or **Logarithmic**.
 - **Drag the fade-out disc** (bottom-right): extend the fade-out length.
 - **Drag the trim-start handle**: shorten from the start.
 - **Drag the trim-end handle**: shorten from the end.
@@ -1251,9 +1252,9 @@ Mixing is the act of balancing your tracks, shaping them with EQ and dynamics, p
 5. **HPF every track that doesn't need lows.** Vocals, guitars, and most overdubs need a 60–100 Hz high-pass. Kick and bass don't; everything else probably does.
 6. **EQ.** Cut before you boost. If something is muddy, find the muddy frequency and pull it down before you reach for a top-end boost.
 7. **Compress.** Use the Opto on smooth sources (vocals, bass), the FET on transients (drums, guitars), the VCA when you need precision.
-8. **Bus routing.** Assign drums to bus 1, vocals to bus 2, etc. Tighten the buses with the SSL-style compressor (2:1 ratio, ~10 ms attack, auto-release, 1–3 dB of reduction).
+8. **Bus routing.** Assign drums to bus 1, vocals to bus 2, etc. Tighten the buses with the console-style compressor (2:1 ratio, ~10 ms attack, auto-release, 1–3 dB of reduction).
 9. **Aux sends.** Route what needs reverb to aux 1, what needs delay to aux 2.
-10. **Master bus.** Glue the whole mix with the master compressor and Pultec EQ. Add a touch of tape if it needs body.
+10. **Master bus.** Glue the whole mix with the master compressor and program EQ. Add a touch of tape if it needs body.
 11. **Listen on multiple systems.** Check the **MONO** button on the master strip. Check headphones, laptop speakers, the car. Adjust.
 
 ## Aux sends in detail
@@ -1288,7 +1289,7 @@ Each channel strip, each bus, and the master strip have an automation mode butto
 - **WRITE**: every fader movement is recorded for as long as the transport rolls. Existing automation in the region played over is overwritten.
 - **TOUCH**: while you are touching the fader, your movement is recorded. When you let go, the automation reverts to the previously recorded value via a short ramp.
 
-The same modes apply to pan, mute, and solo. On a bus the automatable controls are the fader, pan, and mute (bus solo is manual-only).
+The same modes apply to pan, mute, and solo. Pan rides like the fader; mute and solo are discrete on/off toggles, so they record only in WRITE (in READ/TOUCH the recorded lane drives them). On a bus the automatable controls are the fader, pan, and mute (bus solo is manual-only).
 
 Dusk Studio's automation is intentionally console-style: you ride the controls and the program writes what you did. There is no graphical curve editor.
 
@@ -1483,7 +1484,7 @@ Once connected:
 - **Bank Left** / **Bank Right** step the bank by 8.
 - **Channel Left** / **Channel Right** step the selected channel by 1.
 - **Mute / Solo / Arm / Select** buttons mirror and drive the on-screen buttons. LEDs reflect state.
-- **V-pot** rotaries drive pan, sends, EQ band, or compressor depending on the **assign mode**. Press one of the **Track / Send / Pan / Plugin / EQ / Inst** buttons to switch.
+- **V-pot** rotaries drive pan, sends, EQ band gain, or compressor depending on the **assign mode**. Press **Pan**, **Send** (repeated presses cycle sends 1–4), **EQ**, or the **Track** button (mapped to the compressor in Dusk Studio) to switch. The surface's **Plugin** and **Inst** assign buttons are not mapped in v1.
 - **Transport buttons** map to Play, Stop, Record, Rewind, Forward, Loop.
 - **Jog wheel** scrubs the playhead.
 - **Touch sense** drives Touch automation: touching a fader on the surface puts it into touch-write mode while you hold it.
@@ -1525,14 +1526,14 @@ Right-click the binding in the MIDI Bindings panel to change its mode.
 ## Available targets
 
 - **Transport**: Play, Stop, Record, Toggle play/stop.
-- **Per-track**: Mute, Solo, Arm, Select.
+- **Per-track**: Mute, Solo, Arm.
 - **Per-track continuous**: Fader (dB), Pan.
 - **Per-track DSP**: HPF frequency, EQ band gain (4 bands), compressor threshold, compressor makeup.
-- **Per-track toggles**: EQ on/off, compressor on/off, hardware insert bypass.
+- **Per-track toggles**: EQ on/off, compressor on/off, hardware insert bypass, aux-send pre/post.
 - **Per-track plugin parameter**: any indexed parameter on the loaded plugin.
 - **Per-bus**: Fader, Pan, Mute, Solo, EQ band gain (LF / MID / HF — 3 bands).
 - **Per-aux**: Fader, Mute.
-- **Master**: Fader, EQ low boost (Pultec), EQ high boost (Pultec), compressor threshold, compressor makeup, compressor ratio.
+- **Master**: Fader, EQ low boost, EQ high boost, compressor threshold, compressor makeup, compressor ratio.
 - **Per-track aux send**: send level for each of the four aux destinations.
 - **Bank-relative variants**: every "Per-track ..." target above has a `(banked)` counterpart that drives the active bank's 8 strips by position rather than absolute track number. One 8-fader controller can therefore drive whichever 8 of the 24 tracks are in the visible bank.
 
@@ -1579,14 +1580,15 @@ Because the session is a folder, you can copy or back up a session by copying th
 - **File → Save** (or **Cmd+S**): write the current session over the existing `session.json`. The write is atomic — a temporary file is written and fsynced to disk, then renamed over the target. A crash during a save never produces a corrupted file.
 - **File → Save As…** (or **Cmd+Shift+S**): pick a new session directory. The audio files are copied to the new directory's `audio/` folder.
 - **File → Open…** (or **Cmd+O**): load a session by choosing its folder.
+- **File → New from template**: start a fresh session with tracks pre-named and colour-coded for a common workflow. The built-in templates are **Blank** (numbered tracks), **Band** (Drums / Bass / Guitars / Keys / Vocals), **Beats** (Kick / Snare / Hat / Perc / 808 / Pad / Lead / Vox), and **Singer-Songwriter** (Vocal / Acoustic gtr / Bass / Synth / Drums). Templates only set track names and colours — they don't add plugins or audio.
 
 ## Autosave
 
-Every 30 seconds, if anything has changed since the last save, Dusk Studio writes `session.json` automatically. The autosave is atomic (same temp-file-and-rename pattern) and silent — it never interrupts playback or recording.
+Every 30 seconds, if anything has changed since the last save, Dusk Studio writes a recovery file, `session.json.autosave`, next to the canonical `session.json` (it does **not** overwrite `session.json` — a manual Save is still what updates the real session file). The autosave is atomic (same temp-file-and-rename pattern) and silent — it never interrupts playback or recording. Idle sessions are skipped via a content hash, so the file isn't rewritten when nothing meaningful changed.
 
-If Dusk Studio crashes or loses power, the next launch detects the autosave file and offers to recover.
+If Dusk Studio crashes or loses power, the next launch detects the autosave file and offers to recover. A manual Save deletes the autosave, so a leftover autosave that differs from `session.json` is the signal that a recovery point exists.
 
-Plugin state is captured only on manual save, not on autosave, to avoid audio dropouts. A crash recovery loads the most recent manual plugin state, which may be slightly stale relative to in-flight knob tweaks.
+Plugin and tape state are captured in the autosave along with everything else, so recovery restores your processing as it stood at the last tick.
 
 ## What's in a session
 
@@ -1622,17 +1624,19 @@ For larger archives, `tar czf` the folder and store the tarball.
 
 To export your finished mix as a stereo audio file:
 
-1. From any stage, choose **File → Bounce…** (or **Cmd+B**).
-2. The bounce dialog asks for:
-   - The destination file path.
-   - Sample rate (defaults to the device rate).
-   - Bit depth (16, 24, or 32-bit float).
-   - Tail length in seconds (default 5; allows reverb and compression tails to decay naturally).
-3. Press **Bounce**.
+1. From any stage, choose **File → Bounce…** (or **Cmd/Ctrl+B**).
+2. A file browser opens at the session folder; pick or rename the destination WAV and confirm.
+3. A progress dialog renders the project offline. **Cancel** stops the render.
 
-Dusk Studio detaches from the realtime audio device and renders the project offline as fast as the CPU allows. A progress bar shows status. **Cancel** stops the render.
+The output is always **stereo 24-bit WAV at the current device sample rate**, with a fixed 5-second tail so reverb and compression ringouts decay naturally. Dusk Studio offers no per-bounce format options in v1.
 
-When the bounce completes, the audio device is automatically re-attached.
+Dusk Studio detaches from the realtime audio device and renders the project offline as fast as the CPU allows. When the bounce completes, the audio device is automatically re-attached.
+
+The File menu has three bounce commands:
+
+- **Bounce…** — render the full master mix to a WAV you choose.
+- **Mixdown** — one-shot render to `mixdown.wav` in the session folder, then automatically switch to the MASTERING stage with that file loaded.
+- **Bounce stems…** — render one WAV per track (named `<base>_<NN>_<track>.wav`); warns before overwriting any existing stem files.
 
 ## Bouncing the master vs the mastering chain
 
@@ -1651,12 +1655,15 @@ Shortcuts use **Cmd** on macOS and **Ctrl** on Linux and Windows unless noted.
 
 ## File
 
-| Shortcut        | Action        |
-| --------------- | ------------- |
-| **Cmd+S**       | Save session  |
-| **Cmd+Shift+S** | Save As…      |
-| **Cmd+O**       | Open session… |
-| **Cmd+B**       | Bounce…       |
+| Shortcut        | Action               |
+| --------------- | -------------------- |
+| **Cmd+N**       | New session…         |
+| **Cmd+O**       | Open session…        |
+| **Cmd+S**       | Save session         |
+| **Cmd+Shift+S** | Save As…             |
+| **Cmd+I**       | Import audio / MIDI… |
+| **Cmd+B**       | Bounce…              |
+| **Cmd+Q**       | Quit                 |
 
 ## Edit
 
@@ -1748,10 +1755,11 @@ The piano roll modal captures its own keypresses first (see `PianoRollComponent:
 
 ## Window
 
-| Shortcut | Action              |
-| -------- | ------------------- |
-| **F11**  | Toggle fullscreen   |
-| **Esc**  | Close current modal |
+| Shortcut       | Action                          |
+| -------------- | ------------------------------- |
+| **F11**        | Toggle fullscreen               |
+| **Cmd+\\**     | Show / hide the tape strip (TIMELINE) |
+| **Esc**        | Close current modal             |
 
 ## Notes on shortcut design
 
@@ -1966,7 +1974,7 @@ Two variants:
 ### Missing plugins
 
 - **When**: Session load found plugin references that can't be instantiated on this machine.
-- **Text**: "[N] plugin instance(s) are missing on this host: [per-plugin: location — plugin name]. Check that the plugins are still installed for the right format (VST3 / LV2) and that this binary can find them, then reload the session."
+- **Text**: "These plugins from the saved session could not be loaded and were left empty: [per-plugin: location — plugin name]. Check that the plugins are still installed for the right format (VST3 / LV2 / AU) and that this binary can find them, then reload the session."
 - **Buttons**: OK.
 - **Action**: Install the missing plugins (or the right plugin format) and reload the session. Saved state for offline plugins is preserved on disk; it round-trips through the next save.
 
@@ -2017,8 +2025,8 @@ Two variants:
 ### Plugin scan complete
 
 - **When**: The scanner finishes (startup-auto or manual).
-- **Text**: "Added [N] plugin(s) to the picker. (Total known: [M])"
-- **Buttons**: OK.
+- **Text**: title "Plugin scan complete", body "[N] new plugin(s) added."
+- **Buttons**: none — the dialog holds briefly, then closes itself.
 
 ### Plugin slot labels (inline, not a dialog)
 
@@ -2078,19 +2086,15 @@ The hardware-insert ping reports its result inline on the editor (not a modal), 
 | EQ HF    | Gain           | ±15 dB                        | 0 dB     |
 | Comp     | Enable         | Off / On                      | Off      |
 | Comp     | Mode           | Opto / FET / VCA              | Opto     |
-| Opto     | Peak reduction | 0–100%                        | 0%       |
-| Opto     | Gain           | 0–100%                        | 50%      |
-| Opto     | Limit          | Off / On                      | Off      |
-| FET      | Input          | −20 to +40 dB                 | 0 dB     |
-| FET      | Output         | −20 to +20 dB                 | 0 dB     |
+| Opto     | Threshold (Peak red.) | set on GR meter         | —        |
+| FET      | Threshold      | −60 to 0 dB                   | −10 dB   |
+| FET      | Ratio          | 4:1 / 8:1 / 12:1 / 20:1 / All | 4:1      |
 | FET      | Attack         | 0.02–80 ms                    | 0.2 ms   |
 | FET      | Release        | 50–1100 ms                    | 400 ms   |
-| FET      | Ratio          | 4:1 / 8:1 / 12:1 / 20:1 / All | 4:1      |
 | VCA      | Threshold      | −38 to +12 dB                 | +12 dB   |
 | VCA      | Ratio          | 1:1–120:1                     | 4:1      |
 | VCA      | Attack         | 0.1–50 ms                     | 1 ms     |
 | VCA      | Release        | 10–5000 ms                    | 100 ms   |
-| VCA      | Output         | −20 to +20 dB                 | 0 dB     |
 | VCA      | Soft knee      | Off / On                      | Off      |
 | VCA      | Detector       | Adaptive / Classic            | Adaptive |
 | Comp     | Makeup         | −12 to +24 dB                 | 0 dB     |
@@ -2135,17 +2139,15 @@ The hardware-insert ping reports its result inline on the editor (not a modal), 
 | Block        | Param         | Range                      | Default |
 | ------------ | ------------- | -------------------------- | ------- |
 | Tape         | Enable        | Off / On                   | Off     |
-| Tape         | HQ (4× OS)    | Off / On                   | Off     |
-| Pultec       | Enable        | Off / On                   | Off     |
-| Pultec       | LF Boost      | 0–10                       | 0       |
-| Pultec       | LF Atten      | 0–10                       | 0       |
-| Pultec       | LF Freq       | 20 / 30 / 60 / 100 Hz      | 60 Hz   |
-| Pultec       | HF Boost      | 0–10                       | 0       |
-| Pultec       | HF Freq       | 3, 4, 5, 8, 10, 12, 16 kHz | 8 kHz   |
-| Pultec       | HF Bandwidth  | 0–10                       | 0.5     |
-| Pultec       | HF Atten      | 0–10                       | 0       |
-| Pultec       | HF Atten Freq | 5, 10, 20 kHz              | 10 kHz  |
-| Pultec       | Output gain   | ±12 dB                     | 0 dB    |
+| Program EQ   | Enable        | Off / On                   | Off     |
+| Program EQ   | LF Boost      | 0–10                       | 0       |
+| Program EQ   | LF Atten      | 0–10                       | 0       |
+| Program EQ   | LF Freq       | 20 / 30 / 60 / 100 Hz      | 60 Hz   |
+| Program EQ   | HF Boost      | 0–10                       | 0       |
+| Program EQ   | HF Freq       | 3, 4, 5, 8, 10, 12, 16 kHz | 8 kHz   |
+| Program EQ   | HF Bandwidth  | 0–10                       | 0.5     |
+| Program EQ   | HF Atten      | 0–10                       | 0       |
+| Program EQ   | HF Atten Freq | 5, 10, 20 kHz              | 10 kHz  |
 | Comp         | Enable        | Off / On                   | Off     |
 | Comp         | Threshold     | −30 to +15 dB              | 0 dB    |
 | Comp         | Ratio         | 1:1–10:1                   | 4:1     |
@@ -2161,11 +2163,11 @@ The hardware-insert ping reports its result inline on the editor (not a modal), 
 | Block     | Param                            | Range         | Default     |
 | --------- | -------------------------------- | ------------- | ----------- |
 | EQ        | Enable                           | Off / On      | Off         |
-| EQ band 0 | Low shelf, 80 Hz, ±15 dB         |               | 0 dB        |
-| EQ band 1 | Peaking, 250 Hz, ±15 dB, Q 0.4–4 |               | 0 dB, Q 1.0 |
-| EQ band 2 | Peaking, 1 kHz, ±15 dB, Q 0.4–4  |               | 0 dB, Q 1.0 |
-| EQ band 3 | Peaking, 4 kHz, ±15 dB, Q 0.4–4  |               | 0 dB, Q 1.0 |
-| EQ band 4 | High shelf, 12 kHz, ±15 dB       |               | 0 dB        |
+| EQ band 0 | Low shelf, 80 Hz, ±12 dB         |               | 0 dB        |
+| EQ band 1 | Peaking, 250 Hz, ±12 dB, Q 0.4–4 |               | 0 dB, Q 1.0 |
+| EQ band 2 | Peaking, 1 kHz, ±12 dB, Q 0.4–4  |               | 0 dB, Q 1.0 |
+| EQ band 3 | Peaking, 4 kHz, ±12 dB, Q 0.4–4  |               | 0 dB, Q 1.0 |
+| EQ band 4 | High shelf, 12 kHz, ±12 dB       |               | 0 dB        |
 | Comp      | Enable                           | Off / On      | Off         |
 | Comp      | Threshold                        | −30 to +15 dB | 0 dB        |
 | Comp      | Ratio                            | 1:1–10:1      | 2:1         |
@@ -2174,7 +2176,7 @@ The hardware-insert ping reports its result inline on the editor (not a modal), 
 | Comp      | Auto release                     | Off / On      | On          |
 | Comp      | Makeup                           | −10 to +20 dB | 0 dB        |
 | Limiter   | Enable                           | Off / On      | On          |
-| Limiter   | Ceiling                          | −20 to 0 dB   | −0.3 dB     |
+| Limiter   | Ceiling                          | −12 to 0 dB   | −0.3 dB     |
 | Limiter   | Drive                            | 0 to +20 dB   | 0 dB        |
 | Limiter   | Release                          | 50–300 ms     | 100 ms      |
 
@@ -2190,7 +2192,7 @@ The hardware-insert ping reports its result inline on the editor (not a modal), 
 | Recorded MIDI        | embedded in session.json (note + CC arrays per region) |
 | Plugin scan cache    | XML, per-user config directory                         |
 | MIDI bindings export | JSON                                                   |
-| Bounce               | WAV (16, 24, or 32-bit float), chosen at bounce time   |
+| Bounce               | 24-bit PCM WAV, session sample rate                    |
 
 \newpage
 
@@ -2208,7 +2210,7 @@ The hardware-insert ping reports its result inline on the editor (not a modal), 
 
 **Count-in.** A configurable number of clicks before recording starts.
 
-**FET compressor.** A solid-state compressor modelled after the 1176, with very fast attack and a discrete ratio selector.
+**FET compressor.** A solid-state compressor in the classic fast-FET tradition, with very fast attack and a discrete ratio selector.
 
 **LUFS.** Loudness Units, Full Scale. A perceptual loudness measurement defined by ITU BS.1770.
 
@@ -2218,9 +2220,9 @@ The hardware-insert ping reports its result inline on the editor (not a modal), 
 
 **OOP plugin sandbox.** Out-of-process plugin hosting. Each loaded plugin runs in a child process so a crash does not take the DAW with it.
 
-**Opto compressor.** A compressor whose gain reduction is performed by a photo-resistor, modelled after the LA-2A.
+**Opto compressor.** A compressor whose gain reduction is performed by a photo-resistor, in the classic optical tradition.
 
-**Pultec EQ.** A program-EQ topology with separately controllable boost and cut at the same frequency.
+**Program EQ.** A passive program-EQ topology with separately controllable boost and cut at the same frequency.
 
 **Punch in / punch out.** Pre-set in and out positions that constrain recording to a specific window.
 
