@@ -91,5 +91,9 @@ private:
     double sampleRateForMeter = 44100.0;
     float  vuRmsLinL = 0.0f;
     float  vuRmsLinR = 0.0f;
+    // RMS smoothing coefficient precomputed for the prepared block size so the
+    // per-block meter path skips std::exp on the common (full-block) callback.
+    int    meterBlockSize = 0;
+    float  meterRmsAlpha  = 0.0f;
 };
 } // namespace duskstudio

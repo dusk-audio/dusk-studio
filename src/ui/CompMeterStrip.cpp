@@ -343,7 +343,8 @@ void CompMeterStrip::paint (juce::Graphics& g)
 
     if (hasCaptions && grBarArea.getWidth() > 4.0f)
     {
-        g.setFont (juce::Font (juce::FontOptions (8.0f, juce::Font::bold)));
+        static const juce::Font kCaptionFont (juce::FontOptions (8.0f, juce::Font::bold));
+        g.setFont (kCaptionFont);
         g.setColour (juce::Colour (0xff909098));
         if (showInputBar && inputBarArea.getWidth() > 4.0f)
             g.drawText ("IN",
@@ -373,7 +374,8 @@ void CompMeterStrip::paint (juce::Graphics& g)
             { -20.0f, "20", false },
             { -40.0f, "40", false },
         };
-        g.setFont (juce::Font (juce::FontOptions (7.0f)));
+        static const juce::Font kScaleFont (juce::FontOptions (7.0f));
+        g.setFont (kScaleFont);
         for (auto& t : kTicks)
         {
             if (t.db < src.floorDb || t.db > src.ceilingDb) continue;

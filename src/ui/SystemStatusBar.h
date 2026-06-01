@@ -42,5 +42,14 @@ private:
     int    lastEngineXruns   = 0;
     int    lastBackendXruns  = 0;
     bool   lastAudioWarn     = false;
+
+    // Last-painted snapshot. The tick fires at 10 Hz but the readout is
+    // static most of the time; only repaint when something the paint()
+    // actually renders has changed, so an idle session stops burning paint
+    // cycles + Font work every 100 ms.
+    juce::String paintedAudioInfo;
+    juce::String paintedDspInfo;
+    juce::String paintedChordInfo;
+    bool         paintedAudioWarn = false;
 };
 } // namespace duskstudio

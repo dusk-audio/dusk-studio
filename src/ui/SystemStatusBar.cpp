@@ -93,18 +93,34 @@ void SystemStatusBar::timerCallback()
         }
     }
 
-    repaint();
+    if (audioInfo     != paintedAudioInfo
+        || dspInfo    != paintedDspInfo
+        || chordInfo  != paintedChordInfo
+        || lastAudioWarn != paintedAudioWarn)
+    {
+        paintedAudioInfo = audioInfo;
+        paintedDspInfo   = dspInfo;
+        paintedChordInfo = chordInfo;
+        paintedAudioWarn = lastAudioWarn;
+        repaint();
+    }
 }
 
 void SystemStatusBar::paint (juce::Graphics& g)
 {
+    // Fonts are immutable + shareable in JUCE; build them once instead of
+    // re-constructing (and re-querying the default mono font name) every paint.
+    static const juce::Font telemetryFont (juce::FontOptions (
+        juce::Font::getDefaultMonospacedFontName(), 12.0f, juce::Font::plain));
+    static const juce::Font chordFont (juce::FontOptions (
+        juce::Font::getDefaultMonospacedFontName(), 18.0f, juce::Font::bold));
+
     g.fillAll (juce::Colour (0xff141418));
     g.setColour (juce::Colour (0xff2a2a32));
     g.drawRect (getLocalBounds(), 1);
 
     auto bounds = getLocalBounds().reduced (8, 0);
-    g.setFont (juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(),
-                                                12.0f, juce::Font::plain)));
+    g.setFont (telemetryFont);
 
     // Color the DSP segment red when CPU is high or either xrun counter
     // moved off zero (engine-side OR backend-side). Read from the cached
@@ -130,12 +146,10 @@ void SystemStatusBar::paint (juce::Graphics& g)
         auto chordBounds = bounds.removeFromRight (220);
         bounds.removeFromRight (8);
         g.setColour (juce::Colour (0xffe8e8f0));
-        g.setFont (juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(),
-                                                    18.0f, juce::Font::bold)));
+        g.setFont (chordFont);
         g.drawText (chordInfo, chordBounds, juce::Justification::centredRight, false);
         // Restore the status-bar font for the audio / DSP segments below.
-        g.setFont (juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(),
-                                                    12.0f, juce::Font::plain)));
+        g.setFont (telemetryFont);
     }
 
     // Audio segment goes red when the device opened with no outputs -

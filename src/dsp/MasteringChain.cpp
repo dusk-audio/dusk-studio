@@ -13,6 +13,8 @@ void MasteringChain::prepare (double sampleRate, int blockSize, int oversampling
     const int bs = juce::jmax (1, blockSize);
     sampleRateForMeter = sampleRate > 0.0 ? sampleRate : 44100.0;
     vuRmsLinL = vuRmsLinR = 0.0f;
+    meterBlockSize = bs;
+    meterRmsAlpha  = std::exp (-((float) bs / (float) sampleRateForMeter) / 0.3f);
 
     digitalEq.prepare (sampleRate, bs);
     digitalEq.reset();
@@ -181,8 +183,9 @@ void MasteringChain::processInPlace (float* L, float* R, int numSamples) noexcep
         const float invN    = 1.0f / (float) juce::jmax (1, numSamples);
         const float rmsBlkL = std::sqrt (sumSqL * invN);
         const float rmsBlkR = std::sqrt (sumSqR * invN);
-        const float dt      = (float) numSamples / (float) sampleRateForMeter;
-        const float alpha   = std::exp (-dt / 0.3f);
+        const float alpha   = (numSamples == meterBlockSize)
+                                ? meterRmsAlpha
+                                : std::exp (-((float) numSamples / (float) sampleRateForMeter) / 0.3f);
         vuRmsLinL = alpha * vuRmsLinL + (1.0f - alpha) * rmsBlkL;
         vuRmsLinR = alpha * vuRmsLinR + (1.0f - alpha) * rmsBlkR;
         paramsRef->meterPostMasterRmsL.store (vuRmsLinL, std::memory_order_relaxed);

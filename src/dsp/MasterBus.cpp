@@ -15,6 +15,11 @@ void MasterBus::prepare (double sampleRate, int blockSize, int oversamplingFacto
 {
     sampleRateForMeter = sampleRate > 0.0 ? sampleRate : 44100.0;
     vuRmsLinL = vuRmsLinR = 0.0f;
+    {
+        const int bs = juce::jmax (1, blockSize);
+        meterBlockSize = bs;
+        meterRmsAlpha  = std::exp (-((float) bs / (float) sampleRateForMeter) / 0.3f);
+    }
     faderGain.reset (sampleRate, 0.020);
     faderGain.setCurrentAndTargetValue (1.0f);
 
@@ -345,8 +350,9 @@ void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
         const float invN    = 1.0f / (float) juce::jmax (1, numSamples);
         const float rmsBlkL = std::sqrt (sumSqL * invN);
         const float rmsBlkR = std::sqrt (sumSqR * invN);
-        const float dt      = (float) numSamples / (float) sampleRateForMeter;
-        const float alpha   = std::exp (-dt / 0.3f);
+        const float alpha   = (numSamples == meterBlockSize)
+                                ? meterRmsAlpha
+                                : std::exp (-((float) numSamples / (float) sampleRateForMeter) / 0.3f);
         vuRmsLinL = alpha * vuRmsLinL + (1.0f - alpha) * rmsBlkL;
         vuRmsLinR = alpha * vuRmsLinR + (1.0f - alpha) * rmsBlkR;
         paramsRef->meterPostMasterRmsL.store (vuRmsLinL, std::memory_order_relaxed);
