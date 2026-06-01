@@ -250,12 +250,13 @@ AuxLaneComponent::AuxLaneComponent (AuxLane& l, AuxLaneStrip& s, int idx,
         const bool newState = muteButton.getToggleState();
         lane.params.mute.store (newState, std::memory_order_relaxed);
 
-        // If we're playing in Write or Touch, drop a discrete mute point
-        // at the playhead so the user-toggled state lands on the lane.
+        // WRITE only: drop a discrete mute point at the playhead. Touch is
+        // excluded because the audio thread reads the discrete lane in Touch
+        // (routeDiscrete, no `touched` gate), so a Touch-mode push_back would
+        // race that read. Write reads `manual`, so there's no overlap.
         const int amode = lane.params.automationMode.load (std::memory_order_relaxed);
         const bool playing = engine.getTransport().isPlaying();
-        if (playing && (amode == (int) AutomationMode::Write
-                        || amode == (int) AutomationMode::Touch))
+        if (playing && amode == (int) AutomationMode::Write)
             captureWritePoint (AutomationParam::Mute, newState ? 1.0f : 0.0f);
     };
     muteButton.addMouseListener (this, false);

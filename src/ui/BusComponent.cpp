@@ -220,9 +220,9 @@ public:
             k->setColour (juce::Slider::thumbColourId, juce::Colours::white);
         mak.setValue (bus.strip.compMakeupDb .load(), juce::dontSendNotification);
 
-        rat.setTooltip ("Bus comp ratio (SSL-stepped: 2:1 / 4:1 / 10:1).");
-        atk.setTooltip ("Bus comp attack (SSL-stepped: 0.1 / 0.3 / 1 / 3 / 10 / 30 ms).");
-        rel.setTooltip ("Bus comp release (SSL-stepped: 0.1 / 0.3 / 0.6 / 1.2 s, top = AUTO).");
+        rat.setTooltip ("Bus comp ratio (stepped: 2:1 / 4:1 / 10:1).");
+        atk.setTooltip ("Bus comp attack (stepped: 0.1 / 0.3 / 1 / 3 / 10 / 30 ms).");
+        rel.setTooltip ("Bus comp release (stepped: 0.1 / 0.3 / 0.6 / 1.2 s, top = AUTO).");
         mak.setTooltip ("Bus comp make-up gain (-10..+20 dB). Double-click for 0 dB; Shift-drag for fine.");
         mak.onValueChange = [this] { bus.strip.compMakeupDb .store ((float) mak.getValue(), std::memory_order_relaxed); };
 
@@ -621,9 +621,9 @@ BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
     styleSmallKnob (compAttack,    0.1,   50.0,    5.0, bus.strip.compAttackMs.load(),  compGold, "",   1);
     styleSmallKnob (compRelease,  50.0, 1000.0,  200.0, bus.strip.compReleaseMs.load(), compGold, "",   0);
     styleSmallKnob (compMakeup,  -10.0,   20.0,    0.0, bus.strip.compMakeupDb.load(),  compGold, "",   1);
-    compRatio  .setTooltip ("Bus comp ratio (SSL-stepped: 2:1 / 4:1 / 10:1).");
-    compAttack .setTooltip ("Bus comp attack (SSL-stepped: 0.1 / 0.3 / 1 / 3 / 10 / 30 ms).");
-    compRelease.setTooltip ("Bus comp release (SSL-stepped: 0.1 / 0.3 / 0.6 / 1.2 s, top = AUTO).");
+    compRatio  .setTooltip ("Bus comp ratio (stepped: 2:1 / 4:1 / 10:1).");
+    compAttack .setTooltip ("Bus comp attack (stepped: 0.1 / 0.3 / 1 / 3 / 10 / 30 ms).");
+    compRelease.setTooltip ("Bus comp release (stepped: 0.1 / 0.3 / 0.6 / 1.2 s, top = AUTO).");
     compMakeup .setTooltip ("Bus comp make-up gain (-10..+20 dB). Double-click for 0 dB; Shift-drag for fine.");
     // White pointer on the powder-blue body — matches the SSL G-bus
     // comp's painted-line indicator. styleSmallKnob's default thumb
@@ -729,10 +729,13 @@ BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
     {
         const bool newState = muteButton.getToggleState();
         bus.strip.mute.store (newState, std::memory_order_release);
+        // WRITE only: the audio thread reads the discrete mute lane in Touch
+        // (routeDiscrete has no `touched` gate), so a Touch-mode capture would
+        // push_back into a vector it is mid-read on. Write reads `manual`, so
+        // the append never overlaps a lane read.
         const int m = bus.strip.automationMode.load (std::memory_order_relaxed);
         const bool capturing = engine.getTransport().isPlaying()
-                             && (m == (int) AutomationMode::Write
-                                 || m == (int) AutomationMode::Touch);
+                             && m == (int) AutomationMode::Write;
         if (capturing)
             captureWritePoint (AutomationParam::Mute, newState ? 1.0f : 0.0f);
     };
@@ -758,7 +761,9 @@ BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
     autoModeButton.setColour (juce::TextButton::buttonColourId,   juce::Colours::transparentBlack);
     autoModeButton.setColour (juce::TextButton::buttonOnColourId, juce::Colours::transparentBlack);
     addAndMakeVisible (autoModeButton);
-    refreshAutoModeButton();
+    // Apply the restored mode (not just the button visuals) so a bus loaded in
+    // READ opens with its fader / pan / mute already disabled.
+    setAutoMode ((AutomationMode) bus.strip.automationMode.load (std::memory_order_relaxed));
 
     // Mouse listeners so the strip's mouseDown sees right-clicks on each
     // child (e.eventComponent identifies which control was hit). Matches
@@ -801,7 +806,7 @@ BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
     styleCompactSectionBtn (eqCompactButton,   juce::Colour (0xff5fc46f));
     styleCompactSectionBtn (compCompactButton, juce::Colour (0xffe0c050));
     eqCompactButton  .setTooltip ("Open the bus EQ editor (3-band British-style EQ).");
-    compCompactButton.setTooltip ("Open the bus comp editor (SSL-style glue compressor).");
+    compCompactButton.setTooltip ("Open the bus comp editor (console-style glue compressor).");
     eqCompactButton  .onClick = [this] { openEqEditorPopup(); };
     compCompactButton.onClick = [this] { openCompEditorPopup(); };
     addChildComponent (eqCompactButton);

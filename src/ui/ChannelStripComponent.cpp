@@ -888,13 +888,16 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         // Touch mode (with transport playing) writes a transition point
         // into the lane at the current playhead. Discrete = no
         // interpolation, no tick-based capture - the click IS the only
-        // event worth recording. In Touch mode the audio thread reads
-        // the lane, so this click is heard immediately on the next
-        // block; in Write the audio reads manual which we just stored.
+        // event worth recording. WRITE only: discrete params have no
+        // `touched` flag, and the audio thread reads the discrete lane
+        // unconditionally in Touch (routeDiscrete) - so capturing in Touch
+        // would push_back into a vector the audio thread is mid-read on
+        // (data race / realloc UAF). In Write the audio reads `manual`, so
+        // the append never overlaps a lane read. (In Touch the lane already
+        // overrides the manual toggle, so the click was a no-op audibly.)
         const int amode = track.automationMode.load (std::memory_order_relaxed);
         const bool capturing = engine.getTransport().isPlaying()
-            && (amode == (int) AutomationMode::Write
-                || amode == (int) AutomationMode::Touch);
+            && amode == (int) AutomationMode::Write;
         if (capturing)
             captureWritePoint (AutomationParam::Mute, newState ? 1.0f : 0.0f);
     };
@@ -913,11 +916,12 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         // but the counter is still updated for consistency.
         session.setTrackSoloed (trackIndex, soloButton.getToggleState());
 
-        // Discrete-param automation capture - same pattern as mute.
+        // Discrete-param automation capture - WRITE only, same rationale as
+        // mute: the audio thread reads the discrete lane in Touch, so a
+        // Touch-mode capture would race that read.
         const int amode = track.automationMode.load (std::memory_order_relaxed);
         const bool capturing = engine.getTransport().isPlaying()
-            && (amode == (int) AutomationMode::Write
-                || amode == (int) AutomationMode::Touch);
+            && amode == (int) AutomationMode::Write;
         if (capturing)
             captureWritePoint (AutomationParam::Solo, soloButton.getToggleState() ? 1.0f : 0.0f);
     };
