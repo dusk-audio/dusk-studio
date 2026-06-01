@@ -149,7 +149,7 @@ public:
         addAndMakeVisible (enableBtn);
 
         styleEditorKnob (lfBoost,   pultecGold,   0.0,  10.0,   3.0,  3.0, "", 1);
-        styleEditorKnob (lfAtten,   pultecGold,   0.0,  10.0,   0.0,  3.0, "", 1);
+        styleEditorKnob (lfAtten,   pultecGold,   0.0,  10.0,   3.0,  3.0, "", 1);
         styleEditorKnob (hfBoost,   pultecGold,   0.0,  10.0,   3.0,  3.0, "", 1);
         styleEditorKnob (hfAtten,   pultecGold,   0.0,  10.0,   3.0,  3.0, "", 1);
         styleEditorKnob (hfBandwidth, pultecGold, 0.0,  10.0,   0.5,  5.0, "", 1);
@@ -165,7 +165,7 @@ public:
             enableBtn.setToggleState (true, juce::dontSendNotification);
         };
         lfBoost    .setTooltip ("program-EQ LF boost (0..10). Double-click for 3; Shift-drag for fine.");
-        lfAtten    .setTooltip ("program-EQ LF attenuate (0..10). Double-click for 0; Shift-drag for fine.");
+        lfAtten    .setTooltip ("program-EQ LF attenuate (0..10). Double-click for 3; Shift-drag for fine.");
         hfBoost    .setTooltip ("program-EQ HF boost (0..10). Double-click for 3; Shift-drag for fine.");
         hfAtten    .setTooltip ("program-EQ HF attenuate (0..10). Double-click for 3; Shift-drag for fine.");
         hfBandwidth.setTooltip ("program-EQ HF bandwidth (Sharp..Broad, 0..10). Double-click for 0.5; Shift-drag for fine.");

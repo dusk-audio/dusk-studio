@@ -1097,6 +1097,10 @@ void MainComponent::maybeStartStartupPluginScan()
     // yet, or that later call would no-op. (resized() may call us repeatedly
     // meanwhile; each just returns here until the dialog closes.)
     if (startupDialogPending) return;
+    // Defer past an open crash-recovery prompt so the scan's progress modal
+    // doesn't stack over the user's recover/discard decision. The recovery
+    // exit paths re-invoke us once that choice is made.
+    if (recoveryModal.isOpen()) return;
     startupScanTriggered = true;   // fire exactly once, whatever the toggle says
 
     const bool enabled = appconfig::getScanPluginsOnStartup();
@@ -2194,6 +2198,7 @@ bool MainComponent::loadSessionFromJson (const juce::File& sessionJson)
             {
                 self->recoveryModal.close();
                 self->finishLoadingSessionFrom (autosave, dir);
+                self->maybeStartStartupPluginScan();   // deferred past the recovery prompt
             }
         };
         raw->onLoad = [safe, sessionJson, dir]
@@ -2202,16 +2207,27 @@ bool MainComponent::loadSessionFromJson (const juce::File& sessionJson)
             {
                 self->recoveryModal.close();
                 self->finishLoadingSessionFrom (sessionJson, dir);
+                self->maybeStartStartupPluginScan();
             }
         };
         raw->onCancel = [safe]
         {
             if (auto* self = safe.getComponent())
+            {
                 self->recoveryModal.close();
+                self->maybeStartStartupPluginScan();
+            }
         };
 
         recoveryModal.show (*this, std::move (body),
-                              [safe] { if (auto* self = safe.getComponent()) self->recoveryModal.close(); });
+                              [safe]
+                              {
+                                  if (auto* self = safe.getComponent())
+                                  {
+                                      self->recoveryModal.close();
+                                      self->maybeStartStartupPluginScan();
+                                  }
+                              });
         return true;
     }
 
