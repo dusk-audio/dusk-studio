@@ -203,7 +203,16 @@ void ConsoleView::resized()
     // Re-clamp the active bank index against the (possibly changed)
     // numBanks so a window-shrink doesn't leave us viewing an empty
     // bank past the end.
+    const int preClampBank = currentBank;
     currentBank = juce::jlimit (0, juce::jmax (0, numBanks() - 1), currentBank);
+    if (currentBank != preClampBank)
+    {
+        // Republish the clamped bank so the audio thread (bank-relative MIDI
+        // bindings) + MCU mirror don't stay pointed past the end — setBank's
+        // early-return can't correct them once they disagree with currentBank.
+        sessionRef.activeBank.store (currentBank, std::memory_order_relaxed);
+        sessionRef.mcu.bank.store   (currentBank, std::memory_order_relaxed);
+    }
     updateBankVisibility();
 
     const int stride = bankStride();

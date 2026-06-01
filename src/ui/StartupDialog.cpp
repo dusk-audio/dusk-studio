@@ -114,7 +114,8 @@ StartupDialog::StartupDialog (juce::Array<juce::File> r)
         // centred + fillDestination — source PNG is square so aspect
         // ratio is preserved; without fillDestination the icon was
         // shrinking to leave large empty margins inside its slot.
-        brandIcon.setImage (img, juce::RectanglePlacement::centred);
+        brandIcon.setImage (img, juce::RectanglePlacement::centred
+                                   | juce::RectanglePlacement::fillDestination);
     }
    #endif
     addAndMakeVisible (brandIcon);

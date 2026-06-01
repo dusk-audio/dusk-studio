@@ -1914,7 +1914,11 @@ void AudioRegionEditor::mouseUp (const juce::MouseEvent&)
         || dragMode == DragMode::PunchIn || dragMode == DragMode::PunchOut)
     {
         dragMode = DragMode::None;
-        setMouseCursor (juce::MouseCursor::NormalCursor);
+        // Restore the cursor for whatever's under the pointer now (e.g. the
+        // resize cursor if still hovering the bracket edge) instead of forcing
+        // the arrow.
+        const auto p = getMouseXYRelative();
+        setMouseCursor (cursorForPoint (p.x, p.y));
         repaint();
         return;
     }

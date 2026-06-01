@@ -2025,7 +2025,7 @@ Two variants:
 ### Plugin scan complete
 
 - **When**: The scanner finishes (startup-auto or manual).
-- **Text**: title "Plugin scan complete", body "[N] new plugin(s) added."
+- **Text**: title "Plugin scan complete", body "1 new plugin added." (singular) or "N new plugins added." (plural).
 - **Buttons**: none — the dialog holds briefly, then closes itself.
 
 ### Plugin slot labels (inline, not a dialog)
