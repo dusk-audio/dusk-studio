@@ -79,6 +79,15 @@ public:
     void setBank (int bankIndex);
     int  getBank() const noexcept { return currentBank; }
 
+    // Component accessors for the screenshot-capture harness. Return the
+    // realised strip components so the capture pass can snapshot one strip
+    // in isolation. nullptr if out of range.
+    ChannelStripComponent* getStripComponent (int track) noexcept
+    { return (track >= 0 && track < Session::kNumTracks) ? strips[(size_t) track].get() : nullptr; }
+    BusComponent* getBusComponent (int bus) noexcept
+    { return (bus >= 0 && bus < Session::kNumBuses) ? busStrips[(size_t) bus].get() : nullptr; }
+    MasterStripComponent* getMasterStripComponent() noexcept { return masterStrip.get(); }
+
     // Called from MainComponent::requestQuit before systemRequestedQuit
     // so editor windows (real top-level DocumentWindows on Linux) die
     // in a quiet window rather than racing Mutter's teardown.

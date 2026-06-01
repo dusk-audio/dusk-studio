@@ -329,6 +329,7 @@ target_sources(DuskStudio PRIVATE
     src/ui/HardwareInsertEditor.cpp
     src/ui/ImportTargetPicker.cpp
     src/ui/MainComponent.cpp
+    src/ui/ScreenshotCapture.cpp
     src/ui/MultiImportTargetPicker.cpp
     src/ui/MasteringEqEditor.cpp
     src/ui/MasteringLimiterEditor.cpp
