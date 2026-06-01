@@ -144,7 +144,8 @@ private:
 
     enum class DragMode { None, MoveNote, ResizeNote, CreateNote, EditVelocity, BoxSelect,
                            EditCcValue, EditNoteVelocity,
-                           ResizeVelocityStrip, ResizeCcStrip, RangeSelect, Pan };
+                           ResizeVelocityStrip, ResizeCcStrip, RangeSelect, Pan,
+                           LoopIn, LoopOut, PunchIn, PunchOut };
     DragMode dragMode = DragMode::None;
 
     int panStartMouseX = 0;
@@ -218,6 +219,8 @@ private:
     void paintNoteGrid      (juce::Graphics&, juce::Rectangle<int> area);
     void paintToolbar       (juce::Graphics&, juce::Rectangle<int> area);
     void paintBeatRuler     (juce::Graphics&, juce::Rectangle<int> area);
+    void paintLoopPunchBrackets (juce::Graphics&, juce::Rectangle<int> ruler,
+                                 juce::Rectangle<int> grid);
     void paintNotes         (juce::Graphics&, juce::Rectangle<int> area);
     void paintVelocityStrip (juce::Graphics&, juce::Rectangle<int> area);
     void paintCcStrip       (juce::Graphics&, juce::Rectangle<int> area);

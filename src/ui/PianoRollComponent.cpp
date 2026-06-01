@@ -758,6 +758,7 @@ void PianoRollComponent::paint (juce::Graphics& g)
     paintBeatRuler    (g, headerArea);
     paintKeyboard     (g, keyboardArea);
     paintNotes        (g, gridArea);
+    paintLoopPunchBrackets (g, headerArea, gridArea);
     if (rangeActive)
     {
         const auto a = juce::jmin (rangeStartTick, rangeEndTick);
@@ -789,6 +790,46 @@ void PianoRollComponent::paint (juce::Graphics& g)
         g.setColour (kNoteSelected.withAlpha (0.85f));
         g.drawRect (rubberBand, 1);
     }
+}
+
+void PianoRollComponent::paintLoopPunchBrackets (juce::Graphics& g,
+                                                 juce::Rectangle<int> ruler,
+                                                 juce::Rectangle<int> grid)
+{
+    const auto* r = region();
+    if (r == nullptr) return;
+    const double sr  = juce::jmax (1.0, engine.getCurrentSampleRate());
+    const float  bpm = session.tempoBpm.load (std::memory_order_relaxed);
+    auto& transport = engine.getTransport();
+
+    auto xForSample = [&] (juce::int64 s)
+    {
+        return xForTick (samplesToTicks (s - r->timelineStart, sr, bpm));
+    };
+    auto drawPair = [&] (juce::int64 a, juce::int64 b, juce::Colour col, bool enabled)
+    {
+        if (b <= a) return;
+        const int xa = xForSample (a);
+        const int xb = xForSample (b);
+        if (xb < grid.getX() || xa > grid.getRight()) return;
+        juce::Graphics::ScopedSaveState saved (g);
+        g.reduceClipRegion (juce::Rectangle<int> (grid.getX(), ruler.getY(),
+                                                  grid.getWidth(),
+                                                  grid.getBottom() - ruler.getY()));
+        const float alpha = enabled ? 1.0f : 0.4f;
+        g.setColour (col.withAlpha (0.08f * alpha));
+        g.fillRect (juce::Rectangle<int> (xa, grid.getY(),
+                                          juce::jmax (1, xb - xa), grid.getHeight()));
+        g.setColour (col.withAlpha (0.9f * alpha));
+        g.drawVerticalLine (xa, (float) ruler.getY(), (float) grid.getBottom());
+        g.drawVerticalLine (xb, (float) ruler.getY(), (float) grid.getBottom());
+        g.fillRect (xa, ruler.getY(), 6, 3); g.fillRect (xa, ruler.getBottom() - 3, 6, 3);
+        g.fillRect (xb - 5, ruler.getY(), 6, 3); g.fillRect (xb - 5, ruler.getBottom() - 3, 6, 3);
+    };
+    drawPair (transport.getLoopStart(), transport.getLoopEnd(),
+              juce::Colour (0xff3aa860), transport.isLoopEnabled());
+    drawPair (transport.getPunchIn(), transport.getPunchOut(),
+              juce::Colour (0xffd05a5a), transport.isPunchEnabled());
 }
 
 void PianoRollComponent::paintToolbar (juce::Graphics& g, juce::Rectangle<int> area)
@@ -2133,6 +2174,36 @@ void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
     // resets editCursorTick to that tick AND clears any active range.
     const auto rulerBand = juce::Rectangle<int> (kKeyboardWidth, kToolbarHeight,
                                                     getWidth() - kKeyboardWidth, kHeaderHeight);
+
+    // Grab a loop / punch bracket edge in the ruler band before the
+    // range-select gesture claims the click. 6px tolerance per edge,
+    // loop edges take priority over punch when both land under the cursor.
+    if (rulerBand.contains (e.x, e.y) && ! e.mods.isPopupMenu())
+    {
+        const double sr  = juce::jmax (1.0, engine.getCurrentSampleRate());
+        const float  bpm = session.tempoBpm.load (std::memory_order_relaxed);
+        auto& transport  = engine.getTransport();
+        auto xForSample  = [&] (juce::int64 s)
+            { return xForTick (samplesToTicks (s - r->timelineStart, sr, bpm)); };
+        const int tol = 6;
+        struct Edge { juce::int64 sample; DragMode mode; bool valid; };
+        const Edge edges[] = {
+            { transport.getLoopStart(),  DragMode::LoopIn,   transport.getLoopEnd()  > transport.getLoopStart() },
+            { transport.getLoopEnd(),    DragMode::LoopOut,  transport.getLoopEnd()  > transport.getLoopStart() },
+            { transport.getPunchIn(),    DragMode::PunchIn,  transport.getPunchOut() > transport.getPunchIn() },
+            { transport.getPunchOut(),   DragMode::PunchOut, transport.getPunchOut() > transport.getPunchIn() },
+        };
+        for (const auto& ed : edges)
+        {
+            if (! ed.valid) continue;
+            if (std::abs (xForSample (ed.sample) - e.x) <= tol)
+            {
+                dragMode = ed.mode;
+                setMouseCursor (juce::MouseCursor::LeftRightResizeCursor);
+                return;
+            }
+        }
+    }
     if (rulerBand.contains (e.x, e.y) && ! e.mods.isPopupMenu())
     {
         // Plain ruler click seeks the transport playhead (Reaper / Ardour
@@ -2408,6 +2479,26 @@ void PianoRollComponent::mouseDrag (const juce::MouseEvent& e)
         return;
     }
 
+    if (dragMode == DragMode::LoopIn || dragMode == DragMode::LoopOut
+        || dragMode == DragMode::PunchIn || dragMode == DragMode::PunchOut)
+    {
+        const double sr  = juce::jmax (1.0, engine.getCurrentSampleRate());
+        const float  bpm = session.tempoBpm.load (std::memory_order_relaxed);
+        auto& transport  = engine.getTransport();
+        const auto tickHere = juce::jmax<juce::int64> (0, tickForX (e.x));
+        const auto tl = r->timelineStart + ticksToSamples (tickHere, sr, bpm);
+        switch (dragMode)
+        {
+            case DragMode::LoopIn:   transport.setLoopRange  (juce::jmin (tl, transport.getLoopEnd()),  transport.getLoopEnd());  break;
+            case DragMode::LoopOut:  transport.setLoopRange  (transport.getLoopStart(), juce::jmax (tl, transport.getLoopStart())); break;
+            case DragMode::PunchIn:  transport.setPunchRange (juce::jmin (tl, transport.getPunchOut()), transport.getPunchOut()); break;
+            case DragMode::PunchOut: transport.setPunchRange (transport.getPunchIn(),  juce::jmax (tl, transport.getPunchIn()));  break;
+            default: break;
+        }
+        repaint();
+        return;
+    }
+
     if (dragMode == DragMode::BoxSelect)
     {
         // Rubber band tracks from mouseDown origin to current point.
@@ -2601,6 +2692,34 @@ void PianoRollComponent::mouseMove (const juce::MouseEvent& e)
         }
     }
 
+    // Loop / punch bracket edges in the ruler band get the resize cursor
+    // so the draggable edges are discoverable.
+    const auto rulerBand = juce::Rectangle<int> (kKeyboardWidth, kToolbarHeight,
+                                                    getWidth() - kKeyboardWidth, kHeaderHeight);
+    if (rulerBand.contains (e.x, e.y))
+    {
+        if (const auto* r = region())
+        {
+            const double sr  = juce::jmax (1.0, engine.getCurrentSampleRate());
+            const float  bpm = session.tempoBpm.load (std::memory_order_relaxed);
+            auto& transport  = engine.getTransport();
+            auto xForSample  = [&] (juce::int64 s)
+                { return xForTick (samplesToTicks (s - r->timelineStart, sr, bpm)); };
+            const juce::int64 edges[] = { transport.getLoopStart(), transport.getLoopEnd(),
+                                          transport.getPunchIn(),   transport.getPunchOut() };
+            const bool valid[] = { transport.getLoopEnd()  > transport.getLoopStart(),
+                                   transport.getLoopEnd()  > transport.getLoopStart(),
+                                   transport.getPunchOut() > transport.getPunchIn(),
+                                   transport.getPunchOut() > transport.getPunchIn() };
+            for (int i = 0; i < 4; ++i)
+                if (valid[i] && std::abs (xForSample (edges[i]) - e.x) <= 6)
+                {
+                    setMouseCursor (juce::MouseCursor::LeftRightResizeCursor);
+                    return;
+                }
+        }
+    }
+
     // Chrome (keyboard column / ruler / velocity strip / cc strip /
     // status bar) keeps the normal arrow regardless of edit mode so
     // mode-flips don't show a hand / scissors over UI that can't act
@@ -2645,6 +2764,13 @@ void PianoRollComponent::mouseUp (const juce::MouseEvent&)
     // restore the default cursor (mouseMove will update it on the next
     // motion to reflect whatever the cursor is now hovering over).
     if (dragMode == DragMode::Pan)
+    {
+        dragMode = DragMode::None;
+        setMouseCursor (juce::MouseCursor::NormalCursor);
+        return;
+    }
+    if (dragMode == DragMode::LoopIn || dragMode == DragMode::LoopOut
+        || dragMode == DragMode::PunchIn || dragMode == DragMode::PunchOut)
     {
         dragMode = DragMode::None;
         setMouseCursor (juce::MouseCursor::NormalCursor);
@@ -2801,6 +2927,30 @@ bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
         {
             navigateRegion (-1);
             return true;
+        }
+        // Loop / punch against the edit cursor. Bare [ / ] set the loop
+        // in/out; Shift+[ / Shift+] set the punch in/out; L / P toggle the
+        // respective enable. Mirrors the audio region editor, but the roll
+        // works in ticks so the cursor maps through the region anchor.
+        const int  kc = k.getKeyCode();
+        const bool sh = k.getModifiers().isShiftDown();
+        if (! cmdOrCtrl && ! k.getModifiers().isAltDown()
+            && (kc == '[' || kc == ']' || kc == 'L' || kc == 'P'))
+        {
+            auto& transport = engine.getTransport();
+            if (kc == 'L' && ! sh) { transport.setLoopEnabled  (! transport.isLoopEnabled());  repaint(); return true; }
+            if (kc == 'P' && ! sh) { transport.setPunchEnabled (! transport.isPunchEnabled()); repaint(); return true; }
+            if (const auto* r = region(); r != nullptr && (kc == '[' || kc == ']'))
+            {
+                const double sr  = juce::jmax (1.0, engine.getCurrentSampleRate());
+                const float  bpm = session.tempoBpm.load (std::memory_order_relaxed);
+                const auto cursorTl = r->timelineStart + ticksToSamples (editCursorTick, sr, bpm);
+                if (kc == '[') { if (sh) transport.setPunchRange (cursorTl, juce::jmax (transport.getPunchOut(), cursorTl));
+                                 else    transport.setLoopRange  (cursorTl, juce::jmax (transport.getLoopEnd(),  cursorTl)); }
+                else { if (sh) transport.setPunchRange (juce::jmin (transport.getPunchIn(),   cursorTl), cursorTl);
+                       else    transport.setLoopRange  (juce::jmin (transport.getLoopStart(), cursorTl), cursorTl); }
+                repaint(); return true;
+            }
         }
         // Select all notes in the open region. Replaces any existing
         // selection so a follow-up Delete or transpose acts on every
