@@ -254,16 +254,10 @@ void AudioEngine::reresolveTrackMidiFromSession()
     resolveSessionIdx (session.syncOutputIdx,         midiOutputDevices, session.syncOutputIdentifier);
     resolveSessionIdx (session.mcu.resolvedInputIdx,  midiInputDevices,  session.mcu.inputIdentifier);
     resolveSessionIdx (session.mcu.resolvedOutputIdx, midiOutputDevices, session.mcu.outputIdentifier);
-
-    // Resolving an output index isn't enough — the JUCE output port must be
-    // opened before clock / MCU feedback can flow. Mirror applySyncOutputChange
-    // / applyMcuOutputChange, which open eagerly on selection, so a freshly
-    // loaded session emits without the user reopening Audio Settings.
-    // (ensureMidiOutputOpen is a no-op when the index is already open.)
-    if (const int i = session.syncOutputIdx.load (std::memory_order_acquire); i >= 0)
-        ensureMidiOutputOpen (i);
-    if (const int i = session.mcu.resolvedOutputIdx.load (std::memory_order_acquire); i >= 0)
-        ensureMidiOutputOpen (i);
+    // NB: this function stays atomic-stores-only so it's safe to run without
+    // detaching the audio callback. The actual output-port opening for sync +
+    // MCU happens in openConfiguredMidiOutputs(), called right after this on
+    // load (same place the per-track outputs open).
 }
 
 void AudioEngine::rebuildMidiInputBank()
@@ -454,6 +448,14 @@ void AudioEngine::openConfiguredMidiOutputs()
         if (idx >= 0)
             ensureMidiOutputOpen (idx);
     }
+
+    // Sync clock + MCU feedback ports the loaded session resolved (see
+    // reresolveTrackMidiFromSession). Opened here so clock / MCU feedback flow
+    // without the user reopening Audio Settings, alongside the per-track opens.
+    if (const int i = session.syncOutputIdx.load (std::memory_order_acquire); i >= 0)
+        ensureMidiOutputOpen (i);
+    if (const int i = session.mcu.resolvedOutputIdx.load (std::memory_order_acquire); i >= 0)
+        ensureMidiOutputOpen (i);
 }
 
 void AudioEngine::handleIncomingMidiMessage (juce::MidiInput* source,

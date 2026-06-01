@@ -210,6 +210,10 @@ int PluginManager::scanInstalledPlugins (
             knownPluginList, deadMansPedalFile);
 
     int added = 0;
+    // Snapshot the blacklist size so a scan that only quarantines a crashing
+    // plugin (added == 0) still persists - otherwise the next launch re-probes
+    // and re-crashes on the same file.
+    const int blacklistBefore = knownPluginList.getBlacklistedFiles().size();
     const auto& formats = formatManager.getFormats();
     const int   numFormats = formats.size();
     bool aborted = false;
@@ -268,7 +272,8 @@ int PluginManager::scanInstalledPlugins (
         knownPluginList.setCustomScanner (nullptr);
    #endif
 
-    if (added > 0) saveCache();
+    const bool blacklistGrew = knownPluginList.getBlacklistedFiles().size() != blacklistBefore;
+    if (added > 0 || blacklistGrew) saveCache();
     return added;
 }
 
