@@ -65,11 +65,13 @@ void CursorOverlay::setMousePosition (juce::Component& source,
     if (paints && ! wasPainting)       setNativeCursorVisible (false);
     else if (! paints && wasPainting)  setNativeCursorVisible (true);
 
-    // Full repaint each move so the old glyph position is properly
-    // cleared by JUCE's parent-repaint-under pass — partial-rect
-    // repaint was leaving trails when the parent components' repaint
-    // wasn't being re-driven for the old dirty rect.
-    repaint();
+    // Full repaint each move so the old glyph position is properly cleared by
+    // JUCE's parent-repaint-under pass — partial-rect repaint was leaving
+    // trails. Skip entirely when neither the old nor the new mode paints a
+    // glyph (Range/Grid moving): paint() is a no-op there, so a repaint would
+    // just invalidate the full surface for nothing.
+    if (paints || wasPainting)
+        repaint();
 }
 
 void CursorOverlay::clearMousePosition()

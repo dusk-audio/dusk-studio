@@ -112,8 +112,14 @@ void PluginScanModal::timerCallback()
     {
         finishedFired = true;
         stopTimer();
+        // Defer onFinished off the timer stack: the caller's callback closes
+        // (destroys) this modal, and invoking it synchronously here would
+        // unwind back into a freed object. Copy the callback + count so the
+        // lambda never touches `this`.
         if (onFinished)
-            onFinished (addedCount.load (std::memory_order_relaxed));   // caller closes; dtor joins the (done) worker
+            juce::MessageManager::callAsync (
+                [cb = onFinished, count = addedCount.load (std::memory_order_relaxed)]
+                { cb (count); });
     }
 }
 

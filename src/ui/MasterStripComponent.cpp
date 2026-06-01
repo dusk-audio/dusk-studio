@@ -1906,6 +1906,12 @@ void MasterStripComponent::openTapeMachineModal()
             delete m;
         }
         tapeMachineDim.reset();
+        // The editor held keyboard focus; this modal isn't an EmbeddedModal so
+        // there's no automatic hand-back. Restore focus to the main canvas (the
+        // EmbeddedModal focus-restore target) so transport / edit shortcuts work
+        // without a stray click.
+        if (auto* t = EmbeddedModal::focusRestoreTarget().getComponent())
+            t->grabKeyboardFocus();
         return;
     }
 

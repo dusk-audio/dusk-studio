@@ -81,14 +81,13 @@ void CompMeterStrip::resetThresholdForMode (Track& t)
             t.strip.compOptoPeakRed.store (0.0f, std::memory_order_relaxed);
             break;
         case 1:
-            // FET: threshold knob now writes compFetThresholdDb directly.
-            // 0 dB threshold + 0 dB input drive + 0 dB output makeup =
-            // a true "no compression" reset. Mirrors the popup editor's
-            // mouseDoubleClick reset so the inline strip handle and the
-            // editor's reset path produce the same state.
+            // FET: reset the detector side only — threshold + input drive to
+            // 0 dB (no compression). Leave compFetOutput (makeup) alone: this
+            // is a double-click on the THRESHOLD handle, so dumping the user's
+            // makeup level would be a surprising jump. Matches Opto/VCA, which
+            // also reset only their threshold-equivalent.
             t.strip.compFetThresholdDb.store (0.0f, std::memory_order_relaxed);
             t.strip.compFetInput      .store (0.0f, std::memory_order_relaxed);
-            t.strip.compFetOutput     .store (0.0f, std::memory_order_relaxed);
             break;
         case 2:
         default:
