@@ -519,6 +519,7 @@ void AudioRegionEditor::paint (juce::Graphics& g)
     paintRuler         (g, rulerArea);
     paintWaveform      (g, waveArea);
     paintFadeEnvelopes (g, waveArea);
+    paintLoopPunchBrackets (g, rulerArea, waveArea);
 
     // Visible drag affordances - painted under the edit cursor so the
     // cursor always wins on top. Handles are intentionally bold against
@@ -614,6 +615,38 @@ void AudioRegionEditor::paint (juce::Graphics& g)
         g.drawText ("region unavailable", getLocalBounds(),
                      juce::Justification::centred, false);
     }
+}
+
+void AudioRegionEditor::paintLoopPunchBrackets (juce::Graphics& g,
+                                                juce::Rectangle<int> ruler,
+                                                juce::Rectangle<int> wave)
+{
+    auto& transport = engine.getTransport();
+    auto drawPair = [&] (juce::int64 a, juce::int64 b, juce::Colour col, bool enabled)
+    {
+        if (b <= a) return;
+        const int xa = xForTimelineSample (a, wave);
+        const int xb = xForTimelineSample (b, wave);
+        if (xb < wave.getX() || xa > wave.getRight()) return;   // fully off-screen
+        const float alpha = enabled ? 1.0f : 0.4f;
+        const int top = ruler.getY();
+        const int bot = wave.getBottom();
+        g.setColour (col.withAlpha (0.08f * alpha));
+        g.fillRect (juce::Rectangle<int> (xa, wave.getY(),
+                                            juce::jmax (1, xb - xa), wave.getHeight()));
+        g.setColour (col.withAlpha (0.9f * alpha));
+        g.drawVerticalLine (xa, (float) top, (float) bot);
+        g.drawVerticalLine (xb, (float) top, (float) bot);
+        // Bracket caps in the ruler so the in/out edges read as [ ].
+        g.fillRect (xa, ruler.getY(), 6, 3);
+        g.fillRect (xa, ruler.getBottom() - 3, 6, 3);
+        g.fillRect (xb - 5, ruler.getY(), 6, 3);
+        g.fillRect (xb - 5, ruler.getBottom() - 3, 6, 3);
+    };
+    drawPair (transport.getLoopStart(), transport.getLoopEnd(),
+              juce::Colour (0xff3aa860), transport.isLoopEnabled());
+    drawPair (transport.getPunchIn(), transport.getPunchOut(),
+              juce::Colour (0xffd05a5a), transport.isPunchEnabled());
 }
 
 void AudioRegionEditor::paintRuler (juce::Graphics& g, juce::Rectangle<int> area)
@@ -1149,6 +1182,37 @@ void AudioRegionEditor::mouseDown (const juce::MouseEvent& e)
         return;
     }
 
+    // Loop / punch bracket drag: grab an in/out edge in the ruler band and
+    // drag it. Same x-axis as the waveform (xForTimelineSample uses waveArea).
+    {
+        const auto rulerArea = juce::Rectangle<int> (0, kIconRowHeight,
+                                                        getWidth(), kRulerHeight);
+        if (! e.mods.isPopupMenu() && rulerArea.contains (e.x, e.y))
+        {
+            auto& transport = engine.getTransport();
+            const int tol = 6;
+            auto nearX = [&] (juce::int64 s)
+                { return std::abs (e.x - xForTimelineSample (s, waveArea)) <= tol; };
+            DragMode hit = DragMode::None;
+            if (transport.getLoopEnd() > transport.getLoopStart())
+            {
+                if      (nearX (transport.getLoopStart())) hit = DragMode::LoopIn;
+                else if (nearX (transport.getLoopEnd()))   hit = DragMode::LoopOut;
+            }
+            if (hit == DragMode::None && transport.getPunchOut() > transport.getPunchIn())
+            {
+                if      (nearX (transport.getPunchIn()))  hit = DragMode::PunchIn;
+                else if (nearX (transport.getPunchOut())) hit = DragMode::PunchOut;
+            }
+            if (hit != DragMode::None)
+            {
+                dragMode = hit;
+                setMouseCursor (juce::MouseCursor::LeftRightResizeCursor);
+                return;
+            }
+        }
+    }
+
     // Automation overlay: when a param lane is active, intercept clicks
     // inside the wave area BEFORE the region-edit branches so the
     // engineer can edit points without first hitting "Off" on the
@@ -1522,6 +1586,27 @@ void AudioRegionEditor::mouseDrag (const juce::MouseEvent& e)
                                                    getWidth(),
                                                    getHeight() - kIconRowHeight - kRulerHeight - kStatusBarH - kScrollBarH);
 
+    // Loop / punch bracket drag - move the grabbed edge to the cursor
+    // (grid-snapped unless Cmd bypasses), clamped against its partner edge.
+    if (dragMode == DragMode::LoopIn || dragMode == DragMode::LoopOut
+        || dragMode == DragMode::PunchIn || dragMode == DragMode::PunchOut)
+    {
+        auto& transport = engine.getTransport();
+        const auto t = juce::jmax<juce::int64> (0,
+            snapTimelineSampleToGrid (timelineSampleForX (e.x, waveArea),
+                                       e.mods.isCommandDown()));
+        switch (dragMode)
+        {
+            case DragMode::LoopIn:   transport.setLoopRange (juce::jmin (t, transport.getLoopEnd()),    transport.getLoopEnd());   break;
+            case DragMode::LoopOut:  transport.setLoopRange (transport.getLoopStart(),  juce::jmax (t, transport.getLoopStart()));  break;
+            case DragMode::PunchIn:  transport.setPunchRange (juce::jmin (t, transport.getPunchOut()),  transport.getPunchOut());  break;
+            case DragMode::PunchOut: transport.setPunchRange (transport.getPunchIn(),   juce::jmax (t, transport.getPunchIn()));   break;
+            default: break;
+        }
+        repaint();
+        return;
+    }
+
     // Pan drag: convert the mouse-x delta to a sample delta and apply
     // against the captured scroll origin so the timeline tracks the
     // cursor 1:1. Inverted because dragging right should move the
@@ -1788,6 +1873,14 @@ void AudioRegionEditor::mouseUp (const juce::MouseEvent&)
     {
         dragMode = DragMode::None;
         setMouseCursor (juce::MouseCursor::NormalCursor);
+        return;
+    }
+    if (dragMode == DragMode::LoopIn || dragMode == DragMode::LoopOut
+        || dragMode == DragMode::PunchIn || dragMode == DragMode::PunchOut)
+    {
+        dragMode = DragMode::None;
+        setMouseCursor (juce::MouseCursor::NormalCursor);
+        repaint();
         return;
     }
     // Automation point drag finishes: clear the in-flight index. No
@@ -2219,6 +2312,39 @@ bool AudioRegionEditor::keyPressed (const juce::KeyPress& k)
     { navigateRegion (+1); return true; }
     if (cmdOrCtrl && (k.getKeyCode() == '[' || k.getTextCharacter() == '['))
     { navigateRegion (-1); return true; }
+
+    // Loop / punch set against the visible waveform: bare [ ] = loop in/out
+    // at the edit cursor, Shift+[ ] = punch in/out, L / P toggle. Handled here
+    // (not forwarded to MainComponent) so the points land on the editor's edit
+    // cursor instead of the transport playhead, which this view doesn't track.
+    // Uses getKeyCode (Shift maps '[' -> '{' for getTextCharacter).
+    {
+        const int  kc = k.getKeyCode();
+        const bool sh = k.getModifiers().isShiftDown();
+        if (! cmdOrCtrl && ! k.getModifiers().isAltDown()
+            && (kc == '[' || kc == ']' || kc == 'L' || kc == 'P'))
+        {
+            auto& transport = engine.getTransport();
+            if (kc == 'L' && ! sh) { transport.setLoopEnabled  (! transport.isLoopEnabled());  repaint(); return true; }
+            if (kc == 'P' && ! sh) { transport.setPunchEnabled (! transport.isPunchEnabled()); repaint(); return true; }
+            if (const auto* r = region(); r != nullptr && (kc == '[' || kc == ']'))
+            {
+                const auto cursorTl = editCursorSample + (r->timelineStart - r->sourceOffset);
+                if (kc == '[')
+                {
+                    if (sh) transport.setPunchRange (cursorTl, juce::jmax (transport.getPunchOut(), cursorTl));
+                    else    transport.setLoopRange  (cursorTl, juce::jmax (transport.getLoopEnd(),  cursorTl));
+                }
+                else
+                {
+                    if (sh) transport.setPunchRange (juce::jmin (transport.getPunchIn(),   cursorTl), cursorTl);
+                    else    transport.setLoopRange  (juce::jmin (transport.getLoopStart(), cursorTl), cursorTl);
+                }
+                repaint();
+                return true;
+            }
+        }
+    }
 
     // Split: 'S' or Cmd+E. With a range active, splits at BOTH
     // boundaries (3 regions). Without a range, splits at the edit

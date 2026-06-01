@@ -101,7 +101,8 @@ private:
     // mouseDown captures regionAtDragStart so mouseUp submits a
     // RegionEditAction(before, after). MoveCursor is not undoable;
     // the rest are.
-    enum class DragMode { None, FadeIn, FadeOut, Gain, TrimStart, TrimEnd, MoveCursor, Range, MoveRegion, Pan, AutomationPoint };
+    enum class DragMode { None, FadeIn, FadeOut, Gain, TrimStart, TrimEnd, MoveCursor, Range, MoveRegion, Pan, AutomationPoint,
+                          LoopIn, LoopOut, PunchIn, PunchOut };
     DragMode dragMode = DragMode::None;
     juce::int64 dragOriginTimelineSample = 0;
     // [start, end) in absolute file samples. Active when end > start;
@@ -280,6 +281,10 @@ private:
     void paintRuler         (juce::Graphics&, juce::Rectangle<int> area);
     void paintWaveform      (juce::Graphics&, juce::Rectangle<int> area);
     void paintFadeEnvelopes (juce::Graphics&, juce::Rectangle<int> area);
+    // Loop (green) + punch (red) brackets over the ruler + waveform, read
+    // from the transport. Dimmed when the matching mode is disabled.
+    void paintLoopPunchBrackets (juce::Graphics&, juce::Rectangle<int> ruler,
+                                  juce::Rectangle<int> wave);
     void paintEditCursor    (juce::Graphics&, juce::Rectangle<int> area);
 
     // Editor operates in TIMELINE samples on
