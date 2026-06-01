@@ -4820,9 +4820,14 @@ void ChannelStripComponent::resized()
     const int kMeterWidth = stereoMode ? 18 : 12;
     constexpr int kMeterScaleWidth = 16;
     constexpr int kMeterGap        = 3;
-    const int     kPeakColumnW     = kMeterScaleWidth + kMeterGap + kMeterWidth;
 
     auto faderArea = area;
+    // Reserve a row at the very bottom for the numeric output-peak readout,
+    // centred under the meter + GR-LED cluster (mirrors the bus / master
+    // strips). Carved before the columns so the fader, level meter and GR LED
+    // all shorten together and keep the meter's 1:1 scale alignment intact.
+    auto peakRow = faderArea.removeFromBottom (kPeakLabelH);
+    faderArea.removeFromBottom (2);
     // Track 3 wants the full remaining vertical real estate for its
     // fader column — skip the kMaxFaderHeight cap that other strips use.
     if (! usesFaderThresholdLayout()
@@ -4927,23 +4932,20 @@ void ChannelStripComponent::resized()
     // Peak readout beneath the meter column. GR readout retired - the GR bar
     // inside the COMP section is the canonical readout now.
     grPeakLabel  .setVisible (false);
+    grReadoutLabel.setVisible (false);
 
-    if (usesFaderThresholdLayout())
+    // Numeric output-peak readout centred under the meter + GR-LED cluster,
+    // matching the bus / master strips (the LED itself is the level scale;
+    // the number is the peak hold). The cluster spans the level meter through
+    // the GR LED to its right; the meter bottom is trimmed below to clear it.
+    inputPeakLabel.setVisible (true);
     {
-        // Track-3 mimics Mixbus's meter-spanning-the-fader-scale grammar
-        // — no numeric peak readout sits below the meter; the LED itself
-        // is the readout.
-        inputPeakLabel.setVisible (false);
-        grReadoutLabel.setVisible (false);
-    }
-    else
-    {
-        const int peakRight = meterColumn.getRight();
-        const int peakLeft  = peakRight - kPeakColumnW;
-        inputPeakLabel.setBounds (juce::Rectangle<int> (peakLeft,
-                                                          meterColumn.getBottom() - kPeakLabelH,
-                                                          kPeakColumnW, kPeakLabelH));
-        grReadoutLabel.setVisible (false);
+        const int clusterX = meterColumn.getX();
+        const int clusterR = faderCompMeterCol.isEmpty() ? meterColumn.getRight()
+                                                         : faderCompMeterCol.getRight();
+        inputPeakLabel.setBounds (clusterX, peakRow.getY(),
+                                    juce::jmax (1, clusterR - clusterX),
+                                    peakRow.getHeight());
     }
 
     // Track-3: trim only enough to leave the slider's 6-px track padding
