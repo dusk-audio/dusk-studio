@@ -165,6 +165,9 @@ jobs:
           if (-not (Test-Path (Join-Path $wixBin "candle.exe"))) {
               throw "candle.exe missing in $wixBin"
           }
+          if (-not (Test-Path (Join-Path $wixBin "light.exe"))) {
+              throw "light.exe missing in $wixBin"
+          }
           # WIX env var must end in a backslash: CPack reads it as
           # CPACK_WIX_ROOT and appends "bin\candle.exe".
           "WIX=$($wixRoot.FullName)\" | Out-File -FilePath $env:GITHUB_ENV  -Append -Encoding utf8

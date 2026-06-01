@@ -47,11 +47,20 @@ cp "$BINARY"                                       AppDir/usr/bin/DuskStudio
 cp packaging/audio.dusk.studio.desktop             AppDir/usr/share/applications/
 cp packaging/DuskStudio.appdata.xml                AppDir/usr/share/metainfo/
 cp packaging/DuskStudio.mime.xml                   AppDir/usr/share/mime/packages/
-# .desktop file declares Icon=DuskStudio so the file at the hicolor path
-# must be named DuskStudio.png regardless of the source filename. The
-# 500x500 source gets downscaled by linuxdeploy / freedesktop tooling
-# when the WM picks a smaller cache size.
-cp "$ICON_SRC"                                     AppDir/usr/share/icons/hicolor/256x256/apps/DuskStudio.png
+# .desktop declares Icon=DuskStudio so the file at the hicolor path must be
+# named DuskStudio.png. The source is 500x500; the 256x256 slot must hold a
+# TRUE 256x256 image or icon validators (and some desktops) flag the mismatch,
+# so downscale into it. ImageMagick is the standard tool; if it's absent fall
+# back to a straight copy with a loud warning rather than failing the build.
+ICON_256="AppDir/usr/share/icons/hicolor/256x256/apps/DuskStudio.png"
+if command -v magick >/dev/null 2>&1; then
+    magick "$ICON_SRC" -resize 256x256 "$ICON_256"
+elif command -v convert >/dev/null 2>&1; then
+    convert "$ICON_SRC" -resize 256x256 "$ICON_256"
+else
+    echo "warning: ImageMagick (magick/convert) not on PATH - copying $ICON_SRC at native 500x500 into the 256x256 slot; icon validators may flag the size mismatch. Install imagemagick for a correctly-sized icon." >&2
+    cp "$ICON_SRC" "$ICON_256"
+fi
 
 OUTPUT="DuskStudio-${VERSION}-x86_64.AppImage"
 export OUTPUT
