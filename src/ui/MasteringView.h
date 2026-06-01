@@ -114,6 +114,10 @@ private:
     // Shared console chrome for the donor multiband panel — the same LED-pill
     // header the EQ + limiter editors now use, so all three sections match.
     std::unique_ptr<class CompHeaderButton>       compHeaderBtn;
+    // Last compEnabled state pushed to compHeaderBtn — the button only repaints
+    // on its own click, so the 20 Hz timer watches this to pick up external
+    // changes (session load, rebuildKnobValues, the legacy toggle).
+    bool compHeaderEnabledSeen { false };
 
     EmbeddedModal exportModal;
 };

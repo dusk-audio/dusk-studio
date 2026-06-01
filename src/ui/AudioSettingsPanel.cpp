@@ -342,7 +342,11 @@ AudioSettingsPanel::AudioSettingsPanel (juce::AudioDeviceManager& dm,
                                        juce::dontSendNotification);
     stopBehaviorCombo.onChange = [this]
     {
-        const auto v = (appconfig::StopBehavior) (stopBehaviorCombo.getSelectedId() - 1);
+        // The combo only carries IDs 1..3, but guard the cast so a future item
+        // edit (or a 0 "nothing selected") can't store an out-of-range enum.
+        const int id = stopBehaviorCombo.getSelectedId();
+        const auto v = (id >= 1 && id <= 3) ? (appconfig::StopBehavior) (id - 1)
+                                            : appconfig::StopBehavior {};
         appconfig::setStopBehavior (v);
         engine.getSession().stopBehavior.store ((int) v, std::memory_order_relaxed);
     };

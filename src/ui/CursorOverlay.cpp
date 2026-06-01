@@ -46,14 +46,20 @@ void CursorOverlay::setMousePosition (juce::Component& source,
         && myCutLine == lastCutLineY)
         return;
 
+    // Only Grab / Cut / Draw paint a glyph at the cursor. Range / Grid draw
+    // nothing (see paint()), so suppressing the OS cursor for them would just
+    // leave an invisible pointer with no replacement. Hide only for painting
+    // modes, and restore the native cursor when transitioning out of one.
+    const bool paints = (mode == EditMode::Grab || mode == EditMode::Cut
+                          || mode == EditMode::Draw);
     const bool wasPainting = lastPainting;
     lastLocal    = myLocal;
     lastMode     = mode;
     lastCutLineY = myCutLine;
-    lastPainting = true;
+    lastPainting = paints;
 
-    if (! wasPainting)
-        setNativeCursorVisible (false);
+    if (paints && ! wasPainting)       setNativeCursorVisible (false);
+    else if (! paints && wasPainting)  setNativeCursorVisible (true);
 
     // Full repaint each move so the old glyph position is properly
     // cleared by JUCE's parent-repaint-under pass — partial-rect

@@ -151,15 +151,20 @@ StartupDialog::StartupDialog (juce::Array<juce::File> r)
         // RECENT just focuses the table — no-op if it's already visible.
         table.grabKeyboardFocus();
     };
+    // The host callbacks (onOpenFile / onNewSession / onOpenRecent / onQuit)
+    // can synchronously dismiss + delete this dialog via the onDismiss path, so
+    // guard `this` with a SafePointer and only closeDialog if we're still alive.
     openTab.onClick = [this]
     {
+        juce::Component::SafePointer<StartupDialog> safe (this);
         if (onOpenFile) onOpenFile();
-        closeDialog (1);
+        if (safe != nullptr) safe->closeDialog (1);
     };
     newTab.onClick = [this]
     {
+        juce::Component::SafePointer<StartupDialog> safe (this);
         if (onNewSession) onNewSession();
-        closeDialog (1);
+        if (safe != nullptr) safe->closeDialog (1);
     };
     addAndMakeVisible (recentTab);
     addAndMakeVisible (openTab);
@@ -197,8 +202,9 @@ StartupDialog::StartupDialog (juce::Array<juce::File> r)
 
     quitButton.onClick = [this]
     {
+        juce::Component::SafePointer<StartupDialog> safe (this);
         if (onQuit) onQuit();
-        closeDialog (0);
+        if (safe != nullptr) safe->closeDialog (0);
     };
     openButton.onClick = [this] { openSelectedRow(); };
     addAndMakeVisible (quitButton);
@@ -228,8 +234,9 @@ void StartupDialog::openSelectedRow()
     const int row = table.getSelectedRow();
     if (row < 0 || row >= (int) rows.size()) return;
     const auto dir = rows[(size_t) row].dir;
+    juce::Component::SafePointer<StartupDialog> safe (this);
     if (onOpenRecent) onOpenRecent (dir);
-    closeDialog (1);
+    if (safe != nullptr) safe->closeDialog (1);
 }
 
 int StartupDialog::getNumRows()

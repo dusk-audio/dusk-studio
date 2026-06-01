@@ -106,7 +106,7 @@ ChannelCompEditor::ChannelCompEditor (Track& t) : track (t)
     vcaOverEasyBtn.setColour (juce::TextButton::buttonOnColourId, juce::Colour (fourKColors::kCompGold));
     vcaOverEasyBtn.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xffd09060));
     vcaOverEasyBtn.setColour (juce::TextButton::textColourOnId,   juce::Colour (0xff121214));
-    vcaOverEasyBtn.setTooltip ("OverEasy: dbx-style soft (parabolic) knee. Off = hard knee.");
+    vcaOverEasyBtn.setTooltip ("Soft knee: parabolic (soft) knee. Off = hard knee.");
     vcaOverEasyBtn.setToggleState (track.strip.compVcaOverEasy.load (std::memory_order_relaxed),
                                     juce::dontSendNotification);
     vcaOverEasyBtn.onClick = [this]
@@ -124,7 +124,7 @@ ChannelCompEditor::ChannelCompEditor (Track& t) : track (t)
     vcaDetectorBtn.setColour (juce::TextButton::buttonOnColourId, juce::Colour (fourKColors::kCompGold));
     vcaDetectorBtn.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xffd09060));
     vcaDetectorBtn.setColour (juce::TextButton::textColourOnId,   juce::Colour (0xff121214));
-    vcaDetectorBtn.setTooltip ("Classic: fixed 10 ms RMS TC (dbx 160 spec). Off = adaptive 35→5 ms.");
+    vcaDetectorBtn.setTooltip ("Classic: fixed 10 ms RMS time constant. Off = adaptive 35→5 ms.");
     vcaDetectorBtn.setToggleState (track.strip.compVcaDetectorClassic.load (std::memory_order_relaxed),
                                     juce::dontSendNotification);
     vcaDetectorBtn.onClick = [this]
@@ -230,12 +230,11 @@ void ChannelCompEditor::refreshLabelsForMode()
     releaseLabel.setText (release, juce::dontSendNotification);
     makeupLabel .setText (makeup,  juce::dontSendNotification);
 
-    // Per-mode threshold knob range. FET, Opto and VCA all share the
-    // generic threshold scale now that the donor exposes a real
-    // fet_threshold param (-40..0 dB). FET still has its full character
-    // (transformer saturation, harmonic generators) — only the previously
-    // fixed -10 dBFS detection threshold is now user-controllable.
-    threshKnob.setRange (-60.0, 0.0, 0.1);
+    // Per-mode threshold knob range. FET / Opto top out at 0 dB; VCA's
+    // compVcaThreshDb runs -38..+12 (where +12 is the "no compression"
+    // sentinel), so VCA needs the knob to reach +12 or the stored value gets
+    // clamped to 0 on display / double-click reset and the sentinel is lost.
+    threshKnob.setRange (-60.0, (m == 2) ? 12.0 : 0.0, 0.1);
 
     // OPTO hides the fixed knobs (ratio / attack / release) entirely —
     // showing them greyed out with "(fixed)" labels added visual noise.
@@ -547,8 +546,8 @@ void ChannelCompEditor::paint (juce::Graphics& g)
         g.setFont (juce::Font (juce::FontOptions (10.0f, juce::Font::bold)));
         g.drawText (caption, area.withY (area.getY() - 14).withHeight (12),
                      juce::Justification::centred, false);
-        g.setFont (juce::Font (juce::FontOptions (9.5f)));
-        g.drawText (valueText, area.withY (area.getBottom()).withHeight (14),
+        g.setFont (juce::Font (juce::FontOptions (12.0f, juce::Font::bold)));
+        g.drawText (valueText, area.withY (area.getBottom() + 1).withHeight (16),
                      juce::Justification::centred, false);
     };
 

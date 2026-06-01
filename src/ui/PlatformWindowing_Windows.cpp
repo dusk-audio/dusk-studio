@@ -100,12 +100,16 @@ void flushWindowOperations()                                {}
 void prepareNativePeerForChildAttach (juce::ComponentPeer&) {}
 
 // Windows: ShowCursor TRUE/FALSE is process-global and counter-based.
-// One pair of unbalanced calls per overlay-show / overlay-hide keeps
-// the count where we want it (negative = hidden). Native cursor hides
-// reliably here via JUCE's setMouseCursor(NoCursor) too, so the
-// platform helper just calls ShowCursor as a belt-and-braces fallback.
+// Calling it repeatedly with the same target drives the internal counter
+// past 0/-1, so a later opposite call no-ops and the cursor gets stuck.
+// Native cursor hides reliably via JUCE's setMouseCursor(NoCursor) too, so
+// this is a belt-and-braces fallback — track the applied state and only call
+// ::ShowCursor on a real transition so the counter stays balanced.
 void setNativeCursorVisibleOnPeer (juce::ComponentPeer&, bool visible)
 {
+    static bool nativeCursorVisible = true;   // message thread only
+    if (visible == nativeCursorVisible) return;
+    nativeCursorVisible = visible;
     ::ShowCursor (visible ? TRUE : FALSE);
 }
 void prepareForTopLevelDestruction (juce::Component& topLevel)

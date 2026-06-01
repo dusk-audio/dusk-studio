@@ -133,8 +133,8 @@ void styleLabel (juce::Label& l, const juce::String& text)
 MasteringView::MasteringView (Session& s, AudioEngine& e)
     : session (s), engine (e)
 {
-    styleKnob (eqLfBoost,   "LF boost (Pultec gain)");
-    styleKnob (eqHfBoost,   "HF boost (Pultec gain)");
+    styleKnob (eqLfBoost,   "LF boost (program-EQ gain)");
+    styleKnob (eqHfBoost,   "HF boost (program-EQ gain)");
     styleKnob (eqHfAtten,   "HF cut shelf");
     styleKnob (eqTubeDrive, "Tube saturation amount");
     styleKnob (eqOutput,    "EQ output gain (dB)");
@@ -347,6 +347,7 @@ MasteringView::MasteringView (Session& s, AudioEngine& e)
         });
     compHeaderBtn->setLabelText ("MULTIBAND COMP");
     compHeaderBtn->setAccentColour (juce::Colour (0xffe0c050));   // gold — comp
+    compHeaderEnabledSeen = session.mastering().compEnabled.load (std::memory_order_relaxed);
     compPanelWrapper->addAndMakeVisible (compHeaderBtn.get());
 
     // Embed ONLY the donor's MultibandCompressorPanel rather than the full
@@ -521,6 +522,15 @@ void MasteringView::timerCallback()
 {
     auto& player = engine.getMasteringPlayer();
     auto& m = session.mastering();
+
+    // The comp header button only repaints itself on click; pick up external
+    // toggles (session load, rebuildKnobValues, the legacy enable) here.
+    const bool compOn = m.compEnabled.load (std::memory_order_relaxed);
+    if (compOn != compHeaderEnabledSeen)
+    {
+        compHeaderEnabledSeen = compOn;
+        if (compHeaderBtn != nullptr) compHeaderBtn->repaint();
+    }
 
     // Clock from the player playhead.
     const double sr = player.getSourceSampleRate();

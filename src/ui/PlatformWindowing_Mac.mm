@@ -115,6 +115,13 @@ void prepareNativePeerForChildAttach (juce::ComponentPeer&) {}
 // restores when overlay clears.
 void setNativeCursorVisibleOnPeer (juce::ComponentPeer&, bool visible)
 {
+    // [NSCursor hide]/[unhide] push/pop a PROCESS-GLOBAL counter, so calling
+    // them on every overlay show/hide across windows can leave the count
+    // unbalanced (cursor stuck hidden). The cursor is global, not per-peer —
+    // track the applied state and only transition on a real change.
+    static bool nativeCursorVisible = true;   // message thread only
+    if (visible == nativeCursorVisible) return;
+    nativeCursorVisible = visible;
     if (visible) [NSCursor unhide];
     else         [NSCursor hide];
 }

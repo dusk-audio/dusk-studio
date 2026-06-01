@@ -12,12 +12,12 @@ PluginScanModal::PluginScanModal (PluginManager& mgr,
 {
     setSize (420, 150);
 
-    titleLabel.setText ("Scanning plugins…", juce::dontSendNotification);
+    titleLabel.setText ("Scanning plugins...", juce::dontSendNotification);
     titleLabel.setFont (juce::Font (juce::FontOptions (16.0f, juce::Font::bold)));
     titleLabel.setColour (juce::Label::textColourId, juce::Colour (0xffe0e0e0));
     addAndMakeVisible (titleLabel);
 
-    statusLabel.setText ("Starting…", juce::dontSendNotification);
+    statusLabel.setText ("Starting...", juce::dontSendNotification);
     statusLabel.setFont (juce::Font (juce::FontOptions (12.0f)));
     statusLabel.setColour (juce::Label::textColourId, juce::Colour (0xffa0a0a0));
     statusLabel.setMinimumHorizontalScale (1.0f);   // ellipsise long paths, don't shrink
