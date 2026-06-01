@@ -308,6 +308,12 @@ static bool isToggleTarget (MidiBindingTarget t) noexcept
         case MidiBindingTarget::BusMute:
         case MidiBindingTarget::BusSolo:
         case MidiBindingTarget::AuxLaneMute:
+        // H3 discrete on/off targets — also latch-friendly, so the learn menu
+        // should offer Press/Toggle button modes for them.
+        case MidiBindingTarget::TrackEqEnabled:
+        case MidiBindingTarget::TrackCompEnabled:
+        case MidiBindingTarget::TrackInsertBypass:
+        case MidiBindingTarget::TrackAuxSendPrePost:
         // One-shot transport actions are idempotent (Play while
         // already playing is a no-op; same for Stop / Record), so
         // exposing Press/Toggle lets latching CC buttons on cheap
@@ -399,7 +405,7 @@ void showLearnMenu (juce::Component& target,
         {
             const auto mode = eb->buttonMode;
             juce::PopupMenu modeMenu;
-            modeMenu.addItem ("Press (momentary 127 → 0)",
+            modeMenu.addItem (juce::CharPointer_UTF8 ("Press (momentary 127 \xe2\x86\x92 0)"),
                                 true, mode == MidiButtonMode::Press,
                 [&session, ek, eidx]
                 {
@@ -410,7 +416,7 @@ void showLearnMenu (juce::Component& target,
                                 x.buttonMode = MidiButtonMode::Press;
                     });
                 });
-            modeMenu.addItem ("Toggle (latching 127 ↔ 0)",
+            modeMenu.addItem (juce::CharPointer_UTF8 ("Toggle (latching 127 \xe2\x86\x94 0)"),
                                 true, mode == MidiButtonMode::Toggle,
                 [&session, ek, eidx]
                 {
@@ -544,6 +550,30 @@ std::optional<std::vector<MidiBinding>> deserializeBindingsPreset (const juce::S
             case MidiBindingTarget::AuxLaneFader:
             case MidiBindingTarget::AuxLaneMute:
             case MidiBindingTarget::MasterFader:
+            // Bank-relative variants — were silently dropped, breaking preset
+            // round-trip for any banked binding.
+            case MidiBindingTarget::TrackFaderBank:
+            case MidiBindingTarget::TrackPanBank:
+            case MidiBindingTarget::TrackMuteBank:
+            case MidiBindingTarget::TrackSoloBank:
+            case MidiBindingTarget::TrackArmBank:
+            case MidiBindingTarget::TrackAuxSendBank:
+            case MidiBindingTarget::TrackHpfFreqBank:
+            case MidiBindingTarget::TrackEqGainBank:
+            case MidiBindingTarget::TrackCompThreshBank:
+            case MidiBindingTarget::TrackCompMakeupBank:
+            case MidiBindingTarget::TrackPluginParamBank:
+            // H3 expansion — likewise missing from the round-trip whitelist.
+            case MidiBindingTarget::TrackEqEnabled:
+            case MidiBindingTarget::TrackCompEnabled:
+            case MidiBindingTarget::TrackInsertBypass:
+            case MidiBindingTarget::TrackAuxSendPrePost:
+            case MidiBindingTarget::BusEqGain:
+            case MidiBindingTarget::MasterEqLfBoost:
+            case MidiBindingTarget::MasterEqHfBoost:
+            case MidiBindingTarget::MasterCompThresh:
+            case MidiBindingTarget::MasterCompMakeup:
+            case MidiBindingTarget::MasterCompRatio:
                 b.target = (MidiBindingTarget) rawTgt;
                 break;
             default:

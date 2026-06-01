@@ -12,6 +12,12 @@
 
 namespace duskstudio
 {
+// Log-span of the HPF sweep band, precomputed once. The MIDI-CC HPF map runs
+// on the audio thread per controller event; without this it would recompute
+// std::log(max/min) on every CC message.
+static const float kHpfLogRange = std::log (ChannelStripParams::kHpfMaxHz
+                                             / ChannelStripParams::kHpfMinHz);
+
 AudioEngine::AudioEngine (Session& sessionToBindTo) : session (sessionToBindTo)
 {
     // Held by unique_ptr so AudioEngine.h stays free of McuReceiver /
@@ -20,7 +26,7 @@ AudioEngine::AudioEngine (Session& sessionToBindTo) : session (sessionToBindTo)
     mcuController = std::make_unique<McuController> (session);
     mcuController->setSink ([this] (const juce::MidiBuffer& buf)
     {
-        const int outIdx = session.mcu.resolvedOutputIdx.load (std::memory_order_relaxed);
+        const int outIdx = session.mcu.resolvedOutputIdx.load (std::memory_order_acquire);
         if (outIdx >= 0) sendMidiToOutput (outIdx, buf);
     });
     mcuController->setTransportProvider ([this] { return &transport; });
@@ -231,6 +237,33 @@ void AudioEngine::reresolveTrackMidiFromSession()
         else if (track.midiOutputIndex.load (std::memory_order_relaxed) >= midiOutputDevices.size())
             track.midiOutputIndex.store (-1, std::memory_order_relaxed);
     }
+
+    // Re-resolve the session-level MIDI wiring the same way: the sync
+    // source/output and the MCU control surface each store a saved identifier,
+    // so a session load must remap them to current bank indices too — else the
+    // engine's sync + MCU consumers read stale indices until the user reopens
+    // Audio Settings. release-ordered to match their setters in AudioSettingsPanel.
+    auto resolveSessionIdx = [&] (std::atomic<int>& idx,
+                                   const juce::Array<juce::MidiDeviceInfo>& devices,
+                                   const juce::String& wantedId)
+    {
+        idx.store (wantedId.isNotEmpty() ? resolveByIdentifier (devices, wantedId) : -1,
+                   std::memory_order_release);
+    };
+    resolveSessionIdx (session.syncSourceInputIdx,    midiInputDevices,  session.syncSourceInputIdentifier);
+    resolveSessionIdx (session.syncOutputIdx,         midiOutputDevices, session.syncOutputIdentifier);
+    resolveSessionIdx (session.mcu.resolvedInputIdx,  midiInputDevices,  session.mcu.inputIdentifier);
+    resolveSessionIdx (session.mcu.resolvedOutputIdx, midiOutputDevices, session.mcu.outputIdentifier);
+
+    // Resolving an output index isn't enough — the JUCE output port must be
+    // opened before clock / MCU feedback can flow. Mirror applySyncOutputChange
+    // / applyMcuOutputChange, which open eagerly on selection, so a freshly
+    // loaded session emits without the user reopening Audio Settings.
+    // (ensureMidiOutputOpen is a no-op when the index is already open.)
+    if (const int i = session.syncOutputIdx.load (std::memory_order_acquire); i >= 0)
+        ensureMidiOutputOpen (i);
+    if (const int i = session.mcu.resolvedOutputIdx.load (std::memory_order_acquire); i >= 0)
+        ensureMidiOutputOpen (i);
 }
 
 void AudioEngine::rebuildMidiInputBank()
@@ -1214,7 +1247,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
     // numSamples each block. transport.getPlayhead() jumps on loop
     // wrap / Cmd-jump / scrub - using it for clock intervals would
     // produce wild BPM swings whenever the user moves the playhead.
-    const int syncIdx = session.syncSourceInputIdx.load (std::memory_order_relaxed);
+    const int syncIdx = session.syncSourceInputIdx.load (std::memory_order_acquire);
     if (syncIdx != lastSyncSourceIdx)
     {
         // Source changed (or first run). Reset both the receiver's
@@ -1765,9 +1798,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                                 }
                                 else
                                 {
-                                    const float lo = ChannelStripParams::kHpfMinHz;
-                                    const float hi = ChannelStripParams::kHpfMaxHz;
-                                    freq = lo * std::exp (std::log (hi / lo) * frac);
+                                    freq = ChannelStripParams::kHpfMinHz
+                                         * std::exp (kHpfLogRange * frac);
                                 }
                                 session.track (b.targetIndex).strip.hpfFreq
                                     .store (freq, std::memory_order_relaxed);

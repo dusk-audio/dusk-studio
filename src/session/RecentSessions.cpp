@@ -55,8 +55,13 @@ void RecentSessions::add (const juce::File& sessionDirectory)
 
 void RecentSessions::clear()
 {
-    const auto store = getStoreFile();
-    if (store == juce::File()) return;
+    // Compute the path WITHOUT getStoreFile() - that creates the config dir as
+    // a side effect, so clearing a never-used recents list would spawn an empty
+    // "Dusk Studio" config dir. If the dir isn't there, there's nothing to clear.
+    auto cfgDir = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+                      .getChildFile ("Dusk Studio");
+    if (! cfgDir.isDirectory()) return;
+    const auto store = cfgDir.getChildFile ("recent.txt");
     if (store.existsAsFile()) store.deleteFile();
 }
 } // namespace duskstudio

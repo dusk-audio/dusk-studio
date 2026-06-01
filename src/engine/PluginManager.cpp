@@ -102,8 +102,12 @@ public:
             return false;
         }
 
+        // A clean payload means the child completed the scan without crashing,
+        // so this is a successful scan even when the file legitimately yields
+        // zero descriptions. Returning false here would re-probe / quarantine a
+        // perfectly-good file. Only the empty-payload (crash/hang) case fails.
         scanproto::parsePayload (payload, result);
-        return ! result.isEmpty();
+        return true;
     }
 
 private:

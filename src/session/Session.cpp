@@ -70,6 +70,13 @@ void Session::setBusSoloed (int busIndex, bool soloed) noexcept
         soloBusCount.fetch_add (soloed ? 1 : -1, std::memory_order_relaxed);
 }
 
+// Called from the control-surface paths (MCU MIDI thread, MIDI-binding apply),
+// never the UI drag (that path has its own gesture-anchored propagation). Every
+// access is a relaxed atomic, so concurrent callers are data-race-free; the only
+// hazard is a transient mis-tracked delta if two surfaces ride the same group at
+// the exact same instant, which self-corrects on the next move. No mutex on
+// purpose: the binding-apply caller can run on the audio thread, where locking
+// is forbidden.
 void Session::setTrackFaderGrouped (int ti, float newDb) noexcept
 {
     if (ti < 0 || ti >= kNumTracks) return;

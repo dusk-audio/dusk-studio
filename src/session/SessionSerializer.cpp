@@ -991,8 +991,11 @@ void restoreBus (Bus& a, const juce::var& v)
                 { return x.timeSamples < y.timeSamples; });
         }
     }
-    if (v.hasProperty ("automation_mode"))
-        a.strip.automationMode.store ((int) v["automation_mode"], std::memory_order_release);
+    // Always write the mode so a re-load into a reused strip can't inherit a
+    // stale value: an absent key means the saved session predates automation → Off.
+    a.strip.automationMode.store (
+        v.hasProperty ("automation_mode") ? (int) v["automation_mode"] : 0,
+        std::memory_order_release);
 }
 } // namespace
 
@@ -1680,6 +1683,18 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                     case (int) MidiBindingTarget::AuxLaneFader:
                     case (int) MidiBindingTarget::AuxLaneMute:
                     case (int) MidiBindingTarget::MasterFader:
+                    // H3 expansion — were silently coerced to None on load,
+                    // dropping the binding from a saved session.
+                    case (int) MidiBindingTarget::TrackEqEnabled:
+                    case (int) MidiBindingTarget::TrackCompEnabled:
+                    case (int) MidiBindingTarget::TrackInsertBypass:
+                    case (int) MidiBindingTarget::TrackAuxSendPrePost:
+                    case (int) MidiBindingTarget::BusEqGain:
+                    case (int) MidiBindingTarget::MasterEqLfBoost:
+                    case (int) MidiBindingTarget::MasterEqHfBoost:
+                    case (int) MidiBindingTarget::MasterCompThresh:
+                    case (int) MidiBindingTarget::MasterCompMakeup:
+                    case (int) MidiBindingTarget::MasterCompRatio:
                         b.target = (MidiBindingTarget) rawTgt; break;
                     default:
                         b.target = MidiBindingTarget::None; break;
@@ -1694,6 +1709,8 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                 const bool bankRelative = isBankRelativeTarget (b.target);
                 const int maxIdx = needsBusIndex (b.target)
                     ? Session::kNumBuses - 1
+                    : (needsPackedBusEqIndex (b.target)
+                        ? Session::kNumBuses * kBusEqBands - 1
                     : (needsAuxLaneIndex (b.target)
                         ? Session::kNumAuxLanes - 1
                         : (needsPackedTrackAuxIndex (b.target)
@@ -1706,7 +1723,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                                         : (b.target == MidiBindingTarget::TrackEqGainBank
                                             ? Session::kBankSize * kPackedEqBands - 1
                                             : Session::kBankSize - 1))
-                                    : Session::kNumTracks - 1))));
+                                    : Session::kNumTracks - 1)))));
                 b.targetIndex = juce::jlimit (0, maxIdx, rawIdx);
                 // paramIndex only meaningful for TrackPluginParam, but
                 // round-trip unconditionally for forward-compat. Clamp
