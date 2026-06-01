@@ -261,8 +261,11 @@ int PluginManager::scanInstalledPlugins (
 
     // Don't report 100%/complete if the user aborted - onProgress already
     // returned false to request the stop, and the caller treats this final
-    // call as "scan finished".
-    if (! aborted && onProgress != nullptr)
+    // call as "scan finished". Also honour a scanner-side abort (the abort
+    // atomic): if it flipped on the last file, scanNextFile can fall out of
+    // the loop before the in-loop abort check runs, so re-test it here.
+    const bool abortFlagSet = (abort != nullptr && abort->load (std::memory_order_relaxed));
+    if (! aborted && ! abortFlagSet && onProgress != nullptr)
         onProgress (1.0f, {});
 
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
