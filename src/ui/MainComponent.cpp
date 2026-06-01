@@ -492,6 +492,19 @@ MainComponent::MainComponent()
     w = juce::jmax (w, minContentW);
     h = juce::jmax (h, minContentH);
 
+    // Gate the startup plugin scan BEFORE setSize(): setSize drives a
+    // synchronous resized() → maybeStartStartupPluginScan(), and if the
+    // dialog-pending flag isn't set yet that call latches startupScanTriggered
+    // and shows the scan modal over the still-blank canvas, defeating the
+    // startup-dialog gate. We're pending iff the picker will actually appear:
+    // no DUSKSTUDIO_LOAD_SESSION and no DUSKSTUDIO_SKIP_STARTUP_DIALOG.
+    {
+        const char* loadPathEnv = std::getenv ("DUSKSTUDIO_LOAD_SESSION");
+        const bool willLoadSession = (loadPathEnv != nullptr && *loadPathEnv);
+        startupDialogPending = (! willLoadSession
+                                && std::getenv ("DUSKSTUDIO_SKIP_STARTUP_DIALOG") == nullptr);
+    }
+
     setSize (w, h);
 
     // Dev affordance for screenshot / xdotool flows: set DUSKSTUDIO_START_STAGE=mastering
@@ -557,14 +570,32 @@ MainComponent::MainComponent()
     }
     else if (std::getenv ("DUSKSTUDIO_SKIP_STARTUP_DIALOG") == nullptr)
     {
-        // Set synchronously: the first resized() (which kicks the plugin scan)
-        // runs before this deferred launch, so the scan must already know a
-        // dialog is coming and hold off until it's dismissed.
-        startupDialogPending = true;
+        // startupDialogPending was already set before setSize() above (so the
+        // scan-kicking resized() saw the gate); just queue the dialog here.
         juce::Component::SafePointer<MainComponent> safeThis (this);
         juce::MessageManager::callAsync ([safeThis]
         {
             if (safeThis != nullptr) safeThis->launchStartupDialog();
+        });
+    }
+
+    // DUSKSTUDIO_CAPTURE_DIR=/path drives the screenshot-capture harness:
+    // synthesise a demo session, snapshot each documented view / strip /
+    // modal into that directory, then quit. Suppress the startup plugin
+    // scan so its modal doesn't overlay the shots; delay so the window is
+    // shown + laid out before the first snapshot.
+    if (const char* capDir = std::getenv ("DUSKSTUDIO_CAPTURE_DIR");
+        capDir != nullptr && *capDir)
+    {
+        // The startup scan is suppressed in maybeStartStartupPluginScan() via
+        // the same env var (resized() can fire mid-ctor, so a member flag set
+        // here would be too late).
+        juce::String dirStr (capDir);
+        juce::Component::SafePointer<MainComponent> safeThis (this);
+        juce::Timer::callAfterDelay (1500, [safeThis, dirStr]
+        {
+            if (safeThis != nullptr)
+                safeThis->captureScreenshots (juce::File (dirStr));
         });
     }
 
@@ -886,7 +917,10 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     // L and P toggle the corresponding mode on/off. Shift+bracket switches
     // to punch boundaries; the unshifted form sets loop boundaries.
     auto& transport = engine.getTransport();
-    if (code == '[' && ! cmd && ! mods.isAltDown())
+    // On Linux/X11 getKeyCode() returns the SHIFTED glyph (XLookupString
+    // applies modifiers), so Shift+[ arrives as '{' and Shift+] as '}'.
+    // Accept both forms or the punch (Shift+bracket) shortcuts never fire.
+    if ((code == '[' || code == '{') && ! cmd && ! mods.isAltDown())
     {
         const auto playhead = transport.getPlayhead();
         if (shift)
@@ -904,7 +938,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         if (tapeStrip != nullptr) tapeStrip->repaint();
         return true;
     }
-    if (code == ']' && ! cmd && ! mods.isAltDown())
+    if ((code == ']' || code == '}') && ! cmd && ! mods.isAltDown())
     {
         const auto playhead = transport.getPlayhead();
         if (shift)
@@ -1051,6 +1085,12 @@ void MainComponent::syncBankButtons (int desiredCount)
 
 void MainComponent::maybeStartStartupPluginScan()
 {
+    // Screenshot-capture mode never scans — its progress modal would overlay
+    // the full-window snapshots. Guard on the env var directly because
+    // resized() (which calls us) can fire mid-ctor, before the capture hook
+    // gets a chance to latch any member flag.
+    if (std::getenv ("DUSKSTUDIO_CAPTURE_DIR") != nullptr) return;
+
     if (startupScanTriggered) return;
     // Defer while the startup dialog is up - dismissStartupDialog() re-invokes
     // us once the user has picked a session. Don't latch startupScanTriggered
@@ -1517,8 +1557,9 @@ void MainComponent::launchStartupDialog()
     startupDialog->onNewSession = [this] { newSessionPrompt(); };
     startupDialog->onOpenFile   = [this] { openFromFilePrompt(); };
     startupDialog->onSkip       = [] {};  // nothing - the bootstrap default dir stays
-    startupDialog->onQuit       = []
+    startupDialog->onQuit       = [this]
     {
+        startupQuitRequested = true;
         if (auto* app = juce::JUCEApplicationBase::getInstance())
             app->systemRequestedQuit();
     };
@@ -1561,9 +1602,11 @@ void MainComponent::dismissStartupDialog()
         safeThis->startupDialog.reset();
         safeThis->startupDim.reset();
         // Dialog gone - now it's safe to run the startup plugin scan that we
-        // held off in maybeStartStartupPluginScan().
+        // held off in maybeStartStartupPluginScan(). Skip it entirely when the
+        // dismissal came from Quit: the app is shutting down, no point scanning.
         safeThis->startupDialogPending = false;
-        safeThis->maybeStartStartupPluginScan();
+        if (! safeThis->startupQuitRequested)
+            safeThis->maybeStartStartupPluginScan();
     });
 }
 
@@ -2218,7 +2261,7 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
             for (const auto& f : failures)
                 body += "    " + f.location + "  -  " + f.pluginName + "\n";
             body += "\nCheck that the plugins are still installed for the "
-                    "right format (VST3 / LV2) and that this binary can "
+                    "right format (VST3 / LV2 / AU) and that this binary can "
                     "find them, then reload the session.";
             juce::Component::SafePointer<MainComponent> safeThis (this);
             juce::MessageManager::callAsync (

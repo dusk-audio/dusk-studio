@@ -25,6 +25,12 @@ public:
     void resized() override;
     bool keyPressed (const juce::KeyPress&) override;
 
+    // Screenshot-capture harness (DUSKSTUDIO_CAPTURE_DIR). Synthesises a
+    // small demo session, drives each documented stage / strip / modal,
+    // writes PNGs into outDir, then quits the app. Defined in
+    // ScreenshotCapture.cpp. No-op effect on normal runs (never called).
+    void captureScreenshots (const juce::File& outDir);
+
     juce::StringArray getMenuBarNames() override;
     juce::PopupMenu   getMenuForIndex (int topLevelMenuIndex,
                                          const juce::String& menuName) override;
@@ -212,6 +218,10 @@ private:
     // resized()-driven scan defers instead of stacking a second modal over it.
     // dismissStartupDialog() clears it and re-invokes the scan.
     bool startupDialogPending = false;
+    // Set when the user picks Quit from the startup dialog: the dialog still
+    // dismisses (tearing down the dim backdrop), but dismissStartupDialog must
+    // NOT kick the deferred plugin scan into a process that's shutting down.
+    bool startupQuitRequested = false;
     void maybeStartStartupPluginScan();
 
     void toggleVirtualKeyboard();
