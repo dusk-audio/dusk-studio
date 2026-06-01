@@ -2744,8 +2744,15 @@ public:
             // during automation / MIDI-driven moves.
             if (! track.strip.auxSendTouched[(size_t) i].load (std::memory_order_acquire))
             {
-                const float knobVal = (dB <= ChannelStripParams::kAuxSendMinDb + 0.01f)
+                const float rawVal = (dB <= ChannelStripParams::kAuxSendMinDb + 0.01f)
                                           ? ChannelStripParams::kAuxSendOffDb : dB;
+                // Clamp to the slider's range before comparing - the off
+                // sentinel (-100) sits below the slider min (-60), so an
+                // unclamped compare never converges and refires setValue every
+                // tick while the send is off.
+                const float knobVal = (float) juce::jlimit (knobs[(size_t) i].getMinimum(),
+                                                            knobs[(size_t) i].getMaximum(),
+                                                            (double) rawVal);
                 if (std::abs ((float) knobs[(size_t) i].getValue() - knobVal) > 0.05f)
                     knobs[(size_t) i].setValue (knobVal, juce::dontSendNotification);
             }

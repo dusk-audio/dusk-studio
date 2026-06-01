@@ -1956,6 +1956,11 @@ void MasterStripComponent::openTapeMachineModal()
     body->setBounds (topLevel->getLocalBounds()
                         .withSizeKeepingCentre (body->getWidth(), body->getHeight()));
     topLevel->addAndMakeVisible (body);
+    // This modal uses a raw DimOverlay rather than EmbeddedModal, so it doesn't
+    // get EmbeddedModal's key forwarding for free — attach the forwarder so
+    // Space / R / Home / loop+punch shortcuts still reach MainComponent while
+    // the tape editor holds focus.
+    attachTransportKeyForwarder (*body);
     tapeMachineModal = body;
 }
 

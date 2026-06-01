@@ -302,6 +302,14 @@ void EditModeToolbar::setVisibleModes (juce::Array<EditMode> modes)
     setIf (cutButton);
     setIf (gridButton);
     setIf (drawButton);
+
+    // If the active mode just became hidden (e.g. an arrange-view Range/Cut
+    // mode carried into the piano roll's Grab/Draw-only palette), snap to the
+    // first visible mode so the mouse handlers don't keep acting on a mode with
+    // no button. setEditMode updates button states + notifies observers.
+    if (! modes.isEmpty() && ! modes.contains (engine.getSession().editMode))
+        setEditMode (modes.getFirst());
+
     resized();
 }
 

@@ -1089,7 +1089,11 @@ juce::MouseCursor AudioRegionEditor::cursorForPoint (int x, int y) const
         // stay native — they're standard OS cursors that render
         // correctly without the overlay.
         const auto m = session.editMode;
-        if (m == EditMode::Grab || m == EditMode::Cut || m == EditMode::Draw)
+        // Only hide the native cursor when the overlay sink is actually wired
+        // (same guard pushCursorPosition uses) — otherwise no glyph is painted
+        // and the cursor would just vanish.
+        if ((m == EditMode::Grab || m == EditMode::Cut || m == EditMode::Draw)
+            && onMouseMovedForCursor != nullptr)
             return invisibleCursor();
         return cursorForEditMode (m);
     }

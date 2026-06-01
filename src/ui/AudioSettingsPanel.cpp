@@ -329,6 +329,7 @@ AudioSettingsPanel::AudioSettingsPanel (juce::AudioDeviceManager& dm,
     };
     addAndMakeVisible (tapeStripExpandedToggle);
 
+    stopBehaviorLabel.setJustificationType (juce::Justification::centredRight);
     addAndMakeVisible (stopBehaviorLabel);
     stopBehaviorCombo.addItem ("Stay where it is (pause)",      1);
     stopBehaviorCombo.addItem ("Return to start (rewind to 0)", 2);

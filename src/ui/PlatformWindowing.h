@@ -46,14 +46,16 @@ void bringWindowToFront (juce::ComponentPeer& peer);
 // window. Used by CursorOverlay to suppress the platform cursor while
 // our painted glyph (hand / scissors / pencil) is showing.
 //
+// Linux-only / best-effort: this is where the actual hide happens.
 // Linux: XDefineCursor on the peer's X11 window with a 1x1 invisible
 // pixmap cursor; XUndefineCursor on show. Bypasses JUCE's
 // setMouseCursor pipeline (which on this hybrid Wayland/X11 setup
 // dispatches to the wrong path).
-// macOS: [NSCursor hide] / [NSCursor unhide] in PlatformWindowing_Mac.mm.
-// Windows: ShowCursor(FALSE) / ShowCursor(TRUE) in
-// PlatformWindowing_Windows.cpp. Both use the platform-native cursor
-// calls directly rather than forwarding to the peer's setMouseCursor.
+// macOS / Windows: NO-OP. JUCE's setMouseCursor(NoCursor) on the component
+// under the overlay glyph already hides the native cursor reliably and is the
+// sole owner of cursor visibility there; driving AppKit's [NSCursor hide]
+// counter or Win32's process-global ShowCursor counter from here too only
+// risks unbalancing it against JUCE.
 //
 // Must be called on the message thread.
 void setNativeCursorVisibleOnPeer (juce::ComponentPeer& peer, bool visible);

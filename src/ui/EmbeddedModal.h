@@ -35,7 +35,8 @@ inline bool isModalForwardableShortcut (const juce::KeyPress& k) noexcept
         || k.getTextCharacter() == '.'                    // stop + rewind
         || kc == 'L' || kc == 'l'                         // loop on/off
         || kc == 'P' || kc == 'p'                         // punch on/off
-        || kc == '[' || kc == ']'                         // set loop/punch in/out at playhead
+        || kc == '[' || kc == ']'                         // set loop in/out at playhead
+        || kc == '{' || kc == '}'                         // Shift+bracket (X11 shifted glyph) = punch in/out
         || k == juce::KeyPress::F11Key;
 }
 
