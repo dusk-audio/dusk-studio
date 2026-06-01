@@ -46,7 +46,7 @@ void styleSmallLabel (juce::Label& lbl, const juce::String& text, juce::Colour c
     lbl.setJustificationType (juce::Justification::centred);
     lbl.setColour (juce::Label::textColourId, col);
     // Bumped from 8.5 pt → 10.5 pt + minimum horizontal scale so the
-    // Pultec captions ("HF BOOST FREQ", "HF− ATTEN FREQ") stay legible
+    // program-EQ captions ("HF BOOST FREQ", "HF− ATTEN FREQ") stay legible
     // against the new blue section background without clipping at the
     // narrow column width.
     lbl.setFont (juce::Font (juce::FontOptions (10.5f, juce::Font::bold)));
@@ -119,11 +119,11 @@ void styleEditorEnableBtn (juce::TextButton& b, juce::Colour onColour)
     b.setColour (juce::TextButton::textColourOnId,   juce::Colour (0xff121214));
 }
 
-// Master EQ modal — full(er) Pultec surface mirroring the donor's
+// Master EQ modal — full(er) program-EQ surface mirroring the donor's
 // TubeEQProcessor parameter set. 2×4 grid:
 //   Row 1 (LF + OUT):  LF BOOST | LF ATTEN | LF FREQ | OUT
 //   Row 2 (HF):        HF BOOST | HF ATTEN | HF BOOST FREQ | HF ATTEN FREQ
-// Pultec freq pickers are discrete (donor accepts float; we expose the
+// program-EQ freq pickers are discrete (donor accepts float; we expose the
 // canonical Pultec-hardware values via DuskComboBox so the UX matches
 // what engineers expect from EQP-1A clones). Bandwidth + Mid Dip/Peak
 // + Tube Drive + Input gain stay hidden — bandwidth/drive are fixed
@@ -164,11 +164,11 @@ public:
             params.eqEnabled.store (true, std::memory_order_release);
             enableBtn.setToggleState (true, juce::dontSendNotification);
         };
-        lfBoost    .setTooltip ("Pultec LF boost (0..10). Double-click for 3; Shift-drag for fine.");
-        lfAtten    .setTooltip ("Pultec LF attenuate (0..10). Double-click for 0; Shift-drag for fine.");
-        hfBoost    .setTooltip ("Pultec HF boost (0..10). Double-click for 3; Shift-drag for fine.");
-        hfAtten    .setTooltip ("Pultec HF attenuate (0..10). Double-click for 3; Shift-drag for fine.");
-        hfBandwidth.setTooltip ("Pultec HF bandwidth (Sharp..Broad, 0..10). Double-click for 0.5; Shift-drag for fine.");
+        lfBoost    .setTooltip ("program-EQ LF boost (0..10). Double-click for 3; Shift-drag for fine.");
+        lfAtten    .setTooltip ("program-EQ LF attenuate (0..10). Double-click for 0; Shift-drag for fine.");
+        hfBoost    .setTooltip ("program-EQ HF boost (0..10). Double-click for 3; Shift-drag for fine.");
+        hfAtten    .setTooltip ("program-EQ HF attenuate (0..10). Double-click for 3; Shift-drag for fine.");
+        hfBandwidth.setTooltip ("program-EQ HF bandwidth (Sharp..Broad, 0..10). Double-click for 0.5; Shift-drag for fine.");
         lfBoost    .onValueChange = [this, arm] { params.eqLfBoost         .store ((float) lfBoost    .getValue(), std::memory_order_relaxed); arm(); };
         lfAtten    .onValueChange = [this, arm] { params.eqLfAtten         .store ((float) lfAtten    .getValue(), std::memory_order_relaxed); arm(); };
         hfBoost    .onValueChange = [this, arm] { params.eqHfBoost         .store ((float) hfBoost    .getValue(), std::memory_order_relaxed); arm(); };
@@ -184,7 +184,7 @@ public:
         for (auto* k : { &lfBoost, &lfAtten, &hfBoost, &hfAtten, &hfBandwidth })
             k->setColour (juce::Slider::thumbColourId, pultecCream);
 
-        // Pultec discrete-frequency rotaries (dented knobs). Same range
+        // program-EQ discrete-frequency rotaries (dented knobs). Same range
         // / format logic as the inline strip version — snaps to the
         // hardware-canonical Hz positions and renders the label in the
         // textbox below.
@@ -231,9 +231,9 @@ public:
         setupFreqKnob (lfFreqKnob,      kLfHz,      4, params.eqLfFreq);
         setupFreqKnob (hfBoostFreqKnob, kHfBoostHz, 7, params.eqHfBoostFreq);
         setupFreqKnob (hfAttenFreqKnob, kHfAttenHz, 3, params.eqHfAttenFreq);
-        lfFreqKnob     .setTooltip ("Pultec LF frequency (20/30/60/100 Hz). Detent-snapped.");
-        hfBoostFreqKnob.setTooltip ("Pultec HF boost frequency (3/4/5/8/10/12/16 kHz). Detent-snapped.");
-        hfAttenFreqKnob.setTooltip ("Pultec HF attenuate frequency (5/10/20 kHz). Detent-snapped.");
+        lfFreqKnob     .setTooltip ("program-EQ LF frequency (20/30/60/100 Hz). Detent-snapped.");
+        hfBoostFreqKnob.setTooltip ("program-EQ HF boost frequency (3/4/5/8/10/12/16 kHz). Detent-snapped.");
+        hfAttenFreqKnob.setTooltip ("program-EQ HF attenuate frequency (5/10/20 kHz). Detent-snapped.");
 
         styleEditorLabel (lfBoostLbl,     "LF BOOST",      pultecCream);
         styleEditorLabel (lfAttenLbl,     "LF ATTEN",      pultecCream);
@@ -268,7 +268,7 @@ public:
 
     void paint (juce::Graphics& g) override
     {
-        // Pultec EQP-1A chassis blue (teal) — same paint as the inline
+        // program-EQ EQP-1A chassis blue (teal) — same paint as the inline
         // strip's eqArea so the popup reads as the same hardware unit
         // scaled up.
         g.fillAll (juce::Colour (0xff2c5060));
@@ -386,9 +386,9 @@ public:
             k->setColour (juce::Slider::thumbColourId, juce::Colours::white);
         mak.setValue (params.compMakeupDb .load(), juce::dontSendNotification);
 
-        rat.setTooltip ("Master bus comp ratio (SSL-stepped: 2:1 / 4:1 / 10:1).");
-        atk.setTooltip ("Master bus comp attack (SSL-stepped: 0.1 / 0.3 / 1 / 3 / 10 / 30 ms).");
-        rel.setTooltip ("Master bus comp release (SSL-stepped: 0.1 / 0.3 / 0.6 / 1.2 s, top = AUTO).");
+        rat.setTooltip ("Master bus comp ratio (stepped: 2:1 / 4:1 / 10:1).");
+        atk.setTooltip ("Master bus comp attack (stepped: 0.1 / 0.3 / 1 / 3 / 10 / 30 ms).");
+        rel.setTooltip ("Master bus comp release (stepped: 0.1 / 0.3 / 0.6 / 1.2 s, top = AUTO).");
         mak.setTooltip ("Master bus comp make-up gain (-10..+20 dB). Double-click for 0 dB; Shift-drag for fine.");
         mak.onValueChange = [this] { params.compMakeupDb .store ((float) mak.getValue(), std::memory_order_relaxed); };
 
@@ -666,7 +666,7 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
         b.setColour (juce::TextButton::textColourOnId,   juce::Colour (0xff121214));
     };
 
-    // EQ + comp section toggles + their parameter knobs. Pultec EQP-1A
+    // EQ + comp section toggles + their parameter knobs. program-EQ EQP-1A
     // hardware grammar: black bakelite knobs against the teal-blue
     // chassis, with cream-stencilled labels. Knobs share `pultecBlack`;
     // labels use `pultecCream`; the eqArea background paints in
@@ -677,7 +677,7 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     const auto compGold    = juce::Colour (0xff7da8c5);   // SSL G-bus comp powder blue (legacy var name)
 
     // EQ header — shared CompHeaderButton pill (green LED + bold label).
-    // No pickFn: master EQ has a single Pultec topology, no mode picker.
+    // No pickFn: master EQ has a single program-EQ topology, no mode picker.
     eqHeaderBtn = std::make_unique<CompHeaderButton> (
         /*getEnabled*/ [this] { return params.eqEnabled.load (std::memory_order_relaxed); },
         /*onToggle*/   [this]
@@ -687,7 +687,7 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
                             if (eqHeaderBtn != nullptr) eqHeaderBtn->repaint();
                         });
     eqHeaderBtn->setLabelText ("EQ");
-    eqHeaderBtn->setTooltip ("Pultec-style Tube EQ on/off");
+    eqHeaderBtn->setTooltip ("program-style Tube EQ on/off");
     addAndMakeVisible (eqHeaderBtn.get());
 
     // Suffixes intentionally empty - section labels already convey the
@@ -697,18 +697,18 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     styleSmallKnob (eqLfAtten,    0.0,  10.0,   3.0, params.eqLfAtten.load(),       pultecGold, "", 1);
     styleSmallKnob (eqHfBoost,    0.0,  10.0,   3.0, params.eqHfBoost.load(),       pultecGold, "", 1);
     styleSmallKnob (eqHfAtten,    0.0,  10.0,   3.0, params.eqHfAtten.load(),       pultecGold, "", 1);
-    eqLfBoost.setTooltip ("Pultec LF boost (0..10). Double-click for 3; Shift-drag for fine.");
-    eqLfAtten.setTooltip ("Pultec LF attenuate (0..10). Double-click for 3; Shift-drag for fine.");
-    eqHfBoost.setTooltip ("Pultec HF boost (0..10). Double-click for 3; Shift-drag for fine.");
-    eqHfAtten.setTooltip ("Pultec HF attenuate (0..10). Double-click for 3; Shift-drag for fine.");
+    eqLfBoost.setTooltip ("program-EQ LF boost (0..10). Double-click for 3; Shift-drag for fine.");
+    eqLfAtten.setTooltip ("program-EQ LF attenuate (0..10). Double-click for 3; Shift-drag for fine.");
+    eqHfBoost.setTooltip ("program-EQ HF boost (0..10). Double-click for 3; Shift-drag for fine.");
+    eqHfAtten.setTooltip ("program-EQ HF attenuate (0..10). Double-click for 3; Shift-drag for fine.");
     // styleSmallKnob picks the thumb colour by brightening the fill;
     // black brightened ~0.3 is too dark to read against the black knob
     // body. Override thumb to cream so the pointer reads as the white
-    // stencilled indicator on a Pultec EQP-1A knob.
+    // stencilled indicator on a program-EQ EQP-1A knob.
     for (auto* k : { &eqLfBoost, &eqLfAtten, &eqHfBoost, &eqHfAtten })
         k->setColour (juce::Slider::thumbColourId, pultecCream);
 
-    // Auto-arm the master Pultec EQ on any band touch. EQ defaults to
+    // Auto-arm the master program-EQ EQ on any band touch. EQ defaults to
     // off (Session.h) so the LED only lights once the engineer shapes
     // the sound — same UX as channel + bus EQ headers.
     auto armMasterEq = [this]
@@ -731,7 +731,7 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     // Discrete Pultec-position freq pickers (LF FREQ, HF BOOST FREQ,
     // HF ATTEN FREQ). Lists + format mirror MasterEqEditorPanel so the
     // inline surface stays in lock-step with the popup.
-    // Stepped rotary knob — snaps to the discrete Pultec position
+    // Stepped rotary knob — snaps to the discrete program-EQ position
     // indices (0..N-1). textFromValueFunction maps the index back to
     // the Hz / kHz string so the knob's textbox reads like a freq
     // picker. Dragging the knob feels detent-like because the range
@@ -788,11 +788,11 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     setupStripFreqKnob (eqLfFreqKnob,      kLfHz,      4, params.eqLfFreq,      fmtLfHz);
     setupStripFreqKnob (eqHfBoostFreqKnob, kHfBoostHz, 7, params.eqHfBoostFreq, fmtHfHz);
     setupStripFreqKnob (eqHfAttenFreqKnob, kHfAttenHz, 3, params.eqHfAttenFreq, fmtHfHz);
-    eqLfFreqKnob     .setTooltip ("Pultec LF frequency (20/30/60/100 Hz). Dragging snaps to the hardware-canonical detents.");
-    eqHfBoostFreqKnob.setTooltip ("Pultec HF boost frequency (3/4/5/8/10/12/16 kHz). Detent-snapped.");
-    eqHfAttenFreqKnob.setTooltip ("Pultec HF attenuate frequency (5/10/20 kHz). Detent-snapped.");
+    eqLfFreqKnob     .setTooltip ("program-EQ LF frequency (20/30/60/100 Hz). Dragging snaps to the hardware-canonical detents.");
+    eqHfBoostFreqKnob.setTooltip ("program-EQ HF boost frequency (3/4/5/8/10/12/16 kHz). Detent-snapped.");
+    eqHfAttenFreqKnob.setTooltip ("program-EQ HF attenuate frequency (5/10/20 kHz). Detent-snapped.");
 
-    // Inline now shows the full Pultec surface (mirrors the popup editor):
+    // Inline now shows the full program-EQ surface (mirrors the popup editor):
     // Row 1 = 4 gain knobs, Row 2 = LF FREQ / HF BANDWIDTH / HF BOOST FREQ
     // / HF ATTEN FREQ, Row 3 = OUT centred. The "FREQS…" button is gone.
     styleSmallLabel (eqLfBoostLabel, "LF BOOST", pultecCream);
@@ -873,9 +873,9 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     styleSmallKnob (compAttack,      0.1, 50.0,    5.0, params.compAttackMs.load(),    compGold, "",   1);
     styleSmallKnob (compRelease,    50.0,1000.0, 200.0, params.compReleaseMs.load(),   compGold, "",   0);
     styleSmallKnob (compMakeup,    -10.0, 20.0,    0.0, params.compMakeupDb.load(),    compGold, "",   1);
-    compRatio  .setTooltip ("Master bus comp ratio (SSL-stepped: 2:1 / 4:1 / 10:1).");
-    compAttack .setTooltip ("Master bus comp attack (SSL-stepped: 0.1 / 0.3 / 1 / 3 / 10 / 30 ms).");
-    compRelease.setTooltip ("Master bus comp release (SSL-stepped: 0.1 / 0.3 / 0.6 / 1.2 s, top = AUTO).");
+    compRatio  .setTooltip ("Master bus comp ratio (stepped: 2:1 / 4:1 / 10:1).");
+    compAttack .setTooltip ("Master bus comp attack (stepped: 0.1 / 0.3 / 1 / 3 / 10 / 30 ms).");
+    compRelease.setTooltip ("Master bus comp release (stepped: 0.1 / 0.3 / 0.6 / 1.2 s, top = AUTO).");
     compMakeup .setTooltip ("Master bus comp make-up gain (-10..+20 dB). Double-click for 0 dB; Shift-drag for fine.");
     for (auto* k : { &compRatio, &compAttack, &compRelease, &compMakeup })
         k->setColour (juce::Slider::thumbColourId, juce::Colours::white);
@@ -915,8 +915,8 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     };
     styleCompactSectionBtn (eqCompactButton,   juce::Colour (0xff5fc46f));
     styleCompactSectionBtn (compCompactButton, juce::Colour (0xffe0c050));
-    eqCompactButton  .setTooltip ("Open the master EQ editor (Pultec-style Tube EQ).");
-    compCompactButton.setTooltip ("Open the master comp editor (SSL-style glue compressor).");
+    eqCompactButton  .setTooltip ("Open the master EQ editor (program-style Tube EQ).");
+    compCompactButton.setTooltip ("Open the master comp editor (console-style glue compressor).");
     eqCompactButton  .onClick = [this] { openEqEditorPopup(); };
     compCompactButton.onClick = [this] { openCompEditorPopup(); };
     addChildComponent (eqCompactButton);
@@ -1287,7 +1287,7 @@ void MasterStripComponent::timerCallback()
     syncKnob (eqHfAtten,     params.eqHfAtten         .load (std::memory_order_relaxed));
     // HF Bandwidth no longer inline; popup syncs from atom on open.
 
-    // Snap stepped freq knobs to nearest discrete Pultec position so
+    // Snap stepped freq knobs to nearest discrete program-EQ position so
     // popup edits / MIDI-bound writes reflect on the inline knob.
     auto syncFreqKnob = [] (juce::Slider& k, const int* hz, int count, float atomHz)
     {
@@ -1404,7 +1404,7 @@ void MasterStripComponent::paint (juce::Graphics& g)
     // EQ / COMP framed bands - same grammar as channel + bus strips.
     if (! eqArea.isEmpty())
     {
-        // Pultec EQP-1A chassis blue (teal-ish) — black bakelite knobs
+        // program-EQ EQP-1A chassis blue (teal-ish) — black bakelite knobs
         // + cream stencilling read as the real-hardware grammar.
         g.setColour (juce::Colour (0xff2c5060));
         g.fillRoundedRectangle (eqArea.toFloat(), 3.0f);
