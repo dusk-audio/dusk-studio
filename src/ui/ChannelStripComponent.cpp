@@ -1656,15 +1656,16 @@ void ChannelStripComponent::setMixingMode (bool mixing)
     // bounds and bleeds out behind the Insert button (still clickable).
     ioConfigButton     .setVisible (! mixing);
     modeSelector       .setVisible (! mixing);
-    inputSelector      .setVisible (! mixing);
-    inputSelectorR     .setVisible (! mixing);
-    midiInputSelector  .setVisible (! mixing);
-    midiChannelSelector.setVisible (! mixing);
-    midiActivityLed    .setVisible (! mixing);
-    midiOutputSelector .setVisible (! mixing);
     monitorButton      .setVisible (! mixing);
     armButton          .setVisible (! mixing);
     printButton        .setVisible (! mixing);
+    // The 6 input / MIDI selectors are also mode-dependent (a mono track has
+    // no R-input selector, an audio track no MIDI selectors). Don't force them
+    // all visible here - refreshInputSelectorVisibility() is the single source
+    // of truth, gating on BOTH mixingMode and track mode, so it's correct
+    // entering AND leaving Mixing. (A plain setVisible(!mixing) here left
+    // phantom rows when leaving Mixing onto a mono / MIDI strip.)
+    refreshInputSelectorVisibility();
 
     const bool showAux = mixing || usesFaderThresholdLayout();
     if (showAux && compactMode)
@@ -1677,10 +1678,6 @@ void ChannelStripComponent::setMixingMode (bool mixing)
         setAuxSectionVisible (showAux);
         auxCompactButton.setVisible (false);
     }
-
-    if (mixing)
-        refreshInputSelectorVisibility();   // not needed since selectors are hidden,
-                                            // but re-syncs when we leave Mixing later
 
     resized();
     repaint();
