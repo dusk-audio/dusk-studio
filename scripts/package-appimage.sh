@@ -6,8 +6,10 @@
 # Prerequisites:
 #   • build-linux/ already configured + built (Release).
 #   • linuxdeploy on $PATH.
-#   • assets/ds-icon.png present (committed; downscaled by linuxdeploy
-#     to the 256x256 hicolor slot).
+#   • assets/ds-icon.png present (committed). This script downscales it to
+#     256x256 with ImageMagick (magick/convert), or falls back to a straight
+#     copy if ImageMagick is absent; linuxdeploy only renames + packages the
+#     already-prepared icon.
 #
 # Output:
 #   DuskStudio-<version>-x86_64.AppImage in the repo root.
@@ -58,7 +60,7 @@ if command -v magick >/dev/null 2>&1; then
 elif command -v convert >/dev/null 2>&1; then
     convert "$ICON_SRC" -resize 256x256 "$ICON_256"
 else
-    echo "warning: ImageMagick (magick/convert) not on PATH - copying $ICON_SRC at native 500x500 into the 256x256 slot; icon validators may flag the size mismatch. Install imagemagick for a correctly-sized icon." >&2
+    echo "warning: ImageMagick (magick/convert) not on PATH - copying $ICON_SRC at its native size into the 256x256 slot; icon validators may flag the size mismatch. Install imagemagick for a correctly-sized icon." >&2
     cp "$ICON_SRC" "$ICON_256"
 fi
 
@@ -66,15 +68,16 @@ OUTPUT="DuskStudio-${VERSION}-x86_64.AppImage"
 export OUTPUT
 # linuxdeploy derives the AppImage's root icon name from the basename of
 # --icon-file; the .desktop file's Icon= field must match. Copy the
-# source to a basename of "DuskStudio.png" so linuxdeploy + .desktop
-# agree without renaming the committed asset.
+# already-resized ICON_256 to a basename of "DuskStudio.png" so linuxdeploy +
+# .desktop agree AND the root icon is the 256x256 image (not the 500x500
+# source), without renaming the committed asset.
 TMP_ICON_DIR="$(mktemp -d)"
 # Remove the temp icon dir on ANY exit. With set -e a linuxdeploy failure
 # bails before a trailing rm would run, so a plain cleanup line would leak
 # the dir; the trap fires on success, error, and interrupt alike.
 trap 'rm -rf "$TMP_ICON_DIR"' EXIT
 TMP_ICON="$TMP_ICON_DIR/DuskStudio.png"
-cp "$ICON_SRC" "$TMP_ICON"
+cp "$ICON_256" "$TMP_ICON"
 linuxdeploy --appdir AppDir \
             --desktop-file packaging/audio.dusk.studio.desktop \
             --icon-file    "$TMP_ICON" \

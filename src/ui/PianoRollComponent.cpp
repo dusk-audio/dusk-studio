@@ -2374,7 +2374,10 @@ void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
     //   - Draw mode: create a new note at the click (legacy pencil).
     //   - Grab mode: clear selection + drop cursor, no creation.
     //     Click-and-drag on empty space promotes to a box-select.
-    if (e.x < kKeyboardWidth || e.y < kToolbarHeight + kHeaderHeight) return;
+    // Positive grid-containment guard: clicks in the status / scrollbar
+    // gutter below the grid (not caught by the lane returns above) must not
+    // start a range-select or get eaten by the Cut/Grid early-return.
+    if (! noteGridArea().contains (e.x, e.y)) return;
 
     // Drop the edit cursor at the snapped click tick, regardless of
     // which sub-path runs next (box-select, note-create, or just an

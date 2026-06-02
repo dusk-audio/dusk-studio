@@ -83,6 +83,10 @@ void inferAudioFormat (const juce::File& sessionDir,
 
     juce::AudioFormatManager fm;
     fm.registerBasicFormats();
+    // registerBasicFormats covers WAV + AIFF only; the file glob above also
+    // matches .flac, so register it explicitly or the SR / bit-depth columns
+    // stay blank for FLAC-only sessions.
+    fm.registerFormat (new juce::FlacAudioFormat(), false);
     std::unique_ptr<juce::AudioFormatReader> reader
         (fm.createReaderFor (files.getReference (0)));
     if (reader == nullptr) return;
@@ -218,8 +222,12 @@ bool StartupDialog::keyPressed (const juce::KeyPress& key)
 {
     if (key.isKeyCode (juce::KeyPress::escapeKey))
     {
+        // onSkip may synchronously dismiss + delete this dialog (via the
+        // onDismiss path), so guard the follow-up closeDialog like the
+        // openTab / newTab / openSelectedRow handlers do.
+        juce::Component::SafePointer<StartupDialog> safe (this);
         if (onSkip) onSkip();
-        closeDialog (0);
+        if (safe != nullptr) safe->closeDialog (0);
         return true;
     }
     if (key.isKeyCode (juce::KeyPress::returnKey))

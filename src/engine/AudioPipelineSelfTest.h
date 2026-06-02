@@ -62,10 +62,11 @@ private:
         std::array<float, Session::kNumTracks> lmGainDb {};
         std::array<float, Session::kNumTracks> hmGainDb {};
         std::array<float, Session::kNumTracks> hfGainDb {};
-        // prepareCleanState clears track 0's busAssign and testMasterComp...
-        // enables the master comp; capture both so the live session is fully
-        // restored after a run.
-        std::array<bool, ChannelStripParams::kNumBuses> track0BusAssign {};
+        // prepareCleanState clears track 0's busAssign and testCompPerTrack
+        // clears every track's; capture all so the live session's routing is
+        // fully restored after a run.
+        std::array<std::array<bool, ChannelStripParams::kNumBuses>,
+                   Session::kNumTracks> trackBusAssign {};
         // testBusSoloMutesDirect solos bus 0; capture every bus's solo so a
         // user's pre-existing bus solo survives a self-test run.
         std::array<bool, Session::kNumBuses> busSolo {};

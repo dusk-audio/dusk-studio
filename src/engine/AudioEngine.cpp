@@ -458,6 +458,19 @@ void AudioEngine::openConfiguredMidiOutputs()
         ensureMidiOutputOpen (i);
 }
 
+void AudioEngine::openConfiguredMidiOutputsSafely()
+{
+    // Session-load calls this with the audio callback ATTACHED, but
+    // ensureMidiOutputOpen mutates the midiOutputs bank the audio thread
+    // reads (midiOutputs[idx] in the clock / MCU send paths). Detach the
+    // callback for the brief open pass — same contract refreshMidiInputs()
+    // and rebuildMidiOutputBank() rely on. The startup caller runs pre-attach
+    // and uses openConfiguredMidiOutputs() directly.
+    deviceManager.removeAudioCallback (this);
+    openConfiguredMidiOutputs();
+    deviceManager.addAudioCallback (this);
+}
+
 void AudioEngine::handleIncomingMidiMessage (juce::MidiInput* source,
                                                 const juce::MidiMessage& message)
 {
@@ -2117,7 +2130,16 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
     for (auto& v : auxLaneL) juce::FloatVectorOperations::clear (v.data(), numSamples);
     for (auto& v : auxLaneR) juce::FloatVectorOperations::clear (v.data(), numSamples);
 
-    const bool anyChannelSolo = session.anyTrackSoloed();
+    // Solo automation routes into per-track liveSolo (in the strip loop below)
+    // and bypasses the manual-solo RT counter anyTrackSoloed() reads — so an
+    // automation-only solo would never engage the aggregate mute gate. Scan
+    // liveSolo too (last block's routed value: one block stale, imperceptible
+    // for a discrete solo) so the gate fires for automated solos as well.
+    bool anyChannelSolo = session.anyTrackSoloed();
+    if (! anyChannelSolo)
+        for (int t = 0; t < Session::kNumTracks; ++t)
+            if (session.track (t).strip.liveSolo.load (std::memory_order_relaxed))
+            { anyChannelSolo = true; break; }
     const bool anyBusSolo     = session.anyBusSoloed();
 
     std::array<float*, ChannelStrip::kNumBuses> busLPtrs {};

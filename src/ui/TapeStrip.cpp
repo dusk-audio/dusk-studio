@@ -458,6 +458,34 @@ int TapeStrip::xForSample (juce::int64 s) const noexcept
     return tracksColumnBounds().getX() + (int) ((double) rel / sr * px);
 }
 
+juce::Rectangle<int> TapeStrip::audioRegionScreenRect (int trackIdx, int regionIdx) const noexcept
+{
+    if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return {};
+    const auto& ar = session.track (trackIdx).regions;
+    if (regionIdx < 0 || regionIdx >= (int) ar.size()) return {};
+    const auto& r = ar[(size_t) regionIdx];
+    const auto row = rowBounds (trackIdx);
+    if (row.isEmpty()) return {};
+    const int x0 = xForSample (r.timelineStart);
+    const int x1 = xForSample (r.timelineStart + r.lengthInSamples);
+    juce::Rectangle<int> rect (x0, row.getY() + 1, juce::jmax (2, x1 - x0), row.getHeight() - 2);
+    return rect.getIntersection (tracksColumnBounds());
+}
+
+juce::Rectangle<int> TapeStrip::midiRegionScreenRect (int trackIdx, int regionIdx) const noexcept
+{
+    if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return {};
+    const auto& mr = session.track (trackIdx).midiRegions.current();
+    if (regionIdx < 0 || regionIdx >= (int) mr.size()) return {};
+    const auto& r = mr[(size_t) regionIdx];
+    const auto row = rowBounds (trackIdx);
+    if (row.isEmpty()) return {};
+    const int x0 = xForSample (r.timelineStart);
+    const int x1 = xForSample (r.timelineStart + r.lengthInSamples);
+    juce::Rectangle<int> rect (x0, row.getY() + 1, juce::jmax (2, x1 - x0), row.getHeight() - 2);
+    return rect.getIntersection (tracksColumnBounds());
+}
+
 TapeStrip::RegionHit TapeStrip::hitTestRegion (int x, int y) const noexcept
 {
     auto col = tracksColumnBounds();
@@ -1966,8 +1994,14 @@ void TapeStrip::mouseMove (const juce::MouseEvent& e)
             hoveredRegion = hit.regionIdx;
             repaint();
         }
-        setMouseCursor (juce::MouseCursor::NoCursor);
-        return;
+        // Only the track lanes are the cut surface (scissor glyph). Over the
+        // ruler / label column, fall through so loop/punch bracket + marker
+        // hover affordances still work in Cut mode.
+        if (tracksColumnBounds().contains (e.x, e.y))
+        {
+            setMouseCursor (juce::MouseCursor::NoCursor);
+            return;
+        }
     }
 
     // Cursor feedback so the user can tell where edges/body are without

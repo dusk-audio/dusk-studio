@@ -1,5 +1,7 @@
 # Dusk Studio
 
+> **Disclaimer:** I build Dusk Studio with the help of AI coding tools. If you have an issue with that, this DAW is not for you.
+
 [![Linux build](https://github.com/dusk-audio/dusk-studio/actions/workflows/linux-build.yml/badge.svg)](https://github.com/dusk-audio/dusk-studio/actions/workflows/linux-build.yml)
 [![macOS build](https://github.com/dusk-audio/dusk-studio/actions/workflows/macos-build.yml/badge.svg)](https://github.com/dusk-audio/dusk-studio/actions/workflows/macos-build.yml)
 [![Windows build](https://github.com/dusk-audio/dusk-studio/actions/workflows/windows-build.yml/badge.svg)](https://github.com/dusk-audio/dusk-studio/actions/workflows/windows-build.yml)
@@ -33,7 +35,7 @@ Paid via [Patreon](https://www.patreon.com/cw/DuskAudio) (recurring) or [GitHub 
 
 ## Status
 
-**v0.10.0-beta.1.** Feature backlog effectively closed: every spec phase, Tascam DP-24SD parity, MTC + MIDI Clock sync, cross-platform OOP plugin host (audio on all three OSes; editor embedded on Linux + Windows, in-process shell on macOS), and the rename to Dusk Studio have shipped. Remaining 1.0 work is the macOS notarised DMG (deferred until paid Apple Dev cert), deeper accessibility, and cross-process NSView embedding research.
+**v0.9.0 (beta).** Feature backlog effectively closed: every spec phase, Tascam DP-24SD parity, MTC + MIDI Clock sync, cross-platform OOP plugin host (audio on all three OSes; editor embedded on Linux + Windows, in-process shell on macOS), and the rename to Dusk Studio have shipped. Remaining 1.0 work is the macOS notarised DMG (deferred until paid Apple Dev cert), deeper accessibility, and cross-process NSView embedding research.
 
 | Stage | Status |
 |---|---|
@@ -62,7 +64,7 @@ Paid via [Patreon](https://www.patreon.com/cw/DuskAudio) (recurring) or [GitHub 
 | macOS signed + notarised DMG | Deferred (paid Apple Dev cert) |
 | Deeper a11y (full screen-reader labels + keyboard-only mixer nav) | Floor only |
 
-143 Catch2 unit tests across 35 files. Linux (amd64 + arm64) + macOS + Windows builds run on every push; Windows tests run on every push; Linux ThreadSanitizer runs on every PR + push.
+150 Catch2 unit tests across 38 files. Linux (amd64 + arm64) + macOS + Windows builds run on every push; Windows tests run on every push; Linux ThreadSanitizer runs on every PR + push.
 
 ## Bug reports
 
@@ -112,7 +114,7 @@ src/
   session/     # Session model + JSON serialisation
   ui/          # MainComponent, ConsoleView, channel/aux/master strips, mastering view
   util/        # CrashHandler (FileLogger + signal-handler reports)
-tests/         # 144 Catch2 unit tests (session, recording, MIDI, IPC, DSP)
+tests/         # 150 Catch2 unit tests (session, recording, MIDI, IPC, DSP)
 packaging/     # .desktop, AppStream, MIME, macOS bundle — for AppImage + DMG builds
 DuskStudio.md  # authoritative product spec
 MANUAL.md      # end-user manual (Pandoc-buildable to PDF via packaging/build-pdf.sh)
@@ -148,5 +150,5 @@ Dusk Studio ships under a **dual access model**:
   Developer cert is in hand). The payment is for packaging, signing,
   and support access — the source remains open. Self-builders get no
   support, but the code is the same.
-- **Paid 1.0 ($29)**: same source, same GPL. Buys you the signed
+- **Paid licence ($27)**: same source, same GPL. Buys you the signed
   installer + access to bug triage.

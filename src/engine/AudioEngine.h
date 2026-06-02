@@ -99,7 +99,13 @@ public:
 
     // Open the MIDI output every track is routed to. Called once after
     // SessionSerializer::load resolves identifiers. Message-thread only.
+    // Caller MUST have the audio callback detached (startup pre-attach path).
     void openConfiguredMidiOutputs();
+
+    // Same, but for live callers (session load) where the audio callback is
+    // attached: detaches it around the bank mutation so the audio thread
+    // never reads midiOutputs mid-open. Message-thread only.
+    void openConfiguredMidiOutputsSafely();
 
     juce::UndoManager& getUndoManager() noexcept { return undoManager; }
 

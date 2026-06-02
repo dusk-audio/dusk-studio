@@ -145,16 +145,21 @@ std::pair<int, int> ConsoleView::rangeForBank (int bankIndex) const noexcept
 
 void ConsoleView::setBank (int bankIndex)
 {
+    const int requested = bankIndex;
     bankIndex = juce::jlimit (0, juce::jmax (0, numBanks() - 1), bankIndex);
     if (bankIndex == currentBank) return;
     currentBank = bankIndex;
     // Publish the active bank to the audio thread so bank-relative MIDI
     // bindings (TrackFaderBank etc.) resolve to the visible 8 tracks.
     sessionRef.activeBank.store (bankIndex, std::memory_order_relaxed);
-    // Keep the MCU surface on the same bank: a screen / keyboard (Cmd+1/2/3)
-    // bank change moves which 8 tracks the control surface drives, and the
-    // timer below won't fight it because mcu.bank now matches.
-    sessionRef.mcu.bank.store (bankIndex, std::memory_order_relaxed);
+    // Keep the MCU surface on the same bank ONLY when the requested bank was a
+    // valid screen bank (Cmd+1/2/3 within numBanks). The MCU has its own fixed
+    // 3-bank range (kNumBanks); when this call is the timer mirroring a
+    // hardware bank the screen can't show (numBanks collapsed because all
+    // tracks fit at once), the request clamps — writing the clamped value back
+    // would force the surface off banks 9-16/17-24. Skip the store then.
+    if (requested == bankIndex)
+        sessionRef.mcu.bank.store (bankIndex, std::memory_order_relaxed);
 
     updateBankVisibility();
     resized();
@@ -207,11 +212,13 @@ void ConsoleView::resized()
     currentBank = juce::jlimit (0, juce::jmax (0, numBanks() - 1), currentBank);
     if (currentBank != preClampBank)
     {
-        // Republish the clamped bank so the audio thread (bank-relative MIDI
-        // bindings) + MCU mirror don't stay pointed past the end — setBank's
-        // early-return can't correct them once they disagree with currentBank.
+        // Republish the clamped SCREEN bank so bank-relative MIDI bindings
+        // don't stay pointed past the end. Do NOT clamp mcu.bank here — the
+        // MCU surface owns its own fixed 3-bank range (kNumBanks) independent
+        // of the width-driven screen banking; clamping it to numBanks would
+        // strand the surface on bank 0 whenever the window is wide enough to
+        // show every track at once.
         sessionRef.activeBank.store (currentBank, std::memory_order_relaxed);
-        sessionRef.mcu.bank.store   (currentBank, std::memory_order_relaxed);
     }
     updateBankVisibility();
 

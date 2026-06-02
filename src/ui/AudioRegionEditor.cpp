@@ -1070,15 +1070,20 @@ juce::MouseCursor AudioRegionEditor::cursorForPoint (int x, int y) const
         }
     }
 
-    if (fadeInHandleRect (waveArea).contains (x, y)
-        || fadeOutHandleRect (waveArea).contains (x, y))
+    // A locked region blocks fade / trim / gain drags in mouseDown, so don't
+    // advertise the resize cursors over those hotspots either.
+    const auto* lockedRegion = region();
+    const bool  locked = (lockedRegion != nullptr && lockedRegion->locked);
+
+    if (! locked && (fadeInHandleRect (waveArea).contains (x, y)
+        || fadeOutHandleRect (waveArea).contains (x, y)))
         return juce::MouseCursor::LeftRightResizeCursor;
 
-    if (trimStartRect (waveArea).contains (x, y)
-        || trimEndRect (waveArea).contains (x, y))
+    if (! locked && (trimStartRect (waveArea).contains (x, y)
+        || trimEndRect (waveArea).contains (x, y)))
         return juce::MouseCursor::LeftRightResizeCursor;
 
-    if (waveArea.contains (x, y) && std::abs (y - gainLineY (waveArea)) <= 4)
+    if (! locked && waveArea.contains (x, y) && std::abs (y - gainLineY (waveArea)) <= 4)
         return juce::MouseCursor::UpDownResizeCursor;
 
     if (waveArea.contains (x, y))
@@ -1903,11 +1908,19 @@ void AudioRegionEditor::mouseUp (const juce::MouseEvent&)
 {
     auto* r = region();
     // Pan ends with no undo entry / no state to commit - just clear the
-    // drag state and restore the default cursor.
+    // drag state and restore the cursor for whatever's under the pointer
+    // now (mirrors the loop/punch branch below; forcing the arrow would
+    // drop the hover cursor until the next move).
     if (dragMode == DragMode::Pan)
     {
         dragMode = DragMode::None;
-        setMouseCursor (juce::MouseCursor::NormalCursor);
+        const auto p = getMouseXYRelative();
+        setMouseCursor (cursorForPoint (p.x, p.y));
+        // Re-push the overlay glyph: the pan drag suppressed it (dragOwnsCursor),
+        // so an edit-mode glyph + hidden native cursor would leave nothing
+        // visible until the next mouse move.
+        pushCursorPosition (p.x, p.y);
+        repaint();
         return;
     }
     if (dragMode == DragMode::LoopIn || dragMode == DragMode::LoopOut
@@ -1943,7 +1956,12 @@ void AudioRegionEditor::mouseUp (const juce::MouseEvent&)
         }
         draggedPointIdx = -1;
         dragMode = DragMode::None;
-        setMouseCursor (juce::MouseCursor::NormalCursor);
+        const auto p = getMouseXYRelative();
+        setMouseCursor (cursorForPoint (p.x, p.y));
+        // Re-push the overlay glyph (see the Pan branch): the point drag
+        // suppressed it, so refresh it at the release position.
+        pushCursorPosition (p.x, p.y);
+        repaint();
         return;
     }
     if (dragMode == DragMode::Range)
@@ -2381,8 +2399,14 @@ bool AudioRegionEditor::keyPressed (const juce::KeyPress& k)
                 }
                 else
                 {
-                    if (sh) transport.setPunchRange (juce::jmin (transport.getPunchIn(),   cursorTl), cursorTl);
-                    else    transport.setLoopRange  (juce::jmin (transport.getLoopStart(), cursorTl), cursorTl);
+                    // An unset partner reads as 0 (the transport sentinel). Fold
+                    // that to cursorTl so ']' alone drops a zero-width out marker
+                    // at the cursor — symmetric with '[' above — instead of
+                    // synthesising a 0..cursor range.
+                    auto start = sh ? transport.getPunchIn() : transport.getLoopStart();
+                    if (start == 0) start = cursorTl;
+                    if (sh) transport.setPunchRange (juce::jmin (start, cursorTl), cursorTl);
+                    else    transport.setLoopRange  (juce::jmin (start, cursorTl), cursorTl);
                 }
                 repaint();
                 return true;

@@ -768,13 +768,12 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm)
                 AutomationPoint pt;
                 pt.timeSamples   = (juce::int64) pv["t"];
                 pt.value         = juce::jlimit (0.0f, 1.0f, (float) (double) pv["v"]);
-                // Spec calls for migrating missing BPM to session BPM at
-                // load. 3c-i never reaches that case in practice (we only
-                // load what we just saved); 3c-iii's BPM-change retime
-                // dialog will tighten this when it lands.
+                // Legacy / hand-edited points with no bpm anchor to the
+                // session's load-time tempo (not a hard-coded 120) so a later
+                // tempo change retimes them against the right reference.
                 pt.recordedAtBPM = pv.hasProperty ("bpm")
                     ? (float) (double) pv["bpm"]
-                    : 120.0f;
+                    : (float) defaultRecordBpm;
                 lane.points.push_back (pt);
             }
             // Belt-and-braces sort - hand-edited JSON or out-of-order
@@ -937,7 +936,7 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm)
     t.midiRegions.publish (std::move (freshMidi));
 }
 
-void restoreBus (Bus& a, const juce::var& v)
+void restoreBus (Bus& a, const juce::var& v, double defaultRecordBpm)
 {
     if (! v.isObject()) return;
     if (auto s = v["name"].toString();   s.isNotEmpty()) a.name = s;
@@ -983,7 +982,7 @@ void restoreBus (Bus& a, const juce::var& v)
                 pt.value         = juce::jlimit (0.0f, 1.0f, (float) (double) pv["v"]);
                 pt.recordedAtBPM = pv.hasProperty ("bpm")
                     ? (float) (double) pv["bpm"]
-                    : 120.0f;
+                    : (float) defaultRecordBpm;
                 lane.points.push_back (pt);
             }
             std::sort (lane.points.begin(), lane.points.end(),
@@ -1346,7 +1345,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
     {
         const int n = juce::jmin (Session::kNumBuses, busesArr.size());
         for (int i = 0; i < n; ++i)
-            restoreBus (s.bus (i), busesArr[i]);
+            restoreBus (s.bus (i), busesArr[i], sessionLoadBpm);
     }
     if (auto auxLanesArr = root["aux_lanes"]; auxLanesArr.isArray())
     {
@@ -1422,7 +1421,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                         pt.value         = juce::jlimit (0.0f, 1.0f, (float) (double) pv["v"]);
                         pt.recordedAtBPM = pv.hasProperty ("bpm")
                             ? (float) (double) pv["bpm"]
-                            : 120.0f;
+                            : (float) sessionLoadBpm;
                         al.points.push_back (pt);
                     }
                 }
@@ -1507,7 +1506,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                     pt.value         = juce::jlimit (0.0f, 1.0f, (float) (double) pv["v"]);
                     pt.recordedAtBPM = pv.hasProperty ("bpm")
                         ? (float) (double) pv["bpm"]
-                        : 120.0f;
+                        : (float) sessionLoadBpm;
                     al.points.push_back (pt);
                 }
             }

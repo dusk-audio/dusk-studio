@@ -502,7 +502,8 @@ MainComponent::MainComponent()
         const char* loadPathEnv = std::getenv ("DUSKSTUDIO_LOAD_SESSION");
         const bool willLoadSession = (loadPathEnv != nullptr && *loadPathEnv);
         startupDialogPending = (! willLoadSession
-                                && std::getenv ("DUSKSTUDIO_SKIP_STARTUP_DIALOG") == nullptr);
+                                && std::getenv ("DUSKSTUDIO_SKIP_STARTUP_DIALOG") == nullptr
+                                && std::getenv ("DUSKSTUDIO_CAPTURE_DIR") == nullptr);
     }
 
     setSize (w, h);
@@ -568,10 +569,13 @@ MainComponent::MainComponent()
                 safeThis->loadSessionFromJson (juce::File (pathStr));
         });
     }
-    else if (std::getenv ("DUSKSTUDIO_SKIP_STARTUP_DIALOG") == nullptr)
+    else if (std::getenv ("DUSKSTUDIO_SKIP_STARTUP_DIALOG") == nullptr
+             && std::getenv ("DUSKSTUDIO_CAPTURE_DIR") == nullptr)
     {
         // startupDialogPending was already set before setSize() above (so the
         // scan-kicking resized() saw the gate); just queue the dialog here.
+        // Capture mode suppresses the picker too — its modal would overlay
+        // the snapshots (mirrors the CAPTURE_DIR guard in the scan path).
         juce::Component::SafePointer<MainComponent> safeThis (this);
         juce::MessageManager::callAsync ([safeThis]
         {
@@ -608,6 +612,10 @@ MainComponent::MainComponent()
     // we cannot rely on screen-space polling).
     cursorOverlay = std::make_unique<CursorOverlay>();
     addAndMakeVisible (cursorOverlay.get());
+    // Size it now — setSize() above already ran resized() before this overlay
+    // existed, so without this it sits at 0x0 (invisible glyph) until the
+    // first window resize.
+    cursorOverlay->setBounds (getLocalBounds());
 
     // Autosave heartbeat. Writes session.json.autosave next to the canonical
     // session.json every kAutosaveIntervalMs (30 s) so a crash loses at most
@@ -1871,6 +1879,14 @@ void MainComponent::requestQuit()
     bool dirty = false;
     if (dir != juce::File())
     {
+        // Publish live plugin + transport/tape state into the Session model
+        // first — the serializer reads only from Session, so without this a
+        // just-touched plugin/tape param stays at its last-published value and
+        // the compare would falsely read clean (lost-edit-on-quit). Mirrors
+        // the save / autosave bookend; audio is live here so no detach.
+        engine.publishPluginStateForSave (/*audioCallbackDetached*/ false);
+        engine.publishTransportStateForSave();
+
         // Compare with volatile state stripped (same as the autosave dirty
         // check) - otherwise refreshed transient fields (playhead, view
         // state, timestamps) flip the raw JSON and prompt on a clean session.
@@ -2312,7 +2328,9 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     // Open MIDI output ports for any tracks the loaded session had
     // routed. Done here (not in the engine constructor) so startup
     // never blocks on snd_seq_connect_to for ports nobody uses.
-    engine.openConfiguredMidiOutputs();
+    // Safely variant: the audio callback is live on the load path (the
+    // lightweight reresolve above doesn't detach), so the bank open must.
+    engine.openConfiguredMidiOutputsSafely();
     const auto tAfterMidiOuts = juce::Time::getMillisecondCounterHiRes();
 
     // Reconstruct the console so all controls reflect the freshly
@@ -3330,8 +3348,67 @@ void MainComponent::cleanOutUnreferencedFiles()
                        /*destructive*/ true);
 }
 
+namespace
+{
+// Editor expand/collapse timing. Open is a touch slower than close so the
+// panel "blooms" out of the region but dismisses crisply.
+constexpr int kEditorOpenMs  = 180;
+constexpr int kEditorCloseMs = 150;
+
+// A start rect is only animatable when it's on-screen and big enough that the
+// editor's resized() math has something to chew on; otherwise snap to final.
+bool editorStartRectUsable (juce::Rectangle<int> r) noexcept
+{
+    return ! r.isEmpty() && r.getWidth() >= 2 && r.getHeight() >= 2;
+}
+
+// One-shot timer that fires `fn` once after `ms` then idles. Owned by
+// MainComponent so it outlives the ComponentAnimator's collapse run.
+class OneShotTimer final : public juce::Timer
+{
+public:
+    OneShotTimer (int ms, std::function<void()> f) : fn (std::move (f)) { startTimer (ms); }
+    void timerCallback() override
+    {
+        stopTimer();
+        auto f = fn;
+        fn = nullptr;
+        if (f) f();
+    }
+private:
+    std::function<void()> fn;
+};
+
+// Fade the dim in; scale the editor out of `startRect` into `finalBounds`.
+// Editor + dim must already be visible children. Falls back to a hard snap
+// when the source rect is off-screen / degenerate.
+void animateEditorOpen (juce::Component& editor, juce::Component& dim,
+                        juce::Rectangle<int> finalBounds,
+                        juce::Rectangle<int> startRect)
+{
+    auto& animator = juce::Desktop::getInstance().getAnimator();
+    dim.setAlpha (0.0f);
+    animator.animateComponent (&dim, dim.getBounds(), 1.0f, kEditorOpenMs, false, 1.0, 0.0);
+
+    if (editorStartRectUsable (startRect))
+    {
+        editor.setBounds (startRect);
+        animator.animateComponent (&editor, finalBounds, 1.0f, kEditorOpenMs, false, 1.0, 0.0);
+    }
+    else
+    {
+        editor.setBounds (finalBounds);
+        editor.setAlpha (1.0f);
+    }
+}
+} // namespace
+
 void MainComponent::openPianoRoll (int trackIdx, int regionIdx)
 {
+    // Drop any pending collapse-teardown so a stale timer can't tear down
+    // the editor we're about to open (swap mid-collapse).
+    editorTeardownTimer.reset();
+
     // Mutually exclusive with the audio editor. Opening the piano roll
     // tears down any open audio editor first.
     if (audioEditor != nullptr) closeAudioEditor();
@@ -3345,8 +3422,8 @@ void MainComponent::openPianoRoll (int trackIdx, int regionIdx)
     {
         const bool sameRegion = (pianoRollTrackIdx == trackIdx
                                   && pianoRollRegionIdx == regionIdx);
+        if (sameRegion) { closePianoRollAnimated(); return; }
         closePianoRoll();
-        if (sameRegion) return;
     }
 
     pianoRoll = std::make_unique<PianoRollComponent> (session, engine, trackIdx, regionIdx);
@@ -3362,12 +3439,19 @@ void MainComponent::openPianoRoll (int trackIdx, int regionIdx)
     const int inset = juce::jmax (24, juce::jmin (bounds.getWidth(), bounds.getHeight()) / 16);
     const auto rollBounds = bounds.reduced (inset);
 
+    juce::Rectangle<int> startRect;
+    if (tapeStrip != nullptr)
+    {
+        const auto rr = tapeStrip->midiRegionScreenRect (trackIdx, regionIdx);
+        if (! rr.isEmpty())
+            startRect = getLocalArea (tapeStrip.get(), rr);
+    }
+
     pianoRollDim->setBounds (bounds);
-    pianoRollDim->onClick = [this] { closePianoRoll(); };
+    pianoRollDim->onClick = [this] { closePianoRollAnimated(); };
     addAndMakeVisible (pianoRollDim.get());
 
-    pianoRoll->setBounds (rollBounds);
-    pianoRoll->onCloseRequested = [this] { closePianoRoll(); };
+    pianoRoll->onCloseRequested = [this] { closePianoRollAnimated(); };
     pianoRoll->onMouseMovedForCursor =
         [this] (juce::Component& src, juce::Point<int> localInSrc, EditMode m,
                 juce::Range<int> cutLine)
@@ -3386,10 +3470,19 @@ void MainComponent::openPianoRoll (int trackIdx, int regionIdx)
     };
     addAndMakeVisible (pianoRoll.get());
     pianoRoll->grabKeyboardFocus();
+
+    animateEditorOpen (*pianoRoll, *pianoRollDim, rollBounds, startRect);
 }
 
 void MainComponent::closePianoRoll()
 {
+    // Cancel any in-flight collapse animation BEFORE resetting — the
+    // ComponentAnimator holds raw pointers and would tick into freed
+    // memory otherwise (false = leave at current pos, don't snap).
+    auto& animator = juce::Desktop::getInstance().getAnimator();
+    if (pianoRoll != nullptr) animator.cancelAnimation (pianoRoll.get(), false);
+    if (pianoRollDim != nullptr) animator.cancelAnimation (pianoRollDim.get(), false);
+
     // Clear the shared CursorOverlay first — JUCE doesn't fire
     // mouseExit on a component being removed, so the editor's
     // onMouseExitedForCursor callback won't run on its own. Without
@@ -3403,11 +3496,41 @@ void MainComponent::closePianoRoll()
     pianoRollDim.reset();
     pianoRollTrackIdx  = -1;
     pianoRollRegionIdx = -1;
-    if (tapeStrip != nullptr) tapeStrip->repaint();
+    // The editor's toolbar may have changed session.editMode while open;
+    // refresh the strip's native cursor so it reflects the mode immediately
+    // rather than waiting for the first mouse move over the strip.
+    if (tapeStrip != nullptr) { tapeStrip->refreshModeCursor(); tapeStrip->repaint(); }
+}
+
+void MainComponent::closePianoRollAnimated()
+{
+    if (pianoRoll == nullptr) return;
+
+    juce::Rectangle<int> startRect;
+    if (tapeStrip != nullptr)
+    {
+        const auto rr = tapeStrip->midiRegionScreenRect (pianoRollTrackIdx, pianoRollRegionIdx);
+        if (! rr.isEmpty())
+            startRect = getLocalArea (tapeStrip.get(), rr);
+    }
+    // No usable target rect (region scrolled off): skip the collapse and
+    // tear down immediately.
+    if (! editorStartRectUsable (startRect)) { closePianoRoll(); return; }
+
+    if (cursorOverlay != nullptr) cursorOverlay->clearMousePosition();
+    auto& animator = juce::Desktop::getInstance().getAnimator();
+    animator.animateComponent (pianoRoll.get(), startRect, 0.0f, kEditorCloseMs, false, 1.0, 0.0);
+    if (pianoRollDim != nullptr)
+        animator.animateComponent (pianoRollDim.get(), pianoRollDim->getBounds(), 0.0f,
+                                   kEditorCloseMs, false, 1.0, 0.0);
+    editorTeardownTimer = std::make_unique<OneShotTimer> (kEditorCloseMs, [this] { closePianoRoll(); });
 }
 
 void MainComponent::openAudioEditor (int trackIdx, int regionIdx)
 {
+    // Drop any pending collapse-teardown (see openPianoRoll).
+    editorTeardownTimer.reset();
+
     // Mutual exclusion with the piano roll - opening the audio editor
     // tears down any open piano roll first.
     if (pianoRoll != nullptr) closePianoRoll();
@@ -3418,8 +3541,8 @@ void MainComponent::openAudioEditor (int trackIdx, int regionIdx)
     {
         const bool sameRegion = (audioEditorTrackIdx == trackIdx
                                   && audioEditorRegionIdx == regionIdx);
+        if (sameRegion) { closeAudioEditorAnimated(); return; }
         closeAudioEditor();
-        if (sameRegion) return;
     }
 
     audioEditor = std::make_unique<AudioRegionEditor> (session, engine, trackIdx, regionIdx);
@@ -3431,12 +3554,19 @@ void MainComponent::openAudioEditor (int trackIdx, int regionIdx)
     const int inset = juce::jmax (24, juce::jmin (bounds.getWidth(), bounds.getHeight()) / 16);
     const auto editorBounds = bounds.reduced (inset);
 
+    juce::Rectangle<int> startRect;
+    if (tapeStrip != nullptr)
+    {
+        const auto rr = tapeStrip->audioRegionScreenRect (trackIdx, regionIdx);
+        if (! rr.isEmpty())
+            startRect = getLocalArea (tapeStrip.get(), rr);
+    }
+
     audioEditorDim->setBounds (bounds);
-    audioEditorDim->onClick = [this] { closeAudioEditor(); };
+    audioEditorDim->onClick = [this] { closeAudioEditorAnimated(); };
     addAndMakeVisible (audioEditorDim.get());
 
-    audioEditor->setBounds (editorBounds);
-    audioEditor->onCloseRequested = [this] { closeAudioEditor(); };
+    audioEditor->onCloseRequested = [this] { closeAudioEditorAnimated(); };
     audioEditor->onMouseMovedForCursor =
         [this] (juce::Component& src, juce::Point<int> localInSrc, EditMode m,
                 juce::Range<int> cutLine)
@@ -3453,10 +3583,18 @@ void MainComponent::openAudioEditor (int trackIdx, int regionIdx)
     };
     addAndMakeVisible (audioEditor.get());
     audioEditor->grabKeyboardFocus();
+
+    animateEditorOpen (*audioEditor, *audioEditorDim, editorBounds, startRect);
 }
 
 void MainComponent::closeAudioEditor()
 {
+    // Cancel any in-flight collapse animation BEFORE resetting — the
+    // ComponentAnimator holds raw pointers (see closePianoRoll).
+    auto& animator = juce::Desktop::getInstance().getAnimator();
+    if (audioEditor    != nullptr) animator.cancelAnimation (audioEditor.get(), false);
+    if (audioEditorDim != nullptr) animator.cancelAnimation (audioEditorDim.get(), false);
+
     // Same reasoning as closePianoRoll — clear the overlay first so
     // the painted glyph + Linux native-cursor hide don't outlive the
     // editor.
@@ -3467,7 +3605,31 @@ void MainComponent::closeAudioEditor()
     audioEditorDim.reset();
     audioEditorTrackIdx  = -1;
     audioEditorRegionIdx = -1;
-    if (tapeStrip != nullptr) tapeStrip->repaint();
+    // Refresh the strip cursor for any mode change made in the editor (see
+    // closePianoRoll).
+    if (tapeStrip != nullptr) { tapeStrip->refreshModeCursor(); tapeStrip->repaint(); }
+}
+
+void MainComponent::closeAudioEditorAnimated()
+{
+    if (audioEditor == nullptr) return;
+
+    juce::Rectangle<int> startRect;
+    if (tapeStrip != nullptr)
+    {
+        const auto rr = tapeStrip->audioRegionScreenRect (audioEditorTrackIdx, audioEditorRegionIdx);
+        if (! rr.isEmpty())
+            startRect = getLocalArea (tapeStrip.get(), rr);
+    }
+    if (! editorStartRectUsable (startRect)) { closeAudioEditor(); return; }
+
+    if (cursorOverlay != nullptr) cursorOverlay->clearMousePosition();
+    auto& animator = juce::Desktop::getInstance().getAnimator();
+    animator.animateComponent (audioEditor.get(), startRect, 0.0f, kEditorCloseMs, false, 1.0, 0.0);
+    if (audioEditorDim != nullptr)
+        animator.animateComponent (audioEditorDim.get(), audioEditorDim->getBounds(), 0.0f,
+                                   kEditorCloseMs, false, 1.0, 0.0);
+    editorTeardownTimer = std::make_unique<OneShotTimer> (kEditorCloseMs, [this] { closeAudioEditor(); });
 }
 
 namespace

@@ -262,25 +262,22 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
         removeChildComponent (&m);
     };
 
+    // np-10/ed-04 and np-11/ed-05 are the same figure under two names: render
+    // once, copy to the alias.
+    auto alias = [&] (const juce::String& from, const juce::String& to)
+    {
+        outDir.getChildFile (from).copyFileTo (outDir.getChildFile (to));
+    };
     {
         AudioRegionEditor ed (session, engine, 0, 0);
         modalShot (ed, 1000, 640, "np-10-region-editor.png", 500);
-        // Re-snapshot under the second documented name (same figure).
-        addAndMakeVisible (ed);
-        ed.setBounds ((juce::jmax (1000, getWidth()) - 1000) / 2,
-                      (juce::jmax (640, getHeight()) - 640) / 2, 1000, 640);
-        snapshotComponent (&ed, outDir, "ed-04-region-editor-modal.png", 300);
-        removeChildComponent (&ed);
     }
+    alias ("np-10-region-editor.png", "ed-04-region-editor-modal.png");
     {
         PianoRollComponent pr (session, engine, 8, 0);
         modalShot (pr, 1100, 680, "np-11-piano-roll.png", 500);
-        addAndMakeVisible (pr);
-        pr.setBounds ((juce::jmax (1100, getWidth()) - 1100) / 2,
-                      (juce::jmax (680, getHeight()) - 680) / 2, 1100, 680);
-        snapshotComponent (&pr, outDir, "ed-05-piano-roll-full.png", 300);
-        removeChildComponent (&pr);
     }
+    alias ("np-11-piano-roll.png", "ed-05-piano-roll-full.png");
     {
         AudioSettingsPanel p (engine.getDeviceManager(), engine, session);
         modalShot (p, 720, 560, "qg-02-audio-settings.png", 400);
@@ -357,12 +354,8 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
         BounceDialog bd (engine, session, engine.getDeviceManager(), target,
                          BounceEngine::Mode::MasterMix);
         modalShot (bd, 520, 200, "qg-07-bounce-dialog.png", 200);
-        addAndMakeVisible (bd);
-        bd.setBounds ((juce::jmax (520, getWidth()) - 520) / 2,
-                      (juce::jmax (200, getHeight()) - 200) / 2, 520, 200);
-        snapshotComponent (&bd, outDir, "bnc-01-bounce-dialog.png", 100);
-        removeChildComponent (&bd);
     }
+    alias ("qg-07-bounce-dialog.png", "bnc-01-bounce-dialog.png");
 
     std::fprintf (stderr, "[Dusk Studio/capture] done\n");
     juce::JUCEApplication::getInstance()->quit();

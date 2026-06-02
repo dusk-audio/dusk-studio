@@ -266,7 +266,8 @@ private:
     int pianoRollTrackIdx  = -1;
     int pianoRollRegionIdx = -1;
     void openPianoRoll  (int trackIdx, int regionIdx);
-    void closePianoRoll();
+    void closePianoRoll();          // immediate teardown (swap / mutual exclusion)
+    void closePianoRollAnimated();  // collapse into region rect, then teardown
 
     // Mutually exclusive with the piano roll (opening one closes the other).
     std::unique_ptr<class DimOverlay>           audioEditorDim;
@@ -275,6 +276,13 @@ private:
     int audioEditorRegionIdx = -1;
     void openAudioEditor  (int trackIdx, int regionIdx);
     void closeAudioEditor();
+    void closeAudioEditorAnimated();
+
+    // One-shot deferred teardown for the editor collapse animation — kept
+    // alive while the ComponentAnimator runs, then fires the immediate
+    // close. Only one region editor is open at a time, so a single slot
+    // suffices.
+    std::unique_ptr<juce::Timer> editorTeardownTimer;
 
     // 30 Hz timer polls Session::tuneLatestHz / Level into the overlay.
     // onDismiss closes the modal AND clears tuneTrackIndex so the

@@ -18,3 +18,6 @@ sessions/
 *.wav
 *.flac
 !resources/**/*.wav
+
+# Generated user manual (build via packaging/build-pdf.sh)
+MANUAL.pdf

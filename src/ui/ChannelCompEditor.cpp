@@ -451,7 +451,7 @@ void ChannelCompEditor::syncKnobsFromMode()
         case 1: // FET
         {
             // THRESHOLD knob now mirrors compFetThresholdDb directly
-            // (-40..0 dB). Output / attack / release / ratio unchanged.
+            // (-60..0 dB). Output / attack / release / ratio unchanged.
             threshKnob.setValue (track.strip.compFetThresholdDb.load (std::memory_order_relaxed),
                                     juce::dontSendNotification);
             // Map the discrete FET ratio index back to the unified ratio knob's

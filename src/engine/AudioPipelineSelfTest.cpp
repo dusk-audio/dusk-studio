@@ -52,9 +52,10 @@ AudioPipelineSelfTest::SavedState AudioPipelineSelfTest::saveState() const
         s.hmGainDb[(size_t) t]     = ts.hmGainDb.load (std::memory_order_relaxed);
         s.hfGainDb[(size_t) t]     = ts.hfGainDb.load (std::memory_order_relaxed);
     }
-    for (int b = 0; b < ChannelStripParams::kNumBuses; ++b)
-        s.track0BusAssign[(size_t) b] =
-            session.track (0).strip.busAssign[(size_t) b].load (std::memory_order_relaxed);
+    for (int t = 0; t < Session::kNumTracks; ++t)
+        for (int b = 0; b < ChannelStripParams::kNumBuses; ++b)
+            s.trackBusAssign[(size_t) t][(size_t) b] =
+                session.track (t).strip.busAssign[(size_t) b].load (std::memory_order_relaxed);
     for (int b = 0; b < Session::kNumBuses; ++b)
         s.busSolo[(size_t) b] = session.bus (b).strip.solo.load (std::memory_order_relaxed);
     s.masterFaderDb     = session.master().faderDb.load (std::memory_order_relaxed);
@@ -84,9 +85,10 @@ void AudioPipelineSelfTest::restoreState (const SavedState& s)
         ts.hmGainDb.store     (s.hmGainDb[(size_t) t],     std::memory_order_relaxed);
         ts.hfGainDb.store     (s.hfGainDb[(size_t) t],     std::memory_order_relaxed);
     }
-    for (int b = 0; b < ChannelStripParams::kNumBuses; ++b)
-        session.track (0).strip.busAssign[(size_t) b].store (
-            s.track0BusAssign[(size_t) b], std::memory_order_relaxed);
+    for (int t = 0; t < Session::kNumTracks; ++t)
+        for (int b = 0; b < ChannelStripParams::kNumBuses; ++b)
+            session.track (t).strip.busAssign[(size_t) b].store (
+                s.trackBusAssign[(size_t) t][(size_t) b], std::memory_order_relaxed);
     for (int b = 0; b < Session::kNumBuses; ++b)
         session.bus (b).strip.solo.store (s.busSolo[(size_t) b], std::memory_order_relaxed);
     session.master().faderDb.store     (s.masterFaderDb,     std::memory_order_relaxed);
@@ -117,11 +119,17 @@ int AudioPipelineSelfTest::prepareCleanState()
     t0s.hmGainDb.store     (0.0f,  std::memory_order_relaxed);
     t0s.hfGainDb.store     (0.0f,  std::memory_order_relaxed);
     // No bus assignment: track 0 routes DIRECT to master. Every track-0 test
-    // (pass-through unity, mute, bus-solo) assumes this; saveState/restoreState
-    // don't cover busAssign, so enforce it here instead of inheriting whatever
-    // the live session held.
+    // (pass-through unity, mute, bus-solo) assumes this, so enforce it here
+    // regardless of the live session's routing (which save/restoreState
+    // round-trips for all tracks).
     for (int b = 0; b < ChannelStripParams::kNumBuses; ++b)
         t0s.busAssign[(size_t) b].store (false, std::memory_order_relaxed);
+
+    // Clear bus solos too: a live session (or a test that set one) leaving a
+    // bus soloed would mute track 0's direct-to-master path via the SIP gate
+    // and spuriously fail every audible-track-0 test.
+    for (int b = 0; b < Session::kNumBuses; ++b)
+        session.bus (b).strip.solo.store (false, std::memory_order_relaxed);
 
     // Other tracks: hard mute so they can't contribute to the master mix.
     for (int t = 1; t < Session::kNumTracks; ++t)
@@ -817,6 +825,11 @@ juce::String AudioPipelineSelfTest::testCompPerTrack()
             ts.compMode    .store (0, std::memory_order_relaxed);   // Opto
             ts.compOptoPeakRed.store (50.0f, std::memory_order_relaxed);
             ts.compOptoGain   .store (60.0f, std::memory_order_relaxed);
+            // Force every tested track direct-to-master; a live bus assignment
+            // would route it through bus EQ/comp/fader and skew the per-track
+            // peak comparison. (saveState/restoreState round-trip the routing.)
+            for (int b = 0; b < ChannelStripParams::kNumBuses; ++b)
+                ts.busAssign[(size_t) b].store (false, std::memory_order_relaxed);
             session.track (i).inputMonitor.store (i == t, std::memory_order_relaxed);
             session.track (i).recordArmed .store (false, std::memory_order_relaxed);
             session.track (i).inputSource .store (t, std::memory_order_relaxed);

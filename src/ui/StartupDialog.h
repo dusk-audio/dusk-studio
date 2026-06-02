@@ -8,8 +8,8 @@
 namespace duskstudio
 {
 // Shown once on app launch. Ardour-style layout: a sidebar (Dusk wordmark
-// + Recent / Open / New nav) on the left, a sortable table of recent
-// sessions in the middle, and a Quit / Open footer at the bottom.
+// + Recent / Open / New nav) on the left, a table of recent sessions in
+// the middle, and a Quit / Open footer at the bottom.
 //
 // All actions are reported via callbacks; the dialog itself doesn't touch
 // the Session/AudioEngine. MainComponent wires the callbacks to its

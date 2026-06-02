@@ -73,6 +73,12 @@ public:
     std::function<void (int trackIdx, int regionIdx)> onMidiRegionDoubleClicked;
     std::function<void (int trackIdx, int regionIdx)> onAudioRegionDoubleClicked;
 
+    // On-screen rect of a region, in TapeStrip-local coords, for the
+    // editor expand/collapse animation. Empty when the index is invalid
+    // or the region is fully scrolled off the visible track area.
+    juce::Rectangle<int> audioRegionScreenRect (int trackIdx, int regionIdx) const noexcept;
+    juce::Rectangle<int> midiRegionScreenRect  (int trackIdx, int regionIdx) const noexcept;
+
     // trackHint = row under the drop, -1 if dropped on ruler / outside.
     // Host (batch-import) picks adjacent tracks for subsequent files.
     std::function<void (juce::Array<juce::File> files,
