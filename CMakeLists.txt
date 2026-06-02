@@ -984,9 +984,17 @@ if(WIN32)
     set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_BINARY_DIR}/LICENSE.txt")
 endif()
 
-# macOS DMG: cpack -G DragNDrop. scripts/package-macos.sh chains
-# codesign + notarytool because cpack doesn't notarize.
+# macOS DMG: cpack -G DragNDrop. scripts/package-macos.sh wraps it with
+# an ad-hoc codesign (unsigned by design - no notarization).
 set(CPACK_DMG_FORMAT                "UDZO")
 set(CPACK_DMG_VOLUME_NAME           "Dusk Studio ${DUSKSTUDIO_VERSION}")
+
+# Package filename platform suffix. CPack defaults to the kernel name
+# ("Darwin") on macOS - rename to a user-facing, arch-explicit "macOS-arm64"
+# (the build is Apple-Silicon-only; it won't run on Intel Macs). Mirrors the
+# arch-suffixed win64 / x86_64 the Windows + Linux artifacts already carry.
+if(APPLE)
+    set(CPACK_SYSTEM_NAME "macOS-arm64")
+endif()
 
 include(CPack)
