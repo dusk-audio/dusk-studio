@@ -355,6 +355,12 @@ macOS 14 Sonoma and 15 Sequoia ship Gatekeeper at its strictest defaults. Right-
 
 If you later install a newer build (different binary hash), the bypass dance repeats once for that new build.
 
+**If the icon shows in the Dock but the app never opens (and you have to force-quit):** you are almost certainly launching it from the mounted DMG or your Downloads folder. An ad-hoc-signed app run from a quarantined location can hang at launch on Apple Silicon. Fix: make sure **Dusk Studio.app** is in `/Applications` (step 2) and launch it from there - not from the DMG. If it still hangs, clear the quarantine flag in Terminal, then launch again:
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/Dusk Studio.app"
+```
+
 ### Windows (MSI installer)
 
 Windows SmartScreen blocks unsigned MSIs by default. The bypass is one click but it's hidden behind a small link.
@@ -1292,6 +1298,21 @@ Each channel strip, each bus, and the master strip have an automation mode butto
 The same modes apply to pan, mute, and solo. Pan rides like the fader; mute and solo are discrete on/off toggles, so they record only in WRITE (in READ/TOUCH the recorded lane drives them). On a bus the automatable controls are the fader, pan, and mute (bus solo is manual-only).
 
 Dusk Studio's automation is console-first: you ride the controls and the program writes what you did. For touch-up, the audio region editor exposes a per-parameter breakpoint lane - add, drag, and delete points, with linear segments between them. There is no freehand/spline (pencil) curve drawing.
+
+### Editing breakpoints in the region editor
+
+Double-click an audio region to open its editor. The **Auto:** button at the top of the editor picks which parameter the lane edits - **Fader**, **Pan**, **Mute**, **Solo**, or **Aux Send 1-4** - or **Off** to hide the lane and edit the region normally. With a lane active, its points draw over the waveform:
+
+- **Click empty space** - add a breakpoint at the click. It snaps to the grid; hold **Cmd/Ctrl** to place it off-grid.
+- **Drag a point** - move it in time and value.
+- **Right-click a point** - delete it.
+
+A few rules:
+
+- **Transport must be stopped.** The audio thread reads the lane live during playback, so editing is disabled while rolling.
+- **Mute and Solo are on/off lanes** - their points snap to 0 or 1.
+- **Drawing a point auto-arms the track to READ** so the lane plays back on the next Play (it won't arm WRITE - your drawn points stay put).
+- Segments between points are **linear**; there is no curve/spline shaping.
 
 \newpage
 
