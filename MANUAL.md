@@ -43,11 +43,11 @@ Dusk Studio includes:
 - No more than 24 tracks. The limit is fixed.
 - No reorderable signal chain. EQ is always before the compressor; the compressor is always before the fader. No chains of seventeen plugins on a single channel.
 - No sample-level audio editing. Regions can be moved, split, trimmed, faded, normalised, and gained. The waveform itself is not editable.
-- No automation curves. Fader and pan respond to Write/Touch/Read in a console style; you ride controls, the program records the ride.
+- No freehand/spline automation. Automation is console-style - ride the fader, pan, mute, or an aux send with Write/Touch/Read and the program records the move - with a breakpoint editor in the audio region editor for adding, dragging, and deleting points after the take. Linear between points; no bezier shaping.
 - No preferences sprawl. The only preferences panel is for audio device configuration.
 - No tabs, no hidden panes, no project-explorer-trees-within-trees.
 
-If a feature would not have existed on a $2000 hardware portastudio, it is not in Dusk Studio.
+If a feature mainly adds configurability or options, it is not in Dusk Studio. Fixed, finite, commit-first.
 
 \newpage
 
@@ -1291,7 +1291,7 @@ Each channel strip, each bus, and the master strip have an automation mode butto
 
 The same modes apply to pan, mute, and solo. Pan rides like the fader; mute and solo are discrete on/off toggles, so they record only in WRITE (in READ/TOUCH the recorded lane drives them). On a bus the automatable controls are the fader, pan, and mute (bus solo is manual-only).
 
-Dusk Studio's automation is intentionally console-style: you ride the controls and the program writes what you did. There is no graphical curve editor.
+Dusk Studio's automation is console-first: you ride the controls and the program writes what you did. For touch-up, the audio region editor exposes a per-parameter breakpoint lane - add, drag, and delete points, with linear segments between them. There is no freehand/spline (pencil) curve drawing.
 
 \newpage
 

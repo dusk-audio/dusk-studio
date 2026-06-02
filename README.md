@@ -10,7 +10,7 @@
 
 A deliberately constrained, portastudio-style DAW for Linux, macOS, and Windows. Built for engineers who want to **record, mix, and master without leaving the application** — no plugin paralysis, no menu diving, no infinite-options sprawl.
 
-> *"If it wouldn't exist as a physical control on a $2000 hardware recorder, it probably doesn't belong here."*
+> *"Fixed signal chain, finite track count, one page per stage. You commit, you move on."*
 
 JUCE 8 / C++17. PipeWire (primary) via JUCE's JACK backend on Linux; native ALSA backend with USB hot-unplug recovery; macOS CoreAudio + Windows WASAPI / ASIO via JUCE. Authoritative spec: [DuskStudio.md](DuskStudio.md). User manual: [MANUAL.md](MANUAL.md).
 
@@ -82,10 +82,10 @@ These are not implementation details — they're the product. Anything that viol
 1. **24 channels maximum.** Fixed. Three banks of 8 to match standard control surfaces (each bank drives 8 strips on the surface; all 24 are visible on screen).
 2. **Fixed signal chain.** No reordering EQ / comp. Channel-strip processing order is the same on every track, every time. Each channel gets **one optional insert slot** (a single VST3 / LV2 / AU plugin **or** a hardware insert — never a chain), at a fixed position in the strip; aux returns get one plugin slot each.
 3. **No waveform editing.** Region-level move / split / delete / trim / fade / gain only. (Draw mode exists only inside the MIDI piano roll.)
-4. **Console-style automation only.** Write / Read / Touch via gesture; no curve drawing.
+4. **Console-style automation + breakpoint editing.** Ride controls with Write / Read / Touch, or add / drag / delete per-parameter breakpoints in the region editor's automation lane (linear segments; no freehand / spline curves).
 5. **Everything visible within a stage.** Four workflow stages match the portastudio layout (Recording / Mixing / Aux / Mastering); within each stage there are no tabs and no hidden panels. The MIDI piano roll, plugin editors, and audio-settings dialog are embedded modals over the current stage.
 6. **No preferences sprawl.** A single Audio Settings panel covers audio device + buffer + oversampling + MIDI sync (Clock in / out, chase, emit) + MIDI bindings + UI scale. No per-feature settings menus, no global preferences window.
-7. **Portastudio philosophy.** "Would this exist on a $2000 hardware recorder?" If no, don't build it.
+7. **Portastudio philosophy.** Stay fixed, finite, and commit-first; if a feature mainly adds configurability or options, leave it out.
 
 ## Architecture
 
