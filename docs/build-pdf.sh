@@ -44,10 +44,33 @@ PROCESSED="${PROCESSED_DIR}/MANUAL.md"
 trap 'rm -rf "${PROCESSED_DIR}"' EXIT
 perl -CSD -pe 's/[ \t]*\x{2014}[ \t]*/ - /g' "${SRC}" > "${PROCESSED}"
 
+# The body font (Latin Modern, pandoc's xelatex default) lacks the handful of
+# symbol glyphs the manual uses - musical note, geometric triangles/discs,
+# transport arrows, >=, keyboard, refresh. Map each to a DejaVu Sans fallback
+# (ships via fonts-dejavu and covers all of them) so they render instead of
+# dropping out. Only these codepoints fall back; the rest stays Latin Modern.
+HEADER="${PROCESSED_DIR}/glyph-fallback.tex"
+cat > "${HEADER}" <<'TEX'
+\usepackage{newunicodechar}
+\newfontfamily\glyphfallback{DejaVu Sans}
+\newunicodechar{≥}{{\glyphfallback ≥}}
+\newunicodechar{⌨}{{\glyphfallback ⌨}}
+\newunicodechar{■}{{\glyphfallback ■}}
+\newunicodechar{▴}{{\glyphfallback ▴}}
+\newunicodechar{▶}{{\glyphfallback ▶}}
+\newunicodechar{▾}{{\glyphfallback ▾}}
+\newunicodechar{◀}{{\glyphfallback ◀}}
+\newunicodechar{◉}{{\glyphfallback ◉}}
+\newunicodechar{●}{{\glyphfallback ●}}
+\newunicodechar{♩}{{\glyphfallback ♩}}
+\newunicodechar{⟳}{{\glyphfallback ⟳}}
+TEX
+
 pandoc "${PROCESSED}" \
   --output="${OUT}" \
   --pdf-engine=xelatex \
   --resource-path="${REPO_ROOT}:${REPO_ROOT}/docs:${REPO_ROOT}/docs/images" \
+  --include-in-header="${HEADER}" \
   --toc \
   --toc-depth=3 \
   --variable=geometry:margin=1in \
