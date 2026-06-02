@@ -23,6 +23,11 @@ public:
                             class PluginSlot& slotRef, AudioEngine& engineRef);
     ~ChannelStripComponent() override;
 
+    // Screenshot-harness only: re-read the insert slot's state into its button
+    // (the 30 Hz timer that normally does this doesn't fire during the
+    // harness's synchronous settle()). Used after PluginSlot::setOfflineForCapture.
+    void refreshInsertButtonForCapture();
+
     void paint (juce::Graphics&) override;
     void resized() override;
     void mouseDown (const juce::MouseEvent& e) override;

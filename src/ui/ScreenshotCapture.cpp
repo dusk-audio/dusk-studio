@@ -248,6 +248,20 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
         resized();
         snapshotComponent (consoleView->getStripComponent (0), outDir, "mm-01-automation-modes.png", 120);
         session.track (0).automationMode.store ((int) AutomationMode::Off, std::memory_order_relaxed);
+
+        // Offline-plugin slot: force track 2's insert into the offline display
+        // state, snapshot the strip, then clear it so later full-window shots
+        // stay clean.
+        engine.getStrip (2).getPluginSlot().setOfflineForCapture ("Vintage Reverb");
+        if (auto* s2 = consoleView->getStripComponent (2))
+        {
+            s2->refreshInsertButtonForCapture();
+            settle (60);
+            snapshotComponent (s2, outDir, "ts-02-plugin-offline.png");
+        }
+        engine.getStrip (2).getPluginSlot().setOfflineForCapture ({});
+        if (auto* s2 = consoleView->getStripComponent (2))
+            s2->refreshInsertButtonForCapture();
     }
 
     // ── AUX stage ───────────────────────────────────────────────────────

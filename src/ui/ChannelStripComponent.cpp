@@ -1923,6 +1923,12 @@ void ChannelStripComponent::showPluginSlotMenu()
         });
 }
 
+void ChannelStripComponent::refreshInsertButtonForCapture()
+{
+    refreshPluginSlotButton();
+    repaint();
+}
+
 void ChannelStripComponent::refreshPluginSlotButton()
 {
     const int mode = engine.getChannelStrip (trackIndex)

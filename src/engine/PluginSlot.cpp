@@ -444,6 +444,22 @@ bool PluginSlot::isOffline() const noexcept
     return offlineDescriptionXml.isNotEmpty();
 }
 
+void PluginSlot::setOfflineForCapture (const juce::String& displayName)
+{
+    if (displayName.isEmpty())
+    {
+        offlineDescriptionXml.clear();
+        offlineStateBase64.clear();
+        return;
+    }
+    juce::PluginDescription desc;
+    desc.name             = displayName;
+    desc.pluginFormatName = "VST3";
+    if (auto xml = desc.createXml())
+        offlineDescriptionXml = xml->toString();
+    offlineStateBase64.clear();
+}
+
 juce::String PluginSlot::getOfflineName() const
 {
     if (offlineDescriptionXml.isEmpty()) return {};

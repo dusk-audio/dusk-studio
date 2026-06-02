@@ -1837,7 +1837,7 @@ The piano roll modal captures its own keypresses first (see `PianoRollComponent:
 
 # Troubleshooting
 
-*(Screenshot pending: a plugin slot in the `⚠ (offline)` state after the original plugin couldn't be re-instantiated.)*
+![A plugin slot in the `⚠ (offline)` state after the original plugin couldn't be re-instantiated.](docs/images/ts-02-plugin-offline.png)
 
 ## "Plugin crashed — reload to recover"
 

@@ -168,6 +168,12 @@ public:
     bool         isOffline() const noexcept;
     juce::String getOfflineName() const;
 
+    // Screenshot-harness only: force the empty slot into the offline display
+    // state with a synthetic saved description (so the manual's offline-slot
+    // figure can be captured without a real missing-plugin session). Pass an
+    // empty string to clear it again. Never called in normal operation.
+    void setOfflineForCapture (const juce::String& displayName);
+
    #if JUCE_MAC && DUSKSTUDIO_HAS_OOP_PLUGINS
     // Mac dual-load shell-instance API. Loads a parent-process copy of
     // the plugin solely to host its editor in the main app window while
