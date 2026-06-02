@@ -1,0 +1,144 @@
+name: Linux release (AppImage)
+
+# Builds the x86_64 AppImage and publishes it to the PRIVATE releases repo
+# on a v* tag — sharing the tag's release with the Windows MSI + macOS DMG
+# (distinct asset names coexist). The AppImage is UNSIGNED; Linux desktops
+# trust AppImages without a code-signing dance. The source is open; the
+# packaged binary is the product.
+#
+# Mirrors linux-build.yml's toolchain (upstream JUCE 8.0.4 + the x86_64-GCC
+# SIMD<long long> alias patch + donor plugins), then runs the same
+# scripts/package-appimage.sh a maintainer runs locally.
+#
+# Required repository secret:
+#   RELEASES_REPO_TOKEN  PAT with contents:write on the PRIVATE releases
+#                        repo below. The AppImage is pushed there as a
+#                        release asset — NEVER to this public repo.
+#
+# Edit RELEASES_REPO (env, below) to your private releases repo.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release:
+    name: Build + package AppImage (GCC Release, Ubuntu 22.04, amd64)
+    runs-on: ubuntu-22.04
+    env:
+      RELEASES_REPO: dusk-audio/dusk-studio-releases
+      # GitHub runners have no FUSE; tell linuxdeploy + the appimagetool it
+      # spawns to extract-and-run themselves instead of mounting.
+      APPIMAGE_EXTRACT_AND_RUN: 1
+
+    steps:
+      - name: Checkout Dusk Studio
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Install Linux build deps + packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config \
+            libasound2-dev libjack-jackd2-dev \
+            ladspa-sdk \
+            libcurl4-openssl-dev libfreetype-dev libfontconfig1-dev \
+            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
+            libxinerama-dev libxrandr-dev libxrender-dev libxss-dev \
+            libwebkit2gtk-4.0-dev libglu1-mesa-dev \
+            libwayland-dev libxkbcommon-dev libdecor-0-dev \
+            imagemagick file
+
+      - name: Clone JUCE 8.0.4 (upstream)
+        run: |
+          git clone --depth 1 --branch 8.0.4 \
+            https://github.com/juce-framework/JUCE.git \
+            "${RUNNER_TEMP}/JUCE-wayland"
+
+      - name: Patch JUCE — SIMDNativeOps<long long> alias for x86_64 Linux
+        # Same patch linux-build.yml applies: upstream JUCE 8.0.4 omits the
+        # SIMDNativeOps<long long> specialization GCC needs for int64 SIMD.
+        run: |
+          file="${RUNNER_TEMP}/JUCE-wayland/modules/juce_dsp/native/juce_SIMDNativeOps_sse.h"
+          awk '
+            /^}[[:space:]]*\/\/.*juce.*dsp/ && !done {
+              print "#if defined (__GNUC__) && defined (__SIZEOF_LONG__) && __SIZEOF_LONG__ == 8 && !defined (_WIN32)"
+              print "template <> struct SIMDNativeOps<long long> : SIMDNativeOps<int64_t> {};"
+              print "template <> struct SIMDNativeOps<unsigned long long> : SIMDNativeOps<uint64_t> {};"
+              print "#endif"
+              done = 1
+            }
+            { print }
+          ' "$file" > "$file.new" && mv "$file.new" "$file"
+          if ! grep -q "SIMDNativeOps<long long>" "$file"; then
+            echo "ERROR: SIMDNativeOps<long long> alias not present after patch." >&2
+            exit 1
+          fi
+
+      - name: Clone Dusk plugins (donor DSP)
+        run: |
+          git clone --depth 1 \
+            https://github.com/dusk-audio/dusk-audio-plugins.git \
+            "${RUNNER_TEMP}/plugins-main"
+
+      - name: Configure (Release)
+        run: |
+          cmake -S . -B build-linux -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DDUSKSTUDIO_SKIP_FORK_CHECK=ON \
+            -DJUCE_PATH="${RUNNER_TEMP}/JUCE-wayland" \
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main"
+
+      - name: Build (Release)
+        run: cmake --build build-linux -j
+
+      - name: Fetch linuxdeploy
+        run: |
+          curl -sSL -o /usr/local/bin/linuxdeploy \
+            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          chmod +x /usr/local/bin/linuxdeploy
+
+      - name: Package AppImage
+        # scripts/package-appimage.sh expects BUILD_DIR=build-linux, ImageMagick
+        # (downscales the icon), and linuxdeploy on PATH. Emits
+        # DuskStudio-<version>-x86_64.AppImage + .sha256 at the repo root.
+        run: BUILD_DIR=build-linux scripts/package-appimage.sh
+
+      - name: Publish AppImage to the PRIVATE releases repo
+        # Only on a real v* tag — dispatch runs are build validation.
+        if: ${{ github.ref_type == 'tag' }}
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          NOTES="Unsigned Linux AppImage (x86_64). chmod +x and run."
+
+          shopt -s nullglob
+          ASSETS=( *.AppImage *.AppImage.sha256 )
+          if [[ ${#ASSETS[@]} -eq 0 ]]; then
+            echo "::error::no AppImage produced — packaging step failed" >&2
+            exit 1
+          fi
+
+          if ! gh release view "$TAG" --repo "$RELEASES_REPO" >/dev/null 2>&1; then
+            gh release create "$TAG" \
+              --repo "$RELEASES_REPO" \
+              --title "Dusk Studio $TAG" \
+              --notes "$NOTES" \
+              "${ASSETS[@]}"
+          else
+            gh release upload "$TAG" --repo "$RELEASES_REPO" --clobber "${ASSETS[@]}"
+          fi
+          echo "Published ${#ASSETS[@]} asset(s) to ${RELEASES_REPO} @ ${TAG}"

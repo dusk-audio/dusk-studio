@@ -15,8 +15,9 @@ name: Windows build
 #   - workflow_dispatch  → publishes a build-numbered pre-release for
 #                          hand-offs to testers.
 #
-# The MSI is currently UNSIGNED (no Authenticode cert yet) — testers see a
-# SmartScreen prompt. Statically linked CRT, so no vc_redist needed.
+# The MSI is UNSIGNED by design (no Authenticode cert) — users see a
+# SmartScreen prompt and choose "More info -> Run anyway" on first launch.
+# Statically linked CRT, so no vc_redist needed.
 on:
   push:
     tags: ['v*']
@@ -37,15 +38,6 @@ jobs:
       # PRIVATE releases repo — the MSI is pushed here, never to this
       # public repo. Same target as macos-release.yml.
       RELEASES_REPO: dusk-audio/dusk-studio-releases
-      # H10: Authenticode signing secrets exported to the job env so
-      # the per-step `if:` predicates can resolve at expression-layer
-      # time. Empty on fork PRs / dispatch runs without the secret
-      # configured — the package step's no-signing branch handles
-      # that. SIGNING_CERT_BASE64 is the base64-encoded PFX; the
-      # decode step writes it to a temp file on the runner. Never
-      # expose the raw PFX in workspace storage.
-      SIGNING_CERT_BASE64: ${{ secrets.SIGNING_CERT_BASE64 }}
-      SIGNING_CERT_PASSWORD: ${{ secrets.SIGNING_CERT_PASSWORD }}
 
     steps:
       - name: Checkout Dusk Studio
@@ -115,35 +107,6 @@ jobs:
         shell: bash
         run: cmake --build build --config Release -j
 
-      - name: Decode signing certificate from base64 secret
-        # H10: convert the SIGNING_CERT_BASE64 job-env secret (sourced
-        # at the job level — see top of file) into a PFX file on the
-        # runner's temp storage so signtool can consume it. No-op when
-        # the secret is absent (forks, dispatch runs without the cert
-        # configured) — the packaging step then falls through to an
-        # unsigned MSI build, which still completes successfully and
-        # surfaces a SmartScreen warning to testers.
-        #
-        # The temp path is exported via GITHUB_ENV so the packaging +
-        # cleanup steps both see it without re-decoding. Writing under
-        # $env:RUNNER_TEMP keeps the file off the workspace tree
-        # (workspaces are checkpointed by some actions; RUNNER_TEMP is
-        # always wiped at runner teardown).
-        if: ${{ env.SIGNING_CERT_BASE64 != '' }}
-        shell: pwsh
-        run: |
-          $pfxPath = Join-Path $env:RUNNER_TEMP "dusk-signing.pfx"
-          [System.IO.File]::WriteAllBytes(
-              $pfxPath,
-              [System.Convert]::FromBase64String($env:SIGNING_CERT_BASE64))
-          # Restrict ACL so any concurrent process on the runner can't
-          # read the PFX while it's on disk. icacls returns 0 on
-          # success; non-zero is non-fatal (signing still proceeds) so
-          # the build doesn't die on a stricter runner image.
-          icacls $pfxPath /inheritance:r /grant:r "$($env:USERNAME):(R)" | Out-Null
-          "SIGNING_PFX_PATH=$pfxPath" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          Write-Host "Signing cert decoded to $pfxPath"
-
       - name: Set up WiX Toolset v3 (CPack -G WIX needs candle/light)
         # GitHub's windows runner image migration (windows-latest ->
         # windows-2025) dropped the pre-installed WiX 3 toolset that CPack's
@@ -174,46 +137,15 @@ jobs:
           $wixBin                     | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
           Write-Host "WiX ready: $wixBin"
 
-      - name: Package MSI via CPack WIX (signs binaries + MSI when cert present)
+      - name: Package MSI via CPack WIX (unsigned)
         shell: pwsh
-        # Delegates the cpack + signtool dance to the cross-platform
-        # packaging script so local devs (cert in personal store) and
-        # CI (cert decoded from base64 secret) share one signing path.
-        # SIGNING_PFX_PATH is set by the prior step ONLY when the
-        # SIGNING_CERT_BASE64 secret is present; the script's
-        # "no-signing" branch handles the empty case gracefully.
-        # SIGNING_CERT_PASSWORD comes from the job-level env block.
+        # Delegates the cpack run to the cross-platform packaging script.
+        # No signing args: the MSI ships unsigned by design.
         run: |
-          .\scripts\package-windows.ps1 `
-              -BuildDir build `
-              -SigningPfxPath ($env:SIGNING_PFX_PATH ?? "") `
-              -SigningPfxPassword ($env:SIGNING_CERT_PASSWORD ?? "")
+          .\scripts\package-windows.ps1 -BuildDir build
           if ($LASTEXITCODE -ne 0) { throw "package-windows.ps1 failed" }
           Get-ChildItem build\*.msi
           Get-ChildItem *.msi -ErrorAction SilentlyContinue
-
-      - name: Wipe signing certificate from runner storage
-        # H10: belt-and-braces secure-cleanup. The runner's RUNNER_TEMP
-        # gets nuked at job end regardless, but GitHub Actions can
-        # cache + replay logs on retry; overwriting the file with
-        # zeros + then removing guarantees no signature material lingers
-        # in a snapshot. `if: always()` runs on success AND failure
-        # paths so a botched signing step still cleans up the cert.
-        if: ${{ always() }}
-        shell: pwsh
-        run: |
-          $pfx = $env:SIGNING_PFX_PATH
-          if ($pfx -and (Test-Path $pfx)) {
-              # Overwrite with zero bytes the size of the file to
-              # ensure the bytes-on-disk don't survive in a journaled
-              # filesystem free-list snapshot. Cheap (PFX is a few KB).
-              $sz = (Get-Item $pfx).Length
-              [System.IO.File]::WriteAllBytes($pfx, (New-Object byte[] $sz))
-              Remove-Item $pfx -Force
-              Write-Host "Signing cert wiped + removed: $pfx"
-          } else {
-              Write-Host "No signing cert to clean up (none was decoded)."
-          }
 
       - name: Compute SHA256 of MSI(s)
         shell: pwsh
@@ -261,7 +193,7 @@ jobs:
             NOTES="Automated Windows build."
           else
             TAG="v$(tr -d '[:space:]' < VERSION)+build.${GITHUB_RUN_NUMBER}"
-            NOTES="UNSIGNED Windows dev build (no Authenticode cert yet). SmartScreen may warn — choose More info -> Run anyway. Statically linked, no vc_redist needed. Not for sale until signed."
+            NOTES="Unsigned Windows build. SmartScreen may warn — choose More info -> Run anyway. Statically linked, no vc_redist needed."
           fi
 
           shopt -s nullglob

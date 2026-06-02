@@ -322,7 +322,7 @@ Any modern multi-core CPU (Intel, AMD, or Apple Silicon) is sufficient for a 24-
 
 ## Installing Dusk Studio
 
-The binaries shipped via Patreon and GitHub Sponsors are **unsigned** for now. Apple Developer ID + Windows Authenticode certs are both deferred — the cost-to-clean-first-launch-UX ratio doesn't favour them at this stage. The result: macOS Gatekeeper and Windows SmartScreen will warn you on first launch. The warning is expected and the bypass is quick — under 30 seconds per OS — but it is required the first time.
+The binaries shipped via Patreon and GitHub Sponsors are **unsigned by design** — Dusk Studio uses no Apple Developer ID and no Windows Authenticode certificate, and neither is planned. The result: macOS Gatekeeper and Windows SmartScreen will warn you on first launch. The warning is expected and the bypass is quick — under 30 seconds per OS — but it is required the first time.
 
 The source on GitHub is GPL-3.0; anyone who prefers to skip the warning can build from source.
 

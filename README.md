@@ -21,7 +21,7 @@ GPL source on this repo — build from source and the binary costs you nothing b
 | Tier | Price | What you get |
 |---|---|---|
 | **Source** | Free | Clone, build, audit. GPL-3.0. No support tier. |
-| **Patreon Supporter** | from $3 / month | Latest release binaries (Linux AppImage + Windows MSI; macOS DMG when the Apple Dev cert lands) delivered as attachments on each release post. Name in plugin credits. Lapse keeps whatever build you've already downloaded. |
+| **Patreon Supporter** | from $3 / month | Latest release binaries (Linux AppImage + Windows MSI + macOS DMG, all unsigned) delivered as attachments on each release post. Name in plugin credits. Lapse keeps whatever build you've already downloaded. |
 | **Patreon Patron** | $5 / month | Everything above + early-access beta builds 1–2 weeks ahead of public. |
 | **Patreon Champion** | $10 / month | Everything above + DM support + roadmap-feature votes. |
 | **One-time licence** | **$27** | Current major version (1.x.x). Every 1.x minor + patch update included. 2.0 requires a new purchase (or the lifetime upgrade). |
@@ -29,13 +29,13 @@ GPL source on this repo — build from source and the binary costs you nothing b
 
 *Version-discipline contract: major bumps (1.x → 2.x) mean roadmap-defining shifts — new stages, core-architecture changes. Plugin additions, UI polish, performance work, new DSP modules all stay within the current major.*
 
-Paid via [Patreon](https://www.patreon.com/cw/DuskAudio) (recurring) or [GitHub Sponsors](https://github.com/sponsors/marc-korte) (one-time, $27 + $49 amounts). Buyer gets invited to the private releases repo where every signed binary lands.
+Paid via [Patreon](https://www.patreon.com/cw/DuskAudio) (recurring) or [GitHub Sponsors](https://github.com/sponsors/marc-korte) (one-time, $27 + $49 amounts). Buyer gets invited to the private releases repo where every build lands.
 
-**First-time launch:** binaries are unsigned. macOS Gatekeeper + Windows SmartScreen will warn on first launch — see [MANUAL.md § Installing Dusk Studio](MANUAL.md#installing-dusk-studio) for the 30-second bypass per OS.
+**First-time launch:** binaries are unsigned by design (no Apple Developer ID, no Windows Authenticode — neither is planned). macOS Gatekeeper + Windows SmartScreen will warn on first launch — see [MANUAL.md § Installing Dusk Studio](MANUAL.md#installing-dusk-studio) for the 30-second bypass per OS. Linux AppImages need no bypass.
 
 ## Status
 
-**v0.9.0 (beta).** Feature backlog effectively closed: every spec phase, Tascam DP-24SD parity, MTC + MIDI Clock sync, cross-platform OOP plugin host (audio on all three OSes; editor embedded on Linux + Windows, in-process shell on macOS), and the rename to Dusk Studio have shipped. Remaining 1.0 work is the macOS notarised DMG (deferred until paid Apple Dev cert), deeper accessibility, and cross-process NSView embedding research.
+**v0.9.0 (beta).** Feature backlog effectively closed: every spec phase, Tascam DP-24SD parity, MTC + MIDI Clock sync, cross-platform OOP plugin host (audio on all three OSes; editor embedded on Linux + Windows, in-process shell on macOS), and the rename to Dusk Studio have shipped. All three OSes ship unsigned binaries (Linux AppImage + Windows MSI + macOS DMG) to the private releases repo on each tag. Remaining 1.0 work is deeper accessibility and cross-process NSView embedding research.
 
 | Stage | Status |
 |---|---|
@@ -60,8 +60,9 @@ Paid via [Patreon](https://www.patreon.com/cw/DuskAudio) (recurring) or [GitHub 
 | Mackie Control surface (tested against Tascam DP-24SD) | Working |
 | Multi-file audio + MIDI import with target-track picker | Working |
 | Cross-process NSView embed (macOS editor) | Research |
-| Windows MSI installer | Working (CI publishes to private releases repo) |
-| macOS signed + notarised DMG | Deferred (paid Apple Dev cert) |
+| Windows MSI installer (unsigned) | Working (CI publishes to private releases repo on tag) |
+| Linux AppImage | Working (CI publishes to private releases repo on tag) |
+| macOS DMG (unsigned, ad-hoc) | Working (CI publishes to private releases repo on tag) |
 | Deeper a11y (full screen-reader labels + keyboard-only mixer nav) | Floor only |
 
 150 Catch2 unit tests across 38 files. Linux (amd64 + arm64) + macOS + Windows builds run on every push; Windows tests run on every push; Linux ThreadSanitizer runs on every PR + push.
@@ -122,7 +123,7 @@ MANUAL.md      # end-user manual (Pandoc-buildable to PDF via packaging/build-pd
 
 ## Builds & contributing
 
-Precompiled binaries delivered via Patreon (Linux AppImage + Windows MSI today via the private releases repo; macOS DMG deferred until the paid Apple Developer cert lands). Self-build is fully supported and equivalent at the source level — no support tier for self-builders.
+Precompiled (unsigned) binaries delivered via Patreon — Linux AppImage + Windows MSI + macOS DMG, all published to the private releases repo on each tag. Self-build is fully supported and equivalent at the source level — no support tier for self-builders.
 
 | Platform | Doc |
 |----------|-----|
@@ -134,7 +135,7 @@ Precompiled binaries delivered via Patreon (Linux AppImage + Windows MSI today v
 
 After a build, sanity check with `Dusk Studio --version` — prints app + JUCE + platform string and exits 0. Useful as a paste-target for Patreon support DMs.
 
-CI runs on every push to `main` against Linux (Ubuntu 22.04 GCC), macOS (14 Apple Silicon, Ninja + ccache), and Windows (Server 2022 MSVC). Windows tests (`windows-tests.yml`) exercise the Catch2 suite on every PR. Linux ThreadSanitizer (`linux-sanitizer.yml`) runs the Catch2 suite under TSan on every PR + push. Tagged releases (`v*`) trigger the Windows MSI workflow (publishes to private releases repo) and the macOS signed + notarised DMG workflow (when the Developer ID cert is configured).
+CI runs on every push to `main` against Linux (Ubuntu 22.04 GCC), macOS (14 Apple Silicon, Ninja + ccache), and Windows (Server 2022 MSVC). Windows tests (`windows-tests.yml`) exercise the Catch2 suite on every PR. Linux ThreadSanitizer (`linux-sanitizer.yml`) runs the Catch2 suite under TSan on every PR + push. Tagged releases (`v*`) trigger the Windows MSI, macOS DMG, and Linux AppImage workflows — each builds an unsigned binary and publishes it to the private releases repo (one shared release per tag, distinct asset names).
 
 ## License
 
@@ -145,10 +146,9 @@ Dusk Studio ships under a **dual access model**:
 
 - **Source**: GPL-3.0. Clone, audit, build, modify, redistribute — all
   fine under GPL terms.
-- **Patreon binaries**: precompiled Linux AppImages + Windows MSIs
-  delivered to supporters today (macOS DMGs land once the Apple
-  Developer cert is in hand). The payment is for packaging, signing,
-  and support access — the source remains open. Self-builders get no
-  support, but the code is the same.
-- **Paid licence ($27)**: same source, same GPL. Buys you the signed
+- **Patreon binaries**: precompiled, unsigned Linux AppImages + Windows
+  MSIs + macOS DMGs delivered to supporters. The payment is for
+  packaging + support access — the source remains open. Self-builders
+  get no support, but the code is the same.
+- **Paid licence ($27)**: same source, same GPL. Buys you the prebuilt
   installer + access to bug triage.
