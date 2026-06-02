@@ -58,7 +58,7 @@ jobs:
             libxinerama-dev libxrandr-dev libxrender-dev libxss-dev \
             libwebkit2gtk-4.0-dev libglu1-mesa-dev \
             libwayland-dev libxkbcommon-dev libdecor-0-dev \
-            imagemagick file
+            imagemagick file squashfs-tools zsync
 
       - name: Clone JUCE 8.0.4 (upstream)
         run: |
@@ -104,6 +104,10 @@ jobs:
         run: cmake --build build-linux -j
 
       - name: Fetch linuxdeploy
+        # linuxdeploy's appimage output plugin also fetches appimagetool +
+        # the AppImage runtime from GitHub at build time, so this step needs
+        # network (always available on GitHub runners). squashfs-tools above
+        # supplies the mksquashfs appimagetool shells out to.
         run: |
           curl -sSL -o /usr/local/bin/linuxdeploy \
             https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
