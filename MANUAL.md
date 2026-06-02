@@ -1817,8 +1817,10 @@ The piano roll modal captures its own keypresses first (see `PianoRollComponent:
 
 ## Headphone cue mix for tracking
 
+> **Planned - not yet implemented.** Per-aux physical outputs (a discrete cue / monitor send) are on the roadmap but not in this build: today all four aux returns sum into the master and leave through the single device output. The recipe below describes the intended workflow.
+
 1. Send each tracking channel pre-fader to **Aux 4**.
-2. Set the aux 4 output to a separate physical output (the headphone amp).
+2. Route the aux 4 output to a separate physical output (the headphone amp).
 3. Adjust each channel's aux 4 send to balance what the performer hears, independently of what you hear on the main mix.
 
 ## Parallel compression on drums
