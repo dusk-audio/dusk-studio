@@ -1,0 +1,114 @@
+name: Manual PDF
+
+# Renders MANUAL.md -> MANUAL.pdf on Ubuntu (apt pandoc + texlive-xetex,
+# fast + reliable) and publishes it as a release asset next to the macOS
+# DMG and Windows MSI on the SAME v* tag, in the PRIVATE releases repo.
+#
+# Unlike the binaries, the manual is NOT paid (MANUAL.md is in the open
+# source tree), so rendering it in public CI gives nothing away. It still
+# lands on the private releases repo only so collaborators grab one
+# cross-platform asset set per tag (DMG + MSI + PDF) from one place.
+#
+# Triggers:
+#   - push of a v* tag   -> attaches MANUAL.pdf to that tag's release.
+#   - workflow_dispatch  -> build-numbered pre-release for hand-offs.
+#
+# Uses docs/build-pdf.sh, the same renderer a maintainer runs locally, so
+# the CI PDF is byte-for-byte the local one given the same toolchain.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: manual-pdf-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  render:
+    name: Render + publish MANUAL.pdf
+    runs-on: ubuntu-22.04
+    env:
+      # PRIVATE releases repo — same target as macos-release.yml and
+      # windows-build.yml so one tag carries DMG + MSI + PDF.
+      RELEASES_REPO: dusk-audio/dusk-studio-releases
+
+    steps:
+      - name: Checkout Dusk Studio
+        uses: actions/checkout@v4
+        with:
+          # No submodules needed: the manual is pure docs (MANUAL.md +
+          # docs/images/*), none of the C++/sfizz tree is touched.
+          submodules: false
+          # Publish goes through RELEASES_REPO_TOKEN, not the persisted
+          # GITHUB_TOKEN — don't leave it in git config.
+          persist-credentials: false
+
+      - name: Install pandoc + xelatex
+        # texlive-xetex provides xelatex; the -recommended sets cover the
+        # pandoc default template (geometry, hyperref/xcolor for colorlinks,
+        # fancyvrb, booktabs). fonts-dejavu supplies the "DejaVu Sans Mono"
+        # monofont build-pdf.sh requests. perl is preinstalled on the runner
+        # (build-pdf.sh uses it to strip em dashes).
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pandoc \
+            texlive-xetex \
+            texlive-fonts-recommended \
+            texlive-latex-recommended \
+            texlive-latex-extra \
+            fonts-dejavu
+
+      - name: Render MANUAL.pdf
+        run: |
+          bash docs/build-pdf.sh
+          test -f MANUAL.pdf || { echo "::error::build-pdf.sh produced no MANUAL.pdf" >&2; exit 1; }
+          sha256sum MANUAL.pdf | tee SHA256SUMS.manual
+
+      - name: Publish MANUAL.pdf to the PRIVATE releases repo
+        # Only publish on a real release tag. Manual/branch dispatches are
+        # for validating the render — they don't pollute the releases repo.
+        if: ${{ github.ref_type == 'tag' }}
+        # NOT actions/upload-artifact for the release path: keep one asset
+        # set per tag in the private repo, matching the DMG/MSI workflows.
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          NOTES="Dusk Studio user manual (PDF)."
+
+          ASSETS=( MANUAL.pdf SHA256SUMS.manual )
+
+          # Create the release on first push of this tag, else just add the
+          # assets (idempotent re-run). --clobber overwrites a same-named
+          # asset from a previous attempt. The macOS/Windows workflows share
+          # this tag; whichever job runs first creates the release, the rest
+          # upload onto it (asset names are distinct, so they coexist).
+          if ! gh release view "$TAG" --repo "$RELEASES_REPO" >/dev/null 2>&1; then
+            gh release create "$TAG" \
+              --repo "$RELEASES_REPO" \
+              --title "Dusk Studio $TAG" \
+              --notes "$NOTES" \
+              "${ASSETS[@]}"
+          else
+            gh release upload "$TAG" --repo "$RELEASES_REPO" --clobber "${ASSETS[@]}"
+          fi
+          echo "Published ${#ASSETS[@]} asset(s) to ${RELEASES_REPO} @ ${TAG}"
+
+      - name: Upload MANUAL.pdf as a workflow artifact (dispatch validation)
+        # On workflow_dispatch (no tag) there's no release to attach to;
+        # surface the rendered PDF as a downloadable artifact so a manual
+        # run still lets you eyeball the output. The manual isn't paid, so a
+        # world-downloadable artifact here gives nothing away.
+        if: ${{ github.ref_type != 'tag' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: MANUAL-pdf
+          path: MANUAL.pdf
+          if-no-files-found: error
