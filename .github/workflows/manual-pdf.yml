@@ -62,6 +62,7 @@ jobs:
             texlive-fonts-recommended \
             texlive-latex-recommended \
             texlive-latex-extra \
+            lmodern \
             fonts-dejavu
 
       - name: Render MANUAL.pdf
