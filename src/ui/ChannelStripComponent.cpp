@@ -1651,6 +1651,10 @@ void ChannelStripComponent::setMixingMode (bool mixing)
 
     // The mode/input/IN/ARM/PRINT block is hidden in Mixing - those controls
     // are tracking-stage only. The aux send knobs take that real estate.
+    // ioConfigButton must hide too: resized() only re-lays-out the I/O region
+    // when !mixingMode, so left visible it keeps its stale recording-mode
+    // bounds and bleeds out behind the Insert button (still clickable).
+    ioConfigButton     .setVisible (! mixing);
     modeSelector       .setVisible (! mixing);
     inputSelector      .setVisible (! mixing);
     inputSelectorR     .setVisible (! mixing);
