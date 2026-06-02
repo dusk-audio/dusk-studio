@@ -39,11 +39,27 @@ namespace
 void writePng (const juce::Image& img, const juce::File& f)
 {
     if (! img.isValid()) return;
+
+    // Flatten onto an opaque dark backing before writing. Components captured
+    // in isolation - the settings panel, dialogs, rounded-corner strips - don't
+    // paint a fully opaque background: at runtime they sit over the dimmed dark
+    // window, so their snapshot has transparent pixels. Written straight to PNG
+    // those become WHITE wherever the manual / viewers composite on white, which
+    // reads as an inverted/negative image. Compositing onto the app's window
+    // colour makes those areas dark, matching the live UI. Opaque snapshots
+    // (strips that fill their whole bounds) are unchanged.
+    juce::Image flat (juce::Image::RGB, img.getWidth(), img.getHeight(), true);
+    {
+        juce::Graphics g (flat);
+        g.fillAll (juce::Colour (0xff121214));
+        g.drawImageAt (img, 0, 0);
+    }
+
     f.deleteFile();
     if (auto os = std::unique_ptr<juce::FileOutputStream> (f.createOutputStream()))
     {
         juce::PNGImageFormat png;
-        png.writeImageToStream (img, *os);
+        png.writeImageToStream (flat, *os);
         std::fprintf (stderr, "[Dusk Studio/capture] wrote %s\n",
                       f.getFileName().toRawUTF8());
     }
