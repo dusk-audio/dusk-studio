@@ -119,7 +119,15 @@ jobs:
         # DuskStudio-<version>-x86_64.AppImage + .sha256 at the repo root.
         run: BUILD_DIR=build-linux scripts/package-appimage.sh
 
-      - name: Publish AppImage to the PRIVATE releases repo
+      - name: Stage raw executable
+        # Ship the bare ELF too, for users who'd rather run the binary
+        # directly than via the AppImage wrapper. (No .deb / .rpm yet.)
+        run: |
+          set -euo pipefail
+          cp build-linux/DuskStudio_artefacts/Release/DuskStudio ./DuskStudio-x86_64
+          sha256sum DuskStudio-x86_64 | tee DuskStudio-x86_64.sha256
+
+      - name: Publish AppImage + executable to the PRIVATE releases repo
         # Only on a real v* tag — dispatch runs are build validation.
         if: ${{ github.ref_type == 'tag' }}
         env:
@@ -127,12 +135,12 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF_NAME}"
-          NOTES="Unsigned Linux AppImage (x86_64). chmod +x and run."
+          NOTES="Unsigned Linux x86_64: AppImage (chmod +x and run) + bare executable."
 
           shopt -s nullglob
-          ASSETS=( *.AppImage *.AppImage.sha256 )
+          ASSETS=( *.AppImage *.AppImage.sha256 DuskStudio-x86_64 DuskStudio-x86_64.sha256 )
           if [[ ${#ASSETS[@]} -eq 0 ]]; then
-            echo "::error::no AppImage produced — packaging step failed" >&2
+            echo "::error::no Linux artifacts produced — packaging step failed" >&2
             exit 1
           fi
 
