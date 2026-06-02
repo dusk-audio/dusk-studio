@@ -64,6 +64,23 @@ cat > "${HEADER}" <<'TEX'
 \newunicodechar{●}{{\glyphfallback ●}}
 \newunicodechar{♩}{{\glyphfallback ♩}}
 \newunicodechar{⟳}{{\glyphfallback ⟳}}
+\newunicodechar{⚠}{{\glyphfallback ⚠}}
+
+% Cap image height at 0.82 textheight (pandoc's \pandocbounded otherwise
+% scales tall figures to the FULL text height, leaving no room for the
+% caption - which then collides with the centred footer page number). Width
+% bound (\linewidth) is unchanged. Mirrors pandoc 3.x's definition, only the
+% height reference shrinks.
+\makeatletter
+\renewcommand*\pandocbounded[1]{%
+  \sbox\pandoc@box{#1}%
+  \Gscale@div\@tempa{0.82\textheight}{\dimexpr\ht\pandoc@box+\dp\pandoc@box\relax}%
+  \Gscale@div\@tempb{\linewidth}{\wd\pandoc@box}%
+  \ifdim\@tempb\p@<\@tempa\p@\let\@tempa\@tempb\fi%
+  \ifdim\@tempa\p@<\p@\scalebox{\@tempa}{\usebox\pandoc@box}%
+  \else\usebox\pandoc@box\fi%
+}
+\makeatother
 TEX
 
 pandoc "${PROCESSED}" \

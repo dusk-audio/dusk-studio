@@ -55,7 +55,7 @@ If a feature mainly adds configurability or options, it is not in Dusk Studio. F
 
 This chapter walks an empty session all the way to a finished bounce. If you have never opened Dusk Studio before, follow it in order. If you are returning, skim the headings.
 
-## 1. Install and first launch
+## Install and first launch
 
 Install per your platform. On first launch, Dusk Studio opens a blank session called `Untitled` and the **Startup** dialog asks whether you want to create a new session in a chosen folder or open a recent one. Pick **New**, name your session, and click through.
 
@@ -63,7 +63,7 @@ Install per your platform. On first launch, Dusk Studio opens a blank session ca
 
 The main window is laid out top to bottom: menu bar, stage selector (RECORDING / MIXING / AUX / MASTERING), bank selector, transport bar, tape strip toggle, console. The console fills the rest of the window with 24 channel strips, 4 buses, and the master.
 
-## 2. Pick an audio device
+## Pick an audio device
 
 Open **Settings → Audio…**. Choose your interface, sample rate, and block size. 48 kHz at 256 samples is a safe default; drop to 128 if your hardware can keep up and you need lower monitoring latency.
 
@@ -73,7 +73,7 @@ On Linux, PipeWire and JACK both appear as "JACK"; pick whichever owns your inte
 
 If your interface has more than two inputs, the channel pickers on each track's input block will populate automatically; no extra routing dialog is needed.
 
-## 3. Arm a track and check levels
+## Arm a track and check levels
 
 Switch to **RECORDING** stage. Click the **ARM** button on track 1. The button lights red and the **Input** picker becomes active. Leave the input on `−2: follow track index` if your guitar is plugged into interface input 1, or pick a specific input if it is somewhere else.
 
@@ -83,7 +83,7 @@ Click **IN** to enable input monitoring. Play the source and watch the input met
 
 If you want to track _through_ the channel's EQ and compressor, also engage **PRINT**. The recorded file will contain the post-effects signal. With PRINT off (the default) you can tweak EQ and compression after the take without re-recording. PRINT applies to **audio tracks only**; MIDI tracks always record raw MIDI events and ignore the PRINT button.
 
-## 4. Record
+## Record
 
 Hit **R** or click the transport's record button. Playback starts, the record indicator flashes, and a region begins drawing into the tape strip on track 1. Stop with **Space** when you are done.
 
@@ -91,7 +91,7 @@ Hit **R** or click the transport's record button. Playback starts, the record in
 
 If you do not like the take, **Cmd+Z** undoes the recording. The take is preserved in the region's take history (up to 20 takes per region) — right-click the region and pick a previous take to swap it back in.
 
-## 5. Overdub
+## Overdub
 
 Disarm track 1. Arm track 2, pick the right input, and record over the playback of track 1. Repeat for as many tracks as you need; Dusk Studio can record 8 inputs at once.
 
@@ -99,7 +99,7 @@ Disarm track 1. Arm track 2, pick the right input, and record over the playback 
 
 To punch in over a specific section of an already-recorded track, set the punch in and out points (**Shift+[** and **Shift+]**), engage **P** for punch mode, arm the track, and press record before the punch in point. Dusk Studio will start recording at the punch in point and stop at the punch out point automatically.
 
-## 6. Mix
+## Mix
 
 Switch to **MIXING** stage. The input block on each strip collapses into a small `I/O` button, and the aux send knobs replace it. Now you have full visibility of:
 
@@ -117,7 +117,7 @@ Mix top-down: shape EQ first, then ride the compressor, then balance with faders
 
 For console-style automation, click the small mode label below a fader to cycle through OFF / READ / WRITE / TOUCH. WRITE records every move while the transport rolls; TOUCH only writes while you are physically touching the control.
 
-## 7. Bounce
+## Bounce
 
 When the mix is where you want it, hit **Cmd+B** to open the bounce dialog. Pick a filename, sample rate, and bit depth. The bounce renders offline as fast as the CPU allows and lands in the session folder by default.
 
@@ -1452,7 +1452,7 @@ The measured latency is stored per insert and applied as an internal delay line 
 
 # Sync to external gear
 
-![MTC frame-rate dropdown showing all four rates.](docs/images/sync-02-mtc-rates.png)
+*(Screenshot pending: the MTC frame-rate dropdown, open, showing all four rates.)*
 
 ## MIDI Clock
 
@@ -1578,7 +1578,7 @@ At the bottom:
 
 # Saving and loading sessions
 
-![Session folder contents on disk.](docs/images/ses-02-session-folder.png)
+*(Screenshot pending: the session folder contents on disk, in a file manager.)*
 
 ## Where sessions live
 
@@ -1837,7 +1837,7 @@ The piano roll modal captures its own keypresses first (see `PianoRollComponent:
 
 # Troubleshooting
 
-![A plugin slot showing the `⚠ (offline)` state after the original plugin couldn't be re-instantiated.](docs/images/ts-02-plugin-offline.png)
+*(Screenshot pending: a plugin slot in the `⚠ (offline)` state after the original plugin couldn't be re-instantiated.)*
 
 ## "Plugin crashed — reload to recover"
 
