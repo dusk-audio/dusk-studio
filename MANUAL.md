@@ -328,14 +328,14 @@ The source on GitHub is GPL-3.0; anyone who prefers to skip the warning can buil
 
 ### Linux (AppImage)
 
-1. Download `DuskStudio-x86_64.AppImage` (or `-aarch64` on Raspberry Pi / ARM64 Linux) from the Patreon post or the private releases repo.
+1. Download `dusk-studio-<version>-Linux-x86_64.AppImage` from the Patreon post or the private releases repo.
 2. Open a terminal in the download folder and mark it executable:
    ```bash
-   chmod +x DuskStudio-x86_64.AppImage
+   chmod +x dusk-studio-*-Linux-x86_64.AppImage
    ```
 3. Double-click to launch, or run it from the terminal:
    ```bash
-   ./DuskStudio-x86_64.AppImage
+   ./dusk-studio-*-Linux-x86_64.AppImage
    ```
 
 No signing dance. Linux desktops trust AppImages by default.

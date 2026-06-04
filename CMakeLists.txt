@@ -990,11 +990,14 @@ set(CPACK_DMG_FORMAT                "UDZO")
 set(CPACK_DMG_VOLUME_NAME           "Dusk Studio ${DUSKSTUDIO_VERSION}")
 
 # Package filename platform suffix. CPack defaults to the kernel name
-# ("Darwin") on macOS - rename to a user-facing, arch-explicit "macOS-arm64"
-# (the build is Apple-Silicon-only; it won't run on Intel Macs). Mirrors the
-# arch-suffixed win64 / x86_64 the Windows + Linux artifacts already carry.
+# ("Darwin") on macOS and "win64" on Windows - override both to a user-facing,
+# OS-and-arch-explicit suffix so every platform shares one scheme:
+# dusk-studio-<version>-<OS>-<arch>.<ext> (macOS-arm64 / Windows-x64 /
+# Linux-x86_64). macOS is Apple-Silicon-only (won't run on Intel Macs).
 if(APPLE)
     set(CPACK_SYSTEM_NAME "macOS-arm64")
+elseif(WIN32)
+    set(CPACK_SYSTEM_NAME "Windows-x64")
 endif()
 
 include(CPack)
