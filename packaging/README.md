@@ -54,7 +54,7 @@ linuxdeploy --appdir AppDir \
             --output appimage
 ```
 
-Output: `DuskStudio-<version>-x86_64.AppImage` ready to upload to Patreon.
+Output: `dusk-studio-<version>-Linux-x86_64.AppImage` ready to upload to Patreon.
 
 ## Patreon delivery checklist
 

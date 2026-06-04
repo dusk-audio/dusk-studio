@@ -12,7 +12,7 @@
 #     already-prepared icon.
 #
 # Output:
-#   DuskStudio-<version>-x86_64.AppImage in the repo root.
+#   dusk-studio-<version>-Linux-x86_64.AppImage in the repo root.
 
 set -euo pipefail
 
@@ -64,7 +64,7 @@ else
     cp "$ICON_SRC" "$ICON_256"
 fi
 
-OUTPUT="DuskStudio-${VERSION}-x86_64.AppImage"
+OUTPUT="dusk-studio-${VERSION}-Linux-x86_64.AppImage"
 export OUTPUT
 # linuxdeploy derives the AppImage's root icon name from the basename of
 # --icon-file; the .desktop file's Icon= field must match. Copy the
@@ -85,4 +85,3 @@ linuxdeploy --appdir AppDir \
 
 echo
 echo "Built: $OUTPUT"
-sha256sum "$OUTPUT" | tee "$OUTPUT.sha256"

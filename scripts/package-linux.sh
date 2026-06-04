@@ -49,6 +49,6 @@ popd >/dev/null
 # Move output to repo root for predictable downstream paths.
 shopt -s nullglob
 case "$FORMAT" in
-    deb) for f in "$BUILD_DIR"/*.deb; do mv "$f" .; echo "Built: $(basename "$f")"; sha256sum "$(basename "$f")" >> SHA256SUMS; done ;;
-    rpm) for f in "$BUILD_DIR"/*.rpm; do mv "$f" .; echo "Built: $(basename "$f")"; sha256sum "$(basename "$f")" >> SHA256SUMS; done ;;
+    deb) for f in "$BUILD_DIR"/*.deb; do mv "$f" .; echo "Built: $(basename "$f")"; sha256sum "$(basename "$f")" >> SHA256SUMS.linux; done ;;
+    rpm) for f in "$BUILD_DIR"/*.rpm; do mv "$f" .; echo "Built: $(basename "$f")"; sha256sum "$(basename "$f")" >> SHA256SUMS.linux; done ;;
 esac
