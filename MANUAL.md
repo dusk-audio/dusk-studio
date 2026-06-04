@@ -855,7 +855,7 @@ The source file path is displayed below the buttons.
 
 ## Transport
 
-A miniature transport bar with **Play**, **Stop**, **Rewind**, a clock display, and a gain-reduction readout summing the compressor and limiter.
+A miniature transport bar with **Play**, **Stop**, **Rewind**, a clock display, and a gain-reduction readout summing the compressor and limiter. The **spacebar** toggles play/stop of the loaded mix (it drives the mastering player here, not the multitrack transport).
 
 ## Waveform
 

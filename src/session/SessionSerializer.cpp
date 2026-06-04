@@ -1199,7 +1199,6 @@ juce::String SessionSerializer::serialize (const Session& s)
     tport->setProperty ("snap_to_grid",      s.snapToGrid);
     tport->setProperty ("snap_resolution",   (int) s.snapResolution);
     tport->setProperty ("piano_roll_key_snap", s.pianoRollKeySnap);
-    tport->setProperty ("edit_mode",         (int) s.editMode);
     tport->setProperty ("tempo_bpm",         s.tempoBpm.load());
     tport->setProperty ("ui_stage",          s.uiStage.load());
     tport->setProperty ("sync_source_input",  s.syncSourceInputIdentifier);
@@ -1570,11 +1569,10 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
             const int i = (int) tport["snap_resolution"];
             if (i >= 0 && i <= (int) SnapResolution::CDFrames) s.snapResolution = (SnapResolution) i;
         }
-        if (tport.hasProperty ("edit_mode"))
-        {
-            const int i = (int) tport["edit_mode"];
-            if (i >= 0 && i <= (int) EditMode::Draw) s.editMode = (EditMode) i;
-        }
+        // edit_mode intentionally not restored - the edit tool is transient UI
+        // state, not session content. A persisted Cut/Range would reload as the
+        // tapestrip's tool with no on-screen selector to change it back. Always
+        // start in the Session.h default (Grab).
         if (tport.hasProperty ("tempo_bpm"))         s.tempoBpm.store         ((float) (double) tport["tempo_bpm"]);
         if (tport.hasProperty ("ui_stage"))          s.uiStage.store          ((int)  tport["ui_stage"]);
         if (tport.hasProperty ("sync_source_input"))

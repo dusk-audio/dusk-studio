@@ -45,56 +45,86 @@ void paintScissorsGlyph (juce::Graphics& g, float cx, float cy)
 
 void paintPencilGlyph (juce::Graphics& g, float cx, float cy)
 {
-    // Pro Tools-style pencil: a slim rectangular body rotated ~45°
-    // (eraser-end at upper-right, lead-end at lower-left), with a
-    // perpendicular ferrule band near the eraser and a darker
-    // triangular tip at the lead end. Strictly fits inside a 24×24
-    // box with the lead tip at (cx, cy) so the glyph never extends
-    // past the cursor's canvas.
-    //
-    // Hotspot = the lead tip ⇒ position the glyph so its (3, 21) grid
-    // coordinate lands at (cx, cy). kSize ≤ 24 keeps the (20, 5)
-    // eraser corner within (cx + 17, cy - 16) of the hotspot — under
-    // the 24-px canvas budget once the 1.6 px halo is included.
+    // Pencil pointing down-left, eraser up-right, the barrel at ~45°. A white
+    // silhouette with a black halo (matching the hand / scissors glyphs), with
+    // the lead tip and the wood-collar / ferrule section lines drawn in black
+    // so it reads as a pencil rather than a plain stick. Built along a single
+    // axis from the lead tip (the hotspot, at cx,cy) to the eraser.
     constexpr float kGrid = 24.0f;
-    constexpr float kSize = 22.0f;
-    const float ox = cx - (3.0f / kGrid) * kSize;
-    const float oy = cy - (21.0f / kGrid) * kSize;
-    auto sx = [&] (float u) { return ox + (u / kGrid) * kSize; };
-    auto sy = [&] (float u) { return oy + (u / kGrid) * kSize; };
+    constexpr float kSize = 34.0f;
+    // Anchor the lead tip (grid 4,20) on the hotspot (cx,cy).
+    const juce::Point<float> tip { 4.0f, 20.0f };
+    const float ox = cx - (tip.x / kGrid) * kSize;
+    const float oy = cy - (tip.y / kGrid) * kSize;
+    auto P = [&] (float gx, float gy)
+        { return juce::Point<float> (ox + (gx / kGrid) * kSize, oy + (gy / kGrid) * kSize); };
 
-    // Body quadrilateral. Vertex order traces:
-    //   tip-bottom (3,21) → tip-top (7,16) → eraser-top (20,5)
-    //   → eraser-bottom (17,8). Closed quad = full pencil silhouette.
-    juce::Path body;
-    body.addQuadrilateral (sx (3.0f),  sy (21.0f),
-                            sx (7.0f),  sy (16.0f),
-                            sx (20.0f), sy ( 5.0f),
-                            sx (17.0f), sy ( 8.0f));
+    // Axis param t = grid units from the tip toward the eraser (45° up-right);
+    // half-width offsets run along the perpendicular (down-right).
+    constexpr float kInv = 0.70710678f;
+    auto axis = [&] (float t) { return juce::Point<float> (tip.x + kInv * t, tip.y - kInv * t); };
+    auto eA = [&] (float t, float w) { auto c = axis (t); return P (c.x - kInv * w, c.y - kInv * w); };
+    auto eB = [&] (float t, float w) { auto c = axis (t); return P (c.x + kInv * w, c.y + kInv * w); };
+    auto quad = [&] (float t0, float w0, float t1, float w1)
+    {
+        juce::Path p;
+        p.startNewSubPath (eA (t0, w0));
+        p.lineTo (eB (t0, w0));
+        p.lineTo (eB (t1, w1));
+        p.lineTo (eA (t1, w1));
+        p.closeSubPath();
+        return p;
+    };
 
-    // Filled triangle at the lead end (sharpened tip). Same colour
-    // as the body so the whole pencil reads as a single white
-    // silhouette with a black halo for contrast.
-    juce::Path tip;
-    tip.addTriangle (sx (3.0f),  sy (21.0f),
-                      sx (7.0f),  sy (16.0f),
-                      sx (5.5f), sy (18.5f));
+    constexpr float W  = 3.0f;   // barrel half-width
+    constexpr float wG = 1.2f;   // graphite base half-width
+    // Section boundaries (grid units from the tip).
+    constexpr float tGraphite = 2.4f;
+    constexpr float tWood     = 5.8f;
+    constexpr float tBody     = 16.0f;
+    constexpr float tFerrule  = 18.6f;
+    constexpr float tEnd      = 21.0f;
 
-    const auto bodyHaloStroke = juce::PathStrokeType (2.4f,
-                                                        juce::PathStrokeType::curved,
-                                                        juce::PathStrokeType::rounded);
+    const auto apex = P (tip.x, tip.y);
 
-    // Halo: black stroke around the body silhouette so the all-white
-    // pencil reads on any background.
+    // Outer silhouette (apex → wood widen → straight barrel → eraser end and
+    // back) for the halo stroke.
+    juce::Path sil;
+    sil.startNewSubPath (apex);
+    sil.lineTo (eA (tWood, W));
+    sil.lineTo (eA (tEnd,  W));
+    sil.lineTo (eB (tEnd,  W));
+    sil.lineTo (eB (tWood, W));
+    sil.closeSubPath();
+
+    // Black halo + white body, matching the hand / scissors glyphs. The
+    // pencil sections are drawn as black detail strokes on the white
+    // silhouette rather than colour fills.
     g.setColour (juce::Colours::black.withAlpha (0.85f));
-    g.strokePath (body, bodyHaloStroke);
-
-    // All-white pencil: body + tip in the same colour. Halo gives
-    // the shape; the lead tip stays visible as a slight protrusion
-    // beyond the quad's tip corner.
+    g.strokePath (sil, juce::PathStrokeType (3.0f, juce::PathStrokeType::curved,
+                                              juce::PathStrokeType::rounded));
     g.setColour (juce::Colours::white);
-    g.fillPath (body);
-    g.fillPath (tip);
+    g.fillPath (sil);
+
+    // Black lead point at the tip.
+    juce::Path graphite;
+    graphite.startNewSubPath (apex);
+    graphite.lineTo (eA (tGraphite, wG));
+    graphite.lineTo (eB (tGraphite, wG));
+    graphite.closeSubPath();
+    g.setColour (juce::Colours::black.withAlpha (0.85f));
+    g.fillPath (graphite);
+
+    // Section divider lines (wood collar, the two ferrule-band edges) so the
+    // pencil reads as a pencil without colour.
+    auto cross = [&] (float t)
+    {
+        const auto a = eA (t, W), b = eB (t, W);
+        g.drawLine (a.getX(), a.getY(), b.getX(), b.getY(), 1.3f);
+    };
+    cross (tWood);
+    cross (tBody);
+    cross (tFerrule);
 }
 
 void paintHandGlyph (juce::Graphics& g, float cx, float cy)
@@ -126,9 +156,9 @@ void paintHandGlyph (juce::Graphics& g, float cx, float cy)
 namespace
 {
 juce::Image drawCursorImage (float hotX, float hotY,
-                              void (*paintFn) (juce::Graphics&, float, float))
+                              void (*paintFn) (juce::Graphics&, float, float),
+                              int kSz = 24)
 {
-    constexpr int kSz = 24;
     juce::Image img (juce::Image::ARGB, kSz, kSz, true);
     juce::Graphics g (img);
     paintFn (g, hotX, hotY);
@@ -146,7 +176,9 @@ juce::MouseCursor makeScissorsCursor()
 
 juce::MouseCursor makePencilCursor()
 {
-    return juce::MouseCursor (drawCursorImage (3.0f, 21.0f, &paintPencilGlyph), 3, 21);
+    // Lead tip is the hotspot, near the lower-left; the body extends up-right.
+    // 36-px canvas fits the enlarged glyph (kSize 34) + halo without clipping.
+    return juce::MouseCursor (drawCursorImage (5.0f, 30.0f, &paintPencilGlyph, 36), 5, 30);
 }
 
 juce::MouseCursor makeHandCursor()

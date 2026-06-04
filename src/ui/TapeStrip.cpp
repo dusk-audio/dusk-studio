@@ -1307,6 +1307,14 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
 
 void TapeStrip::mouseDrag (const juce::MouseEvent& e)
 {
+    // Keep the Grab glyph following a region MOVE drag - mouseDrag fires but
+    // mouseMove doesn't, so without this the glyph freezes at the click point
+    // while the region slides out from under it. Trim/fade/gain drags keep
+    // the native resize cursor mouseMove last set.
+    if (onMouseMovedForCursor && session.editMode == EditMode::Grab
+        && (drag.op == RegionOp::Move || midiDrag.active()))
+        onMouseMovedForCursor (*this, { e.x, e.y }, EditMode::Grab, {});
+
     // MIDI region move-drag. In-place mutation of timelineStart on
     // the AtomicSnapshot's mutable copy so the audio thread's
     // scheduler picks it up without a publish (no reallocation, no
@@ -1985,46 +1993,7 @@ void TapeStrip::mouseDoubleClick (const juce::MouseEvent& e)
 void TapeStrip::mouseMove (const juce::MouseEvent& e)
 {
     const auto mode = session.editMode;
-    if (mode == EditMode::Cut)
-    {
-        const auto hit = hitTestRegion (e.x, e.y);
-        if (hit.track != hoveredTrack || hit.regionIdx != hoveredRegion)
-        {
-            hoveredTrack  = hit.track;
-            hoveredRegion = hit.regionIdx;
-            repaint();
-        }
-        // Only the track lanes are the cut surface (scissor glyph). Over the
-        // ruler / label column, fall through so loop/punch bracket + marker
-        // hover affordances still work in Cut mode.
-        if (tracksColumnBounds().contains (e.x, e.y))
-        {
-            setMouseCursor (juce::MouseCursor::NoCursor);
-            return;
-        }
-    }
-
-    // Cursor feedback so the user can tell where edges/body are without
-    // clicking blindly.
-    if (hitTestMarker (e.x, e.y) >= 0)
-    {
-        // Markers are click-to-seek and drag-to-reposition - "dragging
-        // hand" reads as both clickable and draggable.
-        setMouseCursor (juce::MouseCursor::DraggingHandCursor);
-        return;
-    }
-
-    if (const auto bh = hitTestBracket (e.x, e.y); bh != BracketHit::None)
-    {
-        // Endpoint pills get a horizontal-resize cursor; bar drags get
-        // a "moving" hand. Same pattern as region trim vs region move.
-        const bool isBar = (bh == BracketHit::LoopBar || bh == BracketHit::PunchBar);
-        setMouseCursor (isBar ? juce::MouseCursor::DraggingHandCursor
-                              : juce::MouseCursor::LeftRightResizeCursor);
-        return;
-    }
-
-    const auto hit = hitTestRegion (e.x, e.y);
+    const auto hit  = hitTestRegion (e.x, e.y);
 
     // Update hover state so paint() can show the fade handles only
     // for the region under the cursor (or the selected region). Skip
@@ -2037,6 +2006,50 @@ void TapeStrip::mouseMove (const juce::MouseEvent& e)
         repaint();
     }
 
+    const bool overMidi = overMidiRegionBody (e.x, e.y);
+
+    // Cut: scissors glyph only over an AUDIO region body (the only thing the
+    // cut tool splits on the lane); empty lane and MIDI regions get the plain
+    // arrow so the cursor never advertises a split that won't happen. Over the
+    // ruler / label column fall through so marker + loop/punch affordances work.
+    if (mode == EditMode::Cut && tracksColumnBounds().contains (e.x, e.y))
+    {
+        setHoverCursor (hit.regionIdx >= 0 ? juce::MouseCursor::NoCursor
+                                           : juce::MouseCursor::NormalCursor,
+                        e.x, e.y);
+        return;
+    }
+
+    // Cursor feedback so the user can tell where edges/body are without
+    // clicking blindly.
+    if (hitTestMarker (e.x, e.y) >= 0)
+    {
+        // Markers are click-to-seek and drag-to-reposition - "dragging
+        // hand" reads as both clickable and draggable.
+        setHoverCursor (juce::MouseCursor::DraggingHandCursor, e.x, e.y);
+        return;
+    }
+
+    if (const auto bh = hitTestBracket (e.x, e.y); bh != BracketHit::None)
+    {
+        // Endpoint pills get a horizontal-resize cursor; bar drags get
+        // a "moving" hand. Same pattern as region trim vs region move.
+        const bool isBar = (bh == BracketHit::LoopBar || bh == BracketHit::PunchBar);
+        setHoverCursor (isBar ? juce::MouseCursor::DraggingHandCursor
+                              : juce::MouseCursor::LeftRightResizeCursor, e.x, e.y);
+        return;
+    }
+
+    // MIDI regions are move-only on the lane (trim happens in the piano roll):
+    // hand glyph in Grab, plain arrow otherwise. Audio region ops fall through
+    // to the switch below.
+    if (overMidi)
+    {
+        setHoverCursor (mode == EditMode::Grab ? juce::MouseCursor::NoCursor
+                                                : juce::MouseCursor::NormalCursor, e.x, e.y);
+        return;
+    }
+
     switch (hit.op)
     {
         case RegionOp::TrimStart:
@@ -2047,7 +2060,7 @@ void TapeStrip::mouseMove (const juce::MouseEvent& e)
             // handle - the user sees they can drag horizontally either
             // way. The y-position (top band vs full edge) tells them
             // which mode they're in; we don't need a separate cursor.
-            setMouseCursor (juce::MouseCursor::LeftRightResizeCursor);
+            setHoverCursor (juce::MouseCursor::LeftRightResizeCursor, e.x, e.y);
             break;
         case RegionOp::Move:
             // Alt over the body promotes Move -> AdjustGain on click;
@@ -2057,38 +2070,72 @@ void TapeStrip::mouseMove (const juce::MouseEvent& e)
             // tool is always visible; other modes stay on the normal
             // arrow so a dragging-hand cursor doesn't compete with the
             // actual drag-in-progress cursor.
-            setMouseCursor (e.mods.isAltDown()
+            setHoverCursor (e.mods.isAltDown()
                               ? juce::MouseCursor::UpDownResizeCursor
                               : (mode == EditMode::Grab
                                     ? juce::MouseCursor::NoCursor
-                                    : juce::MouseCursor::NormalCursor));
+                                    : juce::MouseCursor::NormalCursor), e.x, e.y);
             break;
         case RegionOp::AdjustGain:
-            setMouseCursor (juce::MouseCursor::UpDownResizeCursor);
+            setHoverCursor (juce::MouseCursor::UpDownResizeCursor, e.x, e.y);
             break;
         case RegionOp::TakeBadge:
-            setMouseCursor (juce::MouseCursor::PointingHandCursor);
+            setHoverCursor (juce::MouseCursor::PointingHandCursor, e.x, e.y);
             break;
         case RegionOp::None:
-            setMouseCursor (mode == EditMode::Grab
-                                ? juce::MouseCursor::NoCursor
-                                : juce::MouseCursor::NormalCursor);
+            // Empty lane = plain arrow even in Grab. The hand glyph is
+            // reserved for hovering a region body (RegionOp::Move).
+            setHoverCursor (juce::MouseCursor::NormalCursor, e.x, e.y);
             break;
     }
+}
+
+void TapeStrip::setHoverCursor (const juce::MouseCursor& c, int x, int y)
+{
+    setMouseCursor (c);
+    if (! (onMouseMovedForCursor && onMouseExitedForCursor))
+        return;
+    if (c == juce::MouseCursor::NoCursor)
+        onMouseMovedForCursor (*this, { x, y }, session.editMode, {});
+    else
+        onMouseExitedForCursor();
 }
 
 void TapeStrip::refreshModeCursor()
 {
     const auto mode = session.editMode;
-    if (mode == EditMode::Grab || mode == EditMode::Cut)
-        // CursorOverlay paints the glyph; hide the native cursor.
-        setMouseCursor (juce::MouseCursor::NoCursor);
-    else
-        setMouseCursor (juce::MouseCursor::NormalCursor);
+    const auto p = getMouseXYRelative();
+    // A glyph shows only over the lanes, and only where mouseMove would hide
+    // the native cursor: Cut anywhere on a lane (scissors), Grab over a
+    // region body (hand). Empty lane / ruler / label column = plain arrow -
+    // hiding the whole component would leave an invisible pointer there until
+    // the next move (on platforms where JUCE's NoCursor does the hiding).
+    const bool overLanes = isMouseOver (true) && tracksColumnBounds().contains (p.x, p.y);
+    bool wantGlyph = false;
+    if (overLanes)
+    {
+        const auto hit      = hitTestRegion (p.x, p.y);
+        const bool overMidi = overMidiRegionBody (p.x, p.y);
+        if (mode == EditMode::Cut)
+            wantGlyph = (hit.regionIdx >= 0);                        // scissors over audio (splittable) only
+        else if (mode == EditMode::Grab)
+            wantGlyph = (hit.op == RegionOp::Move || overMidi);      // hand over a body
+    }
+    setMouseCursor (wantGlyph ? juce::MouseCursor::NoCursor
+                              : juce::MouseCursor::NormalCursor);
+    // Mode flipped via toolbar / hotkey with no mouse event to follow -
+    // seed the overlay glyph from the current pointer so it appears
+    // immediately instead of waiting for the next move.
+    if (onMouseMovedForCursor && onMouseExitedForCursor)
+    {
+        if (wantGlyph) onMouseMovedForCursor (*this, { p.x, p.y }, mode, {});
+        else           onMouseExitedForCursor();
+    }
 }
 
 void TapeStrip::mouseExit (const juce::MouseEvent&)
 {
+    if (onMouseExitedForCursor) onMouseExitedForCursor();
     if (hoveredTrack != -1 || hoveredRegion != -1)
     {
         hoveredTrack  = -1;
@@ -3591,6 +3638,26 @@ TapeStrip::BracketHit TapeStrip::hitTestBracket (int x, int y) const noexcept
         }
     }
     return BracketHit::None;
+}
+
+bool TapeStrip::overMidiRegionBody (int x, int y) const noexcept
+{
+    if (! tracksColumnBounds().contains (x, y)) return false;
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        const auto row = rowBounds (t);
+        if (! row.contains (x, y)) continue;
+        const auto& mr = session.track (t).midiRegions.current();
+        for (int i = (int) mr.size() - 1; i >= 0; --i)
+        {
+            const auto& r  = mr[(size_t) i];
+            const int   x0 = xForSample (r.timelineStart);
+            const int   x1 = xForSample (r.timelineStart + r.lengthInSamples);
+            if (x >= x0 && x <= x1) return true;
+        }
+        break;
+    }
+    return false;
 }
 
 int TapeStrip::hitTestMarker (int x, int y) const noexcept

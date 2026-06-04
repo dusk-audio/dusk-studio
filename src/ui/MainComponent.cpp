@@ -617,6 +617,22 @@ MainComponent::MainComponent()
     // first window resize.
     cursorOverlay->setBounds (getLocalBounds());
 
+    // Feed the TapeStrip's Grab/Cut pointer into the overlay - same sink the
+    // audio/MIDI editors use. Without this the strip hides the native cursor
+    // but nothing paints the glyph, so the pointer vanishes over the lanes.
+    if (tapeStrip != nullptr)
+    {
+        tapeStrip->onMouseMovedForCursor =
+            [this] (juce::Component& src, juce::Point<int> localInSrc, EditMode m,
+                    juce::Range<int> cutLine)
+            {
+                if (cursorOverlay != nullptr)
+                    cursorOverlay->setMousePosition (src, localInSrc, m, cutLine);
+            };
+        tapeStrip->onMouseExitedForCursor =
+            [this] { if (cursorOverlay != nullptr) cursorOverlay->clearMousePosition(); };
+    }
+
     // Autosave heartbeat. Writes session.json.autosave next to the canonical
     // session.json every kAutosaveIntervalMs (30 s) so a crash loses at most
     // ~30 s of work. The write is atomic (temp + rename), so even a kill
@@ -680,7 +696,13 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
 {
     auto& um = engine.getUndoManager();
     const auto mods    = key.getModifiers();
-    const int  code    = key.getKeyCode();
+    int        code    = key.getKeyCode();
+    // On this Linux/X11 (JUCE-wayland) build getKeyCode() returns the actual
+    // XLookupString glyph, so unmodified letters arrive lowercase ('m', not
+    // 'M') and every uppercase comparison below would silently miss. Normalise
+    // ASCII letters to uppercase - a no-op on macOS/Windows where getKeyCode()
+    // is already uppercase. Brackets / digits / symbols are untouched.
+    if (code >= 'a' && code <= 'z') code -= ('a' - 'A');
     const bool cmd     = mods.isCommandDown();   // Ctrl on Linux/Windows, Cmd on macOS
     const bool shift   = mods.isShiftDown();
     const bool noMods  = ! cmd && ! shift && ! mods.isAltDown();
@@ -861,6 +883,15 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     // the key.
     if (key == juce::KeyPress::spaceKey && noMods)
     {
+        // In the Mastering stage the audible source is the standalone mixdown
+        // player, not the multitrack transport - so space drives that instead.
+        if (engine.getStage() == AudioEngine::Stage::Mastering)
+        {
+            auto& mp = engine.getMasteringPlayer();
+            if      (mp.isPlaying()) mp.stop();
+            else if (mp.isLoaded())  mp.play();
+            return true;
+        }
         auto& transport = engine.getTransport();
         if (transport.isStopped()) engine.play();
         else                       { engine.stop(); if (transportBar != nullptr) transportBar->notifyRecordStopped(); }
@@ -3409,6 +3440,9 @@ void MainComponent::openPianoRoll (int trackIdx, int regionIdx)
     // the editor we're about to open (swap mid-collapse).
     editorTeardownTimer.reset();
 
+    // Remember the tapestrip's edit tool before any modal can change it.
+    snapshotEditModeForModal();
+
     // Mutually exclusive with the audio editor. Opening the piano roll
     // tears down any open audio editor first.
     if (audioEditor != nullptr) closeAudioEditor();
@@ -3500,6 +3534,7 @@ void MainComponent::closePianoRoll()
     // refresh the strip's native cursor so it reflects the mode immediately
     // rather than waiting for the first mouse move over the strip.
     if (tapeStrip != nullptr) { tapeStrip->refreshModeCursor(); tapeStrip->repaint(); }
+    scheduleEditModeRestore();
 }
 
 void MainComponent::closePianoRollAnimated()
@@ -3530,6 +3565,9 @@ void MainComponent::openAudioEditor (int trackIdx, int regionIdx)
 {
     // Drop any pending collapse-teardown (see openPianoRoll).
     editorTeardownTimer.reset();
+
+    // Remember the tapestrip's edit tool before any modal can change it.
+    snapshotEditModeForModal();
 
     // Mutual exclusion with the piano roll - opening the audio editor
     // tears down any open piano roll first.
@@ -3607,6 +3645,42 @@ void MainComponent::closeAudioEditor()
     audioEditorRegionIdx = -1;
     // Refresh the strip cursor for any mode change made in the editor (see
     // closePianoRoll).
+    if (tapeStrip != nullptr) { tapeStrip->refreshModeCursor(); tapeStrip->repaint(); }
+    scheduleEditModeRestore();
+}
+
+void MainComponent::snapshotEditModeForModal()
+{
+    // Snapshot only on the first modal open. A swap (audio<->piano) or a
+    // region-navigate re-enters here with a modal still tracked, so the guard
+    // preserves the original tapestrip tool instead of capturing the modal's.
+    if (! modalEditModeSaved)
+    {
+        savedEditMode      = session.editMode;
+        modalEditModeSaved = true;
+    }
+}
+
+void MainComponent::scheduleEditModeRestore()
+{
+    if (! modalEditModeSaved) return;
+    // Defer: a swap / navigate closes then re-opens within the same call
+    // stack, so by the time this fires a modal is open again and the restore
+    // is correctly skipped. A genuine close leaves both editors null.
+    juce::Component::SafePointer<MainComponent> safe (this);
+    juce::MessageManager::callAsync ([safe]
+    {
+        if (auto* s = safe.getComponent()) s->restoreEditModeIfModalClosed();
+    });
+}
+
+void MainComponent::restoreEditModeIfModalClosed()
+{
+    if (! modalEditModeSaved) return;
+    if (audioEditor != nullptr || pianoRoll != nullptr) return;   // reopened (swap / navigate)
+    modalEditModeSaved = false;
+    if (session.editMode == savedEditMode) return;
+    session.editMode = savedEditMode;
     if (tapeStrip != nullptr) { tapeStrip->refreshModeCursor(); tapeStrip->repaint(); }
 }
 
