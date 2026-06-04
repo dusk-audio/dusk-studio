@@ -44,6 +44,12 @@ public:
         }
         addAndMakeVisible (headerMask);
         addAndMakeVisible (footerMask);
+        // Swallow clicks on the masked donor nameplate so its hidden
+        // titleClickArea can't open the plugin's Patreon/supporters overlay
+        // inside the DAW (the DAW hosts its own patron section). The preset
+        // cluster + enable button are reparented on top below, so they still
+        // receive their own clicks; only the bare header area is blocked.
+        headerMask.setInterceptsMouseClicks (true, false);
         // Reparent AFTER the masks so it ends up topmost in z-order —
         // otherwise the header mask covers the cluster too.
         if (presetCombo != nullptr) addAndMakeVisible (presetCombo.getComponent());
@@ -97,12 +103,13 @@ public:
         headerMask.setBounds (0, 0, getWidth(), kHeaderH);
         footerMask.setBounds (0, getHeight() - kFooterH, getWidth(), kFooterH);
 
-        // On/off toggle pinned to the header's left (the preset cluster is
-        // centred, so no collision).
+        // On/off toggle pinned to the header's RIGHT to match the master EQ
+        // ("EQ") + COMP ("COMP") editor panels (both removeFromRight(60)). The
+        // preset cluster is centred, so no collision.
         const int rowH = (int) (26 * scale);
-        const int btnW = (int) (64 * scale);
+        const int btnW = (int) (60 * scale);
         const int pad  = (int) (8  * scale);
-        enableBtn.setBounds (pad, (kHeaderH - rowH) / 2, btnW, rowH);
+        enableBtn.setBounds (getWidth() - pad - btnW, (kHeaderH - rowH) / 2, btnW, rowH);
     }
 
 private:
@@ -118,8 +125,10 @@ private:
         Mask()
         {
             setOpaque (true);
-            // MUST pass clicks through — header mask sits over the
-            // recentered preset cluster.
+            // Pass-through by default (the footer mask covers nothing
+            // clickable). The header mask overrides this to intercept, so the
+            // donor nameplate's supporters trigger can't fire; its reparented
+            // preset cluster sits on top and still gets its own clicks.
             setInterceptsMouseClicks (false, false);
         }
         void paint (juce::Graphics& g) override

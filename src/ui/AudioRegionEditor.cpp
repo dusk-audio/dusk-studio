@@ -394,15 +394,33 @@ void AudioRegionEditor::zoomFitToArea (juce::Rectangle<int> area)
 {
     const auto* r = region();
     if (r == nullptr || r->lengthInSamples <= 0) return;
-    // Pin the anchor range to the focused region's CURRENT timeline
-    // span. Splits later mutate region.lengthInSamples but anchor
-    // stays put -> the waveform doesn't shift on screen, cuts just
-    // add visible boundary lines.
-    anchorTimelineStart  = r->timelineStart;
-    anchorTimelineLength = r->lengthInSamples;
+
+    // Anchor spans the WHOLE track's content (min start .. max end over every
+    // region on the track) so zooming out / scrolling reveals all regions, not
+    // just the focused one. Splitting never changes the track's overall extent,
+    // so the anchor stays put and the waveform doesn't shift when a cut adds a
+    // boundary line.
+    juce::int64 lo = r->timelineStart;
+    juce::int64 hi = r->timelineStart + r->lengthInSamples;
+    if (trackIdx >= 0 && trackIdx < Session::kNumTracks)
+        for (const auto& reg : session.track (trackIdx).regions)
+        {
+            if (reg.lengthInSamples <= 0) continue;
+            lo = juce::jmin (lo, reg.timelineStart);
+            hi = juce::jmax (hi, reg.timelineStart + reg.lengthInSamples);
+        }
+    anchorTimelineStart  = lo;
+    anchorTimelineLength = juce::jmax<juce::int64> (1, hi - lo);
+
+    // Initial view zooms to fit the FOCUSED region (what was double-clicked);
+    // the user zooms out to see the rest of the track.
     const float w = (float) juce::jmax (1, area.getWidth() - 8);
-    pixelsPerSample = w / (float) anchorTimelineLength;
-    scrollSamples   = 0;
+    pixelsPerSample = w / (float) juce::jmax<juce::int64> (1, r->lengthInSamples);
+
+    // Scroll so the focused region sits at the left edge, clamped to content.
+    const juce::int64 viewSamples = (juce::int64) std::round ((double) w / pixelsPerSample);
+    const juce::int64 maxStart    = juce::jmax<juce::int64> (0, anchorTimelineLength - viewSamples);
+    scrollSamples    = juce::jlimit<juce::int64> (0, maxStart, r->timelineStart - anchorTimelineStart);
     editCursorSample = r->sourceOffset;
 }
 
@@ -779,7 +797,6 @@ void AudioRegionEditor::paintWaveform (juce::Graphics& g, juce::Rectangle<int> a
         if (reg.lengthInSamples <= 0) continue;
         const auto regEnd = reg.timelineStart + reg.lengthInSamples;
         if (regEnd <= anchorTimelineStart || reg.timelineStart >= anchorEnd) continue;
-        if (reg.file != loadedFile) continue;  // different audio source, can't share thumbnail
 
         const int xa = xForTimelineSample (reg.timelineStart, area);
         const int xb = xForTimelineSample (regEnd, area);
@@ -804,11 +821,13 @@ void AudioRegionEditor::paintWaveform (juce::Graphics& g, juce::Rectangle<int> a
         const auto sliceColour = (reg.customColour.isTransparent()
                                       ? kWaveformFill
                                       : reg.customColour);
-        g.setColour (sliceColour.withMultipliedBrightness (isFocused ? 1.05f : 0.55f)
-                                  .withAlpha (isFocused ? 1.0f : 0.85f));
 
-        if (thumb->isFullyLoaded() || thumb->getNumChannels() > 0)
+        if (reg.file == loadedFile && (thumb->isFullyLoaded() || thumb->getNumChannels() > 0))
         {
+            // Shares the focused region's audio file -> render its slice of the
+            // cached thumbnail at the region's own sourceOffset / length.
+            g.setColour (sliceColour.withMultipliedBrightness (isFocused ? 1.05f : 0.55f)
+                                      .withAlpha (isFocused ? 1.0f : 0.85f));
             const double t0 = (double) reg.sourceOffset / sr;
             const double t1 = t0 + (double) reg.lengthInSamples / sr;
             // Clip so we only draw inside the slice's x-range even when
@@ -821,6 +840,15 @@ void AudioRegionEditor::paintWaveform (juce::Graphics& g, juce::Rectangle<int> a
                                                           xb - xa, inset.getHeight()),
                                   t0, t1, 0.95f);
         }
+        else if (reg.file != loadedFile)
+        {
+            // Different audio source than the focused region: the editor caches
+            // one thumbnail, so we can't draw this region's waveform. Paint a
+            // flat colour block so it's still visible on the track when zoomed
+            // out (double-click it to focus + see its waveform).
+            g.setColour (sliceColour.withMultipliedBrightness (0.5f).withAlpha (0.7f));
+            g.fillRect (slice);
+        }
     }
 
     // Slice boundary lines: subtle dark stroke at each region's edge.
@@ -830,7 +858,6 @@ void AudioRegionEditor::paintWaveform (juce::Graphics& g, juce::Rectangle<int> a
     for (const auto& reg : regs)
     {
         if (reg.lengthInSamples <= 0) continue;
-        if (reg.file != loadedFile) continue;
         const auto regEnd = reg.timelineStart + reg.lengthInSamples;
         if (reg.timelineStart > anchorTimelineStart
             && reg.timelineStart < anchorEnd)
@@ -1042,6 +1069,20 @@ int AudioRegionEditor::gainLineY (juce::Rectangle<int> waveArea) const
     return inset.getCentreY() - (int) std::round (frac * spanPx);
 }
 
+bool AudioRegionEditor::pointOverRegionBody (int x, juce::Rectangle<int> waveArea) const
+{
+    if (trackIdx < 0 || trackIdx >= Session::kNumTracks)
+        return false;
+    const int hovIdx = regionIndexAtX (x, waveArea);
+    const auto& regs = session.track (trackIdx).regions;
+    const AudioRegion* r = (hovIdx >= 0 && hovIdx < (int) regs.size())
+                             ? &regs[(size_t) hovIdx] : region();
+    if (r == nullptr) return false;
+    const int xStart = xForTimelineSample (r->timelineStart, waveArea);
+    const int xEnd   = xForTimelineSample (r->timelineStart + r->lengthInSamples, waveArea);
+    return juce::Range<int> (juce::jmin (xStart, xEnd), juce::jmax (xStart, xEnd)).contains (x);
+}
+
 juce::MouseCursor AudioRegionEditor::cursorForPoint (int x, int y) const
 {
     // Single source of truth for cursor selection — shared between
@@ -1097,9 +1138,18 @@ juce::MouseCursor AudioRegionEditor::cursorForPoint (int x, int y) const
         // Only hide the native cursor when the overlay sink is actually wired
         // (same guard pushCursorPosition uses) — otherwise no glyph is painted
         // and the cursor would just vanish.
-        if ((m == EditMode::Grab || m == EditMode::Cut || m == EditMode::Draw)
-            && onMouseMovedForCursor != nullptr)
-            return invisibleCursor();
+        if (onMouseMovedForCursor != nullptr)
+        {
+            // Grab (hand) and Cut (scissors) show their glyph only over a
+            // region body; empty timeline gets the plain arrow - nothing to
+            // grab or split there. Draw paints across the whole content area
+            // (gain breakpoints can sit anywhere).
+            if (m == EditMode::Grab || m == EditMode::Cut)
+                return pointOverRegionBody (x, waveArea) ? invisibleCursor()
+                                                          : juce::MouseCursor::NormalCursor;
+            if (m == EditMode::Draw)
+                return invisibleCursor();
+        }
         return cursorForEditMode (m);
     }
 
@@ -1129,8 +1179,16 @@ void AudioRegionEditor::pushCursorPosition (int x, int y)
     // should follow the dragged region); hovering (no drag) keeps it too.
     const bool dragOwnsCursor = dragMode != DragMode::None
                              && dragMode != DragMode::MoveRegion;
-    const bool wantsGlyph = inContent && ! overHandle && ! dragOwnsCursor
-                           && (m == EditMode::Grab || m == EditMode::Cut || m == EditMode::Draw);
+    bool wantsGlyph = inContent && ! overHandle && ! dragOwnsCursor
+                     && (m == EditMode::Grab || m == EditMode::Cut || m == EditMode::Draw);
+    // Grab (hand) and Cut (scissors) only paint over a region body - empty
+    // timeline keeps the plain arrow (matches cursorForPoint). A region MOVE
+    // drag is the exception: the cursor tracks the dragged region, so the
+    // glyph stays. Cut never drags, so the guard collapses to the body test.
+    if (wantsGlyph && (m == EditMode::Grab || m == EditMode::Cut)
+        && dragMode != DragMode::MoveRegion
+        && ! pointOverRegionBody (x, waveArea))
+        wantsGlyph = false;
 
     // In Cut mode the dashed cut-line + scissor variant only fires
     // when the cursor X is over the REGION's painted audio range
@@ -2606,9 +2664,26 @@ bool AudioRegionEditor::keyPressed (const juce::KeyPress& k)
             return true;
         }
         auto& um = engine.getUndoManager();
+        // After deleting, keep the editor open on a surviving region (e.g. the
+        // other half after a split) by re-anchoring regionIdx; only close when
+        // the track has no regions left to edit.
+        auto reanchorOrClose = [this]
+        {
+            additionalSelectedRegions.clear();
+            const int total = (int) session.track (trackIdx).regions.size();
+            if (total <= 0)
+            {
+                if (onCloseRequested) onCloseRequested();
+                return;
+            }
+            regionIdx = juce::jlimit (0, total - 1, regionIdx);
+            refreshStatusBarReadouts();
+            repaint();
+        };
+
         // Multi-select Delete: remove every additional region first
         // (descending index order so earlier deletes don't shift later
-        // indices). Then delete the focused region last and close.
+        // indices), then the focused region.
         if (! additionalSelectedRegions.empty())
         {
             std::vector<int> idxs = additionalSelectedRegions;
@@ -2618,13 +2693,12 @@ bool AudioRegionEditor::keyPressed (const juce::KeyPress& k)
             um.beginNewTransaction (idxs.size() > 1 ? "Delete regions" : "Delete region");
             for (int idx : idxs)
                 um.perform (new DeleteRegionAction (session, engine, trackIdx, idx));
-            additionalSelectedRegions.clear();
-            if (onCloseRequested) onCloseRequested();
+            reanchorOrClose();
             return true;
         }
         um.beginNewTransaction ("Delete region");
         um.perform (new DeleteRegionAction (session, engine, trackIdx, regionIdx));
-        if (onCloseRequested) onCloseRequested();
+        reanchorOrClose();
         return true;
     }
 

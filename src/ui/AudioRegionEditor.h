@@ -223,6 +223,11 @@ public:
     // resize cursor sitting on a handle.
     juce::MouseCursor cursorForPoint (int x, int y) const;
 
+    // True when x falls inside a region's painted body (hovered slice, else
+    // the focused region). Drives the Grab cursor: hand glyph over a body,
+    // plain arrow over empty timeline between / past regions.
+    bool pointOverRegionBody (int x, juce::Rectangle<int> waveArea) const;
+
     // Two-way: fresh overlap creates/widens auto-fades, vanishing
     // overlap retracts a previously-auto fade to zero. User-pinned
     // fades (fadeInAuto=false with non-zero length) untouched. Each

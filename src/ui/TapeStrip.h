@@ -51,6 +51,11 @@ public:
 
     void refreshModeCursor();
 
+    // setMouseCursor + push the matching glyph into the CursorOverlay. When
+    // c is NoCursor the overlay paints the Grab/Cut glyph at (x,y); any
+    // other cursor clears it so only the native cursor shows.
+    void setHoverCursor (const juce::MouseCursor& c, int x, int y);
+
     // Called from MainComponent's keyboard handler. Returns true if the
     // op happened (caller decides whether to swallow the keypress).
     // All edits route through engine's UndoManager.
@@ -72,6 +77,15 @@ public:
     // opens the dedicated editor — one mental model across audio + MIDI.
     std::function<void (int trackIdx, int regionIdx)> onMidiRegionDoubleClicked;
     std::function<void (int trackIdx, int regionIdx)> onAudioRegionDoubleClicked;
+
+    // CursorOverlay sink — MainComponent wires these so the strip can push
+    // its local mouse position into the shared overlay (which can't poll
+    // Desktop::getMousePosition reliably on Wayland). Grab/Cut mode hides
+    // the native cursor with NoCursor; without these the overlay never gets
+    // a position and the pointer simply vanishes over the lanes.
+    std::function<void (juce::Component&, juce::Point<int>, EditMode,
+                          juce::Range<int>)> onMouseMovedForCursor;
+    std::function<void()> onMouseExitedForCursor;
 
     // On-screen rect of a region, in TapeStrip-local coords, for the
     // editor expand/collapse animation. Empty when the index is invalid
@@ -137,6 +151,10 @@ private:
         RegionOp op  = RegionOp::None;
     };
     RegionHit hitTestRegion (int x, int y) const noexcept;
+    // True when (x,y) is inside a MIDI region's painted body on its lane.
+    // hitTestRegion only covers audio regions; this is the MIDI counterpart
+    // used for the Grab hand cursor over MIDI regions (move-only on the lane).
+    bool overMidiRegionBody (int x, int y) const noexcept;
     // Tested only inside the ruler band.
     int hitTestMarker (int x, int y) const noexcept;
 

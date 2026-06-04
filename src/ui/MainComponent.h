@@ -278,6 +278,20 @@ private:
     void closeAudioEditor();
     void closeAudioEditorAnimated();
 
+    // The edit tool (session.editMode) is global, but a modal editor changing
+    // it (e.g. picking scissors in the audio editor) should not leak back to
+    // the tapestrip. Snapshot the mode when the first modal opens, restore it
+    // once the last modal closes. Restore is async so a swap / region-navigate
+    // (close-then-open in one call stack) is seen as "still in a modal" and
+    // skipped. modalEditModeSaved guards so swaps don't re-snapshot the
+    // modal's tool. editMode is no longer persisted (SessionSerializer), so a
+    // fresh launch is always the Grab default, not a stale Cut.
+    EditMode savedEditMode      = EditMode::Grab;
+    bool     modalEditModeSaved = false;
+    void snapshotEditModeForModal();
+    void scheduleEditModeRestore();
+    void restoreEditModeIfModalClosed();
+
     // One-shot deferred teardown for the editor collapse animation — kept
     // alive while the ComponentAnimator runs, then fires the immediate
     // close. Only one region editor is open at a time, so a single slot

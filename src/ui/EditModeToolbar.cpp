@@ -99,29 +99,34 @@ void paintGridGlyph (juce::Graphics& g, juce::Rectangle<float> r)
 
 void paintDrawGlyph (juce::Graphics& g, juce::Rectangle<float> r)
 {
-    // Minimal Logic-style pencil: a thick diagonal stroke from top-
-    // right (eraser end) to bottom-left (tip), with a small filled
-    // triangle at the bottom-left forming the sharpened lead.
-    const auto cell = r.reduced (5.0f);
-    auto scaleX = [&] (float u) { return cell.getX() + (u / 24.0f) * cell.getWidth(); };
-    auto scaleY = [&] (float u) { return cell.getY() + (u / 24.0f) * cell.getHeight(); };
+    // Solid pencil matching the Draw-mode cursor (paintPencilGlyph): lead tip
+    // lower-left, eraser upper-right. Filled in the button's glyph colour - the
+    // cursor is a solid pencil, so a stroked outline here read as a hollow,
+    // inverted version of it.
+    const auto cell = r.reduced (4.0f);
+    auto P = [&] (float gx, float gy)
+    {
+        return juce::Point<float> (cell.getX() + (gx / 24.0f) * cell.getWidth(),
+                                   cell.getY() + (gy / 24.0f) * cell.getHeight());
+    };
 
-    // Body — single fat diagonal line.
-    juce::Path body;
-    body.startNewSubPath (scaleX (6.0f),  scaleY (18.0f));
-    body.lineTo          (scaleX (20.0f), scaleY (4.0f));
-    g.strokePath (body, juce::PathStrokeType (2.4f,
-                                                juce::PathStrokeType::curved,
-                                                juce::PathStrokeType::butt));
+    constexpr float kInv = 0.70710678f;
+    const juce::Point<float> tip { 4.0f, 20.0f };
+    auto axis = [&] (float t) { return juce::Point<float> (tip.x + kInv * t, tip.y - kInv * t); };
+    auto eA = [&] (float t, float w) { auto c = axis (t); return P (c.x - kInv * w, c.y - kInv * w); };
+    auto eB = [&] (float t, float w) { auto c = axis (t); return P (c.x + kInv * w, c.y + kInv * w); };
 
-    // Filled triangle tip at the bottom-left end. The diagonal line
-    // ends just past the triangle's apex so the tip reads as a
-    // continuation rather than a stuck-on attachment.
-    juce::Path tip;
-    tip.addTriangle (scaleX (3.0f),  scaleY (21.0f),
-                      scaleX (6.5f),  scaleY (17.0f),
-                      scaleX (8.0f),  scaleY (20.5f));
-    g.fillPath (tip);
+    constexpr float W = 3.0f, tWood = 5.8f, tEnd = 21.0f;
+
+    // Filled silhouette: tip apex -> wood widen -> straight barrel -> eraser end.
+    juce::Path sil;
+    sil.startNewSubPath (P (tip.x, tip.y));
+    sil.lineTo (eA (tWood, W));
+    sil.lineTo (eA (tEnd,  W));
+    sil.lineTo (eB (tEnd,  W));
+    sil.lineTo (eB (tWood, W));
+    sil.closeSubPath();
+    g.fillPath (sil);
 }
 } // namespace
 

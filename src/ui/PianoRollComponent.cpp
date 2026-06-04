@@ -592,11 +592,12 @@ void PianoRollComponent::syncEditModeToolbar()
     // hiding the native cursor would leave NO cursor at all until the next move.
     bool onEdge = false;
     const bool overNote = noteGridArea().contains (p) && hitTestNote (p.x, p.y, onEdge) >= 0;
-    if ((mode == EditMode::Grab || mode == EditMode::Draw)
+    if (mode == EditMode::Draw
         && dragMode == DragMode::None
         && noteGridArea().contains (p)
         && ! overNote)
-        // CursorOverlay paints the actual glyph; hide the native cursor.
+        // Draw's pencil glyph is overlay-painted; hide the native cursor.
+        // Grab keeps the arrow on empty grid (hand only over a note).
         setMouseCursor (juce::MouseCursor::NoCursor);
     else
         setMouseCursor (juce::MouseCursor::NormalCursor);
@@ -2674,10 +2675,10 @@ void PianoRollComponent::pushCursorPosition (int x, int y)
     // overlay glyph there so the two don't show at once (empty grid keeps it).
     bool onEdge = false;
     const bool overNote = inContent && hitTestNote (x, y, onEdge) >= 0;
-    // Only Grab + Draw get a glyph on the piano-roll grid. Range / Cut
-    // / Grid stay on the platform cursor.
-    const bool wantsGlyph = inContent && ! overNote
-                         && (m == EditMode::Grab || m == EditMode::Draw);
+    // Only Draw paints a glyph on empty grid (pencil). Grab uses the plain
+    // arrow over empty grid and a native drag-hand over a note body, so it
+    // never needs the overlay glyph. Range / Cut / Grid stay native too.
+    const bool wantsGlyph = inContent && ! overNote && m == EditMode::Draw;
     if (wantsGlyph) onMouseMovedForCursor (*this, juce::Point<int> (x, y), m, {});
     else            onMouseExitedForCursor();
 }
@@ -2757,12 +2758,11 @@ void PianoRollComponent::mouseMove (const juce::MouseEvent& e)
     const int hit = hitTestNote (e.x, e.y, onEdge);
     if (hit < 0)
     {
-        // Empty grid: Grab = hand (selection / box-select); Draw =
-        // pencil (next click creates a note). CursorOverlay paints
-        // both glyphs; hide the native cursor so we don't show two.
-        // Other modes are inert on the piano-roll grid — show the
-        // normal arrow.
-        if (mode == EditMode::Grab || mode == EditMode::Draw)
+        // Empty grid: Draw = pencil (next click creates a note), painted by
+        // the CursorOverlay, so hide the native cursor. Grab gets the plain
+        // arrow here - the hand is reserved for hovering a note body. Other
+        // modes are inert on the grid - normal arrow.
+        if (mode == EditMode::Draw)
             setMouseCursor (juce::MouseCursor::NoCursor);
         else
             setMouseCursor (juce::MouseCursor::NormalCursor);
