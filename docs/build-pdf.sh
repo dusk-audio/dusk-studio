@@ -71,7 +71,14 @@ cat > "${HEADER}" <<'TEX'
 % caption - which then collides with the centred footer page number). Width
 % bound (\linewidth) is unchanged. Mirrors pandoc 3.x's definition, only the
 % height reference shrinks.
+%
+% \providecommand first so \renewcommand always has a target: pandoc only
+% emits \pandocbounded for sized images from ~3.1.7 on, so on a runner with
+% an older pandoc the macro is undefined and a bare \renewcommand errors out
+% ("Command \pandocbounded undefined"). The provide is a no-op when pandoc
+% already defined it; the renew then installs the height-capped version.
 \makeatletter
+\providecommand*\pandocbounded[1]{#1}%
 \renewcommand*\pandocbounded[1]{%
   \sbox\pandoc@box{#1}%
   \Gscale@div\@tempa{0.82\textheight}{\dimexpr\ht\pandoc@box+\dp\pandoc@box\relax}%
