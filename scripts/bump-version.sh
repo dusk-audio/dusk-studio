@@ -38,6 +38,13 @@ if [[ "$CURRENT" == "$NEW_VERSION" ]]; then
     exit 1
 fi
 
+# A release must have its CHANGELOG section written before we stamp the
+# version, so the published notes never lag the tag.
+if [[ -f CHANGELOG.md ]] && ! grep -qF "## [$NEW_VERSION]" CHANGELOG.md; then
+    echo "error: CHANGELOG.md has no '## [$NEW_VERSION]' section - add it first" >&2
+    exit 1
+fi
+
 TODAY="$(date -u +%Y-%m-%d)"
 
 echo "$NEW_VERSION" > VERSION

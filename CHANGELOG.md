@@ -5,6 +5,18 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
+## [0.11.0] - unreleased
+
+Built to a production-grade bar; shipped as a Beta. (In progress — dated at
+tag time.) 1.0.0 is reserved for the public stable declaration.
+
+### Changed
+
+- **Mastering limiter rebuilt as a true-peak brickwall limiter.** 4×
+  oversampled lookahead limiting with a hard inter-sample-peak ceiling,
+  monotonic-min gain envelope, and hold + smooth release — replaces the
+  previous sample-peak design that pumped like a compressor.
+
 ## [0.10.0-beta.1] - 2026-05-29 — first beta
 
 Architectural-audit sprint: every "Working" cell in the README's

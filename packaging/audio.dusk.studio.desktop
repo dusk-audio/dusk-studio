@@ -2,7 +2,7 @@
 Type=Application
 Name=Dusk Studio
 GenericName=Multitrack Recorder
-Comment=Portastudio-style 16-channel DAW
+Comment=Portastudio-style 24-channel DAW
 Exec=DuskStudio
 Icon=DuskStudio
 Terminal=false

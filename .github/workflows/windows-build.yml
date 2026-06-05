@@ -107,6 +107,24 @@ jobs:
         shell: bash
         run: cmake --build build --config Release -j
 
+      - name: Build + run tests (release gate)
+        # No MSI ships unless the IPC regression net passes. Narrowed to
+        # "ipc-stub" to match windows-tests.yml: the full suite still has
+        # pre-existing MSVC donor-compressor (UniversalCompressor static-curve)
+        # failures. Broadening to the full suite is tracked separately
+        # (triage / skip those cases on MSVC first).
+        shell: bash
+        run: |
+          cmake -S . -B build-tests \
+            -G "Visual Studio 17 2022" -A x64 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DDUSKSTUDIO_BUILD_TESTS=ON \
+            -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
+            -DASIOSDK_PATH="${ASIOSDK_PATH}"
+          cmake --build build-tests --config Release --target dusk-studio-tests -j
+          ctest --test-dir build-tests --output-on-failure -C Release -R "ipc-stub"
+
       - name: Set up WiX Toolset v3 (CPack -G WIX needs candle/light)
         # GitHub's windows runner image migration (windows-latest ->
         # windows-2025) dropped the pre-installed WiX 3 toolset that CPack's

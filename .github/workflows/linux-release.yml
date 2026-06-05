@@ -103,6 +103,18 @@ jobs:
       - name: Build (Release)
         run: cmake --build build-linux -j
 
+      - name: Build + run tests (release gate)
+        # No artifact ships unless the full Catch2 suite passes.
+        run: |
+          cmake -S . -B build-tests -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DDUSKSTUDIO_BUILD_TESTS=ON \
+            -DDUSKSTUDIO_SKIP_FORK_CHECK=ON \
+            -DJUCE_PATH="${RUNNER_TEMP}/JUCE-wayland" \
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main"
+          cmake --build build-tests --target dusk-studio-tests -j
+          ctest --test-dir build-tests --output-on-failure
+
       - name: Fetch linuxdeploy
         # linuxdeploy's appimage output plugin also fetches appimagetool +
         # the AppImage runtime from GitHub at build time, so this step needs
