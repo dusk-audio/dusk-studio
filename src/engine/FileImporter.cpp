@@ -205,9 +205,20 @@ AudioImportResult importAudio (const AudioImportRequest& req)
         }
     }
 
-    // Write the normalised WAV.
+    // Write the normalised WAV. Same transient-lock retry as the source open:
+    // a freshly-created file in the audio dir can be briefly held by the
+    // Windows indexer / AV before the stream opens.
     const auto outFile = req.audioDir.getChildFile (makeImportedFilename (req.trackIndex));
-    std::unique_ptr<juce::FileOutputStream> stream (outFile.createOutputStream());
+    std::unique_ptr<juce::FileOutputStream> stream;
+    for (int attempt = 0; attempt < 5; ++attempt)
+    {
+        stream = outFile.createOutputStream();
+        if (stream != nullptr && stream->openedOk())
+            break;
+        stream.reset();
+        if (attempt < 4)
+            juce::Thread::sleep (20);
+    }
     if (stream == nullptr || ! stream->openedOk())
     {
         result.errorMessage = "Could not open output file for writing: "
