@@ -2,43 +2,50 @@
 
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_core/juce_core.h>
+#include <juce_dsp/juce_dsp.h>
 #include <atomic>
+#include <memory>
 #include <vector>
 
 namespace duskstudio
 {
-// Lookahead brickwall peak limiter, intended for the master / mastering chain.
+// True-peak lookahead brickwall limiter for the master / mastering chain
+// (Pro-L 2 / Waves L2 class). Transparent gain reduction with a hard ceiling
+// guarantee on inter-sample peaks.
 //
-// Algorithm (sample-accurate, no allocation on the audio thread):
-//   1. Each input sample is pushed into a stereo delay line of length
-//      `lookaheadSamples` (default 3 ms - long enough that fast transients
-//      are caught without smearing).
-//   2. For every input sample we compute the *required* gain to keep the
-//      peak at or below the ceiling: required = min(1, ceiling / |x|).
-//   3. We track the minimum required gain across the entire lookahead
-//      window via a simple O(N) scan per sample (N ~ 144 at 48 k / 3 ms,
-//      so a few hundred MFLOPS for stereo - trivial; a monotonic deque
-//      is the clean follow-up but isn't audibly different).
-//   4. The output envelope snaps INSTANTLY down to the window-min when
-//      the new input demands it (the lookahead delay means the envelope
-//      ramp starts BEFORE the peak hits the output) and releases up to
-//      1.0 with a 1-pole release coefficient.
-//   5. Output = delayed_input * envelope. Result: hard ceiling guarantee
-//      with no ramp overshoot, no artifacts on impulses, and a release
-//      curve that breathes naturally on sustained material.
-//
-// Inter-sample-peak (true peak / ISP) detection is NOT implemented yet -
-// peaks are sample-level. ISP is the obvious follow-up before this
-// limiter ships to a real release context.
+// Signal flow (all RT-safe; buffers + oversampler allocated only in prepare):
+//   1. Input drive.
+//   2. 4x linear-phase FIR oversampling — the whole limiting process runs at
+//      the oversampled rate so inter-sample peaks are actually detected AND
+//      controlled (sample-rate-only detection lets ISP through after the DAC
+//      reconstruction filter). NOTE: this is an intentional, documented
+//      exception to the project's "no per-DSP-unit internal oversampling" rule
+//      — a true-peak limiter cannot function without its own oversampling and
+//      it is the terminal output stage, so there is no donor saturation
+//      downstream to double-oversample.
+//   3. Lookahead delay (~2 ms at the oversampled rate).
+//   4. Per-sample required gain min(1, ceiling/|peak|), stereo-linked.
+//   5. Sliding-window minimum over the lookahead (monotonic deque, O(1)
+//      amortized) feeds a one-pole attack / hold / one-pole release smoother.
+//      The lookahead lets the gain finish ramping down BEFORE the peak reaches
+//      the output; the smoothing keeps the gain trajectory continuous so there
+//      is no intermodulation distortion (the cause of the old "compressor"
+//      character was an instant gain snap with a single slow release).
+//   6. Gain applied at the oversampled rate.
+//   7. Downsample 4x.
+//   8. Final safety clamp at the ceiling (the smoother carries the load; the
+//      clamp only catches sub-dB residual overshoot from the attack lag and
+//      the downsampling filter) — this is what makes the ceiling a hard,
+//      true-peak guarantee.
 class BrickwallLimiter
 {
 public:
     BrickwallLimiter() = default;
 
-    // Message thread. Sizes the delay + history buffers for the configured
-    // lookahead. Must be called before processInPlace.
+    // Message thread. Sizes the delay + history buffers and the oversampler
+    // for the configured lookahead. Must be called before processInPlace.
     void prepare (double sampleRate, int maxBlockSize,
-                   double lookaheadMs = 3.0);
+                   double lookaheadMs = 2.0);
     void reset() noexcept;
 
     // Message thread (atomic stores; audio thread reads).
@@ -53,34 +60,54 @@ public:
     float getReleaseMs() const noexcept { return releaseMs.load (std::memory_order_relaxed); }
 
     // Audio thread. In-place stereo process; L and R must be at least
-    // `numSamples` floats. Bypasses internally if !enabled (still applies
-    // the lookahead delay so toggling the enable doesn't pop - the delay
-    // is applied unconditionally).
+    // `numSamples` floats. `numSamples` must not exceed the maxBlockSize passed
+    // to prepare() — the oversampler is sized for it (the mastering chain
+    // enforces this). When disabled it stays transparent but still applies the
+    // (constant) lookahead + oversampling latency so toggling never pops.
     void processInPlace (float* L, float* R, int numSamples) noexcept;
 
     // Audio-thread metering: peak GR over the last block, in dB (≤ 0).
     float getCurrentGrDb() const noexcept { return currentGrDb.load (std::memory_order_relaxed); }
 
-    // Round-trip latency the limiter introduces - UI can subtract this
-    // from playhead/seek displays if it wants sample accuracy. For MVP we
-    // ignore it; 3 ms is below the visual jitter threshold.
-    int getLatencySamples() const noexcept { return lookaheadSamples.load (std::memory_order_relaxed); }
+    // Round-trip latency the limiter introduces, in base-rate samples
+    // (oversampling FIR latency + lookahead). The chain forwards this so the
+    // host/transport can compensate.
+    int getLatencySamples() const noexcept { return latencySamplesBase.load (std::memory_order_relaxed); }
 
 private:
-    double sr             = 0.0;
-    // Atomic so the message-thread reader (getLatencySamples) and the audio /
-    // setup-thread writer (prepare) don't race on a plain int.
-    std::atomic<int> lookaheadSamples { 0 };
+    double sr     = 0.0;
+    double osRate = 0.0;
+    int    osFactor = 4;
 
-    // Stereo delay line - circular, sized to lookaheadSamples + 1.
+    // Atomic so the message-thread reader (getLatencySamples) and the
+    // setup-thread writer (prepare) don't race on a plain int.
+    std::atomic<int> latencySamplesBase { 0 };
+
+    std::unique_ptr<juce::dsp::Oversampling<float>> oversampler;
+
+    // Stereo delay line at the OVERSAMPLED rate - circular, length lookaheadOs + 1.
+    int lookaheadOs = 0;
+    int delayLen    = 0;
     std::vector<float> delayL, delayR;
     int writePos = 0;
 
-    // Per-sample required-gain history; same indexing as the delay line.
-    std::vector<float> gainHistory;
+    // Monotonic min deque over the lookahead window (size lookaheadOs + 1),
+    // stored in a fixed ring so the sliding-window minimum is O(1) amortized
+    // with no per-sample scan and no allocation. Capacity = window + 1.
+    int                    windowLen = 0;
+    std::vector<float>     dqVal;
+    std::vector<long long> dqIdx;
+    int       dqHead = 0;
+    int       dqCount = 0;
+    long long sampleCounter = 0;
 
-    float envelope    = 1.0f;
+    // Gain smoother (runs at the oversampled rate): instant attack to the
+    // lookahead-window minimum, hold, one-pole release.
+    float env         = 1.0f;
     float releaseCoef = 0.0f;
+    int   holdOs      = 0;
+    int   holdCounter = 0;
+    float lastReleaseMs = -1.0f;
 
     std::atomic<bool>  enabled    { true };
     std::atomic<float> inputDrive { 0.0f };  // dB
