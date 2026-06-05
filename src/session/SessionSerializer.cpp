@@ -1680,8 +1680,8 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                     case (int) MidiBindingTarget::AuxLaneFader:
                     case (int) MidiBindingTarget::AuxLaneMute:
                     case (int) MidiBindingTarget::MasterFader:
-                    // H3 expansion — were silently coerced to None on load,
-                    // dropping the binding from a saved session.
+                    // Were silently coerced to None on load, dropping the
+                    // binding from a saved session.
                     case (int) MidiBindingTarget::TrackEqEnabled:
                     case (int) MidiBindingTarget::TrackCompEnabled:
                     case (int) MidiBindingTarget::TrackInsertBypass:

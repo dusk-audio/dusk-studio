@@ -129,8 +129,7 @@ juce::String describeBindingTarget (const MidiBinding& b,
         case MidiBindingTarget::AuxLaneMute:     return "AUX " + trk() + " mute";
         case MidiBindingTarget::MasterFader:     return "Master fader";
 
-        // H3 expansion (Phase 5a). describeBindingTarget mirrors the
-        // grammar of the existing track / bus / master labels so the
+        // Mirror the grammar of the track / bus / master labels so the
         // bindings panel + right-click menu read consistently.
         case MidiBindingTarget::TrackEqEnabled:     return "Track " + trk() + " EQ on/off";
         case MidiBindingTarget::TrackCompEnabled:   return "Track " + trk() + " comp on/off";
@@ -203,8 +202,8 @@ const char* nameForTarget (MidiBindingTarget t) noexcept
         case MidiBindingTarget::AuxLaneMute:     return "AUX mute";
         case MidiBindingTarget::MasterFader:     return "Master fader";
 
-        // H3 expansion (Phase 5a). Short category names for the
-        // bindings-panel section headers + the right-click menu.
+        // Short category names for the bindings-panel section headers
+        // + the right-click menu.
         case MidiBindingTarget::TrackEqEnabled:     return "Track EQ on/off";
         case MidiBindingTarget::TrackCompEnabled:   return "Track comp on/off";
         case MidiBindingTarget::TrackInsertBypass:  return "Track insert bypass";
@@ -308,8 +307,8 @@ static bool isToggleTarget (MidiBindingTarget t) noexcept
         case MidiBindingTarget::BusMute:
         case MidiBindingTarget::BusSolo:
         case MidiBindingTarget::AuxLaneMute:
-        // H3 discrete on/off targets — also latch-friendly, so the learn menu
-        // should offer Press/Toggle button modes for them.
+        // Discrete on/off targets — latch-friendly, so the learn menu
+        // offers Press/Toggle button modes for them.
         case MidiBindingTarget::TrackEqEnabled:
         case MidiBindingTarget::TrackCompEnabled:
         case MidiBindingTarget::TrackInsertBypass:
@@ -563,7 +562,7 @@ std::optional<std::vector<MidiBinding>> deserializeBindingsPreset (const juce::S
             case MidiBindingTarget::TrackCompThreshBank:
             case MidiBindingTarget::TrackCompMakeupBank:
             case MidiBindingTarget::TrackPluginParamBank:
-            // H3 expansion — likewise missing from the round-trip whitelist.
+            // Likewise missing from the round-trip whitelist.
             case MidiBindingTarget::TrackEqEnabled:
             case MidiBindingTarget::TrackCompEnabled:
             case MidiBindingTarget::TrackInsertBypass:

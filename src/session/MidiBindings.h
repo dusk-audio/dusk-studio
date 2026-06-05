@@ -89,7 +89,6 @@ enum class MidiBindingTarget : int
 
     MasterFader       = 200,
 
-    // ── H3 expansion (Phase 5a) ───────────────────────────────────────
     // Discrete toggles (buttons).
     TrackEqEnabled       = 210, // targetIndex = track
     TrackCompEnabled     = 211, // targetIndex = track
@@ -149,7 +148,7 @@ constexpr bool isContinuousTarget (MidiBindingTarget t) noexcept
         || t == MidiBindingTarget::BusPan
         || t == MidiBindingTarget::AuxLaneFader
         || t == MidiBindingTarget::MasterFader
-        // H3 expansion: continuous bus + master targets.
+        // Continuous bus + master targets.
         || t == MidiBindingTarget::BusEqGain
         || t == MidiBindingTarget::MasterEqLfBoost
         || t == MidiBindingTarget::MasterEqHfBoost
@@ -180,7 +179,7 @@ constexpr bool needsTrackIndex (MidiBindingTarget t) noexcept
         || t == MidiBindingTarget::TrackMute
         || t == MidiBindingTarget::TrackSolo
         || t == MidiBindingTarget::TrackArm
-        // H3 expansion: per-track discrete toggles.
+        // Per-track discrete toggles.
         || t == MidiBindingTarget::TrackEqEnabled
         || t == MidiBindingTarget::TrackCompEnabled
         || t == MidiBindingTarget::TrackInsertBypass;
@@ -232,7 +231,7 @@ constexpr bool needsPackedTrackEqIndex (MidiBindingTarget t) noexcept
     return t == MidiBindingTarget::TrackEqGain;
 }
 
-// H3: BusEqGain stores bus * kBusEqBands + band in targetIndex.
+// BusEqGain stores bus * kBusEqBands + band in targetIndex.
 constexpr bool needsPackedBusEqIndex (MidiBindingTarget t) noexcept
 {
     return t == MidiBindingTarget::BusEqGain;
