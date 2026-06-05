@@ -63,7 +63,7 @@ float peak (const std::vector<float>& v)
 }
 } // namespace
 
-TEST_CASE ("BusStrip: unity fader + center pan + flat EQ + comp off ≈ passthrough",
+TEST_CASE ("BusStrip: unity fader + center pan + flat EQ + comp off ~= passthrough",
            "[BusStrip]")
 {
     duskstudio::BusParams params;   // all defaults: fader 0 dB, pan 0, EQ/comp off

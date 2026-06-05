@@ -98,12 +98,10 @@ jobs:
         shell: bash
         run: cmake --build build-tests --config Release --target dusk-studio-tests -j
 
-      - name: Run IPC stub tests
-        # Narrow filter so this workflow surfaces only the IPC regression
-        # net — donor-DSP failures (pre-existing UniversalCompressor
-        # static-curve assertions tracked separately) and other test
-        # cases that happen to compile on Windows aren't this job's
-        # responsibility. To broaden coverage later, drop the -R arg.
+      - name: Run tests
+        # Full Catch2 suite on MSVC. (The donor UniversalCompressor curve
+        # tests pass here; the earlier ipc-stub-only narrowing predated that
+        # and is no longer needed.)
         #
         # Loopback / firewall: the Windows IPC layer uses named pipes
         # (\\.\pipe\dusk-studio-ipc-*) + CreateFileMapping + WaitOnAddress.

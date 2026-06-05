@@ -108,11 +108,7 @@ jobs:
         run: cmake --build build --config Release -j
 
       - name: Build + run tests (release gate)
-        # No MSI ships unless the IPC regression net passes. Narrowed to
-        # "ipc-stub" to match windows-tests.yml: the full suite still has
-        # pre-existing MSVC donor-compressor (UniversalCompressor static-curve)
-        # failures. Broadening to the full suite is tracked separately
-        # (triage / skip those cases on MSVC first).
+        # No MSI ships unless the full Catch2 suite passes on MSVC.
         shell: bash
         run: |
           cmake -S . -B build-tests \
@@ -123,7 +119,7 @@ jobs:
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
             -DASIOSDK_PATH="${ASIOSDK_PATH}"
           cmake --build build-tests --config Release --target dusk-studio-tests -j
-          ctest --test-dir build-tests --output-on-failure -C Release -R "ipc-stub"
+          ctest --test-dir build-tests --output-on-failure -C Release
 
       - name: Set up WiX Toolset v3 (CPack -G WIX needs candle/light)
         # GitHub's windows runner image migration (windows-latest ->
