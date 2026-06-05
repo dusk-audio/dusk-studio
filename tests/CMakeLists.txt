@@ -155,6 +155,12 @@ if(DEFINED DUSK_PLUGINS_PATH)
     target_sources(dusk-studio-tests PRIVATE
         comp_static_curve.cpp
         comp_timing.cpp
+        bus_strip.cpp
+        mastering_chain.cpp
+        ${CMAKE_SOURCE_DIR}/src/dsp/BusStrip.cpp
+        ${CMAKE_SOURCE_DIR}/src/dsp/MasteringChain.cpp
+        ${CMAKE_SOURCE_DIR}/src/dsp/MasteringDigitalEq.cpp
+        ${CMAKE_SOURCE_DIR}/src/dsp/LoudnessMeter.cpp
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/multicomp.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/AnalogLookAndFeel.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/EnhancedCompressorEditor.cpp"
