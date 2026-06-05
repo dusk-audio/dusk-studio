@@ -86,6 +86,10 @@ private:
     // audio thread so the published atom matches what TapeMachine writes
     // internally for its own VU - keeps mixer + TapeMachine meters in sync.
     double sampleRateForMeter = 44100.0;
+    // Precomputed so the per-block meter path skips std::exp on the common
+    // (full-block) callback; odd-sized blocks fall back to recomputing alpha.
+    int    meterBlockSize = 0;
+    float  meterRmsAlpha  = 0.0f;
     float  vuRmsLinL = 0.0f;
     float  vuRmsLinR = 0.0f;
 };
