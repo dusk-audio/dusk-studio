@@ -113,7 +113,17 @@ AudioImportResult importAudio (const AudioImportRequest& req)
 
     juce::AudioFormatManager fm;
     fm.registerBasicFormats();
-    std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (req.source));
+    // Bounded retry: on Windows a file that was just written/downloaded can be
+    // transiently locked by the indexer or AV real-time scan, so the first open
+    // returns null even though the file is valid. Retry briefly before treating
+    // it as unreadable; genuine unsupported files just exhaust the attempts.
+    std::unique_ptr<juce::AudioFormatReader> reader;
+    for (int attempt = 0; attempt < 5 && reader == nullptr; ++attempt)
+    {
+        reader.reset (fm.createReaderFor (req.source));
+        if (reader == nullptr && attempt < 4)
+            juce::Thread::sleep (20);
+    }
     if (reader == nullptr)
     {
         result.errorMessage = "Unsupported or unreadable audio file: "
