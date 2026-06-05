@@ -113,4 +113,4 @@ jobs:
         # without elevation.
         shell: bash
         run: |
-          ctest --test-dir build-tests --output-on-failure -C Release -R "ipc-stub"
+          ctest --test-dir build-tests --output-on-failure -C Release
