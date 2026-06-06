@@ -705,32 +705,34 @@ void AudioRegionEditor::paintRuler (juce::Graphics& g, juce::Rectangle<int> area
     const auto mode = (TimeDisplayMode) session.timeDisplayMode.load (std::memory_order_relaxed);
     if (mode == TimeDisplayMode::Bars)
     {
-        const double bpm = juce::jmax (1.0, (double) session.tempoBpm.load (std::memory_order_relaxed));
         const int beatsPerBar = juce::jmax (1, session.beatsPerBar.load (std::memory_order_relaxed));
-        const double samplesPerBeat = sr * 60.0 / bpm;
-        const double samplesPerBar  = samplesPerBeat * beatsPerBar;
+        const juce::int64 ticksPerBar = (juce::int64) beatsPerBar * kMidiTicksPerQuarter;
+        // Bar boundaries are musical-time positions resolved through the session
+        // tempo map (constant tempoBpm when empty) at the timeline sample rate,
+        // so the grid follows tempo changes.
+        const double tsr = engine.getCurrentSampleRate();
+        const juce::int64 anchorEndTimeline = anchorTimelineStart + anchorTimelineLength;
 
-        // Iterate bars across the WHOLE anchor range so splits inside
-        // the editor still paint a continuous ruler. anchorTimeline*
-        // is captured at open and stays fixed under splits.
-        const double anchorStart = (double) anchorTimelineStart;
-        const double anchorEnd   = anchorStart + (double) anchorTimelineLength;
-        const double firstBar = std::floor (anchorStart / samplesPerBar);
-        const double lastBar  = std::ceil  (anchorEnd   / samplesPerBar);
-
-        for (double bar = firstBar; bar <= lastBar; bar += 1.0)
+        if (tsr > 0.0)
         {
-            const auto barTimeline = (juce::int64) std::round (bar * samplesPerBar);
-            if (barTimeline < anchorTimelineStart
-                || barTimeline > anchorTimelineStart + anchorTimelineLength) continue;
-            const int x = xForTimelineSample (barTimeline, area);
-            if (x < area.getX() || x > area.getRight()) continue;
-            g.setColour (kBarLine);
-            g.drawVerticalLine (x, (float) area.getY(), (float) area.getBottom());
-            g.setColour (kHeaderText);
-            g.drawText (juce::String ((int) bar + 1),
-                         juce::Rectangle<int> (x + 3, area.getY(), 40, area.getHeight()),
-                         juce::Justification::centredLeft, false);
+            const auto startTick = session.samplesToTicks (anchorTimelineStart, tsr);
+            const auto endTick   = session.samplesToTicks (anchorEndTimeline,   tsr);
+            const int firstBar = (int) (startTick / ticksPerBar);
+            const int lastBar  = (int) (endTick   / ticksPerBar) + 1;
+
+            for (int bar = firstBar; bar <= lastBar; ++bar)
+            {
+                const auto barTimeline = session.ticksToSamples ((juce::int64) bar * ticksPerBar, tsr);
+                if (barTimeline < anchorTimelineStart || barTimeline > anchorEndTimeline) continue;
+                const int x = xForTimelineSample (barTimeline, area);
+                if (x < area.getX() || x > area.getRight()) continue;
+                g.setColour (kBarLine);
+                g.drawVerticalLine (x, (float) area.getY(), (float) area.getBottom());
+                g.setColour (kHeaderText);
+                g.drawText (juce::String (bar + 1),
+                             juce::Rectangle<int> (x + 3, area.getY(), 40, area.getHeight()),
+                             juce::Justification::centredLeft, false);
+            }
         }
     }
     else

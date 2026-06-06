@@ -105,15 +105,59 @@ namespace duskstudio::snap
         return snapDelta (delta, step);
     }
 
+    // Grid step in TICKS for a musical SnapResolution (tempo-independent: a
+    // quarter is always kMidiTicksPerQuarter ticks). Returns 0 for the
+    // sample-based resolutions (Timecode / MinSec / CDFrames), which are snapped
+    // directly in samples instead.
+    inline juce::int64 musicalTickStep (SnapResolution r, int beatsPerBar) noexcept
+    {
+        const double q = (double) kMidiTicksPerQuarter;
+        const auto m = [&] (double quarters) -> juce::int64
+            { return (juce::int64) std::llround (q * quarters); };
+        switch (r)
+        {
+            case SnapResolution::Bar:              return m ((double) juce::jmax (1, beatsPerBar));
+            case SnapResolution::Half:             return m (2.0);
+            case SnapResolution::Quarter:          return m (1.0);
+            case SnapResolution::Eighth:           return m (0.5);
+            case SnapResolution::Sixteenth:        return m (0.25);
+            case SnapResolution::ThirtySecond:     return m (0.125);
+            case SnapResolution::SixtyFourth:      return m (0.0625);
+            case SnapResolution::OneTwentyEighth:  return m (0.03125);
+            case SnapResolution::HalfTriplet:      return m (2.0   * 2.0 / 3.0);
+            case SnapResolution::QuarterTriplet:   return m (1.0   * 2.0 / 3.0);
+            case SnapResolution::EighthTriplet:    return m (0.5   * 2.0 / 3.0);
+            case SnapResolution::SixteenthTriplet: return m (0.25  * 2.0 / 3.0);
+            case SnapResolution::ThirtySecondTrip: return m (0.125 * 2.0 / 3.0);
+            case SnapResolution::HalfDotted:       return m (2.0   * 1.5);
+            case SnapResolution::QuarterDotted:    return m (1.5);
+            case SnapResolution::EighthDotted:     return m (0.75);
+            case SnapResolution::SixteenthDotted:  return m (0.375);
+            case SnapResolution::Timecode:
+            case SnapResolution::MinSec:
+            case SnapResolution::CDFrames:         return 0;
+        }
+        return 0;
+    }
+
     // Convenience: gate the absolute-snap on session.snapToGrid using the
-    // session's active SnapResolution. Skips snapping entirely when no
-    // valid step is available (matches prior new-region behaviour).
+    // session's active SnapResolution. Skips snapping entirely when no valid
+    // step is available (matches prior new-region behaviour). Musical
+    // resolutions snap in tick space through the session tempo map, so the grid
+    // follows tempo changes; the constant-tempo case is unchanged.
     inline juce::int64 snapAbsoluteToGrid (juce::int64 sample, const Session& s,
                                            double sampleRate) noexcept
     {
-        if (! s.snapToGrid) return sample;
-        const auto bpm = s.tempoBpm.load (std::memory_order_relaxed);
+        if (! s.snapToGrid || sampleRate <= 0.0) return sample;
         const auto bpb = s.beatsPerBar.load (std::memory_order_relaxed);
+        if (const auto tickStep = musicalTickStep (s.snapResolution, bpb); tickStep > 0)
+        {
+            const auto tick = s.samplesToTicks (sample, sampleRate);
+            return s.ticksToSamples (snapAbsolute (tick, tickStep), sampleRate);
+        }
+        // Sample-based resolutions (timecode / minsec / cd-frames) are
+        // tempo-independent absolute-time grids.
+        const auto bpm = s.tempoBpm.load (std::memory_order_relaxed);
         return snapAbsolute (sample,
                               stepForResolution (s.snapResolution, sampleRate, bpm, bpb));
     }
