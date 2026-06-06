@@ -55,6 +55,13 @@ public:
     MasterBus&        getMasterBus()       noexcept { return master; }
     Metronome&        getMetronome()       noexcept { return metronome; }
 
+    // Message thread: replace the session tempo map and republish the lock-free
+    // snapshot the audio thread reads. Call setTempoPoints for edits; call
+    // publishTempoMap after a session load (or any other mutation of
+    // session.tempoMap) to sync the audio-thread copy.
+    void setTempoPoints (std::vector<TempoPoint> pts);
+    void publishTempoMap();
+
     Stage getStage() const noexcept { return stage.load (std::memory_order_relaxed); }
     void  setStage (Stage s) noexcept;
 
@@ -298,6 +305,16 @@ private:
     MasteringPlayer  masteringPlayer;
     MasteringChain   masteringChain;
     Metronome        metronome;
+
+    // Lock-free tempo-map snapshot for the audio thread (MIDI scheduler +
+    // metronome). publishTempoMap heap-allocates an immutable copy, keeps it
+    // alive in the pool, and release-stores its pointer; the audio thread
+    // acquire-loads and never frees. Retired copies are never freed while audio
+    // could be reading them — the pool is trimmed only in audioDeviceStopped
+    // (callback guaranteed idle). null pointer = treat as constant tempoBpm.
+    std::vector<std::unique_ptr<TempoMap>> rtTempoMapPool;
+    std::atomic<const TempoMap*>           rtTempoMap { nullptr };
+
     PitchDetector    pitchDetector;
     MidiSyncReceiver       midiSyncReceiver;
     MidiTimeCodeReceiver   midiTimeCodeReceiver;

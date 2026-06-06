@@ -1134,7 +1134,7 @@ The top is a row of icon buttons:
 - **Properties** (file path, sample rate, channel count, length).
 - **Zoom out / Zoom in / Zoom fit** (also **−**, **+**, **0**).
 
-The edit-mode toolbar follows: **Grab**, **Range**, **Cut**, **Grid**, **Draw**. Most editing uses Grab. Range lets you highlight a time band for split or fade-fit. Cut splits the region at every click. **Grid** edits the tempo map: in the timeline ruler, click an empty spot to add a tempo change (then type its BPM), drag a tempo point to move it in time, or right-click one to set its BPM or delete it — the bar grid re-flows to follow. The first point you add seeds a tempo at bar 1 from the session tempo, so the bars before your change keep the original tempo. Draw is reserved for later phases.
+The edit-mode toolbar follows: **Grab**, **Range**, **Cut**, **Grid**, **Draw**. Most editing uses Grab. Range lets you highlight a time band for split or fade-fit. Cut splits the region at every click. **Grid** edits the tempo map: in the timeline ruler, click an empty spot to add a tempo change (then type its BPM), drag a tempo point to move it in time, or right-click one to set its BPM or delete it. The bar grid re-flows to follow, and **MIDI playback and the metronome track the tempo changes** too. The first point you add seeds a tempo at bar 1 from the session tempo, so the bars before your change keep the original tempo. (Audio regions are never time-stretched — only MIDI follows the tempo map.) Draw is reserved for later phases.
 
 The **Snap** toggle and snap-denomination dropdown are at the right of the toolbar.
 

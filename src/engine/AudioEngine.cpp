@@ -45,6 +45,8 @@ AudioEngine::AudioEngine (Session& sessionToBindTo) : session (sessionToBindTo)
     // already selected (harmless flush — no notes held yet).
     lastMidiInputIndex.fill (-1);
 
+    publishTempoMap();   // seed the snapshot (empty -> constant tempoBpm)
+
     for (int i = 0; i < Session::kNumTracks; ++i)
     {
         strips[(size_t) i].bind (session.track (i).strip);
@@ -204,6 +206,26 @@ void AudioEngine::refreshMidiInputs()
     sendChangeMessage();
 }
 
+void AudioEngine::publishTempoMap()
+{
+    // Message thread. Heap-allocate an immutable copy, keep it alive in the
+    // pool, then release-store its pointer so the audio thread's next
+    // acquire-load sees a fully-built map. The old copy is NOT freed here — a
+    // concurrent callback may still hold it (publishes can be as frequent as a
+    // drag's mouse-moves); the pool is trimmed in audioDeviceStopped, when no
+    // callback can be in flight. Each copy is tiny (a few tempo points).
+    auto fresh = std::make_unique<TempoMap> (session.tempoMap);
+    const TempoMap* raw = fresh.get();
+    rtTempoMapPool.push_back (std::move (fresh));
+    rtTempoMap.store (raw, std::memory_order_release);
+}
+
+void AudioEngine::setTempoPoints (std::vector<TempoPoint> pts)
+{
+    session.tempoMap.setPoints (std::move (pts));
+    publishTempoMap();
+}
+
 void AudioEngine::reresolveTrackMidiFromSession()
 {
     // Re-map saved per-track MIDI identifiers to runtime indices against the
@@ -254,6 +276,11 @@ void AudioEngine::reresolveTrackMidiFromSession()
     resolveSessionIdx (session.syncOutputIdx,         midiOutputDevices, session.syncOutputIdentifier);
     resolveSessionIdx (session.mcu.resolvedInputIdx,  midiInputDevices,  session.mcu.inputIdentifier);
     resolveSessionIdx (session.mcu.resolvedOutputIdx, midiOutputDevices, session.mcu.outputIdentifier);
+
+    // A session load may have replaced the tempo map — republish the audio
+    // thread's snapshot so the MIDI scheduler + metronome see the loaded points.
+    publishTempoMap();
+
     // NB: this function stays atomic-stores-only so it's safe to run without
     // detaching the audio callback. The actual output-port opening for sync +
     // MCU happens in openConfiguredMidiOutputs(), called right after this on
@@ -1107,6 +1134,17 @@ void AudioEngine::audioDeviceError (const juce::String& errorMessage)
 
 void AudioEngine::audioDeviceStopped()
 {
+    // No audio callback is in flight now, so it's safe to drop every retired
+    // tempo-map copy except the currently-published one.
+    if (rtTempoMapPool.size() > 1)
+    {
+        const TempoMap* cur = rtTempoMap.load (std::memory_order_relaxed);
+        rtTempoMapPool.erase (
+            std::remove_if (rtTempoMapPool.begin(), rtTempoMapPool.end(),
+                            [cur] (const std::unique_ptr<TempoMap>& p) { return p.get() != cur; }),
+            rtTempoMapPool.end());
+    }
+
     // Stop any in-flight recording BEFORE clearing the sample rate: the
     // writer drain in stopRecording depends on recordSampleRate being
     // non-zero to map sample positions to seconds. Without this, a
@@ -2464,6 +2502,11 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
             // following a BPM change.
             const float bpm = session.tempoBpm.load (std::memory_order_acquire);
             const double sr = currentSampleRate.load (std::memory_order_relaxed);
+            // Lock-free tempo-map snapshot. When non-empty, note/CC ticks resolve
+            // to absolute timeline samples through the map (so playback follows
+            // tempo changes); when null/empty this is the exact constant-bpm path.
+            const TempoMap* tm = rtTempoMap.load (std::memory_order_acquire);
+            const bool useMap = (tm != nullptr && ! tm->empty());
             // Plugin latency comp for instrument tracks: shift the scheduling
             // window forward by the plugin's reported latency so the
             // delayed audio output aligns to the correct timeline sample.
@@ -2498,10 +2541,16 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                 {
                     if (region.muted) continue;
                     const auto regStart = region.timelineStart;
+                    const auto regStartTick = useMap ? tm->samplesToTicks (regStart, sr) : (juce::int64) 0;
+                    auto absOf = [&] (juce::int64 relTick)
+                    {
+                        return useMap ? tm->ticksToSamples (regStartTick + relTick, sr)
+                                      : regStart + ticksToSamples (relTick, sr, bpm);
+                    };
                     for (const auto& n : region.notes)
                     {
-                        const auto onAbs  = regStart + ticksToSamples (n.startTick, sr, bpm);
-                        const auto offAbs = onAbs + ticksToSamples (n.lengthInTicks, sr, bpm);
+                        const auto onAbs  = absOf (n.startTick);
+                        const auto offAbs = absOf (n.startTick + n.lengthInTicks);
                         if (onAbs < blockStartSamples && offAbs > blockStartSamples)
                         {
                             perTrackMidiScratch.addEvent (
@@ -2517,7 +2566,17 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
             {
                 if (region.muted) continue;
                 const auto regStart = region.timelineStart;
-                const auto regEnd   = regStart + region.lengthInSamples;
+                const auto regStartTick = useMap ? tm->samplesToTicks (regStart, sr) : (juce::int64) 0;
+                auto absOf = [&] (juce::int64 relTick)
+                {
+                    return useMap ? tm->ticksToSamples (regStartTick + relTick, sr)
+                                  : regStart + ticksToSamples (relTick, sr, bpm);
+                };
+                // Musical region end (lengthInTicks is the source of truth) so a
+                // region that got longer in samples under a tempo slowdown isn't
+                // skipped by the overlap test.
+                const auto regEnd = useMap ? absOf (region.lengthInTicks)
+                                           : regStart + region.lengthInSamples;
                 // Skip regions that don't overlap the SHIFTED block at all.
                 // schedStart/blockEnd already include the plugin-latency
                 // offset for MIDI tracks; on audio tracks pluginLatency=0
@@ -2527,8 +2586,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
 
                 for (const auto& n : region.notes)
                 {
-                    const auto onAbs  = regStart + ticksToSamples (n.startTick, sr, bpm);
-                    const auto offAbs = onAbs + ticksToSamples (n.lengthInTicks, sr, bpm);
+                    const auto onAbs  = absOf (n.startTick);
+                    const auto offAbs = absOf (n.startTick + n.lengthInTicks);
                     if (onAbs >= schedStart && onAbs < blockEnd)
                     {
                         perTrackMidiScratch.addEvent (
@@ -2545,7 +2604,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                 }
                 for (const auto& c : region.ccs)
                 {
-                    const auto sAbs = regStart + ticksToSamples (c.atTick, sr, bpm);
+                    const auto sAbs = absOf (c.atTick);
                     if (sAbs >= schedStart && sAbs < blockEnd)
                     {
                         perTrackMidiScratch.addEvent (
@@ -3003,7 +3062,16 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
     const bool polyphonic    = session.metronomePolyphonic         .load (std::memory_order_relaxed);
 
     metronome.setEnabled    (session.metronomeEnabled.load (std::memory_order_relaxed));
-    metronome.setBpm        (session.tempoBpm.load (std::memory_order_relaxed));
+    {
+        // Click follows the tempo map: use the tempo in effect at the block's
+        // playhead (per-block is plenty for a monitoring click). Falls back to
+        // the constant tempo when no map is published.
+        const TempoMap* tmMetro = rtTempoMap.load (std::memory_order_acquire);
+        const float metroBpm = (tmMetro != nullptr && ! tmMetro->empty())
+                                 ? tmMetro->bpmAt (blockStartSamples)
+                                 : session.tempoBpm.load (std::memory_order_relaxed);
+        metronome.setBpm (metroBpm);
+    }
     metronome.setBeatsPerBar(session.beatsPerBar.load (std::memory_order_relaxed));
     metronome.setVolumeDb   (session.metronomeVolDb.load (std::memory_order_relaxed));
     metronome.setPolyphonic (polyphonic);

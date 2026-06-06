@@ -1395,7 +1395,7 @@ void TapeStrip::mouseDrag (const juce::MouseEvent& e)
                                        session, engine.getCurrentSampleRate()));
         auto vec = tempoPointDrag.others;
         vec.push_back ({ newSample, tempoPointDrag.bpm });
-        session.tempoMap.setPoints (std::move (vec));
+        engine.setTempoPoints (std::move (vec));
         tempoPointDrag.moved = true;
         repaint();
         return;
@@ -3788,7 +3788,7 @@ void TapeStrip::addTempoPointAt (juce::int64 sample)
     if (vec.empty())
         vec.push_back ({ 0, session.tempoBpm.load (std::memory_order_relaxed) });
     vec.push_back ({ sample, session.bpmAt (sample) });
-    session.tempoMap.setPoints (std::move (vec));
+    engine.setTempoPoints (std::move (vec));
     repaint();
 }
 
@@ -3812,7 +3812,7 @@ void TapeStrip::editTempoPointBpm (juce::int64 atSample)
             auto vec = safeThis->session.tempoMap.points();
             for (auto& p : vec)
                 if (p.timelineSamples == atSample) p.bpm = b;
-            safeThis->session.tempoMap.setPoints (std::move (vec));
+            safeThis->engine.setTempoPoints (std::move (vec));
             safeThis->repaint();
         });
 }
@@ -3823,7 +3823,7 @@ void TapeStrip::deleteTempoPoint (juce::int64 atSample)
     vec.erase (std::remove_if (vec.begin(), vec.end(),
         [atSample] (const TempoPoint& p) { return p.timelineSamples == atSample; }),
         vec.end());
-    session.tempoMap.setPoints (std::move (vec));
+    engine.setTempoPoints (std::move (vec));
     repaint();
 }
 
