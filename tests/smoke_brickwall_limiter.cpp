@@ -26,6 +26,13 @@ float blockPeak (const std::vector<float>& L, const std::vector<float>& R)
     return p;
 }
 
+float peak (const std::vector<float>& v)
+{
+    float p = 0.0f;
+    for (float x : v) p = std::max (p, std::abs (x));
+    return p;
+}
+
 // Inter-sample (true) peak of a mono buffer, measured by 4x oversampling -
 // the same resolution the limiter controls internally.
 float truePeak4x (std::vector<float> mono)
@@ -190,4 +197,76 @@ TEST_CASE ("BrickwallLimiter: bypass preserves level", "[BrickwallLimiter]")
     // Bypassed: no gain reduction, level preserved through the OS round-trip.
     REQUIRE_THAT (steadyPeak, WithinRel (amp, 0.01f));
     REQUIRE_THAT (lim.getCurrentGrDb(), WithinAbs (0.0f, 1.0e-6f));
+}
+
+TEST_CASE ("BrickwallLimiter: stereo-link off limits channels independently",
+           "[BrickwallLimiter]")
+{
+    const float ceiling = juce::Decibels::decibelsToGain (-1.0f);
+    const float hot  = juce::Decibels::decibelsToGain (12.0f);   // well over ceiling
+    const float quiet = juce::Decibels::decibelsToGain (-12.0f); // under ceiling
+
+    // L hammered, R sits below the ceiling. With link OFF, R must pass at unity
+    // (its own peak never exceeds the ceiling); with link ON, R is pulled down
+    // to match L's gain reduction.
+    auto run = [&] (bool linked)
+    {
+        duskstudio::BrickwallLimiter lim;
+        lim.prepare (kSr, kBlock, kLookahead);
+        lim.setCeilingDb (-1.0f);
+        lim.setStereoLink (linked);
+        lim.setEnabled (true);
+
+        std::vector<float> L (kBlock), R (kBlock);
+        double phase = 0.0;
+        float rPeak = 0.0f;
+        for (int b = 0; b < 12; ++b)
+        {
+            const double inc = 2.0 * juce::MathConstants<double>::pi * 1000.0 / kSr;
+            for (int i = 0; i < kBlock; ++i)
+            {
+                const float s = (float) std::sin (phase);
+                phase += inc;
+                L[(size_t) i] = hot * s;
+                R[(size_t) i] = quiet * s;
+            }
+            lim.processInPlace (L.data(), R.data(), kBlock);
+            if (b >= 6) rPeak = std::max (rPeak, peak (R));
+        }
+        return rPeak;
+    };
+
+    const float rUnlinked = run (false);
+    const float rLinked   = run (true);
+
+    REQUIRE (rLinked <= ceiling + 1.0e-4f);          // L's reduction drags R down
+    REQUIRE_THAT (rUnlinked, WithinRel (quiet, 0.02f)); // R untouched on its own
+    REQUIRE (rUnlinked > rLinked + 0.05f);           // the two modes clearly differ
+}
+
+TEST_CASE ("BrickwallLimiter: every mode holds the ceiling", "[BrickwallLimiter]")
+{
+    const float ceiling = juce::Decibels::decibelsToGain (-1.0f);
+
+    for (int mode = 0; mode < 3; ++mode)
+    {
+        duskstudio::BrickwallLimiter lim;
+        lim.prepare (kSr, kBlock, kLookahead);
+        lim.setCeilingDb (-1.0f);
+        lim.setMode (mode);
+        lim.setEnabled (true);
+
+        std::vector<float> L (kBlock), R (kBlock);
+        double phase = 0.0;
+        float steadyPeak = 0.0f;
+        for (int b = 0; b < 12; ++b)
+        {
+            fillSine (L, R, phase, 1000.0, juce::Decibels::decibelsToGain (9.0f));
+            lim.processInPlace (L.data(), R.data(), kBlock);
+            if (b >= 4) steadyPeak = std::max (steadyPeak, blockPeak (L, R));
+        }
+        INFO ("mode = " << mode);
+        REQUIRE (steadyPeak <= ceiling + 1.0e-4f);
+        REQUIRE (lim.getCurrentGrDb() < 0.0f);
+    }
 }

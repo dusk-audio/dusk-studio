@@ -53,11 +53,17 @@ public:
     void setInputDriveDb (float dB) noexcept       { inputDrive.store (dB, std::memory_order_relaxed); }
     void setCeilingDb  (float dB) noexcept         { ceilingDb.store (dB, std::memory_order_relaxed); }
     void setReleaseMs  (float ms) noexcept         { releaseMs.store (ms, std::memory_order_relaxed); }
+    // 0 Modern, 1 Transparent, 2 Punchy — shapes hold + release around the
+    // release knob. Stereo link off = independent per-channel gain reduction.
+    void setMode       (int m) noexcept            { mode.store (m, std::memory_order_relaxed); }
+    void setStereoLink (bool b) noexcept           { stereoLink.store (b, std::memory_order_relaxed); }
 
     bool  isEnabled() const noexcept    { return enabled.load (std::memory_order_relaxed); }
     float getInputDriveDb() const noexcept { return inputDrive.load (std::memory_order_relaxed); }
     float getCeilingDb() const noexcept { return ceilingDb.load (std::memory_order_relaxed); }
     float getReleaseMs() const noexcept { return releaseMs.load (std::memory_order_relaxed); }
+    int   getMode() const noexcept      { return mode.load (std::memory_order_relaxed); }
+    bool  getStereoLink() const noexcept { return stereoLink.load (std::memory_order_relaxed); }
 
     // Audio thread. In-place stereo process; L and R must be at least
     // `numSamples` floats. `numSamples` must not exceed the maxBlockSize passed
@@ -91,28 +97,33 @@ private:
     std::vector<float> delayL, delayR;
     int writePos = 0;
 
-    // Monotonic min deque over the lookahead window (size lookaheadOs + 1),
-    // stored in a fixed ring so the sliding-window minimum is O(1) amortized
-    // with no per-sample scan and no allocation. Capacity = window + 1.
+    // Per-channel monotonic min deque over the lookahead window
+    // (size lookaheadOs + 1), stored in a fixed ring so the sliding-window
+    // minimum is O(1) amortized with no per-sample scan and no allocation.
+    // Capacity = window + 1. Two independent channels so stereo-link can be
+    // disabled; when linked both are fed the same (max-of-L/R) target.
     int                    windowLen = 0;
-    std::vector<float>     dqVal;
-    std::vector<long long> dqIdx;
-    int       dqHead = 0;
-    int       dqCount = 0;
+    std::vector<float>     dqVal[2];
+    std::vector<long long> dqIdx[2];
+    int       dqHead[2]  = { 0, 0 };
+    int       dqCount[2] = { 0, 0 };
     long long sampleCounter = 0;
 
-    // Gain smoother (runs at the oversampled rate): instant attack to the
-    // lookahead-window minimum, hold, one-pole release.
-    float env         = 1.0f;
+    // Per-channel gain smoother (runs at the oversampled rate): instant attack
+    // to the lookahead-window minimum, hold, one-pole release.
+    float env[2]         = { 1.0f, 1.0f };
+    int   holdCounter[2] = { 0, 0 };
     float releaseCoef = 0.0f;
     int   holdOs      = 0;
-    int   holdCounter = 0;
     float lastReleaseMs = -1.0f;
+    int   lastMode      = -1;
 
     std::atomic<bool>  enabled    { true };
     std::atomic<float> inputDrive { 0.0f };  // dB
     std::atomic<float> ceilingDb  { -0.3f };
     std::atomic<float> releaseMs  { 100.0f };
+    std::atomic<int>   mode       { 0 };
+    std::atomic<bool>  stereoLink { true };
 
     mutable std::atomic<float> currentGrDb { 0.0f };
 };

@@ -75,20 +75,25 @@ MasteringLimiterEditor::MasteringLimiterEditor (MasteringParams& p,
     headerBtn->setAccentColour (juce::Colour (0xffe05050));   // red — brickwall
     addAndMakeVisible (headerBtn.get());
 
-    // Mode dropdown - single "Modern" mode for now; the dropdown is here so
-    // future limiter modes (Vintage / Aggressive / Glue) drop in without a
-    // layout change. Persisted state is the limiter-mode atomic on params,
-    // when one exists; for now it's purely cosmetic.
+    // Mode shapes the limiter's hold + release: Modern (balanced), Transparent
+    // (fast recovery, minimal pumping), Punchy (longer hold, denser).
     modeCaption.setJustificationType (juce::Justification::centredRight);
     modeCaption.setFont (juce::Font (juce::FontOptions (10.5f, juce::Font::bold)));
     modeCaption.setColour (juce::Label::textColourId, juce::Colour (0xffa0a0a8));
     addAndMakeVisible (modeCaption);
 
     modeCombo.addItem ("Modern", 1);
-    modeCombo.setSelectedId (1, juce::dontSendNotification);
+    modeCombo.addItem ("Transparent", 2);
+    modeCombo.addItem ("Punchy", 3);
+    modeCombo.setSelectedId (params.limiterMode.load (std::memory_order_relaxed) + 1,
+                              juce::dontSendNotification);
     modeCombo.setColour (juce::ComboBox::backgroundColourId, juce::Colour (0xff1a1a22));
     modeCombo.setColour (juce::ComboBox::textColourId,       juce::Colour (0xffe0e0e8));
     modeCombo.setColour (juce::ComboBox::outlineColourId,    juce::Colour (0xff404048));
+    modeCombo.onChange = [this]
+    {
+        params.limiterMode.store (modeCombo.getSelectedId() - 1, std::memory_order_relaxed);
+    };
     addAndMakeVisible (modeCombo);
 
     const auto accent = juce::Colour (0xff5a8ad0);
@@ -107,10 +112,15 @@ MasteringLimiterEditor::MasteringLimiterEditor (MasteringParams& p,
     addAndMakeVisible (releaseLabel);
 
     stereoLinkToggle.setColour (juce::ToggleButton::textColourId, juce::Colour (0xffd0d0d0));
-    stereoLinkToggle.setToggleState (true, juce::dontSendNotification);
+    stereoLinkToggle.setToggleState (params.limiterStereoLink.load (std::memory_order_relaxed),
+                                      juce::dontSendNotification);
     stereoLinkToggle.setTooltip ("When on, gain reduction is matched across L/R "
-                                  "to preserve the stereo image. (Always on for "
-                                  "this limiter implementation.)");
+                                  "to preserve the stereo image. Off limits each "
+                                  "channel independently.");
+    stereoLinkToggle.onClick = [this]
+    {
+        params.limiterStereoLink.store (stereoLinkToggle.getToggleState(), std::memory_order_relaxed);
+    };
     addAndMakeVisible (stereoLinkToggle);
 
     startTimerHz (30);

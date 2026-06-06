@@ -265,7 +265,7 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 | 3   | Waveform          | Stereo overview with the playhead.                                                          |
 | 4   | 5-band digital EQ | Low shelf / 3 peaks / high shelf, ±12 dB per band.                                          |
 | 5   | Bus compressor    | Same UniversalCompressor as elsewhere, tuned to mastering defaults.                         |
-| 6   | Brickwall limiter | Sample-peak (see the mastering chapter for the ISP note).                                   |
+| 6   | Brickwall limiter | True-peak, 4× oversampled lookahead (see the mastering chapter).                            |
 | 7   | Loudness panel    | Momentary / short-term / integrated LUFS + True Peak (4× oversampled, BS.1770).             |
 | 8   | Export master…    | Renders the chain offline to a stereo file.                                                 |
 
@@ -883,13 +883,15 @@ The same UniversalCompressor in Bus mode as the channel / master compressors, bu
 
 ### Brickwall limiter
 
-A sample-peak brickwall limiter. **Enabled by default.** (The True-Peak readout in the loudness panel _is_ 4× oversampled per BS.1770; the limiter that engages on the signal is not — see below.)
+A true-peak brickwall limiter with lookahead. **Enabled by default.** It runs the whole limiting process at 4× oversampling, so the ceiling holds on inter-sample peaks, not just sample peaks.
 
 - **Ceiling**: −12 to 0 dB. Default **−0.3 dB** (matches the headroom expected by most streaming platforms).
 - **Drive**: 0 to +20 dB pre-limiter gain. Drives the input harder for more limiting.
 - **Release**: 50 to 300 ms.
+- **Mode**: shapes the hold + release character — **Modern** (balanced default), **Transparent** (fast recovery, minimal pumping), **Punchy** (longer hold, denser).
+- **Stereo link**: on (default) matches the gain reduction across L/R to preserve the stereo image; off limits each channel independently.
 
-The limiter detects sample peaks only. Inter-sample-peak (true-peak) detection per ITU BS.1770 is planned but not implemented in v1; reserve a little extra headroom in the ceiling if you are mastering for lossy delivery.
+The lookahead adds a small, fixed latency that the engine compensates for. True-peak control is to 4× resolution; for very-high-frequency masters reserve a little extra ceiling headroom.
 
 ## Loudness metering
 

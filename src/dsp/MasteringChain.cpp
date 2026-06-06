@@ -117,6 +117,8 @@ void MasteringChain::updateLimiterParameters() noexcept
     limiter.setInputDriveDb (paramsRef->limiterDriveDb.load (std::memory_order_relaxed));
     limiter.setCeilingDb  (paramsRef->limiterCeilingDb.load (std::memory_order_relaxed));
     limiter.setReleaseMs  (paramsRef->limiterReleaseMs.load (std::memory_order_relaxed));
+    limiter.setMode       (paramsRef->limiterMode.load (std::memory_order_relaxed));
+    limiter.setStereoLink (paramsRef->limiterStereoLink.load (std::memory_order_relaxed));
 }
 
 void MasteringChain::processInPlace (float* L, float* R, int numSamples) noexcept

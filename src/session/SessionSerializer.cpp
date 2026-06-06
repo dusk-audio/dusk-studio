@@ -1180,10 +1180,12 @@ juce::String SessionSerializer::serialize (const Session& s)
     mast->setProperty ("comp_release_ms",   s.mastering().compReleaseMs.load());
     mast->setProperty ("comp_release_auto", s.mastering().compReleaseAuto.load());
     mast->setProperty ("comp_makeup_db",    s.mastering().compMakeupDb.load());
-    mast->setProperty ("limiter_enabled",   s.mastering().limiterEnabled.load());
-    mast->setProperty ("limiter_drive_db",  s.mastering().limiterDriveDb.load());
-    mast->setProperty ("limiter_ceiling_db",s.mastering().limiterCeilingDb.load());
-    mast->setProperty ("limiter_release_ms",s.mastering().limiterReleaseMs.load());
+    mast->setProperty ("limiter_enabled",     s.mastering().limiterEnabled.load());
+    mast->setProperty ("limiter_drive_db",    s.mastering().limiterDriveDb.load());
+    mast->setProperty ("limiter_ceiling_db",  s.mastering().limiterCeilingDb.load());
+    mast->setProperty ("limiter_release_ms",  s.mastering().limiterReleaseMs.load());
+    mast->setProperty ("limiter_mode",        s.mastering().limiterMode.load());
+    mast->setProperty ("limiter_stereo_link", s.mastering().limiterStereoLink.load());
     mast->setProperty ("target_preset",     s.mastering().targetPresetIndex.load());
     root->setProperty ("mastering", juce::var (mast));
 
@@ -1526,6 +1528,8 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
             { if (mast.hasProperty (k)) dst.store ((float) (double) mast[k]); };
         auto loadB = [&] (const char* k, std::atomic<bool>& dst)
             { if (mast.hasProperty (k)) dst.store ((bool) mast[k]); };
+        auto loadI = [&] (const char* k, std::atomic<int>& dst)
+            { if (mast.hasProperty (k)) dst.store ((int) mast[k]); };
         loadB ("eq_enabled",        m.eqEnabled);
         for (int b = 0; b < MasteringParams::kNumEqBands; ++b)
         {
@@ -1546,10 +1550,12 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         loadF ("comp_release_ms",   m.compReleaseMs);
         loadB ("comp_release_auto", m.compReleaseAuto);
         loadF ("comp_makeup_db",    m.compMakeupDb);
-        loadB ("limiter_enabled",   m.limiterEnabled);
-        loadF ("limiter_drive_db",  m.limiterDriveDb);
-        loadF ("limiter_ceiling_db",m.limiterCeilingDb);
-        loadF ("limiter_release_ms",m.limiterReleaseMs);
+        loadB ("limiter_enabled",     m.limiterEnabled);
+        loadF ("limiter_drive_db",    m.limiterDriveDb);
+        loadF ("limiter_ceiling_db",  m.limiterCeilingDb);
+        loadF ("limiter_release_ms",  m.limiterReleaseMs);
+        loadI ("limiter_mode",        m.limiterMode);
+        loadB ("limiter_stereo_link", m.limiterStereoLink);
         if (mast.hasProperty ("target_preset"))
             m.targetPresetIndex.store ((int) mast["target_preset"]);
     }

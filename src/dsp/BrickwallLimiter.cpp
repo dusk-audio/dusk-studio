@@ -39,16 +39,19 @@ void BrickwallLimiter::prepare (double sampleRate, int maxBlockSize, double look
 
     windowLen = lookaheadOs + 1;
     const int cap = windowLen + 1;
-    dqVal.assign ((size_t) cap, 1.0f);
-    dqIdx.assign ((size_t) cap, 0);
-    dqHead = dqCount = 0;
+    for (int c = 0; c < 2; ++c)
+    {
+        dqVal[c].assign ((size_t) cap, 1.0f);
+        dqIdx[c].assign ((size_t) cap, 0);
+        dqHead[c] = dqCount[c] = 0;
+        env[c] = 1.0f;
+        holdCounter[c] = 0;
+    }
     sampleCounter = 0;
 
-    env         = 1.0f;
-    holdOs      = juce::jmax (0, (int) (osRate * 5.0 / 1000.0));   // 5 ms hold
-    holdCounter = 0;
-
-    lastReleaseMs = -1.0f;   // force release-coef recompute on first block
+    holdOs        = juce::jmax (0, (int) (osRate * 5.0 / 1000.0));   // default (Modern)
+    lastReleaseMs = -1.0f;   // force release/hold recompute on first block
+    lastMode      = -1;
     releaseCoef   = onePoleCoef (releaseMs.load (std::memory_order_relaxed), osRate);
 
     const int osLat = (int) std::lround (oversampler->getLatencyInSamples());
@@ -63,10 +66,13 @@ void BrickwallLimiter::reset() noexcept
     std::fill (delayL.begin(), delayL.end(), 0.0f);
     std::fill (delayR.begin(), delayR.end(), 0.0f);
     writePos = 0;
-    dqHead = dqCount = 0;
     sampleCounter = 0;
-    env = 1.0f;
-    holdCounter = 0;
+    for (int c = 0; c < 2; ++c)
+    {
+        dqHead[c] = dqCount[c] = 0;
+        env[c] = 1.0f;
+        holdCounter[c] = 0;
+    }
     if (oversampler != nullptr)
         oversampler->reset();
     currentGrDb.store (0.0f, std::memory_order_relaxed);
@@ -87,13 +93,27 @@ void BrickwallLimiter::processInPlace (float* L, float* R, int numSamples) noexc
                             ceilingDb.load (std::memory_order_relaxed));
 
     {
-        const float relMs = releaseMs.load (std::memory_order_relaxed);
-        if (! juce::approximatelyEqual (relMs, lastReleaseMs))
+        const int   modeNow = mode.load (std::memory_order_relaxed);
+        const float relMs   = releaseMs.load (std::memory_order_relaxed);
+        if (modeNow != lastMode || ! juce::approximatelyEqual (relMs, lastReleaseMs))
         {
+            lastMode      = modeNow;
             lastReleaseMs = relMs;
-            releaseCoef   = onePoleCoef (relMs, osRate);
+            // Mode shapes hold + effective release around the release knob:
+            // Transparent recovers fast with almost no hold; Punchy holds longer
+            // and releases slower for density.
+            float holdMs, effRelMs;
+            switch (modeNow)
+            {
+                case 1:  holdMs = 1.0f;  effRelMs = relMs * 0.5f; break;  // Transparent
+                case 2:  holdMs = 12.0f; effRelMs = relMs * 2.0f; break;  // Punchy
+                default: holdMs = 5.0f;  effRelMs = relMs;        break;  // Modern
+            }
+            releaseCoef = onePoleCoef (effRelMs, osRate);
+            holdOs      = juce::jmax (0, (int) (osRate * (double) holdMs / 1000.0));
         }
     }
+    const bool linked = stereoLink.load (std::memory_order_relaxed);
 
     if (! juce::approximatelyEqual (drive, 1.0f))
         for (int i = 0; i < numSamples; ++i) { L[i] *= drive; R[i] *= drive; }
@@ -106,7 +126,7 @@ void BrickwallLimiter::processInPlace (float* L, float* R, int numSamples) noexc
     float* uL = up.getChannelPointer (0);
     float* uR = up.getChannelPointer (1);
 
-    const int cap = (int) dqVal.size();
+    const int cap = (int) dqVal[0].size();
     float blockMinEnv = 1.0f;
 
     for (int i = 0; i < osN; ++i)
@@ -116,49 +136,65 @@ void BrickwallLimiter::processInPlace (float* L, float* R, int numSamples) noexc
         delayL[(size_t) writePos] = inL;
         delayR[(size_t) writePos] = inR;
 
-        const float peak     = juce::jmax (std::abs (inL), std::abs (inR));
-        const float target   = (peak > ceiling && peak > 1.0e-9f) ? ceiling / peak : 1.0f;
-
-        // Push target into the monotonic min deque (back holds the largest).
-        while (dqCount > 0 && dqVal[(size_t) ((dqHead + dqCount - 1) % cap)] >= target)
-            --dqCount;
+        // Required gain per channel. Linked: both see the max-of-L/R target so
+        // the reduction is matched and the stereo image is preserved. Unlinked:
+        // each channel limits on its own peak.
+        float tgt[2];
+        if (linked)
         {
-            const int slot = (dqHead + dqCount) % cap;
-            dqVal[(size_t) slot] = target;
-            dqIdx[(size_t) slot] = sampleCounter;
-            ++dqCount;
-        }
-        // Drop entries that have fallen out of the lookahead window.
-        while (dqCount > 0 && dqIdx[(size_t) dqHead] <= sampleCounter - windowLen)
-        {
-            dqHead = (dqHead + 1) % cap;
-            --dqCount;
-        }
-        const float wmin = dqVal[(size_t) dqHead];
-
-        // Instant attack to the lookahead-guaranteed gain (so env never sits
-        // above wmin and the output peak lands exactly at the ceiling), then
-        // hold, then a smooth one-pole release. The lookahead delay means this
-        // snap happens before the peak reaches the output, so it is not heard
-        // as a click.
-        if (wmin <= env)
-        {
-            env = wmin;
-            holdCounter = holdOs;
-        }
-        else if (holdCounter > 0)
-        {
-            --holdCounter;
+            const float peak = juce::jmax (std::abs (inL), std::abs (inR));
+            tgt[0] = tgt[1] = (peak > ceiling && peak > 1.0e-9f) ? ceiling / peak : 1.0f;
         }
         else
         {
-            env += (wmin - env) * releaseCoef;
+            const float pL = std::abs (inL), pR = std::abs (inR);
+            tgt[0] = (pL > ceiling && pL > 1.0e-9f) ? ceiling / pL : 1.0f;
+            tgt[1] = (pR > ceiling && pR > 1.0e-9f) ? ceiling / pR : 1.0f;
         }
 
-        const int   readPos = (writePos + 1) % delayLen;
-        const float gain    = active ? env : 1.0f;
-        float oL = delayL[(size_t) readPos] * gain;
-        float oR = delayR[(size_t) readPos] * gain;
+        for (int c = 0; c < 2; ++c)
+        {
+            const float target = tgt[c];
+            // Monotonic min deque push (back holds the largest).
+            while (dqCount[c] > 0
+                   && dqVal[c][(size_t) ((dqHead[c] + dqCount[c] - 1) % cap)] >= target)
+                --dqCount[c];
+            {
+                const int slot = (dqHead[c] + dqCount[c]) % cap;
+                dqVal[c][(size_t) slot] = target;
+                dqIdx[c][(size_t) slot] = sampleCounter;
+                ++dqCount[c];
+            }
+            // Drop entries that have fallen out of the lookahead window.
+            while (dqCount[c] > 0 && dqIdx[c][(size_t) dqHead[c]] <= sampleCounter - windowLen)
+            {
+                dqHead[c] = (dqHead[c] + 1) % cap;
+                --dqCount[c];
+            }
+            const float wmin = dqVal[c][(size_t) dqHead[c]];
+
+            // Instant attack to the lookahead-guaranteed gain (env never sits
+            // above wmin, so the output peak lands at the ceiling), then hold,
+            // then a smooth one-pole release. The lookahead delay means the snap
+            // happens before the peak reaches the output, so it isn't a click.
+            if (wmin <= env[c])
+            {
+                env[c] = wmin;
+                holdCounter[c] = holdOs;
+            }
+            else if (holdCounter[c] > 0)
+            {
+                --holdCounter[c];
+            }
+            else
+            {
+                env[c] += (wmin - env[c]) * releaseCoef;
+            }
+        }
+
+        const int readPos = (writePos + 1) % delayLen;
+        float oL = delayL[(size_t) readPos] * (active ? env[0] : 1.0f);
+        float oR = delayR[(size_t) readPos] * (active ? env[1] : 1.0f);
         if (active)
         {
             oL = juce::jlimit (-ceiling, ceiling, oL);
@@ -167,7 +203,8 @@ void BrickwallLimiter::processInPlace (float* L, float* R, int numSamples) noexc
         uL[i] = oL;
         uR[i] = oR;
 
-        if (active && env < blockMinEnv) blockMinEnv = env;
+        if (active)
+            blockMinEnv = juce::jmin (blockMinEnv, juce::jmin (env[0], env[1]));
 
         writePos = (writePos + 1) % delayLen;
         ++sampleCounter;

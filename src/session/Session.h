@@ -817,6 +817,11 @@ struct MasteringParams
     std::atomic<float> limiterDriveDb  { 0.0f };
     std::atomic<float> limiterCeilingDb{ -0.3f };
     std::atomic<float> limiterReleaseMs{ 100.0f };
+    // 0 Modern, 1 Transparent, 2 Punchy — shapes hold/release around the
+    // release knob. Stereo link on = matched L/R gain (preserves the image);
+    // off = independent per-channel limiting.
+    std::atomic<int>   limiterMode       { 0 };
+    std::atomic<bool>  limiterStereoLink { true };
 
     mutable std::atomic<float> meterPostMasterLDb  { -100.0f };
     mutable std::atomic<float> meterPostMasterRDb  { -100.0f };
