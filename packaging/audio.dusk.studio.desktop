@@ -3,13 +3,10 @@ Type=Application
 Name=Dusk Studio
 GenericName=Multitrack Recorder
 Comment=Portastudio-style 24-channel DAW
-Exec=DuskStudio
+Exec=DuskStudio %f
 Icon=DuskStudio
 Terminal=false
 Categories=AudioVideo;Audio;Recorder;Music;
 StartupWMClass=DuskStudio
 Keywords=DAW;recording;mixer;multitrack;portastudio;
-# MimeType + %f restored once DuskStudioApp::initialise parses a positional
-# session path. Until then the file-manager double-click would launch
-# Dusk Studio without opening the session — confusing — so don't claim the
-# association at all.
+MimeType=application/x-dusk-studio-session;

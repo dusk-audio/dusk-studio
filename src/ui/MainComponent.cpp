@@ -2213,6 +2213,19 @@ void MainComponent::saveAsPrompt()
     });
 }
 
+void MainComponent::openSessionPath (const juce::File& path)
+{
+    // Accept either the session.json itself or the session directory holding it.
+    juce::File sessionJson;
+    if (path.isDirectory())
+        sessionJson = path.getChildFile ("session.json");
+    else if (path.hasFileExtension ("json"))
+        sessionJson = path;
+
+    if (sessionJson.existsAsFile())
+        loadSessionFromJson (sessionJson);   // shows its own alert on failure
+}
+
 bool MainComponent::loadSessionFromJson (const juce::File& sessionJson)
 {
     if (! sessionJson.existsAsFile())

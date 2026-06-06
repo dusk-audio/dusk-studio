@@ -59,6 +59,8 @@ This chapter walks an empty session all the way to a finished bounce. If you hav
 
 Install per your platform. On first launch, Dusk Studio opens a blank session called `Untitled` and the **Startup** dialog asks whether you want to create a new session in a chosen folder or open a recent one. Pick **New**, name your session, and click through.
 
+You can also open an existing session directly: pass its `session.json` (or the session folder) on the command line — `DuskStudio path/to/session.json` — or double-click a `session.json` in your file manager (Linux file-type association is installed with the app). If Dusk Studio is already running, the session opens in the existing window.
+
 ![First-launch window with the Startup dialog visible.](docs/images/qg-01-startup.png)
 
 The main window is laid out top to bottom: menu bar, stage selector (RECORDING / MIXING / AUX / MASTERING), bank selector, transport bar, tape strip toggle, console. The console fills the rest of the window with 24 channel strips, 4 buses, and the master.

@@ -714,6 +714,23 @@ static void runHeadlessSelfTest()
     std::fflush (stdout);
 }
 
+// First non-flag token that resolves to an existing file or directory. Used to
+// open a session passed on the command line / by the file manager. Relative
+// paths resolve against the working directory; quoted paths (spaces) survive.
+static juce::File sessionPathFromCommandLine (const juce::String& commandLine)
+{
+    for (const auto& tok : juce::StringArray::fromTokens (commandLine, true))
+    {
+        const auto t = tok.unquoted();
+        if (t.isEmpty() || t.startsWithChar ('-')) continue;
+        const juce::File f = juce::File::isAbsolutePath (t)
+                               ? juce::File (t)
+                               : juce::File::getCurrentWorkingDirectory().getChildFile (t);
+        if (f.exists()) return f;
+    }
+    return {};
+}
+
 void DuskStudioApp::initialise (const juce::String& commandLine)
 {
     // --version: print app + JUCE versions + platform string and exit
@@ -977,6 +994,22 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
     juce::Desktop::getInstance().setGlobalScaleFactor (appconfig::getUiScaleOverride());
 
     mainWindow = std::make_unique<MainWindow> (getApplicationName());
+
+    // Open a session passed on the command line (file-manager "open with",
+    // `DuskStudio path/to/session.json`, or a session directory). Deferred so
+    // it runs after MainComponent's own startup (recovery prompt / scan) has
+    // settled, then loads the requested session over it.
+    if (const auto sessionPath = sessionPathFromCommandLine (commandLine);
+        sessionPath != juce::File())
+    {
+        juce::Component::SafePointer<MainWindow> safeWin (mainWindow.get());
+        juce::MessageManager::callAsync ([safeWin, sessionPath]
+        {
+            if (safeWin == nullptr) return;
+            if (auto* main = dynamic_cast<MainComponent*> (safeWin->getContentComponent()))
+                main->openSessionPath (sessionPath);
+        });
+    }
 }
 
 void DuskStudioApp::shutdown()
@@ -1032,5 +1065,15 @@ void DuskStudioApp::systemRequestedQuit()
     quit();
 }
 
-void DuskStudioApp::anotherInstanceStarted (const juce::String&) {}
+void DuskStudioApp::anotherInstanceStarted (const juce::String& commandLine)
+{
+    // Single-instance app: a second launch (e.g. opening a session from the
+    // file manager) routes here. Bring the window forward and open the path.
+    if (mainWindow == nullptr) return;
+    mainWindow->toFront (true);
+    if (const auto sessionPath = sessionPathFromCommandLine (commandLine);
+        sessionPath != juce::File())
+        if (auto* main = dynamic_cast<MainComponent*> (mainWindow->getContentComponent()))
+            main->openSessionPath (sessionPath);
+}
 } // namespace duskstudio

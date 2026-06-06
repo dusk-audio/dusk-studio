@@ -59,6 +59,11 @@ public:
     // destructing. See AudioEngine::leakAllPluginInstancesForShutdown.
     void leakAllPluginInstancesForShutdown();
 
+    // Open a session from a path (a session.json file or a session directory
+    // containing one) — used for command-line / file-manager "open with" and
+    // the second-instance handoff. No-op if the path resolves to nothing.
+    void openSessionPath (const juce::File& path);
+
 private:
     void openAudioSettings();
     void openBounceDialog();
