@@ -494,7 +494,7 @@ From left to right:
 - **Forward** (▶▶). Brief press jumps to the next marker (no overshoot past the last one). Hold to scrub forward at 10× speed.
 - **Record** (●). Toggles record. Requires at least one track armed.
 - **Loop** (⟳). Toggles loop playback.
-- **Punch** (◉). Toggles punch recording. Right-click to set pre-roll and post-roll seconds.
+- **Punch** (◉). Toggles punch recording. Right-click to enable/disable pre-roll and post-roll and set their seconds.
 - **Virtual keyboard** (⌨). Opens an on-screen MIDI keyboard.
 - **Metronome** (♩). Toggles the click. Right-click for click settings.
 - **C/I**. Toggles count-in (one bar of click before record starts).
@@ -954,7 +954,7 @@ To overdub a specific section without erasing material before or after:
 
 1. Set the **punch in** and **punch out** points by clicking the timeline ruler at the desired in and out positions, holding **Shift**.
 2. Click the **Punch** button on the transport bar.
-3. Right-click the **Punch** button to set the **pre-roll** seconds (how much existing material plays back before the punch-in) and the **post-roll** seconds (how long the transport keeps rolling past the punch-out before auto-stopping). Post-roll defaults to 0 (off).
+3. Right-click the **Punch** button to set the **pre-roll** seconds (how much existing material plays back before the punch-in) and the **post-roll** seconds (how long the transport keeps rolling past the punch-out before auto-stopping). Each has an enable toggle in the same menu, so you can switch a roll off without losing its seconds value. Post-roll defaults to 0 (off).
 4. Press Record. Playback begins at the pre-roll position. Recording begins exactly at the punch-in sample and ends exactly at the punch-out sample. The audio before and after is untouched.
 
 When the new take begins, a 64-sample raised-cosine fade-in shapes its edge against the existing material. When the new take ends, a 64-sample fade-out shapes the other edge. The result is a click-free splice.

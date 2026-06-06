@@ -1232,6 +1232,8 @@ juce::String SessionSerializer::serialize (const Session& s)
     tport->setProperty ("last_record_point",  (juce::int64) s.lastRecordPointSamples.load());
     tport->setProperty ("pre_roll_seconds",   (double) s.preRollSeconds.load());
     tport->setProperty ("post_roll_seconds",  (double) s.postRollSeconds.load());
+    tport->setProperty ("pre_roll_enabled",   s.preRollEnabled.load());
+    tport->setProperty ("post_roll_enabled",  s.postRollEnabled.load());
 
     // MIDI controller bindings. Each entry stamps a (channel, dataNumber,
     // trigger) source onto a target enum + per-strip index. Only emit
@@ -1622,6 +1624,8 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         if (tport.hasProperty ("last_record_point")) s.lastRecordPointSamples.store ((juce::int64) tport["last_record_point"]);
         if (tport.hasProperty ("pre_roll_seconds"))  s.preRollSeconds.store   ((float)  (double) tport["pre_roll_seconds"]);
         if (tport.hasProperty ("post_roll_seconds")) s.postRollSeconds.store  ((float)  (double) tport["post_roll_seconds"]);
+        if (tport.hasProperty ("pre_roll_enabled"))  s.preRollEnabled.store   ((bool) tport["pre_roll_enabled"]);
+        if (tport.hasProperty ("post_roll_enabled")) s.postRollEnabled.store  ((bool) tport["post_roll_enabled"]);
 
         // Build the bindings list off-snapshot, then publish atomically so
         // the audio thread either sees the prior set or the new one - never

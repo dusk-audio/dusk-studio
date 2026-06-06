@@ -982,6 +982,10 @@ public:
     // indefinitely.
     std::atomic<float> preRollSeconds  { 0.0f };
     std::atomic<float> postRollSeconds { 0.0f };
+    // Enable toggles, so a roll can be bypassed without losing its seconds
+    // value. Effective roll = enabled ? seconds : 0.
+    std::atomic<bool>  preRollEnabled  { true };
+    std::atomic<bool>  postRollEnabled { true };
 
     // tuneTrackIndex = -1 disables; 0..15 selects. Audio writes Hz/level
     // per block; TunerOverlay's 30 Hz timer reads. Not persisted.

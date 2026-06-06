@@ -714,7 +714,9 @@ void TransportBar::timerCallback()
         {
             const auto pIn  = transport.getPunchIn();
             const auto pOut = transport.getPunchOut();
-            const float postRoll = engine.getSession().postRollSeconds.load (std::memory_order_relaxed);
+            const float postRoll = engine.getSession().postRollEnabled.load (std::memory_order_relaxed)
+                                     ? engine.getSession().postRollSeconds.load (std::memory_order_relaxed)
+                                     : 0.0f;
             if (pOut > pIn && postRoll > 0.0f && sr > 0.0)
             {
                 const auto stopAt = pOut + (juce::int64) ((double) postRoll * sr);
@@ -1147,10 +1149,15 @@ void TransportBar::showPunchSettingsMenu()
         postMenu.addItem (formatSecs (v), true, std::abs (post - v) < 0.05f,
             [&s, v] { s.postRollSeconds.store (v, std::memory_order_relaxed); });
 
+    const bool preEn  = s.preRollEnabled.load  (std::memory_order_relaxed);
+    const bool postEn = s.postRollEnabled.load (std::memory_order_relaxed);
+
     m.addSectionHeader ("Auto-punch");
-    m.addItem ("Roll IN before punch (audible context)", false, false, []{});
+    m.addItem ("Roll IN before punch (audible context)", true, preEn,
+        [&s, preEn] { s.preRollEnabled.store (! preEn, std::memory_order_relaxed); });
     m.addSubMenu ("Pre-roll: "  + formatSecs (pre),  preMenu);
-    m.addItem ("Stop after punch-out (auto-stop)",     false, false, []{});
+    m.addItem ("Stop after punch-out (auto-stop)",     true, postEn,
+        [&s, postEn] { s.postRollEnabled.store (! postEn, std::memory_order_relaxed); });
     m.addSubMenu ("Post-roll: " + formatSecs (post), postMenu);
     showContextMenu (m, punchButton);
 }

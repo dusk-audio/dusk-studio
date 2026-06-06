@@ -680,7 +680,9 @@ void AudioEngine::record()
     // Stacks with count-in (whichever rolls back further wins).
     if (transport.isPunchEnabled())
     {
-        const float pre = session.preRollSeconds.load (std::memory_order_relaxed);
+        const float pre = session.preRollEnabled.load (std::memory_order_relaxed)
+                            ? session.preRollSeconds.load (std::memory_order_relaxed)
+                            : 0.0f;
         if (pre > 0.0f)
         {
             const auto preSamples = (juce::int64) ((double) pre * sr);
