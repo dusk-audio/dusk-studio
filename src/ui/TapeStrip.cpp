@@ -2749,53 +2749,69 @@ void TapeStrip::paint (juce::Graphics& g)
         const auto mode = (TimeDisplayMode) session.timeDisplayMode.load (std::memory_order_relaxed);
         if (mode == TimeDisplayMode::Bars)
         {
-            // Bar grid - tick every bar (or 2/4/8 bars at low zoom).
-            const float bpm = session.tempoBpm.load (std::memory_order_relaxed);
-            const int   bpb = juce::jmax (1, session.beatsPerBar.load (std::memory_order_relaxed));
-            const double secsPerBar = (bpm > 0.0f) ? (double) bpb * 60.0 / (double) bpm : 2.0;
-            const double pxPerBar = px * secsPerBar;
+            // Bar grid - bar/beat boundaries are musical-time positions resolved
+            // through the session tempo map (constant tempoBpm when the map is
+            // empty), so the grid follows tempo changes instead of assuming one
+            // uniform bar width.
+            const int     bpb = juce::jmax (1, session.beatsPerBar.load (std::memory_order_relaxed));
+            const juce::int64 ticksPerBar = (juce::int64) bpb * kMidiTicksPerQuarter;
+
+            // Step + sub-tick density are sized from the tempo at the left edge.
+            const float  bpmEst = juce::jmax (1.0f, session.bpmAt (scrollSamples));
+            const double pxPerBar = px * (double) bpb * 60.0 / (double) bpmEst;
             int barStep = 1;
             if      (pxPerBar < 8.0)  barStep = 16;
             else if (pxPerBar < 16.0) barStep = 8;
             else if (pxPerBar < 32.0) barStep = 4;
             else if (pxPerBar < 64.0) barStep = 2;
 
-            const double endSec = (double) col.getWidth() / px;
-            const int lastBar = (int) std::ceil (endSec / secsPerBar);
+            const juce::int64 startTick = session.samplesToTicks (scrollSamples, sr);
+            int firstBar = (int) (startTick / ticksPerBar);
+            firstBar -= (firstBar % barStep);
+            firstBar = juce::jmax (0, firstBar);
 
-            // Beat sub-ticks: only drawn when each beat would render at
-            // least ~6 px apart so they don't smear into a grey band at
-            // low zoom. Drawn first (dimmer, shorter) so the bar ticks
-            // overpaint them at every bar's first beat.
+            auto barX = [&] (int bar)
+            {
+                return xForSample (session.ticksToSamples ((juce::int64) bar * ticksPerBar, sr));
+            };
+
+            // Beat sub-ticks: only when each beat renders at least ~6 px apart,
+            // so they don't smear into a grey band at low zoom. Drawn first
+            // (dimmer, shorter) so bar ticks overpaint the first beat of a bar.
             const double pxPerBeat = pxPerBar / (double) bpb;
             if (pxPerBeat >= 6.0 && barStep == 1)
             {
                 g.setColour (juce::Colour (0xff3a3a40));
                 const float beatY0 = (float) ruler.getY() + (float) kRulerTickBandH * 0.55f;
                 const float beatY1 = (float) ruler.getY() + (float) kRulerTickBandH;
-                for (int bar = 0; bar <= lastBar; ++bar)
+                for (int bar = firstBar; barX (bar) <= col.getRight(); ++bar)
                 {
                     for (int beat = 1; beat < bpb; ++beat)
                     {
-                        const double sec = (double) bar * secsPerBar
-                                         + (double) beat * (secsPerBar / (double) bpb);
-                        const int x = col.getX() + (int) (sec * px);
+                        const auto tick = (juce::int64) bar * ticksPerBar
+                                            + (juce::int64) beat * kMidiTicksPerQuarter;
+                        const int x = xForSample (session.ticksToSamples (tick, sr));
                         if (x < col.getX() || x > col.getRight()) continue;
                         g.drawVerticalLine (x, beatY0, beatY1);
                     }
+                    if (bar - firstBar > 100000) break;   // safety
                 }
-                // Restore bar-tick colour for the loop below.
                 g.setColour (juce::Colour (0xff707074));
             }
 
-            for (int bar = 0; bar <= lastBar; bar += barStep)
+            for (int bar = firstBar; ; bar += barStep)
             {
-                const int x = col.getX() + (int) ((double) bar * secsPerBar * px);
-                g.drawVerticalLine (x, (float) ruler.getY() + 6.0f,
-                                      (float) ruler.getY() + (float) kRulerTickBandH);
-                g.drawText (juce::String (bar + 1),
-                             x + 3, ruler.getY(), 60, kRulerTickBandH - 1,
-                             juce::Justification::centredLeft, false);
+                const int x = barX (bar);
+                if (x > col.getRight()) break;
+                if (x >= col.getX())
+                {
+                    g.drawVerticalLine (x, (float) ruler.getY() + 6.0f,
+                                          (float) ruler.getY() + (float) kRulerTickBandH);
+                    g.drawText (juce::String (bar + 1),
+                                 x + 3, ruler.getY(), 60, kRulerTickBandH - 1,
+                                 juce::Justification::centredLeft, false);
+                }
+                if (bar - firstBar > 200000) break;       // safety
             }
         }
         else

@@ -1061,6 +1061,29 @@ public:
     // Piecewise tempo (Grid mode). Empty = constant tempoBpm. Message-thread
     // owned; consumers migrate onto it over the M2c phases.
     TempoMap           tempoMap;
+
+    // Map-aware sample<->tick conversion: uses the tempo map when it has points,
+    // otherwise the constant tempoBpm. Single entry point so consumers don't
+    // each branch on tempoMap.empty(). Message-thread only until the RT-safe
+    // published snapshot lands (the audio thread still uses tempoBpm directly).
+    juce::int64 samplesToTicks (juce::int64 samples, double sr) const noexcept
+    {
+        return tempoMap.empty()
+                 ? ::duskstudio::samplesToTicks (samples, sr, tempoBpm.load (std::memory_order_relaxed))
+                 : tempoMap.samplesToTicks (samples, sr);
+    }
+    juce::int64 ticksToSamples (juce::int64 ticks, double sr) const noexcept
+    {
+        return tempoMap.empty()
+                 ? ::duskstudio::ticksToSamples (ticks, sr, tempoBpm.load (std::memory_order_relaxed))
+                 : tempoMap.ticksToSamples (ticks, sr);
+    }
+    float bpmAt (juce::int64 sample) const noexcept
+    {
+        return tempoMap.empty()
+                 ? tempoBpm.load (std::memory_order_relaxed)
+                 : tempoMap.bpmAt (sample);
+    }
     std::atomic<bool>  metronomeEnabled  { false };
     std::atomic<float> metronomeVolDb    { -12.0f };
     // metronomeOnlyDuringCountIn overrides clickWhileRecording for the
