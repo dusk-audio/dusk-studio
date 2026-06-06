@@ -2,9 +2,11 @@
 
 #include <juce_core/juce_core.h>
 #include <juce_graphics/juce_graphics.h>
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <limits>
 #include <memory>
 #include <vector>
 #include "AtomicSnapshot.h"
@@ -316,6 +318,126 @@ inline juce::int64 ticksToSamples (juce::int64 ticks,
         (double) ticks * sampleRate * 60.0
             / ((double) bpm * (double) kMidiTicksPerQuarter));
 }
+
+// One tempo change: `bpm` takes effect at `timelineSamples` and holds until the
+// next point (piecewise-constant tempo).
+struct TempoPoint
+{
+    juce::int64 timelineSamples = 0;
+    float       bpm             = 120.0f;
+};
+
+// Piecewise-constant tempo across the timeline. When it has points, sample<->tick
+// conversions integrate across the segments, and the span before the first point
+// takes the first point's tempo (segment 0 starts at the timeline origin no
+// matter where the first point sits).
+//
+// An EMPTY map carries no tempo of its own — the session's constant tempoBpm is
+// authoritative then, so callers check empty() and fall back to the
+// duskstudio::samplesToTicks/ticksToSamples free functions with Session::tempoBpm.
+// That keeps tempoBpm the single source of truth for constant tempo (the map
+// only ever holds genuine tempo changes).
+//
+// Message-thread state for now; the audio thread still reads Session::tempoBpm.
+// A lock-free published snapshot for the RT MIDI scheduler arrives in a later
+// phase — until then nothing on the audio path reads this.
+class TempoMap
+{
+public:
+    static constexpr float kMinBpm = 30.0f;
+    static constexpr float kMaxBpm = 300.0f;
+    static float clampBpm (float b) noexcept
+    {
+        return std::isfinite (b) ? juce::jlimit (kMinBpm, kMaxBpm, b) : 120.0f;
+    }
+
+    // Replace the points. Input need not be sorted; this sorts by sample, clamps
+    // each bpm to [kMinBpm, kMaxBpm], and drops points colliding on the same
+    // sample (last wins). Positions are preserved.
+    void setPoints (std::vector<TempoPoint> pts)
+    {
+        std::sort (pts.begin(), pts.end(),
+                   [] (const TempoPoint& a, const TempoPoint& b)
+                   { return a.timelineSamples < b.timelineSamples; });
+        points_.clear();
+        for (auto& p : pts)
+        {
+            p.bpm = clampBpm (p.bpm);
+            p.timelineSamples = juce::jmax ((juce::int64) 0, p.timelineSamples);
+            if (! points_.empty() && points_.back().timelineSamples == p.timelineSamples)
+                points_.back() = p;                 // collision: last wins
+            else
+                points_.push_back (p);
+        }
+    }
+
+    void clear() noexcept { points_.clear(); }
+    bool empty() const noexcept { return points_.empty(); }
+    const std::vector<TempoPoint>& points() const noexcept { return points_; }
+
+    // Valid only when !empty() (returns 120 as a harmless default otherwise).
+    float bpmAt (juce::int64 sample) const noexcept
+    {
+        if (points_.empty()) return 120.0f;
+        float bpm = points_.front().bpm;
+        for (const auto& p : points_)
+        {
+            if (p.timelineSamples <= sample) bpm = p.bpm;
+            else break;
+        }
+        return bpm;
+    }
+
+    // Valid only when !empty(); returns 0 otherwise (use the constant path).
+    juce::int64 samplesToTicks (juce::int64 sample, double sr) const noexcept
+    {
+        if (sr <= 0.0 || sample <= 0 || points_.empty()) return 0;
+
+        const double k = (double) kMidiTicksPerQuarter / (sr * 60.0);
+        double ticks = 0.0;
+        for (size_t i = 0; i < points_.size(); ++i)
+        {
+            const juce::int64 segStart = (i == 0) ? (juce::int64) 0 : points_[i].timelineSamples;
+            if (sample <= segStart) break;
+            const juce::int64 segEnd = (i + 1 < points_.size())
+                                         ? points_[i + 1].timelineSamples
+                                         : std::numeric_limits<juce::int64>::max();
+            const juce::int64 upTo = juce::jmin (sample, segEnd);
+            ticks += (double) (upTo - segStart) * (double) points_[i].bpm * k;
+        }
+        return (juce::int64) std::llround (ticks);
+    }
+
+    juce::int64 ticksToSamples (juce::int64 ticks, double sr) const noexcept
+    {
+        if (sr <= 0.0 || ticks <= 0 || points_.empty()) return 0;
+
+        const double invK = (sr * 60.0) / (double) kMidiTicksPerQuarter;   // ticks->samples per bpm
+        double remTicks = (double) ticks;
+        for (size_t i = 0; i < points_.size(); ++i)
+        {
+            const juce::int64 segStart = (i == 0) ? (juce::int64) 0 : points_[i].timelineSamples;
+            const bool last = (i + 1 >= points_.size());
+            if (! last)
+            {
+                const juce::int64 segLen = points_[i + 1].timelineSamples - segStart;
+                const double segTicks = (double) segLen * (double) points_[i].bpm
+                                            / invK;   // ticks the segment holds
+                if (remTicks <= segTicks)
+                    return segStart + (juce::int64) std::llround (remTicks * invK / (double) points_[i].bpm);
+                remTicks -= segTicks;
+            }
+            else
+            {
+                return segStart + (juce::int64) std::llround (remTicks * invK / (double) points_[i].bpm);
+            }
+        }
+        return 0;
+    }
+
+private:
+    std::vector<TempoPoint> points_;
+};
 
 enum class TimeDisplayMode : int { Bars = 0, Time = 1 };
 
@@ -936,6 +1058,9 @@ public:
     std::atomic<float> tempoBpm          { 120.0f };
     std::atomic<int>   beatsPerBar       { 4 };
     std::atomic<int>   beatUnit          { 4 };
+    // Piecewise tempo (Grid mode). Empty = constant tempoBpm. Message-thread
+    // owned; consumers migrate onto it over the M2c phases.
+    TempoMap           tempoMap;
     std::atomic<bool>  metronomeEnabled  { false };
     std::atomic<float> metronomeVolDb    { -12.0f };
     // metronomeOnlyDuringCountIn overrides clickWhileRecording for the

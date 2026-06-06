@@ -1202,6 +1202,18 @@ juce::String SessionSerializer::serialize (const Session& s)
     tport->setProperty ("snap_resolution",   (int) s.snapResolution);
     tport->setProperty ("piano_roll_key_snap", s.pianoRollKeySnap);
     tport->setProperty ("tempo_bpm",         s.tempoBpm.load());
+    if (! s.tempoMap.empty())
+    {
+        juce::Array<juce::var> tpArr;
+        for (const auto& p : s.tempoMap.points())
+        {
+            auto* o = new juce::DynamicObject();
+            o->setProperty ("sample", p.timelineSamples);
+            o->setProperty ("bpm",    (double) p.bpm);
+            tpArr.add (juce::var (o));
+        }
+        tport->setProperty ("tempo_points", tpArr);
+    }
     tport->setProperty ("ui_stage",          s.uiStage.load());
     tport->setProperty ("sync_source_input",  s.syncSourceInputIdentifier);
     tport->setProperty ("sync_follow_tempo",
@@ -1582,6 +1594,17 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         // tapestrip's tool with no on-screen selector to change it back. Always
         // start in the Session.h default (Grab).
         if (tport.hasProperty ("tempo_bpm"))         s.tempoBpm.store         ((float) (double) tport["tempo_bpm"]);
+        if (tport.hasProperty ("tempo_points"))
+        {
+            std::vector<TempoPoint> pts;
+            if (auto* arr = tport["tempo_points"].getArray())
+                for (const auto& v : *arr)
+                    if (auto* o = v.getDynamicObject())
+                        if (o->hasProperty ("sample") && o->hasProperty ("bpm"))
+                            pts.push_back ({ (juce::int64) o->getProperty ("sample"),
+                                             (float) (double) o->getProperty ("bpm") });
+            s.tempoMap.setPoints (std::move (pts));
+        }
         if (tport.hasProperty ("ui_stage"))          s.uiStage.store          ((int)  tport["ui_stage"]);
         if (tport.hasProperty ("sync_source_input"))
             s.syncSourceInputIdentifier = tport["sync_source_input"].toString();

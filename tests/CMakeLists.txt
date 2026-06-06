@@ -11,6 +11,7 @@ add_executable(dusk-studio-tests
     smoke_brickwall_limiter.cpp
     plugin_scan_protocol.cpp
     session_tick_conversion.cpp
+    tempo_map_conversion.cpp
     atomic_park.cpp
     embedded_modal_close_safety.cpp
     x11_anti_pattern_guard.cpp
