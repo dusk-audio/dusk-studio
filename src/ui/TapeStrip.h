@@ -157,6 +157,8 @@ private:
     bool overMidiRegionBody (int x, int y) const noexcept;
     // Tested only inside the ruler band.
     int hitTestMarker (int x, int y) const noexcept;
+    // Tested only inside the ruler tick band (top), where tempo points live.
+    int hitTestTempoPoint (int x, int y) const noexcept;
 
     // Pills reposition that endpoint; bar drags translate the whole
     // range preserving length.
@@ -174,6 +176,15 @@ private:
     // action surface yet).
     void showMidiRegionContextMenu (int trackIdx, int regionIdx,
                                        juce::Point<int> screenPos);
+
+    // Grid-mode tempo-point editing (ruler tick band): add on empty-band
+    // click, drag to reposition, menu to set BPM or delete. Mutates
+    // session.tempoMap then repaints.
+    void addTempoPointAt (juce::int64 sample);
+    void editTempoPointBpm (juce::int64 atSample);
+    void deleteTempoPoint (juce::int64 atSample);
+    void showTempoPointMenu (int index, juce::Point<int> screenPos);
+    void paintTempoPoints (juce::Graphics&);
 
     Session& session;
     AudioEngine& engine;
@@ -310,6 +321,22 @@ private:
         juce::int64 mouseDownSample = 0;
     };
     MarkerDrag markerDrag;
+
+    // Grid-mode tempo-point drag. locked = the base 0-sample anchor, which
+    // ignores horizontal drag so it can't be pulled off the origin. others
+    // = every point except the dragged one, rebuilt with the new position
+    // each move so setPoints re-sorts/clamps in one shot.
+    struct TempoPointDrag
+    {
+        bool active = false;
+        bool moved  = false;
+        bool locked = false;
+        float bpm   = 120.0f;
+        juce::int64 originSample    = 0;
+        juce::int64 mouseDownSample = 0;
+        std::vector<duskstudio::TempoPoint> others;
+    };
+    TempoPointDrag tempoPointDrag;
 
     // origStart/End captured pre-drag so whole-bar moves translate by
     // delta without compounding rounding.
