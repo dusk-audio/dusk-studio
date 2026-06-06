@@ -223,6 +223,12 @@ void AudioEngine::publishTempoMap()
 void AudioEngine::setTempoPoints (std::vector<TempoPoint> pts)
 {
     session.tempoMap.setPoints (std::move (pts));
+    // Keep the constant tempoBpm mirroring the bar-1 tempo so the transport
+    // readout, count-in, and the empty-map fallback all show the right number
+    // while a map is active. release pairs with the audio thread's acquire.
+    if (! session.tempoMap.empty())
+        session.tempoBpm.store (session.tempoMap.points().front().bpm,
+                                 std::memory_order_release);
     publishTempoMap();
 }
 

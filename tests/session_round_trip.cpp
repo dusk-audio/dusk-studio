@@ -57,6 +57,8 @@ TEST_CASE ("SessionSerializer round-trip preserves transport + per-track state",
     t2.mode.store ((int) Track::Mode::Midi, std::memory_order_relaxed);
     t2.midiChannel.store (5, std::memory_order_relaxed);
 
+    a.tempoMap.setPoints ({ { 0, 120.0f }, { 96000, 90.0f } });
+
     REQUIRE (SessionSerializer::save (a, target));
     REQUIRE (target.existsAsFile());
 
@@ -65,6 +67,12 @@ TEST_CASE ("SessionSerializer round-trip preserves transport + per-track state",
 
     REQUIRE_THAT (b.tempoBpm.load (std::memory_order_relaxed),
                   WithinAbs (137.0f, 1e-4f));
+
+    REQUIRE (b.tempoMap.points().size() == 2);
+    REQUIRE (b.tempoMap.points()[0].timelineSamples == 0);
+    REQUIRE_THAT (b.tempoMap.points()[0].bpm, WithinAbs (120.0f, 1e-4f));
+    REQUIRE (b.tempoMap.points()[1].timelineSamples == 96000);
+    REQUIRE_THAT (b.tempoMap.points()[1].bpm, WithinAbs (90.0f, 1e-4f));
 
     REQUIRE (b.track (0).name == "Kick");
     REQUIRE (b.track (0).mode.load (std::memory_order_relaxed) == (int) Track::Mode::Mono);

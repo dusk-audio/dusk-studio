@@ -676,7 +676,10 @@ void PianoRollComponent::refreshStatusBarReadouts()
     const int    bpb = session.beatsPerBar.load (std::memory_order_relaxed);
     juce::int64 timelineSample = 0;
     if (auto* r = region())
-        timelineSample = r->timelineStart + ticksToSamples (editCursorTick, sr, bpm);
+    {
+        const auto regStartTick = session.samplesToTicks (r->timelineStart, sr);
+        timelineSample = session.ticksToSamples (regStartTick + editCursorTick, sr);
+    }
     positionLabel.setText ("pos " + formatSamplePosition (timelineSample, sr, bpm, bpb, mode),
                               juce::dontSendNotification);
     const int v = activeVelocity();
@@ -805,12 +808,12 @@ void PianoRollComponent::paintLoopPunchBrackets (juce::Graphics& g,
     const auto* r = region();
     if (r == nullptr) return;
     const double sr  = juce::jmax (1.0, engine.getCurrentSampleRate());
-    const float  bpm = session.tempoBpm.load (std::memory_order_relaxed);
     auto& transport = engine.getTransport();
 
+    const auto regStartTick = session.samplesToTicks (r->timelineStart, sr);
     auto xForSample = [&] (juce::int64 s)
     {
-        return xForTick (samplesToTicks (s - r->timelineStart, sr, bpm));
+        return xForTick (session.samplesToTicks (s, sr) - regStartTick);
     };
     auto drawPair = [&] (juce::int64 a, juce::int64 b, juce::Colour col, bool enabled)
     {
@@ -1688,16 +1691,18 @@ void PianoRollComponent::stepRecordNoteOn (int noteNumber, int velocity)
     // within the same chord share the start position.
     if (stepRecordHeld == 0 && stepRecordChordHad)
     {
-        const juce::int64 advanceSamples = ticksToSamples (stepTicks, sr, bpm);
-        engine.getTransport().setPlayhead (
-            engine.getTransport().getPlayhead() + advanceSamples);
+        const auto playhead   = engine.getTransport().getPlayhead();
+        const auto playheadTick = session.samplesToTicks (playhead, sr);
+        const juce::int64 advanceSamples =
+            session.ticksToSamples (playheadTick + stepTicks, sr) - playhead;
+        engine.getTransport().setPlayhead (playhead + advanceSamples);
         stepRecordChordHad = false;
     }
 
-    const auto playhead = engine.getTransport().getPlayhead();
-    const juce::int64 sampleOffset = playhead - r->timelineStart;
-    if (sampleOffset < 0) return;   // playhead is before the region; ignore
-    const juce::int64 startTick = samplesToTicks (sampleOffset, sr, bpm);
+    const auto nowPlayhead = engine.getTransport().getPlayhead();
+    if (nowPlayhead - r->timelineStart < 0) return;   // playhead is before the region; ignore
+    const auto regStartTick = session.samplesToTicks (r->timelineStart, sr);
+    const juce::int64 startTick = session.samplesToTicks (nowPlayhead, sr) - regStartTick;
 
     // Extend the region if the new note would go past its current
     // end. Without this the painter clips the note and the engine
@@ -1705,7 +1710,8 @@ void PianoRollComponent::stepRecordNoteOn (int noteNumber, int velocity)
     if (startTick + stepTicks > r->lengthInTicks)
     {
         r->lengthInTicks = startTick + stepTicks;
-        r->lengthInSamples = ticksToSamples (r->lengthInTicks, sr, bpm);
+        r->lengthInSamples = session.ticksToSamples (regStartTick + r->lengthInTicks, sr)
+                                 - r->timelineStart;
     }
 
     MidiNote n;
@@ -2198,10 +2204,10 @@ void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
     if (rulerBand.contains (e.x, e.y) && ! e.mods.isPopupMenu())
     {
         const double sr  = juce::jmax (1.0, engine.getCurrentSampleRate());
-        const float  bpm = session.tempoBpm.load (std::memory_order_relaxed);
         auto& transport  = engine.getTransport();
+        const auto regStartTick = session.samplesToTicks (r->timelineStart, sr);
         auto xForSample  = [&] (juce::int64 s)
-            { return xForTick (samplesToTicks (s - r->timelineStart, sr, bpm)); };
+            { return xForTick (session.samplesToTicks (s, sr) - regStartTick); };
         const int tol = 6;
         struct Edge { juce::int64 sample; DragMode mode; bool valid; };
         const Edge edges[] = {
@@ -2227,8 +2233,9 @@ void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
         // muscle memory), parity with AudioRegionEditor.
         const auto tickHere = juce::jmax<juce::int64> (0, tickForX (e.x));
         const double sr  = engine.getCurrentSampleRate();
-        const double bpm = session.tempoBpm.load (std::memory_order_relaxed);
-        const auto sampleOffset = ticksToSamples (tickHere, sr, bpm);
+        const auto regStartTick = session.samplesToTicks (r->timelineStart, sr);
+        const auto sampleOffset = session.ticksToSamples (regStartTick + tickHere, sr)
+                                      - r->timelineStart;
         engine.getTransport().setPlayhead (r->timelineStart + sampleOffset);
 
         rangeStartTick = tickHere;
@@ -2503,10 +2510,10 @@ void PianoRollComponent::mouseDrag (const juce::MouseEvent& e)
         || dragMode == DragMode::PunchIn || dragMode == DragMode::PunchOut)
     {
         const double sr  = juce::jmax (1.0, engine.getCurrentSampleRate());
-        const float  bpm = session.tempoBpm.load (std::memory_order_relaxed);
         auto& transport  = engine.getTransport();
         const auto tickHere = juce::jmax<juce::int64> (0, tickForX (e.x));
-        const auto tl = r->timelineStart + ticksToSamples (tickHere, sr, bpm);
+        const auto tl = session.ticksToSamples (
+            session.samplesToTicks (r->timelineStart, sr) + tickHere, sr);
         switch (dragMode)
         {
             case DragMode::LoopIn:   transport.setLoopRange  (juce::jmin (tl, transport.getLoopEnd()),  transport.getLoopEnd());  break;
@@ -2721,10 +2728,10 @@ void PianoRollComponent::mouseMove (const juce::MouseEvent& e)
         if (const auto* r = region())
         {
             const double sr  = juce::jmax (1.0, engine.getCurrentSampleRate());
-            const float  bpm = session.tempoBpm.load (std::memory_order_relaxed);
             auto& transport  = engine.getTransport();
+            const auto regStartTick = session.samplesToTicks (r->timelineStart, sr);
             auto xForSample  = [&] (juce::int64 s)
-                { return xForTick (samplesToTicks (s - r->timelineStart, sr, bpm)); };
+                { return xForTick (session.samplesToTicks (s, sr) - regStartTick); };
             const juce::int64 edges[] = { transport.getLoopStart(), transport.getLoopEnd(),
                                           transport.getPunchIn(),   transport.getPunchOut() };
             const bool valid[] = { transport.getLoopEnd()  > transport.getLoopStart(),
@@ -2973,8 +2980,8 @@ bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
             if (const auto* r = region(); r != nullptr && (kc == '[' || kc == ']'))
             {
                 const double sr  = juce::jmax (1.0, engine.getCurrentSampleRate());
-                const float  bpm = session.tempoBpm.load (std::memory_order_relaxed);
-                const auto cursorTl = r->timelineStart + ticksToSamples (editCursorTick, sr, bpm);
+                const auto cursorTl = session.ticksToSamples (
+                    session.samplesToTicks (r->timelineStart, sr) + editCursorTick, sr);
                 if (kc == '[') { if (sh) transport.setPunchRange (cursorTl, juce::jmax (transport.getPunchOut(), cursorTl));
                                  else    transport.setLoopRange  (cursorTl, juce::jmax (transport.getLoopEnd(),  cursorTl)); }
                 else { if (sh) transport.setPunchRange (juce::jmin (transport.getPunchIn(),   cursorTl), cursorTl);
@@ -3734,8 +3741,8 @@ int PianoRollComponent::transportPlayheadX (juce::Rectangle<int> gridArea) const
     const auto localSample = playheadSample - r->timelineStart;
     if (localSample < 0 || localSample > r->lengthInSamples) return -1;
     const double sr = juce::jmax (1.0, engine.getCurrentSampleRate());
-    const float bpm = juce::jmax (1.0f, session.tempoBpm.load (std::memory_order_relaxed));
-    const auto localTick = samplesToTicks (localSample, sr, bpm);
+    const auto regStartTick = session.samplesToTicks (r->timelineStart, sr);
+    const auto localTick = session.samplesToTicks (localSample + r->timelineStart, sr) - regStartTick;
     if (localTick < 0 || localTick > r->lengthInTicks) return -1;
     const int x = xForTick (localTick);
     if (x < gridArea.getX() || x > gridArea.getRight()) return -1;
@@ -3822,8 +3829,8 @@ void PianoRollComponent::timerCallback()
             if (localSample >= 0 && localSample <= r->lengthInSamples)
             {
                 const double sr  = juce::jmax (1.0, engine.getCurrentSampleRate());
-                const float  bpm = juce::jmax (1.0f, session.tempoBpm.load (std::memory_order_relaxed));
-                const auto localTick = samplesToTicks (localSample, sr, bpm);
+                const auto regStartTick = session.samplesToTicks (r->timelineStart, sr);
+                const auto localTick = session.samplesToTicks (localSample + r->timelineStart, sr) - regStartTick;
                 const double playheadPx = (double) localTick * pixelsPerTick;
                 const int gridW = juce::jmax (1, getWidth() - kKeyboardWidth);
                 const int xRel  = (int) std::round (playheadPx) - scrollX;

@@ -1336,6 +1336,18 @@ void TransportBar::confirmAndApplyBpm (float newBpm, float oldBpm)
         return;
     }
 
+    // When a tempo map is active it governs timing directly, so the BPM field
+    // edits the bar-1 tempo point instead of running the legacy single-tempo
+    // region retime (and there's no retime dialog — nothing is rescaled).
+    if (! s.tempoMap.empty())
+    {
+        auto pts = s.tempoMap.points();
+        pts.front().bpm = newBpm;
+        engine.setTempoPoints (std::move (pts));
+        bpmValue.setText (juce::String ((int) newBpm), juce::dontSendNotification);
+        return;
+    }
+
     int lockedMidi = 0, floatMidi = 0;
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
