@@ -3820,6 +3820,11 @@ void TapeStrip::editTempoPointBpm (juce::int64 atSample)
 void TapeStrip::deleteTempoPoint (juce::int64 atSample)
 {
     auto vec = session.tempoMap.points();
+    // The base anchor at sample 0 is the song's starting tempo. Keep it while
+    // any later tempo change still exists — deleting it would slide the next
+    // point's tempo back to bar 1. Deleting it when it's the only point is fine:
+    // the map clears back to a constant tempo.
+    if (atSample == 0 && vec.size() > 1) return;
     vec.erase (std::remove_if (vec.begin(), vec.end(),
         [atSample] (const TempoPoint& p) { return p.timelineSamples == atSample; }),
         vec.end());
@@ -3841,7 +3846,8 @@ void TapeStrip::showTempoPointMenu (int index, juce::Point<int> screenPos)
                 {
                     if (safeThis != nullptr) safeThis->editTempoPointBpm (atSample);
                 });
-    m.addItem ("Delete",
+    const bool baseAnchorLocked = (atSample == 0 && pts.size() > 1);
+    m.addItem ("Delete", ! baseAnchorLocked, false,
                 [safeThis = juce::Component::SafePointer<TapeStrip> (this), atSample]
                 {
                     if (safeThis != nullptr) safeThis->deleteTempoPoint (atSample);
