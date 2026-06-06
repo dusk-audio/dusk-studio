@@ -1140,17 +1140,6 @@ void AudioEngine::audioDeviceError (const juce::String& errorMessage)
 
 void AudioEngine::audioDeviceStopped()
 {
-    // No audio callback is in flight now, so it's safe to drop every retired
-    // tempo-map copy except the currently-published one.
-    if (rtTempoMapPool.size() > 1)
-    {
-        const TempoMap* cur = rtTempoMap.load (std::memory_order_relaxed);
-        rtTempoMapPool.erase (
-            std::remove_if (rtTempoMapPool.begin(), rtTempoMapPool.end(),
-                            [cur] (const std::unique_ptr<TempoMap>& p) { return p.get() != cur; }),
-            rtTempoMapPool.end());
-    }
-
     // Stop any in-flight recording BEFORE clearing the sample rate: the
     // writer drain in stopRecording depends on recordSampleRate being
     // non-zero to map sample positions to seconds. Without this, a

@@ -309,9 +309,11 @@ private:
     // Lock-free tempo-map snapshot for the audio thread (MIDI scheduler +
     // metronome). publishTempoMap heap-allocates an immutable copy, keeps it
     // alive in the pool, and release-stores its pointer; the audio thread
-    // acquire-loads and never frees. Retired copies are never freed while audio
-    // could be reading them — the pool is trimmed only in audioDeviceStopped
-    // (callback guaranteed idle). null pointer = treat as constant tempoBpm.
+    // acquire-loads and never frees. The pool is only ever appended to, and
+    // only from the message thread, so the audio thread can read a published
+    // copy without it being freed or reallocated under it. Retired copies stay
+    // alive for the session (each is tiny — a few tempo points) and are freed
+    // when the engine is destroyed. null pointer = treat as constant tempoBpm.
     std::vector<std::unique_ptr<TempoMap>> rtTempoMapPool;
     std::atomic<const TempoMap*>           rtTempoMap { nullptr };
 
