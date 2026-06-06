@@ -52,16 +52,16 @@ cp packaging/DuskStudio.mime.xml                   AppDir/usr/share/mime/package
 # .desktop declares Icon=DuskStudio so the file at the hicolor path must be
 # named DuskStudio.png. The source is 500x500; the 256x256 slot must hold a
 # TRUE 256x256 image or icon validators (and some desktops) flag the mismatch,
-# so downscale into it. ImageMagick is the standard tool; if it's absent fall
-# back to a straight copy with a loud warning rather than failing the build.
+# so downscale into it. ImageMagick is required — a native-size copy ships a
+# malformed icon, so hard-fail rather than warn-and-continue.
 ICON_256="AppDir/usr/share/icons/hicolor/256x256/apps/DuskStudio.png"
 if command -v magick >/dev/null 2>&1; then
     magick "$ICON_SRC" -resize 256x256 "$ICON_256"
 elif command -v convert >/dev/null 2>&1; then
     convert "$ICON_SRC" -resize 256x256 "$ICON_256"
 else
-    echo "warning: ImageMagick (magick/convert) not on PATH - copying $ICON_SRC at its native size into the 256x256 slot; icon validators may flag the size mismatch. Install imagemagick for a correctly-sized icon." >&2
-    cp "$ICON_SRC" "$ICON_256"
+    echo "error: ImageMagick (magick/convert) not on PATH - cannot produce the 256x256 icon. Install imagemagick before packaging." >&2
+    exit 1
 fi
 
 OUTPUT="dusk-studio-${VERSION}-Linux-x86_64.AppImage"

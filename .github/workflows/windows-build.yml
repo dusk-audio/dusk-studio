@@ -72,8 +72,9 @@ jobs:
           # Steinberg distributes the ASIO SDK as a ZIP on a stable URL.
           # CMake looks at $ASIOSDK_PATH so we extract + export. The
           # vendor occasionally bumps version - if the URL 404s, update
-          # the path here AND in the README.
-          curl -sSL -o "${RUNNER_TEMP}/asiosdk.zip" https://download.steinberg.net/sdk_downloads/asiosdk_2.3.3_2019-06-14.zip
+          # the path here AND in the README. -f makes curl fail on an HTTP
+          # error instead of saving the error page into the .zip.
+          curl -fsSL -o "${RUNNER_TEMP}/asiosdk.zip" https://download.steinberg.net/sdk_downloads/asiosdk_2.3.3_2019-06-14.zip
           7z x -y "${RUNNER_TEMP}/asiosdk.zip" -o"${RUNNER_TEMP}/asiosdk-extract" > /dev/null
           # ZIP wraps everything under asiosdk_2.3.3_2019-06-14/; explicitly
           # resolve the single inner directory and fail loud if zero or

@@ -35,7 +35,7 @@ Paid via [Patreon](https://www.patreon.com/cw/DuskAudio) (recurring) or [GitHub 
 
 ## Status
 
-**v0.9.0 (beta).** Feature backlog effectively closed: every spec phase, Tascam DP-24SD parity, MTC + MIDI Clock sync, cross-platform OOP plugin host (audio on all three OSes; editor embedded on Linux + Windows, in-process shell on macOS), and the rename to Dusk Studio have shipped. All three OSes ship unsigned binaries (Linux AppImage + Windows MSI + macOS DMG) to the private releases repo on each tag. Remaining 1.0 work is deeper accessibility and cross-process NSView embedding research.
+**v0.11.0 (Beta).** Built to a production bar; released as Beta. Feature backlog effectively closed: every spec phase, Tascam DP-24SD parity, MTC + MIDI Clock sync, cross-platform OOP plugin host (audio on all three OSes; editor embedded on Linux + Windows, in-process shell on macOS), a true-peak mastering limiter, a piecewise tempo map (changing tempo within a song), session open-with, and the rename to Dusk Studio have shipped. All three OSes ship unsigned binaries (Linux AppImage + Windows MSI + macOS DMG) to the private releases repo on each tag. Remaining work toward the public 1.0 is release-engineering polish and deeper accessibility.
 
 | Stage | Status |
 |---|---|
