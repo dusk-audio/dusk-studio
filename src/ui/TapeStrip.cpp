@@ -1833,6 +1833,18 @@ void TapeStrip::mouseDoubleClick (const juce::MouseEvent& e)
         return;
     }
 
+    // Tempo-point double-click: edit its BPM. The discoverable path for
+    // changing tempo — right-click still offers add / delete. Checked after
+    // markers so a marker pill double-click always wins on shared columns.
+    if (const int tIdx = hitTestTempoPoint (e.x, e.y); tIdx != -1)
+    {
+        if (tIdx == kTempoBaseHandle)
+            editBaseTempo();
+        else
+            editTempoPointBpm (session.tempoMap.points()[(size_t) tIdx].timelineSamples);
+        return;
+    }
+
     auto col = tracksColumnBounds();
     if (! col.contains (e.x, e.y)) return;
 
@@ -3626,8 +3638,10 @@ int TapeStrip::hitTestTempoPoint (int x, int y) const noexcept
 {
     auto ruler = rulerBounds();
     if (! ruler.contains (x, y)) return -1;
-    // Tempo points live in the tick band (top), above the marker pills.
-    if (y >= ruler.getY() + kRulerTickBandH) return -1;
+    // The glyph + label live in the top tick band, but accept a right-click
+    // anywhere in the ruler column under them — the thin 14px band is too
+    // easy to miss, and markers (lower band) use their own hit test, so a
+    // generous vertical zone here doesn't steal their menu.
 
     // Hit zone spans the triangle (a few px left) plus the BPM label drawn to
     // its right, so right-clicking the number — not just the tiny glyph —
