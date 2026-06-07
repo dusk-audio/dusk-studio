@@ -7,6 +7,7 @@
 #include "AuxView.h"
 #include "BounceDialog.h"
 #include "PluginScanModal.h"
+#include "ShortcutsPanel.h"
 #include "DuskContextMenu.h"
 #include "../session/MidiBindings.h"
 #include "ConsoleView.h"
@@ -345,6 +346,10 @@ MainComponent::MainComponent()
     styleStageButton (mixingStageBtn,    juce::Colour (0xff5a8ad0));   // mix-desk blue
     styleStageButton (auxStageBtn,       juce::Colour (0xff6e5ad0));   // aux indigo-violet
     styleStageButton (masteringStageBtn, juce::Colour (0xff8a5ad0));   // mastering purple
+    recordingStageBtn.setTooltip ("Recording stage — press 1");
+    mixingStageBtn   .setTooltip ("Mixing stage — press 2");
+    masteringStageBtn.setTooltip ("Mastering stage — press 3");
+    auxStageBtn      .setTooltip ("Aux send / return stage — press 4");
     recordingStageBtn.setConnectedEdges (juce::Button::ConnectedOnRight);
     mixingStageBtn   .setConnectedEdges (juce::Button::ConnectedOnLeft | juce::Button::ConnectedOnRight);
     masteringStageBtn.setConnectedEdges (juce::Button::ConnectedOnLeft | juce::Button::ConnectedOnRight);
@@ -737,6 +742,27 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         }
     }
 
+    // ── Stage switching: plain 1/2/3/4 select Recording / Mixing / Mastering /
+    // Aux. Cmd/Ctrl + digit is bank switching (above), so these stay unmodified.
+    if (noMods)
+    {
+        switch (code)
+        {
+            case '1': switchToStage (AudioEngine::Stage::Recording); return true;
+            case '2': switchToStage (AudioEngine::Stage::Mixing);    return true;
+            case '3': switchToStage (AudioEngine::Stage::Mastering); return true;
+            case '4': switchToStage (AudioEngine::Stage::Aux);       return true;
+            default:  break;
+        }
+    }
+
+    // ── '?' (Shift+/) opens the keyboard-shortcut reference.
+    if (key.getTextCharacter() == '?')
+    {
+        openShortcuts();
+        return true;
+    }
+
     // ── TIMELINE toggle: Cmd/Ctrl + \ shows / hides the tape strip.
     // Mirrors the TransportBar's TIMELINE button so the user can flip
     // the arrangement view without mousing. Backslash is otherwise
@@ -1117,6 +1143,13 @@ void MainComponent::syncBankButtons (int desiredCount)
         {
             if (consoleView != nullptr) consoleView->setBank (idx);
         };
+        // Banks 1-3 are reachable via Cmd/Ctrl + 1/2/3 (see keyPressed).
+        juce::String hint;
+        if (idx < 3)
+            hint = "  (" + juce::KeyPress ('1' + idx,
+                                             juce::ModifierKeys (juce::ModifierKeys::commandModifier), 0)
+                               .getTextDescriptionWithIcons() + ")";
+        btn->setTooltip ("Channel bank " + juce::String (idx + 1) + hint);
         addAndMakeVisible (btn.get());
         bankButtons.push_back (std::move (btn));
     }
@@ -1476,6 +1509,12 @@ void MainComponent::openAudioSettings()
                                                    kPanelW, kPanelH);
     host->setSize (kPanelW + sbW + 4, hostH);
     audioSettingsModal.show (*this, std::move (host));
+}
+
+void MainComponent::openShortcuts()
+{
+    if (shortcutsModal.isOpen()) return;
+    shortcutsModal.show (*this, std::make_unique<ShortcutsPanel>());
 }
 
 void MainComponent::switchToStage (AudioEngine::Stage s)
@@ -3063,6 +3102,7 @@ enum MenuItemId
     kMenuFileTemplateBase = 1200,
     kMenuSettingsAudio = 2001,
     kMenuSettingsAbout = 2002,
+    kMenuSettingsShortcuts = 2003,
 };
 }
 
@@ -3164,6 +3204,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelMenuIndex,
     else if (topLevelMenuIndex == 1)   // Settings
     {
         menu.addItem (kMenuSettingsAudio, "Settings...");
+        menu.addItem (kMenuSettingsShortcuts, "Keyboard Shortcuts  (?)");
         menu.addSeparator();
         menu.addItem (kMenuSettingsAbout, "About Dusk Studio");
     }
@@ -3267,6 +3308,7 @@ void MainComponent::menuItemSelected (int menuItemID, int /*topLevelMenuIndex*/)
                 app->systemRequestedQuit();
             break;
         case kMenuSettingsAudio: openAudioSettings();   break;
+        case kMenuSettingsShortcuts: openShortcuts();   break;
         case kMenuSettingsAbout:
         {
             // Pull the version string from the JUCE_APPLICATION_VERSION_STRING

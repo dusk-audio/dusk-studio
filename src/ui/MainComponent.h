@@ -214,6 +214,8 @@ private:
     EmbeddedModal virtualKeyboardModal;
     EmbeddedModal importTargetModal;
     EmbeddedModal scanModal;
+    EmbeddedModal shortcutsModal;
+    void openShortcuts();
 
     // Scan-on-startup runs asynchronously behind a progress modal. Triggered
     // from the first resized() (the window is sized + on screen by then),

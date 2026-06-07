@@ -63,7 +63,7 @@ You can also open an existing session directly: pass its `session.json` (or the 
 
 ![First-launch window with the Startup dialog visible.](docs/images/qg-01-startup.png)
 
-The main window is laid out top to bottom: menu bar, stage selector (RECORDING / MIXING / AUX / MASTERING), bank selector, transport bar, tape strip toggle, console. The console fills the rest of the window with 24 channel strips, 4 buses, and the master.
+The main window is laid out top to bottom: menu bar, stage selector (RECORDING / MIXING / MASTERING / AUX), bank selector, transport bar, tape strip toggle, console. The console fills the rest of the window with 24 channel strips, 4 buses, and the master.
 
 ## Pick an audio device
 
@@ -142,7 +142,7 @@ This chapter is a visual reference. Every numbered callout on the figures below 
 | #   | Name              | Description                                                                                                                       |
 | --- | ----------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | 1   | Menu bar          | `File` and `Settings` menus only. No tabs, no hidden submenus.                                                                    |
-| 2   | Stage selector    | Four buttons: **RECORDING**, **MIXING**, **AUX**, **MASTERING**. Picks which view fills the console area.                         |
+| 2   | Stage selector    | Four buttons: **RECORDING**, **MIXING**, **MASTERING**, **AUX** (keys 1–4). Picks which view fills the console area.                  |
 | 3   | Bank selector     | `1-8`, `9-16`, `17-24`. Only visible when the window is too narrow to show all 24 channel strips at once.                         |
 | 4   | Transport bar     | Play, record, loop, punch, BPM, time signature, clock, tuner. See the next figure for the inventory.                              |
 | 5   | Tape strip toggle | `▾ TIMELINE` / `▴ TAPE`. Collapses or expands the timeline view below the bar.                                                     |
@@ -406,13 +406,13 @@ Verification protects against a bit-flipped download or a man-in-the-middle atta
 On first launch Dusk Studio opens a blank session named `Untitled`. The window is divided, top to bottom, into:
 
 - A thin menu bar (File and Settings).
-- A row of large coloured buttons for the four stages: **RECORDING**, **MIXING**, **AUX**, **MASTERING**.
+- A row of large coloured buttons for the four stages: **RECORDING**, **MIXING**, **MASTERING**, **AUX** (keys **1–4**).
 - A bank selector (only visible when the window is too narrow to show all 24 channel strips at once).
 - The transport bar.
 - The tape strip (the timeline view), collapsed by default.
 - The console view, showing 24 channel strips (in three banks of 8), 4 buses, and the master strip.
 
-Press **RECORDING** to focus the channel strips on input routing and arm controls. Press **MIXING** to focus them on send levels and inserts. Press **AUX** to see the four aux lanes, their inserts, and their send sources. Press **MASTERING** to load a finished mix and run it through the mastering chain.
+Press **RECORDING** to focus the channel strips on input routing and arm controls. Press **MIXING** to focus them on send levels and inserts. Press **MASTERING** to load a finished mix and run it through the mastering chain. Press **AUX** to see the four aux lanes, their inserts, and their send sources.
 
 ## Configuring audio
 
@@ -469,7 +469,7 @@ The window is structured as a stack of horizontal bands.
 ┌───────────────────────────────────────────────────────┐
 │ File   Settings              Session name      CPU…   │  Menu bar
 ├───────────────────────────────────────────────────────┤
-│  RECORDING   MIXING   AUX   MASTERING                 │  Stage selector
+│  RECORDING   MIXING   MASTERING   AUX                 │  Stage selector
 ├───────────────────────────────────────────────────────┤
 │  1-8   9-16                                           │  Bank selector
 ├───────────────────────────────────────────────────────┤
@@ -491,8 +491,10 @@ Only one stage is visible at a time, but the same engine drives all four. Switch
 
 - **RECORDING** shows each channel strip's input source, arm button, monitor toggle, and "print" toggle (for whether EQ and compression are committed to the recorded file or kept live).
 - **MIXING** replaces the input block with the channel's four aux send knobs. Inserts and EQ stay on screen.
-- **AUX** swaps the console view for the four aux return lanes, with a full-width view of each lane's plugin chain.
 - **MASTERING** swaps the console view for the mastering chain, including a file picker for loading a finished mix.
+- **AUX** swaps the console view for the four aux return lanes, with a full-width view of each lane's plugin chain.
+
+Press **1 / 2 / 3 / 4** to jump straight to RECORDING / MIXING / MASTERING / AUX. The bank selector has its own keys — **Cmd/Ctrl+1 / 2 / 3** — so a plain digit changes stage and a modified digit changes bank. Hovering any tab or bank button shows its shortcut, and **?** opens a full keyboard-shortcut list (also under **Settings → Keyboard Shortcuts**).
 
 Switching into or out of MASTERING force-stops the transport. The mix engine and the mastering engine cannot run at the same time.
 
