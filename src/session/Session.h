@@ -854,6 +854,11 @@ struct MasterBusParams
 {
     std::atomic<float> faderDb     { 0.0f };
 
+    // Physical output pair for the main mix, encoded L*1000+R+1 (see
+    // dsp/OutputPairRouting.h). -1 = the default first pair (outputs 1-2); the
+    // engine maps it there so the master is never silent.
+    std::atomic<int>   outputPair  { -1 };
+
     // Zero the output bus. Cheaper than -inf fader because MasterBus
     // also skips the metering RMS smooth.
     std::atomic<bool>  mute        { false };

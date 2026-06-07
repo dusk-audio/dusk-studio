@@ -39,6 +39,13 @@ private:
     Session& session;
     std::unique_ptr<juce::AudioDeviceSelectorComponent> selector;
 
+    // Physical output pair for the main mix. Defaults to outputs 1-2; pick
+    // another pair when the device has more outputs enabled.
+    juce::Label    mainOutputLabel { {}, "Main output" };
+    DuskComboBox mainOutputCombo;
+    void populateMainOutputCombo();
+    void applyMainOutputChange();
+
 #if defined(__linux__)
     juce::Label    periodsLabel  { {}, "Periods (ALSA)" };
     DuskComboBox periodsCombo;

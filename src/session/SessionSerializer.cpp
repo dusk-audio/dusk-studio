@@ -1095,6 +1095,7 @@ juce::String SessionSerializer::serialize (const Session& s)
 
     auto* master = new juce::DynamicObject();
     master->setProperty ("fader_db",     s.master().faderDb.load());
+    master->setProperty ("output_pair",  s.master().outputPair.load());
     if (s.master().mute.load (std::memory_order_relaxed))
         master->setProperty ("mute", true);
     if (s.master().monoSum.load (std::memory_order_relaxed))
@@ -1466,6 +1467,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
     if (auto master = root["master"]; master.isObject())
     {
         if (master.hasProperty ("fader_db"))     s.master().faderDb.store ((float) (double) master["fader_db"]);
+        if (master.hasProperty ("output_pair"))  s.master().outputPair.store ((int) master["output_pair"]);
         if (master.hasProperty ("mute"))         s.master().mute.store ((bool) master["mute"]);
         if (master.hasProperty ("mono_sum"))     s.master().monoSum.store ((bool) master["mono_sum"]);
         if (master.hasProperty ("tape_enabled")) s.master().tapeEnabled.store ((bool) master["tape_enabled"]);

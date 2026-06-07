@@ -399,6 +399,12 @@ private:
     void rebuildMidiInputBank();
     void rebuildMidiOutputBank();
 
+    // Write the finished master mix (mixL/mixR) to its configured device output
+    // pair. Accumulates, so an aux lane routed to the same pair sums in rather
+    // than being clobbered. Default (-1) maps to the first pair (outputs 1-2).
+    void writeMasterMixToOutput (float* const* outputChannelData,
+                                 int numOutputChannels, int numSamples) noexcept;
+
     std::atomic<double> currentSampleRate { 0.0 };
     std::atomic<int>    currentBlockSize  { 0 };
     std::atomic<int>    xrunCount         { 0 };

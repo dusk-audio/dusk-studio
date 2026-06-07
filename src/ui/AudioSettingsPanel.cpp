@@ -3,6 +3,7 @@
 #include "MidiBindingsPanel.h"
 #include "SelfTestPanel.h"
 #include "../engine/AudioEngine.h"
+#include "../dsp/OutputPairRouting.h"
 #include "../session/Session.h"
 #if defined(__linux__)
  #include "../engine/alsa/AlsaAudioIODevice.h"
@@ -21,6 +22,19 @@ AudioSettingsPanel::AudioSettingsPanel (juce::AudioDeviceManager& dm,
         /*showMidi*/ false, /*showMidiOut*/ false,
         /*stereoPairs*/ false, /*hideAdvanced*/ false);
     addAndMakeVisible (*selector);
+
+    mainOutputLabel.setJustificationType (juce::Justification::centredRight);
+    addAndMakeVisible (mainOutputLabel);
+    mainOutputCombo.setTooltip (
+        "Physical output pair for the main mix. Defaults to outputs 1-2. "
+        "Tick more output channels above to send the master to a different "
+        "pair (aux lanes can then take 1-2 as a separate headphone / cue feed).");
+    populateMainOutputCombo();
+    mainOutputCombo.onChange = [this] { applyMainOutputChange(); };
+    addAndMakeVisible (mainOutputCombo);
+
+    // Refresh the main-output menu when the device's output count changes.
+    deviceManager.addChangeListener (this);
 
 #if defined(__linux__)
     addAndMakeVisible (periodsLabel);
@@ -415,6 +429,11 @@ void AudioSettingsPanel::resized()
     sectionHeader (audioSectionLabel);
     auto audioBlock = area.removeFromTop (kAudioBlockH);
     selector->setBounds (audioBlock);
+    {
+        auto row = takeStdRow();
+        mainOutputLabel.setBounds (row.removeFromLeft (kLabelW).reduced (4, 2));
+        mainOutputCombo.setBounds (row.removeFromLeft (kComboW).reduced (4, 2));
+    }
     endSection();
 
     // ── Control Surface (MCU) ────────────────────────────────────────
@@ -602,6 +621,7 @@ void AudioSettingsPanel::applyOversamplingChange()
 AudioSettingsPanel::~AudioSettingsPanel()
 {
     engine.removeChangeListener (this);
+    deviceManager.removeChangeListener (this);
 }
 
 void AudioSettingsPanel::changeListenerCallback (juce::ChangeBroadcaster*)
@@ -615,6 +635,37 @@ void AudioSettingsPanel::changeListenerCallback (juce::ChangeBroadcaster*)
     populateSyncOutputCombo();
     populateMcuInputCombo();
     populateMcuOutputCombo();
+    populateMainOutputCombo();
+}
+
+void AudioSettingsPanel::populateMainOutputCombo()
+{
+    mainOutputCombo.clear (juce::dontSendNotification);
+    mainOutputCombo.addItem ("1-2 (default)", 1);
+
+    if (auto* device = deviceManager.getCurrentAudioDevice())
+    {
+        const int count = device->getOutputChannelNames().size();
+        // Skip the first pair — it's already the "1-2 (default)" item.
+        for (int i = 2; i + 1 < count; i += 2)
+            mainOutputCombo.addItem ("Out " + juce::String (i + 1) + "-" + juce::String (i + 2),
+                                       outputpair::encodePair (i, i + 1));
+    }
+
+    // -1 (or anything not in the menu) falls back to the default 1-2 item.
+    const int stored = session.master().outputPair.load (std::memory_order_relaxed);
+    int wantId = 1;
+    if (stored > 0)
+        for (int i = 0; i < mainOutputCombo.getNumItems(); ++i)
+            if (mainOutputCombo.getItemId (i) == stored) { wantId = stored; break; }
+    mainOutputCombo.setSelectedId (wantId, juce::dontSendNotification);
+}
+
+void AudioSettingsPanel::applyMainOutputChange()
+{
+    const int id = mainOutputCombo.getSelectedId();
+    // Item 1 = default 1-2; store -1 so the engine uses its default mapping.
+    session.master().outputPair.store (id <= 1 ? -1 : id, std::memory_order_relaxed);
 }
 
 void AudioSettingsPanel::populateSyncSourceCombo()
