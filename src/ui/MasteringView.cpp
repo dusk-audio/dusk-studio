@@ -86,13 +86,6 @@ void WaveformDisplay::mouseDown (const juce::MouseEvent& e)
 }
 namespace
 {
-void styleKnob (juce::Slider& s, const juce::String& tooltip)
-{
-    s.setSliderStyle (juce::Slider::RotaryVerticalDrag);
-    s.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 70, 18);
-    s.setTooltip (tooltip);
-}
-
 // Streaming / broadcast target presets. Index 0 is the no-target case;
 // indices 1..N correspond to the dropdown items. Values are LUFS (integrated
 // program loudness) and true-peak ceiling in dBTP. Source: the platforms'
@@ -108,44 +101,11 @@ constexpr MasteringTarget kMasteringTargets[] =
     { "Broadcast (EBU R128)", -23.0f,  -1.0f },
 };
 constexpr int kNumMasteringTargets = (int) (sizeof (kMasteringTargets) / sizeof (kMasteringTargets[0]));
-
-void styleSection (juce::Label& title, juce::ToggleButton& enable,
-                    const juce::String& name)
-{
-    title.setText (name, juce::dontSendNotification);
-    title.setJustificationType (juce::Justification::centredLeft);
-    title.setFont (juce::Font (juce::FontOptions (13.0f, juce::Font::bold)));
-    title.setColour (juce::Label::textColourId, juce::Colour (0xffe0e0e0));
-
-    enable.setButtonText ("ON");
-    enable.setColour (juce::ToggleButton::textColourId, juce::Colour (0xffd0d0d0));
-}
-
-void styleLabel (juce::Label& l, const juce::String& text)
-{
-    l.setText (text, juce::dontSendNotification);
-    l.setJustificationType (juce::Justification::centred);
-    l.setFont (juce::Font (juce::FontOptions (10.0f)));
-    l.setColour (juce::Label::textColourId, juce::Colour (0xff909094));
-}
 } // namespace
 
 MasteringView::MasteringView (Session& s, AudioEngine& e)
     : session (s), engine (e)
 {
-    styleKnob (eqLfBoost,   "LF boost (program-EQ gain)");
-    styleKnob (eqHfBoost,   "HF boost (program-EQ gain)");
-    styleKnob (eqHfAtten,   "HF cut shelf");
-    styleKnob (eqTubeDrive, "Tube saturation amount");
-    styleKnob (eqOutput,    "EQ output gain (dB)");
-    styleKnob (compThresh,  "Compressor threshold (dB)");
-    styleKnob (compRatio,   "Compressor ratio");
-    styleKnob (compAttack,  "Compressor attack (ms)");
-    styleKnob (compRelease, "Compressor release (ms)");
-    styleKnob (compMakeup,  "Compressor makeup gain (dB)");
-    styleKnob (limDrive,    "Limiter input drive (dB)");
-    styleKnob (limCeiling,  "Limiter ceiling (dB)");
-    styleKnob (limRelease,  "Limiter release (ms)");
     // ── header ──
     sourceFileLabel.setText ("No mix loaded", juce::dontSendNotification);
     sourceFileLabel.setColour (juce::Label::textColourId, juce::Colour (0xffd0d0d0));
@@ -178,78 +138,7 @@ MasteringView::MasteringView (Session& s, AudioEngine& e)
     grLabel.setFont (juce::Font (juce::FontOptions (11.0f)));
     addAndMakeVisible (grLabel);
 
-    // ── EQ section ──
     auto& m = session.mastering();
-
-    auto setupKnob = [this] (juce::Slider& s, std::atomic<float>& atom,
-                              double minV, double maxV, double interval)
-    {
-        s.setRange (minV, maxV, interval);
-        s.setValue (atom.load(), juce::dontSendNotification);
-        s.onValueChange = [&s, &atom] { atom.store ((float) s.getValue()); };
-        addAndMakeVisible (s);
-    };
-
-    styleSection (eqGroup.title,  eqGroup.enable,  "Digital EQ");
-    eqGroup.enable.setToggleState (m.eqEnabled.load(), juce::dontSendNotification);
-    eqGroup.enable.onClick = [this, &m] { m.eqEnabled.store (eqGroup.enable.getToggleState()); };
-    addAndMakeVisible (eqGroup.title);
-    addAndMakeVisible (eqGroup.enable);
-
-    // 5-band parametric: each existing knob slot now controls one band's
-    // GAIN. Frequencies are fixed at musical defaults shown in the labels;
-    // a freq-per-band UI is the next iteration.
-    setupKnob (eqLfBoost,   m.eqBandGainDb[0], -12.0, 12.0, 0.1);
-    setupKnob (eqHfBoost,   m.eqBandGainDb[1], -12.0, 12.0, 0.1);
-    setupKnob (eqHfAtten,   m.eqBandGainDb[2], -12.0, 12.0, 0.1);
-    setupKnob (eqTubeDrive, m.eqBandGainDb[3], -12.0, 12.0, 0.1);
-    setupKnob (eqOutput,    m.eqBandGainDb[4], -12.0, 12.0, 0.1);
-    styleLabel (eqLfBoostL,   "Low Shelf");
-    styleLabel (eqHfBoostL,   "Low Mid");
-    styleLabel (eqHfAttenL,   "Mid");
-    styleLabel (eqTubeDriveL, "High Mid");
-    styleLabel (eqOutputL,    "High Shelf");
-    addAndMakeVisible (eqLfBoostL);   addAndMakeVisible (eqHfBoostL);
-    addAndMakeVisible (eqHfAttenL);   addAndMakeVisible (eqTubeDriveL);
-    addAndMakeVisible (eqOutputL);
-
-    // ── Comp section ──
-    styleSection (compGroup.title, compGroup.enable, "Multi Comp");
-    compGroup.enable.setToggleState (m.compEnabled.load(), juce::dontSendNotification);
-    compGroup.enable.onClick = [this, &m] { m.compEnabled.store (compGroup.enable.getToggleState()); };
-    addAndMakeVisible (compGroup.title);
-    addAndMakeVisible (compGroup.enable);
-
-    setupKnob (compThresh,  m.compThreshDb,  -30.0,    0.0, 0.1);
-    setupKnob (compRatio,   m.compRatio,       1.0,   10.0, 0.1);
-    setupKnob (compAttack,  m.compAttackMs,    0.1,   50.0, 0.1);
-    setupKnob (compRelease, m.compReleaseMs,   50.0, 1000.0, 1.0);
-    setupKnob (compMakeup,  m.compMakeupDb,   -10.0,  20.0, 0.1);
-    styleLabel (compThreshL,  "Thresh");
-    styleLabel (compRatioL,   "Ratio");
-    styleLabel (compAttackL,  "Attack");
-    styleLabel (compReleaseL, "Release");
-    styleLabel (compMakeupL,  "Makeup");
-    addAndMakeVisible (compThreshL);   addAndMakeVisible (compRatioL);
-    addAndMakeVisible (compAttackL);   addAndMakeVisible (compReleaseL);
-    addAndMakeVisible (compMakeupL);
-
-    // ── Limiter section ──
-    styleSection (limGroup.title, limGroup.enable, "Limiter");
-    limGroup.enable.setToggleState (m.limiterEnabled.load(), juce::dontSendNotification);
-    limGroup.enable.onClick = [this, &m] { m.limiterEnabled.store (limGroup.enable.getToggleState()); };
-    addAndMakeVisible (limGroup.title);
-    addAndMakeVisible (limGroup.enable);
-
-    setupKnob (limDrive,    m.limiterDriveDb,    -20.0, 20.0, 0.1);
-    setupKnob (limCeiling,  m.limiterCeilingDb,   -3.0,  0.0, 0.05);
-    setupKnob (limRelease,  m.limiterReleaseMs,   10.0, 1000.0, 1.0);
-    styleLabel (limDriveL,   "Drive");
-    styleLabel (limCeilingL, "Ceiling");
-    styleLabel (limReleaseL, "Release");
-    addAndMakeVisible (limDriveL);
-    addAndMakeVisible (limCeilingL);
-    addAndMakeVisible (limReleaseL);
 
     // ── Meter + LUFS ──
     auto styleMeter = [] (juce::Label& l)
@@ -491,31 +380,6 @@ void MasteringView::resized()
     // Limiter panel - custom Waves L4-style editor.
     if (limiterEditor != nullptr)
         limiterEditor->setBounds (limPanel);
-
-    // Hide the legacy EQ / Comp / Limiter knobs. New panels own these
-    // controls now. Group titles + enable toggles also retire because each
-    // panel renders its own title + ON toggle.
-    eqLfBoost.setVisible (false);   eqHfBoost.setVisible (false);
-    eqHfAtten.setVisible (false);   eqTubeDrive.setVisible (false);
-    eqOutput.setVisible (false);
-    eqLfBoostL.setVisible (false);  eqHfBoostL.setVisible (false);
-    eqHfAttenL.setVisible (false);  eqTubeDriveL.setVisible (false);
-    eqOutputL.setVisible (false);
-    eqGroup.title.setVisible (false); eqGroup.enable.setVisible (false);
-
-    compThresh.setVisible  (false); compRatio.setVisible  (false);
-    compAttack.setVisible  (false); compRelease.setVisible (false);
-    compMakeup.setVisible  (false);
-    compThreshL.setVisible (false); compRatioL.setVisible (false);
-    compAttackL.setVisible (false); compReleaseL.setVisible(false);
-    compMakeupL.setVisible (false);
-    compGroup.title.setVisible (false); compGroup.enable.setVisible (false);
-
-    limDrive.setVisible   (false); limCeiling.setVisible (false);
-    limRelease.setVisible (false);
-    limDriveL.setVisible  (false); limCeilingL.setVisible(false);
-    limReleaseL.setVisible(false);
-    limGroup.title.setVisible (false); limGroup.enable.setVisible (false);
 }
 
 void MasteringView::timerCallback()
@@ -524,7 +388,7 @@ void MasteringView::timerCallback()
     auto& m = session.mastering();
 
     // The comp header button only repaints itself on click; pick up external
-    // toggles (session load, rebuildKnobValues, the legacy enable) here.
+    // toggles (e.g. session load) here.
     const bool compOn = m.compEnabled.load (std::memory_order_relaxed);
     if (compOn != compHeaderEnabledSeen)
     {
@@ -624,34 +488,6 @@ void MasteringView::updateLabels()
         sourceFileLabel.setText (m.sourceFile.getFileName()
                                   + "  (" + m.sourceFile.getParentDirectory().getFileName() + "/)",
                                   juce::dontSendNotification);
-}
-
-void MasteringView::rebuildKnobValues()
-{
-    auto& m = session.mastering();
-    // The EQ knobs were re-bound to the 5-band digital EQ atomics in the
-    // ctor (m.eqBandGainDb[0..4]); the legacy m.eqLfBoost/etc. atomics are
-    // session.json compatibility shims that no longer drive the DSP. Read
-    // the active atomics so loading a session populates the visible knobs.
-    eqLfBoost.setValue   (m.eqBandGainDb[0].load(), juce::dontSendNotification);
-    eqHfBoost.setValue   (m.eqBandGainDb[1].load(), juce::dontSendNotification);
-    eqHfAtten.setValue   (m.eqBandGainDb[2].load(), juce::dontSendNotification);
-    eqTubeDrive.setValue (m.eqBandGainDb[3].load(), juce::dontSendNotification);
-    eqOutput.setValue    (m.eqBandGainDb[4].load(), juce::dontSendNotification);
-
-    compThresh.setValue  (m.compThreshDb.load(),  juce::dontSendNotification);
-    compRatio.setValue   (m.compRatio.load(),     juce::dontSendNotification);
-    compAttack.setValue  (m.compAttackMs.load(),  juce::dontSendNotification);
-    compRelease.setValue (m.compReleaseMs.load(), juce::dontSendNotification);
-    compMakeup.setValue  (m.compMakeupDb.load(),  juce::dontSendNotification);
-
-    limDrive.setValue    (m.limiterDriveDb.load(),    juce::dontSendNotification);
-    limCeiling.setValue  (m.limiterCeilingDb.load(),  juce::dontSendNotification);
-    limRelease.setValue  (m.limiterReleaseMs.load(),  juce::dontSendNotification);
-
-    eqGroup.enable.setToggleState  (m.eqEnabled.load(),       juce::dontSendNotification);
-    compGroup.enable.setToggleState (m.compEnabled.load(),    juce::dontSendNotification);
-    limGroup.enable.setToggleState  (m.limiterEnabled.load(), juce::dontSendNotification);
 }
 
 bool MasteringView::loadFile (const juce::File& file)
