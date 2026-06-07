@@ -833,44 +833,8 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
         }
     }
 
-    // Grid mode: the ruler tick band edits tempo points. Click an existing
-    // point to drag it, right-click for its menu, or click empty band to
-    // add a point at the (snapped) click sample and immediately set its
-    // BPM. Tested before the neutral ruler-selection so a tempo click never
-    // starts a loop/punch range.
-    if (session.editMode == EditMode::Grid && ruler.contains (e.x, e.y))
-    {
-        const double sr = engine.getCurrentSampleRate();
-        const int hit = hitTestTempoPoint (e.x, e.y);
-        if (hit == kTempoBaseHandle)   // bar-1 base handle (no map yet)
-        {
-            editBaseTempo();
-            return;
-        }
-        if (e.mods.isRightButtonDown())
-        {
-            if (hit >= 0)
-                showTempoPointMenu (hit, e.getScreenPosition());
-            return;
-        }
-        if (hit >= 0)
-        {
-            const auto& pts = session.tempoMap.points();
-            tempoPointDrag.active          = true;
-            tempoPointDrag.moved           = false;
-            tempoPointDrag.bpm             = pts[(size_t) hit].bpm;
-            tempoPointDrag.originSample    = pts[(size_t) hit].timelineSamples;
-            tempoPointDrag.mouseDownSample = sampleAtX (e.x);
-            tempoPointDrag.locked          = (tempoPointDrag.originSample == 0);
-            tempoPointDrag.others.assign (pts.begin(), pts.end());
-            tempoPointDrag.others.erase (tempoPointDrag.others.begin() + hit);
-            return;
-        }
-        const auto spawn = snap::snapAbsoluteToGrid (sampleAtX (e.x), session, sr);
-        addTempoPointAt (spawn);
-        editTempoPointBpm (spawn);
-        return;
-    }
+    // Tempo is edited via the ruler's right-click menu (any edit mode) — see
+    // the "Tempo" section in the loop/punch context menu below.
 
     // Left-click in the ruler band (not on a marker / bracket) → start
     // a neutral selection drag. The range is painted as a translucent
@@ -1054,6 +1018,38 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
         {
             transport.setPlayhead (clickedSample);
         });
+
+        // ── Tempo (ruler only) ── add / edit / delete a tempo-map point at the
+        // clicked position. Right-click is the only tempo edit surface.
+        if (ruler.contains (e.x, e.y))
+        {
+            using SP = juce::Component::SafePointer<TapeStrip>;
+            m.addSeparator();
+            m.addSectionHeader ("Tempo");
+            const int tIdx = hitTestTempoPoint (e.x, e.y);
+            if (tIdx == kTempoBaseHandle)        // bar-1 base, no map yet
+            {
+                m.addItem ("Set starting tempo...", [safeThis = SP (this)]
+                    { if (safeThis != nullptr) safeThis->editBaseTempo(); });
+            }
+            else if (tIdx >= 0)                  // an existing tempo marker
+            {
+                const auto sample = session.tempoMap.points()[(size_t) tIdx].timelineSamples;
+                m.addItem ("Set tempo...", [safeThis = SP (this), sample]
+                    { if (safeThis != nullptr) safeThis->editTempoPointBpm (sample); });
+                // The bar-1 anchor (sample 0) is the starting tempo — can't delete it.
+                m.addItem ("Delete tempo", sample != 0, false, [safeThis = SP (this), sample]
+                    { if (safeThis != nullptr) safeThis->deleteTempoPoint (sample); });
+            }
+            else                                  // empty spot -> add a change
+            {
+                const auto snapped = snap::snapAbsoluteToGrid (
+                    clickedSample, session, engine.getCurrentSampleRate());
+                m.addItem ("Set tempo here...", [safeThis = SP (this), snapped]
+                    { if (safeThis != nullptr) safeThis->promptAddTempoPoint (snapped); });
+            }
+        }
+
         // Anchor the menu at the cursor instead of the TapeStrip's
         // top-left corner. Same fix as the plugin picker.
         const auto cursor = e.getScreenPosition();
@@ -1418,25 +1414,6 @@ void TapeStrip::mouseDrag (const juce::MouseEvent& e)
         return;
     }
 
-    // Tempo-point drag - reposition a Grid-mode tempo point. The base
-    // 0-sample anchor is locked and ignores horizontal drag; every other
-    // point clamps to >=1 so it never collides with the base point. Each
-    // move rebuilds the full point set (others + the dragged point) and
-    // lets setPoints re-sort/clamp/dedup.
-    if (tempoPointDrag.active && ! tempoPointDrag.locked)
-    {
-        const auto delta = sampleAtX (e.x) - tempoPointDrag.mouseDownSample;
-        const auto newSample = juce::jmax ((juce::int64) 1,
-            snap::snapAbsoluteToGrid (tempoPointDrag.originSample + delta,
-                                       session, engine.getCurrentSampleRate()));
-        auto vec = tempoPointDrag.others;
-        vec.push_back ({ newSample, tempoPointDrag.bpm });
-        engine.setTempoPoints (std::move (vec));
-        tempoPointDrag.moved = true;
-        repaint();
-        return;
-    }
-
     // Marker drag - reposition a marker once the cursor moves more than
     // a small threshold from the click. Below threshold, it's still a
     // click (mouseUp will seek). The marker's array index stays valid
@@ -1756,14 +1733,6 @@ void TapeStrip::mouseUp (const juce::MouseEvent& e)
         return;
     }
 
-    // Tempo-point drag finalisation. The drag already mutated the map in
-    // place via setPoints, so there's nothing to commit — just clear.
-    if (tempoPointDrag.active)
-    {
-        tempoPointDrag = {};
-        repaint();
-        return;
-    }
 
     // Marker drag finalisation. A click without movement seeks; a real
     // drag commits the new marker position (and re-sorts the vector so
@@ -3819,16 +3788,31 @@ int TapeStrip::hitTestTempoPoint (int x, int y) const noexcept
     return -1;
 }
 
-void TapeStrip::addTempoPointAt (juce::int64 sample)
+void TapeStrip::promptAddTempoPoint (juce::int64 sample)
 {
-    auto vec = session.tempoMap.points();
-    // The first point ever added needs a base anchor at the origin so the
-    // span before the change keeps the session's constant tempo.
-    if (vec.empty())
-        vec.push_back ({ 0, session.tempoBpm.load (std::memory_order_relaxed) });
-    vec.push_back ({ sample, session.bpmAt (sample) });
-    engine.setTempoPoints (std::move (vec));
-    repaint();
+    // Prompt for the BPM first and add the point only on Accept, so Cancel
+    // leaves no stray marker on the grid.
+    auto* host = getTopLevelComponent();
+    if (host == nullptr) host = this;
+    showEmbeddedTextInput (*host, "Tempo", "BPM (30-300):",
+        juce::String ((int) std::round (session.bpmAt (sample))), "Add",
+        [safeThis = juce::Component::SafePointer<TapeStrip> (this), sample] (juce::String s)
+        {
+            if (safeThis == nullptr) return;
+            const float b = juce::jlimit (30.0f, 300.0f, s.getFloatValue());
+            if (b <= 0.0f) return;
+            auto vec = safeThis->session.tempoMap.points();
+            // First point ever: seed a base anchor at the origin so the span
+            // before this change keeps the starting tempo.
+            if (vec.empty())
+                vec.push_back ({ 0, safeThis->session.tempoBpm.load (std::memory_order_relaxed) });
+            bool existed = false;
+            for (auto& p : vec)
+                if (p.timelineSamples == sample) { p.bpm = b; existed = true; break; }
+            if (! existed) vec.push_back ({ sample, b });
+            safeThis->engine.setTempoPoints (std::move (vec));
+            safeThis->repaint();
+        });
 }
 
 void TapeStrip::editTempoPointBpm (juce::int64 atSample)
@@ -3889,33 +3873,6 @@ void TapeStrip::deleteTempoPoint (juce::int64 atSample)
         vec.end());
     engine.setTempoPoints (std::move (vec));
     repaint();
-}
-
-void TapeStrip::showTempoPointMenu (int index, juce::Point<int> screenPos)
-{
-    const auto& pts = session.tempoMap.points();
-    if (index < 0 || index >= (int) pts.size()) return;
-    const auto atSample = pts[(size_t) index].timelineSamples;
-
-    juce::PopupMenu m;
-    m.addSectionHeader (juce::String ((int) std::round (pts[(size_t) index].bpm))
-                            + " BPM");
-    m.addItem ("Set tempo...",
-                [safeThis = juce::Component::SafePointer<TapeStrip> (this), atSample]
-                {
-                    if (safeThis != nullptr) safeThis->editTempoPointBpm (atSample);
-                });
-    const bool baseAnchorLocked = (atSample == 0 && pts.size() > 1);
-    m.addItem ("Delete", ! baseAnchorLocked, false,
-                [safeThis = juce::Component::SafePointer<TapeStrip> (this), atSample]
-                {
-                    if (safeThis != nullptr) safeThis->deleteTempoPoint (atSample);
-                });
-    showContextMenu (m, *this, screenPos,
-                      [safeThis = juce::Component::SafePointer<TapeStrip> (this)] (int)
-                      {
-                          if (safeThis != nullptr) safeThis->repaint();
-                      });
 }
 
 void TapeStrip::paintTempoPoints (juce::Graphics& g)

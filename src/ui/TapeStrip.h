@@ -190,15 +190,13 @@ private:
                                        juce::Point<int> screenPos);
 
     // Grid-mode tempo-point editing (ruler tick band): add on empty-band
-    // click, drag to reposition, menu to set BPM or delete. Mutates
-    // session.tempoMap then repaints.
-    void addTempoPointAt (juce::int64 sample);
+    // Tempo edits, all driven from the ruler's right-click menu.
+    void promptAddTempoPoint (juce::int64 sample);   // prompt, add on accept
     void editTempoPointBpm (juce::int64 atSample);
     // Edit the song's starting tempo when no tempo map exists yet (the bar-1
     // base handle). hitTestTempoPoint returns kTempoBaseHandle for it.
     void editBaseTempo();
     void deleteTempoPoint (juce::int64 atSample);
-    void showTempoPointMenu (int index, juce::Point<int> screenPos);
     void paintTempoPoints (juce::Graphics&);
 
     Session& session;
@@ -336,22 +334,6 @@ private:
         juce::int64 mouseDownSample = 0;
     };
     MarkerDrag markerDrag;
-
-    // Grid-mode tempo-point drag. locked = the base 0-sample anchor, which
-    // ignores horizontal drag so it can't be pulled off the origin. others
-    // = every point except the dragged one, rebuilt with the new position
-    // each move so setPoints re-sorts/clamps in one shot.
-    struct TempoPointDrag
-    {
-        bool active = false;
-        bool moved  = false;
-        bool locked = false;
-        float bpm   = 120.0f;
-        juce::int64 originSample    = 0;
-        juce::int64 mouseDownSample = 0;
-        std::vector<duskstudio::TempoPoint> others;
-    };
-    TempoPointDrag tempoPointDrag;
 
     // origStart/End captured pre-drag so whole-bar moves translate by
     // delta without compounding rounding.

@@ -396,10 +396,10 @@ MainComponent::MainComponent()
     addAndMakeVisible (hdrZoomFitBtn);
 
     // Edit-tools strip above the timeline. Owns Snap (so the header no longer
-    // carries a duplicate). Draw is omitted — it's a no-op on the tape strip.
+    // carries a duplicate). Draw is a no-op on the tape strip; tempo is edited
+    // via the ruler's right-click menu, so Grid isn't a mode here either.
     editTools = std::make_unique<EditModeToolbar> (engine);
-    editTools->setVisibleModes ({ EditMode::Grab, EditMode::Range,
-                                    EditMode::Cut, EditMode::Grid });
+    editTools->setVisibleModes ({ EditMode::Grab, EditMode::Range, EditMode::Cut });
     editTools->onEditModeChanged = [this] { onEditModeChangedFromToolbar(); };
     editTools->onSnapChanged     = [this] { if (tapeStrip != nullptr) tapeStrip->repaint(); };
     addAndMakeVisible (editTools.get());
@@ -1466,11 +1466,6 @@ void MainComponent::onEditModeChangedFromToolbar()
     if (audioEditor != nullptr) audioEditor->syncEditModeToolbar();
     if (pianoRoll   != nullptr) pianoRoll->syncEditModeToolbar();
     if (tapeStrip   != nullptr) { tapeStrip->refreshModeCursor(); tapeStrip->repaint(); }
-
-    // Grid edits tempo on the tape-strip ruler — open the timeline so there's
-    // something to click.
-    if (session.editMode == EditMode::Grid && ! tapeStripExpanded)
-        setTimelineVisible (true);
 }
 
 void MainComponent::openAudioSettings()
