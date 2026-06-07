@@ -63,7 +63,7 @@ You can also open an existing session directly: pass its `session.json` (or the 
 
 ![First-launch window with the Startup dialog visible.](docs/images/qg-01-startup.png)
 
-The main window is laid out top to bottom: menu bar, stage selector (RECORDING / MIXING / MASTERING / AUX), bank selector, transport bar, edit-tools strip (Grab / Range / Cut mouse tools + snap), tape strip toggle, console. The console fills the rest of the window with 24 channel strips, 4 buses, and the master.
+The main window is laid out top to bottom: menu bar, stage selector (RECORDING / MIXING / MASTERING / AUX), bank selector, transport bar, tape strip toggle, console. The console fills the rest of the window with 24 channel strips, 4 buses, and the master.
 
 ## Pick an audio device
 
@@ -145,9 +145,8 @@ This chapter is a visual reference. Every numbered callout on the figures below 
 | 2   | Stage selector    | Four buttons: **RECORDING**, **MIXING**, **MASTERING**, **AUX** (keys 1–4). Picks which view fills the console area.                  |
 | 3   | Bank selector     | `1-8`, `9-16`, `17-24`. Only visible when the window is too narrow to show all 24 channel strips at once.                         |
 | 4   | Transport bar     | Play, record, loop, punch, BPM, time signature, clock, tuner. See the next figure for the inventory.                              |
-| 5   | Edit-tools strip  | Directly under the transport bar: **Grab / Range / Cut** mouse tools + **Snap** (toggle + resolution). Always visible in the console view. (Tempo is edited by right-clicking the timeline ruler — see *The four stages*.) |
-| 6   | Tape strip toggle | `▾ TIMELINE` / `▴ TAPE`. Collapses or expands the timeline view below the bar.                                                     |
-| 7   | Console view      | Holds 24 channel strips, 4 buses, and the master strip. Replaced by the aux lane or mastering chain when those stages are active. |
+| 5   | Tape strip toggle | `▾ TIMELINE` / `▴ TAPE`. Collapses or expands the timeline view below the bar.                                                     |
+| 6   | Console view      | Holds 24 channel strips, 4 buses, and the master strip. Replaced by the aux lane or mastering chain when those stages are active. |
 
 ## The transport bar
 
@@ -171,7 +170,7 @@ This chapter is a visual reference. Every numbered callout on the figures below 
 | 14  | Clock display    | Bars.Beats.Ticks or mm:ss.mmm; right-click to flip.                              |
 | 15  | Tuner            | Opens the chromatic tuner against the selected input.                            |
 | 16  | TIMELINE / TAPE   | Same as the tape strip toggle below the bar.                                     |
-| 17  | − / + / Fit      | Timeline zoom out / in / fit-to-window (shown in the header when the timeline is expanded). Grid **Snap** moved to the edit-tools strip. |
+| 17  | − / + / Fit      | Timeline zoom out / in / fit-to-window (shown in the header when the timeline is expanded). |
 
 In compact mode (window narrower than 1850 px) labels shorten; `SNAP` becomes `S`, `TIMELINE` becomes `▾`, and the time-format toggle hides — right-click the clock display to flip format instead.
 
@@ -277,13 +276,14 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 
 | #   | Name               | Description                                                     |
 | --- | ------------------ | --------------------------------------------------------------- |
-| 1   | Ruler              | Bars and beats. Right-click for snap denomination.              |
+| 1   | Ruler              | Bars and beats. **Left-click to move the playhead**; right-click for tempo / loop / punch / markers. |
 | 2   | Region             | Audio or MIDI clip. Drag to move, drag the edges to trim.       |
 | 3   | Region edge handle | Trim handle. Hold Cmd to nudge by snap.                         |
 | 4   | Marker             | Drop with **M**, drag to move, right-click to rename or delete. |
 | 5   | Loop bracket       | Set with **[** / **]**; enable loop with **L**.                 |
 | 6   | Punch bracket      | Set with **Shift+[** / **Shift+]**; enable punch with **P**.    |
-| 7   | Snap toggle        | Global on/off mirrored from the transport bar's SNAP button.    |
+
+**Left-click anywhere on the timeline moves the playhead there** (the ruler or empty track space). Regions still respond to clicks — click to select, drag a body to move, drag an edge to trim — and **double-click a region to open the full editor**. Everything else (split, delete, set tempo, set loop / punch) is on the **right-click** menu.
 
 ## The audio region editor
 
@@ -512,7 +512,7 @@ From left to right:
 - **Virtual keyboard** (⌨). Opens an on-screen MIDI keyboard.
 - **Metronome** (♩). Toggles the click. Right-click for click settings.
 - **C/I**. Toggles count-in (one bar of click before record starts).
-- **BPM**. Click to type a tempo; drag up or down to nudge. Changing BPM while MIDI regions exist prompts for confirmation, because tick positions are interpreted relative to BPM.
+- **BPM**. A read-only display of the tempo at the playhead (it follows tempo-map changes). Set the tempo by right-clicking the timeline ruler; **TAP** sets the starting tempo.
 - **TAP**. Click on each beat; Dusk Studio averages the last four intervals over a two-second window and sets the tempo.
 - **Time signature**. Click to choose from common signatures or enter a custom one.
 - **Clock display**. Shows the current playhead position. Right-click to flip between **Bars.Beats.Ticks** (e.g. `5.2.120`) and **mm:ss.mmm** (e.g. `01:23.456`).
@@ -1768,7 +1768,7 @@ Shortcuts use **Cmd** on macOS and **Ctrl** on Linux and Windows unless noted.
 | Shortcut              | Action                                             |
 | --------------------- | -------------------------------------------------- |
 | **S** / **Cmd+E**     | Split at edit cursor                               |
-| **G**                 | Grab (move / select) edit mode — other modes via the edit-tools strip |
+| **G**                 | Grab (move / select) edit mode (used inside the region / piano-roll editors) |
 | **Cmd+]** / **Cmd+[** | Next / previous region                             |
 | **Esc**               | Close modal                                        |
 

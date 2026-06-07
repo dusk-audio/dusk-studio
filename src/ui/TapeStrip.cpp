@@ -836,21 +836,15 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
     // Tempo is edited via the ruler's right-click menu (any edit mode) — see
     // the "Tempo" section in the loop/punch context menu below.
 
-    // Left-click in the ruler band (not on a marker / bracket) → start
-    // a neutral selection drag. The range is painted as a translucent
-    // highlight during drag; on mouseUp we show a popup that asks
-    // whether to make it a loop range or a punch range. We don't touch
-    // transport state until the user picks.
+    // Left-click on the ruler (not a marker / bracket) → move the playhead
+    // there. Loop / punch ranges are set from the right-click menu.
     if (! e.mods.isRightButtonDown() && ruler.contains (e.x, e.y))
     {
-        rulerSelection.active        = true;
-        rulerSelection.originSample  = sampleAtX (e.x);
-        rulerSelection.currentSample = rulerSelection.originSample;
-        // Remember this click so a future Stop in "Return to last
-        // clicked" mode lands here. Stored on the session so the engine
-        // (no UI dep) can read it without crossing the layer boundary.
-        session.lastClickedTimelineSample.store (rulerSelection.originSample,
-                                                   std::memory_order_relaxed);
+        const auto sample = sampleAtX (e.x);
+        engine.getTransport().setPlayhead (sample);
+        // Remember this click so a future Stop in "Return to last clicked"
+        // mode lands here.
+        session.lastClickedTimelineSample.store (sample, std::memory_order_relaxed);
         repaint();
         return;
     }
@@ -1061,55 +1055,6 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
         return;
     }
 
-    // Edit-mode dispatch. Cut Mode: clicking a region body splits at the
-    // click sample (single click, no drag). Range Mode: any body click in
-    // the track-column starts a ruler-style range selection — reuses the
-    // existing rulerSelection state so the mouseDrag + mouseUp + paint
-    // paths handle the visual range and the loop/punch action popup
-    // without further wiring. Grab / Grid / Draw fall through to legacy
-    // behaviour (Grid + Draw are Phase 3c/3d).
-    //
-    // Cmd/Ctrl/Shift held bypass the mode dispatch entirely so the
-    // multi-region selection (Ctrl+click) and range-extend (Shift+click)
-    // gestures from the legacy block keep working regardless of mode.
-    const bool bypassModeDispatch = e.mods.isCommandDown() || e.mods.isShiftDown();
-    if (! e.mods.isRightButtonDown() && col.contains (e.x, e.y) && ! bypassModeDispatch)
-    {
-        if (session.editMode == EditMode::Cut)
-        {
-            const auto hit = hitTestRegion (e.x, e.y);
-            if (hit.op != RegionOp::None
-                && (hit.op == RegionOp::Move
-                    || hit.op == RegionOp::TrimStart
-                    || hit.op == RegionOp::TrimEnd))
-            {
-                const auto& reg = session.track (hit.track).regions[(size_t) hit.regionIdx];
-                if (! reg.locked)
-                {
-                    auto& um = engine.getUndoManager();
-                    um.beginNewTransaction ("Split region");
-                    um.perform (new SplitRegionAction (
-                        session, engine, hit.track, hit.regionIdx, sampleAtX (e.x)));
-                    repaint();
-                    return;
-                }
-                // Locked region: fall through to normal selection handling
-                // below so the user can still pick the region up. No split,
-                // no early return.
-            }
-        }
-        if (session.editMode == EditMode::Range)
-        {
-            rulerSelection.active        = true;
-            rulerSelection.originSample  = sampleAtX (e.x);
-            rulerSelection.currentSample = rulerSelection.originSample;
-            session.lastClickedTimelineSample.store (rulerSelection.originSample,
-                                                       std::memory_order_relaxed);
-            repaint();
-            return;
-        }
-    }
-
     // Left-click on the track label (the strip on the far left of each
     // row, before the timeline column starts) selects that track without
     // picking a region. Lets keyboard shortcuts (A / S / X) target a
@@ -1137,6 +1082,18 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
     // marks that region as selected - keyboard copy/cut/delete then act on
     // it without needing a separate selection step.
     const auto hit = hitTestRegion (e.x, e.y);
+
+    // Empty track space (no region under the cursor) → move the playhead, so a
+    // plain click anywhere on the timeline seeks. Region clicks still select /
+    // drag / trim below; double-click opens the region editor.
+    if (hit.op == RegionOp::None && ! e.mods.isRightButtonDown())
+    {
+        const auto sample = sampleAtX (e.x);
+        engine.getTransport().setPlayhead (sample);
+        session.lastClickedTimelineSample.store (sample, std::memory_order_relaxed);
+        repaint();
+        return;
+    }
 
     // Take-history badge: rotate to the next take. No drag, no selection
     // change beyond marking the rotated region as selected. Rotation is
@@ -1509,16 +1466,6 @@ void TapeStrip::mouseDrag (const juce::MouseEvent& e)
         return;
     }
 
-    // Ruler selection - sweep the highlight range as the user drags.
-    // Range start is min(origin, current); end is max - works whether
-    // the user drags left-to-right or right-to-left.
-    if (rulerSelection.active)
-    {
-        rulerSelection.currentSample = juce::jmax ((juce::int64) 0, sampleAtX (e.x));
-        repaint();
-        return;
-    }
-
     if (drag.op == RegionOp::None) return;
 
     auto& regions = session.track (drag.track).regions;
@@ -1641,7 +1588,7 @@ void TapeStrip::mouseDrag (const juce::MouseEvent& e)
     repaint();
 }
 
-void TapeStrip::mouseUp (const juce::MouseEvent& e)
+void TapeStrip::mouseUp (const juce::MouseEvent&)
 {
     // MIDI region drag finalise. If the cursor moved at all from the
     // origin, submit a MidiRegionEditAction (before/after) to the
@@ -1774,80 +1721,6 @@ void TapeStrip::mouseUp (const juce::MouseEvent& e)
         }
         markerDrag = {};
         repaint();
-        return;
-    }
-
-    // Ruler-selection finalisation. A drag shorter than ~24ms is
-    // treated as a click and just dismisses the selection. Otherwise we
-    // offer a context menu so the user picks whether the range is for
-    // loop or punch - dragging itself doesn't auto-commit.
-    //
-    // Important: we DON'T clear rulerSelection here. Keeping it active
-    // means the grey highlight stays painted while the menu is open;
-    // each menu lambda clears it as part of the same setLoopRange/
-    // setPunchRange call, so the very next paint shows the committed
-    // green/red range instead of the grey - no blink between states.
-    if (rulerSelection.active)
-    {
-        const auto a = juce::jmin (rulerSelection.originSample,
-                                     rulerSelection.currentSample);
-        const auto b = juce::jmax (rulerSelection.originSample,
-                                     rulerSelection.currentSample);
-
-        constexpr juce::int64 kMinUsefulRangeSamples = 1024;
-        if (b - a <= kMinUsefulRangeSamples)
-        {
-            // Click without a drag = seek the playhead to the clicked
-            // position. Drag-to-create-range still triggers the
-            // loop/punch popup below.
-            engine.getTransport().setPlayhead (juce::jmax ((juce::int64) 0, a));
-            rulerSelection = {};
-            repaint();
-            return;
-        }
-
-        const auto cursor = e.getScreenPosition();
-        juce::PopupMenu m;
-        m.addItem ("Set loop here",
-                    [safeThis = juce::Component::SafePointer<TapeStrip> (this), a, b]
-                    {
-                        if (safeThis == nullptr) return;
-                        auto& transport = safeThis->engine.getTransport();
-                        transport.setLoopRange (a, b);
-                        transport.setLoopEnabled (true);
-                        safeThis->rulerSelection = {};
-                        safeThis->repaint();
-                    });
-        m.addItem ("Set punch in / out here",
-                    [safeThis = juce::Component::SafePointer<TapeStrip> (this), a, b]
-                    {
-                        if (safeThis == nullptr) return;
-                        auto& transport = safeThis->engine.getTransport();
-                        transport.setPunchRange (a, b);
-                        transport.setPunchEnabled (true);
-                        safeThis->rulerSelection = {};
-                        safeThis->repaint();
-                    });
-        m.addSeparator();
-        m.addItem ("Cancel",
-                    [safeThis = juce::Component::SafePointer<TapeStrip> (this)]
-                    {
-                        if (safeThis == nullptr) return;
-                        safeThis->rulerSelection = {};
-                        safeThis->repaint();
-                    });
-        // Menu-dismiss callback catches escape / click-outside (no item
-        // chosen) so the grey highlight still goes away in those paths.
-        showContextMenu (m, *this, cursor,
-                          [safeThis = juce::Component::SafePointer<TapeStrip> (this)] (int)
-                          {
-                              if (safeThis == nullptr) return;
-                              if (safeThis->rulerSelection.active)
-                              {
-                                  safeThis->rulerSelection = {};
-                                  safeThis->repaint();
-                              }
-                          });
         return;
     }
 
@@ -3543,27 +3416,6 @@ void TapeStrip::paint (juce::Graphics& g)
             }
         }
     };
-
-    // ── In-flight ruler selection ──
-    // Painted under loop/punch so a freshly-finished drag's highlight
-    // doesn't overpaint the result the user just chose. Neutral grey so
-    // it doesn't misleadingly look like a committed loop or punch range.
-    if (rulerSelection.active)
-    {
-        const auto sa = juce::jmin (rulerSelection.originSample,
-                                      rulerSelection.currentSample);
-        const auto sb = juce::jmax (rulerSelection.originSample,
-                                      rulerSelection.currentSample);
-        const int x0 = juce::jmax (col.getX(),     xForSample (sa));
-        const int x1 = juce::jmin (col.getRight(), xForSample (sb));
-        if (x1 > x0)
-        {
-            g.setColour (juce::Colour (0xffd0d0d8).withAlpha (0.18f));
-            g.fillRect (x0, kRulerH, x1 - x0, getHeight() - kRulerH);
-            g.setColour (juce::Colour (0xffd0d0d8).withAlpha (0.85f));
-            g.fillRect (x0, ruler.getBottom() - 4, x1 - x0, 4);
-        }
-    }
 
     auto& transport = engine.getTransport();
     // Loop in green (visually distinct from punch's red), punch in red -

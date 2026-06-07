@@ -8,7 +8,6 @@
 #include "BounceDialog.h"
 #include "PluginScanModal.h"
 #include "ShortcutsPanel.h"
-#include "EditModeToolbar.h"
 #include "DuskContextMenu.h"
 #include "../session/MidiBindings.h"
 #include "ConsoleView.h"
@@ -395,15 +394,6 @@ MainComponent::MainComponent()
     addAndMakeVisible (hdrZoomInBtn);
     addAndMakeVisible (hdrZoomFitBtn);
 
-    // Edit-tools strip above the timeline. Owns Snap (so the header no longer
-    // carries a duplicate). Draw is a no-op on the tape strip; tempo is edited
-    // via the ruler's right-click menu, so Grid isn't a mode here either.
-    editTools = std::make_unique<EditModeToolbar> (engine);
-    editTools->setVisibleModes ({ EditMode::Grab, EditMode::Range, EditMode::Cut });
-    editTools->onEditModeChanged = [this] { onEditModeChangedFromToolbar(); };
-    editTools->onSnapChanged     = [this] { if (tapeStrip != nullptr) tapeStrip->repaint(); };
-    addAndMakeVisible (editTools.get());
-
     // Bank-button row is rebuilt by syncBankButtons() each layout pass
     // (visible only when the window can't fit all 16 strips at min
     // width). Sits on a row directly below the stage selector so the
@@ -716,7 +706,6 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     if (code == 'G' && noMods)
     {
         session.editMode = EditMode::Grab;
-        if (editTools   != nullptr) editTools->syncFromSession();
         if (audioEditor != nullptr) audioEditor->syncEditModeToolbar();
         if (pianoRoll   != nullptr) pianoRoll->syncEditModeToolbar();
         if (tapeStrip   != nullptr) { tapeStrip->refreshModeCursor(); tapeStrip->repaint(); }
@@ -1393,17 +1382,6 @@ void MainComponent::resized()
 
     if (! inFullscreenView)
     {
-        // Edit-tools strip (Grab/Range/Cut/Grid + Snap) directly under the
-        // transport bar — always visible in the console view. Hidden in the
-        // fullscreen AUX / Mastering stages (handled in the else branches).
-        if (editTools != nullptr)
-        {
-            editTools->setVisible (true);
-            constexpr int kEditToolsH = 30;
-            editTools->setBounds (area.removeFromTop (kEditToolsH));
-            area.removeFromTop (4);
-        }
-
         if (tapeStrip != nullptr && tapeStripExpanded)
         {
             // Mirror the timeline's rows to the console's ACTIVE BANK
@@ -1431,12 +1409,13 @@ void MainComponent::resized()
 
         if (consoleView != nullptr) consoleView->setBounds (area);
     }
-    else
+    else if (inMastering)
     {
-        // Fullscreen AUX / Mastering stages have no timeline subject.
-        if (editTools != nullptr) editTools->setVisible (false);
-        if (inMastering && masteringView != nullptr) masteringView->setBounds (area);
-        else if (inAux && auxView != nullptr)        auxView->setBounds (area);
+        if (masteringView != nullptr) masteringView->setBounds (area);
+    }
+    else if (inAux)
+    {
+        if (auxView != nullptr) auxView->setBounds (area);
     }
 
     // Re-centre the startup modal + its dim backdrop when the main window
@@ -1457,15 +1436,6 @@ void MainComponent::setTimelineVisible (bool show)
     if (consoleView  != nullptr) consoleView->setStripsCompactMode (show);
     if (transportBar != nullptr) transportBar->setTapeToggleVisualState (show);
     resized();
-}
-
-void MainComponent::onEditModeChangedFromToolbar()
-{
-    // Keep the modal editors' toolbars + the tape-strip cursor in sync with
-    // the global mode the strip just set.
-    if (audioEditor != nullptr) audioEditor->syncEditModeToolbar();
-    if (pianoRoll   != nullptr) pianoRoll->syncEditModeToolbar();
-    if (tapeStrip   != nullptr) { tapeStrip->refreshModeCursor(); tapeStrip->repaint(); }
 }
 
 void MainComponent::openAudioSettings()

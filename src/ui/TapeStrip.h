@@ -314,16 +314,6 @@ private:
     };
     MidiActiveDrag midiDrag;
 
-    // mouseUp offers a "Set loop / set punch" menu — dragging itself
-    // doesn't commit anything to transport state.
-    struct RulerSelection
-    {
-        bool active     = false;
-        juce::int64 originSample  = 0;
-        juce::int64 currentSample = 0;
-    };
-    RulerSelection rulerSelection;
-
     // moved=false at release = click (seek); true = drag (update marker).
     struct MarkerDrag
     {
