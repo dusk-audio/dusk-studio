@@ -12,6 +12,7 @@
 #include "../engine/PluginSlot.h"
 #include "../engine/PluginManager.h"
 #include "PlatformWindowing.h"
+#include "../session/ParamEditAction.h"
 #include "../session/RegionEditActions.h"
 
 namespace duskstudio
@@ -260,8 +261,14 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     {
         auto txt = nameLabel.getText().trim();
         if (txt.isEmpty()) txt = juce::String (trackIndex + 1);
-        track.name = txt;
         nameLabel.setText (txt, juce::dontSendNotification);
+        if (txt == track.name) return;
+        const auto oldName = track.name;
+        auto& um = engine.getUndoManager();
+        um.beginNewTransaction ("Track name");
+        um.perform (new ParamEditAction (
+            [&s = session, idx = trackIndex, txt]     { s.track (idx).name = txt; },
+            [&s = session, idx = trackIndex, oldName] { s.track (idx).name = oldName; }));
     };
     addAndMakeVisible (nameLabel);
 
@@ -2919,6 +2926,12 @@ void ChannelStripComponent::timerCallback()
         && nameLabel.getText (false) != track.name)
         nameLabel.setText (track.name, juce::dontSendNotification);
 
+    if (lastTrackColour != track.colour)
+    {
+        lastTrackColour = track.colour;
+        repaint();
+    }
+
     // Aux send name sync — when another strip (or the AuxLaneComponent
     // header) renames an aux lane, every strip's matching label must
     // update so the rename reads as global.
@@ -3673,7 +3686,13 @@ void ChannelStripComponent::mouseDown (const juce::MouseEvent& e)
 
 void ChannelStripComponent::applyTrackColour (juce::Colour c)
 {
-    track.colour = c;
+    if (track.colour == c) return;
+    const auto oldColour = track.colour;
+    auto& um = engine.getUndoManager();
+    um.beginNewTransaction ("Track colour");
+    um.perform (new ParamEditAction (
+        [&s = session, idx = trackIndex, c]         { s.track (idx).colour = c; },
+        [&s = session, idx = trackIndex, oldColour] { s.track (idx).colour = oldColour; }));
     repaint();
 }
 

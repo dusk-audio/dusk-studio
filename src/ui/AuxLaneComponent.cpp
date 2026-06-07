@@ -9,6 +9,7 @@
 #include "../engine/PluginSlot.h"
 #include "../engine/Transport.h"
 #include "../session/MidiBindings.h"
+#include "../session/ParamEditAction.h"
 
 namespace duskstudio
 {
@@ -209,7 +210,13 @@ AuxLaneComponent::AuxLaneComponent (AuxLane& l, AuxLaneStrip& s, int idx,
             txt = txt.substring (0, kAuxNameMaxChars);
             nameLabel.setText (txt, juce::dontSendNotification);
         }
-        lane.name = txt;
+        if (txt == lane.name) return;
+        const auto oldName = lane.name;
+        auto& um = engine.getUndoManager();
+        um.beginNewTransaction ("Aux name");
+        um.perform (new ParamEditAction (
+            [&l = lane, txt]     { l.name = txt; },
+            [&l = lane, oldName] { l.name = oldName; }));
     };
     addAndMakeVisible (nameLabel);
 
@@ -373,6 +380,9 @@ AuxLaneComponent::~AuxLaneComponent()
 
 void AuxLaneComponent::timerCallback()
 {
+    if (! nameLabel.isBeingEdited() && nameLabel.getText (false) != lane.name)
+        nameLabel.setText (lane.name, juce::dontSendNotification);
+
     for (int i = 0; i < AuxLaneParams::kMaxLanePlugins; ++i)
         refreshSlotControls (i);
     if (stripMeter != nullptr) stripMeter->repaint();

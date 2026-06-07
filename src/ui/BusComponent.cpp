@@ -5,6 +5,7 @@
 #include "CompBypassLed.h"
 #include "DuskStudioLookAndFeel.h"  // fourKColors palette
 #include "../session/MidiBindings.h"
+#include "../session/ParamEditAction.h"
 #include <algorithm>
 
 namespace duskstudio
@@ -494,8 +495,14 @@ BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
     nameLabel.onTextChange = [this]
     {
         const auto txt = nameLabel.getText().trim();
-        if (txt.isEmpty()) nameLabel.setText (bus.name, juce::dontSendNotification);
-        else bus.name = txt;
+        if (txt.isEmpty()) { nameLabel.setText (bus.name, juce::dontSendNotification); return; }
+        if (txt == bus.name) return;
+        const auto oldName = bus.name;
+        auto& um = engine.getUndoManager();
+        um.beginNewTransaction ("Bus name");
+        um.perform (new ParamEditAction (
+            [&s = sessionRef, idx = busIndex, txt]     { s.bus (idx).name = txt; },
+            [&s = sessionRef, idx = busIndex, oldName] { s.bus (idx).name = oldName; }));
     };
     addAndMakeVisible (nameLabel);
 
@@ -965,6 +972,17 @@ void BusComponent::refreshAutoModeButton()
 
 void BusComponent::timerCallback()
 {
+    // Refresh the name label when something external rewrites it (undo,
+    // session reload) so the strip doesn't show a stale name.
+    if (! nameLabel.isBeingEdited() && nameLabel.getText (false) != bus.name)
+        nameLabel.setText (bus.name, juce::dontSendNotification);
+
+    if (lastBusColour != bus.colour)
+    {
+        lastBusColour = bus.colour;
+        repaint();
+    }
+
     // Compact-mode button illumination: the EQ + COMP pills light up
     // when their corresponding section is engaged (eqEnabled /
     // compEnabled). Mirrors ChannelStripComponent's compact-button
@@ -1129,7 +1147,17 @@ void BusComponent::mouseDown (const juce::MouseEvent& e)
     }
 }
 
-void BusComponent::applyBusColour (juce::Colour c) { bus.colour = c; repaint(); }
+void BusComponent::applyBusColour (juce::Colour c)
+{
+    if (bus.colour == c) return;
+    const auto oldColour = bus.colour;
+    auto& um = engine.getUndoManager();
+    um.beginNewTransaction ("Bus colour");
+    um.perform (new ParamEditAction (
+        [&s = sessionRef, idx = busIndex, c]         { s.bus (idx).colour = c; },
+        [&s = sessionRef, idx = busIndex, oldColour] { s.bus (idx).colour = oldColour; }));
+    repaint();
+}
 
 void BusComponent::showColourMenu()
 {
