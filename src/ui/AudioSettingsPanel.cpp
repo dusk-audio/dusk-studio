@@ -17,7 +17,7 @@ AudioSettingsPanel::AudioSettingsPanel (juce::AudioDeviceManager& dm,
     selector = std::make_unique<juce::AudioDeviceSelectorComponent>(
         dm,
         /*minIn*/  0, /*maxIn*/  16,
-        /*minOut*/ 2, /*maxOut*/ 2,
+        /*minOut*/ 2, /*maxOut*/ 32,
         /*showMidi*/ false, /*showMidiOut*/ false,
         /*stereoPairs*/ false, /*hideAdvanced*/ false);
     addAndMakeVisible (*selector);
