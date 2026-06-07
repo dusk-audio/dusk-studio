@@ -403,7 +403,29 @@ void AudioSettingsPanel::resized()
     // a huge gap under the shorter backends — the section separator
     // line + the next section header sit at fixed Y immediately
     // below this block, so under-budget is far worse than over.
-    constexpr int kAudioBlockH  = 360;
+    // The JUCE AudioDeviceSelectorComponent's height varies with the device:
+    // the active-channel list boxes grow with channel count (capped at 4 rows
+    // by getBestHeight(100)), and a list is absent entirely when the device
+    // exposes no channels of that kind. A fixed height either overlaps (many
+    // channels) or leaves a void (stereo), so size the block from the live
+    // device's channel counts, mirroring the selector's vertical stack. Biased
+    // a touch high so the Main-output row below never collides.
+    const int kAudioBlockH = [this]
+    {
+        constexpr int selRow = 30;   // 24 px control + 6 px JUCE spacing
+        const auto listH = [] (int n)
+        { return n > 0 ? 22 * juce::jlimit (2, 4, n) + 8 : 0; };
+
+        if (auto* dev = deviceManager.getCurrentAudioDevice())
+            return selRow                                              // device-type
+                 + selRow + selRow                                     // output + input rows
+                 + listH (dev->getOutputChannelNames().size())        // active-output list
+                 + listH (dev->getInputChannelNames().size())         // active-input list
+                 + 12                                                 // pre-advanced spacer
+                 + selRow + selRow                                    // sample rate + buffer
+                 + 16;                                                // slack
+        return 210;                                                  // device picker only
+    }();
 
     auto sectionHeader = [&] (juce::Label& label)
     {
@@ -636,6 +658,11 @@ void AudioSettingsPanel::changeListenerCallback (juce::ChangeBroadcaster*)
     populateMcuInputCombo();
     populateMcuOutputCombo();
     populateMainOutputCombo();
+
+    // A device change alters the selector's height (channel-list sizes), which
+    // the audio-block layout is computed from — re-lay-out so the rows below
+    // follow it instead of overlapping or floating.
+    resized();
 }
 
 void AudioSettingsPanel::populateMainOutputCombo()
