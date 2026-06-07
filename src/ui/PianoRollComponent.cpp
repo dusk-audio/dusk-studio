@@ -456,6 +456,38 @@ const MidiRegion* PianoRollComponent::region() const
     return &v[(size_t) regionIdx];
 }
 
+void PianoRollComponent::beginNoteEdit()
+{
+    // One call per mouseDown — always re-capture so a gesture whose mouseUp
+    // got swallowed (e.g. a context menu) can't leave a stale snapshot for
+    // the next gesture. Discrete edits use their own local snapshots, so
+    // nothing nests with this member state.
+    auto* r = region();
+    if (r == nullptr) { noteEditActive = false; return; }
+    noteEditBefore = *r;
+    noteEditActive = true;
+}
+
+void PianoRollComponent::commitNoteEdit (const juce::String& transactionName)
+{
+    if (! noteEditActive) return;
+    noteEditActive = false;
+    pushNoteEdit (noteEditBefore, transactionName);
+}
+
+void PianoRollComponent::pushNoteEdit (const MidiRegion& before,
+                                        const juce::String& transactionName)
+{
+    auto* r = region();
+    if (r == nullptr) return;
+    if (r->notes == before.notes && r->ccs == before.ccs)
+        return;   // nothing changed (e.g. click-release with no move)
+    auto& um = engine.getUndoManager();
+    um.beginNewTransaction (transactionName);
+    um.perform (new MidiRegionEditAction (session, engine, trackIdx, regionIdx,
+                                            before, *r));
+}
+
 int PianoRollComponent::yForNoteNumber (int n) const
 {
     // High notes at the top (matches a piano keyboard's visual layout).
@@ -1349,18 +1381,21 @@ void PianoRollComponent::transposeSelected (int semitones)
 {
     auto* r = region();
     if (r == nullptr || selectedNotes.empty()) return;
+    const MidiRegion before = *r;
     for (int idx : selectedNotes)
     {
         if (idx < 0 || idx >= (int) r->notes.size()) continue;
         auto& n = r->notes[(size_t) idx];
         n.noteNumber = juce::jlimit (0, kNumKeys - 1, n.noteNumber + semitones);
     }
+    pushNoteEdit (before, "Transpose notes");
 }
 
 void PianoRollComponent::quantizeSelected (juce::int64 gridTicks, float strength)
 {
     auto* r = region();
     if (r == nullptr || gridTicks <= 0) return;
+    const MidiRegion before = *r;
     strength = juce::jlimit (0.0f, 1.0f, strength);
     // No selection → quantize every note in the region. Matches Logic
     // and Reaper (Q on empty selection = quantize all).
@@ -1384,12 +1419,14 @@ void PianoRollComponent::quantizeSelected (juce::int64 gridTicks, float strength
             applyToOne (r->notes[(size_t) idx]);
         }
     }
+    pushNoteEdit (before, "Quantize notes");
 }
 
 void PianoRollComponent::humanizeVelocity (int rangePercent)
 {
     auto* r = region();
     if (r == nullptr) return;
+    const MidiRegion before = *r;
     rangePercent = juce::jlimit (1, 100, rangePercent);
     const int range = (int) std::round (127.0 * (double) rangePercent / 100.0);
     juce::Random rng;
@@ -1403,18 +1440,21 @@ void PianoRollComponent::humanizeVelocity (int rangePercent)
         for (int idx : selectedNotes)
             if (idx >= 0 && idx < (int) r->notes.size())
                 applyToOne (r->notes[(size_t) idx]);
+    pushNoteEdit (before, "Humanise velocity");
 }
 
 void PianoRollComponent::setVelocityFor (int value)
 {
     auto* r = region();
     if (r == nullptr) return;
+    const MidiRegion before = *r;
     const int v = juce::jlimit (1, 127, value);
     if (selectedNotes.empty()) for (auto& n : r->notes) n.velocity = v;
     else
         for (int idx : selectedNotes)
             if (idx >= 0 && idx < (int) r->notes.size())
                 r->notes[(size_t) idx].velocity = v;
+    pushNoteEdit (before, "Set velocity");
 }
 
 void PianoRollComponent::showVelocityPopup()
@@ -1461,6 +1501,7 @@ void PianoRollComponent::setChannelForSelected (int channel)
 {
     auto* r = region();
     if (r == nullptr) return;
+    const MidiRegion before = *r;
     const int ch = juce::jlimit (1, 16, channel);
     auto applyToOne = [ch] (MidiNote& n) { n.channel = ch; };
     if (selectedNotes.empty()) for (auto& n : r->notes) applyToOne (n);
@@ -1468,6 +1509,7 @@ void PianoRollComponent::setChannelForSelected (int channel)
         for (int idx : selectedNotes)
             if (idx >= 0 && idx < (int) r->notes.size())
                 applyToOne (r->notes[(size_t) idx]);
+    pushNoteEdit (before, "Set note channel");
 }
 
 void PianoRollComponent::setLengthTicksForSelected (juce::int64 ticks)
@@ -1475,6 +1517,7 @@ void PianoRollComponent::setLengthTicksForSelected (juce::int64 ticks)
     auto* r = region();
     if (r == nullptr) return;
     if (ticks <= 0) return;
+    const MidiRegion before = *r;
     auto applyToOne = [r, ticks] (MidiNote& n)
     {
         // Clamp so the note can't extend past the region. Hard floor
@@ -1487,6 +1530,7 @@ void PianoRollComponent::setLengthTicksForSelected (juce::int64 ticks)
         for (int idx : selectedNotes)
             if (idx >= 0 && idx < (int) r->notes.size())
                 applyToOne (r->notes[(size_t) idx]);
+    pushNoteEdit (before, "Set note length");
 }
 
 void PianoRollComponent::showNotePropertiesPopup (int hitNoteIdx, juce::Point<int> screenPos)
@@ -1572,6 +1616,7 @@ void PianoRollComponent::glueSelectedNotes()
 {
     auto* r = region();
     if (r == nullptr || selectedNotes.size() < 2) return;
+    const MidiRegion before = *r;
 
     // Group selected notes by pitch. Within each group, sort by
     // startTick, then walk consecutive pairs - if the second's
@@ -1630,12 +1675,14 @@ void PianoRollComponent::glueSelectedNotes()
     // down). Clearing is the simplest correct response - the user
     // can re-select if they need to.
     clearSelection();
+    pushNoteEdit (before, "Glue notes");
 }
 
 void PianoRollComponent::duplicateSelectedNotes()
 {
     auto* r = region();
     if (r == nullptr || selectedNotes.empty()) return;
+    const MidiRegion before = *r;
 
     // Compute the selection span so the clone block sits cleanly
     // after the original. minStart/maxEnd over all selected notes;
@@ -1669,6 +1716,7 @@ void PianoRollComponent::duplicateSelectedNotes()
     }
     selectedNotes = std::move (newSelection);
     std::sort (selectedNotes.begin(), selectedNotes.end());
+    pushNoteEdit (before, "Duplicate notes");
 }
 
 void PianoRollComponent::stepRecordNoteOn (int noteNumber, int velocity)
@@ -1703,6 +1751,7 @@ void PianoRollComponent::stepRecordNoteOn (int noteNumber, int velocity)
     if (nowPlayhead - r->timelineStart < 0) return;   // playhead is before the region; ignore
     const auto regStartTick = session.samplesToTicks (r->timelineStart, sr);
     const juce::int64 startTick = session.samplesToTicks (nowPlayhead, sr) - regStartTick;
+    const MidiRegion before = *r;
 
     // Extend the region if the new note would go past its current
     // end. Without this the painter clips the note and the engine
@@ -1722,6 +1771,7 @@ void PianoRollComponent::stepRecordNoteOn (int noteNumber, int velocity)
     n.lengthInTicks = stepTicks;
     r->notes.push_back (n);
 
+    pushNoteEdit (before, "Step record note");
     ++stepRecordHeld;
     stepRecordChordHad = true;
     repaint();
@@ -1763,11 +1813,13 @@ void PianoRollComponent::nudgeSelectedTicks (juce::int64 deltaTicks)
                                   r->lengthInTicks - maxEnd,
                                   deltaTicks);
     if (deltaTicks == 0) return;
+    const MidiRegion before = *r;
     for (int idx : selectedNotes)
     {
         if (idx < 0 || idx >= (int) r->notes.size()) continue;
         r->notes[(size_t) idx].startTick += deltaTicks;
     }
+    pushNoteEdit (before, "Nudge notes");
 }
 
 bool PianoRollComponent::isInScale (int noteNumber) const noexcept
@@ -2147,6 +2199,11 @@ void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
     grabKeyboardFocus();
     auto* r = region();
     if (r == nullptr) return;
+
+    // Snapshot the region for undo. Covers every note-mutating gesture
+    // (move / resize / velocity / create); the commit at mouseUp is a
+    // no-op for non-mutating gestures (pan, box-select, range).
+    beginNoteEdit();
 
     // Middle-mouse-drag in the grid pans the timeline + keyboard range
     // together. Captured first so it never gets shadowed by note hits /
@@ -2786,6 +2843,23 @@ void PianoRollComponent::mouseMove (const juce::MouseEvent& e)
 
 void PianoRollComponent::mouseUp (const juce::MouseEvent&)
 {
+    // Close out the note-edit snapshot opened at mouseDown. The change
+    // guard inside makes this a no-op for non-mutating gestures, so it's
+    // safe to run before the pan / loop / box early-returns below.
+    {
+        juce::String editName = "Edit notes";
+        switch (dragMode)
+        {
+            case DragMode::MoveNote:         editName = "Move notes";    break;
+            case DragMode::ResizeNote:       editName = "Resize note";   break;
+            case DragMode::EditNoteVelocity:
+            case DragMode::EditVelocity:     editName = "Edit velocity"; break;
+            case DragMode::EditCcValue:      editName = "Edit CC";       break;
+            default: break;
+        }
+        commitNoteEdit (editName);
+    }
+
     // Pan ends with no state to commit - clear the drag state and
     // restore the default cursor (mouseMove will update it on the next
     // motion to reflect whatever the cursor is now hovering over).
@@ -2893,6 +2967,7 @@ bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
     {
         auto* r = region();
         if (r == nullptr || selectedNotes.empty()) return false;
+        const MidiRegion before = *r;
         // Erase in descending index order so earlier indices stay valid
         // through the loop. selectedNotes is sorted ascending, so walk
         // backwards.
@@ -2903,6 +2978,7 @@ bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
                 r->notes.erase (r->notes.begin() + idx);
         }
         clearSelection();
+        pushNoteEdit (before, "Delete notes");
         repaint();
         return true;
     }
@@ -3032,9 +3108,8 @@ bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
             auto* r = region();
             if (r == nullptr || selectedNotes.empty()) return true;
             // Copy first, then delete the selection (same shape as the
-            // Delete-key handler below). Mutates the live MidiRegion
-            // directly - matches the existing note-edit pattern in this
-            // file; not undoable (note edits aren't yet, by design).
+            // Delete-key handler below).
+            const MidiRegion before = *r;
             sNoteClipboard.clear();
             juce::int64 minTick = std::numeric_limits<juce::int64>::max();
             for (int idx : selectedNotes)
@@ -3051,6 +3126,7 @@ bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
                 if (*it >= 0 && *it < (int) r->notes.size())
                     r->notes.erase (r->notes.begin() + *it);
             clearSelection();
+            pushNoteEdit (before, "Cut notes");
             repaint();
             return true;
         }
@@ -3062,6 +3138,7 @@ bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
             // the target region's bounds; notes that would land past
             // the end are dropped. The pasted notes become the new
             // selection so a follow-up nudge / transpose acts on them.
+            const MidiRegion before = *r;
             clearSelection();
             for (const auto& src : sNoteClipboard)
             {
@@ -3074,6 +3151,7 @@ bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
                 r->notes.push_back (n);
                 addToSelection ((int) r->notes.size() - 1);
             }
+            pushNoteEdit (before, "Paste notes");
             refreshStatusBarReadouts();
             repaint();
             return true;
@@ -3494,6 +3572,7 @@ void PianoRollComponent::splitSelectedAtCursor()
 {
     auto* r = region();
     if (r == nullptr) return;
+    const MidiRegion before = *r;
     const auto cursor = editCursorTick;
 
     // Operate on the current selection if any; otherwise consider every
@@ -3519,6 +3598,7 @@ void PianoRollComponent::splitSelectedAtCursor()
         n.lengthInTicks    = cursor - n.startTick;
         r->notes.push_back (tail);
     }
+    pushNoteEdit (before, "Split notes");
     repaint();
 }
 

@@ -206,6 +206,16 @@ private:
     MidiRegion*       region();
     const MidiRegion* region() const;
 
+    // Note-edit undo. Drag gestures: beginNoteEdit() at mouseDown,
+    // commitNoteEdit() at mouseUp. Discrete edits (key / menu mutators):
+    // snapshot a local `before`, mutate, then pushNoteEdit(before, name).
+    // All collapse to one MidiRegionEditAction, skipped if nothing changed.
+    void beginNoteEdit();
+    void commitNoteEdit (const juce::String& transactionName);
+    void pushNoteEdit (const MidiRegion& before, const juce::String& transactionName);
+    bool       noteEditActive = false;
+    MidiRegion noteEditBefore;
+
     int  yForNoteNumber (int noteNumber) const;
     int  noteNumberForY (int y) const;
     int  xForTick (juce::int64 tick) const;

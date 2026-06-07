@@ -529,6 +529,14 @@ struct MidiNote
     int  velocity      = 100;   // 1..127 (recorded notes always >= 1)
     juce::int64 startTick     = 0;
     juce::int64 lengthInTicks = 0;
+
+    bool operator== (const MidiNote& o) const noexcept
+    {
+        return channel == o.channel && noteNumber == o.noteNumber
+            && velocity == o.velocity && startTick == o.startTick
+            && lengthInTicks == o.lengthInTicks;
+    }
+    bool operator!= (const MidiNote& o) const noexcept { return ! (*this == o); }
 };
 
 // `controller` doubles as message-type discriminator: 0..127 = CC.
@@ -539,6 +547,13 @@ struct MidiCc
     int  controller = 64;       // sustain pedal
     int  value      = 0;
     juce::int64 atTick = 0;
+
+    bool operator== (const MidiCc& o) const noexcept
+    {
+        return channel == o.channel && controller == o.controller
+            && value == o.value && atTick == o.atTick;
+    }
+    bool operator!= (const MidiCc& o) const noexcept { return ! (*this == o); }
 };
 
 struct MidiTakeRef
