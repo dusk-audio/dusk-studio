@@ -190,7 +190,10 @@ private:
                                        juce::Point<int> screenPos);
 
     // Grid-mode tempo-point editing (ruler tick band): add on empty-band
-    // Tempo edits, all driven from the ruler's right-click menu.
+    // Tempo edits, all driven from the ruler's right-click menu. Every edit
+    // routes through commitTempoPoints so it's a single undoable transaction.
+    void commitTempoPoints (std::vector<duskstudio::TempoPoint> after,
+                             const juce::String& name);
     void promptAddTempoPoint (juce::int64 sample);   // prompt, add on accept
     void editTempoPointBpm (juce::int64 atSample);
     // Edit the song's starting tempo when no tempo map exists yet (the bar-1

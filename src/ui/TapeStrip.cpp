@@ -3629,15 +3629,32 @@ int TapeStrip::hitTestTempoPoint (int x, int y) const noexcept
     // Tempo points live in the tick band (top), above the marker pills.
     if (y >= ruler.getY() + kRulerTickBandH) return -1;
 
+    // Hit zone spans the triangle (a few px left) plus the BPM label drawn to
+    // its right, so right-clicking the number — not just the tiny glyph —
+    // still lands on the marker.
+    const auto onHandle = [this, x] (juce::int64 sample)
+    {
+        const int px = xForSample (sample);
+        return x >= px - 6 && x <= px + 28;
+    };
     const auto& pts = session.tempoMap.points();
     // No map yet: the only handle is the bar-1 base (the starting tempo).
     if (pts.empty())
-        return (std::abs (x - xForSample (0)) <= 6) ? kTempoBaseHandle : -1;
+        return onHandle (0) ? kTempoBaseHandle : -1;
     // Back-to-front so a later (rightmost) point wins on overlap.
     for (int i = (int) pts.size() - 1; i >= 0; --i)
-        if (std::abs (x - xForSample (pts[(size_t) i].timelineSamples)) <= 6)
+        if (onHandle (pts[(size_t) i].timelineSamples))
             return i;
     return -1;
+}
+
+void TapeStrip::commitTempoPoints (std::vector<duskstudio::TempoPoint> after,
+                                    const juce::String& name)
+{
+    auto& um = engine.getUndoManager();
+    um.beginNewTransaction (name);
+    um.perform (new SetTempoMapAction (engine, session.tempoMap.points(), std::move (after)));
+    repaint();
 }
 
 void TapeStrip::promptAddTempoPoint (juce::int64 sample)
@@ -3662,8 +3679,7 @@ void TapeStrip::promptAddTempoPoint (juce::int64 sample)
             for (auto& p : vec)
                 if (p.timelineSamples == sample) { p.bpm = b; existed = true; break; }
             if (! existed) vec.push_back ({ sample, b });
-            safeThis->engine.setTempoPoints (std::move (vec));
-            safeThis->repaint();
+            safeThis->commitTempoPoints (std::move (vec), "Add tempo");
         });
 }
 
@@ -3687,16 +3703,15 @@ void TapeStrip::editTempoPointBpm (juce::int64 atSample)
             auto vec = safeThis->session.tempoMap.points();
             for (auto& p : vec)
                 if (p.timelineSamples == atSample) p.bpm = b;
-            safeThis->engine.setTempoPoints (std::move (vec));
-            safeThis->repaint();
+            safeThis->commitTempoPoints (std::move (vec), "Set tempo");
         });
 }
 
 void TapeStrip::editBaseTempo()
 {
-    // Starting tempo when no map exists yet. Goes through applyTempoChange so
-    // tempo-locked MIDI / automation retime exactly as the (now read-only)
-    // transport BPM field used to do.
+    // Starting tempo when no map exists yet. Seeds a single bar-0 point, which
+    // reads as a constant tempo and keeps the edit on the (undoable) tempo-map
+    // path like every other tempo edit.
     auto* host = getTopLevelComponent();
     if (host == nullptr) host = this;
     showEmbeddedTextInput (*host, "Tempo", "Starting BPM (30-300):",
@@ -3706,9 +3721,7 @@ void TapeStrip::editBaseTempo()
             if (safeThis == nullptr) return;
             const float b = juce::jlimit (30.0f, 300.0f, s.getFloatValue());
             if (b <= 0.0f) return;
-            applyTempoChange (safeThis->session, b,
-                               safeThis->engine.getCurrentSampleRate());
-            safeThis->repaint();
+            safeThis->commitTempoPoints ({ { 0, b } }, "Set starting tempo");
         });
 }
 
@@ -3723,8 +3736,7 @@ void TapeStrip::deleteTempoPoint (juce::int64 atSample)
     vec.erase (std::remove_if (vec.begin(), vec.end(),
         [atSample] (const TempoPoint& p) { return p.timelineSamples == atSample; }),
         vec.end());
-    engine.setTempoPoints (std::move (vec));
-    repaint();
+    commitTempoPoints (std::move (vec), "Delete tempo");
 }
 
 void TapeStrip::paintTempoPoints (juce::Graphics& g)

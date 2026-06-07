@@ -284,4 +284,24 @@ private:
     std::vector<TrackDiff> diffs;
     bool firstPerformDone = false;
 };
+
+// Replaces the whole tempo map. Every tempo-marker edit (add / change / delete /
+// starting tempo) collapses to "the points were X, now Y", so one action type
+// covers them all. perform()/undo() publish the after/before set through the
+// engine's lock-free tempo snapshot.
+class SetTempoMapAction final : public juce::UndoableAction
+{
+public:
+    SetTempoMapAction (AudioEngine& engine,
+                        std::vector<TempoPoint> before,
+                        std::vector<TempoPoint> after);
+
+    bool perform() override;
+    bool undo()    override;
+    int  getSizeInUnits() override { return 1; }
+
+private:
+    AudioEngine& engine;
+    std::vector<TempoPoint> before, after;
+};
 } // namespace duskstudio

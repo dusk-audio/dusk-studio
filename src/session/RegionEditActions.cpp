@@ -801,4 +801,12 @@ bool RecordCommitAction::undo()
     rebuildPlaybackIfStopped (engine);
     return true;
 }
+
+SetTempoMapAction::SetTempoMapAction (AudioEngine& e,
+                                        std::vector<TempoPoint> b,
+                                        std::vector<TempoPoint> a)
+    : engine (e), before (std::move (b)), after (std::move (a)) {}
+
+bool SetTempoMapAction::perform() { engine.setTempoPoints (after);  return true; }
+bool SetTempoMapAction::undo()    { engine.setTempoPoints (before); return true; }
 } // namespace duskstudio
