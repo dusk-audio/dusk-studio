@@ -834,6 +834,28 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
         }
     }
 
+    // Left-click on a tempo marker → start a reposition drag. Checked before
+    // the ruler seek so grabbing a marker doesn't also move the playhead. The
+    // bar-1 anchor (sample 0) is the starting tempo and stays put. Edit /
+    // delete stay on the right-click menu; double-click still edits the BPM.
+    if (! e.mods.isRightButtonDown())
+    {
+        const int tIdx = hitTestTempoPoint (e.x, e.y);
+        if (tIdx >= 0)
+        {
+            const auto& pts = session.tempoMap.points();
+            if (tIdx < (int) pts.size() && pts[(size_t) tIdx].timelineSamples != 0)
+            {
+                tempoDrag.active          = true;
+                tempoDrag.moved           = false;
+                tempoDrag.index           = tIdx;
+                tempoDrag.mouseDownSample = sampleAtX (e.x);
+                tempoDrag.orig            = pts;
+                return;
+            }
+        }
+    }
+
     // Tempo is edited via the ruler's right-click menu (any edit mode) — see
     // the "Tempo" section in the loop/punch context menu below.
 
@@ -1416,6 +1438,36 @@ void TapeStrip::mouseDrag (const juce::MouseEvent& e)
         return;
     }
 
+    // Tempo-marker drag — same threshold + absolute-snap model as markers.
+    // Rebuild the full point set from the captured original (fixed index),
+    // move the dragged point, and republish so the bar grid + audio map
+    // follow live. Clamp to >= 1 sample so it never collides with the bar-1
+    // anchor (which setPoints would dedup away).
+    if (tempoDrag.active)
+    {
+        const auto cur = sampleAtX (e.x);
+        constexpr juce::int64 kDragThresholdSamples = 256;   // ~5 ms @ 48k
+        if (! tempoDrag.moved
+            && std::abs (cur - tempoDrag.mouseDownSample) > kDragThresholdSamples)
+            tempoDrag.moved = true;
+
+        if (tempoDrag.moved
+            && tempoDrag.index >= 0
+            && tempoDrag.index < (int) tempoDrag.orig.size())
+        {
+            juce::int64 newPos = juce::jmax ((juce::int64) 1, cur);
+            newPos = snap::snapAbsoluteToGrid (newPos, session,
+                                                engine.getCurrentSampleRate());
+            newPos = juce::jmax ((juce::int64) 1, newPos);
+
+            auto working = tempoDrag.orig;
+            working[(size_t) tempoDrag.index].timelineSamples = newPos;
+            engine.setTempoPoints (std::move (working));
+            repaint();
+        }
+        return;
+    }
+
     // Bracket drag - reposition loop/punch endpoints or translate the
     // whole range. Endpoint drags clamp to keep start ≤ end - 1024
     // samples (the same useful-range floor we use elsewhere) so the
@@ -1737,6 +1789,29 @@ void TapeStrip::mouseUp (const juce::MouseEvent&)
         return;
     }
 
+    if (tempoDrag.active)
+    {
+        if (tempoDrag.moved)
+        {
+            // Live drag already published the moved map; wrap the
+            // original -> final swap in one SetTempoMapAction for undo.
+            auto& um = engine.getUndoManager();
+            um.beginNewTransaction ("Move tempo");
+            um.perform (new SetTempoMapAction (engine, tempoDrag.orig,
+                                                 session.tempoMap.points()));
+        }
+        else if (tempoDrag.index >= 0
+                 && tempoDrag.index < (int) tempoDrag.orig.size())
+        {
+            // Pure click on a tempo marker → seek to it.
+            engine.getTransport().setPlayhead (
+                tempoDrag.orig[(size_t) tempoDrag.index].timelineSamples);
+        }
+        tempoDrag = {};
+        repaint();
+        return;
+    }
+
     if (drag.op == RegionOp::None) return;
 
     auto& regions = session.track (drag.track).regions;
@@ -1983,6 +2058,19 @@ void TapeStrip::mouseMove (const juce::MouseEvent& e)
                                            : juce::MouseCursor::NormalCursor,
                         e.x, e.y);
         return;
+    }
+
+    // Tempo markers are drag-to-reposition (left/right) — a horizontal-resize
+    // cursor advertises it. The bar-1 anchor (sample 0) doesn't move, so it
+    // keeps the plain cursor.
+    if (const int tIdx = hitTestTempoPoint (e.x, e.y); tIdx >= 0)
+    {
+        const auto& pts = session.tempoMap.points();
+        if (tIdx < (int) pts.size() && pts[(size_t) tIdx].timelineSamples != 0)
+        {
+            setHoverCursor (juce::MouseCursor::LeftRightResizeCursor, e.x, e.y);
+            return;
+        }
     }
 
     // Cursor feedback so the user can tell where edges/body are without

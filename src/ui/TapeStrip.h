@@ -342,6 +342,20 @@ private:
     };
     BracketDrag bracketDrag;
 
+    // Tempo-marker reposition drag. `orig` is the whole pre-drag map so the
+    // dragged point keeps a stable index even as setPoints re-sorts the live
+    // copy, and so mouseUp can push one before/after undo transaction. The
+    // bar-1 anchor (timelineSamples == 0) is never dragged.
+    struct TempoDrag
+    {
+        bool active = false;
+        bool moved  = false;
+        int  index  = -1;
+        juce::int64 mouseDownSample = 0;
+        std::vector<duskstudio::TempoPoint> orig;
+    };
+    TempoDrag tempoDrag;
+
     // Most-recently-clicked region. Single-region ops act on this;
     // group ops also include additionalSelections. Cleared on
     // undo/redo (action might have shifted indices).
