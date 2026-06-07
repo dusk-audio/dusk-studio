@@ -2223,7 +2223,13 @@ void MainComponent::openSessionPath (const juce::File& path)
         sessionJson = path;
 
     if (sessionJson.existsAsFile())
+    {
+        // Clear the startup New / Open-recent flow first so a CLI / file-manager
+        // open doesn't stack a session-load (recovery) modal over the startup
+        // dialog. Covers both the directory and file cases above.
+        dismissStartupDialog();
         loadSessionFromJson (sessionJson);   // shows its own alert on failure
+    }
 }
 
 bool MainComponent::loadSessionFromJson (const juce::File& sessionJson)

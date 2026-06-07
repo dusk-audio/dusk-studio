@@ -714,11 +714,14 @@ static void runHeadlessSelfTest()
     std::fflush (stdout);
 }
 
-// First non-flag token that resolves to an existing file or directory. Used to
-// open a session passed on the command line / by the file manager. Relative
-// paths resolve against the working directory; quoted paths (spaces) survive.
+// Resolve a session path passed on the command line / by the file manager.
+// Prefer a token that clearly names a session (session.json, a directory holding
+// one, or any .json file); otherwise fall back to the first existing token so a
+// bare path still works. Relative paths resolve against the working directory;
+// quoted paths (spaces) survive.
 static juce::File sessionPathFromCommandLine (const juce::String& commandLine)
 {
+    juce::File firstExisting;
     for (const auto& tok : juce::StringArray::fromTokens (commandLine, true))
     {
         const auto t = tok.unquoted();
@@ -726,9 +729,15 @@ static juce::File sessionPathFromCommandLine (const juce::String& commandLine)
         const juce::File f = juce::File::isAbsolutePath (t)
                                ? juce::File (t)
                                : juce::File::getCurrentWorkingDirectory().getChildFile (t);
-        if (f.exists()) return f;
+        if (! f.exists()) continue;
+        if (f.getFileName() == "session.json"
+            || (f.isDirectory() && f.getChildFile ("session.json").existsAsFile())
+            || f.hasFileExtension ("json"))
+            return f;
+        if (firstExisting == juce::File())
+            firstExisting = f;
     }
-    return {};
+    return firstExisting;
 }
 
 void DuskStudioApp::initialise (const juce::String& commandLine)
