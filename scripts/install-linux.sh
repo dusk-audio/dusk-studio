@@ -90,7 +90,11 @@ ln -sf "$BIN" "$BINDIR/DuskStudio"
 SRC_DESKTOP="$OPT/share/applications/audio.dusk.studio.desktop"
 [ -f "$SRC_DESKTOP" ] || { echo "error: $SRC_DESKTOP missing - tarball is incomplete" >&2; exit 1; }
 mkdir -p "$(dirname "$DESKTOP")" "$(dirname "$ICON")" "$(dirname "$MIME")" "$(dirname "$META")"
-sed "s|^Exec=.*|Exec=$BIN %f|" "$SRC_DESKTOP" > "$DESKTOP"
+# awk with a print-built line, not sed/awk-sub: the install path is data, and a
+# replacement context would treat '&' / '\' in it specially (e.g. an odd $HOME).
+# Pass $BIN via the environment (ENVIRON), not -v, which would escape-process it.
+BIN="$BIN" awk '/^Exec=/ { print "Exec=" ENVIRON["BIN"] " %f"; next } { print }' \
+    "$SRC_DESKTOP" > "$DESKTOP"
 cp "$OPT/share/icons/hicolor/256x256/apps/DuskStudio.png" "$ICON"
 cp "$OPT/share/mime/packages/DuskStudio.mime.xml" "$MIME"
 cp "$OPT/share/metainfo/DuskStudio.appdata.xml" "$META"
