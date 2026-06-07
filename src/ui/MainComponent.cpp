@@ -103,8 +103,7 @@ public:
 
         bodyLabel.setText (
             "Your session has unsaved changes since the last manual save. "
-            "If you don't save, the autosave will still be available "
-            "the next time you open this session.",
+            "If you don't save, those changes are discarded.",
             juce::dontSendNotification);
         bodyLabel.setFont (juce::Font (juce::FontOptions (13.0f)));
         bodyLabel.setColour (juce::Label::textColourId, juce::Colour (0xffc0c0c8));
@@ -2002,12 +2001,15 @@ void MainComponent::requestQuit()
     };
     dialog->onDontSave = [safeThis]
     {
-        // Quit and let the autosave linger. Next launch's session-load
-        // will offer to recover from it.
+        // "Don't save" means discard — delete the autosave too, so the next
+        // launch doesn't offer to recover the work the user just discarded.
+        // Recovery is then reserved for an actual crash (unclean exit, where
+        // this clean-shutdown path never runs and the autosave survives).
         juce::MessageManager::callAsync ([safeThis]
         {
             if (auto* self = safeThis.getComponent())
             {
+                self->deleteAutosaveFor (self->session.getSessionDirectory());
                 self->quitModal.close();
                 self->beginSafeShutdown();
             }
