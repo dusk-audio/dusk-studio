@@ -76,6 +76,8 @@ private:
 
     juce::Label  meterL, meterR;
     juce::Label  lufsM, lufsS, lufsI, truePeak;
+    // Backdrop rect around the TP/M/S/I cells, recomputed in resized().
+    juce::Rectangle<int> loudnessClusterBounds;
     juce::TextButton resetLoudness { "Reset I" };
 
     DuskComboBox masteringTargetCombo;

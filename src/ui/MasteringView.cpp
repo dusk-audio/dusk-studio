@@ -339,6 +339,16 @@ void MasteringView::applyMultibandPreset (int presetIndex)
 void MasteringView::paint (juce::Graphics& g)
 {
     g.fillAll (juce::Colour (0xff0d0d0f));
+
+    // Grouping backdrop behind the TP/M/S/I loudness cells (their own darker
+    // cell backgrounds pop against this) so they read as one loudness cluster.
+    if (! loudnessClusterBounds.isEmpty())
+    {
+        g.setColour (juce::Colour (0xff17171d));
+        g.fillRoundedRectangle (loudnessClusterBounds.toFloat(), 4.0f);
+        g.setColour (juce::Colour (0xff2c2c34));
+        g.drawRoundedRectangle (loudnessClusterBounds.toFloat(), 4.0f, 1.0f);
+    }
 }
 
 void MasteringView::resized()
@@ -350,6 +360,8 @@ void MasteringView::resized()
     loadButton.setBounds (header.removeFromLeft (110));
     header.removeFromLeft (4);
     loadLatestMixdown.setBounds (header.removeFromLeft (180));
+    header.removeFromLeft (8);
+    exportButton.setBounds (header.removeFromLeft (150));
     header.removeFromLeft (12);
     sourceFileLabel.setBounds (header);
     area.removeFromTop (8);
@@ -360,29 +372,46 @@ void MasteringView::resized()
     //    clamped placement so narrow windows don't render widgets
     //    with negative widths. ──
     auto transportRow = area.removeFromTop (36);
-    const auto place = [&transportRow] (juce::Component& c, int preferredW, int gapAfter = 0)
+
+    // Transport cluster on the left.
+    const auto placeL = [&transportRow] (juce::Component& c, int w, int gapAfter = 0)
     {
-        const int available = transportRow.getWidth();
-        if (available <= 0) { c.setVisible (false); return; }
+        if (transportRow.getWidth() <= 0) { c.setVisible (false); return; }
         c.setVisible (true);
-        const int w = juce::jmin (preferredW, available);
-        c.setBounds (transportRow.removeFromLeft (w));
+        c.setBounds (transportRow.removeFromLeft (juce::jmin (w, transportRow.getWidth())));
         if (gapAfter > 0) transportRow.removeFromLeft (juce::jmin (gapAfter, transportRow.getWidth()));
     };
-    place (rewindButton,    50,  4);
-    place (playButton,      70,  4);
-    place (stopButton,      70, 16);
-    place (clockLabel,     140, 12);
-    place (grLabel,        140, 12);
-    place (truePeak,       100,  4);
-    place (lufsM,           90,  4);
-    place (lufsS,           90,  4);
-    place (lufsI,          120,  6);
-    place (resetLoudness,   60, 16);
-    // Target sits with the loudness cluster it governs: the integrated-LUFS
-    // (I) cell glows green when within range of this target.
-    place (targetCaption,   46,  4);
-    place (masteringTargetCombo, 260, 0);
+    placeL (rewindButton, 50, 4);
+    placeL (playButton,   70, 4);
+    placeL (stopButton,   70, 16);
+    placeL (clockLabel,  140, 0);
+
+    // Loudness cluster pinned to the right edge, placed right-to-left so it
+    // reads  GR | TP M S I | Reset | Target. The four meter cells sit flush as
+    // one grouped block (backdrop drawn in paint()).
+    const auto placeR = [&transportRow] (juce::Component& c, int w, int gapBefore = 0)
+    {
+        if (transportRow.getWidth() <= 0) { c.setVisible (false); return; }
+        c.setVisible (true);
+        c.setBounds (transportRow.removeFromRight (juce::jmin (w, transportRow.getWidth())));
+        if (gapBefore > 0) transportRow.removeFromRight (juce::jmin (gapBefore, transportRow.getWidth()));
+    };
+    placeR (masteringTargetCombo, 240, 4);
+    placeR (targetCaption,         40, 12);
+    placeR (resetLoudness,         56, 10);
+    placeR (lufsI,    110);
+    placeR (lufsS,     85);
+    placeR (lufsM,     85);
+    placeR (truePeak,  95, 12);
+    placeR (grLabel,  170);
+
+    // Backdrop rect around the flush TP..I meter block, for visual grouping.
+    if (truePeak.isVisible() && lufsI.isVisible())
+        loudnessClusterBounds = juce::Rectangle<int> (truePeak.getX() - 4, truePeak.getY() - 2,
+                                                        lufsI.getRight() - truePeak.getX() + 8,
+                                                        truePeak.getHeight() + 4);
+    else
+        loudnessClusterBounds = {};
     area.removeFromTop (8);
 
     // ── Bottom strip (export + L/R meters). LUFS readouts + target moved
@@ -392,8 +421,6 @@ void MasteringView::resized()
     area.removeFromBottom (6);
 
     auto meterRow = bottom.removeFromTop (28);
-    exportButton.setBounds (meterRow.removeFromRight (160));
-    meterRow.removeFromRight (12);
     meterR.setBounds (meterRow.removeFromRight (140));
     meterRow.removeFromRight (4);
     meterL.setBounds (meterRow.removeFromRight (140));
@@ -414,11 +441,11 @@ void MasteringView::resized()
 
     constexpr int kPanelGap = 8;
     const int totalW    = juce::jmax (0, panelsRow.getWidth() - 2 * kPanelGap);
-    const int eqW       = (int) std::round (totalW * 0.42);
-    // Limiter shrunk 0.22 -> 0.14. Two sliders + a release knob don't
-    // need a fifth of the row; the freed width goes to the multiband
-    // comp panel which has 4 columns of GR bars + a row of knobs.
-    const int limW      = (int) std::round (totalW * 0.14);
+    // The limiter is the terminal stage and was starved at 0.14 (clipped
+    // labels, cramped meters); the EQ curve had the most slack. Rebalance to
+    // 0.36 / 0.42 / 0.22 so all three read comfortably.
+    const int eqW       = (int) std::round (totalW * 0.36);
+    const int limW      = (int) std::round (totalW * 0.22);
     const int compW     = totalW - eqW - limW;
 
     auto eqPanel   = panelsRow.removeFromLeft (eqW);
