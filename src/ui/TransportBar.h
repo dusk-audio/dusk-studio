@@ -56,7 +56,7 @@ public:
     int getTunerLeftX() const noexcept { return tuneButton.getX(); }
 
     // MainComponent clamps the centered stage-tab overlay against this
-    // so RECORDING/MIXING/AUX/MASTERING never slide left over the clock.
+    // so RECORDING/MIXING/MASTERING/AUX never slide left over the clock.
     int getClockRightX() const noexcept { return clockLabel.getRight(); }
 
     // Below this width SNAP->S, TIMELINE->chevron, clock shrinks,

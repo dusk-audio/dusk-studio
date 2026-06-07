@@ -347,8 +347,8 @@ MainComponent::MainComponent()
     styleStageButton (masteringStageBtn, juce::Colour (0xff8a5ad0));   // mastering purple
     recordingStageBtn.setConnectedEdges (juce::Button::ConnectedOnRight);
     mixingStageBtn   .setConnectedEdges (juce::Button::ConnectedOnLeft | juce::Button::ConnectedOnRight);
-    auxStageBtn      .setConnectedEdges (juce::Button::ConnectedOnLeft | juce::Button::ConnectedOnRight);
-    masteringStageBtn.setConnectedEdges (juce::Button::ConnectedOnLeft);
+    masteringStageBtn.setConnectedEdges (juce::Button::ConnectedOnLeft | juce::Button::ConnectedOnRight);
+    auxStageBtn      .setConnectedEdges (juce::Button::ConnectedOnLeft);
     recordingStageBtn.onClick = [this] { switchToStage (AudioEngine::Stage::Recording); };
     mixingStageBtn   .onClick = [this] { switchToStage (AudioEngine::Stage::Mixing); };
     auxStageBtn      .onClick = [this] { switchToStage (AudioEngine::Stage::Aux); };
@@ -1290,8 +1290,8 @@ void MainComponent::resized()
 
     recordingStageBtn.setBounds (stageX,                stageY, stageW, kStageBtnH);
     mixingStageBtn   .setBounds (stageX + stageW,       stageY, stageW, kStageBtnH);
-    auxStageBtn      .setBounds (stageX + 2 * stageW,   stageY, stageW, kStageBtnH);
-    masteringStageBtn.setBounds (stageX + 3 * stageW,   stageY, stageW, kStageBtnH);
+    masteringStageBtn.setBounds (stageX + 2 * stageW,   stageY, stageW, kStageBtnH);
+    auxStageBtn      .setBounds (stageX + 3 * stageW,   stageY, stageW, kStageBtnH);
     // Z-order is correct by construction: transportBar is added BEFORE
     // the stage tabs + bank buttons in the ctor, so the overlays sit on
     // top of the transport bar's painted background naturally.
