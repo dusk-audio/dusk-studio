@@ -264,11 +264,10 @@ MasteringView::MasteringView (Session& s, AudioEngine& e)
     {
         const int id = compPresetCombo.getSelectedId();
         if (id >= 2)
-        {
             applyMultibandPreset (id - 2);
-            // One-shot: drop back to the placeholder so re-picking re-applies.
-            compPresetCombo.setSelectedId (1, juce::dontSendNotification);
-        }
+        // Leave the picked preset name showing so the user sees what's loaded
+        // (it stays selected even after they tweak a band — it's a starting
+        // point, not live state).
     };
     compPanelWrapper->addAndMakeVisible (compPresetCombo);
 #endif
@@ -331,6 +330,12 @@ void MasteringView::applyMultibandPreset (int presetIndex)
     setP ("mb_crossover_3", juce::jmax (preset.hiXoverHz, c2));
 
     setP ("auto_makeup", 0.0f);   // Choice: 0 = Off, matching the chart
+
+    // Programmatic APVTS writes don't refresh the panel's knob row / crossover
+    // faders (those only sync on band-select); force it so the UI shows the
+    // applied values.
+    if (auto* panel = dynamic_cast<MultibandCompressorPanel*> (compEditor.get()))
+        panel->refreshFromParameters();
 #else
     juce::ignoreUnused (presetIndex);
 #endif
@@ -496,6 +501,17 @@ void MasteringView::timerCallback()
         compHeaderEnabledSeen = compOn;
         if (compHeaderBtn != nullptr) compHeaderBtn->repaint();
     }
+
+#if DUSKSTUDIO_HAS_DUSK_DSP
+    // Pump per-band gain reduction into the embedded comp panel. The donor's
+    // GR meters are fed externally (EnhancedCompressorEditor does this in the
+    // full plugin); since we host the bare MultibandCompressorPanel, we drive
+    // them here or they stay flat despite audible compression.
+    if (auto* panel = dynamic_cast<MultibandCompressorPanel*> (compEditor.get()))
+        if (auto* comp = engine.getMasteringChain().getCompProcessor())
+            for (int b = 0; b < 4; ++b)
+                panel->setBandGainReduction (b, comp->getBandGainReduction (b));
+#endif
 
     // Clock from the player playhead.
     const double sr = player.getSourceSampleRate();
