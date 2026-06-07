@@ -304,4 +304,28 @@ private:
     AudioEngine& engine;
     std::vector<TempoPoint> before, after;
 };
+
+// Replaces one track's automation-lane point set. Add / drag / delete of a
+// breakpoint all collapse to "the lane was X, now Y". perform()/undo() swap
+// the point vector and republish it to the audio thread via a release-store
+// on the track's automationMode (the Session.h lane-sync contract). Lane
+// editing is gated on transport=Stopped, same as the live edit path.
+class AutomationLaneEditAction final : public juce::UndoableAction
+{
+public:
+    AutomationLaneEditAction (Session& session, int trackIdx, int paramIdx,
+                               std::vector<AutomationPoint> before,
+                               std::vector<AutomationPoint> after);
+
+    bool perform() override;
+    bool undo()    override;
+    int  getSizeInUnits() override { return 1; }
+
+private:
+    void apply (const std::vector<AutomationPoint>& pts);
+
+    Session& session;
+    int trackIdx, paramIdx;
+    std::vector<AutomationPoint> before, after;
+};
 } // namespace duskstudio

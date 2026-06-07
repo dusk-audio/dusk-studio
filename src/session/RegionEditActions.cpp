@@ -809,4 +809,26 @@ SetTempoMapAction::SetTempoMapAction (AudioEngine& e,
 
 bool SetTempoMapAction::perform() { engine.setTempoPoints (after);  return true; }
 bool SetTempoMapAction::undo()    { engine.setTempoPoints (before); return true; }
+
+AutomationLaneEditAction::AutomationLaneEditAction (Session& s, int t, int p,
+                                                      std::vector<AutomationPoint> b,
+                                                      std::vector<AutomationPoint> a)
+    : session (s), trackIdx (t), paramIdx (p),
+      before (std::move (b)), after (std::move (a)) {}
+
+void AutomationLaneEditAction::apply (const std::vector<AutomationPoint>& pts)
+{
+    if (trackIdx < 0 || trackIdx >= Session::kNumTracks
+        || paramIdx < 0 || paramIdx >= kNumAutomationParams)
+        return;
+    auto& trk = session.track (trackIdx);
+    trk.automationLanes[(size_t) paramIdx].points = pts;
+    // Republish to the audio thread: a release-store on automationMode makes
+    // the lane.points write happen-before the next acquire-load (Session.h).
+    const int m = trk.automationMode.load (std::memory_order_relaxed);
+    trk.automationMode.store (m, std::memory_order_release);
+}
+
+bool AutomationLaneEditAction::perform() { apply (after);  return true; }
+bool AutomationLaneEditAction::undo()    { apply (before); return true; }
 } // namespace duskstudio

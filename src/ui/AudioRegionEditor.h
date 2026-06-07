@@ -255,6 +255,8 @@ private:
     juce::TextButton automationParamButton { "Auto: Off" };
     int  automationParam = -1;        // -1 = overlay disabled; else AutomationParam enum
     int  draggedPointIdx = -1;
+    std::vector<AutomationPoint> automationDragBefore;   // lane snapshot at gesture start, for undo
+    int  automationDragParam = -1;                       // param being edited this gesture
     void showAutomationParamMenu();
     void paintAutomationOverlay (juce::Graphics&, juce::Rectangle<int> waveArea);
     int  hitTestAutomationPoint (int x, int y, juce::Rectangle<int> waveArea) const;

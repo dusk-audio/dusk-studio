@@ -1340,6 +1340,7 @@ void AudioRegionEditor::mouseDown (const juce::MouseEvent& e)
             // away from any dot.
             if (hit >= 0)
             {
+                auto beforePts = lane.points;
                 lane.points.erase (lane.points.begin() + hit);
                 // Publish the lane mutation via a release-store on the
                 // track's automationMode atomic (Session.h synchronisation
@@ -1351,6 +1352,10 @@ void AudioRegionEditor::mouseDown (const juce::MouseEvent& e)
                     const int m = trk.automationMode.load (std::memory_order_relaxed);
                     trk.automationMode.store (m, std::memory_order_release);
                 }
+                auto& um = engine.getUndoManager();
+                um.beginNewTransaction ("Delete automation point");
+                um.perform (new AutomationLaneEditAction (session, trackIdx, automationParam,
+                                                            std::move (beforePts), lane.points));
                 repaint();
                 return;
             }
@@ -1359,6 +1364,8 @@ void AudioRegionEditor::mouseDown (const juce::MouseEvent& e)
         {
             if (hit >= 0)
             {
+                automationDragBefore = lane.points;
+                automationDragParam  = automationParam;
                 draggedPointIdx = hit;
                 dragMode = DragMode::AutomationPoint;
                 setMouseCursor (juce::MouseCursor::DraggingHandCursor);
@@ -1383,6 +1390,9 @@ void AudioRegionEditor::mouseDown (const juce::MouseEvent& e)
             pt.timeSamples = juce::jmax<juce::int64> (0, t);
             pt.value       = v01;
             pt.recordedAtBPM = session.tempoBpm.load (std::memory_order_relaxed);
+
+            automationDragBefore = lane.points;
+            automationDragParam  = automationParam;
 
             auto insertAt = std::upper_bound (
                 lane.points.begin(), lane.points.end(), pt,
@@ -1999,25 +2009,38 @@ void AudioRegionEditor::mouseUp (const juce::MouseEvent&)
         repaint();
         return;
     }
-    // Automation point drag finishes: clear the in-flight index. No
-    // undoable wrapper for v1 — direct lane mutation matches the
-    // existing piano-roll-edit race profile (transport must be stopped,
-    // gated at mouseDown). Future commit can add an undo action.
+    // Automation point gesture finishes (add / move). The whole gesture —
+    // a click-add followed by an immediate drag, or a drag of an existing
+    // point — collapses to one before/after lane snapshot pushed here, so
+    // Cmd+Z reverts it in a single step. Editing is gated on
+    // transport=Stopped at mouseDown, so no acquire-load races the swap.
     if (dragMode == DragMode::AutomationPoint)
     {
         // Publish the drag's lane.points writes via a release-store on
         // automationMode so the audio thread's next acquire-load sees
-        // them. Per-frame publication during the drag would be wasteful;
-        // one re-store at drag-end is sufficient because editing is
-        // gated on transport=Stopped (no acquire-load can race during
-        // the drag).
+        // them. One re-store at drag-end is sufficient.
         if (trackIdx >= 0 && trackIdx < Session::kNumTracks
             && automationParam >= 0 && automationParam < kNumAutomationParams)
         {
             auto& trk = session.track (trackIdx);
             const int m = trk.automationMode.load (std::memory_order_relaxed);
             trk.automationMode.store (m, std::memory_order_release);
+
+            if (automationDragParam == automationParam)
+            {
+                auto& lane = trk.automationLanes[(size_t) automationParam];
+                if (lane.points != automationDragBefore)
+                {
+                    auto& um = engine.getUndoManager();
+                    um.beginNewTransaction ("Edit automation");
+                    um.perform (new AutomationLaneEditAction (session, trackIdx, automationParam,
+                                                                std::move (automationDragBefore),
+                                                                lane.points));
+                }
+            }
         }
+        automationDragBefore.clear();
+        automationDragParam = -1;
         draggedPointIdx = -1;
         dragMode = DragMode::None;
         const auto p = getMouseXYRelative();

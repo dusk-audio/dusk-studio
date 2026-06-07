@@ -49,6 +49,13 @@ struct AutomationPoint
     juce::int64 timeSamples   = 0;
     float       value         = 0.0f;     // 0..1
     float       recordedAtBPM = 120.0f;
+
+    bool operator== (const AutomationPoint& o) const noexcept
+    {
+        return timeSamples == o.timeSamples && value == o.value
+            && recordedAtBPM == o.recordedAtBPM;
+    }
+    bool operator!= (const AutomationPoint& o) const noexcept { return ! (*this == o); }
 };
 
 // Points sorted by timeSamples; binary search at lookup. Plain vector —
