@@ -894,6 +894,8 @@ A clean linear-phase-style mastering EQ.
 
 The same UniversalCompressor in Bus mode as the channel / master compressors, but tuned to mastering defaults: 2:1 ratio, 30 ms attack, 250 ms release, auto-release on. Apply 0.5–2 dB of gain reduction to glue a final mix without squashing transients.
 
+**Presets** (dropdown in the comp panel header): nine genre starting points transcribed from the Tascam DP-24/32 multiband compression chart — Basic CD, Pop, Pop Rock 1/2, Rock 1/2, Classic, Dance, R&B Hip Hop. Picking one writes the three-band threshold / ratio / attack / release / makeup and the two crossovers into the multiband comp, with the high-mid band disabled so it behaves as the original 3-band (Low / Mid / High) preset. It's a one-shot apply — tweak any band afterwards and the dropdown returns to the placeholder. A few presets specify a high crossover (above 5 kHz) that the mid/high split clamps slightly.
+
 ### Brickwall limiter
 
 A true-peak brickwall limiter with lookahead. **Enabled by default.** It runs the whole limiting process at 4× oversampling, so the ceiling holds on inter-sample peaks, not just sample peaks.

@@ -13,6 +13,7 @@ add_executable(dusk-studio-tests
     session_tick_conversion.cpp
     tempo_map_conversion.cpp
     output_pair_routing.cpp
+    multiband_comp_presets.cpp
     atomic_park.cpp
     embedded_modal_close_safety.cpp
     x11_anti_pattern_guard.cpp

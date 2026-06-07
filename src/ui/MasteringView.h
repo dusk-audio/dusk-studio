@@ -57,6 +57,10 @@ private:
     void doLoadLatestMixdown();
     void doExport();
 
+    // Apply a DP-24-style 3-band preset to the mastering multiband compressor
+    // (no-op without donor DSP). See dsp/MultibandCompPresets.h.
+    void applyMultibandPreset (int presetIndex);
+
     Session& session;
     AudioEngine& engine;
 
@@ -76,6 +80,9 @@ private:
 
     DuskComboBox masteringTargetCombo;
     juce::Label    targetCaption;
+
+    // Multiband-comp preset picker in the comp panel header (donor DSP only).
+    DuskComboBox compPresetCombo;
 
     juce::TextButton exportButton { "Export master..." };
 

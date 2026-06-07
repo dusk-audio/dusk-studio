@@ -4,6 +4,7 @@
 #include "DuskFileBrowser.h"
 #include "MasteringEqEditor.h"
 #include "MasteringLimiterEditor.h"
+#include "../dsp/MultibandCompPresets.h"
 #include "../engine/BounceEngine.h"
 #include "../engine/MasteringPlayer.h"
 #if DUSKSTUDIO_HAS_DUSK_DSP
@@ -251,6 +252,25 @@ MasteringView::MasteringView (Session& s, AudioEngine& e)
         compEditor = std::make_unique<MultibandCompressorPanel> (compProc->getParameters());
         compPanelWrapper->addAndMakeVisible (compEditor.get());
     }
+
+    // DP-24-style 3-band preset picker in the comp header.
+    compPresetCombo.addItem ("Presets...", 1);
+    for (int i = 0; i < mbpresets::kNumPresets; ++i)
+        compPresetCombo.addItem (mbpresets::kPresets[(size_t) i].name, i + 2);
+    compPresetCombo.setSelectedId (1, juce::dontSendNotification);
+    compPresetCombo.setTooltip ("Apply a DP-24-style 3-band mastering compressor preset. "
+                                  "Maps onto the multiband comp with the high-mid band disabled.");
+    compPresetCombo.onChange = [this]
+    {
+        const int id = compPresetCombo.getSelectedId();
+        if (id >= 2)
+        {
+            applyMultibandPreset (id - 2);
+            // One-shot: drop back to the placeholder so re-picking re-applies.
+            compPresetCombo.setSelectedId (1, juce::dontSendNotification);
+        }
+    };
+    compPanelWrapper->addAndMakeVisible (compPresetCombo);
 #endif
 
     // ── Custom Limiter editor ──
@@ -267,6 +287,54 @@ MasteringView::MasteringView (Session& s, AudioEngine& e)
 }
 
 MasteringView::~MasteringView() = default;
+
+void MasteringView::applyMultibandPreset (int presetIndex)
+{
+#if DUSKSTUDIO_HAS_DUSK_DSP
+    if (presetIndex < 0 || presetIndex >= mbpresets::kNumPresets) return;
+    auto* comp = engine.getMasteringChain().getCompProcessor();
+    if (comp == nullptr) return;
+
+    auto& apvts = comp->getParameters();
+    const auto& preset = mbpresets::kPresets[(size_t) presetIndex];
+
+    const auto setP = [&apvts] (const juce::String& id, float value)
+    {
+        if (auto* param = apvts.getParameter (id))
+            param->setValueNotifyingHost (
+                juce::jlimit (0.0f, 1.0f, apvts.getParameterRange (id).convertTo0to1 (value)));
+    };
+    const auto setBand = [&setP] (const char* band, const mbpresets::Band& b)
+    {
+        const juce::String pre = "mb_" + juce::String (band) + "_";
+        setP (pre + "threshold", b.thresholdDb);
+        setP (pre + "ratio",     b.ratio);
+        setP (pre + "makeup",    b.makeupDb);
+        setP (pre + "attack",    b.attackMs);
+        setP (pre + "release",   b.releaseMs);
+        setP (pre + "enabled",   1.0f);
+        setP (pre + "bypass",    0.0f);
+        setP (pre + "solo",      0.0f);
+    };
+
+    setBand ("low",    preset.low);
+    setBand ("lowmid", preset.mid);
+    setBand ("high",   preset.high);
+
+    // 3-band emulation: disable the high-mid band and collapse its width so the
+    // lowmid/high split lands on the chart's Hi-Xover. crossover_2 maxes at
+    // 5 kHz, so presets with a higher Hi-Xover leave a thin uncompressed sliver.
+    setP ("mb_highmid_enabled", 0.0f);
+    setP ("mb_crossover_1", preset.lowXoverHz);
+    const float c2 = juce::jmin (preset.hiXoverHz, 5000.0f);
+    setP ("mb_crossover_2", c2);
+    setP ("mb_crossover_3", juce::jmax (preset.hiXoverHz, c2));
+
+    setP ("auto_makeup", 0.0f);   // Choice: 0 = Off, matching the chart
+#else
+    juce::ignoreUnused (presetIndex);
+#endif
+}
 
 void MasteringView::paint (juce::Graphics& g)
 {
@@ -370,8 +438,14 @@ void MasteringView::resized()
     {
         compPanelWrapper->setBounds (compPanel);
         auto inner = compPanelWrapper->getLocalBounds().reduced (8);
-        auto header = inner.removeFromTop (20);
-        if (compHeaderBtn != nullptr) compHeaderBtn->setBounds (header);
+        auto headerRow = inner.removeFromTop (20);
+#if DUSKSTUDIO_HAS_DUSK_DSP
+        // Preset picker on the right of the header, the ON-toggle pill on the left.
+        const int presetW = juce::jlimit (0, 130, headerRow.getWidth() / 2 - 2);
+        compPresetCombo.setBounds (headerRow.removeFromRight (presetW));
+        headerRow.removeFromRight (4);
+#endif
+        if (compHeaderBtn != nullptr) compHeaderBtn->setBounds (headerRow);
         inner.removeFromTop (4);
         if (compEditor != nullptr)
             compEditor->setBounds (inner);
