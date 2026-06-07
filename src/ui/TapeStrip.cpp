@@ -1,5 +1,6 @@
 #include "TapeStrip.h"
 #include "../session/MarkerEditActions.h"
+#include "../session/ParamEditAction.h"
 #include "../session/RegionEditActions.h"
 #include "../session/SnapHelpers.h"
 #include "DuskAlerts.h"
@@ -950,7 +951,16 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
                                     if (safeThis == nullptr) return;
                                     const auto trimmed = newName.trim();
                                     if (trimmed.isEmpty()) return;
-                                    safeThis->session.renameMarker (hoveredMarkerIdx, trimmed);
+                                    auto& s   = safeThis->session;
+                                    const auto& m3 = s.getMarkers();
+                                    if (hoveredMarkerIdx < 0 || hoveredMarkerIdx >= (int) m3.size()) return;
+                                    const auto oldName = m3[(size_t) hoveredMarkerIdx].name;
+                                    if (oldName == trimmed) return;
+                                    auto& um = safeThis->engine.getUndoManager();
+                                    um.beginNewTransaction ("Rename marker");
+                                    um.perform (new ParamEditAction (
+                                        [&s, idx = hoveredMarkerIdx, trimmed] { s.renameMarker (idx, trimmed); },
+                                        [&s, idx = hoveredMarkerIdx, oldName] { s.renameMarker (idx, oldName); }));
                                     safeThis->repaint();
                                 });
                         });
@@ -1095,30 +1105,33 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
         return;
     }
 
-    // Take-history badge: rotate to the next take. No drag, no selection
-    // change beyond marking the rotated region as selected. Rotation is
-    // FIFO - front of previousTakes surfaces, current goes to the back.
-    // We keep this off the UndoManager for now: a rotation is reversible
-    // by N more clicks, and undo of a single click would be visually
-    // identical to clicking back manually.
+    // Take-history badge: rotate to the next take (FIFO — front of
+    // previousTakes surfaces, current goes to the back). Wrapped in a
+    // RegionEditAction so Cmd+Z reverts the rotation, like the Takes menu.
     if (hit.op == RegionOp::TakeBadge)
     {
-        auto& region = session.track (hit.track).regions[(size_t) hit.regionIdx];
-        if (! region.previousTakes.empty())
+        const auto& cur = session.track (hit.track).regions[(size_t) hit.regionIdx];
+        if (! cur.previousTakes.empty())
         {
-            TakeRef next = std::move (region.previousTakes.front());
-            region.previousTakes.erase (region.previousTakes.begin());
-            TakeRef current { region.file, region.sourceOffset, region.lengthInSamples };
-            region.previousTakes.push_back (std::move (current));
-            region.file            = next.file;
-            region.sourceOffset    = next.sourceOffset;
-            region.lengthInSamples = next.lengthInSamples;
+            AudioRegion before = cur;
+            AudioRegion after  = cur;
+            const TakeRef current { after.file, after.sourceOffset, after.lengthInSamples };
+            const TakeRef next = after.previousTakes.front();
+            after.previousTakes.erase (after.previousTakes.begin());
+            after.previousTakes.push_back (current);
+            after.file            = next.file;
+            after.sourceOffset    = next.sourceOffset;
+            after.lengthInSamples = next.lengthInSamples;
 
             selectedTrack  = hit.track;
             selectedRegion = hit.regionIdx;
             selectedMidiTrack  = -1;
             selectedMidiRegion = -1;
-            rebuildPlaybackIfStopped();
+
+            auto& um = engine.getUndoManager();
+            um.beginNewTransaction ("Cycle take");
+            um.perform (new RegionEditAction (session, engine,
+                                                hit.track, hit.regionIdx, before, after));
             repaint();
         }
         return;
@@ -2516,46 +2529,36 @@ void TapeStrip::showMidiRegionContextMenu (int trackIdx, int regionIdx,
                         [safeThis, trackIdx, regionIdx] (juce::String newLabel)
                         {
                             if (safeThis == nullptr) return;
-                            auto& live = safeThis->session.track (trackIdx)
-                                            .midiRegions.currentMutable();
+                            const auto& live = safeThis->session.track (trackIdx)
+                                                  .midiRegions.current();
                             if (regionIdx < 0 || regionIdx >= (int) live.size()) return;
-                            live[(size_t) regionIdx].label = std::move (newLabel);
+                            MidiRegion before = live[(size_t) regionIdx];
+                            MidiRegion after  = before;
+                            after.label = std::move (newLabel);
+                            auto& um = safeThis->engine.getUndoManager();
+                            um.beginNewTransaction ("Label MIDI region");
+                            um.perform (new MidiRegionEditAction (safeThis->session,
+                                safeThis->engine, trackIdx, regionIdx, before, after));
                             safeThis->repaint();
                         });
                 });
 
     m.addSeparator();
 
-    // Mute toggle - mutates via currentMutable() since MIDI regions
-    // don't have an undoable edit-action surface today (matches how
-    // PianoRoll handles per-note edits). The audio thread reads the
-    // same memory so toggling takes effect on the next block.
+    // Mute / lock toggles — wrapped in MidiRegionEditAction so Cmd+Z reverts.
     m.addItem (region.muted ? "Unmute region" : "Mute region",
-                [safeThis = juce::Component::SafePointer<TapeStrip> (this),
-                 trackIdx, regionIdx, currentlyMuted = region.muted]
+                [safeThis = juce::Component::SafePointer<TapeStrip> (this), trackIdx, regionIdx]
                 {
-                    if (safeThis == nullptr) return;
-                    auto& live = safeThis->session.track (trackIdx)
-                                    .midiRegions.currentMutable();
-                    if (regionIdx < 0 || regionIdx >= (int) live.size()) return;
-                    live[(size_t) regionIdx].muted = ! currentlyMuted;
-                    safeThis->repaint();
+                    if (safeThis != nullptr)
+                        safeThis->commitMidiRegionToggle (trackIdx, regionIdx, "Mute MIDI region",
+                            [] (MidiRegion& r) { r.muted = ! r.muted; });
                 });
-    // Lock toggle. MIDI regions today only have one place where
-    // lock matters (this menu - tape-strip drag isn't supported on
-    // MIDI, so there's nothing else to gate). The flag still
-    // serialises and the painter shows the lock badge so users
-    // can mark "this part is final" for visual organisation.
     m.addItem (region.locked ? "Unlock region" : "Lock region",
-                [safeThis = juce::Component::SafePointer<TapeStrip> (this),
-                 trackIdx, regionIdx, currentlyLocked = region.locked]
+                [safeThis = juce::Component::SafePointer<TapeStrip> (this), trackIdx, regionIdx]
                 {
-                    if (safeThis == nullptr) return;
-                    auto& live = safeThis->session.track (trackIdx)
-                                    .midiRegions.currentMutable();
-                    if (regionIdx < 0 || regionIdx >= (int) live.size()) return;
-                    live[(size_t) regionIdx].locked = ! currentlyLocked;
-                    safeThis->repaint();
+                    if (safeThis != nullptr)
+                        safeThis->commitMidiRegionToggle (trackIdx, regionIdx, "Lock MIDI region",
+                            [] (MidiRegion& r) { r.locked = ! r.locked; });
                 });
 
     m.addSeparator();
@@ -2656,11 +2659,8 @@ void TapeStrip::showMidiRegionContextMenu (int trackIdx, int regionIdx,
                 || chosen >= 5000 + (int) (sizeof (kPalette) / sizeof (kPalette[0])))
                 return;
             const juce::Colour newColour { kPalette[chosen - 5000].argb };
-            auto& live = safeThis->session.track (trackIdx)
-                            .midiRegions.currentMutable();
-            if (regionIdx < 0 || regionIdx >= (int) live.size()) return;
-            live[(size_t) regionIdx].customColour = newColour;
-            safeThis->repaint();
+            safeThis->commitMidiRegionToggle (trackIdx, regionIdx, "Color MIDI region",
+                [newColour] (MidiRegion& r) { r.customColour = newColour; });
         });
 }
 
@@ -3646,6 +3646,21 @@ int TapeStrip::hitTestTempoPoint (int x, int y) const noexcept
         if (onHandle (pts[(size_t) i].timelineSamples))
             return i;
     return -1;
+}
+
+void TapeStrip::commitMidiRegionToggle (int trackIdx, int regionIdx,
+                                         const juce::String& name,
+                                         std::function<void (MidiRegion&)> mutate)
+{
+    const auto& live = session.track (trackIdx).midiRegions.current();
+    if (regionIdx < 0 || regionIdx >= (int) live.size()) return;
+    MidiRegion before = live[(size_t) regionIdx];
+    MidiRegion after  = before;
+    mutate (after);
+    auto& um = engine.getUndoManager();
+    um.beginNewTransaction (name);
+    um.perform (new MidiRegionEditAction (session, engine, trackIdx, regionIdx, before, after));
+    repaint();
 }
 
 void TapeStrip::commitTempoPoints (std::vector<duskstudio::TempoPoint> after,

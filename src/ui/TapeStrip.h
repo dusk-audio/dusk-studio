@@ -183,13 +183,15 @@ private:
     BracketHit hitTestBracket (int x, int y) const noexcept;
     void rebuildPlaybackIfStopped();
     void showRegionContextMenu (const RegionHit&, juce::Point<int> screenPos);
-    // Smaller than audio version — just Rename + Color. Mutates via
-    // midiRegions.currentMutable (MIDI doesn't have an undoable edit
-    // action surface yet).
+    // Smaller than audio version — Rename + Color + mute/lock, all routed
+    // through MidiRegionEditAction for undo.
     void showMidiRegionContextMenu (int trackIdx, int regionIdx,
                                        juce::Point<int> screenPos);
 
-    // Grid-mode tempo-point editing (ruler tick band): add on empty-band
+    // Undoable MIDI-region mute/lock toggle from the tape-strip menu.
+    void commitMidiRegionToggle (int trackIdx, int regionIdx, const juce::String& name,
+                                  std::function<void (duskstudio::MidiRegion&)> mutate);
+
     // Tempo edits, all driven from the ruler's right-click menu. Every edit
     // routes through commitTempoPoints so it's a single undoable transaction.
     void commitTempoPoints (std::vector<duskstudio::TempoPoint> after,
