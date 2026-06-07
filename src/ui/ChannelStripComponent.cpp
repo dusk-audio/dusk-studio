@@ -4954,18 +4954,6 @@ void ChannelStripComponent::resized()
         faderArea.removeFromRight (kMeterGap);
     }
 
-    // Position the 4 bus buttons vertically centred within busColumn.
-    {
-        const int totalButtonsH = ChannelStripParams::kNumBuses * kBusButtonH
-                                + (ChannelStripParams::kNumBuses - 1) * kBusButtonGap;
-        int y = busColumn.getY() + (busColumn.getHeight() - totalButtonsH) / 2;
-        for (int i = 0; i < ChannelStripParams::kNumBuses; ++i)
-        {
-            busButtons[(size_t) i]->setBounds (busColumn.getX(), y, kBusColumnW, kBusButtonH);
-            y += kBusButtonH + kBusButtonGap;
-        }
-    }
-
     // Peak readout beneath the meter column. GR readout retired - the GR bar
     // inside the COMP section is the canonical readout now.
     grPeakLabel  .setVisible (false);
@@ -5054,6 +5042,23 @@ void ChannelStripComponent::resized()
                                       kFaderValueH);
     }
     faderSlider.setBounds (sliderBounds);
+
+    // Bus buttons (1-4): stack upward from the fader's "off" tick so the
+    // bottom of #4 lines up with the "off" scale label. faderYForDb gives
+    // the exact tick Y for both the normal and threshold fader layouts;
+    // anchoring to the meter column would miss it on strips that reserve
+    // peak-label space below the meter.
+    {
+        const int totalButtonsH = ChannelStripParams::kNumBuses * kBusButtonH
+                                + (ChannelStripParams::kNumBuses - 1) * kBusButtonGap;
+        const int offY = (int) std::lround (duskstudio::faderYForDb (faderSlider, -90.0f));
+        int y = offY - totalButtonsH;
+        for (int i = 0; i < ChannelStripParams::kNumBuses; ++i)
+        {
+            busButtons[(size_t) i]->setBounds (busColumn.getX(), y, kBusColumnW, kBusButtonH);
+            y += kBusButtonH + kBusButtonGap;
+        }
+    }
 
     // Track 3 (experimental): place the hoisted CompMeterStrip in its
     // fader-column slot. Vertically constrained to the trimmed meter
