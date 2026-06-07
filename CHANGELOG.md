@@ -10,12 +10,67 @@ canonical source.
 Built to a production-grade bar; shipped as a Beta. (In progress — dated at
 tag time.) 1.0.0 is reserved for the public stable declaration.
 
+### Added
+
+- **Multi-output routing (Tascam-style cue/monitor sends).** The audio device
+  can open more than two outputs (Audio settings). Each AUX return lane can be
+  routed to its own physical output pair for an independent headphone / cue mix,
+  fed by the existing per-channel pre-fader sends; the tap is taken before the
+  return fader and mute, so those still govern only the fold into the master.
+- **Selectable main output pair.** The master mix can be sent to any open output
+  pair (Audio settings → Main output), freeing 1-2 for a control-room or cue
+  feed. An aux routed to the master's pair sums in.
+- **DP-24-style multiband compressor presets.** Nine genre starting points
+  (Basic CD, Pop, Pop Rock 1/2, Rock 1/2, Classic, Dance, R&B Hip Hop) in the
+  mastering comp header, mapping the three-band chart onto the multiband comp
+  with the high-mid band disabled.
+- **Piecewise tempo map (Grid edit mode).** Songs can change tempo over time:
+  add / drag tempo points on the bar ruler in Grid mode; the bar ruler, grid
+  snap, region-editor ruler, BPM control, piano roll, MIDI scheduler and
+  metronome all follow the map.
+- **Limiter Mode + Stereo-link.** Mastering limiter gains a Mode selector
+  (Modern / Transparent / Punchy) shaping hold + release, and a Stereo-link
+  toggle (linked GR vs per-channel).
+- **Punch pre-roll / post-roll enable toggles** — arm playback before the
+  in-point and auto-stop after the out-point.
+- **Open a session from the command line / file manager.** Positional session
+  path on launch and a running-instance hand-off, with the `.desktop` MIME
+  association restored.
+- **Portable Linux tarball + installer** replacing the AppImage: a
+  run-in-place program directory plus an `install.sh` that registers the
+  launcher / icon / MIME (the Reaper model).
+- **Raspberry Pi (arm64) build-check CI.**
+
 ### Changed
 
 - **Mastering limiter rebuilt as a true-peak brickwall limiter.** 4×
   oversampled lookahead limiting with a hard inter-sample-peak ceiling,
   monotonic-min gain envelope, and hold + smooth release — replaces the
   previous sample-peak design that pumped like a compressor.
+- **Limiter "Threshold" control now makes sense.** Pulling the handle down
+  drives more signal into the ceiling (louder, denser) instead of only
+  attenuating.
+- **Mastering layout rebalanced.** The starved limiter panel gets more width,
+  the loudness readouts (TP / M / S / I) group into one cluster, and Export
+  master moves up to the header beside Load latest mixdown.
+- **Tape-strip track-label column auto-sizes** to the longest track name
+  instead of clipping at a fixed width.
+- Release CI (Linux / macOS / Windows) gates publishing on the test suite;
+  version metadata corrected (24-channel, 0.11.0).
+
+### Fixed
+
+- **Mastering comp display.** Gain-reduction meters are now live during
+  playback, and applying a preset refreshes the band knobs / crossovers (the
+  embedded panel previously only synced on a manual band-click).
+- **Audio settings layout** no longer overlaps the Main-output row with the
+  sample-rate / buffer controls when many outputs are enabled.
+- **Packaging scripts hardened**: gated the destructive `rm -rf` install dir,
+  empty-VERSION and missing-source guards, and a special-character-safe rewrite
+  of the desktop `Exec=` line.
+- **Tempo-map real-time safety**: append-only snapshot pool (no cross-thread
+  race) and the bar-1 anchor is protected from deletion.
+- **File import** retries transient file-lock opens (Windows).
 
 ## [0.10.0-beta.1] - 2026-05-29 — first beta
 
