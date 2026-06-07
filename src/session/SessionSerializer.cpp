@@ -1022,6 +1022,7 @@ juce::String SessionSerializer::serialize (const Session& s)
         obj->setProperty ("colour", colourToHex (lane.colour));
         obj->setProperty ("return_level_db", lane.params.returnLevelDb.load());
         obj->setProperty ("mute",            lane.params.mute.load());
+        obj->setProperty ("output_pair",     lane.params.outputPair.load());
         // Per-slot plugin state. Empty strings serialise as empty - same
         // pattern as Track.
         juce::Array<juce::var> slots;
@@ -1376,6 +1377,8 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                 lane.params.returnLevelDb.store ((float) (double) v["return_level_db"]);
             if (v.hasProperty ("mute"))
                 lane.params.mute.store ((bool) v["mute"]);
+            if (v.hasProperty ("output_pair"))
+                lane.params.outputPair.store ((int) v["output_pair"]);
             if (auto slots = v["plugin_slots"]; slots.isArray())
             {
                 const int sn = juce::jmin (AuxLaneParams::kMaxLanePlugins, slots.size());

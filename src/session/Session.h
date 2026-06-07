@@ -803,6 +803,13 @@ struct AuxLaneParams
     std::atomic<float> returnLevelDb { 0.0f };
     std::atomic<bool>  mute           { false };
 
+    // Physical output routing for a cue / headphone mix. Encoded L*1000+R+1
+    // (see dsp/OutputPairRouting.h); -1 = master-only (no hardware tap). The
+    // tap is taken pre-return-fader/mute, so the hardware pair carries the full
+    // processed aux mix while returnLevelDb / mute govern only the fold back
+    // into the master bus.
+    std::atomic<int> outputPair { -1 };
+
     // Audio reads THESE (not raw values) so Off/Read/Write/Touch
     // hand-off lives in the engine; AuxLaneStrip stays lane-agnostic.
     mutable std::atomic<float> liveReturnLevelDb { 0.0f };
