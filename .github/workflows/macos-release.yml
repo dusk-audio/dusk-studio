@@ -121,7 +121,7 @@ jobs:
         # NOT actions/upload-artifact: on a public repo those are
         # world-downloadable, which would give the paid build away. Push
         # to the private releases repo (shares the tag's release with the
-        # Windows MSI + Linux AppImage; distinct asset names coexist).
+        # Windows MSI + Linux tarball; distinct asset names coexist).
         if: ${{ github.ref_type == 'tag' }}
         env:
           GH_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}

@@ -2,7 +2,7 @@
 
 Dusk Studio targets Linux as its primary platform. ALSA is the default audio backend; PipeWire's JACK shim works too. JUCE 8 / C++17, no exotic toolchains.
 
-This document is aimed at a developer with a Linux machine who has been handed the source tree and wants to compile and run it. Patreon supporters who just want a precompiled AppImage should grab one from the Patreon post instead.
+This document is aimed at a developer with a Linux machine who has been handed the source tree and wants to compile and run it. Patreon supporters who just want a precompiled binary should grab one from the Patreon post instead.
 
 ## Prerequisites (one-time install)
 
@@ -155,9 +155,9 @@ DUSKSTUDIO_USE_OOP_PLUGINS=1 ./build-linux/DuskStudio_artefacts/Release/DuskStud
 
 Routes new plugin loads through the `dusk-studio-plugin-host` child process so a misbehaving plugin can't take down the host. Currently Linux-only via `memfd_create` + `futex`. macOS (Mach ports) and Windows (named pipes) ports land in 1.0.
 
-## Packaging an AppImage
+## Packaging the Linux tarball
 
-See [packaging/README.md](packaging/README.md). Requires `linuxdeploy` and a 256×256 PNG icon at `packaging/DuskStudio.png` (not committed — provide your own).
+See [packaging/README.md](packaging/README.md). Run `scripts/package-tarball.sh` after a Release build in `build-linux/`; it emits `dusk-studio-<version>-Linux-<arch>.tar.xz` (a portable program dir + `install.sh`). Requires ImageMagick and `assets/ds-icon.png`.
 
 ## Known caveats on Linux
 

@@ -21,7 +21,7 @@ GPL source on this repo — build from source and the binary costs you nothing b
 | Tier | Price | What you get |
 |---|---|---|
 | **Source** | Free | Clone, build, audit. GPL-3.0. No support tier. |
-| **Patreon Supporter** | from $3 / month | Latest release binaries (Linux AppImage + Windows MSI + macOS DMG, all unsigned) delivered as attachments on each release post. Name in plugin credits. Lapse keeps whatever build you've already downloaded. |
+| **Patreon Supporter** | from $3 / month | Latest release binaries (Linux tarball + Windows MSI + macOS DMG, all unsigned) delivered as attachments on each release post. Name in plugin credits. Lapse keeps whatever build you've already downloaded. |
 | **Patreon Patron** | $5 / month | Everything above + early-access beta builds 1–2 weeks ahead of public. |
 | **Patreon Champion** | $10 / month | Everything above + DM support + roadmap-feature votes. |
 | **One-time licence** | **$27** | Current major version (1.x.x). Every 1.x minor + patch update included. 2.0 requires a new purchase (or the lifetime upgrade). |
@@ -31,11 +31,11 @@ GPL source on this repo — build from source and the binary costs you nothing b
 
 Paid via [Patreon](https://www.patreon.com/cw/DuskAudio) (recurring) or [GitHub Sponsors](https://github.com/sponsors/marc-korte) (one-time, $27 + $49 amounts). Buyer gets invited to the private releases repo where every build lands.
 
-**First-time launch:** binaries are unsigned by design (no Apple Developer ID, no Windows Authenticode — neither is planned). macOS Gatekeeper + Windows SmartScreen will warn on first launch — see [MANUAL.md § Installing Dusk Studio](MANUAL.md#installing-dusk-studio) for the 30-second bypass per OS. Linux AppImages need no bypass.
+**First-time launch:** binaries are unsigned by design (no Apple Developer ID, no Windows Authenticode — neither is planned). macOS Gatekeeper + Windows SmartScreen will warn on first launch — see [MANUAL.md § Installing Dusk Studio](MANUAL.md#installing-dusk-studio) for the 30-second bypass per OS. The Linux tarball needs no bypass.
 
 ## Status
 
-**v0.11.0 (Beta).** Built to a production bar; released as Beta. Feature backlog effectively closed: every spec phase, Tascam DP-24SD parity, MTC + MIDI Clock sync, cross-platform OOP plugin host (audio on all three OSes; editor embedded on Linux + Windows, in-process shell on macOS), a true-peak mastering limiter, a piecewise tempo map (changing tempo within a song), session open-with, and the rename to Dusk Studio have shipped. All three OSes ship unsigned binaries (Linux AppImage + Windows MSI + macOS DMG) to the private releases repo on each tag. Remaining work toward the public 1.0 is release-engineering polish and deeper accessibility.
+**v0.11.0 (Beta).** Built to a production bar; released as Beta. Feature backlog effectively closed: every spec phase, Tascam DP-24SD parity, MTC + MIDI Clock sync, cross-platform OOP plugin host (audio on all three OSes; editor embedded on Linux + Windows, in-process shell on macOS), a true-peak mastering limiter, a piecewise tempo map (changing tempo within a song), session open-with, and the rename to Dusk Studio have shipped. All three OSes ship unsigned binaries (Linux tarball + Windows MSI + macOS DMG) to the private releases repo on each tag. Remaining work toward the public 1.0 is release-engineering polish and deeper accessibility.
 
 | Stage | Status |
 |---|---|
@@ -61,7 +61,7 @@ Paid via [Patreon](https://www.patreon.com/cw/DuskAudio) (recurring) or [GitHub 
 | Multi-file audio + MIDI import with target-track picker | Working |
 | Cross-process NSView embed (macOS editor) | Research |
 | Windows MSI installer (unsigned) | Working (CI publishes to private releases repo on tag) |
-| Linux AppImage | Working (CI publishes to private releases repo on tag) |
+| Linux tarball | Working (CI publishes to private releases repo on tag) |
 | macOS DMG (unsigned, ad-hoc) | Working (CI publishes to private releases repo on tag) |
 | Deeper a11y (full screen-reader labels + keyboard-only mixer nav) | Floor only |
 
@@ -116,26 +116,26 @@ src/
   ui/          # MainComponent, ConsoleView, channel/aux/master strips, mastering view
   util/        # CrashHandler (FileLogger + signal-handler reports)
 tests/         # 150 Catch2 unit tests (session, recording, MIDI, IPC, DSP)
-packaging/     # .desktop, AppStream, MIME, macOS bundle — for AppImage + DMG builds
+packaging/     # .desktop, AppStream, MIME, macOS bundle — for tarball + DMG builds
 DuskStudio.md  # authoritative product spec
 MANUAL.md      # end-user manual (Pandoc-buildable to PDF via packaging/build-pdf.sh)
 ```
 
 ## Builds & contributing
 
-Precompiled (unsigned) binaries delivered via Patreon — Linux AppImage + Windows MSI + macOS DMG, all published to the private releases repo on each tag. Self-build is fully supported and equivalent at the source level — no support tier for self-builders.
+Precompiled (unsigned) binaries delivered via Patreon — Linux tarball + Windows MSI + macOS DMG, all published to the private releases repo on each tag. Self-build is fully supported and equivalent at the source level — no support tier for self-builders.
 
 | Platform | Doc |
 |----------|-----|
 | Linux | [BUILDING-LINUX.md](BUILDING-LINUX.md) |
 | Windows | [BUILDING-WINDOWS.md](BUILDING-WINDOWS.md) |
 | macOS | Mirror of Linux flow; upstream JUCE 8.0.4 + sibling `plugins-main`. Smoke-built per push on `macos-14` (Apple Silicon Sonoma) — see [.github/workflows/macos-build.yml](.github/workflows/macos-build.yml). |
-| AppImage packaging (Linux) | [packaging/README.md](packaging/README.md) |
+| Linux tarball packaging | [packaging/README.md](packaging/README.md) |
 | End-user manual / troubleshooting | [MANUAL.md](MANUAL.md) |
 
 After a build, sanity check with `Dusk Studio --version` — prints app + JUCE + platform string and exits 0. Useful as a paste-target for Patreon support DMs.
 
-CI runs on every push to `main` against Linux (Ubuntu 22.04 GCC), macOS (14 Apple Silicon, Ninja + ccache), and Windows (Server 2022 MSVC). Windows tests (`windows-tests.yml`) exercise the Catch2 suite on every PR. Linux ThreadSanitizer (`linux-sanitizer.yml`) runs the Catch2 suite under TSan on every PR + push. Tagged releases (`v*`) trigger the Windows MSI, macOS DMG, and Linux AppImage workflows — each builds an unsigned binary and publishes it to the private releases repo (one shared release per tag, distinct asset names).
+CI runs on every push to `main` against Linux (Ubuntu 22.04 GCC), macOS (14 Apple Silicon, Ninja + ccache), and Windows (Server 2022 MSVC). Windows tests (`windows-tests.yml`) exercise the Catch2 suite on every PR. Linux ThreadSanitizer (`linux-sanitizer.yml`) runs the Catch2 suite under TSan on every PR + push. Tagged releases (`v*`) trigger the Windows MSI, macOS DMG, and Linux tarball workflows — each builds an unsigned binary and publishes it to the private releases repo (one shared release per tag, distinct asset names).
 
 ## License
 
@@ -146,7 +146,7 @@ Dusk Studio ships under a **dual access model**:
 
 - **Source**: GPL-3.0. Clone, audit, build, modify, redistribute — all
   fine under GPL terms.
-- **Patreon binaries**: precompiled, unsigned Linux AppImages + Windows
+- **Patreon binaries**: precompiled, unsigned Linux tarballs + Windows
   MSIs + macOS DMGs delivered to supporters. The payment is for
   packaging + support access — the source remains open. Self-builders
   get no support, but the code is the same.

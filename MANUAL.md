@@ -328,19 +328,27 @@ The binaries shipped via Patreon and GitHub Sponsors are **unsigned by design** 
 
 The source on GitHub is GPL-3.0; anyone who prefers to skip the warning can build from source.
 
-### Linux (AppImage)
+### Linux (tarball)
 
-1. Download `dusk-studio-<version>-Linux-x86_64.AppImage` from the Patreon post or the private releases repo.
-2. Open a terminal in the download folder and mark it executable:
+1. Download `dusk-studio-<version>-Linux-<arch>.tar.xz` from the Patreon post or the private releases repo.
+2. Extract it in the download folder:
    ```bash
-   chmod +x dusk-studio-*-Linux-x86_64.AppImage
+   tar xf dusk-studio-*-Linux-*.tar.xz
    ```
-3. Double-click to launch, or run it from the terminal:
+   This unpacks a `dusk-studio-<version>-Linux-<arch>/` directory holding a portable `DuskStudio/` program folder plus `install.sh`.
+3. Run it in place — no install required:
    ```bash
-   ./dusk-studio-*-Linux-x86_64.AppImage
+   cd dusk-studio-*-Linux-*
+   ./DuskStudio/DuskStudio
    ```
+4. Or install it for a menu entry, a `DuskStudio` launcher on your `PATH`, and the `session.json` file association:
+   ```bash
+   ./install.sh                # user install to ~/.local (no root)
+   sudo ./install.sh --system  # system-wide to /opt + /usr/local
+   ```
+   Remove a previous install with `./install.sh --uninstall` (add `sudo` for a system install).
 
-No signing dance. Linux desktops trust AppImages by default.
+No signing dance. Linux desktops run the binary directly.
 
 ### macOS (DMG / .app)
 
