@@ -842,6 +842,11 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
     {
         const double sr = engine.getCurrentSampleRate();
         const int hit = hitTestTempoPoint (e.x, e.y);
+        if (hit == kTempoBaseHandle)   // bar-1 base handle (no map yet)
+        {
+            editBaseTempo();
+            return;
+        }
         if (e.mods.isRightButtonDown())
         {
             if (hit >= 0)
@@ -3804,6 +3809,9 @@ int TapeStrip::hitTestTempoPoint (int x, int y) const noexcept
     if (y >= ruler.getY() + kRulerTickBandH) return -1;
 
     const auto& pts = session.tempoMap.points();
+    // No map yet: the only handle is the bar-1 base (the starting tempo).
+    if (pts.empty())
+        return (std::abs (x - xForSample (0)) <= 6) ? kTempoBaseHandle : -1;
     // Back-to-front so a later (rightmost) point wins on overlap.
     for (int i = (int) pts.size() - 1; i >= 0; --i)
         if (std::abs (x - xForSample (pts[(size_t) i].timelineSamples)) <= 6)
@@ -3844,6 +3852,26 @@ void TapeStrip::editTempoPointBpm (juce::int64 atSample)
             for (auto& p : vec)
                 if (p.timelineSamples == atSample) p.bpm = b;
             safeThis->engine.setTempoPoints (std::move (vec));
+            safeThis->repaint();
+        });
+}
+
+void TapeStrip::editBaseTempo()
+{
+    // Starting tempo when no map exists yet. Goes through applyTempoChange so
+    // tempo-locked MIDI / automation retime exactly as the (now read-only)
+    // transport BPM field used to do.
+    auto* host = getTopLevelComponent();
+    if (host == nullptr) host = this;
+    showEmbeddedTextInput (*host, "Tempo", "Starting BPM (30-300):",
+        juce::String ((int) std::round (session.tempoBpm.load (std::memory_order_relaxed))), "Set",
+        [safeThis = juce::Component::SafePointer<TapeStrip> (this)] (juce::String s)
+        {
+            if (safeThis == nullptr) return;
+            const float b = juce::jlimit (30.0f, 300.0f, s.getFloatValue());
+            if (b <= 0.0f) return;
+            applyTempoChange (safeThis->session, b,
+                               safeThis->engine.getCurrentSampleRate());
             safeThis->repaint();
         });
 }
@@ -3892,32 +3920,39 @@ void TapeStrip::showTempoPointMenu (int index, juce::Point<int> screenPos)
 
 void TapeStrip::paintTempoPoints (juce::Graphics& g)
 {
-    if (session.tempoMap.empty()) return;
-
     auto ruler = rulerBounds();
     auto col   = tracksColumnBounds();
     const int yTop = ruler.getY();
     const auto amber = juce::Colour (0xffd0a050);
-
     g.setFont (juce::Font (juce::FontOptions (9.0f, juce::Font::bold)));
-    for (const auto& p : session.tempoMap.points())
-    {
-        const int x = xForSample (p.timelineSamples);
-        if (x < col.getX() - 8 || x > col.getRight()) continue;
 
+    const auto drawHandle = [&] (juce::int64 sample, float bpm, bool dim)
+    {
+        const int x = xForSample (sample);
+        if (x < col.getX() - 8 || x > col.getRight()) return;
         juce::Path tri;
         tri.addTriangle ((float) x - 3.5f, (float) yTop,
                           (float) x + 3.5f, (float) yTop,
                           (float) x,        (float) yTop + 7.0f);
-        g.setColour (amber);
+        g.setColour (dim ? amber.withAlpha (0.55f) : amber);
         g.fillPath (tri);
 
-        const juce::String label ((int) std::round (p.bpm));
+        const juce::String label ((int) std::round (bpm));
         const int labelW = g.getCurrentFont().getStringWidth (label) + 2;
         if (x + 5 + labelW <= col.getRight())
             g.drawText (label, x + 5, yTop, labelW, kRulerTickBandH - 1,
                          juce::Justification::centredLeft, false);
+    };
+
+    if (session.tempoMap.empty())
+    {
+        // No changes yet: show the bar-1 base handle (dimmed) so the starting
+        // tempo stays editable here — the transport BPM field is read-only.
+        drawHandle (0, session.tempoBpm.load (std::memory_order_relaxed), /*dim*/ true);
+        return;
     }
+    for (const auto& p : session.tempoMap.points())
+        drawHandle (p.timelineSamples, p.bpm, /*dim*/ false);
 }
 
 bool TapeStrip::copySelectedRegion()

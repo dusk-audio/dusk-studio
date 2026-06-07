@@ -164,8 +164,8 @@ This chapter is a visual reference. Every numbered callout on the figures below 
 | 8   | Virtual keyboard | Opens the on-screen MIDI keyboard overlay.                                       |
 | 9   | Metronome        | Click on / off. Right-click for the click settings.                              |
 | 10  | C/I              | Count-in toggle. One bar of click before record starts.                          |
-| 11  | BPM              | Click to type a tempo; drag to nudge.                                            |
-| 12  | TAP              | Tap repeatedly to set the tempo from your wrist.                                 |
+| 11  | BPM              | Tempo at the playhead (read-only display). Set the tempo in the tape strip's Grid mode; **TAP** sets the starting tempo. |
+| 12  | TAP              | Tap repeatedly to set the **starting** tempo from your wrist.                    |
 | 13  | Time signature   | Click to choose. Custom signatures supported.                                    |
 | 14  | Clock display    | Bars.Beats.Ticks or mm:ss.mmm; right-click to flip.                              |
 | 15  | Tuner            | Opens the chromatic tuner against the selected input.                            |
@@ -1151,7 +1151,7 @@ The top is a row of icon buttons:
 - **Properties** (file path, sample rate, channel count, length).
 - **Zoom out / Zoom in / Zoom fit** (also **−**, **+**, **0**).
 
-The edit-mode toolbar follows: **Grab**, **Range**, **Cut**, **Grid**, **Draw**. Most editing uses Grab. Range lets you highlight a time band for split or fade-fit. Cut splits the region at every click. **Grid** edits the tempo map: in the timeline ruler, click an empty spot to add a tempo change (then type its BPM), drag a tempo point to move it in time, or right-click one to set its BPM or delete it. The bar grid re-flows to follow, and **MIDI playback and the metronome track the tempo changes** too. The first point you add seeds a tempo at bar 1 from the session tempo, so the bars before your change keep the original tempo. (Audio regions are never time-stretched — only MIDI follows the tempo map.) Draw is reserved for later phases.
+The edit-mode toolbar follows: **Grab**, **Range**, **Cut**, **Grid**, **Draw**. Most editing uses Grab. Range lets you highlight a time band for split or fade-fit. Cut splits the region at every click. **Grid** edits the tempo map — this is the only place tempo is set (the transport BPM field is a read-only playhead readout). In the timeline ruler: click the dimmed **bar-1 handle** to set the song's starting tempo (it's always there, even before you add any changes); click an empty spot to add a tempo change (then type its BPM); drag a tempo point to move it in time; or right-click one to set its BPM or delete it. The bar grid re-flows to follow, and **MIDI playback and the metronome track the tempo changes** too. The first change you add seeds a point at bar 1 from the starting tempo, so the bars before it keep that tempo. (Audio regions are never time-stretched — only MIDI follows the tempo map.) Draw is reserved for later phases.
 
 The **Snap** toggle and snap-denomination dropdown are at the right of the toolbar.
 

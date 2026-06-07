@@ -546,16 +546,13 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
                                                       14.0f, juce::Font::bold)));
     bpmValue.setText (juce::String ((int) engine.getSession().tempoBpm.load()),
                        juce::dontSendNotification);
-    bpmValue.setEditable (false, true);  // double-click to edit; Enter commits
-    bpmValue.setTooltip ("Tempo in beats per minute. Double-click to edit. "
-                          "Drives the metronome click and the snap-to-beat grid.");
-    bpmValue.onTextChange = [this]
-    {
-        const auto raw = bpmValue.getText().getFloatValue();
-        const float clamped = juce::jlimit (30.0f, 300.0f, raw);
-        const float oldBpm = engine.getSession().tempoBpm.load (std::memory_order_relaxed);
-        confirmAndApplyBpm (clamped, oldBpm);
-    };
+    // Read-only: it shows the tempo at the playhead (following the tempo map).
+    // All tempo editing lives in the tape strip's Grid mode — the bar-1 point
+    // is the starting tempo. (Tap, below, still sets the starting tempo.)
+    bpmValue.setEditable (false, false);
+    bpmValue.setTooltip ("Tempo at the playhead (beats per minute). Edit the "
+                          "tempo in the tape strip's Grid mode; tap below to set "
+                          "the starting tempo.");
     addAndMakeVisible (bpmValue);
 
     tapButton.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff202024));
@@ -663,10 +660,11 @@ void TransportBar::timerCallback()
     }
 
     const auto playhead = engine.getTransport().getPlayhead();
-    const double seconds = (sr > 0.0) ? (double) playhead / sr : 0.0;
-    const int mins   = (int) (seconds / 60.0);
-    const int secs   = (int) seconds % 60;
-    const int millis = (int) ((seconds - std::floor (seconds)) * 1000.0);
+
+    // BPM field tracks the tempo at the playhead (constant when no map).
+    bpmValue.setText (juce::String ((int) std::round (engine.getSession().bpmAt (playhead))),
+                       juce::dontSendNotification);
+
     // Skip the periodic refresh while the user is mid-edit so we don't
     // stomp their typed input. Same pattern the BPM editor uses below.
     // When MIDI learn is pending, the clock label dims and shows a

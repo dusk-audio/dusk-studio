@@ -167,6 +167,9 @@ private:
     // Tested only inside the ruler band.
     int hitTestMarker (int x, int y) const noexcept;
     // Tested only inside the ruler tick band (top), where tempo points live.
+    // hitTestTempoPoint returns this for the bar-1 base handle shown when no
+    // tempo map exists yet (lets the user set the starting tempo here).
+    static constexpr int kTempoBaseHandle = -2;
     int hitTestTempoPoint (int x, int y) const noexcept;
 
     // Pills reposition that endpoint; bar drags translate the whole
@@ -191,6 +194,9 @@ private:
     // session.tempoMap then repaints.
     void addTempoPointAt (juce::int64 sample);
     void editTempoPointBpm (juce::int64 atSample);
+    // Edit the song's starting tempo when no tempo map exists yet (the bar-1
+    // base handle). hitTestTempoPoint returns kTempoBaseHandle for it.
+    void editBaseTempo();
     void deleteTempoPoint (juce::int64 atSample);
     void showTempoPointMenu (int index, juce::Point<int> screenPos);
     void paintTempoPoints (juce::Graphics&);
