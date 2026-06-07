@@ -896,7 +896,12 @@ void AuxLaneComponent::rebuildSlots()
             if (ui.hwInsertEditor != nullptr) detachHardwareInsertForSlot (i);
 
             auto* instance = strip.getPluginSlot (i).getInstance();
-            if (instance != nullptr && ui.editor == nullptr)
+            // Only build the editor once this lane is actually on a realised,
+            // visible peer. Creating it while hidden (all 4 lanes are built up
+            // front; AuxView shows one) maps the plugin's X11 editor window to
+            // the root window — a stray top-level flash until it reparents.
+            // visibilityChanged() re-runs rebuildSlots when the lane is shown.
+            if (instance != nullptr && ui.editor == nullptr && isShowing())
             {
                 if (instance->hasEditor())
                 {
@@ -917,6 +922,31 @@ void AuxLaneComponent::rebuildSlots()
         }
     }
     resized();
+}
+
+void AuxLaneComponent::visibilityChanged()
+{
+    // Lazily build the plugin editor only while this lane is the visible one
+    // (avoids the root-window flash from creating it hidden). When hidden,
+    // drop the editor so an inactive lane doesn't keep an X11 plugin window
+    // parented off-screen — it rebuilds on the next show.
+    if (isShowing())
+        rebuildSlots();
+    else
+        for (int i = 0; i < AuxLaneParams::kMaxLanePlugins; ++i)
+            detachEditorForSlot (i);
+}
+
+void AuxLaneComponent::parentHierarchyChanged()
+{
+    // Catches the lane being added to (or removed from) a realised, on-screen
+    // window — visibilityChanged alone doesn't fire on the initial desktop
+    // attach. Same build-when-showing / tear-down-when-hidden policy.
+    if (isShowing())
+        rebuildSlots();
+    else
+        for (int i = 0; i < AuxLaneParams::kMaxLanePlugins; ++i)
+            detachEditorForSlot (i);
 }
 
 void AuxLaneComponent::paint (juce::Graphics& g)

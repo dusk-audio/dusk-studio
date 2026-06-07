@@ -31,6 +31,8 @@ public:
     void resized() override;
     void childBoundsChanged (juce::Component* child) override;
     void mouseDown (const juce::MouseEvent&) override;
+    void visibilityChanged() override;
+    void parentHierarchyChanged() override;
 
     static constexpr int kStripWidth      = 150;
     static constexpr int kSendPanelWidth  = 280;
