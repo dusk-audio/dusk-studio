@@ -8,6 +8,7 @@
 #include "BounceDialog.h"
 #include "PluginScanModal.h"
 #include "ShortcutsPanel.h"
+#include "EditModeToolbar.h"
 #include "DuskContextMenu.h"
 #include "../session/MidiBindings.h"
 #include "ConsoleView.h"
@@ -332,13 +333,10 @@ MainComponent::MainComponent()
     transportBar->onVirtualKeyboardToggle = [this] { toggleVirtualKeyboard(); };
     transportBar->onTapeStripToggle = [this] (bool expanded)
     {
-        tapeStripExpanded = expanded;
-        if (tapeStrip != nullptr) tapeStrip->setVisible (expanded);
         // Collapse each track strip's EQ + COMP into popup buttons while the
         // TIMELINE view is up - without this the fader and bus assigns get
         // pushed off the bottom of the strip and become unusable.
-        if (consoleView != nullptr) consoleView->setStripsCompactMode (expanded);
-        resized();
+        setTimelineVisible (expanded);
     };
     addAndMakeVisible (transportBar.get());
 
@@ -375,20 +373,12 @@ MainComponent::MainComponent()
         b.setColour (juce::TextButton::textColourOnId,   juce::Colours::white);
         b.setMouseClickGrabsKeyboardFocus (false);
     };
-    styleHdrPill (hdrSnapToggle);
     styleHdrPill (hdrZoomOutBtn);
     styleHdrPill (hdrZoomInBtn);
     styleHdrPill (hdrZoomFitBtn);
-    hdrSnapToggle.setClickingTogglesState (true);
-    hdrSnapToggle.setToggleState (session.snapToGrid, juce::dontSendNotification);
-    hdrSnapToggle.setTooltip ("Snap region drags to the grid.");
     hdrZoomOutBtn.setTooltip ("Zoom out (-)");
     hdrZoomInBtn .setTooltip ("Zoom in (=)");
     hdrZoomFitBtn.setTooltip ("Zoom to fit (Cmd+0)");
-    hdrSnapToggle.onClick = [this]
-    {
-        session.snapToGrid = hdrSnapToggle.getToggleState();
-    };
     hdrZoomOutBtn.onClick = [this]
     {
         if (tapeStrip != nullptr) tapeStrip->zoomByFactor (1.0f / 1.25f);
@@ -401,10 +391,18 @@ MainComponent::MainComponent()
     {
         if (tapeStrip != nullptr) tapeStrip->zoomFit();
     };
-    addAndMakeVisible (hdrSnapToggle);
     addAndMakeVisible (hdrZoomOutBtn);
     addAndMakeVisible (hdrZoomInBtn);
     addAndMakeVisible (hdrZoomFitBtn);
+
+    // Edit-tools strip above the timeline. Owns Snap (so the header no longer
+    // carries a duplicate). Draw is omitted — it's a no-op on the tape strip.
+    editTools = std::make_unique<EditModeToolbar> (engine);
+    editTools->setVisibleModes ({ EditMode::Grab, EditMode::Range,
+                                    EditMode::Cut, EditMode::Grid });
+    editTools->onEditModeChanged = [this] { onEditModeChangedFromToolbar(); };
+    editTools->onSnapChanged     = [this] { if (tapeStrip != nullptr) tapeStrip->repaint(); };
+    addAndMakeVisible (editTools.get());
 
     // Bank-button row is rebuilt by syncBankButtons() each layout pass
     // (visible only when the window can't fit all 16 strips at min
@@ -718,6 +716,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     if (code == 'G' && noMods)
     {
         session.editMode = EditMode::Grab;
+        if (editTools   != nullptr) editTools->syncFromSession();
         if (audioEditor != nullptr) audioEditor->syncEditModeToolbar();
         if (pianoRoll   != nullptr) pianoRoll->syncEditModeToolbar();
         if (tapeStrip   != nullptr) { tapeStrip->refreshModeCursor(); tapeStrip->repaint(); }
@@ -769,11 +768,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     // unbound; \\ is what Reaper / Pro Tools use for similar toggles.
     if (cmd && ! shift && key.getTextCharacter() == '\\')
     {
-        tapeStripExpanded = ! tapeStripExpanded;
-        if (tapeStrip != nullptr) tapeStrip->setVisible (tapeStripExpanded);
-        if (consoleView != nullptr) consoleView->setStripsCompactMode (tapeStripExpanded);
-        if (transportBar != nullptr) transportBar->setTapeToggleVisualState (tapeStripExpanded);
-        resized();
+        setTimelineVisible (! tapeStripExpanded);
         return true;
     }
 
@@ -1359,20 +1354,18 @@ void MainComponent::resized()
     // - right padding). Hidden when there's no TapeStrip context (e.g.
     // user in AUX/Mastering fullscreen views — strip controls don't
     // apply there).
-    constexpr int kHdrSnapW    = 50;
     constexpr int kHdrZoomBtnW = 30;
     constexpr int kHdrFitW     = 36;
     constexpr int kHdrBtnGap   = 4;
     constexpr int kHdrBtnH     = 24;
-    constexpr int kHdrClusterW = kHdrSnapW + kHdrZoomBtnW * 2 + kHdrFitW + kHdrBtnGap * 3;
+    constexpr int kHdrClusterW = kHdrZoomBtnW * 2 + kHdrFitW + kHdrBtnGap * 2;
     // Only show when TapeStrip is actually expanded — when it's
     // collapsed or the user is in a fullscreen stage (AUX/Mastering),
-    // SNAP+zoom have no on-screen subject so they don't belong in
-    // the header.
+    // the zoom buttons have no on-screen subject so they don't belong in
+    // the header. (Snap moved onto the edit-tools strip above the timeline.)
     const bool hdrClusterVisible = ! inFullscreenView
                                   && tapeStrip != nullptr
                                   && tapeStripExpanded;
-    hdrSnapToggle.setVisible (hdrClusterVisible);
     hdrZoomOutBtn.setVisible (hdrClusterVisible);
     hdrZoomInBtn .setVisible (hdrClusterVisible);
     hdrZoomFitBtn.setVisible (hdrClusterVisible);
@@ -1391,21 +1384,26 @@ void MainComponent::resized()
         const int clusterX  = leftEdge + juce::jmax (0, (gapW - kHdrClusterW) / 2);
         const int clusterY  = rowBounds.getY() + (rowBounds.getHeight() - kHdrBtnH) / 2;
         int x = clusterX;
-        hdrSnapToggle.setBounds (x, clusterY, kHdrSnapW,   kHdrBtnH); x += kHdrSnapW   + kHdrBtnGap;
         hdrZoomOutBtn.setBounds (x, clusterY, kHdrZoomBtnW, kHdrBtnH); x += kHdrZoomBtnW + kHdrBtnGap;
         hdrZoomInBtn .setBounds (x, clusterY, kHdrZoomBtnW, kHdrBtnH); x += kHdrZoomBtnW + kHdrBtnGap;
         hdrZoomFitBtn.setBounds (x, clusterY, kHdrFitW,    kHdrBtnH);
-
-        // Sync SNAP visual state with the session atom (e.g. session
-        // load, MIDI-bound toggle).
-        if (hdrSnapToggle.getToggleState() != (bool) session.snapToGrid)
-            hdrSnapToggle.setToggleState (session.snapToGrid, juce::dontSendNotification);
     }
 
     area.removeFromTop (4);
 
     if (! inFullscreenView)
     {
+        // Edit-tools strip (Grab/Range/Cut/Grid + Snap) directly under the
+        // transport bar — always visible in the console view. Hidden in the
+        // fullscreen AUX / Mastering stages (handled in the else branches).
+        if (editTools != nullptr)
+        {
+            editTools->setVisible (true);
+            constexpr int kEditToolsH = 30;
+            editTools->setBounds (area.removeFromTop (kEditToolsH));
+            area.removeFromTop (4);
+        }
+
         if (tapeStrip != nullptr && tapeStripExpanded)
         {
             // Mirror the timeline's rows to the console's ACTIVE BANK
@@ -1433,13 +1431,12 @@ void MainComponent::resized()
 
         if (consoleView != nullptr) consoleView->setBounds (area);
     }
-    else if (inMastering)
+    else
     {
-        if (masteringView != nullptr) masteringView->setBounds (area);
-    }
-    else if (inAux)
-    {
-        if (auxView != nullptr) auxView->setBounds (area);
+        // Fullscreen AUX / Mastering stages have no timeline subject.
+        if (editTools != nullptr) editTools->setVisible (false);
+        if (inMastering && masteringView != nullptr) masteringView->setBounds (area);
+        else if (inAux && auxView != nullptr)        auxView->setBounds (area);
     }
 
     // Re-centre the startup modal + its dim backdrop when the main window
@@ -1451,6 +1448,29 @@ void MainComponent::resized()
                                        .withSizeKeepingCentre (startupDialog->getWidth(),
                                                                   startupDialog->getHeight()));
     }
+}
+
+void MainComponent::setTimelineVisible (bool show)
+{
+    tapeStripExpanded = show;
+    if (tapeStrip    != nullptr) tapeStrip->setVisible (show);
+    if (consoleView  != nullptr) consoleView->setStripsCompactMode (show);
+    if (transportBar != nullptr) transportBar->setTapeToggleVisualState (show);
+    resized();
+}
+
+void MainComponent::onEditModeChangedFromToolbar()
+{
+    // Keep the modal editors' toolbars + the tape-strip cursor in sync with
+    // the global mode the strip just set.
+    if (audioEditor != nullptr) audioEditor->syncEditModeToolbar();
+    if (pianoRoll   != nullptr) pianoRoll->syncEditModeToolbar();
+    if (tapeStrip   != nullptr) { tapeStrip->refreshModeCursor(); tapeStrip->repaint(); }
+
+    // Grid edits tempo on the tape-strip ruler — open the timeline so there's
+    // something to click.
+    if (session.editMode == EditMode::Grid && ! tapeStripExpanded)
+        setTimelineVisible (true);
 }
 
 void MainComponent::openAudioSettings()

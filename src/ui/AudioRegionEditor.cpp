@@ -81,6 +81,10 @@ AudioRegionEditor::AudioRegionEditor (Session& s, AudioEngine& e, int t, int r)
     // session.editMode drives both modal mouse handlers and TapeStrip's
     // dispatch, so a pick here is global.
     editModeToolbar = std::make_unique<EditModeToolbar> (engine);
+    // Grid edits the tempo map, which is a timeline concept, not a per-region
+    // one — it lives on the main edit-tools strip, not in here.
+    editModeToolbar->setVisibleModes ({ EditMode::Grab, EditMode::Range,
+                                          EditMode::Cut, EditMode::Draw });
     // Update the mouse cursor the instant the mode changes, without
     // waiting for the next mouse move.
     editModeToolbar->onEditModeChanged = [this] { updateModeCursor(); };

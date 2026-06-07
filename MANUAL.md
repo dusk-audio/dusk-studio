@@ -63,7 +63,7 @@ You can also open an existing session directly: pass its `session.json` (or the 
 
 ![First-launch window with the Startup dialog visible.](docs/images/qg-01-startup.png)
 
-The main window is laid out top to bottom: menu bar, stage selector (RECORDING / MIXING / MASTERING / AUX), bank selector, transport bar, tape strip toggle, console. The console fills the rest of the window with 24 channel strips, 4 buses, and the master.
+The main window is laid out top to bottom: menu bar, stage selector (RECORDING / MIXING / MASTERING / AUX), bank selector, transport bar, edit-tools strip (mouse tools + snap, incl. **Grid** for tempo), tape strip toggle, console. The console fills the rest of the window with 24 channel strips, 4 buses, and the master.
 
 ## Pick an audio device
 
@@ -145,8 +145,9 @@ This chapter is a visual reference. Every numbered callout on the figures below 
 | 2   | Stage selector    | Four buttons: **RECORDING**, **MIXING**, **MASTERING**, **AUX** (keys 1–4). Picks which view fills the console area.                  |
 | 3   | Bank selector     | `1-8`, `9-16`, `17-24`. Only visible when the window is too narrow to show all 24 channel strips at once.                         |
 | 4   | Transport bar     | Play, record, loop, punch, BPM, time signature, clock, tuner. See the next figure for the inventory.                              |
-| 5   | Tape strip toggle | `▾ TIMELINE` / `▴ TAPE`. Collapses or expands the timeline view below the bar.                                                     |
-| 6   | Console view      | Holds 24 channel strips, 4 buses, and the master strip. Replaced by the aux lane or mastering chain when those stages are active. |
+| 5   | Edit-tools strip  | Directly under the transport bar: **Grab / Range / Cut / Grid** mouse tools + **Snap** (toggle + resolution). **Grid** is where you edit the tempo map — see *The four stages* below. Always visible in the console view. |
+| 6   | Tape strip toggle | `▾ TIMELINE` / `▴ TAPE`. Collapses or expands the timeline view below the bar.                                                     |
+| 7   | Console view      | Holds 24 channel strips, 4 buses, and the master strip. Replaced by the aux lane or mastering chain when those stages are active. |
 
 ## The transport bar
 
@@ -170,8 +171,7 @@ This chapter is a visual reference. Every numbered callout on the figures below 
 | 14  | Clock display    | Bars.Beats.Ticks or mm:ss.mmm; right-click to flip.                              |
 | 15  | Tuner            | Opens the chromatic tuner against the selected input.                            |
 | 16  | TIMELINE / TAPE   | Same as the tape strip toggle below the bar.                                     |
-| 17  | SNAP             | Global grid snap toggle for region edits.                                        |
-| 18  | − / + / Fit      | Timeline zoom out / in / fit-to-window.                                          |
+| 17  | − / + / Fit      | Timeline zoom out / in / fit-to-window (shown in the header when the timeline is expanded). Grid **Snap** moved to the edit-tools strip. |
 
 In compact mode (window narrower than 1850 px) labels shorten; `SNAP` becomes `S`, `TIMELINE` becomes `▾`, and the time-format toggle hides — right-click the clock display to flip format instead.
 
@@ -295,7 +295,7 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 | 2   | Fade handle       | Drag in from each edge to set fade-in or fade-out length.                       |
 | 3   | Trim handle       | Region in / out trims (non-destructive).                                        |
 | 4   | Gain slider       | ±24 dB region gain.                                                             |
-| 5   | Edit-mode toolbar | Grab / Range / Cut / Grid / Draw. Cycle with **G**.                             |
+| 5   | Edit-mode toolbar | Grab / Range / Cut / Draw (tempo's **Grid** lives on the main edit-tools strip, not per-region). **G** = Grab. |
 
 ## The piano roll
 
@@ -1151,7 +1151,9 @@ The top is a row of icon buttons:
 - **Properties** (file path, sample rate, channel count, length).
 - **Zoom out / Zoom in / Zoom fit** (also **−**, **+**, **0**).
 
-The edit-mode toolbar follows: **Grab**, **Range**, **Cut**, **Grid**, **Draw**. Most editing uses Grab. Range lets you highlight a time band for split or fade-fit. Cut splits the region at every click. **Grid** edits the tempo map — this is the only place tempo is set (the transport BPM field is a read-only playhead readout). In the timeline ruler: click the dimmed **bar-1 handle** to set the song's starting tempo (it's always there, even before you add any changes); click an empty spot to add a tempo change (then type its BPM); drag a tempo point to move it in time; or right-click one to set its BPM or delete it. The bar grid re-flows to follow, and **MIDI playback and the metronome track the tempo changes** too. The first change you add seeds a point at bar 1 from the starting tempo, so the bars before it keep that tempo. (Audio regions are never time-stretched — only MIDI follows the tempo map.) Draw is reserved for later phases.
+The region editor's edit-mode toolbar offers **Grab**, **Range**, **Cut**, **Draw**. Most editing uses Grab. Range lets you highlight a time band for split or fade-fit. Cut splits the region at every click. Draw edits the region's gain envelope.
+
+Tempo lives elsewhere: switch to **Grid** on the **main edit-tools strip** (under the transport bar) — this is the only place tempo is set (the transport BPM field is a read-only playhead readout). Picking Grid opens the timeline if it's collapsed. In the timeline ruler: click the dimmed **bar-1 handle** to set the song's starting tempo (it's always there, even before you add any changes); click an empty spot to add a tempo change (then type its BPM); drag a tempo point to move it in time; or right-click one to set its BPM or delete it. The bar grid re-flows to follow, and **MIDI playback and the metronome track the tempo changes** too. The first change you add seeds a point at bar 1 from the starting tempo, so the bars before it keep that tempo. (Audio regions are never time-stretched — only MIDI follows the tempo map.) Draw is reserved for later phases.
 
 The **Snap** toggle and snap-denomination dropdown are at the right of the toolbar.
 
@@ -1766,7 +1768,7 @@ Shortcuts use **Cmd** on macOS and **Ctrl** on Linux and Windows unless noted.
 | Shortcut              | Action                                             |
 | --------------------- | -------------------------------------------------- |
 | **S** / **Cmd+E**     | Split at edit cursor                               |
-| **G**                 | Cycle edit mode (Grab / Range / Cut / Grid / Draw) |
+| **G**                 | Grab (move / select) edit mode — other modes via the edit-tools strip |
 | **Cmd+]** / **Cmd+[** | Next / previous region                             |
 | **Esc**               | Close modal                                        |
 

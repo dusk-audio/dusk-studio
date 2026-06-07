@@ -71,6 +71,14 @@ private:
     void cleanOutUnreferencedFiles();
     void launchStartupDialog();
     void switchToStage (AudioEngine::Stage);
+
+    // Edit-tools strip callback: sync the modal toolbars + tape-strip cursor and
+    // auto-open the timeline when Grid is picked.
+    void onEditModeChangedFromToolbar();
+    // Show / hide the tape strip (timeline) and reflow. Shared by the Cmd+\
+    // toggle, the TransportBar TIMELINE button, and Grid-mode auto-open.
+    void setTimelineVisible (bool show);
+
     // Visibility / view construction / strip mode / toggle buttons.
     // Called by switchToStage AND by session-load so a rebuilt
     // consoleView lands in the right mode even when engine stage
@@ -189,10 +197,13 @@ private:
     // Pinned to the header row between the rightmost bank tab and the
     // tuner button. Forwards into TapeStrip's helpers; no-op when
     // TapeStrip is collapsed.
-    juce::TextButton hdrSnapToggle { "SNAP" };
     juce::TextButton hdrZoomOutBtn { "-"    };
     juce::TextButton hdrZoomInBtn  { "+"    };
     juce::TextButton hdrZoomFitBtn { "Fit"  };
+
+    // Persistent edit-tools strip (Grab/Range/Cut/Grid + Snap) above the
+    // timeline — the home EditModeToolbar was always designed for. Owns Snap.
+    std::unique_ptr<class EditModeToolbar> editTools;
 
     // Every dialog opens via DuskFileBrowser (in-window EmbeddedModal)
     // which owns its own lifetime — no caller-side keep-alive. Standalone
