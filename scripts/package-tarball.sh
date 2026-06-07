@@ -17,6 +17,7 @@ REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_DIR"
 
 VERSION="$(tr -d '[:space:]' < VERSION)"
+[[ -n "$VERSION" ]] || { echo "error: VERSION file is empty or missing - cannot name the tarball" >&2; exit 1; }
 BUILD_DIR="${BUILD_DIR:-build-linux}"
 ARTEFACTS="$BUILD_DIR/DuskStudio_artefacts/Release"
 BINARY="$ARTEFACTS/DuskStudio"

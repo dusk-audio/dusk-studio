@@ -40,6 +40,17 @@ else
     DATA="${XDG_DATA_HOME:-$HOME/.local/share}"
 fi
 
+# Gate the destructive rm -rf "$OPT" below: OPT must be exactly one of the two
+# known install dirs. Guards against an unset $HOME collapsing the user path to
+# /.local/opt/dusk-studio (or any other surprise) before we delete it.
+if [ "$SCOPE" = user ] && [ -z "${HOME:-}" ]; then
+    echo "error: \$HOME is unset - cannot resolve the user install dir" >&2; exit 1
+fi
+case "$OPT" in
+    /opt/dusk-studio|"$HOME"/.local/opt/dusk-studio) : ;;
+    *) echo "error: refusing destructive op on unexpected install dir: '$OPT'" >&2; exit 1 ;;
+esac
+
 DESKTOP="$DATA/applications/audio.dusk.studio.desktop"
 ICON="$DATA/icons/hicolor/256x256/apps/DuskStudio.png"
 MIME="$DATA/mime/packages/DuskStudio.mime.xml"
@@ -76,8 +87,10 @@ mkdir -p "$BINDIR"
 ln -sf "$BIN" "$BINDIR/DuskStudio"
 
 # Desktop integration: rewrite the relative Exec to the installed absolute path.
+SRC_DESKTOP="$OPT/share/applications/audio.dusk.studio.desktop"
+[ -f "$SRC_DESKTOP" ] || { echo "error: $SRC_DESKTOP missing - tarball is incomplete" >&2; exit 1; }
 mkdir -p "$(dirname "$DESKTOP")" "$(dirname "$ICON")" "$(dirname "$MIME")" "$(dirname "$META")"
-sed "s|^Exec=.*|Exec=$BIN %f|" "$OPT/share/applications/audio.dusk.studio.desktop" > "$DESKTOP"
+sed "s|^Exec=.*|Exec=$BIN %f|" "$SRC_DESKTOP" > "$DESKTOP"
 cp "$OPT/share/icons/hicolor/256x256/apps/DuskStudio.png" "$ICON"
 cp "$OPT/share/mime/packages/DuskStudio.mime.xml" "$MIME"
 cp "$OPT/share/metainfo/DuskStudio.appdata.xml" "$META"
