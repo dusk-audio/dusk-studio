@@ -324,21 +324,42 @@ int TapeStrip::visualRowForTrack (int trackIdx) const noexcept
 
 juce::Rectangle<int> TapeStrip::labelColumnBounds() const noexcept
 {
-    return getLocalBounds().withTrimmedTop (kRulerH).withWidth (kTrackLabelW);
+    return getLocalBounds().withTrimmedTop (kRulerH).withWidth (labelColW);
 }
 
 juce::Rectangle<int> TapeStrip::rulerBounds() const noexcept
 {
-    return juce::Rectangle<int> (kTrackLabelW, 0,
-                                  juce::jmax (0, getWidth() - kTrackLabelW),
+    return juce::Rectangle<int> (labelColW, 0,
+                                  juce::jmax (0, getWidth() - labelColW),
                                   kRulerH);
 }
 
 juce::Rectangle<int> TapeStrip::tracksColumnBounds() const noexcept
 {
-    return juce::Rectangle<int> (kTrackLabelW, kRulerH,
-                                  juce::jmax (0, getWidth() - kTrackLabelW),
+    return juce::Rectangle<int> (labelColW, kRulerH,
+                                  juce::jmax (0, getWidth() - labelColW),
                                   juce::jmax (0, getHeight() - kRulerH));
+}
+
+void TapeStrip::refreshLabelColumnWidth()
+{
+    // Measure every row's drawn text (name, or the 1-based number fallback) in
+    // the same 10 pt bold the painter uses, and widen the column to the longest
+    // plus the stripe + insets, clamped so a stray long name can't swallow the
+    // timeline.
+    const juce::Font font (juce::FontOptions (10.0f, juce::Font::bold));
+    float maxText = 0.0f;
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        const auto& nm = session.track (t).name;
+        const juce::String s = nm.isNotEmpty() ? nm : juce::String (t + 1);
+        juce::GlyphArrangement ga;
+        ga.addLineOfText (font, s, 0.0f, 0.0f);
+        maxText = juce::jmax (maxText, ga.getBoundingBox (0, -1, true).getWidth());
+    }
+    // 3 px colour stripe + 4 px left inset (see paint) + text + 6 px right pad.
+    const int want = 3 + 4 + (int) maxText + 1 + 6;
+    labelColW = juce::jlimit (kTrackLabelW, kTrackLabelWMax, want);
 }
 
 juce::Rectangle<int> TapeStrip::rowBounds (int trackIdx) const noexcept
@@ -670,6 +691,10 @@ void TapeStrip::resized()
     // relayout here would re-enter this method.
     rebuildVisibleTrackOrder (/*relayoutParent*/ false);
 
+    // Size the label column to the current track names before placing the
+    // SHOW ALL toggle (which is pinned to that column's width).
+    refreshLabelColumnWidth();
+
     // SHOW ALL toggle pinned to the right edge of the label column at
     // the top — lives in unused real estate above the row labels, fits
     // in the kRulerH band so it doesn't compete with the time ruler.
@@ -678,7 +703,7 @@ void TapeStrip::resized()
     constexpr int kShowAllPad = 2;
     showAllToggle.setBounds (kShowAllPad,
                               kShowAllPad,
-                              juce::jmin (kShowAllW, kTrackLabelW - 2 * kShowAllPad),
+                              juce::jmin (kShowAllW, labelColW - 2 * kShowAllPad),
                               kShowAllH);
     inheritCursorOnDescendants (*this);
 }
@@ -689,12 +714,18 @@ void TapeStrip::timerCallback()
     // anything changed. Cheap - there are 16 tracks and we just compare
     // a String + a Colour each tick.
     bool stateChanged = false;
+    bool namesChanged = false;
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         const auto& tr = session.track (t);
-        if (lastNames[(size_t) t]   != tr.name)   { lastNames[(size_t) t]   = tr.name;   stateChanged = true; }
+        if (lastNames[(size_t) t]   != tr.name)   { lastNames[(size_t) t]   = tr.name;   stateChanged = true; namesChanged = true; }
         if (lastColours[(size_t) t] != tr.colour) { lastColours[(size_t) t] = tr.colour; stateChanged = true; }
     }
+
+    // A rename can change the column width; resize repositions the SHOW ALL
+    // toggle and recomputes labelColW, and the repaint below redraws.
+    if (namesChanged)
+        resized();
 
     auto& transport = engine.getTransport();
     const bool        loopOn = transport.isLoopEnabled();

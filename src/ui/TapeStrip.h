@@ -28,7 +28,10 @@ public:
     void mouseWheelMove   (const juce::MouseEvent&,
                               const juce::MouseWheelDetails&) override;
 
-    static constexpr int kTrackLabelW = 44;
+    // Minimum label-column width. The actual width (labelColW) grows to fit the
+    // longest track name, up to kTrackLabelWMax, recomputed on name changes.
+    static constexpr int kTrackLabelW    = 44;
+    static constexpr int kTrackLabelWMax = 200;
     // Ruler bands:
     //   y=0..tick band        — time labels + tick marks
     //   y=tick..pill band     — markers row + loop/punch pills
@@ -123,6 +126,12 @@ private:
     juce::Rectangle<int> labelColumnBounds() const noexcept;
     juce::Rectangle<int> rulerBounds() const noexcept;
     juce::Rectangle<int> tracksColumnBounds() const noexcept;
+
+    // Width of the left label column, grown to fit the longest track name
+    // (clamped [kTrackLabelW, kTrackLabelWMax]). Recomputed by
+    // refreshLabelColumnWidth() on construction, layout, and name changes.
+    int  labelColW { kTrackLabelW };
+    void refreshLabelColumnWidth();
     // Empty rect when trackIdx is collapsed — callers iterating must
     // respect this so hit tests / painters skip hidden rows.
     juce::Rectangle<int> rowBounds (int trackIdx) const noexcept;
