@@ -896,7 +896,7 @@ The same UniversalCompressor in Bus mode as the channel / master compressors, bu
 A true-peak brickwall limiter with lookahead. **Enabled by default.** It runs the whole limiting process at 4× oversampling, so the ceiling holds on inter-sample peaks, not just sample peaks.
 
 - **Ceiling**: −12 to 0 dB. Default **−0.3 dB** (matches the headroom expected by most streaming platforms).
-- **Drive**: 0 to +20 dB pre-limiter gain. Drives the input harder for more limiting.
+- **Threshold**: 0 to −20 dB (drag the handle on the input meter). Pull it down to drive more signal into the ceiling — louder and denser. (Internally it adds up to +20 dB of input gain; the ceiling then holds the peak.)
 - **Release**: 50 to 300 ms.
 - **Mode**: shapes the hold + release character — **Modern** (balanced default), **Transparent** (fast recovery, minimal pumping), **Punchy** (longer hold, denser).
 - **Stereo link**: on (default) matches the gain reduction across L/R to preserve the stereo image; off limits each channel independently.

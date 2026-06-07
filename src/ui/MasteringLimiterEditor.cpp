@@ -130,7 +130,10 @@ MasteringLimiterEditor::~MasteringLimiterEditor() { stopTimer(); }
 
 float MasteringLimiterEditor::yToDriveDb (int y) const noexcept
 {
-    return yToDb (y, kThreshMinDb, kThreshMaxDb, threshMeterArea.toFloat());
+    // The handle is a threshold (0..-20 dB top-to-bottom) but the limiter has
+    // no threshold — it drives the input into the ceiling. Lower threshold =
+    // more drive = louder, so drive = -threshold (0..+20 dB).
+    return -yToDb (y, kThreshMinDb, kThreshMaxDb, threshMeterArea.toFloat());
 }
 
 float MasteringLimiterEditor::yToCeilingDb (int y) const noexcept
@@ -154,11 +157,11 @@ void MasteringLimiterEditor::timerCallback()
     if (post > displayedOutDb) displayedOutDb = post;
     else                        displayedOutDb += (post - displayedOutDb) * 0.15f;
 
-    // Pre-limiter (input) approximation: post-limiter peak minus the GR
+    // Pre-limiter (driven input) approximation: post-limiter peak minus the GR
     // (which the limiter pulled out). With 0 GR this just matches the post
-    // value; with active limiting the column shows the unbounded input.
-    const float drive  = params.limiterDriveDb.load (std::memory_order_relaxed);
-    const float preApprox = post - displayedGrDb + drive;
+    // value; with active limiting the column shows the driven level the
+    // threshold line sits against.
+    const float preApprox = post - displayedGrDb;
     if (preApprox > displayedInDb) displayedInDb = preApprox;
     else                            displayedInDb += (preApprox - displayedInDb) * 0.15f;
 
@@ -213,9 +216,10 @@ void MasteringLimiterEditor::paint (juce::Graphics& g)
         }
         drawSegmentDividers (g, bar);
 
-        // Drive handle (drag triangle on left).
+        // Threshold handle (drag triangle on left). drive is 0..+20; the
+        // handle sits at the threshold position = -drive (0..-20 dB).
         const float drive = params.limiterDriveDb.load (std::memory_order_relaxed);
-        const float handleY = dbToY (drive, kThreshMinDb, kThreshMaxDb, bar);
+        const float handleY = dbToY (-drive, kThreshMinDb, kThreshMaxDb, bar);
 
         juce::Path tri;
         const float baseX = bar.getX() - 6.0f;
@@ -231,7 +235,8 @@ void MasteringLimiterEditor::paint (juce::Graphics& g)
 
         drawCaption (threshMeterArea, "Threshold");
 
-        // Drive value box just below the handle.
+        // Threshold value box just below the handle (shows the threshold dB,
+        // i.e. -drive, to match the caption and the meter scale).
         g.setColour (juce::Colour (0xff181820));
         const auto valBox = juce::Rectangle<float> (bar.getX() + 2.0f, handleY + 6.0f,
                                                        bar.getWidth() - 4.0f, 14.0f);
@@ -241,7 +246,7 @@ void MasteringLimiterEditor::paint (juce::Graphics& g)
         g.drawRoundedRectangle (valBox, 2.0f, 0.6f);
         g.setColour (juce::Colour (0xff80b0e0));
         g.setFont (juce::Font (juce::FontOptions (9.5f, juce::Font::bold)));
-        g.drawText (juce::String::formatted ("%.2f", drive),
+        g.drawText (juce::String::formatted ("%.2f", -drive),
                      valBox, juce::Justification::centred, false);
     }
 
