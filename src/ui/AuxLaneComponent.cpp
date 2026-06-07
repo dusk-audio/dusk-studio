@@ -4,6 +4,7 @@
 #include "PlatformWindowing.h"
 #include "PluginPickerHelpers.h"
 #include "../dsp/AuxLaneStrip.h"
+#include "../dsp/OutputPairRouting.h"
 #include "../engine/AudioEngine.h"
 #include "../engine/PluginSlot.h"
 #include "../engine/Transport.h"
@@ -277,6 +278,20 @@ AuxLaneComponent::AuxLaneComponent (AuxLane& l, AuxLaneStrip& s, int idx,
     }
     addAndMakeVisible (autoModeButton);
 
+    // Cue/headphone output routing. "Master only" = no hardware tap; any other
+    // pair sends this aux's processed mix (pre return-fader/mute) to that
+    // device output pair. Enable extra outputs in Audio settings first.
+    outputPairCombo.setTooltip ("Send this AUX lane to a hardware output pair "
+                                  "for a headphone / cue mix. Enable extra outputs "
+                                  "in Audio settings first.");
+    outputPairCombo.onChange = [this]
+    {
+        const int id = outputPairCombo.getSelectedId();
+        lane.params.outputPair.store (id <= 1 ? -1 : id, std::memory_order_relaxed);
+    };
+    populateOutputPairCombo();
+    addAndMakeVisible (outputPairCombo);
+
     stripMeter = std::make_unique<StripMeter> (lane.params);
     addAndMakeVisible (stripMeter.get());
 
@@ -408,6 +423,39 @@ void AuxLaneComponent::timerCallback()
         if (muteButton.getToggleState() != effective)
             muteButton.setToggleState (effective, juce::dontSendNotification);
     }
+
+    // Rebuild the output-pair menu when the device's output count changes
+    // (e.g. the user just enabled more outputs in Audio settings).
+    if (auto* dev = engine.getDeviceManager().getCurrentAudioDevice())
+        if (dev->getOutputChannelNames().size() != lastOutputChannelCount)
+            populateOutputPairCombo();
+}
+
+void AuxLaneComponent::populateOutputPairCombo()
+{
+    outputPairCombo.clear (juce::dontSendNotification);
+    outputPairCombo.addItem ("Master only", 1);
+
+    int count = 0;
+    if (auto* device = engine.getDeviceManager().getCurrentAudioDevice())
+    {
+        const auto names = device->getOutputChannelNames();
+        count = names.size();
+        for (int i = 0; i + 1 < count; i += 2)
+            outputPairCombo.addItem ("Out " + juce::String (i + 1) + "-" + juce::String (i + 2),
+                                       outputpair::encodePair (i, i + 1));
+    }
+    lastOutputChannelCount = count;
+
+    // Preselect the stored routing; fall back to "Master only" if that pair is
+    // no longer present (device changed). dontSendNotification so this doesn't
+    // overwrite the param via onChange.
+    const int stored = lane.params.outputPair.load (std::memory_order_relaxed);
+    int wantId = 1;
+    if (stored > 0)
+        for (int i = 0; i < outputPairCombo.getNumItems(); ++i)
+            if (outputPairCombo.getItemId (i) == stored) { wantId = stored; break; }
+    outputPairCombo.setSelectedId (wantId, juce::dontSendNotification);
 }
 
 void AuxLaneComponent::showAutoModeMenu()
@@ -897,6 +945,8 @@ void AuxLaneComponent::resized()
     {
         auto autoRow = stripCol.removeFromTop (18);
         autoModeButton.setBounds (autoRow.removeFromRight (44));
+        autoRow.removeFromRight (4);
+        outputPairCombo.setBounds (autoRow);
     }
     stripCol.removeFromTop (6);
 

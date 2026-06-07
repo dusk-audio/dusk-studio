@@ -424,6 +424,7 @@ Open **Settings → Audio…** to choose your audio device. The panel is divided
 - **Sample rate**: any rate the device supports. 44.1 kHz, 48 kHz, 88.2 kHz, 96 kHz are common.
 - **Block size**: smaller blocks give lower latency but cost more CPU per sample. 256 or 512 samples is a good starting point.
 - **Periods (Linux/ALSA only)**: how many buffers the ALSA driver keeps in flight. Two is the lowest-latency safe value; three or more is more robust on a busy machine.
+- **Active output channels**: the master mix uses outputs 1-2. If your interface has more outputs, tick the extra pairs here to open them — each pair then becomes selectable as an aux lane's **Output** (a headphone / cue feed). Off by default; the master stays stereo until you enable more.
 - **Rescan devices**: re-enumerates every backend, useful if you plugged in a USB interface after launch.
 
 ### Control surface
@@ -832,6 +833,7 @@ Each lane is divided into three columns:
 - **Return fader**: −∞ to +12 dB. This is the level of the aux's processed output into the master.
 - **Output meter**: pre-master return level.
 - **Automation mode**: same OFF / READ / WRITE / TOUCH cycle as channel faders.
+- **Output**: where this aux lane's processed mix is sent. **Master only** (default) folds it into the main mix as usual. Pick a hardware pair (Out 1-2, Out 3-4, …) to also send the lane to that physical output — a headphone / cue feed. The hardware tap is taken *before* the return fader and Mute, so those still govern only the fold into the master while the cue keeps playing. Build the cue from each channel's **pre-fader** aux send (right-click a send knob to flip it pre-fader) so riding the main mix doesn't change what the performer hears. Enable the extra outputs first in **Audio settings** (the Output menu lists whatever output pairs the device currently has open).
 
 ### Plugin chain (centre column)
 

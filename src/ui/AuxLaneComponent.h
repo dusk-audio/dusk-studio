@@ -5,6 +5,7 @@
 #include <array>
 #include <memory>
 #include "../session/Session.h"
+#include "DuskComboBox.h"
 
 namespace duskstudio
 {
@@ -61,6 +62,10 @@ private:
     void setAutoMode (AutomationMode m);
     void captureWritePoint (AutomationParam param, float denormValue);
 
+    // Cue/headphone output-pair picker. Rebuilt from the live device's output
+    // channels (so it tracks outputs the user enables in Audio settings).
+    void populateOutputPairCombo();
+
     AuxLane& lane;
     AuxLaneStrip& strip;
     AudioEngine& engine;
@@ -70,6 +75,11 @@ private:
     juce::Slider  returnFader { juce::Slider::LinearVertical, juce::Slider::TextBoxBelow };
     juce::TextButton muteButton { "M" };
     juce::TextButton autoModeButton { "Off" };
+    DuskComboBox  outputPairCombo;
+
+    // Output-channel count the combo was last built for; the timer rebuilds it
+    // when the device's output count changes (e.g. user enables more outputs).
+    int lastOutputChannelCount { -1 };
 
     // Throttle motor-fader setValue() to changes >0.05 dB so the slider
     // doesn't churn every timer tick when the value is effectively
