@@ -1939,7 +1939,7 @@ Dusk Studio targets functional accessibility for screen reader users. The 24-cha
 
 ## What's still rough
 
-- Keyboard-only navigation of the 24-channel mixer is not yet fully smooth. Tab order across all 24 strips works but is verbose. A planned 1.x release adds bank-relative keyboard shortcuts (Cmd-1 through Cmd-8 focus the current bank's 8 strips directly).
+- In the **Recording** and **Mixing** stages, **Left / Right arrows** move a gold focus ring across the 24 channel strips, automatically flipping the visible bank as you cross a boundary. The focused strip is the target for the **A / S / X** (arm / solo / mute) shortcuts, so you can walk the mixer and toggle states without the mouse. (Clicking a strip moves the ring too.)
 - Region drag-and-drop on the timeline relies on mouse gestures. Region edit actions (split, trim, fade, gain) are all available via the keyboard reference; the drag-to-move case is the gap.
 - Plugin editors are out of Dusk Studio's accessibility control surface. JUCE forwards screen-reader requests to each plugin; vendor accessibility varies.
 

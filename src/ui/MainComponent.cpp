@@ -745,6 +745,19 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         }
     }
 
+    // ── Plain Left/Right move the channel-strip focus ring across the 24
+    // strips (Recording / Mixing stages), auto-flipping the visible bank at a
+    // boundary. The focused strip becomes the A / S / X target. Cmd+arrows are
+    // region nudge (handled above), so the unmodified form is free here.
+    if (noMods && consoleView != nullptr
+        && (key == juce::KeyPress::leftKey || key == juce::KeyPress::rightKey)
+        && (engine.getStage() == AudioEngine::Stage::Recording
+            || engine.getStage() == AudioEngine::Stage::Mixing))
+    {
+        consoleView->moveFocus (key == juce::KeyPress::leftKey ? -1 : 1);
+        return true;
+    }
+
     // ── '?' (Shift+/) opens the keyboard-shortcut reference.
     if (key.getTextCharacter() == '?')
     {

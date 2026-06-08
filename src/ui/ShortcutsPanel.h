@@ -41,6 +41,7 @@ public:
                 { "]", "Set loop / punch out" }, { "L", "Toggle loop" },
                 { "P", "Toggle punch" } } },
             { "Selected track", {
+                { juce::CharPointer_UTF8 ("\xe2\x86\x90 / \xe2\x86\x92"), "Focus prev / next strip" },
                 { "A", "Arm" }, { "S", "Solo" }, { "X", "Mute" } } },
             { "Tools & view", {
                 { "G", "Grab / move edit mode" }, { "C", "Metronome on / off" },

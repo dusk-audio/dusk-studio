@@ -414,8 +414,44 @@ void ConsoleView::setStripsMixingMode (bool mixing)
 
 void ConsoleView::setOnStripFocusRequested (std::function<void (int)> cb)
 {
+    // Route every strip's focus request through focusStrip so a click updates
+    // the focus ring the same way an arrow-key move does, then forward to the
+    // external callback (which sets the A/S/X target selection).
+    stripFocusCb = std::move (cb);
     for (auto& strip : strips)
         if (strip != nullptr)
-            strip->onTrackFocusRequested = cb;
+            strip->onTrackFocusRequested = [this] (int t) { focusStrip (t); };
+}
+
+void ConsoleView::focusStrip (int track)
+{
+    if (track < 0 || track >= Session::kNumTracks) return;
+    focusedStrip = track;
+
+    // Bring the focused strip's bank into view when banking is active.
+    if (! showingAllTracks)
+    {
+        const int stride = bankStride();
+        if (stride > 0) setBank (track / stride);
+    }
+    repaint();
+    if (stripFocusCb) stripFocusCb (track);
+}
+
+void ConsoleView::moveFocus (int delta)
+{
+    const int start = focusedStrip >= 0 ? focusedStrip : 0;
+    focusStrip (juce::jlimit (0, Session::kNumTracks - 1, start + delta));
+}
+
+void ConsoleView::paintOverChildren (juce::Graphics& g)
+{
+    if (focusedStrip < 0 || focusedStrip >= Session::kNumTracks) return;
+    auto* strip = strips[(size_t) focusedStrip].get();
+    if (strip == nullptr || ! strip->isVisible()) return;
+
+    // Gold ring around the focused strip — the keyboard "I am here" signal.
+    g.setColour (juce::Colour (0xffd0a050));
+    g.drawRoundedRectangle (strip->getBounds().toFloat().reduced (1.0f), 4.0f, 2.0f);
 }
 } // namespace duskstudio
