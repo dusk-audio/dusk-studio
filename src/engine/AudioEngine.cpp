@@ -1,4 +1,5 @@
 #include "AudioEngine.h"
+#include "PdcMath.h"
 #include "../dsp/OutputPairRouting.h"
 #include "McuReceiver.h"
 #include "McuController.h"
@@ -242,6 +243,36 @@ void AudioEngine::setTempoPoints (std::vector<TempoPoint> pts)
         session.tempoBpm.store (session.tempoMap.points().front().bpm,
                                  std::memory_order_release);
     publishTempoMap();
+}
+
+void AudioEngine::recomputePdc() noexcept
+{
+    int latency[Session::kNumTracks];
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        auto& strip = strips[(size_t) t];
+        int lat = 0;
+        // MIDI tracks report 0: the instrument's latency is already absorbed by
+        // the MIDI scheduling pre-shift (audioDeviceIOCallbackWithContext), so
+        // their output is timeline-aligned as if zero-latency.
+        const bool midi = session.track (t).mode.load (std::memory_order_relaxed)
+                              == (int) Track::Mode::Midi;
+        if (! midi)
+        {
+            const int mode = strip.insertMode.load (std::memory_order_relaxed);
+            if (mode == ChannelStrip::kInsertPlugin)
+                lat = strip.getPluginSlot().getLatencySamples();
+            else if (mode == ChannelStrip::kInsertHardware)
+                lat = strip.getHardwareInsertSlot().getLatencySamples();
+        }
+        latency[t] = juce::jlimit (0, ChannelStrip::kMaxPdcSamples, lat);
+    }
+
+    int comp[Session::kNumTracks];
+    const int deepest = pdc::computeCompensations (latency, comp, Session::kNumTracks);
+    for (int t = 0; t < Session::kNumTracks; ++t)
+        strips[(size_t) t].setPdcCompensationSamples (comp[t]);
+    aggregatePdcLatencySamples.store (deepest, std::memory_order_relaxed);
 }
 
 void AudioEngine::reresolveTrackMidiFromSession()
@@ -1086,6 +1117,11 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
     for (auto& a : busStrips)     a.prepare (sr, bs, oxFactor);
     for (auto& a : auxLaneStrips) a.prepare (sr, bs);
     master.prepare (sr, bs, oxFactor);
+
+    // Strips just re-prepared their plugins (re-caching latency) and rebuilt
+    // their PDC delay lines — recompute the compensation against the fresh
+    // latencies.
+    recomputePdc();
 
     // Sync receiver uses the same sample-clock the engine derives its
     // per-block playhead from. Reset on every prepare so a sample-rate
@@ -2182,6 +2218,10 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
     for (auto& v : busR) juce::FloatVectorOperations::clear (v.data(), numSamples);
     for (auto& v : auxLaneL) juce::FloatVectorOperations::clear (v.data(), numSamples);
     for (auto& v : auxLaneR) juce::FloatVectorOperations::clear (v.data(), numSamples);
+
+    // Refresh PDC compensation before the strip loop reads it. Cheap atomic
+    // sweep; auto-tracks any latency change without a separate trigger.
+    recomputePdc();
 
     // Solo automation routes into per-track liveSolo (in the strip loop below)
     // and bypasses the manual-solo RT counter anyTrackSoloed() reads — so an

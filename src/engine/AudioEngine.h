@@ -195,6 +195,21 @@ public:
     // synthetic buffers.
     void prepareForSelfTest (double sampleRate, int blockSize);
 
+    // Cross-track Plugin Delay Compensation. Reads each track's reported insert
+    // latency (plugin OR hardware, gated by mode; MIDI tracks count 0 because
+    // their instrument latency is already absorbed by the MIDI scheduling
+    // pre-shift), finds the deepest, and sets every strip's compensation =
+    // deepest − own so all tracks line up. Pure atomic loads/stores — no alloc,
+    // lock, or I/O — so it runs once per audio block (auto-tracks any latency
+    // change: plugin load/unload, HW measure, auto-bypass) and also at prepare.
+    // aggregatePdcLatencySamples exposes the deepest track latency for bounce
+    // lead-in trimming.
+    void recomputePdc() noexcept;
+    int  getAggregatePdcLatencySamples() const noexcept
+    {
+        return aggregatePdcLatencySamples.load (std::memory_order_relaxed);
+    }
+
     // Test-only. Next callback merges `events` into perInputMidi[inputIdx]
     // AFTER collector drain. Cleared after one block.
     void stageTestMidiInjection (int inputIdx, juce::MidiBuffer events);
@@ -351,6 +366,10 @@ private:
     // Recording is the workflow start state. Saved sessions overwrite
     // via session.uiStage on load.
     std::atomic<Stage> stage { Stage::Recording };
+
+    // Deepest per-track insert latency in the session (samples). Set by
+    // recomputePdc; read by BounceEngine to trim the render's lead-in.
+    std::atomic<int> aggregatePdcLatencySamples { 0 };
 
     std::array<ChannelStrip, Session::kNumTracks> strips;
     std::array<BusStrip,  Session::kNumBuses> busStrips;

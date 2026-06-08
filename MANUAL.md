@@ -1469,7 +1469,7 @@ Run the ping after any change to your interface routing or your external gear's 
 
 ## Latency compensation
 
-The measured latency is stored per insert and applied as an internal delay line inside the hardware insert slot itself, so that the signal returning from external gear lines up with where it left the channel. Cross-track delay compensation (delaying tracks without inserts by the longest insert latency in the session) is not yet implemented in v1; instrument plugins with reported latency are compensated on their own track only.
+The measured latency is stored per insert and applied as an internal delay line inside the hardware insert slot itself, so that the signal returning from external gear lines up with where it left the channel. **Cross-track plugin delay compensation (PDC) is automatic**: Dusk Studio finds the deepest insert latency in the session (any track's plugin or hardware insert) and delays every other track to match, so a track with a lookahead/linear-phase plugin stays sample-aligned with the rest. It applies on every route (master, buses, aux) and is trimmed out of bounces and stems so rendered files still start at sample 0. MIDI instrument tracks are already aligned via the note-scheduling pre-shift, so they count as zero added latency. (Aux-return plugin latency — the wet vs dry timing of a send/return — is not yet compensated; that is a separate, narrower case.)
 
 \newpage
 

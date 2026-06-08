@@ -43,6 +43,23 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     insertScratchL.assign ((size_t) juce::jmax (1, blockSize), 0.0f);
     insertScratchR.assign ((size_t) juce::jmax (1, blockSize), 0.0f);
 
+    // PDC compensation delay lines, pre-sized to the max so setDelay() is a pure
+    // parameter update (no RT allocation). The compensation amount itself is set
+    // by the engine's PDC aggregator; here we just (re)latch the applied length
+    // and clear history. pdcSilentRun starts maxed so a pending change can apply
+    // on the very first block.
+    const juce::dsp::ProcessSpec pdcSpec
+        { sampleRate, (juce::uint32) juce::jmax (1, blockSize), 1 };
+    pdcDelayL.prepare (pdcSpec);
+    pdcDelayR.prepare (pdcSpec);
+    pdcDelayL.setMaximumDelayInSamples (kMaxPdcSamples);
+    pdcDelayR.setMaximumDelayInSamples (kMaxPdcSamples);
+    pdcDelayL.setDelay ((float) pdcAppliedSamples);
+    pdcDelayR.setDelay ((float) pdcAppliedSamples);
+    pdcDelayL.reset();
+    pdcDelayR.reset();
+    pdcSilentRun = (juce::int64) kMaxPdcSamples;
+
     // Pre-size the MIDI scratch buffers so the audio thread's addEvent /
     // processBlock calls never grow them. 4 KB covers ~400-800 typical
     // channel-voice messages per block; far above any sane density even
@@ -365,6 +382,29 @@ void ChannelStrip::bindHardwareInsert (const HardwareInsertParams& params) noexc
     hardwareSlot.bind (params);
 }
 
+void ChannelStrip::relatchPdcIfDrained (float blockPeakAbs, int numSamples) noexcept
+{
+    // Track how long the signal feeding the delay has been silent. We only
+    // change the delay length once the line has fully drained (silent for at
+    // least the currently-applied length) — then a reset() drops only silence,
+    // so the latency change is click-free. A continuously-loud track defers the
+    // change to its next silent gap (latency edits happen on plugin load, which
+    // is normally done with the transport stopped → silent → immediate).
+    constexpr float kSilenceEps = 1.0e-6f;
+    if (blockPeakAbs < kSilenceEps) pdcSilentRun += numSamples;
+    else                            pdcSilentRun = 0;
+
+    const int target = pdcTargetSamples.load (std::memory_order_relaxed);
+    if (target != pdcAppliedSamples && pdcSilentRun >= (juce::int64) pdcAppliedSamples)
+    {
+        pdcDelayL.setDelay ((float) target);
+        pdcDelayR.setDelay ((float) target);
+        pdcDelayL.reset();
+        pdcDelayR.reset();
+        pdcAppliedSamples = target;
+    }
+}
+
 void ChannelStrip::processAndAccumulate (const float* inL,
                                          const float* inR,
                                          juce::MidiBuffer& trackMidi,
@@ -495,7 +535,15 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         };
         const float peakL = peakAbs (inL, numSamples);
         const float peakR = (stereo && inR != nullptr) ? peakAbs (inR, numSamples) : 0.0f;
-        if (peakL <= 1e-6f && peakR <= 1e-6f)
+        // Hold off the skip until the PDC delay line has drained — otherwise the
+        // last pdcAppliedSamples of this track's signal (still sitting in the
+        // line) would be truncated. While the tail flushes we fall through to
+        // the normal path; relatchPdcIfDrained there advances pdcSilentRun, and
+        // once it reaches the applied length this skip re-engages. (Empty insert
+        // ⇒ post-insert == input, so the input-peak silence test is exact.)
+        const bool pdcDrained = pdcAppliedSamples == 0
+                              || pdcSilentRun >= (juce::int64) pdcAppliedSamples;
+        if (peakL <= 1e-6f && peakR <= 1e-6f && pdcDrained)
         {
            #if DUSKSTUDIO_HAS_DUSK_DSP
             // No comp ran this block, so the GR meter would otherwise pin
@@ -586,6 +634,20 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             const float g = activeInsertGain.getNextValue();
             tempMono[(size_t) i] = (1.0f - g) * insertScratchL[(size_t) i]
                                    +        g  * tempMono[(size_t) i];
+        }
+
+        // PDC: delay this track's post-insert signal so it lines up with the
+        // session's deepest-latency track on every downstream route.
+        {
+            const auto rng = juce::FloatVectorOperations::findMinAndMax (tempMono.data(), numSamples);
+            relatchPdcIfDrained (juce::jmax (std::abs (rng.getStart()), std::abs (rng.getEnd())),
+                                  numSamples);
+            if (pdcAppliedSamples > 0)
+                for (int i = 0; i < numSamples; ++i)
+                {
+                    pdcDelayL.pushSample (0, tempMono[(size_t) i]);
+                    tempMono[(size_t) i] = pdcDelayL.popSample (0);
+                }
         }
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
@@ -734,6 +796,24 @@ void ChannelStrip::processAndAccumulate (const float* inL,
                 L[i] = (1.0f - g) * insertScratchL[(size_t) i] + g * L[i];
                 R[i] = (1.0f - g) * insertScratchR[(size_t) i] + g * R[i];
             }
+        }
+
+        // PDC: delay this track's post-insert L/R to align with the session's
+        // deepest-latency track (covers the MIDI-instrument branch above too —
+        // its compensation is relative to its own already-scheduling-shifted
+        // output, which the aggregator treats as zero latency).
+        {
+            const auto rL = juce::FloatVectorOperations::findMinAndMax (L, numSamples);
+            const auto rR = juce::FloatVectorOperations::findMinAndMax (R, numSamples);
+            const float pk = juce::jmax (std::abs (rL.getStart()), std::abs (rL.getEnd()),
+                                          std::abs (rR.getStart()), std::abs (rR.getEnd()));
+            relatchPdcIfDrained (pk, numSamples);
+            if (pdcAppliedSamples > 0)
+                for (int i = 0; i < numSamples; ++i)
+                {
+                    pdcDelayL.pushSample (0, L[i]);  L[i] = pdcDelayL.popSample (0);
+                    pdcDelayR.pushSample (0, R[i]);  R[i] = pdcDelayR.popSample (0);
+                }
         }
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
