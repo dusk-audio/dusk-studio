@@ -16,7 +16,7 @@ colorlinks: true
 
 # About this manual
 
-Dusk Studio is a deliberately constrained, portastudio-style digital audio workstation. It records up to 24 tracks of audio or MIDI, runs every track through a fixed signal chain inspired by classic analog consoles, and bounces a finished mix to a stereo WAV. It does not host a thousand plug-ins on a thousand tracks. It does not let you draw automation curves with a pencil tool. It does not have tabbed views or hidden panels. Everything is on screen, all the time.
+Dusk Studio is a deliberately constrained, portastudio-style digital audio workstation. It records up to 24 tracks of audio or MIDI, runs every track through a fixed signal chain inspired by classic analog consoles, and bounces a finished mix to a stereo WAV. It does not host a thousand plug-ins on a thousand tracks. It does not have tabbed views or hidden panels. Everything is on screen, all the time.
 
 This manual covers Dusk Studio v1. It is written for musicians and engineers who want a reference for every control, every shortcut, and every workflow the program supports. Read it cover to cover the first time and skim by section thereafter.
 
@@ -43,7 +43,7 @@ Dusk Studio includes:
 - No more than 24 tracks. The limit is fixed.
 - No reorderable signal chain. EQ is always before the compressor; the compressor is always before the fader. No chains of seventeen plugins on a single channel.
 - No sample-level audio editing. Regions can be moved, split, trimmed, faded, normalised, and gained. The waveform itself is not editable.
-- No freehand/spline automation. Automation is console-style - ride the fader, pan, mute, or an aux send with Write/Touch/Read and the program records the move - with a breakpoint editor in the audio region editor for adding, dragging, and deleting points after the take. Linear between points; no bezier shaping.
+- Console-style automation. Ride the fader, pan, mute, or an aux send with Write/Touch/Read and the program records the move. For touch-up, the audio region editor's breakpoint lane lets you add, drag, and delete points, or draw a freehand stroke with the Draw tool to lay a run of points at once. Segments stay linear between points; no spline/bezier shaping.
 - No preferences sprawl. The only preferences panel is for audio device configuration.
 - No tabs, no hidden panes, no project-explorer-trees-within-trees.
 
@@ -1153,7 +1153,7 @@ The top is a row of icon buttons:
 - **Properties** (file path, sample rate, channel count, length).
 - **Zoom out / Zoom in / Zoom fit** (also **−**, **+**, **0**).
 
-The region editor's edit-mode toolbar offers **Grab**, **Range**, **Cut**, **Draw**. Most editing uses Grab. Range lets you highlight a time band for split or fade-fit. Cut splits the region at every click. Draw edits the region's gain envelope.
+The region editor's edit-mode toolbar offers **Grab**, **Range**, **Cut**, **Draw**. Most editing uses Grab. Range lets you highlight a time band for split or fade-fit. Cut splits the region at every click. Draw is the automation pencil: with an automation lane selected (see below) it draws a freehand breakpoint curve; with no lane selected it does nothing (it never moves the region).
 
 **Tempo** is edited on the **timeline ruler** (the top band of the tape strip), in any edit mode — it's the only place tempo is set (the transport BPM field is a read-only playhead readout). **Double-click a tempo marker (its triangle or BPM number) to change its value**; double-click the dimmed bar-1 handle to set the starting tempo. **Drag a tempo marker left or right to move it** (it snaps to the grid when SNAP is on; the bar-1 starting tempo stays anchored). **Right-click** the ruler for the full menu: its *Tempo* section offers **Set tempo here…** on an empty spot (adds a tempo change at that bar — type the BPM); **Set tempo… / Delete tempo** on an existing marker (right-clicking anywhere in the ruler column under the number lands on it); and **Set starting tempo…** on the bar-1 handle before any changes exist. The bar grid re-flows to follow, and **MIDI playback and the metronome track the tempo changes** too. The first change you add seeds a point at bar 1 from the starting tempo, so the bars before it keep that tempo. (Audio regions are never time-stretched — only MIDI follows the tempo map.)
 
@@ -1320,7 +1320,7 @@ Each channel strip, each bus, and the master strip have an automation mode butto
 
 The same modes apply to pan, mute, and solo. Pan rides like the fader; mute and solo are discrete on/off toggles, so they record only in WRITE (in READ/TOUCH the recorded lane drives them). On a bus the automatable controls are the fader, pan, and mute (bus solo is manual-only).
 
-Dusk Studio's automation is console-first: you ride the controls and the program writes what you did. For touch-up, the audio region editor exposes a per-parameter breakpoint lane - add, drag, and delete points, with linear segments between them. There is no freehand/spline (pencil) curve drawing.
+Dusk Studio's automation is console-first: you ride the controls and the program writes what you did. For touch-up, the audio region editor exposes a per-parameter breakpoint lane - add, drag, and delete points individually, or switch to the Draw tool and draw a freehand stroke to lay a run of points at once. Segments stay linear between points; there is no spline/bezier shaping.
 
 ### Editing breakpoints in the region editor
 
@@ -1329,6 +1329,7 @@ Double-click an audio region to open its editor. The **Auto:** button at the top
 - **Click empty space** - add a breakpoint at the click. It snaps to the grid; hold **Cmd/Ctrl** to place it off-grid.
 - **Drag a point** - move it in time and value.
 - **Right-click a point** - delete it.
+- **Draw tool** - pick **Draw** in the edit-mode toolbar, then drag across the lane to paint a freehand curve. It lays a run of breakpoints along the stroke (overwriting any automation under it) and thins them to a clean set when you release. Hold **Cmd/Ctrl** to draw off-grid.
 
 A few rules:
 

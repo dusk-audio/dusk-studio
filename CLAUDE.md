@@ -7,7 +7,7 @@ Dusk Studio is a deliberately constrained, portastudio-style DAW for Linux, JUCE
 1. **24 channels maximum.** Fixed. Three banks of 8 (1-8 / 9-16 / 17-24) to match standard control surfaces.
 2. **Fixed signal chain.** No reordering EQ/comp. No adding/removing processors. No plugin chains on channels.
 3. **No waveform editing.** Region-level move/split/delete/trim only. No zoom-to-sample, no pencil tool.
-4. **Console-style automation + breakpoint editing.** Ride controls with Write/Read/Touch, or add/drag/delete per-parameter breakpoints in the region editor's automation lane (linear segments; no freehand/spline curves).
+4. **Console-style automation + breakpoint editing.** Ride controls with Write/Read/Touch, or add/drag/delete per-parameter breakpoints in the region editor's automation lane — or draw a freehand stroke with the Draw tool to lay a run of them (linear segments between points; no spline/bezier curves).
 5. **Everything visible.** No tabs, no hidden panels (the MIDI piano roll overlay is the one exception).
 6. **No preferences sprawl.** Audio device config and that's it.
 7. **Portastudio philosophy.** Stay fixed, finite, and commit-first; if a feature mainly adds configurability or options, leave it out.

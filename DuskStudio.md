@@ -680,7 +680,7 @@ Recording is NOT undoable (portastudio philosophy — you committed to that take
 
 ### **8. Automation System (`src/engine/`)**
 
-Console-style "write and ride" automation, modeled after motorized fader workflows on real mixing consoles — you perform your mix moves in real time, just like riding faders on a Tascam or SSL. The audio region editor adds a per-parameter breakpoint lane (add/drag/delete points, linear between them) for cleaning up or hand-placing automation after the take. No freehand/spline curve drawing.
+Console-style "write and ride" automation, modeled after motorized fader workflows on real mixing consoles — you perform your mix moves in real time, just like riding faders on a Tascam or SSL. The audio region editor adds a per-parameter breakpoint lane (add/drag/delete points, or draw a freehand stroke with the Draw tool to lay a run of them) for cleaning up or hand-placing automation after the take. Segments stay linear between points; no spline/bezier shaping.
 
 **Automatable parameters per channel:**
 
@@ -992,7 +992,7 @@ Add to Phase 3:
 1. **24 channels maximum.** Do not make this configurable. The constraint is the feature. (24 is chosen so that three banks of 8 — 1-8 / 9-16 / 17-24 — map cleanly onto every standard control surface — Mackie Control, FaderPort 16, X-Touch Compact, BCF2000. Bank-switching is built into the control-surface protocol; on screen the full 24 strips remain visible.)
 2. **Fixed signal chain.** No reordering EQ/comp. No adding/removing processors. No plugin chains on channels.
 3. **No waveform editing.** Regions can be moved, split, and deleted. No fades, no time-stretching, no pitch-shifting, no crossfade editing.
-4. **Console-style automation + breakpoint editing.** Fader, pan, mute, and send levels are automated by riding the control during playback (Write/Touch) and reading it back — motorized-fader style. The audio region editor adds a per-parameter breakpoint lane (add/drag/delete points, linear between them) for hand-placing or cleaning up automation after the take. No freehand/spline (pencil) curve drawing. See the Automation section above for full spec.
+4. **Console-style automation + breakpoint editing.** Fader, pan, mute, and send levels are automated by riding the control during playback (Write/Touch) and reading it back — motorized-fader style. The audio region editor adds a per-parameter breakpoint lane (add/drag/delete points, or draw a freehand stroke with the Draw tool to lay a run of them) for hand-placing or cleaning up automation after the take. Segments stay linear between points; no spline/bezier shaping. See the Automation section above for full spec.
 5. **Everything visible.** No hidden panels, no tabs (except the MIDI piano roll overlay). If it's not on screen, it doesn't exist.
 6. **No preferences/settings sprawl.** Audio device config and that's it. No themes, no layout customization, no plugin chain options.
 7. **Portastudio philosophy.** Stay fixed, finite, and commit-first; if a feature mainly adds configurability or options, leave it out.
