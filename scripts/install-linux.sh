@@ -35,19 +35,19 @@ if [ "$SCOPE" = system ]; then
     DATA=/usr/share
     [ "$(id -u)" = 0 ] || { echo "error: --system needs root (use sudo)" >&2; exit 1; }
 else
+    # Must run before $HOME is dereferenced: under set -u an unset HOME would
+    # abort with "HOME: unbound variable" and a cryptic message otherwise.
+    [ -n "${HOME:-}" ] || { echo "error: \$HOME is unset - cannot resolve the user install dir" >&2; exit 1; }
     OPT="$HOME/.local/opt/dusk-studio"
     BINDIR="$HOME/.local/bin"
     DATA="${XDG_DATA_HOME:-$HOME/.local/share}"
 fi
 
 # Gate the destructive rm -rf "$OPT" below: OPT must be exactly one of the two
-# known install dirs. Guards against an unset $HOME collapsing the user path to
-# /.local/opt/dusk-studio (or any other surprise) before we delete it.
-if [ "$SCOPE" = user ] && [ -z "${HOME:-}" ]; then
-    echo "error: \$HOME is unset - cannot resolve the user install dir" >&2; exit 1
-fi
+# known install dirs. Guards against any surprise path before we delete it.
+# ${HOME:-} keeps the pattern set -u-safe for a system install with HOME unset.
 case "$OPT" in
-    /opt/dusk-studio|"$HOME"/.local/opt/dusk-studio) : ;;
+    /opt/dusk-studio|"${HOME:-}"/.local/opt/dusk-studio) : ;;
     *) echo "error: refusing destructive op on unexpected install dir: '$OPT'" >&2; exit 1 ;;
 esac
 
