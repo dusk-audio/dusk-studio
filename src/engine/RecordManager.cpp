@@ -9,10 +9,10 @@ namespace
 // Cap on the per-region take history. Each overdub that fully contains
 // an existing region pushes the previous take onto previousTakes; without
 // a bound, repeated punch-recording in the same spot accumulates
-// indefinitely. 20 covers a comfortable session-long retake history;
-// older takes get trimmed from the back (the oldest, least-likely-to-be-
-// recalled entries) when the cap is exceeded.
-constexpr int kMaxTakesPerRegion = 20;
+// indefinitely. 8 is plenty for a portastudio retake workflow; older takes
+// get trimmed from the back (the oldest, least-likely-to-be-recalled
+// entries) when the cap is exceeded.
+constexpr int kMaxTakesPerRegion = 8;
 
 template <typename Region>
 void trimTakeHistory (Region& region) noexcept

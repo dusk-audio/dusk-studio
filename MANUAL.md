@@ -36,7 +36,7 @@ Dusk Studio includes:
 - MIDI Clock and MIDI Time Code chase and emit.
 - Mackie Control surface support (tested against Tascam DP-24SD).
 - A piano roll for MIDI editing and an audio region editor with non-destructive trim, fade, and gain.
-- Session save/load with automatic 30-second autosave, atomic-write protection, and a 20-take history per region.
+- Session save/load with automatic 30-second autosave, atomic-write protection, and an 8-take history per region.
 
 ## What it deliberately does not have
 
@@ -91,7 +91,7 @@ Hit **R** or click the transport's record button. Playback starts, the record in
 
 ![Mid-record: levels lit, region drawing in the tape strip.](docs/images/qg-04-record-rolling.png)
 
-If you do not like the take, **Cmd+Z** undoes the recording. The take is preserved in the region's take history (up to 20 takes per region) — right-click the region and pick a previous take to swap it back in.
+If you do not like the take, **Cmd+Z** undoes the recording. The take is preserved in the region's take history (up to 8 takes per region) — right-click the region and pick a previous take to swap it back in.
 
 ## Overdub
 
@@ -1005,7 +1005,7 @@ MIDI tracks do not produce separate files; their note and CC data is embedded in
 
 ## Take history
 
-Each region keeps a stack of up to **20 previous takes**. When you record a new take whose timeline range fully contains an existing region, the existing region is pushed onto that stack. Partially-overlapping takes are not absorbed — they stay visible on either side of the punch.
+Each region keeps a stack of up to **8 previous takes**. When you record a new take whose timeline range fully contains an existing region, the existing region is pushed onto that stack. Partially-overlapping takes are not absorbed — they stay visible on either side of the punch.
 
 To cycle through takes:
 
@@ -1014,7 +1014,7 @@ To cycle through takes:
 
 Or click the take badge on the region itself (visible when more than one take exists).
 
-The 20-take cap bounds memory and disk growth across long sessions.
+The 8-take cap bounds memory and disk growth across long sessions.
 
 ## Recording errors
 
@@ -2276,7 +2276,7 @@ The hardware-insert ping reports its result inline on the editor (not a modal), 
 
 **SIP (solo-in-place).** A solo mode in which un-soloed tracks are silenced from the main mix output (as opposed to PFL, which only affects monitoring).
 
-**Take.** A single recording pass. Dusk Studio keeps up to 20 previous takes per region.
+**Take.** A single recording pass. Dusk Studio keeps up to 8 previous takes per region.
 
 **Tape strip.** Dusk Studio's timeline canvas.
 

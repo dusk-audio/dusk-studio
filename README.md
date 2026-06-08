@@ -52,7 +52,7 @@ Paid via [Patreon](https://www.patreon.com/cw/DuskAudio) (recurring) or [GitHub 
 | Aux sends + reverb / delay returns | Working |
 | External hardware inserts (per channel + per aux, with auto-latency ping) | Working |
 | MIDI tracks + instrument plugins + piano roll editor | Working |
-| Audio region editor (non-destructive trim / fade / gain) + 20-take history | Working |
+| Audio region editor (non-destructive trim / fade / gain) + 8-take history | Working |
 | Take cycling + comping (cycle previousTakes — Option A) | Working |
 | Console automation (Write / Read / Touch on channels + aux + master) | Working |
 | MIDI Clock sync + MTC slave + master | Working |
