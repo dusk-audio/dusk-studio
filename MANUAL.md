@@ -521,7 +521,7 @@ From left to right:
 
 On the right end of the transport bar:
 
-- **SNAP**. Global grid snap toggle. When on, region drags, trims, and pastes snap to the snap denomination set in the edit-mode toolbar.
+- **Snap**. Global grid snap toggle in the header (with a resolution button beside it). When on, region drags, trims, pastes, marker / loop / punch / tempo moves snap to the chosen grid resolution.
 - **−** / **+** / **Fit**. Timeline zoom out, in, and fit-to-window.
 
 In compact mode (window narrower than 1850 pixels), labels shorten: `SNAP` becomes `S`, `TIMELINE` becomes `▾`, and the time-format toggle hides — right-click the clock display to flip format instead.
@@ -1157,7 +1157,7 @@ The region editor's edit-mode toolbar offers **Grab**, **Range**, **Cut**, **Dra
 
 **Tempo** is edited on the **timeline ruler** (the top band of the tape strip), in any edit mode — it's the only place tempo is set (the transport BPM field is a read-only playhead readout). **Double-click a tempo marker (its triangle or BPM number) to change its value**; double-click the dimmed bar-1 handle to set the starting tempo. **Drag a tempo marker left or right to move it** (it snaps to the grid when SNAP is on; the bar-1 starting tempo stays anchored). **Right-click** the ruler for the full menu: its *Tempo* section offers **Set tempo here…** on an empty spot (adds a tempo change at that bar — type the BPM); **Set tempo… / Delete tempo** on an existing marker (right-clicking anywhere in the ruler column under the number lands on it); and **Set starting tempo…** on the bar-1 handle before any changes exist. The bar grid re-flows to follow, and **MIDI playback and the metronome track the tempo changes** too. The first change you add seeds a point at bar 1 from the starting tempo, so the bars before it keep that tempo. (Audio regions are never time-stretched — only MIDI follows the tempo map.)
 
-The **Snap** toggle and snap-denomination dropdown are at the right of the toolbar.
+The **Snap** toggle and its grid-resolution button sit in the header, to the left of the zoom (− / + / Fit) cluster — visible whenever the **TIMELINE** is open. Click **Snap** to turn grid snapping on/off; click the resolution button (e.g. *1/4 Note*) to pick the grid (Bar, 1/2, 1/4, 1/8, 1/16, 1/32, plus triplet and dotted variants). The setting is saved with the session.
 
 Below the toolbar:
 

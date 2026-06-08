@@ -11,6 +11,7 @@
 #include "DuskContextMenu.h"
 #include "../session/MidiBindings.h"
 #include "ConsoleView.h"
+#include "EditModeToolbar.h"   // EditModeToolbar::labelFor for the snap-resolution label
 #include "CursorOverlay.h"
 #include "DimOverlay.h"
 #include "DuskAlerts.h"
@@ -394,6 +395,24 @@ MainComponent::MainComponent()
     addAndMakeVisible (hdrZoomOutBtn);
     addAndMakeVisible (hdrZoomInBtn);
     addAndMakeVisible (hdrZoomFitBtn);
+
+    // Grid snap toggle + resolution. Gates every tape-strip region / marker /
+    // loop / tempo drag (SnapHelpers no-op when session.snapToGrid is false).
+    styleHdrPill (hdrSnapBtn);
+    styleHdrPill (hdrSnapResBtn);
+    hdrSnapBtn.setClickingTogglesState (true);
+    hdrSnapBtn.setTooltip ("Snap region edits, markers, loop / punch and tempo points to the grid");
+    hdrSnapBtn.onClick = [this]
+    {
+        session.snapToGrid = hdrSnapBtn.getToggleState();
+        refreshSnapUi();
+        if (tapeStrip != nullptr) tapeStrip->repaint();
+    };
+    hdrSnapResBtn.setTooltip ("Grid resolution used when Snap is on");
+    hdrSnapResBtn.onClick = [this] { showSnapResolutionMenu(); };
+    addAndMakeVisible (hdrSnapBtn);
+    addAndMakeVisible (hdrSnapResBtn);
+    refreshSnapUi();
 
     // Bank-button row is rebuilt by syncBankButtons() each layout pass
     // (visible only when the window can't fit all 16 strips at min
@@ -1359,9 +1378,12 @@ void MainComponent::resized()
     // apply there).
     constexpr int kHdrZoomBtnW = 30;
     constexpr int kHdrFitW     = 36;
+    constexpr int kHdrSnapW    = 48;
+    constexpr int kHdrSnapResW = 78;
     constexpr int kHdrBtnGap   = 4;
     constexpr int kHdrBtnH     = 24;
-    constexpr int kHdrClusterW = kHdrZoomBtnW * 2 + kHdrFitW + kHdrBtnGap * 2;
+    constexpr int kHdrClusterW = kHdrSnapW + kHdrSnapResW + kHdrZoomBtnW * 2 + kHdrFitW
+                               + kHdrBtnGap * 4;
     // Only show when TapeStrip is actually expanded — when it's
     // collapsed or the user is in a fullscreen stage (AUX/Mastering),
     // the zoom buttons have no on-screen subject so they don't belong in
@@ -1372,6 +1394,8 @@ void MainComponent::resized()
     hdrZoomOutBtn.setVisible (hdrClusterVisible);
     hdrZoomInBtn .setVisible (hdrClusterVisible);
     hdrZoomFitBtn.setVisible (hdrClusterVisible);
+    hdrSnapBtn   .setVisible (hdrClusterVisible);
+    hdrSnapResBtn.setVisible (hdrClusterVisible);
     if (hdrClusterVisible)
     {
         // Real tuner X (parent-local on transportBar = parent-local on
@@ -1387,6 +1411,8 @@ void MainComponent::resized()
         const int clusterX  = leftEdge + juce::jmax (0, (gapW - kHdrClusterW) / 2);
         const int clusterY  = rowBounds.getY() + (rowBounds.getHeight() - kHdrBtnH) / 2;
         int x = clusterX;
+        hdrSnapBtn   .setBounds (x, clusterY, kHdrSnapW,    kHdrBtnH); x += kHdrSnapW    + kHdrBtnGap;
+        hdrSnapResBtn.setBounds (x, clusterY, kHdrSnapResW, kHdrBtnH); x += kHdrSnapResW + kHdrBtnGap;
         hdrZoomOutBtn.setBounds (x, clusterY, kHdrZoomBtnW, kHdrBtnH); x += kHdrZoomBtnW + kHdrBtnGap;
         hdrZoomInBtn .setBounds (x, clusterY, kHdrZoomBtnW, kHdrBtnH); x += kHdrZoomBtnW + kHdrBtnGap;
         hdrZoomFitBtn.setBounds (x, clusterY, kHdrFitW,    kHdrBtnH);
@@ -1441,6 +1467,41 @@ void MainComponent::resized()
                                        .withSizeKeepingCentre (startupDialog->getWidth(),
                                                                   startupDialog->getHeight()));
     }
+}
+
+void MainComponent::refreshSnapUi()
+{
+    hdrSnapBtn.setToggleState (session.snapToGrid, juce::dontSendNotification);
+    hdrSnapResBtn.setButtonText (EditModeToolbar::labelFor (session.snapResolution));
+    hdrSnapResBtn.setEnabled (session.snapToGrid);   // resolution irrelevant when snap is off
+}
+
+void MainComponent::showSnapResolutionMenu()
+{
+    // The musically useful subset for region-level snapping (timecode / CD-frame
+    // resolutions are time-mode niche; the modal editors expose the full set).
+    static const SnapResolution kOpts[] = {
+        SnapResolution::Bar, SnapResolution::Half, SnapResolution::Quarter,
+        SnapResolution::Eighth, SnapResolution::Sixteenth, SnapResolution::ThirtySecond,
+        SnapResolution::QuarterTriplet, SnapResolution::EighthTriplet,
+        SnapResolution::QuarterDotted, SnapResolution::EighthDotted,
+    };
+    juce::PopupMenu m;
+    for (int i = 0; i < (int) (sizeof (kOpts) / sizeof (kOpts[0])); ++i)
+    {
+        if (i == 6 || i == 8) m.addSeparator();   // straight | triplet | dotted
+        m.addItem (i + 1, EditModeToolbar::labelFor (kOpts[i]), true,
+                    session.snapResolution == kOpts[i]);
+    }
+    juce::Component::SafePointer<MainComponent> safe (this);
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (hdrSnapResBtn),
+        [safe] (int chosen)
+        {
+            if (safe == nullptr || chosen <= 0) return;
+            safe->session.snapResolution = kOpts[(size_t) (chosen - 1)];
+            safe->refreshSnapUi();
+            if (safe->tapeStrip != nullptr) safe->tapeStrip->repaint();
+        });
 }
 
 void MainComponent::setTimelineVisible (bool show)
@@ -2459,6 +2520,7 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
             engine.setStage (wantStage);
         syncStageUi (wantStage);
     }
+    refreshSnapUi();   // snap on/off + resolution are serialized — reflect the loaded values
     resized();
     const auto tAfterConsole = juce::Time::getMillisecondCounterHiRes();
 

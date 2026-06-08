@@ -197,6 +197,13 @@ private:
     juce::TextButton hdrZoomOutBtn { "-"    };
     juce::TextButton hdrZoomInBtn  { "+"    };
     juce::TextButton hdrZoomFitBtn { "Fit"  };
+    // Tape-strip grid snap: on/off toggle + resolution picker. Write
+    // session.snapToGrid / snapResolution, which the SnapHelpers gate every
+    // region / marker / loop / tempo drag on.
+    juce::TextButton hdrSnapBtn    { "Snap" };
+    juce::TextButton hdrSnapResBtn { {}     };
+    void showSnapResolutionMenu();
+    void refreshSnapUi();
 
     // Every dialog opens via DuskFileBrowser (in-window EmbeddedModal)
     // which owns its own lifetime — no caller-side keep-alive. Standalone
