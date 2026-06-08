@@ -7,6 +7,7 @@
 
 using duskstudio::TempoMap;
 using duskstudio::TempoPoint;
+using Catch::Matchers::WithinAbs;
 
 namespace
 {
@@ -45,10 +46,10 @@ TEST_CASE ("TempoMap: piecewise integration across a tempo change", "[TempoMap]"
     // + 1 s at 60 bpm => 1 beat => 480 more ticks.
     REQUIRE (std::abs (m.samplesToTicks (96000, kSr) - 1440) <= 1);
 
-    REQUIRE (m.bpmAt (0)      == 120.0f);
-    REQUIRE (m.bpmAt (47999)  == 120.0f);
-    REQUIRE (m.bpmAt (48000)  == 60.0f);
-    REQUIRE (m.bpmAt (1000000) == 60.0f);
+    REQUIRE_THAT (m.bpmAt (0),       WithinAbs (120.0f, 1e-6f));
+    REQUIRE_THAT (m.bpmAt (47999),   WithinAbs (120.0f, 1e-6f));
+    REQUIRE_THAT (m.bpmAt (48000),   WithinAbs (60.0f,  1e-6f));
+    REQUIRE_THAT (m.bpmAt (1000000), WithinAbs (60.0f,  1e-6f));
 }
 
 TEST_CASE ("TempoMap: ticks<->samples round-trips through a tempo change", "[TempoMap]")

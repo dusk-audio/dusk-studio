@@ -27,7 +27,8 @@ float peak (const float* v, int n)
 double driveSine (duskstudio::MasteringChain& chain, double phase, double freqHz,
                   float amp, int blocks,
                   std::vector<float>* captureL = nullptr,
-                  int captureFromBlock = 0)
+                  int captureFromBlock = 0,
+                  std::vector<float>* captureR = nullptr)
 {
     const double inc = 2.0 * juce::MathConstants<double>::pi * freqHz / kSr;
     std::vector<float> L (kBlock), R (kBlock);
@@ -41,8 +42,11 @@ double driveSine (duskstudio::MasteringChain& chain, double phase, double freqHz
             R[(size_t) i] = s;
         }
         chain.processInPlace (L.data(), R.data(), kBlock);
-        if (captureL != nullptr && b >= captureFromBlock)
-            captureL->insert (captureL->end(), L.begin(), L.end());
+        if (b >= captureFromBlock)
+        {
+            if (captureL != nullptr) captureL->insert (captureL->end(), L.begin(), L.end());
+            if (captureR != nullptr) captureR->insert (captureR->end(), R.begin(), R.end());
+        }
     }
     return phase;
 }
@@ -128,16 +132,20 @@ TEST_CASE ("MasteringChain: hot input stays finite and at/below the ceiling",
     const float ceiling = juce::Decibels::decibelsToGain (-1.0f);
     const float amp = juce::Decibels::decibelsToGain (6.0f);   // hot, +6 dBFS
 
-    std::vector<float> captured;
-    driveSine (chain, 0.0, 1000.0, amp, 24, &captured, 12);   // capture steady state
+    std::vector<float> capturedL, capturedR;
+    driveSine (chain, 0.0, 1000.0, amp, 24, &capturedL, 12, &capturedR);   // capture steady state
 
-    for (float x : captured)
-        REQUIRE (std::isfinite (x));
+    REQUIRE (capturedL.size() == capturedR.size());
+    REQUIRE_FALSE (capturedL.empty());
 
-    float steadyPeak = 0.0f;
-    for (float x : captured) steadyPeak = std::max (steadyPeak, std::abs (x));
+    float steadyPeakL = 0.0f, steadyPeakR = 0.0f;
+    for (float x : capturedL) { REQUIRE (std::isfinite (x)); steadyPeakL = std::max (steadyPeakL, std::abs (x)); }
+    for (float x : capturedR) { REQUIRE (std::isfinite (x)); steadyPeakR = std::max (steadyPeakR, std::abs (x)); }
 
     // 4x oversampled FIR ripple ⇒ ~0.3 dB tolerance above the linear ceiling
-    // (same allowance the BrickwallLimiter true-peak test uses).
-    REQUIRE (steadyPeak <= ceiling * 1.04f);
+    // (same allowance the BrickwallLimiter true-peak test uses). Both channels
+    // must stay finite + at/below the ceiling — a right-only regression
+    // wouldn't show if we only checked L.
+    REQUIRE (steadyPeakL <= ceiling * 1.04f);
+    REQUIRE (steadyPeakR <= ceiling * 1.04f);
 }

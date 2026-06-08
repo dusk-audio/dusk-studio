@@ -143,6 +143,25 @@ float MasteringLimiterEditor::yToCeilingDb (int y) const noexcept
 
 void MasteringLimiterEditor::timerCallback()
 {
+    // Mode / stereo-link / release are set once in the ctor, so a session load
+    // (which rewrites the params in place) would leave them stale. Re-sync from
+    // the params here — dontSendNotification so this never re-fires the onChange
+    // write-back. Skip the knob while the user is dragging it.
+    const int modeId = params.limiterMode.load (std::memory_order_relaxed) + 1;
+    if (modeCombo.getSelectedId() != modeId)
+        modeCombo.setSelectedId (modeId, juce::dontSendNotification);
+
+    const bool link = params.limiterStereoLink.load (std::memory_order_relaxed);
+    if (stereoLinkToggle.getToggleState() != link)
+        stereoLinkToggle.setToggleState (link, juce::dontSendNotification);
+
+    if (! releaseKnob.isMouseButtonDown())
+    {
+        const float rel = params.limiterReleaseMs.load (std::memory_order_relaxed);
+        if (std::abs ((float) releaseKnob.getValue() - rel) > 0.5f)
+            releaseKnob.setValue (rel, juce::dontSendNotification);
+    }
+
     const float gr = limiter.getCurrentGrDb();
     if (gr < displayedGrDb) displayedGrDb = gr;
     else                    displayedGrDb += (gr - displayedGrDb) * 0.18f;

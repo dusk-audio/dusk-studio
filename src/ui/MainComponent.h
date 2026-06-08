@@ -260,7 +260,10 @@ private:
     // backdrop. Both torn down together via dismissStartupDialog.
     std::unique_ptr<class StartupDialog> startupDialog;
     std::unique_ptr<class DimOverlay>    startupDim;
-    void dismissStartupDialog();
+    // onDone runs AFTER the async teardown completes, so a caller can open the
+    // next UI (e.g. a session-load recovery prompt) without stacking it over
+    // the still-present startup dialog.
+    void dismissStartupDialog (std::function<void()> onDone = {});
 
     // Cross-OS cursor overlay — paints Grab / Cut / Draw glyphs at the
     // mouse position via a 60 Hz JUCE timer, bypassing the platform

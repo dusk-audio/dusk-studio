@@ -320,14 +320,27 @@ void MasteringView::applyMultibandPreset (int presetIndex)
     setBand ("lowmid", preset.mid);
     setBand ("high",   preset.high);
 
-    // 3-band emulation: disable the high-mid band and collapse its width so the
-    // lowmid/high split lands on the chart's Hi-Xover. crossover_2 maxes at
-    // 5 kHz, so presets with a higher Hi-Xover leave a thin uncompressed sliver.
-    setP ("mb_highmid_enabled", 0.0f);
+    // Map the chart's 3 bands (low / mid / high) onto the 4-band multiband comp.
+    // crossover_2 maxes at 5 kHz, so when the chart's Hi-Xover is above that we
+    // can't fit the whole "mid" band into lowmid alone. Rather than disabling
+    // high-mid (which would leave 5 kHz..Hi-Xover uncompressed), keep it enabled
+    // and give it the SAME params as lowmid so lowmid+highmid together form one
+    // continuous chart-"mid" band with no seam.
     setP ("mb_crossover_1", preset.lowXoverHz);
-    const float c2 = juce::jmin (preset.hiXoverHz, 5000.0f);
-    setP ("mb_crossover_2", c2);
-    setP ("mb_crossover_3", juce::jmax (preset.hiXoverHz, c2));
+    if (preset.hiXoverHz > 5000.0f)
+    {
+        setBand ("highmid", preset.mid);
+        setP ("mb_highmid_enabled", 1.0f);
+        setP ("mb_crossover_2", 5000.0f);
+        setP ("mb_crossover_3", preset.hiXoverHz);
+    }
+    else
+    {
+        // 3-band collapse: high-mid off, mid/high split lands on Hi-Xover.
+        setP ("mb_highmid_enabled", 0.0f);
+        setP ("mb_crossover_2", preset.hiXoverHz);
+        setP ("mb_crossover_3", 5000.0f);   // > crossover_2; band is disabled anyway
+    }
 
     setP ("auto_makeup", 0.0f);   // Choice: 0 = Off, matching the chart
 

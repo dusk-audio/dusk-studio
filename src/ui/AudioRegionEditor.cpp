@@ -712,21 +712,22 @@ void AudioRegionEditor::paintRuler (juce::Graphics& g, juce::Rectangle<int> area
         const int beatsPerBar = juce::jmax (1, session.beatsPerBar.load (std::memory_order_relaxed));
         const juce::int64 ticksPerBar = (juce::int64) beatsPerBar * kMidiTicksPerQuarter;
         // Bar boundaries are musical-time positions resolved through the session
-        // tempo map (constant tempoBpm when empty) at the timeline sample rate,
-        // so the grid follows tempo changes.
-        const double tsr = engine.getCurrentSampleRate();
+        // tempo map (constant tempoBpm when empty). Use the SAME file-domain
+        // sample rate (`sr`) the waveform + Time-mode grid use, not the engine
+        // rate — otherwise a region whose file SR differs from the device SR
+        // draws its bar lines drifted against the waveform underneath.
         const juce::int64 anchorEndTimeline = anchorTimelineStart + anchorTimelineLength;
 
-        if (tsr > 0.0)
+        if (sr > 0.0)
         {
-            const auto startTick = session.samplesToTicks (anchorTimelineStart, tsr);
-            const auto endTick   = session.samplesToTicks (anchorEndTimeline,   tsr);
+            const auto startTick = session.samplesToTicks (anchorTimelineStart, sr);
+            const auto endTick   = session.samplesToTicks (anchorEndTimeline,   sr);
             const int firstBar = (int) (startTick / ticksPerBar);
             const int lastBar  = (int) (endTick   / ticksPerBar) + 1;
 
             for (int bar = firstBar; bar <= lastBar; ++bar)
             {
-                const auto barTimeline = session.ticksToSamples ((juce::int64) bar * ticksPerBar, tsr);
+                const auto barTimeline = session.ticksToSamples ((juce::int64) bar * ticksPerBar, sr);
                 if (barTimeline < anchorTimelineStart || barTimeline > anchorEndTimeline) continue;
                 const int x = xForTimelineSample (barTimeline, area);
                 if (x < area.getX() || x > area.getRight()) continue;

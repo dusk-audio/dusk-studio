@@ -672,11 +672,17 @@ void AudioSettingsPanel::populateMainOutputCombo()
 
     if (auto* device = deviceManager.getCurrentAudioDevice())
     {
+        // Only offer pairs the engine can actually write to: both channels of
+        // the pair must be in the device's active-output set. Listing inactive
+        // physical outputs lets the user route the master to a dead pair and
+        // makes it appear to vanish.
+        const auto active = device->getActiveOutputChannels();
         const int count = device->getOutputChannelNames().size();
         // Skip the first pair — it's already the "1-2 (default)" item.
         for (int i = 2; i + 1 < count; i += 2)
-            mainOutputCombo.addItem ("Out " + juce::String (i + 1) + "-" + juce::String (i + 2),
-                                       outputpair::encodePair (i, i + 1));
+            if (active[i] && active[i + 1])
+                mainOutputCombo.addItem ("Out " + juce::String (i + 1) + "-" + juce::String (i + 2),
+                                           outputpair::encodePair (i, i + 1));
     }
 
     // -1 (or anything not in the menu) falls back to the default 1-2 item.

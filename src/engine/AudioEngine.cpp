@@ -219,6 +219,17 @@ void AudioEngine::publishTempoMap()
     const TempoMap* raw = fresh.get();
     rtTempoMapPool.push_back (std::move (fresh));
     rtTempoMap.store (raw, std::memory_order_release);
+
+    // Bound the pool so a long drag (a publish per mouse-move) can't grow it
+    // without limit between audioDeviceStopped reclamations. The audio thread
+    // loads rtTempoMap once per block and holds that pointer only for the block;
+    // far fewer than kMaxRtTempoMaps publishes can land inside one block, so the
+    // pointer any in-flight callback holds is always still retained. Trimming
+    // the oldest (front) entries is therefore safe.
+    constexpr size_t kMaxRtTempoMaps = 8;
+    if (rtTempoMapPool.size() > kMaxRtTempoMaps)
+        rtTempoMapPool.erase (rtTempoMapPool.begin(),
+                               rtTempoMapPool.end() - (std::ptrdiff_t) kMaxRtTempoMaps);
 }
 
 void AudioEngine::setTempoPoints (std::vector<TempoPoint> pts)

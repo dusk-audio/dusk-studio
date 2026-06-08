@@ -674,9 +674,8 @@ void TransportBar::timerCallback()
 
     const auto playhead = engine.getTransport().getPlayhead();
 
-    // BPM field tracks the tempo at the playhead (constant when no map).
-    bpmValue.setText (juce::String ((int) std::round (engine.getSession().bpmAt (playhead))),
-                       juce::dontSendNotification);
+    // BPM field tracks the tempo at the playhead (refreshButtonStates() below
+    // sets it; it reads the playhead too so the two never disagree).
 
     // Current-section pill: name of the latest marker at or before the
     // playhead. Empty (hidden) when there are no markers or the playhead
@@ -952,9 +951,12 @@ void TransportBar::refreshButtonStates()
                                    juce::dontSendNotification);
 
     // Avoid stomping the user's mid-edit text - only refresh the BPM
-    // display when the label isn't currently being typed into.
+    // display when the label isn't currently being typed into. Show the tempo
+    // AT THE PLAYHEAD (follows the tempo map), not the constant bar-1 tempo —
+    // otherwise this clobbers the playhead-driven value timerCallback just set.
     if (! bpmValue.isBeingEdited())
-        bpmValue.setText (juce::String ((int) engine.getSession().tempoBpm.load()),
+        bpmValue.setText (juce::String ((int) std::round (
+                              engine.getSession().bpmAt (engine.getTransport().getPlayhead()))),
                            juce::dontSendNotification);
 
     // BPM caption priority:

@@ -434,10 +434,11 @@ void AuxLaneComponent::timerCallback()
             muteButton.setToggleState (effective, juce::dontSendNotification);
     }
 
-    // Rebuild the output-pair menu when the device's output count changes
-    // (e.g. the user just enabled more outputs in Audio settings).
+    // Rebuild the output-pair menu when the device's ACTIVE output count
+    // changes (e.g. the user just enabled more outputs in Audio settings —
+    // the physical name count wouldn't move, only the active mask).
     if (auto* dev = engine.getDeviceManager().getCurrentAudioDevice())
-        if (dev->getOutputChannelNames().size() != lastOutputChannelCount)
+        if (dev->getActiveOutputChannels().countNumberOfSetBits() != lastOutputChannelCount)
             populateOutputPairCombo();
 }
 
@@ -449,11 +450,18 @@ void AuxLaneComponent::populateOutputPairCombo()
     int count = 0;
     if (auto* device = engine.getDeviceManager().getCurrentAudioDevice())
     {
-        const auto names = device->getOutputChannelNames();
-        count = names.size();
-        for (int i = 0; i + 1 < count; i += 2)
-            outputPairCombo.addItem ("Out " + juce::String (i + 1) + "-" + juce::String (i + 2),
-                                       outputpair::encodePair (i, i + 1));
+        // Only list pairs the engine can write to — both channels must be in the
+        // device's active-output set. Offering inactive physical outputs would
+        // route a cue to a dead pair (no sound). count tracks the active channel
+        // count so the timer re-populates when the user toggles outputs in Audio
+        // settings (getOutputChannelNames().size() wouldn't change there).
+        const auto active = device->getActiveOutputChannels();
+        const int total = device->getOutputChannelNames().size();
+        for (int i = 0; i + 1 < total; i += 2)
+            if (active[i] && active[i + 1])
+                outputPairCombo.addItem ("Out " + juce::String (i + 1) + "-" + juce::String (i + 2),
+                                           outputpair::encodePair (i, i + 1));
+        count = active.countNumberOfSetBits();
     }
     lastOutputChannelCount = count;
 

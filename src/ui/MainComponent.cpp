@@ -1657,7 +1657,7 @@ void MainComponent::launchStartupDialog()
     addAndMakeVisible (startupDialog.get());
 }
 
-void MainComponent::dismissStartupDialog()
+void MainComponent::dismissStartupDialog (std::function<void()> onDone)
 {
     // Defer the actual delete by one message-loop tick — closeDialog is
     // typically called from inside one of the dialog's own button click
@@ -1665,7 +1665,7 @@ void MainComponent::dismissStartupDialog()
     // chain is fragile. callAsync runs on the message thread after the
     // click handler returns, when nothing's still on the dialog's stack.
     juce::Component::SafePointer<MainComponent> safeThis (this);
-    juce::MessageManager::callAsync ([safeThis]
+    juce::MessageManager::callAsync ([safeThis, onDone = std::move (onDone)]
     {
         if (safeThis == nullptr) return;
         safeThis->startupDialog.reset();
@@ -1682,6 +1682,9 @@ void MainComponent::dismissStartupDialog()
         safeThis->startupDialogPending = false;
         if (! safeThis->startupQuitRequested)
             safeThis->maybeStartStartupPluginScan();
+
+        // The dialog is now fully torn down; safe to run any follow-up UI.
+        if (onDone) onDone();
     });
 }
 
@@ -2255,9 +2258,15 @@ void MainComponent::openSessionPath (const juce::File& path)
     {
         // Clear the startup New / Open-recent flow first so a CLI / file-manager
         // open doesn't stack a session-load (recovery) modal over the startup
-        // dialog. Covers both the directory and file cases above.
-        dismissStartupDialog();
-        loadSessionFromJson (sessionJson);   // shows its own alert on failure
+        // dialog. dismissStartupDialog tears down asynchronously, so defer the
+        // load into its completion callback — otherwise the recovery prompt
+        // would open on top of the still-present startup dialog.
+        juce::Component::SafePointer<MainComponent> safeThis (this);
+        dismissStartupDialog ([safeThis, sessionJson]
+        {
+            if (safeThis != nullptr)
+                safeThis->loadSessionFromJson (sessionJson);   // shows its own alert on failure
+        });
     }
 }
 

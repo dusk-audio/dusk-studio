@@ -1115,17 +1115,10 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
     // it without needing a separate selection step.
     const auto hit = hitTestRegion (e.x, e.y);
 
-    // Empty track space (no region under the cursor) → move the playhead, so a
-    // plain click anywhere on the timeline seeks. Region clicks still select /
-    // drag / trim below; double-click opens the region editor.
-    if (hit.op == RegionOp::None && ! e.mods.isRightButtonDown())
-    {
-        const auto sample = sampleAtX (e.x);
-        engine.getTransport().setPlayhead (sample);
-        session.lastClickedTimelineSample.store (sample, std::memory_order_relaxed);
-        repaint();
-        return;
-    }
+    // NOTE: the empty-timeline seek lives at the END of this method, AFTER the
+    // MIDI-region click and the Shift/Cmd rubber-band handlers. Seeking here on
+    // hit.op == None (audio-only hit test) would swallow clicks on MIDI regions
+    // and box-select drags.
 
     // Take-history badge: rotate to the next take (FIFO — front of
     // previousTakes surfaces, current goes to the back). Wrapped in a
@@ -1355,11 +1348,15 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
     }
 
     // Plain click on empty timeline → seek the playhead AND clear
-    // every selection (primary + additional).
+    // every selection (primary + additional). Runs only after the MIDI and
+    // rubber-band handlers above have declined the click.
     clearAllSelections();
 
     const auto sample = sampleAtX (e.x);
     engine.getTransport().setPlayhead (sample);
+    // Remember this click so a future Stop in "Return to last clicked" mode
+    // lands here.
+    session.lastClickedTimelineSample.store (sample, std::memory_order_relaxed);
     repaint();
 }
 
@@ -3785,8 +3782,11 @@ void TapeStrip::promptAddTempoPoint (juce::int64 sample)
         [safeThis = juce::Component::SafePointer<TapeStrip> (this), sample] (juce::String s)
         {
             if (safeThis == nullptr) return;
-            const float b = juce::jlimit (30.0f, 300.0f, s.getFloatValue());
-            if (b <= 0.0f) return;
+            // Validate BEFORE clamping: getFloatValue() returns 0 for junk, and
+            // jlimit would then silently turn that into a 30 BPM entry.
+            const auto t = s.trim();
+            if (t.isEmpty() || ! t.containsOnly ("0123456789.+-")) return;
+            const float b = juce::jlimit (30.0f, 300.0f, t.getFloatValue());
             auto vec = safeThis->session.tempoMap.points();
             // First point ever: seed a base anchor at the origin so the span
             // before this change keeps the starting tempo.
@@ -3815,8 +3815,9 @@ void TapeStrip::editTempoPointBpm (juce::int64 atSample)
         (juce::String s)
         {
             if (safeThis == nullptr) return;
-            const float b = s.getFloatValue();
-            if (b <= 0.0f) return;
+            const auto t = s.trim();
+            if (t.isEmpty() || ! t.containsOnly ("0123456789.+-")) return;
+            const float b = juce::jlimit (30.0f, 300.0f, t.getFloatValue());
             auto vec = safeThis->session.tempoMap.points();
             for (auto& p : vec)
                 if (p.timelineSamples == atSample) p.bpm = b;
@@ -3836,8 +3837,9 @@ void TapeStrip::editBaseTempo()
         [safeThis = juce::Component::SafePointer<TapeStrip> (this)] (juce::String s)
         {
             if (safeThis == nullptr) return;
-            const float b = juce::jlimit (30.0f, 300.0f, s.getFloatValue());
-            if (b <= 0.0f) return;
+            const auto t = s.trim();
+            if (t.isEmpty() || ! t.containsOnly ("0123456789.+-")) return;
+            const float b = juce::jlimit (30.0f, 300.0f, t.getFloatValue());
             safeThis->commitTempoPoints ({ { 0, b } }, "Set starting tempo");
         });
 }
