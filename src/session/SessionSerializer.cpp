@@ -481,10 +481,10 @@ juce::DynamicObject::Ptr trackToObject (const Track& t)
     for (int p = 0; p < kNumAutomationParams; ++p)
     {
         const auto& lane = t.automationLanes[(size_t) p];
-        if (lane.points.empty()) continue;
+        if (lane.pointsConst().empty()) continue;
         juce::Array<juce::var> pts;
-        pts.ensureStorageAllocated ((int) lane.points.size());
-        for (const auto& pt : lane.points)
+        pts.ensureStorageAllocated ((int) lane.pointsConst().size());
+        for (const auto& pt : lane.pointsConst())
         {
             auto* pObj = new juce::DynamicObject();
             pObj->setProperty ("t",   (juce::int64) pt.timeSamples);
@@ -533,10 +533,10 @@ juce::DynamicObject::Ptr busToObject (const Bus& a)
     for (int p = 0; p < kNumAutomationParams; ++p)
     {
         const auto& lane = a.strip.automationLanes[(size_t) p];
-        if (lane.points.empty()) continue;
+        if (lane.pointsConst().empty()) continue;
         juce::Array<juce::var> pts;
-        pts.ensureStorageAllocated ((int) lane.points.size());
-        for (const auto& pt : lane.points)
+        pts.ensureStorageAllocated ((int) lane.pointsConst().size());
+        for (const auto& pt : lane.pointsConst())
         {
             auto* pObj = new juce::DynamicObject();
             pObj->setProperty ("t",   (juce::int64) pt.timeSamples);
@@ -751,7 +751,7 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm)
     // after all lane mutations pairs with the engine's acquire-load
     // gating lane reads.
     for (auto& lane : t.automationLanes)
-        lane.points.clear();
+        lane.publishPoints ({});
     if (auto autoVar = v["automation"]; autoVar.isObject())
     {
         for (int p = 0; p < kNumAutomationParams; ++p)
@@ -759,8 +759,8 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm)
             const char* key = automationParamKey ((AutomationParam) p);
             auto pts = autoVar[key];
             if (! pts.isArray()) continue;
-            auto& lane = t.automationLanes[(size_t) p];
-            lane.points.reserve ((size_t) pts.size());
+            std::vector<AutomationPoint> tmp;
+            tmp.reserve ((size_t) pts.size());
             for (int k = 0; k < pts.size(); ++k)
             {
                 auto pv = pts[k];
@@ -774,14 +774,15 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm)
                 pt.recordedAtBPM = pv.hasProperty ("bpm")
                     ? (float) (double) pv["bpm"]
                     : (float) defaultRecordBpm;
-                lane.points.push_back (pt);
+                tmp.push_back (pt);
             }
             // Belt-and-braces sort - hand-edited JSON or out-of-order
             // writers can't violate the binary-search invariant in
             // evaluateLane().
-            std::sort (lane.points.begin(), lane.points.end(),
+            std::sort (tmp.begin(), tmp.end(),
                 [] (const AutomationPoint& a, const AutomationPoint& b)
                 { return a.timeSamples < b.timeSamples; });
+            t.automationLanes[(size_t) p].publishPoints (std::move (tmp));
         }
     }
     if (v.hasProperty ("automation_mode"))
@@ -963,7 +964,7 @@ void restoreBus (Bus& a, const juce::var& v, double defaultRecordBpm)
     // release-store the mode so the audio thread never reads a half-rebuilt
     // lane vector. Only FaderDb / Pan / Mute lanes are ever populated.
     for (auto& lane : a.strip.automationLanes)
-        lane.points.clear();
+        lane.publishPoints ({});
     if (auto autoVar = v["automation"]; autoVar.isObject())
     {
         for (int p = 0; p < kNumAutomationParams; ++p)
@@ -971,8 +972,8 @@ void restoreBus (Bus& a, const juce::var& v, double defaultRecordBpm)
             const char* key = automationParamKey ((AutomationParam) p);
             auto pts = autoVar[key];
             if (! pts.isArray()) continue;
-            auto& lane = a.strip.automationLanes[(size_t) p];
-            lane.points.reserve ((size_t) pts.size());
+            std::vector<AutomationPoint> tmp;
+            tmp.reserve ((size_t) pts.size());
             for (int k = 0; k < pts.size(); ++k)
             {
                 auto pv = pts[k];
@@ -983,11 +984,12 @@ void restoreBus (Bus& a, const juce::var& v, double defaultRecordBpm)
                 pt.recordedAtBPM = pv.hasProperty ("bpm")
                     ? (float) (double) pv["bpm"]
                     : (float) defaultRecordBpm;
-                lane.points.push_back (pt);
+                tmp.push_back (pt);
             }
-            std::sort (lane.points.begin(), lane.points.end(),
+            std::sort (tmp.begin(), tmp.end(),
                 [] (const AutomationPoint& x, const AutomationPoint& y)
                 { return x.timeSamples < y.timeSamples; });
+            a.strip.automationLanes[(size_t) p].publishPoints (std::move (tmp));
         }
     }
     // Always write the mode so a re-load into a reused strip can't inherit a
@@ -1061,10 +1063,10 @@ juce::String SessionSerializer::serialize (const Session& s)
         for (int p = 0; p < kNumAutomationParams; ++p)
         {
             const auto& al = lane.params.automationLanes[(size_t) p];
-            if (al.points.empty()) continue;
+            if (al.pointsConst().empty()) continue;
             juce::Array<juce::var> pts;
-            pts.ensureStorageAllocated ((int) al.points.size());
-            for (const auto& pt : al.points)
+            pts.ensureStorageAllocated ((int) al.pointsConst().size());
+            for (const auto& pt : al.pointsConst())
             {
                 auto* pObj = new juce::DynamicObject();
                 pObj->setProperty ("t",   (juce::int64) pt.timeSamples);
@@ -1138,10 +1140,10 @@ juce::String SessionSerializer::serialize (const Session& s)
         for (int p = 0; p < kNumAutomationParams; ++p)
         {
             const auto& al = s.master().automationLanes[(size_t) p];
-            if (al.points.empty()) continue;
+            if (al.pointsConst().empty()) continue;
             juce::Array<juce::var> pts;
-            pts.ensureStorageAllocated ((int) al.points.size());
-            for (const auto& pt : al.points)
+            pts.ensureStorageAllocated ((int) al.pointsConst().size());
+            for (const auto& pt : al.pointsConst())
             {
                 auto* pObj = new juce::DynamicObject();
                 pObj->setProperty ("t",   (juce::int64) pt.timeSamples);
@@ -1420,7 +1422,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
             // ordering rationale as the track-load block: avoid the
             // audio thread reading half-rebuilt lane vectors.
             for (auto& al : lane.params.automationLanes)
-                al.points.clear();
+                al.publishPoints ({});
             if (auto autoObj = v["automation"]; autoObj.isObject())
             {
                 for (int p = 0; p < kNumAutomationParams; ++p)
@@ -1429,8 +1431,8 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                     if (! autoObj.hasProperty (key)) continue;
                     auto pts = autoObj[key];
                     if (! pts.isArray()) continue;
-                    auto& al = lane.params.automationLanes[(size_t) p];
-                    al.points.reserve ((size_t) pts.size());
+                    std::vector<AutomationPoint> tmp;
+                    tmp.reserve ((size_t) pts.size());
                     for (int k = 0; k < pts.size(); ++k)
                     {
                         auto pv = pts[k];
@@ -1441,8 +1443,9 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                         pt.recordedAtBPM = pv.hasProperty ("bpm")
                             ? (float) (double) pv["bpm"]
                             : (float) sessionLoadBpm;
-                        al.points.push_back (pt);
+                        tmp.push_back (pt);
                     }
+                    lane.params.automationLanes[(size_t) p].publishPoints (std::move (tmp));
                 }
             }
             if (v.hasProperty ("automation_mode"))
@@ -1506,7 +1509,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         // Mode publish happens AFTER lane mutations below — same
         // ordering rationale as the track-load + aux-load blocks.
         for (auto& al : s.master().automationLanes)
-            al.points.clear();
+            al.publishPoints ({});
         if (auto autoObj = master["automation"]; autoObj.isObject())
         {
             for (int p = 0; p < kNumAutomationParams; ++p)
@@ -1515,8 +1518,8 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                 if (! autoObj.hasProperty (key)) continue;
                 auto pts = autoObj[key];
                 if (! pts.isArray()) continue;
-                auto& al = s.master().automationLanes[(size_t) p];
-                al.points.reserve ((size_t) pts.size());
+                std::vector<AutomationPoint> tmp;
+                tmp.reserve ((size_t) pts.size());
                 for (int k = 0; k < pts.size(); ++k)
                 {
                     auto pv = pts[k];
@@ -1527,8 +1530,9 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                     pt.recordedAtBPM = pv.hasProperty ("bpm")
                         ? (float) (double) pv["bpm"]
                         : (float) sessionLoadBpm;
-                    al.points.push_back (pt);
+                    tmp.push_back (pt);
                 }
+                s.master().automationLanes[(size_t) p].publishPoints (std::move (tmp));
             }
         }
         if (master.hasProperty ("automation_mode"))

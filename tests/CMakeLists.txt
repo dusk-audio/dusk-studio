@@ -33,6 +33,7 @@ add_executable(dusk-studio-tests
     midi_time_code_decode.cpp
     midi_time_code_emit.cpp
     automation_thinning.cpp
+    automation_lane_snapshot.cpp
     session_midi_tempolock_roundtrip.cpp
     session_apply_tempo_change.cpp
     session_fader_group.cpp

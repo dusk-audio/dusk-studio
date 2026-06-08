@@ -822,11 +822,11 @@ void AutomationLaneEditAction::apply (const std::vector<AutomationPoint>& pts)
         || paramIdx < 0 || paramIdx >= kNumAutomationParams)
         return;
     auto& trk = session.track (trackIdx);
-    trk.automationLanes[(size_t) paramIdx].points = pts;
-    // Republish to the audio thread: a release-store on automationMode makes
-    // the lane.points write happen-before the next acquire-load (Session.h).
-    const int m = trk.automationMode.load (std::memory_order_relaxed);
-    trk.automationMode.store (m, std::memory_order_release);
+    // Atomic publish: the audio thread reads this lane lock-free in Read/Touch
+    // mode, so undo/redo (which can fire mid-playback) must swap the whole
+    // vector, not mutate it in place. The publish IS the release the audio
+    // thread's acquire-load pairs with; no separate mode re-store needed.
+    trk.automationLanes[(size_t) paramIdx].publishPoints (pts);
 }
 
 bool AutomationLaneEditAction::perform() { apply (after);  return true; }

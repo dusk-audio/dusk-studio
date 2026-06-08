@@ -861,7 +861,7 @@ void BusComponent::captureWritePoint (AutomationParam param, float denormValue)
         return 0.0f;
     };
 
-    auto& lane = bus.strip.automationLanes[(size_t) param];
+    auto& lane = bus.strip.automationLanes[(size_t) param].mutableForWritePass();  // in-place; audio does not read this lane in Write/Touch-touched
     AutomationPoint pt;
     pt.timeSamples   = engine.getTransport().getPlayhead();
     pt.value         = normalize (param, denormValue);
@@ -870,11 +870,11 @@ void BusComponent::captureWritePoint (AutomationParam param, float denormValue)
     // Pre-filter: drop near-identical continuous samples close in time
     // (timer noise when the control hasn't moved). Discrete params keep
     // every transition.
-    if (isContinuousParam (param) && ! lane.points.empty())
+    if (isContinuousParam (param) && ! lane.empty())
     {
         constexpr float kDeltaEps = 0.001f;
         constexpr juce::int64 kMaxSpanSamples = 22050;   // ~500 ms @ 44.1 k
-        const auto& last = lane.points.back();
+        const auto& last = lane.back();
         if (std::abs (pt.value - last.value) < kDeltaEps
             && pt.timeSamples >= last.timeSamples
             && (pt.timeSamples - last.timeSamples) < kMaxSpanSamples)
@@ -884,22 +884,22 @@ void BusComponent::captureWritePoint (AutomationParam param, float denormValue)
     // Keep the ascending-time invariant evaluateLane's binary search needs.
     // A backward playhead (loop wrap / rewind) truncates the now-future tail
     // then appends; a same-sample hit replaces in place.
-    if (! lane.points.empty() && lane.points.back().timeSamples >= pt.timeSamples)
+    if (! lane.empty() && lane.back().timeSamples >= pt.timeSamples)
     {
-        if (lane.points.back().timeSamples > pt.timeSamples)
+        if (lane.back().timeSamples > pt.timeSamples)
         {
-            auto cutoff = std::lower_bound (lane.points.begin(), lane.points.end(),
+            auto cutoff = std::lower_bound (lane.begin(), lane.end(),
                 pt.timeSamples,
                 [] (const AutomationPoint& a, juce::int64 t) { return a.timeSamples < t; });
-            lane.points.erase (cutoff, lane.points.end());
+            lane.erase (cutoff, lane.end());
         }
-        if (! lane.points.empty() && lane.points.back().timeSamples == pt.timeSamples)
+        if (! lane.empty() && lane.back().timeSamples == pt.timeSamples)
         {
-            lane.points.back() = pt;
+            lane.back() = pt;
             return;
         }
     }
-    lane.points.push_back (pt);
+    lane.push_back (pt);
 }
 
 void BusComponent::showAutoModeMenu()

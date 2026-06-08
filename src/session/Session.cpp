@@ -305,10 +305,9 @@ namespace { float denormalizeAutomation (AutomationParam p, float v) noexcept
     return denormalizeAutomationValue (p, v);
 } } // namespace
 
-float evaluateLane (const AutomationLane& lane, juce::int64 t,
+float evaluateLane (const std::vector<AutomationPoint>& pts, juce::int64 t,
                     AutomationParam param) noexcept
 {
-    const auto& pts = lane.points;
     if (pts.empty()) return 0.0f;
 
     // Hold-first below the lane, hold-last above it.
@@ -388,7 +387,7 @@ void rdp (const std::vector<AutomationPoint>& in,
 }
 } // namespace
 
-void thinAutomationLane (AutomationLane& lane,
+void thinAutomationLane (std::vector<AutomationPoint>& points,
                             AutomationParam param,
                             double epsilon) noexcept
 {
@@ -396,7 +395,7 @@ void thinAutomationLane (AutomationLane& lane,
     // round wrong and silently lose state transitions. Skip thinning;
     // the existing same-sample coalesce in captureWritePoint is enough.
     if (! isContinuousParam (param)) return;
-    if (lane.points.size() <= 2) return;
+    if (points.size() <= 2) return;
 
     // Negative epsilon would make `worst > epsilon` always true (since
     // perpendicularDistance returns |…| ≥ 0), so every interior point
@@ -404,17 +403,17 @@ void thinAutomationLane (AutomationLane& lane,
     // safety; the caller should already pass a non-negative value.
     epsilon = std::max (epsilon, 0.0);
 
-    std::vector<char> keep (lane.points.size(), 0);
+    std::vector<char> keep (points.size(), 0);
     keep.front() = 1;
     keep.back()  = 1;
-    rdp (lane.points, 0, lane.points.size() - 1, epsilon, keep);
+    rdp (points, 0, points.size() - 1, epsilon, keep);
 
     std::vector<AutomationPoint> thinned;
-    thinned.reserve (lane.points.size());
-    for (std::size_t i = 0; i < lane.points.size(); ++i)
-        if (keep[i]) thinned.push_back (lane.points[i]);
+    thinned.reserve (points.size());
+    for (std::size_t i = 0; i < points.size(); ++i)
+        if (keep[i]) thinned.push_back (points[i]);
 
-    lane.points = std::move (thinned);
+    points = std::move (thinned);
 }
 
 void handleWritePassComplete (Session& s) noexcept
@@ -425,19 +424,26 @@ void handleWritePassComplete (Session& s) noexcept
     // typical "ride" gesture.
     constexpr double kEpsilon = 0.002;
 
+    // Thin via mutatePoints (copy → thin → atomic publish) so a stray reader
+    // never sees the reshape mid-flight. Skip lanes that can't change (discrete,
+    // or ≤ 2 points) to avoid a pointless republish of an identical vector.
+    const auto thinLane = [&] (AutomationLane& lane, AutomationParam p)
+    {
+        if (! isContinuousParam (p) || lane.pointsConst().size() <= 2) return;
+        lane.mutatePoints ([p] (std::vector<AutomationPoint>& v)
+                            { thinAutomationLane (v, p, kEpsilon); });
+    };
+
     for (int t = 0; t < Session::kNumTracks; ++t)
         for (int p = 0; p < kNumAutomationParams; ++p)
-            thinAutomationLane (s.track (t).automationLanes[(size_t) p],
-                                  (AutomationParam) p, kEpsilon);
+            thinLane (s.track (t).automationLanes[(size_t) p], (AutomationParam) p);
 
     for (int a = 0; a < Session::kNumAuxLanes; ++a)
         for (int p = 0; p < kNumAutomationParams; ++p)
-            thinAutomationLane (s.auxLane (a).params.automationLanes[(size_t) p],
-                                  (AutomationParam) p, kEpsilon);
+            thinLane (s.auxLane (a).params.automationLanes[(size_t) p], (AutomationParam) p);
 
     for (int p = 0; p < kNumAutomationParams; ++p)
-        thinAutomationLane (s.master().automationLanes[(size_t) p],
-                              (AutomationParam) p, kEpsilon);
+        thinLane (s.master().automationLanes[(size_t) p], (AutomationParam) p);
 }
 
 void applyTempoChange (Session& s, float newBpm, double sampleRate) noexcept

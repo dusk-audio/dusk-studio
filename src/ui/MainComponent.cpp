@@ -3283,12 +3283,12 @@ void MainComponent::menuItemSelected (int menuItemID, int /*topLevelMenuIndex*/)
                 std::size_t total = 0;
                 for (int t = 0; t < Session::kNumTracks; ++t)
                     for (int p = 0; p < kNumAutomationParams; ++p)
-                        total += session.track (t).automationLanes[(size_t) p].points.size();
+                        total += session.track (t).automationLanes[(size_t) p].pointsConst().size();
                 for (int a = 0; a < Session::kNumAuxLanes; ++a)
                     for (int p = 0; p < kNumAutomationParams; ++p)
-                        total += session.auxLane (a).params.automationLanes[(size_t) p].points.size();
+                        total += session.auxLane (a).params.automationLanes[(size_t) p].pointsConst().size();
                 for (int p = 0; p < kNumAutomationParams; ++p)
-                    total += session.master().automationLanes[(size_t) p].points.size();
+                    total += session.master().automationLanes[(size_t) p].pointsConst().size();
                 return total;
             };
             const auto before = countPoints();

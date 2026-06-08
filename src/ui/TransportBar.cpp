@@ -1404,12 +1404,12 @@ void TransportBar::confirmAndApplyBpm (float newBpm, float oldBpm)
     int autoPoints = 0;
     for (int t = 0; t < Session::kNumTracks; ++t)
         for (const auto& lane : s.track (t).automationLanes)
-            autoPoints += (int) lane.points.size();
+            autoPoints += (int) lane.pointsConst().size();
     for (int a = 0; a < Session::kNumAuxLanes; ++a)
         for (const auto& lane : s.auxLane (a).params.automationLanes)
-            autoPoints += (int) lane.points.size();
+            autoPoints += (int) lane.pointsConst().size();
     for (const auto& lane : s.master().automationLanes)
-        autoPoints += (int) lane.points.size();
+        autoPoints += (int) lane.pointsConst().size();
 
     const bool empty = (lockedMidi == 0 && floatMidi == 0 && autoPoints == 0);
     if (empty)

@@ -541,7 +541,9 @@ void AuxLaneComponent::captureWritePoint (AutomationParam param, float denormVal
         return 0.0f;
     };
 
-    auto& laneRef = lane.params.automationLanes[(size_t) param];
+    // In-place append/erase via mutableForWritePass: sound only because the
+    // audio thread does not read this lane in Write/Touch-touched mode.
+    auto& laneRef = lane.params.automationLanes[(size_t) param].mutableForWritePass();
     AutomationPoint pt;
     pt.timeSamples   = engine.getTransport().getPlayhead();
     pt.value         = normalize (param, denormValue);
@@ -553,33 +555,33 @@ void AuxLaneComponent::captureWritePoint (AutomationParam param, float denormVal
     // last.timeSamples guard keeps us from short-circuiting after a
     // loop-wrap or transport rewind — those need the truncation block
     // below to drop the now-stale future points.
-    if (isContinuousParam (param) && ! laneRef.points.empty())
+    if (isContinuousParam (param) && ! laneRef.empty())
     {
         constexpr float kDeltaEps = 0.001f;
         constexpr juce::int64 kMaxSpanSamples = 22050;   // ~500 ms @ 44.1 k
-        const auto& last = laneRef.points.back();
+        const auto& last = laneRef.back();
         if (std::abs (pt.value - last.value) < kDeltaEps
             && pt.timeSamples >= last.timeSamples
             && (pt.timeSamples - last.timeSamples) < kMaxSpanSamples)
             return;
     }
 
-    if (! laneRef.points.empty() && laneRef.points.back().timeSamples >= pt.timeSamples)
+    if (! laneRef.empty() && laneRef.back().timeSamples >= pt.timeSamples)
     {
-        if (laneRef.points.back().timeSamples > pt.timeSamples)
+        if (laneRef.back().timeSamples > pt.timeSamples)
         {
-            auto cutoff = std::lower_bound (laneRef.points.begin(), laneRef.points.end(),
+            auto cutoff = std::lower_bound (laneRef.begin(), laneRef.end(),
                 pt.timeSamples,
                 [] (const AutomationPoint& a, juce::int64 t) { return a.timeSamples < t; });
-            laneRef.points.erase (cutoff, laneRef.points.end());
+            laneRef.erase (cutoff, laneRef.end());
         }
-        if (! laneRef.points.empty() && laneRef.points.back().timeSamples == pt.timeSamples)
+        if (! laneRef.empty() && laneRef.back().timeSamples == pt.timeSamples)
         {
-            laneRef.points.back() = pt;
+            laneRef.back() = pt;
             return;
         }
     }
-    laneRef.points.push_back (pt);
+    laneRef.push_back (pt);
 }
 
 void AuxLaneComponent::refreshSlotControls (int i)

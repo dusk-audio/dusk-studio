@@ -3364,7 +3364,7 @@ void ChannelStripComponent::captureWritePoint (AutomationParam param, float deno
         return 0.0f;
     };
 
-    auto& lane = track.automationLanes[(size_t) param];
+    auto& lane = track.automationLanes[(size_t) param].mutableForWritePass();  // in-place; audio does not read this lane in Write/Touch-touched
     AutomationPoint pt;
     pt.timeSamples   = engine.getTransport().getPlayhead();
     pt.value         = normalize (param, denormValue);
@@ -3379,11 +3379,11 @@ void ChannelStripComponent::captureWritePoint (AutomationParam param, float deno
     // playhead jump (loop wrap / transport rewind) from sliding under
     // the short-span cutoff and skipping the future-tail truncation
     // block below.
-    if (isContinuousParam (param) && ! lane.points.empty())
+    if (isContinuousParam (param) && ! lane.empty())
     {
         constexpr float kDeltaEps = 0.001f;
         constexpr juce::int64 kMaxSpanSamples = 22050;   // ~500 ms @ 44.1 k
-        const auto& last = lane.points.back();
+        const auto& last = lane.back();
         if (std::abs (pt.value - last.value) < kDeltaEps
             && pt.timeSamples >= last.timeSamples
             && (pt.timeSamples - last.timeSamples) < kMaxSpanSamples)
@@ -3398,28 +3398,28 @@ void ChannelStripComponent::captureWritePoint (AutomationParam param, float deno
     // belong AFTER the most recent timeline position, not before it.
     // Strict ascending invariant is required by evaluateLane's binary
     // search.
-    if (! lane.points.empty() && lane.points.back().timeSamples >= pt.timeSamples)
+    if (! lane.empty() && lane.back().timeSamples >= pt.timeSamples)
     {
         // Loop wraparound case: drop the rest of the lane that's now in
         // the future relative to playhead, so the binary-search invariant
         // (sorted ascending) holds and the upcoming Write captures land
         // in their natural order. Discrete params (mute / solo) keep
         // the same rule.
-        if (lane.points.back().timeSamples > pt.timeSamples)
+        if (lane.back().timeSamples > pt.timeSamples)
         {
-            auto cutoff = std::lower_bound (lane.points.begin(), lane.points.end(),
+            auto cutoff = std::lower_bound (lane.begin(), lane.end(),
                 pt.timeSamples,
                 [] (const AutomationPoint& a, juce::int64 t) { return a.timeSamples < t; });
-            lane.points.erase (cutoff, lane.points.end());
+            lane.erase (cutoff, lane.end());
         }
         // Same-sample replace: keep the latest value at this exact sample.
-        if (! lane.points.empty() && lane.points.back().timeSamples == pt.timeSamples)
+        if (! lane.empty() && lane.back().timeSamples == pt.timeSamples)
         {
-            lane.points.back() = pt;
+            lane.back() = pt;
             return;
         }
     }
-    lane.points.push_back (pt);
+    lane.push_back (pt);
 }
 
 void ChannelStripComponent::showAutoModeMenu()
@@ -3449,12 +3449,12 @@ void ChannelStripComponent::setAutoMode (AutomationMode mode)
     // When transitioning OUT of Write or Touch, the points just appended
     // to the lane need to be visible to the audio thread BEFORE it starts
     // reading from the lane. The release-store on mode synchronizes those
-    // writes - any prior append to lane.points happens-before the audio
+    // writes - any prior append to lane happens-before the audio
     // thread's acquire-load of the new mode.
     //
     // Auto-thin on mode-flip would be tempting here, but the existing
     // concurrency model partitions lane reads/writes by (mode, touched)
-    // and handleWritePassComplete rewrites lane.points unconditionally —
+    // and handleWritePassComplete rewrites lane unconditionally —
     // there's no safe ordering relative to the audio thread acquiring
     // the new mode (or to OTHER strips that are in Read). Thinning needs
     // AtomicSnapshot on each lane before it can fire on mode-flip; for

@@ -2258,14 +2258,14 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                                           const std::atomic<bool>* touched,
                                           std::atomic<float>& live)
             {
-                const auto& lane = session.track (t).automationLanes[(size_t) param];
+                const auto& pts = session.track (t).automationLanes[(size_t) param].pointsForRead();
                 const bool readsLane =
                        amode == (int) AutomationMode::Read
                     || (amode == (int) AutomationMode::Touch
                         && touched != nullptr
                         && ! touched->load (std::memory_order_acquire));
-                const float v = (readsLane && ! lane.points.empty())
-                    ? evaluateLane (lane, blockStartSamples, param)
+                const float v = (readsLane && ! pts.empty())
+                    ? evaluateLane (pts, blockStartSamples, param)
                     : manual.load (std::memory_order_relaxed);
                 live.store (v, std::memory_order_relaxed);
             };
@@ -2294,12 +2294,12 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                                        const std::atomic<bool>& manual,
                                        std::atomic<bool>& live)
             {
-                const auto& lane = session.track (t).automationLanes[(size_t) param];
+                const auto& pts = session.track (t).automationLanes[(size_t) param].pointsForRead();
                 const bool readsLane =
                        amode == (int) AutomationMode::Read
                     || amode == (int) AutomationMode::Touch;
-                const bool effective = (readsLane && ! lane.points.empty())
-                    ? (evaluateLane (lane, blockStartSamples, param) >= 0.5f)
+                const bool effective = (readsLane && ! pts.empty())
+                    ? (evaluateLane (pts, blockStartSamples, param) >= 0.5f)
                     : manual.load (std::memory_order_relaxed);
                 live.store (effective, std::memory_order_relaxed);
             };
@@ -2886,31 +2886,31 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         {
             const int amode = params.automationMode.load (std::memory_order_acquire);
             {
-                const auto& lane = params.automationLanes[(size_t) AutomationParam::FaderDb];
+                const auto& pts = params.automationLanes[(size_t) AutomationParam::FaderDb].pointsForRead();
                 const bool touched = params.faderTouched.load (std::memory_order_acquire);
                 const bool readsLane = amode == (int) AutomationMode::Read
                                      || (amode == (int) AutomationMode::Touch && ! touched);
-                const float v = (readsLane && ! lane.points.empty())
-                    ? evaluateLane (lane, blockStartSamples, AutomationParam::FaderDb)
+                const float v = (readsLane && ! pts.empty())
+                    ? evaluateLane (pts, blockStartSamples, AutomationParam::FaderDb)
                     : params.faderDb.load (std::memory_order_relaxed);
                 params.liveFaderDb.store (v, std::memory_order_relaxed);
             }
             {
-                const auto& lane = params.automationLanes[(size_t) AutomationParam::Pan];
+                const auto& pts = params.automationLanes[(size_t) AutomationParam::Pan].pointsForRead();
                 const bool touched = params.panTouched.load (std::memory_order_acquire);
                 const bool readsLane = amode == (int) AutomationMode::Read
                                      || (amode == (int) AutomationMode::Touch && ! touched);
-                const float v = (readsLane && ! lane.points.empty())
-                    ? evaluateLane (lane, blockStartSamples, AutomationParam::Pan)
+                const float v = (readsLane && ! pts.empty())
+                    ? evaluateLane (pts, blockStartSamples, AutomationParam::Pan)
                     : params.pan.load (std::memory_order_relaxed);
                 params.livePan.store (v, std::memory_order_relaxed);
             }
             {
-                const auto& lane = params.automationLanes[(size_t) AutomationParam::Mute];
+                const auto& pts = params.automationLanes[(size_t) AutomationParam::Mute].pointsForRead();
                 const bool readsLane = amode == (int) AutomationMode::Read
                                      || amode == (int) AutomationMode::Touch;
-                const bool effective = (readsLane && ! lane.points.empty())
-                    ? (evaluateLane (lane, blockStartSamples, AutomationParam::Mute) >= 0.5f)
+                const bool effective = (readsLane && ! pts.empty())
+                    ? (evaluateLane (pts, blockStartSamples, AutomationParam::Mute) >= 0.5f)
                     : params.mute.load (std::memory_order_relaxed);
                 params.liveMute.store (effective, std::memory_order_relaxed);
             }
@@ -2980,22 +2980,22 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
 
         // FaderDb (continuous).
         {
-            const auto& lane = aparams.automationLanes[(size_t) AutomationParam::FaderDb];
+            const auto& pts = aparams.automationLanes[(size_t) AutomationParam::FaderDb].pointsForRead();
             const bool touched = aparams.faderTouched.load (std::memory_order_acquire);
             const bool readsLane = amode == (int) AutomationMode::Read
                                  || (amode == (int) AutomationMode::Touch && ! touched);
-            const float v = (readsLane && ! lane.points.empty())
-                ? evaluateLane (lane, blockStartSamples, AutomationParam::FaderDb)
+            const float v = (readsLane && ! pts.empty())
+                ? evaluateLane (pts, blockStartSamples, AutomationParam::FaderDb)
                 : aparams.returnLevelDb.load (std::memory_order_relaxed);
             aparams.liveReturnLevelDb.store (v, std::memory_order_relaxed);
         }
         // Mute (discrete).
         {
-            const auto& lane = aparams.automationLanes[(size_t) AutomationParam::Mute];
+            const auto& pts = aparams.automationLanes[(size_t) AutomationParam::Mute].pointsForRead();
             const bool readsLane = amode == (int) AutomationMode::Read
                                  || amode == (int) AutomationMode::Touch;
-            const bool effective = (readsLane && ! lane.points.empty())
-                ? (evaluateLane (lane, blockStartSamples, AutomationParam::Mute) >= 0.5f)
+            const bool effective = (readsLane && ! pts.empty())
+                ? (evaluateLane (pts, blockStartSamples, AutomationParam::Mute) >= 0.5f)
                 : aparams.mute.load (std::memory_order_relaxed);
             aparams.liveMute.store (effective, std::memory_order_relaxed);
         }
@@ -3005,12 +3005,12 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
     {
         auto& mparams = session.master();
         const int amode = mparams.automationMode.load (std::memory_order_acquire);
-        const auto& lane = mparams.automationLanes[(size_t) AutomationParam::FaderDb];
+        const auto& pts = mparams.automationLanes[(size_t) AutomationParam::FaderDb].pointsForRead();
         const bool touched = mparams.faderTouched.load (std::memory_order_acquire);
         const bool readsLane = amode == (int) AutomationMode::Read
                              || (amode == (int) AutomationMode::Touch && ! touched);
-        const float v = (readsLane && ! lane.points.empty())
-            ? evaluateLane (lane, blockStartSamples, AutomationParam::FaderDb)
+        const float v = (readsLane && ! pts.empty())
+            ? evaluateLane (pts, blockStartSamples, AutomationParam::FaderDb)
             : mparams.faderDb.load (std::memory_order_relaxed);
         mparams.liveFaderDb.store (v, std::memory_order_relaxed);
     }

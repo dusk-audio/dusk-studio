@@ -58,18 +58,43 @@ struct AutomationPoint
     bool operator!= (const AutomationPoint& o) const noexcept { return ! (*this == o); }
 };
 
-// Points sorted by timeSamples; binary search at lookup. Plain vector —
-// session load (transport stopped) is the only mutator the audio thread
-// races. Write mode (3c-ii) will swap via atomic ptr.
+// Points sorted by timeSamples; binary search at lookup. Backed by an
+// AtomicSnapshot so the message thread can reshape the lane (add / drag /
+// delete a breakpoint, undo, thin, load) while the audio thread reads it in
+// Read/Touch mode without a data race. See AtomicSnapshot.h for the
+// one-publish-behind reclamation contract.
+//
+// Accessor discipline:
+//   pointsForRead()      — audio thread (acquire-load). Never null post-ctor.
+//   pointsConst()        — message-thread read.
+//   mutableForWritePass()— Write-mode capture ONLY. In-place append/erase with
+//                          NO publish. Sound solely because the audio thread
+//                          does not read this lane in Write mode (it reads the
+//                          manual setpoint), and discrete capture is gated
+//                          Write-only. Do NOT use for edit gestures — a
+//                          resize under a concurrent reader is UB; use
+//                          mutatePoints / publishPoints there.
+//   publishPoints/mutate — safe swap for every edit / load / thin path.
 struct AutomationLane
 {
-    std::vector<AutomationPoint> points;
+    AtomicSnapshot<std::vector<AutomationPoint>> snapshot;
+
+    const std::vector<AutomationPoint>& pointsForRead() const noexcept { return *snapshot.read(); }
+    const std::vector<AutomationPoint>& pointsConst()   const noexcept { return snapshot.current(); }
+    std::vector<AutomationPoint>&       mutableForWritePass() noexcept  { return snapshot.currentMutable(); }
+
+    void publishPoints (std::vector<AutomationPoint> pts)
+    {
+        snapshot.publish (std::make_unique<std::vector<AutomationPoint>> (std::move (pts)));
+    }
+    template <typename Fn>
+    void mutatePoints (Fn&& fn) { snapshot.mutate (std::forward<Fn> (fn)); }
 };
 
 // Linear interp between bracketing points for continuous; step (hold
 // previous) for discrete. Out-of-range holds the first / last value.
-// Returns 0 on empty lane — callers gate on lane.points.empty() first.
-float evaluateLane (const AutomationLane& lane, juce::int64 t,
+// Returns 0 on empty input — callers gate on points.empty() first.
+float evaluateLane (const std::vector<AutomationPoint>& points, juce::int64 t,
                     AutomationParam param) noexcept;
 
 float denormalizeAutomationValue (AutomationParam p, float v01) noexcept;
@@ -78,7 +103,7 @@ float normalizeAutomationValue   (AutomationParam p, float denormValue) noexcept
 // RDP thin in normalized 0..1 units (range-independent). 0.002 = 0.2%
 // of vertical, the production default. No-op for discrete params.
 // Synchronous — 10-min Write pass (~18k points) runs in < 1 ms.
-void thinAutomationLane (AutomationLane& lane,
+void thinAutomationLane (std::vector<AutomationPoint>& points,
                             AutomationParam param,
                             double epsilon) noexcept;
 

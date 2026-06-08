@@ -1341,22 +1341,15 @@ void AudioRegionEditor::mouseDown (const juce::MouseEvent& e)
             // away from any dot.
             if (hit >= 0)
             {
-                auto beforePts = lane.points;
-                lane.points.erase (lane.points.begin() + hit);
-                // Publish the lane mutation via a release-store on the
-                // track's automationMode atomic (Session.h synchronisation
-                // contract: every message-thread append/erase must
-                // happen-before the audio thread's next acquire-load).
-                // Cheap — single re-store of the same value.
-                {
-                    auto& trk = session.track (trackIdx);
-                    const int m = trk.automationMode.load (std::memory_order_relaxed);
-                    trk.automationMode.store (m, std::memory_order_release);
-                }
+                // Build before/after locally and let the action's perform()
+                // do the atomic publish — no in-place lane mutation needed.
+                auto before = lane.pointsConst();
+                auto after  = before;
+                after.erase (after.begin() + hit);
                 auto& um = engine.getUndoManager();
                 um.beginNewTransaction ("Delete automation point");
                 um.perform (new AutomationLaneEditAction (session, trackIdx, automationParam,
-                                                            std::move (beforePts), lane.points));
+                                                            std::move (before), std::move (after)));
                 repaint();
                 return;
             }
@@ -1365,7 +1358,7 @@ void AudioRegionEditor::mouseDown (const juce::MouseEvent& e)
         {
             if (hit >= 0)
             {
-                automationDragBefore = lane.points;
+                automationDragBefore = lane.pointsConst();
                 automationDragParam  = automationParam;
                 draggedPointIdx = hit;
                 dragMode = DragMode::AutomationPoint;
@@ -1392,26 +1385,31 @@ void AudioRegionEditor::mouseDown (const juce::MouseEvent& e)
             pt.value       = v01;
             pt.recordedAtBPM = session.tempoBpm.load (std::memory_order_relaxed);
 
-            automationDragBefore = lane.points;
+            automationDragBefore = lane.pointsConst();
             automationDragParam  = automationParam;
 
+            // Live in-place edit: editing is gated on transport=Stopped above,
+            // so the audio thread is not reading this lane. The gesture commits
+            // one AutomationLaneEditAction at mouseUp.
+            auto& live = lane.mutableForWritePass();
             auto insertAt = std::upper_bound (
-                lane.points.begin(), lane.points.end(), pt,
+                live.begin(), live.end(), pt,
                 [] (const AutomationPoint& a, const AutomationPoint& b)
                 { return a.timeSamples < b.timeSamples; });
-            const int newIdx = (int) (insertAt - lane.points.begin());
-            lane.points.insert (insertAt, pt);
+            const int newIdx = (int) (insertAt - live.begin());
+            live.insert (insertAt, pt);
 
             // Auto-arm: flip the track's automation mode to Read so
             // the freshly-drawn lane is audible immediately on Play.
             // No-op if already Read / Touch. Without this the engineer
             // draws a curve, hits Play, and hears nothing because the
             // engine ignores lanes in Off mode.
-            // The mode store is ALSO the release publication of the
-            // lane.points.insert above (Session.h sync contract). If
-            // the mode is already Read / Touch (no transition), do an
-            // explicit re-store so the audio thread's next acquire-load
-            // still happens-after this insert.
+            // The mode store is ALSO the release publication of the in-place
+            // insert above: editing is gated on transport=Stopped so the
+            // mutableForWritePass write doesn't race, and the mode release
+            // pairs with the audio thread's acquire-load when it resumes. If
+            // the mode is already Read / Touch (no transition), do an explicit
+            // re-store so a later acquire-load still happens-after this insert.
             auto& trk = session.track (trackIdx);
             const int curMode = trk.automationMode.load (std::memory_order_acquire);
             if (curMode == (int) AutomationMode::Off
@@ -1748,9 +1746,12 @@ void AudioRegionEditor::mouseDrag (const juce::MouseEvent& e)
         && draggedPointIdx >= 0
         && trackIdx >= 0 && trackIdx < Session::kNumTracks)
     {
-        auto& lane = session.track (trackIdx)
-                          .automationLanes[(size_t) automationParam];
-        if (draggedPointIdx >= (int) lane.points.size())
+        // Live in-place drag: gated on transport=Stopped at gesture start and
+        // the mouse is captured for the gesture, so the audio thread is not
+        // reading this lane. mouseUp commits one AutomationLaneEditAction.
+        auto& live = session.track (trackIdx)
+                          .automationLanes[(size_t) automationParam].mutableForWritePass();
+        if (draggedPointIdx >= (int) live.size())
         {
             draggedPointIdx = -1;
             dragMode = DragMode::None;
@@ -1770,7 +1771,7 @@ void AudioRegionEditor::mouseDrag (const juce::MouseEvent& e)
         if (! isContinuousParam ((AutomationParam) automationParam))
             v01 = (v01 >= 0.5f) ? 1.0f : 0.0f;
 
-        auto& pt = lane.points[(size_t) draggedPointIdx];
+        auto& pt = live[(size_t) draggedPointIdx];
         pt.timeSamples = t;
         pt.value       = v01;
 
@@ -1778,18 +1779,18 @@ void AudioRegionEditor::mouseDrag (const juce::MouseEvent& e)
         // lane and refind our point's new index by identity (time +
         // value match — collisions are negligible at click resolution).
         const auto needSort = (draggedPointIdx > 0
-                                  && lane.points[(size_t) draggedPointIdx - 1].timeSamples > t)
-                             || (draggedPointIdx + 1 < (int) lane.points.size()
-                                  && lane.points[(size_t) draggedPointIdx + 1].timeSamples < t);
+                                  && live[(size_t) draggedPointIdx - 1].timeSamples > t)
+                             || (draggedPointIdx + 1 < (int) live.size()
+                                  && live[(size_t) draggedPointIdx + 1].timeSamples < t);
         if (needSort)
         {
-            std::stable_sort (lane.points.begin(), lane.points.end(),
+            std::stable_sort (live.begin(), live.end(),
                 [] (const AutomationPoint& a, const AutomationPoint& b)
                 { return a.timeSamples < b.timeSamples; });
             int refound = -1;
-            for (int i = 0; i < (int) lane.points.size(); ++i)
-                if (lane.points[(size_t) i].timeSamples == t
-                    && std::abs (lane.points[(size_t) i].value - v01) < 1e-4f)
+            for (int i = 0; i < (int) live.size(); ++i)
+                if (live[(size_t) i].timeSamples == t
+                    && std::abs (live[(size_t) i].value - v01) < 1e-4f)
                 {
                     refound = i;
                     break;
@@ -2017,27 +2018,22 @@ void AudioRegionEditor::mouseUp (const juce::MouseEvent&)
     // transport=Stopped at mouseDown, so no acquire-load races the swap.
     if (dragMode == DragMode::AutomationPoint)
     {
-        // Publish the drag's lane.points writes via a release-store on
-        // automationMode so the audio thread's next acquire-load sees
-        // them. One re-store at drag-end is sufficient.
+        // Commit the whole gesture (the live in-place add/drag above) as one
+        // undoable transaction. AutomationLaneEditAction::perform() atomically
+        // publishes the after-state, which is the release the audio thread's
+        // next acquire-load pairs with — no separate mode re-store needed.
         if (trackIdx >= 0 && trackIdx < Session::kNumTracks
-            && automationParam >= 0 && automationParam < kNumAutomationParams)
+            && automationParam >= 0 && automationParam < kNumAutomationParams
+            && automationDragParam == automationParam)
         {
-            auto& trk = session.track (trackIdx);
-            const int m = trk.automationMode.load (std::memory_order_relaxed);
-            trk.automationMode.store (m, std::memory_order_release);
-
-            if (automationDragParam == automationParam)
+            auto& lane = session.track (trackIdx).automationLanes[(size_t) automationParam];
+            if (lane.pointsConst() != automationDragBefore)
             {
-                auto& lane = trk.automationLanes[(size_t) automationParam];
-                if (lane.points != automationDragBefore)
-                {
-                    auto& um = engine.getUndoManager();
-                    um.beginNewTransaction ("Edit automation");
-                    um.perform (new AutomationLaneEditAction (session, trackIdx, automationParam,
-                                                                std::move (automationDragBefore),
-                                                                lane.points));
-                }
+                auto& um = engine.getUndoManager();
+                um.beginNewTransaction ("Edit automation");
+                um.perform (new AutomationLaneEditAction (session, trackIdx, automationParam,
+                                                            std::move (automationDragBefore),
+                                                            lane.pointsConst()));
             }
         }
         automationDragBefore.clear();
@@ -3706,12 +3702,12 @@ int AudioRegionEditor::hitTestAutomationPoint (int x, int y,
                                                   juce::Rectangle<int> waveArea) const
 {
     if (automationParam < 0 || automationParam >= kNumAutomationParams) return -1;
-    const auto& lane = session.track (trackIdx)
-                            .automationLanes[(size_t) automationParam];
+    const auto& pts = session.track (trackIdx)
+                            .automationLanes[(size_t) automationParam].pointsConst();
     constexpr int kHitR = 8;
-    for (int i = 0; i < (int) lane.points.size(); ++i)
+    for (int i = 0; i < (int) pts.size(); ++i)
     {
-        const auto& pt = lane.points[(size_t) i];
+        const auto& pt = pts[(size_t) i];
         const int px = xForTimelineSample (pt.timeSamples, waveArea);
         const int py = automationYForValue (pt.value, waveArea);
         if (std::abs (px - x) <= kHitR && std::abs (py - y) <= kHitR)
@@ -3723,8 +3719,8 @@ int AudioRegionEditor::hitTestAutomationPoint (int x, int y,
 void AudioRegionEditor::paintAutomationOverlay (juce::Graphics& g, juce::Rectangle<int> waveArea)
 {
     if (automationParam < 0 || automationParam >= kNumAutomationParams) return;
-    const auto& lane = session.track (trackIdx)
-                            .automationLanes[(size_t) automationParam];
+    const auto& pts = session.track (trackIdx)
+                            .automationLanes[(size_t) automationParam].pointsConst();
     const auto colour = automationParamColour (automationParam);
     const auto laneArea = automationLaneArea (waveArea);
 
@@ -3739,7 +3735,7 @@ void AudioRegionEditor::paintAutomationOverlay (juce::Graphics& g, juce::Rectang
     }
 
     // Empty lane: just paint the baseline ghost line.
-    if (lane.points.empty())
+    if (pts.empty())
     {
         g.setColour (colour.withAlpha (0.25f));
         const int midY = laneArea.getY() + laneArea.getHeight() / 2;
@@ -3755,7 +3751,7 @@ void AudioRegionEditor::paintAutomationOverlay (juce::Graphics& g, juce::Rectang
     juce::Path line;
     bool first = true;
     int prevX = laneArea.getX(), prevY = laneArea.getBottom();
-    for (const auto& pt : lane.points)
+    for (const auto& pt : pts)
     {
         const int px = xForTimelineSample (pt.timeSamples, laneArea);
         const int py = automationYForValue (pt.value, laneArea);
@@ -3777,7 +3773,7 @@ void AudioRegionEditor::paintAutomationOverlay (juce::Graphics& g, juce::Rectang
     g.strokePath (line, juce::PathStrokeType (1.6f));
 
     // Dots
-    for (const auto& pt : lane.points)
+    for (const auto& pt : pts)
     {
         const int px = xForTimelineSample (pt.timeSamples, laneArea);
         const int py = automationYForValue (pt.value, laneArea);

@@ -3329,7 +3329,7 @@ void TapeStrip::paint (juce::Graphics& g)
         // pan / sends / mute / solo can swap in here.
         const auto& fadeLane = session.track (t)
                                    .automationLanes[(size_t) AutomationParam::FaderDb];
-        if (! fadeLane.points.empty())
+        if (! fadeLane.pointsConst().empty())
         {
             const auto rowF = row.toFloat();
             const auto leftX  = (float) col.getX();
@@ -3345,15 +3345,15 @@ void TapeStrip::paint (juce::Graphics& g)
             };
 
             juce::Path curve;
-            const auto first = pointPx (fadeLane.points.front());
+            const auto first = pointPx (fadeLane.pointsConst().front());
             // Hold from row-left edge to the first point so the curve
             // doesn't appear to fade in from nowhere.
             curve.startNewSubPath (leftX, first.y);
             curve.lineTo (first.x, first.y);
-            for (size_t i = 1; i < fadeLane.points.size(); ++i)
-                curve.lineTo (pointPx (fadeLane.points[i]));
+            for (size_t i = 1; i < fadeLane.pointsConst().size(); ++i)
+                curve.lineTo (pointPx (fadeLane.pointsConst()[i]));
             // Hold the final value out to the row's right edge.
-            const auto last = pointPx (fadeLane.points.back());
+            const auto last = pointPx (fadeLane.pointsConst().back());
             curve.lineTo (rightX, last.y);
 
             g.setColour (juce::Colour (0xff7fdfff).withAlpha (0.85f));  // soft cyan
