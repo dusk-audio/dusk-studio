@@ -1746,10 +1746,14 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                                 b.targetIndex = base + b.targetIndex;
                                 break;
                             case MidiBindingTarget::TrackEqGainBank:
+                            case MidiBindingTarget::TrackEqFreqBank:
+                            case MidiBindingTarget::TrackEqQBank:
                             {
                                 const int pos = b.targetIndex / kPackedEqBands;
                                 const int band = b.targetIndex % kPackedEqBands;
-                                b.target = MidiBindingTarget::TrackEqGain;
+                                b.target = b.target == MidiBindingTarget::TrackEqGainBank ? MidiBindingTarget::TrackEqGain
+                                         : b.target == MidiBindingTarget::TrackEqFreqBank ? MidiBindingTarget::TrackEqFreq
+                                                                                          : MidiBindingTarget::TrackEqQ;
                                 b.targetIndex = packTrackEqBand (base + pos, band);
                                 break;
                             }
@@ -1935,6 +1939,44 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                                     case 2: strip.hmGainDb.store (db, std::memory_order_relaxed); break;
                                     case 3: strip.hfGainDb.store (db, std::memory_order_relaxed); break;
                                 }
+                            }
+                            break;
+                        }
+                        case MidiBindingTarget::TrackEqFreq:
+                        {
+                            // Per-band frequency, log-mapped over each band's range
+                            // (LF/LM/HM/HF have distinct min/max — see ChannelStripParams).
+                            const int trk  = unpackTrackEqTrack (b.targetIndex);
+                            const int band = unpackTrackEqBand  (b.targetIndex);
+                            if (trk >= 0 && trk < Session::kNumTracks
+                                && band >= 0 && band < kPackedEqBands)
+                            {
+                                auto logFreq = [frac] (float lo, float hi)
+                                { return lo * std::exp (frac * std::log (hi / lo)); };
+                                auto& strip = session.track (trk).strip;
+                                switch (band)
+                                {
+                                    case 0: strip.lfFreq.store (logFreq (ChannelStripParams::kLfFreqMin, ChannelStripParams::kLfFreqMax), std::memory_order_relaxed); break;
+                                    case 1: strip.lmFreq.store (logFreq (ChannelStripParams::kLmFreqMin, ChannelStripParams::kLmFreqMax), std::memory_order_relaxed); break;
+                                    case 2: strip.hmFreq.store (logFreq (ChannelStripParams::kHmFreqMin, ChannelStripParams::kHmFreqMax), std::memory_order_relaxed); break;
+                                    case 3: strip.hfFreq.store (logFreq (ChannelStripParams::kHfFreqMin, ChannelStripParams::kHfFreqMax), std::memory_order_relaxed); break;
+                                }
+                            }
+                            break;
+                        }
+                        case MidiBindingTarget::TrackEqQ:
+                        {
+                            // Only the two bell bands carry a Q (LM / HM); LF / HF are
+                            // shelves and ignore this target.
+                            const int trk  = unpackTrackEqTrack (b.targetIndex);
+                            const int band = unpackTrackEqBand  (b.targetIndex);
+                            if (trk >= 0 && trk < Session::kNumTracks)
+                            {
+                                const float q = ChannelStripParams::kBandQMin
+                                    + frac * (ChannelStripParams::kBandQMax - ChannelStripParams::kBandQMin);
+                                auto& strip = session.track (trk).strip;
+                                if (band == 1) strip.lmQ.store (q, std::memory_order_relaxed);
+                                else if (band == 2) strip.hmQ.store (q, std::memory_order_relaxed);
                             }
                             break;
                         }

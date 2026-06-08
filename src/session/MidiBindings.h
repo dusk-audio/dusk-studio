@@ -61,6 +61,8 @@ enum class MidiBindingTarget : int
     TrackCompThresh   = 108,
     TrackCompMakeup   = 109,
     TrackPluginParam  = 110, // paramIndex (separate field) = plugin slot.
+    TrackEqFreq       = 111, // targetIndex = track * 4 + band (log-mapped freq)
+    TrackEqQ          = 112, // targetIndex = track * 4 + band; only LM(1)/HM(2) act
 
     // Bank-relative — targetIndex is a POSITION 0..kBankSize-1 (or
     // packed pos*N+sub). Resolved at audio time via
@@ -78,6 +80,8 @@ enum class MidiBindingTarget : int
     TrackCompThreshBank   = 138,
     TrackCompMakeupBank   = 139,
     TrackPluginParamBank  = 140,
+    TrackEqFreqBank       = 141, // pos * kPackedEqBands + band
+    TrackEqQBank          = 142, // pos * kPackedEqBands + band
 
     BusFader          = 150,
     BusPan            = 151,
@@ -133,6 +137,8 @@ constexpr bool isContinuousTarget (MidiBindingTarget t) noexcept
         || t == MidiBindingTarget::TrackAuxSend
         || t == MidiBindingTarget::TrackHpfFreq
         || t == MidiBindingTarget::TrackEqGain
+        || t == MidiBindingTarget::TrackEqFreq
+        || t == MidiBindingTarget::TrackEqQ
         || t == MidiBindingTarget::TrackCompThresh
         || t == MidiBindingTarget::TrackCompMakeup
         || t == MidiBindingTarget::TrackPluginParam
@@ -141,6 +147,8 @@ constexpr bool isContinuousTarget (MidiBindingTarget t) noexcept
         || t == MidiBindingTarget::TrackAuxSendBank
         || t == MidiBindingTarget::TrackHpfFreqBank
         || t == MidiBindingTarget::TrackEqGainBank
+        || t == MidiBindingTarget::TrackEqFreqBank
+        || t == MidiBindingTarget::TrackEqQBank
         || t == MidiBindingTarget::TrackCompThreshBank
         || t == MidiBindingTarget::TrackCompMakeupBank
         || t == MidiBindingTarget::TrackPluginParamBank
@@ -167,6 +175,8 @@ constexpr bool isBankRelativeTarget (MidiBindingTarget t) noexcept
         || t == MidiBindingTarget::TrackAuxSendBank
         || t == MidiBindingTarget::TrackHpfFreqBank
         || t == MidiBindingTarget::TrackEqGainBank
+        || t == MidiBindingTarget::TrackEqFreqBank
+        || t == MidiBindingTarget::TrackEqQBank
         || t == MidiBindingTarget::TrackCompThreshBank
         || t == MidiBindingTarget::TrackCompMakeupBank
         || t == MidiBindingTarget::TrackPluginParamBank;
@@ -228,7 +238,9 @@ constexpr int unpackTrackEqBand  (int packed) noexcept { return packed % kPacked
 
 constexpr bool needsPackedTrackEqIndex (MidiBindingTarget t) noexcept
 {
-    return t == MidiBindingTarget::TrackEqGain;
+    return t == MidiBindingTarget::TrackEqGain
+        || t == MidiBindingTarget::TrackEqFreq
+        || t == MidiBindingTarget::TrackEqQ;
 }
 
 // BusEqGain stores bus * kBusEqBands + band in targetIndex.

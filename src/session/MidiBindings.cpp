@@ -65,6 +65,24 @@ juce::String describeBindingTarget (const MidiBinding& b,
             return "Track " + juce::String (track + 1)
                  + " EQ " + juce::String (bandName) + " gain";
         }
+        case MidiBindingTarget::TrackEqFreq:
+        {
+            const int track = unpackTrackEqTrack (b.targetIndex);
+            const int band  = unpackTrackEqBand  (b.targetIndex);
+            static const char* kBandNames[] = { "LF", "LM", "HM", "HF" };
+            const char* bandName = (band >= 0 && band < 4) ? kBandNames[band] : "?";
+            return "Track " + juce::String (track + 1)
+                 + " EQ " + juce::String (bandName) + " freq";
+        }
+        case MidiBindingTarget::TrackEqQ:
+        {
+            const int track = unpackTrackEqTrack (b.targetIndex);
+            const int band  = unpackTrackEqBand  (b.targetIndex);
+            static const char* kBandNames[] = { "LF", "LM", "HM", "HF" };
+            const char* bandName = (band >= 0 && band < 4) ? kBandNames[band] : "?";
+            return "Track " + juce::String (track + 1)
+                 + " EQ " + juce::String (bandName) + " Q";
+        }
         case MidiBindingTarget::TrackCompThresh: return "Track " + trk() + " comp threshold";
         case MidiBindingTarget::TrackCompMakeup: return "Track " + trk() + " comp makeup";
         case MidiBindingTarget::TrackPluginParam:
@@ -116,6 +134,17 @@ juce::String describeBindingTarget (const MidiBinding& b,
             const char* bandName = (band >= 0 && band < 4) ? kBandNames[band] : "?";
             return "Bank pos " + juce::String (pos + 1)
                  + " EQ " + juce::String (bandName) + " gain (banked)";
+        }
+        case MidiBindingTarget::TrackEqFreqBank:
+        case MidiBindingTarget::TrackEqQBank:
+        {
+            const int pos  = b.targetIndex / kPackedEqBands;
+            const int band = b.targetIndex % kPackedEqBands;
+            static const char* kBandNames[] = { "LF", "LM", "HM", "HF" };
+            const char* bandName = (band >= 0 && band < 4) ? kBandNames[band] : "?";
+            const char* knob = (b.target == MidiBindingTarget::TrackEqFreqBank) ? " freq" : " Q";
+            return "Bank pos " + juce::String (pos + 1)
+                 + " EQ " + juce::String (bandName) + juce::String (knob) + " (banked)";
         }
         case MidiBindingTarget::TrackCompThreshBank:  return "Bank pos " + trk() + " comp threshold (banked)";
         case MidiBindingTarget::TrackCompMakeupBank:  return "Bank pos " + trk() + " comp makeup (banked)";
@@ -180,6 +209,8 @@ const char* nameForTarget (MidiBindingTarget t) noexcept
         case MidiBindingTarget::TrackAuxSend:    return "AUX send";
         case MidiBindingTarget::TrackHpfFreq:    return "HPF cutoff";
         case MidiBindingTarget::TrackEqGain:     return "EQ band gain";
+        case MidiBindingTarget::TrackEqFreq:     return "EQ band frequency";
+        case MidiBindingTarget::TrackEqQ:        return "EQ band Q";
         case MidiBindingTarget::TrackCompThresh: return "Comp threshold";
         case MidiBindingTarget::TrackCompMakeup: return "Comp makeup";
         case MidiBindingTarget::TrackPluginParam: return "Plugin parameter";
@@ -191,6 +222,8 @@ const char* nameForTarget (MidiBindingTarget t) noexcept
         case MidiBindingTarget::TrackAuxSendBank:     return "AUX send (banked)";
         case MidiBindingTarget::TrackHpfFreqBank:     return "HPF cutoff (banked)";
         case MidiBindingTarget::TrackEqGainBank:      return "EQ band gain (banked)";
+        case MidiBindingTarget::TrackEqFreqBank:      return "EQ band frequency (banked)";
+        case MidiBindingTarget::TrackEqQBank:         return "EQ band Q (banked)";
         case MidiBindingTarget::TrackCompThreshBank:  return "Comp threshold (banked)";
         case MidiBindingTarget::TrackCompMakeupBank:  return "Comp makeup (banked)";
         case MidiBindingTarget::TrackPluginParamBank: return "Plugin parameter (banked)";
@@ -280,10 +313,14 @@ static bool tryGetBankedVariant (MidiBindingTarget kind, int absIndex,
             return true;
         }
         case MidiBindingTarget::TrackEqGain:
+        case MidiBindingTarget::TrackEqFreq:
+        case MidiBindingTarget::TrackEqQ:
         {
             const int trk  = unpackTrackEqTrack (absIndex);
             const int band = unpackTrackEqBand  (absIndex);
-            outTarget = MidiBindingTarget::TrackEqGainBank;
+            outTarget = kind == MidiBindingTarget::TrackEqGain ? MidiBindingTarget::TrackEqGainBank
+                      : kind == MidiBindingTarget::TrackEqFreq ? MidiBindingTarget::TrackEqFreqBank
+                                                               : MidiBindingTarget::TrackEqQBank;
             outIndex  = packTrackEqBand (pos (trk), band);
             return true;
         }
@@ -373,7 +410,9 @@ void showLearnMenu (juce::Component& target,
         const int posDisplay =
             (bankedKind == MidiBindingTarget::TrackAuxSendBank)
                 ? (bankedIndex / kPackedAuxLanes) + 1
-            : (bankedKind == MidiBindingTarget::TrackEqGainBank)
+            : (bankedKind == MidiBindingTarget::TrackEqGainBank
+               || bankedKind == MidiBindingTarget::TrackEqFreqBank
+               || bankedKind == MidiBindingTarget::TrackEqQBank)
                 ? (bankedIndex / kPackedEqBands) + 1
                 : bankedIndex + 1;
         const auto banklabel = "MIDI Learn (follow bank, position "
@@ -539,6 +578,8 @@ std::optional<std::vector<MidiBinding>> deserializeBindingsPreset (const juce::S
             case MidiBindingTarget::TrackAuxSend:
             case MidiBindingTarget::TrackHpfFreq:
             case MidiBindingTarget::TrackEqGain:
+            case MidiBindingTarget::TrackEqFreq:
+            case MidiBindingTarget::TrackEqQ:
             case MidiBindingTarget::TrackCompThresh:
             case MidiBindingTarget::TrackCompMakeup:
             case MidiBindingTarget::TrackPluginParam:
@@ -559,6 +600,8 @@ std::optional<std::vector<MidiBinding>> deserializeBindingsPreset (const juce::S
             case MidiBindingTarget::TrackAuxSendBank:
             case MidiBindingTarget::TrackHpfFreqBank:
             case MidiBindingTarget::TrackEqGainBank:
+            case MidiBindingTarget::TrackEqFreqBank:
+            case MidiBindingTarget::TrackEqQBank:
             case MidiBindingTarget::TrackCompThreshBank:
             case MidiBindingTarget::TrackCompMakeupBank:
             case MidiBindingTarget::TrackPluginParamBank:

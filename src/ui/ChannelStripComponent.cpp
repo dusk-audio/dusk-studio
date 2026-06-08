@@ -656,6 +656,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
                     eqEnabledPtr->store (true, std::memory_order_release);
                 };
             }
+            row.q->addMouseListener (this, false);   // right-click → MIDI Learn (TrackEqQ)
             addAndMakeVisible (row.q.get());
 
             row.qLabel.setText ("Q", juce::dontSendNotification);
@@ -674,6 +675,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
                 eqEnabledPtr->store (true, std::memory_order_release);
             };
         }
+        row.freq->addMouseListener (this, false);   // right-click → MIDI Learn (TrackEqFreq)
         addAndMakeVisible (row.freq.get());
     }
 
@@ -3637,11 +3639,25 @@ void ChannelStripComponent::mouseDown (const juce::MouseEvent& e)
         }
         for (int i = 0; i < (int) eqRows.size(); ++i)
         {
-            if (eqRows[(size_t) i].gain != nullptr
-                && e.eventComponent == eqRows[(size_t) i].gain.get())
+            auto& row = eqRows[(size_t) i];
+            if (row.gain != nullptr && e.eventComponent == row.gain.get())
             {
-                midilearn::showLearnMenu (*eqRows[(size_t) i].gain, session,
+                midilearn::showLearnMenu (*row.gain, session,
                                             MidiBindingTarget::TrackEqGain,
+                                            packTrackEqBand (trackIndex, i));
+                return;
+            }
+            if (row.freq != nullptr && e.eventComponent == row.freq.get())
+            {
+                midilearn::showLearnMenu (*row.freq, session,
+                                            MidiBindingTarget::TrackEqFreq,
+                                            packTrackEqBand (trackIndex, i));
+                return;
+            }
+            if (row.q != nullptr && e.eventComponent == row.q.get())
+            {
+                midilearn::showLearnMenu (*row.q, session,
+                                            MidiBindingTarget::TrackEqQ,
                                             packTrackEqBand (trackIndex, i));
                 return;
             }

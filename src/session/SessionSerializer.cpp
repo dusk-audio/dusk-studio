@@ -1701,6 +1701,8 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                     case (int) MidiBindingTarget::TrackAuxSend:
                     case (int) MidiBindingTarget::TrackHpfFreq:
                     case (int) MidiBindingTarget::TrackEqGain:
+                    case (int) MidiBindingTarget::TrackEqFreq:
+                    case (int) MidiBindingTarget::TrackEqQ:
                     case (int) MidiBindingTarget::TrackCompThresh:
                     case (int) MidiBindingTarget::TrackCompMakeup:
                     case (int) MidiBindingTarget::TrackPluginParam:
@@ -1712,6 +1714,8 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                     case (int) MidiBindingTarget::TrackAuxSendBank:
                     case (int) MidiBindingTarget::TrackHpfFreqBank:
                     case (int) MidiBindingTarget::TrackEqGainBank:
+                    case (int) MidiBindingTarget::TrackEqFreqBank:
+                    case (int) MidiBindingTarget::TrackEqQBank:
                     case (int) MidiBindingTarget::TrackCompThreshBank:
                     case (int) MidiBindingTarget::TrackCompMakeupBank:
                     case (int) MidiBindingTarget::TrackPluginParamBank:
@@ -1759,7 +1763,9 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                                 : (bankRelative
                                     ? (b.target == MidiBindingTarget::TrackAuxSendBank
                                         ? Session::kBankSize * kPackedAuxLanes - 1
-                                        : (b.target == MidiBindingTarget::TrackEqGainBank
+                                        : ((b.target == MidiBindingTarget::TrackEqGainBank
+                                            || b.target == MidiBindingTarget::TrackEqFreqBank
+                                            || b.target == MidiBindingTarget::TrackEqQBank)
                                             ? Session::kBankSize * kPackedEqBands - 1
                                             : Session::kBankSize - 1))
                                     : Session::kNumTracks - 1)))));

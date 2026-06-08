@@ -1572,7 +1572,7 @@ Right-click the binding in the MIDI Bindings panel to change its mode.
 - **Transport**: Play, Stop, Record, Toggle play/stop.
 - **Per-track**: Mute, Solo, Arm.
 - **Per-track continuous**: Fader (dB), Pan.
-- **Per-track DSP**: HPF frequency, EQ band gain (4 bands), compressor threshold, compressor makeup.
+- **Per-track DSP**: HPF frequency, EQ band gain (4 bands), EQ band frequency (4 bands), EQ band Q (the two bell bands, LM / HM), compressor threshold, compressor makeup.
 - **Per-track toggles**: EQ on/off, compressor on/off, hardware insert bypass, aux-send pre/post.
 - **Per-track plugin parameter**: any indexed parameter on the loaded plugin.
 - **Per-bus**: Fader, Pan, Mute, Solo, EQ band gain (LF / MID / HF — 3 bands).
