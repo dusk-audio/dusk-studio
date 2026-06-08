@@ -56,8 +56,13 @@ public:
     int getTunerLeftX() const noexcept { return tuneButton.getX(); }
 
     // MainComponent clamps the centered stage-tab overlay against this
-    // so RECORDING/MIXING/MASTERING/AUX never slide left over the clock.
-    int getClockRightX() const noexcept { return clockLabel.getRight(); }
+    // so RECORDING/MIXING/MASTERING/AUX never slide left over the clock —
+    // or over the current-section pill when it's showing.
+    int getClockRightX() const noexcept
+    {
+        return sectionLabel.isVisible() ? sectionLabel.getRight()
+                                        : clockLabel.getRight();
+    }
 
     // Below this width SNAP->S, TIMELINE->chevron, clock shrinks,
     // MainComponent's bank overlay shrinks to match. Calibrated to
@@ -152,6 +157,11 @@ private:
 
     juce::TextButton tapeToggle    { juce::CharPointer_UTF8 ("\xe2\x96\xbe TIMELINE") };  // "▾ TIMELINE"
     juce::Label      clockLabel;
+    // Current song-section readout: the name of the most recent marker at or
+    // before the playhead (e.g. "▸ Verse 2"). Hidden when there are no markers
+    // or the playhead sits before the first one. Lets the engineer track the
+    // arrangement even with the TIMELINE collapsed.
+    juce::Label      sectionLabel;
     // Label always shows the format the user will get on click (so
     // looking at bars shows "TIME"). Hidden in compact mode — right-
     // click on clockLabel is the always-available fallback.
@@ -168,6 +178,11 @@ private:
 public:
     // Set by MainComponent. Fires after toggle flip; bool = new state.
     std::function<void (bool)> onTapeStripToggle;
+
+    // Set by MainComponent. Fires when the current-section pill appears,
+    // disappears, or changes width, so the centered stage tabs re-clamp
+    // against the new getClockRightX().
+    std::function<void()> onSectionChanged;
 
     // Sync the TIMELINE button's visual state from outside (keyboard
     // shortcut path). dontSendNotification — caller updates the rest of

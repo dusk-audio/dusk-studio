@@ -1105,6 +1105,8 @@ Press **M** to drop a marker at the current playhead. A marker pill appears in t
 - Right-click for **Rename** and **Delete**.
 - **Rewind** and **Forward** transport buttons jump to the previous and next marker.
 
+Once a song has markers, the transport bar shows a **current-section pill** just right of the clock (e.g. *▸ Verse 2*) — the name of the most recent marker at or before the playhead. It tracks the arrangement as you play, so you always know which section is current even with the **TIMELINE** collapsed. It is hidden until the playhead reaches the first marker.
+
 ## Loop and punch brackets
 
 When **Loop** or **Punch** is enabled, coloured brackets appear in the ruler.
