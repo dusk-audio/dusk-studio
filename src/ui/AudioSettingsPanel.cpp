@@ -633,16 +633,16 @@ void AudioSettingsPanel::applyOversamplingChange()
     session.oversamplingFactor.store (factor, std::memory_order_relaxed);
 
     // Re-prepare engine DSP so the new factor takes effect. The factor is only
-    // read in AudioEngine::prepareForSelfTest (via audioDeviceAboutToStart), so
-    // the device must actually re-open. setAudioDeviceSetup() with the SAME
-    // setup is a no-op in JUCE — it early-returns when newSetup == currentSetup
-    // and a device is open, so nothing re-prepares. Close then restart instead:
-    // closeAudioDevice() nulls currentAudioDevice, so restartLastAudioDevice()
-    // reopens it (audioDeviceStopped → audioDeviceAboutToStart → re-prepare),
-    // rebuilding every strip/bus/master oversampler at the new factor. Brief
-    // dropout, same as a buffer-size change — acceptable for a settings tweak.
-    deviceManager.closeAudioDevice();
-    deviceManager.restartLastAudioDevice();
+    // read in AudioEngine::prepareForSelfTest (driven by audioDeviceAboutToStart).
+    // setAudioDeviceSetup() with the SAME setup is a JUCE no-op, and a full
+    // device close/restart disturbs the window peer on Linux (mouse-offset
+    // regression). Instead, detach + reattach the engine as the audio callback:
+    // removeAudioCallback fires audioDeviceStopped, addAudioCallback fires
+    // audioDeviceAboutToStart → prepareForSelfTest, rebuilding every
+    // strip/bus/master oversampler at the new factor — all WITHOUT touching the
+    // device or the window. Brief silence gap only.
+    deviceManager.removeAudioCallback (&engine);
+    deviceManager.addAudioCallback (&engine);
 }
 
 AudioSettingsPanel::~AudioSettingsPanel()
