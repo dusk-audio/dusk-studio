@@ -1107,10 +1107,12 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
         secondsPerTick = (tps > 0) ? 1.0 / (double) tps : 0.0;
     }
 
-    // Read the global oversampling factor once per prepare. Per-channel
-    // strips don't take an oversampling param (ChannelComp is fast-path /
-    // native-rate only); aux + master propagate it to their bus comps and
-    // (for master) to the tape oversampler.
+    // Read the global oversampling factor once per prepare and propagate it to
+    // every strip/bus/master that wraps EQ+Comp in a Dusk Studio-side
+    // oversampler (each rebuilds its juce::dsp::Oversampling at this factor in
+    // prepare). Aux lanes host plugin chains only (no Dusk EQ/Comp), so they
+    // don't take the factor. The cost only materialises when a strip is
+    // actually processing audio — silent / skipped strips dodge the chain.
     const int oxFactor = session.oversamplingFactor.load (std::memory_order_relaxed);
 
     for (auto& s : strips)        s.prepare (sr, bs, oxFactor);

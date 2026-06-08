@@ -632,12 +632,17 @@ void AudioSettingsPanel::applyOversamplingChange()
 
     session.oversamplingFactor.store (factor, std::memory_order_relaxed);
 
-    // Re-prepare engine DSP so the new factor takes effect on the next
-    // callback. Bouncing setAudioDeviceSetup forces audioDeviceAboutToStart
-    // → AudioEngine::prepareForSelfTest → master/aux prepare(...,factor),
-    // which is the cheapest way to apply the change without restarting.
-    auto setup = deviceManager.getAudioDeviceSetup();
-    deviceManager.setAudioDeviceSetup (setup, /*treatAsChosenDevice*/ true);
+    // Re-prepare engine DSP so the new factor takes effect. The factor is only
+    // read in AudioEngine::prepareForSelfTest (via audioDeviceAboutToStart), so
+    // the device must actually re-open. setAudioDeviceSetup() with the SAME
+    // setup is a no-op in JUCE — it early-returns when newSetup == currentSetup
+    // and a device is open, so nothing re-prepares. Close then restart instead:
+    // closeAudioDevice() nulls currentAudioDevice, so restartLastAudioDevice()
+    // reopens it (audioDeviceStopped → audioDeviceAboutToStart → re-prepare),
+    // rebuilding every strip/bus/master oversampler at the new factor. Brief
+    // dropout, same as a buffer-size change — acceptable for a settings tweak.
+    deviceManager.closeAudioDevice();
+    deviceManager.restartLastAudioDevice();
 }
 
 AudioSettingsPanel::~AudioSettingsPanel()
