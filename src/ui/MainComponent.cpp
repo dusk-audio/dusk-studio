@@ -266,17 +266,16 @@ MainComponent::MainComponent()
     juce::LookAndFeel::setDefaultLookAndFeel (&lookAndFeel);
 
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
-    // DUSKSTUDIO_USE_OOP_PLUGINS=1 routes new plugin loads through the
-    // dusk-studio-plugin-host child process. Read once at startup; flipping
-    // mid-session would require reloading every plugin to pick up the
-    // new mode. Off by default while the OOP path is still maturing.
-    if (auto* env = std::getenv ("DUSKSTUDIO_USE_OOP_PLUGINS");
-        env != nullptr && *env != 0 && *env != '0')
+    // Third-party binary plugins (VST3 / LV2 / AU) run out-of-process in the
+    // dusk-studio-plugin-host child by default, so a plugin crash / hang takes
+    // down only the child, not the app. No UI toggle (keeps the no-prefs-sprawl
+    // rule); the hidden escape hatch DUSKSTUDIO_USE_OOP_PLUGINS=0 forces
+    // in-process hosting for debugging. Read once at startup — flipping
+    // mid-session would require reloading every plugin to pick up the new mode.
     {
-        engine.getPluginManager().setOopEnabled (true);
-        std::fprintf (stdout,
-                      "[Dusk Studio] Out-of-process plugin hosting enabled "
-                      "(DUSKSTUDIO_USE_OOP_PLUGINS=1).\n");
+        const char* env = std::getenv ("DUSKSTUDIO_USE_OOP_PLUGINS");
+        const bool forceInProcess = (env != nullptr && env[0] == '0' && env[1] == '\0');
+        engine.getPluginManager().setOopEnabled (! forceInProcess);
     }
    #endif
 

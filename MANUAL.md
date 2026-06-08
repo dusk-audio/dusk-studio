@@ -1400,7 +1400,7 @@ OOP is supported on:
 - **Windows**: always.
 - **macOS**: requires macOS 14.4 or later. The plugin **editor** is hosted in-process via a shell instance and embeds as a centred modal like the other platforms — see *Opening the editor* above.
 
-OOP is enabled per-session by setting the environment variable `DUSKSTUDIO_USE_OOP_PLUGINS=1` before launching Dusk Studio. A future release will expose this as a per-plugin or per-session UI toggle.
+OOP is **on by default** for third-party binary plugins (VST3 / LV2 / AU), so a plugin that crashes or hangs takes down only the host child, not Dusk Studio. There is no setting to manage; if the `dusk-studio-plugin-host` binary is missing the loader falls back to in-process automatically. For debugging you can force in-process hosting by launching with `DUSKSTUDIO_USE_OOP_PLUGINS=0`. (Dusk Studio's own bundled plugins always run in-process.)
 
 When a plugin crashes in OOP mode:
 
