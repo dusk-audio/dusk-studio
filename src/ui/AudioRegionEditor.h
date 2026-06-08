@@ -102,7 +102,7 @@ private:
     // RegionEditAction(before, after). MoveCursor is not undoable;
     // the rest are.
     enum class DragMode { None, FadeIn, FadeOut, Gain, TrimStart, TrimEnd, MoveCursor, Range, MoveRegion, Pan, AutomationPoint,
-                          LoopIn, LoopOut, PunchIn, PunchOut };
+                          AutomationPaint, LoopIn, LoopOut, PunchIn, PunchOut };
     DragMode dragMode = DragMode::None;
     juce::int64 dragOriginTimelineSample = 0;
     // [start, end) in absolute file samples. Active when end > start;
@@ -249,14 +249,27 @@ private:
     juce::ToggleButton muteToggle;
     juce::ToggleButton lockToggle;
 
-    // Click empty area to add, drag a dot to move, right-click to
-    // delete. Edit only when transport stopped — audio reads lane
-    // lock-free, mid-play mutation would race.
+    // Grab mode: click empty area to add, drag a dot to move, right-click
+    // to delete. Draw mode: drag to paint a freehand curve. Edit only when
+    // transport stopped — audio reads lane lock-free, mid-play would race.
     juce::TextButton automationParamButton { "Auto: Off" };
     int  automationParam = -1;        // -1 = overlay disabled; else AutomationParam enum
     int  draggedPointIdx = -1;
     std::vector<AutomationPoint> automationDragBefore;   // lane snapshot at gesture start, for undo
     int  automationDragParam = -1;                       // param being edited this gesture
+    // Freehand pencil (DragMode::AutomationPaint) trackers: last point laid
+    // down this stroke, so each step overwrites the swept band and throttles
+    // new-point density.
+    juce::int64 automationPaintLastT = 0;
+    int  automationPaintLastX = -1;
+    // Lay/update one automation point under (x,y) for the freehand pencil.
+    // first = gesture start (no swept-band erase). Overwrites pre-existing
+    // points in the band swept since the last step.
+    void paintAutomationStep (int x, int y, juce::Rectangle<int> waveArea,
+                              bool first, bool bypassSnap);
+    // Flip the focused track to Read mode if it's Off/Write, so a freshly
+    // drawn lane is audible on Play. Shared by click-add + pencil paths.
+    void autoArmAutomationRead();
     void showAutomationParamMenu();
     void paintAutomationOverlay (juce::Graphics&, juce::Rectangle<int> waveArea);
     int  hitTestAutomationPoint (int x, int y, juce::Rectangle<int> waveArea) const;
