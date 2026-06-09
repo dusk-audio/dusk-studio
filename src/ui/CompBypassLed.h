@@ -24,7 +24,7 @@ public:
           toggleFn (std::move (onToggle))
     {
         setMouseCursor (juce::MouseCursor::PointingHandCursor);
-        setTooltip ("Compressor bypass — green when engaged, click to toggle");
+        setTooltip ("Compressor bypass - green when engaged, click to toggle");
     }
 
     void paint (juce::Graphics& g) override

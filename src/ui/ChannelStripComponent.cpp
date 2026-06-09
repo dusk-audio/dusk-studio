@@ -2101,7 +2101,7 @@ void ChannelStripComponent::openPluginEditor()
             {
                 std::fprintf (stderr,
                               "[Dusk Studio/ChannelStripComponent] shell state-sync "
-                              "failed: %s — shell editor opens with defaults.\n",
+                              "failed: %s - shell editor opens with defaults.\n",
                               syncErr.toRawUTF8());
             }
 
@@ -2137,7 +2137,7 @@ void ChannelStripComponent::openPluginEditor()
         {
             std::fprintf (stderr,
                           "[Dusk Studio/ChannelStripComponent] Mac shell-editor "
-                          "load failed: %s — falling back to floating child window.\n",
+                          "load failed: %s - falling back to floating child window.\n",
                           shellErr.toRawUTF8());
         }
         if (embed != nullptr)
@@ -2483,7 +2483,7 @@ void ChannelStripComponent::refreshPrintButtonForMode()
                         == (int) Track::Mode::Midi);
     printButton.setEnabled (! isMidi);
     if (isMidi)
-        printButton.setTooltip ("PRINT does not apply to MIDI tracks — they "
+        printButton.setTooltip ("PRINT does not apply to MIDI tracks - they "
                                   "record raw note events. The instrument "
                                   "plugin's audio is rendered on playback, "
                                   "not on capture, so there is nothing to "

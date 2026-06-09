@@ -118,7 +118,7 @@ void install (const juce::String& appVersion)
     // from the date in the filename — next-day startup picks a new file.
     ownedLogger = std::make_unique<juce::FileLogger> (
         cachedLogFile,
-        "Dusk Studio " + appVersion + " — "
+        "Dusk Studio " + appVersion + " - "
             + juce::Time::getCurrentTime().toString (true, true));
     juce::Logger::setCurrentLogger (ownedLogger.get());
 
