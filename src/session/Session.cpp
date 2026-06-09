@@ -430,7 +430,7 @@ void handleWritePassComplete (Session& s) noexcept
     const auto thinLane = [&] (AutomationLane& lane, AutomationParam p)
     {
         if (! isContinuousParam (p) || lane.pointsConst().size() <= 2) return;
-        lane.mutatePoints ([p] (std::vector<AutomationPoint>& v)
+        lane.mutatePoints ([p, kEpsilon] (std::vector<AutomationPoint>& v)
                             { thinAutomationLane (v, p, kEpsilon); });
     };
 
