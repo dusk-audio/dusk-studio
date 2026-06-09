@@ -388,7 +388,10 @@ public:
     // sample (last wins). Positions are preserved.
     void setPoints (std::vector<TempoPoint> pts)
     {
-        std::sort (pts.begin(), pts.end(),
+        // Stable so equal-sample points keep their input order — the
+        // collision loop below is "last wins", which only means "last in the
+        // caller's order" if equal keys aren't reshuffled.
+        std::stable_sort (pts.begin(), pts.end(),
                    [] (const TempoPoint& a, const TempoPoint& b)
                    { return a.timelineSamples < b.timelineSamples; });
         points_.clear();
@@ -540,6 +543,36 @@ inline juce::String formatSamplePosition (juce::int64 samples,
     const int beat = (int) (remBar / samplesPerBeat);
     const double remBeat = remBar - (double) beat * samplesPerBeat;
     const int tick = (int) (remBeat * (double) kMidiTicksPerQuarter / samplesPerBeat);
+    return juce::String (bar + 1) + "."
+         + juce::String (beat + 1) + "."
+         + juce::String (tick).paddedLeft ('0', 3);
+}
+
+// Map-aware bar/beat/tick. With an empty map this delegates to the constant-
+// tempo overload above (bit-identical output, so the common case never
+// regresses); with a populated map it integrates ticks across the tempo
+// segments so bar/beat stay correct after a tempo change. Time mode is tempo-
+// independent and routes through the scalar path either way.
+inline juce::String formatSamplePosition (juce::int64 samples,
+                                            double sampleRate,
+                                            const TempoMap& tempoMap,
+                                            float fallbackBpm,
+                                            int beatsPerBar,
+                                            TimeDisplayMode mode) noexcept
+{
+    if (tempoMap.empty() || mode == TimeDisplayMode::Time)
+        return formatSamplePosition (samples, sampleRate, fallbackBpm, beatsPerBar, mode);
+
+    if (samples < 0) samples = 0;
+    if (sampleRate <= 0.0 || beatsPerBar <= 0)
+        return juce::String ("1.1.000");
+
+    const juce::int64 ticks        = tempoMap.samplesToTicks (samples, sampleRate);
+    const juce::int64 ticksPerBeat = kMidiTicksPerQuarter;
+    const juce::int64 ticksPerBar  = ticksPerBeat * (juce::int64) beatsPerBar;
+    const int bar  = (int) (ticks / ticksPerBar);
+    const int beat = (int) ((ticks % ticksPerBar) / ticksPerBeat);
+    const int tick = (int) (ticks % ticksPerBeat);
     return juce::String (bar + 1) + "."
          + juce::String (beat + 1) + "."
          + juce::String (tick).paddedLeft ('0', 3);

@@ -71,7 +71,7 @@ bool migrateSession (juce::var& root, int from)
         {
             std::fprintf (stderr,
                           "[Dusk Studio/SessionSerializer] migrator at v%d failed to advance "
-                          "version — aborting to avoid infinite loop\n", v);
+                          "version - aborting to avoid infinite loop\n", v);
             return false;
         }
     }
@@ -1335,7 +1335,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
     {
         std::fprintf (stderr,
                       "[Dusk Studio/SessionSerializer] session.json version %d is newer "
-                      "than this build's max supported version %d — refusing to "
+                      "than this build's max supported version %d - refusing to "
                       "load. Upgrade Dusk Studio.\n",
                       fileVersion, kFormatVersion);
         return false;
@@ -1382,6 +1382,8 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                 lane.params.mute.store ((bool) v["mute"]);
             if (v.hasProperty ("output_pair"))
                 lane.params.outputPair.store ((int) v["output_pair"]);
+            else
+                lane.params.outputPair.store (-1);   // model default: Master only
             if (auto slots = v["plugin_slots"]; slots.isArray())
             {
                 const int sn = juce::jmin (AuxLaneParams::kMaxLanePlugins, slots.size());
@@ -1469,9 +1471,13 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
     }
     if (auto master = root["master"]; master.isObject())
     {
-        if (master.hasProperty ("fader_db"))     s.master().faderDb.store ((float) (double) master["fader_db"]);
-        if (master.hasProperty ("output_pair"))  s.master().outputPair.store ((int) master["output_pair"]);
-        if (master.hasProperty ("mute"))         s.master().mute.store ((bool) master["mute"]);
+        // Reset to struct defaults when a key is absent — load() reuses the live
+        // session (no pre-load reset), so a conditional store would inherit the
+        // previously-loaded session's value. (Audible master state: level /
+        // routing / mute.)
+        s.master().faderDb.store    (master.hasProperty ("fader_db")    ? (float) (double) master["fader_db"] : 0.0f);
+        s.master().outputPair.store (master.hasProperty ("output_pair") ? (int) master["output_pair"]         : -1);
+        s.master().mute.store       (master.hasProperty ("mute")        ? (bool) master["mute"]               : false);
         if (master.hasProperty ("mono_sum"))     s.master().monoSum.store ((bool) master["mono_sum"]);
         if (master.hasProperty ("tape_enabled")) s.master().tapeEnabled.store ((bool) master["tape_enabled"]);
         if (master.hasProperty ("tape_hq"))      s.master().tapeHQ.store ((bool) master["tape_hq"]);
@@ -1614,6 +1620,8 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                                              (float) (double) o->getProperty ("bpm") });
             s.tempoMap.setPoints (std::move (pts));
         }
+        else
+            s.tempoMap.setPoints ({});   // no map in the file → clear any stale map from a prior load
         if (tport.hasProperty ("ui_stage"))          s.uiStage.store          ((int)  tport["ui_stage"]);
         if (tport.hasProperty ("sync_source_input"))
             s.syncSourceInputIdentifier = tport["sync_source_input"].toString();
@@ -1656,8 +1664,10 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         if (tport.hasProperty ("last_record_point")) s.lastRecordPointSamples.store ((juce::int64) tport["last_record_point"]);
         if (tport.hasProperty ("pre_roll_seconds"))  s.preRollSeconds.store   ((float)  (double) tport["pre_roll_seconds"]);
         if (tport.hasProperty ("post_roll_seconds")) s.postRollSeconds.store  ((float)  (double) tport["post_roll_seconds"]);
-        if (tport.hasProperty ("pre_roll_enabled"))  s.preRollEnabled.store   ((bool) tport["pre_roll_enabled"]);
-        if (tport.hasProperty ("post_roll_enabled")) s.postRollEnabled.store  ((bool) tport["post_roll_enabled"]);
+        // Default true when absent (Session.h) so an older file lacking the key
+        // doesn't inherit a disabled flag from a previously-loaded session.
+        s.preRollEnabled.store  (tport.hasProperty ("pre_roll_enabled")  ? (bool) tport["pre_roll_enabled"]  : true);
+        s.postRollEnabled.store (tport.hasProperty ("post_roll_enabled") ? (bool) tport["post_roll_enabled"] : true);
 
         // Build the bindings list off-snapshot, then publish atomically so
         // the audio thread either sees the prior set or the new one - never

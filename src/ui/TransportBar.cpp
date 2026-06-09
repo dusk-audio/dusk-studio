@@ -439,7 +439,7 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
     sectionLabel.setColour (juce::Label::outlineColourId,    juce::Colour (0xff2a2a32));
     sectionLabel.setFont (juce::Font (juce::FontOptions (12.0f, juce::Font::bold)));
     sectionLabel.setMinimumHorizontalScale (1.0f);
-    sectionLabel.setTooltip ("Current song section — the most recent marker at "
+    sectionLabel.setTooltip ("Current song section - the most recent marker at "
                               "or before the playhead. Add markers with M.");
     sectionLabel.setVisible (false);
     addAndMakeVisible (sectionLabel);
@@ -722,6 +722,7 @@ void TransportBar::timerCallback()
             const int   bpb = engine.getSession().beatsPerBar.load (std::memory_order_relaxed);
             clockLabel.setText (formatSamplePosition (playhead,
                                                         engine.getCurrentSampleRate(),
+                                                        engine.getSession().tempoMap,
                                                         bpm, bpb, mode),
                                  juce::dontSendNotification);
             // Icon shows what the next click will switch TO — matches the
@@ -922,7 +923,7 @@ void TransportBar::notifyRecordStopped()
                 ? "WAV write failed (disk full / I/O error)"
                 : "MIDI events dropped (capture buffer full)";
         body += "    Track " + juce::String (e.trackIndex + 1)
-              + " — " + kind + " ("
+              + " - " + kind + " ("
               + juce::String (e.count) + ")\n";
     }
     body += "\nCheck the session's audio folder for free space and the "
@@ -1308,7 +1309,7 @@ void TransportBar::promptCustomTimeSig()
 
     juce::Component::SafePointer<TransportBar> safe (this);
     showDuskTextInput (*tlw, "Custom time signature",
-                          "Enter N/D — numerator first, then denominator "
+                          "Enter N/D - numerator first, then denominator "
                           "(power of two: 1, 2, 4, 8, 16, 32).",
                           current,
                           [safe] (const juce::String& text)

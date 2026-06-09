@@ -696,6 +696,14 @@ void AudioSettingsPanel::populateMainOutputCombo()
     if (stored > 0)
         for (int i = 0; i < mainOutputCombo.getNumItems(); ++i)
             if (mainOutputCombo.getItemId (i) == stored) { wantId = stored; break; }
+
+    // Persist the fallback so the engine doesn't keep routing the master to a
+    // pair that's no longer active (which would silence it) while the UI shows
+    // "1-2 (default)". Normalize to the same encoding applyMainOutputChange
+    // writes: item 1 = default → -1.
+    const int normalized = wantId <= 1 ? -1 : wantId;
+    if (normalized != stored)
+        session.master().outputPair.store (normalized, std::memory_order_relaxed);
     mainOutputCombo.setSelectedId (wantId, juce::dontSendNotification);
 }
 

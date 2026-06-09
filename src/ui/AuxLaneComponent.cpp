@@ -434,11 +434,12 @@ void AuxLaneComponent::timerCallback()
             muteButton.setToggleState (effective, juce::dontSendNotification);
     }
 
-    // Rebuild the output-pair menu when the device's ACTIVE output count
-    // changes (e.g. the user just enabled more outputs in Audio settings —
-    // the physical name count wouldn't move, only the active mask).
+    // Rebuild the output-pair menu when the device's ACTIVE output set changes
+    // (e.g. the user enabled/swapped outputs in Audio settings — the physical
+    // name count wouldn't move, only the active mask).
     if (auto* dev = engine.getDeviceManager().getCurrentAudioDevice())
-        if (dev->getActiveOutputChannels().countNumberOfSetBits() != lastOutputChannelCount)
+        if (dev->getActiveOutputChannels() != lastOutputChannelMask
+            || dev->getOutputChannelNames().size() != lastOutputChannelCount)
             populateOutputPairCombo();
 }
 
@@ -447,23 +448,28 @@ void AuxLaneComponent::populateOutputPairCombo()
     outputPairCombo.clear (juce::dontSendNotification);
     outputPairCombo.addItem ("Master only", 1);
 
-    int count = 0;
+    juce::BigInteger activeMask;
     if (auto* device = engine.getDeviceManager().getCurrentAudioDevice())
     {
         // Only list pairs the engine can write to — both channels must be in the
         // device's active-output set. Offering inactive physical outputs would
-        // route a cue to a dead pair (no sound). count tracks the active channel
-        // count so the timer re-populates when the user toggles outputs in Audio
-        // settings (getOutputChannelNames().size() wouldn't change there).
+        // route a cue to a dead pair (no sound). activeMask is cached so the
+        // timer re-populates when the user toggles outputs in Audio settings
+        // (getOutputChannelNames().size() wouldn't change there).
         const auto active = device->getActiveOutputChannels();
         const int total = device->getOutputChannelNames().size();
         for (int i = 0; i + 1 < total; i += 2)
             if (active[i] && active[i + 1])
                 outputPairCombo.addItem ("Out " + juce::String (i + 1) + "-" + juce::String (i + 2),
                                            outputpair::encodePair (i, i + 1));
-        count = active.countNumberOfSetBits();
+        activeMask = active;
+        lastOutputChannelCount = total;
     }
-    lastOutputChannelCount = count;
+    else
+    {
+        lastOutputChannelCount = -1;
+    }
+    lastOutputChannelMask = activeMask;
 
     // Preselect the stored routing; fall back to "Master only" if that pair is
     // no longer present (device changed). dontSendNotification so this doesn't
@@ -1012,7 +1018,7 @@ void AuxLaneComponent::resized()
     // enforced at compile time so adding kMaxLanePlugins > 1 forces this
     // layout block to be revisited.
     static_assert (AuxLaneParams::kMaxLanePlugins == 1,
-                     "AuxLaneComponent::resized assumes a single plugin slot — "
+                     "AuxLaneComponent::resized assumes a single plugin slot - "
                      "extend the layout block before raising kMaxLanePlugins.");
     auto center = getCenterArea();
     auto& ui = slots[0];

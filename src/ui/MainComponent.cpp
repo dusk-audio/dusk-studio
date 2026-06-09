@@ -267,16 +267,18 @@ MainComponent::MainComponent()
     juce::LookAndFeel::setDefaultLookAndFeel (&lookAndFeel);
 
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
-    // Third-party binary plugins (VST3 / LV2 / AU) run out-of-process in the
-    // dusk-studio-plugin-host child by default, so a plugin crash / hang takes
-    // down only the child, not the app. No UI toggle (keeps the no-prefs-sprawl
-    // rule); the hidden escape hatch DUSKSTUDIO_USE_OOP_PLUGINS=0 forces
-    // in-process hosting for debugging. Read once at startup — flipping
-    // mid-session would require reloading every plugin to pick up the new mode.
+    // Plugins run IN-PROCESS by default. On Linux/XWayland the out-of-process
+    // editor path (cross-process XEmbed) is structurally unreliable — the
+    // compositor fights X11 reparenting — and in-process hosting gives instant,
+    // correct plugin editors with the lowest CPU/latency. The trade-off is
+    // crash isolation: a misbehaving plugin can take down the app instead of
+    // just a child. Opt back into the OOP sandbox with
+    // DUSKSTUDIO_USE_OOP_PLUGINS=1. Read once at startup — flipping mid-session
+    // would require reloading every plugin to pick up the new mode.
     {
         const char* env = std::getenv ("DUSKSTUDIO_USE_OOP_PLUGINS");
-        const bool forceInProcess = (env != nullptr && env[0] == '0' && env[1] == '\0');
-        engine.getPluginManager().setOopEnabled (! forceInProcess);
+        const bool enableOop = (env != nullptr && env[0] == '1' && env[1] == '\0');
+        engine.getPluginManager().setOopEnabled (enableOop);
     }
    #endif
 
@@ -345,10 +347,10 @@ MainComponent::MainComponent()
     styleStageButton (mixingStageBtn,    juce::Colour (0xff5a8ad0));   // mix-desk blue
     styleStageButton (auxStageBtn,       juce::Colour (0xff6e5ad0));   // aux indigo-violet
     styleStageButton (masteringStageBtn, juce::Colour (0xff8a5ad0));   // mastering purple
-    recordingStageBtn.setTooltip ("Recording stage — press 1");
-    mixingStageBtn   .setTooltip ("Mixing stage — press 2");
-    masteringStageBtn.setTooltip ("Mastering stage — press 3");
-    auxStageBtn      .setTooltip ("Aux send / return stage — press 4");
+    recordingStageBtn.setTooltip ("Recording stage - press 1");
+    mixingStageBtn   .setTooltip ("Mixing stage - press 2");
+    masteringStageBtn.setTooltip ("Mastering stage - press 3");
+    auxStageBtn      .setTooltip ("Aux send / return stage - press 4");
     recordingStageBtn.setConnectedEdges (juce::Button::ConnectedOnRight);
     mixingStageBtn   .setConnectedEdges (juce::Button::ConnectedOnLeft | juce::Button::ConnectedOnRight);
     masteringStageBtn.setConnectedEdges (juce::Button::ConnectedOnLeft | juce::Button::ConnectedOnRight);
@@ -474,6 +476,11 @@ MainComponent::MainComponent()
 
     consoleView = std::make_unique<ConsoleView> (session, engine);
     addAndMakeVisible (consoleView.get());
+    // Propagate the persisted timeline-expanded state: tapeStrip visibility +
+    // the transport toggle were set above, but the console strips' compact
+    // mode wasn't — without this they start full-height even when the timeline
+    // is expanded on launch.
+    consoleView->setStripsCompactMode (tapeStripExpanded);
     consoleView->setOnStripFocusRequested ([this] (int t)
     {
         if (tapeStrip != nullptr) tapeStrip->setSelectedTrack (t);
@@ -1194,7 +1201,7 @@ void MainComponent::maybeStartStartupPluginScan()
 
     const bool enabled = appconfig::getScanPluginsOnStartup();
     std::fprintf (stderr, "[Dusk Studio] startup plugin scan: toggle=%s\n",
-                  enabled ? "ON — deferring progress modal" : "off — skipped");
+                  enabled ? "ON - deferring progress modal" : "off - skipped");
     std::fflush (stderr);
     if (! enabled)
         return;
@@ -1494,7 +1501,10 @@ void MainComponent::showSnapResolutionMenu()
                     session.snapResolution == kOpts[i]);
     }
     juce::Component::SafePointer<MainComponent> safe (this);
-    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (hdrSnapResBtn),
+    // Route through the app's in-window popup path, not JUCE's showMenuAsync —
+    // raw JUCE popups flicker / mis-dismiss under X11 / Wayland, which is why
+    // every other menu in this file goes through showContextMenu.
+    duskstudio::showContextMenu (m, hdrSnapResBtn,
         [safe] (int chosen)
         {
             if (safe == nullptr || chosen <= 0) return;

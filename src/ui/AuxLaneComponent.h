@@ -79,8 +79,15 @@ private:
     juce::TextButton autoModeButton { "Off" };
     DuskComboBox  outputPairCombo;
 
-    // Output-channel count the combo was last built for; the timer rebuilds it
-    // when the device's output count changes (e.g. user enables more outputs).
+    // Active-output channel mask the combo was last built for; the timer
+    // rebuilds it when the device's active-output set changes. A bitmask (not
+    // just a set-bit count) so swapping which pair is active — same count,
+    // different channels — still triggers a repopulate.
+    juce::BigInteger lastOutputChannelMask;
+    // Output channel count the combo was last built for. The mask alone can
+    // match across two devices (both stereo → bits 0,1) while the physical
+    // output count — which drives how many pairs the menu lists — differs, so
+    // a device swap with the same active mask still needs a repopulate.
     int lastOutputChannelCount { -1 };
 
     // Throttle motor-fader setValue() to changes >0.05 dB so the slider

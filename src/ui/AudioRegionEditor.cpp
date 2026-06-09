@@ -3217,6 +3217,7 @@ void AudioRegionEditor::refreshStatusBarReadouts()
         const auto mode = (TimeDisplayMode) session.timeDisplayMode.load (std::memory_order_relaxed);
         const auto timelineSample = r->timelineStart + (editCursorSample - r->sourceOffset);
         positionLabel.setText ("pos " + formatSamplePosition (timelineSample, sr,
+                                                                session.tempoMap,
                                                                 (float) bpm, bpb, mode),
                                   juce::dontSendNotification);
         gainLabel.setText (juce::String (r->gainDb, 1) + " dB",

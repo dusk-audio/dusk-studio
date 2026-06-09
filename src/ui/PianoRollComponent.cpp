@@ -712,7 +712,8 @@ void PianoRollComponent::refreshStatusBarReadouts()
         const auto regStartTick = session.samplesToTicks (r->timelineStart, sr);
         timelineSample = session.ticksToSamples (regStartTick + editCursorTick, sr);
     }
-    positionLabel.setText ("pos " + formatSamplePosition (timelineSample, sr, bpm, bpb, mode),
+    positionLabel.setText ("pos " + formatSamplePosition (timelineSample, sr,
+                                                            session.tempoMap, bpm, bpb, mode),
                               juce::dontSendNotification);
     const int v = activeVelocity();
     valueLabel.setText (v < 0 ? juce::String ("vel -")

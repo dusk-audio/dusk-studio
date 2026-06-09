@@ -322,7 +322,7 @@ public:
     int  getSizeInUnits() override { return 1; }
 
 private:
-    void apply (const std::vector<AutomationPoint>& pts);
+    bool apply (const std::vector<AutomationPoint>& pts);
 
     Session& session;
     int trackIdx, paramIdx;

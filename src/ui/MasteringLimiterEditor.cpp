@@ -85,14 +85,19 @@ MasteringLimiterEditor::MasteringLimiterEditor (MasteringParams& p,
     modeCombo.addItem ("Modern", 1);
     modeCombo.addItem ("Transparent", 2);
     modeCombo.addItem ("Punchy", 3);
-    modeCombo.setSelectedId (params.limiterMode.load (std::memory_order_relaxed) + 1,
-                              juce::dontSendNotification);
+    // Clamp at the param boundary so a stale / corrupt limiterMode can't select
+    // an ID the combo doesn't have (which renders it blank).
+    const int storedMode = juce::jlimit (0, modeCombo.getNumItems() - 1,
+                                          params.limiterMode.load (std::memory_order_relaxed));
+    modeCombo.setSelectedId (storedMode + 1, juce::dontSendNotification);
     modeCombo.setColour (juce::ComboBox::backgroundColourId, juce::Colour (0xff1a1a22));
     modeCombo.setColour (juce::ComboBox::textColourId,       juce::Colour (0xffe0e0e8));
     modeCombo.setColour (juce::ComboBox::outlineColourId,    juce::Colour (0xff404048));
     modeCombo.onChange = [this]
     {
-        params.limiterMode.store (modeCombo.getSelectedId() - 1, std::memory_order_relaxed);
+        const int candidate = juce::jlimit (0, modeCombo.getNumItems() - 1,
+                                             modeCombo.getSelectedId() - 1);
+        params.limiterMode.store (candidate, std::memory_order_relaxed);
     };
     addAndMakeVisible (modeCombo);
 
@@ -147,7 +152,8 @@ void MasteringLimiterEditor::timerCallback()
     // (which rewrites the params in place) would leave them stale. Re-sync from
     // the params here — dontSendNotification so this never re-fires the onChange
     // write-back. Skip the knob while the user is dragging it.
-    const int modeId = params.limiterMode.load (std::memory_order_relaxed) + 1;
+    const int modeId = juce::jlimit (0, modeCombo.getNumItems() - 1,
+                                     params.limiterMode.load (std::memory_order_relaxed)) + 1;
     if (modeCombo.getSelectedId() != modeId)
         modeCombo.setSelectedId (modeId, juce::dontSendNotification);
 
