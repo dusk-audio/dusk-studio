@@ -116,6 +116,10 @@ public:
         addToDesktop (getDesktopWindowStyleFlags());
        #if defined(__linux__)
         duskstudio::platform::clearPreferX11ForNativeWindow();
+        // The peer now exists (JUCE's X display is up), so a non-fatal X error
+        // handler installed here captures JUCE's handler as its chain target.
+        // Stops a dying OOP plugin editor window from core-dumping the host.
+        duskstudio::platform::installNonFatalXErrorHandler();
        #endif
 
         // Brand icon on the live peer. macOS / Windows already pick this

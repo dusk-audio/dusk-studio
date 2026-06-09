@@ -45,6 +45,47 @@ bool isWaylandSession()
     return cached;
 }
 
+::XErrorHandler previousXErrorHandler = nullptr;
+bool xErrorHandlerInstalled = false;
+
+int nonFatalXErrorHandler (::Display* d, ::XErrorEvent* e)
+{
+    // OOP plugin editors are X11 toplevels owned by a SEPARATE process. When
+    // one dies (crash / timeout-kill) the parent's already-queued reparent /
+    // query-tree / configure requests reference a window the server has freed.
+    // Xlib's default handler abort()s on the resulting BadWindow etc. — turning
+    // a plugin's death into a host core-dump. Swallow those benign races and
+    // log them; defer anything else to the prior handler so real bugs stay loud.
+    if (e != nullptr)
+    {
+        switch (e->error_code)
+        {
+            case BadWindow:
+            case BadDrawable:
+            case BadMatch:
+            case BadValue:
+            {
+                char buf[128] = {};
+                if (d != nullptr)
+                    ::XGetErrorText (d, e->error_code, buf, (int) sizeof (buf) - 1);
+                std::fprintf (stderr,
+                              "[Dusk Studio/X] swallowed non-fatal X error: %s "
+                              "(request %u, resource 0x%lx) - likely a plugin "
+                              "editor window race\n",
+                              buf, (unsigned) e->request_code,
+                              (unsigned long) e->resourceid);
+                std::fflush (stderr);
+                return 0;
+            }
+            default:
+                break;
+        }
+    }
+    if (previousXErrorHandler != nullptr)
+        return previousXErrorHandler (d, e);
+    return 0;
+}
+
 juce::ComponentPeer* pickSiblingFocusTargetPeer (juce::Component& departing)
 {
     auto* departingPeer = departing.getPeer();
@@ -62,6 +103,17 @@ juce::ComponentPeer* pickSiblingFocusTargetPeer (juce::Component& departing)
     return nullptr;
 }
 } // namespace
+
+void installNonFatalXErrorHandler()
+{
+    // Install once. XSetErrorHandler returns the previously-installed handler
+    // (JUCE's, if it set one during peer creation — call this AFTER the main
+    // window exists — otherwise Xlib's default), which we chain to for any
+    // error we don't recognise as a benign plugin-window race.
+    if (xErrorHandlerInstalled) return;
+    xErrorHandlerInstalled = true;
+    previousXErrorHandler = ::XSetErrorHandler (&nonFatalXErrorHandler);
+}
 
 void setNativeCursorVisibleOnPeer (juce::ComponentPeer& peer, bool visible)
 {
