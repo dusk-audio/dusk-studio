@@ -338,6 +338,21 @@ PluginManager::createPluginInstance (const juce::File& pluginFile,
     return createPluginInstance (*typesFound.getFirst(), sampleRate, blockSize, errorMessage);
 }
 
+namespace
+{
+// The caller will call prepareToPlay before processing - but we set the bus
+// layout here so the caller knows what they got. Default mono in / mono out for
+// channel-strip use; stereo fallback for plugins that don't support mono
+// (channel strips mix L+R from a stereo plugin's output).
+void applyDefaultBusLayout (juce::AudioPluginInstance& instance)
+{
+    if (! instance.setBusesLayout ({ { juce::AudioChannelSet::mono() },
+                                      { juce::AudioChannelSet::mono() } }))
+        instance.setBusesLayout ({ { juce::AudioChannelSet::stereo() },
+                                    { juce::AudioChannelSet::stereo() } });
+}
+} // namespace
+
 std::unique_ptr<juce::AudioPluginInstance>
 PluginManager::createPluginInstance (const juce::PluginDescription& desc,
                                       double sampleRate, int blockSize,
@@ -347,20 +362,27 @@ PluginManager::createPluginInstance (const juce::PluginDescription& desc,
     if (instance == nullptr)
         return nullptr;
 
-    // The caller will call prepareToPlay before processing - but we set the
-    // bus layout here so the caller knows what they got. Default mono in /
-    // mono out for channel-strip use; stereo can be re-set by callers that
-    // want it.
-    if (! instance->setBusesLayout ({ { juce::AudioChannelSet::mono() },
-                                       { juce::AudioChannelSet::mono() } }))
-    {
-        // Plugin doesn't support mono - fall back to stereo. Callers that
-        // need mono will have to deal (most channel strips will mix
-        // L+R from a stereo plugin's output).
-        instance->setBusesLayout ({ { juce::AudioChannelSet::stereo() },
-                                     { juce::AudioChannelSet::stereo() } });
-    }
-
+    applyDefaultBusLayout (*instance);
     return instance;
+}
+
+void PluginManager::createPluginInstanceAsync (
+    const juce::PluginDescription& desc, double sampleRate, int blockSize,
+    std::function<void (std::unique_ptr<juce::AudioPluginInstance>, juce::String)> callback)
+{
+    // Off-thread creation for slow-to-instantiate formats (notably the native
+    // multisample / soundfont player, which decodes samples). JUCE runs the
+    // format's createInstance on a background thread when the format reports
+    // requiresUnblockedMessageThreadDuringCreation() == false, then fires this
+    // callback ON THE MESSAGE THREAD with the fully-built instance — so the
+    // caller's swap-in logic stays single-threaded.
+    formatManager.createPluginInstanceAsync (desc, sampleRate, blockSize,
+        [cb = std::move (callback)]
+        (std::unique_ptr<juce::AudioPluginInstance> instance, const juce::String& err)
+    {
+        if (instance != nullptr)
+            applyDefaultBusLayout (*instance);
+        cb (std::move (instance), err);
+    });
 }
 } // namespace duskstudio

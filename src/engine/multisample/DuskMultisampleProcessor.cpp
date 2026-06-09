@@ -444,7 +444,11 @@ void DuskMultisampleProcessor::setStateInformation (const void* data, int size)
     if (! state.isValid()) return;
 
     const auto path = state.getProperty ("file").toString();
-    if (path.isNotEmpty())
+    // Skip the re-load when createPluginInstance already loaded this exact file
+    // from the description (the common session-restore path). Loading a
+    // soundfont is the single most expensive thing this plugin does (~1.5s of
+    // sample decode); doing it twice per restored instance is pure waste.
+    if (path.isNotEmpty() && path != loadedFilePath)
     {
         const auto file = juce::File (path);
         const auto ext = file.getFileExtension().toLowerCase();

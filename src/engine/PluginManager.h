@@ -49,6 +49,14 @@ public:
                            double sampleRate, int blockSize,
                            juce::String& errorMessage);
 
+    // Off-thread variant: creates the instance on a background thread (for
+    // formats that allow it — e.g. the multisample player's slow sample
+    // decode) and invokes `callback` ON THE MESSAGE THREAD with the finished
+    // instance (or nullptr + error). Keeps the UI responsive during load.
+    void createPluginInstanceAsync (
+        const juce::PluginDescription& desc, double sampleRate, int blockSize,
+        std::function<void (std::unique_ptr<juce::AudioPluginInstance>, juce::String)> callback);
+
     // Cache file under userApplicationDataDirectory. Auto-saved on every
     // successful add; loaded best-effort at construction.
     juce::File getCacheFile() const;
