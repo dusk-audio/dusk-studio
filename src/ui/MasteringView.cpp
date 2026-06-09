@@ -344,11 +344,11 @@ void MasteringView::applyMultibandPreset (int presetIndex)
 
     setP ("auto_makeup", 0.0f);   // Choice: 0 = Off, matching the chart
 
-    // Programmatic APVTS writes don't refresh the panel's knob row / crossover
-    // faders (those only sync on band-select); force it so the UI shows the
-    // applied values.
-    if (auto* panel = dynamic_cast<MultibandCompressorPanel*> (compEditor.get()))
-        panel->refreshFromParameters();
+    // No explicit panel refresh: the donor's MultibandCompressorPanel now picks
+    // up programmatic APVTS writes on its own — the visible band's knobs are
+    // live SliderAttachments and its repaint timer re-syncs the crossover faders
+    // and per-band enable layout within a tick. (Its refreshFromParameters() was
+    // removed in the donor's per-band-enable refactor.)
 #else
     juce::ignoreUnused (presetIndex);
 #endif
