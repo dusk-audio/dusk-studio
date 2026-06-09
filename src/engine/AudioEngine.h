@@ -18,6 +18,7 @@
 #include "MidiTimeCodeEmitter.h"
 #include "../session/Session.h"
 #include "AudioWorkerPool.h"
+#include "LatencyCompensator.h"
 #include "MasteringPlayer.h"
 #include "PlaybackEngine.h"
 #include "PluginManager.h"
@@ -376,6 +377,13 @@ private:
     std::array<BusStrip,  Session::kNumBuses> busStrips;
     std::array<AuxLaneStrip, Session::kNumAuxLanes> auxLaneStrips;
     MasterBus master;
+
+    // Aux-return PDC: delays the dry/bus mix by the deepest lane's plugin
+    // latency and each lane's return by the difference, so latent aux
+    // chains re-converge sample-aligned before the master strip.
+    static_assert (LatencyCompensator::kNumLanes == Session::kNumAuxLanes,
+                   "LatencyCompensator lane count must match the session");
+    LatencyCompensator latencyCompensator;
 
     std::vector<float> mixL, mixR;
     std::array<std::vector<float>, Session::kNumBuses> busL, busR;

@@ -1119,6 +1119,7 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
     for (auto& a : busStrips)     a.prepare (sr, bs, oxFactor);
     for (auto& a : auxLaneStrips) a.prepare (sr, bs);
     master.prepare (sr, bs, oxFactor);
+    latencyCompensator.prepare (sr, bs);
 
     // Strips just re-prepared their plugins (re-caching latency) and rebuilt
     // their PDC delay lines — recompute the compensation against the fresh
@@ -3230,6 +3231,17 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         mparams.liveFaderDb.store (v, std::memory_order_relaxed);
     }
 
+    // Aux-return PDC. Lane latency is a sum of relaxed atomics, cheap
+    // enough to recompute every block — which also catches every mutation
+    // path (plugin load/swap/bypass, hardware ping calibration) without
+    // message-thread hooks. Delay the dry/bus mix by the deepest lane's
+    // latency here; each wet return below is delayed by the difference so
+    // everything re-converges sample-aligned before the master strip.
+    // Bit-exact no-op while no lane reports latency.
+    for (int a = 0; a < Session::kNumAuxLanes; ++a)
+        latencyCompensator.setAuxLatency (a, auxLaneStrips[(size_t) a].getLatencySamples());
+    latencyCompensator.processDryPath (mixL.data(), mixR.data(), numSamples);
+
     // AUX return lanes - process each lane's accumulated send buffer
     // through its plugin chain, then sum the wet output into master. Same
     // silence-skip optimisation as the bus pass above so idle lanes (no
@@ -3246,6 +3258,27 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                 juce::jmax (std::abs (rngR.getStart()), std::abs (rngR.getEnd())));
             if (peak <= 1e-6f)
             {
+                // With PDC engaged this lane's return delay still holds
+                // up to maxAux samples of in-flight wet audio: keep
+                // feeding it (silence in) and fold the drain into master,
+                // otherwise the tail freezes inside the line and bursts
+                // out when the lane wakes. When PDC is inactive — or the
+                // lane is the deepest one and carries no extra delay —
+                // the original fast-path runs untouched.
+                if (latencyCompensator.getAuxReturnDelay (a) > 0)
+                {
+                    latencyCompensator.processAuxReturn (a,
+                                                          auxLaneL[(size_t) a].data(),
+                                                          auxLaneR[(size_t) a].data(),
+                                                          numSamples);
+                    juce::FloatVectorOperations::add (mixL.data(),
+                                                        auxLaneL[(size_t) a].data(),
+                                                        numSamples);
+                    juce::FloatVectorOperations::add (mixR.data(),
+                                                        auxLaneR[(size_t) a].data(),
+                                                        numSamples);
+                }
+
                 // Reset the aux-lane meter on skip — same rationale as the
                 // bus-pass skip above. Without this the lane LED freezes
                 // at the last-played level.
@@ -3263,6 +3296,10 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                                                         numCurrentDeviceInputs,
                                                         currentDeviceOutputs,
                                                         numCurrentDeviceOutputs);
+        latencyCompensator.processAuxReturn (a,
+                                              auxLaneL[(size_t) a].data(),
+                                              auxLaneR[(size_t) a].data(),
+                                              numSamples);
         juce::FloatVectorOperations::add (mixL.data(),
                                             auxLaneL[(size_t) a].data(),
                                             numSamples);
