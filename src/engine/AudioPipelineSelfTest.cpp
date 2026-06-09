@@ -444,16 +444,12 @@ juce::String AudioPipelineSelfTest::testMasterTapeAddsGain()
     // Audit: characterize the master tape donor's transfer function across
     // its input-gain (drive) parameter, with auto-compensation both ON and
     // OFF. Pre-tape peak after pan-center is 0.3544 (-9.01 dBFS) given a
-    // -6 dBFS sine on the input. Pass = (1) autoComp ON delivers a
-    // monotonic decreasing curve with respect to drive (sane behavior:
-    // higher drive -> more tape compression -> lower output) and (2) the
-    // default config (autoComp ON, drive 0 dB) sits within +/- 3 dB of
-    // unity. -3..+3 dB matches real analog tape behavior at 0 VU.
-    //
-    // Known TapeMachine donor issue: at high drive (+6..+12 dB) autoComp
-    // undercompensates by 2-4 dB. Formula constants in PluginProcessor.cpp
-    // (compressionCompensation) need re-tuning. Tracked as donor-side
-    // punch-list, not a Dusk Studio regression.
+    // -6 dBFS sine on the input. With autoComp ON the TapeMachine donor is
+    // expected to hold close-to-unity output across the full drive range
+    // (-12..+12 dB). Pass = autoComp ON delivers |delta| < 0.5 dB at every
+    // drive point. The donor's compressionCompensation curve was re-derived
+    // from the measured raw transfer (plugins GH #92), so the old 2-4 dB
+    // high-drive undercompensation no longer applies.
     prepareCleanState();
     session.master().tapeEnabled.store (true,  std::memory_order_relaxed);
     session.master().tapeHQ.store      (false, std::memory_order_relaxed);
@@ -485,8 +481,8 @@ juce::String AudioPipelineSelfTest::testMasterTapeAddsGain()
     const bool  autoCompModes[] = { true, false };
 
     float deltaAtDefault = 0.0f;
-    bool  autoCompOnIsMonotonic = true;
-    float prevDeltaAutoOn = std::numeric_limits<float>::infinity();
+    float worstAutoOnDelta = 0.0f;   // largest |delta| over the autoComp-ON sweep
+    bool  autoCompOnWithinHalfDb = true;
     for (bool ac : autoCompModes)
     {
         setNorm (pAuto, ac ? 1.0f : 0.0f);   // Choice "Off"/"On" -> 0 / 1
@@ -507,9 +503,9 @@ juce::String AudioPipelineSelfTest::testMasterTapeAddsGain()
                 deltaAtDefault = deltaDb;
             if (ac)
             {
-                if (deltaDb > prevDeltaAutoOn + 0.1f)
-                    autoCompOnIsMonotonic = false;
-                prevDeltaAutoOn = deltaDb;
+                worstAutoOnDelta = juce::jmax (worstAutoOnDelta, std::abs (deltaDb));
+                if (std::abs (deltaDb) > 0.5f)
+                    autoCompOnWithinHalfDb = false;
             }
         }
     }
@@ -518,18 +514,17 @@ juce::String AudioPipelineSelfTest::testMasterTapeAddsGain()
     setNorm (pOut,  normFromGainDb (0.0f));
     setNorm (pAuto, 1.0f);
 
-    const bool defaultInBand = std::abs (deltaAtDefault) < 3.0f;
-    const bool pass          = defaultInBand && autoCompOnIsMonotonic;
+    const bool pass = autoCompOnWithinHalfDb;
 
     return juce::String::formatted (
         "%s Master Tape gain audit (sweep)\n%s"
-        "      Default (autoComp ON, drive 0 dB): %+.2f dB vs unity "
-        "(pass if |delta| < 3.0 dB and curve monotonic)\n"
-        "      autoComp ON curve %s",
+        "      Default (autoComp ON, drive 0 dB): %+.2f dB vs unity\n"
+        "      autoComp ON worst |delta| over -12..+12 dB: %.2f dB "
+        "(pass if < 0.5 dB at every drive point)",
         fmtPassFail (pass).toRawUTF8(),
         table.toRawUTF8(),
         deltaAtDefault,
-        autoCompOnIsMonotonic ? "monotonic decreasing - OK" : "not monotonic - INVESTIGATE");
+        worstAutoOnDelta);
 }
 
 namespace
