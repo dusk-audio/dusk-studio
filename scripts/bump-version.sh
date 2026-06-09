@@ -40,7 +40,10 @@ fi
 
 # A release must have its CHANGELOG section written before we stamp the
 # version, so the published notes never lag the tag.
-if [[ -f CHANGELOG.md ]] && ! grep -qF "## [$NEW_VERSION]" CHANGELOG.md; then
+if [[ ! -f CHANGELOG.md ]]; then
+    echo "error: CHANGELOG.md is missing - create it with a '## [$NEW_VERSION]' section first" >&2
+    exit 1
+elif ! grep -qF "## [$NEW_VERSION]" CHANGELOG.md; then
     echo "error: CHANGELOG.md has no '## [$NEW_VERSION]' section - add it first" >&2
     exit 1
 fi
