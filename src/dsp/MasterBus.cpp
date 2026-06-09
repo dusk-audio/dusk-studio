@@ -33,18 +33,15 @@ void MasterBus::prepare (double sampleRate, int blockSize, int oversamplingFacto
     // scratch buffer used to feed processBlock each callback. The bypass
     // APVTS atom is cached here so the audio thread can flip it lock-free.
     tape.setPlayConfigDetails (2, 2, sampleRate, juce::jmax (1, blockSize));
-    tape.prepareToPlay (sampleRate, juce::jmax (1, blockSize));
-    tapeStereoBuffer.setSize (2, juce::jmax (1, blockSize), false, false, true);
-    tapeMidi.clear();
-    tapeBypassAtom = tape.getAPVTS().getRawParameterValue ("bypass");
 
     // Drive TapeMachine's internal oversampling from the global Audio Settings
     // factor (Session::oversamplingFactor). The donor's "oversampling" param
     // is a 3-choice (1x / 2x / 4x); map Dusk Studio's 1/2/4 factor to indices 0/1/2.
-    // Use AudioParameterChoice::operator= so JUCE's APVTS listeners fire and
-    // any open editor's combo-box attachment updates — writing the raw atom
-    // directly would skip the notification and leave the UI showing stale
-    // state (combo would still read 4x even after we set 1x in MasterBus).
+    // Set this BEFORE prepareToPlay: the donor reads the param there to size its
+    // oversampler and report its latency, so setting it first means
+    // getLatencySamples() below is correct without waiting for a processBlock to
+    // re-sync. operator= so JUCE's listeners fire and any open editor's combo
+    // updates (raw-atom write would skip the notification and leave it stale).
     if (auto* osParam = dynamic_cast<juce::AudioParameterChoice*> (
             tape.getAPVTS().getParameter ("oversampling")))
     {
@@ -52,6 +49,36 @@ void MasterBus::prepare (double sampleRate, int blockSize, int oversamplingFacto
                      : (currentOxFactor == 2) ? 1
                                               : 0;
         *osParam = idx;
+    }
+
+    tape.prepareToPlay (sampleRate, juce::jmax (1, blockSize));
+    tapeStereoBuffer.setSize (2, juce::jmax (1, blockSize), false, false, true);
+    tapeDryBuffer.setSize (2, juce::jmax (1, blockSize), false, false, true);
+    tapeMidi.clear();
+    tapeBypassAtom = tape.getAPVTS().getRawParameterValue ("bypass");
+
+    // 20 ms toggle crossfade. Primed to the live tape state on the first block
+    // (prepare can't see paramsRef reliably) so loading a session with tape ON
+    // doesn't fade in from dry.
+    tapeMix.reset (sampleRate, 0.020);
+    tapeMixPrimed = false;
+
+    // Resolve the tape's engaged latency (0 at 1×) now that prepareToPlay has
+    // set it from the factor above, and size the dry delay to match so the
+    // crossfade is phase-coherent and bit-perfect.
+    tapeLatencySamples = juce::jmax (0, tape.getLatencySamples());
+    {
+        const int maxDelay = juce::jmax (1, tapeLatencySamples);
+        const juce::dsp::ProcessSpec drySpec {
+            sampleRate, (juce::uint32) juce::jmax (1, blockSize), 1 };
+        tapeDryDelayL.prepare (drySpec);
+        tapeDryDelayR.prepare (drySpec);
+        tapeDryDelayL.setMaximumDelayInSamples (maxDelay);
+        tapeDryDelayR.setMaximumDelayInSamples (maxDelay);
+        tapeDryDelayL.setDelay ((float) tapeLatencySamples);
+        tapeDryDelayR.setDelay ((float) tapeLatencySamples);
+        tapeDryDelayL.reset();
+        tapeDryDelayR.reset();
     }
 
     // Master oversampler around (TubeEQ + busComp). Both stages have donor
@@ -70,11 +97,24 @@ void MasterBus::prepare (double sampleRate, int blockSize, int oversamplingFacto
             /*isMaximumQuality*/ true);
         oversampler->initProcessing ((size_t) bsClamped);
         oversampler->reset();
+        osLatencySamples = juce::jmin (kMaxOsLatency,
+            (int) std::lround (oversampler->getLatencyInSamples()));
     }
     else
     {
         oversampler.reset();
+        osLatencySamples = 0;
     }
+
+    const juce::dsp::ProcessSpec osSpec { sampleRate, (juce::uint32) bsClamped, 1 };
+    osSkipDelayL.prepare (osSpec);
+    osSkipDelayR.prepare (osSpec);
+    osSkipDelayL.setMaximumDelayInSamples (kMaxOsLatency);
+    osSkipDelayR.setMaximumDelayInSamples (kMaxOsLatency);
+    osSkipDelayL.setDelay ((float) osLatencySamples);
+    osSkipDelayR.setDelay ((float) osLatencySamples);
+    osSkipDelayL.reset();
+    osSkipDelayR.reset();
 
     const double prepSr = sampleRate * (double) currentOxFactor;
     const int    prepBs = bsClamped * currentOxFactor;
@@ -223,7 +263,16 @@ void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
     updateEqParameters();
     updateCompParameters();
 
-    if (oversamplerStages > 0 && oversampler != nullptr)
+    // The master tube EQ and bus comp are the only saturating stages inside
+    // this wrap (TapeMachine handles its own OS below). When BOTH are bypassed
+    // the up/downsample round-trip is pure waste — both donors would just pass
+    // the signal through dry — so we skip the oversampler entirely.
+    const bool eqOn   = paramsRef != nullptr
+                     && paramsRef->eqEnabled.load (std::memory_order_relaxed);
+    const bool compOn = paramsRef != nullptr
+                     && paramsRef->compEnabled.load (std::memory_order_relaxed);
+
+    if (oversamplerStages > 0 && oversampler != nullptr && (eqOn || compOn))
     {
         // Oversampled path. Wrap (TubeEQ + busComp) inside the up/down so
         // their saturation is band-limited before downsampling. EQ and UC
@@ -238,66 +287,154 @@ void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
         float* upPtrs[2] = { upBlock.getChannelPointer (0),
                               upBlock.getChannelPointer (1) };
         juce::AudioBuffer<float> upBuf (upPtrs, 2, upN);
-        tubeEQ.process (upBuf);
+        if (eqOn)
+            tubeEQ.process (upBuf);
 
-        const int compBufSize = compStereoBuffer.getNumSamples();
-        for (int offset = 0; offset < upN; offset += compBufSize)
+        if (compOn)
         {
-            const int n = juce::jmin (compBufSize, upN - offset);
-            float* compView[2] = { upPtrs[0] + offset, upPtrs[1] + offset };
-            juce::AudioBuffer<float> compBuf (compView, 2, n);
-            compMidi.clear();
-            busComp.processBlock (compBuf, compMidi);
+            const int compBufSize = compStereoBuffer.getNumSamples();
+            for (int offset = 0; offset < upN; offset += compBufSize)
+            {
+                const int n = juce::jmin (compBufSize, upN - offset);
+                float* compView[2] = { upPtrs[0] + offset, upPtrs[1] + offset };
+                juce::AudioBuffer<float> compBuf (compView, 2, n);
+                compMidi.clear();
+                busComp.processBlock (compBuf, compMidi);
+            }
         }
 
         oversampler->processSamplesDown (nativeOut);
     }
-    else
+    else if (eqOn || compOn)
     {
-        // Native-rate path. EQ + comp run at sample rate; chunk both passes
-        // to honor preparedBlockSize / compStereoBuffer sizes.
-        const int eqBuf = juce::jmax (1, preparedBlockSize);
-        for (int offset = 0; offset < numSamples; offset += eqBuf)
+        // Native-rate path (factor == 1, or a single active stage). Chunk
+        // both passes to honor preparedBlockSize / compStereoBuffer sizes.
+        if (eqOn)
         {
-            const int n = juce::jmin (eqBuf, numSamples - offset);
-            float* channels[2] = { L + offset, R + offset };
-            juce::AudioBuffer<float> buf (channels, 2, n);
-            tubeEQ.process (buf);
+            const int eqBuf = juce::jmax (1, preparedBlockSize);
+            for (int offset = 0; offset < numSamples; offset += eqBuf)
+            {
+                const int n = juce::jmin (eqBuf, numSamples - offset);
+                float* channels[2] = { L + offset, R + offset };
+                juce::AudioBuffer<float> buf (channels, 2, n);
+                tubeEQ.process (buf);
+            }
         }
-        const int compBuf = compStereoBuffer.getNumSamples();
-        for (int offset = 0; offset < numSamples; offset += compBuf)
+        if (compOn)
         {
-            const int n = juce::jmin (compBuf, numSamples - offset);
-            float* lrView[2] = { L + offset, R + offset };
-            juce::AudioBuffer<float> cb (lrView, 2, n);
-            compMidi.clear();
-            busComp.processBlock (cb, compMidi);
+            const int compBuf = compStereoBuffer.getNumSamples();
+            for (int offset = 0; offset < numSamples; offset += compBuf)
+            {
+                const int n = juce::jmin (compBuf, numSamples - offset);
+                float* lrView[2] = { L + offset, R + offset };
+                juce::AudioBuffer<float> cb (lrView, 2, n);
+                compMidi.clear();
+                busComp.processBlock (cb, compMidi);
+            }
         }
     }
+    else if (oversamplerStages > 0 && osLatencySamples > 0)
+    {
+        // EQ + comp both bypassed → oversampler skipped. Delay by its latency
+        // so the master's latency stays invariant to the EQ/comp toggle.
+        for (int i = 0; i < numSamples; ++i)
+        {
+            osSkipDelayL.pushSample (0, L[i]);  L[i] = osSkipDelayL.popSample (0);
+            osSkipDelayR.pushSample (0, R[i]);  R[i] = osSkipDelayR.popSample (0);
+        }
+    }
+    // else (factor == 1, both off): signal passes through. TapeMachine still
+    // runs below.
 
     if (paramsRef != nullptr)
-        paramsRef->meterGrDb.store (busComp.getGainReduction(),
+        paramsRef->meterGrDb.store (compOn ? busComp.getGainReduction() : 0.0f,
                                      std::memory_order_relaxed);
 #endif
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
     // TapeMachine handles its own internal oversampling (driven from the
-    // global factor via its `oversampling` APVTS param, written in
-    // prepare()). The TAPE button toggles the donor's `bypass` atom -
-    // when bypassed, the donor's processBlock returns the dry signal.
-    // Always call processBlock so the donor's bypass crossfade machinery
-    // produces clean transitions; chunk by preparedBlockSize because the
-    // donor's internal scratch is sized to that.
-    storeAtom (tapeBypassAtom, tapeOn ? 0.0f : 1.0f);
+    // global factor via its `oversampling` APVTS param, written in prepare()).
+    // The donor hard-bypasses (early-returns, no ramp), so we own the on/off
+    // crossfade here: blend the dry (pre-tape) signal against the wet output
+    // over 20 ms. Tape is run only while audible — fully on, or still fading —
+    // so a disengaged tape costs ~nothing. Chunked by preparedBlockSize
+    // because the donor's internal scratch is sized to that.
+    const float tapeTarget = tapeOn ? 1.0f : 0.0f;
+    if (! tapeMixPrimed)
     {
+        tapeMix.setCurrentAndTargetValue (tapeTarget);
+        tapeMixPrimed = true;
+    }
+    tapeMix.setTargetValue (tapeTarget);
+
+    const bool blending = tapeMix.isSmoothing();
+    const bool runTape  = tapeOn || blending;            // wet needed this block
+    const bool alignDry = tapeLatencySamples > 0;        // tape adds latency (2×/4×)
+
+    if (! runTape && ! alignDry)
+    {
+        // 1× (no latency) and fully faded out → dry passes through untouched
+        // (free). Keep the donor's bypass atom set so any open editor agrees.
+        storeAtom (tapeBypassAtom, 1.0f);
+    }
+    else
+    {
+        storeAtom (tapeBypassAtom, runTape ? 0.0f : 1.0f);
+
         const int bufSize = tapeStereoBuffer.getNumSamples();
         for (int offset = 0; offset < numSamples; offset += bufSize)
         {
             const int n = juce::jmin (bufSize, numSamples - offset);
-            float* lrView[2] = { L + offset, R + offset };
-            juce::AudioBuffer<float> tapeBuf (lrView, 2, n);
-            tapeMidi.clear();
-            tape.processBlock (tapeBuf, tapeMidi);
+            float* Lc = L + offset;
+            float* Rc = R + offset;
+
+            // Capture the dry (pre-tape) signal. With tape latency present we
+            // push it through a matching delay — fed EVERY block so the ring
+            // stays warm → seamless next toggle. At 0 latency a plain copy
+            // suffices and is only needed while blending.
+            if (alignDry)
+            {
+                for (int i = 0; i < n; ++i)
+                {
+                    tapeDryDelayL.pushSample (0, Lc[i]);
+                    tapeDryDelayR.pushSample (0, Rc[i]);
+                    tapeDryBuffer.setSample (0, i, tapeDryDelayL.popSample (0));
+                    tapeDryBuffer.setSample (1, i, tapeDryDelayR.popSample (0));
+                }
+            }
+            else if (blending)
+            {
+                tapeDryBuffer.copyFrom (0, 0, Lc, n);
+                tapeDryBuffer.copyFrom (1, 0, Rc, n);
+            }
+
+            if (runTape)
+            {
+                float* lrView[2] = { Lc, Rc };
+                juce::AudioBuffer<float> tapeBuf (lrView, 2, n);
+                tapeMidi.clear();
+                tape.processBlock (tapeBuf, tapeMidi);
+            }
+
+            const float* dryL = tapeDryBuffer.getReadPointer (0);
+            const float* dryR = tapeDryBuffer.getReadPointer (1);
+            if (! runTape)
+            {
+                // Fully off but latency-compensated → emit the delayed dry so
+                // master latency stays constant (no timing jump on re-engage).
+                juce::FloatVectorOperations::copy (Lc, dryL, n);
+                juce::FloatVectorOperations::copy (Rc, dryR, n);
+            }
+            else if (blending)
+            {
+                for (int i = 0; i < n; ++i)
+                {
+                    const float g = tapeMix.getNextValue();   // 0 = dry, 1 = wet
+                    Lc[i] = dryL[i] * (1.0f - g) + Lc[i] * g;
+                    Rc[i] = dryR[i] * (1.0f - g) + Rc[i] * g;
+                }
+            }
+            // else fully on → Lc/Rc already hold the wet output.
         }
     }
 #endif

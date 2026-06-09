@@ -133,6 +133,7 @@ private:
     std::unique_ptr<juce::dsp::Oversampling<float>> oversamplerMono;
     std::unique_ptr<juce::dsp::Oversampling<float>> oversamplerStereo;
     int oversamplerStages = 0;
+    int oversampleFactor  = 1;   // 1 / 2 / 4 — drives the comp sub-chunk size
 
     // Sits between phase invert and the EQ stage.
     PluginSlot pluginSlot;
@@ -159,6 +160,17 @@ private:
     int          pdcAppliedSamples = 0;
     juce::int64  pdcSilentRun = 0;
     void relatchPdcIfDrained (float blockPeakAbs, int numSamples) noexcept;
+
+    // When EQ + comp are both off we skip the per-strip oversampler entirely.
+    // The oversampler imposes ~3-4.4 native samples of latency though, so a
+    // skipped strip would lead the strips that DID oversample and comb against
+    // correlated sources at the master sum. Delay the skip path by the
+    // oversampler's rounded latency to hold alignment. Integer (None) delay is
+    // enough: the <0.5-sample rounding residual nulls above 50 kHz, inaudible.
+    static constexpr int kMaxOsLatency = 16;
+    PdcDelayLine osSkipDelayL { kMaxOsLatency };
+    PdcDelayLine osSkipDelayR { kMaxOsLatency };
+    int          osLatencySamples = 0;
 
     // Empty buffer for the channel insert plugin; PluginSlot's
     // processBlock requires a MidiBuffer& even when the insert is an

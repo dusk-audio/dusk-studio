@@ -39,17 +39,33 @@ void BusStrip::prepare (double sampleRate, int blockSize, int oversamplingFactor
             /*isMaximumQuality*/ true);
         oversampler->initProcessing ((size_t) bsClamped);
         oversampler->reset();
+        osLatencySamples = juce::jmin (kMaxOsLatency,
+            (int) std::lround (oversampler->getLatencyInSamples()));
     }
     else
     {
         oversampler.reset();
+        osLatencySamples = 0;
     }
+
+    const juce::dsp::ProcessSpec osSpec { sampleRate, (juce::uint32) bsClamped, 1 };
+    osSkipDelayL.prepare (osSpec);
+    osSkipDelayR.prepare (osSpec);
+    osSkipDelayL.setMaximumDelayInSamples (kMaxOsLatency);
+    osSkipDelayR.setMaximumDelayInSamples (kMaxOsLatency);
+    osSkipDelayL.setDelay ((float) osLatencySamples);
+    osSkipDelayR.setDelay ((float) osLatencySamples);
+    osSkipDelayL.reset();
+    osSkipDelayR.reset();
 
     const double prepSr = sampleRate * (double) factor;
     const int    prepBs = bsClamped * factor;
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
-    eq.prepare (prepSr, prepBs, 2);
+    // The bus EQ is linear tone-shaping (no saturation), so it never aliases
+    // and is prepared at NATIVE rate — it always runs outside the oversampler.
+    // Only the comp (below) is wrapped, and only when engaged.
+    eq.prepare (sampleRate, bsClamped, 2);
     eq.reset();
 
     busComp.setPlayConfigDetails (2, 2, prepSr, prepBs);
@@ -198,12 +214,32 @@ void BusStrip::processInPlace (float* L, float* R, int numSamples) noexcept
     updateEqParameters();
     updateCompParameters();
 
-    if (oversamplerStages > 0 && oversampler != nullptr)
+    // EQ is linear and native-rate, so it runs outside the oversampler — but
+    // only when engaged (a disabled EQ would otherwise run at unity, wasting
+    // cycles). The comp is the only saturating stage; the oversampler wraps
+    // just the comp and only when it's engaged. With comp off we delay the
+    // signal by the oversampler latency so the bus stays aligned with comp-on
+    // buses — EQ on/off is latency-free, so the delay logic is unaffected.
+    const bool eqEnabled = paramsRef != nullptr
+                        && paramsRef->eqEnabled.load (std::memory_order_relaxed);
+    const bool compEnabled = paramsRef != nullptr
+                          && paramsRef->compEnabled.load (std::memory_order_relaxed);
+
+    if (eqEnabled && ! prevEqEnabled)
+        eq.reset();                 // clear stale state so re-enabling doesn't click
+    prevEqEnabled = eqEnabled;
+
+    if (eqEnabled)
     {
-        // Oversampled chain: upsample (L, R), run EQ + UC at oversampled
-        // rate, downsample back into (L, R). EQ and UC were prepared at
-        // sampleRate × factor in prepare() so their coefficients are
-        // correct for the upsampled rate.
+        float* channels[2] = { L, R };
+        juce::AudioBuffer<float> buf (channels, 2, numSamples);
+        eq.process (buf);
+    }
+
+    if (compEnabled && oversamplerStages > 0 && oversampler != nullptr)
+    {
+        // Oversample around the comp only — band-limits its saturation. The
+        // comp was prepared at sampleRate × factor in prepare().
         const float* readPtrs[2]  = { L, R };
         float*       writePtrs[2] = { L, R };
         juce::dsp::AudioBlock<const float> nativeIn  (readPtrs,  2, (size_t) numSamples);
@@ -213,8 +249,6 @@ void BusStrip::processInPlace (float* L, float* R, int numSamples) noexcept
         const int upN = (int) upBlock.getNumSamples();
         float* upPtrs[2] = { upBlock.getChannelPointer (0),
                               upBlock.getChannelPointer (1) };
-        juce::AudioBuffer<float> upBuf (upPtrs, 2, upN);
-        eq.process (upBuf);
 
         const int compBufSize = compStereoBuffer.getNumSamples();
         for (int offset = 0; offset < upN; offset += compBufSize)
@@ -228,13 +262,9 @@ void BusStrip::processInPlace (float* L, float* R, int numSamples) noexcept
 
         oversampler->processSamplesDown (nativeOut);
     }
-    else
+    else if (compEnabled)
     {
-        // Native-rate path (factor == 1).
-        float* channels[2] = { L, R };
-        juce::AudioBuffer<float> buf (channels, 2, numSamples);
-        eq.process (buf);
-
+        // Native comp (factor == 1).
         const int bufSize = compStereoBuffer.getNumSamples();
         for (int offset = 0; offset < numSamples; offset += bufSize)
         {
@@ -245,9 +275,19 @@ void BusStrip::processInPlace (float* L, float* R, int numSamples) noexcept
             busComp.processBlock (compBuf, compMidi);
         }
     }
+    else if (oversamplerStages > 0 && osLatencySamples > 0)
+    {
+        // Comp off but an OS factor is active → the comp's oversampler was
+        // skipped. Delay the EQ-only signal by its latency to hold alignment.
+        for (int i = 0; i < numSamples; ++i)
+        {
+            osSkipDelayL.pushSample (0, L[i]);  L[i] = osSkipDelayL.popSample (0);
+            osSkipDelayR.pushSample (0, R[i]);  R[i] = osSkipDelayR.popSample (0);
+        }
+    }
 
     if (paramsRef != nullptr)
-        paramsRef->meterGrDb.store (busComp.getGainReduction(),
+        paramsRef->meterGrDb.store (compEnabled ? busComp.getGainReduction() : 0.0f,
                                      std::memory_order_relaxed);
 #endif
 
