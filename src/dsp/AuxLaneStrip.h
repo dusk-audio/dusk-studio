@@ -53,6 +53,13 @@ public:
 
     std::array<std::atomic<int>, kMaxPlugins> insertMode {};
 
+    // Total latency of the lane's serial insert chain, in samples.
+    // Relaxed atomic loads only — safe from any thread, including the
+    // audio thread's per-block PDC recompute. A bypassed plugin slot
+    // passes dry through (see PluginSlot::processStereoBlock) so it
+    // contributes 0 regardless of its cached value.
+    int getLatencySamples() const noexcept;
+
     // Mute clears L/R and skips processing.
     // deviceInputs/Outputs forwarded to HardwareInsertSlot. Defaulted
     // to null so non-engine callers still compile.

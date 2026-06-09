@@ -39,6 +39,28 @@ void AuxLaneStrip::bindHardwareInsert (int slotIdx, const HardwareInsertParams& 
     hardwareSlots[(size_t) slotIdx].bind (params);
 }
 
+int AuxLaneStrip::getLatencySamples() const noexcept
+{
+    int total = 0;
+    for (int s = 0; s < kMaxPlugins; ++s)
+    {
+        const auto sIdx = (size_t) s;
+        switch (insertMode[sIdx].load (std::memory_order_relaxed))
+        {
+            case kInsertPlugin:
+                if (! slots[sIdx].isBypassed() && ! slots[sIdx].wasAutoBypassed())
+                    total += slots[sIdx].getLatencySamples();
+                break;
+            case kInsertHardware:
+                total += hardwareSlots[sIdx].getLatencySamples();
+                break;
+            default:
+                break;
+        }
+    }
+    return total;
+}
+
 void AuxLaneStrip::updateGainTarget() noexcept
 {
     if (paramsRef == nullptr) return;
