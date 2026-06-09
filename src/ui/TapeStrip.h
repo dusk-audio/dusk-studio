@@ -319,6 +319,18 @@ private:
     };
     MidiActiveDrag midiDrag;
 
+    // Ruler drag-to-create-range. A drag on the ruler sweeps a neutral
+    // highlight; on release a popup asks whether the range is a loop or a
+    // punch. A drag shorter than ~1024 samples is treated as a click and
+    // just seeks the playhead — so plain click-to-seek still works.
+    struct RulerSelection
+    {
+        bool active     = false;
+        juce::int64 originSample  = 0;
+        juce::int64 currentSample = 0;
+    };
+    RulerSelection rulerSelection;
+
     // moved=false at release = click (seek); true = drag (update marker).
     struct MarkerDrag
     {
