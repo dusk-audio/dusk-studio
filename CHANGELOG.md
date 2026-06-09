@@ -68,8 +68,9 @@ tag time.) 1.0.0 is reserved for the public stable declaration.
 - **Packaging scripts hardened**: gated the destructive `rm -rf` install dir,
   empty-VERSION and missing-source guards, and a special-character-safe rewrite
   of the desktop `Exec=` line.
-- **Tempo-map real-time safety**: append-only snapshot pool (no cross-thread
-  race) and the bar-1 anchor is protected from deletion.
+- **Tempo-map real-time safety**: tempo-map edits during playback are now
+  thread-safe and can't corrupt playback, and the bar-1 anchor is protected
+  from deletion.
 - **File import** retries transient file-lock opens (Windows).
 
 ## [0.10.0-beta.1] - 2026-05-29 — first beta

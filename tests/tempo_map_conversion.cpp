@@ -79,8 +79,8 @@ TEST_CASE ("TempoMap: setPoints sorts and clamps bpm, preserving positions", "[T
     const auto& p = m.points();
     REQUIRE (p.size() == 2);
     REQUIRE (p[0].timelineSamples == 24000);          // position preserved, not moved
-    REQUIRE (p[0].bpm == 100.0f);
-    REQUIRE (p[1].bpm == TempoMap::kMaxBpm);           // 1000 clamped to 300
+    REQUIRE_THAT (p[0].bpm, WithinAbs (100.0f, 1e-6f));
+    REQUIRE_THAT (p[1].bpm, WithinAbs (TempoMap::kMaxBpm, 1e-6f));   // 1000 clamped to 300
 
     // The span before the first point takes the first point's tempo, so the
     // first point's position doesn't change the integration here.

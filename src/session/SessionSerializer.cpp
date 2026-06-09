@@ -1447,6 +1447,12 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                             : (float) sessionLoadBpm;
                         tmp.push_back (pt);
                     }
+                    // Sort by time so the lane evaluator's binary search holds,
+                    // matching the track / bus / master restore paths (a
+                    // hand-edited or out-of-order JSON would otherwise break it).
+                    std::sort (tmp.begin(), tmp.end(),
+                               [] (const AutomationPoint& a, const AutomationPoint& b)
+                               { return a.timeSamples < b.timeSamples; });
                     lane.params.automationLanes[(size_t) p].publishPoints (std::move (tmp));
                 }
             }
@@ -1478,10 +1484,14 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         s.master().faderDb.store    (master.hasProperty ("fader_db")    ? (float) (double) master["fader_db"] : 0.0f);
         s.master().outputPair.store (master.hasProperty ("output_pair") ? (int) master["output_pair"]         : -1);
         s.master().mute.store       (master.hasProperty ("mute")        ? (bool) master["mute"]               : false);
-        if (master.hasProperty ("mono_sum"))     s.master().monoSum.store ((bool) master["mono_sum"]);
-        if (master.hasProperty ("tape_enabled")) s.master().tapeEnabled.store ((bool) master["tape_enabled"]);
-        if (master.hasProperty ("tape_hq"))      s.master().tapeHQ.store ((bool) master["tape_hq"]);
-        if (master.hasProperty ("tape_state"))   s.master().tapeStateBase64 = master["tape_state"].toString();
+        // Reset-when-absent too (same rationale as the level/routing/mute lines
+        // above): a conditional store would inherit the previously-loaded
+        // session's tape / mono-sum state.
+        s.master().monoSum.store     (master.hasProperty ("mono_sum")     ? (bool) master["mono_sum"]     : false);
+        s.master().tapeEnabled.store (master.hasProperty ("tape_enabled") ? (bool) master["tape_enabled"] : false);
+        s.master().tapeHQ.store      (master.hasProperty ("tape_hq")      ? (bool) master["tape_hq"]      : false);
+        s.master().tapeStateBase64 = master.hasProperty ("tape_state") ? master["tape_state"].toString()
+                                                                       : juce::String();
 
         // Pultec EQ. Missing keys keep the in-memory default (matches
         // the per-track / per-bus pattern).
@@ -1579,12 +1589,15 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         loadF ("comp_release_ms",   m.compReleaseMs);
         loadB ("comp_release_auto", m.compReleaseAuto);
         loadF ("comp_makeup_db",    m.compMakeupDb);
-        loadB ("limiter_enabled",     m.limiterEnabled);
-        loadF ("limiter_drive_db",    m.limiterDriveDb);
-        loadF ("limiter_ceiling_db",  m.limiterCeilingDb);
-        loadF ("limiter_release_ms",  m.limiterReleaseMs);
-        loadI ("limiter_mode",        m.limiterMode);
-        loadB ("limiter_stereo_link", m.limiterStereoLink);
+        // Limiter fields are newly persisted, so old sessions lack them — reset
+        // to the struct defaults when absent instead of inheriting the prior
+        // session's limiter state (loadB/loadF/loadI conditional-store, no reset).
+        m.limiterEnabled.store    (mast.hasProperty ("limiter_enabled")     ? (bool) mast["limiter_enabled"]              : true);
+        m.limiterDriveDb.store    (mast.hasProperty ("limiter_drive_db")    ? (float) (double) mast["limiter_drive_db"]   : 0.0f);
+        m.limiterCeilingDb.store  (mast.hasProperty ("limiter_ceiling_db")  ? (float) (double) mast["limiter_ceiling_db"] : -0.3f);
+        m.limiterReleaseMs.store  (mast.hasProperty ("limiter_release_ms")  ? (float) (double) mast["limiter_release_ms"] : 100.0f);
+        m.limiterMode.store       (mast.hasProperty ("limiter_mode")        ? (int) mast["limiter_mode"]                  : 0);
+        m.limiterStereoLink.store (mast.hasProperty ("limiter_stereo_link") ? (bool) mast["limiter_stereo_link"]          : true);
         if (mast.hasProperty ("target_preset"))
             m.targetPresetIndex.store ((int) mast["target_preset"]);
     }

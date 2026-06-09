@@ -804,6 +804,10 @@ void PluginSlot::loadFromDescriptionAsync (const juce::PluginDescription& desc,
     lastTouchedListener.reset();
     lastTouchedParamIndex.store (-1, std::memory_order_relaxed);
     currentInstance.store (nullptr, std::memory_order_release);
+    // Parked: clear the cached latency so the deposed plugin's value can't leak
+    // into PDC accounting during the off-thread load window. installInProcess-
+    // Instance restores it from the new instance on completion.
+    cachedLatencySamples.store (0, std::memory_order_relaxed);
     if (previousInstances[1] != nullptr)
         previousInstances[1]->releaseResources();
     previousInstances[1] = std::move (previousInstances[0]);

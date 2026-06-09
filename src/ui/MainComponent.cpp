@@ -1759,15 +1759,17 @@ void MainComponent::dismissStartupDialog (std::function<void()> onDone)
         // focusRestoreTarget hand-back to lean on).
         if (! safeThis->startupQuitRequested && safeThis->isShowing())
             safeThis->grabKeyboardFocus();
-        // Dialog gone - now it's safe to run the startup plugin scan that we
-        // held off in maybeStartStartupPluginScan(). Skip it entirely when the
-        // dismissal came from Quit: the app is shutting down, no point scanning.
+        // Run the caller's follow-up FIRST: onDone may open UI (a session-
+        // recovery prompt, an open-with load) that must not be overlaid by the
+        // scan-progress modal kicked off below.
+        if (onDone) onDone();
+
+        // Now safe to run the startup plugin scan we held off in
+        // maybeStartStartupPluginScan(). Skip it when the dismissal came from
+        // Quit: the app is shutting down, no point scanning.
         safeThis->startupDialogPending = false;
         if (! safeThis->startupQuitRequested)
             safeThis->maybeStartStartupPluginScan();
-
-        // The dialog is now fully torn down; safe to run any follow-up UI.
-        if (onDone) onDone();
     });
 }
 

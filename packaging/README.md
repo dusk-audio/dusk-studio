@@ -43,7 +43,7 @@ scripts/package-tarball.sh
 Output: `dusk-studio-<version>-Linux-<arch>.tar.xz` in the repo root, ready to
 upload to Patreon. Its structure:
 
-```
+```text
 dusk-studio-<version>-Linux-<arch>/
   DuskStudio/                 portable program dir — run ./DuskStudio/DuskStudio in place
     DuskStudio

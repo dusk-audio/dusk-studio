@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "dsp/OutputPairRouting.h"
 
@@ -6,6 +7,7 @@
 #include <vector>
 
 using namespace duskstudio::outputpair;
+using Catch::Matchers::WithinAbs;
 
 TEST_CASE ("output pair encode/decode round-trips")
 {
@@ -48,7 +50,7 @@ TEST_CASE ("tapStereoPairInto accumulates onto the routed pair")
         tapStereoPairInto (out.ptrs.data(), 4, L.data(), R.data(), n, -1);
         tapStereoPairInto (out.ptrs.data(), 4, L.data(), R.data(), n, 0);
         for (int c = 0; c < 4; ++c)
-            for (int i = 0; i < n; ++i) REQUIRE (out.bufs[(size_t) c][(size_t) i] == 0.0f);
+            for (int i = 0; i < n; ++i) REQUIRE_THAT (out.bufs[(size_t) c][(size_t) i], WithinAbs (0.0f, 1e-6f));
     }
 
     SECTION ("valid pair receives L/R, others untouched")
@@ -57,10 +59,10 @@ TEST_CASE ("tapStereoPairInto accumulates onto the routed pair")
         tapStereoPairInto (out.ptrs.data(), 4, L.data(), R.data(), n, encodePair (2, 3));
         for (int i = 0; i < n; ++i)
         {
-            REQUIRE (out.bufs[2][(size_t) i] == 0.5f);
-            REQUIRE (out.bufs[3][(size_t) i] == -0.25f);
-            REQUIRE (out.bufs[0][(size_t) i] == 0.0f);
-            REQUIRE (out.bufs[1][(size_t) i] == 0.0f);
+            REQUIRE_THAT (out.bufs[2][(size_t) i], WithinAbs (0.5f,   1e-6f));
+            REQUIRE_THAT (out.bufs[3][(size_t) i], WithinAbs (-0.25f, 1e-6f));
+            REQUIRE_THAT (out.bufs[0][(size_t) i], WithinAbs (0.0f,   1e-6f));
+            REQUIRE_THAT (out.bufs[1][(size_t) i], WithinAbs (0.0f,   1e-6f));
         }
     }
 
@@ -71,8 +73,8 @@ TEST_CASE ("tapStereoPairInto accumulates onto the routed pair")
         tapStereoPairInto (out.ptrs.data(), 4, L.data(), R.data(), n, encodePair (0, 1));
         for (int i = 0; i < n; ++i)
         {
-            REQUIRE (out.bufs[0][(size_t) i] == 1.0f);
-            REQUIRE (out.bufs[1][(size_t) i] == -0.5f);
+            REQUIRE_THAT (out.bufs[0][(size_t) i], WithinAbs (1.0f,  1e-6f));
+            REQUIRE_THAT (out.bufs[1][(size_t) i], WithinAbs (-0.5f, 1e-6f));
         }
     }
 
@@ -83,6 +85,6 @@ TEST_CASE ("tapStereoPairInto accumulates onto the routed pair")
         tapStereoPairInto (out.ptrs.data(), 4, L.data(), R.data(), n, encodePair (4, 5));
         tapStereoPairInto (out.ptrs.data(), 5, L.data(), R.data(), n, encodePair (4, 0));   // ch4 null
         for (int c = 0; c < 4; ++c)
-            for (int i = 0; i < n; ++i) REQUIRE (out.bufs[(size_t) c][(size_t) i] == 0.0f);
+            for (int i = 0; i < n; ++i) REQUIRE_THAT (out.bufs[(size_t) c][(size_t) i], WithinAbs (0.0f, 1e-6f));
     }
 }

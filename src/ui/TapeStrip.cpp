@@ -8,6 +8,8 @@
 #include "EditCursors.h"
 #include "EmbeddedModal.h"
 #include "FadeCurve.h"
+#include <cmath>
+#include <string>
 
 namespace duskstudio
 {
@@ -21,6 +23,25 @@ EmbeddedModal& sharedTapeStripTextInputModal()
 {
     static EmbeddedModal m;
     return m;
+}
+
+// Strict, full-string float parse. containsOnly() lets malformed input like
+// "+", "-", or "1..2" through, and getFloatValue() turns those into 0 — which
+// jlimit then silently clamps to the minimum (a bogus 30 BPM entry). Require the
+// ENTIRE trimmed string to parse as one number; reject partial / junk input.
+bool parseFullFloat (const juce::String& s, float& out) noexcept
+{
+    const auto t = s.trim().toStdString();
+    if (t.empty()) return false;
+    try
+    {
+        std::size_t consumed = 0;
+        const float v = std::stof (t, &consumed);
+        if (consumed != t.size() || ! std::isfinite (v)) return false;   // trailing junk / inf / nan
+        out = v;
+        return true;
+    }
+    catch (...) { return false; }
 }
 
 // Dusk-styled text-input panel — title + prompt + TextEditor + OK /
@@ -1967,9 +1988,8 @@ void TapeStrip::mouseDoubleClick (const juce::MouseEvent& e)
     // Right-click double doesn't make sense for create-region.
     if (e.mods.isRightButtonDown()) return;
 
-    // Marker double-click: rename. Mirrors the right-click "Rename" item
-    // — same modal, same undo-less rename path (session.renameMarker
-    // mutates the marker list in place).
+    // Marker double-click: rename. Mirrors the right-click "Rename" item —
+    // same modal and the same undoable ParamEditAction path so Cmd+Z reverts.
     if (const int markerIdx = hitTestMarker (e.x, e.y); markerIdx >= 0)
     {
         const auto& markers = session.getMarkers();
@@ -1984,7 +2004,16 @@ void TapeStrip::mouseDoubleClick (const juce::MouseEvent& e)
                 if (safeThis == nullptr) return;
                 const auto trimmed = newName.trim();
                 if (trimmed.isEmpty()) return;
-                safeThis->session.renameMarker (markerIdx, trimmed);
+                auto& s = safeThis->session;
+                const auto& m2 = s.getMarkers();
+                if (markerIdx < 0 || markerIdx >= (int) m2.size()) return;
+                const auto oldName = m2[(size_t) markerIdx].name;
+                if (oldName == trimmed) return;
+                auto& um = safeThis->engine.getUndoManager();
+                um.beginNewTransaction ("Rename marker");
+                um.perform (new ParamEditAction (
+                    [&s, idx = markerIdx, trimmed] { s.renameMarker (idx, trimmed); },
+                    [&s, idx = markerIdx, oldName] { s.renameMarker (idx, oldName); }));
                 safeThis->repaint();
             });
         return;
@@ -3891,8 +3920,9 @@ void TapeStrip::promptAddTempoPoint (juce::int64 sample)
             // Validate BEFORE clamping: getFloatValue() returns 0 for junk, and
             // jlimit would then silently turn that into a 30 BPM entry.
             const auto t = s.trim();
-            if (t.isEmpty() || ! t.containsOnly ("0123456789.+-")) return;
-            const float b = juce::jlimit (30.0f, 300.0f, t.getFloatValue());
+            float parsed = 0.0f;
+            if (! parseFullFloat (t, parsed)) return;
+            const float b = juce::jlimit (30.0f, 300.0f, parsed);
             auto vec = safeThis->session.tempoMap.points();
             // First point ever: seed a base anchor at the origin so the span
             // before this change keeps the starting tempo.
@@ -3922,8 +3952,9 @@ void TapeStrip::editTempoPointBpm (juce::int64 atSample)
         {
             if (safeThis == nullptr) return;
             const auto t = s.trim();
-            if (t.isEmpty() || ! t.containsOnly ("0123456789.+-")) return;
-            const float b = juce::jlimit (30.0f, 300.0f, t.getFloatValue());
+            float parsed = 0.0f;
+            if (! parseFullFloat (t, parsed)) return;
+            const float b = juce::jlimit (30.0f, 300.0f, parsed);
             auto vec = safeThis->session.tempoMap.points();
             for (auto& p : vec)
                 if (p.timelineSamples == atSample) p.bpm = b;
@@ -3944,8 +3975,9 @@ void TapeStrip::editBaseTempo()
         {
             if (safeThis == nullptr) return;
             const auto t = s.trim();
-            if (t.isEmpty() || ! t.containsOnly ("0123456789.+-")) return;
-            const float b = juce::jlimit (30.0f, 300.0f, t.getFloatValue());
+            float parsed = 0.0f;
+            if (! parseFullFloat (t, parsed)) return;
+            const float b = juce::jlimit (30.0f, 300.0f, parsed);
             safeThis->commitTempoPoints ({ { 0, b } }, "Set starting tempo");
         });
 }

@@ -556,16 +556,16 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         // the normal path; relatchPdcIfDrained there advances pdcSilentRun, and
         // once it reaches the applied length this skip re-engages. (Empty insert
         // ⇒ post-insert == input, so the input-peak silence test is exact.)
-        const bool pdcDrained = pdcAppliedSamples == 0
-                              || pdcSilentRun >= (juce::int64) pdcAppliedSamples;
-        // Same guard for the OS-skip alignment line: when EQ+comp are off and an
-        // OS factor is active the dry signal flows through osSkipDelay*, so
-        // skipping before it drains would truncate its osLatencySamples tail.
-        // osSkipDelay is fed the same post-insert signal pdcSilentRun tracks, so
-        // the silent-run count is a valid drain proxy for it too.
-        const bool osDrained = osLatencySamples == 0
-                             || pdcSilentRun >= (juce::int64) osLatencySamples;
-        if (peakL <= 1e-6f && peakR <= 1e-6f && pdcDrained && osDrained)
+        // The PDC delay line and the OS-skip alignment line are in SERIES (insert
+        // -> PDC delay -> osSkipDelay), both fed the post-insert signal that
+        // pdcSilentRun tracks. So when both are active the trailing tail is the
+        // SUM of their lengths; draining only to max(pdc, os) would truncate the
+        // shorter line's tail. When only one is active it's that one's length.
+        const juce::int64 requiredDrain =
+            (pdcAppliedSamples > 0 && osLatencySamples > 0)
+                ? (juce::int64) pdcAppliedSamples + (juce::int64) osLatencySamples
+                : (juce::int64) juce::jmax (pdcAppliedSamples, osLatencySamples);
+        if (peakL <= 1e-6f && peakR <= 1e-6f && pdcSilentRun >= requiredDrain)
         {
            #if DUSKSTUDIO_HAS_DUSK_DSP
             // No comp ran this block, so the GR meter would otherwise pin
