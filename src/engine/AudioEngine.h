@@ -212,6 +212,18 @@ public:
         return aggregatePdcLatencySamples.load (std::memory_order_relaxed);
     }
 
+    // Deepest aux-lane insert-chain latency: the extra delay the aux-return
+    // compensator adds to the master mix on top of the per-track aggregate.
+    // Clamped to the compensator's cap so it matches the delay actually
+    // applied. Relaxed atomic loads only — safe from any thread.
+    int getAuxReturnPdcLatencySamples() const noexcept
+    {
+        int deepest = 0;
+        for (const auto& lane : auxLaneStrips)
+            deepest = juce::jmax (deepest, lane.getLatencySamples());
+        return juce::jmin (deepest, LatencyCompensator::kMaxDelaySamples);
+    }
+
     // Test-only. Next callback merges `events` into perInputMidi[inputIdx]
     // AFTER collector drain. Cleared after one block.
     void stageTestMidiInjection (int inputIdx, juce::MidiBuffer events);

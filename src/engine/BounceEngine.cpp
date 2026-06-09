@@ -209,12 +209,14 @@ void BounceEngine::run()
     }
 
     // PDC lead-in: with cross-track compensation the master mix is delayed by
-    // the deepest track latency. Render that many extra samples and discard
-    // them up front so the file isn't shifted. The MasteringChain path bypasses
-    // the channel strips, so it carries no per-track PDC lead-in.
+    // the deepest track latency, and the aux-return compensator adds the
+    // deepest aux-lane latency on top. Render that many extra samples and
+    // discard them up front so the file isn't shifted. The MasteringChain path
+    // bypasses the channel strips and aux lanes, so it carries no PDC lead-in.
     const juce::int64 leadIn = (renderMode == Mode::MasteringChain)
                                  ? 0
-                                 : (juce::int64) engine.getAggregatePdcLatencySamples();
+                                 : (juce::int64) (engine.getAggregatePdcLatencySamples()
+                                                  + engine.getAuxReturnPdcLatencySamples());
     const juce::int64 toRender = totalSamples + leadIn;
 
     juce::int64 done    = 0;   // samples processed through the engine
@@ -355,9 +357,11 @@ bool BounceEngine::renderOneStem (const juce::File& outFile,
     engine.getPlaybackEngine().preparePlayback();
 
     // Same PDC lead-in trim as the master render: each stem runs the full strip
-    // path, so it's delayed by the deepest track latency. Drop those leading
-    // samples so all stems stay mutually aligned and start at sample 0.
-    const juce::int64 leadIn  = (juce::int64) engine.getAggregatePdcLatencySamples();
+    // path, so it's delayed by the deepest track latency plus the aux-return
+    // compensation. Drop those leading samples so all stems stay mutually
+    // aligned and start at sample 0.
+    const juce::int64 leadIn  = (juce::int64) (engine.getAggregatePdcLatencySamples()
+                                               + engine.getAuxReturnPdcLatencySamples());
     const juce::int64 toRender = lenSamples + leadIn;
 
     juce::int64 done    = 0;
