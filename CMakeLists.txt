@@ -271,6 +271,7 @@ target_sources(DuskStudio PRIVATE
     src/Main.cpp
     src/DuskStudioApp.cpp
     src/engine/AudioEngine.cpp
+    src/engine/AudioWorkerPool.cpp
     src/engine/BounceEngine.cpp
     src/engine/FileImporter.cpp
     src/engine/MasteringPlayer.cpp

@@ -17,6 +17,7 @@
 #include "MidiClockEmitter.h"
 #include "MidiTimeCodeEmitter.h"
 #include "../session/Session.h"
+#include "AudioWorkerPool.h"
 #include "MasteringPlayer.h"
 #include "PlaybackEngine.h"
 #include "PluginManager.h"
@@ -379,11 +380,61 @@ private:
     std::vector<float> mixL, mixR;
     std::array<std::vector<float>, Session::kNumBuses> busL, busR;
     std::array<std::vector<float>, Session::kNumAuxLanes> auxLaneL, auxLaneR;
-    std::vector<float> playbackScratch;
-    std::vector<float> playbackScratchR;
+    // Per-track disk-playback buffers. One per track (not a single shared
+    // scratch) so the per-block work can run as two passes — a serial PREP
+    // pass that resolves each track's source + MIDI, then a DSP pass that
+    // processes the strips — without a later track's prep clobbering an
+    // earlier track's not-yet-processed source. (Prerequisite for running the
+    // DSP pass across cores.)
+    std::array<std::vector<float>, Session::kNumTracks> playbackScratch;
+    std::array<std::vector<float>, Session::kNumTracks> playbackScratchR;
     // Fed to strips with a generator-style insert when the track has no
     // audio source — lets the insert emit even without input or playback.
     std::vector<float> silentInputScratch;
+
+    // Per-track DSP inputs resolved by the PREP pass and consumed by the DSP
+    // pass. Pointers reference the persistent per-track buffers above (disk),
+    // the device input block (live), or silentInputScratch — all valid for the
+    // whole callback.
+    struct TrackDspJob
+    {
+        const float* monoIn      = nullptr;
+        const float* monoInR     = nullptr;
+        const float* deviceInput = nullptr;   // raw input for the recorder
+        bool         isMidi      = false;
+        bool         passes      = false;
+        bool         armed       = false;
+        bool         stereoInput = false;
+    };
+    std::array<TrackDspJob, Session::kNumTracks> trackJobs;
+
+    // ── Opt-in parallel strip DSP ────────────────────────────────────────
+    // The DSP pass over the 24 strips can be fanned out across worker threads
+    // when DUSKSTUDIO_AUDIO_WORKERS is set (default: serial, the proven path).
+    // Each lane accumulates its strip subset into its OWN buffer set so the
+    // workers never write a shared buffer; a serial reduce then sums the lane
+    // sets into mixL/busL/auxLaneL. Metering + recording stay on a serial tail
+    // pass (audio thread), so worker threads only ever run pure DSP.
+    static constexpr int kMaxDspLanes = 16;
+    struct AccumSet
+    {
+        std::vector<float> mixL, mixR;
+        std::array<std::vector<float>, Session::kNumBuses>    busL, busR;
+        std::array<std::vector<float>, Session::kNumAuxLanes> auxL, auxR;
+    };
+    std::array<AccumSet, kMaxDspLanes> laneAccum;
+    AudioWorkerPool workerPool;
+    bool workerPoolStarted = false;
+    int  currentBlockSamples = 0;        // stashed for the worker lane job
+
+    void accumulateStrip (int t, float* mL, float* mR,
+                          const std::array<float*, ChannelStrip::kNumBuses>& bL,
+                          const std::array<float*, ChannelStrip::kNumBuses>& bR,
+                          const std::array<float*, ChannelStripParams::kNumAuxSends>& aL,
+                          const std::array<float*, ChannelStripParams::kNumAuxSends>& aR,
+                          int numSamples) noexcept;
+    void processStripLane (int lane) noexcept;            // one worker lane
+    void reduceLaneAccum (int numSamples) noexcept;       // sum lanes → mix
 
     // One MidiMessageCollector per registered input. MIDI thread
     // addMessageToQueue's; audio thread drains per-block into
@@ -391,7 +442,7 @@ private:
     juce::Array<juce::MidiDeviceInfo> midiInputDevices;
     std::vector<std::unique_ptr<juce::MidiMessageCollector>> midiInputCollectors;
     std::vector<juce::MidiBuffer> perInputMidi;
-    juce::MidiBuffer perTrackMidiScratch;
+    std::array<juce::MidiBuffer, Session::kNumTracks> perTrackMidiScratch;
 
     // Recomputed every rebuildMidiInputBank so hot-plug doesn't invalidate.
     int virtualKeyboardCollectorIndex { -1 };

@@ -1160,9 +1160,50 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
     for (auto& v : busR)      v.assign ((size_t) bs, 0.0f);
     for (auto& v : auxLaneL)  v.assign ((size_t) bs, 0.0f);
     for (auto& v : auxLaneR)  v.assign ((size_t) bs, 0.0f);
-    playbackScratch .assign ((size_t) bs, 0.0f);
-    playbackScratchR.assign ((size_t) bs, 0.0f);
+    for (auto& v : playbackScratch)  v.assign ((size_t) bs, 0.0f);
+    for (auto& v : playbackScratchR) v.assign ((size_t) bs, 0.0f);
+    for (auto& m : perTrackMidiScratch) m.ensureSize (4096);
     silentInputScratch.assign ((size_t) bs, 0.0f);
+
+    for (auto& a : laneAccum)
+    {
+        a.mixL.assign ((size_t) bs, 0.0f);
+        a.mixR.assign ((size_t) bs, 0.0f);
+        for (auto& v : a.busL) v.assign ((size_t) bs, 0.0f);
+        for (auto& v : a.busR) v.assign ((size_t) bs, 0.0f);
+        for (auto& v : a.auxL) v.assign ((size_t) bs, 0.0f);
+        for (auto& v : a.auxR) v.assign ((size_t) bs, 0.0f);
+    }
+
+    // Opt-in parallel strip DSP. Started once (block-size independent); the
+    // worker threads park until the first audioDeviceIOCallback dispatches a
+    // block. Unset / 0 → serial (default).
+    //
+    // Cap = cores - 2. The workers run at real-time priority and the audio
+    // callback thread spin-joins them, so `workers + audio-thread` must stay
+    // BELOW the core count — otherwise the real-time set saturates every core
+    // and starves the normal-priority message (UI) thread, freezing the app
+    // exactly under the heavy load this is meant to help. cores - 2 leaves one
+    // core for the UI + the OS on top of the audio thread.
+    if (! workerPoolStarted)
+    {
+        workerPoolStarted = true;
+        if (const char* env = std::getenv ("DUSKSTUDIO_AUDIO_WORKERS"))
+        {
+            const int maxWorkers = juce::jmin (juce::SystemStats::getNumCpus() - 2,
+                                               kMaxDspLanes - 1);
+            const int n = juce::jlimit (0, juce::jmax (0, maxWorkers),
+                                        juce::String (env).getIntValue());
+            if (n > 0)
+            {
+                workerPool.start (n, [this] (int lane) { processStripLane (lane); });
+                // One-line stderr marker so it's obvious whether the opt-in
+                // parallel path is live (absent line == serial / default).
+                std::fprintf (stderr, "[DuskStudio] parallel strip DSP: %d worker(s)\n",
+                              workerPool.isActive() ? n : 0);
+            }
+        }
+    }
 }
 
 void AudioEngine::audioDeviceError (const juce::String& errorMessage)
@@ -1252,7 +1293,7 @@ void AudioEngine::changeListenerCallback (juce::ChangeBroadcaster* source)
         hadLiveDevice_.store (false, std::memory_order_release);
 
         std::fprintf (stderr,
-                      "[Dusk Studio/AudioEngine] hot-unplug detected — no current "
+                      "[Dusk Studio/AudioEngine] hot-unplug detected - no current "
                       "audio device. Transport stopped.\n");
 
         // audioDeviceStopped already force-stopped transport +
@@ -1282,6 +1323,76 @@ void AudioEngine::writeMasterMixToOutput (float* const* outputChannelData,
     const int enc = mp > 0 ? mp : outputpair::encodePair (0, 1);
     outputpair::tapStereoPairInto (outputChannelData, numOutputChannels,
                                      mixL.data(), mixR.data(), numSamples, enc);
+}
+
+void AudioEngine::accumulateStrip (int t, float* mL, float* mR,
+                                   const std::array<float*, ChannelStrip::kNumBuses>& bL,
+                                   const std::array<float*, ChannelStrip::kNumBuses>& bR,
+                                   const std::array<float*, ChannelStripParams::kNumAuxSends>& aL,
+                                   const std::array<float*, ChannelStripParams::kNumAuxSends>& aR,
+                                   int numSamples) noexcept
+{
+    const auto& job = trackJobs[(size_t) t];
+    strips[(size_t) t].processAndAccumulate (job.monoIn, job.monoInR,
+                                             perTrackMidiScratch[(size_t) t], job.isMidi,
+                                             mL, mR, bL, bR, aL, aR,
+                                             numSamples, job.passes,
+                                             currentDeviceInputs,  numCurrentDeviceInputs,
+                                             currentDeviceOutputs, numCurrentDeviceOutputs);
+}
+
+void AudioEngine::processStripLane (int lane) noexcept
+{
+    const int lanes = workerPool.laneCount();
+    const int n     = currentBlockSamples;
+    auto& acc = laneAccum[(size_t) lane];
+
+    // Each lane owns its accum set — clear it, build pointer views, accumulate
+    // a contiguous strip subset. No lane writes another lane's buffers.
+    juce::FloatVectorOperations::clear (acc.mixL.data(), n);
+    juce::FloatVectorOperations::clear (acc.mixR.data(), n);
+    std::array<float*, ChannelStrip::kNumBuses> bL {}, bR {};
+    for (int a = 0; a < ChannelStrip::kNumBuses; ++a)
+    {
+        juce::FloatVectorOperations::clear (acc.busL[(size_t) a].data(), n);
+        juce::FloatVectorOperations::clear (acc.busR[(size_t) a].data(), n);
+        bL[(size_t) a] = acc.busL[(size_t) a].data();
+        bR[(size_t) a] = acc.busR[(size_t) a].data();
+    }
+    std::array<float*, ChannelStripParams::kNumAuxSends> aL {}, aR {};
+    for (int a = 0; a < ChannelStripParams::kNumAuxSends; ++a)
+    {
+        juce::FloatVectorOperations::clear (acc.auxL[(size_t) a].data(), n);
+        juce::FloatVectorOperations::clear (acc.auxR[(size_t) a].data(), n);
+        aL[(size_t) a] = acc.auxL[(size_t) a].data();
+        aR[(size_t) a] = acc.auxR[(size_t) a].data();
+    }
+
+    const int lo = (Session::kNumTracks * lane)       / lanes;
+    const int hi = (Session::kNumTracks * (lane + 1)) / lanes;
+    for (int t = lo; t < hi; ++t)
+        accumulateStrip (t, acc.mixL.data(), acc.mixR.data(), bL, bR, aL, aR, n);
+}
+
+void AudioEngine::reduceLaneAccum (int numSamples) noexcept
+{
+    const int lanes = workerPool.laneCount();
+    for (int lane = 0; lane < lanes; ++lane)
+    {
+        auto& acc = laneAccum[(size_t) lane];
+        juce::FloatVectorOperations::add (mixL.data(), acc.mixL.data(), numSamples);
+        juce::FloatVectorOperations::add (mixR.data(), acc.mixR.data(), numSamples);
+        for (int a = 0; a < Session::kNumBuses; ++a)
+        {
+            juce::FloatVectorOperations::add (busL[(size_t) a].data(), acc.busL[(size_t) a].data(), numSamples);
+            juce::FloatVectorOperations::add (busR[(size_t) a].data(), acc.busR[(size_t) a].data(), numSamples);
+        }
+        for (int a = 0; a < Session::kNumAuxLanes; ++a)
+        {
+            juce::FloatVectorOperations::add (auxLaneL[(size_t) a].data(), acc.auxL[(size_t) a].data(), numSamples);
+            juce::FloatVectorOperations::add (auxLaneR[(size_t) a].data(), acc.auxR[(size_t) a].data(), numSamples);
+        }
+    }
 }
 
 void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputChannelData,
@@ -2477,11 +2588,11 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
             // Stereo tracks read both channels from disk; mono tracks pass
             // nullptr for outR which makes readForTrack skip the second
             // channel entirely.
-            float* outR = stereoTrackInput ? playbackScratchR.data() : nullptr;
+            float* outR = stereoTrackInput ? playbackScratchR[(size_t) t].data() : nullptr;
             playbackEngine.readForTrack (t, blockStartSamples,
-                                          playbackScratch.data(), outR,
+                                          playbackScratch[(size_t) t].data(), outR,
                                           numSamples);
-            monoIn = playbackScratch.data();
+            monoIn = playbackScratch[(size_t) t].data();
         }
         else if (deviceInput != nullptr && (armed || monitorEnabled))
         {
@@ -2564,14 +2675,14 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         lastMidiInputIndex[(size_t) t] = currentMidiIdx;
         const bool perTrackFlush = flushHangingMidi || midiInputSwapped;
 
-        perTrackMidiScratch.clear();
+        perTrackMidiScratch[(size_t) t].clear();
         if (midiTrack && perTrackFlush)
         {
             for (int ch = 1; ch <= 16; ++ch)
             {
-                perTrackMidiScratch.addEvent (
+                perTrackMidiScratch[(size_t) t].addEvent (
                     juce::MidiMessage::controllerEvent (ch, 64,  0), 0);
-                perTrackMidiScratch.addEvent (
+                perTrackMidiScratch[(size_t) t].addEvent (
                     juce::MidiMessage::controllerEvent (ch, 123, 0), 0);
             }
         }
@@ -2650,7 +2761,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                         const auto offAbs = absOf (n.startTick + n.lengthInTicks);
                         if (onAbs < blockStartSamples && offAbs > blockStartSamples)
                         {
-                            perTrackMidiScratch.addEvent (
+                            perTrackMidiScratch[(size_t) t].addEvent (
                                 juce::MidiMessage::noteOn (n.channel, n.noteNumber,
                                                             (juce::uint8) n.velocity),
                                 1);
@@ -2687,14 +2798,14 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                     const auto offAbs = absOf (n.startTick + n.lengthInTicks);
                     if (onAbs >= schedStart && onAbs < blockEnd)
                     {
-                        perTrackMidiScratch.addEvent (
+                        perTrackMidiScratch[(size_t) t].addEvent (
                             juce::MidiMessage::noteOn (n.channel, n.noteNumber,
                                                         (juce::uint8) n.velocity),
                             (int) (onAbs - schedStart));
                     }
                     if (offAbs >= schedStart && offAbs < blockEnd)
                     {
-                        perTrackMidiScratch.addEvent (
+                        perTrackMidiScratch[(size_t) t].addEvent (
                             juce::MidiMessage::noteOff (n.channel, n.noteNumber),
                             (int) (offAbs - schedStart));
                     }
@@ -2704,7 +2815,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                     const auto sAbs = absOf (c.atTick);
                     if (sAbs >= schedStart && sAbs < blockEnd)
                     {
-                        perTrackMidiScratch.addEvent (
+                        perTrackMidiScratch[(size_t) t].addEvent (
                             juce::MidiMessage::controllerEvent (c.channel,
                                                                   c.controller,
                                                                   c.value),
@@ -2712,7 +2823,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                     }
                 }
             }
-            if (! perTrackMidiScratch.isEmpty())
+            if (! perTrackMidiScratch[(size_t) t].isEmpty())
                 session.track (t).midiActivity.store (true, std::memory_order_relaxed);
         }
         else if (midiTrack)
@@ -2731,7 +2842,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                 {
                     const auto m = meta.getMessage();
                     if (chFilter == 0 || m.getChannel() == chFilter)
-                        perTrackMidiScratch.addEvent (m, meta.samplePosition);
+                        perTrackMidiScratch[(size_t) t].addEvent (m, meta.samplePosition);
                 }
             };
 
@@ -2750,7 +2861,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
             if (trackArmed && virtualKeyboardCollectorIndex != midiIdx)
                 pullInput (virtualKeyboardCollectorIndex);
 
-            if (! perTrackMidiScratch.isEmpty())
+            if (! perTrackMidiScratch[(size_t) t].isEmpty())
                 session.track (t).midiActivity.store (true, std::memory_order_relaxed);
         }
 
@@ -2760,11 +2871,11 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         // MIDI buffer in place, so by the time processAndAccumulate
         // returns, perTrackMidiScratch is typically empty. Writing here
         // captures the events the user actually played.
-        if (isRecording && armed && midiTrack && ! perTrackMidiScratch.isEmpty())
+        if (isRecording && armed && midiTrack && ! perTrackMidiScratch[(size_t) t].isEmpty())
         {
             const auto recStart = activeRecordStart.load (std::memory_order_relaxed);
             const auto blockOffsetFromRecord = blockStartSamples - recStart;
-            recordManager.writeMidiBlock (t, perTrackMidiScratch, blockOffsetFromRecord);
+            recordManager.writeMidiBlock (t, perTrackMidiScratch[(size_t) t], blockOffsetFromRecord);
         }
 
         // External MIDI output. When this MIDI track has a hardware port
@@ -2775,7 +2886,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         // rebuildMidiOutputBank), so the audio thread just enqueues.
         // Empty buffer skipped to avoid pointless wakeups on the
         // delivery thread.
-        if (midiTrack && ! perTrackMidiScratch.isEmpty())
+        if (midiTrack && ! perTrackMidiScratch[(size_t) t].isEmpty())
         {
             const int outIdx = session.track (t).midiOutputIndex.load (
                                   std::memory_order_relaxed);
@@ -2790,7 +2901,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                     // arg lets the delivery thread map sample offsets to
                     // wall-clock deltas.
                     const double sendRate = currentSampleRate.load (std::memory_order_relaxed);
-                    out->sendBlockOfMessages (perTrackMidiScratch,
+                    out->sendBlockOfMessages (perTrackMidiScratch[(size_t) t],
                                                 juce::Time::getMillisecondCounterHiRes(),
                                                 sendRate > 0.0 ? sendRate : 48000.0);
                 }
@@ -2815,7 +2926,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         {
             if (willReadFromDisk)
             {
-                monoInR = playbackScratchR.data();
+                monoInR = playbackScratchR[(size_t) t].data();
             }
             else if (monoIn == silentInputScratch.data())
             {
@@ -2836,17 +2947,37 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         // Audio tracks still require a non-null source to pass.
         const bool stripPasses = midiTrack ? passes : (passes && monoIn != nullptr);
 
-        strips[(size_t) t].processAndAccumulate (monoIn, monoInR,
-                                                 perTrackMidiScratch, midiTrack,
-                                                 mixL.data(), mixR.data(),
-                                                 busLPtrs, busRPtrs,
-                                                 auxLanePtrsL, auxLanePtrsR,
-                                                 numSamples,
-                                                 stripPasses,
-                                                 currentDeviceInputs,
-                                                 numCurrentDeviceInputs,
-                                                 currentDeviceOutputs,
-                                                 numCurrentDeviceOutputs);
+        trackJobs[(size_t) t] = { monoIn, monoInR, deviceInput,
+                                  midiTrack, stripPasses, armed, stereoTrackInput };
+    }
+
+    // ── DSP pass ─────────────────────────────────────────────────────────
+    // Heavy per-strip DSP (the only thing that fans out). Serial path
+    // accumulates straight into mixL/busL/auxLaneL; the opt-in worker pool
+    // instead has each lane accumulate its strip subset into its own buffer
+    // set, then a serial reduce sums the lanes in. Metering + recording run on
+    // the serial tail below — the audio thread, after all strips are done —
+    // reading each strip's just-produced output, so worker threads only ever
+    // run pure DSP. (The parallel reduce regroups the float sum, so the master
+    // is bit-identical only in serial mode; the parallel difference is a
+    // deterministic ~1e-7, far below audibility.)
+    if (workerPool.isActive())
+    {
+        currentBlockSamples = numSamples;
+        workerPool.runBlock();
+        reduceLaneAccum (numSamples);
+    }
+    else
+    {
+        for (int t = 0; t < Session::kNumTracks; ++t)
+            accumulateStrip (t, mixL.data(), mixR.data(),
+                             busLPtrs, busRPtrs, auxLanePtrsL, auxLanePtrsR, numSamples);
+    }
+
+    // ── Post-DSP serial tail: metering + recording (audio thread). ───────
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        const auto& job = trackJobs[(size_t) t];
         session.track (t).meterGrDb.store (strips[(size_t) t].getCurrentGrDb(),
                                             std::memory_order_relaxed);
         session.track (t).meterOutLDb.store (strips[(size_t) t].getOutLDb(),
@@ -2862,7 +2993,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         // the post-DSP peak (same buffer the recorder uses for printed-
         // FX captures) into the input-meter atom so the UI's existing
         // poll renders a real level for MIDI tracks.
-        if (midiTrack)
+        if (job.isMidi)
         {
             const int n = strips[(size_t) t].getLastProcessedSamples();
             if (auto* lp = strips[(size_t) t].getLastProcessedMono(); lp != nullptr && n > 0)
@@ -2896,15 +3027,15 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         // is sliced to the intersection of [blockStart, blockEnd) and the
         // punch window; outside samples are silently discarded (NOT written
         // as zeros, so the WAV's frame count equals the punch window length).
-        if (isRecording && armed && deviceInput != nullptr)
+        if (isRecording && job.armed && job.deviceInput != nullptr)
         {
             const bool printEfx = session.track (t).printEffects.load (std::memory_order_relaxed);
 
             // Default sources: deviceInput on L; deviceInputR on R for stereo
             // tracks (resolved earlier as monoInR). printEffects swaps both
             // L and R to the strip's post-effect buffers when available.
-            const float* recL = deviceInput;
-            const float* recR = stereoTrackInput ? monoInR : nullptr;
+            const float* recL = job.deviceInput;
+            const float* recR = job.stereoInput ? job.monoInR : nullptr;
             if (printEfx)
             {
                 auto& strip = strips[(size_t) t];
@@ -2913,7 +3044,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                     && strip.getLastProcessedSamples() >= numSamples)
                 {
                     recL = processed;
-                    if (stereoTrackInput)
+                    if (job.stereoInput)
                         recR = strip.getLastProcessedR();  // may be nullptr → recorder duplicates L
                 }
             }
