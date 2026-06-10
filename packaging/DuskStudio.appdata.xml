@@ -30,6 +30,26 @@
   <content_rating type="oars-1.1"/>
   <releases>
     <!-- scripts/bump-version.sh prepends new <release> entries here. -->
+    <release version="0.11.0" date="2026-06-12">
+      <description>
+        <p>Beta release. Out-of-process plugin hosting by default on all
+        three OSes, automatic cross-track plugin delay compensation,
+        broad undo coverage (notes, automation, tempo, renames), tempo
+        editing from the ruler, portable session folders, MIDI Learn for
+        EQ frequency/Q, multi-output cue routing, true-peak mastering
+        limiter, and a data-integrity and real-time-safety hardening
+        pass (atomic session save, autosave recovery, MIDI-out xruns,
+        crash fixes on stop and quit).</p>
+      </description>
+    </release>
+    <release version="0.10.0" date="2026-05-29">
+      <description>
+        <p>First beta. MIDI binding targets across the mixer, screen-reader
+        accessibility for the channel strips, audio-device hot-unplug
+        recovery, macOS out-of-process plugin pipeline with in-process
+        editors, and Linux arm64 builds.</p>
+      </description>
+    </release>
     <release version="0.9.0" date="2026-05-21">
       <description>
         <p>Beta release leading up to 1.0. Phase 4 MIDI tempo retime,

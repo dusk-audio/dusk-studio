@@ -1631,7 +1631,7 @@ Because the session is a folder, you can copy or back up a session by copying th
 
 Every 30 seconds, if anything has changed since the last save, Dusk Studio writes a recovery file, `session.json.autosave`, next to the canonical `session.json` (it does **not** overwrite `session.json` — a manual Save is still what updates the real session file). The autosave is atomic (same temp-file-and-rename pattern) and silent — it never interrupts playback or recording. Idle sessions are skipped via a content hash, so the file isn't rewritten when nothing meaningful changed.
 
-If Dusk Studio crashes or loses power, the next launch detects the autosave file and offers to recover. A manual Save deletes the autosave, so a leftover autosave that differs from `session.json` is the signal that a recovery point exists.
+If Dusk Studio crashes or loses power, the next launch detects the autosave file and offers to recover. Choosing **Recover autosave** immediately writes the recovered state to `session.json` (and only then removes the autosave), so the recovered work is on disk even if you quit right after. A manual Save deletes the autosave, so a leftover autosave that differs from `session.json` is the signal that a recovery point exists.
 
 Plugin and tape state are captured in the autosave along with everything else, so recovery restores your processing as it stood at the last tick.
 
@@ -2001,14 +2001,21 @@ The format for each entry:
 - **Buttons**: OK.
 - **Action**: Use **Save As…** to land the session somewhere writable. Do not quit before saving — your in-memory state is intact.
 
+### Missing audio files
+
+- **When**: A loaded session references audio files that can't be found — even after Dusk Studio tried re-rooting each path against the session's `audio/` folder.
+- **Text**: "These audio files referenced by the session could not be found: [list]. Their regions will play silent. If the session folder was moved, copy the files back into its audio/ subfolder and reload the session."
+- **Buttons**: OK.
+- **Action**: Put the listed files into the session's `audio/` folder (the file name is what matters) and reload.
+
 ### Clean out
 
 Three variants:
 
 - **No audio directory**: "This session has no audio directory yet, so there's nothing to clean." — Buttons: OK.
 - **No unreferenced files**: "No unreferenced files found. The audio directory is already clean." — Buttons: OK.
-- **Confirm delete**: "Found [N] unreferenced .wav file(s) totalling [size] MB. These were created by past record passes that no longer have any region or take pointing at them. Deleting cannot be undone." — Buttons: **Delete** (destructive, red) / **Cancel**.
-- **Action**: Confirm only if you have backed up anything you might still want.
+- **Confirm delete**: "Found [N] unreferenced .wav file(s) totalling [size] MB. These were created by past record passes that no longer have any region or take pointing at them. Deleting cannot be undone, and the session's undo history will be cleared (undone edits may still reference these files)." — Buttons: **Delete** (destructive, red) / **Cancel**.
+- **Action**: Confirm only if you have backed up anything you might still want. Deleting also clears the undo stack, so finish any edits you might want to undo first.
 
 ### Optimize automation
 
