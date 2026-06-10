@@ -24,8 +24,7 @@ Dusk Studio is deliberately constrained. These aren't arbitrary limits to be "im
 - **24 channels.** Three banks of 8, mirroring a control surface.
 - **Fixed signal chain.** HPF → EQ → comp → sends → pan → fader, in that order, on every strip. No reordering, no per-channel plugin chains beyond the insert slots.
 - **Regions, not waveforms.** Move/split/trim/fade/delete — no sample-level destructive editing.
-- **Everything visible.** One window; the editors are in-window overlays, not floating tool palettes.
-- **No preferences sprawl.** Audio device config and little else.
+- **Minimal preferences.** The settings surface is the audio device panel plus a handful of adjacent config (MIDI bindings, sync). Resist adding options — pick a good default instead.
 
 The touchstone is hardware like the Tascam DP-24: "would this exist on a standalone hardware recorder?" is the right instinct when judging a feature request, even though it's a sensibility rather than a law. Many "missing feature" requests are intentional omissions — check [DuskStudio.md](../DuskStudio.md) before assuming something was forgotten.
 
@@ -335,9 +334,11 @@ TSan is the one that catches "I forgot this cross-thread field should be atomic"
 
 You can support the whole app without ever touching this — but when a user says "loading X crashes Dusk Studio," this is where you go.
 
-### Why it's out-of-process
+### In-process by default, out-of-process on request
 
-VST3/LV2/AU plugins are third-party code that can crash or hang. Dusk Studio runs them in a **separate child process** (`dusk-studio-plugin-host`). A plugin crash kills the child, not the DAW; a plugin that hangs during scanning gets a timeout and is blacklisted. This is why there's a whole `src/engine/ipc/` directory.
+VST3/LV2/AU plugins run **in-process by default**. Out-of-process hosting (a separate `dusk-studio-plugin-host` child per plugin) was tried as the default and rolled back: the cross-process editor path added UI latency, and on Linux/XWayland cross-process XEmbed is structurally unreliable (the compositor fights X11 reparenting). In-process gives instant, correct plugin editors at the lowest CPU cost; the trade-off is crash isolation — a misbehaving plugin can take the app down. Set `DUSKSTUDIO_USE_OOP_PLUGINS=1` to opt back into the sandbox (read once at startup; see `MainComponent`'s constructor).
+
+**Plugin scanning is out-of-process regardless of that flag** (whenever the host binary is present): the child runs the scan, so a plugin that crashes or hangs while being probed gets a timeout and a blacklist entry, never a dead DAW. This is why the `src/engine/ipc/` directory exists and is fully maintained even though the in-process path is the runtime default.
 
 ### How parent and child talk
 
@@ -377,7 +378,7 @@ Region and marker edits are `juce::UndoableAction` subclasses ([src/session/Regi
 | Intermittent wrong value / flicker | A cross-thread field that should be `atomic` isn't, or wrong memory order. TSan. |
 | "The EQ/comp/tape disappeared" | `DUSK_PLUGINS_PATH` not discovered → `DUSKSTUDIO_HAS_DUSK_DSP=0`. Check CMake configure output. |
 | Build fails finding JUCE | Wrong sibling dir / fork vs upstream. Pass `-DJUCE_PATH=…` explicitly; check JuceCompat.h API split. |
-| Loading one plugin crashes the app | It shouldn't (out-of-process) — if it does, the IPC swap or child lifecycle in `PluginSlot`/`ipc/`. Reproduce with the stub test. |
+| Loading one plugin crashes the app | Expected risk of the in-process default — try the same plugin with `DUSKSTUDIO_USE_OOP_PLUGINS=1` to confirm it's the plugin, then blacklist or sandbox it. If it crashes only in OOP mode, suspect the IPC swap / child lifecycle in `PluginSlot`/`ipc/`; reproduce with the stub test. |
 | Plugin scan hangs / a plugin never appears | Scanner timeout/blacklist in `PluginManager.cpp`; check the sentinel parsing in `PluginScanProtocol`. |
 | Session won't load / loses data | `SessionSerializer` migration path; a field added to `Session.h` but not (de)serialized. Add a round-trip test. |
 | Meter frozen but audio plays | UI timer not running, or reading the wrong meter atom. |

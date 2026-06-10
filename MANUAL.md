@@ -1401,7 +1401,7 @@ OOP is supported on:
 - **Windows**: always.
 - **macOS**: requires macOS 14.4 or later. The plugin **editor** is hosted in-process via a shell instance and embeds as a centred modal like the other platforms — see *Opening the editor* above.
 
-OOP is **on by default** for third-party binary plugins (VST3 / LV2 / AU), so a plugin that crashes or hangs takes down only the host child, not Dusk Studio. There is no setting to manage; if the `dusk-studio-plugin-host` binary is missing the loader falls back to in-process automatically. For debugging you can force in-process hosting by launching with `DUSKSTUDIO_USE_OOP_PLUGINS=0`. (Dusk Studio's own bundled plugins always run in-process.)
+Plugins run **in-process by default** — it gives the most responsive plugin editors and the lowest CPU cost. To run third-party binary plugins (VST3 / LV2 / AU) in the OOP sandbox instead, launch with `DUSKSTUDIO_USE_OOP_PLUGINS=1`; a plugin that crashes or hangs then takes down only the host child, not Dusk Studio. If the `dusk-studio-plugin-host` binary is missing the loader falls back to in-process automatically. Plugin **scanning** always runs in the sandboxed child, so a plugin that crashes while being probed is blacklisted instead of crashing the app. (Dusk Studio's own bundled plugins always run in-process.)
 
 When a plugin crashes in OOP mode:
 

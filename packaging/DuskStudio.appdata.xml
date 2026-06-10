@@ -32,8 +32,9 @@
     <!-- scripts/bump-version.sh prepends new <release> entries here. -->
     <release version="0.11.0" date="2026-06-12">
       <description>
-        <p>Beta release. Out-of-process plugin hosting by default on all
-        three OSes, automatic cross-track plugin delay compensation,
+        <p>Beta release. Optional out-of-process plugin sandbox with
+        crash-isolated plugin scanning on all three OSes,
+        automatic cross-track plugin delay compensation,
         broad undo coverage (notes, automation, tempo, renames), tempo
         editing from the ruler, portable session folders, MIDI Learn for
         EQ frequency/Q, multi-output cue routing, true-peak mastering

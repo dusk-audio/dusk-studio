@@ -12,10 +12,13 @@ the public stable declaration.
 
 ### Added
 
-- **Out-of-process plugin hosting by default.** Third-party plugins run in
-  a sandboxed child process on all three OSes — a crashing plugin no longer
-  takes the session down. Plugin instantiation moved off-thread, so loading
-  a heavy synth doesn't freeze the UI.
+- **Optional out-of-process plugin sandbox.** Third-party plugins can run
+  in a sandboxed child process on all three OSes (launch with
+  `DUSKSTUDIO_USE_OOP_PLUGINS=1`) so a crashing plugin doesn't take the
+  session down. In-process remains the default — the cross-process editor
+  path added UI latency. Plugin scanning is always sandboxed, and plugin
+  instantiation moved off-thread, so loading a heavy synth doesn't freeze
+  the UI.
 - **Automatic cross-track plugin delay compensation (PDC).** Tracks with
   latency-reporting inserts stay sample-aligned with the rest of the mix.
 - **Undo, broadly.** Piano-roll note edits, automation breakpoint edits,
