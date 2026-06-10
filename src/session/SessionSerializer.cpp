@@ -181,7 +181,54 @@ static const char* automationParamKey (AutomationParam p) noexcept
     return "";
 }
 
-juce::DynamicObject::Ptr trackToObject (const Track& t)
+// Audio file paths are stored relative to the session directory whenever
+// the file lives inside it (the normal case — RecordManager writes into
+// <sessionDir>/audio). Absolute paths are kept for files referenced from
+// outside the session folder. This keeps sessions portable across a
+// rename, a copy to another machine, or the macOS<->Linux flow where the
+// home prefix differs.
+juce::String portablePath (const juce::File& f, const juce::File& sessionDir)
+{
+    if (f == juce::File()) return {};
+    if (sessionDir != juce::File() && f.isAChildOf (sessionDir))
+        return f.getRelativePathFrom (sessionDir);
+    return f.getFullPathName();
+}
+
+// Inverse of portablePath, with a recovery step: when the stored path
+// (typically a stale absolute path from a moved/renamed session) doesn't
+// exist, look for the same file name under <sessionDir>/audio before
+// giving up. Unresolved paths are appended to `missing` so the UI can
+// tell the user which files the session expected.
+juce::File resolvePortablePath (const juce::String& stored,
+                                const juce::File& sessionDir,
+                                std::vector<juce::String>& missing)
+{
+    if (stored.isEmpty()) return {};
+
+    juce::File f;
+    if (juce::File::isAbsolutePath (stored))
+        f = juce::File (stored);
+    else if (sessionDir != juce::File())
+        f = sessionDir.getChildFile (stored);
+    else
+        return {};
+
+    if (f.existsAsFile()) return f;
+
+    const auto fileName = stored.replaceCharacter ('\\', '/')
+                                .fromLastOccurrenceOf ("/", false, false);
+    if (sessionDir != juce::File() && fileName.isNotEmpty())
+    {
+        const auto byName = sessionDir.getChildFile ("audio").getChildFile (fileName);
+        if (byName.existsAsFile()) return byName;
+    }
+
+    missing.push_back (stored);
+    return f;
+}
+
+juce::DynamicObject::Ptr trackToObject (const Track& t, const juce::File& sessionDir)
 {
     auto* obj = new juce::DynamicObject();
     obj->setProperty ("name",   t.name);
@@ -310,7 +357,7 @@ juce::DynamicObject::Ptr trackToObject (const Track& t)
     for (auto& r : t.regions)
     {
         auto* rObj = new juce::DynamicObject();
-        rObj->setProperty ("file",            r.file.getFullPathName());
+        rObj->setProperty ("file",            portablePath (r.file, sessionDir));
         rObj->setProperty ("timeline_start",  (juce::int64) r.timelineStart);
         rObj->setProperty ("length",          (juce::int64) r.lengthInSamples);
         rObj->setProperty ("source_offset",   (juce::int64) r.sourceOffset);
@@ -352,7 +399,7 @@ juce::DynamicObject::Ptr trackToObject (const Track& t)
             for (auto& take : r.previousTakes)
             {
                 auto* tObj = new juce::DynamicObject();
-                tObj->setProperty ("file",          take.file.getFullPathName());
+                tObj->setProperty ("file",          portablePath (take.file, sessionDir));
                 tObj->setProperty ("source_offset", (juce::int64) take.sourceOffset);
                 tObj->setProperty ("length",        (juce::int64) take.lengthInSamples);
                 prior.add (juce::var (tObj));
@@ -553,7 +600,9 @@ juce::DynamicObject::Ptr busToObject (const Bus& a)
     return obj;
 }
 
-void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm)
+void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm,
+                   const juce::File& sessionDir,
+                   std::vector<juce::String>& missingFiles)
 {
     if (! v.isObject()) return;
     if (auto s = v["name"].toString();           s.isNotEmpty()) t.name = s;
@@ -796,7 +845,8 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm)
             auto rv = regions[i];
             if (! rv.isObject()) continue;
             AudioRegion r;
-            r.file            = juce::File (rv["file"].toString());
+            r.file            = resolvePortablePath (rv["file"].toString(),
+                                                      sessionDir, missingFiles);
             r.timelineStart   = (juce::int64) rv["timeline_start"];
             r.lengthInSamples = (juce::int64) rv["length"];
             r.sourceOffset    = (juce::int64) rv["source_offset"];
@@ -831,7 +881,8 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm)
                     auto tv = prior[k];
                     if (! tv.isObject()) continue;
                     TakeRef take;
-                    take.file            = juce::File (tv["file"].toString());
+                    take.file            = resolvePortablePath (tv["file"].toString(),
+                                                                 sessionDir, missingFiles);
                     take.sourceOffset    = (juce::int64) tv["source_offset"];
                     take.lengthInSamples = (juce::int64) tv["length"];
                     r.previousTakes.push_back (std::move (take));
@@ -1007,7 +1058,7 @@ juce::String SessionSerializer::serialize (const Session& s)
 
     juce::Array<juce::var> tracks;
     for (int i = 0; i < Session::kNumTracks; ++i)
-        tracks.add (juce::var (trackToObject (s.track (i)).get()));
+        tracks.add (juce::var (trackToObject (s.track (i), s.getSessionDirectory()).get()));
     root->setProperty ("tracks", tracks);
 
     juce::Array<juce::var> busesArr;
@@ -1163,7 +1214,8 @@ juce::String SessionSerializer::serialize (const Session& s)
     // Mastering chain - separate from the master strip so its EQ/comp/limiter
     // settings can diverge from the in-mix master DSP.
     auto* mast = new juce::DynamicObject();
-    mast->setProperty ("source_file",       s.mastering().sourceFile.getFullPathName());
+    mast->setProperty ("source_file",       portablePath (s.mastering().sourceFile,
+                                                           s.getSessionDirectory()));
     mast->setProperty ("eq_enabled",        s.mastering().eqEnabled.load());
     for (int b = 0; b < MasteringParams::kNumEqBands; ++b)
     {
@@ -1327,6 +1379,8 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
     juce::var root = juce::JSON::parse (source);
     if (! root.isObject()) return false;
 
+    s.missingAudioFilesAfterLoad.clear();
+
     // Format version gate. Missing key (pre-versioning sessions) is
     // treated as v1 — the format was effectively stable at v1 when the
     // version field landed. Future-versioned sessions are rejected up
@@ -1363,7 +1417,8 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
     {
         const int n = juce::jmin (Session::kNumTracks, tracks.size());
         for (int i = 0; i < n; ++i)
-            restoreTrack (s.track (i), tracks[i], sessionLoadBpm);
+            restoreTrack (s.track (i), tracks[i], sessionLoadBpm,
+                          s.getSessionDirectory(), s.missingAudioFilesAfterLoad);
     }
     if (auto busesArr = root["buses"]; busesArr.isArray())
     {
@@ -1566,7 +1621,8 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         if (mast.hasProperty ("source_file"))
         {
             const juce::String p = mast["source_file"].toString();
-            m.sourceFile = p.isNotEmpty() ? juce::File (p) : juce::File();
+            m.sourceFile = resolvePortablePath (p, s.getSessionDirectory(),
+                                                s.missingAudioFilesAfterLoad);
         }
         auto loadF = [&] (const char* k, std::atomic<float>& dst)
             { if (mast.hasProperty (k)) dst.store ((float) (double) mast[k]); };

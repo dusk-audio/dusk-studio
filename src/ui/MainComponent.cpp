@@ -2495,6 +2495,27 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
                 });
         }
     }
+
+    // Same surface for unresolved audio files — without it a moved or
+    // hand-edited session loads "successfully" and plays silence with no
+    // hint why.
+    if (! session.missingAudioFilesAfterLoad.empty())
+    {
+        juce::String body =
+            "These audio files referenced by the session could not be found:\n\n";
+        for (const auto& p : session.missingAudioFilesAfterLoad)
+            body += "    " + p + "\n";
+        body += "\nTheir regions will play silent. If the session folder was "
+                "moved, copy the files back into its audio/ subfolder and "
+                "reload the session.";
+        juce::Component::SafePointer<MainComponent> safeThis (this);
+        juce::MessageManager::callAsync (
+            [body = std::move (body), safeThis]
+            {
+                if (auto* self = safeThis.getComponent())
+                    showDuskAlert (*self, "Missing audio files", body);
+            });
+    }
     const auto tAfterPlugins = juce::Time::getMillisecondCounterHiRes();
     engine.consumeTransportStateAfterLoad();
 

@@ -4,6 +4,7 @@
 #include <juce_data_structures/juce_data_structures.h>
 #include <array>
 #include <atomic>
+#include <mutex>
 #include <vector>
 #include "../dsp/AuxLaneStrip.h"
 #include "../dsp/BusStrip.h"
@@ -101,8 +102,10 @@ public:
     // Message-thread only.
     bool ensureMidiOutputOpen (int index);
 
-    // No implicit ensure — caller checks state first. Safe from audio
-    // OR message thread (JUCE marshals to its own delivery thread).
+    // No implicit ensure — caller checks state first. Message thread
+    // only (MCU feedback sink). The audio thread routes MIDI out through
+    // queueMidiOutBlock instead — sendBlockOfMessages locks and
+    // allocates, so it must never run in the callback.
     bool sendMidiToOutput (int index, const juce::MidiBuffer& events) noexcept;
 
     // Open the MIDI output every track is routed to. Called once after
@@ -456,6 +459,47 @@ private:
 
     juce::Array<juce::MidiDeviceInfo> midiOutputDevices;
     std::vector<std::unique_ptr<juce::MidiOutput>> midiOutputs;
+
+    // MIDI-out handoff. juce::MidiOutput::sendBlockOfMessages is NOT
+    // audio-thread safe: it takes the delivery thread's mutex (which
+    // that thread holds across waits of up to ~20 ms) and inserts into
+    // a heap-allocating multiset under it. The audio thread instead
+    // writes whole per-port event blocks into this lock-free FIFO; the
+    // pump thread drains it every millisecond and does the
+    // sendBlockOfMessages call where blocking is harmless. Slot
+    // MidiBuffers are pre-sized in prepareForSelfTest so the audio-
+    // thread copy never allocates. Queue-full drops the block —
+    // dropping clock bytes beats an xrun.
+    static constexpr int kMidiOutQueueSlots = 64;
+    struct QueuedMidiOut
+    {
+        int    port       = -1;
+        double timeMs     = 0.0;
+        double sampleRate = 48000.0;
+        juce::MidiBuffer events;
+    };
+    juce::AbstractFifo midiOutFifo { kMidiOutQueueSlots };
+    std::array<QueuedMidiOut, kMidiOutQueueSlots> midiOutQueue;
+
+    // Serialises the pump thread's port access against message-thread
+    // bank mutation (rebuildMidiOutputBank / ensureMidiOutputOpen). The
+    // audio thread never takes it — it only touches the FIFO.
+    std::mutex midiOutBankMutex;
+
+    class MidiOutPump final : public juce::Thread
+    {
+    public:
+        explicit MidiOutPump (AudioEngine& e)
+            : juce::Thread ("Dusk Studio MIDI out"), engine (e) {}
+        void run() override;
+    private:
+        AudioEngine& engine;
+    };
+    MidiOutPump midiOutPump { *this };
+
+    void queueMidiOutBlock (int port, const juce::MidiBuffer& events,
+                            double sampleRate) noexcept;
+    void drainMidiOutQueue();
 
     // Previous block's midiInputIndex per track — detects mid-play
     // input swaps so we can fire All-Notes-Off + Sustain-Off on the

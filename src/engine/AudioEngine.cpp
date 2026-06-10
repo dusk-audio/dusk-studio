@@ -60,6 +60,10 @@ AudioEngine::AudioEngine (Session& sessionToBindTo) : session (sessionToBindTo)
 
     publishTempoMap();   // seed the snapshot (empty -> constant tempoBpm)
 
+    // High priority so a loaded message thread can't starve clock /
+    // note delivery; still below the audio thread.
+    midiOutPump.startThread (juce::Thread::Priority::high);
+
     for (int i = 0; i < Session::kNumTracks; ++i)
     {
         strips[(size_t) i].bind (session.track (i).strip);
@@ -451,15 +455,18 @@ juce::MidiMessageCollector* AudioEngine::getVirtualKeyboardCollector() noexcept
 void AudioEngine::rebuildMidiOutputBank()
 {
     // Mutating midiOutputs is safe only with audio callback detached
-    // (audio iterates while sending).
-    midiOutputs.clear();
-
+    // (audio writes port indices into the out-FIFO while running) and
+    // under midiOutBankMutex (the pump thread dereferences the ports).
     // Enumerate but don't open — eager open at startup blocks the
     // message thread on each snd_seq_connect_to and spawns one thread
     // per port; stalls MainWindow::setVisible(true) for seconds on
     // systems with USB MIDI. Open on demand via ensureMidiOutputOpen.
-    midiOutputDevices = juce::MidiOutput::getAvailableDevices();
-    midiOutputs.resize ((size_t) midiOutputDevices.size());
+    {
+        const std::lock_guard<std::mutex> lock (midiOutBankMutex);
+        midiOutputs.clear();
+        midiOutputDevices = juce::MidiOutput::getAvailableDevices();
+        midiOutputs.resize ((size_t) midiOutputDevices.size());
+    }
 
     // Eager-open the chosen sync port so the first clock byte the
     // audio thread emits doesn't wait on a sync ALSA connect.
@@ -517,11 +524,66 @@ bool AudioEngine::ensureMidiOutputOpen (int index)
                       midiOutputDevices[index].identifier.toRawUTF8());
         return false;
     }
-    // Background thread so audio-thread sendBlockOfMessages enqueues
-    // without blocking on the OS port.
+    // Background thread so the pump thread's sendBlockOfMessages
+    // enqueues without blocking on the OS port.
     out->startBackgroundThread();
-    midiOutputs[(size_t) index] = std::move (out);
+    {
+        // The pump thread may be dereferencing this slot's pointer.
+        const std::lock_guard<std::mutex> lock (midiOutBankMutex);
+        midiOutputs[(size_t) index] = std::move (out);
+    }
     return true;
+}
+
+void AudioEngine::MidiOutPump::run()
+{
+    while (! threadShouldExit())
+    {
+        engine.drainMidiOutQueue();
+        wait (1);
+    }
+}
+
+void AudioEngine::queueMidiOutBlock (int port, const juce::MidiBuffer& events,
+                                     double sampleRate) noexcept
+{
+    int start1 = 0, size1 = 0, start2 = 0, size2 = 0;
+    midiOutFifo.prepareToWrite (1, start1, size1, start2, size2);
+    if (size1 + size2 < 1) return;   // pump stalled — drop the block
+
+    auto& slot = midiOutQueue[(size_t) start1];
+    slot.port       = port;
+    slot.timeMs     = juce::Time::getMillisecondCounterHiRes();
+    slot.sampleRate = sampleRate > 0.0 ? sampleRate : 48000.0;
+    slot.events.clear();   // keeps the pre-sized capacity
+    slot.events.addEvents (events, 0, -1, 0);
+    midiOutFifo.finishedWrite (1);
+}
+
+void AudioEngine::drainMidiOutQueue()
+{
+    const int ready = midiOutFifo.getNumReady();
+    if (ready <= 0) return;
+
+    int start1 = 0, size1 = 0, start2 = 0, size2 = 0;
+    midiOutFifo.prepareToRead (ready, start1, size1, start2, size2);
+    {
+        const std::lock_guard<std::mutex> lock (midiOutBankMutex);
+        auto send = [this] (int start, int n)
+        {
+            for (int i = 0; i < n; ++i)
+            {
+                auto& slot = midiOutQueue[(size_t) (start + i)];
+                if (slot.port >= 0 && slot.port < (int) midiOutputs.size())
+                    if (auto* out = midiOutputs[(size_t) slot.port].get())
+                        out->sendBlockOfMessages (slot.events, slot.timeMs,
+                                                   slot.sampleRate);
+            }
+        };
+        send (start1, size1);
+        send (start2, size2);
+    }
+    midiOutFifo.finishedRead (size1 + size2);
 }
 
 bool AudioEngine::sendMidiToOutput (int index, const juce::MidiBuffer& events) noexcept
@@ -626,6 +688,9 @@ AudioEngine::~AudioEngine()
     deviceManager.removeChangeListener (this);
     deviceManager.removeAudioCallback (this);
     deviceManager.closeAudioDevice();
+    // After the callback is gone — nothing pushes to the out-FIFO, the
+    // pump drains or drops what's left, then midiOutputs can destruct.
+    midiOutPump.stopThread (2000);
 }
 
 void AudioEngine::play()
@@ -1185,6 +1250,8 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
     for (auto& v : playbackScratch)  v.assign ((size_t) bs, 0.0f);
     for (auto& v : playbackScratchR) v.assign ((size_t) bs, 0.0f);
     for (auto& m : perTrackMidiScratch) m.ensureSize (4096);
+    midiClockOutScratch.ensureSize (4096);
+    for (auto& q : midiOutQueue) q.events.ensureSize (4096);
     silentInputScratch.assign ((size_t) bs, 0.0f);
 
     for (auto& a : laneAccum)
@@ -1746,16 +1813,11 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
 
         if (! midiClockOutScratch.isEmpty())
         {
-            // sendBlockOfMessages places the buffer into JUCE's background
-            // delivery queue. The timestamp arg is the "now" wall-clock
-            // ms used to scale the per-event sample offsets. sr > 0
-            // guaranteed by audioDeviceAboutToStart so the divide is
-            // safe here.
-            const double srSend = currentSampleRate.load (std::memory_order_relaxed);
-            midiOutputs[(size_t) syncOutIdx]->sendBlockOfMessages (
-                midiClockOutScratch,
-                juce::Time::getMillisecondCounterHiRes(),
-                srSend > 0.0 ? srSend : 48000.0);
+            // Hand off to the pump thread — sendBlockOfMessages locks
+            // the delivery thread's mutex and allocates, neither of
+            // which is audio-thread safe (see midiOutFifo).
+            queueMidiOutBlock (syncOutIdx, midiClockOutScratch,
+                               currentSampleRate.load (std::memory_order_relaxed));
         }
     }
 
@@ -2911,31 +2973,17 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         // External MIDI output. When this MIDI track has a hardware port
         // selected, mirror the just-built per-track buffer to that port
         // so an external synth/drum machine receives the same notes the
-        // loaded instrument plugin (if any) does. JUCE's MidiOutput
-        // delivers via its own background thread (started in
-        // rebuildMidiOutputBank), so the audio thread just enqueues.
-        // Empty buffer skipped to avoid pointless wakeups on the
-        // delivery thread.
+        // loaded instrument plugin (if any) does. Handed to the pump
+        // thread via the lock-free out-FIFO (see midiOutFifo) — the
+        // pump validates the port index against the bank under its
+        // mutex. Empty buffer skipped to avoid pointless slot use.
         if (midiTrack && ! perTrackMidiScratch[(size_t) t].isEmpty())
         {
             const int outIdx = session.track (t).midiOutputIndex.load (
                                   std::memory_order_relaxed);
-            if (outIdx >= 0 && outIdx < (int) midiOutputs.size())
-            {
-                if (auto* out = midiOutputs[(size_t) outIdx].get())
-                {
-                    // sendBlockOfMessages takes an absolute "ms-since-epoch"
-                    // start time; pass juce::Time::getMillisecondCounterHiRes()
-                    // so events fire as close to "now + sampleOffset" as
-                    // the OS scheduler allows. The samples-per-second
-                    // arg lets the delivery thread map sample offsets to
-                    // wall-clock deltas.
-                    const double sendRate = currentSampleRate.load (std::memory_order_relaxed);
-                    out->sendBlockOfMessages (perTrackMidiScratch[(size_t) t],
-                                                juce::Time::getMillisecondCounterHiRes(),
-                                                sendRate > 0.0 ? sendRate : 48000.0);
-                }
-            }
+            if (outIdx >= 0)
+                queueMidiOutBlock (outIdx, perTrackMidiScratch[(size_t) t],
+                                   currentSampleRate.load (std::memory_order_relaxed));
         }
 
         // Tell the strip whether the recorder is going to ask for the
@@ -3266,6 +3314,22 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
     // channel sending to them) don't run their plugins.
     for (int a = 0; a < Session::kNumAuxLanes; ++a)
     {
+        // Skip only when every slot is empty. A loaded send effect
+        // (reverb / delay) keeps ringing after its input goes silent —
+        // skipping on input peak would hard-cut the tail at a block
+        // boundary and ring the stale remainder back in on the next
+        // note. A hardware insert returns outboard audio regardless of
+        // the lane's send level. Mirrors the plugin-tail exclusion on
+        // the per-track skip in ChannelStrip::processBlock.
+        bool laneHasInsert = false;
+        for (auto& m : auxLaneStrips[(size_t) a].insertMode)
+            if (m.load (std::memory_order_relaxed) != AuxLaneStrip::kInsertEmpty)
+            {
+                laneHasInsert = true;
+                break;
+            }
+
+        if (! laneHasInsert)
         {
             const auto rngL = juce::FloatVectorOperations::findMinAndMax (
                                   auxLaneL[(size_t) a].data(), numSamples);

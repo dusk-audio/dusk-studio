@@ -27,6 +27,7 @@ add_executable(dusk-studio-tests
     session_corrupted_recovery.cpp
     session_format_version.cpp
     session_write_atomic.cpp
+    session_portable_paths.cpp
     session_schema_migration.cpp
     dsp_components_test.cpp
     recording_byte_accuracy.cpp
