@@ -272,6 +272,13 @@ public:
     // against a baseline instead. Message thread.
     void   resetXRunCounts() noexcept;
 
+    // Per-section callback timing (see PerfSections below). Capture is
+    // normally enabled by DUSKSTUDIO_PERF=1 + a 2 s reporter timer; the
+    // headless session-perf harness enables it directly and prints once
+    // at the end of its run.
+    void setPerfCaptureEnabled (bool b) noexcept { perf.enabled = b; }
+    void printPerfTable();
+
     // False = PipeWire opened the per-device ALSA name with 0 output
     // channels and the user gets silent output with no error.
     bool   hasUsableOutputs() const noexcept { return usableOutputs.load (std::memory_order_relaxed); }
@@ -388,6 +395,12 @@ private:
     std::vector<float> mixL, mixR;
     std::array<std::vector<float>, Session::kNumBuses> busL, busR;
     std::array<std::vector<float>, Session::kNumAuxLanes> auxLaneL, auxLaneR;
+
+    // Aux tail-aware skip: consecutive samples each plugin lane's wet
+    // output has been silent. Past kAuxTailSilenceSeconds the lane
+    // sleeps until its input returns. Audio thread only.
+    static constexpr double kAuxTailSilenceSeconds = 2.0;
+    std::array<juce::int64, Session::kNumAuxLanes> auxSilentRunSamples {};
     // Per-track disk-playback buffers. One per track (not a single shared
     // scratch) so the per-block work can run as two passes — a serial PREP
     // pass that resolves each track's source + MIDI, then a DSP pass that
@@ -526,6 +539,25 @@ private:
 
     std::atomic<double> currentSampleRate { 0.0 };
     std::atomic<int>    currentBlockSize  { 0 };
+
+    // DUSKSTUDIO_PERF=1: coarse per-section wall-time attribution for the
+    // callback. The audio thread adds tick deltas into relaxed atomics at
+    // six section boundaries (one branch + one fetch_add each when
+    // enabled, a single cached-bool branch when not); a 2 s message-thread
+    // timer prints the table to stderr and zeroes the counters.
+    struct PerfSections
+    {
+        enum Section { kPre = 0, kStrips, kMeterRecordTail,
+                       kBuses, kAuxes, kMasterOut, kNumSections };
+        std::array<std::atomic<juce::int64>, kNumSections> ticks {};
+        std::atomic<juce::int64> totalTicks { 0 };
+        std::atomic<juce::int64> blocks     { 0 };
+        bool enabled = false;
+    };
+    PerfSections perf;
+    class PerfReporter;
+    std::unique_ptr<PerfReporter> perfReporter;
+
     std::atomic<int>    xrunCount         { 0 };
     // Device xrun count at the last resetXRunCounts(); subtracted in
     // getBackendXRunCount. Cleared on device start (the device's own

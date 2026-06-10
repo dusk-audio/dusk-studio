@@ -90,10 +90,11 @@ AudioSettingsPanel::AudioSettingsPanel (juce::AudioDeviceManager& dm,
     }
     oversamplingCombo.setTooltip (
         "Global effect oversampling. 1x is native rate "
-        "(lowest CPU). 2x / 4x engage internal "
-        "oversampling on the master + aux bus comps and "
-        "the master tape saturation. Per-channel comp "
-        "and EQ stay at native rate regardless.");
+        "(lowest CPU). 2x / 4x raise the internal rate of "
+        "every channel, bus, and master EQ + compressor "
+        "and the tape saturation - roughly 2-4x the DSP "
+        "cost of the whole mixer. The status bar shows "
+        "an @2x / @4x badge while engaged.");
     oversamplingCombo.onChange = [this] { applyOversamplingChange(); };
     addAndMakeVisible (oversamplingCombo);
 

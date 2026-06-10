@@ -58,6 +58,11 @@ void SystemStatusBar::timerCallback()
     // - surfacing both lets a glitchy session be diagnosed at a glance.
     dspInfo = "DSP: " + juce::String ((int) std::round (cpu * 100.0)) + "%"
             + " (" + juce::String (engineXruns) + "/" + juce::String (backendXruns) + ")";
+    // Oversampling badge, only above 1x: a session saved at 2x/4x
+    // multiplies the whole mixer's DSP cost, and without the badge that
+    // cost reads as an inexplicable load spike.
+    if (const int ox = engine.getSession().oversamplingFactor.load (std::memory_order_relaxed); ox > 1)
+        dspInfo += " @" + juce::String (ox) + "x";
 
     // Chord readout. Audio thread maintains heldMidiNotes; we snapshot
     // here, fingerprint to skip re-analysis when nothing changed, and

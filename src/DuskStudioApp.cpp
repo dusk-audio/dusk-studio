@@ -677,6 +677,109 @@ static void runHeadlessPipelineTest (const juce::String& pluginPath)
     std::fflush (stdout);
 }
 
+// DUSKSTUDIO_PERF_SESSION=<path>: load a real session and play it
+// headlessly at 48 kHz / 256 samples, paced to realtime so the playback
+// prefetch behaves as it does live, then print the per-section perf
+// table. Measures the full mixer path (region playback, automation,
+// buses, aux, master) with no audio device — for attributing a DSP-load
+// report to a specific section of the callback.
+static void runHeadlessSessionPerf (const juce::String& sessionPath)
+{
+    constexpr double sampleRate = 48000.0;
+    constexpr int    blockSize  = 256;
+    constexpr int    numBlocks  = 2000;   // ~10.7 s at 48k/256
+    constexpr int    numInChannels  = 2;
+    constexpr int    numOutChannels = 2;
+
+    std::fprintf (stdout, "=== Dusk Studio Headless Session Perf ===\n");
+    std::fprintf (stdout, "Session: %s\nSR=%.0f BS=%d Blocks=%d (realtime-paced)\n",
+                  sessionPath.toRawUTF8(), sampleRate, blockSize, numBlocks);
+
+    auto session = std::make_unique<Session>();
+    auto engine  = std::make_unique<AudioEngine> (*session);
+    engine->prepareForSelfTest (sampleRate, blockSize);
+
+    juce::File f (sessionPath);
+    if (f.isDirectory()) f = f.getChildFile ("session.json");
+    if (! f.existsAsFile())
+    {
+        std::fprintf (stderr, "FAIL: no session.json at %s\n", f.getFullPathName().toRawUTF8());
+        return;
+    }
+    session->setSessionDirectory (f.getParentDirectory());
+    if (! SessionSerializer::load (*session, f))
+    {
+        std::fprintf (stderr, "FAIL: SessionSerializer::load returned false\n");
+        return;
+    }
+    engine->consumePluginStateAfterLoad();
+    engine->consumeTransportStateAfterLoad();
+    // Re-prepare so just-loaded plugins see the right SR/BS.
+    engine->prepareForSelfTest (sampleRate, blockSize);
+
+    int regions = 0, midiRegions = 0, inserts = 0, hwInserts = 0;
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        regions     += (int) session->track (t).regions.size();
+        midiRegions += (int) session->track (t).midiRegions.current().size();
+        if (engine->getStrip (t).getPluginSlot().isLoaded())          ++inserts;
+        if (session->track (t).hardwareInsert.enabled.load())          ++hwInserts;
+    }
+    std::fprintf (stdout, "Loaded: %d audio regions, %d MIDI regions, %d plugin inserts, %d HW inserts\n",
+                  regions, midiRegions, inserts, hwInserts);
+
+    engine->setPerfCaptureEnabled (true);
+    engine->getTransport().setPlayhead (0);
+    engine->play();
+
+    std::vector<std::vector<float>> inputs ((size_t) numInChannels,
+                                              std::vector<float> ((size_t) blockSize, 0.0f));
+    std::vector<const float*> inputPtrs ((size_t) numInChannels, nullptr);
+    for (int c = 0; c < numInChannels; ++c)
+        inputPtrs[(size_t) c] = inputs[(size_t) c].data();
+
+    std::vector<std::vector<float>> outputs ((size_t) numOutChannels,
+                                               std::vector<float> ((size_t) blockSize, 0.0f));
+    std::vector<float*> outputPtrs ((size_t) numOutChannels, nullptr);
+    for (int c = 0; c < numOutChannels; ++c)
+        outputPtrs[(size_t) c] = outputs[(size_t) c].data();
+
+    juce::AudioIODeviceCallbackContext ctx {};
+
+    const double blockMs = 1000.0 * blockSize / sampleRate;
+    const auto   wall0   = juce::Time::getMillisecondCounterHiRes();
+    float masterPeak = 0.0f;
+
+    for (int b = 0; b < numBlocks; ++b)
+    {
+        for (auto& o : outputs) std::fill (o.begin(), o.end(), 0.0f);
+        engine->audioDeviceIOCallbackWithContext (
+            inputPtrs.data(), numInChannels,
+            outputPtrs.data(), numOutChannels,
+            blockSize, ctx);
+
+        for (int s = 0; s < blockSize; ++s)
+            masterPeak = juce::jmax (masterPeak,
+                                     std::abs (outputs[0][(size_t) s]),
+                                     std::abs (outputs[1][(size_t) s]));
+
+        // Pace to realtime so the prefetch thread fills readers the way a
+        // live device run would; free-running would outrun it and the
+        // resulting silence would let strips skip, undercounting cost.
+        const double target = wall0 + (double) (b + 1) * blockMs;
+        while (juce::Time::getMillisecondCounterHiRes() < target)
+            juce::Thread::sleep (1);
+    }
+
+    engine->stop();
+    std::fprintf (stdout, "Master peak over run: %.4f %s\n", masterPeak,
+                  masterPeak <= 1.0e-6f ? "(SILENT - check playhead/regions; costs below undercount the live case)"
+                                        : "");
+    engine->printPerfTable();
+    std::fprintf (stdout, "=== End of Session Perf ===\n");
+    std::fflush (stdout);
+}
+
 static void runHeadlessSelfTest()
 {
     // Heap-allocated so destruction order matches the GUI path: AudioEngine
@@ -787,6 +890,13 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
     if (const char* path = std::getenv ("DUSKSTUDIO_PIPELINE_TEST"); path != nullptr && *path)
     {
         runHeadlessPipelineTest (juce::String (path));
+        quit();
+        return;
+    }
+
+    if (const char* path = std::getenv ("DUSKSTUDIO_PERF_SESSION"); path != nullptr && *path)
+    {
+        runHeadlessSessionPerf (juce::String (path));
         quit();
         return;
     }

@@ -31,8 +31,67 @@ static juce::File audioDeviceStateFile()
     return dir.getChildFile ("audio-device.xml");
 }
 
+class AudioEngine::PerfReporter final : public juce::Timer
+{
+public:
+    explicit PerfReporter (AudioEngine& e) : engine (e) { startTimer (2000); }
+    ~PerfReporter() override { stopTimer(); }
+
+private:
+    void timerCallback() override { engine.printPerfTable(); }
+    AudioEngine& engine;
+};
+
+void AudioEngine::printPerfTable()
+{
+    // The per-counter exchanges aren't a consistent snapshot — a block
+    // can land between them, skewing the averages by ~1 block out of
+    // the hundreds in a reporting window. Fine for a diagnostic.
+    const auto blocks = perf.blocks.exchange (0, std::memory_order_relaxed);
+    if (blocks <= 0) return;
+
+    static const char* const names[PerfSections::kNumSections] = {
+        "pre (midi/sync/bindings/automation/pdc/playback prep)",
+        "strip DSP (24 tracks: playback read + chain + accumulate)",
+        "meter + record tail",
+        "bus loop",
+        "aux loop",
+        "master + metronome + output",
+    };
+
+    const double tps      = (double) juce::Time::getHighResolutionTicksPerSecond();
+    const double sr       = currentSampleRate.load (std::memory_order_relaxed);
+    const int    bs       = currentBlockSize.load (std::memory_order_relaxed);
+    const double budgetUs = (sr > 0.0 && bs > 0) ? 1.0e6 * (double) bs / sr : 0.0;
+
+    std::fprintf (stderr,
+                  "[Dusk Studio/perf] %lld blocks @ %.0f Hz / %d samples (budget %.0f us)\n",
+                  (long long) blocks, sr, bs, budgetUs);
+
+    for (int s = 0; s < PerfSections::kNumSections; ++s)
+    {
+        const auto t = perf.ticks[(size_t) s].exchange (0, std::memory_order_relaxed);
+        const double us = 1.0e6 * (double) t / tps / (double) blocks;
+        std::fprintf (stderr, "  %-58s %8.1f us/block  %5.1f%%\n",
+                      names[s], us, budgetUs > 0.0 ? 100.0 * us / budgetUs : 0.0);
+    }
+
+    const auto tot = perf.totalTicks.exchange (0, std::memory_order_relaxed);
+    const double totUs = 1.0e6 * (double) tot / tps / (double) blocks;
+    std::fprintf (stderr, "  %-58s %8.1f us/block  %5.1f%%\n",
+                  "TOTAL callback", totUs,
+                  budgetUs > 0.0 ? 100.0 * totUs / budgetUs : 0.0);
+    std::fflush (stderr);
+}
+
 AudioEngine::AudioEngine (Session& sessionToBindTo) : session (sessionToBindTo)
 {
+    if (const char* p = std::getenv ("DUSKSTUDIO_PERF"); p != nullptr && p[0] == '1')
+    {
+        perf.enabled = true;
+        perfReporter = std::make_unique<PerfReporter> (*this);
+    }
+
     // Held by unique_ptr so AudioEngine.h stays free of McuReceiver /
     // McuController definitions.
     mcuReceiver   = std::make_unique<McuReceiver>   (session);
@@ -1221,6 +1280,8 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
     for (auto& a : auxLaneStrips) a.prepare (sr, bs);
     master.prepare (sr, bs, oxFactor);
 
+    auxSilentRunSamples.fill (0);
+
     // Strips just re-prepared their plugins (re-caching latency) and rebuilt
     // their PDC delay lines — recompute the compensation against the fresh
     // latencies.
@@ -1529,6 +1590,20 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
     if (numSamples <= 0) return;
 
     const auto callbackStart = juce::Time::getHighResolutionTicks();
+
+    // Section attribution (see PerfSections). One cached-bool branch per
+    // lap when disabled; the mastering-stage shortcut and other early
+    // returns simply never lap, so only full mixer passes are counted.
+    const bool perfOn = perf.enabled;
+    juce::int64 perfMark = callbackStart;
+    auto perfLap = [&] (int section) noexcept
+    {
+        if (! perfOn) return;
+        const auto now = juce::Time::getHighResolutionTicks();
+        perf.ticks[(size_t) section].fetch_add (now - perfMark,
+                                                std::memory_order_relaxed);
+        perfMark = now;
+    };
 
     // Cache the device-I/O pointers + channel counts for the strips'
     // hardware-insert slots. Strips read/write through these for the
@@ -3059,6 +3134,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
     // run pure DSP. (The parallel reduce regroups the float sum, so the master
     // is bit-identical only in serial mode; the parallel difference is a
     // deterministic ~1e-7, far below audibility.)
+    perfLap (PerfSections::kPre);
+
     if (workerPool.isActive())
     {
         currentBlockSamples = numSamples;
@@ -3071,6 +3148,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
             accumulateStrip (t, mixL.data(), mixR.data(),
                              busLPtrs, busRPtrs, auxLanePtrsL, auxLanePtrsR, numSamples);
     }
+
+    perfLap (PerfSections::kStrips);
 
     // ── Post-DSP serial tail: metering + recording (audio thread). ───────
     for (int t = 0; t < Session::kNumTracks; ++t)
@@ -3187,6 +3266,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
 
     }
 
+    perfLap (PerfSections::kMeterRecordTail);
+
     for (int a = 0; a < Session::kNumBuses; ++a)
     {
         const auto& params = session.bus (a).strip;
@@ -3280,6 +3361,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                                             numSamples);
     }
 
+    perfLap (PerfSections::kBuses);
+
     // AUX automation routing. Mirror of the per-track per-block block
     // up at the top: for each aux lane, drive liveReturnLevelDb /
     // liveMute from the lane in Read or (Touch && !touched) mode,
@@ -3334,31 +3417,53 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
     // channel sending to them) don't run their plugins.
     for (int a = 0; a < Session::kNumAuxLanes; ++a)
     {
-        // Skip only when every slot is empty. A loaded send effect
-        // (reverb / delay) keeps ringing after its input goes silent —
-        // skipping on input peak would hard-cut the tail at a block
-        // boundary and ring the stale remainder back in on the next
-        // note. A hardware insert returns outboard audio regardless of
-        // the lane's send level. Mirrors the plugin-tail exclusion on
-        // the per-track skip in ChannelStrip::processBlock.
-        bool laneHasInsert = false;
+        // Tail-aware skip. A loaded send effect (reverb / delay) keeps
+        // ringing after its input goes silent, so an input-peak skip
+        // would hard-cut the tail at a block boundary. Instead, a lane
+        // with loaded plugin slots only sleeps once its wet OUTPUT has
+        // measured <= 1e-6 (~-120 dBFS) for kAuxTailSilenceSeconds of
+        // CONSECUTIVE blocks — any audible output resets the clock
+        // below, so the skip cannot engage mid-decay. What freezes is
+        // the plugin's sub-audible residue, which resumes (still
+        // sub-audible) on the next send. Hardware-insert lanes never
+        // skip (outboard gear returns audio regardless of the send
+        // level, and measuring that return requires running the block).
+        bool laneHasPlugin = false, laneHasHardware = false;
         for (auto& m : auxLaneStrips[(size_t) a].insertMode)
-            if (m.load (std::memory_order_relaxed) != AuxLaneStrip::kInsertEmpty)
-            {
-                laneHasInsert = true;
-                break;
-            }
+        {
+            const int mode = m.load (std::memory_order_relaxed);
+            if (mode == AuxLaneStrip::kInsertPlugin)   laneHasPlugin   = true;
+            if (mode == AuxLaneStrip::kInsertHardware) laneHasHardware = true;
+        }
 
-        if (! laneHasInsert)
+        const auto lanePeak = [this, numSamples] (int lane) -> float
         {
             const auto rngL = juce::FloatVectorOperations::findMinAndMax (
-                                  auxLaneL[(size_t) a].data(), numSamples);
+                                  auxLaneL[(size_t) lane].data(), numSamples);
             const auto rngR = juce::FloatVectorOperations::findMinAndMax (
-                                  auxLaneR[(size_t) a].data(), numSamples);
-            const float peak = juce::jmax (
+                                  auxLaneR[(size_t) lane].data(), numSamples);
+            return juce::jmax (
                 juce::jmax (std::abs (rngL.getStart()), std::abs (rngL.getEnd())),
                 juce::jmax (std::abs (rngR.getStart()), std::abs (rngR.getEnd())));
-            if (peak <= 1e-6f)
+        };
+
+        if (! laneHasHardware)
+        {
+            const float inPeak = lanePeak (a);
+            const bool inputSilent = inPeak <= 1e-6f;
+
+            // auxSilentRunSamples is zeroed in prepareForSelfTest, so a
+            // sample-rate change can't hold a stale count against the
+            // new window.
+            const double srNow = currentSampleRate.load (std::memory_order_relaxed);
+            const juce::int64 tailSamples = (juce::int64) (kAuxTailSilenceSeconds
+                                                            * (srNow > 0.0 ? srNow : 48000.0));
+            // Empty lanes skip immediately on silent input (no tail to
+            // protect); plugin lanes wait out the tail window.
+            const bool canSkip = inputSilent
+                              && (! laneHasPlugin
+                                  || auxSilentRunSamples[(size_t) a] >= tailSamples);
+            if (canSkip)
             {
                 // Reset the aux-lane meter on skip — same rationale as the
                 // bus-pass skip above. Without this the lane LED freezes
@@ -3368,6 +3473,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                 auxLaneRef.params.meterPostR.store (-100.0f, std::memory_order_relaxed);
                 continue;
             }
+            if (! inputSilent)
+                auxSilentRunSamples[(size_t) a] = 0;
         }
 
         auxLaneStrips[(size_t) a].processStereoBlock (auxLaneL[(size_t) a].data(),
@@ -3383,7 +3490,21 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         juce::FloatVectorOperations::add (mixR.data(),
                                             auxLaneR[(size_t) a].data(),
                                             numSamples);
+
+        // Tail clock: advances only while the wet output has decayed to
+        // silence (input silence is implied — a loud input resets the
+        // run above before processing). Once it passes the tail window
+        // the skip engages on the next silent-input block.
+        if (laneHasPlugin && ! laneHasHardware)
+        {
+            if (lanePeak (a) <= 1e-6f)
+                auxSilentRunSamples[(size_t) a] += numSamples;
+            else
+                auxSilentRunSamples[(size_t) a] = 0;
+        }
     }
+
+    perfLap (PerfSections::kAuxes);
 
     master.processInPlace (mixL.data(), mixR.data(), numSamples);
 
@@ -3477,6 +3598,14 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
     // for the status bar. Same pass also updates the smoothed CPU usage
     // (callback wall-time / buffer audio-time, one-pole LPF) which the
     // status bar polls.
+    perfLap (PerfSections::kMasterOut);
+    if (perfOn)
+    {
+        perf.totalTicks.fetch_add (juce::Time::getHighResolutionTicks() - callbackStart,
+                                   std::memory_order_relaxed);
+        perf.blocks.fetch_add (1, std::memory_order_relaxed);
+    }
+
     const auto sr = currentSampleRate.load (std::memory_order_relaxed);
     if (sr > 0.0)
     {
