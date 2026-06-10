@@ -18,8 +18,10 @@ cd "$REPO_DIR"
 
 VERSION="$(tr -d '[:space:]' < VERSION)"
 [[ -n "$VERSION" ]] || { echo "error: VERSION file is empty or missing" >&2; exit 1; }
-[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$ ]] || { 
-    echo "error: VERSION must be semantic version (e.g., 1.2.3 or 1.2.3-beta), got: $VERSION" >&2
+# Strict triple only, matching bump-version.sh: CMake's project(VERSION)
+# rejects prerelease suffixes, so they can never reach the VERSION file.
+[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+    echo "error: VERSION must be a semver triple (e.g., 1.2.3), got: $VERSION" >&2
     exit 1
 }
 BUILD_DIR="${BUILD_DIR:-build-linux}"
