@@ -267,6 +267,11 @@ public:
     // Backend xruns (e.g. ALSA snd_pcm_recover EPIPE). 0 if no device.
     int    getBackendXRunCount() const noexcept;
 
+    // Zero both xrun readouts (status-bar double-click). The backend
+    // counter is device-owned and can't be cleared, so it's offset
+    // against a baseline instead. Message thread.
+    void   resetXRunCounts() noexcept;
+
     // False = PipeWire opened the per-device ALSA name with 0 output
     // channels and the user gets silent output with no error.
     bool   hasUsableOutputs() const noexcept { return usableOutputs.load (std::memory_order_relaxed); }
@@ -522,6 +527,10 @@ private:
     std::atomic<double> currentSampleRate { 0.0 };
     std::atomic<int>    currentBlockSize  { 0 };
     std::atomic<int>    xrunCount         { 0 };
+    // Device xrun count at the last resetXRunCounts(); subtracted in
+    // getBackendXRunCount. Cleared on device start (the device's own
+    // counter restarts at 0 there).
+    std::atomic<int>    backendXrunBaseline { 0 };
     std::atomic<float>  cpuUsage          { 0.0f };
 
     // Valid for the duration of one callback only — strips consume

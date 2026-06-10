@@ -655,8 +655,18 @@ int AudioEngine::getBackendXRunCount() const noexcept
     // const_cast: getCurrentAudioDevice is non-const for historical
     // reasons. Benign — getXRunCount is noexcept and returns a counter.
     if (auto* dev = const_cast<juce::AudioDeviceManager&> (deviceManager).getCurrentAudioDevice())
-        return dev->getXRunCount();
+        return juce::jmax (0, dev->getXRunCount()
+                                  - backendXrunBaseline.load (std::memory_order_relaxed));
     return 0;
+}
+
+void AudioEngine::resetXRunCounts() noexcept
+{
+    xrunCount.store (0, std::memory_order_relaxed);
+    int devCount = 0;
+    if (auto* dev = deviceManager.getCurrentAudioDevice())
+        devCount = dev->getXRunCount();
+    backendXrunBaseline.store (devCount, std::memory_order_relaxed);
 }
 
 void AudioEngine::setStage (Stage s) noexcept
@@ -1100,6 +1110,9 @@ void AudioEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
     // changeListenerCallback sees the bump before it inspects
     // getCurrentAudioDevice().
     hadLiveDevice_.store (true, std::memory_order_release);
+
+    // Fresh device, fresh xrun counter — drop the readout offset.
+    backendXrunBaseline.store (0, std::memory_order_relaxed);
 
     // Detect the silent-failure mode where a per-device ALSA name resolves
     // to 0 active output channels (PipeWire's ALSA shim does this for the

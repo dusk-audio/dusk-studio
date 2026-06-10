@@ -485,6 +485,8 @@ The window is structured as a stack of horizontal bands.
 
 Modal dialogs (audio settings, plugin picker, region editor, piano roll, import target picker) appear centered with a dimmed backdrop behind them. Press **Esc** or click outside the modal to dismiss.
 
+The readout in the menu bar's right corner shows the device state (`Audio: 48 kHz 5.3 ms`) and the engine load (`DSP: 12% (0/0)`). The parenthesised pair counts audio dropouts: engine-side overruns / backend (driver) xruns. The segment turns red when load passes ~85% or either counter is non-zero. **Double-click the DSP readout to reset the counters** — useful after fixing whatever caused a dropout so you can watch for fresh ones.
+
 ## The four stages
 
 Only one stage is visible at a time, but the same engine drives all four. Switching stages is purely a UI change; audio keeps flowing.

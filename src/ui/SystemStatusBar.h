@@ -18,9 +18,17 @@ public:
     ~SystemStatusBar() override;
 
     void paint (juce::Graphics&) override;
+    void mouseDoubleClick (const juce::MouseEvent&) override;
 
 private:
     void timerCallback() override;
+
+    // The DSP segment's bounds — shared by paint() and the double-click
+    // hit test so the reset zone always matches what's drawn.
+    juce::Rectangle<int> dspSegmentBounds() const noexcept
+    {
+        return getLocalBounds().reduced (8, 0).removeFromRight (140);
+    }
 
     AudioEngine& engine;
     juce::String audioInfo  { "Audio: -" };
