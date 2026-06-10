@@ -420,7 +420,7 @@ Open **Settings → Audio…** to choose your audio device. The panel is divided
 
 ### Audio
 
-- **Device**: lists every backend driver Dusk Studio detected. On Linux, PipeWire and JACK appear as "JACK"; ALSA devices appear separately. On Windows, ASIO is preferred and selected by default when an ASIO driver is present; if none is installed, Dusk Studio falls back to "Windows Audio (Exclusive Mode)" for low latency, then shared "Windows Audio", then "DirectSound". Install your interface's ASIO driver (or ASIO4ALL) for best latency.
+- **Device**: lists every backend driver Dusk Studio detected. On Linux, PipeWire and JACK appear as "JACK"; ALSA devices appear separately. On Windows, ASIO is preferred and selected by default when an ASIO driver is present; if none is installed, Dusk Studio falls back to "Windows Audio (Exclusive Mode)" for low latency, then shared "Windows Audio", then "DirectSound". Install your interface's ASIO driver (or ASIO4ALL) for best latency. Changes apply immediately — there is no Save button — and the device you pick is remembered across restarts (per machine, not per session).
 - **Sample rate**: any rate the device supports. 44.1 kHz, 48 kHz, 88.2 kHz, 96 kHz are common.
 - **Block size**: smaller blocks give lower latency but cost more CPU per sample. 256 or 512 samples is a good starting point.
 - **Periods (Linux/ALSA only)**: how many buffers the ALSA driver keeps in flight. Two is the lowest-latency safe value; three or more is more robust on a busy machine.

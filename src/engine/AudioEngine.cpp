@@ -20,6 +20,17 @@ namespace duskstudio
 static const float kHpfLogRange = std::log (ChannelStripParams::kHpfMaxHz
                                              / ChannelStripParams::kHpfMinHz);
 
+// Per-machine audio device setup, alongside app-config.properties /
+// window-state.txt (one concern per file). Restored at construction,
+// persisted on every device change broadcast.
+static juce::File audioDeviceStateFile()
+{
+    auto dir = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+                   .getChildFile ("Dusk Studio");
+    if (! dir.exists()) dir.createDirectory();
+    return dir.getChildFile ("audio-device.xml");
+}
+
 AudioEngine::AudioEngine (Session& sessionToBindTo) : session (sessionToBindTo)
 {
     // Held by unique_ptr so AudioEngine.h stays free of McuReceiver /
@@ -116,7 +127,18 @@ AudioEngine::AudioEngine (Session& sessionToBindTo) : session (sessionToBindTo)
         if (t != nullptr) t->scanForDevices();
    #endif
 
-    if (const auto err = deviceManager.initialiseWithDefaultDevices (16, 2);
+    // Restore the persisted device setup so the backend pick above only
+    // decides the FIRST launch. Without this, every start re-runs the
+    // default pick — on Windows that re-selects the first ASIO entry,
+    // re-instantiating app-shim "drivers" (JRiver et al) the user already
+    // switched away from. Null XML (fresh machine, unreadable file) makes
+    // initialise behave exactly like initialiseWithDefaultDevices.
+    std::unique_ptr<juce::XmlElement> savedDeviceState;
+    if (const auto stateFile = audioDeviceStateFile(); stateFile.existsAsFile())
+        savedDeviceState = juce::parseXML (stateFile);
+
+    if (const auto err = deviceManager.initialise (16, 2, savedDeviceState.get(),
+                                                   /*selectDefaultDeviceOnFailure*/ true);
         err.isNotEmpty())
     {
         std::fprintf (stderr,
@@ -1265,6 +1287,14 @@ void AudioEngine::changeListenerCallback (juce::ChangeBroadcaster* source)
     // engine itself broadcasts via its ChangeBroadcaster base; we
     // don't want to react to our own messages).
     if (source != &deviceManager) return;
+
+    // Persist the chosen setup. createStateXml returns null until the
+    // user has explicitly picked something (treatAsChosenDevice), so the
+    // first-launch default pick is never frozen into the file — only
+    // deliberate choices survive a restart.
+    if (deviceManager.getCurrentAudioDevice() != nullptr)
+        if (const auto xml = deviceManager.createStateXml())
+            audioDeviceStateFile().replaceWithText (xml->toString());
 
     // The hot-unplug signal is "we had a live device, now the
     // current device is null." User-driven settings changes also
