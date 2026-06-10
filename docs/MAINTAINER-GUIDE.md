@@ -1,10 +1,9 @@
 # Dusk Studio — Maintainer's Guide
 
-A guide to understanding, building, debugging, and extending Dusk Studio on your own. It assumes you can read C++ but does **not** assume you know JUCE, real-time audio, or this codebase. Work through Part 1 once, then keep Parts 2–6 open as reference.
+A guide to understanding, building, debugging, and extending Dusk Studio. It assumes you can read C++ but does **not** assume you know JUCE, real-time audio, or this codebase. Work through Part 1 once, then keep Parts 2–6 open as reference.
 
-> Companion docs you already have:
+> Companion docs:
 > - [DuskStudio.md](../DuskStudio.md) — the product spec (the *why* and the *what*). ~1000 lines.
-> - [CLAUDE.md](../CLAUDE.md) — the engineering rulebook (the *how*: audio-thread rules, DSP lifecycle, code style). Read this twice; every rule in it has bitten someone.
 > - [MANUAL.md](../MANUAL.md) — the end-user manual (what each control does).
 > - [README.md](../README.md), [BUILDING-LINUX.md](../BUILDING-LINUX.md), [BUILDING-WINDOWS.md](../BUILDING-WINDOWS.md) — build entry points.
 
@@ -14,29 +13,27 @@ A guide to understanding, building, debugging, and extending Dusk Studio on your
 
 Dusk Studio is a **deliberately constrained, portastudio-style DAW** for Linux/macOS/Windows, written in **JUCE 8 / C++17**. It is one native desktop application — no server, no web component, no database. State lives in RAM (the `Session` object) and is serialized to a single `session.json` file plus a folder of WAV takes.
 
-It is ~**80,000 lines** of C++ across `src/`, plus a large `CMakeLists.txt` (~990 lines) and ~40 Catch2 test files. The DSP (EQ, compressors, tape) is **not** written here — it is shared header code pulled in from a sibling repo of Dusk Audio plugins.
+It is ~**85,000 lines** of C++ across `src/`, plus a large `CMakeLists.txt` (~990 lines) and ~75 Catch2 test files. The DSP (EQ, compressors, tape) is **not** written here — it is shared header code pulled in from a sibling repo of Dusk Audio plugins.
 
 The single most important mental model: **there are several threads, and the rules about what each may do are absolute.** Most bugs that look mysterious are thread-rule violations. Internalize Part 3 before you touch the audio path.
 
-### The hard product constraints (don't "improve" these away)
+### The portastudio sensibility (the product's spine)
 
-These are in [CLAUDE.md](../CLAUDE.md) but they govern *every* feature decision, so they belong here too:
+Dusk Studio is deliberately constrained. These aren't arbitrary limits to be "improved" away — they're the product:
 
-1. **24 channels max.** Fixed. Three banks of 8.
-2. **Fixed signal chain.** No reordering EQ/comp, no plugin chains on channels.
-3. **No waveform editing.** Region move/split/trim/delete only.
-4. **Console-style automation only.** Write/Read/Touch via gesture; no curve drawing.
-5. **Everything visible.** No tabs (piano-roll overlay is the one exception).
-6. **No preferences sprawl.** Audio device config and nothing else.
-7. **Portastudio test:** "Would this exist on a $2000 hardware recorder?" If no, don't build it.
+- **24 channels.** Three banks of 8, mirroring a control surface.
+- **Fixed signal chain.** HPF → EQ → comp → sends → pan → fader, in that order, on every strip. No reordering, no per-channel plugin chains beyond the insert slots.
+- **Regions, not waveforms.** Move/split/trim/fade/delete — no sample-level destructive editing.
+- **Everything visible.** One window; the editors are in-window overlays, not floating tool palettes.
+- **No preferences sprawl.** Audio device config and little else.
 
-If a user asks for a feature, the first question is not "can I build it" but "does it pass the seven constraints." Most "missing feature" requests are intentional omissions.
+The touchstone is hardware like the Tascam DP-24: "would this exist on a standalone hardware recorder?" is the right instinct when judging a feature request, even though it's a sensibility rather than a law. Many "missing feature" requests are intentional omissions — check [DuskStudio.md](../DuskStudio.md) before assuming something was forgotten.
 
 ---
 
 ## Part 1 — The learning path (do this in order)
 
-If you stopped using an AI assistant tomorrow, here is the realistic ramp. Budget a few weeks of evenings. Each step has a concrete "you can do this now" checkpoint.
+Here is the realistic ramp from zero to maintaining this codebase. Budget a few weeks of evenings. Each step has a concrete "you can do this now" checkpoint.
 
 ### Step 1 — Get it building and running (½ day)
 
@@ -93,11 +90,11 @@ Resources: the official JUCE tutorials (audio + GUI tracks), the JUCE class refe
 
 ### Step 4 — Learn enough real-time audio (read once, then it's reflex)
 
-This is the part that has no shortcut and that an AI was probably hiding from you. The audio thread is a hard-real-time deadline: it must fill the output buffer before the soundcard needs it (a few milliseconds), every time, forever. Miss once → an audible click ("xrun"). The rules in [CLAUDE.md](../CLAUDE.md) "Audio thread rules (MANDATORY)" exist because of this. The short version:
+This is the part that has no shortcut. The audio thread is a hard-real-time deadline: it must fill the output buffer before the soundcard needs it (a few milliseconds), every time, forever. Miss once → an audible click ("xrun"). Every thread rule in this guide exists because of this. The short version:
 
 On the audio thread you may **not**: allocate (`new`, `push_back`, `resize`, `std::string`, `juce::String`), lock a mutex, do file/network/log I/O, or call any UI/message-thread API. You communicate with other threads only through `std::atomic<T>` and lock-free FIFOs.
 
-Read CLAUDE.md's audio-thread section until you can recite the list. Then read the actual callback (`AudioEngine::audioDeviceIOCallbackWithContext`, Part 3) and notice it obeys every rule.
+Read Part 3's thread table until you can recite it. Then read the actual callback (`AudioEngine::audioDeviceIOCallbackWithContext`, Part 3) and notice it obeys every rule.
 
 ### Step 5 — Trace one signal end-to-end (the keystone exercise)
 
@@ -127,7 +124,7 @@ That round-trip — **UI writes atom → audio reads atom → audio writes meter
   src/session/   ── Session data model + JSON serialize + edits    (knows nothing above it)
 ```
 
-**Hard rule (enforced by code review, see CLAUDE.md):** `dsp/`, `engine/`, and `session/` never `#include` anything from `ui/`. The dependency arrow points one way: UI → engine → dsp → session. Break this and you'll create circular includes and untestable code.
+**Hard rule (enforced by code review):** `dsp/`, `engine/`, and `session/` never `#include` anything from `ui/`. The dependency arrow points one way: UI → engine → dsp → session. Break this and you'll create circular includes and untestable code.
 
 ### Where things live (the file map that matters)
 
@@ -219,8 +216,9 @@ After binding, the audio thread reads parameters straight from the session's ato
 | **MIDI input** | JUCE's handler → `MidiMessageCollector` | lock-free enqueue | heavy work |
 | **Playback prefetch** | `TimeSliceThread` in `PlaybackEngine` | read WAVs ahead of the playhead | — |
 | **Record disk** | `TimeSliceThread` in `RecordManager` | drain the write FIFO to disk | — |
+| **MIDI out pump** | 1 ms loop in `AudioEngine` | drain the MIDI-out FIFO, call `sendBlockOfMessages` (it locks — that's why it can't run on the audio thread) | — |
 
-Cross-thread state is *always* `std::atomic` or a lock-free FIFO. Metering atomics use `memory_order_relaxed`. Flags that gate audio reads of newly-published data (automation mode, swapped plugin pointer) use `release` on the writer and `acquire` on the audio reader. This is the single subtlest thing in the codebase; CLAUDE.md's "Memory ordering" bullet is the authority.
+Cross-thread state is *always* `std::atomic` or a lock-free FIFO. Metering atomics use `memory_order_relaxed`. Flags that gate audio reads of newly-published data (automation mode, swapped plugin pointer) use `release` on the writer and `acquire` on the audio reader. This is the single subtlest thing in the codebase — when in doubt, find an existing pattern (PluginSlot's swap, RecordManager's in-flight counter) and copy its ordering exactly.
 
 ### Transport & playhead
 
@@ -237,7 +235,7 @@ Cross-thread state is *always* `std::atomic` or a lock-free FIFO. Metering atomi
 
 ### The lifecycle every DSP class follows
 
-`ChannelStrip`, `BusStrip`, `AuxLaneStrip`, `MasterBus`, `MasteringChain`, `PluginSlot` all share this shape (CLAUDE.md "DSP lifecycle" is the canonical statement):
+`ChannelStrip`, `BusStrip`, `AuxLaneStrip`, `MasterBus`, `MasteringChain`, `PluginSlot` all share this shape:
 
 - **`prepare(sampleRate, blockSize, ...)`** — cache the sample rate, `.prepare(spec)` every `juce::dsp` member, `.reset()` every `SmoothedValue`, size every scratch buffer. Must be idempotent (it gets called again on device change).
 - **`bind(params)`** — stash a reference to the matching session param struct.
@@ -301,7 +299,7 @@ CMake auto-detects two external repos at configure time. **Read the configure ou
 - **JUCE:** `-DJUCE_PATH=…` wins; else on Linux it prefers `../JUCE-wayland` (a plugdata-team fork with ~5 local commits Dusk Studio depends on — XEmbed, X11-on-Wayland fix, peer-creation latch), falling back to `../JUCE`; on macOS it uses `../JUCE` (upstream). The upstream-vs-fork API difference (`addDefaultFormatsToManager`) is hidden behind [src/engine/JuceCompat.h](../src/engine/JuceCompat.h) — call `duskstudio::juce_compat::addDefaultFormats(fm)` and never sprinkle `#ifdef __linux__` at call sites.
 - **Dusk plugins:** `-DDUSK_PLUGINS_PATH=…` wins; else prefers `../plugins-main` (a git worktree pinned to the plugins repo's `main` so feature-branch work doesn't break the donor API), falling back to `../plugins`. Set it up once on Linux: `cd ../plugins && git worktree add ../plugins-main main`.
 
-The cross-OS layout (you author on macOS, test on Linux — see the memory notes):
+The cross-OS layout (development happens on macOS, Linux testing on a separate machine — both use the same build-dir names so switching machines never needs a reconfigure):
 
 | OS | App | Tests | JUCE | Plugins |
 |---|---|---|---|---|
@@ -375,7 +373,7 @@ Region and marker edits are `juce::UndoableAction` subclasses ([src/session/Regi
 
 | Symptom | First suspects |
 |---|---|
-| Audible clicks / dropouts ("xruns") | Something allocating/locking/logging on the audio thread; a `SmoothedValue` not reset in `prepare`; buffer-size mismatch. Run TSan. Re-read CLAUDE.md audio rules. |
+| Audible clicks / dropouts ("xruns") | Something allocating/locking/logging on the audio thread; a `SmoothedValue` not reset in `prepare`; buffer-size mismatch. Run TSan. Re-read the thread rules in Part 3. |
 | Intermittent wrong value / flicker | A cross-thread field that should be `atomic` isn't, or wrong memory order. TSan. |
 | "The EQ/comp/tape disappeared" | `DUSK_PLUGINS_PATH` not discovered → `DUSKSTUDIO_HAS_DUSK_DSP=0`. Check CMake configure output. |
 | Build fails finding JUCE | Wrong sibling dir / fork vs upstream. Pass `-DJUCE_PATH=…` explicitly; check JuceCompat.h API split. |
@@ -383,7 +381,7 @@ Region and marker edits are `juce::UndoableAction` subclasses ([src/session/Regi
 | Plugin scan hangs / a plugin never appears | Scanner timeout/blacklist in `PluginManager.cpp`; check the sentinel parsing in `PluginScanProtocol`. |
 | Session won't load / loses data | `SessionSerializer` migration path; a field added to `Session.h` but not (de)serialized. Add a round-trip test. |
 | Meter frozen but audio plays | UI timer not running, or reading the wrong meter atom. |
-| Crash on quit only | Plugin/IPC teardown order; the Linux plugin-leak-on-shutdown is intentional (see the JUCE-pin memory note). |
+| Crash on quit only | Plugin/IPC teardown order; note the Linux plugin-leak-on-shutdown is intentional — see `PluginSlot::leakInstanceForShutdown()` and its comments. |
 | Wayland/X11 window weirdness on Linux | The JUCE-wayland fork commits; `PlatformWindowing_Linux.cpp`. |
 
 General approach: reproduce in a test if at all possible (the suite runs in milliseconds), reach for ASan/TSan early, and when touching the audio path, re-read the thread rules *before* writing the fix, not after.
@@ -399,7 +397,7 @@ General approach: reproduce in a test if at all possible (the suite runs in mill
 - **No backward-compat shims / dead code.** When something's gone, delete it.
 - **No premature abstraction.** Three similar lines beat a speculative class. (But existing duplication that's already a problem *is* fair game to fix.)
 - **Layer rule again:** `dsp/`/`engine/`/`session/` never include `ui/`.
-- **Git:** commits are authored by you only (no AI co-author trailer); small, reviewable, phase-boundary commits; never push without intending to; never force-push `main`.
+- **Git:** small, reviewable commits at natural feature boundaries; no co-author trailers; never push without intending to; never force-push `main`.
 - **Keep the manual in sync:** any user-visible change to `src/{ui,session,dsp,engine}` should be reflected in [MANUAL.md](../MANUAL.md).
 
 ---
@@ -419,7 +417,7 @@ THE HEART        AudioEngine::audioDeviceIOCallbackWithContext()   src/engine/Au
 THE DATA         src/session/Session.h
 THE PATTERN      ChannelStrip::bindCompParams()                    src/dsp/ChannelStrip.cpp
 THE NERVOUS SYS  UI writes atom → audio reads atom → audio writes meter atom → UI timer reads it
-THE RULES        CLAUDE.md  →  "Audio thread rules (MANDATORY)"
+THE RULES        Part 3's thread table — no alloc / lock / I/O / UI on the audio thread
 ```
 
 ---
