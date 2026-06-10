@@ -143,6 +143,11 @@ StartupDialog::StartupDialog (juce::Array<juce::File> r)
     addAndMakeVisible (emptyLabel);
     emptyLabel.setVisible (rows.empty());
 
+    updateLabel.setFont (juce::Font (juce::FontOptions (11.0f, juce::Font::bold)));
+    updateLabel.setJustificationType (juce::Justification::centred);
+    updateLabel.setInterceptsMouseClicks (false, false);
+    addChildComponent (updateLabel);   // hidden until setUpdateAvailable
+
     styleSidebarTab (recentTab, true);
     styleSidebarTab (openTab,   false);
     styleSidebarTab (newTab,    false);
@@ -335,6 +340,8 @@ void StartupDialog::resized()
     recentTab.setBounds (sidebar.removeFromTop (36));
     openTab  .setBounds (sidebar.removeFromTop (36));
     newTab   .setBounds (sidebar.removeFromTop (36));
+    sidebar.removeFromTop (16);
+    updateLabel.setBounds (sidebar.removeFromTop (32));
 
     // Footer.
     constexpr int footerH = 52;
@@ -358,6 +365,24 @@ void StartupDialog::resized()
         table.setVisible (true);
         table.setBounds (main);
     }
+}
+
+void StartupDialog::setUpdateAvailable (const juce::String& tagName)
+{
+    updateLabel.setText ("UPDATE\n" + tagName, juce::dontSendNotification);
+    updateLabel.setTooltip ("A newer Dusk Studio release (" + tagName + ") is available.");
+    updateLabel.setColour (juce::Label::textColourId, juce::Colour (0xffe0a050));
+    updateLabel.setVisible (true);
+    startTimer (500);
+}
+
+void StartupDialog::timerCallback()
+{
+    // Flash by alternating the badge between amber and dim — text stays
+    // put so it remains readable mid-blink.
+    updateFlashOn = ! updateFlashOn;
+    updateLabel.setColour (juce::Label::textColourId,
+                           updateFlashOn ? juce::Colour (0xffe0a050) : kTextLo);
 }
 
 void StartupDialog::closeDialog (int returnCode)

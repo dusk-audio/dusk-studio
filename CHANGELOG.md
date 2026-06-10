@@ -38,6 +38,9 @@ the public stable declaration.
   (from markers) next to the clock.
 - **Double-click the DSP readout to reset the xrun counters** after fixing
   whatever caused a dropout.
+- **Update notice.** The startup dialog checks for a newer release and
+  shows a flashing UPDATE badge in its sidebar when one exists; silent
+  when up to date or offline.
 - **Opt-in parallel strip DSP** across worker threads
   (`DUSKSTUDIO_AUDIO_WORKERS`) for heavyweight sessions on many-core
   machines.

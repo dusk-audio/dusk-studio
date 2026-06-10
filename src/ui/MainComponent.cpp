@@ -24,6 +24,7 @@
 #include "../session/SessionTemplates.h"
 #include "MasteringView.h"
 #include "StartupDialog.h"
+#include "UpdateChecker.h"
 #include "SystemStatusBar.h"
 #include "TapeStrip.h"
 #include "TransportBar.h"
@@ -1743,6 +1744,19 @@ void MainComponent::launchStartupDialog()
                                                        startupDialog->getHeight());
     startupDialog->setBounds (bounds);
     addAndMakeVisible (startupDialog.get());
+
+    // Background tag probe -> flashing sidebar badge when a newer
+    // release exists. SafePointer: the response may arrive after the
+    // dialog is dismissed.
+    {
+        juce::Component::SafePointer<StartupDialog> safeDlg (startupDialog.get());
+        updatecheck::checkForNewerTagAsync (JUCE_APPLICATION_VERSION_STRING,
+            [safeDlg] (const juce::String& tag)
+            {
+                if (auto* dlg = safeDlg.getComponent())
+                    dlg->setUpdateAvailable (tag);
+            });
+    }
 }
 
 void MainComponent::dismissStartupDialog (std::function<void()> onDone)
