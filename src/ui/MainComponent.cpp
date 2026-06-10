@@ -683,20 +683,25 @@ MainComponent::~MainComponent()
     if (consoleView != nullptr)
         consoleView->dropAllPluginEditors();
 
-    // Force-delete any audio settings dialog we launched. JUCE's
-    // ModalComponentManager keeps modal dialogs alive on its own stack and
-    // would clean them up at app exit via ScopedJuceInitialiser_GUI's
-    // destructor - but that runs AFTER MainComponent destructs (and
-    // therefore AFTER our AudioEngine + AudioDeviceManager are gone). The
-    // dialog's AudioDeviceSelectorComponent listens to AudioDeviceManager
-    // and would crash on listener-removal in that delayed teardown.
-    // Deleting it here, while AudioEngine is still alive, is safe.
-    // Embedded modal teardown: closes the panel + dim while AudioEngine
-    // is still alive, so AudioDeviceSelectorComponent's listener removal
-    // happens before the engine and its DeviceManager go away.
-    audioSettingsModal.close();
-    mixdownModal      .close();
-    bounceModal       .close();
+    // Force-delete any modal body we launched, synchronously. close()
+    // would defer body destruction to the next message-loop tick — but
+    // the dispatch loop has already exited on this path, so the deferred
+    // lambda would run AFTER our AudioEngine + AudioDeviceManager are
+    // gone. AudioSettingsPanel's destructor removes listeners from both;
+    // PluginScanModal's stops a worker that calls into the engine-owned
+    // PluginManager; BounceDialog's cancels + joins a BounceEngine
+    // rendering through the engine. All of those must run while the
+    // engine is still alive. No body callback can be on the stack here
+    // (the dtor runs from app shutdown), so in-place destruction is safe.
+    audioSettingsModal   .closeAndDeleteBodyNow();
+    mixdownModal         .closeAndDeleteBodyNow();
+    bounceModal          .closeAndDeleteBodyNow();
+    scanModal            .closeAndDeleteBodyNow();
+    quitModal            .closeAndDeleteBodyNow();
+    recoveryModal        .closeAndDeleteBodyNow();
+    virtualKeyboardModal .closeAndDeleteBodyNow();
+    importTargetModal    .closeAndDeleteBodyNow();
+    shortcutsModal       .closeAndDeleteBodyNow();
 
     // Intentionally NO auto-save here. Standard DAW behavior is to require
     // an explicit Save before exit. The previous auto-save on destruct

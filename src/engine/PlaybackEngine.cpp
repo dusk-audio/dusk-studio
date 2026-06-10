@@ -1,5 +1,7 @@
 #include "PlaybackEngine.h"
+#include <cstdio>
 #include <cstring>
+#include <thread>
 
 namespace duskstudio
 {
@@ -168,10 +170,39 @@ void PlaybackEngine::preparePlayback()
         if (! stream->regions.empty())
             streams[(size_t) t] = std::move (stream);
     }
+
+    streamsActive.store (true, std::memory_order_release);
 }
 
 void PlaybackEngine::stopPlayback()
 {
+    streamsActive.store (false, std::memory_order_release);
+
+    // Drain in-flight readForTrack calls before destroying the readers.
+    // The audio callback latches the transport state once per block, so
+    // it can still be mid-sum when the message thread gets here. Bounded
+    // yield loop, same shape (and same bail rationale) as
+    // RecordManager::stopRecording: if the audio thread is stuck past
+    // the cap, leave the streams allocated — streamsActive stays false
+    // so no new reads start, and the next stopPlayback retries the
+    // drain. Leak beats UAF.
+    constexpr int kMaxSpinIterations = 1000;
+    int spinIters = 0;
+    while (audioInFlight.load (std::memory_order_acquire) > 0)
+    {
+        if (++spinIters > kMaxSpinIterations)
+        {
+            std::fprintf (stderr,
+                          "[Dusk Studio/PlaybackEngine] stopPlayback: audioInFlight=%d "
+                          "after %d yields; BAILING teardown to avoid UAF. Streams "
+                          "leak until the next stopPlayback drains.\n",
+                          audioInFlight.load (std::memory_order_relaxed),
+                          kMaxSpinIterations);
+            return;
+        }
+        std::this_thread::yield();
+    }
+
     for (auto& s : streams) s.reset();
 }
 
@@ -185,6 +216,13 @@ void PlaybackEngine::readForTrack (int trackIndex,
     std::memset (outL, 0, sizeof (float) * (size_t) numSamples);
     if (outR != nullptr)
         std::memset (outR, 0, sizeof (float) * (size_t) numSamples);
+
+    // Bump BEFORE checking streamsActive: stopPlayback clears the flag,
+    // then drains this counter, so any read that got past the check is
+    // waited on before the readers are destroyed. Reads that bump after
+    // the flag cleared bail here and output stays silent.
+    AudioInFlightScope guard (audioInFlight);
+    if (! streamsActive.load (std::memory_order_acquire)) return;
 
     auto& slot = streams[(size_t) trackIndex];
     if (slot == nullptr) return;
