@@ -1280,9 +1280,11 @@ juce::String SessionSerializer::serialize (const Session& s)
 
 bool SessionSerializer::writeAtomic (const juce::File& target, const juce::String& json)
 {
-    // Atomic write: temp file + move-to-target. JUCE's File::moveFileTo uses
-    // POSIX rename() under the hood which is atomic on the same filesystem,
-    // so a partial session.json never appears even if we crash mid-save.
+    // Atomic write: temp file + atomic replace. replaceFileIn (NOT
+    // moveFileTo, which deletes the target first and leaves a window with
+    // neither file on disk) is a bare rename() on POSIX / ReplaceFileW on
+    // Windows, so a partial or missing session.json never appears even if
+    // we crash mid-save.
     const auto parent = target.getParentDirectory();
     parent.createDirectory();
     auto tmp = parent.getChildFile (target.getFileName() + ".tmp");
@@ -1302,7 +1304,10 @@ bool SessionSerializer::writeAtomic (const juce::File& target, const juce::Strin
     // rename and the next page-cache flush can leave the canonical
     // session.json renamed but with empty / partial content.
     fsyncFile (tmp);
-    if (! tmp.moveFileTo (target)) { cleanupTmp(); return false; }
+    // On replace failure, KEEP the tmp: it holds a complete, fsynced copy
+    // of the state being saved — the only one if the target was lost.
+    // The next successful save overwrites it.
+    if (! tmp.replaceFileIn (target)) return false;
     // POSIX rename() is atomic in-memory only; durability of the rename
     // itself requires fsync on the PARENT DIRECTORY. Without this a power
     // loss after moveFileTo can vanish the rename and leave neither tmp
@@ -1330,7 +1335,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
     // the worst-case bug class.
     const int fileVersion = root.hasProperty ("version")
         ? (int) root["version"]
-        : kFormatVersion;
+        : 1;
     if (fileVersion > kFormatVersion)
     {
         std::fprintf (stderr,

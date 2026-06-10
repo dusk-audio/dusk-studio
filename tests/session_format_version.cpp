@@ -30,9 +30,8 @@ void writeRaw (const juce::File& target, const juce::String& contents)
 //     kFormatVersion — newer Dusk Studio can read older sessions (via the
 //     migrateSession switch) but older Dusk Studio must refuse newer ones
 //     rather than silent-drop new fields the build doesn't understand.
-//   * Missing "version" key (pre-versioning saves) is treated as
-//     kFormatVersion — older builds wrote no key, but the schema was
-//     effectively v1 when the field landed.
+//   * Missing "version" key (pre-versioning saves) is treated as v1 so
+//     those files run through every migration step once one exists.
 
 TEST_CASE ("SessionSerializer rejects future-version sessions",
            "[session][serializer][version]")

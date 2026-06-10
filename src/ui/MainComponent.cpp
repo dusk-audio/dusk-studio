@@ -2441,10 +2441,17 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     }
     const auto tAfterParse = juce::Time::getMillisecondCounterHiRes();
 
-    // Autosave's job is done - clean up so the next load has a clean slate.
-    // (Even when the user chose "load saved session" we drop the autosave, on
-    // the assumption they've made a deliberate choice to discard it.)
-    deleteAutosaveFor (dir);
+    const bool loadedFromAutosave =
+        sourceJson.getFileName().endsWithIgnoreCase (".autosave");
+
+    // When the user chose "load saved session" the autosave's job is done -
+    // they made a deliberate choice to discard it, so clean up for the next
+    // load. When RECOVERING from the autosave, keep it: until the recovered
+    // state is persisted to session.json (at the tail of this function) the
+    // autosave file is the only durable copy. saveSessionTo deletes it on
+    // success.
+    if (! loadedFromAutosave)
+        deleteAutosaveFor (dir);
 
     // Note: lastSavedSessionJson is seeded later in this function, after
     // consumePluginStateAfterLoad has filled in plugin/transport state.
@@ -2542,8 +2549,7 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     const auto tAfterConsole = juce::Time::getMillisecondCounterHiRes();
 
     RecentSessions::add (dir);
-    setStatusForPath ("Loaded", sourceJson,
-                         /*isAutosave*/ sourceJson.getFileName().endsWithIgnoreCase (".autosave"));
+    setStatusForPath ("Loaded", sourceJson, /*isAutosave*/ loadedFromAutosave);
 
     // Seed the saved-state snapshot from the live in-memory session now
     // that plugin + transport state have been consumed. The next autosave
@@ -2551,6 +2557,16 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     // session remains untouched.
     setLastSavedSessionJson    (SessionSerializer::serialize (session));
     setLastWrittenAutosaveJson (juce::String());
+
+    // Recovery must end with the recovered state on disk. Without this,
+    // the snapshot seeded above makes the session look clean: the quit
+    // dirty-check passes, the autosave tick skips, and the recovered
+    // work exists nowhere durable — quit + relaunch would land on the
+    // stale session.json. saveSessionTo persists it and (only on
+    // success) deletes the autosave; on failure the autosave survives
+    // and the save-failed alert fires.
+    if (loadedFromAutosave)
+        saveSessionTo (dir);
 
     std::fprintf (stderr,
                   "[Dusk Studio/Load] %s: parse=%dms plugins=%dms midiOuts=%dms console=%dms total=%dms\n",

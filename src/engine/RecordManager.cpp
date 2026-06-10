@@ -104,8 +104,14 @@ bool RecordManager::startRecording (double sampleRate, juce::int64 startSample)
 
         auto trackName = juce::String::formatted ("track%02d_%s.wav", t + 1,
                                                    stamp.toRawUTF8());
+        // The stamp has one-second resolution: a stop + re-arm within the
+        // same second would collide with the just-committed take, and
+        // deleting here would destroy the WAV its region references.
+        // getNonexistentChildFile suffixes (2), (3), ... instead.
         juce::File outFile = audioDir.getChildFile (trackName);
-        outFile.deleteFile();
+        if (outFile.exists())
+            outFile = audioDir.getNonexistentChildFile (
+                trackName.upToLastOccurrenceOf (".wav", false, true), ".wav");
 
         auto* fileStream = outFile.createOutputStream().release();
         if (fileStream == nullptr)
