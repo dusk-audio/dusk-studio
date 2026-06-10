@@ -37,9 +37,12 @@ TEST_CASE ("region files inside the session dir round-trip as relative paths",
     const auto target = dir.getChildFile ("session.json");
     REQUIRE (SessionSerializer::save (a, target));
 
-    // The stored path must not leak the machine-specific prefix.
+    // The stored path must not leak the machine-specific prefix, and the
+    // separator must be the canonical '/' on every OS (Windows'
+    // getRelativePathFrom hands back backslashes).
     const auto json = target.loadFileAsString();
     REQUIRE (json.contains ("audio/track01_take.wav"));
+    REQUIRE_FALSE (json.contains ("audio\\track01_take.wav"));
     REQUIRE_FALSE (json.contains (dir.getFullPathName() + "/audio"));
 
     Session b;
@@ -71,6 +74,34 @@ TEST_CASE ("stale absolute region path re-roots to the session's audio dir",
     target.replaceWithText (
         R"({"version":1,"tracks":[{"name":"T","regions":[)"
         R"({"file":"/home/elsewhere/sessions/old/audio/track02_take.wav",)"
+        R"("timeline_start":0,"length":1000,"source_offset":0}]}]})");
+
+    REQUIRE (SessionSerializer::load (s, target));
+    REQUIRE (s.track (0).regions.size() == 1);
+    REQUIRE (s.track (0).regions[0].file == wav);
+    REQUIRE (s.missingAudioFilesAfterLoad.empty());
+
+    dir.deleteRecursively();
+}
+
+TEST_CASE ("backslash-relative path from a Windows save resolves on load",
+           "[session][serializer][paths]")
+{
+    using namespace duskstudio;
+
+    const auto dir = makeTempSessionDir ("backslash");
+    Session s;
+    s.setSessionDirectory (dir);
+
+    const auto wav = s.getAudioDirectory().getChildFile ("track04_take.wav");
+    wav.replaceWithText ("not a real wav");
+
+    // Emulates a session saved by a Windows build before separators were
+    // canonicalised: the relative path uses '\\'.
+    const auto target = dir.getChildFile ("session.json");
+    target.replaceWithText (
+        R"({"version":1,"tracks":[{"name":"T","regions":[)"
+        R"({"file":"audio\\track04_take.wav",)"
         R"("timeline_start":0,"length":1000,"source_offset":0}]}]})");
 
     REQUIRE (SessionSerializer::load (s, target));

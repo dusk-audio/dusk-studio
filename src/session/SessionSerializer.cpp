@@ -191,7 +191,10 @@ juce::String portablePath (const juce::File& f, const juce::File& sessionDir)
 {
     if (f == juce::File()) return {};
     if (sessionDir != juce::File() && f.isAChildOf (sessionDir))
-        return f.getRelativePathFrom (sessionDir);
+        // Canonical separator is '/' regardless of OS — Windows'
+        // getRelativePathFrom returns backslashes, which a POSIX load
+        // would treat as literal filename characters.
+        return f.getRelativePathFrom (sessionDir).replaceCharacter ('\\', '/');
     return f.getFullPathName();
 }
 
@@ -210,7 +213,11 @@ juce::File resolvePortablePath (const juce::String& stored,
     if (juce::File::isAbsolutePath (stored))
         f = juce::File (stored);
     else if (sessionDir != juce::File())
-        f = sessionDir.getChildFile (stored);
+        // Normalise to '/' before resolving: a session saved by an older
+        // Windows build stored backslash-relative paths, and getChildFile
+        // on POSIX would treat those as part of the file name. Windows
+        // accepts '/' natively, so this is a no-op there.
+        f = sessionDir.getChildFile (stored.replaceCharacter ('\\', '/'));
     else
         return {};
 
