@@ -247,13 +247,14 @@ void AudioEngine::publishTempoMap()
     rtTempoMapPool.push_back (std::move (fresh));
     rtTempoMap.store (raw, std::memory_order_release);
 
-    // Bound the pool so a long drag (a publish per mouse-move) can't grow it
-    // without limit between audioDeviceStopped reclamations. The audio thread
-    // loads rtTempoMap once per block and holds that pointer only for the block;
-    // far fewer than kMaxRtTempoMaps publishes can land inside one block, so the
-    // pointer any in-flight callback holds is always still retained. Trimming
-    // the oldest (front) entries is therefore safe.
-    constexpr size_t kMaxRtTempoMaps = 8;
+    // Backstop bound so a marathon drag session can't grow the pool without
+    // limit between audioDeviceStopped reclamations. Generous on purpose: a
+    // queued-event burst (post-stall drain of a tempo-handle drag) can land
+    // many publishes inside ONE audio block while the callback still holds
+    // an old map across its MIDI-region scheduling scan — a tight bound here
+    // would free that map under the reader. 256 publishes inside a single
+    // block is not a reachable burst; each map is a few tempo points.
+    constexpr size_t kMaxRtTempoMaps = 256;
     if (rtTempoMapPool.size() > kMaxRtTempoMaps)
         rtTempoMapPool.erase (rtTempoMapPool.begin(),
                                rtTempoMapPool.end() - (std::ptrdiff_t) kMaxRtTempoMaps);
@@ -1341,6 +1342,12 @@ void AudioEngine::audioDeviceStopped()
 
     currentSampleRate.store (0.0, std::memory_order_relaxed);
     currentBlockSize.store  (0,   std::memory_order_relaxed);
+
+    // Reclaim retired tempo-map copies. Only safe here: no callback can be
+    // in flight, so nothing holds a pointer into the pool except the live
+    // map the next device start will read.
+    if (rtTempoMapPool.size() > 1)
+        rtTempoMapPool.erase (rtTempoMapPool.begin(), rtTempoMapPool.end() - 1);
     // Reset to the optimistic default so a transient "no device open" state
     // doesn't stick a NO OUTPUTS warning on the UI.
     usableOutputs.store (true, std::memory_order_relaxed);

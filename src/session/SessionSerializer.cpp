@@ -764,11 +764,16 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm,
         loadB ("vca_detector_classic", t.strip.compVcaDetectorClassic);
     }
 
+    // Enabled is stored unconditionally: load() reuses the live Session,
+    // so a key absent from the file (pre-HW-insert session) must reset
+    // the flag — inheriting the prior session's enabled insert would
+    // route audio out to hardware this session never asked for.
+    {
+        auto hwi = v["hardware_insert"];
+        t.hardwareInsert.enabled.store (hwi.isObject() && (bool) hwi["enabled"]);
+    }
     if (auto hwi = v["hardware_insert"]; hwi.isObject())
     {
-        if (hwi.hasProperty ("enabled"))
-            t.hardwareInsert.enabled.store ((bool) hwi["enabled"]);
-
         auto fresh = std::make_unique<HardwareInsertRouting>();
         // current() returns the existing snapshot - seeds any field that
         // the JSON doesn't carry (forward-compat with older sessions).
@@ -834,8 +839,12 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm,
             t.automationLanes[(size_t) p].publishPoints (std::move (tmp));
         }
     }
-    if (v.hasProperty ("automation_mode"))
-        t.automationMode.store ((int) v["automation_mode"], std::memory_order_release);
+    // Unconditional store (default Off when absent) — same hazard as
+    // restoreBus's automation_mode: a track left in Write by the prior
+    // session must not keep writing over the loaded session's lanes.
+    t.automationMode.store (v.hasProperty ("automation_mode")
+                                ? (int) v["automation_mode"] : 0,
+                            std::memory_order_release);
 
     t.regions.clear();
     if (auto regions = v["regions"]; regions.isArray())
@@ -1454,12 +1463,15 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                     lane.pluginDescriptionXml[(size_t) p] = sv["plugin_desc_xml"].toString();
                     lane.pluginStateBase64[(size_t) p]    = sv["plugin_state"]   .toString();
 
+                    // Same default-off rationale as the track hardware_insert.
+                    {
+                        auto hwi = sv["hardware_insert"];
+                        lane.hardwareInserts[(size_t) p].enabled.store (
+                            hwi.isObject() && (bool) hwi["enabled"]);
+                    }
                     if (auto hwi = sv["hardware_insert"]; hwi.isObject())
                     {
                         auto& hw = lane.hardwareInserts[(size_t) p];
-                        if (hwi.hasProperty ("enabled"))
-                            hw.enabled.store ((bool) hwi["enabled"]);
-
                         auto fresh = std::make_unique<HardwareInsertRouting>();
                         *fresh = hw.routing.current();
                         if (hwi.hasProperty ("output_ch_l"))     fresh->outputChL      = (int) hwi["output_ch_l"];
@@ -1516,14 +1528,16 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                     lane.params.automationLanes[(size_t) p].publishPoints (std::move (tmp));
                 }
             }
-            if (v.hasProperty ("automation_mode"))
-                lane.params.automationMode.store ((int) v["automation_mode"],
-                                                   std::memory_order_release);
+            lane.params.automationMode.store (v.hasProperty ("automation_mode")
+                                                  ? (int) v["automation_mode"] : 0,
+                                               std::memory_order_release);
         }
     }
+    // Clear unconditionally — a session without the key must not keep the
+    // prior session's markers.
+    s.getMarkers().clear();
     if (auto markersArr = root["markers"]; markersArr.isArray())
     {
-        s.getMarkers().clear();
         for (int i = 0; i < markersArr.size(); ++i)
         {
             auto v = markersArr[i];

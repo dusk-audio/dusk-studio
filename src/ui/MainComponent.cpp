@@ -3516,6 +3516,8 @@ void MainComponent::cleanOutUnreferencedFiles()
                 referenced.addIfNotAlreadyThere (take.file.getFullPathName());
         }
     }
+    // A bounce loaded into the Mastering stage may live in audio/ too.
+    referenced.addIfNotAlreadyThere (session.mastering().sourceFile.getFullPathName());
 
     // Walk the audio directory for .wav files. Anything outside the
     // referenced set is a candidate. Subdirectories are intentionally
@@ -3546,7 +3548,9 @@ void MainComponent::cleanOutUnreferencedFiles()
                    + juce::String (sizeMB, 1) + " MB.\n\n"
                    + "These were created by past record passes that no "
                      "longer have any region or take pointing at them. "
-                     "Deleting cannot be undone.";
+                     "Deleting cannot be undone, and the session's undo "
+                     "history will be cleared (undone edits may still "
+                     "reference these files).";
 
     juce::Component::SafePointer<MainComponent> safeThis (this);
     showDuskConfirm (*this, "Clean out unreferenced files", msg,
@@ -3557,10 +3561,16 @@ void MainComponent::cleanOutUnreferencedFiles()
                            for (const auto& f : candidates)
                                if (f.deleteFile()) ++deleted;
                            if (auto* self = safeThis.getComponent())
+                           {
+                               // The undo stack holds full before-states of
+                               // deleted regions; Ctrl+Z after this would
+                               // restore a region whose WAV is gone.
+                               self->engine.getUndoManager().clearUndoHistory();
                                self->statusLabel.setText (
                                    "Deleted " + juce::String (deleted)
                                        + " unreferenced file(s).",
                                    juce::dontSendNotification);
+                           }
                        },
                        /*secondary*/   "Cancel",
                        /*onSecondary*/ {},
@@ -3687,8 +3697,18 @@ void MainComponent::openPianoRoll (int trackIdx, int regionIdx)
     {
         // Close + reopen on the new region. Same-track only; the
         // editor already validated the bounds before calling.
-        closePianoRoll();
-        openPianoRoll (t, newIdx);
+        // Deferred: the call arrives from the editor's own keyPressed
+        // frame — closing in place would destroy the component (and the
+        // invoked std::function) while both are still on the stack.
+        juce::Component::SafePointer<MainComponent> safe (this);
+        juce::MessageManager::callAsync ([safe, t, newIdx]
+        {
+            if (auto* self = safe.getComponent())
+            {
+                self->closePianoRoll();
+                self->openPianoRoll (t, newIdx);
+            }
+        });
     };
     addAndMakeVisible (pianoRoll.get());
     pianoRoll->grabKeyboardFocus();
@@ -3804,8 +3824,16 @@ void MainComponent::openAudioEditor (int trackIdx, int regionIdx)
         [this] { if (cursorOverlay != nullptr) cursorOverlay->clearMousePosition(); };
     audioEditor->onNavigateToRegion = [this] (int t, int newIdx)
     {
-        closeAudioEditor();
-        openAudioEditor (t, newIdx);
+        // Deferred — see the piano-roll navigate handler.
+        juce::Component::SafePointer<MainComponent> safe (this);
+        juce::MessageManager::callAsync ([safe, t, newIdx]
+        {
+            if (auto* self = safe.getComponent())
+            {
+                self->closeAudioEditor();
+                self->openAudioEditor (t, newIdx);
+            }
+        });
     };
     addAndMakeVisible (audioEditor.get());
     audioEditor->grabKeyboardFocus();
@@ -3954,8 +3982,16 @@ void MainComponent::closeTuner()
     tunerPoller.reset();
     if (tuner    != nullptr) removeChildComponent (tuner.get());
     if (tunerDim != nullptr) removeChildComponent (tunerDim.get());
-    tuner.reset();
-    tunerDim.reset();
+    // Deferred destruction — closeTuner is reached from tunerDim's own
+    // mouseDown and the overlay's onDismiss, so resetting in place would
+    // destroy the component whose mouse handler is still on the stack
+    // (the EmbeddedModal::close() teardown pattern).
+    if (tuner != nullptr || tunerDim != nullptr)
+    {
+        std::shared_ptr<juce::Component> trashTuner (tuner.release());
+        std::shared_ptr<juce::Component> trashDim   (tunerDim.release());
+        juce::MessageManager::callAsync ([trashTuner, trashDim]() mutable {});
+    }
     session.tuneTrackIndex.store (-1, std::memory_order_relaxed);
 }
 
