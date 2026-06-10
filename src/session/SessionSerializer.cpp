@@ -71,7 +71,7 @@ bool migrateSession (juce::var& root, int from)
         {
             std::fprintf (stderr,
                           "[Dusk Studio/SessionSerializer] migrator at v%d failed to advance "
-                          "version — aborting to avoid infinite loop\n", v);
+                          "version - aborting to avoid infinite loop\n", v);
             return false;
         }
     }
@@ -481,10 +481,10 @@ juce::DynamicObject::Ptr trackToObject (const Track& t)
     for (int p = 0; p < kNumAutomationParams; ++p)
     {
         const auto& lane = t.automationLanes[(size_t) p];
-        if (lane.points.empty()) continue;
+        if (lane.pointsConst().empty()) continue;
         juce::Array<juce::var> pts;
-        pts.ensureStorageAllocated ((int) lane.points.size());
-        for (const auto& pt : lane.points)
+        pts.ensureStorageAllocated ((int) lane.pointsConst().size());
+        for (const auto& pt : lane.pointsConst())
         {
             auto* pObj = new juce::DynamicObject();
             pObj->setProperty ("t",   (juce::int64) pt.timeSamples);
@@ -533,10 +533,10 @@ juce::DynamicObject::Ptr busToObject (const Bus& a)
     for (int p = 0; p < kNumAutomationParams; ++p)
     {
         const auto& lane = a.strip.automationLanes[(size_t) p];
-        if (lane.points.empty()) continue;
+        if (lane.pointsConst().empty()) continue;
         juce::Array<juce::var> pts;
-        pts.ensureStorageAllocated ((int) lane.points.size());
-        for (const auto& pt : lane.points)
+        pts.ensureStorageAllocated ((int) lane.pointsConst().size());
+        for (const auto& pt : lane.pointsConst())
         {
             auto* pObj = new juce::DynamicObject();
             pObj->setProperty ("t",   (juce::int64) pt.timeSamples);
@@ -751,7 +751,7 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm)
     // after all lane mutations pairs with the engine's acquire-load
     // gating lane reads.
     for (auto& lane : t.automationLanes)
-        lane.points.clear();
+        lane.publishPoints ({});
     if (auto autoVar = v["automation"]; autoVar.isObject())
     {
         for (int p = 0; p < kNumAutomationParams; ++p)
@@ -759,8 +759,8 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm)
             const char* key = automationParamKey ((AutomationParam) p);
             auto pts = autoVar[key];
             if (! pts.isArray()) continue;
-            auto& lane = t.automationLanes[(size_t) p];
-            lane.points.reserve ((size_t) pts.size());
+            std::vector<AutomationPoint> tmp;
+            tmp.reserve ((size_t) pts.size());
             for (int k = 0; k < pts.size(); ++k)
             {
                 auto pv = pts[k];
@@ -774,14 +774,15 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm)
                 pt.recordedAtBPM = pv.hasProperty ("bpm")
                     ? (float) (double) pv["bpm"]
                     : (float) defaultRecordBpm;
-                lane.points.push_back (pt);
+                tmp.push_back (pt);
             }
             // Belt-and-braces sort - hand-edited JSON or out-of-order
             // writers can't violate the binary-search invariant in
             // evaluateLane().
-            std::sort (lane.points.begin(), lane.points.end(),
+            std::sort (tmp.begin(), tmp.end(),
                 [] (const AutomationPoint& a, const AutomationPoint& b)
                 { return a.timeSamples < b.timeSamples; });
+            t.automationLanes[(size_t) p].publishPoints (std::move (tmp));
         }
     }
     if (v.hasProperty ("automation_mode"))
@@ -963,7 +964,7 @@ void restoreBus (Bus& a, const juce::var& v, double defaultRecordBpm)
     // release-store the mode so the audio thread never reads a half-rebuilt
     // lane vector. Only FaderDb / Pan / Mute lanes are ever populated.
     for (auto& lane : a.strip.automationLanes)
-        lane.points.clear();
+        lane.publishPoints ({});
     if (auto autoVar = v["automation"]; autoVar.isObject())
     {
         for (int p = 0; p < kNumAutomationParams; ++p)
@@ -971,8 +972,8 @@ void restoreBus (Bus& a, const juce::var& v, double defaultRecordBpm)
             const char* key = automationParamKey ((AutomationParam) p);
             auto pts = autoVar[key];
             if (! pts.isArray()) continue;
-            auto& lane = a.strip.automationLanes[(size_t) p];
-            lane.points.reserve ((size_t) pts.size());
+            std::vector<AutomationPoint> tmp;
+            tmp.reserve ((size_t) pts.size());
             for (int k = 0; k < pts.size(); ++k)
             {
                 auto pv = pts[k];
@@ -983,11 +984,12 @@ void restoreBus (Bus& a, const juce::var& v, double defaultRecordBpm)
                 pt.recordedAtBPM = pv.hasProperty ("bpm")
                     ? (float) (double) pv["bpm"]
                     : (float) defaultRecordBpm;
-                lane.points.push_back (pt);
+                tmp.push_back (pt);
             }
-            std::sort (lane.points.begin(), lane.points.end(),
+            std::sort (tmp.begin(), tmp.end(),
                 [] (const AutomationPoint& x, const AutomationPoint& y)
                 { return x.timeSamples < y.timeSamples; });
+            a.strip.automationLanes[(size_t) p].publishPoints (std::move (tmp));
         }
     }
     // Always write the mode so a re-load into a reused strip can't inherit a
@@ -1022,6 +1024,7 @@ juce::String SessionSerializer::serialize (const Session& s)
         obj->setProperty ("colour", colourToHex (lane.colour));
         obj->setProperty ("return_level_db", lane.params.returnLevelDb.load());
         obj->setProperty ("mute",            lane.params.mute.load());
+        obj->setProperty ("output_pair",     lane.params.outputPair.load());
         // Per-slot plugin state. Empty strings serialise as empty - same
         // pattern as Track.
         juce::Array<juce::var> slots;
@@ -1060,10 +1063,10 @@ juce::String SessionSerializer::serialize (const Session& s)
         for (int p = 0; p < kNumAutomationParams; ++p)
         {
             const auto& al = lane.params.automationLanes[(size_t) p];
-            if (al.points.empty()) continue;
+            if (al.pointsConst().empty()) continue;
             juce::Array<juce::var> pts;
-            pts.ensureStorageAllocated ((int) al.points.size());
-            for (const auto& pt : al.points)
+            pts.ensureStorageAllocated ((int) al.pointsConst().size());
+            for (const auto& pt : al.pointsConst())
             {
                 auto* pObj = new juce::DynamicObject();
                 pObj->setProperty ("t",   (juce::int64) pt.timeSamples);
@@ -1094,6 +1097,7 @@ juce::String SessionSerializer::serialize (const Session& s)
 
     auto* master = new juce::DynamicObject();
     master->setProperty ("fader_db",     s.master().faderDb.load());
+    master->setProperty ("output_pair",  s.master().outputPair.load());
     if (s.master().mute.load (std::memory_order_relaxed))
         master->setProperty ("mute", true);
     if (s.master().monoSum.load (std::memory_order_relaxed))
@@ -1136,10 +1140,10 @@ juce::String SessionSerializer::serialize (const Session& s)
         for (int p = 0; p < kNumAutomationParams; ++p)
         {
             const auto& al = s.master().automationLanes[(size_t) p];
-            if (al.points.empty()) continue;
+            if (al.pointsConst().empty()) continue;
             juce::Array<juce::var> pts;
-            pts.ensureStorageAllocated ((int) al.points.size());
-            for (const auto& pt : al.points)
+            pts.ensureStorageAllocated ((int) al.pointsConst().size());
+            for (const auto& pt : al.pointsConst())
             {
                 auto* pObj = new juce::DynamicObject();
                 pObj->setProperty ("t",   (juce::int64) pt.timeSamples);
@@ -1180,10 +1184,12 @@ juce::String SessionSerializer::serialize (const Session& s)
     mast->setProperty ("comp_release_ms",   s.mastering().compReleaseMs.load());
     mast->setProperty ("comp_release_auto", s.mastering().compReleaseAuto.load());
     mast->setProperty ("comp_makeup_db",    s.mastering().compMakeupDb.load());
-    mast->setProperty ("limiter_enabled",   s.mastering().limiterEnabled.load());
-    mast->setProperty ("limiter_drive_db",  s.mastering().limiterDriveDb.load());
-    mast->setProperty ("limiter_ceiling_db",s.mastering().limiterCeilingDb.load());
-    mast->setProperty ("limiter_release_ms",s.mastering().limiterReleaseMs.load());
+    mast->setProperty ("limiter_enabled",     s.mastering().limiterEnabled.load());
+    mast->setProperty ("limiter_drive_db",    s.mastering().limiterDriveDb.load());
+    mast->setProperty ("limiter_ceiling_db",  s.mastering().limiterCeilingDb.load());
+    mast->setProperty ("limiter_release_ms",  s.mastering().limiterReleaseMs.load());
+    mast->setProperty ("limiter_mode",        s.mastering().limiterMode.load());
+    mast->setProperty ("limiter_stereo_link", s.mastering().limiterStereoLink.load());
     mast->setProperty ("target_preset",     s.mastering().targetPresetIndex.load());
     root->setProperty ("mastering", juce::var (mast));
 
@@ -1200,6 +1206,18 @@ juce::String SessionSerializer::serialize (const Session& s)
     tport->setProperty ("snap_resolution",   (int) s.snapResolution);
     tport->setProperty ("piano_roll_key_snap", s.pianoRollKeySnap);
     tport->setProperty ("tempo_bpm",         s.tempoBpm.load());
+    if (! s.tempoMap.empty())
+    {
+        juce::Array<juce::var> tpArr;
+        for (const auto& p : s.tempoMap.points())
+        {
+            auto* o = new juce::DynamicObject();
+            o->setProperty ("sample", p.timelineSamples);
+            o->setProperty ("bpm",    (double) p.bpm);
+            tpArr.add (juce::var (o));
+        }
+        tport->setProperty ("tempo_points", tpArr);
+    }
     tport->setProperty ("ui_stage",          s.uiStage.load());
     tport->setProperty ("sync_source_input",  s.syncSourceInputIdentifier);
     tport->setProperty ("sync_follow_tempo",
@@ -1230,6 +1248,8 @@ juce::String SessionSerializer::serialize (const Session& s)
     tport->setProperty ("last_record_point",  (juce::int64) s.lastRecordPointSamples.load());
     tport->setProperty ("pre_roll_seconds",   (double) s.preRollSeconds.load());
     tport->setProperty ("post_roll_seconds",  (double) s.postRollSeconds.load());
+    tport->setProperty ("pre_roll_enabled",   s.preRollEnabled.load());
+    tport->setProperty ("post_roll_enabled",  s.postRollEnabled.load());
 
     // MIDI controller bindings. Each entry stamps a (channel, dataNumber,
     // trigger) source onto a target enum + per-strip index. Only emit
@@ -1315,7 +1335,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
     {
         std::fprintf (stderr,
                       "[Dusk Studio/SessionSerializer] session.json version %d is newer "
-                      "than this build's max supported version %d — refusing to "
+                      "than this build's max supported version %d - refusing to "
                       "load. Upgrade Dusk Studio.\n",
                       fileVersion, kFormatVersion);
         return false;
@@ -1360,6 +1380,10 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                 lane.params.returnLevelDb.store ((float) (double) v["return_level_db"]);
             if (v.hasProperty ("mute"))
                 lane.params.mute.store ((bool) v["mute"]);
+            if (v.hasProperty ("output_pair"))
+                lane.params.outputPair.store ((int) v["output_pair"]);
+            else
+                lane.params.outputPair.store (-1);   // model default: Master only
             if (auto slots = v["plugin_slots"]; slots.isArray())
             {
                 const int sn = juce::jmin (AuxLaneParams::kMaxLanePlugins, slots.size());
@@ -1400,7 +1424,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
             // ordering rationale as the track-load block: avoid the
             // audio thread reading half-rebuilt lane vectors.
             for (auto& al : lane.params.automationLanes)
-                al.points.clear();
+                al.publishPoints ({});
             if (auto autoObj = v["automation"]; autoObj.isObject())
             {
                 for (int p = 0; p < kNumAutomationParams; ++p)
@@ -1409,8 +1433,8 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                     if (! autoObj.hasProperty (key)) continue;
                     auto pts = autoObj[key];
                     if (! pts.isArray()) continue;
-                    auto& al = lane.params.automationLanes[(size_t) p];
-                    al.points.reserve ((size_t) pts.size());
+                    std::vector<AutomationPoint> tmp;
+                    tmp.reserve ((size_t) pts.size());
                     for (int k = 0; k < pts.size(); ++k)
                     {
                         auto pv = pts[k];
@@ -1421,8 +1445,15 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                         pt.recordedAtBPM = pv.hasProperty ("bpm")
                             ? (float) (double) pv["bpm"]
                             : (float) sessionLoadBpm;
-                        al.points.push_back (pt);
+                        tmp.push_back (pt);
                     }
+                    // Sort by time so the lane evaluator's binary search holds,
+                    // matching the track / bus / master restore paths (a
+                    // hand-edited or out-of-order JSON would otherwise break it).
+                    std::sort (tmp.begin(), tmp.end(),
+                               [] (const AutomationPoint& a, const AutomationPoint& b)
+                               { return a.timeSamples < b.timeSamples; });
+                    lane.params.automationLanes[(size_t) p].publishPoints (std::move (tmp));
                 }
             }
             if (v.hasProperty ("automation_mode"))
@@ -1446,12 +1477,21 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
     }
     if (auto master = root["master"]; master.isObject())
     {
-        if (master.hasProperty ("fader_db"))     s.master().faderDb.store ((float) (double) master["fader_db"]);
-        if (master.hasProperty ("mute"))         s.master().mute.store ((bool) master["mute"]);
-        if (master.hasProperty ("mono_sum"))     s.master().monoSum.store ((bool) master["mono_sum"]);
-        if (master.hasProperty ("tape_enabled")) s.master().tapeEnabled.store ((bool) master["tape_enabled"]);
-        if (master.hasProperty ("tape_hq"))      s.master().tapeHQ.store ((bool) master["tape_hq"]);
-        if (master.hasProperty ("tape_state"))   s.master().tapeStateBase64 = master["tape_state"].toString();
+        // Reset to struct defaults when a key is absent — load() reuses the live
+        // session (no pre-load reset), so a conditional store would inherit the
+        // previously-loaded session's value. (Audible master state: level /
+        // routing / mute.)
+        s.master().faderDb.store    (master.hasProperty ("fader_db")    ? (float) (double) master["fader_db"] : 0.0f);
+        s.master().outputPair.store (master.hasProperty ("output_pair") ? (int) master["output_pair"]         : -1);
+        s.master().mute.store       (master.hasProperty ("mute")        ? (bool) master["mute"]               : false);
+        // Reset-when-absent too (same rationale as the level/routing/mute lines
+        // above): a conditional store would inherit the previously-loaded
+        // session's tape / mono-sum state.
+        s.master().monoSum.store     (master.hasProperty ("mono_sum")     ? (bool) master["mono_sum"]     : false);
+        s.master().tapeEnabled.store (master.hasProperty ("tape_enabled") ? (bool) master["tape_enabled"] : false);
+        s.master().tapeHQ.store      (master.hasProperty ("tape_hq")      ? (bool) master["tape_hq"]      : false);
+        s.master().tapeStateBase64 = master.hasProperty ("tape_state") ? master["tape_state"].toString()
+                                                                       : juce::String();
 
         // Pultec EQ. Missing keys keep the in-memory default (matches
         // the per-track / per-bus pattern).
@@ -1485,7 +1525,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         // Mode publish happens AFTER lane mutations below — same
         // ordering rationale as the track-load + aux-load blocks.
         for (auto& al : s.master().automationLanes)
-            al.points.clear();
+            al.publishPoints ({});
         if (auto autoObj = master["automation"]; autoObj.isObject())
         {
             for (int p = 0; p < kNumAutomationParams; ++p)
@@ -1494,8 +1534,8 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                 if (! autoObj.hasProperty (key)) continue;
                 auto pts = autoObj[key];
                 if (! pts.isArray()) continue;
-                auto& al = s.master().automationLanes[(size_t) p];
-                al.points.reserve ((size_t) pts.size());
+                std::vector<AutomationPoint> tmp;
+                tmp.reserve ((size_t) pts.size());
                 for (int k = 0; k < pts.size(); ++k)
                 {
                     auto pv = pts[k];
@@ -1506,8 +1546,9 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                     pt.recordedAtBPM = pv.hasProperty ("bpm")
                         ? (float) (double) pv["bpm"]
                         : (float) sessionLoadBpm;
-                    al.points.push_back (pt);
+                    tmp.push_back (pt);
                 }
+                s.master().automationLanes[(size_t) p].publishPoints (std::move (tmp));
             }
         }
         if (master.hasProperty ("automation_mode"))
@@ -1526,6 +1567,8 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
             { if (mast.hasProperty (k)) dst.store ((float) (double) mast[k]); };
         auto loadB = [&] (const char* k, std::atomic<bool>& dst)
             { if (mast.hasProperty (k)) dst.store ((bool) mast[k]); };
+        auto loadI = [&] (const char* k, std::atomic<int>& dst)
+            { if (mast.hasProperty (k)) dst.store ((int) mast[k]); };
         loadB ("eq_enabled",        m.eqEnabled);
         for (int b = 0; b < MasteringParams::kNumEqBands; ++b)
         {
@@ -1546,10 +1589,15 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         loadF ("comp_release_ms",   m.compReleaseMs);
         loadB ("comp_release_auto", m.compReleaseAuto);
         loadF ("comp_makeup_db",    m.compMakeupDb);
-        loadB ("limiter_enabled",   m.limiterEnabled);
-        loadF ("limiter_drive_db",  m.limiterDriveDb);
-        loadF ("limiter_ceiling_db",m.limiterCeilingDb);
-        loadF ("limiter_release_ms",m.limiterReleaseMs);
+        // Limiter fields are newly persisted, so old sessions lack them — reset
+        // to the struct defaults when absent instead of inheriting the prior
+        // session's limiter state (loadB/loadF/loadI conditional-store, no reset).
+        m.limiterEnabled.store    (mast.hasProperty ("limiter_enabled")     ? (bool) mast["limiter_enabled"]              : true);
+        m.limiterDriveDb.store    (mast.hasProperty ("limiter_drive_db")    ? (float) (double) mast["limiter_drive_db"]   : 0.0f);
+        m.limiterCeilingDb.store  (mast.hasProperty ("limiter_ceiling_db")  ? (float) (double) mast["limiter_ceiling_db"] : -0.3f);
+        m.limiterReleaseMs.store  (mast.hasProperty ("limiter_release_ms")  ? (float) (double) mast["limiter_release_ms"] : 100.0f);
+        m.limiterMode.store       (mast.hasProperty ("limiter_mode")        ? (int) mast["limiter_mode"]                  : 0);
+        m.limiterStereoLink.store (mast.hasProperty ("limiter_stereo_link") ? (bool) mast["limiter_stereo_link"]          : true);
         if (mast.hasProperty ("target_preset"))
             m.targetPresetIndex.store ((int) mast["target_preset"]);
     }
@@ -1574,6 +1622,19 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         // tapestrip's tool with no on-screen selector to change it back. Always
         // start in the Session.h default (Grab).
         if (tport.hasProperty ("tempo_bpm"))         s.tempoBpm.store         ((float) (double) tport["tempo_bpm"]);
+        if (tport.hasProperty ("tempo_points"))
+        {
+            std::vector<TempoPoint> pts;
+            if (auto* arr = tport["tempo_points"].getArray())
+                for (const auto& v : *arr)
+                    if (auto* o = v.getDynamicObject())
+                        if (o->hasProperty ("sample") && o->hasProperty ("bpm"))
+                            pts.push_back ({ (juce::int64) o->getProperty ("sample"),
+                                             (float) (double) o->getProperty ("bpm") });
+            s.tempoMap.setPoints (std::move (pts));
+        }
+        else
+            s.tempoMap.setPoints ({});   // no map in the file → clear any stale map from a prior load
         if (tport.hasProperty ("ui_stage"))          s.uiStage.store          ((int)  tport["ui_stage"]);
         if (tport.hasProperty ("sync_source_input"))
             s.syncSourceInputIdentifier = tport["sync_source_input"].toString();
@@ -1616,6 +1677,10 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         if (tport.hasProperty ("last_record_point")) s.lastRecordPointSamples.store ((juce::int64) tport["last_record_point"]);
         if (tport.hasProperty ("pre_roll_seconds"))  s.preRollSeconds.store   ((float)  (double) tport["pre_roll_seconds"]);
         if (tport.hasProperty ("post_roll_seconds")) s.postRollSeconds.store  ((float)  (double) tport["post_roll_seconds"]);
+        // Default true when absent (Session.h) so an older file lacking the key
+        // doesn't inherit a disabled flag from a previously-loaded session.
+        s.preRollEnabled.store  (tport.hasProperty ("pre_roll_enabled")  ? (bool) tport["pre_roll_enabled"]  : true);
+        s.postRollEnabled.store (tport.hasProperty ("post_roll_enabled") ? (bool) tport["post_roll_enabled"] : true);
 
         // Build the bindings list off-snapshot, then publish atomically so
         // the audio thread either sees the prior set or the new one - never
@@ -1659,6 +1724,8 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                     case (int) MidiBindingTarget::TrackAuxSend:
                     case (int) MidiBindingTarget::TrackHpfFreq:
                     case (int) MidiBindingTarget::TrackEqGain:
+                    case (int) MidiBindingTarget::TrackEqFreq:
+                    case (int) MidiBindingTarget::TrackEqQ:
                     case (int) MidiBindingTarget::TrackCompThresh:
                     case (int) MidiBindingTarget::TrackCompMakeup:
                     case (int) MidiBindingTarget::TrackPluginParam:
@@ -1670,6 +1737,8 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                     case (int) MidiBindingTarget::TrackAuxSendBank:
                     case (int) MidiBindingTarget::TrackHpfFreqBank:
                     case (int) MidiBindingTarget::TrackEqGainBank:
+                    case (int) MidiBindingTarget::TrackEqFreqBank:
+                    case (int) MidiBindingTarget::TrackEqQBank:
                     case (int) MidiBindingTarget::TrackCompThreshBank:
                     case (int) MidiBindingTarget::TrackCompMakeupBank:
                     case (int) MidiBindingTarget::TrackPluginParamBank:
@@ -1680,8 +1749,8 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                     case (int) MidiBindingTarget::AuxLaneFader:
                     case (int) MidiBindingTarget::AuxLaneMute:
                     case (int) MidiBindingTarget::MasterFader:
-                    // H3 expansion — were silently coerced to None on load,
-                    // dropping the binding from a saved session.
+                    // Were silently coerced to None on load, dropping the
+                    // binding from a saved session.
                     case (int) MidiBindingTarget::TrackEqEnabled:
                     case (int) MidiBindingTarget::TrackCompEnabled:
                     case (int) MidiBindingTarget::TrackInsertBypass:
@@ -1717,7 +1786,9 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                                 : (bankRelative
                                     ? (b.target == MidiBindingTarget::TrackAuxSendBank
                                         ? Session::kBankSize * kPackedAuxLanes - 1
-                                        : (b.target == MidiBindingTarget::TrackEqGainBank
+                                        : ((b.target == MidiBindingTarget::TrackEqGainBank
+                                            || b.target == MidiBindingTarget::TrackEqFreqBank
+                                            || b.target == MidiBindingTarget::TrackEqQBank)
                                             ? Session::kBankSize * kPackedEqBands - 1
                                             : Session::kBankSize - 1))
                                     : Session::kNumTracks - 1)))));

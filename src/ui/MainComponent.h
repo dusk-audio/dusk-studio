@@ -59,6 +59,11 @@ public:
     // destructing. See AudioEngine::leakAllPluginInstancesForShutdown.
     void leakAllPluginInstancesForShutdown();
 
+    // Open a session from a path (a session.json file or a session directory
+    // containing one) — used for command-line / file-manager "open with" and
+    // the second-instance handoff. No-op if the path resolves to nothing.
+    void openSessionPath (const juce::File& path);
+
 private:
     void openAudioSettings();
     void openBounceDialog();
@@ -66,6 +71,11 @@ private:
     void cleanOutUnreferencedFiles();
     void launchStartupDialog();
     void switchToStage (AudioEngine::Stage);
+
+    // Show / hide the tape strip (timeline) and reflow. Shared by the Cmd+\
+    // toggle and the TransportBar TIMELINE button.
+    void setTimelineVisible (bool show);
+
     // Visibility / view construction / strip mode / toggle buttons.
     // Called by switchToStage AND by session-load so a rebuilt
     // consoleView lands in the right mode even when engine stage
@@ -184,10 +194,16 @@ private:
     // Pinned to the header row between the rightmost bank tab and the
     // tuner button. Forwards into TapeStrip's helpers; no-op when
     // TapeStrip is collapsed.
-    juce::TextButton hdrSnapToggle { "SNAP" };
     juce::TextButton hdrZoomOutBtn { "-"    };
     juce::TextButton hdrZoomInBtn  { "+"    };
     juce::TextButton hdrZoomFitBtn { "Fit"  };
+    // Tape-strip grid snap: on/off toggle + resolution picker. Write
+    // session.snapToGrid / snapResolution, which the SnapHelpers gate every
+    // region / marker / loop / tempo drag on.
+    juce::TextButton hdrSnapBtn    { "Snap" };
+    juce::TextButton hdrSnapResBtn { {}     };
+    void showSnapResolutionMenu();
+    void refreshSnapUi();
 
     // Every dialog opens via DuskFileBrowser (in-window EmbeddedModal)
     // which owns its own lifetime — no caller-side keep-alive. Standalone
@@ -209,6 +225,8 @@ private:
     EmbeddedModal virtualKeyboardModal;
     EmbeddedModal importTargetModal;
     EmbeddedModal scanModal;
+    EmbeddedModal shortcutsModal;
+    void openShortcuts();
 
     // Scan-on-startup runs asynchronously behind a progress modal. Triggered
     // from the first resized() (the window is sized + on screen by then),
@@ -249,7 +267,10 @@ private:
     // backdrop. Both torn down together via dismissStartupDialog.
     std::unique_ptr<class StartupDialog> startupDialog;
     std::unique_ptr<class DimOverlay>    startupDim;
-    void dismissStartupDialog();
+    // onDone runs AFTER the async teardown completes, so a caller can open the
+    // next UI (e.g. a session-load recovery prompt) without stacking it over
+    // the still-present startup dialog.
+    void dismissStartupDialog (std::function<void()> onDone = {});
 
     // Cross-OS cursor overlay — paints Grab / Cut / Draw glyphs at the
     // mouse position via a 60 Hz JUCE timer, bypassing the platform

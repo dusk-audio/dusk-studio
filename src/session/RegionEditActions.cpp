@@ -801,4 +801,35 @@ bool RecordCommitAction::undo()
     rebuildPlaybackIfStopped (engine);
     return true;
 }
+
+SetTempoMapAction::SetTempoMapAction (AudioEngine& e,
+                                        std::vector<TempoPoint> b,
+                                        std::vector<TempoPoint> a)
+    : engine (e), before (std::move (b)), after (std::move (a)) {}
+
+bool SetTempoMapAction::perform() { engine.setTempoPoints (after);  return true; }
+bool SetTempoMapAction::undo()    { engine.setTempoPoints (before); return true; }
+
+AutomationLaneEditAction::AutomationLaneEditAction (Session& s, int t, int p,
+                                                      std::vector<AutomationPoint> b,
+                                                      std::vector<AutomationPoint> a)
+    : session (s), trackIdx (t), paramIdx (p),
+      before (std::move (b)), after (std::move (a)) {}
+
+bool AutomationLaneEditAction::apply (const std::vector<AutomationPoint>& pts)
+{
+    if (trackIdx < 0 || trackIdx >= Session::kNumTracks
+        || paramIdx < 0 || paramIdx >= kNumAutomationParams)
+        return false;
+    auto& trk = session.track (trackIdx);
+    // Atomic publish: the audio thread reads this lane lock-free in Read/Touch
+    // mode, so undo/redo (which can fire mid-playback) must swap the whole
+    // vector, not mutate it in place. The publish IS the release the audio
+    // thread's acquire-load pairs with; no separate mode re-store needed.
+    trk.automationLanes[(size_t) paramIdx].publishPoints (pts);
+    return true;
+}
+
+bool AutomationLaneEditAction::perform() { return apply (after); }
+bool AutomationLaneEditAction::undo()    { return apply (before); }
 } // namespace duskstudio

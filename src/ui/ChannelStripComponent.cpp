@@ -12,6 +12,7 @@
 #include "../engine/PluginSlot.h"
 #include "../engine/PluginManager.h"
 #include "PlatformWindowing.h"
+#include "../session/ParamEditAction.h"
 #include "../session/RegionEditActions.h"
 
 namespace duskstudio
@@ -260,8 +261,14 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     {
         auto txt = nameLabel.getText().trim();
         if (txt.isEmpty()) txt = juce::String (trackIndex + 1);
-        track.name = txt;
         nameLabel.setText (txt, juce::dontSendNotification);
+        if (txt == track.name) return;
+        const auto oldName = track.name;
+        auto& um = engine.getUndoManager();
+        um.beginNewTransaction ("Track name");
+        um.perform (new ParamEditAction (
+            [&s = session, idx = trackIndex, txt]     { s.track (idx).name = txt; },
+            [&s = session, idx = trackIndex, oldName] { s.track (idx).name = oldName; }));
     };
     addAndMakeVisible (nameLabel);
 
@@ -649,6 +656,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
                     eqEnabledPtr->store (true, std::memory_order_release);
                 };
             }
+            row.q->addMouseListener (this, false);   // right-click → MIDI Learn (TrackEqQ)
             addAndMakeVisible (row.q.get());
 
             row.qLabel.setText ("Q", juce::dontSendNotification);
@@ -667,6 +675,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
                 eqEnabledPtr->store (true, std::memory_order_release);
             };
         }
+        row.freq->addMouseListener (this, false);   // right-click → MIDI Learn (TrackEqFreq)
         addAndMakeVisible (row.freq.get());
     }
 
@@ -2092,7 +2101,7 @@ void ChannelStripComponent::openPluginEditor()
             {
                 std::fprintf (stderr,
                               "[Dusk Studio/ChannelStripComponent] shell state-sync "
-                              "failed: %s — shell editor opens with defaults.\n",
+                              "failed: %s - shell editor opens with defaults.\n",
                               syncErr.toRawUTF8());
             }
 
@@ -2128,7 +2137,7 @@ void ChannelStripComponent::openPluginEditor()
         {
             std::fprintf (stderr,
                           "[Dusk Studio/ChannelStripComponent] Mac shell-editor "
-                          "load failed: %s — falling back to floating child window.\n",
+                          "load failed: %s - falling back to floating child window.\n",
                           shellErr.toRawUTF8());
         }
         if (embed != nullptr)
@@ -2474,7 +2483,7 @@ void ChannelStripComponent::refreshPrintButtonForMode()
                         == (int) Track::Mode::Midi);
     printButton.setEnabled (! isMidi);
     if (isMidi)
-        printButton.setTooltip ("PRINT does not apply to MIDI tracks — they "
+        printButton.setTooltip ("PRINT does not apply to MIDI tracks - they "
                                   "record raw note events. The instrument "
                                   "plugin's audio is rendered on playback, "
                                   "not on capture, so there is nothing to "
@@ -2919,6 +2928,12 @@ void ChannelStripComponent::timerCallback()
         && nameLabel.getText (false) != track.name)
         nameLabel.setText (track.name, juce::dontSendNotification);
 
+    if (lastTrackColour != track.colour)
+    {
+        lastTrackColour = track.colour;
+        repaint();
+    }
+
     // Aux send name sync — when another strip (or the AuxLaneComponent
     // header) renames an aux lane, every strip's matching label must
     // update so the rename reads as global.
@@ -3351,7 +3366,7 @@ void ChannelStripComponent::captureWritePoint (AutomationParam param, float deno
         return 0.0f;
     };
 
-    auto& lane = track.automationLanes[(size_t) param];
+    auto& lane = track.automationLanes[(size_t) param].mutableForWritePass();  // in-place; audio does not read this lane in Write/Touch-touched
     AutomationPoint pt;
     pt.timeSamples   = engine.getTransport().getPlayhead();
     pt.value         = normalize (param, denormValue);
@@ -3366,11 +3381,11 @@ void ChannelStripComponent::captureWritePoint (AutomationParam param, float deno
     // playhead jump (loop wrap / transport rewind) from sliding under
     // the short-span cutoff and skipping the future-tail truncation
     // block below.
-    if (isContinuousParam (param) && ! lane.points.empty())
+    if (isContinuousParam (param) && ! lane.empty())
     {
         constexpr float kDeltaEps = 0.001f;
         constexpr juce::int64 kMaxSpanSamples = 22050;   // ~500 ms @ 44.1 k
-        const auto& last = lane.points.back();
+        const auto& last = lane.back();
         if (std::abs (pt.value - last.value) < kDeltaEps
             && pt.timeSamples >= last.timeSamples
             && (pt.timeSamples - last.timeSamples) < kMaxSpanSamples)
@@ -3385,28 +3400,28 @@ void ChannelStripComponent::captureWritePoint (AutomationParam param, float deno
     // belong AFTER the most recent timeline position, not before it.
     // Strict ascending invariant is required by evaluateLane's binary
     // search.
-    if (! lane.points.empty() && lane.points.back().timeSamples >= pt.timeSamples)
+    if (! lane.empty() && lane.back().timeSamples >= pt.timeSamples)
     {
         // Loop wraparound case: drop the rest of the lane that's now in
         // the future relative to playhead, so the binary-search invariant
         // (sorted ascending) holds and the upcoming Write captures land
         // in their natural order. Discrete params (mute / solo) keep
         // the same rule.
-        if (lane.points.back().timeSamples > pt.timeSamples)
+        if (lane.back().timeSamples > pt.timeSamples)
         {
-            auto cutoff = std::lower_bound (lane.points.begin(), lane.points.end(),
+            auto cutoff = std::lower_bound (lane.begin(), lane.end(),
                 pt.timeSamples,
                 [] (const AutomationPoint& a, juce::int64 t) { return a.timeSamples < t; });
-            lane.points.erase (cutoff, lane.points.end());
+            lane.erase (cutoff, lane.end());
         }
         // Same-sample replace: keep the latest value at this exact sample.
-        if (! lane.points.empty() && lane.points.back().timeSamples == pt.timeSamples)
+        if (! lane.empty() && lane.back().timeSamples == pt.timeSamples)
         {
-            lane.points.back() = pt;
+            lane.back() = pt;
             return;
         }
     }
-    lane.points.push_back (pt);
+    lane.push_back (pt);
 }
 
 void ChannelStripComponent::showAutoModeMenu()
@@ -3436,12 +3451,12 @@ void ChannelStripComponent::setAutoMode (AutomationMode mode)
     // When transitioning OUT of Write or Touch, the points just appended
     // to the lane need to be visible to the audio thread BEFORE it starts
     // reading from the lane. The release-store on mode synchronizes those
-    // writes - any prior append to lane.points happens-before the audio
+    // writes - any prior append to lane happens-before the audio
     // thread's acquire-load of the new mode.
     //
     // Auto-thin on mode-flip would be tempting here, but the existing
     // concurrency model partitions lane reads/writes by (mode, touched)
-    // and handleWritePassComplete rewrites lane.points unconditionally —
+    // and handleWritePassComplete rewrites lane unconditionally —
     // there's no safe ordering relative to the audio thread acquiring
     // the new mode (or to OTHER strips that are in Read). Thinning needs
     // AtomicSnapshot on each lane before it can fire on mode-flip; for
@@ -3624,11 +3639,25 @@ void ChannelStripComponent::mouseDown (const juce::MouseEvent& e)
         }
         for (int i = 0; i < (int) eqRows.size(); ++i)
         {
-            if (eqRows[(size_t) i].gain != nullptr
-                && e.eventComponent == eqRows[(size_t) i].gain.get())
+            auto& row = eqRows[(size_t) i];
+            if (row.gain != nullptr && e.eventComponent == row.gain.get())
             {
-                midilearn::showLearnMenu (*eqRows[(size_t) i].gain, session,
+                midilearn::showLearnMenu (*row.gain, session,
                                             MidiBindingTarget::TrackEqGain,
+                                            packTrackEqBand (trackIndex, i));
+                return;
+            }
+            if (row.freq != nullptr && e.eventComponent == row.freq.get())
+            {
+                midilearn::showLearnMenu (*row.freq, session,
+                                            MidiBindingTarget::TrackEqFreq,
+                                            packTrackEqBand (trackIndex, i));
+                return;
+            }
+            if (row.q != nullptr && e.eventComponent == row.q.get())
+            {
+                midilearn::showLearnMenu (*row.q, session,
+                                            MidiBindingTarget::TrackEqQ,
                                             packTrackEqBand (trackIndex, i));
                 return;
             }
@@ -3673,7 +3702,13 @@ void ChannelStripComponent::mouseDown (const juce::MouseEvent& e)
 
 void ChannelStripComponent::applyTrackColour (juce::Colour c)
 {
-    track.colour = c;
+    if (track.colour == c) return;
+    const auto oldColour = track.colour;
+    auto& um = engine.getUndoManager();
+    um.beginNewTransaction ("Track colour");
+    um.perform (new ParamEditAction (
+        [&s = session, idx = trackIndex, c]         { s.track (idx).colour = c; },
+        [&s = session, idx = trackIndex, oldColour] { s.track (idx).colour = oldColour; }));
     repaint();
 }
 
@@ -4935,18 +4970,6 @@ void ChannelStripComponent::resized()
         faderArea.removeFromRight (kMeterGap);
     }
 
-    // Position the 4 bus buttons vertically centred within busColumn.
-    {
-        const int totalButtonsH = ChannelStripParams::kNumBuses * kBusButtonH
-                                + (ChannelStripParams::kNumBuses - 1) * kBusButtonGap;
-        int y = busColumn.getY() + (busColumn.getHeight() - totalButtonsH) / 2;
-        for (int i = 0; i < ChannelStripParams::kNumBuses; ++i)
-        {
-            busButtons[(size_t) i]->setBounds (busColumn.getX(), y, kBusColumnW, kBusButtonH);
-            y += kBusButtonH + kBusButtonGap;
-        }
-    }
-
     // Peak readout beneath the meter column. GR readout retired - the GR bar
     // inside the COMP section is the canonical readout now.
     grPeakLabel  .setVisible (false);
@@ -5035,6 +5058,23 @@ void ChannelStripComponent::resized()
                                       kFaderValueH);
     }
     faderSlider.setBounds (sliderBounds);
+
+    // Bus buttons (1-4): stack upward from the fader's "off" tick so the
+    // bottom of #4 lines up with the "off" scale label. faderYForDb gives
+    // the exact tick Y for both the normal and threshold fader layouts;
+    // anchoring to the meter column would miss it on strips that reserve
+    // peak-label space below the meter.
+    {
+        const int totalButtonsH = ChannelStripParams::kNumBuses * kBusButtonH
+                                + (ChannelStripParams::kNumBuses - 1) * kBusButtonGap;
+        const int offY = (int) std::lround (duskstudio::faderYForDb (faderSlider, -90.0f));
+        int y = offY - totalButtonsH;
+        for (int i = 0; i < ChannelStripParams::kNumBuses; ++i)
+        {
+            busButtons[(size_t) i]->setBounds (busColumn.getX(), y, kBusColumnW, kBusButtonH);
+            y += kBusButtonH + kBusButtonGap;
+        }
+    }
 
     // Track 3 (experimental): place the hoisted CompMeterStrip in its
     // fader-column slot. Vertically constrained to the trimmed meter

@@ -21,7 +21,14 @@ public:
     ConsoleView (Session& session, AudioEngine& engine);
 
     void paint (juce::Graphics&) override;
+    void paintOverChildren (juce::Graphics&) override;
     void resized() override;
+
+    // Keyboard strip focus: Left/Right move the focus ring across the 24
+    // strips (auto-flipping the visible bank at a boundary); the focused
+    // strip becomes the A/S/X target via the same path a click uses.
+    void moveFocus (int delta);
+    int  getFocusedStrip() const noexcept { return focusedStrip; }
 
     // Min: VCA comp's "513 ms" / "0.2 ms" textboxes don't clip.
     static constexpr int kMinChannelWidth = 154;
@@ -121,6 +128,11 @@ private:
 
     int currentBank = 0;
     bool showingAllTracks = false;
+
+    // -1 = none. Drives the focus ring + (via stripFocusCb) the A/S/X target.
+    int focusedStrip = -1;
+    std::function<void (int)> stripFocusCb;
+    void focusStrip (int track);
 
     void updateBankVisibility();
 

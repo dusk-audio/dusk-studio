@@ -113,7 +113,17 @@ AudioImportResult importAudio (const AudioImportRequest& req)
 
     juce::AudioFormatManager fm;
     fm.registerBasicFormats();
-    std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (req.source));
+    // Bounded retry: on Windows a file that was just written/downloaded can be
+    // transiently locked by the indexer or AV real-time scan, so the first open
+    // returns null even though the file is valid. Retry briefly before treating
+    // it as unreadable; genuine unsupported files just exhaust the attempts.
+    std::unique_ptr<juce::AudioFormatReader> reader;
+    for (int attempt = 0; attempt < 5 && reader == nullptr; ++attempt)
+    {
+        reader.reset (fm.createReaderFor (req.source));
+        if (reader == nullptr && attempt < 4)
+            juce::Thread::sleep (20);
+    }
     if (reader == nullptr)
     {
         result.errorMessage = "Unsupported or unreadable audio file: "
@@ -195,9 +205,20 @@ AudioImportResult importAudio (const AudioImportRequest& req)
         }
     }
 
-    // Write the normalised WAV.
+    // Write the normalised WAV. Same transient-lock retry as the source open:
+    // a freshly-created file in the audio dir can be briefly held by the
+    // Windows indexer / AV before the stream opens.
     const auto outFile = req.audioDir.getChildFile (makeImportedFilename (req.trackIndex));
-    std::unique_ptr<juce::FileOutputStream> stream (outFile.createOutputStream());
+    std::unique_ptr<juce::FileOutputStream> stream;
+    for (int attempt = 0; attempt < 5; ++attempt)
+    {
+        stream = outFile.createOutputStream();
+        if (stream != nullptr && stream->openedOk())
+            break;
+        stream.reset();
+        if (attempt < 4)
+            juce::Thread::sleep (20);
+    }
     if (stream == nullptr || ! stream->openedOk())
     {
         result.errorMessage = "Could not open output file for writing: "

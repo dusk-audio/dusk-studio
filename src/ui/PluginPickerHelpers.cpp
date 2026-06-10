@@ -495,26 +495,34 @@ void openPickerMenu (PluginSlot& slot,
             return;
         }
 
-        juce::String error;
-        if (! slotPtr->loadFromDescription (desc, error))
+        // Load off-thread so a slow sample decode (soundfonts!) doesn't freeze
+        // the UI. The completion runs on the message thread, and only if the
+        // slot is still alive (PluginSlot's internal guard), so slotPtr is safe
+        // to deref here.
+        slotPtr->loadFromDescriptionAsync (desc,
+            [slotPtr, safeParent, onChange, kind] (bool ok, juce::String error) mutable
         {
-            if (auto* p = safeParent.getComponent())
-                showDuskAlert (*p, "Plugin load failed", error);
-            else
-                showLoadFailureAlertFallback (error);
-            return;
-        }
-        // Post-load sanity check: rare for the loaded plugin's
-        // self-reported flag to differ from its scanned description,
-        // but it has been seen (plugin reports differently when hosted
-        // vs scanned). Reject + warn in that case too.
-        if (! loadedKindMatches (*slotPtr, kind))
-        {
-            rejectMismatchedKind (*slotPtr, kind);
+            if (! ok)
+            {
+                if (error == "load superseded")
+                    return;   // a newer pick on this slot won; not a real failure
+                if (auto* p = safeParent.getComponent())
+                    showDuskAlert (*p, "Plugin load failed", error);
+                else
+                    showLoadFailureAlertFallback (error);
+                return;
+            }
+            // Post-load sanity check: rare for the loaded plugin's self-reported
+            // flag to differ from its scanned description, but it has been seen
+            // (plugin reports differently when hosted vs scanned).
+            if (! loadedKindMatches (*slotPtr, kind))
+            {
+                rejectMismatchedKind (*slotPtr, kind);
+                if (onChange) onChange();
+                return;
+            }
             if (onChange) onChange();
-            return;
-        }
-        if (onChange) onChange();
+        });
     };
 
     auto panel = std::make_unique<PluginPickerPanel> (

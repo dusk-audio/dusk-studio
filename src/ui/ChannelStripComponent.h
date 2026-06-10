@@ -188,6 +188,7 @@ private:
     juce::Rectangle<int> groupChipBounds;
     int  lastGroupId     = 0;
     bool lastGroupMaster = false;
+    juce::Colour lastTrackColour;   // cached so the timer repaints on external colour change (undo)
     juce::Label inputPeakLabel;
     juce::Label grPeakLabel;
     juce::Label grReadoutLabel;

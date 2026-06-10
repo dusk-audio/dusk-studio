@@ -75,20 +75,30 @@ MasteringLimiterEditor::MasteringLimiterEditor (MasteringParams& p,
     headerBtn->setAccentColour (juce::Colour (0xffe05050));   // red — brickwall
     addAndMakeVisible (headerBtn.get());
 
-    // Mode dropdown - single "Modern" mode for now; the dropdown is here so
-    // future limiter modes (Vintage / Aggressive / Glue) drop in without a
-    // layout change. Persisted state is the limiter-mode atomic on params,
-    // when one exists; for now it's purely cosmetic.
+    // Mode shapes the limiter's hold + release: Modern (balanced), Transparent
+    // (fast recovery, minimal pumping), Punchy (longer hold, denser).
     modeCaption.setJustificationType (juce::Justification::centredRight);
     modeCaption.setFont (juce::Font (juce::FontOptions (10.5f, juce::Font::bold)));
     modeCaption.setColour (juce::Label::textColourId, juce::Colour (0xffa0a0a8));
     addAndMakeVisible (modeCaption);
 
     modeCombo.addItem ("Modern", 1);
-    modeCombo.setSelectedId (1, juce::dontSendNotification);
+    modeCombo.addItem ("Transparent", 2);
+    modeCombo.addItem ("Punchy", 3);
+    // Clamp at the param boundary so a stale / corrupt limiterMode can't select
+    // an ID the combo doesn't have (which renders it blank).
+    const int storedMode = juce::jlimit (0, modeCombo.getNumItems() - 1,
+                                          params.limiterMode.load (std::memory_order_relaxed));
+    modeCombo.setSelectedId (storedMode + 1, juce::dontSendNotification);
     modeCombo.setColour (juce::ComboBox::backgroundColourId, juce::Colour (0xff1a1a22));
     modeCombo.setColour (juce::ComboBox::textColourId,       juce::Colour (0xffe0e0e8));
     modeCombo.setColour (juce::ComboBox::outlineColourId,    juce::Colour (0xff404048));
+    modeCombo.onChange = [this]
+    {
+        const int candidate = juce::jlimit (0, modeCombo.getNumItems() - 1,
+                                             modeCombo.getSelectedId() - 1);
+        params.limiterMode.store (candidate, std::memory_order_relaxed);
+    };
     addAndMakeVisible (modeCombo);
 
     const auto accent = juce::Colour (0xff5a8ad0);
@@ -107,10 +117,15 @@ MasteringLimiterEditor::MasteringLimiterEditor (MasteringParams& p,
     addAndMakeVisible (releaseLabel);
 
     stereoLinkToggle.setColour (juce::ToggleButton::textColourId, juce::Colour (0xffd0d0d0));
-    stereoLinkToggle.setToggleState (true, juce::dontSendNotification);
+    stereoLinkToggle.setToggleState (params.limiterStereoLink.load (std::memory_order_relaxed),
+                                      juce::dontSendNotification);
     stereoLinkToggle.setTooltip ("When on, gain reduction is matched across L/R "
-                                  "to preserve the stereo image. (Always on for "
-                                  "this limiter implementation.)");
+                                  "to preserve the stereo image. Off limits each "
+                                  "channel independently.");
+    stereoLinkToggle.onClick = [this]
+    {
+        params.limiterStereoLink.store (stereoLinkToggle.getToggleState(), std::memory_order_relaxed);
+    };
     addAndMakeVisible (stereoLinkToggle);
 
     startTimerHz (30);
@@ -120,7 +135,10 @@ MasteringLimiterEditor::~MasteringLimiterEditor() { stopTimer(); }
 
 float MasteringLimiterEditor::yToDriveDb (int y) const noexcept
 {
-    return yToDb (y, kThreshMinDb, kThreshMaxDb, threshMeterArea.toFloat());
+    // The handle is a threshold (0..-20 dB top-to-bottom) but the limiter has
+    // no threshold — it drives the input into the ceiling. Lower threshold =
+    // more drive = louder, so drive = -threshold (0..+20 dB).
+    return -yToDb (y, kThreshMinDb, kThreshMaxDb, threshMeterArea.toFloat());
 }
 
 float MasteringLimiterEditor::yToCeilingDb (int y) const noexcept
@@ -130,6 +148,26 @@ float MasteringLimiterEditor::yToCeilingDb (int y) const noexcept
 
 void MasteringLimiterEditor::timerCallback()
 {
+    // Mode / stereo-link / release are set once in the ctor, so a session load
+    // (which rewrites the params in place) would leave them stale. Re-sync from
+    // the params here — dontSendNotification so this never re-fires the onChange
+    // write-back. Skip the knob while the user is dragging it.
+    const int modeId = juce::jlimit (0, modeCombo.getNumItems() - 1,
+                                     params.limiterMode.load (std::memory_order_relaxed)) + 1;
+    if (modeCombo.getSelectedId() != modeId)
+        modeCombo.setSelectedId (modeId, juce::dontSendNotification);
+
+    const bool link = params.limiterStereoLink.load (std::memory_order_relaxed);
+    if (stereoLinkToggle.getToggleState() != link)
+        stereoLinkToggle.setToggleState (link, juce::dontSendNotification);
+
+    if (! releaseKnob.isMouseButtonDown())
+    {
+        const float rel = params.limiterReleaseMs.load (std::memory_order_relaxed);
+        if (std::abs ((float) releaseKnob.getValue() - rel) > 0.5f)
+            releaseKnob.setValue (rel, juce::dontSendNotification);
+    }
+
     const float gr = limiter.getCurrentGrDb();
     if (gr < displayedGrDb) displayedGrDb = gr;
     else                    displayedGrDb += (gr - displayedGrDb) * 0.18f;
@@ -144,11 +182,11 @@ void MasteringLimiterEditor::timerCallback()
     if (post > displayedOutDb) displayedOutDb = post;
     else                        displayedOutDb += (post - displayedOutDb) * 0.15f;
 
-    // Pre-limiter (input) approximation: post-limiter peak minus the GR
+    // Pre-limiter (driven input) approximation: post-limiter peak minus the GR
     // (which the limiter pulled out). With 0 GR this just matches the post
-    // value; with active limiting the column shows the unbounded input.
-    const float drive  = params.limiterDriveDb.load (std::memory_order_relaxed);
-    const float preApprox = post - displayedGrDb + drive;
+    // value; with active limiting the column shows the driven level the
+    // threshold line sits against.
+    const float preApprox = post - displayedGrDb;
     if (preApprox > displayedInDb) displayedInDb = preApprox;
     else                            displayedInDb += (preApprox - displayedInDb) * 0.15f;
 
@@ -203,9 +241,10 @@ void MasteringLimiterEditor::paint (juce::Graphics& g)
         }
         drawSegmentDividers (g, bar);
 
-        // Drive handle (drag triangle on left).
+        // Threshold handle (drag triangle on left). drive is 0..+20; the
+        // handle sits at the threshold position = -drive (0..-20 dB).
         const float drive = params.limiterDriveDb.load (std::memory_order_relaxed);
-        const float handleY = dbToY (drive, kThreshMinDb, kThreshMaxDb, bar);
+        const float handleY = dbToY (-drive, kThreshMinDb, kThreshMaxDb, bar);
 
         juce::Path tri;
         const float baseX = bar.getX() - 6.0f;
@@ -221,7 +260,8 @@ void MasteringLimiterEditor::paint (juce::Graphics& g)
 
         drawCaption (threshMeterArea, "Threshold");
 
-        // Drive value box just below the handle.
+        // Threshold value box just below the handle (shows the threshold dB,
+        // i.e. -drive, to match the caption and the meter scale).
         g.setColour (juce::Colour (0xff181820));
         const auto valBox = juce::Rectangle<float> (bar.getX() + 2.0f, handleY + 6.0f,
                                                        bar.getWidth() - 4.0f, 14.0f);
@@ -231,7 +271,7 @@ void MasteringLimiterEditor::paint (juce::Graphics& g)
         g.drawRoundedRectangle (valBox, 2.0f, 0.6f);
         g.setColour (juce::Colour (0xff80b0e0));
         g.setFont (juce::Font (juce::FontOptions (9.5f, juce::Font::bold)));
-        g.drawText (juce::String::formatted ("%.2f", drive),
+        g.drawText (juce::String::formatted ("%.2f", -drive),
                      valBox, juce::Justification::centred, false);
     }
 

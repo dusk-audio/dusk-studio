@@ -17,6 +17,7 @@
 #include "MidiClockEmitter.h"
 #include "MidiTimeCodeEmitter.h"
 #include "../session/Session.h"
+#include "AudioWorkerPool.h"
 #include "MasteringPlayer.h"
 #include "PlaybackEngine.h"
 #include "PluginManager.h"
@@ -54,6 +55,13 @@ public:
     MasteringChain&   getMasteringChain()  noexcept { return masteringChain; }
     MasterBus&        getMasterBus()       noexcept { return master; }
     Metronome&        getMetronome()       noexcept { return metronome; }
+
+    // Message thread: replace the session tempo map and republish the lock-free
+    // snapshot the audio thread reads. Call setTempoPoints for edits; call
+    // publishTempoMap after a session load (or any other mutation of
+    // session.tempoMap) to sync the audio-thread copy.
+    void setTempoPoints (std::vector<TempoPoint> pts);
+    void publishTempoMap();
 
     Stage getStage() const noexcept { return stage.load (std::memory_order_relaxed); }
     void  setStage (Stage s) noexcept;
@@ -188,6 +196,21 @@ public:
     // synthetic buffers.
     void prepareForSelfTest (double sampleRate, int blockSize);
 
+    // Cross-track Plugin Delay Compensation. Reads each track's reported insert
+    // latency (plugin OR hardware, gated by mode; MIDI tracks count 0 because
+    // their instrument latency is already absorbed by the MIDI scheduling
+    // pre-shift), finds the deepest, and sets every strip's compensation =
+    // deepest − own so all tracks line up. Pure atomic loads/stores — no alloc,
+    // lock, or I/O — so it runs once per audio block (auto-tracks any latency
+    // change: plugin load/unload, HW measure, auto-bypass) and also at prepare.
+    // aggregatePdcLatencySamples exposes the deepest track latency for bounce
+    // lead-in trimming.
+    void recomputePdc() noexcept;
+    int  getAggregatePdcLatencySamples() const noexcept
+    {
+        return aggregatePdcLatencySamples.load (std::memory_order_relaxed);
+    }
+
     // Test-only. Next callback merges `events` into perInputMidi[inputIdx]
     // AFTER collector drain. Cleared after one block.
     void stageTestMidiInjection (int inputIdx, juce::MidiBuffer events);
@@ -298,6 +321,18 @@ private:
     MasteringPlayer  masteringPlayer;
     MasteringChain   masteringChain;
     Metronome        metronome;
+
+    // Lock-free tempo-map snapshot for the audio thread (MIDI scheduler +
+    // metronome). publishTempoMap heap-allocates an immutable copy, keeps it
+    // alive in the pool, and release-stores its pointer; the audio thread
+    // acquire-loads and never frees. The pool is only ever appended to, and
+    // only from the message thread, so the audio thread can read a published
+    // copy without it being freed or reallocated under it. Retired copies stay
+    // alive for the session (each is tiny — a few tempo points) and are freed
+    // when the engine is destroyed. null pointer = treat as constant tempoBpm.
+    std::vector<std::unique_ptr<TempoMap>> rtTempoMapPool;
+    std::atomic<const TempoMap*>           rtTempoMap { nullptr };
+
     PitchDetector    pitchDetector;
     MidiSyncReceiver       midiSyncReceiver;
     MidiTimeCodeReceiver   midiTimeCodeReceiver;
@@ -333,6 +368,10 @@ private:
     // via session.uiStage on load.
     std::atomic<Stage> stage { Stage::Recording };
 
+    // Deepest per-track insert latency in the session (samples). Set by
+    // recomputePdc; read by BounceEngine to trim the render's lead-in.
+    std::atomic<int> aggregatePdcLatencySamples { 0 };
+
     std::array<ChannelStrip, Session::kNumTracks> strips;
     std::array<BusStrip,  Session::kNumBuses> busStrips;
     std::array<AuxLaneStrip, Session::kNumAuxLanes> auxLaneStrips;
@@ -341,11 +380,61 @@ private:
     std::vector<float> mixL, mixR;
     std::array<std::vector<float>, Session::kNumBuses> busL, busR;
     std::array<std::vector<float>, Session::kNumAuxLanes> auxLaneL, auxLaneR;
-    std::vector<float> playbackScratch;
-    std::vector<float> playbackScratchR;
+    // Per-track disk-playback buffers. One per track (not a single shared
+    // scratch) so the per-block work can run as two passes — a serial PREP
+    // pass that resolves each track's source + MIDI, then a DSP pass that
+    // processes the strips — without a later track's prep clobbering an
+    // earlier track's not-yet-processed source. (Prerequisite for running the
+    // DSP pass across cores.)
+    std::array<std::vector<float>, Session::kNumTracks> playbackScratch;
+    std::array<std::vector<float>, Session::kNumTracks> playbackScratchR;
     // Fed to strips with a generator-style insert when the track has no
     // audio source — lets the insert emit even without input or playback.
     std::vector<float> silentInputScratch;
+
+    // Per-track DSP inputs resolved by the PREP pass and consumed by the DSP
+    // pass. Pointers reference the persistent per-track buffers above (disk),
+    // the device input block (live), or silentInputScratch — all valid for the
+    // whole callback.
+    struct TrackDspJob
+    {
+        const float* monoIn      = nullptr;
+        const float* monoInR     = nullptr;
+        const float* deviceInput = nullptr;   // raw input for the recorder
+        bool         isMidi      = false;
+        bool         passes      = false;
+        bool         armed       = false;
+        bool         stereoInput = false;
+    };
+    std::array<TrackDspJob, Session::kNumTracks> trackJobs;
+
+    // ── Opt-in parallel strip DSP ────────────────────────────────────────
+    // The DSP pass over the 24 strips can be fanned out across worker threads
+    // when DUSKSTUDIO_AUDIO_WORKERS is set (default: serial, the proven path).
+    // Each lane accumulates its strip subset into its OWN buffer set so the
+    // workers never write a shared buffer; a serial reduce then sums the lane
+    // sets into mixL/busL/auxLaneL. Metering + recording stay on a serial tail
+    // pass (audio thread), so worker threads only ever run pure DSP.
+    static constexpr int kMaxDspLanes = 16;
+    struct AccumSet
+    {
+        std::vector<float> mixL, mixR;
+        std::array<std::vector<float>, Session::kNumBuses>    busL, busR;
+        std::array<std::vector<float>, Session::kNumAuxLanes> auxL, auxR;
+    };
+    std::array<AccumSet, kMaxDspLanes> laneAccum;
+    AudioWorkerPool workerPool;
+    bool workerPoolStarted = false;
+    int  currentBlockSamples = 0;        // stashed for the worker lane job
+
+    void accumulateStrip (int t, float* mL, float* mR,
+                          const std::array<float*, ChannelStrip::kNumBuses>& bL,
+                          const std::array<float*, ChannelStrip::kNumBuses>& bR,
+                          const std::array<float*, ChannelStripParams::kNumAuxSends>& aL,
+                          const std::array<float*, ChannelStripParams::kNumAuxSends>& aR,
+                          int numSamples) noexcept;
+    void processStripLane (int lane) noexcept;            // one worker lane
+    void reduceLaneAccum (int numSamples) noexcept;       // sum lanes → mix
 
     // One MidiMessageCollector per registered input. MIDI thread
     // addMessageToQueue's; audio thread drains per-block into
@@ -353,7 +442,7 @@ private:
     juce::Array<juce::MidiDeviceInfo> midiInputDevices;
     std::vector<std::unique_ptr<juce::MidiMessageCollector>> midiInputCollectors;
     std::vector<juce::MidiBuffer> perInputMidi;
-    juce::MidiBuffer perTrackMidiScratch;
+    std::array<juce::MidiBuffer, Session::kNumTracks> perTrackMidiScratch;
 
     // Recomputed every rebuildMidiInputBank so hot-plug doesn't invalidate.
     int virtualKeyboardCollectorIndex { -1 };
@@ -379,6 +468,12 @@ private:
     // reattach fence is what makes vector mutation safe.
     void rebuildMidiInputBank();
     void rebuildMidiOutputBank();
+
+    // Write the finished master mix (mixL/mixR) to its configured device output
+    // pair. Accumulates, so an aux lane routed to the same pair sums in rather
+    // than being clobbered. Default (-1) maps to the first pair (outputs 1-2).
+    void writeMasterMixToOutput (float* const* outputChannelData,
+                                 int numOutputChannels, int numSamples) noexcept;
 
     std::atomic<double> currentSampleRate { 0.0 };
     std::atomic<int>    currentBlockSize  { 0 };

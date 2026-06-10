@@ -1,4 +1,5 @@
 #include "AuxLaneStrip.h"
+#include "OutputPairRouting.h"
 #include <cmath>
 
 namespace duskstudio
@@ -148,6 +149,12 @@ void AuxLaneStrip::processStereoBlock (float* L, float* R, int numSamples,
             R[i] = (1.0f - g) * insertScratchR[(size_t) i] + g * R[i];
         }
     }
+
+    // Cue / headphone tap. Send the processed aux mix to its routed output
+    // pair BEFORE the return fader/mute below, so the hardware pair is an
+    // independent cue send (the fader/mute govern only the fold into master).
+    outputpair::tapStereoPairInto (deviceOutputs, numDeviceOutputs, L, R, numSamples,
+                                     paramsRef->outputPair.load (std::memory_order_relaxed));
 
     // Return level + meter peak.
     float postPeakL = 0.0f, postPeakR = 0.0f;

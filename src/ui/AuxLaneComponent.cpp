@@ -4,10 +4,12 @@
 #include "PlatformWindowing.h"
 #include "PluginPickerHelpers.h"
 #include "../dsp/AuxLaneStrip.h"
+#include "../dsp/OutputPairRouting.h"
 #include "../engine/AudioEngine.h"
 #include "../engine/PluginSlot.h"
 #include "../engine/Transport.h"
 #include "../session/MidiBindings.h"
+#include "../session/ParamEditAction.h"
 
 namespace duskstudio
 {
@@ -208,7 +210,13 @@ AuxLaneComponent::AuxLaneComponent (AuxLane& l, AuxLaneStrip& s, int idx,
             txt = txt.substring (0, kAuxNameMaxChars);
             nameLabel.setText (txt, juce::dontSendNotification);
         }
-        lane.name = txt;
+        if (txt == lane.name) return;
+        const auto oldName = lane.name;
+        auto& um = engine.getUndoManager();
+        um.beginNewTransaction ("Aux name");
+        um.perform (new ParamEditAction (
+            [&l = lane, txt]     { l.name = txt; },
+            [&l = lane, oldName] { l.name = oldName; }));
     };
     addAndMakeVisible (nameLabel);
 
@@ -276,6 +284,20 @@ AuxLaneComponent::AuxLaneComponent (AuxLane& l, AuxLaneStrip& s, int idx,
                                                                               : "T");
     }
     addAndMakeVisible (autoModeButton);
+
+    // Cue/headphone output routing. "Master only" = no hardware tap; any other
+    // pair sends this aux's processed mix (pre return-fader/mute) to that
+    // device output pair. Enable extra outputs in Audio settings first.
+    outputPairCombo.setTooltip ("Send this AUX lane to a hardware output pair "
+                                  "for a headphone / cue mix. Enable extra outputs "
+                                  "in Audio settings first.");
+    outputPairCombo.onChange = [this]
+    {
+        const int id = outputPairCombo.getSelectedId();
+        lane.params.outputPair.store (id <= 1 ? -1 : id, std::memory_order_relaxed);
+    };
+    populateOutputPairCombo();
+    addAndMakeVisible (outputPairCombo);
 
     stripMeter = std::make_unique<StripMeter> (lane.params);
     addAndMakeVisible (stripMeter.get());
@@ -358,6 +380,9 @@ AuxLaneComponent::~AuxLaneComponent()
 
 void AuxLaneComponent::timerCallback()
 {
+    if (! nameLabel.isBeingEdited() && nameLabel.getText (false) != lane.name)
+        nameLabel.setText (lane.name, juce::dontSendNotification);
+
     for (int i = 0; i < AuxLaneParams::kMaxLanePlugins; ++i)
         refreshSlotControls (i);
     if (stripMeter != nullptr) stripMeter->repaint();
@@ -408,6 +433,53 @@ void AuxLaneComponent::timerCallback()
         if (muteButton.getToggleState() != effective)
             muteButton.setToggleState (effective, juce::dontSendNotification);
     }
+
+    // Rebuild the output-pair menu when the device's ACTIVE output set changes
+    // (e.g. the user enabled/swapped outputs in Audio settings — the physical
+    // name count wouldn't move, only the active mask).
+    if (auto* dev = engine.getDeviceManager().getCurrentAudioDevice())
+        if (dev->getActiveOutputChannels() != lastOutputChannelMask
+            || dev->getOutputChannelNames().size() != lastOutputChannelCount)
+            populateOutputPairCombo();
+}
+
+void AuxLaneComponent::populateOutputPairCombo()
+{
+    outputPairCombo.clear (juce::dontSendNotification);
+    outputPairCombo.addItem ("Master only", 1);
+
+    juce::BigInteger activeMask;
+    if (auto* device = engine.getDeviceManager().getCurrentAudioDevice())
+    {
+        // Only list pairs the engine can write to — both channels must be in the
+        // device's active-output set. Offering inactive physical outputs would
+        // route a cue to a dead pair (no sound). activeMask is cached so the
+        // timer re-populates when the user toggles outputs in Audio settings
+        // (getOutputChannelNames().size() wouldn't change there).
+        const auto active = device->getActiveOutputChannels();
+        const int total = device->getOutputChannelNames().size();
+        for (int i = 0; i + 1 < total; i += 2)
+            if (active[i] && active[i + 1])
+                outputPairCombo.addItem ("Out " + juce::String (i + 1) + "-" + juce::String (i + 2),
+                                           outputpair::encodePair (i, i + 1));
+        activeMask = active;
+        lastOutputChannelCount = total;
+    }
+    else
+    {
+        lastOutputChannelCount = -1;
+    }
+    lastOutputChannelMask = activeMask;
+
+    // Preselect the stored routing; fall back to "Master only" if that pair is
+    // no longer present (device changed). dontSendNotification so this doesn't
+    // overwrite the param via onChange.
+    const int stored = lane.params.outputPair.load (std::memory_order_relaxed);
+    int wantId = 1;
+    if (stored > 0)
+        for (int i = 0; i < outputPairCombo.getNumItems(); ++i)
+            if (outputPairCombo.getItemId (i) == stored) { wantId = stored; break; }
+    outputPairCombo.setSelectedId (wantId, juce::dontSendNotification);
 }
 
 void AuxLaneComponent::showAutoModeMenu()
@@ -475,7 +547,9 @@ void AuxLaneComponent::captureWritePoint (AutomationParam param, float denormVal
         return 0.0f;
     };
 
-    auto& laneRef = lane.params.automationLanes[(size_t) param];
+    // In-place append/erase via mutableForWritePass: sound only because the
+    // audio thread does not read this lane in Write/Touch-touched mode.
+    auto& laneRef = lane.params.automationLanes[(size_t) param].mutableForWritePass();
     AutomationPoint pt;
     pt.timeSamples   = engine.getTransport().getPlayhead();
     pt.value         = normalize (param, denormValue);
@@ -487,33 +561,33 @@ void AuxLaneComponent::captureWritePoint (AutomationParam param, float denormVal
     // last.timeSamples guard keeps us from short-circuiting after a
     // loop-wrap or transport rewind — those need the truncation block
     // below to drop the now-stale future points.
-    if (isContinuousParam (param) && ! laneRef.points.empty())
+    if (isContinuousParam (param) && ! laneRef.empty())
     {
         constexpr float kDeltaEps = 0.001f;
         constexpr juce::int64 kMaxSpanSamples = 22050;   // ~500 ms @ 44.1 k
-        const auto& last = laneRef.points.back();
+        const auto& last = laneRef.back();
         if (std::abs (pt.value - last.value) < kDeltaEps
             && pt.timeSamples >= last.timeSamples
             && (pt.timeSamples - last.timeSamples) < kMaxSpanSamples)
             return;
     }
 
-    if (! laneRef.points.empty() && laneRef.points.back().timeSamples >= pt.timeSamples)
+    if (! laneRef.empty() && laneRef.back().timeSamples >= pt.timeSamples)
     {
-        if (laneRef.points.back().timeSamples > pt.timeSamples)
+        if (laneRef.back().timeSamples > pt.timeSamples)
         {
-            auto cutoff = std::lower_bound (laneRef.points.begin(), laneRef.points.end(),
+            auto cutoff = std::lower_bound (laneRef.begin(), laneRef.end(),
                 pt.timeSamples,
                 [] (const AutomationPoint& a, juce::int64 t) { return a.timeSamples < t; });
-            laneRef.points.erase (cutoff, laneRef.points.end());
+            laneRef.erase (cutoff, laneRef.end());
         }
-        if (! laneRef.points.empty() && laneRef.points.back().timeSamples == pt.timeSamples)
+        if (! laneRef.empty() && laneRef.back().timeSamples == pt.timeSamples)
         {
-            laneRef.points.back() = pt;
+            laneRef.back() = pt;
             return;
         }
     }
-    laneRef.points.push_back (pt);
+    laneRef.push_back (pt);
 }
 
 void AuxLaneComponent::refreshSlotControls (int i)
@@ -838,7 +912,12 @@ void AuxLaneComponent::rebuildSlots()
             if (ui.hwInsertEditor != nullptr) detachHardwareInsertForSlot (i);
 
             auto* instance = strip.getPluginSlot (i).getInstance();
-            if (instance != nullptr && ui.editor == nullptr)
+            // Only build the editor once this lane is actually on a realised,
+            // visible peer. Creating it while hidden (all 4 lanes are built up
+            // front; AuxView shows one) maps the plugin's X11 editor window to
+            // the root window — a stray top-level flash until it reparents.
+            // visibilityChanged() re-runs rebuildSlots when the lane is shown.
+            if (instance != nullptr && ui.editor == nullptr && isShowing())
             {
                 if (instance->hasEditor())
                 {
@@ -859,6 +938,31 @@ void AuxLaneComponent::rebuildSlots()
         }
     }
     resized();
+}
+
+void AuxLaneComponent::visibilityChanged()
+{
+    // Lazily build the plugin editor only while this lane is the visible one
+    // (avoids the root-window flash from creating it hidden). When hidden,
+    // drop the editor so an inactive lane doesn't keep an X11 plugin window
+    // parented off-screen — it rebuilds on the next show.
+    if (isShowing())
+        rebuildSlots();
+    else
+        for (int i = 0; i < AuxLaneParams::kMaxLanePlugins; ++i)
+            detachEditorForSlot (i);
+}
+
+void AuxLaneComponent::parentHierarchyChanged()
+{
+    // Catches the lane being added to (or removed from) a realised, on-screen
+    // window — visibilityChanged alone doesn't fire on the initial desktop
+    // attach. Same build-when-showing / tear-down-when-hidden policy.
+    if (isShowing())
+        rebuildSlots();
+    else
+        for (int i = 0; i < AuxLaneParams::kMaxLanePlugins; ++i)
+            detachEditorForSlot (i);
 }
 
 void AuxLaneComponent::paint (juce::Graphics& g)
@@ -897,6 +1001,8 @@ void AuxLaneComponent::resized()
     {
         auto autoRow = stripCol.removeFromTop (18);
         autoModeButton.setBounds (autoRow.removeFromRight (44));
+        autoRow.removeFromRight (4);
+        outputPairCombo.setBounds (autoRow);
     }
     stripCol.removeFromTop (6);
 
@@ -912,7 +1018,7 @@ void AuxLaneComponent::resized()
     // enforced at compile time so adding kMaxLanePlugins > 1 forces this
     // layout block to be revisited.
     static_assert (AuxLaneParams::kMaxLanePlugins == 1,
-                     "AuxLaneComponent::resized assumes a single plugin slot — "
+                     "AuxLaneComponent::resized assumes a single plugin slot - "
                      "extend the layout block before raising kMaxLanePlugins.");
     auto center = getCenterArea();
     auto& ui = slots[0];

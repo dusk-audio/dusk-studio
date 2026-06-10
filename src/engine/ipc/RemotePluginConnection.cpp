@@ -613,7 +613,7 @@ void RemotePluginConnection::readerLoop()
         if (replyReady)
             std::fprintf (stderr,
                           "[Dusk Studio/RemotePluginConnection] reader: "
-                          "dropping unread reply slot (op=%u) — caller "
+                          "dropping unread reply slot (op=%u) - caller "
                           "did not consume the previous reply.\n",
                           (unsigned) replyHeader.op);
         replyHeader = hdr;

@@ -1,18 +1,18 @@
-name: Linux release (AppImage)
+name: Linux release (tarball)
 
-# Builds the x86_64 AppImage and publishes it to the PRIVATE releases repo
-# on a v* tag — sharing the tag's release with the Windows MSI + macOS DMG
-# (distinct asset names coexist). The AppImage is UNSIGNED; Linux desktops
-# trust AppImages without a code-signing dance. The source is open; the
-# packaged binary is the product.
+# Builds the x86_64 portable tarball and publishes it to the PRIVATE releases
+# repo on a v* tag — sharing the tag's release with the Windows MSI + macOS DMG
+# (distinct asset names coexist). The tarball is UNSIGNED; the source is open,
+# the packaged binary is the product. It runs in place or installs via the
+# bundled install.sh.
 #
-# Mirrors linux-build.yml's toolchain (upstream JUCE 8.0.4 + the x86_64-GCC
+# Mirrors linux-build.yml's toolchain (upstream JUCE 8.0.4 + the GCC
 # SIMD<long long> alias patch + donor plugins), then runs the same
-# scripts/package-appimage.sh a maintainer runs locally.
+# scripts/package-tarball.sh a maintainer runs locally.
 #
 # Required repository secret:
 #   RELEASES_REPO_TOKEN  PAT with contents:write on the PRIVATE releases
-#                        repo below. The AppImage is pushed there as a
+#                        repo below. The tarball is pushed there as a
 #                        release asset — NEVER to this public repo.
 #
 # Edit RELEASES_REPO (env, below) to your private releases repo.
@@ -31,13 +31,10 @@ concurrency:
 
 jobs:
   release:
-    name: Build + package AppImage (GCC Release, Ubuntu 22.04, amd64)
+    name: Build + package tarball (GCC Release, Ubuntu 22.04, amd64)
     runs-on: ubuntu-22.04
     env:
       RELEASES_REPO: dusk-audio/dusk-studio-releases
-      # GitHub runners have no FUSE; tell linuxdeploy + the appimagetool it
-      # spawns to extract-and-run themselves instead of mounting.
-      APPIMAGE_EXTRACT_AND_RUN: 1
 
     steps:
       - name: Checkout Dusk Studio
@@ -58,7 +55,7 @@ jobs:
             libxinerama-dev libxrandr-dev libxrender-dev libxss-dev \
             libwebkit2gtk-4.0-dev libglu1-mesa-dev \
             libwayland-dev libxkbcommon-dev libdecor-0-dev \
-            imagemagick file squashfs-tools zsync
+            imagemagick xz-utils
 
       - name: Clone JUCE 8.0.4 (upstream)
         run: |
@@ -103,44 +100,31 @@ jobs:
       - name: Build (Release)
         run: cmake --build build-linux -j
 
-      - name: Fetch linuxdeploy
-        # linuxdeploy's appimage output plugin also fetches appimagetool +
-        # the AppImage runtime from GitHub at build time, so this step needs
-        # network (always available on GitHub runners). squashfs-tools above
-        # supplies the mksquashfs appimagetool shells out to.
+      - name: Build + run tests (release gate)
+        # No artifact ships unless the full Catch2 suite passes.
         run: |
-          curl -sSL -o /usr/local/bin/linuxdeploy \
-            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
-          chmod +x /usr/local/bin/linuxdeploy
+          cmake -S . -B build-tests -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DDUSKSTUDIO_BUILD_TESTS=ON \
+            -DDUSKSTUDIO_SKIP_FORK_CHECK=ON \
+            -DJUCE_PATH="${RUNNER_TEMP}/JUCE-wayland" \
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main"
+          cmake --build build-tests --target dusk-studio-tests -j
+          ctest --test-dir build-tests --output-on-failure
 
-      - name: Package AppImage
-        # scripts/package-appimage.sh expects BUILD_DIR=build-linux, ImageMagick
-        # (downscales the icon), and linuxdeploy on PATH. Emits
-        # dusk-studio-<version>-Linux-x86_64.AppImage at the repo root.
-        run: BUILD_DIR=build-linux scripts/package-appimage.sh
-
-      - name: Stage raw executable
-        # Ship the bare ELF too, for users who'd rather run the binary
-        # directly than via the AppImage wrapper. (No .deb / .rpm yet.) Name
-        # mirrors the cross-platform scheme: dusk-studio-<version>-Linux-x86_64.
-        run: |
-          set -euo pipefail
-          VERSION="$(tr -d '[:space:]' < VERSION)"
-          EXE="dusk-studio-${VERSION}-Linux-x86_64"
-          cp build-linux/DuskStudio_artefacts/Release/DuskStudio "./${EXE}"
+      - name: Package portable tarball
+        # scripts/package-tarball.sh emits dusk-studio-<version>-Linux-x86_64.tar.xz
+        # at the repo root: a portable program directory (run ./DuskStudio/DuskStudio
+        # in place) plus install.sh for optional menu / PATH / session-file-type
+        # integration. Needs ImageMagick (icon downscale).
+        run: BUILD_DIR=build-linux scripts/package-tarball.sh
 
       - name: Checksums
-        # One combined SHA256SUMS.linux over both Linux artifacts, mirroring
-        # SHA256SUMS.macos / SHA256SUMS.windows (the per-file .sha256 form is
-        # gone for parity). The two globs match the AppImage and the bare ELF
-        # respectively - the ELF glob has no trailing wildcard so it can't also
-        # catch the .AppImage.
         run: |
           set -euo pipefail
-          sha256sum dusk-studio-*-Linux-x86_64.AppImage dusk-studio-*-Linux-x86_64 \
-            | tee SHA256SUMS.linux
+          sha256sum dusk-studio-*-Linux-x86_64.tar.xz | tee SHA256SUMS.linux
 
-      - name: Publish AppImage + executable to the PRIVATE releases repo
+      - name: Publish tarball to the PRIVATE releases repo
         # Only on a real v* tag — dispatch runs are build validation.
         if: ${{ github.ref_type == 'tag' }}
         env:
@@ -148,10 +132,10 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF_NAME}"
-          NOTES="Unsigned Linux x86_64: AppImage (chmod +x and run) + bare executable."
+          NOTES="Unsigned Linux x86_64 tarball: extract, then run ./DuskStudio/DuskStudio (or ./install.sh for a menu entry, PATH launcher, and session-file association)."
 
           shopt -s nullglob
-          ASSETS=( *.AppImage dusk-studio-*-Linux-x86_64 SHA256SUMS.linux )
+          ASSETS=( dusk-studio-*-Linux-x86_64.tar.xz SHA256SUMS.linux )
           if [[ ${#ASSETS[@]} -eq 0 ]]; then
             echo "::error::no Linux artifacts produced — packaging step failed" >&2
             exit 1

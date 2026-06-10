@@ -44,6 +44,10 @@ public:
     // (no-op on the note grid) don't clutter the toolbar.
     void setVisibleModes (juce::Array<EditMode> modes);
 
+    // Pure formatter for a grid resolution ("1/4 Note", "Bar", …). Static +
+    // public so other surfaces (the header snap picker) can reuse it.
+    static juce::String labelFor (SnapResolution r);
+
 private:
     // Compact rectangular icon button that paints a glyph for an
     // EditMode. Active state shown via a lit-up rim, mirroring
@@ -79,7 +83,6 @@ private:
     void setEditMode (EditMode m);
     void updateButtonStates();
     void showSnapResolutionMenu();
-    static juce::String labelFor (SnapResolution r);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (EditModeToolbar)
 };

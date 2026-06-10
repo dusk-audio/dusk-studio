@@ -2,9 +2,11 @@
 
 #include <juce_core/juce_core.h>
 #include <juce_graphics/juce_graphics.h>
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <limits>
 #include <memory>
 #include <vector>
 #include "AtomicSnapshot.h"
@@ -47,20 +49,52 @@ struct AutomationPoint
     juce::int64 timeSamples   = 0;
     float       value         = 0.0f;     // 0..1
     float       recordedAtBPM = 120.0f;
+
+    bool operator== (const AutomationPoint& o) const noexcept
+    {
+        return timeSamples == o.timeSamples && value == o.value
+            && recordedAtBPM == o.recordedAtBPM;
+    }
+    bool operator!= (const AutomationPoint& o) const noexcept { return ! (*this == o); }
 };
 
-// Points sorted by timeSamples; binary search at lookup. Plain vector —
-// session load (transport stopped) is the only mutator the audio thread
-// races. Write mode (3c-ii) will swap via atomic ptr.
+// Points sorted by timeSamples; binary search at lookup. Backed by an
+// AtomicSnapshot so the message thread can reshape the lane (add / drag /
+// delete a breakpoint, undo, thin, load) while the audio thread reads it in
+// Read/Touch mode without a data race. See AtomicSnapshot.h for the
+// one-publish-behind reclamation contract.
+//
+// Accessor discipline:
+//   pointsForRead()      — audio thread (acquire-load). Never null post-ctor.
+//   pointsConst()        — message-thread read.
+//   mutableForWritePass()— Write-mode capture ONLY. In-place append/erase with
+//                          NO publish. Sound solely because the audio thread
+//                          does not read this lane in Write mode (it reads the
+//                          manual setpoint), and discrete capture is gated
+//                          Write-only. Do NOT use for edit gestures — a
+//                          resize under a concurrent reader is UB; use
+//                          mutatePoints / publishPoints there.
+//   publishPoints/mutate — safe swap for every edit / load / thin path.
 struct AutomationLane
 {
-    std::vector<AutomationPoint> points;
+    AtomicSnapshot<std::vector<AutomationPoint>> snapshot;
+
+    const std::vector<AutomationPoint>& pointsForRead() const noexcept { return *snapshot.read(); }
+    const std::vector<AutomationPoint>& pointsConst()   const noexcept { return snapshot.current(); }
+    std::vector<AutomationPoint>&       mutableForWritePass() noexcept  { return snapshot.currentMutable(); }
+
+    void publishPoints (std::vector<AutomationPoint> pts)
+    {
+        snapshot.publish (std::make_unique<std::vector<AutomationPoint>> (std::move (pts)));
+    }
+    template <typename Fn>
+    void mutatePoints (Fn&& fn) { snapshot.mutate (std::forward<Fn> (fn)); }
 };
 
 // Linear interp between bracketing points for continuous; step (hold
 // previous) for discrete. Out-of-range holds the first / last value.
-// Returns 0 on empty lane — callers gate on lane.points.empty() first.
-float evaluateLane (const AutomationLane& lane, juce::int64 t,
+// Returns 0 on empty input — callers gate on points.empty() first.
+float evaluateLane (const std::vector<AutomationPoint>& points, juce::int64 t,
                     AutomationParam param) noexcept;
 
 float denormalizeAutomationValue (AutomationParam p, float v01) noexcept;
@@ -69,7 +103,7 @@ float normalizeAutomationValue   (AutomationParam p, float denormValue) noexcept
 // RDP thin in normalized 0..1 units (range-independent). 0.002 = 0.2%
 // of vertical, the production default. No-op for discrete params.
 // Synchronous — 10-min Write pass (~18k points) runs in < 1 ms.
-void thinAutomationLane (AutomationLane& lane,
+void thinAutomationLane (std::vector<AutomationPoint>& points,
                             AutomationParam param,
                             double epsilon) noexcept;
 
@@ -317,6 +351,129 @@ inline juce::int64 ticksToSamples (juce::int64 ticks,
             / ((double) bpm * (double) kMidiTicksPerQuarter));
 }
 
+// One tempo change: `bpm` takes effect at `timelineSamples` and holds until the
+// next point (piecewise-constant tempo).
+struct TempoPoint
+{
+    juce::int64 timelineSamples = 0;
+    float       bpm             = 120.0f;
+};
+
+// Piecewise-constant tempo across the timeline. When it has points, sample<->tick
+// conversions integrate across the segments, and the span before the first point
+// takes the first point's tempo (segment 0 starts at the timeline origin no
+// matter where the first point sits).
+//
+// An EMPTY map carries no tempo of its own — the session's constant tempoBpm is
+// authoritative then, so callers check empty() and fall back to the
+// duskstudio::samplesToTicks/ticksToSamples free functions with Session::tempoBpm.
+// That keeps tempoBpm the single source of truth for constant tempo (the map
+// only ever holds genuine tempo changes).
+//
+// Message-thread state for now; the audio thread still reads Session::tempoBpm.
+// A lock-free published snapshot for the RT MIDI scheduler arrives in a later
+// phase — until then nothing on the audio path reads this.
+class TempoMap
+{
+public:
+    static constexpr float kMinBpm = 30.0f;
+    static constexpr float kMaxBpm = 300.0f;
+    static float clampBpm (float b) noexcept
+    {
+        return std::isfinite (b) ? juce::jlimit (kMinBpm, kMaxBpm, b) : 120.0f;
+    }
+
+    // Replace the points. Input need not be sorted; this sorts by sample, clamps
+    // each bpm to [kMinBpm, kMaxBpm], and drops points colliding on the same
+    // sample (last wins). Positions are preserved.
+    void setPoints (std::vector<TempoPoint> pts)
+    {
+        // Stable so equal-sample points keep their input order — the
+        // collision loop below is "last wins", which only means "last in the
+        // caller's order" if equal keys aren't reshuffled.
+        std::stable_sort (pts.begin(), pts.end(),
+                   [] (const TempoPoint& a, const TempoPoint& b)
+                   { return a.timelineSamples < b.timelineSamples; });
+        points_.clear();
+        for (auto& p : pts)
+        {
+            p.bpm = clampBpm (p.bpm);
+            p.timelineSamples = juce::jmax ((juce::int64) 0, p.timelineSamples);
+            if (! points_.empty() && points_.back().timelineSamples == p.timelineSamples)
+                points_.back() = p;                 // collision: last wins
+            else
+                points_.push_back (p);
+        }
+    }
+
+    void clear() noexcept { points_.clear(); }
+    bool empty() const noexcept { return points_.empty(); }
+    const std::vector<TempoPoint>& points() const noexcept { return points_; }
+
+    // Valid only when !empty() (returns 120 as a harmless default otherwise).
+    float bpmAt (juce::int64 sample) const noexcept
+    {
+        if (points_.empty()) return 120.0f;
+        float bpm = points_.front().bpm;
+        for (const auto& p : points_)
+        {
+            if (p.timelineSamples <= sample) bpm = p.bpm;
+            else break;
+        }
+        return bpm;
+    }
+
+    // Valid only when !empty(); returns 0 otherwise (use the constant path).
+    juce::int64 samplesToTicks (juce::int64 sample, double sr) const noexcept
+    {
+        if (sr <= 0.0 || sample <= 0 || points_.empty()) return 0;
+
+        const double k = (double) kMidiTicksPerQuarter / (sr * 60.0);
+        double ticks = 0.0;
+        for (size_t i = 0; i < points_.size(); ++i)
+        {
+            const juce::int64 segStart = (i == 0) ? (juce::int64) 0 : points_[i].timelineSamples;
+            if (sample <= segStart) break;
+            const juce::int64 segEnd = (i + 1 < points_.size())
+                                         ? points_[i + 1].timelineSamples
+                                         : std::numeric_limits<juce::int64>::max();
+            const juce::int64 upTo = juce::jmin (sample, segEnd);
+            ticks += (double) (upTo - segStart) * (double) points_[i].bpm * k;
+        }
+        return (juce::int64) std::llround (ticks);
+    }
+
+    juce::int64 ticksToSamples (juce::int64 ticks, double sr) const noexcept
+    {
+        if (sr <= 0.0 || ticks <= 0 || points_.empty()) return 0;
+
+        const double invK = (sr * 60.0) / (double) kMidiTicksPerQuarter;   // ticks->samples per bpm
+        double remTicks = (double) ticks;
+        for (size_t i = 0; i < points_.size(); ++i)
+        {
+            const juce::int64 segStart = (i == 0) ? (juce::int64) 0 : points_[i].timelineSamples;
+            const bool last = (i + 1 >= points_.size());
+            if (! last)
+            {
+                const juce::int64 segLen = points_[i + 1].timelineSamples - segStart;
+                const double segTicks = (double) segLen * (double) points_[i].bpm
+                                            / invK;   // ticks the segment holds
+                if (remTicks <= segTicks)
+                    return segStart + (juce::int64) std::llround (remTicks * invK / (double) points_[i].bpm);
+                remTicks -= segTicks;
+            }
+            else
+            {
+                return segStart + (juce::int64) std::llround (remTicks * invK / (double) points_[i].bpm);
+            }
+        }
+        return 0;
+    }
+
+private:
+    std::vector<TempoPoint> points_;
+};
+
 enum class TimeDisplayMode : int { Bars = 0, Time = 1 };
 
 // Ardour-style. Stretch is deliberately absent — DuskStudio.md forbids
@@ -391,6 +548,36 @@ inline juce::String formatSamplePosition (juce::int64 samples,
          + juce::String (tick).paddedLeft ('0', 3);
 }
 
+// Map-aware bar/beat/tick. With an empty map this delegates to the constant-
+// tempo overload above (bit-identical output, so the common case never
+// regresses); with a populated map it integrates ticks across the tempo
+// segments so bar/beat stay correct after a tempo change. Time mode is tempo-
+// independent and routes through the scalar path either way.
+inline juce::String formatSamplePosition (juce::int64 samples,
+                                            double sampleRate,
+                                            const TempoMap& tempoMap,
+                                            float fallbackBpm,
+                                            int beatsPerBar,
+                                            TimeDisplayMode mode) noexcept
+{
+    if (tempoMap.empty() || mode == TimeDisplayMode::Time)
+        return formatSamplePosition (samples, sampleRate, fallbackBpm, beatsPerBar, mode);
+
+    if (samples < 0) samples = 0;
+    if (sampleRate <= 0.0 || beatsPerBar <= 0)
+        return juce::String ("1.1.000");
+
+    const juce::int64 ticks        = tempoMap.samplesToTicks (samples, sampleRate);
+    const juce::int64 ticksPerBeat = kMidiTicksPerQuarter;
+    const juce::int64 ticksPerBar  = ticksPerBeat * (juce::int64) beatsPerBar;
+    const int bar  = (int) (ticks / ticksPerBar);
+    const int beat = (int) ((ticks % ticksPerBar) / ticksPerBeat);
+    const int tick = (int) (ticks % ticksPerBeat);
+    return juce::String (bar + 1) + "."
+         + juce::String (beat + 1) + "."
+         + juce::String (tick).paddedLeft ('0', 3);
+}
+
 // Off events folded into lengthInTicks — no dangling on/off bookkeeping.
 // Negative or zero length = "all-notes-off across region" sentinel.
 struct MidiNote
@@ -400,6 +587,14 @@ struct MidiNote
     int  velocity      = 100;   // 1..127 (recorded notes always >= 1)
     juce::int64 startTick     = 0;
     juce::int64 lengthInTicks = 0;
+
+    bool operator== (const MidiNote& o) const noexcept
+    {
+        return channel == o.channel && noteNumber == o.noteNumber
+            && velocity == o.velocity && startTick == o.startTick
+            && lengthInTicks == o.lengthInTicks;
+    }
+    bool operator!= (const MidiNote& o) const noexcept { return ! (*this == o); }
 };
 
 // `controller` doubles as message-type discriminator: 0..127 = CC.
@@ -410,6 +605,13 @@ struct MidiCc
     int  controller = 64;       // sustain pedal
     int  value      = 0;
     juce::int64 atTick = 0;
+
+    bool operator== (const MidiCc& o) const noexcept
+    {
+        return channel == o.channel && controller == o.controller
+            && value == o.value && atTick == o.atTick;
+    }
+    bool operator!= (const MidiCc& o) const noexcept { return ! (*this == o); }
 };
 
 struct MidiTakeRef
@@ -681,6 +883,13 @@ struct AuxLaneParams
     std::atomic<float> returnLevelDb { 0.0f };
     std::atomic<bool>  mute           { false };
 
+    // Physical output routing for a cue / headphone mix. Encoded L*1000+R+1
+    // (see dsp/OutputPairRouting.h); -1 = master-only (no hardware tap). The
+    // tap is taken pre-return-fader/mute, so the hardware pair carries the full
+    // processed aux mix while returnLevelDb / mute govern only the fold back
+    // into the master bus.
+    std::atomic<int> outputPair { -1 };
+
     // Audio reads THESE (not raw values) so Off/Read/Write/Touch
     // hand-off lives in the engine; AuxLaneStrip stays lane-agnostic.
     mutable std::atomic<float> liveReturnLevelDb { 0.0f };
@@ -724,6 +933,11 @@ struct AuxLane
 struct MasterBusParams
 {
     std::atomic<float> faderDb     { 0.0f };
+
+    // Physical output pair for the main mix, encoded L*1000+R+1 (see
+    // dsp/OutputPairRouting.h). -1 = the default first pair (outputs 1-2); the
+    // engine maps it there so the master is never silent.
+    std::atomic<int>   outputPair  { -1 };
 
     // Zero the output bus. Cheaper than -inf fader because MasterBus
     // also skips the metering RMS smooth.
@@ -817,6 +1031,11 @@ struct MasteringParams
     std::atomic<float> limiterDriveDb  { 0.0f };
     std::atomic<float> limiterCeilingDb{ -0.3f };
     std::atomic<float> limiterReleaseMs{ 100.0f };
+    // 0 Modern, 1 Transparent, 2 Punchy — shapes hold/release around the
+    // release knob. Stereo link on = matched L/R gain (preserves the image);
+    // off = independent per-channel limiting.
+    std::atomic<int>   limiterMode       { 0 };
+    std::atomic<bool>  limiterStereoLink { true };
 
     mutable std::atomic<float> meterPostMasterLDb  { -100.0f };
     mutable std::atomic<float> meterPostMasterRDb  { -100.0f };
@@ -931,6 +1150,32 @@ public:
     std::atomic<float> tempoBpm          { 120.0f };
     std::atomic<int>   beatsPerBar       { 4 };
     std::atomic<int>   beatUnit          { 4 };
+    // Piecewise tempo (Grid mode). Empty = constant tempoBpm. Message-thread
+    // owned; consumers migrate onto it over the M2c phases.
+    TempoMap           tempoMap;
+
+    // Map-aware sample<->tick conversion: uses the tempo map when it has points,
+    // otherwise the constant tempoBpm. Single entry point so consumers don't
+    // each branch on tempoMap.empty(). Message-thread only until the RT-safe
+    // published snapshot lands (the audio thread still uses tempoBpm directly).
+    juce::int64 samplesToTicks (juce::int64 samples, double sr) const noexcept
+    {
+        return tempoMap.empty()
+                 ? ::duskstudio::samplesToTicks (samples, sr, tempoBpm.load (std::memory_order_relaxed))
+                 : tempoMap.samplesToTicks (samples, sr);
+    }
+    juce::int64 ticksToSamples (juce::int64 ticks, double sr) const noexcept
+    {
+        return tempoMap.empty()
+                 ? ::duskstudio::ticksToSamples (ticks, sr, tempoBpm.load (std::memory_order_relaxed))
+                 : tempoMap.ticksToSamples (ticks, sr);
+    }
+    float bpmAt (juce::int64 sample) const noexcept
+    {
+        return tempoMap.empty()
+                 ? tempoBpm.load (std::memory_order_relaxed)
+                 : tempoMap.bpmAt (sample);
+    }
     std::atomic<bool>  metronomeEnabled  { false };
     std::atomic<float> metronomeVolDb    { -12.0f };
     // metronomeOnlyDuringCountIn overrides clickWhileRecording for the
@@ -977,6 +1222,10 @@ public:
     // indefinitely.
     std::atomic<float> preRollSeconds  { 0.0f };
     std::atomic<float> postRollSeconds { 0.0f };
+    // Enable toggles, so a roll can be bypassed without losing its seconds
+    // value. Effective roll = enabled ? seconds : 0.
+    std::atomic<bool>  preRollEnabled  { true };
+    std::atomic<bool>  postRollEnabled { true };
 
     // tuneTrackIndex = -1 disables; 0..15 selects. Audio writes Hz/level
     // per block; TunerOverlay's 30 Hz timer reads. Not persisted.

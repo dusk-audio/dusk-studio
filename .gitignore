@@ -21,3 +21,9 @@ sessions/
 
 # Generated user manual (build via packaging/build-pdf.sh)
 MANUAL.pdf
+
+# Linux release artifacts (built by scripts/package-tarball.sh)
+dusk-studio-*-Linux-*.tar.xz
+dusk-studio-*-Linux-*.AppImage
+AppDir/
+SHA256SUMS.linux

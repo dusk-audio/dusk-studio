@@ -4,6 +4,7 @@
 #include "DuskFileBrowser.h"
 #include "MasteringEqEditor.h"
 #include "MasteringLimiterEditor.h"
+#include "../dsp/MultibandCompPresets.h"
 #include "../engine/BounceEngine.h"
 #include "../engine/MasteringPlayer.h"
 #if DUSKSTUDIO_HAS_DUSK_DSP
@@ -86,13 +87,6 @@ void WaveformDisplay::mouseDown (const juce::MouseEvent& e)
 }
 namespace
 {
-void styleKnob (juce::Slider& s, const juce::String& tooltip)
-{
-    s.setSliderStyle (juce::Slider::RotaryVerticalDrag);
-    s.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 70, 18);
-    s.setTooltip (tooltip);
-}
-
 // Streaming / broadcast target presets. Index 0 is the no-target case;
 // indices 1..N correspond to the dropdown items. Values are LUFS (integrated
 // program loudness) and true-peak ceiling in dBTP. Source: the platforms'
@@ -108,44 +102,11 @@ constexpr MasteringTarget kMasteringTargets[] =
     { "Broadcast (EBU R128)", -23.0f,  -1.0f },
 };
 constexpr int kNumMasteringTargets = (int) (sizeof (kMasteringTargets) / sizeof (kMasteringTargets[0]));
-
-void styleSection (juce::Label& title, juce::ToggleButton& enable,
-                    const juce::String& name)
-{
-    title.setText (name, juce::dontSendNotification);
-    title.setJustificationType (juce::Justification::centredLeft);
-    title.setFont (juce::Font (juce::FontOptions (13.0f, juce::Font::bold)));
-    title.setColour (juce::Label::textColourId, juce::Colour (0xffe0e0e0));
-
-    enable.setButtonText ("ON");
-    enable.setColour (juce::ToggleButton::textColourId, juce::Colour (0xffd0d0d0));
-}
-
-void styleLabel (juce::Label& l, const juce::String& text)
-{
-    l.setText (text, juce::dontSendNotification);
-    l.setJustificationType (juce::Justification::centred);
-    l.setFont (juce::Font (juce::FontOptions (10.0f)));
-    l.setColour (juce::Label::textColourId, juce::Colour (0xff909094));
-}
 } // namespace
 
 MasteringView::MasteringView (Session& s, AudioEngine& e)
     : session (s), engine (e)
 {
-    styleKnob (eqLfBoost,   "LF boost (program-EQ gain)");
-    styleKnob (eqHfBoost,   "HF boost (program-EQ gain)");
-    styleKnob (eqHfAtten,   "HF cut shelf");
-    styleKnob (eqTubeDrive, "Tube saturation amount");
-    styleKnob (eqOutput,    "EQ output gain (dB)");
-    styleKnob (compThresh,  "Compressor threshold (dB)");
-    styleKnob (compRatio,   "Compressor ratio");
-    styleKnob (compAttack,  "Compressor attack (ms)");
-    styleKnob (compRelease, "Compressor release (ms)");
-    styleKnob (compMakeup,  "Compressor makeup gain (dB)");
-    styleKnob (limDrive,    "Limiter input drive (dB)");
-    styleKnob (limCeiling,  "Limiter ceiling (dB)");
-    styleKnob (limRelease,  "Limiter release (ms)");
     // ── header ──
     sourceFileLabel.setText ("No mix loaded", juce::dontSendNotification);
     sourceFileLabel.setColour (juce::Label::textColourId, juce::Colour (0xffd0d0d0));
@@ -178,78 +139,7 @@ MasteringView::MasteringView (Session& s, AudioEngine& e)
     grLabel.setFont (juce::Font (juce::FontOptions (11.0f)));
     addAndMakeVisible (grLabel);
 
-    // ── EQ section ──
     auto& m = session.mastering();
-
-    auto setupKnob = [this] (juce::Slider& s, std::atomic<float>& atom,
-                              double minV, double maxV, double interval)
-    {
-        s.setRange (minV, maxV, interval);
-        s.setValue (atom.load(), juce::dontSendNotification);
-        s.onValueChange = [&s, &atom] { atom.store ((float) s.getValue()); };
-        addAndMakeVisible (s);
-    };
-
-    styleSection (eqGroup.title,  eqGroup.enable,  "Digital EQ");
-    eqGroup.enable.setToggleState (m.eqEnabled.load(), juce::dontSendNotification);
-    eqGroup.enable.onClick = [this, &m] { m.eqEnabled.store (eqGroup.enable.getToggleState()); };
-    addAndMakeVisible (eqGroup.title);
-    addAndMakeVisible (eqGroup.enable);
-
-    // 5-band parametric: each existing knob slot now controls one band's
-    // GAIN. Frequencies are fixed at musical defaults shown in the labels;
-    // a freq-per-band UI is the next iteration.
-    setupKnob (eqLfBoost,   m.eqBandGainDb[0], -12.0, 12.0, 0.1);
-    setupKnob (eqHfBoost,   m.eqBandGainDb[1], -12.0, 12.0, 0.1);
-    setupKnob (eqHfAtten,   m.eqBandGainDb[2], -12.0, 12.0, 0.1);
-    setupKnob (eqTubeDrive, m.eqBandGainDb[3], -12.0, 12.0, 0.1);
-    setupKnob (eqOutput,    m.eqBandGainDb[4], -12.0, 12.0, 0.1);
-    styleLabel (eqLfBoostL,   "Low Shelf");
-    styleLabel (eqHfBoostL,   "Low Mid");
-    styleLabel (eqHfAttenL,   "Mid");
-    styleLabel (eqTubeDriveL, "High Mid");
-    styleLabel (eqOutputL,    "High Shelf");
-    addAndMakeVisible (eqLfBoostL);   addAndMakeVisible (eqHfBoostL);
-    addAndMakeVisible (eqHfAttenL);   addAndMakeVisible (eqTubeDriveL);
-    addAndMakeVisible (eqOutputL);
-
-    // ── Comp section ──
-    styleSection (compGroup.title, compGroup.enable, "Multi Comp");
-    compGroup.enable.setToggleState (m.compEnabled.load(), juce::dontSendNotification);
-    compGroup.enable.onClick = [this, &m] { m.compEnabled.store (compGroup.enable.getToggleState()); };
-    addAndMakeVisible (compGroup.title);
-    addAndMakeVisible (compGroup.enable);
-
-    setupKnob (compThresh,  m.compThreshDb,  -30.0,    0.0, 0.1);
-    setupKnob (compRatio,   m.compRatio,       1.0,   10.0, 0.1);
-    setupKnob (compAttack,  m.compAttackMs,    0.1,   50.0, 0.1);
-    setupKnob (compRelease, m.compReleaseMs,   50.0, 1000.0, 1.0);
-    setupKnob (compMakeup,  m.compMakeupDb,   -10.0,  20.0, 0.1);
-    styleLabel (compThreshL,  "Thresh");
-    styleLabel (compRatioL,   "Ratio");
-    styleLabel (compAttackL,  "Attack");
-    styleLabel (compReleaseL, "Release");
-    styleLabel (compMakeupL,  "Makeup");
-    addAndMakeVisible (compThreshL);   addAndMakeVisible (compRatioL);
-    addAndMakeVisible (compAttackL);   addAndMakeVisible (compReleaseL);
-    addAndMakeVisible (compMakeupL);
-
-    // ── Limiter section ──
-    styleSection (limGroup.title, limGroup.enable, "Limiter");
-    limGroup.enable.setToggleState (m.limiterEnabled.load(), juce::dontSendNotification);
-    limGroup.enable.onClick = [this, &m] { m.limiterEnabled.store (limGroup.enable.getToggleState()); };
-    addAndMakeVisible (limGroup.title);
-    addAndMakeVisible (limGroup.enable);
-
-    setupKnob (limDrive,    m.limiterDriveDb,    -20.0, 20.0, 0.1);
-    setupKnob (limCeiling,  m.limiterCeilingDb,   -3.0,  0.0, 0.05);
-    setupKnob (limRelease,  m.limiterReleaseMs,   10.0, 1000.0, 1.0);
-    styleLabel (limDriveL,   "Drive");
-    styleLabel (limCeilingL, "Ceiling");
-    styleLabel (limReleaseL, "Release");
-    addAndMakeVisible (limDriveL);
-    addAndMakeVisible (limCeilingL);
-    addAndMakeVisible (limReleaseL);
 
     // ── Meter + LUFS ──
     auto styleMeter = [] (juce::Label& l)
@@ -362,6 +252,24 @@ MasteringView::MasteringView (Session& s, AudioEngine& e)
         compEditor = std::make_unique<MultibandCompressorPanel> (compProc->getParameters());
         compPanelWrapper->addAndMakeVisible (compEditor.get());
     }
+
+    // DP-24-style 3-band preset picker in the comp header.
+    compPresetCombo.addItem ("Presets...", 1);
+    for (int i = 0; i < mbpresets::kNumPresets; ++i)
+        compPresetCombo.addItem (mbpresets::kPresets[(size_t) i].name, i + 2);
+    compPresetCombo.setSelectedId (1, juce::dontSendNotification);
+    compPresetCombo.setTooltip ("Apply a DP-24-style 3-band mastering compressor preset. "
+                                  "Maps onto the multiband comp with the high-mid band disabled.");
+    compPresetCombo.onChange = [this]
+    {
+        const int id = compPresetCombo.getSelectedId();
+        if (id >= 2)
+            applyMultibandPreset (id - 2);
+        // Leave the picked preset name showing so the user sees what's loaded
+        // (it stays selected even after they tweak a band — it's a starting
+        // point, not live state).
+    };
+    compPanelWrapper->addAndMakeVisible (compPresetCombo);
 #endif
 
     // ── Custom Limiter editor ──
@@ -379,9 +287,86 @@ MasteringView::MasteringView (Session& s, AudioEngine& e)
 
 MasteringView::~MasteringView() = default;
 
+void MasteringView::applyMultibandPreset (int presetIndex)
+{
+#if DUSKSTUDIO_HAS_DUSK_DSP
+    if (presetIndex < 0 || presetIndex >= mbpresets::kNumPresets) return;
+    auto* comp = engine.getMasteringChain().getCompProcessor();
+    if (comp == nullptr) return;
+
+    auto& apvts = comp->getParameters();
+    const auto& preset = mbpresets::kPresets[(size_t) presetIndex];
+
+    const auto setP = [&apvts] (const juce::String& id, float value)
+    {
+        if (auto* param = apvts.getParameter (id))
+            param->setValueNotifyingHost (
+                juce::jlimit (0.0f, 1.0f, apvts.getParameterRange (id).convertTo0to1 (value)));
+    };
+    const auto setBand = [&setP] (const char* band, const mbpresets::Band& b)
+    {
+        const juce::String pre = "mb_" + juce::String (band) + "_";
+        setP (pre + "threshold", b.thresholdDb);
+        setP (pre + "ratio",     b.ratio);
+        setP (pre + "makeup",    b.makeupDb);
+        setP (pre + "attack",    b.attackMs);
+        setP (pre + "release",   b.releaseMs);
+        setP (pre + "enabled",   1.0f);
+        setP (pre + "bypass",    0.0f);
+        setP (pre + "solo",      0.0f);
+    };
+
+    setBand ("low",    preset.low);
+    setBand ("lowmid", preset.mid);
+    setBand ("high",   preset.high);
+
+    // Map the chart's 3 bands (low / mid / high) onto the 4-band multiband comp.
+    // crossover_2 maxes at 5 kHz, so when the chart's Hi-Xover is above that we
+    // can't fit the whole "mid" band into lowmid alone. Rather than disabling
+    // high-mid (which would leave 5 kHz..Hi-Xover uncompressed), keep it enabled
+    // and give it the SAME params as lowmid so lowmid+highmid together form one
+    // continuous chart-"mid" band with no seam.
+    setP ("mb_crossover_1", preset.lowXoverHz);
+    if (preset.hiXoverHz > 5000.0f)
+    {
+        setBand ("highmid", preset.mid);
+        setP ("mb_highmid_enabled", 1.0f);
+        setP ("mb_crossover_2", 5000.0f);
+        setP ("mb_crossover_3", preset.hiXoverHz);
+    }
+    else
+    {
+        // 3-band collapse: high-mid off, mid/high split lands on Hi-Xover.
+        setP ("mb_highmid_enabled", 0.0f);
+        setP ("mb_crossover_2", preset.hiXoverHz);
+        setP ("mb_crossover_3", 5000.0f);   // > crossover_2; band is disabled anyway
+    }
+
+    setP ("auto_makeup", 0.0f);   // Choice: 0 = Off, matching the chart
+
+    // No explicit panel refresh: the donor's MultibandCompressorPanel now picks
+    // up programmatic APVTS writes on its own — the visible band's knobs are
+    // live SliderAttachments and its repaint timer re-syncs the crossover faders
+    // and per-band enable layout within a tick. (Its refreshFromParameters() was
+    // removed in the donor's per-band-enable refactor.)
+#else
+    juce::ignoreUnused (presetIndex);
+#endif
+}
+
 void MasteringView::paint (juce::Graphics& g)
 {
     g.fillAll (juce::Colour (0xff0d0d0f));
+
+    // Grouping backdrop behind the TP/M/S/I loudness cells (their own darker
+    // cell backgrounds pop against this) so they read as one loudness cluster.
+    if (! loudnessClusterBounds.isEmpty())
+    {
+        g.setColour (juce::Colour (0xff17171d));
+        g.fillRoundedRectangle (loudnessClusterBounds.toFloat(), 4.0f);
+        g.setColour (juce::Colour (0xff2c2c34));
+        g.drawRoundedRectangle (loudnessClusterBounds.toFloat(), 4.0f, 1.0f);
+    }
 }
 
 void MasteringView::resized()
@@ -393,6 +378,8 @@ void MasteringView::resized()
     loadButton.setBounds (header.removeFromLeft (110));
     header.removeFromLeft (4);
     loadLatestMixdown.setBounds (header.removeFromLeft (180));
+    header.removeFromLeft (8);
+    exportButton.setBounds (header.removeFromLeft (150));
     header.removeFromLeft (12);
     sourceFileLabel.setBounds (header);
     area.removeFromTop (8);
@@ -403,29 +390,46 @@ void MasteringView::resized()
     //    clamped placement so narrow windows don't render widgets
     //    with negative widths. ──
     auto transportRow = area.removeFromTop (36);
-    const auto place = [&transportRow] (juce::Component& c, int preferredW, int gapAfter = 0)
+
+    // Transport cluster on the left.
+    const auto placeL = [&transportRow] (juce::Component& c, int w, int gapAfter = 0)
     {
-        const int available = transportRow.getWidth();
-        if (available <= 0) { c.setVisible (false); return; }
+        if (transportRow.getWidth() <= 0) { c.setVisible (false); return; }
         c.setVisible (true);
-        const int w = juce::jmin (preferredW, available);
-        c.setBounds (transportRow.removeFromLeft (w));
+        c.setBounds (transportRow.removeFromLeft (juce::jmin (w, transportRow.getWidth())));
         if (gapAfter > 0) transportRow.removeFromLeft (juce::jmin (gapAfter, transportRow.getWidth()));
     };
-    place (rewindButton,    50,  4);
-    place (playButton,      70,  4);
-    place (stopButton,      70, 16);
-    place (clockLabel,     140, 12);
-    place (grLabel,        140, 12);
-    place (truePeak,       100,  4);
-    place (lufsM,           90,  4);
-    place (lufsS,           90,  4);
-    place (lufsI,          120,  6);
-    place (resetLoudness,   60, 16);
-    // Target sits with the loudness cluster it governs: the integrated-LUFS
-    // (I) cell glows green when within range of this target.
-    place (targetCaption,   46,  4);
-    place (masteringTargetCombo, 260, 0);
+    placeL (rewindButton, 50, 4);
+    placeL (playButton,   70, 4);
+    placeL (stopButton,   70, 16);
+    placeL (clockLabel,  140, 0);
+
+    // Loudness cluster pinned to the right edge, placed right-to-left so it
+    // reads  GR | TP M S I | Reset | Target. The four meter cells sit flush as
+    // one grouped block (backdrop drawn in paint()).
+    const auto placeR = [&transportRow] (juce::Component& c, int w, int gapBefore = 0)
+    {
+        if (transportRow.getWidth() <= 0) { c.setVisible (false); return; }
+        c.setVisible (true);
+        c.setBounds (transportRow.removeFromRight (juce::jmin (w, transportRow.getWidth())));
+        if (gapBefore > 0) transportRow.removeFromRight (juce::jmin (gapBefore, transportRow.getWidth()));
+    };
+    placeR (masteringTargetCombo, 240, 4);
+    placeR (targetCaption,         40, 12);
+    placeR (resetLoudness,         56, 10);
+    placeR (lufsI,    110);
+    placeR (lufsS,     85);
+    placeR (lufsM,     85);
+    placeR (truePeak,  95, 12);
+    placeR (grLabel,  170);
+
+    // Backdrop rect around the flush TP..I meter block, for visual grouping.
+    if (truePeak.isVisible() && lufsI.isVisible())
+        loudnessClusterBounds = juce::Rectangle<int> (truePeak.getX() - 4, truePeak.getY() - 2,
+                                                        lufsI.getRight() - truePeak.getX() + 8,
+                                                        truePeak.getHeight() + 4);
+    else
+        loudnessClusterBounds = {};
     area.removeFromTop (8);
 
     // ── Bottom strip (export + L/R meters). LUFS readouts + target moved
@@ -435,8 +439,6 @@ void MasteringView::resized()
     area.removeFromBottom (6);
 
     auto meterRow = bottom.removeFromTop (28);
-    exportButton.setBounds (meterRow.removeFromRight (160));
-    meterRow.removeFromRight (12);
     meterR.setBounds (meterRow.removeFromRight (140));
     meterRow.removeFromRight (4);
     meterL.setBounds (meterRow.removeFromRight (140));
@@ -457,11 +459,11 @@ void MasteringView::resized()
 
     constexpr int kPanelGap = 8;
     const int totalW    = juce::jmax (0, panelsRow.getWidth() - 2 * kPanelGap);
-    const int eqW       = (int) std::round (totalW * 0.42);
-    // Limiter shrunk 0.22 -> 0.14. Two sliders + a release knob don't
-    // need a fifth of the row; the freed width goes to the multiband
-    // comp panel which has 4 columns of GR bars + a row of knobs.
-    const int limW      = (int) std::round (totalW * 0.14);
+    // The limiter is the terminal stage and was starved at 0.14 (clipped
+    // labels, cramped meters); the EQ curve had the most slack. Rebalance to
+    // 0.36 / 0.42 / 0.22 so all three read comfortably.
+    const int eqW       = (int) std::round (totalW * 0.36);
+    const int limW      = (int) std::round (totalW * 0.22);
     const int compW     = totalW - eqW - limW;
 
     auto eqPanel   = panelsRow.removeFromLeft (eqW);
@@ -481,8 +483,14 @@ void MasteringView::resized()
     {
         compPanelWrapper->setBounds (compPanel);
         auto inner = compPanelWrapper->getLocalBounds().reduced (8);
-        auto header = inner.removeFromTop (20);
-        if (compHeaderBtn != nullptr) compHeaderBtn->setBounds (header);
+        auto headerRow = inner.removeFromTop (20);
+#if DUSKSTUDIO_HAS_DUSK_DSP
+        // Preset picker on the right of the header, the ON-toggle pill on the left.
+        const int presetW = juce::jlimit (0, 130, headerRow.getWidth() / 2 - 2);
+        compPresetCombo.setBounds (headerRow.removeFromRight (presetW));
+        headerRow.removeFromRight (4);
+#endif
+        if (compHeaderBtn != nullptr) compHeaderBtn->setBounds (headerRow);
         inner.removeFromTop (4);
         if (compEditor != nullptr)
             compEditor->setBounds (inner);
@@ -491,31 +499,6 @@ void MasteringView::resized()
     // Limiter panel - custom Waves L4-style editor.
     if (limiterEditor != nullptr)
         limiterEditor->setBounds (limPanel);
-
-    // Hide the legacy EQ / Comp / Limiter knobs. New panels own these
-    // controls now. Group titles + enable toggles also retire because each
-    // panel renders its own title + ON toggle.
-    eqLfBoost.setVisible (false);   eqHfBoost.setVisible (false);
-    eqHfAtten.setVisible (false);   eqTubeDrive.setVisible (false);
-    eqOutput.setVisible (false);
-    eqLfBoostL.setVisible (false);  eqHfBoostL.setVisible (false);
-    eqHfAttenL.setVisible (false);  eqTubeDriveL.setVisible (false);
-    eqOutputL.setVisible (false);
-    eqGroup.title.setVisible (false); eqGroup.enable.setVisible (false);
-
-    compThresh.setVisible  (false); compRatio.setVisible  (false);
-    compAttack.setVisible  (false); compRelease.setVisible (false);
-    compMakeup.setVisible  (false);
-    compThreshL.setVisible (false); compRatioL.setVisible (false);
-    compAttackL.setVisible (false); compReleaseL.setVisible(false);
-    compMakeupL.setVisible (false);
-    compGroup.title.setVisible (false); compGroup.enable.setVisible (false);
-
-    limDrive.setVisible   (false); limCeiling.setVisible (false);
-    limRelease.setVisible (false);
-    limDriveL.setVisible  (false); limCeilingL.setVisible(false);
-    limReleaseL.setVisible(false);
-    limGroup.title.setVisible (false); limGroup.enable.setVisible (false);
 }
 
 void MasteringView::timerCallback()
@@ -524,13 +507,24 @@ void MasteringView::timerCallback()
     auto& m = session.mastering();
 
     // The comp header button only repaints itself on click; pick up external
-    // toggles (session load, rebuildKnobValues, the legacy enable) here.
+    // toggles (e.g. session load) here.
     const bool compOn = m.compEnabled.load (std::memory_order_relaxed);
     if (compOn != compHeaderEnabledSeen)
     {
         compHeaderEnabledSeen = compOn;
         if (compHeaderBtn != nullptr) compHeaderBtn->repaint();
     }
+
+#if DUSKSTUDIO_HAS_DUSK_DSP
+    // Pump per-band gain reduction into the embedded comp panel. The donor's
+    // GR meters are fed externally (EnhancedCompressorEditor does this in the
+    // full plugin); since we host the bare MultibandCompressorPanel, we drive
+    // them here or they stay flat despite audible compression.
+    if (auto* panel = dynamic_cast<MultibandCompressorPanel*> (compEditor.get()))
+        if (auto* comp = engine.getMasteringChain().getCompProcessor())
+            for (int b = 0; b < 4; ++b)
+                panel->setBandGainReduction (b, comp->getBandGainReduction (b));
+#endif
 
     // Clock from the player playhead.
     const double sr = player.getSourceSampleRate();
@@ -624,34 +618,6 @@ void MasteringView::updateLabels()
         sourceFileLabel.setText (m.sourceFile.getFileName()
                                   + "  (" + m.sourceFile.getParentDirectory().getFileName() + "/)",
                                   juce::dontSendNotification);
-}
-
-void MasteringView::rebuildKnobValues()
-{
-    auto& m = session.mastering();
-    // The EQ knobs were re-bound to the 5-band digital EQ atomics in the
-    // ctor (m.eqBandGainDb[0..4]); the legacy m.eqLfBoost/etc. atomics are
-    // session.json compatibility shims that no longer drive the DSP. Read
-    // the active atomics so loading a session populates the visible knobs.
-    eqLfBoost.setValue   (m.eqBandGainDb[0].load(), juce::dontSendNotification);
-    eqHfBoost.setValue   (m.eqBandGainDb[1].load(), juce::dontSendNotification);
-    eqHfAtten.setValue   (m.eqBandGainDb[2].load(), juce::dontSendNotification);
-    eqTubeDrive.setValue (m.eqBandGainDb[3].load(), juce::dontSendNotification);
-    eqOutput.setValue    (m.eqBandGainDb[4].load(), juce::dontSendNotification);
-
-    compThresh.setValue  (m.compThreshDb.load(),  juce::dontSendNotification);
-    compRatio.setValue   (m.compRatio.load(),     juce::dontSendNotification);
-    compAttack.setValue  (m.compAttackMs.load(),  juce::dontSendNotification);
-    compRelease.setValue (m.compReleaseMs.load(), juce::dontSendNotification);
-    compMakeup.setValue  (m.compMakeupDb.load(),  juce::dontSendNotification);
-
-    limDrive.setValue    (m.limiterDriveDb.load(),    juce::dontSendNotification);
-    limCeiling.setValue  (m.limiterCeilingDb.load(),  juce::dontSendNotification);
-    limRelease.setValue  (m.limiterReleaseMs.load(),  juce::dontSendNotification);
-
-    eqGroup.enable.setToggleState  (m.eqEnabled.load(),       juce::dontSendNotification);
-    compGroup.enable.setToggleState (m.compEnabled.load(),    juce::dontSendNotification);
-    limGroup.enable.setToggleState  (m.limiterEnabled.load(), juce::dontSendNotification);
 }
 
 bool MasteringView::loadFile (const juce::File& file)

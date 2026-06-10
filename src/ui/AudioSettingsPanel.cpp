@@ -3,6 +3,7 @@
 #include "MidiBindingsPanel.h"
 #include "SelfTestPanel.h"
 #include "../engine/AudioEngine.h"
+#include "../dsp/OutputPairRouting.h"
 #include "../session/Session.h"
 #if defined(__linux__)
  #include "../engine/alsa/AlsaAudioIODevice.h"
@@ -17,10 +18,23 @@ AudioSettingsPanel::AudioSettingsPanel (juce::AudioDeviceManager& dm,
     selector = std::make_unique<juce::AudioDeviceSelectorComponent>(
         dm,
         /*minIn*/  0, /*maxIn*/  16,
-        /*minOut*/ 2, /*maxOut*/ 2,
+        /*minOut*/ 2, /*maxOut*/ 32,
         /*showMidi*/ false, /*showMidiOut*/ false,
         /*stereoPairs*/ false, /*hideAdvanced*/ false);
     addAndMakeVisible (*selector);
+
+    mainOutputLabel.setJustificationType (juce::Justification::centredRight);
+    addAndMakeVisible (mainOutputLabel);
+    mainOutputCombo.setTooltip (
+        "Physical output pair for the main mix. Defaults to outputs 1-2. "
+        "Tick more output channels above to send the master to a different "
+        "pair (aux lanes can then take 1-2 as a separate headphone / cue feed).");
+    populateMainOutputCombo();
+    mainOutputCombo.onChange = [this] { applyMainOutputChange(); };
+    addAndMakeVisible (mainOutputCombo);
+
+    // Refresh the main-output menu when the device's output count changes.
+    deviceManager.addChangeListener (this);
 
 #if defined(__linux__)
     addAndMakeVisible (periodsLabel);
@@ -389,7 +403,29 @@ void AudioSettingsPanel::resized()
     // a huge gap under the shorter backends — the section separator
     // line + the next section header sit at fixed Y immediately
     // below this block, so under-budget is far worse than over.
-    constexpr int kAudioBlockH  = 360;
+    // The JUCE AudioDeviceSelectorComponent's height varies with the device:
+    // the active-channel list boxes grow with channel count (capped at 4 rows
+    // by getBestHeight(100)), and a list is absent entirely when the device
+    // exposes no channels of that kind. A fixed height either overlaps (many
+    // channels) or leaves a void (stereo), so size the block from the live
+    // device's channel counts, mirroring the selector's vertical stack. Biased
+    // a touch high so the Main-output row below never collides.
+    const int kAudioBlockH = [this]
+    {
+        constexpr int selRow = 30;   // 24 px control + 6 px JUCE spacing
+        const auto listH = [] (int n)
+        { return n > 0 ? 22 * juce::jlimit (2, 4, n) + 8 : 0; };
+
+        if (auto* dev = deviceManager.getCurrentAudioDevice())
+            return selRow                                              // device-type
+                 + selRow + selRow                                     // output + input rows
+                 + listH (dev->getOutputChannelNames().size())        // active-output list
+                 + listH (dev->getInputChannelNames().size())         // active-input list
+                 + 12                                                 // pre-advanced spacer
+                 + selRow + selRow                                    // sample rate + buffer
+                 + 16;                                                // slack
+        return 210;                                                  // device picker only
+    }();
 
     auto sectionHeader = [&] (juce::Label& label)
     {
@@ -415,6 +451,11 @@ void AudioSettingsPanel::resized()
     sectionHeader (audioSectionLabel);
     auto audioBlock = area.removeFromTop (kAudioBlockH);
     selector->setBounds (audioBlock);
+    {
+        auto row = takeStdRow();
+        mainOutputLabel.setBounds (row.removeFromLeft (kLabelW).reduced (4, 2));
+        mainOutputCombo.setBounds (row.removeFromLeft (kComboW).reduced (4, 2));
+    }
     endSection();
 
     // ── Control Surface (MCU) ────────────────────────────────────────
@@ -591,17 +632,23 @@ void AudioSettingsPanel::applyOversamplingChange()
 
     session.oversamplingFactor.store (factor, std::memory_order_relaxed);
 
-    // Re-prepare engine DSP so the new factor takes effect on the next
-    // callback. Bouncing setAudioDeviceSetup forces audioDeviceAboutToStart
-    // → AudioEngine::prepareForSelfTest → master/aux prepare(...,factor),
-    // which is the cheapest way to apply the change without restarting.
-    auto setup = deviceManager.getAudioDeviceSetup();
-    deviceManager.setAudioDeviceSetup (setup, /*treatAsChosenDevice*/ true);
+    // Re-prepare engine DSP so the new factor takes effect. The factor is only
+    // read in AudioEngine::prepareForSelfTest (driven by audioDeviceAboutToStart).
+    // setAudioDeviceSetup() with the SAME setup is a JUCE no-op, and a full
+    // device close/restart disturbs the window peer on Linux (mouse-offset
+    // regression). Instead, detach + reattach the engine as the audio callback:
+    // removeAudioCallback fires audioDeviceStopped, addAudioCallback fires
+    // audioDeviceAboutToStart → prepareForSelfTest, rebuilding every
+    // strip/bus/master oversampler at the new factor — all WITHOUT touching the
+    // device or the window. Brief silence gap only.
+    deviceManager.removeAudioCallback (&engine);
+    deviceManager.addAudioCallback (&engine);
 }
 
 AudioSettingsPanel::~AudioSettingsPanel()
 {
     engine.removeChangeListener (this);
+    deviceManager.removeChangeListener (this);
 }
 
 void AudioSettingsPanel::changeListenerCallback (juce::ChangeBroadcaster*)
@@ -615,6 +662,56 @@ void AudioSettingsPanel::changeListenerCallback (juce::ChangeBroadcaster*)
     populateSyncOutputCombo();
     populateMcuInputCombo();
     populateMcuOutputCombo();
+    populateMainOutputCombo();
+
+    // A device change alters the selector's height (channel-list sizes), which
+    // the audio-block layout is computed from — re-lay-out so the rows below
+    // follow it instead of overlapping or floating.
+    resized();
+}
+
+void AudioSettingsPanel::populateMainOutputCombo()
+{
+    mainOutputCombo.clear (juce::dontSendNotification);
+    mainOutputCombo.addItem ("1-2 (default)", 1);
+
+    if (auto* device = deviceManager.getCurrentAudioDevice())
+    {
+        // Only offer pairs the engine can actually write to: both channels of
+        // the pair must be in the device's active-output set. Listing inactive
+        // physical outputs lets the user route the master to a dead pair and
+        // makes it appear to vanish.
+        const auto active = device->getActiveOutputChannels();
+        const int count = device->getOutputChannelNames().size();
+        // Skip the first pair — it's already the "1-2 (default)" item.
+        for (int i = 2; i + 1 < count; i += 2)
+            if (active[i] && active[i + 1])
+                mainOutputCombo.addItem ("Out " + juce::String (i + 1) + "-" + juce::String (i + 2),
+                                           outputpair::encodePair (i, i + 1));
+    }
+
+    // -1 (or anything not in the menu) falls back to the default 1-2 item.
+    const int stored = session.master().outputPair.load (std::memory_order_relaxed);
+    int wantId = 1;
+    if (stored > 0)
+        for (int i = 0; i < mainOutputCombo.getNumItems(); ++i)
+            if (mainOutputCombo.getItemId (i) == stored) { wantId = stored; break; }
+
+    // Persist the fallback so the engine doesn't keep routing the master to a
+    // pair that's no longer active (which would silence it) while the UI shows
+    // "1-2 (default)". Normalize to the same encoding applyMainOutputChange
+    // writes: item 1 = default → -1.
+    const int normalized = wantId <= 1 ? -1 : wantId;
+    if (normalized != stored)
+        session.master().outputPair.store (normalized, std::memory_order_relaxed);
+    mainOutputCombo.setSelectedId (wantId, juce::dontSendNotification);
+}
+
+void AudioSettingsPanel::applyMainOutputChange()
+{
+    const int id = mainOutputCombo.getSelectedId();
+    // Item 1 = default 1-2; store -1 so the engine uses its default mapping.
+    session.master().outputPair.store (id <= 1 ? -1 : id, std::memory_order_relaxed);
 }
 
 void AudioSettingsPanel::populateSyncSourceCombo()

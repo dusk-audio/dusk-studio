@@ -43,6 +43,30 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     insertScratchL.assign ((size_t) juce::jmax (1, blockSize), 0.0f);
     insertScratchR.assign ((size_t) juce::jmax (1, blockSize), 0.0f);
 
+    // PDC compensation delay lines, pre-sized to the max so setDelay() is a pure
+    // parameter update (no RT allocation). The compensation amount itself is set
+    // by the engine's PDC aggregator; here we just (re)latch the applied length
+    // and clear history. pdcSilentRun starts maxed so a pending change can apply
+    // on the very first block.
+    const juce::dsp::ProcessSpec pdcSpec
+        { sampleRate, (juce::uint32) juce::jmax (1, blockSize), 1 };
+    pdcDelayL.prepare (pdcSpec);
+    pdcDelayR.prepare (pdcSpec);
+    pdcDelayL.setMaximumDelayInSamples (kMaxPdcSamples);
+    pdcDelayR.setMaximumDelayInSamples (kMaxPdcSamples);
+    pdcDelayL.setDelay ((float) pdcAppliedSamples);
+    pdcDelayR.setDelay ((float) pdcAppliedSamples);
+    pdcDelayL.reset();
+    pdcDelayR.reset();
+    pdcSilentRun = (juce::int64) kMaxPdcSamples;
+
+    // OS-skip alignment delay lines (delay set below once the oversampler
+    // latency is known). 1-channel each, mirroring the PDC pair.
+    osSkipDelayL.prepare (pdcSpec);
+    osSkipDelayR.prepare (pdcSpec);
+    osSkipDelayL.setMaximumDelayInSamples (kMaxOsLatency);
+    osSkipDelayR.setMaximumDelayInSamples (kMaxOsLatency);
+
     // Pre-size the MIDI scratch buffers so the audio thread's addEvent /
     // processBlock calls never grow them. 4 KB covers ~400-800 typical
     // channel-voice messages per block; far above any sane density even
@@ -68,6 +92,7 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     const int factor = (oversamplingFactor == 2 || oversamplingFactor == 4)
                             ? oversamplingFactor : 1;
     oversamplerStages = (factor == 4) ? 2 : (factor == 2) ? 1 : 0;
+    oversampleFactor  = factor;
     const int bsClamped = juce::jmax (1, blockSize);
     if (oversamplerStages > 0)
     {
@@ -84,12 +109,19 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
         oversamplerStereo->initProcessing ((size_t) bsClamped);
         oversamplerMono  ->reset();
         oversamplerStereo->reset();
+        osLatencySamples = juce::jmin (kMaxOsLatency,
+            (int) std::lround (oversamplerMono->getLatencyInSamples()));
     }
     else
     {
         oversamplerMono.reset();
         oversamplerStereo.reset();
+        osLatencySamples = 0;
     }
+    osSkipDelayL.setDelay ((float) osLatencySamples);
+    osSkipDelayR.setDelay ((float) osLatencySamples);
+    osSkipDelayL.reset();
+    osSkipDelayR.reset();
 
     const double prepSr = sampleRate * (double) factor;
     const int    prepBs = bsClamped * factor;
@@ -365,6 +397,29 @@ void ChannelStrip::bindHardwareInsert (const HardwareInsertParams& params) noexc
     hardwareSlot.bind (params);
 }
 
+void ChannelStrip::relatchPdcIfDrained (float blockPeakAbs, int numSamples) noexcept
+{
+    // Track how long the signal feeding the delay has been silent. We only
+    // change the delay length once the line has fully drained (silent for at
+    // least the currently-applied length) — then a reset() drops only silence,
+    // so the latency change is click-free. A continuously-loud track defers the
+    // change to its next silent gap (latency edits happen on plugin load, which
+    // is normally done with the transport stopped → silent → immediate).
+    constexpr float kSilenceEps = 1.0e-6f;
+    if (blockPeakAbs < kSilenceEps) pdcSilentRun += numSamples;
+    else                            pdcSilentRun = 0;
+
+    const int target = pdcTargetSamples.load (std::memory_order_relaxed);
+    if (target != pdcAppliedSamples && pdcSilentRun >= (juce::int64) pdcAppliedSamples)
+    {
+        pdcDelayL.setDelay ((float) target);
+        pdcDelayR.setDelay ((float) target);
+        pdcDelayL.reset();
+        pdcDelayR.reset();
+        pdcAppliedSamples = target;
+    }
+}
+
 void ChannelStrip::processAndAccumulate (const float* inL,
                                          const float* inR,
                                          juce::MidiBuffer& trackMidi,
@@ -495,7 +550,22 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         };
         const float peakL = peakAbs (inL, numSamples);
         const float peakR = (stereo && inR != nullptr) ? peakAbs (inR, numSamples) : 0.0f;
-        if (peakL <= 1e-6f && peakR <= 1e-6f)
+        // Hold off the skip until the PDC delay line has drained — otherwise the
+        // last pdcAppliedSamples of this track's signal (still sitting in the
+        // line) would be truncated. While the tail flushes we fall through to
+        // the normal path; relatchPdcIfDrained there advances pdcSilentRun, and
+        // once it reaches the applied length this skip re-engages. (Empty insert
+        // ⇒ post-insert == input, so the input-peak silence test is exact.)
+        // The PDC delay line and the OS-skip alignment line are in SERIES (insert
+        // -> PDC delay -> osSkipDelay), both fed the post-insert signal that
+        // pdcSilentRun tracks. So when both are active the trailing tail is the
+        // SUM of their lengths; draining only to max(pdc, os) would truncate the
+        // shorter line's tail. When only one is active it's that one's length.
+        const juce::int64 requiredDrain =
+            (pdcAppliedSamples > 0 && osLatencySamples > 0)
+                ? (juce::int64) pdcAppliedSamples + (juce::int64) osLatencySamples
+                : (juce::int64) juce::jmax (pdcAppliedSamples, osLatencySamples);
+        if (peakL <= 1e-6f && peakR <= 1e-6f && pdcSilentRun >= requiredDrain)
         {
            #if DUSKSTUDIO_HAS_DUSK_DSP
             // No comp ran this block, so the GR meter would otherwise pin
@@ -527,6 +597,12 @@ void ChannelStrip::processAndAccumulate (const float* inL,
     if (eqEnabled && ! prevEqEnabled)
         eq.reset();
     prevEqEnabled = eqEnabled;
+
+    // Comp engaged this block. Both eqEnabled and compEnabled gate the
+    // oversampler: the per-strip OS exists only to band-limit EQ console
+    // saturation and comp saturation, so with neither stage active the up/down
+    // pass (and the comp processBlock) is pure waste and is skipped entirely.
+    const bool compEnabled = paramsRef->compEnabled.load (std::memory_order_relaxed);
 
     // Source-pointer set used by the accumulation loop below. For mono,
     // both point at tempMono (so srcL[i] and srcR[i] are the same sample —
@@ -588,8 +664,42 @@ void ChannelStrip::processAndAccumulate (const float* inL,
                                    +        g  * tempMono[(size_t) i];
         }
 
+        // PDC: delay this track's post-insert signal so it lines up with the
+        // session's deepest-latency track on every downstream route.
+        {
+            const auto rng = juce::FloatVectorOperations::findMinAndMax (tempMono.data(), numSamples);
+            relatchPdcIfDrained (juce::jmax (std::abs (rng.getStart()), std::abs (rng.getEnd())),
+                                  numSamples);
+            if (pdcAppliedSamples > 0)
+                for (int i = 0; i < numSamples; ++i)
+                {
+                    pdcDelayL.pushSample (0, tempMono[(size_t) i]);
+                    tempMono[(size_t) i] = pdcDelayL.popSample (0);
+                }
+        }
+
 #if DUSKSTUDIO_HAS_DUSK_DSP
-        if (oversamplerStages > 0 && oversamplerMono != nullptr)
+        // Sub-chunk the compressor so the SmoothedValue ramp updates the donor's
+        // atoms many times per block (it reads each atom once per processBlock).
+        // Scale the chunk by the OS factor so the update cadence is constant in
+        // NATIVE time regardless of oversampling — at 4× a 64-sample native
+        // chunk would otherwise become 16 calls/256-block instead of 4. 256
+        // samples at 4× = 1.33 ms ≪ audible zipper threshold.
+        const auto runComp = [this] (float* base, int total)
+        {
+            const int compBufSize = 64 * oversampleFactor;
+            for (int offset = 0; offset < total; offset += compBufSize)
+            {
+                const int n = juce::jmin (compBufSize, total - offset);
+                float* compView[1] = { base + offset };
+                juce::AudioBuffer<float> compBuf (compView, 1, n);
+                publishSmoothedCompParams (n);
+                compMidiScratch.clear();
+                compressor.processBlock (compBuf, compMidiScratch);
+            }
+        };
+
+        if (oversamplerStages > 0 && oversamplerMono != nullptr && (eqEnabled || compEnabled))
         {
             // Oversampled chain: upsample tempMono, run EQ + Comp on the
             // upsampled view, then downsample back into tempMono. Donor
@@ -606,62 +716,42 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             juce::AudioBuffer<float> upBuf (upPtrs, 1, upN);
             if (eqEnabled)
                 eq.process (upBuf);
-
-            // 64-sample sub-chunks so the SmoothedValue ramp updates the
-            // donor's atoms many times per audio block instead of once -
-            // the donor reads each atom only at the start of its
-            // processBlock call, so a single big chunk = a single
-            // stepped value per block. Actual count per block depends
-            // on host buffer size + OS factor (range 4-64 sub-chunks
-            // for typical 256-512 sample buffers at 1-4× OS). 64
-            // samples = 1.3 ms at 48 kHz native / 0.33 ms at 4× OS,
-            // well below audible zipper threshold.
-            constexpr int compBufSize = 64;
-            for (int offset = 0; offset < upN; offset += compBufSize)
-            {
-                const int n = juce::jmin (compBufSize, upN - offset);
-                float* compView[1] = { upPtrs[0] + offset };
-                juce::AudioBuffer<float> compBuf (compView, 1, n);
-                // Smooth-publish continuous comp params to the donor atoms
-                // for this chunk (advances smoothers by n samples, writes
-                // current value). 20 ms ramp turns knob jumps into clean
-                // ramps instead of zipper-noise steps.
-                publishSmoothedCompParams (n);
-                compMidiScratch.clear();
-                // Always call processBlock — even when bypassed — so the
-                // donor's lookahead ring buffers, bypass-fade crossfader,
-                // and detector state stay warm. compBypassAtom flips the
-                // donor's bypass param at the top of updateCompParameters,
-                // and its internal bypass branch returns dry signal.
-                compressor.processBlock (compBuf, compMidiScratch);
-            }
+            if (compEnabled)
+                runComp (upPtrs[0], upN);
 
             oversamplerMono->processSamplesDown (nativeOut);
         }
-        else
+        else if (eqEnabled || compEnabled)
         {
-            // Native-rate path (factor == 1).
-            float* monoChannel[1] = { tempMono.data() };
-            juce::AudioBuffer<float> monoBuf (monoChannel, 1, numSamples);
+            // Native-rate path (factor == 1, or a single active stage that
+            // still wants processing without the OS round-trip).
             if (eqEnabled)
-                eq.process (monoBuf);
-
-            constexpr int bufSize = 64;   // same sub-chunk rationale as above
-            for (int offset = 0; offset < numSamples; offset += bufSize)
             {
-                const int n = juce::jmin (bufSize, numSamples - offset);
-                float* monoView[1] = { tempMono.data() + offset };
-                juce::AudioBuffer<float> compBuf (monoView, 1, n);
-                publishSmoothedCompParams (n);
-                compMidiScratch.clear();
-                compressor.processBlock (compBuf, compMidiScratch);
+                float* monoChannel[1] = { tempMono.data() };
+                juce::AudioBuffer<float> monoBuf (monoChannel, 1, numSamples);
+                eq.process (monoBuf);
+            }
+            if (compEnabled)
+                runComp (tempMono.data(), numSamples);
+        }
+        else if (osLatencySamples > 0)
+        {
+            // EQ and comp both off → no nonlinear stage, so we skip the
+            // oversampler round-trip. Delay the dry signal by the oversampler's
+            // latency so this strip stays aligned with strips that did
+            // oversample (see osSkipDelayL rationale in the header).
+            for (int i = 0; i < numSamples; ++i)
+            {
+                osSkipDelayL.pushSample (0, tempMono[(size_t) i]);
+                tempMono[(size_t) i] = osSkipDelayL.popSample (0);
             }
         }
+        // else (factor == 1, both off): tempMono passes through untouched.
+
         // When bypassed, force the GR atom to 0 so the meter doesn't hold
         // the last-computed reduction (the donor's getGainReduction()
         // returns the cached value from its detector even while bypass=1).
-        const bool compOn = paramsRef->compEnabled.load (std::memory_order_relaxed);
-        currentGrDb.store (compOn ? compressor.getGainReduction() : 0.0f,
+        currentGrDb.store (compEnabled ? compressor.getGainReduction() : 0.0f,
                             std::memory_order_relaxed);
 #endif
 
@@ -736,8 +826,43 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             }
         }
 
+        // PDC: delay this track's post-insert L/R to align with the session's
+        // deepest-latency track (covers the MIDI-instrument branch above too —
+        // its compensation is relative to its own already-scheduling-shifted
+        // output, which the aggregator treats as zero latency).
+        {
+            const auto rL = juce::FloatVectorOperations::findMinAndMax (L, numSamples);
+            const auto rR = juce::FloatVectorOperations::findMinAndMax (R, numSamples);
+            const float pk = juce::jmax (std::abs (rL.getStart()), std::abs (rL.getEnd()),
+                                          std::abs (rR.getStart()), std::abs (rR.getEnd()));
+            relatchPdcIfDrained (pk, numSamples);
+            if (pdcAppliedSamples > 0)
+                for (int i = 0; i < numSamples; ++i)
+                {
+                    pdcDelayL.pushSample (0, L[i]);  L[i] = pdcDelayL.popSample (0);
+                    pdcDelayR.pushSample (0, R[i]);  R[i] = pdcDelayR.popSample (0);
+                }
+        }
+
 #if DUSKSTUDIO_HAS_DUSK_DSP
-        if (oversamplerStages > 0 && oversamplerStereo != nullptr)
+        // Comp sub-chunk scaled by OS factor — same rationale as the mono path:
+        // keep the donor-atom update cadence constant in native time so 4× OS
+        // doesn't multiply the per-call overhead.
+        const auto runCompStereo = [this] (float* l, float* r, int total)
+        {
+            const int compBufSize = 64 * oversampleFactor;
+            for (int offset = 0; offset < total; offset += compBufSize)
+            {
+                const int n = juce::jmin (compBufSize, total - offset);
+                float* compView[2] = { l + offset, r + offset };
+                juce::AudioBuffer<float> compBuf (compView, 2, n);
+                publishSmoothedCompParams (n);
+                compMidiScratch.clear();
+                compressor.processBlock (compBuf, compMidiScratch);
+            }
+        };
+
+        if (oversamplerStages > 0 && oversamplerStereo != nullptr && (eqEnabled || compEnabled))
         {
             const float* readPtrs[2]  = { L, R };
             float*       writePtrs[2] = { L, R };
@@ -751,51 +876,37 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             juce::AudioBuffer<float> upBuf (upPtrs, 2, upN);
             if (eqEnabled)
                 eq.process (upBuf);
-
-            // 64-sample sub-chunks so the SmoothedValue ramp updates the
-            // donor's atoms many times per audio block instead of once -
-            // the donor reads each atom only at the start of its
-            // processBlock call, so a single big chunk = a single
-            // stepped value per block. Actual count per block depends
-            // on host buffer size + OS factor (range 4-64 sub-chunks
-            // for typical 256-512 sample buffers at 1-4× OS). 64
-            // samples = 1.3 ms at 48 kHz native / 0.33 ms at 4× OS,
-            // well below audible zipper threshold.
-            constexpr int compBufSize = 64;
-            for (int offset = 0; offset < upN; offset += compBufSize)
-            {
-                const int n = juce::jmin (compBufSize, upN - offset);
-                float* compView[2] = { upPtrs[0] + offset, upPtrs[1] + offset };
-                juce::AudioBuffer<float> compBuf (compView, 2, n);
-                publishSmoothedCompParams (n);
-                compMidiScratch.clear();
-                compressor.processBlock (compBuf, compMidiScratch);
-            }
+            if (compEnabled)
+                runCompStereo (upPtrs[0], upPtrs[1], upN);
 
             oversamplerStereo->processSamplesDown (nativeOut);
         }
-        else
+        else if (eqEnabled || compEnabled)
         {
-            float* stereoChannels[2] = { L, R };
-            juce::AudioBuffer<float> stereoBuf (stereoChannels, 2, numSamples);
             if (eqEnabled)
-                eq.process (stereoBuf);
-
-            constexpr int bufSize = 64;   // same sub-chunk rationale as above
-            for (int offset = 0; offset < numSamples; offset += bufSize)
             {
-                const int n = juce::jmin (bufSize, numSamples - offset);
-                float* stView[2] = { L + offset, R + offset };
-                juce::AudioBuffer<float> compBuf (stView, 2, n);
-                publishSmoothedCompParams (n);
-                compMidiScratch.clear();
-                compressor.processBlock (compBuf, compMidiScratch);
+                float* stereoChannels[2] = { L, R };
+                juce::AudioBuffer<float> stereoBuf (stereoChannels, 2, numSamples);
+                eq.process (stereoBuf);
+            }
+            if (compEnabled)
+                runCompStereo (L, R, numSamples);
+        }
+        else if (osLatencySamples > 0)
+        {
+            // OS skipped (both stages off) — delay L/R by the oversampler
+            // latency to hold alignment with strips that oversampled.
+            for (int i = 0; i < numSamples; ++i)
+            {
+                osSkipDelayL.pushSample (0, L[i]);  L[i] = osSkipDelayL.popSample (0);
+                osSkipDelayR.pushSample (0, R[i]);  R[i] = osSkipDelayR.popSample (0);
             }
         }
+        // else (factor == 1, both off): L/R pass through untouched.
+
         // See mono-path comment above — zero the GR atom when bypassed so
         // the meter doesn't pin at the last reduction value.
-        const bool compOnStereo = paramsRef->compEnabled.load (std::memory_order_relaxed);
-        currentGrDb.store (compOnStereo ? compressor.getGainReduction() : 0.0f,
+        currentGrDb.store (compEnabled ? compressor.getGainReduction() : 0.0f,
                             std::memory_order_relaxed);
 #endif
 

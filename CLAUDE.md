@@ -7,7 +7,7 @@ Dusk Studio is a deliberately constrained, portastudio-style DAW for Linux, JUCE
 1. **24 channels maximum.** Fixed. Three banks of 8 (1-8 / 9-16 / 17-24) to match standard control surfaces.
 2. **Fixed signal chain.** No reordering EQ/comp. No adding/removing processors. No plugin chains on channels.
 3. **No waveform editing.** Region-level move/split/delete/trim only. No zoom-to-sample, no pencil tool.
-4. **Console-style automation + breakpoint editing.** Ride controls with Write/Read/Touch, or add/drag/delete per-parameter breakpoints in the region editor's automation lane (linear segments; no freehand/spline curves).
+4. **Console-style automation + breakpoint editing.** Ride controls with Write/Read/Touch, or add/drag/delete per-parameter breakpoints in the region editor's automation lane — or draw a freehand stroke with the Draw tool to lay a run of them (linear segments between points; no spline/bezier curves).
 5. **Everything visible.** No tabs, no hidden panels (the MIDI piano roll overlay is the one exception).
 6. **No preferences sprawl.** Audio device config and that's it.
 7. **Portastudio philosophy.** Stay fixed, finite, and commit-first; if a feature mainly adds configurability or options, leave it out.
@@ -99,7 +99,7 @@ For plugin instances, audio file readers, or any heavy resource — never block 
 
 ## Common DSP patterns
 
-- **Oversampling** — All oversampling (donor plugins and otherwise) is controlled globally by the **Effect Oversampling** dropdown in the Audio Device settings panel. Individual DSP units must NOT enable internal oversampling on their own; the engine drives the chosen factor through to every processor that supports it. Don't call `setInternalOversamplingEnabled` (or equivalent) at the DSP-class level — wire new processors to read the engine-wide setting instead.
+- **Oversampling** — All oversampling (donor plugins and otherwise) is controlled globally by the **Effect Oversampling** dropdown in the Audio Device settings panel. Individual DSP units must NOT enable internal oversampling on their own; the engine drives the chosen factor through to every processor that supports it. Don't call `setInternalOversamplingEnabled` (or equivalent) at the DSP-class level — wire new processors to read the engine-wide setting instead. **One deliberate exception**: the mastering [BrickwallLimiter](src/dsp/BrickwallLimiter.h) owns a fixed 4× oversampler. True-peak limiting is impossible without it, and the limiter is the terminal output stage (no donor saturation downstream to double-oversample), so it stays independent of the global setting.
 - **Filters** — `juce::dsp::IIR::Filter` and `BritishEQProcessor` (vendored). Always `.prepare(spec)` in `prepare`. **No EQ cramping ever** — IIR filters near Nyquist need oversampling; pre-warping alone is insufficient. The vendored EQs handle this.
 - **Metering** — `std::atomic<float>` with `relaxed`, written from the audio thread, polled by the UI on a 30 Hz `juce::Timer`. SIMD-friendly peak detection via `juce::FloatVectorOperations::findMinAndMax`.
 - **Smoothing** — `juce::SmoothedValue` with a 20 ms ramp is the default for any continuous control (faders, pans, gains). Bus toggles smooth 0..1 over 20 ms to avoid clicks on assign/unassign.

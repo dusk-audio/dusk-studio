@@ -43,6 +43,7 @@ private:
     // flipped. -1 forces the first tick to refresh.
     int lastCompactEqOn   = -1;
     int lastCompactCompOn = -1;
+    juce::Colour lastBusColour;   // cached so the timer repaints on external colour change (undo)
     void timerCallback() override;
     void showColourMenu();
     void applyBusColour (juce::Colour c);

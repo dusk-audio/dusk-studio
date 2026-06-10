@@ -89,6 +89,17 @@ jobs:
       - name: Build (Release)
         run: cmake --build build -j
 
+      - name: Build + run tests (release gate)
+        # No DMG ships unless the full Catch2 suite passes.
+        run: |
+          cmake -S . -B build-tests -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DDUSKSTUDIO_BUILD_TESTS=ON \
+            -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main"
+          cmake --build build-tests --target dusk-studio-tests -j
+          ctest --test-dir build-tests --output-on-failure
+
       - name: Package unsigned DMG
         # CMake already ad-hoc-signed the .app via identity "-"; just wrap
         # it in a DMG. Not notarized, so users right-click -> Open once.
@@ -110,7 +121,7 @@ jobs:
         # NOT actions/upload-artifact: on a public repo those are
         # world-downloadable, which would give the paid build away. Push
         # to the private releases repo (shares the tag's release with the
-        # Windows MSI + Linux AppImage; distinct asset names coexist).
+        # Windows MSI + Linux tarball; distinct asset names coexist).
         if: ${{ github.ref_type == 'tag' }}
         env:
           GH_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}

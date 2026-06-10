@@ -271,6 +271,7 @@ target_sources(DuskStudio PRIVATE
     src/Main.cpp
     src/DuskStudioApp.cpp
     src/engine/AudioEngine.cpp
+    src/engine/AudioWorkerPool.cpp
     src/engine/BounceEngine.cpp
     src/engine/FileImporter.cpp
     src/engine/MasteringPlayer.cpp
@@ -982,6 +983,14 @@ if(WIN32)
     configure_file("${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
                    "${CMAKE_CURRENT_BINARY_DIR}/LICENSE.txt" COPYONLY)
     set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_BINARY_DIR}/LICENSE.txt")
+
+    # Start Menu + desktop shortcuts. Without CPACK_PACKAGE_EXECUTABLES the
+    # WIX generator installs the .exe to bin/ but creates no shortcut, so the
+    # app only appears in the install folder. The pair is
+    # "<exe-name-without-.exe>" "<shortcut label>"; CREATE_DESKTOP_LINKS adds
+    # the desktop icon for the same executable.
+    set(CPACK_PACKAGE_EXECUTABLES "DuskStudio" "Dusk Studio")
+    set(CPACK_CREATE_DESKTOP_LINKS "DuskStudio")
 endif()
 
 # macOS DMG: cpack -G DragNDrop. scripts/package-macos.sh wraps it with

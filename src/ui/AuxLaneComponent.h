@@ -5,6 +5,7 @@
 #include <array>
 #include <memory>
 #include "../session/Session.h"
+#include "DuskComboBox.h"
 
 namespace duskstudio
 {
@@ -30,6 +31,8 @@ public:
     void resized() override;
     void childBoundsChanged (juce::Component* child) override;
     void mouseDown (const juce::MouseEvent&) override;
+    void visibilityChanged() override;
+    void parentHierarchyChanged() override;
 
     static constexpr int kStripWidth      = 150;
     static constexpr int kSendPanelWidth  = 280;
@@ -61,6 +64,10 @@ private:
     void setAutoMode (AutomationMode m);
     void captureWritePoint (AutomationParam param, float denormValue);
 
+    // Cue/headphone output-pair picker. Rebuilt from the live device's output
+    // channels (so it tracks outputs the user enables in Audio settings).
+    void populateOutputPairCombo();
+
     AuxLane& lane;
     AuxLaneStrip& strip;
     AudioEngine& engine;
@@ -70,6 +77,18 @@ private:
     juce::Slider  returnFader { juce::Slider::LinearVertical, juce::Slider::TextBoxBelow };
     juce::TextButton muteButton { "M" };
     juce::TextButton autoModeButton { "Off" };
+    DuskComboBox  outputPairCombo;
+
+    // Active-output channel mask the combo was last built for; the timer
+    // rebuilds it when the device's active-output set changes. A bitmask (not
+    // just a set-bit count) so swapping which pair is active — same count,
+    // different channels — still triggers a repopulate.
+    juce::BigInteger lastOutputChannelMask;
+    // Output channel count the combo was last built for. The mask alone can
+    // match across two devices (both stereo → bits 0,1) while the physical
+    // output count — which drives how many pairs the menu lists — differs, so
+    // a device swap with the same active mask still needs a repopulate.
+    int lastOutputChannelCount { -1 };
 
     // Throttle motor-fader setValue() to changes >0.05 dB so the slider
     // doesn't churn every timer tick when the value is effectively

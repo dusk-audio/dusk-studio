@@ -702,7 +702,7 @@ void ChordAnalyzer::addBasicSuggestions(std::vector<ChordSuggestion>& suggestion
                 break;
             case 2:  // ii -> V, vii°
                 addSuggestion(5, "V", ChordQuality::Major, "Classic ii-V", 0.95f);
-                addSuggestion(7, "vii°", ChordQuality::Diminished, "Leading tone chord", 0.5f);
+                addSuggestion(7, "viio", ChordQuality::Diminished, "Leading tone chord", 0.5f);
                 break;
             case 3:  // iii -> vi, IV
                 addSuggestion(6, "vi", ChordQuality::Minor, "Descending thirds", 0.8f);

@@ -60,6 +60,23 @@ private:
     std::unique_ptr<juce::dsp::Oversampling<float>> oversampler;
     int oversamplerStages = 0;
 
+    // When the comp is bypassed we skip the oversampler (the bus EQ is linear
+    // and never aliases). The oversampler imposes ~3-4.4 native samples of
+    // latency though, so delay the skip path by that amount to keep this bus
+    // time-aligned with the rest of the mix regardless of comp on/off. Integer
+    // (None) delay — sub-sample rounding residual is inaudible.
+    static constexpr int kMaxOsLatency = 16;
+    using OsDelayLine = juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::None>;
+    OsDelayLine osSkipDelayL { kMaxOsLatency };
+    OsDelayLine osSkipDelayR { kMaxOsLatency };
+    int osLatencySamples = 0;
+
+    // Skip the EQ filter entirely when the bus EQ is disengaged (it would
+    // otherwise run at unity, burning cycles for nothing). Init true so the
+    // first block with EQ off doesn't fire a spurious reset; reset on the
+    // off→on edge clears stale filter state so re-enabling doesn't click.
+    bool prevEqEnabled { true };
+
     std::atomic<float>* compModeAtom        = nullptr;
     std::atomic<float>* compBypassAtom      = nullptr;
     std::atomic<float>* compMixAtom         = nullptr;
@@ -86,6 +103,10 @@ private:
     // audio thread so the published atom matches what TapeMachine writes
     // internally for its own VU - keeps mixer + TapeMachine meters in sync.
     double sampleRateForMeter = 44100.0;
+    // Precomputed so the per-block meter path skips std::exp on the common
+    // (full-block) callback; odd-sized blocks fall back to recomputing alpha.
+    int    meterBlockSize = 0;
+    float  meterRmsAlpha  = 0.0f;
     float  vuRmsLinL = 0.0f;
     float  vuRmsLinR = 0.0f;
 };

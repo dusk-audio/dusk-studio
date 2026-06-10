@@ -1,0 +1,106 @@
+name: Raspberry Pi build (arm64)
+
+# Build-check for Raspberry Pi 4 / 5 (64-bit) and other aarch64 Linux. Runs on
+# GitHub's native ARM64 runner — no cross-compile, no QEMU. Compiles Dusk
+# Studio, then smoke-launches the binary and drives the headless self-test so a
+# link/startup regression specific to arm64 is caught early. No artifact is
+# published (binaries are paid; the source is open).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Dusk Studio (GCC Release, Ubuntu 22.04, arm64)
+    runs-on: ubuntu-22.04-arm
+
+    steps:
+      - name: Checkout Dusk Studio
+        uses: actions/checkout@v4
+        with:
+          # external/sfizz is a submodule; DuskMultisampleProcessor.cpp pulls
+          # <sfizz.h>, so it must be present or configure/build fails.
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Install Linux build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config \
+            libasound2-dev libjack-jackd2-dev \
+            ladspa-sdk \
+            libcurl4-openssl-dev libfreetype-dev libfontconfig1-dev \
+            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
+            libxinerama-dev libxrandr-dev libxrender-dev libxss-dev \
+            libwebkit2gtk-4.0-dev libglu1-mesa-dev xvfb \
+            libwayland-dev libxkbcommon-dev libdecor-0-dev
+
+      - name: Clone JUCE 8.0.4 (upstream)
+        run: |
+          git clone --depth 1 --branch 8.0.4 \
+            https://github.com/juce-framework/JUCE.git \
+            "${RUNNER_TEMP}/JUCE-wayland"
+
+      - name: Patch JUCE — SIMDNativeOps<long long> alias (NEON)
+        # Upstream JUCE 8.0.4 defines SIMDNativeOps<int64_t> but not
+        # SIMDNativeOps<long long>; on GCC those are distinct types and JUCE
+        # instantiates SIMDRegister<long long> for jmax<juce::int64>() — an
+        # incomplete-type hard error. The plugdata-team JUCE-wayland fork adds
+        # the aliases; we apply them to the NEON header here so the arm64 build
+        # is clean. (The SSE header is patched the same way in linux-build.yml;
+        # it isn't compiled on arm64.)
+        run: |
+          file="${RUNNER_TEMP}/JUCE-wayland/modules/juce_dsp/native/juce_SIMDNativeOps_neon.h"
+          if [ ! -f "$file" ]; then
+            echo "ERROR: $file not present in this JUCE checkout." >&2
+            exit 1
+          fi
+          awk '
+            /^}[[:space:]]*\/\/.*juce.*dsp/ && !done {
+              print "#if defined (__GNUC__) && defined (__SIZEOF_LONG__) && __SIZEOF_LONG__ == 8 && !defined (_WIN32)"
+              print "template <> struct SIMDNativeOps<long long> : SIMDNativeOps<int64_t> {};"
+              print "template <> struct SIMDNativeOps<unsigned long long> : SIMDNativeOps<uint64_t> {};"
+              print "#endif"
+              done = 1
+            }
+            { print }
+          ' "$file" > "$file.new" && mv "$file.new" "$file"
+          if ! grep -q "SIMDNativeOps<long long>" "$file"; then
+            echo "ERROR: SIMDNativeOps<long long> alias not present after patch — the awk anchor likely no longer matches upstream JUCE." >&2
+            exit 1
+          fi
+
+      - name: Clone Dusk plugins (donor DSP)
+        run: |
+          git clone --depth 1 \
+            https://github.com/dusk-audio/dusk-audio-plugins.git \
+            "${RUNNER_TEMP}/plugins-main"
+
+      - name: Configure (Release)
+        run: |
+          cmake -S . -B build-linux -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DDUSKSTUDIO_SKIP_FORK_CHECK=ON \
+            -DJUCE_PATH="${RUNNER_TEMP}/JUCE-wayland" \
+            -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main"
+
+      - name: Build (Release)
+        run: cmake --build build-linux -j
+
+      - name: Smoke launch (xvfb, --version)
+        run: |
+          xvfb-run --auto-servernum \
+            build-linux/DuskStudio_artefacts/Release/DuskStudio --version
+
+      - name: Headless self-test (xvfb, DUSKSTUDIO_RUN_SELFTEST=1)
+        # 60 s timeout: CI runners have no audio device, so the device-readiness
+        # wait times out before falling through to the synthetic DSP tests.
+        run: |
+          timeout 60 xvfb-run --auto-servernum \
+            env DUSKSTUDIO_RUN_SELFTEST=1 \
+            build-linux/DuskStudio_artefacts/Release/DuskStudio

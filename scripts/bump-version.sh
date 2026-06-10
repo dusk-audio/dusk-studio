@@ -38,6 +38,16 @@ if [[ "$CURRENT" == "$NEW_VERSION" ]]; then
     exit 1
 fi
 
+# A release must have its CHANGELOG section written before we stamp the
+# version, so the published notes never lag the tag.
+if [[ ! -f CHANGELOG.md ]]; then
+    echo "error: CHANGELOG.md is missing - create it with a '## [$NEW_VERSION]' section first" >&2
+    exit 1
+elif ! grep -qF "## [$NEW_VERSION]" CHANGELOG.md; then
+    echo "error: CHANGELOG.md has no '## [$NEW_VERSION]' section - add it first" >&2
+    exit 1
+fi
+
 TODAY="$(date -u +%Y-%m-%d)"
 
 echo "$NEW_VERSION" > VERSION
@@ -95,4 +105,4 @@ echo "  1) Review the diff:   git diff VERSION $APPDATA"
 echo "  2) Rebuild + smoke:   cmake --build build -j && build/.../DuskStudio --selftest"
 echo "  3) Commit:            git commit -am \"Release v$NEW_VERSION\""
 echo "  4) Tag:               git tag -a v$NEW_VERSION -m \"Dusk Studio $NEW_VERSION\""
-echo "  5) Package:           scripts/package-{appimage,linux,windows,macos}.{sh,ps1}"
+echo "  5) Package:           scripts/package-{tarball,macos}.sh, scripts/package-windows.ps1"

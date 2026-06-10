@@ -124,7 +124,7 @@ ChannelCompEditor::ChannelCompEditor (Track& t) : track (t)
     vcaDetectorBtn.setColour (juce::TextButton::buttonOnColourId, juce::Colour (fourKColors::kCompGold));
     vcaDetectorBtn.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xffd09060));
     vcaDetectorBtn.setColour (juce::TextButton::textColourOnId,   juce::Colour (0xff121214));
-    vcaDetectorBtn.setTooltip ("Classic: fixed 10 ms RMS time constant. Off = adaptive 35→5 ms.");
+    vcaDetectorBtn.setTooltip ("Classic: fixed 10 ms RMS time constant. Off = adaptive 35-5 ms.");
     vcaDetectorBtn.setToggleState (track.strip.compVcaDetectorClassic.load (std::memory_order_relaxed),
                                     juce::dontSendNotification);
     vcaDetectorBtn.onClick = [this]

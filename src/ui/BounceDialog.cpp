@@ -126,7 +126,7 @@ void BounceDialog::timerCallback()
         {
             statusLabel.setText ("Rendering stem " + juce::String (idx)
                                   + " of " + juce::String (total)
-                                  + " → " + outputFile.getParentDirectory().getFullPathName(),
+                                  + " -> " + outputFile.getParentDirectory().getFullPathName(),
                                   juce::dontSendNotification);
         }
     }

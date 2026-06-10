@@ -11,6 +11,9 @@ add_executable(dusk-studio-tests
     smoke_brickwall_limiter.cpp
     plugin_scan_protocol.cpp
     session_tick_conversion.cpp
+    tempo_map_conversion.cpp
+    output_pair_routing.cpp
+    multiband_comp_presets.cpp
     atomic_park.cpp
     embedded_modal_close_safety.cpp
     x11_anti_pattern_guard.cpp
@@ -30,6 +33,8 @@ add_executable(dusk-studio-tests
     midi_time_code_decode.cpp
     midi_time_code_emit.cpp
     automation_thinning.cpp
+    automation_lane_snapshot.cpp
+    pdc_math.cpp
     session_midi_tempolock_roundtrip.cpp
     session_apply_tempo_change.cpp
     session_fader_group.cpp
@@ -155,6 +160,12 @@ if(DEFINED DUSK_PLUGINS_PATH)
     target_sources(dusk-studio-tests PRIVATE
         comp_static_curve.cpp
         comp_timing.cpp
+        bus_strip.cpp
+        mastering_chain.cpp
+        ${CMAKE_SOURCE_DIR}/src/dsp/BusStrip.cpp
+        ${CMAKE_SOURCE_DIR}/src/dsp/MasteringChain.cpp
+        ${CMAKE_SOURCE_DIR}/src/dsp/MasteringDigitalEq.cpp
+        ${CMAKE_SOURCE_DIR}/src/dsp/LoudnessMeter.cpp
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/multicomp.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/AnalogLookAndFeel.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/EnhancedCompressorEditor.cpp"

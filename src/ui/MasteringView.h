@@ -52,11 +52,14 @@ public:
 private:
     void timerCallback() override;
     void updateLabels();
-    void rebuildKnobValues();
 
     void doLoadPrompt();
     void doLoadLatestMixdown();
     void doExport();
+
+    // Apply a DP-24-style 3-band preset to the mastering multiband compressor
+    // (no-op without donor DSP). See dsp/MultibandCompPresets.h.
+    void applyMultibandPreset (int presetIndex);
 
     Session& session;
     AudioEngine& engine;
@@ -71,28 +74,17 @@ private:
     juce::Label       clockLabel;
     juce::Label       grLabel;
 
-    struct KnobGroup
-    {
-        juce::Label  title;
-        juce::ToggleButton enable;
-    };
-    KnobGroup eqGroup, compGroup, limGroup;
-
-    juce::Slider eqLfBoost, eqHfBoost, eqHfAtten, eqTubeDrive, eqOutput;
-    juce::Label  eqLfBoostL, eqHfBoostL, eqHfAttenL, eqTubeDriveL, eqOutputL;
-
-    juce::Slider compThresh, compRatio, compAttack, compRelease, compMakeup;
-    juce::Label  compThreshL, compRatioL, compAttackL, compReleaseL, compMakeupL;
-
-    juce::Slider limDrive, limCeiling, limRelease;
-    juce::Label  limDriveL, limCeilingL, limReleaseL;
-
     juce::Label  meterL, meterR;
     juce::Label  lufsM, lufsS, lufsI, truePeak;
+    // Backdrop rect around the TP/M/S/I cells, recomputed in resized().
+    juce::Rectangle<int> loudnessClusterBounds;
     juce::TextButton resetLoudness { "Reset I" };
 
     DuskComboBox masteringTargetCombo;
     juce::Label    targetCaption;
+
+    // Multiband-comp preset picker in the comp panel header (donor DSP only).
+    DuskComboBox compPresetCombo;
 
     juce::TextButton exportButton { "Export master..." };
 
@@ -116,7 +108,7 @@ private:
     std::unique_ptr<class CompHeaderButton>       compHeaderBtn;
     // Last compEnabled state pushed to compHeaderBtn — the button only repaints
     // on its own click, so the 20 Hz timer watches this to pick up external
-    // changes (session load, rebuildKnobValues, the legacy toggle).
+    // changes (e.g. session load).
     bool compHeaderEnabledSeen { false };
 
     EmbeddedModal exportModal;

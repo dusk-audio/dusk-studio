@@ -431,6 +431,19 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
     };
     addAndMakeVisible (clockLabel);
 
+    // Current-section pill: muted-amber accent, sits just right of the clock.
+    // Starts hidden; the timer shows it once a marker is at/before the playhead.
+    sectionLabel.setJustificationType (juce::Justification::centredLeft);
+    sectionLabel.setColour (juce::Label::textColourId,       juce::Colour (0xffd0a050));
+    sectionLabel.setColour (juce::Label::backgroundColourId, juce::Colour (0xff121214));
+    sectionLabel.setColour (juce::Label::outlineColourId,    juce::Colour (0xff2a2a32));
+    sectionLabel.setFont (juce::Font (juce::FontOptions (12.0f, juce::Font::bold)));
+    sectionLabel.setMinimumHorizontalScale (1.0f);
+    sectionLabel.setTooltip ("Current song section - the most recent marker at "
+                              "or before the playhead. Add markers with M.");
+    sectionLabel.setVisible (false);
+    addAndMakeVisible (sectionLabel);
+
     timeFormatToggle.setTooltip ("Flip display between Bars/Beats and mm:ss.ms. "
                                    "Affects the clock, tape ruler, and editor rulers. "
                                    "Right-click the clock to flip when this button is hidden.");
@@ -546,16 +559,13 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
                                                       14.0f, juce::Font::bold)));
     bpmValue.setText (juce::String ((int) engine.getSession().tempoBpm.load()),
                        juce::dontSendNotification);
-    bpmValue.setEditable (false, true);  // double-click to edit; Enter commits
-    bpmValue.setTooltip ("Tempo in beats per minute. Double-click to edit. "
-                          "Drives the metronome click and the snap-to-beat grid.");
-    bpmValue.onTextChange = [this]
-    {
-        const auto raw = bpmValue.getText().getFloatValue();
-        const float clamped = juce::jlimit (30.0f, 300.0f, raw);
-        const float oldBpm = engine.getSession().tempoBpm.load (std::memory_order_relaxed);
-        confirmAndApplyBpm (clamped, oldBpm);
-    };
+    // Read-only: it shows the tempo at the playhead (following the tempo map).
+    // All tempo editing lives in the tape strip's Grid mode — the bar-1 point
+    // is the starting tempo. (Tap, below, still sets the starting tempo.)
+    bpmValue.setEditable (false, false);
+    bpmValue.setTooltip ("Tempo at the playhead (beats per minute). Edit the "
+                          "tempo in the tape strip's Grid mode; tap below to set "
+                          "the starting tempo.");
     addAndMakeVisible (bpmValue);
 
     tapButton.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff202024));
@@ -663,10 +673,33 @@ void TransportBar::timerCallback()
     }
 
     const auto playhead = engine.getTransport().getPlayhead();
-    const double seconds = (sr > 0.0) ? (double) playhead / sr : 0.0;
-    const int mins   = (int) (seconds / 60.0);
-    const int secs   = (int) seconds % 60;
-    const int millis = (int) ((seconds - std::floor (seconds)) * 1000.0);
+
+    // BPM field tracks the tempo at the playhead (refreshButtonStates() below
+    // sets it; it reads the playhead too so the two never disagree).
+
+    // Current-section pill: name of the latest marker at or before the
+    // playhead. Empty (hidden) when there are no markers or the playhead
+    // sits before the first one. Re-lays out + re-clamps the stage tabs only
+    // when the text actually changes (rare — marker-boundary crossings).
+    {
+        const auto& markers = engine.getSession().getMarkers();
+        const Marker* cur = nullptr;
+        for (const auto& mk : markers)
+            if (mk.timelineSamples <= playhead
+                && (cur == nullptr || mk.timelineSamples > cur->timelineSamples))
+                cur = &mk;
+        const juce::String text = cur != nullptr
+            ? juce::String (juce::CharPointer_UTF8 ("\xe2\x96\xb8 ")) + cur->name   // "▸ "
+            : juce::String();
+        if (text != sectionLabel.getText())
+        {
+            sectionLabel.setText (text, juce::dontSendNotification);
+            sectionLabel.setVisible (text.isNotEmpty());
+            resized();
+            if (onSectionChanged) onSectionChanged();
+        }
+    }
+
     // Skip the periodic refresh while the user is mid-edit so we don't
     // stomp their typed input. Same pattern the BPM editor uses below.
     // When MIDI learn is pending, the clock label dims and shows a
@@ -689,6 +722,7 @@ void TransportBar::timerCallback()
             const int   bpb = engine.getSession().beatsPerBar.load (std::memory_order_relaxed);
             clockLabel.setText (formatSamplePosition (playhead,
                                                         engine.getCurrentSampleRate(),
+                                                        engine.getSession().tempoMap,
                                                         bpm, bpb, mode),
                                  juce::dontSendNotification);
             // Icon shows what the next click will switch TO — matches the
@@ -714,7 +748,9 @@ void TransportBar::timerCallback()
         {
             const auto pIn  = transport.getPunchIn();
             const auto pOut = transport.getPunchOut();
-            const float postRoll = engine.getSession().postRollSeconds.load (std::memory_order_relaxed);
+            const float postRoll = engine.getSession().postRollEnabled.load (std::memory_order_relaxed)
+                                     ? engine.getSession().postRollSeconds.load (std::memory_order_relaxed)
+                                     : 0.0f;
             if (pOut > pIn && postRoll > 0.0f && sr > 0.0)
             {
                 const auto stopAt = pOut + (juce::int64) ((double) postRoll * sr);
@@ -887,7 +923,7 @@ void TransportBar::notifyRecordStopped()
                 ? "WAV write failed (disk full / I/O error)"
                 : "MIDI events dropped (capture buffer full)";
         body += "    Track " + juce::String (e.trackIndex + 1)
-              + " — " + kind + " ("
+              + " - " + kind + " ("
               + juce::String (e.count) + ")\n";
     }
     body += "\nCheck the session's audio folder for free space and the "
@@ -916,9 +952,12 @@ void TransportBar::refreshButtonStates()
                                    juce::dontSendNotification);
 
     // Avoid stomping the user's mid-edit text - only refresh the BPM
-    // display when the label isn't currently being typed into.
+    // display when the label isn't currently being typed into. Show the tempo
+    // AT THE PLAYHEAD (follows the tempo map), not the constant bar-1 tempo —
+    // otherwise this clobbers the playhead-driven value timerCallback just set.
     if (! bpmValue.isBeingEdited())
-        bpmValue.setText (juce::String ((int) engine.getSession().tempoBpm.load()),
+        bpmValue.setText (juce::String ((int) std::round (
+                              engine.getSession().bpmAt (engine.getTransport().getPlayhead()))),
                            juce::dontSendNotification);
 
     // BPM caption priority:
@@ -1009,6 +1048,15 @@ void TransportBar::resized()
         area.removeFromLeft (6);
     }
     clockLabel.setBounds (area.removeFromLeft (compact ? 110 : 130));
+
+    // Current-section pill, sized to its text, just right of the clock.
+    if (sectionLabel.isVisible())
+    {
+        area.removeFromLeft (8);
+        const int textW = sectionLabel.getFont().getStringWidth (sectionLabel.getText()) + 16;
+        const int maxW  = compact ? 110 : 190;
+        sectionLabel.setBounds (area.removeFromLeft (juce::jmin (textW, maxW)).reduced (0, 4));
+    }
 
     tapeToggle.setBounds (area.removeFromRight (compact ? 32 : 84).reduced (1));
     area.removeFromRight (12);
@@ -1147,10 +1195,15 @@ void TransportBar::showPunchSettingsMenu()
         postMenu.addItem (formatSecs (v), true, std::abs (post - v) < 0.05f,
             [&s, v] { s.postRollSeconds.store (v, std::memory_order_relaxed); });
 
+    const bool preEn  = s.preRollEnabled.load  (std::memory_order_relaxed);
+    const bool postEn = s.postRollEnabled.load (std::memory_order_relaxed);
+
     m.addSectionHeader ("Auto-punch");
-    m.addItem ("Roll IN before punch (audible context)", false, false, []{});
+    m.addItem ("Roll IN before punch (audible context)", true, preEn,
+        [&s, preEn] { s.preRollEnabled.store (! preEn, std::memory_order_relaxed); });
     m.addSubMenu ("Pre-roll: "  + formatSecs (pre),  preMenu);
-    m.addItem ("Stop after punch-out (auto-stop)",     false, false, []{});
+    m.addItem ("Stop after punch-out (auto-stop)",     true, postEn,
+        [&s, postEn] { s.postRollEnabled.store (! postEn, std::memory_order_relaxed); });
     m.addSubMenu ("Post-roll: " + formatSecs (post), postMenu);
     showContextMenu (m, punchButton);
 }
@@ -1256,7 +1309,7 @@ void TransportBar::promptCustomTimeSig()
 
     juce::Component::SafePointer<TransportBar> safe (this);
     showDuskTextInput (*tlw, "Custom time signature",
-                          "Enter N/D — numerator first, then denominator "
+                          "Enter N/D - numerator first, then denominator "
                           "(power of two: 1, 2, 4, 8, 16, 32).",
                           current,
                           [safe] (const juce::String& text)
@@ -1329,6 +1382,18 @@ void TransportBar::confirmAndApplyBpm (float newBpm, float oldBpm)
         return;
     }
 
+    // When a tempo map is active it governs timing directly, so the BPM field
+    // edits the bar-1 tempo point instead of running the legacy single-tempo
+    // region retime (and there's no retime dialog — nothing is rescaled).
+    if (! s.tempoMap.empty())
+    {
+        auto pts = s.tempoMap.points();
+        pts.front().bpm = newBpm;
+        engine.setTempoPoints (std::move (pts));
+        bpmValue.setText (juce::String ((int) newBpm), juce::dontSendNotification);
+        return;
+    }
+
     int lockedMidi = 0, floatMidi = 0;
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
@@ -1340,12 +1405,12 @@ void TransportBar::confirmAndApplyBpm (float newBpm, float oldBpm)
     int autoPoints = 0;
     for (int t = 0; t < Session::kNumTracks; ++t)
         for (const auto& lane : s.track (t).automationLanes)
-            autoPoints += (int) lane.points.size();
+            autoPoints += (int) lane.pointsConst().size();
     for (int a = 0; a < Session::kNumAuxLanes; ++a)
         for (const auto& lane : s.auxLane (a).params.automationLanes)
-            autoPoints += (int) lane.points.size();
+            autoPoints += (int) lane.pointsConst().size();
     for (const auto& lane : s.master().automationLanes)
-        autoPoints += (int) lane.points.size();
+        autoPoints += (int) lane.pointsConst().size();
 
     const bool empty = (lockedMidi == 0 && floatMidi == 0 && autoPoints == 0);
     if (empty)

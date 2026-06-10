@@ -16,7 +16,7 @@ colorlinks: true
 
 # About this manual
 
-Dusk Studio is a deliberately constrained, portastudio-style digital audio workstation. It records up to 24 tracks of audio or MIDI, runs every track through a fixed signal chain inspired by classic analog consoles, and bounces a finished mix to a stereo WAV. It does not host a thousand plug-ins on a thousand tracks. It does not let you draw automation curves with a pencil tool. It does not have tabbed views or hidden panels. Everything is on screen, all the time.
+Dusk Studio is a deliberately constrained, portastudio-style digital audio workstation. It records up to 24 tracks of audio or MIDI, runs every track through a fixed signal chain inspired by classic analog consoles, and bounces a finished mix to a stereo WAV. It does not host a thousand plug-ins on a thousand tracks. It does not have tabbed views or hidden panels. Everything is on screen, all the time.
 
 This manual covers Dusk Studio v1. It is written for musicians and engineers who want a reference for every control, every shortcut, and every workflow the program supports. Read it cover to cover the first time and skim by section thereafter.
 
@@ -36,14 +36,14 @@ Dusk Studio includes:
 - MIDI Clock and MIDI Time Code chase and emit.
 - Mackie Control surface support (tested against Tascam DP-24SD).
 - A piano roll for MIDI editing and an audio region editor with non-destructive trim, fade, and gain.
-- Session save/load with automatic 30-second autosave, atomic-write protection, and a 20-take history per region.
+- Session save/load with automatic 30-second autosave, atomic-write protection, and an 8-take history per region.
 
 ## What it deliberately does not have
 
 - No more than 24 tracks. The limit is fixed.
 - No reorderable signal chain. EQ is always before the compressor; the compressor is always before the fader. No chains of seventeen plugins on a single channel.
 - No sample-level audio editing. Regions can be moved, split, trimmed, faded, normalised, and gained. The waveform itself is not editable.
-- No freehand/spline automation. Automation is console-style - ride the fader, pan, mute, or an aux send with Write/Touch/Read and the program records the move - with a breakpoint editor in the audio region editor for adding, dragging, and deleting points after the take. Linear between points; no bezier shaping.
+- Console-style automation. Ride the fader, pan, mute, or an aux send with Write/Touch/Read and the program records the move. For touch-up, the audio region editor's breakpoint lane lets you add, drag, and delete points, or draw a freehand stroke with the Draw tool to lay a run of points at once. Segments stay linear between points; no spline/bezier shaping.
 - No preferences sprawl. The only preferences panel is for audio device configuration.
 - No tabs, no hidden panes, no project-explorer-trees-within-trees.
 
@@ -59,9 +59,11 @@ This chapter walks an empty session all the way to a finished bounce. If you hav
 
 Install per your platform. On first launch, Dusk Studio opens a blank session called `Untitled` and the **Startup** dialog asks whether you want to create a new session in a chosen folder or open a recent one. Pick **New**, name your session, and click through.
 
+You can also open an existing session directly: pass its `session.json` (or the session folder) on the command line — `DuskStudio path/to/session.json` — or double-click a `session.json` in your file manager (Linux file-type association is installed with the app). If Dusk Studio is already running, the session opens in the existing window.
+
 ![First-launch window with the Startup dialog visible.](docs/images/qg-01-startup.png)
 
-The main window is laid out top to bottom: menu bar, stage selector (RECORDING / MIXING / AUX / MASTERING), bank selector, transport bar, tape strip toggle, console. The console fills the rest of the window with 24 channel strips, 4 buses, and the master.
+The main window is laid out top to bottom: menu bar, stage selector (RECORDING / MIXING / MASTERING / AUX), bank selector, transport bar, tape strip toggle, console. The console fills the rest of the window with 24 channel strips, 4 buses, and the master.
 
 ## Pick an audio device
 
@@ -89,7 +91,7 @@ Hit **R** or click the transport's record button. Playback starts, the record in
 
 ![Mid-record: levels lit, region drawing in the tape strip.](docs/images/qg-04-record-rolling.png)
 
-If you do not like the take, **Cmd+Z** undoes the recording. The take is preserved in the region's take history (up to 20 takes per region) — right-click the region and pick a previous take to swap it back in.
+If you do not like the take, **Cmd+Z** undoes the recording. The take is preserved in the region's take history (up to 8 takes per region) — right-click the region and pick a previous take to swap it back in.
 
 ## Overdub
 
@@ -140,7 +142,7 @@ This chapter is a visual reference. Every numbered callout on the figures below 
 | #   | Name              | Description                                                                                                                       |
 | --- | ----------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | 1   | Menu bar          | `File` and `Settings` menus only. No tabs, no hidden submenus.                                                                    |
-| 2   | Stage selector    | Four buttons: **RECORDING**, **MIXING**, **AUX**, **MASTERING**. Picks which view fills the console area.                         |
+| 2   | Stage selector    | Four buttons: **RECORDING**, **MIXING**, **MASTERING**, **AUX** (keys 1–4). Picks which view fills the console area.                  |
 | 3   | Bank selector     | `1-8`, `9-16`, `17-24`. Only visible when the window is too narrow to show all 24 channel strips at once.                         |
 | 4   | Transport bar     | Play, record, loop, punch, BPM, time signature, clock, tuner. See the next figure for the inventory.                              |
 | 5   | Tape strip toggle | `▾ TIMELINE` / `▴ TAPE`. Collapses or expands the timeline view below the bar.                                                     |
@@ -162,14 +164,13 @@ This chapter is a visual reference. Every numbered callout on the figures below 
 | 8   | Virtual keyboard | Opens the on-screen MIDI keyboard overlay.                                       |
 | 9   | Metronome        | Click on / off. Right-click for the click settings.                              |
 | 10  | C/I              | Count-in toggle. One bar of click before record starts.                          |
-| 11  | BPM              | Click to type a tempo; drag to nudge.                                            |
-| 12  | TAP              | Tap repeatedly to set the tempo from your wrist.                                 |
+| 11  | BPM              | Tempo at the playhead (read-only display). Set the tempo by right-clicking the timeline ruler; **TAP** sets the starting tempo. |
+| 12  | TAP              | Tap repeatedly to set the **starting** tempo from your wrist.                    |
 | 13  | Time signature   | Click to choose. Custom signatures supported.                                    |
 | 14  | Clock display    | Bars.Beats.Ticks or mm:ss.mmm; right-click to flip.                              |
 | 15  | Tuner            | Opens the chromatic tuner against the selected input.                            |
 | 16  | TIMELINE / TAPE   | Same as the tape strip toggle below the bar.                                     |
-| 17  | SNAP             | Global grid snap toggle for region edits.                                        |
-| 18  | − / + / Fit      | Timeline zoom out / in / fit-to-window.                                          |
+| 17  | − / + / Fit      | Timeline zoom out / in / fit-to-window (shown in the header when the timeline is expanded). |
 
 In compact mode (window narrower than 1850 px) labels shorten; `SNAP` becomes `S`, `TIMELINE` becomes `▾`, and the time-format toggle hides — right-click the clock display to flip format instead.
 
@@ -265,7 +266,7 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 | 3   | Waveform          | Stereo overview with the playhead.                                                          |
 | 4   | 5-band digital EQ | Low shelf / 3 peaks / high shelf, ±12 dB per band.                                          |
 | 5   | Bus compressor    | Same UniversalCompressor as elsewhere, tuned to mastering defaults.                         |
-| 6   | Brickwall limiter | Sample-peak (see the mastering chapter for the ISP note).                                   |
+| 6   | Brickwall limiter | True-peak, 4× oversampled lookahead (see the mastering chapter).                            |
 | 7   | Loudness panel    | Momentary / short-term / integrated LUFS + True Peak (4× oversampled, BS.1770).             |
 | 8   | Export master…    | Renders the chain offline to a stereo file.                                                 |
 
@@ -275,13 +276,14 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 
 | #   | Name               | Description                                                     |
 | --- | ------------------ | --------------------------------------------------------------- |
-| 1   | Ruler              | Bars and beats. Right-click for snap denomination.              |
+| 1   | Ruler              | Bars and beats. **Left-click to move the playhead**; right-click for tempo / loop / punch / markers. |
 | 2   | Region             | Audio or MIDI clip. Drag to move, drag the edges to trim.       |
 | 3   | Region edge handle | Trim handle. Hold Cmd to nudge by snap.                         |
 | 4   | Marker             | Drop with **M**, drag to move, right-click to rename or delete. |
 | 5   | Loop bracket       | Set with **[** / **]**; enable loop with **L**.                 |
 | 6   | Punch bracket      | Set with **Shift+[** / **Shift+]**; enable punch with **P**.    |
-| 7   | Snap toggle        | Global on/off mirrored from the transport bar's SNAP button.    |
+
+**Left-click anywhere on the timeline moves the playhead there** (the ruler or empty track space). Regions still respond to clicks — click to select, drag a body to move, drag an edge to trim — and **double-click a region to open the full editor**. Everything else (split, delete, set tempo, set loop / punch) is on the **right-click** menu.
 
 ## The audio region editor
 
@@ -293,7 +295,7 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 | 2   | Fade handle       | Drag in from each edge to set fade-in or fade-out length.                       |
 | 3   | Trim handle       | Region in / out trims (non-destructive).                                        |
 | 4   | Gain slider       | ±24 dB region gain.                                                             |
-| 5   | Edit-mode toolbar | Grab / Range / Cut / Grid / Draw. Cycle with **G**.                             |
+| 5   | Edit-mode toolbar | Grab / Range / Cut / Draw. **G** = Grab. (Tempo is edited by right-clicking the main timeline ruler, not from here.) |
 
 ## The piano roll
 
@@ -326,19 +328,27 @@ The binaries shipped via Patreon and GitHub Sponsors are **unsigned by design** 
 
 The source on GitHub is GPL-3.0; anyone who prefers to skip the warning can build from source.
 
-### Linux (AppImage)
+### Linux (tarball)
 
-1. Download `dusk-studio-<version>-Linux-x86_64.AppImage` from the Patreon post or the private releases repo.
-2. Open a terminal in the download folder and mark it executable:
+1. Download `dusk-studio-<version>-Linux-<arch>.tar.xz` from the Patreon post or the private releases repo.
+2. Extract it in the download folder:
    ```bash
-   chmod +x dusk-studio-*-Linux-x86_64.AppImage
+   tar xf dusk-studio-*-Linux-*.tar.xz
    ```
-3. Double-click to launch, or run it from the terminal:
+   This unpacks a `dusk-studio-<version>-Linux-<arch>/` directory holding a portable `DuskStudio/` program folder plus `install.sh`.
+3. Run it in place — no install required:
    ```bash
-   ./dusk-studio-*-Linux-x86_64.AppImage
+   cd dusk-studio-*-Linux-*
+   ./DuskStudio/DuskStudio
    ```
+4. Or install it for a menu entry, a `DuskStudio` launcher on your `PATH`, and the `session.json` file association:
+   ```bash
+   ./install.sh                # user install to ~/.local (no root)
+   sudo ./install.sh --system  # system-wide to /opt + /usr/local
+   ```
+   Remove a previous install with `./install.sh --uninstall` (add `sudo` for a system install).
 
-No signing dance. Linux desktops trust AppImages by default.
+No signing dance. Linux desktops run the binary directly.
 
 ### macOS (DMG / .app)
 
@@ -370,7 +380,7 @@ Windows SmartScreen blocks unsigned MSIs by default. The bypass is one click but
 3. Click the small **More info** link near the top of the dialog. SmartScreen expands to show *"App: DuskStudio-{version}.msi / Publisher: Unknown publisher"*.
 4. A new **Run anyway** button appears at the bottom — click it.
 5. The MSI installer runs normally. Accept the install location (`C:\Program Files\Dusk Studio` by default) and finish.
-6. Launch Dusk Studio from the Start menu.
+6. Launch Dusk Studio from the **Start menu** (under *Dusk Studio*) or the **desktop shortcut** the installer creates.
 
 Windows SmartScreen treats every new MSI hash as untrusted on first download; reputation builds up across installations over time but reset on every new release. The MORE INFO → RUN ANYWAY two-click bypass is consistent across builds.
 
@@ -396,13 +406,13 @@ Verification protects against a bit-flipped download or a man-in-the-middle atta
 On first launch Dusk Studio opens a blank session named `Untitled`. The window is divided, top to bottom, into:
 
 - A thin menu bar (File and Settings).
-- A row of large coloured buttons for the four stages: **RECORDING**, **MIXING**, **AUX**, **MASTERING**.
+- A row of large coloured buttons for the four stages: **RECORDING**, **MIXING**, **MASTERING**, **AUX** (keys **1–4**).
 - A bank selector (only visible when the window is too narrow to show all 24 channel strips at once).
 - The transport bar.
 - The tape strip (the timeline view), collapsed by default.
 - The console view, showing 24 channel strips (in three banks of 8), 4 buses, and the master strip.
 
-Press **RECORDING** to focus the channel strips on input routing and arm controls. Press **MIXING** to focus them on send levels and inserts. Press **AUX** to see the four aux lanes, their inserts, and their send sources. Press **MASTERING** to load a finished mix and run it through the mastering chain.
+Press **RECORDING** to focus the channel strips on input routing and arm controls. Press **MIXING** to focus them on send levels and inserts. Press **MASTERING** to load a finished mix and run it through the mastering chain. Press **AUX** to see the four aux lanes, their inserts, and their send sources.
 
 ## Configuring audio
 
@@ -414,6 +424,8 @@ Open **Settings → Audio…** to choose your audio device. The panel is divided
 - **Sample rate**: any rate the device supports. 44.1 kHz, 48 kHz, 88.2 kHz, 96 kHz are common.
 - **Block size**: smaller blocks give lower latency but cost more CPU per sample. 256 or 512 samples is a good starting point.
 - **Periods (Linux/ALSA only)**: how many buffers the ALSA driver keeps in flight. Two is the lowest-latency safe value; three or more is more robust on a busy machine.
+- **Active output channels**: the master mix uses outputs 1-2. If your interface has more outputs, tick the extra pairs here to open them — each pair then becomes selectable as an aux lane's **Output** (a headphone / cue feed). Off by default; the master stays stereo until you enable more.
+- **Main output**: which physical pair the master mix goes to. **1-2 (default)** in most rigs; move it to another pair (e.g. when you want outputs 1-2 free for a control-room or cue feed). Only pairs the device currently has open are listed. If an aux lane is routed to the same pair as the master, the two sum on that pair.
 - **Rescan devices**: re-enumerates every backend, useful if you plugged in a USB interface after launch.
 
 ### Control surface
@@ -457,7 +469,7 @@ The window is structured as a stack of horizontal bands.
 ┌───────────────────────────────────────────────────────┐
 │ File   Settings              Session name      CPU…   │  Menu bar
 ├───────────────────────────────────────────────────────┤
-│  RECORDING   MIXING   AUX   MASTERING                 │  Stage selector
+│  RECORDING   MIXING   MASTERING   AUX                 │  Stage selector
 ├───────────────────────────────────────────────────────┤
 │  1-8   9-16                                           │  Bank selector
 ├───────────────────────────────────────────────────────┤
@@ -479,8 +491,10 @@ Only one stage is visible at a time, but the same engine drives all four. Switch
 
 - **RECORDING** shows each channel strip's input source, arm button, monitor toggle, and "print" toggle (for whether EQ and compression are committed to the recorded file or kept live).
 - **MIXING** replaces the input block with the channel's four aux send knobs. Inserts and EQ stay on screen.
-- **AUX** swaps the console view for the four aux return lanes, with a full-width view of each lane's plugin chain.
 - **MASTERING** swaps the console view for the mastering chain, including a file picker for loading a finished mix.
+- **AUX** swaps the console view for the four aux return lanes, with a full-width view of each lane's plugin chain.
+
+Press **1 / 2 / 3 / 4** to jump straight to RECORDING / MIXING / MASTERING / AUX. The bank selector has its own keys — **Cmd/Ctrl+1 / 2 / 3** — so a plain digit changes stage and a modified digit changes bank. Hovering any tab or bank button shows its shortcut, and **?** opens a full keyboard-shortcut list (also under **Settings → Keyboard Shortcuts**).
 
 Switching into or out of MASTERING force-stops the transport. The mix engine and the mastering engine cannot run at the same time.
 
@@ -494,11 +508,11 @@ From left to right:
 - **Forward** (▶▶). Brief press jumps to the next marker (no overshoot past the last one). Hold to scrub forward at 10× speed.
 - **Record** (●). Toggles record. Requires at least one track armed.
 - **Loop** (⟳). Toggles loop playback.
-- **Punch** (◉). Toggles punch recording. Right-click to set pre-roll and post-roll seconds.
+- **Punch** (◉). Toggles punch recording. Right-click to enable/disable pre-roll and post-roll and set their seconds.
 - **Virtual keyboard** (⌨). Opens an on-screen MIDI keyboard.
 - **Metronome** (♩). Toggles the click. Right-click for click settings.
 - **C/I**. Toggles count-in (one bar of click before record starts).
-- **BPM**. Click to type a tempo; drag up or down to nudge. Changing BPM while MIDI regions exist prompts for confirmation, because tick positions are interpreted relative to BPM.
+- **BPM**. A read-only display of the tempo at the playhead (it follows tempo-map changes). Set the tempo by right-clicking the timeline ruler; **TAP** sets the starting tempo.
 - **TAP**. Click on each beat; Dusk Studio averages the last four intervals over a two-second window and sets the tempo.
 - **Time signature**. Click to choose from common signatures or enter a custom one.
 - **Clock display**. Shows the current playhead position. Right-click to flip between **Bars.Beats.Ticks** (e.g. `5.2.120`) and **mm:ss.mmm** (e.g. `01:23.456`).
@@ -507,7 +521,7 @@ From left to right:
 
 On the right end of the transport bar:
 
-- **SNAP**. Global grid snap toggle. When on, region drags, trims, and pastes snap to the snap denomination set in the edit-mode toolbar.
+- **Snap**. Global grid snap toggle in the header (with a resolution button beside it). When on, region drags, trims, pastes, marker / loop / punch / tempo moves snap to the chosen grid resolution.
 - **−** / **+** / **Fit**. Timeline zoom out, in, and fit-to-window.
 
 In compact mode (window narrower than 1850 pixels), labels shorten: `SNAP` becomes `S`, `TIMELINE` becomes `▾`, and the time-format toggle hides — right-click the clock display to flip format instead.
@@ -822,6 +836,7 @@ Each lane is divided into three columns:
 - **Return fader**: −∞ to +12 dB. This is the level of the aux's processed output into the master.
 - **Output meter**: pre-master return level.
 - **Automation mode**: same OFF / READ / WRITE / TOUCH cycle as channel faders.
+- **Output**: where this aux lane's processed mix is sent. **Master only** (default) folds it into the main mix as usual. Pick a hardware pair (Out 1-2, Out 3-4, …) to also send the lane to that physical output — a headphone / cue feed. The hardware tap is taken *before* the return fader and Mute, so those still govern only the fold into the master while the cue keeps playing. Build the cue from each channel's **pre-fader** aux send (right-click a send knob to flip it pre-fader) so riding the main mix doesn't change what the performer hears. Enable the extra outputs first in **Audio settings** (the Output menu lists whatever output pairs the device currently has open).
 
 ### Plugin chain (centre column)
 
@@ -881,15 +896,19 @@ A clean linear-phase-style mastering EQ.
 
 The same UniversalCompressor in Bus mode as the channel / master compressors, but tuned to mastering defaults: 2:1 ratio, 30 ms attack, 250 ms release, auto-release on. Apply 0.5–2 dB of gain reduction to glue a final mix without squashing transients.
 
+**Presets** (dropdown in the comp panel header): nine genre starting points transcribed from the Tascam DP-24/32 multiband compression chart — Basic CD, Pop, Pop Rock 1/2, Rock 1/2, Classic, Dance, R&B Hip Hop. Picking one writes the three-band threshold / ratio / attack / release / makeup and the two crossovers into the multiband comp, with the high-mid band disabled so it behaves as the original 3-band (Low / Mid / High) preset. It's a one-shot apply — tweak any band afterwards and the dropdown returns to the placeholder. A few presets specify a high crossover (above 5 kHz) that the mid/high split clamps slightly.
+
 ### Brickwall limiter
 
-A sample-peak brickwall limiter. **Enabled by default.** (The True-Peak readout in the loudness panel _is_ 4× oversampled per BS.1770; the limiter that engages on the signal is not — see below.)
+A true-peak brickwall limiter with lookahead. **Enabled by default.** It runs the whole limiting process at 4× oversampling, so the ceiling holds on inter-sample peaks, not just sample peaks.
 
 - **Ceiling**: −12 to 0 dB. Default **−0.3 dB** (matches the headroom expected by most streaming platforms).
-- **Drive**: 0 to +20 dB pre-limiter gain. Drives the input harder for more limiting.
+- **Threshold**: 0 to −20 dB (drag the handle on the input meter). Pull it down to drive more signal into the ceiling — louder and denser. (Internally it adds up to +20 dB of input gain; the ceiling then holds the peak.)
 - **Release**: 50 to 300 ms.
+- **Mode**: shapes the hold + release character — **Modern** (balanced default), **Transparent** (fast recovery, minimal pumping), **Punchy** (longer hold, denser).
+- **Stereo link**: on (default) matches the gain reduction across L/R to preserve the stereo image; off limits each channel independently.
 
-The limiter detects sample peaks only. Inter-sample-peak (true-peak) detection per ITU BS.1770 is planned but not implemented in v1; reserve a little extra headroom in the ceiling if you are mastering for lossy delivery.
+The lookahead adds a small, fixed latency that the engine compensates for. True-peak control is to 4× resolution; for very-high-frequency masters reserve a little extra ceiling headroom.
 
 ## Loudness metering
 
@@ -952,7 +971,7 @@ To overdub a specific section without erasing material before or after:
 
 1. Set the **punch in** and **punch out** points by clicking the timeline ruler at the desired in and out positions, holding **Shift**.
 2. Click the **Punch** button on the transport bar.
-3. Right-click the **Punch** button to set the **pre-roll** seconds (how much existing material plays back before the punch-in) and the **post-roll** seconds (how long the transport keeps rolling past the punch-out before auto-stopping). Post-roll defaults to 0 (off).
+3. Right-click the **Punch** button to set the **pre-roll** seconds (how much existing material plays back before the punch-in) and the **post-roll** seconds (how long the transport keeps rolling past the punch-out before auto-stopping). Each has an enable toggle in the same menu, so you can switch a roll off without losing its seconds value. Post-roll defaults to 0 (off).
 4. Press Record. Playback begins at the pre-roll position. Recording begins exactly at the punch-in sample and ends exactly at the punch-out sample. The audio before and after is untouched.
 
 When the new take begins, a 64-sample raised-cosine fade-in shapes its edge against the existing material. When the new take ends, a 64-sample fade-out shapes the other edge. The result is a click-free splice.
@@ -986,7 +1005,7 @@ MIDI tracks do not produce separate files; their note and CC data is embedded in
 
 ## Take history
 
-Each region keeps a stack of up to **20 previous takes**. When you record a new take whose timeline range fully contains an existing region, the existing region is pushed onto that stack. Partially-overlapping takes are not absorbed — they stay visible on either side of the punch.
+Each region keeps a stack of up to **8 previous takes**. When you record a new take whose timeline range fully contains an existing region, the existing region is pushed onto that stack. Partially-overlapping takes are not absorbed — they stay visible on either side of the punch.
 
 To cycle through takes:
 
@@ -995,7 +1014,7 @@ To cycle through takes:
 
 Or click the take badge on the region itself (visible when more than one take exists).
 
-The 20-take cap bounds memory and disk growth across long sessions.
+The 8-take cap bounds memory and disk growth across long sessions.
 
 ## Recording errors
 
@@ -1086,6 +1105,8 @@ Press **M** to drop a marker at the current playhead. A marker pill appears in t
 - Right-click for **Rename** and **Delete**.
 - **Rewind** and **Forward** transport buttons jump to the previous and next marker.
 
+Once a song has markers, the transport bar shows a **current-section pill** just right of the clock (e.g. *▸ Verse 2*) — the name of the most recent marker at or before the playhead. It tracks the arrangement as you play, so you always know which section is current even with the **TIMELINE** collapsed. It is hidden until the playhead reaches the first marker.
+
 ## Loop and punch brackets
 
 When **Loop** or **Punch** is enabled, coloured brackets appear in the ruler.
@@ -1132,9 +1153,11 @@ The top is a row of icon buttons:
 - **Properties** (file path, sample rate, channel count, length).
 - **Zoom out / Zoom in / Zoom fit** (also **−**, **+**, **0**).
 
-The edit-mode toolbar follows: **Grab**, **Range**, **Cut**, **Grid**, **Draw**. Most editing uses Grab. Range lets you highlight a time band for split or fade-fit. Cut splits the region at every click. Grid and Draw are reserved for later phases.
+The region editor's edit-mode toolbar offers **Grab**, **Range**, **Cut**, **Draw**. Most editing uses Grab. Range lets you highlight a time band for split or fade-fit. Cut splits the region at every click. Draw is the automation pencil: with an automation lane selected (see below) it draws a freehand breakpoint curve; with no lane selected it does nothing (it never moves the region).
 
-The **Snap** toggle and snap-denomination dropdown are at the right of the toolbar.
+**Tempo** is edited on the **timeline ruler** (the top band of the tape strip), in any edit mode — it's the only place tempo is set (the transport BPM field is a read-only playhead readout). **Double-click a tempo marker (its triangle or BPM number) to change its value**; double-click the dimmed bar-1 handle to set the starting tempo. **Drag a tempo marker left or right to move it** (it snaps to the grid when SNAP is on; the bar-1 starting tempo stays anchored). **Right-click** the ruler for the full menu: its *Tempo* section offers **Set tempo here…** on an empty spot (adds a tempo change at that bar — type the BPM); **Set tempo… / Delete tempo** on an existing marker (right-clicking anywhere in the ruler column under the number lands on it); and **Set starting tempo…** on the bar-1 handle before any changes exist. The bar grid re-flows to follow, and **MIDI playback and the metronome track the tempo changes** too. The first change you add seeds a point at bar 1 from the starting tempo, so the bars before it keep that tempo. (Audio regions are never time-stretched — only MIDI follows the tempo map.)
+
+The **Snap** toggle and its grid-resolution button sit in the header, to the left of the zoom (− / + / Fit) cluster — visible whenever the **TIMELINE** is open. Click **Snap** to turn grid snapping on/off; click the resolution button (e.g. *1/4 Note*) to pick the grid (Bar, 1/2, 1/4, 1/8, 1/16, 1/32, plus triplet and dotted variants). The setting is saved with the session.
 
 Below the toolbar:
 
@@ -1297,7 +1320,7 @@ Each channel strip, each bus, and the master strip have an automation mode butto
 
 The same modes apply to pan, mute, and solo. Pan rides like the fader; mute and solo are discrete on/off toggles, so they record only in WRITE (in READ/TOUCH the recorded lane drives them). On a bus the automatable controls are the fader, pan, and mute (bus solo is manual-only).
 
-Dusk Studio's automation is console-first: you ride the controls and the program writes what you did. For touch-up, the audio region editor exposes a per-parameter breakpoint lane - add, drag, and delete points, with linear segments between them. There is no freehand/spline (pencil) curve drawing.
+Dusk Studio's automation is console-first: you ride the controls and the program writes what you did. For touch-up, the audio region editor exposes a per-parameter breakpoint lane - add, drag, and delete points individually, or switch to the Draw tool and draw a freehand stroke to lay a run of points at once. Segments stay linear between points; there is no spline/bezier shaping.
 
 ### Editing breakpoints in the region editor
 
@@ -1306,6 +1329,7 @@ Double-click an audio region to open its editor. The **Auto:** button at the top
 - **Click empty space** - add a breakpoint at the click. It snaps to the grid; hold **Cmd/Ctrl** to place it off-grid.
 - **Drag a point** - move it in time and value.
 - **Right-click a point** - delete it.
+- **Draw tool** - pick **Draw** in the edit-mode toolbar, then drag across the lane to paint a freehand curve. It lays a run of breakpoints along the stroke (overwriting any automation under it) and thins them to a clean set when you release. Hold **Cmd/Ctrl** to draw off-grid.
 
 A few rules:
 
@@ -1377,7 +1401,7 @@ OOP is supported on:
 - **Windows**: always.
 - **macOS**: requires macOS 14.4 or later. The plugin **editor** is hosted in-process via a shell instance and embeds as a centred modal like the other platforms — see *Opening the editor* above.
 
-OOP is enabled per-session by setting the environment variable `DUSKSTUDIO_USE_OOP_PLUGINS=1` before launching Dusk Studio. A future release will expose this as a per-plugin or per-session UI toggle.
+OOP is **on by default** for third-party binary plugins (VST3 / LV2 / AU), so a plugin that crashes or hangs takes down only the host child, not Dusk Studio. There is no setting to manage; if the `dusk-studio-plugin-host` binary is missing the loader falls back to in-process automatically. For debugging you can force in-process hosting by launching with `DUSKSTUDIO_USE_OOP_PLUGINS=0`. (Dusk Studio's own bundled plugins always run in-process.)
 
 When a plugin crashes in OOP mode:
 
@@ -1446,7 +1470,7 @@ Run the ping after any change to your interface routing or your external gear's 
 
 ## Latency compensation
 
-The measured latency is stored per insert and applied as an internal delay line inside the hardware insert slot itself, so that the signal returning from external gear lines up with where it left the channel. Cross-track delay compensation (delaying tracks without inserts by the longest insert latency in the session) is not yet implemented in v1; instrument plugins with reported latency are compensated on their own track only.
+The measured latency is stored per insert and applied as an internal delay line inside the hardware insert slot itself, so that the signal returning from external gear lines up with where it left the channel. **Cross-track plugin delay compensation (PDC) is automatic**: Dusk Studio finds the deepest insert latency in the session (any track's plugin or hardware insert) and delays every other track to match, so a track with a lookahead/linear-phase plugin stays sample-aligned with the rest. It applies on every route (master, buses, aux) and is trimmed out of bounces and stems so rendered files still start at sample 0. MIDI instrument tracks are already aligned via the note-scheduling pre-shift, so they count as zero added latency. (Aux-return plugin latency — the wet vs dry timing of a send/return — is not yet compensated; that is a separate, narrower case.)
 
 \newpage
 
@@ -1549,7 +1573,7 @@ Right-click the binding in the MIDI Bindings panel to change its mode.
 - **Transport**: Play, Stop, Record, Toggle play/stop.
 - **Per-track**: Mute, Solo, Arm.
 - **Per-track continuous**: Fader (dB), Pan.
-- **Per-track DSP**: HPF frequency, EQ band gain (4 bands), compressor threshold, compressor makeup.
+- **Per-track DSP**: HPF frequency, EQ band gain (4 bands), EQ band frequency (4 bands), EQ band Q (the two bell bands, LM / HM), compressor threshold, compressor makeup.
 - **Per-track toggles**: EQ on/off, compressor on/off, hardware insert bypass, aux-send pre/post.
 - **Per-track plugin parameter**: any indexed parameter on the loaded plugin.
 - **Per-bus**: Fader, Pan, Mute, Solo, EQ band gain (LF / MID / HF — 3 bands).
@@ -1747,7 +1771,7 @@ Shortcuts use **Cmd** on macOS and **Ctrl** on Linux and Windows unless noted.
 | Shortcut              | Action                                             |
 | --------------------- | -------------------------------------------------- |
 | **S** / **Cmd+E**     | Split at edit cursor                               |
-| **G**                 | Cycle edit mode (Grab / Range / Cut / Grid / Draw) |
+| **G**                 | Grab (move / select) edit mode (used inside the region / piano-roll editors) |
 | **Cmd+]** / **Cmd+[** | Next / previous region                             |
 | **Esc**               | Close modal                                        |
 
@@ -1817,10 +1841,10 @@ The piano roll modal captures its own keypresses first (see `PianoRollComponent:
 
 ## Headphone cue mix for tracking
 
-> **Planned - not yet implemented.** Per-aux physical outputs (a discrete cue / monitor send) are on the roadmap but not in this build: today all four aux returns sum into the master and leave through the single device output. The recipe below describes the intended workflow.
+Each aux return lane can be sent to its own physical output pair (see the aux lane's **Output** control above), so you can build a discrete cue / monitor mix that is independent of the main mix. Enable the extra outputs in **Audio settings** first.
 
-1. Send each tracking channel pre-fader to **Aux 4**.
-2. Route the aux 4 output to a separate physical output (the headphone amp).
+1. Send each tracking channel **pre-fader** to **Aux 4** (right-click a send knob to flip it pre-fader).
+2. Set the **Aux 4** lane's **Output** to a separate physical output pair (the headphone amp). The tap is taken before the return fader and Mute, so riding the main mix doesn't change what the performer hears.
 3. Adjust each channel's aux 4 send to balance what the performer hears, independently of what you hear on the main mix.
 
 ## Parallel compression on drums
@@ -1916,7 +1940,7 @@ Dusk Studio targets functional accessibility for screen reader users. The 24-cha
 
 ## What's still rough
 
-- Keyboard-only navigation of the 24-channel mixer is not yet fully smooth. Tab order across all 24 strips works but is verbose. A planned 1.x release adds bank-relative keyboard shortcuts (Cmd-1 through Cmd-8 focus the current bank's 8 strips directly).
+- In the **Recording** and **Mixing** stages, **Left / Right arrows** move a gold focus ring across the 24 channel strips, automatically flipping the visible bank as you cross a boundary. The focused strip is the target for the **A / S / X** (arm / solo / mute) shortcuts, so you can walk the mixer and toggle states without the mouse. (Clicking a strip moves the ring too.)
 - Region drag-and-drop on the timeline relies on mouse gestures. Region edit actions (split, trim, fade, gain) are all available via the keyboard reference; the drag-to-move case is the gap.
 - Plugin editors are out of Dusk Studio's accessibility control surface. JUCE forwards screen-reader requests to each plugin; vendor accessibility varies.
 
@@ -2253,7 +2277,7 @@ The hardware-insert ping reports its result inline on the editor (not a modal), 
 
 **SIP (solo-in-place).** A solo mode in which un-soloed tracks are silenced from the main mix output (as opposed to PFL, which only affects monitoring).
 
-**Take.** A single recording pass. Dusk Studio keeps up to 20 previous takes per region.
+**Take.** A single recording pass. Dusk Studio keeps up to 8 previous takes per region.
 
 **Tape strip.** Dusk Studio's timeline canvas.
 

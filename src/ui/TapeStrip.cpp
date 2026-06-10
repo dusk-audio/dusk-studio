@@ -1,5 +1,6 @@
 #include "TapeStrip.h"
 #include "../session/MarkerEditActions.h"
+#include "../session/ParamEditAction.h"
 #include "../session/RegionEditActions.h"
 #include "../session/SnapHelpers.h"
 #include "DuskAlerts.h"
@@ -7,6 +8,8 @@
 #include "EditCursors.h"
 #include "EmbeddedModal.h"
 #include "FadeCurve.h"
+#include <cmath>
+#include <string>
 
 namespace duskstudio
 {
@@ -20,6 +23,25 @@ EmbeddedModal& sharedTapeStripTextInputModal()
 {
     static EmbeddedModal m;
     return m;
+}
+
+// Strict, full-string float parse. containsOnly() lets malformed input like
+// "+", "-", or "1..2" through, and getFloatValue() turns those into 0 — which
+// jlimit then silently clamps to the minimum (a bogus 30 BPM entry). Require the
+// ENTIRE trimmed string to parse as one number; reject partial / junk input.
+bool parseFullFloat (const juce::String& s, float& out) noexcept
+{
+    const auto t = s.trim().toStdString();
+    if (t.empty()) return false;
+    try
+    {
+        std::size_t consumed = 0;
+        const float v = std::stof (t, &consumed);
+        if (consumed != t.size() || ! std::isfinite (v)) return false;   // trailing junk / inf / nan
+        out = v;
+        return true;
+    }
+    catch (...) { return false; }
 }
 
 // Dusk-styled text-input panel — title + prompt + TextEditor + OK /
@@ -324,21 +346,42 @@ int TapeStrip::visualRowForTrack (int trackIdx) const noexcept
 
 juce::Rectangle<int> TapeStrip::labelColumnBounds() const noexcept
 {
-    return getLocalBounds().withTrimmedTop (kRulerH).withWidth (kTrackLabelW);
+    return getLocalBounds().withTrimmedTop (kRulerH).withWidth (labelColW);
 }
 
 juce::Rectangle<int> TapeStrip::rulerBounds() const noexcept
 {
-    return juce::Rectangle<int> (kTrackLabelW, 0,
-                                  juce::jmax (0, getWidth() - kTrackLabelW),
+    return juce::Rectangle<int> (labelColW, 0,
+                                  juce::jmax (0, getWidth() - labelColW),
                                   kRulerH);
 }
 
 juce::Rectangle<int> TapeStrip::tracksColumnBounds() const noexcept
 {
-    return juce::Rectangle<int> (kTrackLabelW, kRulerH,
-                                  juce::jmax (0, getWidth() - kTrackLabelW),
+    return juce::Rectangle<int> (labelColW, kRulerH,
+                                  juce::jmax (0, getWidth() - labelColW),
                                   juce::jmax (0, getHeight() - kRulerH));
+}
+
+void TapeStrip::refreshLabelColumnWidth()
+{
+    // Measure every row's drawn text (name, or the 1-based number fallback) in
+    // the same 10 pt bold the painter uses, and widen the column to the longest
+    // plus the stripe + insets, clamped so a stray long name can't swallow the
+    // timeline.
+    const juce::Font font (juce::FontOptions (10.0f, juce::Font::bold));
+    float maxText = 0.0f;
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        const auto& nm = session.track (t).name;
+        const juce::String s = nm.isNotEmpty() ? nm : juce::String (t + 1);
+        juce::GlyphArrangement ga;
+        ga.addLineOfText (font, s, 0.0f, 0.0f);
+        maxText = juce::jmax (maxText, ga.getBoundingBox (0, -1, true).getWidth());
+    }
+    // 3 px colour stripe + 4 px left inset (see paint) + text + 6 px right pad.
+    const int want = 3 + 4 + (int) maxText + 1 + 6;
+    labelColW = juce::jlimit (kTrackLabelW, kTrackLabelWMax, want);
 }
 
 juce::Rectangle<int> TapeStrip::rowBounds (int trackIdx) const noexcept
@@ -670,6 +713,10 @@ void TapeStrip::resized()
     // relayout here would re-enter this method.
     rebuildVisibleTrackOrder (/*relayoutParent*/ false);
 
+    // Size the label column to the current track names before placing the
+    // SHOW ALL toggle (which is pinned to that column's width).
+    refreshLabelColumnWidth();
+
     // SHOW ALL toggle pinned to the right edge of the label column at
     // the top — lives in unused real estate above the row labels, fits
     // in the kRulerH band so it doesn't compete with the time ruler.
@@ -678,7 +725,7 @@ void TapeStrip::resized()
     constexpr int kShowAllPad = 2;
     showAllToggle.setBounds (kShowAllPad,
                               kShowAllPad,
-                              juce::jmin (kShowAllW, kTrackLabelW - 2 * kShowAllPad),
+                              juce::jmin (kShowAllW, labelColW - 2 * kShowAllPad),
                               kShowAllH);
     inheritCursorOnDescendants (*this);
 }
@@ -689,12 +736,18 @@ void TapeStrip::timerCallback()
     // anything changed. Cheap - there are 16 tracks and we just compare
     // a String + a Colour each tick.
     bool stateChanged = false;
+    bool namesChanged = false;
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         const auto& tr = session.track (t);
-        if (lastNames[(size_t) t]   != tr.name)   { lastNames[(size_t) t]   = tr.name;   stateChanged = true; }
+        if (lastNames[(size_t) t]   != tr.name)   { lastNames[(size_t) t]   = tr.name;   stateChanged = true; namesChanged = true; }
         if (lastColours[(size_t) t] != tr.colour) { lastColours[(size_t) t] = tr.colour; stateChanged = true; }
     }
+
+    // A rename can change the column width; resize repositions the SHOW ALL
+    // toggle and recomputes labelColW, and the repaint below redraws.
+    if (namesChanged)
+        resized();
 
     auto& transport = engine.getTransport();
     const bool        loopOn = transport.isLoopEnabled();
@@ -802,21 +855,41 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
         }
     }
 
-    // Left-click in the ruler band (not on a marker / bracket) → start
-    // a neutral selection drag. The range is painted as a translucent
-    // highlight during drag; on mouseUp we show a popup that asks
-    // whether to make it a loop range or a punch range. We don't touch
-    // transport state until the user picks.
+    // Left-click on a tempo marker → start a reposition drag. Checked before
+    // the ruler seek so grabbing a marker doesn't also move the playhead. The
+    // bar-1 anchor (sample 0) is the starting tempo and stays put. Edit /
+    // delete stay on the right-click menu; double-click still edits the BPM.
+    if (! e.mods.isRightButtonDown())
+    {
+        const int tIdx = hitTestTempoPoint (e.x, e.y);
+        if (tIdx >= 0)
+        {
+            const auto& pts = session.tempoMap.points();
+            if (tIdx < (int) pts.size() && pts[(size_t) tIdx].timelineSamples != 0)
+            {
+                tempoDrag.active          = true;
+                tempoDrag.moved           = false;
+                tempoDrag.index           = tIdx;
+                tempoDrag.mouseDownSample = sampleAtX (e.x);
+                tempoDrag.orig            = pts;
+                return;
+            }
+        }
+    }
+
+    // Tempo is edited via the ruler's right-click menu (any edit mode) — see
+    // the "Tempo" section in the loop/punch context menu below.
+
+    // Left-click on the ruler (not a marker / bracket) → start a neutral
+    // selection drag. The range is painted as a translucent highlight while
+    // dragging; on mouseUp a short drag (≈ click) seeks the playhead, a real
+    // drag pops a menu asking loop vs punch. Transport state is untouched
+    // until release.
     if (! e.mods.isRightButtonDown() && ruler.contains (e.x, e.y))
     {
         rulerSelection.active        = true;
         rulerSelection.originSample  = sampleAtX (e.x);
         rulerSelection.currentSample = rulerSelection.originSample;
-        // Remember this click so a future Stop in "Return to last
-        // clicked" mode lands here. Stored on the session so the engine
-        // (no UI dep) can read it without crossing the layer boundary.
-        session.lastClickedTimelineSample.store (rulerSelection.originSample,
-                                                   std::memory_order_relaxed);
         repaint();
         return;
     }
@@ -922,7 +995,16 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
                                     if (safeThis == nullptr) return;
                                     const auto trimmed = newName.trim();
                                     if (trimmed.isEmpty()) return;
-                                    safeThis->session.renameMarker (hoveredMarkerIdx, trimmed);
+                                    auto& s   = safeThis->session;
+                                    const auto& m3 = s.getMarkers();
+                                    if (hoveredMarkerIdx < 0 || hoveredMarkerIdx >= (int) m3.size()) return;
+                                    const auto oldName = m3[(size_t) hoveredMarkerIdx].name;
+                                    if (oldName == trimmed) return;
+                                    auto& um = safeThis->engine.getUndoManager();
+                                    um.beginNewTransaction ("Rename marker");
+                                    um.perform (new ParamEditAction (
+                                        [&s, idx = hoveredMarkerIdx, trimmed] { s.renameMarker (idx, trimmed); },
+                                        [&s, idx = hoveredMarkerIdx, oldName] { s.renameMarker (idx, oldName); }));
                                     safeThis->repaint();
                                 });
                         });
@@ -984,6 +1066,38 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
         {
             transport.setPlayhead (clickedSample);
         });
+
+        // ── Tempo (ruler only) ── add / edit / delete a tempo-map point at the
+        // clicked position. Right-click is the only tempo edit surface.
+        if (ruler.contains (e.x, e.y))
+        {
+            using SP = juce::Component::SafePointer<TapeStrip>;
+            m.addSeparator();
+            m.addSectionHeader ("Tempo");
+            const int tIdx = hitTestTempoPoint (e.x, e.y);
+            if (tIdx == kTempoBaseHandle)        // bar-1 base, no map yet
+            {
+                m.addItem ("Set starting tempo...", [safeThis = SP (this)]
+                    { if (safeThis != nullptr) safeThis->editBaseTempo(); });
+            }
+            else if (tIdx >= 0)                  // an existing tempo marker
+            {
+                const auto sample = session.tempoMap.points()[(size_t) tIdx].timelineSamples;
+                m.addItem ("Set tempo...", [safeThis = SP (this), sample]
+                    { if (safeThis != nullptr) safeThis->editTempoPointBpm (sample); });
+                // The bar-1 anchor (sample 0) is the starting tempo — can't delete it.
+                m.addItem ("Delete tempo", sample != 0, false, [safeThis = SP (this), sample]
+                    { if (safeThis != nullptr) safeThis->deleteTempoPoint (sample); });
+            }
+            else                                  // empty spot -> add a change
+            {
+                const auto snapped = snap::snapAbsoluteToGrid (
+                    clickedSample, session, engine.getCurrentSampleRate());
+                m.addItem ("Set tempo here...", [safeThis = SP (this), snapped]
+                    { if (safeThis != nullptr) safeThis->promptAddTempoPoint (snapped); });
+            }
+        }
+
         // Anchor the menu at the cursor instead of the TapeStrip's
         // top-left corner. Same fix as the plugin picker.
         const auto cursor = e.getScreenPosition();
@@ -993,55 +1107,6 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
                               if (safeThis != nullptr) safeThis->repaint();
                           });
         return;
-    }
-
-    // Edit-mode dispatch. Cut Mode: clicking a region body splits at the
-    // click sample (single click, no drag). Range Mode: any body click in
-    // the track-column starts a ruler-style range selection — reuses the
-    // existing rulerSelection state so the mouseDrag + mouseUp + paint
-    // paths handle the visual range and the loop/punch action popup
-    // without further wiring. Grab / Grid / Draw fall through to legacy
-    // behaviour (Grid + Draw are Phase 3c/3d).
-    //
-    // Cmd/Ctrl/Shift held bypass the mode dispatch entirely so the
-    // multi-region selection (Ctrl+click) and range-extend (Shift+click)
-    // gestures from the legacy block keep working regardless of mode.
-    const bool bypassModeDispatch = e.mods.isCommandDown() || e.mods.isShiftDown();
-    if (! e.mods.isRightButtonDown() && col.contains (e.x, e.y) && ! bypassModeDispatch)
-    {
-        if (session.editMode == EditMode::Cut)
-        {
-            const auto hit = hitTestRegion (e.x, e.y);
-            if (hit.op != RegionOp::None
-                && (hit.op == RegionOp::Move
-                    || hit.op == RegionOp::TrimStart
-                    || hit.op == RegionOp::TrimEnd))
-            {
-                const auto& reg = session.track (hit.track).regions[(size_t) hit.regionIdx];
-                if (! reg.locked)
-                {
-                    auto& um = engine.getUndoManager();
-                    um.beginNewTransaction ("Split region");
-                    um.perform (new SplitRegionAction (
-                        session, engine, hit.track, hit.regionIdx, sampleAtX (e.x)));
-                    repaint();
-                    return;
-                }
-                // Locked region: fall through to normal selection handling
-                // below so the user can still pick the region up. No split,
-                // no early return.
-            }
-        }
-        if (session.editMode == EditMode::Range)
-        {
-            rulerSelection.active        = true;
-            rulerSelection.originSample  = sampleAtX (e.x);
-            rulerSelection.currentSample = rulerSelection.originSample;
-            session.lastClickedTimelineSample.store (rulerSelection.originSample,
-                                                       std::memory_order_relaxed);
-            repaint();
-            return;
-        }
     }
 
     // Left-click on the track label (the strip on the far left of each
@@ -1072,30 +1137,38 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
     // it without needing a separate selection step.
     const auto hit = hitTestRegion (e.x, e.y);
 
-    // Take-history badge: rotate to the next take. No drag, no selection
-    // change beyond marking the rotated region as selected. Rotation is
-    // FIFO - front of previousTakes surfaces, current goes to the back.
-    // We keep this off the UndoManager for now: a rotation is reversible
-    // by N more clicks, and undo of a single click would be visually
-    // identical to clicking back manually.
+    // NOTE: the empty-timeline seek lives at the END of this method, AFTER the
+    // MIDI-region click and the Shift/Cmd rubber-band handlers. Seeking here on
+    // hit.op == None (audio-only hit test) would swallow clicks on MIDI regions
+    // and box-select drags.
+
+    // Take-history badge: rotate to the next take (FIFO — front of
+    // previousTakes surfaces, current goes to the back). Wrapped in a
+    // RegionEditAction so Cmd+Z reverts the rotation, like the Takes menu.
     if (hit.op == RegionOp::TakeBadge)
     {
-        auto& region = session.track (hit.track).regions[(size_t) hit.regionIdx];
-        if (! region.previousTakes.empty())
+        const auto& cur = session.track (hit.track).regions[(size_t) hit.regionIdx];
+        if (! cur.previousTakes.empty())
         {
-            TakeRef next = std::move (region.previousTakes.front());
-            region.previousTakes.erase (region.previousTakes.begin());
-            TakeRef current { region.file, region.sourceOffset, region.lengthInSamples };
-            region.previousTakes.push_back (std::move (current));
-            region.file            = next.file;
-            region.sourceOffset    = next.sourceOffset;
-            region.lengthInSamples = next.lengthInSamples;
+            AudioRegion before = cur;
+            AudioRegion after  = cur;
+            const TakeRef current { after.file, after.sourceOffset, after.lengthInSamples };
+            const TakeRef next = after.previousTakes.front();
+            after.previousTakes.erase (after.previousTakes.begin());
+            after.previousTakes.push_back (current);
+            after.file            = next.file;
+            after.sourceOffset    = next.sourceOffset;
+            after.lengthInSamples = next.lengthInSamples;
 
             selectedTrack  = hit.track;
             selectedRegion = hit.regionIdx;
             selectedMidiTrack  = -1;
             selectedMidiRegion = -1;
-            rebuildPlaybackIfStopped();
+
+            auto& um = engine.getUndoManager();
+            um.beginNewTransaction ("Cycle take");
+            um.perform (new RegionEditAction (session, engine,
+                                                hit.track, hit.regionIdx, before, after));
             repaint();
         }
         return;
@@ -1297,11 +1370,16 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
     }
 
     // Plain click on empty timeline → seek the playhead AND clear
-    // every selection (primary + additional).
+    // every selection (primary + additional). Runs only after the MIDI and
+    // rubber-band handlers above have declined the click.
     clearAllSelections();
 
-    const auto sample = sampleAtX (e.x);
+    const auto sample = snap::snapAbsoluteToGrid (
+        sampleAtX (e.x), session, engine.getCurrentSampleRate());
     engine.getTransport().setPlayhead (sample);
+    // Remember this click so a future Stop in "Return to last clicked" mode
+    // lands here.
+    session.lastClickedTimelineSample.store (sample, std::memory_order_relaxed);
     repaint();
 }
 
@@ -1380,6 +1458,36 @@ void TapeStrip::mouseDrag (const juce::MouseEvent& e)
         return;
     }
 
+    // Tempo-marker drag — same threshold + absolute-snap model as markers.
+    // Rebuild the full point set from the captured original (fixed index),
+    // move the dragged point, and republish so the bar grid + audio map
+    // follow live. Clamp to >= 1 sample so it never collides with the bar-1
+    // anchor (which setPoints would dedup away).
+    if (tempoDrag.active)
+    {
+        const auto cur = sampleAtX (e.x);
+        constexpr juce::int64 kDragThresholdSamples = 256;   // ~5 ms @ 48k
+        if (! tempoDrag.moved
+            && std::abs (cur - tempoDrag.mouseDownSample) > kDragThresholdSamples)
+            tempoDrag.moved = true;
+
+        if (tempoDrag.moved
+            && tempoDrag.index >= 0
+            && tempoDrag.index < (int) tempoDrag.orig.size())
+        {
+            juce::int64 newPos = juce::jmax ((juce::int64) 1, cur);
+            newPos = snap::snapAbsoluteToGrid (newPos, session,
+                                                engine.getCurrentSampleRate());
+            newPos = juce::jmax ((juce::int64) 1, newPos);
+
+            auto working = tempoDrag.orig;
+            working[(size_t) tempoDrag.index].timelineSamples = newPos;
+            engine.setTempoPoints (std::move (working));
+            repaint();
+        }
+        return;
+    }
+
     // Bracket drag - reposition loop/punch endpoints or translate the
     // whole range. Endpoint drags clamp to keep start ≤ end - 1024
     // samples (the same useful-range floor we use elsewhere) so the
@@ -1443,9 +1551,8 @@ void TapeStrip::mouseDrag (const juce::MouseEvent& e)
         return;
     }
 
-    // Ruler selection - sweep the highlight range as the user drags.
-    // Range start is min(origin, current); end is max - works whether
-    // the user drags left-to-right or right-to-left.
+    // Ruler selection — sweep the highlight range as the user drags. Range
+    // start/end via min/max so dragging either direction works.
     if (rulerSelection.active)
     {
         rulerSelection.currentSample = juce::jmax ((juce::int64) 0, sampleAtX (e.x));
@@ -1577,6 +1684,80 @@ void TapeStrip::mouseDrag (const juce::MouseEvent& e)
 
 void TapeStrip::mouseUp (const juce::MouseEvent& e)
 {
+    // Ruler-selection finalisation. A drag shorter than ≈1024 samples is a
+    // click → seek the playhead. A real drag pops a menu asking loop vs
+    // punch — dragging itself never auto-commits transport state.
+    //
+    // We DON'T clear rulerSelection before the menu shows: keeping it active
+    // leaves the grey highlight painted while the menu is open; each lambda
+    // clears it as part of the same setLoop/setPunch call so the next paint
+    // jumps straight to the committed green/red range — no grey blink.
+    if (rulerSelection.active)
+    {
+        const auto a = juce::jmin (rulerSelection.originSample,
+                                     rulerSelection.currentSample);
+        const auto b = juce::jmax (rulerSelection.originSample,
+                                     rulerSelection.currentSample);
+
+        constexpr juce::int64 kMinUsefulRangeSamples = 1024;
+        if (b - a <= kMinUsefulRangeSamples)
+        {
+            const auto sample = snap::snapAbsoluteToGrid (
+                juce::jmax ((juce::int64) 0, a), session, engine.getCurrentSampleRate());
+            engine.getTransport().setPlayhead (sample);
+            // Remember this click so a future Stop in "Return to last
+            // clicked" mode lands here.
+            session.lastClickedTimelineSample.store (sample, std::memory_order_relaxed);
+            rulerSelection = {};
+            repaint();
+            return;
+        }
+
+        const auto cursor = e.getScreenPosition();
+        juce::PopupMenu m;
+        m.addItem ("Set loop here",
+                    [safeThis = juce::Component::SafePointer<TapeStrip> (this), a, b]
+                    {
+                        if (safeThis == nullptr) return;
+                        auto& transport = safeThis->engine.getTransport();
+                        transport.setLoopRange (a, b);
+                        transport.setLoopEnabled (true);
+                        safeThis->rulerSelection = {};
+                        safeThis->repaint();
+                    });
+        m.addItem ("Set punch in / out here",
+                    [safeThis = juce::Component::SafePointer<TapeStrip> (this), a, b]
+                    {
+                        if (safeThis == nullptr) return;
+                        auto& transport = safeThis->engine.getTransport();
+                        transport.setPunchRange (a, b);
+                        transport.setPunchEnabled (true);
+                        safeThis->rulerSelection = {};
+                        safeThis->repaint();
+                    });
+        m.addSeparator();
+        m.addItem ("Cancel",
+                    [safeThis = juce::Component::SafePointer<TapeStrip> (this)]
+                    {
+                        if (safeThis == nullptr) return;
+                        safeThis->rulerSelection = {};
+                        safeThis->repaint();
+                    });
+        // Dismiss callback catches escape / click-outside (no item chosen)
+        // so the grey highlight still clears in those paths.
+        showContextMenu (m, *this, cursor,
+                          [safeThis = juce::Component::SafePointer<TapeStrip> (this)] (int)
+                          {
+                              if (safeThis == nullptr) return;
+                              if (safeThis->rulerSelection.active)
+                              {
+                                  safeThis->rulerSelection = {};
+                                  safeThis->repaint();
+                              }
+                          });
+        return;
+    }
+
     // MIDI region drag finalise. If the cursor moved at all from the
     // origin, submit a MidiRegionEditAction (before/after) to the
     // engine's UndoManager so Cmd+Z reverts. mouseDrag has already
@@ -1667,6 +1848,7 @@ void TapeStrip::mouseUp (const juce::MouseEvent& e)
         return;
     }
 
+
     // Marker drag finalisation. A click without movement seeks; a real
     // drag commits the new marker position (and re-sorts the vector so
     // hit-testing stays consistent next time).
@@ -1710,77 +1892,26 @@ void TapeStrip::mouseUp (const juce::MouseEvent& e)
         return;
     }
 
-    // Ruler-selection finalisation. A drag shorter than ~24ms is
-    // treated as a click and just dismisses the selection. Otherwise we
-    // offer a context menu so the user picks whether the range is for
-    // loop or punch - dragging itself doesn't auto-commit.
-    //
-    // Important: we DON'T clear rulerSelection here. Keeping it active
-    // means the grey highlight stays painted while the menu is open;
-    // each menu lambda clears it as part of the same setLoopRange/
-    // setPunchRange call, so the very next paint shows the committed
-    // green/red range instead of the grey - no blink between states.
-    if (rulerSelection.active)
+    if (tempoDrag.active)
     {
-        const auto a = juce::jmin (rulerSelection.originSample,
-                                     rulerSelection.currentSample);
-        const auto b = juce::jmax (rulerSelection.originSample,
-                                     rulerSelection.currentSample);
-
-        constexpr juce::int64 kMinUsefulRangeSamples = 1024;
-        if (b - a <= kMinUsefulRangeSamples)
+        if (tempoDrag.moved)
         {
-            // Click without a drag = seek the playhead to the clicked
-            // position. Drag-to-create-range still triggers the
-            // loop/punch popup below.
-            engine.getTransport().setPlayhead (juce::jmax ((juce::int64) 0, a));
-            rulerSelection = {};
-            repaint();
-            return;
+            // Live drag already published the moved map; wrap the
+            // original -> final swap in one SetTempoMapAction for undo.
+            auto& um = engine.getUndoManager();
+            um.beginNewTransaction ("Move tempo");
+            um.perform (new SetTempoMapAction (engine, tempoDrag.orig,
+                                                 session.tempoMap.points()));
         }
-
-        const auto cursor = e.getScreenPosition();
-        juce::PopupMenu m;
-        m.addItem ("Set loop here",
-                    [safeThis = juce::Component::SafePointer<TapeStrip> (this), a, b]
-                    {
-                        if (safeThis == nullptr) return;
-                        auto& transport = safeThis->engine.getTransport();
-                        transport.setLoopRange (a, b);
-                        transport.setLoopEnabled (true);
-                        safeThis->rulerSelection = {};
-                        safeThis->repaint();
-                    });
-        m.addItem ("Set punch in / out here",
-                    [safeThis = juce::Component::SafePointer<TapeStrip> (this), a, b]
-                    {
-                        if (safeThis == nullptr) return;
-                        auto& transport = safeThis->engine.getTransport();
-                        transport.setPunchRange (a, b);
-                        transport.setPunchEnabled (true);
-                        safeThis->rulerSelection = {};
-                        safeThis->repaint();
-                    });
-        m.addSeparator();
-        m.addItem ("Cancel",
-                    [safeThis = juce::Component::SafePointer<TapeStrip> (this)]
-                    {
-                        if (safeThis == nullptr) return;
-                        safeThis->rulerSelection = {};
-                        safeThis->repaint();
-                    });
-        // Menu-dismiss callback catches escape / click-outside (no item
-        // chosen) so the grey highlight still goes away in those paths.
-        showContextMenu (m, *this, cursor,
-                          [safeThis = juce::Component::SafePointer<TapeStrip> (this)] (int)
-                          {
-                              if (safeThis == nullptr) return;
-                              if (safeThis->rulerSelection.active)
-                              {
-                                  safeThis->rulerSelection = {};
-                                  safeThis->repaint();
-                              }
-                          });
+        else if (tempoDrag.index >= 0
+                 && tempoDrag.index < (int) tempoDrag.orig.size())
+        {
+            // Pure click on a tempo marker → seek to it.
+            engine.getTransport().setPlayhead (
+                tempoDrag.orig[(size_t) tempoDrag.index].timelineSamples);
+        }
+        tempoDrag = {};
+        repaint();
         return;
     }
 
@@ -1857,9 +1988,8 @@ void TapeStrip::mouseDoubleClick (const juce::MouseEvent& e)
     // Right-click double doesn't make sense for create-region.
     if (e.mods.isRightButtonDown()) return;
 
-    // Marker double-click: rename. Mirrors the right-click "Rename" item
-    // — same modal, same undo-less rename path (session.renameMarker
-    // mutates the marker list in place).
+    // Marker double-click: rename. Mirrors the right-click "Rename" item —
+    // same modal and the same undoable ParamEditAction path so Cmd+Z reverts.
     if (const int markerIdx = hitTestMarker (e.x, e.y); markerIdx >= 0)
     {
         const auto& markers = session.getMarkers();
@@ -1874,9 +2004,30 @@ void TapeStrip::mouseDoubleClick (const juce::MouseEvent& e)
                 if (safeThis == nullptr) return;
                 const auto trimmed = newName.trim();
                 if (trimmed.isEmpty()) return;
-                safeThis->session.renameMarker (markerIdx, trimmed);
+                auto& s = safeThis->session;
+                const auto& m2 = s.getMarkers();
+                if (markerIdx < 0 || markerIdx >= (int) m2.size()) return;
+                const auto oldName = m2[(size_t) markerIdx].name;
+                if (oldName == trimmed) return;
+                auto& um = safeThis->engine.getUndoManager();
+                um.beginNewTransaction ("Rename marker");
+                um.perform (new ParamEditAction (
+                    [&s, idx = markerIdx, trimmed] { s.renameMarker (idx, trimmed); },
+                    [&s, idx = markerIdx, oldName] { s.renameMarker (idx, oldName); }));
                 safeThis->repaint();
             });
+        return;
+    }
+
+    // Tempo-point double-click: edit its BPM. The discoverable path for
+    // changing tempo — right-click still offers add / delete. Checked after
+    // markers so a marker pill double-click always wins on shared columns.
+    if (const int tIdx = hitTestTempoPoint (e.x, e.y); tIdx != -1)
+    {
+        if (tIdx == kTempoBaseHandle)
+            editBaseTempo();
+        else
+            editTempoPointBpm (session.tempoMap.points()[(size_t) tIdx].timelineSamples);
         return;
     }
 
@@ -2018,6 +2169,19 @@ void TapeStrip::mouseMove (const juce::MouseEvent& e)
                                            : juce::MouseCursor::NormalCursor,
                         e.x, e.y);
         return;
+    }
+
+    // Tempo markers are drag-to-reposition (left/right) — a horizontal-resize
+    // cursor advertises it. The bar-1 anchor (sample 0) doesn't move, so it
+    // keeps the plain cursor.
+    if (const int tIdx = hitTestTempoPoint (e.x, e.y); tIdx >= 0)
+    {
+        const auto& pts = session.tempoMap.points();
+        if (tIdx < (int) pts.size() && pts[(size_t) tIdx].timelineSamples != 0)
+        {
+            setHoverCursor (juce::MouseCursor::LeftRightResizeCursor, e.x, e.y);
+            return;
+        }
     }
 
     // Cursor feedback so the user can tell where edges/body are without
@@ -2576,46 +2740,36 @@ void TapeStrip::showMidiRegionContextMenu (int trackIdx, int regionIdx,
                         [safeThis, trackIdx, regionIdx] (juce::String newLabel)
                         {
                             if (safeThis == nullptr) return;
-                            auto& live = safeThis->session.track (trackIdx)
-                                            .midiRegions.currentMutable();
+                            const auto& live = safeThis->session.track (trackIdx)
+                                                  .midiRegions.current();
                             if (regionIdx < 0 || regionIdx >= (int) live.size()) return;
-                            live[(size_t) regionIdx].label = std::move (newLabel);
+                            MidiRegion before = live[(size_t) regionIdx];
+                            MidiRegion after  = before;
+                            after.label = std::move (newLabel);
+                            auto& um = safeThis->engine.getUndoManager();
+                            um.beginNewTransaction ("Label MIDI region");
+                            um.perform (new MidiRegionEditAction (safeThis->session,
+                                safeThis->engine, trackIdx, regionIdx, before, after));
                             safeThis->repaint();
                         });
                 });
 
     m.addSeparator();
 
-    // Mute toggle - mutates via currentMutable() since MIDI regions
-    // don't have an undoable edit-action surface today (matches how
-    // PianoRoll handles per-note edits). The audio thread reads the
-    // same memory so toggling takes effect on the next block.
+    // Mute / lock toggles — wrapped in MidiRegionEditAction so Cmd+Z reverts.
     m.addItem (region.muted ? "Unmute region" : "Mute region",
-                [safeThis = juce::Component::SafePointer<TapeStrip> (this),
-                 trackIdx, regionIdx, currentlyMuted = region.muted]
+                [safeThis = juce::Component::SafePointer<TapeStrip> (this), trackIdx, regionIdx]
                 {
-                    if (safeThis == nullptr) return;
-                    auto& live = safeThis->session.track (trackIdx)
-                                    .midiRegions.currentMutable();
-                    if (regionIdx < 0 || regionIdx >= (int) live.size()) return;
-                    live[(size_t) regionIdx].muted = ! currentlyMuted;
-                    safeThis->repaint();
+                    if (safeThis != nullptr)
+                        safeThis->commitMidiRegionToggle (trackIdx, regionIdx, "Mute MIDI region",
+                            [] (MidiRegion& r) { r.muted = ! r.muted; });
                 });
-    // Lock toggle. MIDI regions today only have one place where
-    // lock matters (this menu - tape-strip drag isn't supported on
-    // MIDI, so there's nothing else to gate). The flag still
-    // serialises and the painter shows the lock badge so users
-    // can mark "this part is final" for visual organisation.
     m.addItem (region.locked ? "Unlock region" : "Lock region",
-                [safeThis = juce::Component::SafePointer<TapeStrip> (this),
-                 trackIdx, regionIdx, currentlyLocked = region.locked]
+                [safeThis = juce::Component::SafePointer<TapeStrip> (this), trackIdx, regionIdx]
                 {
-                    if (safeThis == nullptr) return;
-                    auto& live = safeThis->session.track (trackIdx)
-                                    .midiRegions.currentMutable();
-                    if (regionIdx < 0 || regionIdx >= (int) live.size()) return;
-                    live[(size_t) regionIdx].locked = ! currentlyLocked;
-                    safeThis->repaint();
+                    if (safeThis != nullptr)
+                        safeThis->commitMidiRegionToggle (trackIdx, regionIdx, "Lock MIDI region",
+                            [] (MidiRegion& r) { r.locked = ! r.locked; });
                 });
 
     m.addSeparator();
@@ -2716,11 +2870,8 @@ void TapeStrip::showMidiRegionContextMenu (int trackIdx, int regionIdx,
                 || chosen >= 5000 + (int) (sizeof (kPalette) / sizeof (kPalette[0])))
                 return;
             const juce::Colour newColour { kPalette[chosen - 5000].argb };
-            auto& live = safeThis->session.track (trackIdx)
-                            .midiRegions.currentMutable();
-            if (regionIdx < 0 || regionIdx >= (int) live.size()) return;
-            live[(size_t) regionIdx].customColour = newColour;
-            safeThis->repaint();
+            safeThis->commitMidiRegionToggle (trackIdx, regionIdx, "Color MIDI region",
+                [newColour] (MidiRegion& r) { r.customColour = newColour; });
         });
 }
 
@@ -2749,53 +2900,69 @@ void TapeStrip::paint (juce::Graphics& g)
         const auto mode = (TimeDisplayMode) session.timeDisplayMode.load (std::memory_order_relaxed);
         if (mode == TimeDisplayMode::Bars)
         {
-            // Bar grid - tick every bar (or 2/4/8 bars at low zoom).
-            const float bpm = session.tempoBpm.load (std::memory_order_relaxed);
-            const int   bpb = juce::jmax (1, session.beatsPerBar.load (std::memory_order_relaxed));
-            const double secsPerBar = (bpm > 0.0f) ? (double) bpb * 60.0 / (double) bpm : 2.0;
-            const double pxPerBar = px * secsPerBar;
+            // Bar grid - bar/beat boundaries are musical-time positions resolved
+            // through the session tempo map (constant tempoBpm when the map is
+            // empty), so the grid follows tempo changes instead of assuming one
+            // uniform bar width.
+            const int     bpb = juce::jmax (1, session.beatsPerBar.load (std::memory_order_relaxed));
+            const juce::int64 ticksPerBar = (juce::int64) bpb * kMidiTicksPerQuarter;
+
+            // Step + sub-tick density are sized from the tempo at the left edge.
+            const float  bpmEst = juce::jmax (1.0f, session.bpmAt (scrollSamples));
+            const double pxPerBar = px * (double) bpb * 60.0 / (double) bpmEst;
             int barStep = 1;
             if      (pxPerBar < 8.0)  barStep = 16;
             else if (pxPerBar < 16.0) barStep = 8;
             else if (pxPerBar < 32.0) barStep = 4;
             else if (pxPerBar < 64.0) barStep = 2;
 
-            const double endSec = (double) col.getWidth() / px;
-            const int lastBar = (int) std::ceil (endSec / secsPerBar);
+            const juce::int64 startTick = session.samplesToTicks (scrollSamples, sr);
+            int firstBar = (int) (startTick / ticksPerBar);
+            firstBar -= (firstBar % barStep);
+            firstBar = juce::jmax (0, firstBar);
 
-            // Beat sub-ticks: only drawn when each beat would render at
-            // least ~6 px apart so they don't smear into a grey band at
-            // low zoom. Drawn first (dimmer, shorter) so the bar ticks
-            // overpaint them at every bar's first beat.
+            auto barX = [&] (int bar)
+            {
+                return xForSample (session.ticksToSamples ((juce::int64) bar * ticksPerBar, sr));
+            };
+
+            // Beat sub-ticks: only when each beat renders at least ~6 px apart,
+            // so they don't smear into a grey band at low zoom. Drawn first
+            // (dimmer, shorter) so bar ticks overpaint the first beat of a bar.
             const double pxPerBeat = pxPerBar / (double) bpb;
             if (pxPerBeat >= 6.0 && barStep == 1)
             {
                 g.setColour (juce::Colour (0xff3a3a40));
                 const float beatY0 = (float) ruler.getY() + (float) kRulerTickBandH * 0.55f;
                 const float beatY1 = (float) ruler.getY() + (float) kRulerTickBandH;
-                for (int bar = 0; bar <= lastBar; ++bar)
+                for (int bar = firstBar; barX (bar) <= col.getRight(); ++bar)
                 {
                     for (int beat = 1; beat < bpb; ++beat)
                     {
-                        const double sec = (double) bar * secsPerBar
-                                         + (double) beat * (secsPerBar / (double) bpb);
-                        const int x = col.getX() + (int) (sec * px);
+                        const auto tick = (juce::int64) bar * ticksPerBar
+                                            + (juce::int64) beat * kMidiTicksPerQuarter;
+                        const int x = xForSample (session.ticksToSamples (tick, sr));
                         if (x < col.getX() || x > col.getRight()) continue;
                         g.drawVerticalLine (x, beatY0, beatY1);
                     }
+                    if (bar - firstBar > 100000) break;   // safety
                 }
-                // Restore bar-tick colour for the loop below.
                 g.setColour (juce::Colour (0xff707074));
             }
 
-            for (int bar = 0; bar <= lastBar; bar += barStep)
+            for (int bar = firstBar; ; bar += barStep)
             {
-                const int x = col.getX() + (int) ((double) bar * secsPerBar * px);
-                g.drawVerticalLine (x, (float) ruler.getY() + 6.0f,
-                                      (float) ruler.getY() + (float) kRulerTickBandH);
-                g.drawText (juce::String (bar + 1),
-                             x + 3, ruler.getY(), 60, kRulerTickBandH - 1,
-                             juce::Justification::centredLeft, false);
+                const int x = barX (bar);
+                if (x > col.getRight()) break;
+                if (x >= col.getX())
+                {
+                    g.drawVerticalLine (x, (float) ruler.getY() + 6.0f,
+                                          (float) ruler.getY() + (float) kRulerTickBandH);
+                    g.drawText (juce::String (bar + 1),
+                                 x + 3, ruler.getY(), 60, kRulerTickBandH - 1,
+                                 juce::Justification::centredLeft, false);
+                }
+                if (bar - firstBar > 200000) break;       // safety
             }
         }
         else
@@ -3276,7 +3443,7 @@ void TapeStrip::paint (juce::Graphics& g)
         // pan / sends / mute / solo can swap in here.
         const auto& fadeLane = session.track (t)
                                    .automationLanes[(size_t) AutomationParam::FaderDb];
-        if (! fadeLane.points.empty())
+        if (! fadeLane.pointsConst().empty())
         {
             const auto rowF = row.toFloat();
             const auto leftX  = (float) col.getX();
@@ -3292,15 +3459,15 @@ void TapeStrip::paint (juce::Graphics& g)
             };
 
             juce::Path curve;
-            const auto first = pointPx (fadeLane.points.front());
+            const auto first = pointPx (fadeLane.pointsConst().front());
             // Hold from row-left edge to the first point so the curve
             // doesn't appear to fade in from nowhere.
             curve.startNewSubPath (leftX, first.y);
             curve.lineTo (first.x, first.y);
-            for (size_t i = 1; i < fadeLane.points.size(); ++i)
-                curve.lineTo (pointPx (fadeLane.points[i]));
+            for (size_t i = 1; i < fadeLane.pointsConst().size(); ++i)
+                curve.lineTo (pointPx (fadeLane.pointsConst()[i]));
             // Hold the final value out to the row's right edge.
-            const auto last = pointPx (fadeLane.points.back());
+            const auto last = pointPx (fadeLane.pointsConst().back());
             curve.lineTo (rightX, last.y);
 
             g.setColour (juce::Colour (0xff7fdfff).withAlpha (0.85f));  // soft cyan
@@ -3462,9 +3629,9 @@ void TapeStrip::paint (juce::Graphics& g)
     };
 
     // ── In-flight ruler selection ──
-    // Painted under loop/punch so a freshly-finished drag's highlight
-    // doesn't overpaint the result the user just chose. Neutral grey so
-    // it doesn't misleadingly look like a committed loop or punch range.
+    // Painted under loop/punch so a freshly-finished drag's highlight doesn't
+    // overpaint the result the user just chose. Neutral grey so it doesn't
+    // look like a committed loop or punch range.
     if (rulerSelection.active)
     {
         const auto sa = juce::jmin (rulerSelection.originSample,
@@ -3569,6 +3736,9 @@ void TapeStrip::paint (juce::Graphics& g)
             g.drawVerticalLine (dropHoverX, (float) kRulerH, (float) getHeight());
         }
     }
+
+    // Tempo points sit on top of the ruler + markers.
+    paintTempoPoints (g);
 }
 
 TapeStrip::BracketHit TapeStrip::hitTestBracket (int x, int y) const noexcept
@@ -3682,6 +3852,185 @@ int TapeStrip::hitTestMarker (int x, int y) const noexcept
         if (x >= flagX && x <= flagX + approxFlagW) return i;
     }
     return -1;
+}
+
+int TapeStrip::hitTestTempoPoint (int x, int y) const noexcept
+{
+    auto ruler = rulerBounds();
+    if (! ruler.contains (x, y)) return -1;
+    // The glyph + label live in the top tick band, but accept a right-click
+    // anywhere in the ruler column under them — the thin 14px band is too
+    // easy to miss, and markers (lower band) use their own hit test, so a
+    // generous vertical zone here doesn't steal their menu.
+
+    // Hit zone spans the triangle (a few px left) plus the BPM label drawn to
+    // its right, so right-clicking the number — not just the tiny glyph —
+    // still lands on the marker.
+    const auto onHandle = [this, x] (juce::int64 sample)
+    {
+        const int px = xForSample (sample);
+        return x >= px - 6 && x <= px + 28;
+    };
+    const auto& pts = session.tempoMap.points();
+    // No map yet: the only handle is the bar-1 base (the starting tempo).
+    if (pts.empty())
+        return onHandle (0) ? kTempoBaseHandle : -1;
+    // Back-to-front so a later (rightmost) point wins on overlap.
+    for (int i = (int) pts.size() - 1; i >= 0; --i)
+        if (onHandle (pts[(size_t) i].timelineSamples))
+            return i;
+    return -1;
+}
+
+void TapeStrip::commitMidiRegionToggle (int trackIdx, int regionIdx,
+                                         const juce::String& name,
+                                         std::function<void (MidiRegion&)> mutate)
+{
+    const auto& live = session.track (trackIdx).midiRegions.current();
+    if (regionIdx < 0 || regionIdx >= (int) live.size()) return;
+    MidiRegion before = live[(size_t) regionIdx];
+    MidiRegion after  = before;
+    mutate (after);
+    auto& um = engine.getUndoManager();
+    um.beginNewTransaction (name);
+    um.perform (new MidiRegionEditAction (session, engine, trackIdx, regionIdx, before, after));
+    repaint();
+}
+
+void TapeStrip::commitTempoPoints (std::vector<duskstudio::TempoPoint> after,
+                                    const juce::String& name)
+{
+    auto& um = engine.getUndoManager();
+    um.beginNewTransaction (name);
+    um.perform (new SetTempoMapAction (engine, session.tempoMap.points(), std::move (after)));
+    repaint();
+}
+
+void TapeStrip::promptAddTempoPoint (juce::int64 sample)
+{
+    // Prompt for the BPM first and add the point only on Accept, so Cancel
+    // leaves no stray marker on the grid.
+    auto* host = getTopLevelComponent();
+    if (host == nullptr) host = this;
+    showEmbeddedTextInput (*host, "Tempo", "BPM (30-300):",
+        juce::String ((int) std::round (session.bpmAt (sample))), "Add",
+        [safeThis = juce::Component::SafePointer<TapeStrip> (this), sample] (juce::String s)
+        {
+            if (safeThis == nullptr) return;
+            // Validate BEFORE clamping: getFloatValue() returns 0 for junk, and
+            // jlimit would then silently turn that into a 30 BPM entry.
+            const auto t = s.trim();
+            float parsed = 0.0f;
+            if (! parseFullFloat (t, parsed)) return;
+            const float b = juce::jlimit (30.0f, 300.0f, parsed);
+            auto vec = safeThis->session.tempoMap.points();
+            // First point ever: seed a base anchor at the origin so the span
+            // before this change keeps the starting tempo.
+            if (vec.empty())
+                vec.push_back ({ 0, safeThis->session.tempoBpm.load (std::memory_order_relaxed) });
+            bool existed = false;
+            for (auto& p : vec)
+                if (p.timelineSamples == sample) { p.bpm = b; existed = true; break; }
+            if (! existed) vec.push_back ({ sample, b });
+            safeThis->commitTempoPoints (std::move (vec), "Add tempo");
+        });
+}
+
+void TapeStrip::editTempoPointBpm (juce::int64 atSample)
+{
+    const auto& pts = session.tempoMap.points();
+    float currentBpm = session.bpmAt (atSample);
+    for (const auto& p : pts)
+        if (p.timelineSamples == atSample) { currentBpm = p.bpm; break; }
+
+    auto* host = getTopLevelComponent();
+    if (host == nullptr) host = this;
+    showEmbeddedTextInput (*host, "Tempo", "BPM (30-300):",
+        juce::String ((int) std::round (currentBpm)), "Set",
+        [safeThis = juce::Component::SafePointer<TapeStrip> (this), atSample]
+        (juce::String s)
+        {
+            if (safeThis == nullptr) return;
+            const auto t = s.trim();
+            float parsed = 0.0f;
+            if (! parseFullFloat (t, parsed)) return;
+            const float b = juce::jlimit (30.0f, 300.0f, parsed);
+            auto vec = safeThis->session.tempoMap.points();
+            for (auto& p : vec)
+                if (p.timelineSamples == atSample) p.bpm = b;
+            safeThis->commitTempoPoints (std::move (vec), "Set tempo");
+        });
+}
+
+void TapeStrip::editBaseTempo()
+{
+    // Starting tempo when no map exists yet. Seeds a single bar-0 point, which
+    // reads as a constant tempo and keeps the edit on the (undoable) tempo-map
+    // path like every other tempo edit.
+    auto* host = getTopLevelComponent();
+    if (host == nullptr) host = this;
+    showEmbeddedTextInput (*host, "Tempo", "Starting BPM (30-300):",
+        juce::String ((int) std::round (session.tempoBpm.load (std::memory_order_relaxed))), "Set",
+        [safeThis = juce::Component::SafePointer<TapeStrip> (this)] (juce::String s)
+        {
+            if (safeThis == nullptr) return;
+            const auto t = s.trim();
+            float parsed = 0.0f;
+            if (! parseFullFloat (t, parsed)) return;
+            const float b = juce::jlimit (30.0f, 300.0f, parsed);
+            safeThis->commitTempoPoints ({ { 0, b } }, "Set starting tempo");
+        });
+}
+
+void TapeStrip::deleteTempoPoint (juce::int64 atSample)
+{
+    auto vec = session.tempoMap.points();
+    // The base anchor at sample 0 is the song's starting tempo. Keep it while
+    // any later tempo change still exists — deleting it would slide the next
+    // point's tempo back to bar 1. Deleting it when it's the only point is fine:
+    // the map clears back to a constant tempo.
+    if (atSample == 0 && vec.size() > 1) return;
+    vec.erase (std::remove_if (vec.begin(), vec.end(),
+        [atSample] (const TempoPoint& p) { return p.timelineSamples == atSample; }),
+        vec.end());
+    commitTempoPoints (std::move (vec), "Delete tempo");
+}
+
+void TapeStrip::paintTempoPoints (juce::Graphics& g)
+{
+    auto ruler = rulerBounds();
+    auto col   = tracksColumnBounds();
+    const int yTop = ruler.getY();
+    const auto amber = juce::Colour (0xffd0a050);
+    g.setFont (juce::Font (juce::FontOptions (9.0f, juce::Font::bold)));
+
+    const auto drawHandle = [&] (juce::int64 sample, float bpm, bool dim)
+    {
+        const int x = xForSample (sample);
+        if (x < col.getX() - 8 || x > col.getRight()) return;
+        juce::Path tri;
+        tri.addTriangle ((float) x - 3.5f, (float) yTop,
+                          (float) x + 3.5f, (float) yTop,
+                          (float) x,        (float) yTop + 7.0f);
+        g.setColour (dim ? amber.withAlpha (0.55f) : amber);
+        g.fillPath (tri);
+
+        const juce::String label ((int) std::round (bpm));
+        const int labelW = g.getCurrentFont().getStringWidth (label) + 2;
+        if (x + 5 + labelW <= col.getRight())
+            g.drawText (label, x + 5, yTop, labelW, kRulerTickBandH - 1,
+                         juce::Justification::centredLeft, false);
+    };
+
+    if (session.tempoMap.empty())
+    {
+        // No changes yet: show the bar-1 base handle (dimmed) so the starting
+        // tempo stays editable here — the transport BPM field is read-only.
+        drawHandle (0, session.tempoBpm.load (std::memory_order_relaxed), /*dim*/ true);
+        return;
+    }
+    for (const auto& p : session.tempoMap.points())
+        drawHandle (p.timelineSamples, p.bpm, /*dim*/ false);
 }
 
 bool TapeStrip::copySelectedRegion()

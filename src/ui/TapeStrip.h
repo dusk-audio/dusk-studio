@@ -28,7 +28,10 @@ public:
     void mouseWheelMove   (const juce::MouseEvent&,
                               const juce::MouseWheelDetails&) override;
 
-    static constexpr int kTrackLabelW = 44;
+    // Minimum label-column width. The actual width (labelColW) grows to fit the
+    // longest track name, up to kTrackLabelWMax, recomputed on name changes.
+    static constexpr int kTrackLabelW    = 44;
+    static constexpr int kTrackLabelWMax = 200;
     // Ruler bands:
     //   y=0..tick band        — time labels + tick marks
     //   y=tick..pill band     — markers row + loop/punch pills
@@ -123,6 +126,12 @@ private:
     juce::Rectangle<int> labelColumnBounds() const noexcept;
     juce::Rectangle<int> rulerBounds() const noexcept;
     juce::Rectangle<int> tracksColumnBounds() const noexcept;
+
+    // Width of the left label column, grown to fit the longest track name
+    // (clamped [kTrackLabelW, kTrackLabelWMax]). Recomputed by
+    // refreshLabelColumnWidth() on construction, layout, and name changes.
+    int  labelColW { kTrackLabelW };
+    void refreshLabelColumnWidth();
     // Empty rect when trackIdx is collapsed — callers iterating must
     // respect this so hit tests / painters skip hidden rows.
     juce::Rectangle<int> rowBounds (int trackIdx) const noexcept;
@@ -157,6 +166,11 @@ private:
     bool overMidiRegionBody (int x, int y) const noexcept;
     // Tested only inside the ruler band.
     int hitTestMarker (int x, int y) const noexcept;
+    // Tested only inside the ruler tick band (top), where tempo points live.
+    // hitTestTempoPoint returns this for the bar-1 base handle shown when no
+    // tempo map exists yet (lets the user set the starting tempo here).
+    static constexpr int kTempoBaseHandle = -2;
+    int hitTestTempoPoint (int x, int y) const noexcept;
 
     // Pills reposition that endpoint; bar drags translate the whole
     // range preserving length.
@@ -169,11 +183,26 @@ private:
     BracketHit hitTestBracket (int x, int y) const noexcept;
     void rebuildPlaybackIfStopped();
     void showRegionContextMenu (const RegionHit&, juce::Point<int> screenPos);
-    // Smaller than audio version — just Rename + Color. Mutates via
-    // midiRegions.currentMutable (MIDI doesn't have an undoable edit
-    // action surface yet).
+    // Smaller than audio version — Rename + Color + mute/lock, all routed
+    // through MidiRegionEditAction for undo.
     void showMidiRegionContextMenu (int trackIdx, int regionIdx,
                                        juce::Point<int> screenPos);
+
+    // Undoable MIDI-region mute/lock toggle from the tape-strip menu.
+    void commitMidiRegionToggle (int trackIdx, int regionIdx, const juce::String& name,
+                                  std::function<void (duskstudio::MidiRegion&)> mutate);
+
+    // Tempo edits, all driven from the ruler's right-click menu. Every edit
+    // routes through commitTempoPoints so it's a single undoable transaction.
+    void commitTempoPoints (std::vector<duskstudio::TempoPoint> after,
+                             const juce::String& name);
+    void promptAddTempoPoint (juce::int64 sample);   // prompt, add on accept
+    void editTempoPointBpm (juce::int64 atSample);
+    // Edit the song's starting tempo when no tempo map exists yet (the bar-1
+    // base handle). hitTestTempoPoint returns kTempoBaseHandle for it.
+    void editBaseTempo();
+    void deleteTempoPoint (juce::int64 atSample);
+    void paintTempoPoints (juce::Graphics&);
 
     Session& session;
     AudioEngine& engine;
@@ -290,8 +319,10 @@ private:
     };
     MidiActiveDrag midiDrag;
 
-    // mouseUp offers a "Set loop / set punch" menu — dragging itself
-    // doesn't commit anything to transport state.
+    // Ruler drag-to-create-range. A drag on the ruler sweeps a neutral
+    // highlight; on release a popup asks whether the range is a loop or a
+    // punch. A drag shorter than ~1024 samples is treated as a click and
+    // just seeks the playhead — so plain click-to-seek still works.
     struct RulerSelection
     {
         bool active     = false;
@@ -322,6 +353,20 @@ private:
         juce::int64 origEnd   = 0;
     };
     BracketDrag bracketDrag;
+
+    // Tempo-marker reposition drag. `orig` is the whole pre-drag map so the
+    // dragged point keeps a stable index even as setPoints re-sorts the live
+    // copy, and so mouseUp can push one before/after undo transaction. The
+    // bar-1 anchor (timelineSamples == 0) is never dragged.
+    struct TempoDrag
+    {
+        bool active = false;
+        bool moved  = false;
+        int  index  = -1;
+        juce::int64 mouseDownSample = 0;
+        std::vector<duskstudio::TempoPoint> orig;
+    };
+    TempoDrag tempoDrag;
 
     // Most-recently-clicked region. Single-region ops act on this;
     // group ops also include additionalSelections. Cleared on

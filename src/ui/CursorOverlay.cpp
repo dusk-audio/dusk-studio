@@ -95,9 +95,20 @@ void CursorOverlay::paint (juce::Graphics& g)
     const float cx = (float) lastLocal.x;
     const float cy = (float) lastLocal.y;
 
+    // The glyphs are authored at ~24-34 px (halo included); shrink them about
+    // the hotspot so they read at roughly OS-cursor size. Scaling about
+    // (cx, cy) keeps the hotspot pinned to the actual pointer pixel.
+    constexpr float kGlyphScale = 0.85f;
+    auto paintScaled = [&] (void (*fn) (juce::Graphics&, float, float))
+    {
+        juce::Graphics::ScopedSaveState save (g);
+        g.addTransform (juce::AffineTransform::scale (kGlyphScale, kGlyphScale, cx, cy));
+        fn (g, cx, cy);
+    };
+
     switch (lastMode)
     {
-        case EditMode::Grab:  paintHandGlyph (g, cx, cy); break;
+        case EditMode::Grab:  paintScaled (&paintHandGlyph); break;
         case EditMode::Cut:
             // Dashed vertical cut line FIRST (behind the scissor) so
             // the glyph stays the unambiguous "what tool am I" marker
@@ -121,9 +132,9 @@ void CursorOverlay::paint (juce::Graphics& g)
                 drawDashes (juce::Colours::black.withAlpha (0.85f), 2.2f);
                 drawDashes (juce::Colours::white,                   1.2f);
             }
-            paintScissorsGlyph (g, cx, cy);
+            paintScaled (&paintScissorsGlyph);
             break;
-        case EditMode::Draw:  paintPencilGlyph (g, cx, cy); break;
+        case EditMode::Draw:  paintScaled (&paintPencilGlyph); break;
         case EditMode::Range:
         case EditMode::Grid:
         default: break;

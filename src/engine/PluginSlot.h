@@ -5,6 +5,8 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <array>
 #include <atomic>
+#include <functional>
+#include <memory>
 
 #if DUSKSTUDIO_HAS_OOP_PLUGINS
  #include "ipc/RemotePluginConnection.h"
@@ -64,6 +66,16 @@ public:
     bool loadFromFile (const juce::File& pluginFile, juce::String& errorMessage);
     bool loadFromDescription (const juce::PluginDescription& desc,
                                 juce::String& errorMessage);
+
+    // Off-thread load (in-process only — OOP falls back to the sync path).
+    // Creates the instance on a background thread so a slow sample decode never
+    // freezes the UI, then swaps it in + fires onDone(success, error) ON THE
+    // MESSAGE THREAD. Safe against the slot being destroyed or a newer
+    // load/unload arriving mid-load (weak-token + load-epoch guards).
+    void loadFromDescriptionAsync (
+        const juce::PluginDescription& desc,
+        std::function<void (bool success, juce::String error)> onDone);
+
     void unload();
 
     bool isLoaded() const noexcept;
@@ -211,6 +223,15 @@ public:
    #endif
 
 private:
+    // Message-thread install tail shared by loadFromDescription (sync) and
+    // loadFromDescriptionAsync's completion. Primes + atomically swaps in the
+    // already-built instance; caller has already rotated the keep-alive ring.
+    bool installInProcessInstance (std::unique_ptr<juce::AudioPluginInstance> fresh);
+
+    // Liveness token for async-load completions: a completion captures a
+    // weak_ptr to this and bails if it has expired (slot destroyed mid-load).
+    std::shared_ptr<char> lifeToken { std::make_shared<char>() };
+
     PluginManager* manager = nullptr;
 
     std::unique_ptr<juce::AudioPluginInstance> ownedInstance;

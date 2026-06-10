@@ -1,18 +1,13 @@
 #include "HardwareInsertEditor.h"
+#include "../dsp/OutputPairRouting.h"
 
 #include <memory>
 
 namespace duskstudio
 {
-namespace
-{
-// Channel-pair entries in the Output / Input dropdowns. Indexed from 1
-// (ComboBox treats 0 as "nothing selected"); userData encodes the pair
-// as L * 1000 + R + 1 so we can decode back without a side-table.
-int encodePair (int chL, int chR) noexcept { return (chL * 1000) + chR + 1; }
-int decodePairL (int id)        noexcept { return (id - 1) / 1000; }
-int decodePairR (int id)        noexcept { return (id - 1) % 1000; }
-} // namespace
+using outputpair::encodePair;
+using outputpair::decodePairL;
+using outputpair::decodePairR;
 
 HardwareInsertEditor::HardwareInsertEditor (HardwareInsertParams& paramsRef,
                                                 juce::AudioDeviceManager& dm,

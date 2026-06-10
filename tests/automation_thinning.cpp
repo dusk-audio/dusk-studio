@@ -37,15 +37,15 @@ duskstudio::AutomationPoint pt (juce::int64 t, float v)
 TEST_CASE ("thinAutomationLane: empty + tiny lanes are no-ops",
             "[automation][rdp]")
 {
-    duskstudio::AutomationLane empty;
+    std::vector<duskstudio::AutomationPoint> empty;
     duskstudio::thinAutomationLane (empty, duskstudio::AutomationParam::FaderDb, 0.002);
-    REQUIRE (empty.points.empty());
+    REQUIRE (empty.empty());
 
-    duskstudio::AutomationLane two;
-    two.points.push_back (pt (0,      0.0f));
-    two.points.push_back (pt (44100,  1.0f));
+    std::vector<duskstudio::AutomationPoint> two;
+    two.push_back (pt (0,      0.0f));
+    two.push_back (pt (44100,  1.0f));
     duskstudio::thinAutomationLane (two, duskstudio::AutomationParam::FaderDb, 0.002);
-    REQUIRE (two.points.size() == 2);
+    REQUIRE (two.size() == 2);
 }
 
 TEST_CASE ("thinAutomationLane: collinear interior points are dropped",
@@ -54,17 +54,17 @@ TEST_CASE ("thinAutomationLane: collinear interior points are dropped",
     // Straight ramp from 0 → 1 over 10 samples-per-step; every interior
     // point lies exactly on the chord, so RDP should keep only the
     // endpoints.
-    duskstudio::AutomationLane lane;
+    std::vector<duskstudio::AutomationPoint> lane;
     for (int i = 0; i <= 10; ++i)
-        lane.points.push_back (pt ((juce::int64) (i * 100),
+        lane.push_back (pt ((juce::int64) (i * 100),
                                      (float) i / 10.0f));
 
     duskstudio::thinAutomationLane (lane, duskstudio::AutomationParam::FaderDb, 0.002);
-    REQUIRE (lane.points.size() == 2);
-    REQUIRE (lane.points.front().timeSamples == 0);
-    REQUIRE (lane.points.back ().timeSamples == 1000);
-    REQUIRE_THAT (lane.points.front().value, WithinAbs (0.0f, 1e-6f));
-    REQUIRE_THAT (lane.points.back ().value, WithinAbs (1.0f, 1e-6f));
+    REQUIRE (lane.size() == 2);
+    REQUIRE (lane.front().timeSamples == 0);
+    REQUIRE (lane.back ().timeSamples == 1000);
+    REQUIRE_THAT (lane.front().value, WithinAbs (0.0f, 1e-6f));
+    REQUIRE_THAT (lane.back ().value, WithinAbs (1.0f, 1e-6f));
 }
 
 TEST_CASE ("thinAutomationLane: sine-shaped lane keeps the peak + endpoints",
@@ -74,12 +74,12 @@ TEST_CASE ("thinAutomationLane: sine-shaped lane keeps the peak + endpoints",
     // cos run through 0.5*(1-cos(2π*frac))). The peak at index 10 must
     // survive any epsilon below 1.0 (the peak amplitude); both endpoints
     // must survive unconditionally.
-    duskstudio::AutomationLane lane;
+    std::vector<duskstudio::AutomationPoint> lane;
     for (int i = 0; i <= 20; ++i)
     {
         const float frac = (float) i / 20.0f;
         const float v    = 0.5f * (1.0f - std::cos ((float) M_PI * frac * 2.0f));
-        lane.points.push_back (pt ((juce::int64) (i * 100), v));
+        lane.push_back (pt ((juce::int64) (i * 100), v));
     }
 
     duskstudio::thinAutomationLane (lane, duskstudio::AutomationParam::FaderDb, 0.02);
@@ -87,14 +87,14 @@ TEST_CASE ("thinAutomationLane: sine-shaped lane keeps the peak + endpoints",
     // analysis: spacing needed for 0.02 error on a unit-amplitude sine
     // is roughly 0.06 of the span). The exact count is less important
     // than 'meaningfully fewer than 21 + the structural points survive'.
-    REQUIRE (lane.points.size() >= 3);
-    REQUIRE (lane.points.size() <  21);
-    REQUIRE (lane.points.front().timeSamples == 0);
-    REQUIRE (lane.points.back ().timeSamples == 2000);
+    REQUIRE (lane.size() >= 3);
+    REQUIRE (lane.size() <  21);
+    REQUIRE (lane.front().timeSamples == 0);
+    REQUIRE (lane.back ().timeSamples == 2000);
 
     // The peak should still be present (somewhere near sample-index 1000).
     bool hasPeak = false;
-    for (const auto& p : lane.points)
+    for (const auto& p : lane)
         if (std::abs (p.value - 1.0f) < 0.05f) hasPeak = true;
     REQUIRE (hasPeak);
 }
@@ -105,16 +105,16 @@ TEST_CASE ("thinAutomationLane: discrete lanes are NOT thinned",
     // Mute is discrete; RDP would average two 0/1 transitions into a
     // 0.5 nonsense value and silently lose the toggle. thinAutomationLane
     // must early-return on non-continuous params.
-    duskstudio::AutomationLane lane;
-    lane.points.push_back (pt (0,      0.0f));
-    lane.points.push_back (pt (10000,  0.0f));
-    lane.points.push_back (pt (20000,  1.0f));
-    lane.points.push_back (pt (30000,  1.0f));
-    lane.points.push_back (pt (40000,  0.0f));
+    std::vector<duskstudio::AutomationPoint> lane;
+    lane.push_back (pt (0,      0.0f));
+    lane.push_back (pt (10000,  0.0f));
+    lane.push_back (pt (20000,  1.0f));
+    lane.push_back (pt (30000,  1.0f));
+    lane.push_back (pt (40000,  0.0f));
 
-    const auto before = lane.points.size();
+    const auto before = lane.size();
     duskstudio::thinAutomationLane (lane, duskstudio::AutomationParam::Mute, 0.002);
-    REQUIRE (lane.points.size() == before);
+    REQUIRE (lane.size() == before);
 }
 
 TEST_CASE ("thinAutomationLane: large epsilon over-thins to 2 points",
@@ -123,14 +123,14 @@ TEST_CASE ("thinAutomationLane: large epsilon over-thins to 2 points",
     // Same 0 → 1 → 0 hump as the previous test, but with epsilon ≥ peak
     // amplitude the central peak gets thinned out — only the two anchored
     // endpoints remain.
-    duskstudio::AutomationLane lane;
+    std::vector<duskstudio::AutomationPoint> lane;
     for (int i = 0; i <= 20; ++i)
     {
         const float frac = (float) i / 20.0f;
         const float v    = 0.5f * (1.0f - std::cos ((float) M_PI * frac * 2.0f));
-        lane.points.push_back (pt ((juce::int64) (i * 100), v));
+        lane.push_back (pt ((juce::int64) (i * 100), v));
     }
 
     duskstudio::thinAutomationLane (lane, duskstudio::AutomationParam::FaderDb, 5.0);
-    REQUIRE (lane.points.size() == 2);
+    REQUIRE (lane.size() == 2);
 }

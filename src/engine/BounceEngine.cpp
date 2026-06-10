@@ -208,12 +208,23 @@ void BounceEngine::run()
         engine.getMasteringPlayer().play();
     }
 
-    juce::int64 done = 0;
+    // PDC lead-in: with cross-track compensation the master mix is delayed by
+    // the deepest track latency. Render that many extra samples and discard
+    // them up front so the file isn't shifted. The MasteringChain path bypasses
+    // the channel strips, so it carries no per-track PDC lead-in.
+    const juce::int64 leadIn = (renderMode == Mode::MasteringChain)
+                                 ? 0
+                                 : (juce::int64) engine.getAggregatePdcLatencySamples();
+    const juce::int64 toRender = totalSamples + leadIn;
+
+    juce::int64 done    = 0;   // samples processed through the engine
+    juce::int64 written = 0;   // samples committed to the file
+    juce::int64 dropped = 0;   // lead-in samples discarded
     bool succeeded = true;
-    while (done < totalSamples && ! cancelRequested.load (std::memory_order_relaxed))
+    while (done < toRender && ! cancelRequested.load (std::memory_order_relaxed))
     {
         const int remaining = (int) juce::jmin ((juce::int64) renderBlockSize,
-                                                  totalSamples - done);
+                                                  toRender - done);
 
         // Reset outputs each block.
         for (auto& o : outputs) std::fill (o.begin(), o.end(), 0.0f);
@@ -222,19 +233,31 @@ void BounceEngine::run()
                                                    outputPtrs.data(), kNumChannels,
                                                    remaining, ctx);
 
-        // Use a temporary AudioBuffer wrapping the channel pointers so the
-        // writer's writeFromFloatArrays gets the canonical interface.
-        if (! writer->writeFromFloatArrays (outputPtrs.data(), kNumChannels, remaining))
+        // Drop the leading PDC samples, then write the rest.
+        int writeStart = 0;
+        if (dropped < leadIn)
         {
-            const juce::ScopedLock lock (lastErrorLock);
-            lastError = "Writer failed mid-render at " + juce::String (done) + " samples";
-            succeeded = false;
-            break;
+            writeStart = (int) juce::jmin ((juce::int64) remaining, leadIn - dropped);
+            dropped += writeStart;
+        }
+        const int writeCount = remaining - writeStart;
+        if (writeCount > 0)
+        {
+            std::array<float*, kNumChannels> offPtrs {};
+            for (int c = 0; c < kNumChannels; ++c) offPtrs[(size_t) c] = outputPtrs[(size_t) c] + writeStart;
+            if (! writer->writeFromFloatArrays (offPtrs.data(), kNumChannels, writeCount))
+            {
+                const juce::ScopedLock lock (lastErrorLock);
+                lastError = "Writer failed mid-render at " + juce::String (written) + " samples";
+                succeeded = false;
+                break;
+            }
+            written += writeCount;
         }
 
         done += remaining;
-        renderedSamples.store (done, std::memory_order_relaxed);
-        const float p = (float) ((double) done / (double) totalSamples);
+        renderedSamples.store (written, std::memory_order_relaxed);
+        const float p = (float) ((double) written / (double) totalSamples);
         progress.store (p, std::memory_order_relaxed);
         if (onProgressUpdated) onProgressUpdated (p);
     }
@@ -331,12 +354,20 @@ bool BounceEngine::renderOneStem (const juce::File& outFile,
     transport.setState (Transport::State::Playing);
     engine.getPlaybackEngine().preparePlayback();
 
-    juce::int64 done = 0;
+    // Same PDC lead-in trim as the master render: each stem runs the full strip
+    // path, so it's delayed by the deepest track latency. Drop those leading
+    // samples so all stems stay mutually aligned and start at sample 0.
+    const juce::int64 leadIn  = (juce::int64) engine.getAggregatePdcLatencySamples();
+    const juce::int64 toRender = lenSamples + leadIn;
+
+    juce::int64 done    = 0;
+    juce::int64 written = 0;
+    juce::int64 dropped = 0;
     bool ok = true;
-    while (done < lenSamples && ! cancelRequested.load (std::memory_order_relaxed))
+    while (done < toRender && ! cancelRequested.load (std::memory_order_relaxed))
     {
         const int remaining = (int) juce::jmin ((juce::int64) renderBlockSize,
-                                                  lenSamples - done);
+                                                  toRender - done);
 
         for (auto& o : outputs) std::fill (o.begin(), o.end(), 0.0f);
 
@@ -344,19 +375,29 @@ bool BounceEngine::renderOneStem (const juce::File& outFile,
                                                    outputPtrs.data(), kNumChannels,
                                                    remaining, ctx);
 
-        if (! writer->writeFromFloatArrays (outputPtrs.data(), kNumChannels, remaining))
+        int writeStart = 0;
+        if (dropped < leadIn)
+        {
+            writeStart = (int) juce::jmin ((juce::int64) remaining, leadIn - dropped);
+            dropped += writeStart;
+        }
+        const int writeCount = remaining - writeStart;
+        std::array<float*, kNumChannels> offPtrs {};
+        for (int c = 0; c < kNumChannels; ++c) offPtrs[(size_t) c] = outputPtrs[(size_t) c] + writeStart;
+        if (writeCount > 0 && ! writer->writeFromFloatArrays (offPtrs.data(), kNumChannels, writeCount))
         {
             const juce::ScopedLock lock (lastErrorLock);
             lastError = "Writer failed mid-stem at "
-                        + juce::String (done) + " samples in "
+                        + juce::String (written) + " samples in "
                         + outFile.getFileName();
             ok = false;
             break;
         }
+        written += juce::jmax (0, writeCount);
 
         done += remaining;
-        renderedSamples.store (done, std::memory_order_relaxed);
-        const float withinStem = (float) ((double) done / (double) lenSamples);
+        renderedSamples.store (written, std::memory_order_relaxed);
+        const float withinStem = (float) ((double) written / (double) lenSamples);
         const float overall    = stemFractionStart + withinStem * stemFractionWidth;
         progress.store (overall, std::memory_order_relaxed);
         if (onProgressUpdated) onProgressUpdated (overall);

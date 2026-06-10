@@ -5,6 +5,7 @@
 #include "CompBypassLed.h"
 #include "DuskStudioLookAndFeel.h"  // fourKColors palette
 #include "../session/MidiBindings.h"
+#include "../session/ParamEditAction.h"
 #include <algorithm>
 
 namespace duskstudio
@@ -494,8 +495,14 @@ BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
     nameLabel.onTextChange = [this]
     {
         const auto txt = nameLabel.getText().trim();
-        if (txt.isEmpty()) nameLabel.setText (bus.name, juce::dontSendNotification);
-        else bus.name = txt;
+        if (txt.isEmpty()) { nameLabel.setText (bus.name, juce::dontSendNotification); return; }
+        if (txt == bus.name) return;
+        const auto oldName = bus.name;
+        auto& um = engine.getUndoManager();
+        um.beginNewTransaction ("Bus name");
+        um.perform (new ParamEditAction (
+            [&s = sessionRef, idx = busIndex, txt]     { s.bus (idx).name = txt; },
+            [&s = sessionRef, idx = busIndex, oldName] { s.bus (idx).name = oldName; }));
     };
     addAndMakeVisible (nameLabel);
 
@@ -854,7 +861,7 @@ void BusComponent::captureWritePoint (AutomationParam param, float denormValue)
         return 0.0f;
     };
 
-    auto& lane = bus.strip.automationLanes[(size_t) param];
+    auto& lane = bus.strip.automationLanes[(size_t) param].mutableForWritePass();  // in-place; audio does not read this lane in Write/Touch-touched
     AutomationPoint pt;
     pt.timeSamples   = engine.getTransport().getPlayhead();
     pt.value         = normalize (param, denormValue);
@@ -863,11 +870,11 @@ void BusComponent::captureWritePoint (AutomationParam param, float denormValue)
     // Pre-filter: drop near-identical continuous samples close in time
     // (timer noise when the control hasn't moved). Discrete params keep
     // every transition.
-    if (isContinuousParam (param) && ! lane.points.empty())
+    if (isContinuousParam (param) && ! lane.empty())
     {
         constexpr float kDeltaEps = 0.001f;
         constexpr juce::int64 kMaxSpanSamples = 22050;   // ~500 ms @ 44.1 k
-        const auto& last = lane.points.back();
+        const auto& last = lane.back();
         if (std::abs (pt.value - last.value) < kDeltaEps
             && pt.timeSamples >= last.timeSamples
             && (pt.timeSamples - last.timeSamples) < kMaxSpanSamples)
@@ -877,22 +884,22 @@ void BusComponent::captureWritePoint (AutomationParam param, float denormValue)
     // Keep the ascending-time invariant evaluateLane's binary search needs.
     // A backward playhead (loop wrap / rewind) truncates the now-future tail
     // then appends; a same-sample hit replaces in place.
-    if (! lane.points.empty() && lane.points.back().timeSamples >= pt.timeSamples)
+    if (! lane.empty() && lane.back().timeSamples >= pt.timeSamples)
     {
-        if (lane.points.back().timeSamples > pt.timeSamples)
+        if (lane.back().timeSamples > pt.timeSamples)
         {
-            auto cutoff = std::lower_bound (lane.points.begin(), lane.points.end(),
+            auto cutoff = std::lower_bound (lane.begin(), lane.end(),
                 pt.timeSamples,
                 [] (const AutomationPoint& a, juce::int64 t) { return a.timeSamples < t; });
-            lane.points.erase (cutoff, lane.points.end());
+            lane.erase (cutoff, lane.end());
         }
-        if (! lane.points.empty() && lane.points.back().timeSamples == pt.timeSamples)
+        if (! lane.empty() && lane.back().timeSamples == pt.timeSamples)
         {
-            lane.points.back() = pt;
+            lane.back() = pt;
             return;
         }
     }
-    lane.points.push_back (pt);
+    lane.push_back (pt);
 }
 
 void BusComponent::showAutoModeMenu()
@@ -965,6 +972,17 @@ void BusComponent::refreshAutoModeButton()
 
 void BusComponent::timerCallback()
 {
+    // Refresh the name label when something external rewrites it (undo,
+    // session reload) so the strip doesn't show a stale name.
+    if (! nameLabel.isBeingEdited() && nameLabel.getText (false) != bus.name)
+        nameLabel.setText (bus.name, juce::dontSendNotification);
+
+    if (lastBusColour != bus.colour)
+    {
+        lastBusColour = bus.colour;
+        repaint();
+    }
+
     // Compact-mode button illumination: the EQ + COMP pills light up
     // when their corresponding section is engaged (eqEnabled /
     // compEnabled). Mirrors ChannelStripComponent's compact-button
@@ -1129,7 +1147,17 @@ void BusComponent::mouseDown (const juce::MouseEvent& e)
     }
 }
 
-void BusComponent::applyBusColour (juce::Colour c) { bus.colour = c; repaint(); }
+void BusComponent::applyBusColour (juce::Colour c)
+{
+    if (bus.colour == c) return;
+    const auto oldColour = bus.colour;
+    auto& um = engine.getUndoManager();
+    um.beginNewTransaction ("Bus colour");
+    um.perform (new ParamEditAction (
+        [&s = sessionRef, idx = busIndex, c]         { s.bus (idx).colour = c; },
+        [&s = sessionRef, idx = busIndex, oldColour] { s.bus (idx).colour = oldColour; }));
+    repaint();
+}
 
 void BusComponent::showColourMenu()
 {

@@ -94,7 +94,7 @@ void logLoadedPlugin (const juce::AudioPluginInstance& instance)
     juce::PluginDescription desc;
     instance.fillInPluginDescription (desc);
     std::fprintf (stderr,
-                  "[Dusk Studio/PluginSlot] Loaded \"%s\" (instrument=%d) — "
+                  "[Dusk Studio/PluginSlot] Loaded \"%s\" (instrument=%d) - "
                   "totalIn=%d totalOut=%d busesIn=%d busesOut=%d latency=%d\n",
                   desc.name.toRawUTF8(),
                   (int) desc.isInstrument,
@@ -716,6 +716,18 @@ bool PluginSlot::loadFromDescription (const juce::PluginDescription& desc,
         return false;
     }
 
+    return installInProcessInstance (std::move (fresh));
+}
+
+// Message-thread install tail shared by the synchronous loadFromDescription and
+// the off-thread loadFromDescriptionAsync completion. Primes the freshly-built
+// instance, then atomically swaps it into currentInstance — the audio thread
+// reads via acquire. Caller has already rotated the keep-alive ring + nulled
+// currentInstance, so this only installs the new owner.
+bool PluginSlot::installInProcessInstance (std::unique_ptr<juce::AudioPluginInstance> fresh)
+{
+    if (fresh == nullptr) return false;
+
     // Strip auxiliary buses (sidechain inputs, secondary outputs) BEFORE
     // setPlayConfigDetails so the channel counts we report match the
     // actual buffer width we'll pass at processBlock time. Without this
@@ -747,6 +759,98 @@ bool PluginSlot::loadFromDescription (const juce::PluginDescription& desc,
     offlineDescriptionXml.clear();
     offlineStateBase64.clear();
     return true;
+}
+
+void PluginSlot::loadFromDescriptionAsync (const juce::PluginDescription& desc,
+                                           std::function<void (bool, juce::String)> onDone)
+{
+    if (manager == nullptr)
+    {
+        if (onDone) onDone (false, "PluginSlot has no PluginManager bound");
+        return;
+    }
+
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS
+    // OOP load is already bounded by the IPC connect/load timeouts, so keep it
+    // synchronous; the off-thread path is the in-process win (slow sample
+    // decode). When OOP is enabled, fall back to the proven sync load.
+    if (manager->isOopEnabled())
+    {
+        juce::String err;
+        const bool ok = loadFromDescription (desc, err);
+        if (onDone) onDone (ok, err);
+        return;
+    }
+   #endif
+
+    // Bump the load epoch first: a stale async completion compares epochs and
+    // bails if a newer load / unload superseded it.
+    currentLoadEpoch.fetch_add (1, std::memory_order_release);
+    const auto epoch = currentLoadEpoch.load (std::memory_order_relaxed);
+
+   #if JUCE_MAC && DUSKSTUDIO_HAS_OOP_PLUGINS
+    releaseShellInstance();
+   #endif
+
+    juce::PluginDescription fixedDesc = desc;
+    normalizeVst3FileOrIdentifier (fixedDesc);
+
+    // Rotate the keep-alive ring + null currentInstance now — the slot goes
+    // silent for the duration of the off-thread load. Same shape as the
+    // synchronous path's pre-swap rotation (loadFromDescription).
+    if (ownedInstance != nullptr && lastTouchedListener != nullptr)
+        for (auto* p : ownedInstance->getParameters())
+            if (p != nullptr) p->removeListener (lastTouchedListener.get());
+    lastTouchedListener.reset();
+    lastTouchedParamIndex.store (-1, std::memory_order_relaxed);
+    currentInstance.store (nullptr, std::memory_order_release);
+    // Parked: clear the cached latency so the deposed plugin's value can't leak
+    // into PDC accounting during the off-thread load window. installInProcess-
+    // Instance restores it from the new instance on completion.
+    cachedLatencySamples.store (0, std::memory_order_relaxed);
+    if (previousInstances[1] != nullptr)
+        previousInstances[1]->releaseResources();
+    previousInstances[1] = std::move (previousInstances[0]);
+    previousInstances[0] = std::move (ownedInstance);
+    ownedInstance.reset();
+
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS
+    // A prior load may have been OOP (mode is per-load). Mirror the sync path's
+    // remote teardown so processBlock stops routing to the remote before the
+    // in-process instance becomes the active processor — without this the slot
+    // keeps playing the OOP plugin after currentInstance is nulled. Two-deep
+    // deferred-destruction ring, same as loadFromDescription / unload.
+    reaperTimer.stopTimer();
+    currentRemote.store (nullptr, std::memory_order_release);
+    previousRemotes[1].reset();
+    previousRemotes[1] = std::move (previousRemotes[0]);
+    previousRemotes[0] = std::move (ownedRemote);
+    remoteCrashed.store (false, std::memory_order_relaxed);
+   #endif
+
+    // Off-thread create; the completion fires on the MESSAGE thread. weak_ptr
+    // to lifeToken guards against the slot being destroyed mid-load (token dies
+    // with the slot → weak_ptr expires → bail before touching `this`).
+    std::weak_ptr<char> life = lifeToken;
+    manager->createPluginInstanceAsync (fixedDesc, preparedSampleRate, preparedBlockSize,
+        [this, life, epoch, onDone] (std::unique_ptr<juce::AudioPluginInstance> inst,
+                                      juce::String err)
+    {
+        if (! life.lock()) return;                      // slot destroyed mid-load
+        if (currentLoadEpoch.load (std::memory_order_relaxed) != epoch)
+        {
+            if (onDone) onDone (false, "load superseded");   // newer load / unload won
+            return;
+        }
+        if (inst == nullptr)
+        {
+            if (onDone) onDone (false, err.isNotEmpty() ? err
+                                                        : juce::String ("plugin creation failed"));
+            return;
+        }
+        const bool ok = installInProcessInstance (std::move (inst));
+        if (onDone) onDone (ok, ok ? juce::String() : juce::String ("install failed"));
+    });
 }
 
 void PluginSlot::unload()
@@ -1612,7 +1716,7 @@ bool PluginSlot::ensureShellInstanceForEditor (juce::String& err)
     }
     if (savedDescriptionXml.isEmpty())
     {
-        err = "No plugin loaded — nothing to host in the shell";
+        err = "No plugin loaded - nothing to host in the shell";
         return false;
     }
 

@@ -45,6 +45,14 @@ private:
     juce::AudioBuffer<float>    tapeStereoBuffer;    // pre-allocated; tape processBlock target
     juce::MidiBuffer            tapeMidi;            // unused but required by processBlock
     std::atomic<float>*         tapeBypassAtom = nullptr;
+
+    // TAPE on/off crossfade. The donor hard-bypasses (early-returns, no ramp),
+    // so toggling it would pop. We blend the pre-tape (dry) signal against the
+    // processed (wet) output over 20 ms here instead. Tape is skipped entirely
+    // once fully faded out, so a disengaged tape still costs ~nothing.
+    juce::SmoothedValue<float>  tapeMix { 0.0f };    // 0 = dry, 1 = wet
+    bool                        tapeMixPrimed = false;
+    juce::AudioBuffer<float>    tapeDryBuffer;       // pre-allocated; holds dry during the fade
     TubeEQProcessor             tubeEQ;
     TubeEQProcessor::Parameters lastTubeEqParams {};   // see ChannelStrip equivalent
     UniversalCompressor         busComp;
@@ -89,6 +97,26 @@ private:
     // at native rate AFTER this wrap.
     std::unique_ptr<juce::dsp::Oversampling<float>> oversampler;
     int oversamplerStages    = 0;
+
+    // When EQ + comp are both bypassed the oversampler is skipped. It imposes
+    // ~3-4.4 native samples of latency, so delay the skip path by that amount
+    // to keep the master's latency invariant to the EQ/comp toggle. Integer
+    // (None) delay — the sub-sample rounding residual is inaudible.
+    static constexpr int kMaxOsLatency = 16;
+    using OsDelayLine = juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::None>;
+    OsDelayLine osSkipDelayL { kMaxOsLatency };
+    OsDelayLine osSkipDelayR { kMaxOsLatency };
+    int osLatencySamples = 0;
+
+    // Dry-path PDC for the tape crossfade. Tape adds its own oversampler
+    // latency when engaged (0 at 1×); delaying the dry by the same amount keeps
+    // the on/off blend phase-coherent (no comb mid-fade) and seamless (no
+    // timing jump at the fade ends). Resolved in prepare from the donor's
+    // reported latency; max sized to it. Fed every block at >0 latency so the
+    // ring stays warm for the next toggle — a constant, sub-ms master latency.
+    OsDelayLine tapeDryDelayL { 1 };
+    OsDelayLine tapeDryDelayR { 1 };
+    int tapeLatencySamples = 0;
 
     // VU-RMS smoother state - 300 ms tau on the audio thread so the
     // analog VU on the master strip reads the same level TapeMachine's

@@ -1335,7 +1335,7 @@ void MasterStripComponent::setAutoMode (AutomationMode m)
     // Release-store on the mode word so any pending captureFaderWritePoint
     // appends from a Write/Touch pass are visible before the audio thread's
     // next acquire-load. Thinning is intentionally NOT triggered here —
-    // handleWritePassComplete rewrites lane.points wholesale and would race
+    // handleWritePassComplete rewrites lane wholesale and would race
     // the audio thread; the safe entry point is File ▸ Optimize automation,
     // which gates on transport-stopped + all modes Off.
     params.automationMode.store ((int) m, std::memory_order_release);
@@ -1351,7 +1351,7 @@ void MasterStripComponent::captureFaderWritePoint (float denormDb)
     const float hi = ChannelStripParams::kFaderMaxDb;
     const float v  = juce::jlimit (0.0f, 1.0f, (denormDb - lo) / (hi - lo));
 
-    auto& lane = params.automationLanes[(size_t) AutomationParam::FaderDb];
+    auto& lane = params.automationLanes[(size_t) AutomationParam::FaderDb].mutableForWritePass();  // in-place; audio does not read this lane in Write/Touch-touched
     AutomationPoint pt;
     pt.timeSamples   = engine.getTransport().getPlayhead();
     pt.value         = v;
@@ -1359,32 +1359,32 @@ void MasterStripComponent::captureFaderWritePoint (float denormDb)
 
     // Pre-filter: delta + max-span. Master fader is the most-rideable
     // single control on a session, so the savings here matter most.
-    if (! lane.points.empty())
+    if (! lane.empty())
     {
         constexpr float kDeltaEps = 0.001f;
         constexpr juce::int64 kMaxSpanSamples = 22050;
-        const auto& last = lane.points.back();
+        const auto& last = lane.back();
         if (std::abs (pt.value - last.value) < kDeltaEps
             && (pt.timeSamples - last.timeSamples) < kMaxSpanSamples)
             return;
     }
 
-    if (! lane.points.empty() && lane.points.back().timeSamples >= pt.timeSamples)
+    if (! lane.empty() && lane.back().timeSamples >= pt.timeSamples)
     {
-        if (lane.points.back().timeSamples > pt.timeSamples)
+        if (lane.back().timeSamples > pt.timeSamples)
         {
-            auto cutoff = std::lower_bound (lane.points.begin(), lane.points.end(),
+            auto cutoff = std::lower_bound (lane.begin(), lane.end(),
                 pt.timeSamples,
                 [] (const AutomationPoint& a, juce::int64 t) { return a.timeSamples < t; });
-            lane.points.erase (cutoff, lane.points.end());
+            lane.erase (cutoff, lane.end());
         }
-        if (! lane.points.empty() && lane.points.back().timeSamples == pt.timeSamples)
+        if (! lane.empty() && lane.back().timeSamples == pt.timeSamples)
         {
-            lane.points.back() = pt;
+            lane.back() = pt;
             return;
         }
     }
-    lane.points.push_back (pt);
+    lane.push_back (pt);
 }
 
 void MasterStripComponent::paint (juce::Graphics& g)

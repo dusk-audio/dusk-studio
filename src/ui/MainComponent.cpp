@@ -7,9 +7,11 @@
 #include "AuxView.h"
 #include "BounceDialog.h"
 #include "PluginScanModal.h"
+#include "ShortcutsPanel.h"
 #include "DuskContextMenu.h"
 #include "../session/MidiBindings.h"
 #include "ConsoleView.h"
+#include "EditModeToolbar.h"   // EditModeToolbar::labelFor for the snap-resolution label
 #include "CursorOverlay.h"
 #include "DimOverlay.h"
 #include "DuskAlerts.h"
@@ -102,8 +104,7 @@ public:
 
         bodyLabel.setText (
             "Your session has unsaved changes since the last manual save. "
-            "If you don't save, the autosave will still be available "
-            "the next time you open this session.",
+            "If you don't save, those changes are discarded.",
             juce::dontSendNotification);
         bodyLabel.setFont (juce::Font (juce::FontOptions (13.0f)));
         bodyLabel.setColour (juce::Label::textColourId, juce::Colour (0xffc0c0c8));
@@ -266,17 +267,18 @@ MainComponent::MainComponent()
     juce::LookAndFeel::setDefaultLookAndFeel (&lookAndFeel);
 
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
-    // DUSKSTUDIO_USE_OOP_PLUGINS=1 routes new plugin loads through the
-    // dusk-studio-plugin-host child process. Read once at startup; flipping
-    // mid-session would require reloading every plugin to pick up the
-    // new mode. Off by default while the OOP path is still maturing.
-    if (auto* env = std::getenv ("DUSKSTUDIO_USE_OOP_PLUGINS");
-        env != nullptr && *env != 0 && *env != '0')
+    // Plugins run IN-PROCESS by default. On Linux/XWayland the out-of-process
+    // editor path (cross-process XEmbed) is structurally unreliable — the
+    // compositor fights X11 reparenting — and in-process hosting gives instant,
+    // correct plugin editors with the lowest CPU/latency. The trade-off is
+    // crash isolation: a misbehaving plugin can take down the app instead of
+    // just a child. Opt back into the OOP sandbox with
+    // DUSKSTUDIO_USE_OOP_PLUGINS=1. Read once at startup — flipping mid-session
+    // would require reloading every plugin to pick up the new mode.
     {
-        engine.getPluginManager().setOopEnabled (true);
-        std::fprintf (stdout,
-                      "[Dusk Studio] Out-of-process plugin hosting enabled "
-                      "(DUSKSTUDIO_USE_OOP_PLUGINS=1).\n");
+        const char* env = std::getenv ("DUSKSTUDIO_USE_OOP_PLUGINS");
+        const bool enableOop = (env != nullptr && env[0] == '1' && env[1] == '\0');
+        engine.getPluginManager().setOopEnabled (enableOop);
     }
    #endif
 
@@ -331,24 +333,28 @@ MainComponent::MainComponent()
     transportBar->onVirtualKeyboardToggle = [this] { toggleVirtualKeyboard(); };
     transportBar->onTapeStripToggle = [this] (bool expanded)
     {
-        tapeStripExpanded = expanded;
-        if (tapeStrip != nullptr) tapeStrip->setVisible (expanded);
         // Collapse each track strip's EQ + COMP into popup buttons while the
         // TIMELINE view is up - without this the fader and bus assigns get
         // pushed off the bottom of the strip and become unusable.
-        if (consoleView != nullptr) consoleView->setStripsCompactMode (expanded);
-        resized();
+        setTimelineVisible (expanded);
     };
+    // The current-section pill changes the clock's effective right edge; re-run
+    // the header layout so the centered stage tabs re-clamp past it.
+    transportBar->onSectionChanged = [this] { resized(); };
     addAndMakeVisible (transportBar.get());
 
     styleStageButton (recordingStageBtn, juce::Colour (0xffd03030));   // red, like REC
     styleStageButton (mixingStageBtn,    juce::Colour (0xff5a8ad0));   // mix-desk blue
     styleStageButton (auxStageBtn,       juce::Colour (0xff6e5ad0));   // aux indigo-violet
     styleStageButton (masteringStageBtn, juce::Colour (0xff8a5ad0));   // mastering purple
+    recordingStageBtn.setTooltip ("Recording stage - press 1");
+    mixingStageBtn   .setTooltip ("Mixing stage - press 2");
+    masteringStageBtn.setTooltip ("Mastering stage - press 3");
+    auxStageBtn      .setTooltip ("Aux send / return stage - press 4");
     recordingStageBtn.setConnectedEdges (juce::Button::ConnectedOnRight);
     mixingStageBtn   .setConnectedEdges (juce::Button::ConnectedOnLeft | juce::Button::ConnectedOnRight);
-    auxStageBtn      .setConnectedEdges (juce::Button::ConnectedOnLeft | juce::Button::ConnectedOnRight);
-    masteringStageBtn.setConnectedEdges (juce::Button::ConnectedOnLeft);
+    masteringStageBtn.setConnectedEdges (juce::Button::ConnectedOnLeft | juce::Button::ConnectedOnRight);
+    auxStageBtn      .setConnectedEdges (juce::Button::ConnectedOnLeft);
     recordingStageBtn.onClick = [this] { switchToStage (AudioEngine::Stage::Recording); };
     mixingStageBtn   .onClick = [this] { switchToStage (AudioEngine::Stage::Mixing); };
     auxStageBtn      .onClick = [this] { switchToStage (AudioEngine::Stage::Aux); };
@@ -370,20 +376,12 @@ MainComponent::MainComponent()
         b.setColour (juce::TextButton::textColourOnId,   juce::Colours::white);
         b.setMouseClickGrabsKeyboardFocus (false);
     };
-    styleHdrPill (hdrSnapToggle);
     styleHdrPill (hdrZoomOutBtn);
     styleHdrPill (hdrZoomInBtn);
     styleHdrPill (hdrZoomFitBtn);
-    hdrSnapToggle.setClickingTogglesState (true);
-    hdrSnapToggle.setToggleState (session.snapToGrid, juce::dontSendNotification);
-    hdrSnapToggle.setTooltip ("Snap region drags to the grid.");
     hdrZoomOutBtn.setTooltip ("Zoom out (-)");
     hdrZoomInBtn .setTooltip ("Zoom in (=)");
     hdrZoomFitBtn.setTooltip ("Zoom to fit (Cmd+0)");
-    hdrSnapToggle.onClick = [this]
-    {
-        session.snapToGrid = hdrSnapToggle.getToggleState();
-    };
     hdrZoomOutBtn.onClick = [this]
     {
         if (tapeStrip != nullptr) tapeStrip->zoomByFactor (1.0f / 1.25f);
@@ -396,10 +394,27 @@ MainComponent::MainComponent()
     {
         if (tapeStrip != nullptr) tapeStrip->zoomFit();
     };
-    addAndMakeVisible (hdrSnapToggle);
     addAndMakeVisible (hdrZoomOutBtn);
     addAndMakeVisible (hdrZoomInBtn);
     addAndMakeVisible (hdrZoomFitBtn);
+
+    // Grid snap toggle + resolution. Gates every tape-strip region / marker /
+    // loop / tempo drag (SnapHelpers no-op when session.snapToGrid is false).
+    styleHdrPill (hdrSnapBtn);
+    styleHdrPill (hdrSnapResBtn);
+    hdrSnapBtn.setClickingTogglesState (true);
+    hdrSnapBtn.setTooltip ("Snap region edits, markers, loop / punch and tempo points to the grid");
+    hdrSnapBtn.onClick = [this]
+    {
+        session.snapToGrid = hdrSnapBtn.getToggleState();
+        refreshSnapUi();
+        if (tapeStrip != nullptr) tapeStrip->repaint();
+    };
+    hdrSnapResBtn.setTooltip ("Grid resolution used when Snap is on");
+    hdrSnapResBtn.onClick = [this] { showSnapResolutionMenu(); };
+    addAndMakeVisible (hdrSnapBtn);
+    addAndMakeVisible (hdrSnapResBtn);
+    refreshSnapUi();
 
     // Bank-button row is rebuilt by syncBankButtons() each layout pass
     // (visible only when the window can't fit all 16 strips at min
@@ -461,6 +476,11 @@ MainComponent::MainComponent()
 
     consoleView = std::make_unique<ConsoleView> (session, engine);
     addAndMakeVisible (consoleView.get());
+    // Propagate the persisted timeline-expanded state: tapeStrip visibility +
+    // the transport toggle were set above, but the console strips' compact
+    // mode wasn't — without this they start full-height even when the timeline
+    // is expanded on launch.
+    consoleView->setStripsCompactMode (tapeStripExpanded);
     consoleView->setOnStripFocusRequested ([this] (int t)
     {
         if (tapeStrip != nullptr) tapeStrip->setSelectedTrack (t);
@@ -737,17 +757,47 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         }
     }
 
+    // ── Stage switching: plain 1/2/3/4 select Recording / Mixing / Mastering /
+    // Aux. Cmd/Ctrl + digit is bank switching (above), so these stay unmodified.
+    if (noMods)
+    {
+        switch (code)
+        {
+            case '1': switchToStage (AudioEngine::Stage::Recording); return true;
+            case '2': switchToStage (AudioEngine::Stage::Mixing);    return true;
+            case '3': switchToStage (AudioEngine::Stage::Mastering); return true;
+            case '4': switchToStage (AudioEngine::Stage::Aux);       return true;
+            default:  break;
+        }
+    }
+
+    // ── Plain Left/Right move the channel-strip focus ring across the 24
+    // strips (Recording / Mixing stages), auto-flipping the visible bank at a
+    // boundary. The focused strip becomes the A / S / X target. Cmd+arrows are
+    // region nudge (handled above), so the unmodified form is free here.
+    if (noMods && consoleView != nullptr
+        && (key == juce::KeyPress::leftKey || key == juce::KeyPress::rightKey)
+        && (engine.getStage() == AudioEngine::Stage::Recording
+            || engine.getStage() == AudioEngine::Stage::Mixing))
+    {
+        consoleView->moveFocus (key == juce::KeyPress::leftKey ? -1 : 1);
+        return true;
+    }
+
+    // ── '?' (Shift+/) opens the keyboard-shortcut reference.
+    if (key.getTextCharacter() == '?')
+    {
+        openShortcuts();
+        return true;
+    }
+
     // ── TIMELINE toggle: Cmd/Ctrl + \ shows / hides the tape strip.
     // Mirrors the TransportBar's TIMELINE button so the user can flip
     // the arrangement view without mousing. Backslash is otherwise
     // unbound; \\ is what Reaper / Pro Tools use for similar toggles.
     if (cmd && ! shift && key.getTextCharacter() == '\\')
     {
-        tapeStripExpanded = ! tapeStripExpanded;
-        if (tapeStrip != nullptr) tapeStrip->setVisible (tapeStripExpanded);
-        if (consoleView != nullptr) consoleView->setStripsCompactMode (tapeStripExpanded);
-        if (transportBar != nullptr) transportBar->setTapeToggleVisualState (tapeStripExpanded);
-        resized();
+        setTimelineVisible (! tapeStripExpanded);
         return true;
     }
 
@@ -1117,6 +1167,13 @@ void MainComponent::syncBankButtons (int desiredCount)
         {
             if (consoleView != nullptr) consoleView->setBank (idx);
         };
+        // Banks 1-3 are reachable via Cmd/Ctrl + 1/2/3 (see keyPressed).
+        juce::String hint;
+        if (idx < 3)
+            hint = "  (" + juce::KeyPress ('1' + idx,
+                                             juce::ModifierKeys (juce::ModifierKeys::commandModifier), 0)
+                               .getTextDescriptionWithIcons() + ")";
+        btn->setTooltip ("Channel bank " + juce::String (idx + 1) + hint);
         addAndMakeVisible (btn.get());
         bankButtons.push_back (std::move (btn));
     }
@@ -1144,7 +1201,7 @@ void MainComponent::maybeStartStartupPluginScan()
 
     const bool enabled = appconfig::getScanPluginsOnStartup();
     std::fprintf (stderr, "[Dusk Studio] startup plugin scan: toggle=%s\n",
-                  enabled ? "ON — deferring progress modal" : "off — skipped");
+                  enabled ? "ON - deferring progress modal" : "off - skipped");
     std::fflush (stderr);
     if (! enabled)
         return;
@@ -1290,8 +1347,8 @@ void MainComponent::resized()
 
     recordingStageBtn.setBounds (stageX,                stageY, stageW, kStageBtnH);
     mixingStageBtn   .setBounds (stageX + stageW,       stageY, stageW, kStageBtnH);
-    auxStageBtn      .setBounds (stageX + 2 * stageW,   stageY, stageW, kStageBtnH);
-    masteringStageBtn.setBounds (stageX + 3 * stageW,   stageY, stageW, kStageBtnH);
+    masteringStageBtn.setBounds (stageX + 2 * stageW,   stageY, stageW, kStageBtnH);
+    auxStageBtn      .setBounds (stageX + 3 * stageW,   stageY, stageW, kStageBtnH);
     // Z-order is correct by construction: transportBar is added BEFORE
     // the stage tabs + bank buttons in the ctor, so the overlays sit on
     // top of the transport bar's painted background naturally.
@@ -1326,23 +1383,26 @@ void MainComponent::resized()
     // - right padding). Hidden when there's no TapeStrip context (e.g.
     // user in AUX/Mastering fullscreen views — strip controls don't
     // apply there).
-    constexpr int kHdrSnapW    = 50;
     constexpr int kHdrZoomBtnW = 30;
     constexpr int kHdrFitW     = 36;
+    constexpr int kHdrSnapW    = 48;
+    constexpr int kHdrSnapResW = 78;
     constexpr int kHdrBtnGap   = 4;
     constexpr int kHdrBtnH     = 24;
-    constexpr int kHdrClusterW = kHdrSnapW + kHdrZoomBtnW * 2 + kHdrFitW + kHdrBtnGap * 3;
+    constexpr int kHdrClusterW = kHdrSnapW + kHdrSnapResW + kHdrZoomBtnW * 2 + kHdrFitW
+                               + kHdrBtnGap * 4;
     // Only show when TapeStrip is actually expanded — when it's
     // collapsed or the user is in a fullscreen stage (AUX/Mastering),
-    // SNAP+zoom have no on-screen subject so they don't belong in
-    // the header.
+    // the zoom buttons have no on-screen subject so they don't belong in
+    // the header. (Snap moved onto the edit-tools strip above the timeline.)
     const bool hdrClusterVisible = ! inFullscreenView
                                   && tapeStrip != nullptr
                                   && tapeStripExpanded;
-    hdrSnapToggle.setVisible (hdrClusterVisible);
     hdrZoomOutBtn.setVisible (hdrClusterVisible);
     hdrZoomInBtn .setVisible (hdrClusterVisible);
     hdrZoomFitBtn.setVisible (hdrClusterVisible);
+    hdrSnapBtn   .setVisible (hdrClusterVisible);
+    hdrSnapResBtn.setVisible (hdrClusterVisible);
     if (hdrClusterVisible)
     {
         // Real tuner X (parent-local on transportBar = parent-local on
@@ -1358,15 +1418,11 @@ void MainComponent::resized()
         const int clusterX  = leftEdge + juce::jmax (0, (gapW - kHdrClusterW) / 2);
         const int clusterY  = rowBounds.getY() + (rowBounds.getHeight() - kHdrBtnH) / 2;
         int x = clusterX;
-        hdrSnapToggle.setBounds (x, clusterY, kHdrSnapW,   kHdrBtnH); x += kHdrSnapW   + kHdrBtnGap;
+        hdrSnapBtn   .setBounds (x, clusterY, kHdrSnapW,    kHdrBtnH); x += kHdrSnapW    + kHdrBtnGap;
+        hdrSnapResBtn.setBounds (x, clusterY, kHdrSnapResW, kHdrBtnH); x += kHdrSnapResW + kHdrBtnGap;
         hdrZoomOutBtn.setBounds (x, clusterY, kHdrZoomBtnW, kHdrBtnH); x += kHdrZoomBtnW + kHdrBtnGap;
         hdrZoomInBtn .setBounds (x, clusterY, kHdrZoomBtnW, kHdrBtnH); x += kHdrZoomBtnW + kHdrBtnGap;
         hdrZoomFitBtn.setBounds (x, clusterY, kHdrFitW,    kHdrBtnH);
-
-        // Sync SNAP visual state with the session atom (e.g. session
-        // load, MIDI-bound toggle).
-        if (hdrSnapToggle.getToggleState() != (bool) session.snapToGrid)
-            hdrSnapToggle.setToggleState (session.snapToGrid, juce::dontSendNotification);
     }
 
     area.removeFromTop (4);
@@ -1418,6 +1474,53 @@ void MainComponent::resized()
                                        .withSizeKeepingCentre (startupDialog->getWidth(),
                                                                   startupDialog->getHeight()));
     }
+}
+
+void MainComponent::refreshSnapUi()
+{
+    hdrSnapBtn.setToggleState (session.snapToGrid, juce::dontSendNotification);
+    hdrSnapResBtn.setButtonText (EditModeToolbar::labelFor (session.snapResolution));
+    hdrSnapResBtn.setEnabled (session.snapToGrid);   // resolution irrelevant when snap is off
+}
+
+void MainComponent::showSnapResolutionMenu()
+{
+    // The musically useful subset for region-level snapping (timecode / CD-frame
+    // resolutions are time-mode niche; the modal editors expose the full set).
+    static const SnapResolution kOpts[] = {
+        SnapResolution::Bar, SnapResolution::Half, SnapResolution::Quarter,
+        SnapResolution::Eighth, SnapResolution::Sixteenth, SnapResolution::ThirtySecond,
+        SnapResolution::QuarterTriplet, SnapResolution::EighthTriplet,
+        SnapResolution::QuarterDotted, SnapResolution::EighthDotted,
+    };
+    juce::PopupMenu m;
+    for (int i = 0; i < (int) (sizeof (kOpts) / sizeof (kOpts[0])); ++i)
+    {
+        if (i == 6 || i == 8) m.addSeparator();   // straight | triplet | dotted
+        m.addItem (i + 1, EditModeToolbar::labelFor (kOpts[i]), true,
+                    session.snapResolution == kOpts[i]);
+    }
+    juce::Component::SafePointer<MainComponent> safe (this);
+    // Route through the app's in-window popup path, not JUCE's showMenuAsync —
+    // raw JUCE popups flicker / mis-dismiss under X11 / Wayland, which is why
+    // every other menu in this file goes through showContextMenu.
+    duskstudio::showContextMenu (m, hdrSnapResBtn,
+        [safe] (int chosen)
+        {
+            if (safe == nullptr || chosen <= 0) return;
+            safe->session.snapResolution = kOpts[(size_t) (chosen - 1)];
+            safe->refreshSnapUi();
+            if (safe->tapeStrip != nullptr) safe->tapeStrip->repaint();
+        });
+}
+
+void MainComponent::setTimelineVisible (bool show)
+{
+    tapeStripExpanded = show;
+    if (tapeStrip    != nullptr) tapeStrip->setVisible (show);
+    if (consoleView  != nullptr) consoleView->setStripsCompactMode (show);
+    if (transportBar != nullptr) transportBar->setTapeToggleVisualState (show);
+    resized();
 }
 
 void MainComponent::openAudioSettings()
@@ -1476,6 +1579,12 @@ void MainComponent::openAudioSettings()
                                                    kPanelW, kPanelH);
     host->setSize (kPanelW + sbW + 4, hostH);
     audioSettingsModal.show (*this, std::move (host));
+}
+
+void MainComponent::openShortcuts()
+{
+    if (shortcutsModal.isOpen()) return;
+    shortcutsModal.show (*this, std::make_unique<ShortcutsPanel>());
 }
 
 void MainComponent::switchToStage (AudioEngine::Stage s)
@@ -1631,7 +1740,7 @@ void MainComponent::launchStartupDialog()
     addAndMakeVisible (startupDialog.get());
 }
 
-void MainComponent::dismissStartupDialog()
+void MainComponent::dismissStartupDialog (std::function<void()> onDone)
 {
     // Defer the actual delete by one message-loop tick — closeDialog is
     // typically called from inside one of the dialog's own button click
@@ -1639,7 +1748,7 @@ void MainComponent::dismissStartupDialog()
     // chain is fragile. callAsync runs on the message thread after the
     // click handler returns, when nothing's still on the dialog's stack.
     juce::Component::SafePointer<MainComponent> safeThis (this);
-    juce::MessageManager::callAsync ([safeThis]
+    juce::MessageManager::callAsync ([safeThis, onDone = std::move (onDone)]
     {
         if (safeThis == nullptr) return;
         safeThis->startupDialog.reset();
@@ -1650,9 +1759,14 @@ void MainComponent::dismissStartupDialog()
         // focusRestoreTarget hand-back to lean on).
         if (! safeThis->startupQuitRequested && safeThis->isShowing())
             safeThis->grabKeyboardFocus();
-        // Dialog gone - now it's safe to run the startup plugin scan that we
-        // held off in maybeStartStartupPluginScan(). Skip it entirely when the
-        // dismissal came from Quit: the app is shutting down, no point scanning.
+        // Run the caller's follow-up FIRST: onDone may open UI (a session-
+        // recovery prompt, an open-with load) that must not be overlaid by the
+        // scan-progress modal kicked off below.
+        if (onDone) onDone();
+
+        // Now safe to run the startup plugin scan we held off in
+        // maybeStartStartupPluginScan(). Skip it when the dismissal came from
+        // Quit: the app is shutting down, no point scanning.
         safeThis->startupDialogPending = false;
         if (! safeThis->startupQuitRequested)
             safeThis->maybeStartStartupPluginScan();
@@ -1978,12 +2092,15 @@ void MainComponent::requestQuit()
     };
     dialog->onDontSave = [safeThis]
     {
-        // Quit and let the autosave linger. Next launch's session-load
-        // will offer to recover from it.
+        // "Don't save" means discard — delete the autosave too, so the next
+        // launch doesn't offer to recover the work the user just discarded.
+        // Recovery is then reserved for an actual crash (unclean exit, where
+        // this clean-shutdown path never runs and the autosave survives).
         juce::MessageManager::callAsync ([safeThis]
         {
             if (auto* self = safeThis.getComponent())
             {
+                self->deleteAutosaveFor (self->session.getSessionDirectory());
                 self->quitModal.close();
                 self->beginSafeShutdown();
             }
@@ -2213,6 +2330,31 @@ void MainComponent::saveAsPrompt()
     });
 }
 
+void MainComponent::openSessionPath (const juce::File& path)
+{
+    // Accept either the session.json itself or the session directory holding it.
+    juce::File sessionJson;
+    if (path.isDirectory())
+        sessionJson = path.getChildFile ("session.json");
+    else if (path.hasFileExtension ("json"))
+        sessionJson = path;
+
+    if (sessionJson.existsAsFile())
+    {
+        // Clear the startup New / Open-recent flow first so a CLI / file-manager
+        // open doesn't stack a session-load (recovery) modal over the startup
+        // dialog. dismissStartupDialog tears down asynchronously, so defer the
+        // load into its completion callback — otherwise the recovery prompt
+        // would open on top of the still-present startup dialog.
+        juce::Component::SafePointer<MainComponent> safeThis (this);
+        dismissStartupDialog ([safeThis, sessionJson]
+        {
+            if (safeThis != nullptr)
+                safeThis->loadSessionFromJson (sessionJson);   // shows its own alert on failure
+        });
+    }
+}
+
 bool MainComponent::loadSessionFromJson (const juce::File& sessionJson)
 {
     if (! sessionJson.existsAsFile())
@@ -2390,6 +2532,7 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
             engine.setStage (wantStage);
         syncStageUi (wantStage);
     }
+    refreshSnapUi();   // snap on/off + resolution are serialized — reflect the loaded values
     resized();
     const auto tAfterConsole = juce::Time::getMillisecondCounterHiRes();
 
@@ -3044,6 +3187,7 @@ enum MenuItemId
     kMenuFileTemplateBase = 1200,
     kMenuSettingsAudio = 2001,
     kMenuSettingsAbout = 2002,
+    kMenuSettingsShortcuts = 2003,
 };
 }
 
@@ -3145,6 +3289,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelMenuIndex,
     else if (topLevelMenuIndex == 1)   // Settings
     {
         menu.addItem (kMenuSettingsAudio, "Settings...");
+        menu.addItem (kMenuSettingsShortcuts, "Keyboard Shortcuts  (?)");
         menu.addSeparator();
         menu.addItem (kMenuSettingsAbout, "About Dusk Studio");
     }
@@ -3224,12 +3369,12 @@ void MainComponent::menuItemSelected (int menuItemID, int /*topLevelMenuIndex*/)
                 std::size_t total = 0;
                 for (int t = 0; t < Session::kNumTracks; ++t)
                     for (int p = 0; p < kNumAutomationParams; ++p)
-                        total += session.track (t).automationLanes[(size_t) p].points.size();
+                        total += session.track (t).automationLanes[(size_t) p].pointsConst().size();
                 for (int a = 0; a < Session::kNumAuxLanes; ++a)
                     for (int p = 0; p < kNumAutomationParams; ++p)
-                        total += session.auxLane (a).params.automationLanes[(size_t) p].points.size();
+                        total += session.auxLane (a).params.automationLanes[(size_t) p].pointsConst().size();
                 for (int p = 0; p < kNumAutomationParams; ++p)
-                    total += session.master().automationLanes[(size_t) p].points.size();
+                    total += session.master().automationLanes[(size_t) p].pointsConst().size();
                 return total;
             };
             const auto before = countPoints();
@@ -3248,6 +3393,7 @@ void MainComponent::menuItemSelected (int menuItemID, int /*topLevelMenuIndex*/)
                 app->systemRequestedQuit();
             break;
         case kMenuSettingsAudio: openAudioSettings();   break;
+        case kMenuSettingsShortcuts: openShortcuts();   break;
         case kMenuSettingsAbout:
         {
             // Pull the version string from the JUCE_APPLICATION_VERSION_STRING

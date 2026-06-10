@@ -4,14 +4,14 @@
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-or-later</project_license>
   <name>Dusk Studio</name>
-  <summary>Portastudio-style 16-channel DAW</summary>
+  <summary>Portastudio-style 24-channel DAW</summary>
   <description>
     <p>
       Dusk Studio is a deliberately constrained, portastudio-style digital audio
-      workstation. Fixed 16-channel topology with a fixed signal chain
+      workstation. Fixed 24-channel topology with a fixed signal chain
       (HPF, 4-band EQ, FET/Opto compressor, sends, pan, mute/solo,
-      fader), four aux buses, and a mastering chain with Pultec EQ, bus
-      compressor, tape saturation, and limiter.
+      fader), four aux buses, and a mastering chain with passive program EQ,
+      bus compressor, tape saturation, and limiter.
     </p>
     <p>
       Built for musicians who want to commit to sounds and finish songs
@@ -22,10 +22,10 @@
   </description>
   <launchable type="desktop-id">audio.dusk.studio.desktop</launchable>
   <provides>
-    <binary>Dusk Studio</binary>
+    <binary>DuskStudio</binary>
     <mediatype>application/x-dusk-studio-session</mediatype>
   </provides>
-  <url type="homepage">https://github.com/dusk-audio/Dusk Studio</url>
+  <url type="homepage">https://github.com/dusk-audio/dusk-studio</url>
   <developer_name>Dusk Audio</developer_name>
   <content_rating type="oars-1.1"/>
   <releases>

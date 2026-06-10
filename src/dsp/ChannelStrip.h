@@ -32,6 +32,20 @@ public:
     void prepare (double sampleRate, int blockSize, int oversamplingFactor = 1);
     void bind (const ChannelStripParams& params) noexcept { paramsRef = &params; }
 
+    // Cross-track Plugin Delay Compensation. The engine's PDC aggregator
+    // (AudioEngine::recomputePdc) sets each strip's compensation = the session's
+    // deepest track latency minus this track's own, so every track lines up on
+    // every route (master / buses / aux). Message thread only.
+    static constexpr int kMaxPdcSamples = 16384;   // ~340 ms @ 48k, matches HW insert
+    void setPdcCompensationSamples (int n) noexcept
+    {
+        pdcTargetSamples.store (juce::jlimit (0, kMaxPdcSamples, n), std::memory_order_relaxed);
+    }
+    int getPdcCompensationSamples() const noexcept
+    {
+        return pdcTargetSamples.load (std::memory_order_relaxed);
+    }
+
     // Slot is dormant until a plugin loads — empty strips pay zero RT cost.
     void bindPluginManager (PluginManager& mgr) noexcept { pluginSlot.setManager (mgr); }
     PluginSlot&       getPluginSlot()       noexcept { return pluginSlot; }
@@ -119,6 +133,7 @@ private:
     std::unique_ptr<juce::dsp::Oversampling<float>> oversamplerMono;
     std::unique_ptr<juce::dsp::Oversampling<float>> oversamplerStereo;
     int oversamplerStages = 0;
+    int oversampleFactor  = 1;   // 1 / 2 / 4 — drives the comp sub-chunk size
 
     // Sits between phase invert and the EQ stage.
     PluginSlot pluginSlot;
@@ -131,6 +146,31 @@ private:
 
     std::vector<float> insertScratchL;
     std::vector<float> insertScratchR;
+
+    // PDC compensation delay (post-insert / pre-EQ). Two single-channel lines
+    // mirror the HardwareInsertSlot dry-delay pattern. The delay length only
+    // re-latches once the line has drained to silence (pdcSilentRun >= the
+    // currently-applied length) so a latency change never clicks. pdcApplied /
+    // pdcSilentRun are audio-thread-only; pdcTargetSamples is the cross-thread
+    // setpoint.
+    using PdcDelayLine = juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::None>;
+    PdcDelayLine pdcDelayL { kMaxPdcSamples };
+    PdcDelayLine pdcDelayR { kMaxPdcSamples };
+    std::atomic<int> pdcTargetSamples { 0 };
+    int          pdcAppliedSamples = 0;
+    juce::int64  pdcSilentRun = 0;
+    void relatchPdcIfDrained (float blockPeakAbs, int numSamples) noexcept;
+
+    // When EQ + comp are both off we skip the per-strip oversampler entirely.
+    // The oversampler imposes ~3-4.4 native samples of latency though, so a
+    // skipped strip would lead the strips that DID oversample and comb against
+    // correlated sources at the master sum. Delay the skip path by the
+    // oversampler's rounded latency to hold alignment. Integer (None) delay is
+    // enough: the <0.5-sample rounding residual nulls above 50 kHz, inaudible.
+    static constexpr int kMaxOsLatency = 16;
+    PdcDelayLine osSkipDelayL { kMaxOsLatency };
+    PdcDelayLine osSkipDelayR { kMaxOsLatency };
+    int          osLatencySamples = 0;
 
     // Empty buffer for the channel insert plugin; PluginSlot's
     // processBlock requires a MidiBuffer& even when the insert is an

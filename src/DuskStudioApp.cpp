@@ -116,6 +116,10 @@ public:
         addToDesktop (getDesktopWindowStyleFlags());
        #if defined(__linux__)
         duskstudio::platform::clearPreferX11ForNativeWindow();
+        // The peer now exists (JUCE's X display is up), so a non-fatal X error
+        // handler installed here captures JUCE's handler as its chain target.
+        // Stops a dying OOP plugin editor window from core-dumping the host.
+        duskstudio::platform::installNonFatalXErrorHandler();
        #endif
 
         // Brand icon on the live peer. macOS / Windows already pick this
@@ -714,6 +718,32 @@ static void runHeadlessSelfTest()
     std::fflush (stdout);
 }
 
+// Resolve a session path passed on the command line / by the file manager.
+// Prefer a token that clearly names a session (session.json, a directory holding
+// one, or any .json file); otherwise fall back to the first existing token so a
+// bare path still works. Relative paths resolve against the working directory;
+// quoted paths (spaces) survive.
+static juce::File sessionPathFromCommandLine (const juce::String& commandLine)
+{
+    juce::File firstExisting;
+    for (const auto& tok : juce::StringArray::fromTokens (commandLine, true))
+    {
+        const auto t = tok.unquoted();
+        if (t.isEmpty() || t.startsWithChar ('-')) continue;
+        const juce::File f = juce::File::isAbsolutePath (t)
+                               ? juce::File (t)
+                               : juce::File::getCurrentWorkingDirectory().getChildFile (t);
+        if (! f.exists()) continue;
+        if (f.getFileName() == "session.json"
+            || (f.isDirectory() && f.getChildFile ("session.json").existsAsFile())
+            || f.hasFileExtension ("json"))
+            return f;
+        if (firstExisting == juce::File())
+            firstExisting = f;
+    }
+    return firstExisting;
+}
+
 void DuskStudioApp::initialise (const juce::String& commandLine)
 {
     // --version: print app + JUCE versions + platform string and exit
@@ -977,6 +1007,22 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
     juce::Desktop::getInstance().setGlobalScaleFactor (appconfig::getUiScaleOverride());
 
     mainWindow = std::make_unique<MainWindow> (getApplicationName());
+
+    // Open a session passed on the command line (file-manager "open with",
+    // `DuskStudio path/to/session.json`, or a session directory). Deferred so
+    // it runs after MainComponent's own startup (recovery prompt / scan) has
+    // settled, then loads the requested session over it.
+    if (const auto sessionPath = sessionPathFromCommandLine (commandLine);
+        sessionPath != juce::File())
+    {
+        juce::Component::SafePointer<MainWindow> safeWin (mainWindow.get());
+        juce::MessageManager::callAsync ([safeWin, sessionPath]
+        {
+            if (safeWin == nullptr) return;
+            if (auto* main = dynamic_cast<MainComponent*> (safeWin->getContentComponent()))
+                main->openSessionPath (sessionPath);
+        });
+    }
 }
 
 void DuskStudioApp::shutdown()
@@ -1032,5 +1078,15 @@ void DuskStudioApp::systemRequestedQuit()
     quit();
 }
 
-void DuskStudioApp::anotherInstanceStarted (const juce::String&) {}
+void DuskStudioApp::anotherInstanceStarted (const juce::String& commandLine)
+{
+    // Single-instance app: a second launch (e.g. opening a session from the
+    // file manager) routes here. Bring the window forward and open the path.
+    if (mainWindow == nullptr) return;
+    mainWindow->toFront (true);
+    if (const auto sessionPath = sessionPathFromCommandLine (commandLine);
+        sessionPath != juce::File())
+        if (auto* main = dynamic_cast<MainComponent*> (mainWindow->getContentComponent()))
+            main->openSessionPath (sessionPath);
+}
 } // namespace duskstudio
