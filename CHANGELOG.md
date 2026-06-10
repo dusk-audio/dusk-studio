@@ -36,6 +36,8 @@ the public stable declaration.
   keyboard shortcuts, tooltips, and an in-app shortcut reference.
 - **Song-section display.** The transport shows the current section name
   (from markers) next to the clock.
+- **Double-click the DSP readout to reset the xrun counters** after fixing
+  whatever caused a dropout.
 - **Opt-in parallel strip DSP** across worker threads
   (`DUSKSTUDIO_AUDIO_WORKERS`) for heavyweight sessions on many-core
   machines.
