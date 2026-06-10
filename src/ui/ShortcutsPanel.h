@@ -53,7 +53,7 @@ public:
             { "File", {
                 { mod ('N'), "New session" }, { mod ('O'), "Open" }, { mod ('S'), "Save" },
                 { mod ('S', juce::ModifierKeys::shiftModifier), "Save as" },
-                { mod ('I'), "Import audio" }, { mod ('B'), "Bounce" }, { mod ('Q'), "Quit" } } },
+                { mod ('I'), "Import Audio or MIDI" }, { mod ('B'), "Bounce" }, { mod ('Q'), "Quit" } } },
         };
         setSize (560, 660);
     }

@@ -1706,7 +1706,7 @@ Shortcuts use **Cmd** on macOS and **Ctrl** on Linux and Windows unless noted.
 | **Cmd+O**       | Open session…        |
 | **Cmd+S**       | Save session         |
 | **Cmd+Shift+S** | Save As…             |
-| **Cmd+I**       | Import audio / MIDI… |
+| **Cmd+I**       | Import Audio or MIDI… |
 | **Cmd+B**       | Bounce…              |
 | **Cmd+Q**       | Quit                 |
 

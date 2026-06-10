@@ -3272,7 +3272,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelMenuIndex,
         addAccel (kMenuFileSaveAs, "Save as...", 'S',
                   juce::ModifierKeys::commandModifier | juce::ModifierKeys::shiftModifier);
         menu.addSeparator();
-        addAccel (kMenuFileImport, "Import...", 'I',
+        addAccel (kMenuFileImport, "Import Audio or MIDI...", 'I',
                   juce::ModifierKeys::commandModifier);
         menu.addSeparator();
         menu.addItem (kMenuFileMixdown, "Mixdown");
