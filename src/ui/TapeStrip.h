@@ -209,6 +209,14 @@ private:
 
     juce::int64 lastPlayhead = -1;
 
+    // Playhead band repaint rides the display's vblank so motion steps
+    // once per frame. A free-running 30 Hz Timer beats against the
+    // compositor's refresh and reads as stutter. The timer keeps the
+    // cheap state polling (names, colours, loop/punch, recording's
+    // full-frame repaint).
+    void updatePlayheadBand();
+    juce::VBlankAttachment vBlankAttachment;
+
     // 1.0 = auto-fit-all. zoomFit resets to 1 + zeroes scroll.
     float userZoomFactor = 1.0f;
     // Leftmost visible sample when zoomed. 0 when factor == 1. Wheel +
