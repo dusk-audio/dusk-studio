@@ -5,13 +5,45 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
-## [0.11.0] - unreleased
+## [0.11.0] - 2026-06-12
 
-Built to a production-grade bar; shipped as a Beta. (In progress — dated at
-tag time.) 1.0.0 is reserved for the public stable declaration.
+Built to a production-grade bar; shipped as a Beta. 1.0.0 is reserved for
+the public stable declaration.
 
 ### Added
 
+- **Optional out-of-process plugin sandbox.** Third-party plugins can run
+  in a sandboxed child process on all three OSes (launch with
+  `DUSKSTUDIO_USE_OOP_PLUGINS=1`) so a crashing plugin doesn't take the
+  session down. In-process remains the default — the cross-process editor
+  path added UI latency. Plugin scanning is always sandboxed, and plugin
+  instantiation moved off-thread, so loading a heavy synth doesn't freeze
+  the UI.
+- **Automatic cross-track plugin delay compensation (PDC).** Tracks with
+  latency-reporting inserts stay sample-aligned with the rest of the mix.
+- **Undo, broadly.** Piano-roll note edits, automation breakpoint edits,
+  tape-strip menu edits, tempo-map edits, and track / bus / aux rename +
+  colour changes are all undoable.
+- **Tempo editing from the ruler.** Right-click the bar ruler to add / edit
+  tempo points, drag markers left/right to move them, wider hit zones, and
+  the bar-1 anchor stays protected. The separate Grid edit mode is gone.
+- **Timeline interaction pass.** Left-click moves the playhead (snapped to
+  grid when Snap is on), drag on the ruler sets loop / punch ranges, and the
+  Snap on/off + grid-resolution control is back in the tape-strip header.
+- **MIDI Learn for per-track EQ frequency + Q** (band gain was already
+  mappable).
+- **Arrow-key focus across the 24 channel strips**, plus stage / bank
+  keyboard shortcuts, tooltips, and an in-app shortcut reference.
+- **Song-section display.** The transport shows the current section name
+  (from markers) next to the clock.
+- **Double-click the DSP readout to reset the xrun counters** after fixing
+  whatever caused a dropout.
+- **Update notice.** The startup dialog checks for a newer release and
+  shows a flashing UPDATE badge in its sidebar when one exists; silent
+  when up to date or offline.
+- **Opt-in parallel strip DSP** across worker threads
+  (`DUSKSTUDIO_AUDIO_WORKERS`) for heavyweight sessions on many-core
+  machines.
 - **Multi-output routing (Tascam-style cue/monitor sends).** The audio device
   can open more than two outputs (Audio settings). Each AUX return lane can be
   routed to its own physical output pair for an independent headphone / cue mix,
@@ -43,6 +75,15 @@ tag time.) 1.0.0 is reserved for the public stable declaration.
 
 ### Changed
 
+- **Sessions are portable.** Audio file paths are stored relative to the
+  session folder; loading re-roots stale absolute paths and lists any file
+  it genuinely can't find instead of silently playing silence. Renaming the
+  session folder or moving it between machines now just works.
+- **Disengaged EQ / comp / tape sections skip their DSP** with click-free
+  toggles — lighter CPU on mostly-clean mixes.
+- **Take history capped at 8 per region** (was 20).
+- **Stage tabs reordered** to RECORDING | MIXING | MASTERING | AUX.
+- **Import... renamed to Import Audio or MIDI...**
 - **Mastering limiter rebuilt as a true-peak brickwall limiter.** 4×
   oversampled lookahead limiting with a hard inter-sample-peak ceiling,
   monotonic-min gain envelope, and hold + smooth release — replaces the
@@ -60,6 +101,35 @@ tag time.) 1.0.0 is reserved for the public stable declaration.
 
 ### Fixed
 
+- **Data-integrity hardening.** Session save is now genuinely atomic (a
+  crash mid-save can no longer lose both the old and new file); recovering
+  from an autosave immediately persists the recovered state instead of
+  silently discarding it on quit; a fast stop + re-record within the same
+  second can no longer overwrite the previous take's audio.
+- **Crash fixes.** Stopping the transport during dense playback could
+  free disk readers under the audio callback; quitting with the audio
+  settings, plugin scan, or a bounce in progress could tear down dialogs
+  after the engine was gone. Both classes closed.
+- **Real-time safety.** MIDI clock / MTC and per-track MIDI output are
+  delivered through a dedicated thread instead of locking inside the audio
+  callback (periodic xruns while rolling with MIDI out engaged); the
+  Mastering player no longer reads from disk on the audio thread.
+- **Send-effect tails.** Aux reverb / delay tails are no longer cut off
+  the moment the dry signal stops.
+- **Loading an older session over a newer one** no longer inherits the
+  previous session's hardware-insert enable, automation mode, or markers.
+- **The chosen audio device setup persists across restarts.**
+- **Changing the oversampling factor actually re-prepares the DSP** without
+  a full device restart.
+- **Declining to save on quit discards the autosave**, so the next launch
+  doesn't offer to "recover" the work you chose to drop.
+- **Smoother playhead band repaint** (driven by the display vblank).
+- **Windows MSI creates Start Menu + desktop shortcuts.**
+- **AUX tab no longer flashes plugin-editor windows when opened.**
+- **Region editor's Draw tool paints automation without moving the region**,
+  and edit-tool cursor glyphs match the OS cursor size.
+- **Non-fatal X11 errors raised by plugin editors are swallowed** instead
+  of terminating the app (Linux).
 - **Mastering comp display.** Gain-reduction meters are now live during
   playback, and applying a preset refreshes the band knobs / crossovers (the
   embedded panel previously only synced on a manual band-click).

@@ -6,6 +6,17 @@ namespace duskstudio
 MasteringPlayer::MasteringPlayer()
 {
     formatManager.registerBasicFormats();
+    bufferingThread.startThread();
+}
+
+MasteringPlayer::~MasteringPlayer()
+{
+    // Readers detach from bufferingThread on destruction; drop them
+    // before joining the thread.
+    currentReader.store (nullptr, std::memory_order_release);
+    previousReader.reset();
+    ownedReader.reset();
+    bufferingThread.stopThread (2000);
 }
 
 void MasteringPlayer::prepare (int maxBlockSize)
@@ -21,8 +32,18 @@ bool MasteringPlayer::loadFile (const juce::File& file)
     unloadFile();
     if (! file.existsAsFile()) return false;
 
-    std::unique_ptr<juce::AudioFormatReader> r (formatManager.createReaderFor (file));
-    if (r == nullptr) return false;
+    std::unique_ptr<juce::AudioFormatReader> raw (formatManager.createReaderFor (file));
+    if (raw == nullptr) return false;
+
+    // Wrap in a BufferingAudioReader so process() reads from prefetched
+    // memory. 96000 samples ≈ 1-2 s of lead; timeout 0 keeps the audio
+    // thread non-blocking — a prefetch miss (right after a seek) returns
+    // silence until the prefetch catches up. Same pattern as
+    // PlaybackEngine.
+    constexpr int kSamplesToBuffer = 96000;
+    auto r = std::make_unique<juce::BufferingAudioReader> (
+        raw.release(), bufferingThread, kSamplesToBuffer);
+    r->setReadTimeout (0);
 
     // Stop playback before swapping the reader. The audio thread reads
     // `playing` first and bails before touching the reader pointer; this

@@ -4,6 +4,7 @@
 #include <juce_data_structures/juce_data_structures.h>
 #include <array>
 #include <atomic>
+#include <mutex>
 #include <vector>
 #include "../dsp/AuxLaneStrip.h"
 #include "../dsp/BusStrip.h"
@@ -101,8 +102,10 @@ public:
     // Message-thread only.
     bool ensureMidiOutputOpen (int index);
 
-    // No implicit ensure — caller checks state first. Safe from audio
-    // OR message thread (JUCE marshals to its own delivery thread).
+    // No implicit ensure — caller checks state first. Message thread
+    // only (MCU feedback sink). The audio thread routes MIDI out through
+    // queueMidiOutBlock instead — sendBlockOfMessages locks and
+    // allocates, so it must never run in the callback.
     bool sendMidiToOutput (int index, const juce::MidiBuffer& events) noexcept;
 
     // Open the MIDI output every track is routed to. Called once after
@@ -264,6 +267,18 @@ public:
     // Backend xruns (e.g. ALSA snd_pcm_recover EPIPE). 0 if no device.
     int    getBackendXRunCount() const noexcept;
 
+    // Zero both xrun readouts (status-bar double-click). The backend
+    // counter is device-owned and can't be cleared, so it's offset
+    // against a baseline instead. Message thread.
+    void   resetXRunCounts() noexcept;
+
+    // Per-section callback timing (see PerfSections below). Capture is
+    // normally enabled by DUSKSTUDIO_PERF=1 + a 2 s reporter timer; the
+    // headless session-perf harness enables it directly and prints once
+    // at the end of its run.
+    void setPerfCaptureEnabled (bool b) noexcept { perf.enabled = b; }
+    void printPerfTable();
+
     // False = PipeWire opened the per-device ALSA name with 0 output
     // channels and the user gets silent output with no error.
     bool   hasUsableOutputs() const noexcept { return usableOutputs.load (std::memory_order_relaxed); }
@@ -380,6 +395,12 @@ private:
     std::vector<float> mixL, mixR;
     std::array<std::vector<float>, Session::kNumBuses> busL, busR;
     std::array<std::vector<float>, Session::kNumAuxLanes> auxLaneL, auxLaneR;
+
+    // Aux tail-aware skip: consecutive samples each plugin lane's wet
+    // output has been silent. Past kAuxTailSilenceSeconds the lane
+    // sleeps until its input returns. Audio thread only.
+    static constexpr double kAuxTailSilenceSeconds = 2.0;
+    std::array<juce::int64, Session::kNumAuxLanes> auxSilentRunSamples {};
     // Per-track disk-playback buffers. One per track (not a single shared
     // scratch) so the per-block work can run as two passes — a serial PREP
     // pass that resolves each track's source + MIDI, then a DSP pass that
@@ -457,6 +478,47 @@ private:
     juce::Array<juce::MidiDeviceInfo> midiOutputDevices;
     std::vector<std::unique_ptr<juce::MidiOutput>> midiOutputs;
 
+    // MIDI-out handoff. juce::MidiOutput::sendBlockOfMessages is NOT
+    // audio-thread safe: it takes the delivery thread's mutex (which
+    // that thread holds across waits of up to ~20 ms) and inserts into
+    // a heap-allocating multiset under it. The audio thread instead
+    // writes whole per-port event blocks into this lock-free FIFO; the
+    // pump thread drains it every millisecond and does the
+    // sendBlockOfMessages call where blocking is harmless. Slot
+    // MidiBuffers are pre-sized in prepareForSelfTest so the audio-
+    // thread copy never allocates. Queue-full drops the block —
+    // dropping clock bytes beats an xrun.
+    static constexpr int kMidiOutQueueSlots = 64;
+    struct QueuedMidiOut
+    {
+        int    port       = -1;
+        double timeMs     = 0.0;
+        double sampleRate = 48000.0;
+        juce::MidiBuffer events;
+    };
+    juce::AbstractFifo midiOutFifo { kMidiOutQueueSlots };
+    std::array<QueuedMidiOut, kMidiOutQueueSlots> midiOutQueue;
+
+    // Serialises the pump thread's port access against message-thread
+    // bank mutation (rebuildMidiOutputBank / ensureMidiOutputOpen). The
+    // audio thread never takes it — it only touches the FIFO.
+    std::mutex midiOutBankMutex;
+
+    class MidiOutPump final : public juce::Thread
+    {
+    public:
+        explicit MidiOutPump (AudioEngine& e)
+            : juce::Thread ("Dusk Studio MIDI out"), engine (e) {}
+        void run() override;
+    private:
+        AudioEngine& engine;
+    };
+    MidiOutPump midiOutPump { *this };
+
+    void queueMidiOutBlock (int port, const juce::MidiBuffer& events,
+                            double sampleRate) noexcept;
+    void drainMidiOutQueue();
+
     // Previous block's midiInputIndex per track — detects mid-play
     // input swaps so we can fire All-Notes-Off + Sustain-Off on the
     // new input. Without this, held notes from the previous device
@@ -477,7 +539,30 @@ private:
 
     std::atomic<double> currentSampleRate { 0.0 };
     std::atomic<int>    currentBlockSize  { 0 };
+
+    // DUSKSTUDIO_PERF=1: coarse per-section wall-time attribution for the
+    // callback. The audio thread adds tick deltas into relaxed atomics at
+    // six section boundaries (one branch + one fetch_add each when
+    // enabled, a single cached-bool branch when not); a 2 s message-thread
+    // timer prints the table to stderr and zeroes the counters.
+    struct PerfSections
+    {
+        enum Section { kPre = 0, kStrips, kMeterRecordTail,
+                       kBuses, kAuxes, kMasterOut, kNumSections };
+        std::array<std::atomic<juce::int64>, kNumSections> ticks {};
+        std::atomic<juce::int64> totalTicks { 0 };
+        std::atomic<juce::int64> blocks     { 0 };
+        bool enabled = false;
+    };
+    PerfSections perf;
+    class PerfReporter;
+    std::unique_ptr<PerfReporter> perfReporter;
+
     std::atomic<int>    xrunCount         { 0 };
+    // Device xrun count at the last resetXRunCounts(); subtracted in
+    // getBackendXRunCount. Cleared on device start (the device's own
+    // counter restarts at 0 there).
+    std::atomic<int>    backendXrunBaseline { 0 };
     std::atomic<float>  cpuUsage          { 0.0f };
 
     // Valid for the duration of one callback only — strips consume

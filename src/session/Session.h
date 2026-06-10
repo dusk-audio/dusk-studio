@@ -1070,6 +1070,12 @@ public:
     juce::File getAudioDirectory()   const noexcept { return sessionDir.getChildFile ("audio"); }
     void setSessionDirectory (const juce::File& dir);
 
+    // Stored paths of region / take / mastering files SessionSerializer::
+    // load could not resolve (file gone, or session moved and the name
+    // isn't in audio/ either). UI surfaces these after load. Message
+    // thread only.
+    std::vector<juce::String> missingAudioFilesAfterLoad;
+
     Track& track (int i) noexcept             { jassert (i >= 0 && i < kNumTracks);   return tracks[(size_t) i]; }
     const Track& track (int i) const noexcept { jassert (i >= 0 && i < kNumTracks);   return tracks[(size_t) i]; }
 

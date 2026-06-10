@@ -58,6 +58,11 @@ void SystemStatusBar::timerCallback()
     // - surfacing both lets a glitchy session be diagnosed at a glance.
     dspInfo = "DSP: " + juce::String ((int) std::round (cpu * 100.0)) + "%"
             + " (" + juce::String (engineXruns) + "/" + juce::String (backendXruns) + ")";
+    // Oversampling badge, only above 1x: a session saved at 2x/4x
+    // multiplies the whole mixer's DSP cost, and without the badge that
+    // cost reads as an inexplicable load spike.
+    if (const int ox = engine.getSession().oversamplingFactor.load (std::memory_order_relaxed); ox > 1)
+        dspInfo += " @" + juce::String (ox) + "x";
 
     // Chord readout. Audio thread maintains heldMidiNotes; we snapshot
     // here, fingerprint to skip re-analysis when nothing changed, and
@@ -140,8 +145,8 @@ void SystemStatusBar::paint (juce::Graphics& g)
 
     // DSP info now reads "DSP: 12% (3/0)" at worst - engine/backend xrun
     // pair widens the right column slightly.
-    auto dspBounds = bounds.removeFromRight (140);
-    bounds.removeFromRight (8);  // small gap
+    const auto dspBounds = dspSegmentBounds();
+    bounds.removeFromRight (dspBounds.getWidth() + 8);  // segment + small gap
 
     // Chord readout in the middle column. Held-notes-driven; blank when
     // nothing's playing or fewer than 2 notes are held. Bigger font + a
@@ -168,5 +173,17 @@ void SystemStatusBar::paint (juce::Graphics& g)
 
     g.setColour (warn ? juce::Colour (0xffe05050) : juce::Colour (0xffb0b0b8));
     g.drawText (dspInfo, dspBounds, juce::Justification::centredRight, false);
+}
+
+void SystemStatusBar::mouseDoubleClick (const juce::MouseEvent& e)
+{
+    // Double-click the DSP readout to zero the xrun counters — lets the
+    // user clear a stale warning after fixing whatever caused it and
+    // watch for fresh ones.
+    if (dspSegmentBounds().contains (e.getPosition()))
+    {
+        engine.resetXRunCounts();
+        timerCallback();   // refresh the readout now, not next tick
+    }
 }
 } // namespace duskstudio

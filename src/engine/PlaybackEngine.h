@@ -4,6 +4,7 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_core/juce_core.h>
 #include <array>
+#include <atomic>
 #include <memory>
 #include "../session/Session.h"
 
@@ -82,6 +83,27 @@ private:
     };
 
     std::array<std::unique_ptr<PerTrackStream>, Session::kNumTracks> streams;
+
+    // Audio thread bumps audioInFlight BEFORE inspecting streamsActive /
+    // streams[] and decrements on exit. stopPlayback clears streamsActive
+    // then spins until zero before destroying the readers. Closes the UAF
+    // window where a callback that latched Playing is still summing
+    // regions while the message thread tears the streams down. Same
+    // pattern as RecordManager::audioInFlight.
+    std::atomic<bool> streamsActive { false };
+    std::atomic<int>  audioInFlight { 0 };
+
+    struct AudioInFlightScope
+    {
+        std::atomic<int>& c;
+        // acq_rel: release publishes the bump to the drain spin; acquire
+        // prevents subsequent reads from reordering before the bump.
+        // Release-only on decrement is sufficient.
+        AudioInFlightScope (std::atomic<int>& a) noexcept : c (a)
+            { c.fetch_add (1, std::memory_order_acq_rel); }
+        ~AudioInFlightScope() noexcept
+            { c.fetch_sub (1, std::memory_order_release); }
+    };
 
     juce::AudioBuffer<float> readScratch;
 };

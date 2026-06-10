@@ -24,6 +24,7 @@
 #include "../session/SessionTemplates.h"
 #include "MasteringView.h"
 #include "StartupDialog.h"
+#include "UpdateChecker.h"
 #include "SystemStatusBar.h"
 #include "TapeStrip.h"
 #include "TransportBar.h"
@@ -683,20 +684,25 @@ MainComponent::~MainComponent()
     if (consoleView != nullptr)
         consoleView->dropAllPluginEditors();
 
-    // Force-delete any audio settings dialog we launched. JUCE's
-    // ModalComponentManager keeps modal dialogs alive on its own stack and
-    // would clean them up at app exit via ScopedJuceInitialiser_GUI's
-    // destructor - but that runs AFTER MainComponent destructs (and
-    // therefore AFTER our AudioEngine + AudioDeviceManager are gone). The
-    // dialog's AudioDeviceSelectorComponent listens to AudioDeviceManager
-    // and would crash on listener-removal in that delayed teardown.
-    // Deleting it here, while AudioEngine is still alive, is safe.
-    // Embedded modal teardown: closes the panel + dim while AudioEngine
-    // is still alive, so AudioDeviceSelectorComponent's listener removal
-    // happens before the engine and its DeviceManager go away.
-    audioSettingsModal.close();
-    mixdownModal      .close();
-    bounceModal       .close();
+    // Force-delete any modal body we launched, synchronously. close()
+    // would defer body destruction to the next message-loop tick — but
+    // the dispatch loop has already exited on this path, so the deferred
+    // lambda would run AFTER our AudioEngine + AudioDeviceManager are
+    // gone. AudioSettingsPanel's destructor removes listeners from both;
+    // PluginScanModal's stops a worker that calls into the engine-owned
+    // PluginManager; BounceDialog's cancels + joins a BounceEngine
+    // rendering through the engine. All of those must run while the
+    // engine is still alive. No body callback can be on the stack here
+    // (the dtor runs from app shutdown), so in-place destruction is safe.
+    audioSettingsModal   .closeAndDeleteBodyNow();
+    mixdownModal         .closeAndDeleteBodyNow();
+    bounceModal          .closeAndDeleteBodyNow();
+    scanModal            .closeAndDeleteBodyNow();
+    quitModal            .closeAndDeleteBodyNow();
+    recoveryModal        .closeAndDeleteBodyNow();
+    virtualKeyboardModal .closeAndDeleteBodyNow();
+    importTargetModal    .closeAndDeleteBodyNow();
+    shortcutsModal       .closeAndDeleteBodyNow();
 
     // Intentionally NO auto-save here. Standard DAW behavior is to require
     // an explicit Save before exit. The previous auto-save on destruct
@@ -1738,6 +1744,19 @@ void MainComponent::launchStartupDialog()
                                                        startupDialog->getHeight());
     startupDialog->setBounds (bounds);
     addAndMakeVisible (startupDialog.get());
+
+    // Background tag probe -> flashing sidebar badge when a newer
+    // release exists. SafePointer: the response may arrive after the
+    // dialog is dismissed.
+    {
+        juce::Component::SafePointer<StartupDialog> safeDlg (startupDialog.get());
+        updatecheck::checkForNewerTagAsync (JUCE_APPLICATION_VERSION_STRING,
+            [safeDlg] (const juce::String& tag)
+            {
+                if (auto* dlg = safeDlg.getComponent())
+                    dlg->setUpdateAvailable (tag);
+            });
+    }
 }
 
 void MainComponent::dismissStartupDialog (std::function<void()> onDone)
@@ -2436,10 +2455,17 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     }
     const auto tAfterParse = juce::Time::getMillisecondCounterHiRes();
 
-    // Autosave's job is done - clean up so the next load has a clean slate.
-    // (Even when the user chose "load saved session" we drop the autosave, on
-    // the assumption they've made a deliberate choice to discard it.)
-    deleteAutosaveFor (dir);
+    const bool loadedFromAutosave =
+        sourceJson.getFileName().endsWithIgnoreCase (".autosave");
+
+    // When the user chose "load saved session" the autosave's job is done -
+    // they made a deliberate choice to discard it, so clean up for the next
+    // load. When RECOVERING from the autosave, keep it: until the recovered
+    // state is persisted to session.json (at the tail of this function) the
+    // autosave file is the only durable copy. saveSessionTo deletes it on
+    // success.
+    if (! loadedFromAutosave)
+        deleteAutosaveFor (dir);
 
     // Note: lastSavedSessionJson is seeded later in this function, after
     // consumePluginStateAfterLoad has filled in plugin/transport state.
@@ -2482,6 +2508,27 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
                         showDuskAlert (*self, "Missing plugins", body);
                 });
         }
+    }
+
+    // Same surface for unresolved audio files — without it a moved or
+    // hand-edited session loads "successfully" and plays silence with no
+    // hint why.
+    if (! session.missingAudioFilesAfterLoad.empty())
+    {
+        juce::String body =
+            "These audio files referenced by the session could not be found:\n\n";
+        for (const auto& p : session.missingAudioFilesAfterLoad)
+            body += "    " + p + "\n";
+        body += "\nTheir regions will play silent. If the session folder was "
+                "moved, copy the files back into its audio/ subfolder and "
+                "reload the session.";
+        juce::Component::SafePointer<MainComponent> safeThis (this);
+        juce::MessageManager::callAsync (
+            [body = std::move (body), safeThis]
+            {
+                if (auto* self = safeThis.getComponent())
+                    showDuskAlert (*self, "Missing audio files", body);
+            });
     }
     const auto tAfterPlugins = juce::Time::getMillisecondCounterHiRes();
     engine.consumeTransportStateAfterLoad();
@@ -2537,8 +2584,7 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     const auto tAfterConsole = juce::Time::getMillisecondCounterHiRes();
 
     RecentSessions::add (dir);
-    setStatusForPath ("Loaded", sourceJson,
-                         /*isAutosave*/ sourceJson.getFileName().endsWithIgnoreCase (".autosave"));
+    setStatusForPath ("Loaded", sourceJson, /*isAutosave*/ loadedFromAutosave);
 
     // Seed the saved-state snapshot from the live in-memory session now
     // that plugin + transport state have been consumed. The next autosave
@@ -2546,6 +2592,16 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     // session remains untouched.
     setLastSavedSessionJson    (SessionSerializer::serialize (session));
     setLastWrittenAutosaveJson (juce::String());
+
+    // Recovery must end with the recovered state on disk. Without this,
+    // the snapshot seeded above makes the session look clean: the quit
+    // dirty-check passes, the autosave tick skips, and the recovered
+    // work exists nowhere durable — quit + relaunch would land on the
+    // stale session.json. saveSessionTo persists it and (only on
+    // success) deletes the autosave; on failure the autosave survives
+    // and the save-failed alert fires.
+    if (loadedFromAutosave)
+        saveSessionTo (dir);
 
     std::fprintf (stderr,
                   "[Dusk Studio/Load] %s: parse=%dms plugins=%dms midiOuts=%dms console=%dms total=%dms\n",
@@ -3272,7 +3328,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelMenuIndex,
         addAccel (kMenuFileSaveAs, "Save as...", 'S',
                   juce::ModifierKeys::commandModifier | juce::ModifierKeys::shiftModifier);
         menu.addSeparator();
-        addAccel (kMenuFileImport, "Import...", 'I',
+        addAccel (kMenuFileImport, "Import Audio or MIDI...", 'I',
                   juce::ModifierKeys::commandModifier);
         menu.addSeparator();
         menu.addItem (kMenuFileMixdown, "Mixdown");
@@ -3474,6 +3530,8 @@ void MainComponent::cleanOutUnreferencedFiles()
                 referenced.addIfNotAlreadyThere (take.file.getFullPathName());
         }
     }
+    // A bounce loaded into the Mastering stage may live in audio/ too.
+    referenced.addIfNotAlreadyThere (session.mastering().sourceFile.getFullPathName());
 
     // Walk the audio directory for .wav files. Anything outside the
     // referenced set is a candidate. Subdirectories are intentionally
@@ -3504,7 +3562,9 @@ void MainComponent::cleanOutUnreferencedFiles()
                    + juce::String (sizeMB, 1) + " MB.\n\n"
                    + "These were created by past record passes that no "
                      "longer have any region or take pointing at them. "
-                     "Deleting cannot be undone.";
+                     "Deleting cannot be undone, and the session's undo "
+                     "history will be cleared (undone edits may still "
+                     "reference these files).";
 
     juce::Component::SafePointer<MainComponent> safeThis (this);
     showDuskConfirm (*this, "Clean out unreferenced files", msg,
@@ -3515,10 +3575,16 @@ void MainComponent::cleanOutUnreferencedFiles()
                            for (const auto& f : candidates)
                                if (f.deleteFile()) ++deleted;
                            if (auto* self = safeThis.getComponent())
+                           {
+                               // The undo stack holds full before-states of
+                               // deleted regions; Ctrl+Z after this would
+                               // restore a region whose WAV is gone.
+                               self->engine.getUndoManager().clearUndoHistory();
                                self->statusLabel.setText (
                                    "Deleted " + juce::String (deleted)
                                        + " unreferenced file(s).",
                                    juce::dontSendNotification);
+                           }
                        },
                        /*secondary*/   "Cancel",
                        /*onSecondary*/ {},
@@ -3645,8 +3711,18 @@ void MainComponent::openPianoRoll (int trackIdx, int regionIdx)
     {
         // Close + reopen on the new region. Same-track only; the
         // editor already validated the bounds before calling.
-        closePianoRoll();
-        openPianoRoll (t, newIdx);
+        // Deferred: the call arrives from the editor's own keyPressed
+        // frame — closing in place would destroy the component (and the
+        // invoked std::function) while both are still on the stack.
+        juce::Component::SafePointer<MainComponent> safe (this);
+        juce::MessageManager::callAsync ([safe, t, newIdx]
+        {
+            if (auto* self = safe.getComponent())
+            {
+                self->closePianoRoll();
+                self->openPianoRoll (t, newIdx);
+            }
+        });
     };
     addAndMakeVisible (pianoRoll.get());
     pianoRoll->grabKeyboardFocus();
@@ -3762,8 +3838,16 @@ void MainComponent::openAudioEditor (int trackIdx, int regionIdx)
         [this] { if (cursorOverlay != nullptr) cursorOverlay->clearMousePosition(); };
     audioEditor->onNavigateToRegion = [this] (int t, int newIdx)
     {
-        closeAudioEditor();
-        openAudioEditor (t, newIdx);
+        // Deferred — see the piano-roll navigate handler.
+        juce::Component::SafePointer<MainComponent> safe (this);
+        juce::MessageManager::callAsync ([safe, t, newIdx]
+        {
+            if (auto* self = safe.getComponent())
+            {
+                self->closeAudioEditor();
+                self->openAudioEditor (t, newIdx);
+            }
+        });
     };
     addAndMakeVisible (audioEditor.get());
     audioEditor->grabKeyboardFocus();
@@ -3912,8 +3996,16 @@ void MainComponent::closeTuner()
     tunerPoller.reset();
     if (tuner    != nullptr) removeChildComponent (tuner.get());
     if (tunerDim != nullptr) removeChildComponent (tunerDim.get());
-    tuner.reset();
-    tunerDim.reset();
+    // Deferred destruction — closeTuner is reached from tunerDim's own
+    // mouseDown and the overlay's onDismiss, so resetting in place would
+    // destroy the component whose mouse handler is still on the stack
+    // (the EmbeddedModal::close() teardown pattern).
+    if (tuner != nullptr || tunerDim != nullptr)
+    {
+        std::shared_ptr<juce::Component> trashTuner (tuner.release());
+        std::shared_ptr<juce::Component> trashDim   (tunerDim.release());
+        juce::MessageManager::callAsync ([trashTuner, trashDim]() mutable {});
+    }
     session.tuneTrackIndex.store (-1, std::memory_order_relaxed);
 }
 

@@ -17,7 +17,10 @@ void DimOverlay::paint (juce::Graphics& g)
 
 void DimOverlay::mouseDown (const juce::MouseEvent&)
 {
-    if (onClick) onClick();
+    // Local copy BEFORE invoking — the handler may destroy this overlay
+    // (and with it the member std::function) mid-call. Same idiom as
+    // EmbeddedModal's dim onClick.
+    if (auto cb = onClick) cb();
 }
 
 void DimOverlay::parentSizeChanged()

@@ -61,6 +61,8 @@ Install per your platform. On first launch, Dusk Studio opens a blank session ca
 
 You can also open an existing session directly: pass its `session.json` (or the session folder) on the command line — `DuskStudio path/to/session.json` — or double-click a `session.json` in your file manager (Linux file-type association is installed with the app). If Dusk Studio is already running, the session opens in the existing window.
 
+The Startup dialog also performs a quick update check against the public repository: if a release newer than your build exists, a flashing **UPDATE** badge with the new version number appears in the dialog's sidebar. The check is silent when you're up to date or offline, and nothing is sent beyond the request itself.
+
 ![First-launch window with the Startup dialog visible.](docs/images/qg-01-startup.png)
 
 The main window is laid out top to bottom: menu bar, stage selector (RECORDING / MIXING / MASTERING / AUX), bank selector, transport bar, tape strip toggle, console. The console fills the rest of the window with 24 channel strips, 4 buses, and the master.
@@ -420,7 +422,7 @@ Open **Settings → Audio…** to choose your audio device. The panel is divided
 
 ### Audio
 
-- **Device**: lists every backend driver Dusk Studio detected. On Linux, PipeWire and JACK appear as "JACK"; ALSA devices appear separately. On Windows, ASIO is preferred and selected by default when an ASIO driver is present; if none is installed, Dusk Studio falls back to "Windows Audio (Exclusive Mode)" for low latency, then shared "Windows Audio", then "DirectSound". Install your interface's ASIO driver (or ASIO4ALL) for best latency.
+- **Device**: lists every backend driver Dusk Studio detected. On Linux, PipeWire and JACK appear as "JACK"; ALSA devices appear separately. On Windows, ASIO is preferred and selected by default when an ASIO driver is present; if none is installed, Dusk Studio falls back to "Windows Audio (Exclusive Mode)" for low latency, then shared "Windows Audio", then "DirectSound". Install your interface's ASIO driver (or ASIO4ALL) for best latency. Changes apply immediately — there is no Save button — and the device you pick is remembered across restarts (per machine, not per session).
 - **Sample rate**: any rate the device supports. 44.1 kHz, 48 kHz, 88.2 kHz, 96 kHz are common.
 - **Block size**: smaller blocks give lower latency but cost more CPU per sample. 256 or 512 samples is a good starting point.
 - **Periods (Linux/ALSA only)**: how many buffers the ALSA driver keeps in flight. Two is the lowest-latency safe value; three or more is more robust on a busy machine.
@@ -484,6 +486,8 @@ The window is structured as a stack of horizontal bands.
 ```
 
 Modal dialogs (audio settings, plugin picker, region editor, piano roll, import target picker) appear centered with a dimmed backdrop behind them. Press **Esc** or click outside the modal to dismiss.
+
+The readout in the menu bar's right corner shows the device state (`Audio: 48 kHz 5.3 ms`) and the engine load (`DSP: 12% (0/0)`). The parenthesised pair counts audio dropouts: engine-side overruns / backend (driver) xruns. The segment turns red when load passes ~85% or either counter is non-zero. **Double-click the DSP readout to reset the counters** — useful after fixing whatever caused a dropout so you can watch for fresh ones.
 
 ## The four stages
 
@@ -1401,7 +1405,7 @@ OOP is supported on:
 - **Windows**: always.
 - **macOS**: requires macOS 14.4 or later. The plugin **editor** is hosted in-process via a shell instance and embeds as a centred modal like the other platforms — see *Opening the editor* above.
 
-OOP is **on by default** for third-party binary plugins (VST3 / LV2 / AU), so a plugin that crashes or hangs takes down only the host child, not Dusk Studio. There is no setting to manage; if the `dusk-studio-plugin-host` binary is missing the loader falls back to in-process automatically. For debugging you can force in-process hosting by launching with `DUSKSTUDIO_USE_OOP_PLUGINS=0`. (Dusk Studio's own bundled plugins always run in-process.)
+Plugins run **in-process by default** — it gives the most responsive plugin editors and the lowest CPU cost. To run third-party binary plugins (VST3 / LV2 / AU) in the OOP sandbox instead, launch with `DUSKSTUDIO_USE_OOP_PLUGINS=1`; a plugin that crashes or hangs then takes down only the host child, not Dusk Studio. If the `dusk-studio-plugin-host` binary is missing the loader falls back to in-process automatically. Plugin **scanning** always runs in the sandboxed child, so a plugin that crashes while being probed is blacklisted instead of crashing the app. (Dusk Studio's own bundled plugins always run in-process.)
 
 When a plugin crashes in OOP mode:
 
@@ -1631,7 +1635,7 @@ Because the session is a folder, you can copy or back up a session by copying th
 
 Every 30 seconds, if anything has changed since the last save, Dusk Studio writes a recovery file, `session.json.autosave`, next to the canonical `session.json` (it does **not** overwrite `session.json` — a manual Save is still what updates the real session file). The autosave is atomic (same temp-file-and-rename pattern) and silent — it never interrupts playback or recording. Idle sessions are skipped via a content hash, so the file isn't rewritten when nothing meaningful changed.
 
-If Dusk Studio crashes or loses power, the next launch detects the autosave file and offers to recover. A manual Save deletes the autosave, so a leftover autosave that differs from `session.json` is the signal that a recovery point exists.
+If Dusk Studio crashes or loses power, the next launch detects the autosave file and offers to recover. Choosing **Recover autosave** immediately writes the recovered state to `session.json` (and only then removes the autosave), so the recovered work is on disk even if you quit right after. A manual Save deletes the autosave, so a leftover autosave that differs from `session.json` is the signal that a recovery point exists.
 
 Plugin and tape state are captured in the autosave along with everything else, so recovery restores your processing as it stood at the last tick.
 
@@ -1706,7 +1710,7 @@ Shortcuts use **Cmd** on macOS and **Ctrl** on Linux and Windows unless noted.
 | **Cmd+O**       | Open session…        |
 | **Cmd+S**       | Save session         |
 | **Cmd+Shift+S** | Save As…             |
-| **Cmd+I**       | Import audio / MIDI… |
+| **Cmd+I**       | Import Audio or MIDI… |
 | **Cmd+B**       | Bounce…              |
 | **Cmd+Q**       | Quit                 |
 
@@ -2001,14 +2005,21 @@ The format for each entry:
 - **Buttons**: OK.
 - **Action**: Use **Save As…** to land the session somewhere writable. Do not quit before saving — your in-memory state is intact.
 
+### Missing audio files
+
+- **When**: A loaded session references audio files that can't be found — even after Dusk Studio tried re-rooting each path against the session's `audio/` folder.
+- **Text**: "These audio files referenced by the session could not be found: [list]. Their regions will play silent. If the session folder was moved, copy the files back into its audio/ subfolder and reload the session."
+- **Buttons**: OK.
+- **Action**: Put the listed files into the session's `audio/` folder (the file name is what matters) and reload.
+
 ### Clean out
 
 Three variants:
 
 - **No audio directory**: "This session has no audio directory yet, so there's nothing to clean." — Buttons: OK.
 - **No unreferenced files**: "No unreferenced files found. The audio directory is already clean." — Buttons: OK.
-- **Confirm delete**: "Found [N] unreferenced .wav file(s) totalling [size] MB. These were created by past record passes that no longer have any region or take pointing at them. Deleting cannot be undone." — Buttons: **Delete** (destructive, red) / **Cancel**.
-- **Action**: Confirm only if you have backed up anything you might still want.
+- **Confirm delete**: "Found [N] unreferenced .wav file(s) totalling [size] MB. These were created by past record passes that no longer have any region or take pointing at them. Deleting cannot be undone, and the session's undo history will be cleared (undone edits may still reference these files)." — Buttons: **Delete** (destructive, red) / **Cancel**.
+- **Action**: Confirm only if you have backed up anything you might still want. Deleting also clears the undo stack, so finish any edits you might want to undo first.
 
 ### Optimize automation
 

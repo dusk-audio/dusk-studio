@@ -22,6 +22,7 @@ class MasteringPlayer
 {
 public:
     MasteringPlayer();
+    ~MasteringPlayer();
 
     // Message thread.
     void prepare (int maxBlockSize);
@@ -48,6 +49,12 @@ public:
 
 private:
     juce::AudioFormatManager formatManager;
+
+    // Declared before the readers so it outlives them (destruction is
+    // reverse declaration order). Prefetches for the BufferingAudioReader
+    // wrapper so process() never does synchronous disk I/O — a cold file
+    // or a seek after setPlayhead would otherwise stall the callback.
+    juce::TimeSliceThread bufferingThread { "Dusk Studio mastering prefetch" };
 
     // Owning pointer - mutated only on the message thread (loadFile /
     // unloadFile). The audio thread reads via the `currentReader` atomic

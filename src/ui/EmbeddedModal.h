@@ -265,6 +265,38 @@ public:
         userOnDismiss = {};
     }
 
+    // Shutdown-only teardown. close() defers body destruction to the
+    // next message-loop tick; on the quit path the dispatch loop has
+    // already exited, so the deferred lambda runs after AudioEngine is
+    // destroyed and a body whose destructor talks to the engine
+    // (AudioSettingsPanel, PluginScanModal, BounceDialog) frees memory
+    // it then dereferences. This variant destroys the body in place.
+    // Only call when no body callback is on the stack — i.e. from
+    // ~MainComponent / beginSafeShutdown.
+    void closeAndDeleteBodyNow()
+    {
+        restoreHiddenPluginEditors();
+
+        if (host != nullptr)
+        {
+            if (body_         != nullptr) host->removeChildComponent (body_.get());
+            if (borrowedBody_ != nullptr)
+            {
+                borrowedBody_->removeKeyListener (this);
+                host->removeChildComponent (borrowedBody_);
+            }
+            if (backdrop_ != nullptr) host->removeChildComponent (backdrop_.get());
+            if (dim_      != nullptr) host->removeChildComponent (dim_.get());
+        }
+
+        body_.reset();
+        backdrop_.reset();
+        dim_.reset();
+        borrowedBody_ = nullptr;
+        host = nullptr;
+        userOnDismiss = {};
+    }
+
     bool isOpen() const noexcept { return body_ != nullptr || borrowedBody_ != nullptr; }
 
     juce::Component* getBody() const noexcept
@@ -332,7 +364,12 @@ private:
 
     static constexpr int kBackdropMargin = 6;
 
-    juce::Component* host = nullptr;
+    // SafePointer, not raw: the function-local-static shared modals
+    // (DuskAlerts, DuskContextMenu, DuskComboBox, file browser, plugin
+    // picker) outlive MainComponent. If one is still open at quit, its
+    // static destructor runs close() after the host was destroyed — a
+    // raw pointer would dereference freed memory in removeChildComponent.
+    juce::Component::SafePointer<juce::Component> host;
     std::unique_ptr<DimOverlay> dim_;
     std::unique_ptr<Backdrop> backdrop_;
     std::unique_ptr<juce::Component> body_;

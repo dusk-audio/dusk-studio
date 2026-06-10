@@ -158,7 +158,9 @@ void showEmbeddedTextInput (juce::Component& parent,
         /*onDismiss*/ [] { sharedTapeStripTextInputModal().close(); });
 }
 } // namespace
-TapeStrip::TapeStrip (Session& s, AudioEngine& e) : session (s), engine (e)
+TapeStrip::TapeStrip (Session& s, AudioEngine& e)
+    : session (s), engine (e),
+      vBlankAttachment (this, [this] { updatePlayheadBand(); })
 {
     setOpaque (true);
     startTimerHz (30);
@@ -787,22 +789,34 @@ void TapeStrip::timerCallback()
 
     if (stateChanged) repaint();
 
+    // During recording, pixelsPerSecond auto-shrinks every frame as the
+    // playhead grows, so the bar grid + existing regions also shift —
+    // a thin-band playhead repaint isn't enough. Full repaint keeps
+    // ruler labels + region waveforms aligned with the live playhead.
+    // Stays at the timer's 30 Hz; a full-strip repaint per vblank would
+    // be needlessly heavy. Playback's band repaint lives on the vblank
+    // (updatePlayheadBand).
+    if (nowRec)
+    {
+        const auto now = transport.getPlayhead();
+        if (now != lastPlayhead)
+        {
+            lastPlayhead = now;
+            repaint();
+        }
+    }
+}
+
+void TapeStrip::updatePlayheadBand()
+{
+    if (engine.getTransport().isRecording()) return; // timer's full repaint covers it
+
     const auto now = engine.getTransport().getPlayhead();
     if (now == lastPlayhead) return;
 
     const int oldX = xForSample (lastPlayhead < 0 ? 0 : lastPlayhead);
     const int newX = xForSample (now);
     lastPlayhead = now;
-
-    // During recording, pixelsPerSecond auto-shrinks every frame as the
-    // playhead grows, so the bar grid + existing regions also shift —
-    // a thin-band playhead repaint isn't enough. Full repaint keeps
-    // ruler labels + region waveforms aligned with the live playhead.
-    if (nowRec)
-    {
-        repaint();
-        return;
-    }
 
     // Repaint a thin vertical band covering both the old and new playhead
     // positions plus a few pixels of margin so we don't see ghosting.

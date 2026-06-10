@@ -15,7 +15,8 @@ namespace duskstudio
 // the Session/AudioEngine. MainComponent wires the callbacks to its
 // session-management helpers.
 class StartupDialog final : public juce::Component,
-                              private juce::TableListBoxModel
+                              private juce::TableListBoxModel,
+                              private juce::Timer
 {
 public:
     explicit StartupDialog (juce::Array<juce::File> recentSessions);
@@ -23,6 +24,11 @@ public:
     void resized() override;
     void paint (juce::Graphics&) override;
     bool keyPressed (const juce::KeyPress& key) override;
+
+    // Shows the flashing "update available" badge in the sidebar.
+    // Called (message thread) when the async tag check finds a release
+    // newer than this build; never called when up to date.
+    void setUpdateAvailable (const juce::String& tagName);
 
     // Each action callback also triggers the dialog to dismiss itself.
     std::function<void (juce::File)> onOpenRecent;   // arg = recent session dir
@@ -39,6 +45,7 @@ public:
 private:
     void closeDialog (int returnCode);
     void openSelectedRow();
+    void timerCallback() override;   // flashes the update badge
 
     // juce::TableListBoxModel ─────────────────────────────────────────
     int  getNumRows() override;
@@ -68,6 +75,8 @@ private:
     juce::Label   brandWordmark;
     juce::Label   tableHeading;
     juce::Label   emptyLabel;
+    juce::Label   updateLabel;       // hidden until setUpdateAvailable
+    bool          updateFlashOn = true;
 
     juce::TableListBox table;
 
