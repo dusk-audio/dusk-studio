@@ -35,7 +35,7 @@ Paid via [Patreon](https://www.patreon.com/cw/DuskAudio) (recurring) or [GitHub 
 
 ## Status
 
-**v0.11.0 (Beta).** Built to a production bar; released as Beta. Feature backlog effectively closed: every spec phase, Tascam DP-24SD parity, MTC + MIDI Clock sync, cross-platform OOP plugin host (audio on all three OSes; editor embedded on Linux + Windows, in-process shell on macOS), a true-peak mastering limiter, a piecewise tempo map (changing tempo within a song), session open-with, and the rename to Dusk Studio have shipped. All three OSes ship unsigned binaries (Linux tarball + Windows MSI + macOS DMG) to the private releases repo on each tag. Remaining work toward the public 1.0 is release-engineering polish and deeper accessibility.
+**v0.11.0 (Beta).** Built to a production bar; released as Beta. Feature backlog effectively closed: every spec phase, Tascam DP-24SD parity, MTC + MIDI Clock sync, automatic cross-track plugin delay compensation, broad undo coverage (notes, automation, tempo, renames), portable session folders (relative audio paths, move/copy between machines), an optional out-of-process plugin sandbox with always-sandboxed plugin scanning, a true-peak mastering limiter, a piecewise tempo map (changing tempo within a song), session open-with, an update notice on launch, and the rename to Dusk Studio have shipped. Plugins host in-process by default for the most responsive editors; `DUSKSTUDIO_USE_OOP_PLUGINS=1` opts into the crash-isolating sandbox. All three OSes ship unsigned binaries (Linux tarball + Windows MSI + macOS DMG) to the private releases repo on each tag. Remaining work toward the public 1.0 is release-engineering polish, low-spec/Raspberry-Pi performance, and deeper accessibility.
 
 | Stage | Status |
 |---|---|
@@ -45,8 +45,8 @@ Paid via [Patreon](https://www.patreon.com/cw/DuskAudio) (recurring) or [GitHub 
 | Plugin hosting (per-channel VST3 / LV2 / AU + per-aux return) | Working |
 | Native soundfonts (`.sfz` + `.sf2` via sfizz, no external synth) | Working |
 | Plugin offline-state preservation (missing plugin doesn't wipe save) | Working |
-| Out-of-process plugin host — audio (Linux + macOS + Windows) | Working |
-| Out-of-process plugin host — editor embed (Linux XEmbed, Windows SetParent, macOS in-process shell) | Working |
+| Out-of-process plugin sandbox — audio, opt-in (Linux + macOS + Windows; scanning always sandboxed) | Working |
+| Out-of-process plugin sandbox — editor embed (Linux XEmbed, Windows SetParent, macOS in-process shell) | Working |
 | Mastering view (waveform + 5-band EQ + multiband comp + brick-wall limiter + BS.1770) | Working |
 | Bounce / mixdown export (master or stems) | Working |
 | Aux sends + reverb / delay returns | Working |
@@ -54,18 +54,18 @@ Paid via [Patreon](https://www.patreon.com/cw/DuskAudio) (recurring) or [GitHub 
 | MIDI tracks + instrument plugins + piano roll editor | Working |
 | Audio region editor (non-destructive trim / fade / gain) + 8-take history | Working |
 | Take cycling + comping (cycle previousTakes — Option A) | Working |
+| Cross-track plugin delay compensation (PDC) | Working |
 | Console automation (Write / Read / Touch on channels + aux + master) | Working |
 | MIDI Clock sync + MTC slave + master | Working |
 | MIDI bindings + MIDI Learn (transport / strip / sends / EQ / comp / plugin params) | Working |
 | Mackie Control surface (tested against Tascam DP-24SD) | Working |
 | Multi-file audio + MIDI import with target-track picker | Working |
-| Cross-process NSView embed (macOS editor) | Research |
 | Windows MSI installer (unsigned) | Working (CI publishes to private releases repo on tag) |
 | Linux tarball | Working (CI publishes to private releases repo on tag) |
 | macOS DMG (unsigned, ad-hoc) | Working (CI publishes to private releases repo on tag) |
 | Deeper a11y (full screen-reader labels + keyboard-only mixer nav) | Floor only |
 
-150 Catch2 unit tests across 38 files. Linux (amd64 + arm64) + macOS + Windows builds run on every push; Windows tests run on every push; Linux ThreadSanitizer runs on every PR + push.
+194 Catch2 unit tests across 48 files. Linux (amd64 + arm64) + macOS + Windows builds run on every push; Windows tests run on every push; Linux ThreadSanitizer runs on every PR + push.
 
 ## Bug reports
 
@@ -75,9 +75,9 @@ Paid via [Patreon](https://www.patreon.com/cw/DuskAudio) (recurring) or [GitHub 
 
 Most DAWs are built for production studios with infinite track counts and infinite options. They're also paralysing for ADHD-pattern users — every decision branches, every parameter is reachable, every track type wants its own configuration. Dusk Studio flips the constraint: a fixed signal chain, a finite track count, a single visible page per stage. You commit, you move on.
 
-## The seven hard constraints
+## The design constraints
 
-These are not implementation details — they're the product. Anything that violates them is wrong.
+These are not implementation details — they're the product. Features are judged against them.
 
 1. **24 channels maximum.** Fixed. Three banks of 8 to match standard control surfaces (each bank drives 8 strips on the surface; all 24 are visible on screen).
 2. **Fixed signal chain.** No reordering EQ / comp. Channel-strip processing order is the same on every track, every time. Each channel gets **one optional insert slot** (a single VST3 / LV2 / AU plugin **or** a hardware insert — never a chain), at a fixed position in the strip; aux returns get one plugin slot each.
@@ -91,8 +91,8 @@ These are not implementation details — they're the product. Anything that viol
 
 ```
 Channels 1-24 ───────────────→ 4 Aux Buses ──→ 4 Mix Buses ──→ Master ──→ Output
-   Phase / Polarity              EQ              3-band EQ        Pultec EQ
-   Insert (plugin or HW)         Comp            SSL Bus Comp     Bus Comp
+   Phase / Polarity              EQ              3-band EQ        Passive Program EQ
+   Insert (plugin or HW)         Comp            Bus Comp         Bus Comp
    HPF + LPF                     Fader                            Tape Saturation
    4-band EQ                                                      Fader
    Compressor (Opto/FET/VCA)
@@ -100,7 +100,7 @@ Channels 1-24 ───────────────→ 4 Aux Buses ─�
    Fader / Mute / Solo
 ```
 
-- **DSP** is extracted from the Dusk Audio plugin suite (4K EQ, Multi-Comp FET/Opto/VCA, Multi-Q Pultec, TapeMachine, shared AnalogEmulation) so the mixer and the standalone plugins share a single DSP source of truth.
+- **DSP** is extracted from the Dusk Audio plugin suite (4K EQ, Multi-Comp FET/Opto/VCA, Multi-Q, TapeMachine, shared AnalogEmulation) so the mixer and the standalone plugins share a single DSP source of truth.
 - **Plugin host**: VST3 + LV2 + AU on every channel strip; aux returns host reverb / delay; per-platform IPC backend (Linux `shm` + `eventfd`, macOS `shm_open` + `os_sync_wait_on_address`, Windows `CreateFileMapping` + `WaitOnAddress`) keeps a crashing plugin from taking the host down.
 - **Soundfonts**: `.sfz` and `.sf2` play through the built-in [sfizz](https://github.com/dusk-audio/sfizz) engine (SF2 → SFZ on load). No external synth required.
 
@@ -115,7 +115,7 @@ src/
   session/     # Session model + JSON serialisation
   ui/          # MainComponent, ConsoleView, channel/aux/master strips, mastering view
   util/        # CrashHandler (FileLogger + signal-handler reports)
-tests/         # 150 Catch2 unit tests (session, recording, MIDI, IPC, DSP)
+tests/         # 194 Catch2 unit tests (session, recording, MIDI, IPC, DSP)
 packaging/     # .desktop, AppStream, MIME, macOS bundle — for tarball + DMG builds
 DuskStudio.md  # authoritative product spec
 MANUAL.md      # end-user manual (Pandoc-buildable to PDF via packaging/build-pdf.sh)
