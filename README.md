@@ -65,7 +65,7 @@ Paid via [Patreon](https://www.patreon.com/cw/DuskAudio) (recurring) or [GitHub 
 | macOS DMG (unsigned, ad-hoc) | Working (CI publishes to private releases repo on tag) |
 | Deeper a11y (full screen-reader labels + keyboard-only mixer nav) | Floor only |
 
-194 Catch2 unit tests across 48 files. Linux (amd64 + arm64) + macOS + Windows builds run on every push; Windows tests run on every push; Linux ThreadSanitizer runs on every PR + push.
+206 Catch2 unit tests across 50 files. Linux (amd64 + arm64) + macOS + Windows builds run on every push; Windows tests run on every push; Linux ThreadSanitizer runs on every PR + push.
 
 ## Bug reports
 
@@ -115,7 +115,7 @@ src/
   session/     # Session model + JSON serialisation
   ui/          # MainComponent, ConsoleView, channel/aux/master strips, mastering view
   util/        # CrashHandler (FileLogger + signal-handler reports)
-tests/         # 194 Catch2 unit tests (session, recording, MIDI, IPC, DSP)
+tests/         # 206 Catch2 unit tests (session, recording, MIDI, IPC, DSP)
 packaging/     # .desktop, AppStream, MIME, macOS bundle — for tarball + DMG builds
 DuskStudio.md  # authoritative product spec
 MANUAL.md      # end-user manual (Pandoc-buildable to PDF via packaging/build-pdf.sh)
