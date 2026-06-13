@@ -166,7 +166,7 @@ This chapter is a visual reference. Every numbered callout on the figures below 
 | 8   | Virtual keyboard | Opens the on-screen MIDI keyboard overlay.                                       |
 | 9   | Metronome        | Click on / off. Right-click for the click settings.                              |
 | 10  | C/I              | Count-in toggle. One bar of click before record starts.                          |
-| 11  | BPM              | Tempo at the playhead (read-only display). Set the tempo by right-clicking the timeline ruler; **TAP** sets the starting tempo. |
+| 11  | BPM              | Tempo at the playhead. Double-click to set it directly (in a session with tempo changes, edits the change governing the playhead); or set the tempo from the timeline ruler. **TAP** sets the starting tempo. |
 | 12  | TAP              | Tap repeatedly to set the **starting** tempo from your wrist.                    |
 | 13  | Time signature   | Click to choose. Custom signatures supported.                                    |
 | 14  | Clock display    | Bars.Beats.Ticks or mm:ss.mmm; right-click to flip.                              |
@@ -517,7 +517,7 @@ From left to right:
 - **Virtual keyboard** (⌨). Opens an on-screen MIDI keyboard.
 - **Metronome** (♩). Toggles the click. Right-click for click settings.
 - **C/I**. Toggles count-in (one bar of click before record starts).
-- **BPM**. A read-only display of the tempo at the playhead (it follows tempo-map changes). Set the tempo by right-clicking the timeline ruler; **TAP** sets the starting tempo.
+- **BPM**. The tempo at the playhead (it follows tempo-map changes). Double-click it to set the tempo directly (in a session with tempo changes, this edits the change governing the playhead); you can also set it from the timeline ruler. **TAP** sets the starting tempo.
 - **TAP**. Click on each beat; Dusk Studio averages the last four intervals over a two-second window and sets the tempo.
 - **Time signature**. Click to choose from common signatures or enter a custom one.
 - **Clock display**. Shows the current playhead position. Right-click to flip between **Bars.Beats.Ticks** (e.g. `5.2.120`) and **mm:ss.mmm** (e.g. `01:23.456`).
@@ -2230,7 +2230,7 @@ The hardware-insert ping reports its result inline on the editor (not a modal), 
 | Block     | Param                            | Range         | Default     |
 | --------- | -------------------------------- | ------------- | ----------- |
 | EQ        | Enable                           | Off / On      | Off         |
-| EQ band 0 | Low shelf, 80 Hz, ±12 dB         |               | 0 dB        |
+| EQ band 0 | Low shelf, 50 Hz, ±12 dB         |               | 0 dB        |
 | EQ band 1 | Peaking, 250 Hz, ±12 dB, Q 0.4–4 |               | 0 dB, Q 1.0 |
 | EQ band 2 | Peaking, 1 kHz, ±12 dB, Q 0.4–4  |               | 0 dB, Q 1.0 |
 | EQ band 3 | Peaking, 4 kHz, ±12 dB, Q 0.4–4  |               | 0 dB, Q 1.0 |
