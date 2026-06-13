@@ -78,6 +78,9 @@ private:
         bool  masterTapeEnabled = false;
         bool  masterTapeHQ      = false;
         bool  masterCompEnabled = false;
+        // runPerfBenchmark overwrites the global oversampling factor; capture
+        // it so a perf run doesn't leak its last (4x) setting into the session.
+        int   oversamplingFactor = 1;
     };
 
     SavedState saveState() const;

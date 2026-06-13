@@ -880,16 +880,24 @@ void AlsaAudioIODevice::rearmStream() noexcept
     if (inHandle != nullptr)
         snd_pcm_prepare (inHandle);
 
-    if (silencePrefill != nullptr && periodsCount > 0)
+    if (silencePrefill != nullptr && periodsCount > 0 && periodSize > 0)
     {
-        const auto frames = (snd_pcm_uframes_t) (periodSize * periodsCount);
-        if (snd_pcm_writei (outHandle, silencePrefill.getData(), frames) < 0)
+        const auto   frames     = (snd_pcm_uframes_t) (periodSize * periodsCount);
+        const size_t frameBytes = (size_t) bytesPerOutSample * (size_t) outNumChannels;
+        const auto*  src        = silencePrefill.getData();
+        // NONBLOCK PCM: writei can return a short count, or -EPIPE if the ring
+        // underran during re-arm. Loop until the full prefill lands (recovering
+        // on error) so we never snd_pcm_start an underfilled ring → instant
+        // underrun → straight back into recovery. Bounded so a wedged device
+        // can't spin forever.
+        snd_pcm_uframes_t done = 0;
+        for (int attempts = 0; done < frames && attempts < 16; ++attempts)
         {
-            // Prefill itself underran during re-arm (rare USB-driver case):
-            // recover and retry once, or we'd snd_pcm_start an empty ring →
-            // instant underrun → straight back into recovery. Mirrors open().
-            snd_pcm_recover (outHandle, -EPIPE, /*silent*/ 1);
-            snd_pcm_writei (outHandle, silencePrefill.getData(), frames);
+            const auto n = snd_pcm_writei (outHandle, src + done * frameBytes, frames - done);
+            if (n < 0)
+                snd_pcm_recover (outHandle, (int) n, /*silent*/ 1);
+            else
+                done += (snd_pcm_uframes_t) n;
         }
     }
 

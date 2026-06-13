@@ -224,8 +224,20 @@ juce::File resolvePortablePath (const juce::String& stored,
 {
     if (stored.isEmpty()) return {};
 
+    // A Windows drive-letter (C:/...) or UNC (//server/...) path is absolute
+    // even though juce::File::isAbsolutePath() reports false for it on POSIX.
+    // Treat it as absolute so a session moved Windows -> Linux still re-roots
+    // its audio files by name rather than mis-joining them under sessionDir.
+    const auto normalised = stored.replaceCharacter ('\\', '/');
+    const bool driveLetter = normalised.length() >= 3
+                          && juce::CharacterFunctions::isLetter (normalised[0])
+                          && normalised[1] == ':' && normalised[2] == '/';
+    const bool isAbsolute = juce::File::isAbsolutePath (stored)
+                         || driveLetter
+                         || normalised.startsWith ("//");
+
     juce::File f;
-    if (juce::File::isAbsolutePath (stored))
+    if (isAbsolute)
         f = juce::File (stored);
     else if (sessionDir != juce::File())
         // Normalise to '/' before resolving: a session saved by an older
@@ -245,10 +257,9 @@ juce::File resolvePortablePath (const juce::String& stored,
     // mixdown at the session root), and any absolute path where audio/ is not
     // the direct parent (external media that merely contains an audio/ segment),
     // must not silently remap to an unrelated same-named take — report missing.
-    const auto normalised = stored.replaceCharacter ('\\', '/');
     const auto fileName = normalised.fromLastOccurrenceOf ("/", false, false);
     const bool sessionLocal = normalised.startsWith ("audio/")
-                           || (juce::File::isAbsolutePath (stored)
+                           || (isAbsolute
                                && normalised.endsWith ("/audio/" + fileName));
     if (sessionLocal && sessionDir != juce::File() && fileName.isNotEmpty())
     {

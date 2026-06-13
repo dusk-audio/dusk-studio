@@ -64,6 +64,7 @@ AudioPipelineSelfTest::SavedState AudioPipelineSelfTest::saveState() const
     s.masterTapeEnabled = session.master().tapeEnabled.load (std::memory_order_relaxed);
     s.masterTapeHQ      = session.master().tapeHQ.load (std::memory_order_relaxed);
     s.masterCompEnabled = session.master().compEnabled.load (std::memory_order_relaxed);
+    s.oversamplingFactor = session.oversamplingFactor.load (std::memory_order_relaxed);
     return s;
 }
 
@@ -99,6 +100,7 @@ void AudioPipelineSelfTest::restoreState (const SavedState& s)
     session.master().tapeEnabled.store (s.masterTapeEnabled, std::memory_order_relaxed);
     session.master().tapeHQ.store      (s.masterTapeHQ,      std::memory_order_relaxed);
     session.master().compEnabled.store (s.masterCompEnabled, std::memory_order_relaxed);
+    session.oversamplingFactor.store (s.oversamplingFactor, std::memory_order_relaxed);
     // Bulk-write path bypassed the counter-aware setters; resync the RT
     // counters so anyTrackSoloed/Armed reads are correct in the test pass.
     session.recomputeRtCounters();
@@ -1174,6 +1176,9 @@ juce::String AudioPipelineSelfTest::runAll()
     // attached, the audio thread writes a silent master mix on every
     // callback (no inputs to process), so transitions are clean.
     restoreState (savedSession);
+    // The synthetic tests force the engine serial (setWorkerCountForTest(0));
+    // restore the live configured worker pool before re-attaching.
+    engine.applyDesiredWorkers();
     deviceManager.addAudioCallback (&engine);
 
     report.add (testBackendsOpenCleanly());
@@ -1402,6 +1407,8 @@ juce::String AudioPipelineSelfTest::runPerfSuite()
     }
 
     restoreState (saved);
+    // The perf sweep forces the engine serial; restore the configured pool.
+    engine.applyDesiredWorkers();
     deviceManager.addAudioCallback (&engine);
 
     report.add ("=== End of Engine Perf Benchmark ===");

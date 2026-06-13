@@ -163,7 +163,10 @@ int resolveWorkerCount()
     switch (getMulticoreDspMode())
     {
         case MulticoreDspMode::Off:    return 0;
-        case MulticoreDspMode::Auto:   return maxMulticoreWorkers();   // 0 on <4-core hosts
+        // Auto fans out only on >= 4-core hosts (cores - 2 workers); smaller
+        // machines stay single-core, matching the manual's documented behaviour.
+        case MulticoreDspMode::Auto:   return juce::SystemStats::getNumCpus() >= 4
+                                                  ? maxMulticoreWorkers() : 0;
         case MulticoreDspMode::Manual: return juce::jmin (getMulticoreManualWorkers(),
                                                           maxMulticoreWorkers());
     }
