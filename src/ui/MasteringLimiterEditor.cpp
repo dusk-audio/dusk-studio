@@ -47,10 +47,12 @@ void drawSegmentDividers (juce::Graphics& g, juce::Rectangle<float> bar)
 {
     const int segments = juce::jlimit (8, 30, (int) (bar.getHeight() / 4.0f));
     const float segStep = bar.getHeight() / (float) segments;
-    g.setColour (juce::Colour (0xff020203));
     for (int i = 1; i < segments; ++i)
     {
         const float yy = bar.getY() + i * segStep;
+        // Visible LED-ladder scale so the well reads as an instrument even with
+        // no signal; every 4th line a touch brighter as a major tick.
+        g.setColour ((i % 4 == 0) ? juce::Colour (0xff34343e) : juce::Colour (0xff1d1d24));
         g.fillRect (juce::Rectangle<float> (bar.getX() + 1.0f, yy - 0.4f,
                                               bar.getWidth() - 2.0f, 0.8f));
     }
@@ -195,16 +197,16 @@ void MasteringLimiterEditor::timerCallback()
 
 void MasteringLimiterEditor::paint (juce::Graphics& g)
 {
-    g.fillAll (juce::Colour (0xff181820));
-    g.setColour (juce::Colour (0xff2a2a32));
+    g.fillAll (juce::Colour (0xff20202a));   // raised panel surface
+    g.setColour (juce::Colour (0xff3a3a46));
     g.drawRect (getLocalBounds(), 1);
 
     auto drawMeterBg = [&] (juce::Rectangle<float> bar)
     {
-        g.setColour (juce::Colour (0xff060608));
+        g.setColour (juce::Colour (0xff060608));   // recessed well
         g.fillRoundedRectangle (bar, 2.0f);
-        g.setColour (juce::Colour (0xff2a2a30));
-        g.drawRoundedRectangle (bar, 2.0f, 0.6f);
+        g.setColour (juce::Colour (0xff3c3c48));
+        g.drawRoundedRectangle (bar, 2.0f, 1.0f);
     };
 
     auto drawCaption = [&] (juce::Rectangle<int> meter, const juce::String& caption)
@@ -262,8 +264,9 @@ void MasteringLimiterEditor::paint (juce::Graphics& g)
 
         // Threshold value box just below the handle (shows the threshold dB,
         // i.e. -drive, to match the caption and the meter scale).
-        g.setColour (juce::Colour (0xff181820));
-        const auto valBox = juce::Rectangle<float> (bar.getX() + 2.0f, handleY + 6.0f,
+        // Value readout parked at the bar's vertical centre so the moving
+        // handle never crowds or sits on top of it.
+        const auto valBox = juce::Rectangle<float> (bar.getX() + 2.0f, bar.getCentreY() - 7.0f,
                                                        bar.getWidth() - 4.0f, 14.0f);
         g.setColour (juce::Colour (0xff181820));
         g.fillRoundedRectangle (valBox, 2.0f);
@@ -315,8 +318,8 @@ void MasteringLimiterEditor::paint (juce::Graphics& g)
 
         drawCaption (ceilingMeterArea, "Ceiling");
 
-        // Ceiling value box on top.
-        const auto valBox = juce::Rectangle<float> (bar.getX() + 2.0f, handleY - 18.0f,
+        // Ceiling value readout parked at the bar's vertical centre.
+        const auto valBox = juce::Rectangle<float> (bar.getX() + 2.0f, bar.getCentreY() - 7.0f,
                                                        bar.getWidth() - 4.0f, 14.0f);
         g.setColour (juce::Colour (0xff181820));
         g.fillRoundedRectangle (valBox, 2.0f);

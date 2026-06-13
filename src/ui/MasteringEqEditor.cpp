@@ -10,6 +10,11 @@ constexpr float kFreqMinHz = 20.0f;
 constexpr float kFreqMaxHz = 20000.0f;
 constexpr float kCurveDbRange = 18.0f;   // ±18 dB on the vertical axis
 
+// Spectrum overlay vertical scale (dBFS). The whole plot height maps this
+// range; the EQ ±18 dB curve sits on top in its own scale.
+constexpr float kSpecFloorDb = -96.0f;
+constexpr float kSpecTopDb   =   6.0f;
+
 // Per-band accent colours. Same hue family as the per-channel-strip EQ
 // colours so the user's eye-mapping carries between mixing and mastering.
 const juce::Colour kBandColours[5] = {
@@ -25,7 +30,7 @@ const char* kBandNames[5] = { "Low", "Lo-Mid", "Mid", "Hi-Mid", "High" };
 // either side of its nominal centre - typical for mastering EQs.
 struct BandRange { float minHz, maxHz, defaultHz; };
 constexpr BandRange kBandRanges[5] = {
-    {  20.0f,    400.0f,    80.0f },   // low shelf
+    {  20.0f,    400.0f,    50.0f },   // low shelf
     {  60.0f,   1500.0f,   250.0f },   // low mid
     { 200.0f,   6000.0f,  1000.0f },   // mid
     { 800.0f,  12000.0f,  4000.0f },   // high mid
@@ -63,9 +68,26 @@ juce::String formatFreq (double v)
 }
 } // namespace
 
-MasteringEqEditor::MasteringEqEditor (MasteringParams& p) : params (p)
+MasteringEqEditor::MasteringEqEditor (MasteringParams& p, MasteringChain* c)
+    : params (p), chain (c)
 {
     setOpaque (true);
+
+    specDb.fill (kSpecFloorDb);
+
+    // Spectrum on/off — a small unobtrusive pill in the curve's top-right.
+    specToggle.setClickingTogglesState (true);
+    specToggle.setToggleState (showSpectrum, juce::dontSendNotification);
+    specToggle.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff202028));
+    specToggle.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff2a4a60));
+    specToggle.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xff707078));
+    specToggle.setColour (juce::TextButton::textColourOnId,   juce::Colour (0xff8aceee));
+    specToggle.onClick = [this]
+    {
+        showSpectrum = specToggle.getToggleState();
+        if (! curveArea.isEmpty()) repaint (curveArea);
+    };
+    addAndMakeVisible (specToggle);
 
     headerBtn = std::make_unique<CompHeaderButton> (
         [this] { return params.eqEnabled.load (std::memory_order_relaxed); },
@@ -149,6 +171,8 @@ void MasteringEqEditor::rebuildKnobValues()
 
 void MasteringEqEditor::timerCallback()
 {
+    const bool specChanged = updateSpectrum();
+
     bool changed = false;
     for (int i = 0; i < 5; ++i)
     {
@@ -172,6 +196,8 @@ void MasteringEqEditor::timerCallback()
         if (enabledChanged && headerBtn != nullptr)
             headerBtn->repaint();
     }
+    else if (specChanged && ! curveArea.isEmpty())
+        repaint (curveArea);
 }
 
 float MasteringEqEditor::bandResponseDb (int idx, float freqHz) const noexcept
@@ -209,10 +235,82 @@ float MasteringEqEditor::totalResponseDb (float freqHz) const noexcept
     return total;
 }
 
+bool MasteringEqEditor::updateSpectrum()
+{
+    if (! showSpectrum || chain == nullptr) return false;
+
+    if (chain->readScopeLatest (fftScratch.data(), kFftSize) < kFftSize)
+        return false;   // not enough audio buffered yet
+
+    // performFrequencyOnlyForwardTransform wants a 2×size scratch; the
+    // windowed time data goes in the low half, magnitudes come back in it.
+    std::copy (fftScratch.begin(), fftScratch.end(), fftWork.begin());
+    fftWindow.multiplyWithWindowingTable (fftWork.data(), (size_t) kFftSize);
+    fft.performFrequencyOnlyForwardTransform (fftWork.data());
+
+    // ×2/N: Hann coherent-gain + single-sided scaling, so a 0 dBFS sine
+    // reads near 0 dBFS on the display.
+    constexpr float kRef = 2.0f / (float) kFftSize;
+    for (int i = 0; i < kNumBins; ++i)
+    {
+        const float db = juce::jlimit (kSpecFloorDb, kSpecTopDb,
+            juce::Decibels::gainToDecibels (fftWork[(size_t) i] * kRef, kSpecFloorDb));
+        float& s = specDb[(size_t) i];
+        s = (db > s) ? db : s + (db - s) * 0.25f;   // instant attack, slow release
+    }
+    return true;
+}
+
+void MasteringEqEditor::drawSpectrum (juce::Graphics& g, juce::Rectangle<float> plot) const
+{
+    const double sr = (chain != nullptr) ? chain->getScopeSampleRate() : 48000.0;
+    if (sr <= 0.0) return;
+
+    const float logMin = std::log10 (kFreqMinHz);
+    const float logMax = std::log10 (kFreqMaxHz);
+    auto fToX = [&] (float fHz)
+    {
+        return plot.getX() + (std::log10 (fHz) - logMin) / (logMax - logMin) * plot.getWidth();
+    };
+    auto dbToY = [&] (float db)
+    {
+        const float frac = juce::jlimit (0.0f, 1.0f,
+            (db - kSpecFloorDb) / (kSpecTopDb - kSpecFloorDb));
+        return plot.getBottom() - frac * plot.getHeight();
+    };
+
+    juce::Path contour;
+    float firstX = 0.0f, lastX = 0.0f;
+    bool started = false;
+    const float binHz = (float) sr / (float) kFftSize;
+    for (int i = 1; i < kNumBins; ++i)
+    {
+        const float f = i * binHz;
+        if (f < kFreqMinHz) continue;
+        if (f > kFreqMaxHz) break;
+        const float x = fToX (f);
+        const float y = dbToY (specDb[(size_t) i]);
+        if (! started) { contour.startNewSubPath (x, y); firstX = x; started = true; }
+        else           contour.lineTo (x, y);
+        lastX = x;
+    }
+    if (! started) return;
+
+    juce::Path fill = contour;
+    fill.lineTo (lastX, plot.getBottom());
+    fill.lineTo (firstX, plot.getBottom());
+    fill.closeSubPath();
+
+    g.setColour (juce::Colour (0xff39c0c8).withAlpha (0.16f));
+    g.fillPath (fill);
+    g.setColour (juce::Colour (0xff5fd6dd).withAlpha (0.45f));
+    g.strokePath (contour, juce::PathStrokeType (1.0f));
+}
+
 void MasteringEqEditor::paint (juce::Graphics& g)
 {
-    g.fillAll (juce::Colour (0xff181820));
-    g.setColour (juce::Colour (0xff2a2a30));
+    g.fillAll (juce::Colour (0xff20202a));   // raised panel surface
+    g.setColour (juce::Colour (0xff3a3a46));
     g.drawRect (getLocalBounds(), 1);
 
     if (curveArea.isEmpty()) return;
@@ -260,6 +358,10 @@ void MasteringEqEditor::paint (juce::Graphics& g)
                      juce::Rectangle<float> (x - 18.0f, plot.getBottom() - 11.0f, 36.0f, 10.0f),
                      juce::Justification::centred, false);
     }
+
+    // ── Live spectrum (post-EQ), behind the EQ curves ──
+    if (showSpectrum)
+        drawSpectrum (g, plot);
 
     // ── Per-band response curves (dim) ──
     constexpr int kNumPoints = 220;
@@ -540,16 +642,20 @@ void MasteringEqEditor::resized()
     // Curve plot uses ~55 % of remaining height; the controls row uses the
     // rest. With a tall panel the user reads the curve clearly; with a
     // narrower panel both halves shrink proportionally.
-    const int controlsH = juce::jlimit (110, 160, (int) (area.getHeight() * 0.45f));
+    const int controlsH = juce::jlimit (130, 210, (int) (area.getHeight() * 0.48f));
     controlsArea = area.removeFromBottom (controlsH);
     area.removeFromBottom (4);
     curveArea = area;
+
+    // FFT toggle — small pill in the plot's top-left (top-right holds the
+    // +12 dB scale label, centre holds the BYPASS badge).
+    specToggle.setBounds (curveArea.getX() + 6, curveArea.getY() + 5, 34, 15);
 
     // ── Band controls: 5 equal columns. Each column has band label,
     //    Freq knob, Gain knob, and Q knob (mid bands only). Shelf columns
     //    drop the Q row and centre Freq+Gain instead.
     const int colW = controlsArea.getWidth() / 5;
-    const int knobSize = juce::jlimit (28, 44, (controlsArea.getHeight() - 16) / 3 - 8);
+    const int knobSize = juce::jlimit (34, 60, (controlsArea.getHeight() - 16) / 3 - 8);
 
     for (int i = 0; i < 5; ++i)
     {

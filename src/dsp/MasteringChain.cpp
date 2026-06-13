@@ -38,7 +38,39 @@ void MasteringChain::prepare (double sampleRate, int blockSize, int oversampling
 
     loudnessMeter.prepare (sampleRate, bs);
 
+    // Scope ring: power-of-two, large enough that a single FFT window (2048)
+    // is rarely overwritten mid-copy even at large block sizes.
+    constexpr int kScopeRingSize = 1 << 14;   // 16384
+    if (scopeRing.getNumSamples() != kScopeRingSize)
+        scopeRing.setSize (1, kScopeRingSize, false, false, true);
+    scopeRing.clear();
+    scopeRingMask = kScopeRingSize - 1;
+    scopeWritePos.store (0, std::memory_order_relaxed);
+
     preparedBlockSize = bs;
+}
+
+void MasteringChain::pushScope (const float* L, const float* R, int n) noexcept
+{
+    if (scopeRingMask == 0) return;
+    float* ring = scopeRing.getWritePointer (0);
+    long long wp = scopeWritePos.load (std::memory_order_relaxed);
+    for (int i = 0; i < n; ++i)
+        ring[(int) (wp++ & scopeRingMask)] = 0.5f * (L[i] + R[i]);
+    scopeWritePos.store (wp, std::memory_order_release);
+}
+
+int MasteringChain::readScopeLatest (float* dest, int count) const noexcept
+{
+    const int ringSize = scopeRing.getNumSamples();
+    if (ringSize == 0 || count <= 0) return 0;
+    count = juce::jmin (count, ringSize);
+    const long long wp = scopeWritePos.load (std::memory_order_acquire);
+    const float* ring = scopeRing.getReadPointer (0);
+    const long long start = wp - count;
+    for (int i = 0; i < count; ++i)
+        dest[i] = ring[(int) ((start + i) & scopeRingMask)];
+    return count;
 }
 
 void MasteringChain::resetLoudness()
@@ -132,6 +164,10 @@ void MasteringChain::processInPlace (float* L, float* R, int numSamples) noexcep
     // uses in Mixing. Mastering wants a clean parametric EQ.
     updateEqParameters();
     digitalEq.processInPlace (L, R, numSamples);
+
+    // Feed the UI spectrum analyzer the post-EQ signal so EQ moves are
+    // visible in the overlay (the analyzer lives on the mastering EQ panel).
+    pushScope (L, R, numSamples);
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
     {

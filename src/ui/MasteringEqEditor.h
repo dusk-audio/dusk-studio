@@ -1,9 +1,11 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include <juce_dsp/juce_dsp.h>
 #include <array>
 #include <memory>
 #include "../session/Session.h"
+#include "../dsp/MasteringChain.h"
 
 namespace duskstudio
 {
@@ -25,7 +27,7 @@ namespace duskstudio
 class MasteringEqEditor final : public juce::Component, private juce::Timer
 {
 public:
-    explicit MasteringEqEditor (MasteringParams& params);
+    MasteringEqEditor (MasteringParams& params, MasteringChain* chain);
     ~MasteringEqEditor() override;
 
     void paint (juce::Graphics&) override;
@@ -56,7 +58,29 @@ private:
     float bandResponseDb (int idx, float freqHz) const noexcept;
     float totalResponseDb (float freqHz) const noexcept;
 
+    // Pull the latest post-EQ window from the chain, window + FFT it, fold
+    // the magnitudes into specDb (peak-attack / slow-release). Returns true
+    // if specDb changed (→ repaint the curve area).
+    bool updateSpectrum();
+    void drawSpectrum (juce::Graphics&, juce::Rectangle<float> plot) const;
+
     MasteringParams& params;
+    MasteringChain*  chain = nullptr;
+
+    // ── Spectrum analyzer ──
+    static constexpr int kFftOrder = 11;            // 2048-point
+    static constexpr int kFftSize  = 1 << kFftOrder;
+    static constexpr int kNumBins  = kFftSize / 2;
+
+    bool showSpectrum = true;
+    juce::TextButton specToggle { "FFT" };
+
+    juce::dsp::FFT fft { kFftOrder };
+    juce::dsp::WindowingFunction<float> fftWindow
+        { (size_t) kFftSize, juce::dsp::WindowingFunction<float>::hann, false };
+    std::array<float, kFftSize>     fftScratch {};   // [time | imag]; FFT wants 2×size
+    std::array<float, kFftSize * 2> fftWork {};
+    std::array<float, kNumBins>     specDb;          // smoothed magnitudes, dBFS
 
     // Shared console chrome: LED-pill header (click toggles enable), same
     // component the channel / bus / master strips use for their EQ + COMP

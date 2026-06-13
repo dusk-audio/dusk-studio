@@ -74,7 +74,6 @@ private:
     juce::Label       clockLabel;
     juce::Label       grLabel;
 
-    juce::Label  meterL, meterR;
     juce::Label  lufsM, lufsS, lufsI, truePeak;
     // Backdrop rect around the TP/M/S/I cells, recomputed in resized().
     juce::Rectangle<int> loudnessClusterBounds;
@@ -84,6 +83,7 @@ private:
     juce::Label    targetCaption;
 
     // Multiband-comp preset picker in the comp panel header (donor DSP only).
+    juce::Label  compPresetCaption;
     DuskComboBox compPresetCombo;
 
     juce::TextButton exportButton { "Export master..." };

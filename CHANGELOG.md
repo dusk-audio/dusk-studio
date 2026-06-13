@@ -12,6 +12,13 @@ the public stable declaration.
 
 ### Added
 
+- **Mastering-EQ spectrum analyzer.** A real-time FFT overlay on the mastering
+  EQ draws the post-EQ spectrum behind the response curve; toggle it with the
+  FFT button in the panel's top-left.
+- **Mastering-section visual pass.** Higher-contrast knobs (value-arc rings),
+  raised-panel / recessed-well depth tiers, idle meter-well scales, a stronger
+  loudness cluster, and a waveform with a time ruler, played/unplayed colouring,
+  and a clearer playhead. The mastering-EQ low band now defaults to 50 Hz.
 - **Optional out-of-process plugin sandbox.** Third-party plugins can run
   in a sandboxed child process on all three OSes (launch with
   `DUSKSTUDIO_USE_OOP_PLUGINS=1`) so a crashing plugin doesn't take the

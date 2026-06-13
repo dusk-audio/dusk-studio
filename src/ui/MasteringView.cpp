@@ -56,19 +56,56 @@ void WaveformDisplay::paint (juce::Graphics& g)
     }
 
     auto bounds = getLocalBounds().reduced (4);
-    g.setColour (juce::Colour (0xff5a8ad0));
-    thumbnail.drawChannels (g, bounds, 0.0, thumbnail.getTotalLength(), 1.0f);
 
-    // Playhead line.
-    const double sr = player.getSourceSampleRate();
-    const double total = thumbnail.getTotalLength();
+    const double sr      = player.getSourceSampleRate();
+    const double total   = thumbnail.getTotalLength();
+    const double playSec = (sr > 0.0) ? (double) player.getPlayhead() / sr : 0.0;
+    const float  frac    = (total > 0.0) ? (float) juce::jlimit (0.0, 1.0, playSec / total) : 0.0f;
+    const int    splitX  = bounds.getX() + (int) (frac * bounds.getWidth());
+
+    // Centre line.
+    g.setColour (juce::Colour (0xff202028));
+    g.drawHorizontalLine (bounds.getCentreY(), (float) bounds.getX(), (float) bounds.getRight());
+
+    // Played portion bright, unplayed dim — position reads at a glance.
+    if (total > 0.0 && frac > 0.0f)
+    {
+        g.setColour (juce::Colour (0xff7ab0ee));
+        thumbnail.drawChannels (g, bounds.withRight (splitX), 0.0, playSec, 1.0f);
+    }
+    g.setColour (juce::Colour (0xff3c5c84));
+    thumbnail.drawChannels (g, bounds.withLeft (splitX), playSec, total, 1.0f);
+
+    // Time ruler along the bottom — a handful of mm:ss ticks.
+    if (total > 0.0)
+    {
+        double step = 30.0;
+        for (double s : { 1.0, 2.0, 5.0, 10.0, 15.0, 30.0, 60.0, 120.0, 300.0 })
+            if (total / s <= 10.0) { step = s; break; }
+        g.setFont (juce::Font (juce::FontOptions (9.0f)));
+        for (double t = 0.0; t <= total; t += step)
+        {
+            const int x = bounds.getX() + (int) ((t / total) * bounds.getWidth());
+            g.setColour (juce::Colour (0xff34343e));
+            g.drawVerticalLine (x, (float) bounds.getBottom() - 7.0f, (float) bounds.getBottom());
+            g.setColour (juce::Colour (0xff707078));
+            g.drawText (juce::String::formatted ("%d:%02d", (int) (t / 60.0), (int) t % 60),
+                         x + 2, bounds.getBottom() - 12, 38, 10,
+                         juce::Justification::left, false);
+        }
+    }
+
+    // Playhead — bright line + a small flag at the top.
     if (sr > 0.0 && total > 0.0)
     {
-        const double sec  = (double) player.getPlayhead() / sr;
-        const float  frac = (float) juce::jlimit (0.0, 1.0, sec / total);
-        const int    x    = bounds.getX() + (int) (frac * bounds.getWidth());
-        g.setColour (juce::Colour (0xffe04040));
-        g.drawVerticalLine (x, (float) bounds.getY(), (float) bounds.getBottom());
+        g.setColour (juce::Colour (0xffff5555));
+        g.drawVerticalLine (splitX, (float) bounds.getY(), (float) bounds.getBottom());
+        juce::Path flag;
+        flag.addTriangle ((float) splitX - 4.0f, (float) bounds.getY(),
+                          (float) splitX + 4.0f, (float) bounds.getY(),
+                          (float) splitX,        (float) bounds.getY() + 6.0f);
+        g.setColour (juce::Colour (0xffff7777));
+        g.fillPath (flag);
     }
 }
 
@@ -136,7 +173,7 @@ MasteringView::MasteringView (Session& s, AudioEngine& e)
 
     grLabel.setJustificationType (juce::Justification::centred);
     grLabel.setColour (juce::Label::textColourId, juce::Colour (0xff909094));
-    grLabel.setFont (juce::Font (juce::FontOptions (11.0f)));
+    grLabel.setFont (juce::Font (juce::FontOptions (13.0f)));
     addAndMakeVisible (grLabel);
 
     auto& m = session.mastering();
@@ -146,19 +183,19 @@ MasteringView::MasteringView (Session& s, AudioEngine& e)
     {
         l.setJustificationType (juce::Justification::centred);
         l.setFont (juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(),
-                                                    11.0f, juce::Font::plain)));
+                                                    13.0f, juce::Font::plain)));
         l.setColour (juce::Label::textColourId, juce::Colour (0xffd0d0d0));
         l.setColour (juce::Label::backgroundColourId, juce::Colour (0xff121214));
     };
-    styleMeter (meterL);
-    styleMeter (meterR);
     styleMeter (lufsM);
     styleMeter (lufsS);
     styleMeter (lufsI);
     styleMeter (truePeak);
     lufsI.setColour (juce::Label::backgroundColourId, juce::Colour (0xff1a2228));  // brighter - the target reading
-    addAndMakeVisible (meterL);
-    addAndMakeVisible (meterR);
+    // Integrated LUFS is the headline mastering number — bold it so it reads
+    // as primary against the momentary/short-term cells.
+    lufsI.setFont (juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(),
+                                                    13.0f, juce::Font::bold)));
     addAndMakeVisible (lufsM);
     addAndMakeVisible (lufsS);
     addAndMakeVisible (lufsI);
@@ -214,7 +251,8 @@ MasteringView::MasteringView (Session& s, AudioEngine& e)
     addAndMakeVisible (waveform.get());
 
     // ── Custom Digital EQ editor (curve + band controls) ──
-    eqEditor = std::make_unique<MasteringEqEditor> (session.mastering());
+    eqEditor = std::make_unique<MasteringEqEditor> (session.mastering(),
+                                                     &engine.getMasteringChain());
     addAndMakeVisible (eqEditor.get());
 
     // ── Embedded Multiband Comp editor + header wrapper ──
@@ -253,8 +291,16 @@ MasteringView::MasteringView (Session& s, AudioEngine& e)
         compPanelWrapper->addAndMakeVisible (compEditor.get());
     }
 
-    // DP-24-style 3-band preset picker in the comp header.
-    compPresetCombo.addItem ("Presets...", 1);
+    // DP-24-style 3-band preset picker in the comp header. A muted caption to
+    // its left (matching the Mode / Target / Release caption style elsewhere in
+    // this view) reads as a deliberate labelled control rather than a lone combo.
+    compPresetCaption.setText ("PRESET", juce::dontSendNotification);
+    compPresetCaption.setJustificationType (juce::Justification::centredRight);
+    compPresetCaption.setColour (juce::Label::textColourId, juce::Colour (0xff808088));
+    compPresetCaption.setFont (juce::Font (juce::FontOptions (10.0f, juce::Font::bold)));
+    compPanelWrapper->addAndMakeVisible (compPresetCaption);
+
+    compPresetCombo.addItem ("Select preset...", 1);
     for (int i = 0; i < mbpresets::kNumPresets; ++i)
         compPresetCombo.addItem (mbpresets::kPresets[(size_t) i].name, i + 2);
     compPresetCombo.setSelectedId (1, juce::dontSendNotification);
@@ -362,10 +408,13 @@ void MasteringView::paint (juce::Graphics& g)
     // cell backgrounds pop against this) so they read as one loudness cluster.
     if (! loudnessClusterBounds.isEmpty())
     {
-        g.setColour (juce::Colour (0xff17171d));
-        g.fillRoundedRectangle (loudnessClusterBounds.toFloat(), 4.0f);
-        g.setColour (juce::Colour (0xff2c2c34));
-        g.drawRoundedRectangle (loudnessClusterBounds.toFloat(), 4.0f, 1.0f);
+        const auto box = loudnessClusterBounds.toFloat();
+        juce::ColourGradient grad (juce::Colour (0xff1d1d25), box.getX(), box.getY(),
+                                    juce::Colour (0xff141419), box.getX(), box.getBottom(), false);
+        g.setGradientFill (grad);
+        g.fillRoundedRectangle (box, 4.0f);
+        g.setColour (juce::Colour (0xff44485a));
+        g.drawRoundedRectangle (box, 4.0f, 1.2f);
     }
 }
 
@@ -417,11 +466,11 @@ void MasteringView::resized()
     placeR (masteringTargetCombo, 240, 4);
     placeR (targetCaption,         40, 12);
     placeR (resetLoudness,         56, 10);
-    placeR (lufsI,    110);
-    placeR (lufsS,     85);
-    placeR (lufsM,     85);
-    placeR (truePeak,  95, 12);
-    placeR (grLabel,  170);
+    placeR (lufsI,    122);
+    placeR (lufsS,     96);
+    placeR (lufsM,     96);
+    placeR (truePeak, 108, 12);
+    placeR (grLabel,  205);
 
     // Backdrop rect around the flush TP..I meter block, for visual grouping.
     if (truePeak.isVisible() && lufsI.isVisible())
@@ -431,17 +480,6 @@ void MasteringView::resized()
     else
         loudnessClusterBounds = {};
     area.removeFromTop (8);
-
-    // ── Bottom strip (export + L/R meters). LUFS readouts + target moved
-    //    up to the transport row above; the reclaimed height goes to the
-    //    plugin panels. ──
-    auto bottom = area.removeFromBottom (32);
-    area.removeFromBottom (6);
-
-    auto meterRow = bottom.removeFromTop (28);
-    meterR.setBounds (meterRow.removeFromRight (140));
-    meterRow.removeFromRight (4);
-    meterL.setBounds (meterRow.removeFromRight (140));
 
     // ── Waveform: a slim band at the top so the plugin row gets the bulk
     //    of the vertical real estate. Fixed height; what's left in `area`
@@ -483,14 +521,19 @@ void MasteringView::resized()
     {
         compPanelWrapper->setBounds (compPanel);
         auto inner = compPanelWrapper->getLocalBounds().reduced (8);
+        // Title bar (full width), then a centred preset picker row beneath it.
         auto headerRow = inner.removeFromTop (20);
-#if DUSKSTUDIO_HAS_DUSK_DSP
-        // Preset picker on the right of the header, the ON-toggle pill on the left.
-        const int presetW = juce::jlimit (0, 130, headerRow.getWidth() / 2 - 2);
-        compPresetCombo.setBounds (headerRow.removeFromRight (presetW));
-        headerRow.removeFromRight (4);
-#endif
         if (compHeaderBtn != nullptr) compHeaderBtn->setBounds (headerRow);
+#if DUSKSTUDIO_HAS_DUSK_DSP
+        inner.removeFromTop (6);
+        auto presetRow = inner.removeFromTop (24);
+        const int capW    = 52;
+        const int dropW   = juce::jmin (190, presetRow.getWidth() - capW - 6);
+        auto cluster = presetRow.withSizeKeepingCentre (capW + 6 + dropW, 24);
+        compPresetCaption.setBounds (cluster.removeFromLeft (capW));
+        cluster.removeFromLeft (6);
+        compPresetCombo.setBounds (cluster);
+#endif
         inner.removeFromTop (4);
         if (compEditor != nullptr)
             compEditor->setBounds (inner);
@@ -534,15 +577,6 @@ void MasteringView::timerCallback()
     const int ms   = (int) ((sec - std::floor (sec)) * 1000.0);
     clockLabel.setText (juce::String::formatted ("%02d:%02d.%03d", mins, secs, ms),
                          juce::dontSendNotification);
-
-    // Meters.
-    auto fmt = [] (float dB)
-    {
-        if (dB <= -99.0f) return juce::String ("  -inf");
-        return juce::String::formatted ("%6.1f dB", dB);
-    };
-    meterL.setText ("L " + fmt (m.meterPostMasterLDb.load()), juce::dontSendNotification);
-    meterR.setText ("R " + fmt (m.meterPostMasterRDb.load()), juce::dontSendNotification);
 
     grLabel.setText (juce::String::formatted ("Comp GR %5.1f dB    Lim GR %5.1f dB",
                                                  m.meterCompGrDb.load(),

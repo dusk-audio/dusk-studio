@@ -292,11 +292,37 @@ public:
     {
         const float cx = x + width  * 0.5f;
         const float cy = y + height * 0.5f;
-        const float radius = juce::jmin (width, height) * 0.5f - 2.0f;
-        if (radius <= 2.0f) return;
+        const float outerR = juce::jmin (width, height) * 0.5f - 2.0f;
+        if (outerR <= 2.0f) return;
 
         const float angle = rotaryStartAngle + sliderPos * (rotaryEndAngle - rotaryStartAngle);
         const auto fill = slider.findColour (juce::Slider::rotarySliderFillColourId);
+
+        // Value ring in the annulus around the body — an at-a-glance value
+        // readout that lifts knob contrast against the dark panels. Only on
+        // larger knobs (mastering / master): tiny channel-strip knobs keep the
+        // clean capped look so the ring doesn't crowd a 28 px body.
+        float radius = outerR;
+        const bool drawRing = outerR > 15.0f;
+        if (drawRing)
+        {
+            const float ringR     = outerR - 1.0f;
+            const float ringThick = juce::jmax (2.5f, outerR * 0.13f);
+            juce::Path track;
+            track.addCentredArc (cx, cy, ringR, ringR, 0.0f,
+                                 rotaryStartAngle, rotaryEndAngle, true);
+            g.setColour (juce::Colour (0xff31313c));
+            g.strokePath (track, juce::PathStrokeType (ringThick, juce::PathStrokeType::curved,
+                                                       juce::PathStrokeType::rounded));
+            juce::Path val;
+            val.addCentredArc (cx, cy, ringR, ringR, 0.0f,
+                               rotaryStartAngle, angle, true);
+            g.setColour (fill.brighter (0.30f));
+            g.strokePath (val, juce::PathStrokeType (ringThick, juce::PathStrokeType::curved,
+                                                     juce::PathStrokeType::rounded));
+            radius = ringR - ringThick - 1.5f;   // body sits inside the ring
+            if (radius <= 2.0f) return;
+        }
 
         // Soft drop shadow under the body.
         {

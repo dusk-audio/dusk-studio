@@ -49,6 +49,15 @@ public:
 #endif
     BrickwallLimiter&    getLimiter() noexcept { return limiter; }
 
+    // ── Spectrum-analyzer feed (post-EQ) ──
+    // The audio thread writes mono-summed post-EQ samples into a free-running
+    // ring; the message thread copies the most recent window for the mastering
+    // EQ's FFT overlay. A read overlapping a write tears at most one frame,
+    // which is invisible on a spectrum, so no FIFO accounting is needed — a
+    // single release/acquire write index is the whole contract.
+    int    readScopeLatest (float* dest, int count) const noexcept;
+    double getScopeSampleRate() const noexcept { return sampleRateForMeter; }
+
 private:
     const MasteringParams* paramsRef = nullptr;
 
@@ -58,6 +67,13 @@ private:
 
     void updateEqParameters() noexcept;
     void updateLimiterParameters() noexcept;
+
+    // Post-EQ scope ring (power-of-two length; mask-indexed). Written on the
+    // audio thread, read on the message thread — see readScopeLatest.
+    juce::AudioBuffer<float> scopeRing;
+    std::atomic<long long>   scopeWritePos { 0 };
+    int                      scopeRingMask = 0;
+    void pushScope (const float* L, const float* R, int n) noexcept;
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
     UniversalCompressor         busComp;
