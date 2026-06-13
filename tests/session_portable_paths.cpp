@@ -43,7 +43,11 @@ TEST_CASE ("region files inside the session dir round-trip as relative paths",
     const auto json = target.loadFileAsString();
     REQUIRE (json.contains ("audio/track01_take.wav"));
     REQUIRE_FALSE (json.contains ("audio\\track01_take.wav"));
-    REQUIRE_FALSE (json.contains (dir.getFullPathName() + "/audio"));
+    // Normalise the machine prefix to '/' before checking: on Windows
+    // getFullPathName() returns backslashes, but the JSON stores '/', so the
+    // raw prefix would never match and a real leak could slip through.
+    const auto normalizedPrefix = dir.getFullPathName().replaceCharacter ('\\', '/');
+    REQUIRE_FALSE (json.contains (normalizedPrefix + "/audio"));
 
     Session b;
     b.setSessionDirectory (dir);
@@ -130,6 +134,57 @@ TEST_CASE ("unresolvable region path is reported as missing",
     REQUIRE (SessionSerializer::load (s, target));
     REQUIRE (s.missingAudioFilesAfterLoad.size() == 1);
     REQUIRE (s.missingAudioFilesAfterLoad[0] == "/gone/forever/track03_take.wav");
+
+    dir.deleteRecursively();
+}
+
+TEST_CASE ("same missing file referenced twice is reported once",
+           "[session][serializer][paths]")
+{
+    using namespace duskstudio;
+
+    const auto dir = makeTempSessionDir ("missing-dup");
+    Session s;
+    s.setSessionDirectory (dir);
+
+    const auto target = dir.getChildFile ("session.json");
+    target.replaceWithText (
+        R"({"version":1,"tracks":[{"name":"T","regions":[)"
+        R"({"file":"/gone/forever/track05_take.wav",)"
+        R"("timeline_start":0,"length":1000,"source_offset":0},)"
+        R"({"file":"/gone/forever/track05_take.wav",)"
+        R"("timeline_start":2000,"length":1000,"source_offset":0}]}]})");
+
+    REQUIRE (SessionSerializer::load (s, target));
+    REQUIRE (s.missingAudioFilesAfterLoad.size() == 1);
+
+    dir.deleteRecursively();
+}
+
+TEST_CASE ("mastering source file does not survive loading a session without one",
+           "[session][serializer][paths]")
+{
+    using namespace duskstudio;
+
+    const auto dir = makeTempSessionDir ("mast-stale");
+    Session s;
+    s.setSessionDirectory (dir);
+    s.mastering().sourceFile = dir.getChildFile ("audio").getChildFile ("old_mix.wav");
+
+    const auto target = dir.getChildFile ("session.json");
+
+    SECTION ("mastering block present, source_file key absent")
+    {
+        target.replaceWithText (R"({"version":1,"mastering":{"eq_enabled":false}})");
+        REQUIRE (SessionSerializer::load (s, target));
+        REQUIRE (s.mastering().sourceFile == juce::File());
+    }
+    SECTION ("mastering block absent entirely")
+    {
+        target.replaceWithText (R"({"version":1})");
+        REQUIRE (SessionSerializer::load (s, target));
+        REQUIRE (s.mastering().sourceFile == juce::File());
+    }
 
     dir.deleteRecursively();
 }

@@ -11,6 +11,8 @@
  #include <windows.h>
 #endif
 
+#include <algorithm>
+
 namespace duskstudio
 {
 namespace
@@ -22,7 +24,7 @@ namespace
 // Loader rejects sessions with version > kFormatVersion (newer Dusk Studio
 // can read older files via migrateSession; older Dusk Studio refusing
 // newer files is safer than silently dropping fields).
-constexpr int kFormatVersion = 2;
+constexpr int kFormatVersion = 3;
 } // namespace
 
 // Forward-migrate `root` from a known older version to kFormatVersion
@@ -56,6 +58,19 @@ bool migrateSession (juce::var& root, int from)
                 // case here.
                 if (root.isObject())
                     root.getDynamicObject()->setProperty ("version", 2);
+                ++v;
+                break;
+
+            case 2:
+                // v2 → v3: region "file" / mastering "source_file" may now
+                // be SESSION-RELATIVE (portable sessions). v2 files only
+                // ever stored absolute paths, which resolvePortablePath
+                // still handles, so the version stamp is the only mutation.
+                // The bump exists so v2 readers (0.10.x) REFUSE v3 files
+                // loudly instead of silently failing to resolve relative
+                // paths they predate.
+                if (root.isObject())
+                    root.getDynamicObject()->setProperty ("version", 3);
                 ++v;
                 break;
 
@@ -223,15 +238,26 @@ juce::File resolvePortablePath (const juce::String& stored,
 
     if (f.existsAsFile()) return f;
 
-    const auto fileName = stored.replaceCharacter ('\\', '/')
-                                .fromLastOccurrenceOf ("/", false, false);
-    if (sessionDir != juce::File() && fileName.isNotEmpty())
+    // Re-root by file name, but only for paths that actually lived in a
+    // session's audio folder: a relative "audio/..." (the canonical region
+    // path) or an absolute path whose IMMEDIATE parent is audio/ (a moved/
+    // renamed session). A relative path NOT under audio/ (e.g. a mastering
+    // mixdown at the session root), and any absolute path where audio/ is not
+    // the direct parent (external media that merely contains an audio/ segment),
+    // must not silently remap to an unrelated same-named take — report missing.
+    const auto normalised = stored.replaceCharacter ('\\', '/');
+    const auto fileName = normalised.fromLastOccurrenceOf ("/", false, false);
+    const bool sessionLocal = normalised.startsWith ("audio/")
+                           || (juce::File::isAbsolutePath (stored)
+                               && normalised.endsWith ("/audio/" + fileName));
+    if (sessionLocal && sessionDir != juce::File() && fileName.isNotEmpty())
     {
         const auto byName = sessionDir.getChildFile ("audio").getChildFile (fileName);
         if (byName.existsAsFile()) return byName;
     }
 
-    missing.push_back (stored);
+    if (std::find (missing.begin(), missing.end(), stored) == missing.end())
+        missing.push_back (stored);
     return f;
 }
 
@@ -1636,6 +1662,9 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
             s.master().automationMode.store ((int) master["automation_mode"],
                                               std::memory_order_release);
     }
+    // Always reset: a session without a saved mastering source must not
+    // inherit the previously loaded session's file.
+    s.mastering().sourceFile = juce::File();
     if (auto mast = root["mastering"]; mast.isObject())
     {
         auto& m = s.mastering();
