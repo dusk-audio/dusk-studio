@@ -237,10 +237,10 @@ TapeStrip::TapeStrip (Session& s, AudioEngine& e)
     addAndMakeVisible (snapToggle);
 
     showAllToggle.setClickingTogglesState (true);
-    showAllToggle.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff282830));
-    showAllToggle.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff1f3a52));
-    showAllToggle.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xff909094));
-    showAllToggle.setColour (juce::TextButton::textColourOnId,   juce::Colour (0xff7fb6e6));
+    showAllToggle.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff3c3c48));
+    showAllToggle.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff2f5d86));
+    showAllToggle.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xffd2d2da));
+    showAllToggle.setColour (juce::TextButton::textColourOnId,   juce::Colour (0xffd8ecff));
     showAllToggle.setMouseClickGrabsKeyboardFocus (false);
     showAllToggle.setWantsKeyboardFocus (false);
     showAllToggle.setTooltip ("Show every track row, including empty unarmed tracks.");
@@ -760,11 +760,10 @@ void TapeStrip::resized()
     // the top — lives in unused real estate above the row labels, fits
     // in the kRulerH band so it doesn't compete with the time ruler.
     constexpr int kShowAllH = 14;
-    constexpr int kShowAllW = 38;
     constexpr int kShowAllPad = 2;
     showAllToggle.setBounds (kShowAllPad,
                               kShowAllPad,
-                              juce::jmin (kShowAllW, labelColW - 2 * kShowAllPad),
+                              labelColW - 2 * kShowAllPad,
                               kShowAllH);
     inheritCursorOnDescendants (*this);
 }
