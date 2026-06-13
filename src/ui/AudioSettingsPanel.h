@@ -61,6 +61,12 @@ private:
     juce::Label    oversamplingLabel { {}, "Effect Oversampling" };
     DuskComboBox oversamplingCombo;
 
+    // Per-machine (AppConfig): fan the 24 strips' DSP across worker threads.
+    // Off / Auto (cores-2) / a pinned count. Live-applied via the same
+    // detach/reattach re-prepare as oversampling.
+    juce::Label    multicoreLabel { {}, "Multicore DSP" };
+    DuskComboBox multicoreCombo;
+
     // Engine resolves selection to a real input index on every
     // hot-plug rebuild and feeds clock bytes to MidiSyncReceiver.
     juce::Label    syncSourceLabel { {}, "MIDI Sync Source" };
@@ -115,7 +121,7 @@ private:
     juce::Label generalSectionLabel       { {}, "General" };
     juce::Label advancedSectionLabel      { {}, "Advanced" };
     juce::ToggleButton tapeStripExpandedToggle { "Expand tape strip by default" };
-    juce::Label        stopBehaviorLabel       { {}, "On Stop:" };
+    juce::Label        stopBehaviorLabel       { {}, "Playhead on Stop:" };
     juce::ComboBox     stopBehaviorCombo;
 
     // Captured during resized() + drawn by paint() as thin horizontal
@@ -126,6 +132,7 @@ private:
     void applyPeriodsChange();
 #endif
     void applyOversamplingChange();
+    void applyMulticoreChange();
     void applyUiScaleChange();
     void applyRescan();
     void openSelfTest();

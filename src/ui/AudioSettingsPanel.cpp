@@ -88,15 +88,49 @@ AudioSettingsPanel::AudioSettingsPanel (juce::AudioDeviceManager& dm,
         oversamplingCombo.setSelectedId ((current == 2 || current == 4) ? current : 1,
                                           juce::dontSendNotification);
     }
-    oversamplingCombo.setTooltip (
-        "Global effect oversampling. 1x is native rate "
-        "(lowest CPU). 2x / 4x raise the internal rate of "
+    oversamplingCombo.setTooltip (juce::CharPointer_UTF8 (
+        "Global effect oversampling. 1\xc3\x97 is native rate "
+        "(lowest CPU). 2\xc3\x97 / 4\xc3\x97 raise the internal rate of "
         "every channel, bus, and master EQ + compressor "
-        "and the tape saturation - roughly 2-4x the DSP "
-        "cost of the whole mixer. The status bar shows "
-        "an @2x / @4x badge while engaged.");
+        "and the tape saturation - roughly 2-3\xc3\x97 the mix-engine "
+        "CPU at 4\xc3\x97. The status bar shows "
+        "an @2x / @4x badge while engaged."));
     oversamplingCombo.onChange = [this] { applyOversamplingChange(); };
     addAndMakeVisible (oversamplingCombo);
+
+    // Multicore DSP — per-machine. Item IDs: 1 = Off, 2 = Auto, 10+N = Manual N
+    // workers. The manual entries cover 1..maxMulticoreWorkers() (cores - 2);
+    // hosts with < 3 cores offer Off + Auto (which resolves to serial) only.
+    addAndMakeVisible (multicoreLabel);
+    multicoreLabel.setJustificationType (juce::Justification::centredRight);
+    {
+        const int maxW = appconfig::maxMulticoreWorkers();
+        multicoreCombo.addItem ("Off (serial)", 1);
+        multicoreCombo.addItem (maxW > 0 ? "Auto (" + juce::String (maxW) + " workers)"
+                                         : juce::String ("Auto (needs 4+ cores)"), 2);
+        for (int n = 1; n <= maxW; ++n)
+            multicoreCombo.addItem (juce::String (n) + (n == 1 ? " worker" : " workers"), 10 + n);
+
+        int selId = 2;   // Auto
+        switch (appconfig::getMulticoreDspMode())
+        {
+            case appconfig::MulticoreDspMode::Off:  selId = 1; break;
+            case appconfig::MulticoreDspMode::Auto: selId = 2; break;
+            case appconfig::MulticoreDspMode::Manual:
+                selId = (maxW > 0) ? 10 + juce::jlimit (1, maxW, appconfig::getMulticoreManualWorkers())
+                                   : 2;   // no manual range on this host → fall back to Auto
+                break;
+        }
+        multicoreCombo.setSelectedId (selId, juce::dontSendNotification);
+    }
+    multicoreCombo.setTooltip (
+        "Spread the 24 channel strips' per-block DSP across real-time worker "
+        "threads so the mixer uses more than one CPU core. Off is the single-"
+        "core path. Auto uses (cores - 2) workers, leaving a core for the UI "
+        "and OS. Per-machine — it is not saved in the session, so a project "
+        "made on a many-core machine won't overload a smaller one.");
+    multicoreCombo.onChange = [this] { applyMulticoreChange(); };
+    addAndMakeVisible (multicoreCombo);
 
     // MIDI sync source. Populated on construction + re-populated on
     // every engine MIDI-bank rebuild via the engine's ChangeBroadcaster
@@ -546,6 +580,11 @@ void AudioSettingsPanel::resized()
         selfTestButton   .setBounds (row.removeFromRight (160).reduced (4, 4));
         rescanButton     .setBounds (row.removeFromRight (140).reduced (4, 4));
     }
+    {
+        auto row = takeRow (32);
+        multicoreLabel.setBounds (row.removeFromLeft (160).reduced (4, 4));
+        multicoreCombo.setBounds (row.removeFromLeft (220).reduced (4, 4));
+    }
 }
 
 void AudioSettingsPanel::openSelfTest()
@@ -643,6 +682,34 @@ void AudioSettingsPanel::applyOversamplingChange()
     // strip/bus/master oversampler at the new factor — all WITHOUT touching the
     // device or the window. Brief silence gap only.
     deviceManager.removeAudioCallback (&engine);
+    deviceManager.addAudioCallback (&engine);
+}
+
+void AudioSettingsPanel::applyMulticoreChange()
+{
+    const int id = multicoreCombo.getSelectedId();
+    if (id == 1)
+        appconfig::setMulticoreDspMode (appconfig::MulticoreDspMode::Off);
+    else if (id == 2)
+        appconfig::setMulticoreDspMode (appconfig::MulticoreDspMode::Auto);
+    else if (id >= 11)
+    {
+        appconfig::setMulticoreDspMode (appconfig::MulticoreDspMode::Manual);
+        appconfig::setMulticoreManualWorkers (id - 10);
+    }
+    else
+        return;
+
+    engine.setDesiredWorkers (appconfig::resolveWorkerCount());
+
+    // Detach first so no audio thread is inside the worker pool's runBlock, then
+    // reconfigure the pool, then reattach. removeAudioCallback quiesces the
+    // callback (and waits out any in-flight block); applyDesiredWorkers does the
+    // stop+start safely; addAudioCallback re-prepares DSP and resumes. The pool
+    // is changed ONLY here — prepare no longer touches it — so a routine
+    // buffer-size change can never race the pool. Brief silence gap only.
+    deviceManager.removeAudioCallback (&engine);
+    engine.applyDesiredWorkers();
     deviceManager.addAudioCallback (&engine);
 }
 
