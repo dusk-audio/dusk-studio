@@ -15,6 +15,9 @@ add_executable(dusk-studio-tests
     output_pair_routing.cpp
     multiband_comp_presets.cpp
     atomic_park.cpp
+    audio_worker_pool.cpp
+    rt_priority.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/AudioWorkerPool.cpp
     embedded_modal_close_safety.cpp
     x11_anti_pattern_guard.cpp
     snap_helpers.cpp

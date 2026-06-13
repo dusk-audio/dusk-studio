@@ -55,6 +55,10 @@ private:
         std::array<bool,  Session::kNumTracks> solo {};
         std::array<bool,  Session::kNumTracks> recordArmed {};
         std::array<bool,  Session::kNumTracks> inputMonitor {};
+        // testParallelMatchesSerial forces tracks to Mono mode + follow-index
+        // input; capture both so a live-session run restores the user's routing.
+        std::array<int,   Session::kNumTracks> mode {};
+        std::array<int,   Session::kNumTracks> inputSource {};
         std::array<bool,  Session::kNumTracks> compEnabled {};
         std::array<bool,  Session::kNumTracks> phaseInvert {};
         std::array<bool,  Session::kNumTracks> hpfEnabled {};
@@ -107,6 +111,7 @@ private:
     juce::String testCompEachMode();         // -18 dBFS sine through Opto/FET/VCA; THD + alias floor
     juce::String testCompHeavyGR();          // extreme settings: characterize harmonics at heavy GR
     juce::String testCompPerTrack();         // all 16 tracks under Opto produce identical output
+    juce::String testParallelMatchesSerial(); // worker-pool mix == serial mix within float-reassoc tol
     juce::String testBackendsOpenCleanly();
     juce::String probeUMC1820AlsaFormat();   // explicitly open UMC1820 ALSA & report format
 
@@ -118,7 +123,8 @@ private:
                                     int numActiveTracks,
                                     bool eqEnabled, bool compEnabled,
                                     bool tapeOn, int oversamplingFactor,
-                                    int numWarmupBlocks, int numMeasureBlocks);
+                                    int numWarmupBlocks, int numMeasureBlocks,
+                                    int workerCount = -1);
 
     AudioEngine& engine;
     juce::AudioDeviceManager& deviceManager;

@@ -41,8 +41,40 @@ public:
     // file -> MasteringChain -> output.
     enum class Stage { Recording, Mixing, Aux, Mastering };
 
-    explicit AudioEngine (Session& sessionToBindTo);
+    // initialWorkers seeds the parallel strip-DSP worker count applied at the
+    // first prepare (so Auto takes effect at startup without a re-prepare). The
+    // UI layer resolves it from per-machine AppConfig; headless callers default
+    // to 0 (serial). DUSKSTUDIO_AUDIO_WORKERS overrides it at every prepare.
+    explicit AudioEngine (Session& sessionToBindTo, int initialWorkers = 0);
     ~AudioEngine() override;
+
+    // Message thread. Target worker count for the next prepare; clamped to the
+    // host cap. Does NOT re-prepare — caller drives a device-callback detach/
+    // reattach (as the Audio Settings panel does) to apply it live. Ignored
+    // while DUSKSTUDIO_AUDIO_WORKERS pins the count.
+    void setDesiredWorkers (int n) noexcept { desiredWorkers = juce::jmax (0, n); }
+
+    // Message thread. CALLER MUST have removed this engine as the audio callback
+    // first (so no audio thread is inside the worker pool's runBlock) — the
+    // Audio Settings panel detaches around the change. Stops+restarts the pool
+    // to the current desired count. This is the ONLY live-reconfigure path;
+    // routine device re-opens (buffer-size/rate changes) must NOT touch the pool
+    // because their prepare runs while the callback is still attached.
+    void applyDesiredWorkers();
+
+    // Process gate. suspendProcessing (message thread) raises a flag the audio
+    // callback checks at entry, then blocks until in-flight callbacks drain;
+    // until resumeProcessing the callback emits silent buffers. Used to make
+    // re-prepare provably exclusive of processing (Ardour's process-lock
+    // pattern). prepareForSelfTest brackets itself with these automatically.
+    void suspendProcessing();
+    void resumeProcessing() noexcept;
+
+    // Test-only. Immediately stop+start the pool to `n` workers. Safe only when
+    // no audio callback is concurrently in runBlock() — the offline self-test
+    // drives the callback synchronously, so the A/B harness can flip the count
+    // between captures.
+    void setWorkerCountForTest (int n);
 
     juce::AudioDeviceManager& getDeviceManager() noexcept { return deviceManager; }
     Session&          getSession()        noexcept { return session; }
@@ -276,7 +308,7 @@ public:
     // normally enabled by DUSKSTUDIO_PERF=1 + a 2 s reporter timer; the
     // headless session-perf harness enables it directly and prints once
     // at the end of its run.
-    void setPerfCaptureEnabled (bool b) noexcept { perf.enabled = b; }
+    void setPerfCaptureEnabled (bool b) noexcept { perf.enabled.store (b, std::memory_order_relaxed); }
     void printPerfTable();
 
     // False = PipeWire opened the per-device ALSA name with 0 output
@@ -445,8 +477,24 @@ private:
     };
     std::array<AccumSet, kMaxDspLanes> laneAccum;
     AudioWorkerPool workerPool;
+    // Target worker count (message-thread-owned). Reconciled into workerPool at
+    // each prepare; DUSKSTUDIO_AUDIO_WORKERS overrides it there.
+    int  desiredWorkers = 0;
+    // The pool is started exactly once (first prepare) and thereafter only
+    // reconfigured via applyDesiredWorkers with the callback detached. Device
+    // re-opens (buffer/rate change) must not stop+start it — start/stop mutate
+    // worker state that a live runBlock reads lock-free. (In-flight LANES are
+    // separately handled: prepare/stopped quiesce the pool first.)
     bool workerPoolStarted = false;
     int  currentBlockSamples = 0;        // stashed for the worker lane job
+
+    // Env DUSKSTUDIO_AUDIO_WORKERS (CI / power users) overrides desiredWorkers.
+    int  resolveTargetWorkers() const noexcept;
+
+    // Message thread, callback detached or offline. Stop+start the pool so it
+    // runs exactly `target` workers (clamped to the host cap); no-op if already
+    // there. NEVER call while the audio callback is attached.
+    void reconcileWorkerPool (int target);
 
     void accumulateStrip (int t, float* mL, float* mR,
                           const std::array<float*, ChannelStrip::kNumBuses>& bL,
@@ -489,6 +537,7 @@ private:
     // thread copy never allocates. Queue-full drops the block —
     // dropping clock bytes beats an xrun.
     static constexpr int kMidiOutQueueSlots = 64;
+    static constexpr int kMidiOutSlotBytes  = 4096;
     struct QueuedMidiOut
     {
         int    port       = -1;
@@ -552,11 +601,22 @@ private:
         std::array<std::atomic<juce::int64>, kNumSections> ticks {};
         std::atomic<juce::int64> totalTicks { 0 };
         std::atomic<juce::int64> blocks     { 0 };
-        bool enabled = false;
+        std::atomic<bool> enabled { false };
     };
     PerfSections perf;
     class PerfReporter;
     std::unique_ptr<PerfReporter> perfReporter;
+
+    // Process gate state (see suspendProcessing). The callback increments
+    // callbacksInFlight around its body; suspend raises the flag and waits for
+    // the counter to hit zero, after which it owns every buffer the callback
+    // touches until resume.
+    std::atomic<bool>   processingSuspended { false };
+    std::atomic<int>    callbacksInFlight   { 0 };
+    // Counts callbacks that returned silent before dispatching the strip DSP,
+    // throttling a stderr line that names the cause (gate vs undersized buffer)
+    // — a silent-output stall is otherwise opaque without a debugger.
+    std::atomic<juce::int64> earlyOutBlocks { 0 };
 
     std::atomic<int>    xrunCount         { 0 };
     // Device xrun count at the last resetXRunCounts(); subtracted in

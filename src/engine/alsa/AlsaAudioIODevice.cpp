@@ -1,4 +1,5 @@
 #include "AlsaAudioIODevice.h"
+#include "../RtPriority.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -666,7 +667,10 @@ juce::String AlsaAudioIODevice::open (const juce::BigInteger& inputChannels,
     for (int i = 0; i < activeIn;  ++i) callbackInPointers .set (i, callbackInFloats .getReadPointer  (i));
 
     if (wantOutput)
+    {
         interleavedOutBytes.allocate ((size_t) (bytesPerOutSample * (int) outNumChannels * periodSize), true);
+        silencePrefill.allocate ((size_t) (bytesPerOutSample * (int) outNumChannels * periodSize * periodsCount), true);
+    }
     if (wantInput)
         interleavedInBytes .allocate ((size_t) (bytesPerInSample  * (int) inNumChannels  * periodSize), true);
 
@@ -696,6 +700,7 @@ void AlsaAudioIODevice::close()
 
     interleavedOutBytes.free();
     interleavedInBytes .free();
+    silencePrefill     .free();
     callbackOutFloats.setSize (1, 1);
     callbackInFloats .setSize (1, 1);
 
@@ -750,10 +755,11 @@ void AlsaAudioIODevice::start (juce::AudioIODeviceCallback* newCallback)
         {
             // EPIPE here means the device went into XRUN state during prepare
             // (rare, but seen on some USB drivers). Recover and retry once.
-            // Log the retry result — start() proceeds either way and the
-            // I/O thread will detect a still-broken handle on its first
-            // writei, but the warning here pins the failure to pre-fill.
-            recoverFromXrun (outHandle, (int) wrote);
+            // Use snd_pcm_recover directly, NOT recoverFromXrun — the start
+            // sequence below (prefill + snd_pcm_start) is the re-arm, and
+            // recoverFromXrun's rearmStream would prefill+start a second time.
+            xrunCount.fetch_add (1, std::memory_order_relaxed);
+            snd_pcm_recover (outHandle, (int) wrote, /*silent*/ 1);
             const auto retry = snd_pcm_writei (outHandle, silence.getData(),
                                                  (snd_pcm_uframes_t) preFillFrames);
             if (retry < 0)
@@ -772,41 +778,16 @@ void AlsaAudioIODevice::start (juce::AudioIODeviceCallback* newCallback)
         snd_pcm_start (startHandle);
     }
 
-    // Pick a SCHED_RR priority near the TOP of the rlimit ceiling.
-    // JUCE's Thread::Priority enum maps [0, 10] to kernel SCHED_RR
-    // priorities; we want the I/O thread at or near 10 so we run at
-    // kernel sched_priority ~80+ — the same range PipeWire / JACK
-    // pick. The previous formula linearly scaled (rl.rlim_cur - 4)
-    // down to [0, 10], which under RLIMIT_RTPRIO=95 resolved to
-    // juce-prio=9 → kernel priority ~9 → constant preemption by any
-    // higher-priority process → DSP load spikes + xruns. We keep a
-    // small headroom under the rlimit so sub-threads or system RT
-    // priorities the kernel reserves can still sit above us.
-    int juceRtPrio = 5;
-    struct rlimit rl{};
-    const bool haveRtLimit = (getrlimit (RLIMIT_RTPRIO, &rl) == 0);
-    if (haveRtLimit && rl.rlim_cur > 1)
-    {
-        // rlim_cur is rlim_t (unsigned). RLIM_INFINITY == (rlim_t) -1 would
-        // narrow to -1 under a signed cast and wrongly fall through to the
-        // lowest priority when the limit is in fact "no limit" — so treat
-        // infinity explicitly as the top priority, and compare with an
-        // unsigned type otherwise.
-        if (rl.rlim_cur == RLIM_INFINITY)
-        {
-            juceRtPrio = 10;
-        }
-        else
-        {
-            const unsigned long long rlim = (unsigned long long) rl.rlim_cur;
-            juceRtPrio = rlim >= 95 ? 10
-                       : rlim >= 50 ?  9
-                       : rlim >= 20 ?  7
-                       :               5;
-        }
-    }
+    // Run the I/O thread at real-time priority. The rlimit→priority mapping is
+    // shared with the DSP worker pool (see RtPriority.h — the pool MUST run at
+    // the same SCHED_RR level as this thread or the per-block join can starve a
+    // worker sharing this core). jucePriority == 0 means the rlimit admits no
+    // JUCE-reachable realtime level; don't bother asking.
+    const auto rtInfo = duskstudio::rt::queryRealtimePriority();
+    const int  juceRtPrio = rtInfo.jucePriority;
 
-    const bool gotRT = startRealtimeThread (juce::Thread::RealtimeOptions{}.withPriority (juceRtPrio));
+    const bool gotRT = juceRtPrio > 0
+        && startRealtimeThread (juce::Thread::RealtimeOptions{}.withPriority (juceRtPrio));
     if (! gotRT)
         startThread (juce::Thread::Priority::high);
 
@@ -834,9 +815,9 @@ void AlsaAudioIODevice::start (juce::AudioIODeviceCallback* newCallback)
         }
     }
     const juce::String rtLimitStr =
-        (! haveRtLimit)                  ? juce::String ("unknown")
-        : (rl.rlim_cur == RLIM_INFINITY) ? juce::String ("infinity")
-        :                                  juce::String ((juce::int64) rl.rlim_cur);
+        (! rtInfo.haveRtLimit)   ? juce::String ("unknown")
+        : (rtInfo.rtLimit < 0)   ? juce::String ("infinity")
+        :                          juce::String ((juce::int64) rtInfo.rtLimit);
     std::fprintf (stderr, "[Dusk Studio/ALSA] thread started: %s (juce-prio=%d, kernel-prio=%d, RLIMIT_RTPRIO=%s)\n",
                   gotRT ? policyStr.toRawUTF8() : "Priority::high",
                   juceRtPrio, kernelPrio, rtLimitStr.toRawUTF8());
@@ -872,7 +853,55 @@ int AlsaAudioIODevice::recoverFromXrun (snd_pcm_t* handle, int err)
 {
     xrunCount.fetch_add (1, std::memory_order_relaxed);
     const int recovered = snd_pcm_recover (handle, err, /*silent*/ 1);
+    if (recovered >= 0)
+        rearmStream();
     return recovered;
+}
+
+void AlsaAudioIODevice::rearmStream() noexcept
+{
+    // snd_pcm_recover leaves the stream PREPARED, not RUNNING. For a linked
+    // duplex device that's fatal: the next snd_pcm_wait blocks forever on the
+    // un-started capture handle and the device sits in PREPARED with no audio
+    // (the "audio stops until you change the buffer" stall — changing the
+    // buffer re-opens the device, which runs this exact start sequence). So
+    // mirror open(): prepare both handles, prefill the playback ring past its
+    // start_threshold from the pre-allocated silence block, then snd_pcm_start
+    // (which starts both directions via snd_pcm_link). No allocation — these
+    // are the same kernel calls the I/O loop already makes each block.
+    if (outHandle == nullptr)
+    {
+        if (inHandle != nullptr && snd_pcm_state (inHandle) != SND_PCM_STATE_RUNNING)
+            snd_pcm_start (inHandle);
+        return;
+    }
+
+    snd_pcm_prepare (outHandle);
+    if (inHandle != nullptr)
+        snd_pcm_prepare (inHandle);
+
+    if (silencePrefill != nullptr && periodsCount > 0)
+    {
+        const auto frames = (snd_pcm_uframes_t) (periodSize * periodsCount);
+        if (snd_pcm_writei (outHandle, silencePrefill.getData(), frames) < 0)
+        {
+            // Prefill itself underran during re-arm (rare USB-driver case):
+            // recover and retry once, or we'd snd_pcm_start an empty ring →
+            // instant underrun → straight back into recovery. Mirrors open().
+            snd_pcm_recover (outHandle, -EPIPE, /*silent*/ 1);
+            snd_pcm_writei (outHandle, silencePrefill.getData(), frames);
+        }
+    }
+
+    if (snd_pcm_state (outHandle) != SND_PCM_STATE_RUNNING)
+        snd_pcm_start (outHandle);
+
+    // When the duplex pair was NOT snd_pcm_link'd (cross-card in/out), starting
+    // playback doesn't start capture — it'd sit PREPARED and stall the capture
+    // wait. The state check makes this a no-op for the linked case (capture is
+    // already RUNNING via the link).
+    if (inHandle != nullptr && snd_pcm_state (inHandle) != SND_PCM_STATE_RUNNING)
+        snd_pcm_start (inHandle);
 }
 
 // ----- Interleave / deinterleave dispatch ------------------------------------
