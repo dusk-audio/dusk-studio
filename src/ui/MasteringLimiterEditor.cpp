@@ -248,17 +248,9 @@ void MasteringLimiterEditor::paint (juce::Graphics& g)
         const float drive = params.limiterDriveDb.load (std::memory_order_relaxed);
         const float handleY = dbToY (-drive, kThreshMinDb, kThreshMaxDb, bar);
 
-        juce::Path tri;
-        const float baseX = bar.getX() - 6.0f;
-        tri.addTriangle (baseX, handleY - 5.0f,
-                         baseX, handleY + 5.0f,
-                         bar.getX(), handleY);
-        g.setColour (juce::Colour (0xffe0e0e8));
-        g.fillPath (tri);
-        g.setColour (juce::Colour (0xff0a0a0a));
-        g.strokePath (tri, juce::PathStrokeType (0.6f));
-        g.setColour (juce::Colour (0xff80b0e0).withAlpha (0.7f));
-        g.drawLine (bar.getX(), handleY, bar.getRight(), handleY, 0.8f);
+        // Handle = the full-width level line; the whole bar is the drag target.
+        g.setColour (juce::Colour (0xff80b0e0).withAlpha (0.9f));
+        g.drawLine (bar.getX(), handleY, bar.getRight(), handleY, 1.4f);
 
         drawCaption (threshMeterArea, "Threshold");
 
@@ -305,17 +297,9 @@ void MasteringLimiterEditor::paint (juce::Graphics& g)
         const float ceiling = params.limiterCeilingDb.load (std::memory_order_relaxed);
         const float handleY = dbToY (ceiling, kCeilingMinDb, kCeilingMaxDb, bar);
 
-        juce::Path tri;
-        const float baseX = bar.getX() - 6.0f;
-        tri.addTriangle (baseX, handleY - 5.0f,
-                         baseX, handleY + 5.0f,
-                         bar.getX(), handleY);
-        g.setColour (juce::Colour (0xffe05050));
-        g.fillPath (tri);
-        g.setColour (juce::Colour (0xff0a0a0a));
-        g.strokePath (tri, juce::PathStrokeType (0.6f));
-        g.setColour (juce::Colour (0xffe05050).withAlpha (0.8f));
-        g.drawLine (bar.getX(), handleY, bar.getRight(), handleY, 0.8f);
+        // Handle = the full-width level line; the whole bar is the drag target.
+        g.setColour (juce::Colour (0xffe05050).withAlpha (0.9f));
+        g.drawLine (bar.getX(), handleY, bar.getRight(), handleY, 1.4f);
 
         drawCaption (ceilingMeterArea, "Ceiling");
 
