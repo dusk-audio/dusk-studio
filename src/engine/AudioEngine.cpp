@@ -2682,6 +2682,16 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                                          * secondsPerTick * 1000.0;
             if (elapsedMs > bufferMs)
                 xrunCount.fetch_add (1, std::memory_order_relaxed);
+
+            // Drive the same DSP-load smoother the mix path uses, so the badge
+            // keeps updating in Mastering (this branch returns before the
+            // shared cpuUsage update below).
+            if (bufferMs > 0.0)
+            {
+                const float instant = (float) juce::jlimit (0.0, 2.0, elapsedMs / bufferMs);
+                const float prev = cpuUsage.load (std::memory_order_relaxed);
+                cpuUsage.store (prev + 0.2f * (instant - prev), std::memory_order_relaxed);
+            }
         }
         return;
     }
