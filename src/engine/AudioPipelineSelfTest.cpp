@@ -1166,16 +1166,22 @@ juce::String AudioPipelineSelfTest::runAll()
     report.add ("");
    #endif
 
-    // Restore session state, then re-attach the engine BEFORE the backend
-    // cycle. Without this, every setCurrentAudioDeviceType / setAudioDeviceSetup
-    // below opens the hardware PCM with no audio callback registered, so the
-    // device thread streams whatever's in the kernel/driver buffer
-    // (uninitialised memory, stale samples, or PipeWire-graph residue).
-    // Audibly that's the "test button distortion" - speakers connected during
-    // the test cycle hear noise on each device transition. With the engine
-    // attached, the audio thread writes a silent master mix on every
-    // callback (no inputs to process), so transitions are clean.
-    restoreState (savedSession);
+    // Re-attach the engine BEFORE the backend cycle. Without an audio callback
+    // registered, every setCurrentAudioDeviceType / setAudioDeviceSetup below
+    // opens the hardware PCM and the device thread streams whatever's in the
+    // kernel/driver buffer (uninitialised memory, stale samples, PipeWire-graph
+    // residue) - the "test button distortion" speakers hear on each transition.
+    // With the engine attached the audio thread writes a silent master mix, so
+    // transitions are clean - BUT a restored armed/monitored track would route
+    // live input straight to the speakers while each device is open. So probe
+    // with monitoring forced OFF on every track, then restore the user's real
+    // session once the cycle (which opens real devices) is done.
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        session.track (t).inputMonitor.store (false, std::memory_order_relaxed);
+        session.track (t).recordArmed.store  (false, std::memory_order_relaxed);
+    }
+    session.recomputeRtCounters();
     // The synthetic tests force the engine serial (setWorkerCountForTest(0));
     // restore the live configured worker pool before re-attaching.
     engine.applyDesiredWorkers();
@@ -1184,6 +1190,9 @@ juce::String AudioPipelineSelfTest::runAll()
     report.add (testBackendsOpenCleanly());
     report.add ("");
     report.add (probeUMC1820AlsaFormat());
+
+    // Probe done (devices opened/closed) - reinstate the user's real session.
+    restoreState (savedSession);
 
     report.add ("");
     report.add ("=== End of Self-Test ===");
