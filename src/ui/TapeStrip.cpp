@@ -124,7 +124,15 @@ public:
 
     void visibilityChanged() override
     {
-        if (isVisible()) editor.grabKeyboardFocus();
+        if (! isVisible()) return;
+        // Deferred: at this point the modal host may not have finished
+        // showing, and a synchronous grab silently fails — the user then
+        // has to click into the field before typing.
+        juce::Component::SafePointer<TextInputPanel> safe (this);
+        juce::MessageManager::callAsync ([safe]
+        {
+            if (safe != nullptr) safe->editor.grabKeyboardFocus();
+        });
     }
 
 private:
@@ -158,6 +166,35 @@ void showEmbeddedTextInput (juce::Component& parent,
         /*onDismiss*/ [] { sharedTapeStripTextInputModal().close(); });
 }
 } // namespace
+void TapeStrip::promptRenameMarker (int markerIdx, const juce::String& title)
+{
+    const auto& markers = session.getMarkers();
+    if (markerIdx < 0 || markerIdx >= (int) markers.size()) return;
+
+    auto* host = getTopLevelComponent();
+    if (host == nullptr) host = this;
+    juce::Component::SafePointer<TapeStrip> safeThis (this);
+    showEmbeddedTextInput (*host, title, "New name:",
+        markers[(size_t) markerIdx].name, "Rename",
+        [safeThis, markerIdx] (juce::String newName)
+        {
+            if (safeThis == nullptr) return;
+            const auto trimmed = newName.trim();
+            if (trimmed.isEmpty()) return;
+            auto& s = safeThis->session;
+            const auto& m = s.getMarkers();
+            if (markerIdx < 0 || markerIdx >= (int) m.size()) return;
+            const auto oldName = m[(size_t) markerIdx].name;
+            if (oldName == trimmed) return;
+            auto& um = safeThis->engine.getUndoManager();
+            um.beginNewTransaction ("Rename marker");
+            um.perform (new ParamEditAction (
+                [&s, idx = markerIdx, trimmed] { s.renameMarker (idx, trimmed); },
+                [&s, idx = markerIdx, oldName] { s.renameMarker (idx, oldName); }));
+            safeThis->repaint();
+        });
+}
+
 TapeStrip::TapeStrip (Session& s, AudioEngine& e)
     : session (s), engine (e),
       vBlankAttachment (this, [this] { updatePlayheadBand(); })
@@ -997,30 +1034,8 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
                         [safeThis = juce::Component::SafePointer<TapeStrip> (this),
                          hoveredMarkerIdx]
                         {
-                            if (safeThis == nullptr) return;
-                            const auto& m2 = safeThis->session.getMarkers();
-                            if (hoveredMarkerIdx < 0 || hoveredMarkerIdx >= (int) m2.size()) return;
-                            auto* host = safeThis->getTopLevelComponent();
-                            if (host == nullptr) host = safeThis.getComponent();
-                            showEmbeddedTextInput (*host, "Rename marker", "New name:",
-                                m2[(size_t) hoveredMarkerIdx].name, "Rename",
-                                [safeThis, hoveredMarkerIdx] (juce::String newName)
-                                {
-                                    if (safeThis == nullptr) return;
-                                    const auto trimmed = newName.trim();
-                                    if (trimmed.isEmpty()) return;
-                                    auto& s   = safeThis->session;
-                                    const auto& m3 = s.getMarkers();
-                                    if (hoveredMarkerIdx < 0 || hoveredMarkerIdx >= (int) m3.size()) return;
-                                    const auto oldName = m3[(size_t) hoveredMarkerIdx].name;
-                                    if (oldName == trimmed) return;
-                                    auto& um = safeThis->engine.getUndoManager();
-                                    um.beginNewTransaction ("Rename marker");
-                                    um.perform (new ParamEditAction (
-                                        [&s, idx = hoveredMarkerIdx, trimmed] { s.renameMarker (idx, trimmed); },
-                                        [&s, idx = hoveredMarkerIdx, oldName] { s.renameMarker (idx, oldName); }));
-                                    safeThis->repaint();
-                                });
+                            if (safeThis != nullptr)
+                                safeThis->promptRenameMarker (hoveredMarkerIdx);
                         });
             m.addItem ("Delete \"" + mk.name + "\"",
                         [safeThis = juce::Component::SafePointer<TapeStrip> (this),
@@ -1047,9 +1062,17 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
                             clickedSample, safeThis->session, sr);
                         auto& um = safeThis->engine.getUndoManager();
                         um.beginNewTransaction ("Add marker");
-                        um.perform (new AddMarkerAction (
-                            safeThis->session, spawn));
+                        auto* add = new AddMarkerAction (safeThis->session, spawn);
+                        // The UndoManager owns the action — and DELETES it
+                        // if perform() fails — so only dereference `add`
+                        // after a successful perform.
+                        const bool added = um.perform (add);
                         safeThis->repaint();
+                        // Name-on-create: open the rename input with the
+                        // auto-generated name pre-selected so one typing
+                        // pass names the new marker. Escape keeps it.
+                        if (added)
+                            safeThis->promptRenameMarker (add->insertedIndex(), "Name marker");
                     });
         if (! session.getMarkers().empty())
         {

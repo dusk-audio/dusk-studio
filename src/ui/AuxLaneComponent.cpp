@@ -924,7 +924,11 @@ void AuxLaneComponent::rebuildSlots()
                     // X11 latch is a no-op when main is already X11, but
                     // keep it for safety on platforms that don't force the
                     // main peer to X11 (and to keep the call sites uniform
-                    // with ChannelStripComponent).
+                    // with ChannelStripComponent). Process exclusion: see
+                    // the matching block there — dry-pass this lane while
+                    // the editor constructs.
+                    const juce::SpinLock::ScopedLockType processExclusion (
+                        strip.getPluginSlot (i).getProcessLock());
                     duskstudio::platform::preferX11ForNextNativeWindow();
                     ui.editor.reset (instance->createEditorIfNeeded());
                     duskstudio::platform::clearPreferX11ForNativeWindow();

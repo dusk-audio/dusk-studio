@@ -2206,6 +2206,11 @@ void ChannelStripComponent::openPluginEditor()
         std::unique_ptr<juce::AudioProcessorEditor> fresh;
         if (instance->hasEditor())
         {
+            // Dry-pass this strip while the editor constructs — sampler
+            // editors can block processBlock on their internal loader lock
+            // for seconds, which would stall the whole audio callback.
+            const juce::SpinLock::ScopedLockType processExclusion (
+                pluginSlot.getProcessLock());
             duskstudio::platform::preferX11ForNextNativeWindow();
             fresh.reset (instance->createEditorIfNeeded());
             duskstudio::platform::clearPreferX11ForNativeWindow();

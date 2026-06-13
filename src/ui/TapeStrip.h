@@ -67,6 +67,11 @@ public:
     bool pasteAtPlayhead();
     bool deleteSelectedRegion();
     bool splitSelectedAtPlayhead();
+
+    // Open the marker-name text input (current name pre-selected, Enter
+    // commits, Escape keeps it). Used by the context-menu Rename item and
+    // by the create paths so a fresh marker can be named in one shot.
+    void promptRenameMarker (int markerIdx, const juce::String& title = "Rename marker");
     // Clone immediately after the original via PasteRegionAction.
     bool duplicateSelectedRegion();
     // Negative deltaSamples moves earlier. Clamped at zero.
