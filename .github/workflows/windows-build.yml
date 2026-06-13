@@ -33,7 +33,9 @@ concurrency:
 jobs:
   build:
     name: Build + package (MSVC x64 Release, ASIO enabled)
-    runs-on: windows-latest
+    # Pinned to windows-2022: windows-latest migrated to windows-2025, whose
+    # image no longer resolves the "Visual Studio 17 2022" CMake generator.
+    runs-on: windows-2022
     env:
       # PRIVATE releases repo — the MSI is pushed here, never to this
       # public repo. Same target as macos-release.yml.
