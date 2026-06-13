@@ -262,11 +262,12 @@ void MasteringLimiterEditor::paint (juce::Graphics& g)
 
         drawCaption (threshMeterArea, "Threshold");
 
-        // Threshold value box just below the handle (shows the threshold dB,
-        // i.e. -drive, to match the caption and the meter scale).
-        // Value readout parked at the bar's vertical centre so the moving
-        // handle never crowds or sits on top of it.
-        const auto valBox = juce::Rectangle<float> (bar.getX() + 2.0f, bar.getCentreY() - 7.0f,
+        // Threshold value box rides just under the handle line so the line,
+        // triangle, and readout read as one control (shows -drive). Clamped to
+        // stay inside the bar at the extremes.
+        const float boxY = juce::jlimit (bar.getY() + 1.0f, bar.getBottom() - 15.0f,
+                                          handleY + 1.0f);
+        const auto valBox = juce::Rectangle<float> (bar.getX() + 2.0f, boxY,
                                                        bar.getWidth() - 4.0f, 14.0f);
         g.setColour (juce::Colour (0xff181820));
         g.fillRoundedRectangle (valBox, 2.0f);
@@ -318,8 +319,10 @@ void MasteringLimiterEditor::paint (juce::Graphics& g)
 
         drawCaption (ceilingMeterArea, "Ceiling");
 
-        // Ceiling value readout parked at the bar's vertical centre.
-        const auto valBox = juce::Rectangle<float> (bar.getX() + 2.0f, bar.getCentreY() - 7.0f,
+        // Ceiling value box rides just above the handle line (one control).
+        const float boxY = juce::jlimit (bar.getY() + 1.0f, bar.getBottom() - 15.0f,
+                                          handleY - 15.0f);
+        const auto valBox = juce::Rectangle<float> (bar.getX() + 2.0f, boxY,
                                                        bar.getWidth() - 4.0f, 14.0f);
         g.setColour (juce::Colour (0xff181820));
         g.fillRoundedRectangle (valBox, 2.0f);
