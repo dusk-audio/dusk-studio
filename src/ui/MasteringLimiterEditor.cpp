@@ -43,20 +43,6 @@ void styleKnob (juce::Slider& s, juce::Colour fill,
     s.setTextValueSuffix (suffix);
 }
 
-void drawSegmentDividers (juce::Graphics& g, juce::Rectangle<float> bar)
-{
-    const int segments = juce::jlimit (8, 30, (int) (bar.getHeight() / 4.0f));
-    const float segStep = bar.getHeight() / (float) segments;
-    for (int i = 1; i < segments; ++i)
-    {
-        const float yy = bar.getY() + i * segStep;
-        // Visible LED-ladder scale so the well reads as an instrument even with
-        // no signal; every 4th line a touch brighter as a major tick.
-        g.setColour ((i % 4 == 0) ? juce::Colour (0xff34343e) : juce::Colour (0xff1d1d24));
-        g.fillRect (juce::Rectangle<float> (bar.getX() + 1.0f, yy - 0.4f,
-                                              bar.getWidth() - 2.0f, 0.8f));
-    }
-}
 } // namespace
 
 MasteringLimiterEditor::MasteringLimiterEditor (MasteringParams& p,
@@ -201,12 +187,31 @@ void MasteringLimiterEditor::paint (juce::Graphics& g)
     g.setColour (juce::Colour (0xff3a3a46));
     g.drawRect (getLocalBounds(), 1);
 
+    // LED-segment well matching the multiband-comp GR meters: dark gradient
+    // body, inner shadow, and a 20-rung ladder of unlit segments. The live
+    // signal fill draws over this.
     auto drawMeterBg = [&] (juce::Rectangle<float> bar)
     {
-        g.setColour (juce::Colour (0xff060608));   // recessed well
-        g.fillRoundedRectangle (bar, 2.0f);
-        g.setColour (juce::Colour (0xff3c3c48));
-        g.drawRoundedRectangle (bar, 2.0f, 1.0f);
+        juce::ColourGradient bg (juce::Colour (0xff0c0c0c), bar.getX(), bar.getY(),
+                                  juce::Colour (0xff181818), bar.getX(), bar.getBottom(), false);
+        g.setGradientFill (bg);
+        g.fillRoundedRectangle (bar, 5.0f);
+        g.setColour (juce::Colour (0xff000000).withAlpha (0.5f));
+        g.drawRoundedRectangle (bar.reduced (1.0f), 4.0f, 1.0f);
+
+        auto inner = bar.reduced (4.0f);
+        constexpr int numSegments = 20;
+        constexpr float gap = 2.0f;
+        const float segH = (inner.getHeight() - (numSegments - 1) * gap) / numSegments;
+        for (int s = 0; s < numSegments; ++s)
+        {
+            juce::Rectangle<float> seg (inner.getX(), inner.getY() + s * (segH + gap),
+                                         inner.getWidth(), segH);
+            g.setColour (juce::Colour (0xff242429));
+            g.fillRoundedRectangle (seg, 2.0f);
+            g.setColour (juce::Colour (0xff303036));
+            g.fillRect (seg.getX() + 2.0f, seg.getY() + 1.0f, seg.getWidth() - 4.0f, 1.0f);
+        }
     };
 
     auto drawCaption = [&] (juce::Rectangle<int> meter, const juce::String& caption)
@@ -241,7 +246,6 @@ void MasteringLimiterEditor::paint (juce::Graphics& g)
             g.setGradientFill (grad);
             g.fillRect (fillRect);
         }
-        drawSegmentDividers (g, bar);
 
         // Threshold handle (drag triangle on left). drive is 0..+20; the
         // handle sits at the threshold position = -drive (0..-20 dB).
@@ -292,7 +296,6 @@ void MasteringLimiterEditor::paint (juce::Graphics& g)
             g.setGradientFill (grad);
             g.fillRect (fillRect);
         }
-        drawSegmentDividers (g, bar);
 
         const float ceiling = params.limiterCeilingDb.load (std::memory_order_relaxed);
         const float handleY = dbToY (ceiling, kCeilingMinDb, kCeilingMaxDb, bar);
@@ -338,7 +341,6 @@ void MasteringLimiterEditor::paint (juce::Graphics& g)
             g.setGradientFill (grad);
             g.fillRect (fillRect);
         }
-        drawSegmentDividers (g, bar);
         drawCaption (attenMeterArea, "Atten");
 
         // GR scale ticks on the right (small vertical strip).
