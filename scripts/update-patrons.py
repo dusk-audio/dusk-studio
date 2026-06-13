@@ -288,7 +288,22 @@ def main():
         for tier_name, _ in TIERS:
             text = replace_array(text, tier_name, new_tiers[tier_name])
         text = replace_array(text, "pastSupporters", new_past)
-        header.write_text(text, encoding="utf-8")
+        # Atomic temp-file + rename so an interrupted run never leaves a
+        # truncated header behind (same pattern as write_config_secure).
+        fd, tmp = tempfile.mkstemp(dir=str(header.parent),
+                                   prefix="." + header.name + ".", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(text)
+                fh.flush()
+                os.fsync(fh.fileno())
+            os.replace(tmp, header)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
         print(f"Updated {header}")
 
     print("\nReview + commit the change in the plugins repo, then tag the release.")
