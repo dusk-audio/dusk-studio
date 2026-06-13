@@ -65,20 +65,29 @@ jobs:
             libwayland-dev libxkbcommon-dev libdecor-0-dev \
             imagemagick xz-utils
 
-      - name: Clone JUCE (plugdata-team Wayland fork)
+      - name: Clone JUCE (plugdata-team Wayland fork, pinned)
         # Linux ships against the Wayland fork, NOT upstream: it carries the
         # XEmbed mapping / X11-on-Wayland / peer-creation-latch commits that
         # plugin-editor hosting on Wayland depends on, plus the
         # SIMDNativeOps<long long> alias GCC needs for int64 SIMD (so no
         # separate patch step — re-applying it would duplicate the
-        # specialization and fail to compile). Mac + Windows stay on upstream.
+        # specialization and fail to compile). Pinned to an immutable commit
+        # for reproducible release builds; bump JUCE_REV when the fork advances.
+        # Mac + Windows stay on upstream.
+        env:
+          JUCE_REV: b970a992dfb650812b553da96e7b219d8441f45f
         run: |
-          git clone --depth 1 --branch wayland-juce8 \
-            https://github.com/plugdata-team/JUCE.git \
-            "${RUNNER_TEMP}/JUCE-wayland"
+          set -euo pipefail
+          git init -q "${RUNNER_TEMP}/JUCE-wayland"
+          cd "${RUNNER_TEMP}/JUCE-wayland"
+          git remote add origin https://github.com/plugdata-team/JUCE.git
+          git fetch --depth 1 origin "${JUCE_REV}"
+          git checkout -q FETCH_HEAD
+          [[ "$(git rev-parse HEAD)" == "${JUCE_REV}" ]] || {
+            echo "ERROR: JUCE checkout $(git rev-parse HEAD) != pinned ${JUCE_REV}" >&2; exit 1; }
           grep -q "SIMDNativeOps<long long>" \
-            "${RUNNER_TEMP}/JUCE-wayland/modules/juce_dsp/native/juce_SIMDNativeOps_sse.h" || {
-            echo "ERROR: fork is missing the SIMDNativeOps<long long> alias." >&2; exit 1; }
+            modules/juce_dsp/native/juce_SIMDNativeOps_sse.h || {
+            echo "ERROR: pinned JUCE missing the SIMDNativeOps<long long> alias." >&2; exit 1; }
 
       - name: Clone Dusk plugins (donor DSP)
         run: |
