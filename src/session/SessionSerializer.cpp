@@ -224,17 +224,19 @@ juce::File resolvePortablePath (const juce::String& stored,
 {
     if (stored.isEmpty()) return {};
 
-    // A Windows drive-letter (C:/...) or UNC (//server/...) path is absolute
-    // even though juce::File::isAbsolutePath() reports false for it on POSIX.
-    // Treat it as absolute so a session moved Windows -> Linux still re-roots
-    // its audio files by name rather than mis-joining them under sessionDir.
+    // Recognise absolute paths cross-platform, not just for the running OS:
+    // a leading '/' (POSIX absolute or UNC //server/...) and a Windows
+    // drive-letter (C:/...) are all absolute even when juce::File::isAbsolutePath
+    // reports false for the foreign form (e.g. "/home/..." on Windows, "C:/..."
+    // on POSIX). This keeps re-root-by-name working for sessions moved between
+    // operating systems instead of mis-joining the path under sessionDir.
     const auto normalised = stored.replaceCharacter ('\\', '/');
     const bool driveLetter = normalised.length() >= 3
                           && juce::CharacterFunctions::isLetter (normalised[0])
                           && normalised[1] == ':' && normalised[2] == '/';
     const bool isAbsolute = juce::File::isAbsolutePath (stored)
                          || driveLetter
-                         || normalised.startsWith ("//");
+                         || normalised.startsWith ("/");
 
     juce::File f;
     if (isAbsolute)
