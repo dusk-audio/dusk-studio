@@ -5,6 +5,7 @@
 #include "session/Session.h"
 
 #include <cmath>
+#include <deque>
 #include <memory>
 #include <vector>
 
@@ -310,4 +311,125 @@ TEST_CASE ("HardwareInsertSlot: invalid routing falls through to dry-only path",
     // SEND outputs untouched - the invalid channel indices kept us out.
     REQUIRE_THAT (dev.outStore[0][0], WithinAbs (0.0f, 1.0e-6f));
     REQUIRE_THAT (dev.outStore[1][0], WithinAbs (0.0f, 1.0e-6f));
+}
+
+namespace
+{
+// Drive the slot's ping through a simulated device loopback: everything
+// the slot writes to device output ch 0 reappears on device input ch 0
+// exactly `loopDelay` samples later. Returns the measured pingResult.
+int runPingLoopback (double sampleRate, int loopDelay, int maxBlocks = 2000)
+{
+    duskstudio::HardwareInsertParams params;
+    setRouting (params, 0, 1, 0, 1, 0, 0);
+    auto slot = std::make_unique<duskstudio::HardwareInsertSlot>();
+    slot->prepare (sampleRate, kBlock);
+    slot->bind (params);
+
+    std::deque<float> loopL ((size_t) loopDelay, 0.0f);
+    std::deque<float> loopR ((size_t) loopDelay, 0.0f);
+
+    params.pingResult .store (-1,   std::memory_order_relaxed);
+    params.pingPending.store (true, std::memory_order_release);
+
+    std::vector<float> L (kBlock, 0.0f), R (kBlock, 0.0f);
+    DeviceBuffers dev (2, kBlock);
+
+    for (int b = 0; b < maxBlocks
+         && params.pingPending.load (std::memory_order_acquire); ++b)
+    {
+        for (int i = 0; i < kBlock; ++i)
+        {
+            dev.inStore[0][(size_t) i] = loopL.front(); loopL.pop_front();
+            dev.inStore[1][(size_t) i] = loopR.front(); loopR.pop_front();
+        }
+        std::fill (L.begin(), L.end(), 0.0f);
+        std::fill (R.begin(), R.end(), 0.0f);
+        dev.zeroOutputs();
+        slot->processStereoBlock (L.data(), R.data(), kBlock,
+                                    dev.inPtrs.data(), 2,
+                                    dev.outPtrs.data(), 2);
+        for (int i = 0; i < kBlock; ++i)
+        {
+            loopL.push_back (dev.outStore[0][(size_t) i]);
+            loopR.push_back (dev.outStore[1][(size_t) i]);
+        }
+    }
+
+    REQUIRE_FALSE (params.pingPending.load (std::memory_order_acquire));
+    return params.pingResult.load (std::memory_order_relaxed);
+}
+} // namespace
+
+TEST_CASE ("HardwareInsertSlot: ping measures loopback round-trip exactly",
+            "[HardwareInsertSlot][ping]")
+{
+    SECTION ("short round-trip, well under the chirp length")
+    {
+        REQUIRE (runPingLoopback (48000.0, 700) == 700);
+    }
+    SECTION ("round-trip of a couple of device buffers")
+    {
+        REQUIRE (runPingLoopback (48000.0, 2048) == 2048);
+    }
+    SECTION ("96 kHz - chirp longer than the old fixed capture window")
+    {
+        REQUIRE (runPingLoopback (96000.0, 1500) == 1500);
+    }
+}
+
+TEST_CASE ("HardwareInsertSlot: ping with silent return reports -1",
+            "[HardwareInsertSlot][ping]")
+{
+    duskstudio::HardwareInsertParams params;
+    setRouting (params, 0, 1, 0, 1, 0, 0);
+    auto slot = makeSlot (params);
+
+    params.pingResult .store (-1,   std::memory_order_relaxed);
+    params.pingPending.store (true, std::memory_order_release);
+
+    std::vector<float> L (kBlock, 0.0f), R (kBlock, 0.0f);
+    DeviceBuffers dev (2, kBlock);   // inputs stay all-zero
+
+    for (int b = 0; b < 2000
+         && params.pingPending.load (std::memory_order_acquire); ++b)
+    {
+        std::fill (L.begin(), L.end(), 0.0f);
+        std::fill (R.begin(), R.end(), 0.0f);
+        dev.zeroOutputs();
+        slot->processStereoBlock (L.data(), R.data(), kBlock,
+                                    dev.inPtrs.data(), 2,
+                                    dev.outPtrs.data(), 2);
+    }
+
+    REQUIRE_FALSE (params.pingPending.load (std::memory_order_acquire));
+    REQUIRE (params.pingResult.load (std::memory_order_relaxed) == -1);
+}
+
+TEST_CASE ("HardwareInsertSlot: ping with invalid input routing reports -2",
+            "[HardwareInsertSlot][ping]")
+{
+    duskstudio::HardwareInsertParams params;
+    setRouting (params, 0, 1, -1, -1, 0, 0);   // no return channels
+    auto slot = makeSlot (params);
+
+    params.pingResult .store (-1,   std::memory_order_relaxed);
+    params.pingPending.store (true, std::memory_order_release);
+
+    std::vector<float> L (kBlock, 0.0f), R (kBlock, 0.0f);
+    DeviceBuffers dev (2, kBlock);
+
+    for (int b = 0; b < 2000
+         && params.pingPending.load (std::memory_order_acquire); ++b)
+    {
+        std::fill (L.begin(), L.end(), 0.0f);
+        std::fill (R.begin(), R.end(), 0.0f);
+        dev.zeroOutputs();
+        slot->processStereoBlock (L.data(), R.data(), kBlock,
+                                    dev.inPtrs.data(), 2,
+                                    dev.outPtrs.data(), 2);
+    }
+
+    REQUIRE_FALSE (params.pingPending.load (std::memory_order_acquire));
+    REQUIRE (params.pingResult.load (std::memory_order_relaxed) == -2);
 }

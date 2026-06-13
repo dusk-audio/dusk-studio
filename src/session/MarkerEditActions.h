@@ -20,6 +20,10 @@ public:
     bool undo()    override;
     int  getSizeInUnits() override { return 1; }
 
+    // Valid after perform(); -1 if the add failed. Lets the UI open a
+    // rename prompt on the just-created marker.
+    int insertedIndex() const noexcept { return insertedIdx; }
+
 private:
     Session&     session;
     juce::int64  timelineSamples;

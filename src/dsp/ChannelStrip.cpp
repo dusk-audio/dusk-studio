@@ -512,7 +512,14 @@ void ChannelStrip::processAndAccumulate (const float* inL,
     // recorder doesn't need a processed buffer either. With 16 channels each
     // hosting a UniversalCompressor (a full juce::AudioProcessor), running
     // the chain on every silent track was an xrun-class CPU spike.
-    if (! passByGate && ! needsProcessedMono)
+    // A pending hardware-insert ping must still reach the slot (transport
+    // stopped + IN off is the normal way to ping): the chirp goes only to
+    // the insert's device send pair, and the !passByGate gain targets below
+    // keep master/bus/aux accumulation silent.
+    const bool pingRequested = (req == kInsertHardware
+                                || activeInsertMode == kInsertHardware)
+                            && hardwareSlot.isPingRequested();
+    if (! passByGate && ! needsProcessedMono && ! pingRequested)
     {
         faderGain.setTargetValue (0.0f);
         for (auto& s : busGain)     s.setTargetValue (0.0f);
