@@ -15,12 +15,15 @@ AudioSettingsPanel::AudioSettingsPanel (juce::AudioDeviceManager& dm,
                                           AudioEngine& e, Session& s)
     : deviceManager (dm), engine (e), session (s)
 {
-    selector = std::make_unique<juce::AudioDeviceSelectorComponent>(
-        dm,
-        /*minIn*/  0, /*maxIn*/  16,
-        /*minOut*/ 2, /*maxOut*/ 32,
-        /*showMidi*/ false, /*showMidiOut*/ false,
-        /*stereoPairs*/ false, /*hideAdvanced*/ false);
+    selector = std::make_unique<DuskAudioDeviceSelector> (dm);
+    // A successful device change can alter the active output channels, so
+    // refresh the main-output pair menu and re-layout (the block height is
+    // fixed, but rates/buffers may have changed).
+    selector->onDeviceChanged = [this]
+    {
+        populateMainOutputCombo();
+        resized();
+    };
     addAndMakeVisible (*selector);
 
     mainOutputLabel.setJustificationType (juce::Justification::centredRight);
@@ -430,37 +433,8 @@ void AudioSettingsPanel::resized()
     constexpr int kRowGap       = 4;
     constexpr int kSectionGap   = 14;    // vertical breathing room between groups
     constexpr int kComboW       = 320;
-    // JUCE's AudioDeviceSelectorComponent doesn't expose a preferred
-    // height; we have to budget enough room for the tallest backend.
-    // ALSA pre-2.0 lays out an extra "Sample rate" + "Audio buffer"
-    // row pair AFTER the channel lists; JACK / PipeWire skip those
-    // and end much shorter. 360 px fits ALSA cleanly without leaving
-    // a huge gap under the shorter backends — the section separator
-    // line + the next section header sit at fixed Y immediately
-    // below this block, so under-budget is far worse than over.
-    // The JUCE AudioDeviceSelectorComponent's height varies with the device:
-    // the active-channel list boxes grow with channel count (capped at 4 rows
-    // by getBestHeight(100)), and a list is absent entirely when the device
-    // exposes no channels of that kind. A fixed height either overlaps (many
-    // channels) or leaves a void (stereo), so size the block from the live
-    // device's channel counts, mirroring the selector's vertical stack. Biased
-    // a touch high so the Main-output row below never collides.
-    const int kAudioBlockH = [this]
-    {
-        constexpr int selRow = 30;   // 24 px control + 6 px JUCE spacing
-        const auto listH = [] (int n)
-        { return n > 0 ? 22 * juce::jlimit (2, 4, n) + 8 : 0; };
-
-        if (auto* dev = deviceManager.getCurrentAudioDevice())
-            return selRow                                              // device-type
-                 + selRow + selRow                                     // output + input rows
-                 + listH (dev->getOutputChannelNames().size())        // active-output list
-                 + listH (dev->getInputChannelNames().size())         // active-input list
-                 + 12                                                 // pre-advanced spacer
-                 + selRow + selRow                                    // sample rate + buffer
-                 + 16;                                                // slack
-        return 210;                                                  // device picker only
-    }();
+    // The Dusk device selector is a fixed stack of label + combo rows.
+    const int kAudioBlockH = selector->getPreferredHeight();
 
     auto sectionHeader = [&] (juce::Label& label)
     {

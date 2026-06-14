@@ -6,6 +6,7 @@
 #include <vector>
 #include "EmbeddedModal.h"
 #include "DuskComboBox.h"
+#include "DuskAudioDeviceSelector.h"
 
 namespace duskstudio
 {
@@ -37,7 +38,7 @@ private:
     juce::AudioDeviceManager& deviceManager;
     AudioEngine& engine;
     Session& session;
-    std::unique_ptr<juce::AudioDeviceSelectorComponent> selector;
+    std::unique_ptr<DuskAudioDeviceSelector> selector;
 
     // Physical output pair for the main mix. Defaults to outputs 1-2; pick
     // another pair when the device has more outputs enabled.
