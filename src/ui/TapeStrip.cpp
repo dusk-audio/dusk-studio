@@ -237,10 +237,11 @@ TapeStrip::TapeStrip (Session& s, AudioEngine& e)
     addAndMakeVisible (snapToggle);
 
     showAllToggle.setClickingTogglesState (true);
+    showAllToggle.setLookAndFeel (&pillButtonLnF);
     showAllToggle.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff3c3c48));
     showAllToggle.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff2f5d86));
-    showAllToggle.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xffd2d2da));
-    showAllToggle.setColour (juce::TextButton::textColourOnId,   juce::Colour (0xffd8ecff));
+    showAllToggle.setColour (juce::TextButton::textColourOffId,  juce::Colours::white);
+    showAllToggle.setColour (juce::TextButton::textColourOnId,   juce::Colours::white);
     showAllToggle.setMouseClickGrabsKeyboardFocus (false);
     showAllToggle.setWantsKeyboardFocus (false);
     showAllToggle.setTooltip ("Show every track row, including empty unarmed tracks.");
@@ -267,6 +268,7 @@ TapeStrip::TapeStrip (Session& s, AudioEngine& e)
 
 TapeStrip::~TapeStrip()
 {
+    showAllToggle.setLookAndFeel (nullptr);
     engine.getUndoManager().removeChangeListener (this);
 }
 
@@ -760,11 +762,9 @@ void TapeStrip::resized()
     // the top — lives in unused real estate above the row labels, fits
     // in the kRulerH band so it doesn't compete with the time ruler.
     constexpr int kShowAllH = 14;
-    constexpr int kShowAllPad = 2;
-    showAllToggle.setBounds (kShowAllPad,
-                              kShowAllPad,
-                              labelColW - 2 * kShowAllPad,
-                              kShowAllH);
+    constexpr int kShowAllInset = 8;   // a touch narrower than the full column
+    const int allW = juce::jmax (24, labelColW - 2 * kShowAllInset);
+    showAllToggle.setBounds ((labelColW - allW) / 2, 2, allW, kShowAllH);
     inheritCursorOnDescendants (*this);
 }
 

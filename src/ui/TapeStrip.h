@@ -228,6 +228,18 @@ private:
     // zoom clamp it so the visible window stays inside content.
     juce::int64 scrollSamples = 0;
 
+    // Bold-text LookAndFeel for the SHOW ALL pill (TextButton has no setFont).
+    // Declared before showAllToggle so the button is destroyed first.
+    struct PillButtonLnF : juce::LookAndFeel_V4
+    {
+        juce::Font getTextButtonFont (juce::TextButton&, int h) override
+        {
+            return juce::Font (juce::FontOptions (juce::jmin (12.0f, (float) h * 0.8f),
+                                                   juce::Font::bold));
+        }
+    };
+    PillButtonLnF pillButtonLnF;
+
     juce::TextButton zoomOutButton { "-" };
     juce::TextButton zoomInButton  { "+" };
     juce::TextButton zoomFitButton { "Fit" };
