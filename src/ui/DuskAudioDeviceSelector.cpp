@@ -7,6 +7,14 @@ namespace
 {
 constexpr int kNoneId = 1;   // "(None)" entry in the device combos
 
+// How many device channels to request open. The engine imposes no fixed
+// channel cap — it bounds-checks every output-pair tap against the device's
+// actual open outputs at runtime (OutputPairRouting::tapStereoPairInto). These
+// are generous open-request ceilings so the output-pair menu sees every usable
+// pair without per-channel check-boxes.
+constexpr int kMaxDeviceOutputChannels = 32;
+constexpr int kMaxDeviceInputChannels  = 16;
+
 juce::String formatRate (double r)
 {
     if (std::abs (r - std::floor (r)) < 0.001)
@@ -149,18 +157,18 @@ void DuskAudioDeviceSelector::applySetupChange (bool deviceChanged)
         if (bufferCombo.getSelectedId() > 0) setup.bufferSize = bufferCombo.getSelectedId();
     }
 
-    // Open every channel the device exposes (clamped to the engine's limits)
-    // so the main-output pair menu can offer all active pairs — we don't draw
-    // per-channel check-boxes.
+    // Open a generous fixed number of channels so the main-output pair menu can
+    // offer every active pair — we don't draw per-channel check-boxes. JUCE
+    // clamps the request to what the device actually exposes.
     setup.useDefaultOutputChannels = false;
     setup.outputChannels.clear();
     if (setup.outputDeviceName.isNotEmpty())
-        setup.outputChannels.setRange (0, 32, true);
+        setup.outputChannels.setRange (0, kMaxDeviceOutputChannels, true);
 
     setup.useDefaultInputChannels = false;
     setup.inputChannels.clear();
     if (setup.inputDeviceName.isNotEmpty())
-        setup.inputChannels.setRange (0, 16, true);
+        setup.inputChannels.setRange (0, kMaxDeviceInputChannels, true);
 
     const auto error = deviceManager.setAudioDeviceSetup (setup, /*treatAsChosen*/ true);
 

@@ -2,7 +2,9 @@
 #include "DuskAlerts.h"
 #include "DuskContextMenu.h"
 #include "../session/RegionEditActions.h"
+#include "../util/StringParsing.h"
 #include <algorithm>
+#include <cmath>
 
 namespace duskstudio
 {
@@ -1267,9 +1269,9 @@ void TransportBar::promptEditTempoAtPlayhead()
             if (safe == nullptr) return;
             // getDoubleValue() turns junk into 0, which the >0 check
             // rejects rather than letting jlimit clamp it to 30 BPM.
-            const double parsed = text.trim().getDoubleValue();
-            if (! (parsed > 0.0) || ! std::isfinite (parsed)) return;
-            const float b = juce::jlimit (30.0f, 300.0f, (float) parsed);
+            float parsed = 0.0f;
+            if (! parseFullFloat (text, parsed) || parsed <= 0.0f) return;
+            const float b = juce::jlimit (30.0f, 300.0f, parsed);
 
             auto& s2 = safe->engine.getSession();
             if (s2.tempoMap.empty())
@@ -1287,7 +1289,7 @@ void TransportBar::promptEditTempoAtPlayhead()
             for (auto& p : vec)
                 if (p.timelineSamples <= playhead) gov = &p;
                 else break;
-            if (std::abs (gov->bpm - b) < 0.01f) return;
+            if (std::abs (gov->bpm - b) < 0.005f) return;   // match confirmAndApplyBpm
             gov->bpm = b;
             auto& um = safe->engine.getUndoManager();
             um.beginNewTransaction ("Set tempo");
@@ -1489,9 +1491,16 @@ void TransportBar::confirmAndApplyBpm (float newBpm, float oldBpm)
         return;
     }
 
+    // Show the genuine (possibly fractional) values so a 127.2 → 127.6 edit
+    // doesn't read as "127 to 127 BPM". Trim trailing zeros so whole numbers
+    // still show as "127", not "127.00".
+    auto fmtBpm = [] (float v)
+    {
+        return juce::String (v, 2).trimCharactersAtEnd ("0").trimCharactersAtEnd (".");
+    };
     juce::String body;
-    body << "Change tempo from " << (int) oldBpm << " to "
-         << (int) newBpm << " BPM?\n\n";
+    body << "Change tempo from " << fmtBpm (oldBpm) << " to "
+         << fmtBpm (newBpm) << " BPM?\n\n";
     if (lockedMidi > 0)
         body << "    " << lockedMidi
              << " tempo-locked MIDI region" << (lockedMidi == 1 ? "" : "s")

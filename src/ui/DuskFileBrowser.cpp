@@ -61,7 +61,7 @@ public:
             for (auto* child : browser->getChildren())
                 if (auto* l = dynamic_cast<juce::Label*> (child))
                     if (l->getText() == TRANS ("file:"))
-                        l->setText ("Name:", juce::dontSendNotification);
+                        l->setText (TRANS ("Name:"), juce::dontSendNotification);
 
         titleLabel.setText (opts.title.isNotEmpty() ? opts.title
                                                        : (opts.mode == Mode::Save ? "Save file"

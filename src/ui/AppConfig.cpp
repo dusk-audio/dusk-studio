@@ -128,7 +128,10 @@ void setStopBehavior (StopBehavior b)
 MulticoreDspMode getMulticoreDspMode()
 {
     const auto raw = readKey (kKeyMulticoreMode);
-    if (raw.isEmpty()) return MulticoreDspMode::Auto;   // default: use spare cores
+    // Reject empty or non-numeric: getIntValue() coerces "abc" to 0, which would
+    // silently pass the range check and flip behaviour instead of defaulting.
+    if (raw.isEmpty() || ! raw.containsOnly ("0123456789"))
+        return MulticoreDspMode::Auto;   // default: use spare cores
     const int v = raw.getIntValue();
     if (v >= 0 && v <= 2) return (MulticoreDspMode) v;
     return MulticoreDspMode::Auto;

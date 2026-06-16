@@ -8,6 +8,7 @@
 #include "EditCursors.h"
 #include "EmbeddedModal.h"
 #include "FadeCurve.h"
+#include "../util/StringParsing.h"
 #include <cmath>
 #include <string>
 
@@ -23,25 +24,6 @@ EmbeddedModal& sharedTapeStripTextInputModal()
 {
     static EmbeddedModal m;
     return m;
-}
-
-// Strict, full-string float parse. containsOnly() lets malformed input like
-// "+", "-", or "1..2" through, and getFloatValue() turns those into 0 — which
-// jlimit then silently clamps to the minimum (a bogus 30 BPM entry). Require the
-// ENTIRE trimmed string to parse as one number; reject partial / junk input.
-bool parseFullFloat (const juce::String& s, float& out) noexcept
-{
-    const auto t = s.trim().toStdString();
-    if (t.empty()) return false;
-    try
-    {
-        std::size_t consumed = 0;
-        const float v = std::stof (t, &consumed);
-        if (consumed != t.size() || ! std::isfinite (v)) return false;   // trailing junk / inf / nan
-        out = v;
-        return true;
-    }
-    catch (...) { return false; }
 }
 
 // Dusk-styled text-input panel — title + prompt + TextEditor + OK /
@@ -131,7 +113,10 @@ public:
         juce::Component::SafePointer<TextInputPanel> safe (this);
         juce::MessageManager::callAsync ([safe]
         {
-            if (safe != nullptr) safe->editor.grabKeyboardFocus();
+            // Modal may be dismissed between scheduling and now; skip the grab
+            // if the panel is no longer on screen.
+            if (safe != nullptr && safe->isShowing())
+                safe->editor.grabKeyboardFocus();
         });
     }
 

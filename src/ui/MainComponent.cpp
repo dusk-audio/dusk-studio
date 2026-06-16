@@ -704,6 +704,7 @@ MainComponent::~MainComponent()
     virtualKeyboardModal .closeAndDeleteBodyNow();
     importTargetModal    .closeAndDeleteBodyNow();
     shortcutsModal       .closeAndDeleteBodyNow();
+    supportersModal      .closeAndDeleteBodyNow();
 
     // Intentionally NO auto-save here. Standard DAW behavior is to require
     // an explicit Save before exit. The previous auto-save on destruct

@@ -56,8 +56,9 @@ inline int comparePrerelease (const juce::String& a, const juce::String& b)
         const bool nb = pb[i].containsOnly ("0123456789") && pb[i].isNotEmpty();
         if (na && nb)
         {
-            if (const int d = pa[i].getIntValue() - pb[i].getIntValue(); d != 0)
-                return d;
+            const int va = pa[i].getIntValue();
+            const int vb = pb[i].getIntValue();
+            if (va != vb) return va < vb ? -1 : 1;   // direct compare — no subtraction overflow
         }
         else if (na != nb)
         {
