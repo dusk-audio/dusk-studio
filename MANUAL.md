@@ -18,7 +18,7 @@ colorlinks: true
 
 Dusk Studio is a deliberately constrained, portastudio-style digital audio workstation. It records up to 24 tracks of audio or MIDI, runs every track through a fixed signal chain inspired by classic analog consoles, and bounces a finished mix to a stereo WAV. It does not host a thousand plug-ins on a thousand tracks. It does not have tabbed views or hidden panels. Everything is on screen, all the time.
 
-This manual covers Dusk Studio v1. It is written for musicians and engineers who want a reference for every control, every shortcut, and every workflow the program supports. Read it cover to cover the first time and skim by section thereafter.
+This manual covers Dusk Studio (Beta). It is written for musicians and engineers who want a reference for every control, every shortcut, and every workflow the program supports. Read it cover to cover the first time and skim by section thereafter.
 
 ## What's in the box
 
@@ -699,7 +699,7 @@ The fader is automatable. The automation modes are **OFF** (no automation), **RE
 Below the fader:
 
 - **M** (mute). Lights red when on.
-- **S** (solo). Lights blue when on. Solo is **solo-in-place, additive**: every un-soloed track is muted while any track is soloed; soloing multiple tracks plays them all together. There is no PFL or AFL mode in v1.
+- **S** (solo). Lights blue when on. Solo is **solo-in-place, additive**: every un-soloed track is muted while any track is soloed; soloing multiple tracks plays them all together. There is no PFL or AFL mode.
 - **Ø** (phase invert). Lights yellow when on. Inverts the polarity of the channel's audio before the insert.
 
 ## Bus assigns
@@ -930,7 +930,7 @@ A streaming-platform preset picker (Spotify, Apple Music, YouTube, Netflix, etc.
 
 ## Exporting the master
 
-**Export master…** renders the mastering chain offline to `master.wav` in the session folder. A progress dialog shows the output path and a bar; the render runs as fast as the CPU allows and you can cancel mid-render. The output is **stereo 24-bit WAV at the current device sample rate** (Dusk Studio does not offer per-export format options in v1).
+**Export master…** renders the mastering chain offline to `master.wav` in the session folder. A progress dialog shows the output path and a bar; the render runs as fast as the CPU allows and you can cancel mid-render. The output is **stereo 24-bit WAV at the current device sample rate** (Dusk Studio does not offer per-export format options).
 
 \newpage
 
@@ -991,7 +991,7 @@ To repeat a section while you experiment:
 2. Click the **Loop** button on the transport bar.
 3. Press Play (for loop playback) or Record (for loop recording).
 
-In loop play, the transport wraps at the loop boundary indefinitely. In loop record, playback wraps but recording stays linear — you get a single take that extends from the loop start to wherever you press Stop. There is no take-stacking loop recording in v1.
+In loop play, the transport wraps at the loop boundary indefinitely. In loop record, playback wraps but recording stays linear — you get a single take that extends from the loop start to wherever you press Stop. There is no take-stacking loop recording.
 
 ## Where files are saved
 
@@ -1314,7 +1314,7 @@ Dusk Studio's solo is **solo-in-place, additive**:
 - Press **S** on a second track to add it to the solo set.
 - Press **S** again to remove it.
 
-There is no PFL (pre-fader listen) or AFL (after-fader listen) mode in v1. If you need to audition without the effects of the channel strip, set the **IN** monitor toggle and pull the rest of the mix down.
+There is no PFL (pre-fader listen) or AFL (after-fader listen) mode. If you need to audition without the effects of the channel strip, set the **IN** monitor toggle and pull the rest of the mix down.
 
 ## Automation
 
@@ -1473,7 +1473,7 @@ The status label shows one of:
 - `Detected: N samples (X.X ms)` — measurement succeeded, the value is filled in.
 - `Ping failed — check level / cables` — no correlation peak found.
 
-Run the ping after any change to your interface routing or your external gear's settings. There is no automatic re-ping on session load in v1; you ping when you set up the insert and re-ping if anything in the chain changes.
+Run the ping after any change to your interface routing or your external gear's settings. There is no automatic re-ping on session load; you ping when you set up the insert and re-ping if anything in the chain changes.
 
 ## Latency compensation
 
@@ -1536,7 +1536,7 @@ Once connected:
 - **Bank Left** / **Bank Right** step the bank by 8.
 - **Channel Left** / **Channel Right** step the selected channel by 1.
 - **Mute / Solo / Arm / Select** buttons mirror and drive the on-screen buttons. LEDs reflect state.
-- **V-pot** rotaries drive pan, sends, EQ band gain, or compressor depending on the **assign mode**. Press **Pan**, **Send** (repeated presses cycle sends 1–4), **EQ**, or the **Track** button (mapped to the compressor in Dusk Studio) to switch. The surface's **Plugin** and **Inst** assign buttons are not mapped in v1.
+- **V-pot** rotaries drive pan, sends, EQ band gain, or compressor depending on the **assign mode**. Press **Pan**, **Send** (repeated presses cycle sends 1–4), **EQ**, or the **Track** button (mapped to the compressor in Dusk Studio) to switch. The surface's **Plugin** and **Inst** assign buttons are not mapped.
 - **Transport buttons** map to Play, Stop, Record, Rewind, Forward, Loop.
 - **Jog wheel** scrubs the playhead.
 - **Touch sense** drives Touch automation: touching a fader on the surface puts it into touch-write mode while you hold it.
@@ -1680,7 +1680,7 @@ To export your finished mix as a stereo audio file:
 2. A file browser opens at the session folder; pick or rename the destination WAV and confirm.
 3. A progress dialog renders the project offline. **Cancel** stops the render.
 
-The output is always **stereo 24-bit WAV at the current device sample rate**, with a fixed 5-second tail so reverb and compression ringouts decay naturally. Dusk Studio offers no per-bounce format options in v1.
+The output is always **stereo 24-bit WAV at the current device sample rate**, with a fixed 5-second tail so reverb and compression ringouts decay naturally. Dusk Studio offers no per-bounce format options.
 
 Dusk Studio detaches from the realtime audio device and renders the project offline as fast as the CPU allows. When the bounce completes, the audio device is automatically re-attached.
 

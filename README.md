@@ -24,10 +24,10 @@ GPL source on this repo — build from source and the binary costs you nothing b
 | **Patreon Supporter** | from $3 / month | Latest release binaries (Linux tarball + Windows MSI + macOS DMG, all unsigned) delivered as attachments on each release post. Name in plugin credits. Lapse keeps whatever build you've already downloaded. |
 | **Patreon Patron** | $5 / month | Everything above + early-access beta builds 1–2 weeks ahead of public. |
 | **Patreon Champion** | $10 / month | Everything above + DM support + roadmap-feature votes. |
-| **One-time licence** | **$27** | Current major version (1.x.x). Every 1.x minor + patch update included. 2.0 requires a new purchase (or the lifetime upgrade). |
-| **Lifetime** | $49 | Current major (1.x.x) plus the next major (2.x.x). Two majors of updates for less than two licences. |
+| **One-time licence** | **$27** | The current 0.x beta line and the upcoming 1.x production major — every 1.x minor + patch update included. 2.0 requires a new purchase (or the lifetime upgrade). |
+| **Lifetime** | $49 | The current 0.x beta line, the 1.x production major, and the next major (2.x). Two production majors of updates for less than two licences. |
 
-*Version-discipline contract: major bumps (1.x → 2.x) mean roadmap-defining shifts — new stages, core-architecture changes. Plugin additions, UI polish, performance work, new DSP modules all stay within the current major.*
+*Version-discipline contract: today's 0.x releases are the beta; they roll into the 1.0 production release at no extra cost. Major bumps (1.x → 2.x) mean roadmap-defining shifts — new stages, core-architecture changes — and are the first new-purchase boundary. Plugin additions, UI polish, performance work, and new DSP modules all stay within the current major.*
 
 Paid via [Patreon](https://www.patreon.com/cw/DuskAudio) (recurring) or [GitHub Sponsors](https://github.com/sponsors/marc-korte) (one-time, $27 + $49 amounts). Buyer gets invited to the private releases repo where every build lands.
 
@@ -65,7 +65,7 @@ Paid via [Patreon](https://www.patreon.com/cw/DuskAudio) (recurring) or [GitHub 
 | macOS DMG (unsigned, ad-hoc) | Working (CI publishes to private releases repo on tag) |
 | Deeper a11y (full screen-reader labels + keyboard-only mixer nav) | Floor only |
 
-206 Catch2 unit tests across 50 files. Linux (amd64 + arm64) + macOS + Windows builds run on every push; Windows tests run on every push; Linux ThreadSanitizer runs on every PR + push.
+214 Catch2 unit tests across 51 files. Linux (amd64 + arm64) + macOS + Windows builds run on every push; Windows tests run on every push; Linux ThreadSanitizer runs on every PR + push.
 
 ## Bug reports
 
@@ -115,7 +115,7 @@ src/
   session/     # Session model + JSON serialisation
   ui/          # MainComponent, ConsoleView, channel/aux/master strips, mastering view
   util/        # CrashHandler (FileLogger + signal-handler reports)
-tests/         # 206 Catch2 unit tests (session, recording, MIDI, IPC, DSP)
+tests/         # 214 Catch2 unit tests (session, recording, MIDI, IPC, DSP)
 packaging/     # .desktop, AppStream, MIME, macOS bundle — for tarball + DMG builds
 DuskStudio.md  # authoritative product spec
 MANUAL.md      # end-user manual (Pandoc-buildable to PDF via packaging/build-pdf.sh)

@@ -5,13 +5,30 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
-## [0.11.0] - 2026-06-12
+## [0.11.0] - 2026-06-16
 
 Built to a production-grade bar; shipped as a Beta. 1.0.0 is reserved for
 the public stable declaration.
 
 ### Added
 
+- **Dusk-native audio device selector.** Replaces JUCE's stock device-selector
+  with a native backend / output / input / sample-rate / buffer-size picker that
+  surfaces device-open errors as in-window alerts (no native popup), and opens
+  every device channel so the main-output pair menu finds all active pairs.
+- **Multicore DSP setting.** The Audio Settings panel exposes an in-app control
+  for parallel strip DSP — Auto (uses spare cores), Off (serial), or a pinned
+  worker count — persisted per machine. (`DUSKSTUDIO_AUDIO_WORKERS` still
+  overrides it for CI / power users.)
+- **Hardware-insert ping while stopped.** The insert chirp test runs with the
+  transport stopped and IN off, sending the tone only to the insert's device
+  output pair while master / bus / aux stay silent.
+- **Transport tempo display.** The transport bar shows the tempo at the playhead
+  (tempo-map aware) and edits it through the same undoable prompt as the ruler.
+- **Marker rename on creation.** Adding a marker opens a rename prompt immediately.
+- **Supporters credits panel.** A "Special Thanks" panel lists the project's
+  Patreon / GitHub Sponsors supporters (built only when the credits header is
+  present).
 - **Mastering-EQ spectrum analyzer.** A real-time FFT overlay on the mastering
   EQ draws the post-EQ spectrum behind the response curve; toggle it with the
   FFT button in the panel's top-left.
@@ -108,6 +125,11 @@ the public stable declaration.
 
 ### Fixed
 
+- **Metronome count-in clicks land on the beat.** Count-in (negative-playhead)
+  pre-roll no longer mis-times its clicks crossing the bar line.
+- **Tempo entry works on comma-decimal locales.** The BPM / tempo fields parse
+  "127.6" the same on French / German systems as on English ones, and reject
+  partial junk ("123abc") instead of silently taking the numeric prefix.
 - **Data-integrity hardening.** Session save is now genuinely atomic (a
   crash mid-save can no longer lose both the old and new file); recovering
   from an autosave immediately persists the recovered state instead of

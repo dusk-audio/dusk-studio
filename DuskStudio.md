@@ -38,7 +38,7 @@ Audio Input (Mono/Stereo)          MIDI Input (keyboard/controller)
        │                                      │ audio output
        ▼                                      ▼
 ┌──────────────────────────────────────────────┐
-│  Channel 1-16 (audio path is identical       │
+│  Channel 1-24 (audio path is identical       │
 │  regardless of whether source is mic or      │
 │  instrument plugin)                          │
 │                                              │
@@ -83,7 +83,7 @@ The UI is a single window, split into two always-visible zones. No tabs, no hidd
 
 A horizontal timeline showing:
 
-* Colored rectangular blocks for audio/MIDI regions (one row per track, 16 rows)
+* Colored rectangular blocks for audio/MIDI regions (one row per track, 24 rows)
 * A playhead line
 * **Marker lane** along the top edge — named markers (Intro, Verse 1, Chorus, Bridge, etc.) that you can click to jump to, or assign via keyboard shortcut during playback. Like the LOCATE/MARK function on a Tascam DP-24. Markers are created by pressing a "MARK" button (or key) at the current playhead position, then typing a name.
 * Loop in/out brackets (visual indicators, set via dedicated buttons)
@@ -193,7 +193,7 @@ AudioCallback (one buffer, e.g. 256 samples):
    c. Call instrument plugin's processBlock() — produces audio buffer
    d. This audio buffer now enters the channel strip identically to audio tracks
 3. If recording audio tracks, capture input audio into record ring buffers
-4. For each channel 1-16 (audio and MIDI tracks are identical from here):
+4. For each channel 1-24 (audio and MIDI tracks are identical from here):
    a. Process through channel strip DSP (HPF → EQ → Comp)
    b. Tap send levels, accumulate into effect bus buffers
    c. Apply pan + fader gain (read from automation if in Read/Touch mode)
@@ -209,7 +209,7 @@ AudioCallback (one buffer, e.g. 256 samples):
 
 **Disk streaming**: double-buffered ring buffers (`juce::AbstractFifo`) between real-time thread and background disk I/O thread. One read stream per playing track, one write stream per recording track. Use `juce::TimeSliceThread` for the background disk work.
 
-**Ring buffer sizing**: each per-stream ring buffer is allocated at `bufferDurationSeconds × sampleRate × sizeof(float) × numChannels` bytes. The default buffer duration is 4.0 seconds, exposed as a configurable parameter (`diskBufferSeconds`, clamped to 2.0–8.0 seconds). A track is either reading (playback) or writing (record-armed and rolling) at any instant — never both — so the worst case is 16 stereo streams active simultaneously. At default settings (16 stereo streams, 48 kHz, 4 s): 16 × 2 × 4 × 48000 × 4 bytes ≈ 24 MB. This is allocated once at session load (or audio device initialization) — not per-buffer-callback. Validate the configured value before allocation: values below 2.0 s risk underruns on slow disks, values above 8.0 s waste memory with diminishing returns. Log the total memory budget at allocation time for diagnostics.
+**Ring buffer sizing**: each per-stream ring buffer is allocated at `bufferDurationSeconds × sampleRate × sizeof(float) × numChannels` bytes. The default buffer duration is 4.0 seconds, exposed as a configurable parameter (`diskBufferSeconds`, clamped to 2.0–8.0 seconds). A track is either reading (playback) or writing (record-armed and rolling) at any instant — never both — so the worst case is 24 stereo streams active simultaneously. At default settings (24 stereo streams, 48 kHz, 4 s): 24 × 2 × 4 × 48000 × 4 bytes ≈ 36 MB. This is allocated once at session load (or audio device initialization) — not per-buffer-callback. Validate the configured value before allocation: values below 2.0 s risk underruns on slow disks, values above 8.0 s waste memory with diminishing returns. Log the total memory budget at allocation time for diagnostics.
 
 **Disk stream underrun/overrun policy**:
 
@@ -233,7 +233,7 @@ struct Session {
     double bpm;
     TimeSignature timeSignature;  // numerator/denominator, used by metronome and bar math
 
-    std::array<Track, 16> tracks;
+    std::array<Track, 24> tracks;
     std::array<AuxBus, 4> auxBuses;
     std::array<EffectSend, 2> effectSends;  // plugin slot + return level
     MasterBus master;
@@ -250,7 +250,7 @@ struct Track {
     Colour colour;
     InputMode inputMode;          // Mono, Stereo, MIDI
     int midiInputChannel;         // Internal 0-15, or -1 = omni (all channels).
-                                  // Use userChannelToInternal(1-16) at UI boundaries,
+                                  // Use userChannelToInternal(1-24) at UI boundaries,
                                   // internalChannelToUser(0-15) for display.
     String instrumentPluginId;    // only used if MIDI
     String instrumentPluginState; // serialized plugin state (base64)
@@ -406,7 +406,7 @@ Note: MIDI event data is stored inline in `session.json` (not as separate .mid f
 * On a clean manual save, `session.json.autosave` is deleted.
 * On a crash, the autosave is preserved untouched; next launch triggers the recovery dialog above.
 
-**File format**: JSON. The session is so constrained (16 fixed tracks, fixed topology) that a simple JSON file describes everything. No need for a complex format.
+**File format**: JSON. The session is so constrained (24 fixed tracks, fixed topology) that a simple JSON file describes everything. No need for a complex format.
 
 ### **3. Transport (`src/engine/`)**
 
