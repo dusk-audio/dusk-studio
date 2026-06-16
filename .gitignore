@@ -11,7 +11,7 @@ compile_commands.json
 .idea/
 *.swp
 
-# Python bytecode (scripts/)
+# Python bytecode (repo-wide)
 __pycache__/
 *.pyc
 *.swo

@@ -109,6 +109,7 @@ def refresh_tokens(config):
         "client_secret": config["client_secret"],
     }).encode()
     req = urllib.request.Request(TOKEN_URL, data=body, method="POST")
+    req.add_header("Content-Type", "application/x-www-form-urlencoded")
     with urllib.request.urlopen(req, timeout=30) as resp:
         fresh = json.load(resp)
     config["access_token"] = fresh["access_token"]
@@ -167,6 +168,12 @@ def fetch_members(config):
             raise
         config = refresh_tokens(config)
         return run(config["access_token"])
+    except urllib.error.URLError as e:
+        # DNS failure / connection refused / unreachable network / timeout —
+        # a clearer message than a raw traceback. HTTPError (a URLError
+        # subclass) is handled above, so this only catches transport errors.
+        sys.exit(f"Network error contacting Patreon ({e.reason}). "
+                 "Check your connection and retry.")
 
 
 def find_headers(daw_root):
@@ -218,6 +225,12 @@ def main():
         sys.exit(f"Missing {CONFIG_PATH} — see the setup notes at the top "
                  "of this script.")
     config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    missing = [k for k in ("access_token", "refresh_token",
+                           "client_id", "client_secret") if k not in config]
+    if missing:
+        sys.exit(f"{CONFIG_PATH} is missing required key(s): "
+                 f"{', '.join(missing)} — see the setup notes at the top "
+                 "of this script.")
     overrides = config.get("name_overrides", {})
 
     daw_root = Path(__file__).resolve().parent.parent
