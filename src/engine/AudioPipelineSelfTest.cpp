@@ -1180,7 +1180,18 @@ juce::String AudioPipelineSelfTest::runAll()
     {
         session.track (t).inputMonitor.store (false, std::memory_order_relaxed);
         session.track (t).recordArmed.store  (false, std::memory_order_relaxed);
+        // Clearing monitor/arm stops LIVE input, but a self-generating plugin
+        // (drone synth, noise box) on an unmuted track would still reach the
+        // speakers while real devices are open. Hard-mute + clear solo for
+        // unconditional silence (same enforcement prepareCleanState uses for the
+        // synthetic tests). restoreState(savedSession) below reverts both.
+        session.track (t).strip.mute.store (true,  std::memory_order_relaxed);
+        session.track (t).strip.solo.store (false, std::memory_order_relaxed);
     }
+    // Bus solos too: a soloed bus gates the master mix via the SIP solo logic,
+    // so leave none set while probing.
+    for (int b = 0; b < Session::kNumBuses; ++b)
+        session.bus (b).strip.solo.store (false, std::memory_order_relaxed);
     session.recomputeRtCounters();
     // The synthetic tests force the engine serial (setWorkerCountForTest(0));
     // restore the live configured worker pool before re-attaching.

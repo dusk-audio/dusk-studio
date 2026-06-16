@@ -28,6 +28,12 @@ constexpr int           kMaxBlock  = 1024;        // upper bound on numSamples p
 constexpr int           kMaxChans  = 2;           // stereo plenty for v1
 constexpr std::size_t   kMidiBytes = 16 * 1024;   // serialised juce::MidiBuffer cap
 constexpr std::size_t   kStateBytes = 4 * 1024 * 1024; // up to 4 MB plugin state blob
+// Hard cap on a single control-socket payload. Legit payloads are small
+// (LoadPlugin XML is the largest, a few KB); anything bigger goes via the SHM
+// staging area, not the socket. Reject an out-of-range payloadLen BEFORE
+// allocating so a corrupt/hostile header can't drive a multi-GB std::vector
+// allocation and OOM-kill the process.
+constexpr std::uint32_t kMaxControlPayload = 256 * 1024;
 
 // State values for `BlockHeader::state`.
 constexpr std::uint32_t kStateReady    = 0;

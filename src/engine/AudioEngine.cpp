@@ -109,6 +109,10 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
     // 50 minimum kept even when total exceeds the cap.
     undoManager.setMaxNumberOfStoredUnits (500, 50);
 
+    // Drain silent-output diagnostics on the message thread (1 Hz) so the audio
+    // callback never touches stdio. Cheap when nothing has stalled.
+    diagTimer.startTimer (1000);
+
     // Hosted plugins get this via setPlayHead so tempo-synced features
     // (LFOs, arps, delays) read live session BPM + playhead.
     playHead = std::make_unique<DuskStudioPlayHead> (transport,
@@ -777,6 +781,7 @@ void AudioEngine::setStage (Stage s) noexcept
 
 AudioEngine::~AudioEngine()
 {
+    diagTimer.stopTimer();
     if (transport.isRecording())
         recordManager.stopRecording (transport.getPlayhead());
     deviceManager.removeChangeListener (this);
@@ -785,6 +790,30 @@ AudioEngine::~AudioEngine()
     // After the callback is gone — nothing pushes to the out-FIFO, the
     // pump drains or drops what's left, then midiOutputs can destruct.
     midiOutPump.stopThread (2000);
+}
+
+void AudioEngine::drainCallbackDiagnostics()
+{
+    const auto gated = earlyOutBlocks.load (std::memory_order_relaxed);
+    if (gated != lastReportedGated)
+    {
+        std::fprintf (stderr, "[Dusk Studio/AudioEngine] callback GATED (processingSuspended=true) — "
+                              "%lld silent block(s) since last report; if persistent, the gate is stuck\n",
+                      (long long) (gated - lastReportedGated));
+        lastReportedGated = gated;
+    }
+
+    const auto silent = silentBlocks.load (std::memory_order_relaxed);
+    if (silent != lastReportedSilent)
+    {
+        const auto dims = silentDims.load (std::memory_order_relaxed);
+        std::fprintf (stderr, "[Dusk Studio/AudioEngine] callback SILENT: engine buffers sized %d but device "
+                              "delivered %d samples — re-prepare missed the block size (%lld block(s))\n",
+                      (int) (dims >> 32),
+                      (int) (dims & 0xffffffffu),
+                      (long long) (silent - lastReportedSilent));
+        lastReportedSilent = silent;
+    }
 }
 
 void AudioEngine::play()
@@ -1370,7 +1399,14 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
     for (auto& v : playbackScratchR) v.assign ((size_t) bs, 0.0f);
     for (auto& m : perTrackMidiScratch) m.ensureSize (4096);
     midiClockOutScratch.ensureSize (4096);
-    for (auto& q : midiOutQueue) q.events.ensureSize (kMidiOutSlotBytes);
+    {
+        // Serialize the resize with the MIDI pump: drainMidiOutQueue() reads
+        // slot.events under midiOutBankMutex on the pump thread, which keeps
+        // running across a device re-open. ensureSize() reallocates the buffer,
+        // so it must hold the same lock.
+        const std::lock_guard<std::mutex> lock (midiOutBankMutex);
+        for (auto& q : midiOutQueue) q.events.ensureSize (kMidiOutSlotBytes);
+    }
     silentInputScratch.assign ((size_t) bs, 0.0f);
 
     for (auto& a : laneAccum)
@@ -1491,6 +1527,14 @@ void AudioEngine::audioDeviceStopped()
     // where dispatched lanes outlive their dispatcher; a healthy stop makes
     // this a no-op.
     workerPool.quiesce();
+
+    // Same force-kill case for the callback-level gate: an I/O thread killed by
+    // stopThread()'s timeout can die mid-callback, before InFlightGuard
+    // decrements callbacksInFlight — leaking the count so the NEXT
+    // suspendProcessing() would wait on it forever. The I/O thread is confirmed
+    // stopped by the time this hook runs (no callback can be in flight), so
+    // reset the counter to reconcile any such leak.
+    callbacksInFlight.store (0, std::memory_order_release);
 
     // Stop any in-flight recording BEFORE clearing the sample rate: the
     // writer drain in stopRecording depends on recordSampleRate being
@@ -1694,15 +1738,14 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
     // check around the counter closes the raise-after-first-load window.
     auto clearOutputs = [&]
     {
+        if (outputChannelData == nullptr) return;   // matches the guard below
         for (int ch = 0; ch < numOutputChannels; ++ch)
             if (auto* out = outputChannelData[ch])
                 juce::FloatVectorOperations::clear (out, numSamples);
     };
     if (processingSuspended.load (std::memory_order_acquire))
     {
-        if (earlyOutBlocks.fetch_add (1, std::memory_order_relaxed) % 200 == 0)
-            std::fprintf (stderr, "[Dusk Studio/AudioEngine] callback GATED (processingSuspended=true) "
-                                  "— audio silent; if persistent, the gate is stuck\n");
+        earlyOutBlocks.fetch_add (1, std::memory_order_relaxed);   // drained by diagTimer
         clearOutputs();
         return;
     }
@@ -2650,10 +2693,9 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
 
     if ((int) mixL.size() < numSamples)
     {
-        if (earlyOutBlocks.fetch_add (1, std::memory_order_relaxed) % 200 == 0)
-            std::fprintf (stderr, "[Dusk Studio/AudioEngine] callback SILENT: engine buffers sized %d "
-                                  "but device delivered %d samples — re-prepare missed the block size\n",
-                          (int) mixL.size(), numSamples);
+        silentDims.store (((juce::uint64) (juce::uint32) mixL.size() << 32)
+                          | (juce::uint32) numSamples, std::memory_order_relaxed);
+        silentBlocks.fetch_add (1, std::memory_order_relaxed);   // drained by diagTimer
         for (int ch = 0; ch < numOutputChannels; ++ch)
             if (auto* out = outputChannelData[ch])
                 std::memset (out, 0, sizeof (float) * (size_t) numSamples);

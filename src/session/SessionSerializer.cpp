@@ -902,11 +902,15 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm,
             AudioRegion r;
             r.file            = resolvePortablePath (rv["file"].toString(),
                                                       sessionDir, missingFiles);
-            r.timelineStart   = (juce::int64) rv["timeline_start"];
-            r.lengthInSamples = (juce::int64) rv["length"];
-            r.sourceOffset    = (juce::int64) rv["source_offset"];
-            r.fadeInSamples   = rv.hasProperty ("fade_in")  ? (juce::int64) rv["fade_in"]  : 0;
-            r.fadeOutSamples  = rv.hasProperty ("fade_out") ? (juce::int64) rv["fade_out"] : 0;
+            // Clamp every sample-domain field to >= 0 (mirrors the MIDI-note
+            // loader below) so a hand-edited or truncated session.json can't
+            // seed negative values that underflow PlaybackEngine's read-pointer
+            // math (readStart = sourceOffset + (firstWithin - timelineStart)).
+            r.timelineStart   = juce::jmax ((juce::int64) 0, (juce::int64) rv["timeline_start"]);
+            r.lengthInSamples = juce::jmax ((juce::int64) 0, (juce::int64) rv["length"]);
+            r.sourceOffset    = juce::jmax ((juce::int64) 0, (juce::int64) rv["source_offset"]);
+            r.fadeInSamples   = rv.hasProperty ("fade_in")  ? juce::jmax ((juce::int64) 0, (juce::int64) rv["fade_in"])  : 0;
+            r.fadeOutSamples  = rv.hasProperty ("fade_out") ? juce::jmax ((juce::int64) 0, (juce::int64) rv["fade_out"]) : 0;
             auto loadShape = [] (const juce::var& v) -> FadeShape
             {
                 const int i = (int) v;
@@ -919,7 +923,7 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm,
                                  ? loadShape (rv["fade_out_shape"]) : FadeShape::Linear;
             r.fadeInAuto      = rv.hasProperty ("fade_in_auto")  && (bool) rv["fade_in_auto"];
             r.fadeOutAuto     = rv.hasProperty ("fade_out_auto") && (bool) rv["fade_out_auto"];
-            r.numChannels     = rv.hasProperty ("num_channels") ? (int) rv["num_channels"] : 1;
+            r.numChannels     = juce::jlimit (1, 2, rv.hasProperty ("num_channels") ? (int) rv["num_channels"] : 1);
             r.gainDb          = rv.hasProperty ("gain_db")  ? (float) (double) rv["gain_db"] : 0.0f;
             r.customColour    = rv.hasProperty ("custom_colour")
                                  ? juce::Colour::fromString (rv["custom_colour"].toString())
@@ -938,8 +942,8 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm,
                     TakeRef take;
                     take.file            = resolvePortablePath (tv["file"].toString(),
                                                                  sessionDir, missingFiles);
-                    take.sourceOffset    = (juce::int64) tv["source_offset"];
-                    take.lengthInSamples = (juce::int64) tv["length"];
+                    take.sourceOffset    = juce::jmax ((juce::int64) 0, (juce::int64) tv["source_offset"]);
+                    take.lengthInSamples = juce::jmax ((juce::int64) 0, (juce::int64) tv["length"]);
                     r.previousTakes.push_back (std::move (take));
                 }
             }
@@ -998,9 +1002,9 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm,
             auto rv = midiRegions[i];
             if (! rv.isObject()) continue;
             MidiRegion r;
-            r.timelineStart   = (juce::int64) rv["timeline_start"];
-            r.lengthInSamples = (juce::int64) rv["length_samples"];
-            r.lengthInTicks   = (juce::int64) rv["length_ticks"];
+            r.timelineStart   = juce::jmax ((juce::int64) 0, (juce::int64) rv["timeline_start"]);
+            r.lengthInSamples = juce::jmax ((juce::int64) 0, (juce::int64) rv["length_samples"]);
+            r.lengthInTicks   = juce::jmax ((juce::int64) 0, (juce::int64) rv["length_ticks"]);
             r.customColour    = rv.hasProperty ("custom_colour")
                                  ? juce::Colour::fromString (rv["custom_colour"].toString())
                                  : juce::Colour();
@@ -1030,7 +1034,7 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm,
                     auto tv = prior[k];
                     if (! tv.isObject()) continue;
                     MidiTakeRef take;
-                    take.lengthInTicks = (juce::int64) tv["length_ticks"];
+                    take.lengthInTicks = juce::jmax ((juce::int64) 0, (juce::int64) tv["length_ticks"]);
                     parseNotes (tv["notes"], take.notes);
                     parseCcs   (tv["ccs"],   take.ccs);
                     r.previousTakes.push_back (std::move (take));

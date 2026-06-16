@@ -613,10 +613,29 @@ private:
     // touches until resume.
     std::atomic<bool>   processingSuspended { false };
     std::atomic<int>    callbacksInFlight   { 0 };
-    // Counts callbacks that returned silent before dispatching the strip DSP,
-    // throttling a stderr line that names the cause (gate vs undersized buffer)
-    // — a silent-output stall is otherwise opaque without a debugger.
-    std::atomic<juce::int64> earlyOutBlocks { 0 };
+    // Silent-output diagnostics. The audio callback only bumps these atomics
+    // (RT-safe); diagTimer drains them on the message thread and emits the
+    // stderr line — stdio locks must never touch the audio thread. A silent-
+    // output stall is otherwise opaque without a debugger.
+    std::atomic<juce::int64> earlyOutBlocks  { 0 };   // GATED (processingSuspended) callbacks
+    std::atomic<juce::int64> silentBlocks    { 0 };   // undersized-buffer SILENT callbacks
+    // size<<32 | delivered, packed into ONE atomic so the timer reads a
+    // consistent pair instead of a torn mix of two different SILENT events.
+    std::atomic<juce::uint64> silentDims      { 0 };
+
+    // Drains the silent-output diagnostics off the audio thread. A nested Timer
+    // member keeps AudioEngine's (final) base list unchanged; it ticks at 1 Hz
+    // and prints only when a counter has advanced since the last report.
+    void drainCallbackDiagnostics();
+    struct CallbackDiagnosticTimer : juce::Timer
+    {
+        explicit CallbackDiagnosticTimer (AudioEngine& o) : owner (o) {}
+        void timerCallback() override { owner.drainCallbackDiagnostics(); }
+        AudioEngine& owner;
+    };
+    CallbackDiagnosticTimer diagTimer { *this };
+    juce::int64 lastReportedGated  = 0;   // diagTimer (message thread) only
+    juce::int64 lastReportedSilent = 0;
 
     std::atomic<int>    xrunCount         { 0 };
     // Device xrun count at the last resetXRunCounts(); subtracted in
