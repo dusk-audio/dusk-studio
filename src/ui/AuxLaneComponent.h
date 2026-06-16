@@ -53,6 +53,7 @@ private:
     void detachEditorForSlot (int slotIdx);
     void attachHardwareInsertForSlot (int slotIdx);
     void detachHardwareInsertForSlot (int slotIdx);
+    void hideEditorsKeepingAlive();
     void layoutEditorForSlot (int slotIdx);
     void scheduleEditorRefits (int slotIdx);
 
@@ -94,6 +95,12 @@ private:
     // doesn't churn every timer tick when the value is effectively
     // stable. Mirrors the per-channel pattern.
     float displayedLiveReturnLevelDb { 0.0f };
+
+    // Top-level peer the kept-alive plugin editors were built against. A peer
+    // change (fullscreen toggle recreates the X11 peer) orphans their embedded
+    // windows on the dead peer, so parentHierarchyChanged tears them down to
+    // force a rebuild rather than the cheap same-peer keep-alive remap.
+    juce::ComponentPeer* lastSeenPeer = nullptr;
 
     // Repainted by timer for the return-fader meter bar.
     class StripMeter;

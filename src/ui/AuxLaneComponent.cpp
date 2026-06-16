@@ -806,6 +806,22 @@ void AuxLaneComponent::detachEditorForSlot (int slotIdx)
     ui.editor.reset();
 }
 
+void AuxLaneComponent::hideEditorsKeepingAlive()
+{
+    // Lane went off-screen (tab switch). Keep the already-realised plugin
+    // editor + its hosted GUI resident and just hide it — setVisible(false)
+    // unmaps the embedded X11 window, so nothing lingers on-screen, but the
+    // next show is a cheap remap rather than a rebuild. Genuine teardown
+    // (unload / HW-mode switch / stale instance) still goes through
+    // detachEditorForSlot in rebuildSlots.
+    for (int i = 0; i < AuxLaneParams::kMaxLanePlugins; ++i)
+    {
+        auto& ui = slots[(size_t) i];
+        if (ui.editor != nullptr)
+            ui.editor->setVisible (false);
+    }
+}
+
 void AuxLaneComponent::attachHardwareInsertForSlot (int slotIdx)
 {
     auto& ui = slots[(size_t) slotIdx];
@@ -912,7 +928,16 @@ void AuxLaneComponent::rebuildSlots()
             if (ui.hwInsertEditor != nullptr) detachHardwareInsertForSlot (i);
 
             auto* instance = strip.getPluginSlot (i).getInstance();
-            // Only build the editor once this lane is actually on a realised,
+
+            // A kept-alive editor (we hide rather than destroy on tab switch)
+            // that no longer matches the slot's live instance — unloaded, or
+            // swapped while this lane was hidden — is stale. Tear it down so the
+            // block below rebuilds against the current instance.
+            if (ui.editor != nullptr
+                && (instance == nullptr || ui.editor->getAudioProcessor() != instance))
+                detachEditorForSlot (i);
+
+            // Build the editor once this lane is actually on a realised,
             // visible peer. Creating it while hidden (all 4 lanes are built up
             // front; AuxView shows one) maps the plugin's X11 editor window to
             // the root window — a stray top-level flash until it reparents.
@@ -937,36 +962,62 @@ void AuxLaneComponent::rebuildSlots()
                     ui.editor = std::make_unique<juce::GenericAudioProcessorEditor> (*instance);
                 attachEditorForSlot (i);
             }
-            if (instance == nullptr && ui.editor != nullptr)
-                detachEditorForSlot (i);
+            else if (instance != nullptr && ui.editor != nullptr && isShowing())
+            {
+                // Kept-alive editor returning on a tab switch: re-show and
+                // re-center only. No createEditorIfNeeded, no XWayland reparent,
+                // no stale-size refit cycle — this is what makes clicking back
+                // to a loaded AUX lane feel instant instead of lagging on
+                // GNOME/Wayland (XWayland).
+                ui.editor->setVisible (true);
+                layoutEditorForSlot (i);
+            }
         }
     }
     resized();
+    // Any editor built/kept above now lives on the current peer; record it so
+    // parentHierarchyChanged can tell a real peer change (must rebuild) from a
+    // same-peer visibility/tab change (cheap keep-alive).
+    lastSeenPeer = getPeer();
 }
 
 void AuxLaneComponent::visibilityChanged()
 {
-    // Lazily build the plugin editor only while this lane is the visible one
-    // (avoids the root-window flash from creating it hidden). When hidden,
-    // drop the editor so an inactive lane doesn't keep an X11 plugin window
-    // parented off-screen — it rebuilds on the next show.
+    // Build the editor lazily on first show (creating it hidden maps the
+    // plugin's X11 window to the root window — a stray flash). Once built,
+    // keep it alive across tab switches and just hide it: re-showing then
+    // costs an X11 remap instead of a full createEditor + reparent + size
+    // negotiation, which on GNOME/Wayland (XWayland) was the visible lag when
+    // clicking back to a loaded AUX lane.
     if (isShowing())
         rebuildSlots();
     else
-        for (int i = 0; i < AuxLaneParams::kMaxLanePlugins; ++i)
-            detachEditorForSlot (i);
+        hideEditorsKeepingAlive();
 }
 
 void AuxLaneComponent::parentHierarchyChanged()
 {
     // Catches the lane being added to (or removed from) a realised, on-screen
     // window — visibilityChanged alone doesn't fire on the initial desktop
-    // attach. Same build-when-showing / tear-down-when-hidden policy.
+    // attach. Same build-when-showing / hide-when-off-screen policy.
+    //
+    // A TOP-LEVEL PEER CHANGE (fullscreen toggle recreates the native X11 peer)
+    // is different from a tab/stage visibility change: a kept-alive editor's
+    // embedded X11 window stays parented to the destroyed peer, and the re-show
+    // path only setVisible(true)s it — it never re-embeds. Tear stale editors
+    // down so rebuildSlots recreates them against the new peer. detachEditorForSlot
+    // is a no-op when no editor exists, so a same-peer change costs nothing.
+    if (getPeer() != lastSeenPeer)
+    {
+        for (int i = 0; i < AuxLaneParams::kMaxLanePlugins; ++i)
+            detachEditorForSlot (i);
+        lastSeenPeer = getPeer();
+    }
+
     if (isShowing())
         rebuildSlots();
     else
-        for (int i = 0; i < AuxLaneParams::kMaxLanePlugins; ++i)
-            detachEditorForSlot (i);
+        hideEditorsKeepingAlive();
 }
 
 void AuxLaneComponent::paint (juce::Graphics& g)
