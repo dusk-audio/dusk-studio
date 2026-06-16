@@ -33,6 +33,9 @@
 #include "../session/SessionSerializer.h"
 #include "../engine/FileImporter.h"
 #include "ImportTargetPicker.h"
+#include "DpImportDialog.h"
+#include "../engine/DpImporter.h"
+#include "../engine/DpAligner.h"
 #include <juce_audio_formats/juce_audio_formats.h>
 
 namespace duskstudio
@@ -2980,6 +2983,219 @@ void MainComponent::importPrompt()
     });
 }
 
+namespace
+{
+// Interleave two equal-rate mono fragments (_1 / _2) into one temporary 2-ch
+// WAV so the stereo pair travels through FileImporter::importAudio as a single
+// source. Returns an empty File on failure; caller deletes the temp afterwards.
+juce::File makeStereoTempWav (const juce::File& left, const juce::File& right)
+{
+    auto& fm = importAudioFormatManager();
+    std::unique_ptr<juce::AudioFormatReader> rl (fm.createReaderFor (left));
+    std::unique_ptr<juce::AudioFormatReader> rr (fm.createReaderFor (right));
+    if (rl == nullptr || rr == nullptr) return {};
+
+    const auto len = (int) juce::jmin (rl->lengthInSamples, rr->lengthInSamples);
+    if (len <= 0 || rl->sampleRate <= 0.0) return {};
+
+    // Each fragment is a mono reader (channel 0 only), so read each into its
+    // own 1-ch buffer and assemble the interleaved pair by copy.
+    juce::AudioBuffer<float> lbuf (1, len), rbuf (1, len);
+    lbuf.clear();
+    rbuf.clear();
+    if (! rl->read (&lbuf, 0, len, 0, true, false)
+        || ! rr->read (&rbuf, 0, len, 0, true, false))
+        return {};
+
+    juce::AudioBuffer<float> out (2, len);
+    out.copyFrom (0, 0, lbuf, 0, 0, len);
+    out.copyFrom (1, 0, rbuf, 0, 0, len);
+
+    const auto tmp = juce::File::createTempFile (".wav");
+    std::unique_ptr<juce::FileOutputStream> stream (tmp.createOutputStream());
+    if (stream == nullptr || ! stream->openedOk()) return {};
+    juce::WavAudioFormat wav;
+    std::unique_ptr<juce::AudioFormatWriter> writer (
+        wav.createWriterFor (stream.get(), rl->sampleRate, 2, 24, {}, 0));
+    if (writer == nullptr) return {};
+    stream.release();
+    if (! writer->writeFromAudioSampleBuffer (out, 0, len)) { tmp.deleteFile(); return {}; }
+    writer.reset();
+    return tmp;
+}
+} // namespace
+
+void MainComponent::importDpSongPrompt()
+{
+    if (! engine.getTransport().isStopped())
+    {
+        showImportError ("Import DP Song", "Stop playback before importing.");
+        return;
+    }
+
+    const auto startDir = juce::File::getSpecialLocation (juce::File::userMusicDirectory);
+    filebrowser::open (*this, {
+        /*title*/                  "Select a DP song folder",
+        /*initialFileOrDirectory*/ startDir,
+        /*filePatternsAllowed*/    "",
+        /*mode*/                   filebrowser::Mode::Open,
+        /*warnAboutOverwriting*/   false,
+        /*selectDirectories*/      true,
+    },
+    [safeThis = juce::Component::SafePointer<MainComponent> (this)]
+    (juce::File folder)
+    {
+        auto* self = safeThis.getComponent();
+        if (self == nullptr || folder == juce::File()) return;
+
+        const auto scan = dp::scanSongFolder (folder);
+        if (! scan.ok)
+        {
+            showImportError ("Import DP Song",
+                             scan.warnings.isEmpty()
+                                 ? juce::String ("No DP song folder found at that location.")
+                                 : scan.warnings);
+            return;
+        }
+
+        auto dialog = std::make_unique<DpImportDialog> (
+            scan, Session::kNumTracks,
+            [safeThis, scan] (bool importMixer, bool importTimeline)
+            {
+                if (auto* s = safeThis.getComponent())
+                {
+                    s->importTargetModal.close();
+                    s->runDpImport (scan, importMixer, importTimeline);
+                }
+            },
+            [safeThis]
+            {
+                if (auto* s = safeThis.getComponent())
+                    s->importTargetModal.close();
+            });
+
+        self->importTargetModal.show (*self, std::move (dialog), {},
+                                      /*dismissOnClickOutside*/ false);
+    });
+}
+
+void MainComponent::runDpImport (const dp::SongScan& scan,
+                                 bool importMixer, bool importTimeline)
+{
+    if (! engine.getTransport().isStopped())
+    {
+        showImportError ("Import DP Song", "Stop playback before importing.");
+        return;
+    }
+
+    const int    n        = juce::jmin ((int) scan.tracks.size(), Session::kNumTracks);
+    const double sr       = engine.getCurrentSampleRate();
+    const auto   audioDir = session.getAudioDirectory();
+
+    // Timeline alignment: when requested and a mixdown is present, recover each
+    // fragment's position by onset-aligning it to the mixdown. positionSeconds
+    // is sample-rate independent; convert to session samples. Full-length takes
+    // and low-confidence (not-in-mix / discarded) fragments resolve to 0.
+    std::vector<juce::int64> placeAt ((size_t) n, 0);
+    int alignedCount = 0;
+    if (importTimeline && scan.hasMixdown)
+    {
+        std::vector<juce::File> sources;
+        sources.reserve ((size_t) n);
+        for (int i = 0; i < n; ++i) sources.push_back (scan.tracks[(size_t) i].fragment.mono1);
+        const auto al = dp::alignToMixdown (scan.mixdownFile, sources);
+        for (int i = 0; i < n && i < (int) al.size(); ++i)
+            if (al[(size_t) i].placed)
+            {
+                placeAt[(size_t) i] = (juce::int64) std::llround (al[(size_t) i].positionSeconds * sr);
+                if (! al[(size_t) i].fullLength && placeAt[(size_t) i] > 0) ++alignedCount;
+            }
+    }
+
+    int imported = 0;
+    juce::StringArray skipped;
+
+    for (int i = 0; i < n; ++i)
+    {
+        const auto& it   = scan.tracks[(size_t) i];
+        const auto& frag = it.fragment;
+        auto& track      = session.track (i);
+
+        juce::File src, tmp;
+        const int channels = frag.stereo ? 2 : 1;
+        if (frag.stereo)
+        {
+            tmp = makeStereoTempWav (frag.mono1, frag.mono2);
+            if (tmp == juce::File()) { skipped.add (it.name + ": could not combine stereo halves"); continue; }
+            src = tmp;
+        }
+        else
+        {
+            src = frag.mono1;
+        }
+
+        duskstudio::fileimport::AudioImportRequest req;
+        req.source            = src;
+        req.audioDir          = audioDir;
+        req.trackIndex        = i;
+        req.sessionSampleRate = sr;
+        req.targetChannels    = channels;
+        req.timelineStart     = placeAt[(size_t) i];
+
+        auto res = duskstudio::fileimport::importAudio (req);
+        if (tmp != juce::File()) tmp.deleteFile();
+        if (! res.ok) { skipped.add (it.name + ": " + res.errorMessage); continue; }
+
+        // Transport is stopped, so PlaybackEngine isn't iterating regions on
+        // the audio thread - mutating in place is safe (mirrors runAudioImportFlow).
+        track.regions.push_back (std::move (res.region));
+        track.name = it.name;
+        track.mode.store ((int) (frag.stereo ? Track::Mode::Stereo : Track::Mode::Mono),
+                          std::memory_order_relaxed);
+        if (importMixer && it.mixer.valid)
+        {
+            auto& s = track.strip;
+            s.faderDb.store (it.mixer.faderDb, std::memory_order_relaxed);
+            s.pan    .store (it.mixer.pan,     std::memory_order_relaxed);
+            s.mute   .store (it.mixer.mute,    std::memory_order_relaxed);
+
+            // Map the DP 3-band EQ onto Dusk's 4-band: Low->LF, High->HF, and
+            // Mid->LM or HM by frequency (the unused band stays flat).
+            const auto& m = it.mixer;
+            s.eqEnabled.store (m.eqOn, std::memory_order_relaxed);
+            s.lfGainDb.store (juce::jlimit (-15.0f, 15.0f, m.lowGainDb), std::memory_order_relaxed);
+            s.lfFreq  .store (juce::jlimit (20.0f, 400.0f, m.lowFreqHz), std::memory_order_relaxed);
+            if (m.midFreqHz < 1500.0f)
+            {
+                s.lmGainDb.store (juce::jlimit (-15.0f, 15.0f, m.midGainDb), std::memory_order_relaxed);
+                s.lmFreq  .store (juce::jlimit (100.0f, 4000.0f, m.midFreqHz), std::memory_order_relaxed);
+                s.lmQ     .store (juce::jlimit (0.4f, 4.0f, m.midQ), std::memory_order_relaxed);
+            }
+            else
+            {
+                s.hmGainDb.store (juce::jlimit (-15.0f, 15.0f, m.midGainDb), std::memory_order_relaxed);
+                s.hmFreq  .store (juce::jlimit (600.0f, 13000.0f, m.midFreqHz), std::memory_order_relaxed);
+                s.hmQ     .store (juce::jlimit (0.4f, 4.0f, m.midQ), std::memory_order_relaxed);
+            }
+            s.hfGainDb.store (juce::jlimit (-15.0f, 15.0f, m.highGainDb), std::memory_order_relaxed);
+            s.hfFreq  .store (juce::jlimit (1000.0f, 20000.0f, m.highFreqHz), std::memory_order_relaxed);
+        }
+        ++imported;
+    }
+
+    if (tapeStrip != nullptr) tapeStrip->repaint();
+
+    juce::String msg;
+    msg << "Imported " << imported << (imported == 1 ? " track." : " tracks.");
+    if (scan.discardedTakes > 0)
+        msg << "\nSkipped " << scan.discardedTakes << " discarded take(s).";
+    if (importTimeline && scan.hasMixdown)
+        msg << "\nAligned " << alignedCount << " region(s) to the mixdown; the rest at song start.";
+    if (! skipped.isEmpty())
+        msg << "\n\nSkipped " << skipped.size() << ":\n" << skipped.joinIntoString ("\n");
+    showDuskAlert (*this, "Import DP Song", msg);
+}
+
 void MainComponent::enqueueImports (juce::Array<juce::File> files,
                                        juce::int64 timelineStart,
                                        int trackHint)
@@ -3226,6 +3442,7 @@ enum MenuItemId
     kMenuFileSave     = 1003,
     kMenuFileSaveAs   = 1004,
     kMenuFileImport   = 1006,
+    kMenuFileImportDp = 1007,
     kMenuFileMixdown  = 1010,
     kMenuFileBounce   = 1011,
     kMenuFileCleanOut = 1012,
@@ -3330,6 +3547,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelMenuIndex,
         menu.addSeparator();
         addAccel (kMenuFileImport, "Import Audio or MIDI...", 'I',
                   juce::ModifierKeys::commandModifier);
+        menu.addItem (kMenuFileImportDp, "Import DP Song...");
         menu.addSeparator();
         menu.addItem (kMenuFileMixdown, "Mixdown");
         addAccel (kMenuFileBounce, "Bounce...", 'B',
@@ -3373,6 +3591,7 @@ void MainComponent::menuItemSelected (int menuItemID, int /*topLevelMenuIndex*/)
         }
         case kMenuFileSaveAs: saveAsPrompt();           break;
         case kMenuFileImport: importPrompt(); break;
+        case kMenuFileImportDp: importDpSongPrompt(); break;
         case kMenuFileMixdown: doMixdown();             break;
         case kMenuFileBounce:  openBounceDialog();      break;
         case kMenuFileBounceStems: openBounceStemsDialog(); break;
