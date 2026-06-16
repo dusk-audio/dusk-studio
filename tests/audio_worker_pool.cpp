@@ -22,6 +22,18 @@ struct LaneCounters
     void hit (int lane) { runs[(size_t) lane].fetch_add (1, std::memory_order_relaxed); }
     int  get (int lane) const { return runs[(size_t) lane].load (std::memory_order_relaxed); }
 };
+
+// Spin until pred() holds or a generous deadline expires, then REQUIRE it —
+// turns a dispatch/thread-startup regression into a fast test failure instead
+// of an unbounded spin that hangs CI.
+template <typename Pred>
+void requireBefore (Pred pred, int timeoutMs = 2000)
+{
+    const auto deadline = juce::Time::getMillisecondCounter() + (juce::uint32) timeoutMs;
+    while (! pred() && juce::Time::getMillisecondCounter() < deadline)
+        juce::Thread::yield();
+    REQUIRE (pred());
+}
 } // namespace
 
 TEST_CASE ("AudioWorkerPool: every lane runs exactly once per block over a soak",
@@ -99,8 +111,16 @@ TEST_CASE ("AudioWorkerPool: quiesce drains lanes orphaned by a dead dispatcher"
     });
 
     pool.dispatchForTest();   // all 3 signalled, no join — dispatcher "dies" here
-    while (entered.load (std::memory_order_relaxed) < 3)
-        juce::Thread::yield();
+
+    // Safety net: if requireBefore() below throws (REQUIRE miss), the workers
+    // are still blocked in gate.wait() inside job_, so the pool destructor's
+    // quiesce() would wait on them forever — a CI hang instead of a clean
+    // failure. This guard releases the gate on ANY scope exit so the workers
+    // finish and quiesce can drain. (A plain std::thread here would be worse:
+    // destroyed joinable during unwinding, it calls std::terminate.)
+    struct GateGuard { juce::WaitableEvent& g; ~GateGuard() { g.signal(); } } gateGuard { gate };
+
+    requireBefore ([&] { return entered.load (std::memory_order_relaxed) >= 3; });
 
     std::thread releaser ([&] { juce::Thread::sleep (50); gate.signal(); });
     pool.quiesce();           // must block until all 3 orphaned lanes complete
@@ -129,8 +149,7 @@ TEST_CASE ("AudioWorkerPool: quiesce on a partially-signalled orphan skips undis
     pool.start (3, [&] (int lane) { counters.hit (lane); });
 
     pool.dispatchForTest (1);
-    while (counters.get (0) < 1)      // let worker 0 finish its dispatched lane
-        juce::Thread::yield();
+    requireBefore ([&] { return counters.get (0) >= 1; });   // worker 0 finished its lane
     pool.quiesce();
 
     REQUIRE (counters.get (0) == 1);
