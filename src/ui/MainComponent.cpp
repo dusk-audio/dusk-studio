@@ -3033,20 +3033,25 @@ void MainComponent::importDpSongPrompt()
         return;
     }
 
+    // Selecting a folder-of-files is unintuitive in directory-pick mode (the
+    // browser only lists subfolders, so a song folder looks empty when you open
+    // it). Instead let the user pick ANY file inside the song folder and import
+    // its parent - they navigate in, see the ZZ/.sys files, pick one.
     const auto startDir = juce::File::getSpecialLocation (juce::File::userMusicDirectory);
     filebrowser::open (*this, {
-        /*title*/                  "Select a DP song folder",
+        /*title*/                  "Open any file inside the DP song folder",
         /*initialFileOrDirectory*/ startDir,
-        /*filePatternsAllowed*/    "",
+        /*filePatternsAllowed*/    "*.wav;*.sys",
         /*mode*/                   filebrowser::Mode::Open,
         /*warnAboutOverwriting*/   false,
-        /*selectDirectories*/      true,
+        /*selectDirectories*/      false,
     },
     [safeThis = juce::Component::SafePointer<MainComponent> (this)]
-    (juce::File folder)
+    (juce::File chosen)
     {
         auto* self = safeThis.getComponent();
-        if (self == nullptr || folder == juce::File()) return;
+        if (self == nullptr || chosen == juce::File()) return;
+        const auto folder = chosen.isDirectory() ? chosen : chosen.getParentDirectory();
 
         const auto scan = dp::scanSongFolder (folder);
         if (! scan.ok)
