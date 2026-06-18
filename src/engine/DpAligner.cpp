@@ -153,16 +153,22 @@ CorrResult crossCorrelate (const std::vector<float>& longEnv,
 
     // Dominance: peak vs the best peak at least kDomExcludeFrames away.
     float second = -1.0e30f;
+    bool  hasCompetitor = false;
     for (int t = 0; t <= maxLag; ++t)
     {
         if (std::abs (t - bestLag) <= kDomExcludeFrames) continue;
+        hasCompetitor = true;
         const float v = C[(size_t) t].real();
         if (v > second) second = v;
     }
 
     r.lagFrames = bestLag;
     r.sigma     = sd > 0.0f ? (float) ((peak - mean) / sd) : 0.0f;
-    r.dominance = (second > 0.0f) ? (peak / second) : (peak > 0.0f ? 99.0f : 0.0f);
+    // No competitor at all (fragment nearly mix-length -> the whole valid range
+    // sits inside the exclusion radius) means we have NO evidence of dominance,
+    // so report 1.0 (below any gate) rather than a misleading high value.
+    r.dominance = ! hasCompetitor ? 1.0f
+                : (second > 0.0f ? (peak / second) : (peak > 0.0f ? 99.0f : 0.0f));
     return r;
 }
 

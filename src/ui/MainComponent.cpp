@@ -2995,16 +2995,16 @@ juce::File makeStereoTempWav (const juce::File& left, const juce::File& right)
     std::unique_ptr<juce::AudioFormatReader> rr (fm.createReaderFor (right));
     if (rl == nullptr || rr == nullptr) return {};
 
-    const auto len = (int) juce::jmin (rl->lengthInSamples, rr->lengthInSamples);
+    const juce::int64 len = juce::jmin (rl->lengthInSamples, rr->lengthInSamples);
     if (len <= 0 || rl->sampleRate <= 0.0) return {};
 
     const auto tmp = juce::File::createTempFile (".wav");
     std::unique_ptr<juce::FileOutputStream> stream (tmp.createOutputStream());
-    if (stream == nullptr || ! stream->openedOk()) return {};
+    if (stream == nullptr || ! stream->openedOk()) { tmp.deleteFile(); return {}; }
     juce::WavAudioFormat wav;
     std::unique_ptr<juce::AudioFormatWriter> writer (
         wav.createWriterFor (stream.get(), rl->sampleRate, 2, 24, {}, 0));
-    if (writer == nullptr) return {};
+    if (writer == nullptr) { tmp.deleteFile(); return {}; }
     stream.release();   // writer owns it now
 
     // Each fragment is a mono reader (channel 0). Interleave the two halves into
@@ -3012,9 +3012,9 @@ juce::File makeStereoTempWav (const juce::File& left, const juce::File& right)
     // whole file up front.
     constexpr int kChunk = 1 << 16;   // 64k samples per pass
     juce::AudioBuffer<float> lbuf (1, kChunk), rbuf (1, kChunk), out (2, kChunk);
-    for (int pos = 0; pos < len; pos += kChunk)
+    for (juce::int64 pos = 0; pos < len; pos += kChunk)
     {
-        const int n = juce::jmin (kChunk, len - pos);
+        const int n = (int) juce::jmin ((juce::int64) kChunk, len - pos);
         if (! rl->read (&lbuf, 0, n, pos, true, false)
             || ! rr->read (&rbuf, 0, n, pos, true, false))
         {

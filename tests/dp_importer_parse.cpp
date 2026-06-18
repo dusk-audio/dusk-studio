@@ -108,8 +108,8 @@ TEST_CASE ("DpImporter: pairs stereo, ignores sidecars and master", "[DpImporter
     const auto scan = scanSongFolder (tmp.dir);
     REQUIRE (scan.ok);
     REQUIRE (scan.tracks.size() == 2);
-    REQUIRE (scan.sampleRate == kSr);
-    REQUIRE (scan.bitDepth == 16);
+    REQUIRE (std::abs (scan.sampleRate - kSr) < 0.5);   // float: tolerance, not ==
+    REQUIRE (scan.bitDepth == 16);                       // int: == is correct
 
     // Track 1 = ZZ0000 mono; track 2 = ZZ0001 stereo pair.
     REQUIRE_FALSE (scan.tracks[0].fragment.stereo);
@@ -320,9 +320,11 @@ TEST_CASE ("DpImporter: File-List filters out discarded takes", "[DpImporter]")
     writeTestWav (tmp.dir.getChildFile ("ZZ0001_1.wav"), 48000.0, 1, 1000);
     writeTestWav (tmp.dir.getChildFile ("ZZ0002_1.wav"), 48000.0, 1, 1000);   // discarded take
     {
-        // Minimal edltable whose only ZZ filename strings are 0000 + 0001.
+        // Minimal edltable with the "TEAC" signature, whose only ZZ filename
+        // strings are 0000 + 0001.
         juce::MemoryBlock mb; mb.setSize (512, true);
         auto* d = (char*) mb.getData();
+        std::memcpy (d, "TEAC", 4);
         std::memcpy (d + 0x40, "ZZ0000_1.wav", 12);
         std::memcpy (d + 0x60, "ZZ0001_1.wav", 12);
         tmp.dir.getChildFile ("edltable.sys").replaceWithData (mb.getData(), mb.getSize());

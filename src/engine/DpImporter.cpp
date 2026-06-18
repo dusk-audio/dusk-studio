@@ -216,6 +216,9 @@ std::vector<juce::int64> decodeClipStarts (const juce::File& songSys,
     // (its hypothetical end coincides with song-end-ish values and false-matches).
     const juce::int64 fullLenThresh = songLen > 0 ? (songLen * 85) / 100 : 0;
 
+    // Track starts already claimed so two clips of the same length don't both
+    // grab the same position (deterministic misplacement). Each start is used once.
+    std::set<juce::int64> usedStarts;
     for (size_t i = 0; i < lengths.size(); ++i)
     {
         const juce::int64 L = lengths[i];
@@ -224,14 +227,14 @@ std::vector<juce::int64> decodeClipStarts (const juce::File& songSys,
         juce::int64 best = -1;
         for (const auto S : candSet)
         {
-            if (S + L > hi) continue;
+            if (S + L > hi || usedStarts.count (S)) continue;
             // accept if some candidate end is within tolerance of S + L.
             bool endFound = false;
             for (juce::int64 e = S + L - kEndTolerance; e <= S + L && ! endFound; ++e)
                 if (candSet.count (e)) endFound = true;
             if (endFound && (best < 0 || S < best)) best = S;
         }
-        if (best > 0) starts[i] = best;
+        if (best > 0) { starts[i] = best; usedStarts.insert (best); }
     }
     return starts;
 }
@@ -293,6 +296,10 @@ std::set<int> readActiveFragmentIndices (const juce::File& edltable)
     if (! edltable.existsAsFile() || ! edltable.loadFileAsData (mb)) return active;
     const auto* d = (const char*) mb.getData();
     const int n = (int) mb.getSize();
+    // Only scan genuine DP edit tables (magic "TEAC" at 0x00); otherwise a
+    // non-DP/corrupt file could coincidentally match ZZ patterns and wrongly
+    // filter fragments. Empty result => caller imports everything.
+    if (n < 0x20 || std::memcmp (d, "TEAC", 4) != 0) return active;
     auto dig = [] (char c) { return c >= '0' && c <= '9'; };
     for (int i = 0; i + 12 <= n; ++i)
     {

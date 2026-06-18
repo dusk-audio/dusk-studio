@@ -143,21 +143,21 @@ Layout: `[header + front region]  [overview: 192 B × 60000 cols]  [tail]`.
 
 ## D. Implementation plan (tiered — ship Tier 1 first)
 
-Create a new module `src/engine/Dp24Importer.{h,cpp}` — a **pure parser** with no
+Create a new module `src/engine/DpImporter.{h,cpp}` — a **pure parser** with no
 engine/UI coupling, fully unit-testable. It produces a plain struct; a thin
 orchestrator drives `FileImporter` + builds `Track`s.
 
 ```cpp
-namespace duskstudio::dp24 {
+namespace duskstudio::dp {
 struct Fragment { int zzIndex; juce::File mono1, mono2; bool stereo;
                   juce::int64 lengthSamples; double sampleRate; int bitDepth; };
 struct ImportedTrack { juce::String name; std::vector<Fragment> fragments;
                        juce::int64 timelineStart = 0;     // 0 until §F solved
                        float faderDb = 0.0f; float pan = 0.0f; bool mute = false; };
-struct Dp24Song { double sampleRate; int bitDepth;
+struct SongScan { double sampleRate; int bitDepth;
                   std::vector<ImportedTrack> tracks;
                   juce::String warnings; };  // human-readable caveats
-Dp24Song parseSongFolder (const juce::File& folder);   // never throws; fills warnings
+SongScan scanSongFolder (const juce::File& folder);   // never throws; fills warnings
 }
 ```
 
@@ -202,7 +202,7 @@ fragments of the same track into one `Track` (active take = region; alternates �
 
 ## E. Tests (match existing `tests/` conventions, e.g. `file_importer_audio.cpp`)
 
-Add `tests/dp24_importer_parse.cpp` and register it in `CMakeLists.txt`:
+Add `tests/dp_importer_parse.cpp` and register it in `CMakeLists.txt`:
 1. **Synthetic fixture**: generate a tiny folder with `ZZ0000_1.wav`,
    `ZZ0001_1.wav`+`ZZ0001_2.wav` (stereo pair, equal size), a stub `song.sys`,
    and an `._ZZ0000_1.wav` sidecar. Assert: 2 tracks; track 2 is stereo; sidecar

@@ -153,3 +153,24 @@ TEST_CASE ("DpAligner: full-length take placed at song start", "[DpAligner]")
     REQUIRE (res[0].fullLength);
     REQUIRE (res[0].timelineStartSamples == 0);
 }
+
+TEST_CASE ("DpAligner: near-mix-length fragment is not falsely placed", "[DpAligner]")
+{
+    using namespace duskstudio::dp;
+    TempScope tmp;
+    // Fragment shorter than the mix (so it bypasses the full-length shortcut)
+    // but within the dominance exclusion radius (~2 s): the whole valid lag
+    // range sits inside the exclusion zone, so there is no competitor peak. The
+    // aligner must report this as ambiguous (not placed), not a false positive.
+    auto mix  = onsetySignal (30.0, 8);
+    auto frag = onsetySignal (29.5, 9);   // 0.5 s shorter, unrelated content
+    const auto mixFile  = tmp.dir.getChildFile ("mix.wav");
+    const auto fragFile = tmp.dir.getChildFile ("ZZ0000_1.wav");
+    writeWav (mixFile, mix);
+    writeWav (fragFile, frag);
+
+    const auto res = alignToMixdown (mixFile, { fragFile });
+    REQUIRE (res.size() == 1);
+    REQUIRE_FALSE (res[0].fullLength);
+    REQUIRE_FALSE (res[0].placed);
+}
