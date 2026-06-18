@@ -281,7 +281,7 @@ private:
     void layoutStatusBar (juce::Rectangle<int>);
     void refreshStatusBarReadouts();
 
-    // Honours session.snapToGrid + active snapResolution. bypass
+    // Honours session.audioEditorSnap + active snapResolution. bypass
     // short-circuits to input (Cmd-bypass during drags). Shared so
     // every gesture lands on the same grid.
     juce::int64 snapFileSampleToGrid (juce::int64 fileSample, bool bypass) const noexcept;

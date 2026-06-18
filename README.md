@@ -65,7 +65,7 @@ Paid via [Patreon](https://www.patreon.com/cw/DuskAudio) (recurring) or [GitHub 
 | macOS DMG (unsigned, ad-hoc) | Working (CI publishes to private releases repo on tag) |
 | Deeper a11y (full screen-reader labels + keyboard-only mixer nav) | Floor only |
 
-214 Catch2 unit tests across 51 files. Linux (amd64 + arm64) + macOS + Windows builds run on every push; Windows tests run on every push; Linux ThreadSanitizer runs on every PR + push.
+214 Catch2 unit tests across 51 files. Linux (amd64 + arm64) + macOS + Windows builds run on every push; Windows tests run on every push + PR; Linux ThreadSanitizer runs on every PR + push.
 
 ## Bug reports
 
@@ -101,7 +101,7 @@ Channels 1-24 ───────────────→ 4 Aux Buses ─�
 ```
 
 - **DSP** is extracted from the Dusk Audio plugin suite (4K EQ, Multi-Comp FET/Opto/VCA, Multi-Q, TapeMachine, shared AnalogEmulation) so the mixer and the standalone plugins share a single DSP source of truth.
-- **Plugin host**: VST3 + LV2 + AU on every channel strip; aux returns host reverb / delay; per-platform IPC backend (Linux `shm` + `eventfd`, macOS `shm_open` + `os_sync_wait_on_address`, Windows `CreateFileMapping` + `WaitOnAddress`) keeps a crashing plugin from taking the host down.
+- **Plugin host**: VST3 + LV2 + AU on every channel strip; aux returns host reverb / delay. In-process by default; the **opt-in** out-of-process sandbox (`DUSKSTUDIO_USE_OOP_PLUGINS=1`) runs each plugin in a child via a per-platform IPC backend (Linux `memfd_create` + `futex`, macOS `shm_open` + `os_sync_wait_on_address`, Windows `CreateFileMapping` + `WaitOnAddress`) so a crashing plugin can't take the host down. (Plugin *scanning* is always sandboxed.)
 - **Soundfonts**: `.sfz` and `.sf2` play through the built-in [sfizz](https://github.com/dusk-audio/sfizz) engine (SF2 → SFZ on load). No external synth required.
 
 ## Repository
@@ -135,7 +135,7 @@ Precompiled (unsigned) binaries delivered via Patreon — Linux tarball + Window
 
 After a build, sanity check with `Dusk Studio --version` — prints app + JUCE + platform string and exits 0. Useful as a paste-target for Patreon support DMs.
 
-CI runs on every push to `main` against Linux (Ubuntu 22.04 GCC), macOS (14 Apple Silicon, Ninja + ccache), and Windows (Server 2022 MSVC). Windows tests (`windows-tests.yml`) exercise the Catch2 suite on every PR. Linux ThreadSanitizer (`linux-sanitizer.yml`) runs the Catch2 suite under TSan on every PR + push. Tagged releases (`v*`) trigger the Windows MSI, macOS DMG, and Linux tarball workflows — each builds an unsigned binary and publishes it to the private releases repo (one shared release per tag, distinct asset names).
+CI runs on every push to `main` against Linux (Ubuntu 22.04 GCC), macOS (14 Apple Silicon, Ninja + ccache), and Windows (Server 2022 MSVC). Windows tests (`windows-tests.yml`) exercise the Catch2 suite on every push + PR. Linux ThreadSanitizer (`linux-sanitizer.yml`) runs the Catch2 suite under TSan on every PR + push. Tagged releases (`v*`) trigger the Windows MSI, macOS DMG, and Linux tarball workflows — each builds an unsigned binary and publishes it to the private releases repo (one shared release per tag, distinct asset names).
 
 ## License
 

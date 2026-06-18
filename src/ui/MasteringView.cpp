@@ -22,7 +22,7 @@ WaveformDisplay::WaveformDisplay (MasteringPlayer& p)
     startTimerHz (20);
 }
 
-WaveformDisplay::~WaveformDisplay() { thumbnail.setSource (nullptr); }
+WaveformDisplay::~WaveformDisplay() { stopTimer(); thumbnail.setSource (nullptr); }
 
 void WaveformDisplay::setSource (const juce::File& file)
 {
@@ -59,8 +59,11 @@ void WaveformDisplay::paint (juce::Graphics& g)
 
     const double sr      = player.getSourceSampleRate();
     const double total   = thumbnail.getTotalLength();
-    const double playSec = (sr > 0.0) ? (double) player.getPlayhead() / sr : 0.0;
-    const float  frac    = (total > 0.0) ? (float) juce::jlimit (0.0, 1.0, playSec / total) : 0.0f;
+    const double playSecRaw = (sr > 0.0) ? (double) player.getPlayhead() / sr : 0.0;
+    // Clamp to [0, total]: if the playhead runs past EOF, an unclamped playSec
+    // makes the unplayed drawChannels() call's startTime exceed its endTime.
+    const double playSec = juce::jlimit (0.0, total, playSecRaw);
+    const float  frac    = (total > 0.0) ? (float) (playSec / total) : 0.0f;
     const int    splitX  = bounds.getX() + (int) (frac * bounds.getWidth());
 
     // Centre line.
@@ -331,7 +334,7 @@ MasteringView::MasteringView (Session& s, AudioEngine& e)
     startTimerHz (20);
 }
 
-MasteringView::~MasteringView() = default;
+MasteringView::~MasteringView() { stopTimer(); }   // before derived members destruct
 
 void MasteringView::applyMultibandPreset (int presetIndex)
 {
@@ -529,10 +532,22 @@ void MasteringView::resized()
         auto presetRow = inner.removeFromTop (24);
         const int capW    = 52;
         const int dropW   = juce::jmin (190, presetRow.getWidth() - capW - 6);
-        auto cluster = presetRow.withSizeKeepingCentre (capW + 6 + dropW, 24);
-        compPresetCaption.setBounds (cluster.removeFromLeft (capW));
-        cluster.removeFromLeft (6);
-        compPresetCombo.setBounds (cluster);
+        if (dropW <= 0)
+        {
+            // Too narrow for caption + combo — hide rather than lay out negative
+            // widths (mirrors the transport row's width-clamped placement above).
+            compPresetCaption.setVisible (false);
+            compPresetCombo.setVisible (false);
+        }
+        else
+        {
+            compPresetCaption.setVisible (true);
+            compPresetCombo.setVisible (true);
+            auto cluster = presetRow.withSizeKeepingCentre (capW + 6 + dropW, 24);
+            compPresetCaption.setBounds (cluster.removeFromLeft (capW));
+            cluster.removeFromLeft (6);
+            compPresetCombo.setBounds (cluster);
+        }
 #endif
         inner.removeFromTop (4);
         if (compEditor != nullptr)
@@ -717,12 +732,35 @@ void MasteringView::doExport()
         return;
     }
 
-    auto target = session.getSessionDirectory().getChildFile ("master.wav");
+    const auto defaultFile = session.getSessionDirectory().getChildFile ("master.wav");
+   #if DUSKSTUDIO_HAS_LAME
+    const juce::String patterns = "*.wav;*.mp3";   // name it .mp3 to export MP3
+   #else
+    const juce::String patterns = "*.wav";
+   #endif
 
-    auto panel = std::make_unique<BounceDialog> (engine, session,
-                                                   engine.getDeviceManager(),
-                                                   target, BounceEngine::Mode::MasteringChain);
-    panel->setSize (520, 200);
-    exportModal.show (*this, std::move (panel));
+    filebrowser::open (*this, {
+        /*title*/                  "Export master",
+        /*initialFileOrDirectory*/ defaultFile,
+        /*filePatternsAllowed*/    patterns,
+        /*mode*/                   filebrowser::Mode::Save,
+        /*warnAboutOverwriting*/   true,
+        /*selectDirectories*/      false,
+    },
+    [this] (juce::File out)
+    {
+        if (out == juce::File()) return;
+        auto target = out;
+        const bool mp3 = target.hasFileExtension ("mp3");
+        if (! mp3 && ! target.hasFileExtension ("wav"))
+            target = target.withFileExtension ("wav");
+        const auto fmt = mp3 ? BounceEngine::Format::Mp3 : BounceEngine::Format::Wav;
+
+        auto panel = std::make_unique<BounceDialog> (engine, session,
+                                                       engine.getDeviceManager(), target,
+                                                       BounceEngine::Mode::MasteringChain, fmt);
+        panel->setSize (520, 200);
+        exportModal.show (*this, std::move (panel));
+    });
 }
 } // namespace duskstudio

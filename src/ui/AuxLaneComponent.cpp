@@ -817,7 +817,15 @@ void AuxLaneComponent::hideEditorsKeepingAlive()
     for (int i = 0; i < AuxLaneParams::kMaxLanePlugins; ++i)
     {
         auto& ui = slots[(size_t) i];
-        if (ui.editor != nullptr)
+        if (ui.editor == nullptr) continue;
+        // If the slot's live instance no longer matches this editor (the plugin
+        // was unloaded or swapped while the lane was hidden — e.g. a session
+        // load), keeping the invisible editor would let it outlive its
+        // processor. Tear it down instead, mirroring rebuildSlots' stale check.
+        auto* instance = strip.getPluginSlot (i).getInstance();
+        if (instance == nullptr || ui.editor->getAudioProcessor() != instance)
+            detachEditorForSlot (i);
+        else
             ui.editor->setVisible (false);
     }
 }
@@ -1007,11 +1015,15 @@ void AuxLaneComponent::parentHierarchyChanged()
     // path only setVisible(true)s it — it never re-embeds. Tear stale editors
     // down so rebuildSlots recreates them against the new peer. detachEditorForSlot
     // is a no-op when no editor exists, so a same-peer change costs nothing.
-    if (getPeer() != lastSeenPeer)
+    // Only act on a real peer CHANGE to a new non-null peer. A transient null
+    // (mid-reparent / briefly off-desktop) must NOT tear down kept-alive editors
+    // — lastSeenPeer is left intact so the editors survive until the genuine new
+    // peer (or the same one) arrives.
+    if (auto* peer = getPeer(); peer != nullptr && peer != lastSeenPeer)
     {
         for (int i = 0; i < AuxLaneParams::kMaxLanePlugins; ++i)
             detachEditorForSlot (i);
-        lastSeenPeer = getPeer();
+        lastSeenPeer = peer;
     }
 
     if (isShowing())

@@ -78,6 +78,14 @@ jobs:
           fi
           echo "ASIOSDK_PATH=${RUNNER_TEMP}/asiosdk-extract" >> "$GITHUB_ENV"
 
+      - name: Install libmp3lame (vcpkg)
+        shell: bash
+        # static-md mp3lame so the MP3 bounce writer + its round-trip test
+        # build/run on Windows CI too (CMake finds it via CMAKE_PREFIX_PATH).
+        run: |
+          vcpkg install mp3lame:x64-windows-static-md
+          echo "LAME_PREFIX=${VCPKG_INSTALLATION_ROOT//\\//}/installed/x64-windows-static-md" >> "$GITHUB_ENV"
+
       - name: Configure tests (CMake / Visual Studio 17 2022 / x64)
         shell: bash
         run: |
@@ -87,7 +95,8 @@ jobs:
             -DDUSKSTUDIO_BUILD_TESTS=ON \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
-            -DASIOSDK_PATH="${ASIOSDK_PATH}"
+            -DASIOSDK_PATH="${ASIOSDK_PATH}" \
+            -DCMAKE_PREFIX_PATH="${LAME_PREFIX}"
 
       - name: Build test binary
         # Build only the test target. The Catch2 binary depends on

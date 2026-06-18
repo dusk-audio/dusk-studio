@@ -92,7 +92,22 @@ private:
     bool finishLoadingSessionFrom (const juce::File& sessionJson,
                                     const juce::File& sessionDir);
     void openFromFilePrompt();
+    // Runs `proceed` immediately if the session is clean, otherwise shows the
+    // Save / Don't Save / Cancel prompt and runs `proceed` only after a
+    // successful Save or an explicit Don't Save. Shared by New / Open / Open
+    // Recent / New-from-Template so none of them silently discards unsaved work.
+    void guardUnsavedThen (const juce::String& title, const juce::String& message,
+                            std::function<void()> proceed);
     void newSessionPrompt();
+    // The folder-pick + create half of newSessionPrompt — runs only once any
+    // unsaved-changes prompt has been resolved.
+    void promptNewSessionLocation();
+    // True if the live session diverges from the last manual save / autosave.
+    // Drives the unsaved-changes prompt on quit and on New Session.
+    bool currentSessionDirty();
+    // Reset to a clean default session in `dir` (NOT the current session saved
+    // under a new name) and open it through the normal load path.
+    void createNewSessionAt (const juce::File& dir);
 
     // FileChooser -> ImportTargetPicker (24 tracks, smart-sort +
     // recommendation) -> FileImporter on commit. Flips track.mode if

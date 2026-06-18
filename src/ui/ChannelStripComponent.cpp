@@ -1469,6 +1469,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
 
 ChannelStripComponent::~ChannelStripComponent()
 {
+    stopTimer();   // before derived members destruct (base Timer::~Timer is too late)
     engine.removeChangeListener (this);
 
     // If a popup editor is still on screen when the strip dies (e.g. the

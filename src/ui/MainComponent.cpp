@@ -97,17 +97,17 @@ namespace
 class QuitConfirmDialog final : public juce::Component
 {
 public:
-    QuitConfirmDialog()
+    QuitConfirmDialog (juce::String title = "Save changes before quitting?",
+                       juce::String body  =
+                           "Your session has unsaved changes since the last manual save. "
+                           "If you don't save, those changes are discarded.")
     {
-        titleLabel.setText ("Save changes before quitting?", juce::dontSendNotification);
+        titleLabel.setText (title, juce::dontSendNotification);
         titleLabel.setFont (juce::Font (juce::FontOptions (18.0f, juce::Font::bold)));
         titleLabel.setColour (juce::Label::textColourId, juce::Colour (0xffe8e8e8));
         addAndMakeVisible (titleLabel);
 
-        bodyLabel.setText (
-            "Your session has unsaved changes since the last manual save. "
-            "If you don't save, those changes are discarded.",
-            juce::dontSendNotification);
+        bodyLabel.setText (body, juce::dontSendNotification);
         bodyLabel.setFont (juce::Font (juce::FontOptions (13.0f)));
         bodyLabel.setColour (juce::Label::textColourId, juce::Colour (0xffc0c0c8));
         bodyLabel.setJustificationType (juce::Justification::topLeft);
@@ -1805,7 +1805,75 @@ void MainComponent::dismissStartupDialog (std::function<void()> onDone)
     });
 }
 
+void MainComponent::guardUnsavedThen (const juce::String& title,
+                                       const juce::String& message,
+                                       std::function<void()> proceed)
+{
+    // Clean session — nothing to lose, run straight through.
+    if (! currentSessionDirty())
+    {
+        proceed();
+        return;
+    }
+
+    // Unsaved work — Save / Don't Save / Cancel, deferring each action via
+    // callAsync so the button-click stack unwinds before the modal closes
+    // (closing an EmbeddedModal from inside its own button onClick is a UAF).
+    // `proceed` runs only after a successful Save or an explicit Don't Save.
+    if (quitModal.isOpen()) return;
+    auto dialog = std::make_unique<QuitConfirmDialog> (title, message);
+    dialog->setSize (440, 200);
+    juce::Component::SafePointer<MainComponent> safe (this);
+    auto go = std::make_shared<std::function<void()>> (std::move (proceed));
+    dialog->onCancel = [safe]
+    {
+        juce::MessageManager::callAsync ([safe]
+            { if (auto* s = safe.getComponent()) s->quitModal.close(); });
+    };
+    dialog->onDontSave = [safe, go]
+    {
+        juce::MessageManager::callAsync ([safe, go]
+        {
+            if (auto* s = safe.getComponent())
+            {
+                s->quitModal.close();
+                // Discarding changes — delete the current session's autosave
+                // (still the OLD dir here) so it doesn't later offer to
+                // "recover" the work just thrown away. Mirrors requestQuit.
+                s->deleteAutosaveFor (s->session.getSessionDirectory());
+                (*go)();
+            }
+        });
+    };
+    dialog->onSave = [safe, go]
+    {
+        juce::MessageManager::callAsync ([safe, go]
+        {
+            auto* s = safe.getComponent();
+            if (s == nullptr) return;
+            s->quitModal.close();
+            s->saveSessionAndThen ([safe, go] (bool ok)
+            {
+                if (ok && safe.getComponent() != nullptr)
+                    (*go)();
+            });
+        });
+    };
+    quitModal.show (*this, std::move (dialog), /*onDismiss*/ {},
+                      /*dismissOnClickOutside*/ false, /*dismissOnEscape*/ false);
+}
+
 void MainComponent::newSessionPrompt()
+{
+    // Starting a new session blanks the current one — guard unsaved work first.
+    guardUnsavedThen (
+        "Save changes before starting a new session?",
+        "Your current session has unsaved changes. If you don't save, "
+        "those changes are discarded when the new session opens.",
+        [this] { promptNewSessionLocation(); });
+}
+
+void MainComponent::promptNewSessionLocation()
 {
     // Single-dialog "Save As" UX: filename text field + folder browser in
     // one step. The typed name becomes the session folder; the navigated
@@ -1825,11 +1893,43 @@ void MainComponent::newSessionPrompt()
     [this] (juce::File chosen)
     {
         if (chosen == juce::File()) return;
-        // Treat the chosen path as the new session folder. saveSessionTo
-        // creates the dir + audio subdir and persists an initial session.json
-        // so subsequent saves don't re-prompt.
-        saveSessionTo (chosen);
+        // The chosen path becomes the new session folder. Start from a clean
+        // default state — NOT the current session saved under a new name.
+        createNewSessionAt (chosen);
     });
+}
+
+void MainComponent::createNewSessionAt (const juce::File& dir)
+{
+    if (dir == juce::File()) return;
+    dir.createDirectory();
+
+    // "New Session" must be a clean slate. Write a fresh, default session.json
+    // into the folder and open it through the normal load path: load() clears
+    // every model collection (regions, takes, markers, automation, tempo map,
+    // MIDI bindings), consumePluginStateAfterLoad unloads plugins absent from
+    // the new session, and finishLoadingSessionFrom resets transport + undo,
+    // re-resolves MIDI, and rebuilds the console / aux / mastering UI — so
+    // nothing from the previous session carries over.
+    const auto target = dir.getChildFile ("session.json");
+    // Refuse to clobber an existing session — "New" must never blank someone
+    // else's work. The user picks a fresh name (or opens the existing one).
+    if (target.existsAsFile())
+    {
+        setStatusForPath ("A session already exists at", target);
+        return;
+    }
+
+    auto fresh = std::make_unique<Session>();
+    if (! SessionSerializer::writeAtomic (target, SessionSerializer::serialize (*fresh)))
+    {
+        setStatusForPath ("Could not create session at", target);
+        return;
+    }
+    fresh.reset();   // release the scratch Session before the live load runs
+
+    if (finishLoadingSessionFrom (target, dir))
+        setStatusForPath ("New session", target);
 }
 
 bool MainComponent::saveSessionTo (const juce::File& dir)
@@ -2040,6 +2140,26 @@ void MainComponent::timerCallback()
     writeAutosave();
 }
 
+bool MainComponent::currentSessionDirty()
+{
+    const auto dir = session.getSessionDirectory();
+    if (dir == juce::File()) return false;
+
+    // Publish live plugin + transport/tape state into the Session model first —
+    // the serializer reads only from Session, so without this a just-touched
+    // plugin/tape param stays at its last-published value and the compare would
+    // falsely read clean. Audio is live here so no detach.
+    engine.publishPluginStateForSave (/*audioCallbackDetached*/ false);
+    engine.publishTransportStateForSave();
+
+    // Compare with volatile state stripped (playhead / view / timestamps)
+    // so transient fields don't flip the raw JSON on an otherwise-clean session.
+    const auto strippedCurrent = stripVolatileStateForDirtyCompare (SessionSerializer::serialize (session));
+    const auto strippedSaved   = stripVolatileStateForDirtyCompare (lastSavedSessionJson);
+    return (! lastSavedSessionJson.isEmpty() && strippedCurrent != strippedSaved)
+         || autosaveIsNewerThan (dir.getChildFile ("session.json"));
+}
+
 void MainComponent::requestQuit()
 {
     // Industry-standard dirty-only prompt. Compare the live serialized
@@ -2051,29 +2171,7 @@ void MainComponent::requestQuit()
     // the prompt and silently lose the change). autosaveIsNewerThan
     // stays as a belt-and-braces fallback for sessions where we somehow
     // didn't seed lastSavedSessionJson.
-    const auto dir = session.getSessionDirectory();
-    const auto sessionJson = dir.getChildFile ("session.json");
-    bool dirty = false;
-    if (dir != juce::File())
-    {
-        // Publish live plugin + transport/tape state into the Session model
-        // first — the serializer reads only from Session, so without this a
-        // just-touched plugin/tape param stays at its last-published value and
-        // the compare would falsely read clean (lost-edit-on-quit). Mirrors
-        // the save / autosave bookend; audio is live here so no detach.
-        engine.publishPluginStateForSave (/*audioCallbackDetached*/ false);
-        engine.publishTransportStateForSave();
-
-        // Compare with volatile state stripped (same as the autosave dirty
-        // check) - otherwise refreshed transient fields (playhead, view
-        // state, timestamps) flip the raw JSON and prompt on a clean session.
-        const auto currentJson = SessionSerializer::serialize (session);
-        const auto strippedCurrent = stripVolatileStateForDirtyCompare (currentJson);
-        const auto strippedSaved   = stripVolatileStateForDirtyCompare (lastSavedSessionJson);
-        dirty = (! lastSavedSessionJson.isEmpty()
-                  && strippedCurrent != strippedSaved)
-              || autosaveIsNewerThan (sessionJson);
-    }
+    const bool dirty = currentSessionDirty();
 
     if (! dirty)
     {
@@ -2629,22 +2727,31 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
 
 void MainComponent::openFromFilePrompt()
 {
-    auto startDir = session.getSessionDirectory();
-    if (! startDir.isDirectory())
-        startDir = juce::File::getSpecialLocation (juce::File::userMusicDirectory);
-
-    filebrowser::open (*this, {
-        /*title*/                  "Open session.json",
-        /*initialFileOrDirectory*/ startDir.getChildFile ("session.json"),
-        /*filePatternsAllowed*/    "*.json",
-        /*mode*/                   filebrowser::Mode::Open,
-        /*warnAboutOverwriting*/   false,
-        /*selectDirectories*/      false,
-    },
-    [this] (juce::File chosen)
+    // Opening another session discards the current one — guard unsaved work
+    // before the browser appears (mirrors New Session / Open Recent).
+    guardUnsavedThen (
+        "Save changes before opening another session?",
+        "Your current session has unsaved changes. If you don't save, "
+        "those changes are discarded when the other session opens.",
+        [this]
     {
-        if (chosen == juce::File()) return;
-        loadSessionFromJson (chosen);
+        auto startDir = session.getSessionDirectory();
+        if (! startDir.isDirectory())
+            startDir = juce::File::getSpecialLocation (juce::File::userMusicDirectory);
+
+        filebrowser::open (*this, {
+            /*title*/                  "Open session.json",
+            /*initialFileOrDirectory*/ startDir.getChildFile ("session.json"),
+            /*filePatternsAllowed*/    "*.json",
+            /*mode*/                   filebrowser::Mode::Open,
+            /*warnAboutOverwriting*/   false,
+            /*selectDirectories*/      false,
+        },
+        [this] (juce::File chosen)
+        {
+            if (chosen == juce::File()) return;
+            loadSessionFromJson (chosen);
+        });
     });
 }
 
@@ -2655,10 +2762,16 @@ void MainComponent::openBounceDialog()
         defaultDir = juce::File::getSpecialLocation (juce::File::userMusicDirectory);
     const auto defaultFile = defaultDir.getChildFile ("bounce.wav");
 
+   #if DUSKSTUDIO_HAS_LAME
+    const juce::String patterns = "*.wav;*.mp3";   // name it .mp3 to bounce MP3
+   #else
+    const juce::String patterns = "*.wav";
+   #endif
+
     filebrowser::open (*this, {
-        /*title*/                  "Bounce master mix to WAV",
+        /*title*/                  "Bounce master mix",
         /*initialFileOrDirectory*/ defaultFile,
-        /*filePatternsAllowed*/    "*.wav",
+        /*filePatternsAllowed*/    patterns,
         /*mode*/                   filebrowser::Mode::Save,
         /*warnAboutOverwriting*/   true,
         /*selectDirectories*/      false,
@@ -2667,11 +2780,14 @@ void MainComponent::openBounceDialog()
     {
         if (out == juce::File()) return;  // user cancelled
         auto outFile = out;
-        if (! outFile.hasFileExtension ("wav"))
+        const bool mp3 = outFile.hasFileExtension ("mp3");
+        if (! mp3 && ! outFile.hasFileExtension ("wav"))
             outFile = outFile.withFileExtension ("wav");
+        const auto fmt = mp3 ? BounceEngine::Format::Mp3 : BounceEngine::Format::Wav;
 
         auto panel = std::make_unique<BounceDialog> (engine, session,
-                                                       engine.getDeviceManager(), outFile);
+                                                       engine.getDeviceManager(), outFile,
+                                                       BounceEngine::Mode::MasterMix, fmt);
         panel->setSize (520, 200);
         bounceModal.show (*this, std::move (panel));
     });
@@ -2687,6 +2803,8 @@ void MainComponent::openBounceStemsDialog()
         defaultDir = juce::File::getSpecialLocation (juce::File::userMusicDirectory);
     const auto defaultFile = defaultDir.getChildFile ("stems.wav");
 
+    // Stems are WAV-only — MP3 encoder delay/padding would misalign them for
+    // re-import, so don't offer .mp3 here (the master / mastering bounces do).
     filebrowser::open (*this, {
         /*title*/                  "Bounce stems (one WAV per track)",
         /*initialFileOrDirectory*/ defaultFile,
@@ -3506,7 +3624,11 @@ void MainComponent::menuItemSelected (int menuItemID, int /*topLevelMenuIndex*/)
                 if (idx >= 0 && idx < menuRecentSessions.size())
                 {
                     const auto dir = menuRecentSessions.getReference (idx);
-                    loadSessionFromJson (dir.getChildFile ("session.json"));
+                    guardUnsavedThen (
+                        "Save changes before opening another session?",
+                        "Your current session has unsaved changes. If you don't save, "
+                        "those changes are discarded when the other session opens.",
+                        [this, dir] { loadSessionFromJson (dir.getChildFile ("session.json")); });
                 }
                 break;
             }
@@ -3514,22 +3636,31 @@ void MainComponent::menuItemSelected (int menuItemID, int /*topLevelMenuIndex*/)
             if (menuItemID >= kMenuFileTemplateBase
                 && menuItemID < kMenuFileTemplateBase + (int) SessionTemplate::kCount)
             {
-                applyTemplate (session,
-                                (SessionTemplate) (menuItemID - kMenuFileTemplateBase));
-                // Rebuild the console view so the new track names / colours
-                // / modes propagate into existing strip components - the
-                // simplest way to pick up name + colour + mode in one shot.
-                consoleView.reset();
-                consoleView = std::make_unique<ConsoleView> (session, engine);
-                addAndMakeVisible (consoleView.get());
-                consoleView->setOnStripFocusRequested ([this] (int t)
+                const auto tmpl = (SessionTemplate) (menuItemID - kMenuFileTemplateBase);
+                // Applying a template rewrites the current session in place —
+                // guard unsaved work first (mirrors New / Open).
+                guardUnsavedThen (
+                    "Save changes before applying a template?",
+                    "Your current session has unsaved changes. If you don't save, "
+                    "those changes are discarded when the template is applied.",
+                    [this, tmpl]
                 {
-                    if (tapeStrip != nullptr) tapeStrip->setSelectedTrack (t);
+                    applyTemplate (session, tmpl);
+                    // Rebuild the console view so the new track names / colours
+                    // / modes propagate into existing strip components - the
+                    // simplest way to pick up name + colour + mode in one shot.
+                    consoleView.reset();
+                    consoleView = std::make_unique<ConsoleView> (session, engine);
+                    addAndMakeVisible (consoleView.get());
+                    consoleView->setOnStripFocusRequested ([this] (int t)
+                    {
+                        if (tapeStrip != nullptr) tapeStrip->setSelectedTrack (t);
+                    });
+                    consoleView->setStripsMixingMode (
+                        engine.getStage() == AudioEngine::Stage::Mixing);
+                    if (tapeStrip != nullptr) tapeStrip->repaint();
+                    resized();
                 });
-                consoleView->setStripsMixingMode (
-                    engine.getStage() == AudioEngine::Stage::Mixing);
-                if (tapeStrip != nullptr) tapeStrip->repaint();
-                resized();
             }
             break;
     }

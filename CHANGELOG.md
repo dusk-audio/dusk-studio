@@ -12,6 +12,10 @@ the public stable declaration.
 
 ### Added
 
+- **MP3 bounce / export.** Bounces, stems, and the mastering *Export master*
+  can write 320 kbps MP3 (CBR via libmp3lame) — name the output `.mp3` instead
+  of `.wav`. WAV (stereo 24-bit) stays the default. libmp3lame is auto-detected
+  at build time; absent, the option is hidden and bounces stay WAV-only.
 - **Dusk-native audio device selector.** Replaces JUCE's stock device-selector
   with a native backend / output / input / sample-rate / buffer-size picker that
   surfaces device-open errors as in-window alerts (no native popup), and opens
@@ -65,9 +69,6 @@ the public stable declaration.
 - **Update notice.** The startup dialog checks for a newer release and
   shows a flashing UPDATE badge in its sidebar when one exists; silent
   when up to date or offline.
-- **Opt-in parallel strip DSP** across worker threads
-  (`DUSKSTUDIO_AUDIO_WORKERS`) for heavyweight sessions on many-core
-  machines.
 - **Multi-output routing (Tascam-style cue/monitor sends).** The audio device
   can open more than two outputs (Audio settings). Each AUX return lane can be
   routed to its own physical output pair for an independent headphone / cue mix,

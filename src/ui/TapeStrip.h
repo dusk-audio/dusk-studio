@@ -57,7 +57,7 @@ public:
     // setMouseCursor + push the matching glyph into the CursorOverlay. When
     // c is NoCursor the overlay paints the Grab/Cut glyph at (x,y); any
     // other cursor clears it so only the native cursor shows.
-    void setHoverCursor (const juce::MouseCursor& c, int x, int y);
+    void setHoverCursor (const juce::MouseCursor& c, int x, int y, juce::Range<int> cutLine = {});
 
     // Called from MainComponent's keyboard handler. Returns true if the
     // op happened (caller decides whether to swallow the keypress).

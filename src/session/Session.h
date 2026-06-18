@@ -1136,8 +1136,17 @@ public:
     // no-op when false) + snapResolution (denomination). Toggling
     // master off and on preserves the denomination pick. Message
     // thread only.
-    bool           snapToGrid     = false;
-    SnapResolution snapResolution = SnapResolution::Quarter;
+    //
+    // snapToGrid drives the TIMELINE / tape strip. The audio region editor and
+    // the MIDI piano roll each carry their OWN snap-enable below so the three
+    // surfaces snap independently. midiEditorSnap defaults on (the piano roll
+    // historically always snapped); audioEditorSnap matches the timeline's
+    // off-by-default. The piano roll picks its own resolution via its grid
+    // combo; the audio editor shares snapResolution with the timeline.
+    bool           snapToGrid      = false;
+    SnapResolution snapResolution  = SnapResolution::Quarter;
+    bool           audioEditorSnap = false;
+    bool           midiEditorSnap  = true;
 
     // Persists across editor reopens. Message thread only.
     bool           pianoRollKeySnap = true;

@@ -72,7 +72,7 @@ private:
     // audio thread, read on the message thread — see readScopeLatest.
     juce::AudioBuffer<float> scopeRing;
     std::atomic<long long>   scopeWritePos { 0 };
-    int                      scopeRingMask = 0;
+    std::atomic<int>         scopeRingMask { 0 };   // written in prepare, read by both threads
     void pushScope (const float* L, const float* R, int n) noexcept;
 
 #if DUSKSTUDIO_HAS_DUSK_DSP

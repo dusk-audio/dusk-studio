@@ -88,6 +88,11 @@ AudioRegionEditor::AudioRegionEditor (Session& s, AudioEngine& e, int t, int r)
     // Update the mouse cursor the instant the mode changes, without
     // waiting for the next mouse move.
     editModeToolbar->onEditModeChanged = [this] { updateModeCursor(); };
+    // The audio editor snaps on its OWN enable, independent of the timeline.
+    editModeToolbar->setSnapEnabledAccessor (
+        [this] { return session.audioEditorSnap; },
+        [this] (bool v) { session.audioEditorSnap = v; });
+    editModeToolbar->onSnapChanged = [this] { repaint(); };
     addAndMakeVisible (editModeToolbar.get());
 
     // Bottom status-bar readouts.
@@ -459,7 +464,7 @@ int AudioRegionEditor::xForSample (juce::int64 absSample,
 juce::int64 AudioRegionEditor::snapFileSampleToGrid (juce::int64 fileSample,
                                                        bool bypass) const noexcept
 {
-    if (bypass || ! session.snapToGrid) return fileSample;
+    if (bypass || ! session.audioEditorSnap) return fileSample;
     const auto* r = region();
     if (r == nullptr) return fileSample;
     const auto fileToTimeline = r->timelineStart - r->sourceOffset;
@@ -467,18 +472,18 @@ juce::int64 AudioRegionEditor::snapFileSampleToGrid (juce::int64 fileSample,
     const auto sr = juce::jmax (1.0,
         loadedFileSampleRate > 0.0 ? loadedFileSampleRate
                                     : engine.getCurrentSampleRate());
-    const auto snapped = snap::snapAbsoluteToGrid (timelineSample, session, sr);
+    const auto snapped = snap::snapAbsoluteToGridUnchecked (timelineSample, session, sr);
     return snapped - fileToTimeline;
 }
 
 juce::int64 AudioRegionEditor::snapTimelineSampleToGrid (juce::int64 timelineSample,
                                                           bool bypass) const noexcept
 {
-    if (bypass || ! session.snapToGrid) return timelineSample;
+    if (bypass || ! session.audioEditorSnap) return timelineSample;
     const auto sr = juce::jmax (1.0,
         loadedFileSampleRate > 0.0 ? loadedFileSampleRate
                                     : engine.getCurrentSampleRate());
-    return snap::snapAbsoluteToGrid (timelineSample, session, sr);
+    return snap::snapAbsoluteToGridUnchecked (timelineSample, session, sr);
 }
 
 juce::int64 AudioRegionEditor::sampleForX (int x, juce::Rectangle<int> area) const
@@ -1237,7 +1242,7 @@ void AudioRegionEditor::pushCursorPosition (int x, int y)
                 // the scissor renders at the raw cursor X while the
                 // actual split lands at the nearest grid line — user
                 // reads it as "the cut happened left of the scissor".
-                if (session.snapToGrid)
+                if (session.audioEditorSnap)
                 {
                     const auto rawT     = timelineSampleForX (x, waveArea);
                     const auto snappedT = snapTimelineSampleToGrid (rawT, /*bypass*/ false);
@@ -1848,12 +1853,12 @@ void AudioRegionEditor::mouseDrag (const juce::MouseEvent& e)
     auto snapFileSampleToTimelineGrid = [&] (juce::int64 fileSample) -> juce::int64
     {
         snapGuideTimelineSample = -1;
-        if (bypassSnap || ! session.snapToGrid) return fileSample;
+        if (bypassSnap || ! session.audioEditorSnap) return fileSample;
         auto* rr = region();
         if (rr == nullptr) return fileSample;
         const auto fileToTimeline = rr->timelineStart - rr->sourceOffset;
         const auto timelineSample = fileSample + fileToTimeline;
-        const auto snapped = snap::snapAbsoluteToGrid (timelineSample, session, sampleRate);
+        const auto snapped = snap::snapAbsoluteToGridUnchecked (timelineSample, session, sampleRate);
         if (snapped != timelineSample)
             snapGuideTimelineSample = snapped;
         return snapped - fileToTimeline;
@@ -1861,8 +1866,8 @@ void AudioRegionEditor::mouseDrag (const juce::MouseEvent& e)
 
     auto snapDeltaSamples = [&] (juce::int64 delta) -> juce::int64
     {
-        if (bypassSnap) { snapGuideTimelineSample = -1; return delta; }
-        return snap::snapDeltaToGrid (delta, session, sampleRate);
+        if (bypassSnap || ! session.audioEditorSnap) { snapGuideTimelineSample = -1; return delta; }
+        return snap::snapDeltaToGridUnchecked (delta, session, sampleRate);
     };
 
     if (dragMode == DragMode::MoveCursor)
@@ -1899,7 +1904,7 @@ void AudioRegionEditor::mouseDrag (const juce::MouseEvent& e)
         const auto delta = snapDeltaSamples (rawDelta);
         const auto newStart = juce::jmax<juce::int64> (0, dragOriginTimelineSample + delta);
         r->timelineStart = newStart;
-        if (! bypassSnap && session.snapToGrid && delta != rawDelta)
+        if (! bypassSnap && session.audioEditorSnap && delta != rawDelta)
             snapGuideTimelineSample = newStart;
         // Multi-select translate: every additional region shifts by the
         // same delta as the focused region. dragMultiOriginStarts was

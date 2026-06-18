@@ -1,5 +1,6 @@
 #include "BounceEngine.h"
 #include "AudioEngine.h"
+#include "LameMp3Writer.h"
 #include "MasteringPlayer.h"
 #include "../session/Session.h"
 
@@ -14,6 +15,44 @@ BounceEngine::~BounceEngine()
 {
     cancel();
     stopThread (5000);
+}
+
+std::unique_ptr<juce::AudioFormatWriter>
+BounceEngine::makeWriter (std::unique_ptr<juce::FileOutputStream> outStream,
+                            juce::String& errOut) const
+{
+    constexpr unsigned kNumChannels = 2;   // bounce is always stereo
+    constexpr int      kBitsPerSample = 24;
+
+    if (renderFormat == Format::Mp3)
+    {
+        // LameMp3Writer's base ctor takes ownership of the stream immediately,
+        // so hand it the raw pointer up front; on failure the writer's destructor
+        // frees it (no double-free with the unique_ptr).
+        auto writer = std::make_unique<LameMp3Writer> (outStream.release(),
+                                                        renderSampleRate, kNumChannels,
+                                                        renderBitrateKbps);
+        if (! writer->isOk())
+        {
+            errOut = "MP3 export is not available - this build has no libmp3lame.";
+            return nullptr;
+        }
+        return writer;
+    }
+
+    // WAV: createWriterFor takes ownership of the stream only on success.
+    juce::WavAudioFormat wavFormat;
+    juce::StringPairArray metadata;
+    std::unique_ptr<juce::AudioFormatWriter> writer (
+        wavFormat.createWriterFor (outStream.get(), renderSampleRate,
+                                     kNumChannels, kBitsPerSample, metadata, 0));
+    if (writer == nullptr)
+    {
+        errOut = "Could not create WAV writer";
+        return nullptr;   // outStream still owns + frees the stream
+    }
+    outStream.release();
+    return writer;
 }
 
 juce::int64 BounceEngine::computeBounceLength (double sampleRate, double tail) const
@@ -35,7 +74,7 @@ juce::int64 BounceEngine::computeBounceLength (double sampleRate, double tail) c
 }
 
 bool BounceEngine::start (const juce::File& outFile, double sr, int bs, double tail,
-                            Mode mode)
+                            Mode mode, Format format, int mp3BitrateKbps)
 {
     if (rendering.load (std::memory_order_relaxed)) return false;
 
@@ -45,6 +84,12 @@ bool BounceEngine::start (const juce::File& outFile, double sr, int bs, double t
     renderBlockSize = juce::jmax (64, bs);
     tailSeconds     = tail;
     renderMode      = mode;
+    // Stems must stay WAV: MP3 encoder delay + frame padding shift each stem by
+    // a different amount and change its length, breaking the sample-accurate
+    // alignment stems need for re-import. Force WAV at the engine boundary
+    // regardless of what the caller requested.
+    renderFormat    = (mode == Mode::Stems) ? Format::Wav : format;
+    renderBitrateKbps = mp3BitrateKbps;
 
     if (renderMode == Mode::MasterMix || renderMode == Mode::Stems)
     {
@@ -114,9 +159,8 @@ void BounceEngine::run()
         return;
     }
 
-    // Open the WAV writer first - failure here means we don't bother
-    // touching the engine state.
-    juce::WavAudioFormat wavFormat;
+    // Open the writer first - failure here means we don't bother touching the
+    // engine state.
     std::unique_ptr<juce::FileOutputStream> outStream (outputFile.createOutputStream());
     if (outStream == nullptr)
     {
@@ -132,31 +176,19 @@ void BounceEngine::run()
     outStream->setPosition (0);
     outStream->truncate();
 
-    // 24-bit stereo @ session SR - matches the spec default. Bit depth
-    // could become a parameter later.
-    constexpr int   kBitsPerSample = 24;
-    constexpr int   kNumChannels   = 2;
-    juce::StringPairArray metadata;
-
-    std::unique_ptr<juce::AudioFormatWriter> writer (
-        wavFormat.createWriterFor (outStream.get(),
-                                     renderSampleRate,
-                                     (unsigned) kNumChannels,
-                                     kBitsPerSample,
-                                     metadata,
-                                     0));
+    constexpr int kNumChannels = 2;   // bounce is always stereo
+    juce::String writerErr;
+    std::unique_ptr<juce::AudioFormatWriter> writer = makeWriter (std::move (outStream), writerErr);
     if (writer == nullptr)
     {
-        juce::String err = "Could not create WAV writer";
         {
             const juce::ScopedLock lock (lastErrorLock);
-            lastError = err;
+            lastError = writerErr;
         }
         rendering.store (false, std::memory_order_relaxed);
-        if (onFinished) onFinished (false, err);
+        if (onFinished) onFinished (false, writerErr);
         return;
     }
-    outStream.release();  // writer now owns the stream
 
     // Detach the engine from the realtime device - we drive its audio
     // callback ourselves at non-realtime pace. State is restored at the
@@ -301,7 +333,6 @@ bool BounceEngine::renderOneStem (const juce::File& outFile,
                                     float stemFractionStart,
                                     float stemFractionWidth)
 {
-    juce::WavAudioFormat wavFormat;
     std::unique_ptr<juce::FileOutputStream> outStream (outFile.createOutputStream());
     if (outStream == nullptr)
     {
@@ -312,29 +343,18 @@ bool BounceEngine::renderOneStem (const juce::File& outFile,
     outStream->setPosition (0);
     outStream->truncate();
 
-    constexpr int kBitsPerSample = 24;
-    constexpr int kNumChannels   = 2;
-    juce::StringPairArray metadata;
-    std::unique_ptr<juce::AudioFormatWriter> writer (
-        wavFormat.createWriterFor (outStream.get(),
-                                     renderSampleRate,
-                                     (unsigned) kNumChannels,
-                                     kBitsPerSample,
-                                     metadata,
-                                     0));
+    constexpr int kNumChannels = 2;
+    juce::String writerErr;
+    std::unique_ptr<juce::AudioFormatWriter> writer = makeWriter (std::move (outStream), writerErr);
     if (writer == nullptr)
     {
-        // createWriterFor failed AFTER we truncated the file above -
-        // close our handle and drop the now-zeroed file so we don't
-        // leave a 0-byte stem on disk. (createWriterFor only takes
-        // ownership of outStream on success, so resetting here is safe.)
-        outStream.reset();
+        // Writer failed AFTER we truncated the file above - drop the now-zeroed
+        // file so we don't leave a 0-byte stem on disk.
         outFile.deleteFile();
         const juce::ScopedLock lock (lastErrorLock);
-        lastError = "Could not create WAV writer for stem " + outFile.getFileName();
+        lastError = writerErr + " (stem " + outFile.getFileName() + ")";
         return false;
     }
-    outStream.release();  // writer now owns the stream
 
     constexpr int kNumIn = 16;
     std::vector<std::vector<float>> inputs (kNumIn,

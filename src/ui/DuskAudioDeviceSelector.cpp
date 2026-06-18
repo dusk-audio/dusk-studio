@@ -156,6 +156,14 @@ void DuskAudioDeviceSelector::applySetupChange (bool deviceChanged)
         if (rateCombo.getSelectedId()   > 0) setup.sampleRate = (double) rateCombo.getSelectedId();
         if (bufferCombo.getSelectedId() > 0) setup.bufferSize = bufferCombo.getSelectedId();
     }
+    else
+    {
+        // New device may not support the previous device's rate/buffer — clear
+        // them (0 = "pick a valid default for this device") so the open doesn't
+        // fail when switching between devices with disjoint capabilities.
+        setup.sampleRate = 0.0;
+        setup.bufferSize = 0;
+    }
 
     // Open a generous fixed number of channels so the main-output pair menu can
     // offer every active pair — we don't draw per-channel check-boxes. JUCE

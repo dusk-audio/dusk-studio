@@ -6,6 +6,9 @@
 #endif
 
 #include "ipc/PluginScanProtocol.h"
+#include "PluginBackingCheck.h"
+
+#include <map>
 
 namespace duskstudio
 {
@@ -269,7 +272,8 @@ int PluginManager::scanInstalledPlugins (
     // atomic): if it flipped on the last file, scanNextFile can fall out of
     // the loop before the in-loop abort check runs, so re-test it here.
     const bool abortFlagSet = (abort != nullptr && abort->load (std::memory_order_relaxed));
-    if (! aborted && ! abortFlagSet && onProgress != nullptr)
+    const bool aborting     = aborted || abortFlagSet;
+    if (! aborting && onProgress != nullptr)
         onProgress (1.0f, {});
 
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
@@ -279,8 +283,62 @@ int PluginManager::scanInstalledPlugins (
         knownPluginList.setCustomScanner (nullptr);
    #endif
 
+    // Prune dead entries so the picker never offers a plugin that can't load.
+    // Two instantiation-free checks cover every format:
+    //   1. Path-backed formats (VST3 / AU bundles / CLAP / soundfonts): the
+    //      bundle or file is gone or hollowed out — see pluginBackingLooksDead.
+    //   2. URI-backed formats (LV2, AU component IDs): the identifier is no
+    //      longer discoverable in the format's live search paths because the
+    //      bundle was uninstalled. searchPathsForPlugins re-reads the LV2 world /
+    //      AU registry but does NOT instantiate, so a crashy plugin can't take
+    //      down the scan, and one call yields the whole live set per format.
+    // Skipped on abort — the list is mid-scan and incomplete.
+    int pruned = 0;
+    if (! aborting)
+    {
+        // Live identifier set per format, gathered once and only for formats
+        // that actually have URI-style (non-path) entries needing validation.
+        std::map<juce::String, juce::StringArray> liveIdsByFormat;
+        for (const auto& desc : knownPluginList.getTypes())
+            if (! juce::File::isAbsolutePath (desc.fileOrIdentifier))
+                liveIdsByFormat.emplace (desc.pluginFormatName, juce::StringArray{});
+
+        for (auto& entry : liveIdsByFormat)
+            for (auto* format : formatManager.getFormats())
+                if (format->getName() == entry.first)
+                {
+                    entry.second = format->searchPathsForPlugins (
+                        format->getDefaultLocationsToSearch(), /*recursive*/ true,
+                        /*allowAsync*/ false);
+                    break;
+                }
+
+        for (const auto& desc : knownPluginList.getTypes())
+        {
+            bool dead = pluginBackingLooksDead (desc.fileOrIdentifier);
+
+            if (! dead && ! juce::File::isAbsolutePath (desc.fileOrIdentifier))
+            {
+                const auto it = liveIdsByFormat.find (desc.pluginFormatName);
+                // Only prune when we have a NON-EMPTY live set for the format:
+                // an empty set means discovery failed or the format has no search
+                // locations, and nuking every entry on a transient miss would be
+                // far worse than leaving a stale one.
+                if (it != liveIdsByFormat.end() && ! it->second.isEmpty()
+                     && ! it->second.contains (desc.fileOrIdentifier))
+                    dead = true;
+            }
+
+            if (dead)
+            {
+                knownPluginList.removeType (desc);
+                ++pruned;
+            }
+        }
+    }
+
     const bool blacklistGrew = knownPluginList.getBlacklistedFiles().size() != blacklistBefore;
-    if (added > 0 || blacklistGrew) saveCache();
+    if (added > 0 || pruned > 0 || blacklistGrew) saveCache();
     return added;
 }
 

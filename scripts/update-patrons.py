@@ -177,13 +177,26 @@ def fetch_members(config):
 
 
 def find_headers(daw_root):
+    found, seen = [], set()
+    bases = []
+    # CI / explicit override: point at the same plugins checkout the build uses
+    # for the donor DSP. The release workflows set this so the shipped binary
+    # gets the live supporters list, even though that clone isn't a sibling.
+    env_path = os.environ.get("DUSK_PLUGINS_PATH")
+    if env_path:
+        bases.append(Path(env_path))
     parent = daw_root.parent
-    found = []
-    for sibling in ("plugins-main", "plugins", "plugins-worktree",
-                    "plugins-multi-synth"):
-        h = parent / sibling / "plugins" / "shared" / "PatreonBackers.h"
-        if h.is_file():
-            found.append(h)
+    bases += [parent / s for s in ("plugins-main", "plugins",
+                                   "plugins-worktree", "plugins-multi-synth")]
+    for base in bases:
+        h = base / "plugins" / "shared" / "PatreonBackers.h"
+        if not h.is_file():
+            continue
+        key = h.resolve()
+        if key in seen:
+            continue
+        seen.add(key)
+        found.append(h)
     return found
 
 
@@ -305,13 +318,22 @@ def main():
         # truncated header behind (same pattern as write_config_secure).
         fd, tmp = tempfile.mkstemp(dir=str(header.parent),
                                    prefix="." + header.name + ".", suffix=".tmp")
+        fd_owned_by_file = False  # os.fdopen takes ownership only once it returns
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fd_owned_by_file = True
                 fh.write(text)
                 fh.flush()
                 os.fsync(fh.fileno())
             os.replace(tmp, header)
         except BaseException:
+            # If os.fdopen raised before the file object took ownership, the raw
+            # fd is still open — close it so it isn't leaked.
+            if not fd_owned_by_file:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
             try:
                 os.unlink(tmp)
             except OSError:

@@ -43,7 +43,8 @@ jobs:
         # default Makefiles on this many TUs). ccache: object cache that
         # survives across runs via the actions/cache step below, so an
         # unchanged TU isn't recompiled on the next push.
-        run: brew install ninja ccache
+        # lame: libmp3lame for MP3 bounce/export (CMake auto-detects it).
+        run: brew install ninja ccache lame
 
       - name: Cache ccache objects
         uses: actions/cache@v4
@@ -69,6 +70,7 @@ jobs:
         run: |
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$(brew --prefix)" \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main"
 

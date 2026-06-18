@@ -26,7 +26,9 @@ public:
                    Session& session,
                    juce::AudioDeviceManager& deviceManager,
                    const juce::File& outputFile,
-                   BounceEngine::Mode mode = BounceEngine::Mode::MasterMix);
+                   BounceEngine::Mode mode = BounceEngine::Mode::MasterMix,
+                   BounceEngine::Format format = BounceEngine::Format::Wav,
+                   int mp3BitrateKbps = 320);
     ~BounceDialog() override;
 
     void resized() override;
@@ -46,6 +48,8 @@ private:
     juce::AudioDeviceManager& deviceManager;
     juce::File outputFile;
     BounceEngine::Mode renderMode;
+    BounceEngine::Format renderFormat;
+    int mp3Bitrate;
 
     std::unique_ptr<BounceEngine> bounceEngine;
 

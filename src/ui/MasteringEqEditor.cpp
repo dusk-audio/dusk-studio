@@ -248,9 +248,10 @@ bool MasteringEqEditor::updateSpectrum()
     fftWindow.multiplyWithWindowingTable (fftWork.data(), (size_t) kFftSize);
     fft.performFrequencyOnlyForwardTransform (fftWork.data());
 
-    // ×2/N: Hann coherent-gain + single-sided scaling, so a 0 dBFS sine
-    // reads near 0 dBFS on the display.
-    constexpr float kRef = 2.0f / (float) kFftSize;
+    // ×4/N: single-sided scaling (2/N) times the 2× that compensates the Hann
+    // window's 0.5 coherent gain, so a bin-centred 0 dBFS sine reads near 0 dBFS
+    // (with 2/N alone it sat ~6 dB low).
+    constexpr float kRef = 4.0f / (float) kFftSize;
     for (int i = 0; i < kNumBins; ++i)
     {
         const float db = juce::jlimit (kSpecFloorDb, kSpecTopDb,

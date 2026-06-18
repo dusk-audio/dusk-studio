@@ -786,6 +786,7 @@ AudioEngine::~AudioEngine()
         recordManager.stopRecording (transport.getPlayhead());
     deviceManager.removeChangeListener (this);
     deviceManager.removeAudioCallback (this);
+    deviceManager.removeMidiInputDeviceCallback ({}, this);
     deviceManager.closeAudioDevice();
     // After the callback is gone — nothing pushes to the out-FIFO, the
     // pump drains or drops what's left, then midiOutputs can destruct.
@@ -1148,8 +1149,23 @@ void AudioEngine::consumePluginStateAfterLoad()
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         auto& track = session.track (t);
-        auto& slot  = strips[(size_t) t].getPluginSlot();
-        if (track.pluginDescriptionXml.isEmpty()) continue;   // no plugin to restore
+        auto& strip = strips[(size_t) t];
+        auto& slot  = strip.getPluginSlot();
+        if (track.pluginDescriptionXml.isEmpty())
+        {
+            slot.unload();   // session has no plugin here — clear any carried over from the prior one
+            // Reconstruct the insert mode from session state so a strip that ran
+            // a plugin in the previous session doesn't stay in kInsertPlugin and
+            // route around an enabled hardware insert (mirrors the aux path below).
+            strip.insertMode.store (
+                track.hardwareInsert.enabled.load (std::memory_order_relaxed)
+                    ? ChannelStrip::kInsertHardware : ChannelStrip::kInsertEmpty,
+                std::memory_order_release);
+            continue;
+        }
+        // Plugin intended on this track — pin the mode to Plugin (offline if the
+        // restore below fails) so a prior session's kInsertHardware can't linger.
+        strip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
         juce::String error;
         if (! slot.restoreFromSavedState (track.pluginDescriptionXml,
                                             track.pluginStateBase64, error))
@@ -1168,7 +1184,18 @@ void AudioEngine::consumePluginStateAfterLoad()
         {
             auto& slot = auxLaneStrips[(size_t) a].getPluginSlot (s);
             const auto& descXml = lane.pluginDescriptionXml[(size_t) s];
-            if (descXml.isEmpty()) continue;
+            if (descXml.isEmpty())
+            {
+                // No plugin in this slot — unload any instance left from the
+                // prior session and route around it (or through the hardware
+                // insert when this slot is in HW mode).
+                slot.unload();
+                const bool hw = lane.hardwareInserts[(size_t) s].enabled.load (std::memory_order_relaxed);
+                auxLaneStrips[(size_t) a].insertMode[(size_t) s].store (
+                    hw ? AuxLaneStrip::kInsertHardware : AuxLaneStrip::kInsertEmpty,
+                    std::memory_order_release);
+                continue;
+            }
             juce::String error;
             if (! slot.restoreFromSavedState (descXml,
                                                 lane.pluginStateBase64[(size_t) s], error))
@@ -2696,9 +2723,10 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         silentDims.store (((juce::uint64) (juce::uint32) mixL.size() << 32)
                           | (juce::uint32) numSamples, std::memory_order_relaxed);
         silentBlocks.fetch_add (1, std::memory_order_relaxed);   // drained by diagTimer
-        for (int ch = 0; ch < numOutputChannels; ++ch)
-            if (auto* out = outputChannelData[ch])
-                std::memset (out, 0, sizeof (float) * (size_t) numSamples);
+        if (outputChannelData != nullptr)
+            for (int ch = 0; ch < numOutputChannels; ++ch)
+                if (auto* out = outputChannelData[ch])
+                    std::memset (out, 0, sizeof (float) * (size_t) numSamples);
         return;
     }
 

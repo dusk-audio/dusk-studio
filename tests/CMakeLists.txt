@@ -10,6 +10,7 @@ FetchContent_MakeAvailable(Catch2)
 add_executable(dusk-studio-tests
     smoke_brickwall_limiter.cpp
     plugin_scan_protocol.cpp
+    plugin_backing_check.cpp
     session_tick_conversion.cpp
     tempo_map_conversion.cpp
     output_pair_routing.cpp
@@ -28,6 +29,7 @@ add_executable(dusk-studio-tests
     hardware_insert.cpp
     session_round_trip.cpp
     session_region_bounds.cpp
+    session_transport_bounds.cpp
     session_corrupted_recovery.cpp
     session_format_version.cpp
     session_write_atomic.cpp
@@ -208,6 +210,18 @@ if(DEFINED DUSK_PLUGINS_PATH)
         JucePlugin_IsSynth=0
         JucePlugin_WantsMidiInput=0
         JucePlugin_ProducesMidiOutput=0)
+endif()
+
+# MP3 bounce writer — only when libmp3lame is available (mirrors the app build).
+find_path(LAME_INCLUDE_DIR NAMES lame/lame.h)
+find_library(LAME_LIBRARY NAMES mp3lame lame)
+if(LAME_INCLUDE_DIR AND LAME_LIBRARY)
+    target_sources(dusk-studio-tests PRIVATE
+        lame_mp3_writer.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../src/engine/LameMp3Writer.cpp)
+    target_include_directories(dusk-studio-tests PRIVATE "${LAME_INCLUDE_DIR}")
+    target_link_libraries(dusk-studio-tests PRIVATE "${LAME_LIBRARY}")
+    target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_LAME=1)
 endif()
 
 list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)

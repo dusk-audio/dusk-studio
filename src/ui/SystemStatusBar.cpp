@@ -13,7 +13,7 @@ SystemStatusBar::SystemStatusBar (AudioEngine& e) : engine (e)
     timerCallback();
 }
 
-SystemStatusBar::~SystemStatusBar() = default;
+SystemStatusBar::~SystemStatusBar() { stopTimer(); }   // before derived members destruct
 
 void SystemStatusBar::timerCallback()
 {

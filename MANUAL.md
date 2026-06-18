@@ -123,7 +123,7 @@ For console-style automation, click the small mode label below a fader to cycle 
 
 ## Bounce
 
-When the mix is where you want it, hit **Cmd+B** to open the bounce dialog. Pick a filename, sample rate, and bit depth. The bounce renders offline as fast as the CPU allows and lands in the session folder by default.
+When the mix is where you want it, hit **Cmd+B** to open the bounce dialog. Pick a destination filename — name it `.wav` for a stereo 24-bit WAV (the default) or `.mp3` for a 320 kbps MP3, both at the session sample rate. It renders offline as fast as the CPU allows and lands in the session folder by default.
 
 ![Bounce dialog with a destination filename.](docs/images/qg-07-bounce-dialog.png)
 
@@ -237,7 +237,7 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 | --- | --------------------- | ------------------------------------------------------------------------------------------------ |
 | 1   | Program EQ            | Tube-saturated low + high program EQ. Right-click for the modal editor.                          |
 | 2   | Master bus compressor | Identical DSP to the bus comp, typically used slower.                                            |
-| 3   | Tape saturation       | Reel-to-reel model. Oversampling follows the global Effect Oversampling setting (Audio settings). Click for the tape-machine modal; right-click to toggle the tape on/off. |
+| 3   | Tape saturation       | Reel-to-reel model. Oversampling follows the global Effect Oversampling setting (Audio settings). Click to toggle the tape on/off; right-click for the tape-machine modal. |
 | 4   | Master fader          | −∞ to +12 dB.                                                                                    |
 | 5   | Mono                  | Sums L+R to mono on both legs for phase / single-speaker checks.                                 |
 | 6   | Peak meters           | Post-output L/R.                                                                                 |
@@ -322,7 +322,7 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 - **macOS**: 14.4 (Sonoma) or later for the out-of-process plugin sandbox; older macOS still runs plugins in-process.
 - **Windows**: Windows 10 or later, ASIO driver recommended.
 
-Any modern multi-core CPU (Intel, AMD, or Apple Silicon) is sufficient for a 24-track session at 48 kHz. With **Multicore DSP** set to Auto (the default — see *Settings → Advanced*), the channel-strip work is shared across the available cores, so even small machines such as a 4-core Raspberry Pi 5 can carry a full 24-track session with the per-channel EQ and compressor. The compressor and EQ on every channel are oversampled when the global oversampling factor is raised; expect roughly 2-3× the mix-engine CPU at 4× oversampling (keep oversampling at 1× on low-power machines).
+Any modern multi-core CPU (Intel, AMD, or Apple Silicon) is sufficient for a 24-track session at 48 kHz. With **Multicore DSP** set to Auto (the default — see *Settings → Advanced*), the channel-strip work is shared across the available cores, so lower-power multi-core machines handle larger sessions more comfortably. The compressor and EQ on every channel are oversampled when the global oversampling factor is raised; expect roughly 2-3× the mix-engine CPU at 4× oversampling (keep oversampling at 1× on low-power machines).
 
 ## Installing Dusk Studio
 
@@ -779,8 +779,8 @@ master input → program EQ → master bus compressor → tape saturation → ma
 
 Models a small reel-to-reel tape machine.
 
-- **Open the editor**: left-click the **TAPE** header to open the full tape-machine modal editor, where drive, saturation, and tape-character controls live.
-- **Bypass / engage**: right-click the **TAPE** header to toggle the tape stage in or out of the signal path.
+- **Bypass / engage**: left-click the **TAPE** header to toggle the tape stage in or out of the signal path.
+- **Open the editor**: right-click the **TAPE** header to open the full tape-machine modal editor, where drive, saturation, and tape-character controls live.
 - **Oversampling**: tape oversampling follows the engine-wide **Effect Oversampling** setting in the Audio Device panel — it is not a per-stage toggle.
 
 Tape saturation is the right tool to glue a mix together. A light application thickens the low-mids, rounds the transients, and adds a touch of harmonic colour.
@@ -930,7 +930,7 @@ A streaming-platform preset picker (Spotify, Apple Music, YouTube, Netflix, etc.
 
 ## Exporting the master
 
-**Export master…** renders the mastering chain offline to `master.wav` in the session folder. A progress dialog shows the output path and a bar; the render runs as fast as the CPU allows and you can cancel mid-render. The output is **stereo 24-bit WAV at the current device sample rate** (Dusk Studio does not offer per-export format options).
+**Export master…** renders the mastering chain offline to `master.wav` in the session folder. A progress dialog shows the output path and a bar; the render runs as fast as the CPU allows and you can cancel mid-render. The output is **stereo 24-bit WAV at the session sample rate** by default; name the file `.mp3` to export a 320 kbps MP3 instead.
 
 \newpage
 
@@ -1314,7 +1314,7 @@ Dusk Studio's solo is **solo-in-place, additive**:
 - Press **S** on a second track to add it to the solo set.
 - Press **S** again to remove it.
 
-There is no PFL (pre-fader listen) or AFL (after-fader listen) mode. If you need to audition without the effects of the channel strip, set the **IN** monitor toggle and pull the rest of the mix down.
+There is no PFL (pre-fader listen) or AFL (after-fader listen) mode, and no dry pre-effects monitor — **IN** always monitors *through* the channel strip (EQ, comp, and any insert). To audition one track in isolation, solo it and pull the rest of the mix down; to hear it without processing, bypass the strip's EQ / comp sections.
 
 ## Automation
 
@@ -1670,7 +1670,7 @@ For larger archives, `tar czf` the folder and store the tarball.
 
 # Bouncing and exporting
 
-![Bounce dialog with destination filename and format options.](docs/images/bnc-01-bounce-dialog.png)
+![Bounce dialog with a destination filename.](docs/images/bnc-01-bounce-dialog.png)
 
 ## Bouncing the mix
 
@@ -1680,7 +1680,7 @@ To export your finished mix as a stereo audio file:
 2. A file browser opens at the session folder; pick or rename the destination WAV and confirm.
 3. A progress dialog renders the project offline. **Cancel** stops the render.
 
-The output is always **stereo 24-bit WAV at the current device sample rate**, with a fixed 5-second tail so reverb and compression ringouts decay naturally. Dusk Studio offers no per-bounce format options.
+The output is **stereo 24-bit WAV at the session sample rate** by default (or a 320 kbps MP3 if you name the file `.mp3`), with a fixed 5-second tail so reverb and compression ringouts decay naturally.
 
 Dusk Studio detaches from the realtime audio device and renders the project offline as fast as the CPU allows. When the bounce completes, the audio device is automatically re-attached.
 

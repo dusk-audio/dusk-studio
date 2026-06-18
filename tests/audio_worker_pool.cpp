@@ -4,6 +4,8 @@
 
 #include <array>
 #include <atomic>
+#include <cstdio>
+#include <cstdlib>
 #include <thread>
 
 // The pool's join/quiesce protocol is the unit under test, so these tests run
@@ -33,6 +35,35 @@ void requireBefore (Pred pred, int timeoutMs = 2000)
     while (! pred() && juce::Time::getMillisecondCounter() < deadline)
         juce::Thread::yield();
     REQUIRE (pred());
+}
+
+// quiesce() is intentionally unbounded in production (a wedged worker has no
+// safe recovery). In the tests that exercise its draining, back it with a
+// deadlock watchdog: if it hasn't returned within timeoutMs the protocol has
+// regressed into a hang, so abort with a clear message — a fast, obvious CI
+// failure instead of letting the whole job time out minutes later. The main
+// thread is blocked inside quiesce() during a hang, so only an external thread
+// can react, and the only way for it to fail fast is to terminate the process.
+void quiesceWithWatchdog (AudioWorkerPool& pool, int timeoutMs = 5000)
+{
+    std::atomic<bool> done { false };
+    std::thread watchdog ([&]
+    {
+        const auto deadline = juce::Time::getMillisecondCounter() + (juce::uint32) timeoutMs;
+        while (! done.load (std::memory_order_acquire)
+               && juce::Time::getMillisecondCounter() < deadline)
+            juce::Thread::sleep (10);
+        if (! done.load (std::memory_order_acquire))
+        {
+            std::fprintf (stderr, "AudioWorkerPool::quiesce() did not return within %d ms "
+                                  "- deadlock regression.\n", timeoutMs);
+            std::fflush (stderr);
+            std::abort();
+        }
+    });
+    pool.quiesce();
+    done.store (true, std::memory_order_release);
+    watchdog.join();
 }
 } // namespace
 
@@ -123,7 +154,7 @@ TEST_CASE ("AudioWorkerPool: quiesce drains lanes orphaned by a dead dispatcher"
     requireBefore ([&] { return entered.load (std::memory_order_relaxed) >= 3; });
 
     std::thread releaser ([&] { juce::Thread::sleep (50); gate.signal(); });
-    pool.quiesce();           // must block until all 3 orphaned lanes complete
+    quiesceWithWatchdog (pool);   // must block until all 3 orphaned lanes complete
     releaser.join();
 
     for (int lane = 0; lane < 3; ++lane)
@@ -150,7 +181,7 @@ TEST_CASE ("AudioWorkerPool: quiesce on a partially-signalled orphan skips undis
 
     pool.dispatchForTest (1);
     requireBefore ([&] { return counters.get (0) >= 1; });   // worker 0 finished its lane
-    pool.quiesce();
+    quiesceWithWatchdog (pool);
 
     REQUIRE (counters.get (0) == 1);
     REQUIRE (counters.get (1) == 0);

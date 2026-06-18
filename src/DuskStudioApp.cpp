@@ -751,11 +751,12 @@ static void runHeadlessSessionPerf (const juce::String& sessionPath)
 
     auto session = std::make_unique<Session>();
     auto engine  = std::make_unique<AudioEngine> (*session);
-    engine->prepareForSelfTest (sampleRate, blockSize);
     // The AudioEngine ctor registered with its AudioDeviceManager (and may have
     // opened a real device). This perf path drives the callback MANUALLY below,
-    // so detach to stop the device thread from double-processing the engine.
+    // so detach FIRST — before prepareForSelfTest mutates DSP state — so the
+    // device thread can't process the engine while that state is in flux.
     engine->getDeviceManager().removeAudioCallback (engine.get());
+    engine->prepareForSelfTest (sampleRate, blockSize);
 
     juce::File f (sessionPath);
     if (f.isDirectory()) f = f.getChildFile ("session.json");

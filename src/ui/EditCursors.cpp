@@ -129,28 +129,29 @@ void paintPencilGlyph (juce::Graphics& g, float cx, float cy)
 
 void paintHandGlyph (juce::Graphics& g, float cx, float cy)
 {
-    // makeHandCursor hotspot = (12, 12) — palm centre.
-    const float ox = cx - 12.0f;
-    const float oy = cy - 12.0f;
+    // Pointing hand: index finger extended up, the other fingers curled into a
+    // fist with a thumb off the left — the classic Ardour Grab cursor. White
+    // body + black halo so it reads on any track colour. (cx, cy) is the INDEX
+    // FINGERTIP (the cursor hotspot); the hand hangs down-right of it so the
+    // finger — not the palm — points at / selects the region under the cursor.
+    const float ox = cx - 8.6f;
+    const float oy = cy - 2.0f;
 
-    juce::Path palm;
-    palm.addRoundedRectangle (ox + 6.0f, oy + 10.0f, 12.0f, 11.0f, 2.0f);
-    juce::Path fingers;
-    fingers.addRoundedRectangle (ox + 7.0f,  oy + 4.0f, 2.4f, 8.0f, 1.2f);
-    fingers.addRoundedRectangle (ox + 10.0f, oy + 3.0f, 2.4f, 9.0f, 1.2f);
-    fingers.addRoundedRectangle (ox + 13.0f, oy + 4.0f, 2.4f, 8.0f, 1.2f);
-    fingers.addRoundedRectangle (ox + 16.0f, oy + 6.0f, 2.4f, 6.0f, 1.2f);
-    juce::Path thumb;
-    thumb.addRoundedRectangle (ox + 18.0f, oy + 12.0f, 3.0f, 6.0f, 1.4f);
+    juce::Path hand;
+    // Fist (palm + curled fingers) in the lower half.
+    hand.addRoundedRectangle (ox + 6.0f, oy + 11.0f, 12.0f, 10.0f, 3.0f);
+    // Index finger pointing straight up, rising out of the fist's left.
+    hand.addRoundedRectangle (ox + 7.0f, oy + 2.0f, 3.2f, 13.0f, 1.6f);
+    // Two curled-finger knuckle bumps on top of the fist, right of the index.
+    hand.addRoundedRectangle (ox + 11.0f, oy + 9.0f, 3.0f, 4.0f, 1.4f);
+    hand.addRoundedRectangle (ox + 14.5f, oy + 9.5f, 3.0f, 4.0f, 1.4f);
+    // Thumb bump on the left side of the fist.
+    hand.addRoundedRectangle (ox + 4.0f, oy + 13.0f, 3.0f, 6.0f, 1.4f);
 
     g.setColour (juce::Colours::black.withAlpha (0.75f));
-    g.strokePath (palm,    juce::PathStrokeType (3.4f));
-    g.strokePath (fingers, juce::PathStrokeType (3.4f));
-    g.strokePath (thumb,   juce::PathStrokeType (3.4f));
+    g.strokePath (hand, juce::PathStrokeType (3.4f));
     g.setColour (juce::Colours::white);
-    g.fillPath (palm);
-    g.fillPath (fingers);
-    g.fillPath (thumb);
+    g.fillPath (hand);
 }
 
 namespace
@@ -183,7 +184,10 @@ juce::MouseCursor makePencilCursor()
 
 juce::MouseCursor makeHandCursor()
 {
-    return juce::MouseCursor (drawCursorImage (12.0f, 12.0f, &paintHandGlyph), 12, 12);
+    // Hotspot = index fingertip. paintHandGlyph anchors the fingertip at the
+    // point it's passed, so draw it at (10, 2) to fit the hand (which hangs
+    // down-right) inside the 24×24 image, and set the same pixel as the hotspot.
+    return juce::MouseCursor (drawCursorImage (10.0f, 2.0f, &paintHandGlyph), 10, 2);
 }
 } // namespace
 

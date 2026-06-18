@@ -54,6 +54,11 @@ public:
     // while DUSKSTUDIO_AUDIO_WORKERS pins the count.
     void setDesiredWorkers (int n) noexcept { desiredWorkers = juce::jmax (0, n); }
 
+    // Largest worker count the engine can use: the strips fan out across at most
+    // kMaxDspLanes - 1 worker lanes (the audio callback runs the last lane
+    // itself). Single source of truth for AppConfig's settings/manual cap.
+    static constexpr int getMaxWorkerCount() noexcept { return kMaxDspLanes - 1; }
+
     // Message thread. CALLER MUST have removed this engine as the audio callback
     // first (so no audio thread is inside the worker pool's runBlock) — the
     // Audio Settings panel detaches around the change. Stops+restarts the pool

@@ -895,7 +895,10 @@ void AlsaAudioIODevice::rearmStream() noexcept
         {
             const auto n = snd_pcm_writei (outHandle, src + done * frameBytes, frames - done);
             if (n < 0)
+            {
                 snd_pcm_recover (outHandle, (int) n, /*silent*/ 1);
+                done = 0;   // recover re-prepares (empties) the ring — refill from the start
+            }
             else
                 done += (snd_pcm_uframes_t) n;
         }
