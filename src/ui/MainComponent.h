@@ -14,6 +14,8 @@
 
 namespace duskstudio
 {
+namespace dp { struct SongScan; }
+
 class MainComponent final : public juce::Component,
                              public juce::MenuBarModel,
                              private juce::Timer
@@ -98,6 +100,12 @@ private:
     // recommendation) -> FileImporter on commit. Flips track.mode if
     // needed.
     void importPrompt();
+
+    // DP song-folder import: folder picker -> DpImporter::scanSongFolder ->
+    // DpImportDialog confirmation -> runDpImport drives FileImporter over the
+    // fragments, assigning each to a track at song start.
+    void importDpSongPrompt();
+    void runDpImport (const dp::SongScan& scan, bool importMixer, bool importTimeline);
 
     // Shared between File-menu prompts and TapeStrip drag-drop.
     // trackHint >= 0 biases the recommendation when the file matches.
