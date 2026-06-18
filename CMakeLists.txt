@@ -273,6 +273,8 @@ target_sources(DuskStudio PRIVATE
     src/engine/AudioEngine.cpp
     src/engine/AudioWorkerPool.cpp
     src/engine/BounceEngine.cpp
+    src/engine/DpAligner.cpp
+    src/engine/DpImporter.cpp
     src/engine/LameMp3Writer.cpp
     src/engine/FileImporter.cpp
     src/engine/MasteringPlayer.cpp

@@ -55,6 +55,8 @@ add_executable(dusk-studio-tests
     ${CMAKE_SOURCE_DIR}/src/engine/McuController.cpp
     multisample_state_roundtrip.cpp
     bounce_stem_filename.cpp
+    dp_importer_parse.cpp
+    dp_aligner_align.cpp
     metronome_click.cpp
     ${CMAKE_SOURCE_DIR}/src/dsp/Metronome.cpp
     aria_gui_parse.cpp
@@ -72,6 +74,8 @@ add_executable(dusk-studio-tests
     ${CMAKE_SOURCE_DIR}/src/dsp/BrickwallLimiter.cpp
     ${CMAKE_SOURCE_DIR}/src/dsp/HardwareInsertSlot.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/FileImporter.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/DpImporter.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/DpAligner.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/RecordManager.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/MidiTimeCodeReceiver.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/MidiTimeCodeEmitter.cpp
