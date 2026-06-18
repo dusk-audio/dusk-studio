@@ -122,18 +122,23 @@ CorrResult crossCorrelate (const std::vector<float>& longEnv,
     while ((1 << order) < La + Lb) ++order;
     const int N = 1 << order;
 
-    std::vector<juce::dsp::Complex<float>> A ((size_t) N), B ((size_t) N), C ((size_t) N);
+    std::vector<juce::dsp::Complex<float>> A ((size_t) N), B ((size_t) N), C ((size_t) N),
+                                           Af ((size_t) N), Bf ((size_t) N), Cf ((size_t) N);
     for (int i = 0; i < N; ++i)
     {
         A[(size_t) i] = { i < La ? longEnv[(size_t) i]  : 0.0f, 0.0f };
         B[(size_t) i] = { i < Lb ? shortEnv[(size_t) i] : 0.0f, 0.0f };
     }
     juce::dsp::FFT fft (order);
-    fft.perform (A.data(), A.data(), false);
-    fft.perform (B.data(), B.data(), false);
+    // perform() must NOT alias input and output. macOS vDSP tolerates in-place,
+    // but the FFTFallback engine (Linux / any non-vDSP build) writes garbage
+    // when input == output — which silently zeroed the whole correlation and
+    // left every fragment unplaced. Keep the in/out buffers distinct.
+    fft.perform (A.data(), Af.data(), false);
+    fft.perform (B.data(), Bf.data(), false);
     for (int i = 0; i < N; ++i)
-        C[(size_t) i] = A[(size_t) i] * std::conj (B[(size_t) i]);
-    fft.perform (C.data(), C.data(), true);
+        Cf[(size_t) i] = Af[(size_t) i] * std::conj (Bf[(size_t) i]);
+    fft.perform (Cf.data(), C.data(), true);
 
     const int maxLag = La - Lb;
     // Peak + std over the valid lag range.
