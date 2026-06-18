@@ -96,6 +96,13 @@ public:
     void processStereoBlock (float* L, float* R, int numSamples,
                              juce::MidiBuffer& midiMessages) noexcept;
 
+    // Message thread. Hold while constructing the plugin's editor: sampler-
+    // style plugins share an internal lock between processBlock and their
+    // editor/loader, so a seconds-long editor build can block processBlock —
+    // and with it the whole audio callback. Holding the slot's process lock
+    // makes the audio thread dry-pass THIS strip for the duration instead.
+    juce::SpinLock& getProcessLock() noexcept { return processLock; }
+
     bool wasAutoBypassed() const noexcept { return autoBypassed.load (std::memory_order_relaxed); }
     void clearAutoBypass() noexcept;
 
@@ -246,6 +253,14 @@ private:
     std::atomic<juce::AudioPluginInstance*> currentInstance { nullptr };
     std::atomic<bool> bypassed { false };
     std::atomic<bool> autoBypassed { false };
+
+    // Per-instance prepare↔process exclusion (the Tracktion ExternalPlugin
+    // pattern). The audio/worker thread TRY-locks around the plugin's
+    // processBlock — if prepareToPlay/releaseResources holds the lock the
+    // block passes dry, one inaudible skip. The message-thread mutators take
+    // it blocking, so a plugin can never be re-prepared mid-processBlock even
+    // on a reconfigure path the engine-level gate didn't anticipate.
+    juce::SpinLock processLock;
 
     // Without zeroing latency too, the MIDI scheduler keeps shifting
     // note timing forward by the plugin's pre-bypass latency.

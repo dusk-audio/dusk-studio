@@ -565,6 +565,14 @@ void RemotePluginConnection::readerLoop()
         if (! platform::readExact (controlChannel, &hdr, sizeof (hdr)))
             break;  // EOF / peer closed / EBADF on disconnect
 
+        if (hdr.payloadLen > kMaxControlPayload)
+            break;  // corrupt/hostile header — refuse the alloc, drop the link
+
+        // Header self-consistency: both writers set totalLen = sizeof(hdr) +
+        // payloadLen, so a mismatch is a framing bug / corruption — drop the link.
+        if (hdr.totalLen != (std::uint32_t) sizeof (hdr) + hdr.payloadLen)
+            break;
+
         std::vector<std::uint8_t> payload (hdr.payloadLen);
         if (hdr.payloadLen > 0
             && ! platform::readExact (controlChannel, payload.data(), hdr.payloadLen))

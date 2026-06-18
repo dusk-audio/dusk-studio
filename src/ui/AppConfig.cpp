@@ -9,6 +9,8 @@ constexpr const char* kKeyScanOnStartup      = "scan_plugins_on_startup";
 constexpr const char* kKeyTapeStripExpanded  = "tape_strip_expanded_default";
 constexpr const char* kKeyStopBehavior       = "stop_behavior";
 constexpr const char* kKeyVkbCentreNote      = "vkb_centre_note";
+constexpr const char* kKeyMulticoreMode      = "multicore_dsp_mode";
+constexpr const char* kKeyMulticoreManual    = "multicore_dsp_workers";
 
 juce::File getStorePath()
 {
@@ -121,6 +123,57 @@ StopBehavior getStopBehavior()
 void setStopBehavior (StopBehavior b)
 {
     writeKey (kKeyStopBehavior, juce::String ((int) b));
+}
+
+MulticoreDspMode getMulticoreDspMode()
+{
+    const auto raw = readKey (kKeyMulticoreMode);
+    // Reject empty or non-numeric: getIntValue() coerces "abc" to 0, which would
+    // silently pass the range check and flip behaviour instead of defaulting.
+    if (raw.isEmpty() || ! raw.containsOnly ("0123456789"))
+        return MulticoreDspMode::Auto;   // default: use spare cores
+    const int v = raw.getIntValue();
+    if (v >= 0 && v <= 2) return (MulticoreDspMode) v;
+    return MulticoreDspMode::Auto;
+}
+
+void setMulticoreDspMode (MulticoreDspMode m)
+{
+    writeKey (kKeyMulticoreMode, juce::String ((int) m));
+}
+
+int maxMulticoreWorkers()
+{
+    return juce::jmax (0, juce::SystemStats::getNumCpus() - 2);
+}
+
+int getMulticoreManualWorkers()
+{
+    const auto raw = readKey (kKeyMulticoreManual);
+    const int dflt = juce::jmax (1, maxMulticoreWorkers());
+    if (raw.isEmpty()) return dflt;
+    return juce::jlimit (1, juce::jmax (1, maxMulticoreWorkers()), raw.getIntValue());
+}
+
+void setMulticoreManualWorkers (int n)
+{
+    writeKey (kKeyMulticoreManual,
+              juce::String (juce::jlimit (1, juce::jmax (1, maxMulticoreWorkers()), n)));
+}
+
+int resolveWorkerCount()
+{
+    switch (getMulticoreDspMode())
+    {
+        case MulticoreDspMode::Off:    return 0;
+        // Auto fans out only on >= 4-core hosts (cores - 2 workers); smaller
+        // machines stay single-core, matching the manual's documented behaviour.
+        case MulticoreDspMode::Auto:   return juce::SystemStats::getNumCpus() >= 4
+                                                  ? maxMulticoreWorkers() : 0;
+        case MulticoreDspMode::Manual: return juce::jmin (getMulticoreManualWorkers(),
+                                                          maxMulticoreWorkers());
+    }
+    return 0;
 }
 
 int getVkbCentreNote()

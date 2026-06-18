@@ -8,6 +8,7 @@
 #include "EditCursors.h"
 #include "EmbeddedModal.h"
 #include "FadeCurve.h"
+#include "../util/StringParsing.h"
 #include <cmath>
 #include <string>
 
@@ -23,25 +24,6 @@ EmbeddedModal& sharedTapeStripTextInputModal()
 {
     static EmbeddedModal m;
     return m;
-}
-
-// Strict, full-string float parse. containsOnly() lets malformed input like
-// "+", "-", or "1..2" through, and getFloatValue() turns those into 0 — which
-// jlimit then silently clamps to the minimum (a bogus 30 BPM entry). Require the
-// ENTIRE trimmed string to parse as one number; reject partial / junk input.
-bool parseFullFloat (const juce::String& s, float& out) noexcept
-{
-    const auto t = s.trim().toStdString();
-    if (t.empty()) return false;
-    try
-    {
-        std::size_t consumed = 0;
-        const float v = std::stof (t, &consumed);
-        if (consumed != t.size() || ! std::isfinite (v)) return false;   // trailing junk / inf / nan
-        out = v;
-        return true;
-    }
-    catch (...) { return false; }
 }
 
 // Dusk-styled text-input panel — title + prompt + TextEditor + OK /
@@ -124,7 +106,18 @@ public:
 
     void visibilityChanged() override
     {
-        if (isVisible()) editor.grabKeyboardFocus();
+        if (! isVisible()) return;
+        // Deferred: at this point the modal host may not have finished
+        // showing, and a synchronous grab silently fails — the user then
+        // has to click into the field before typing.
+        juce::Component::SafePointer<TextInputPanel> safe (this);
+        juce::MessageManager::callAsync ([safe]
+        {
+            // Modal may be dismissed between scheduling and now; skip the grab
+            // if the panel is no longer on screen.
+            if (safe != nullptr && safe->isShowing())
+                safe->editor.grabKeyboardFocus();
+        });
     }
 
 private:
@@ -158,6 +151,35 @@ void showEmbeddedTextInput (juce::Component& parent,
         /*onDismiss*/ [] { sharedTapeStripTextInputModal().close(); });
 }
 } // namespace
+void TapeStrip::promptRenameMarker (int markerIdx, const juce::String& title)
+{
+    const auto& markers = session.getMarkers();
+    if (markerIdx < 0 || markerIdx >= (int) markers.size()) return;
+
+    auto* host = getTopLevelComponent();
+    if (host == nullptr) host = this;
+    juce::Component::SafePointer<TapeStrip> safeThis (this);
+    showEmbeddedTextInput (*host, title, "New name:",
+        markers[(size_t) markerIdx].name, "Rename",
+        [safeThis, markerIdx] (juce::String newName)
+        {
+            if (safeThis == nullptr) return;
+            const auto trimmed = newName.trim();
+            if (trimmed.isEmpty()) return;
+            auto& s = safeThis->session;
+            const auto& m = s.getMarkers();
+            if (markerIdx < 0 || markerIdx >= (int) m.size()) return;
+            const auto oldName = m[(size_t) markerIdx].name;
+            if (oldName == trimmed) return;
+            auto& um = safeThis->engine.getUndoManager();
+            um.beginNewTransaction ("Rename marker");
+            um.perform (new ParamEditAction (
+                [&s, idx = markerIdx, trimmed] { s.renameMarker (idx, trimmed); },
+                [&s, idx = markerIdx, oldName] { s.renameMarker (idx, oldName); }));
+            safeThis->repaint();
+        });
+}
+
 TapeStrip::TapeStrip (Session& s, AudioEngine& e)
     : session (s), engine (e),
       vBlankAttachment (this, [this] { updatePlayheadBand(); })
@@ -200,10 +222,11 @@ TapeStrip::TapeStrip (Session& s, AudioEngine& e)
     addAndMakeVisible (snapToggle);
 
     showAllToggle.setClickingTogglesState (true);
-    showAllToggle.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff282830));
-    showAllToggle.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff1f3a52));
-    showAllToggle.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xff909094));
-    showAllToggle.setColour (juce::TextButton::textColourOnId,   juce::Colour (0xff7fb6e6));
+    showAllToggle.setLookAndFeel (&pillButtonLnF);
+    showAllToggle.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff3c3c48));
+    showAllToggle.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff2f5d86));
+    showAllToggle.setColour (juce::TextButton::textColourOffId,  juce::Colours::white);
+    showAllToggle.setColour (juce::TextButton::textColourOnId,   juce::Colours::white);
     showAllToggle.setMouseClickGrabsKeyboardFocus (false);
     showAllToggle.setWantsKeyboardFocus (false);
     showAllToggle.setTooltip ("Show every track row, including empty unarmed tracks.");
@@ -230,6 +253,7 @@ TapeStrip::TapeStrip (Session& s, AudioEngine& e)
 
 TapeStrip::~TapeStrip()
 {
+    showAllToggle.setLookAndFeel (nullptr);
     engine.getUndoManager().removeChangeListener (this);
 }
 
@@ -723,12 +747,9 @@ void TapeStrip::resized()
     // the top — lives in unused real estate above the row labels, fits
     // in the kRulerH band so it doesn't compete with the time ruler.
     constexpr int kShowAllH = 14;
-    constexpr int kShowAllW = 38;
-    constexpr int kShowAllPad = 2;
-    showAllToggle.setBounds (kShowAllPad,
-                              kShowAllPad,
-                              juce::jmin (kShowAllW, labelColW - 2 * kShowAllPad),
-                              kShowAllH);
+    constexpr int kShowAllInset = 8;   // a touch narrower than the full column
+    const int allW = juce::jmax (24, labelColW - 2 * kShowAllInset);
+    showAllToggle.setBounds ((labelColW - allW) / 2, 2, allW, kShowAllH);
     inheritCursorOnDescendants (*this);
 }
 
@@ -997,30 +1018,8 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
                         [safeThis = juce::Component::SafePointer<TapeStrip> (this),
                          hoveredMarkerIdx]
                         {
-                            if (safeThis == nullptr) return;
-                            const auto& m2 = safeThis->session.getMarkers();
-                            if (hoveredMarkerIdx < 0 || hoveredMarkerIdx >= (int) m2.size()) return;
-                            auto* host = safeThis->getTopLevelComponent();
-                            if (host == nullptr) host = safeThis.getComponent();
-                            showEmbeddedTextInput (*host, "Rename marker", "New name:",
-                                m2[(size_t) hoveredMarkerIdx].name, "Rename",
-                                [safeThis, hoveredMarkerIdx] (juce::String newName)
-                                {
-                                    if (safeThis == nullptr) return;
-                                    const auto trimmed = newName.trim();
-                                    if (trimmed.isEmpty()) return;
-                                    auto& s   = safeThis->session;
-                                    const auto& m3 = s.getMarkers();
-                                    if (hoveredMarkerIdx < 0 || hoveredMarkerIdx >= (int) m3.size()) return;
-                                    const auto oldName = m3[(size_t) hoveredMarkerIdx].name;
-                                    if (oldName == trimmed) return;
-                                    auto& um = safeThis->engine.getUndoManager();
-                                    um.beginNewTransaction ("Rename marker");
-                                    um.perform (new ParamEditAction (
-                                        [&s, idx = hoveredMarkerIdx, trimmed] { s.renameMarker (idx, trimmed); },
-                                        [&s, idx = hoveredMarkerIdx, oldName] { s.renameMarker (idx, oldName); }));
-                                    safeThis->repaint();
-                                });
+                            if (safeThis != nullptr)
+                                safeThis->promptRenameMarker (hoveredMarkerIdx);
                         });
             m.addItem ("Delete \"" + mk.name + "\"",
                         [safeThis = juce::Component::SafePointer<TapeStrip> (this),
@@ -1047,9 +1046,17 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
                             clickedSample, safeThis->session, sr);
                         auto& um = safeThis->engine.getUndoManager();
                         um.beginNewTransaction ("Add marker");
-                        um.perform (new AddMarkerAction (
-                            safeThis->session, spawn));
+                        auto* add = new AddMarkerAction (safeThis->session, spawn);
+                        // The UndoManager owns the action — and DELETES it
+                        // if perform() fails — so only dereference `add`
+                        // after a successful perform.
+                        const bool added = um.perform (add);
                         safeThis->repaint();
+                        // Name-on-create: open the rename input with the
+                        // auto-generated name pre-selected so one typing
+                        // pass names the new marker. Escape keeps it.
+                        if (added)
+                            safeThis->promptRenameMarker (add->insertedIndex(), "Name marker");
                     });
         if (! session.getMarkers().empty())
         {

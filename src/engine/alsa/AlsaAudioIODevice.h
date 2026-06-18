@@ -112,8 +112,15 @@ private:
     bool openOneHandle (const juce::String& id, bool isCapture, snd_pcm_t*& handle);
 
     // Recover from an EPIPE / ESTRPIPE / EBADFD; bumps xrunCount. Returns
-    // 0 on successful recovery, the original errno on failure.
+    // 0 on successful recovery, the original errno on failure. On success it
+    // also re-arms the stream (see rearmStream) — snd_pcm_recover alone leaves
+    // a linked duplex device PREPARED-but-not-RUNNING, which stalls audio.
     int recoverFromXrun (snd_pcm_t* handle, int err);
+
+    // Restart a recovered stream: prepare both handles, prefill the playback
+    // ring past start_threshold from silencePrefill, then snd_pcm_start. Mirrors
+    // the start sequence in open(). Audio-thread safe — no allocation.
+    void rearmStream() noexcept;
 
     // Convert one period's worth of float samples to the negotiated sample
     // type, interleaved across all device channels. Inactive channels are
@@ -163,6 +170,10 @@ private:
     // thread).
     juce::HeapBlock<char>     interleavedOutBytes;
     juce::HeapBlock<char>     interleavedInBytes;
+    // periodSize * periodsCount frames of zeroed output bytes, pre-allocated at
+    // open so rearmStream can refill the playback ring without allocating on
+    // the audio thread.
+    juce::HeapBlock<char>     silencePrefill;
     juce::AudioBuffer<float>  callbackOutFloats;  // sized [numChannelsActive, periodSize]
     juce::AudioBuffer<float>  callbackInFloats;
     juce::Array<float*>       callbackOutPointers;

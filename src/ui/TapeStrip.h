@@ -67,6 +67,11 @@ public:
     bool pasteAtPlayhead();
     bool deleteSelectedRegion();
     bool splitSelectedAtPlayhead();
+
+    // Open the marker-name text input (current name pre-selected, Enter
+    // commits, Escape keeps it). Used by the context-menu Rename item and
+    // by the create paths so a fresh marker can be named in one shot.
+    void promptRenameMarker (int markerIdx, const juce::String& title = "Rename marker");
     // Clone immediately after the original via PasteRegionAction.
     bool duplicateSelectedRegion();
     // Negative deltaSamples moves earlier. Clamped at zero.
@@ -222,6 +227,18 @@ private:
     // Leftmost visible sample when zoomed. 0 when factor == 1. Wheel +
     // zoom clamp it so the visible window stays inside content.
     juce::int64 scrollSamples = 0;
+
+    // Bold-text LookAndFeel for the SHOW ALL pill (TextButton has no setFont).
+    // Declared before showAllToggle so the button is destroyed first.
+    struct PillButtonLnF : juce::LookAndFeel_V4
+    {
+        juce::Font getTextButtonFont (juce::TextButton&, int h) override
+        {
+            return juce::Font (juce::FontOptions (juce::jmin (12.0f, (float) h * 0.8f),
+                                                   juce::Font::bold));
+        }
+    };
+    PillButtonLnF pillButtonLnF;
 
     juce::TextButton zoomOutButton { "-" };
     juce::TextButton zoomInButton  { "+" };

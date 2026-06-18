@@ -78,6 +78,7 @@ public:
             if (abort != nullptr && abort->load (std::memory_order_relaxed))
             {
                 proc.kill();
+                proc.waitForProcessToFinish (200);  // reap: kill() SIGKILLs but never waitpid()s
                 aborted = true;
                 break;
             }
@@ -85,6 +86,7 @@ public:
             if (juce::Time::getMillisecondCounter() - startMs >= (juce::uint32) kScanTimeoutMs)
             {
                 proc.kill();
+                proc.waitForProcessToFinish (200);  // reap the SIGKILLed child, no zombie
                 break;
             }
             juce::Thread::sleep (5);

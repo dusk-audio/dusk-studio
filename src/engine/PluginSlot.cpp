@@ -327,6 +327,12 @@ bool PluginSlot::resizeRemoteEditor (int width, int height)
 
 void PluginSlot::prepareToPlay (double sampleRate, int blockSize)
 {
+    // Excludes a concurrent processMono/StereoBlock for THIS slot (they
+    // try-lock and pass dry). Defense in depth under the engine's process
+    // gate: holds even on a reconfigure path that reaches us with a live
+    // callback still running somewhere.
+    const juce::SpinLock::ScopedLockType processGuard (processLock);
+
     preparedSampleRate = sampleRate;
     preparedBlockSize  = juce::jmax (1, blockSize);
     secondsPerTick     = 1.0 / (double) juce::Time::getHighResolutionTicksPerSecond();
@@ -340,6 +346,14 @@ void PluginSlot::prepareToPlay (double sampleRate, int blockSize)
 
     if (ownedInstance != nullptr)
     {
+        // Release BEFORE re-preparing. setPlayConfigDetails updates the
+        // processor's cached block size, and a JUCE VST3 wrapper's prepareToPlay
+        // skips re-running setupProcessing when it sees (isActive && same SR &&
+        // same blockSize) — so a block-size change could leave the plugin's
+        // INTERNAL buffers at the old size while it's fed the new one (overrun /
+        // crash in a multi-bus instrument). releaseResources() clears isActive
+        // so the re-prepare always takes. This is the conventional host cycle.
+        ownedInstance->releaseResources();
         ownedInstance->setPlayConfigDetails (
             ownedInstance->getTotalNumInputChannels(),
             ownedInstance->getTotalNumOutputChannels(),
@@ -389,6 +403,8 @@ void PluginSlot::prepareToPlay (double sampleRate, int blockSize)
 
 void PluginSlot::releaseResources()
 {
+    const juce::SpinLock::ScopedLockType processGuard (processLock);
+
     currentInstance.store (nullptr, std::memory_order_release);
     if (ownedInstance != nullptr)
         ownedInstance->releaseResources();
@@ -1190,6 +1206,11 @@ void PluginSlot::processMonoBlock (float* monoData, int numSamples,
         || autoBypassed.load (std::memory_order_relaxed))
         return;
 
+    // Dry-pass if prepareToPlay / releaseResources holds the lock (see header).
+    const juce::SpinLock::ScopedTryLockType processGuard (processLock);
+    if (! processGuard.isLocked())
+        return;
+
     // Time-budget watchdog. A plugin that consistently overruns the buffer
     // gets auto-bypassed so it can't freeze the audio thread. Two
     // refinements over a naive single-block trip:
@@ -1357,6 +1378,11 @@ void PluginSlot::processStereoBlock (float* L, float* R, int numSamples,
 
     if (bypassed.load (std::memory_order_relaxed)
         || autoBypassed.load (std::memory_order_relaxed))
+        return;
+
+    // Dry-pass if prepareToPlay / releaseResources holds the lock (see header).
+    const juce::SpinLock::ScopedTryLockType processGuard (processLock);
+    if (! processGuard.isLocked())
         return;
 
     constexpr int    kGraceBlocks            = 16;

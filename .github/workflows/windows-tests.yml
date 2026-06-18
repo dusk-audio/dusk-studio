@@ -24,8 +24,10 @@ concurrency:
 
 jobs:
   tests:
-    name: Catch2 tests (MSVC x64 Release, Windows latest)
-    runs-on: windows-latest
+    name: Catch2 tests (MSVC x64 Release, Windows 2022)
+    # Pinned to windows-2022: windows-latest migrated to windows-2025, whose
+    # image no longer resolves the "Visual Studio 17 2022" CMake generator.
+    runs-on: windows-2022
 
     steps:
       - name: Checkout Dusk Studio

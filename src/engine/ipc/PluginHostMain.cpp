@@ -818,6 +818,11 @@ int runIpcHost (int argc, const char* const* argv) noexcept
         {
             ControlMsgHeader hdr {};
             if (! ipcp::readExact (host.channel, &hdr, sizeof (hdr))) break;
+            if (hdr.payloadLen > kMaxControlPayload) break;  // refuse oversized alloc
+            // Header self-consistency: both writers set totalLen = sizeof(hdr) +
+            // payloadLen, so a frame where they disagree is a framing bug or
+            // corruption — drop the link rather than trust a malformed header.
+            if (hdr.totalLen != (std::uint32_t) sizeof (hdr) + hdr.payloadLen) break;
             std::vector<std::uint8_t> payload (hdr.payloadLen);
             if (hdr.payloadLen > 0
                 && ! ipcp::readExact (host.channel, payload.data(), hdr.payloadLen))

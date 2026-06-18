@@ -673,6 +673,60 @@ static void runHeadlessPipelineTest (const juce::String& pluginPath)
     else if (stripPeak <= 1.0e-4f)
         std::fprintf (stdout, "VERDICT: FAIL - strip is silent. "
                               "MIDI not reaching plugin OR strip fader/mute is silencing it.\n");
+
+    // DUSKSTUDIO_PIPELINE_TEST_BS_CYCLE="512,1024,256": after the main run,
+    // re-prepare at each listed block size and drive blocks with a held chord —
+    // reproduces the buffer-size-change crash path (device reopen at a new
+    // period) headlessly, plugin and all, without touching a real device.
+    if (const char* cyc = std::getenv ("DUSKSTUDIO_PIPELINE_TEST_BS_CYCLE"))
+    {
+        juce::StringArray sizes = juce::StringArray::fromTokens (juce::String (cyc), ",", {});
+        for (const auto& tok : sizes)
+        {
+            const int bs = juce::jlimit (32, 8192, tok.trim().getIntValue());
+            std::fprintf (stdout, "BS-CYCLE: re-prepare at %d samples + 64 blocks\n", bs);
+            std::fflush (stdout);
+
+            engine->prepareForSelfTest (sampleRate, bs);
+
+            std::vector<std::vector<float>> ins ((size_t) numInChannels,
+                                                 std::vector<float> ((size_t) bs, 0.0f));
+            std::vector<const float*> inP ((size_t) numInChannels);
+            for (int c = 0; c < numInChannels; ++c) inP[(size_t) c] = ins[(size_t) c].data();
+            std::vector<std::vector<float>> outs ((size_t) numOutChannels,
+                                                  std::vector<float> ((size_t) bs, 0.0f));
+            std::vector<float*> outP ((size_t) numOutChannels);
+            for (int c = 0; c < numOutChannels; ++c) outP[(size_t) c] = outs[(size_t) c].data();
+
+            for (int b = 0; b < 64; ++b)
+            {
+                if (b == 0 && midiInputIdx >= 0)
+                {
+                    juce::MidiBuffer midi;
+                    for (int n : kChordNotes)
+                        midi.addEvent (juce::MidiMessage::noteOn (1, n, (juce::uint8) 100), 0);
+                    engine->stageTestMidiInjection (midiInputIdx, std::move (midi));
+                }
+                for (auto& o : outs) std::fill (o.begin(), o.end(), 0.0f);
+                engine->audioDeviceIOCallbackWithContext (inP.data(), numInChannels,
+                                                          outP.data(), numOutChannels, bs, ctx);
+            }
+            if (midiInputIdx >= 0)
+            {
+                juce::MidiBuffer midi;
+                for (int n : kChordNotes)
+                    midi.addEvent (juce::MidiMessage::noteOff (1, n), 0);
+                engine->stageTestMidiInjection (midiInputIdx, std::move (midi));
+                for (auto& o : outs) std::fill (o.begin(), o.end(), 0.0f);
+                engine->audioDeviceIOCallbackWithContext (inP.data(), numInChannels,
+                                                          outP.data(), numOutChannels, bs, ctx);
+            }
+            std::fprintf (stdout, "BS-CYCLE: %d samples OK\n", bs);
+            std::fflush (stdout);
+        }
+        std::fprintf (stdout, "BS-CYCLE: all sizes survived\n");
+    }
+
     std::fprintf (stdout, "=== End of Pipeline Test ===\n");
     std::fflush (stdout);
 }
@@ -698,6 +752,10 @@ static void runHeadlessSessionPerf (const juce::String& sessionPath)
     auto session = std::make_unique<Session>();
     auto engine  = std::make_unique<AudioEngine> (*session);
     engine->prepareForSelfTest (sampleRate, blockSize);
+    // The AudioEngine ctor registered with its AudioDeviceManager (and may have
+    // opened a real device). This perf path drives the callback MANUALLY below,
+    // so detach to stop the device thread from double-processing the engine.
+    engine->getDeviceManager().removeAudioCallback (engine.get());
 
     juce::File f (sessionPath);
     if (f.isDirectory()) f = f.getChildFile ("session.json");
@@ -714,6 +772,10 @@ static void runHeadlessSessionPerf (const juce::String& sessionPath)
     }
     engine->consumePluginStateAfterLoad();
     engine->consumeTransportStateAfterLoad();
+    // Re-resolve saved MIDI routing AND republish the tempo-map snapshot
+    // (reresolveTrackMidiFromSession does both) so the MIDI scheduler +
+    // metronome run against the loaded map, matching the live path's cost.
+    engine->reresolveTrackMidiFromSession();
     // Re-prepare so just-loaded plugins see the right SR/BS.
     engine->prepareForSelfTest (sampleRate, blockSize);
 

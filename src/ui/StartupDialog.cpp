@@ -373,13 +373,23 @@ void StartupDialog::setUpdateAvailable (const juce::String& tagName)
     updateLabel.setTooltip ("A newer Dusk Studio release (" + tagName + ") is available.");
     updateLabel.setColour (juce::Label::textColourId, juce::Colour (0xffe0a050));
     updateLabel.setVisible (true);
+    updateBlinkCount = 0;
     startTimer (500);
 }
 
 void StartupDialog::timerCallback()
 {
     // Flash by alternating the badge between amber and dim — text stays
-    // put so it remains readable mid-blink.
+    // put so it remains readable mid-blink. A few blinks draw the eye;
+    // after that the badge settles on steady amber instead of strobing
+    // for as long as the dialog is open.
+    constexpr int kMaxUpdateBlinks = 10;
+    if (++updateBlinkCount >= kMaxUpdateBlinks)
+    {
+        stopTimer();
+        updateLabel.setColour (juce::Label::textColourId, juce::Colour (0xffe0a050));
+        return;
+    }
     updateFlashOn = ! updateFlashOn;
     updateLabel.setColour (juce::Label::textColourId,
                            updateFlashOn ? juce::Colour (0xffe0a050) : kTextLo);
