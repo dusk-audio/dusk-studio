@@ -79,7 +79,7 @@ HardwareInsertEditor::HardwareInsertEditor (HardwareInsertParams& paramsRef,
     pingButton.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
     pingButton.setTooltip ("Send a chirp out the SEND, capture the RETURN, "
                             "measure round-trip latency in samples. Make sure "
-                            "the outboard is connected and audio is rolling.");
+                            "the outboard is connected.");
     pingButton.onClick = [this]
     {
         // Clear any stale result before triggering. The audio thread

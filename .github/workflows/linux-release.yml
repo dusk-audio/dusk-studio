@@ -48,8 +48,8 @@ jobs:
         # would publish wrongly-labelled artifacts silently.
         if: startsWith(github.ref, 'refs/tags/')
         run: |
-          [[ "v$(cat VERSION)" == "${GITHUB_REF_NAME}" ]] || {
-            echo "Tag ${GITHUB_REF_NAME} != VERSION v$(cat VERSION)"; exit 1; }
+          [[ "v$(tr -d '[:space:]' < VERSION)" == "${GITHUB_REF_NAME}" ]] || {
+            echo "Tag ${GITHUB_REF_NAME} != VERSION v$(tr -d '[:space:]' < VERSION)"; exit 1; }
 
       - name: Install Linux build deps + packaging tools
         run: |
@@ -65,31 +65,29 @@ jobs:
             libwayland-dev libxkbcommon-dev libdecor-0-dev \
             imagemagick xz-utils
 
-      - name: Clone JUCE 8.0.4 (upstream)
+      - name: Clone JUCE (plugdata-team Wayland fork, pinned)
+        # Linux ships against the Wayland fork, NOT upstream: it carries the
+        # XEmbed mapping / X11-on-Wayland / peer-creation-latch commits that
+        # plugin-editor hosting on Wayland depends on, plus the
+        # SIMDNativeOps<long long> alias GCC needs for int64 SIMD (so no
+        # separate patch step — re-applying it would duplicate the
+        # specialization and fail to compile). Pinned to an immutable commit
+        # for reproducible release builds; bump JUCE_REV when the fork advances.
+        # Mac + Windows stay on upstream.
+        env:
+          JUCE_REV: b970a992dfb650812b553da96e7b219d8441f45f
         run: |
-          git clone --depth 1 --branch 8.0.4 \
-            https://github.com/juce-framework/JUCE.git \
-            "${RUNNER_TEMP}/JUCE-wayland"
-
-      - name: Patch JUCE — SIMDNativeOps<long long> alias for x86_64 Linux
-        # Same patch linux-build.yml applies: upstream JUCE 8.0.4 omits the
-        # SIMDNativeOps<long long> specialization GCC needs for int64 SIMD.
-        run: |
-          file="${RUNNER_TEMP}/JUCE-wayland/modules/juce_dsp/native/juce_SIMDNativeOps_sse.h"
-          awk '
-            /^}[[:space:]]*\/\/.*juce.*dsp/ && !done {
-              print "#if defined (__GNUC__) && defined (__SIZEOF_LONG__) && __SIZEOF_LONG__ == 8 && !defined (_WIN32)"
-              print "template <> struct SIMDNativeOps<long long> : SIMDNativeOps<int64_t> {};"
-              print "template <> struct SIMDNativeOps<unsigned long long> : SIMDNativeOps<uint64_t> {};"
-              print "#endif"
-              done = 1
-            }
-            { print }
-          ' "$file" > "$file.new" && mv "$file.new" "$file"
-          if ! grep -q "SIMDNativeOps<long long>" "$file"; then
-            echo "ERROR: SIMDNativeOps<long long> alias not present after patch." >&2
-            exit 1
-          fi
+          set -euo pipefail
+          git init -q "${RUNNER_TEMP}/JUCE-wayland"
+          cd "${RUNNER_TEMP}/JUCE-wayland"
+          git remote add origin https://github.com/plugdata-team/JUCE.git
+          git fetch --depth 1 origin "${JUCE_REV}"
+          git checkout -q FETCH_HEAD
+          [[ "$(git rev-parse HEAD)" == "${JUCE_REV}" ]] || {
+            echo "ERROR: JUCE checkout $(git rev-parse HEAD) != pinned ${JUCE_REV}" >&2; exit 1; }
+          grep -q "SIMDNativeOps<long long>" \
+            modules/juce_dsp/native/juce_SIMDNativeOps_sse.h || {
+            echo "ERROR: pinned JUCE missing the SIMDNativeOps<long long> alias." >&2; exit 1; }
 
       - name: Clone Dusk plugins (donor DSP)
         run: |

@@ -46,6 +46,8 @@ public:
     // Catches right-clicks routed up from child buttons via
     // addMouseListener — jumpback button's preset menu uses this.
     void mouseDown (const juce::MouseEvent&) override;
+    // Double-click on the BPM readout opens the tempo prompt.
+    void mouseDoubleClick (const juce::MouseEvent&) override;
 
     // Hidden when MainComponent overlays stage + bank buttons on top.
     void setHintVisible (bool visible);
@@ -154,6 +156,11 @@ private:
     // Zero totals apply directly. oldBpm restored on cancel so the
     // spinner doesn't lie about the active tempo.
     void confirmAndApplyBpm (float newBpm, float oldBpm);
+
+    // Double-click on the BPM readout. Constant-tempo sessions edit the
+    // session tempo (with the usual retime confirm); tempo-mapped sessions
+    // edit the point governing the playhead — the value the readout shows.
+    void promptEditTempoAtPlayhead();
 
     juce::TextButton tapeToggle    { juce::CharPointer_UTF8 ("\xe2\x96\xbe TIMELINE") };  // "▾ TIMELINE"
     juce::Label      clockLabel;

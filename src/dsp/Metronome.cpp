@@ -107,9 +107,13 @@ void Metronome::process (juce::int64 playheadStart, bool transportRolling,
 
         if (transportRolling && effectiveEnabled)
         {
-            const juce::int64 beatIdx = (absSample >= 0)
-                ? (juce::int64) ((double) absSample / samplesPerBeat)
-                : (juce::int64) std::ceil ((double) absSample / samplesPerBeat) - 1;
+            // floor() rounds toward -inf, so the beat index is correct for both
+            // forward playback and a negative playhead (count-in pre-roll sets
+            // the playhead to startSample - countInSamples). The old ceil()-1
+            // form mis-indexed exact-beat negative positions, double/skipping
+            // clicks across sample 0.
+            const juce::int64 beatIdx =
+                (juce::int64) std::floor ((double) absSample / samplesPerBeat);
 
             if (! lastBeatSeeded)
             {

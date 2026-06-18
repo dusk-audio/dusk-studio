@@ -15,32 +15,74 @@ namespace updatecheck
 inline constexpr const char* kTagsUrl =
     "https://api.github.com/repos/dusk-audio/dusk-studio/tags?per_page=20";
 
-// "v1.2.3", "1.2.3", "v1.2.3-beta.4" -> {1,2,3}. False when the tag
-// doesn't lead with three dot-separated ints.
-inline bool parseVersionTriplet (juce::String tag, int (&out)[3])
+// "v1.2.3", "1.2.3", "v1.2.3-beta.4". The prerelease suffix is kept so
+// 1.2.3 ranks above 1.2.3-beta.4 (semver: a release outranks any of its
+// prereleases).
+struct ParsedVersion
+{
+    int nums[3] = { 0, 0, 0 };
+    juce::String prerelease;   // empty = stable release
+};
+
+// False when the tag doesn't lead with three dot-separated ints.
+inline bool parseVersion (juce::String tag, ParsedVersion& out)
 {
     tag = tag.trim();
     if (tag.startsWithIgnoreCase ("v")) tag = tag.substring (1);
-    tag = tag.upToFirstOccurrenceOf ("-", false, false);  // drop prerelease suffix
+    out.prerelease = tag.fromFirstOccurrenceOf ("-", false, false);
+    tag = tag.upToFirstOccurrenceOf ("-", false, false);
     auto parts = juce::StringArray::fromTokens (tag, ".", {});
     if (parts.size() < 3) return false;
     for (int i = 0; i < 3; ++i)
     {
         if (! parts[i].containsOnly ("0123456789") || parts[i].isEmpty())
             return false;
-        out[i] = parts[i].getIntValue();
+        out.nums[i] = parts[i].getIntValue();
     }
     return true;
 }
 
-inline bool isNewer (const int (&candidate)[3], const int (&current)[3])
+// Semver-ish prerelease ordering: dot-separated identifiers compared
+// left to right; numeric pairs compare numerically, numeric < alpha,
+// alpha pairs compare lexically, and the shorter list loses when it's
+// a prefix of the longer ("beta" < "beta.1").
+inline int comparePrerelease (const juce::String& a, const juce::String& b)
+{
+    const auto pa = juce::StringArray::fromTokens (a, ".", {});
+    const auto pb = juce::StringArray::fromTokens (b, ".", {});
+    for (int i = 0; i < juce::jmin (pa.size(), pb.size()); ++i)
+    {
+        const bool na = pa[i].containsOnly ("0123456789") && pa[i].isNotEmpty();
+        const bool nb = pb[i].containsOnly ("0123456789") && pb[i].isNotEmpty();
+        if (na && nb)
+        {
+            const int va = pa[i].getIntValue();
+            const int vb = pb[i].getIntValue();
+            if (va != vb) return va < vb ? -1 : 1;   // direct compare — no subtraction overflow
+        }
+        else if (na != nb)
+        {
+            return na ? -1 : 1;
+        }
+        else if (const int d = pa[i].compare (pb[i]); d != 0)
+        {
+            return d;
+        }
+    }
+    return pa.size() - pb.size();
+}
+
+inline bool isNewer (const ParsedVersion& candidate, const ParsedVersion& current)
 {
     for (int i = 0; i < 3; ++i)
     {
-        if (candidate[i] > current[i]) return true;
-        if (candidate[i] < current[i]) return false;
+        if (candidate.nums[i] > current.nums[i]) return true;
+        if (candidate.nums[i] < current.nums[i]) return false;
     }
-    return false;   // equal base versions are not "newer" (prerelease ignored)
+    // Equal triplets: a stable release outranks any prerelease of it.
+    if (candidate.prerelease.isEmpty()) return current.prerelease.isNotEmpty();
+    if (current.prerelease.isEmpty())   return false;
+    return comparePrerelease (candidate.prerelease, current.prerelease) > 0;
 }
 
 // Blocking fetch — call from a background thread only. The GitHub API
@@ -69,7 +111,8 @@ inline juce::String fetchTagsJson()
 }
 
 // Highest release tag in the JSON, or empty. Prerelease tags ("-beta")
-// count by their base triplet, so 0.12.0-beta.1 still flags from 0.11.0.
+// participate with semver ordering, so 0.12.0-beta.1 still flags from
+// 0.11.0 but ranks below a stable 0.12.0.
 inline juce::String highestTag (const juce::String& json)
 {
     const auto parsed = juce::JSON::parse (json);
@@ -77,36 +120,43 @@ inline juce::String highestTag (const juce::String& json)
     if (arr == nullptr) return {};
 
     juce::String bestName;
-    int best[3] = { -1, -1, -1 };
+    ParsedVersion best;
+    best.nums[0] = best.nums[1] = best.nums[2] = -1;
     for (const auto& entry : *arr)
     {
         const auto name = entry.getProperty ("name", {}).toString();
-        int v[3];
-        if (parseVersionTriplet (name, v) && isNewer (v, best))
+        ParsedVersion v;
+        if (parseVersion (name, v) && isNewer (v, best))
         {
-            best[0] = v[0]; best[1] = v[1]; best[2] = v[2];
+            best = v;
             bestName = name;
         }
     }
     return bestName;
 }
 
-// Fire-and-forget. onNewer runs on the message thread with the newer
-// tag's name; never called when up to date or on any failure.
+// Fire-and-forget. onNewer runs on the message thread with the newer tag's
+// name; never called when up to date or on any failure.
+//
+// LIFETIME: onNewer fires after a network round-trip (seconds), so it may
+// outlive the caller. It is NOT given a lifetime token — the caller MUST
+// capture a juce::Component::SafePointer / std::weak_ptr to any owned object
+// and re-check it inside onNewer (which runs on the message thread). See the
+// call site in MainComponent for the SafePointer pattern.
 inline void checkForNewerTagAsync (juce::String currentVersion,
                                    std::function<void (juce::String)> onNewer)
 {
     juce::Thread::launch ([currentVersion = std::move (currentVersion),
                            onNewer = std::move (onNewer)]
     {
-        int current[3];
-        if (! parseVersionTriplet (currentVersion, current)) return;
+        ParsedVersion current;
+        if (! parseVersion (currentVersion, current)) return;
 
         const auto tag = highestTag (fetchTagsJson());
         if (tag.isEmpty()) return;
 
-        int latest[3];
-        if (! parseVersionTriplet (tag, latest) || ! isNewer (latest, current))
+        ParsedVersion latest;
+        if (! parseVersion (tag, latest) || ! isNewer (latest, current))
             return;
 
         juce::MessageManager::callAsync ([tag, onNewer] { if (onNewer) onNewer (tag); });

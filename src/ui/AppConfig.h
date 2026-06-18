@@ -55,6 +55,35 @@ enum class StopBehavior : int
 StopBehavior getStopBehavior();
 void         setStopBehavior (StopBehavior b);
 
+// Multicore DSP: fan the 24 channel strips' per-block DSP across a pool of
+// real-time worker threads (the audio-thread callback runs one lane itself).
+// Off = serial (one core, the proven path). Auto = cores-2 workers on machines
+// with >=4 cores, else Off — leaves a core for the UI + OS on top of the audio
+// thread. Manual = a user-pinned worker count (clamped to the same cap).
+// Persisted per-machine: a session authored on a many-core box must not impose
+// its worker count on a 4-core target, so this never travels in session.json.
+// resolveWorkerCount() maps the stored mode to a concrete count for this host;
+// the env var DUSKSTUDIO_AUDIO_WORKERS overrides it (CI / power users).
+enum class MulticoreDspMode : int
+{
+    Off    = 0,
+    Auto   = 1,
+    Manual = 2,
+};
+MulticoreDspMode getMulticoreDspMode();
+void             setMulticoreDspMode (MulticoreDspMode m);
+
+// Worker count for Manual mode (ignored in Off/Auto). Clamped to
+// [1, maxMulticoreWorkers()] on write.
+int  getMulticoreManualWorkers();
+void setMulticoreManualWorkers (int n);
+
+// Largest worker count this host allows: jmax(0, cores-2). 0 on <3-core hosts.
+int maxMulticoreWorkers();
+
+// Concrete worker count for this host given the stored mode. 0 = serial.
+int resolveWorkerCount();
+
 // Virtual-keyboard centre note (MIDI 0..120). Default 36 (C2) — sits
 // near the lower half of the bass register so the visible 2-octave
 // window (centre-12..centre+12) covers C1..C3 by default, matching

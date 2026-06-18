@@ -8,6 +8,7 @@
 #include "BounceDialog.h"
 #include "PluginScanModal.h"
 #include "ShortcutsPanel.h"
+#include "SupportersPanel.h"
 #include "DuskContextMenu.h"
 #include "../session/MidiBindings.h"
 #include "ConsoleView.h"
@@ -706,6 +707,7 @@ MainComponent::~MainComponent()
     virtualKeyboardModal .closeAndDeleteBodyNow();
     importTargetModal    .closeAndDeleteBodyNow();
     shortcutsModal       .closeAndDeleteBodyNow();
+    supportersModal      .closeAndDeleteBodyNow();
 
     // Intentionally NO auto-save here. Standard DAW behavior is to require
     // an explicit Save before exit. The previous auto-save on destruct
@@ -1006,8 +1008,19 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     {
         const auto playhead = engine.getTransport().getPlayhead();
         um.beginNewTransaction ("Add marker");
-        um.perform (new AddMarkerAction (session, playhead));
-        if (tapeStrip != nullptr) tapeStrip->repaint();
+        auto* add = new AddMarkerAction (session, playhead);
+        // The UndoManager owns the action — and DELETES it if perform()
+        // fails — so only dereference `add` after a successful perform.
+        const bool added = um.perform (add);
+        if (tapeStrip != nullptr)
+        {
+            tapeStrip->repaint();
+            // Name-on-create: the input opens with the auto-generated name
+            // pre-selected, so typing renames the fresh marker in one shot.
+            // Escape keeps the default.
+            if (added)
+                tapeStrip->promptRenameMarker (add->insertedIndex(), "Name marker");
+        }
         return true;
     }
 
@@ -1549,10 +1562,10 @@ void MainComponent::openAudioSettings()
     constexpr int kPanelW = 820;
     // Content height with the bumped 360 px audio block + every
     // section ends just past 1020 px — anything less clips the
-    // Advanced row (ALSA periods / oversampling / self-test / rescan)
-    // off the bottom even with a scroll wrapper, because the viewport
-    // never sees the missing pixels.
-    constexpr int kPanelH = 1060;
+    // Advanced rows (ALSA periods / oversampling / self-test / rescan,
+    // plus the Multicore DSP row) off the bottom even with a scroll
+    // wrapper, because the viewport never sees the missing pixels.
+    constexpr int kPanelH = 1100;
     panel->setSize (kPanelW, kPanelH);
 
     // Wrap the panel in a Viewport so the full content is reachable on
@@ -3516,6 +3529,7 @@ enum MenuItemId
     kMenuSettingsAudio = 2001,
     kMenuSettingsAbout = 2002,
     kMenuSettingsShortcuts = 2003,
+    kMenuSettingsSupporters = 2004,
 };
 }
 
@@ -3620,6 +3634,9 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelMenuIndex,
         menu.addItem (kMenuSettingsAudio, "Settings...");
         menu.addItem (kMenuSettingsShortcuts, "Keyboard Shortcuts  (?)");
         menu.addSeparator();
+       #if DUSKSTUDIO_HAS_PATREON_CREDITS
+        menu.addItem (kMenuSettingsSupporters, "Supporters");
+       #endif
         menu.addItem (kMenuSettingsAbout, "About Dusk Studio");
     }
     return menu;
@@ -3724,6 +3741,18 @@ void MainComponent::menuItemSelected (int menuItemID, int /*topLevelMenuIndex*/)
             break;
         case kMenuSettingsAudio: openAudioSettings();   break;
         case kMenuSettingsShortcuts: openShortcuts();   break;
+       #if DUSKSTUDIO_HAS_PATREON_CREDITS
+        case kMenuSettingsSupporters:
+        {
+            if (! supportersModal.isOpen())
+            {
+                auto panel = std::make_unique<SupportersPanel>();
+                panel->onCloseRequested = [this] { supportersModal.close(); };
+                supportersModal.show (*this, std::move (panel));
+            }
+            break;
+        }
+       #endif
         case kMenuSettingsAbout:
         {
             // Pull the version string from the JUCE_APPLICATION_VERSION_STRING
@@ -3852,8 +3881,10 @@ void MainComponent::cleanOutUnreferencedFiles()
                            {
                                // The undo stack holds full before-states of
                                // deleted regions; Ctrl+Z after this would
-                               // restore a region whose WAV is gone.
-                               self->engine.getUndoManager().clearUndoHistory();
+                               // restore a region whose WAV is gone. Nothing
+                               // deleted = nothing dangling, keep the history.
+                               if (deleted > 0)
+                                   self->engine.getUndoManager().clearUndoHistory();
                                self->statusLabel.setText (
                                    "Deleted " + juce::String (deleted)
                                        + " unreferenced file(s).",

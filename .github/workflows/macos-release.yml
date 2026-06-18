@@ -54,8 +54,8 @@ jobs:
         # would publish wrongly-labelled artifacts silently.
         if: startsWith(github.ref, 'refs/tags/')
         run: |
-          [[ "v$(cat VERSION)" == "${GITHUB_REF_NAME}" ]] || {
-            echo "Tag ${GITHUB_REF_NAME} != VERSION v$(cat VERSION)"; exit 1; }
+          [[ "v$(tr -d '[:space:]' < VERSION)" == "${GITHUB_REF_NAME}" ]] || {
+            echo "Tag ${GITHUB_REF_NAME} != VERSION v$(tr -d '[:space:]' < VERSION)"; exit 1; }
 
       - name: Install ninja + ccache
         run: brew install ninja ccache

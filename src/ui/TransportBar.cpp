@@ -1,7 +1,10 @@
 #include "TransportBar.h"
 #include "DuskAlerts.h"
 #include "DuskContextMenu.h"
+#include "../session/RegionEditActions.h"
+#include "../util/StringParsing.h"
 #include <algorithm>
+#include <cmath>
 
 namespace duskstudio
 {
@@ -559,13 +562,15 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
                                                       14.0f, juce::Font::bold)));
     bpmValue.setText (juce::String ((int) engine.getSession().tempoBpm.load()),
                        juce::dontSendNotification);
-    // Read-only: it shows the tempo at the playhead (following the tempo map).
-    // All tempo editing lives in the tape strip's Grid mode — the bar-1 point
-    // is the starting tempo. (Tap, below, still sets the starting tempo.)
+    // Shows the tempo at the playhead (following the tempo map). Not a
+    // free-typing Label editor — double-click routes through the same
+    // prompt + undoable commit the ruler's tempo edits use.
     bpmValue.setEditable (false, false);
-    bpmValue.setTooltip ("Tempo at the playhead (beats per minute). Edit the "
-                          "tempo in the tape strip's Grid mode; tap below to set "
+    bpmValue.setTooltip ("Tempo at the playhead (beats per minute). "
+                          "Double-click to set it; full tempo-map editing "
+                          "lives on the timeline ruler. Tap below to set "
                           "the starting tempo.");
+    bpmValue.addMouseListener (this, false);
     addAndMakeVisible (bpmValue);
 
     tapButton.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff202024));
@@ -1230,6 +1235,72 @@ void TransportBar::showMetronomeSettingsMenu()
     showContextMenu (m, clickToggle);
 }
 
+void TransportBar::mouseDoubleClick (const juce::MouseEvent& e)
+{
+    if (e.eventComponent == &bpmValue)
+    {
+        promptEditTempoAtPlayhead();
+        return;
+    }
+    juce::Component::mouseDoubleClick (e);
+}
+
+void TransportBar::promptEditTempoAtPlayhead()
+{
+    auto* tlw = getTopLevelComponent();
+    if (tlw == nullptr) return;
+
+    auto& s = engine.getSession();
+    const auto playhead = engine.getTransport().getPlayhead();
+    const float current = s.bpmAt (playhead);
+
+    // Preserve fractional BPM in the prefill (e.g. a tapped 127.6) —
+    // rounding it would make an untouched OK commit a spurious edit.
+    const juce::String prefill =
+        std::abs (current - std::round (current)) < 0.005f
+            ? juce::String ((int) std::round (current))
+            : juce::String (current, 2);
+
+    juce::Component::SafePointer<TransportBar> safe (this);
+    showDuskTextInput (*tlw, "Tempo", "BPM (30-300):",
+        prefill,
+        [safe, playhead] (const juce::String& text)
+        {
+            if (safe == nullptr) return;
+            // getDoubleValue() turns junk into 0, which the >0 check
+            // rejects rather than letting jlimit clamp it to 30 BPM.
+            float parsed = 0.0f;
+            if (! parseFullFloat (text, parsed) || parsed <= 0.0f) return;
+            const float b = juce::jlimit (30.0f, 300.0f, parsed);
+
+            auto& s2 = safe->engine.getSession();
+            if (s2.tempoMap.empty())
+            {
+                const float oldBpm = s2.tempoBpm.load (std::memory_order_relaxed);
+                safe->confirmAndApplyBpm (b, oldBpm);
+                return;
+            }
+
+            // Tempo map active: edit the point governing the playhead —
+            // the value the readout shows. Same undoable commit as the
+            // ruler's tempo edits.
+            auto vec = s2.tempoMap.points();
+            auto* gov = &vec.front();
+            for (auto& p : vec)
+                if (p.timelineSamples <= playhead) gov = &p;
+                else break;
+            if (std::abs (gov->bpm - b) < 0.005f) return;   // match confirmAndApplyBpm
+            gov->bpm = b;
+            auto& um = safe->engine.getUndoManager();
+            um.beginNewTransaction ("Set tempo");
+            um.perform (new SetTempoMapAction (safe->engine,
+                                               s2.tempoMap.points(),
+                                               std::move (vec)));
+            safe->bpmValue.setText (juce::String ((int) b),
+                                      juce::dontSendNotification);
+        });
+}
+
 void TransportBar::onTap()
 {
     // Stamp this tap. If the previous tap was longer than the timeout
@@ -1373,10 +1444,10 @@ void TransportBar::confirmAndApplyBpm (float newBpm, float oldBpm)
 {
     auto& s = engine.getSession();
 
-    // Treat tempo changes inside the BPM-spinner's own integer rounding
-    // as no-ops. Without this, double-clicking the field without editing
-    // would still pop the dialog.
-    if (std::abs (newBpm - oldBpm) < 0.5f)
+    // No-op only for a genuinely unchanged value. A small tolerance (not 0.5)
+    // so fractional edits like 127.2 → 127.6 still apply; the prefill already
+    // round-trips fractional BPM, so an untouched OK stays a true no-op.
+    if (std::abs (newBpm - oldBpm) < 0.005f)
     {
         bpmValue.setText (juce::String ((int) newBpm), juce::dontSendNotification);
         return;
@@ -1420,9 +1491,16 @@ void TransportBar::confirmAndApplyBpm (float newBpm, float oldBpm)
         return;
     }
 
+    // Show the genuine (possibly fractional) values so a 127.2 → 127.6 edit
+    // doesn't read as "127 to 127 BPM". Trim trailing zeros so whole numbers
+    // still show as "127", not "127.00".
+    auto fmtBpm = [] (float v)
+    {
+        return juce::String (v, 2).trimCharactersAtEnd ("0").trimCharactersAtEnd (".");
+    };
     juce::String body;
-    body << "Change tempo from " << (int) oldBpm << " to "
-         << (int) newBpm << " BPM?\n\n";
+    body << "Change tempo from " << fmtBpm (oldBpm) << " to "
+         << fmtBpm (newBpm) << " BPM?\n\n";
     if (lockedMidi > 0)
         body << "    " << lockedMidi
              << " tempo-locked MIDI region" << (lockedMidi == 1 ? "" : "s")

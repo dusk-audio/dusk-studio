@@ -28,10 +28,12 @@ void HardwareInsertSlot::prepare (double sampleRate, int blockSize)
     dryDelayR.setDelay (0.0f);
 
     // Ping calibration buffers. Chirp is pre-rendered at session SR so
-    // the audio thread never builds a sine table in-callback.
-    chirpBuffer  .assign ((size_t) kChirpMaxSamples, 0.0f);
-    captureBuffer.assign ((size_t) kCaptureSamples,  0.0f);
+    // the audio thread never builds a sine table in-callback. Capture
+    // holds the full chirp plus the maximum measurable lag — the
+    // correlator slides the chirp across [0, kMaxDelaySamples].
+    chirpBuffer.assign ((size_t) kChirpMaxSamples, 0.0f);
     renderChirp (sampleRate);
+    captureBuffer.assign ((size_t) (chirpLength + kMaxDelaySamples), 0.0f);
     pingState = PingState::Idle;
     pingPlayPos = pingCapturePos = pingCorrelateK = 0;
     pingBestPeak = 0.0f;
@@ -126,6 +128,12 @@ void HardwareInsertSlot::startPing()
     pingBestK              = -1;
     pingCaptureStallSamples = 0;
     std::fill (captureBuffer.begin(), captureBuffer.end(), 0.0f);
+}
+
+bool HardwareInsertSlot::isPingRequested() const noexcept
+{
+    return paramsRef != nullptr
+        && paramsRef->pingPending.load (std::memory_order_acquire);
 }
 
 void HardwareInsertSlot::finishPing (int measuredLag)
@@ -278,9 +286,9 @@ void HardwareInsertSlot::processStereoBlock (float* L, float* R, int numSamples,
         // Ping override: while the chirp is playing, REPLACE the SEND
         // signal with the chirp sample so the only thing on the device
         // output is the calibration excitation - any user audio mixed
-        // alongside would corrupt the cross-correlation peak. Once
-        // capture starts the SEND drops to silence (chirp tail) and
-        // normal user audio is muted on the send path until the result
+        // alongside would corrupt the cross-correlation peak. After the
+        // chirp ends the SEND drops to silence while capture finishes,
+        // and user audio stays muted on the send path until the result
         // lands.
         if (pingState == PingState::Playing && pingPlayPos < chirpLength)
         {
@@ -325,10 +333,13 @@ void HardwareInsertSlot::processStereoBlock (float* L, float* R, int numSamples,
             // Ping capture: store the L-channel return into the ring.
             // We correlate against L only - the M/S decode hasn't run
             // yet, so a stereo hardware unit's centre material is
-            // strongest on L. Capture begins at sample 0 of the
-            // Capturing state, NOT at the chirp's leading edge - the
-            // correlator finds the lag from chirp-start to capture-start.
-            if (pingState == PingState::Capturing
+            // strongest on L. Capture runs concurrently with playback
+            // from the chirp's first sample, so the correlator's best
+            // lag IS the round-trip latency. (Capture only after the
+            // chirp would discard any return that arrives during the
+            // 100 ms play window - i.e. every realistic round-trip.)
+            if ((pingState == PingState::Playing
+                 || pingState == PingState::Capturing)
                 && pingCapturePos < (int) captureBuffer.size())
             {
                 captureBuffer[(size_t) pingCapturePos] = retL;
@@ -343,7 +354,8 @@ void HardwareInsertSlot::processStereoBlock (float* L, float* R, int numSamples,
                 }
             }
         }
-        else if (pingState == PingState::Capturing)
+        else if (pingState == PingState::Playing
+                 || pingState == PingState::Capturing)
         {
             // Routing went invalid mid-capture (user cleared the input
             // combo, device hot-swap, etc.). Without this watchdog

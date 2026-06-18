@@ -33,7 +33,9 @@ concurrency:
 jobs:
   build:
     name: Build + package (MSVC x64 Release, ASIO enabled)
-    runs-on: windows-latest
+    # Pinned to windows-2022: windows-latest migrated to windows-2025, whose
+    # image no longer resolves the "Visual Studio 17 2022" CMake generator.
+    runs-on: windows-2022
     env:
       # PRIVATE releases repo — the MSI is pushed here, never to this
       # public repo. Same target as macos-release.yml.
@@ -58,8 +60,8 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         shell: bash
         run: |
-          [[ "v$(cat VERSION)" == "${GITHUB_REF_NAME}" ]] || {
-            echo "Tag ${GITHUB_REF_NAME} != VERSION v$(cat VERSION)"; exit 1; }
+          [[ "v$(tr -d '[:space:]' < VERSION)" == "${GITHUB_REF_NAME}" ]] || {
+            echo "Tag ${GITHUB_REF_NAME} != VERSION v$(tr -d '[:space:]' < VERSION)"; exit 1; }
 
       - name: Clone JUCE 8.0.4
         shell: bash

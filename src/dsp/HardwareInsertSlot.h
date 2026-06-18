@@ -56,14 +56,20 @@ public:
     // is being swapped. Drops dry-path delay history.
     void resetTailsAndDelayLine() noexcept;
 
+    // True while the UI has a ping in flight (pingPending set, result
+    // not yet delivered). Audio thread only — lets the strip bypass its
+    // not-passing skip so the slot gets serviced for the measurement.
+    bool isPingRequested() const noexcept;
+
     // ~340 ms at 48 kHz — ample for any realistic outboard round-trip.
     static constexpr int kMaxDelaySamples = 16384;
 
     // Ping calibration. Chirp = 100 ms (capped 9600 samples). Capture
-    // 8192 samples ≈ 170 ms at 48 k. Correlation runs ~256 candidate
-    // lags per block (~32 blocks ≈ 340 ms result latency after capture).
+    // runs concurrently with the chirp and is sized in prepare() to
+    // chirpLength + kMaxDelaySamples, so the correlator's lag search
+    // covers the full latency-slider range at any sample rate.
+    // Correlation runs ~256 candidate lags per block.
     static constexpr int kChirpMaxSamples   = 9600;
-    static constexpr int kCaptureSamples    = 8192;
     static constexpr int kCorrelationsPerBlock = 256;
 
 private:
@@ -100,7 +106,7 @@ private:
     // inValid stays false forever and pingCapturePos never advances.
     // Bail after this many samples so the UI doesn't hang on "Pinging...".
     int       pingCaptureStallSamples = 0;
-    static constexpr int kPingCaptureStallMax = 2 * kCaptureSamples;
+    static constexpr int kPingCaptureStallMax = 2 * (kChirpMaxSamples + kMaxDelaySamples);
 
     std::vector<float> chirpBuffer;
     std::vector<float> captureBuffer;   // one ear (L only)

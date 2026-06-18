@@ -11,6 +11,8 @@
  #include <windows.h>
 #endif
 
+#include <algorithm>
+
 namespace duskstudio
 {
 namespace
@@ -22,7 +24,7 @@ namespace
 // Loader rejects sessions with version > kFormatVersion (newer Dusk Studio
 // can read older files via migrateSession; older Dusk Studio refusing
 // newer files is safer than silently dropping fields).
-constexpr int kFormatVersion = 2;
+constexpr int kFormatVersion = 3;
 } // namespace
 
 // Forward-migrate `root` from a known older version to kFormatVersion
@@ -56,6 +58,19 @@ bool migrateSession (juce::var& root, int from)
                 // case here.
                 if (root.isObject())
                     root.getDynamicObject()->setProperty ("version", 2);
+                ++v;
+                break;
+
+            case 2:
+                // v2 → v3: region "file" / mastering "source_file" may now
+                // be SESSION-RELATIVE (portable sessions). v2 files only
+                // ever stored absolute paths, which resolvePortablePath
+                // still handles, so the version stamp is the only mutation.
+                // The bump exists so v2 readers (0.10.x) REFUSE v3 files
+                // loudly instead of silently failing to resolve relative
+                // paths they predate.
+                if (root.isObject())
+                    root.getDynamicObject()->setProperty ("version", 3);
                 ++v;
                 break;
 
@@ -209,8 +224,22 @@ juce::File resolvePortablePath (const juce::String& stored,
 {
     if (stored.isEmpty()) return {};
 
+    // Recognise absolute paths cross-platform, not just for the running OS:
+    // a leading '/' (POSIX absolute or UNC //server/...) and a Windows
+    // drive-letter (C:/...) are all absolute even when juce::File::isAbsolutePath
+    // reports false for the foreign form (e.g. "/home/..." on Windows, "C:/..."
+    // on POSIX). This keeps re-root-by-name working for sessions moved between
+    // operating systems instead of mis-joining the path under sessionDir.
+    const auto normalised = stored.replaceCharacter ('\\', '/');
+    const bool driveLetter = normalised.length() >= 3
+                          && juce::CharacterFunctions::isLetter (normalised[0])
+                          && normalised[1] == ':' && normalised[2] == '/';
+    const bool isAbsolute = juce::File::isAbsolutePath (stored)
+                         || driveLetter
+                         || normalised.startsWith ("/");
+
     juce::File f;
-    if (juce::File::isAbsolutePath (stored))
+    if (isAbsolute)
         f = juce::File (stored);
     else if (sessionDir != juce::File())
         // Normalise to '/' before resolving: a session saved by an older
@@ -223,15 +252,25 @@ juce::File resolvePortablePath (const juce::String& stored,
 
     if (f.existsAsFile()) return f;
 
-    const auto fileName = stored.replaceCharacter ('\\', '/')
-                                .fromLastOccurrenceOf ("/", false, false);
-    if (sessionDir != juce::File() && fileName.isNotEmpty())
+    // Re-root by file name, but only for paths that actually lived in a
+    // session's audio folder: a relative "audio/..." (the canonical region
+    // path) or an absolute path whose IMMEDIATE parent is audio/ (a moved/
+    // renamed session). A relative path NOT under audio/ (e.g. a mastering
+    // mixdown at the session root), and any absolute path where audio/ is not
+    // the direct parent (external media that merely contains an audio/ segment),
+    // must not silently remap to an unrelated same-named take — report missing.
+    const auto fileName = normalised.fromLastOccurrenceOf ("/", false, false);
+    const bool sessionLocal = normalised.startsWith ("audio/")
+                           || (isAbsolute
+                               && normalised.endsWith ("/audio/" + fileName));
+    if (sessionLocal && sessionDir != juce::File() && fileName.isNotEmpty())
     {
         const auto byName = sessionDir.getChildFile ("audio").getChildFile (fileName);
         if (byName.existsAsFile()) return byName;
     }
 
-    missing.push_back (stored);
+    if (std::find (missing.begin(), missing.end(), stored) == missing.end())
+        missing.push_back (stored);
     return f;
 }
 
@@ -863,11 +902,15 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm,
             AudioRegion r;
             r.file            = resolvePortablePath (rv["file"].toString(),
                                                       sessionDir, missingFiles);
-            r.timelineStart   = (juce::int64) rv["timeline_start"];
-            r.lengthInSamples = (juce::int64) rv["length"];
-            r.sourceOffset    = (juce::int64) rv["source_offset"];
-            r.fadeInSamples   = rv.hasProperty ("fade_in")  ? (juce::int64) rv["fade_in"]  : 0;
-            r.fadeOutSamples  = rv.hasProperty ("fade_out") ? (juce::int64) rv["fade_out"] : 0;
+            // Clamp every sample-domain field to >= 0 (mirrors the MIDI-note
+            // loader below) so a hand-edited or truncated session.json can't
+            // seed negative values that underflow PlaybackEngine's read-pointer
+            // math (readStart = sourceOffset + (firstWithin - timelineStart)).
+            r.timelineStart   = juce::jmax ((juce::int64) 0, (juce::int64) rv["timeline_start"]);
+            r.lengthInSamples = juce::jmax ((juce::int64) 0, (juce::int64) rv["length"]);
+            r.sourceOffset    = juce::jmax ((juce::int64) 0, (juce::int64) rv["source_offset"]);
+            r.fadeInSamples   = rv.hasProperty ("fade_in")  ? juce::jmax ((juce::int64) 0, (juce::int64) rv["fade_in"])  : 0;
+            r.fadeOutSamples  = rv.hasProperty ("fade_out") ? juce::jmax ((juce::int64) 0, (juce::int64) rv["fade_out"]) : 0;
             auto loadShape = [] (const juce::var& v) -> FadeShape
             {
                 const int i = (int) v;
@@ -880,7 +923,7 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm,
                                  ? loadShape (rv["fade_out_shape"]) : FadeShape::Linear;
             r.fadeInAuto      = rv.hasProperty ("fade_in_auto")  && (bool) rv["fade_in_auto"];
             r.fadeOutAuto     = rv.hasProperty ("fade_out_auto") && (bool) rv["fade_out_auto"];
-            r.numChannels     = rv.hasProperty ("num_channels") ? (int) rv["num_channels"] : 1;
+            r.numChannels     = juce::jlimit (1, 2, rv.hasProperty ("num_channels") ? (int) rv["num_channels"] : 1);
             r.gainDb          = rv.hasProperty ("gain_db")  ? (float) (double) rv["gain_db"] : 0.0f;
             r.customColour    = rv.hasProperty ("custom_colour")
                                  ? juce::Colour::fromString (rv["custom_colour"].toString())
@@ -899,8 +942,8 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm,
                     TakeRef take;
                     take.file            = resolvePortablePath (tv["file"].toString(),
                                                                  sessionDir, missingFiles);
-                    take.sourceOffset    = (juce::int64) tv["source_offset"];
-                    take.lengthInSamples = (juce::int64) tv["length"];
+                    take.sourceOffset    = juce::jmax ((juce::int64) 0, (juce::int64) tv["source_offset"]);
+                    take.lengthInSamples = juce::jmax ((juce::int64) 0, (juce::int64) tv["length"]);
                     r.previousTakes.push_back (std::move (take));
                 }
             }
@@ -959,9 +1002,9 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm,
             auto rv = midiRegions[i];
             if (! rv.isObject()) continue;
             MidiRegion r;
-            r.timelineStart   = (juce::int64) rv["timeline_start"];
-            r.lengthInSamples = (juce::int64) rv["length_samples"];
-            r.lengthInTicks   = (juce::int64) rv["length_ticks"];
+            r.timelineStart   = juce::jmax ((juce::int64) 0, (juce::int64) rv["timeline_start"]);
+            r.lengthInSamples = juce::jmax ((juce::int64) 0, (juce::int64) rv["length_samples"]);
+            r.lengthInTicks   = juce::jmax ((juce::int64) 0, (juce::int64) rv["length_ticks"]);
             r.customColour    = rv.hasProperty ("custom_colour")
                                  ? juce::Colour::fromString (rv["custom_colour"].toString())
                                  : juce::Colour();
@@ -991,7 +1034,7 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm,
                     auto tv = prior[k];
                     if (! tv.isObject()) continue;
                     MidiTakeRef take;
-                    take.lengthInTicks = (juce::int64) tv["length_ticks"];
+                    take.lengthInTicks = juce::jmax ((juce::int64) 0, (juce::int64) tv["length_ticks"]);
                     parseNotes (tv["notes"], take.notes);
                     parseCcs   (tv["ccs"],   take.ccs);
                     r.previousTakes.push_back (std::move (take));
@@ -1636,6 +1679,9 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
             s.master().automationMode.store ((int) master["automation_mode"],
                                               std::memory_order_release);
     }
+    // Always reset: a session without a saved mastering source must not
+    // inherit the previously loaded session's file.
+    s.mastering().sourceFile = juce::File();
     if (auto mast = root["mastering"]; mast.isObject())
     {
         auto& m = s.mastering();

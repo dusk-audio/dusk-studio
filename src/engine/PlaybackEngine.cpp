@@ -1,4 +1,5 @@
 #include "PlaybackEngine.h"
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <thread>
@@ -180,24 +181,25 @@ void PlaybackEngine::stopPlayback()
 
     // Drain in-flight readForTrack calls before destroying the readers.
     // The audio callback latches the transport state once per block, so
-    // it can still be mid-sum when the message thread gets here. Bounded
-    // yield loop, same shape (and same bail rationale) as
-    // RecordManager::stopRecording: if the audio thread is stuck past
-    // the cap, leave the streams allocated — streamsActive stays false
+    // it can still be mid-sum when the message thread gets here. Time-
+    // bounded drain (a fixed yield count can elapse in microseconds on a
+    // contended box — less than one legitimate callback — and bail
+    // spuriously). If the audio thread is genuinely stuck past the
+    // deadline, leave the streams allocated — streamsActive stays false
     // so no new reads start, and the next stopPlayback retries the
     // drain. Leak beats UAF.
-    constexpr int kMaxSpinIterations = 1000;
-    int spinIters = 0;
+    constexpr auto kDrainTimeout = std::chrono::milliseconds (200);
+    const auto drainDeadline = std::chrono::steady_clock::now() + kDrainTimeout;
     while (audioInFlight.load (std::memory_order_acquire) > 0)
     {
-        if (++spinIters > kMaxSpinIterations)
+        if (std::chrono::steady_clock::now() > drainDeadline)
         {
             std::fprintf (stderr,
                           "[Dusk Studio/PlaybackEngine] stopPlayback: audioInFlight=%d "
-                          "after %d yields; BAILING teardown to avoid UAF. Streams "
+                          "after %lld ms; BAILING teardown to avoid UAF. Streams "
                           "leak until the next stopPlayback drains.\n",
                           audioInFlight.load (std::memory_order_relaxed),
-                          kMaxSpinIterations);
+                          (long long) kDrainTimeout.count());
             return;
         }
         std::this_thread::yield();

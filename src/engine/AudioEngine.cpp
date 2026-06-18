@@ -1,5 +1,6 @@
 #include "AudioEngine.h"
 #include "PdcMath.h"
+#include "RtPriority.h"
 #include "../dsp/OutputPairRouting.h"
 #include "McuReceiver.h"
 #include "McuController.h"
@@ -84,11 +85,12 @@ void AudioEngine::printPerfTable()
     std::fflush (stderr);
 }
 
-AudioEngine::AudioEngine (Session& sessionToBindTo) : session (sessionToBindTo)
+AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
+    : session (sessionToBindTo), desiredWorkers (juce::jmax (0, initialWorkers))
 {
     if (const char* p = std::getenv ("DUSKSTUDIO_PERF"); p != nullptr && p[0] == '1')
     {
-        perf.enabled = true;
+        perf.enabled.store (true, std::memory_order_relaxed);
         perfReporter = std::make_unique<PerfReporter> (*this);
     }
 
@@ -106,6 +108,10 @@ AudioEngine::AudioEngine (Session& sessionToBindTo) : session (sessionToBindTo)
     // multi-hour sessions; without this the stack grows unbounded.
     // 50 minimum kept even when total exceeds the cap.
     undoManager.setMaxNumberOfStoredUnits (500, 50);
+
+    // Drain silent-output diagnostics on the message thread (1 Hz) so the audio
+    // callback never touches stdio. Cheap when nothing has stalled.
+    diagTimer.startTimer (1000);
 
     // Hosted plugins get this via setPlayHead so tempo-synced features
     // (LFOs, arps, delays) read live session BPM + playhead.
@@ -523,6 +529,17 @@ void AudioEngine::rebuildMidiOutputBank()
     // systems with USB MIDI. Open on demand via ensureMidiOutputOpen.
     {
         const std::lock_guard<std::mutex> lock (midiOutBankMutex);
+        // Discard queued-but-unsent blocks first: their port indices were
+        // minted against the OLD device order and could land on a different
+        // physical port after re-enumeration. The callback is detached, so
+        // nothing new is being written; the mutex excludes the pump's drain.
+        const int stale = midiOutFifo.getNumReady();
+        if (stale > 0)
+        {
+            int s1 = 0, n1 = 0, s2 = 0, n2 = 0;
+            midiOutFifo.prepareToRead (stale, s1, n1, s2, n2);
+            midiOutFifo.finishedRead (n1 + n2);
+        }
         midiOutputs.clear();
         midiOutputDevices = juce::MidiOutput::getAvailableDevices();
         midiOutputs.resize ((size_t) midiOutputDevices.size());
@@ -607,11 +624,18 @@ void AudioEngine::MidiOutPump::run()
 void AudioEngine::queueMidiOutBlock (int port, const juce::MidiBuffer& events,
                                      double sampleRate) noexcept
 {
+    // A block bigger than the slot's pre-allocated capacity would make
+    // addEvents reallocate on the audio thread — drop it instead, same
+    // policy as queue-full.
+    if (events.data.size() > kMidiOutSlotBytes) return;
+
     int start1 = 0, size1 = 0, start2 = 0, size2 = 0;
     midiOutFifo.prepareToWrite (1, start1, size1, start2, size2);
     if (size1 + size2 < 1) return;   // pump stalled — drop the block
 
-    auto& slot = midiOutQueue[(size_t) start1];
+    // The lone writable slot lands in the SECOND segment when the write wraps
+    // (size1 == 0, size2 == 1); use start2 then, not the stale start1.
+    auto& slot = midiOutQueue[(size_t) (size1 > 0 ? start1 : start2)];
     slot.port       = port;
     slot.timeMs     = juce::Time::getMillisecondCounterHiRes();
     slot.sampleRate = sampleRate > 0.0 ? sampleRate : 48000.0;
@@ -622,27 +646,31 @@ void AudioEngine::queueMidiOutBlock (int port, const juce::MidiBuffer& events,
 
 void AudioEngine::drainMidiOutQueue()
 {
+    // The whole read cycle holds midiOutBankMutex — not just the port
+    // dereference — so rebuildMidiOutputBank can discard stale slots
+    // under the same mutex without racing a half-finished drain (the
+    // FIFO's reader side is single-consumer). The audio thread only
+    // touches the writer side and never takes this mutex.
+    const std::lock_guard<std::mutex> lock (midiOutBankMutex);
+
     const int ready = midiOutFifo.getNumReady();
     if (ready <= 0) return;
 
     int start1 = 0, size1 = 0, start2 = 0, size2 = 0;
     midiOutFifo.prepareToRead (ready, start1, size1, start2, size2);
+    auto send = [this] (int start, int n)
     {
-        const std::lock_guard<std::mutex> lock (midiOutBankMutex);
-        auto send = [this] (int start, int n)
+        for (int i = 0; i < n; ++i)
         {
-            for (int i = 0; i < n; ++i)
-            {
-                auto& slot = midiOutQueue[(size_t) (start + i)];
-                if (slot.port >= 0 && slot.port < (int) midiOutputs.size())
-                    if (auto* out = midiOutputs[(size_t) slot.port].get())
-                        out->sendBlockOfMessages (slot.events, slot.timeMs,
-                                                   slot.sampleRate);
-            }
-        };
-        send (start1, size1);
-        send (start2, size2);
-    }
+            auto& slot = midiOutQueue[(size_t) (start + i)];
+            if (slot.port >= 0 && slot.port < (int) midiOutputs.size())
+                if (auto* out = midiOutputs[(size_t) slot.port].get())
+                    out->sendBlockOfMessages (slot.events, slot.timeMs,
+                                               slot.sampleRate);
+        }
+    };
+    send (start1, size1);
+    send (start2, size2);
     midiOutFifo.finishedRead (size1 + size2);
 }
 
@@ -753,6 +781,7 @@ void AudioEngine::setStage (Stage s) noexcept
 
 AudioEngine::~AudioEngine()
 {
+    diagTimer.stopTimer();
     if (transport.isRecording())
         recordManager.stopRecording (transport.getPlayhead());
     deviceManager.removeChangeListener (this);
@@ -761,6 +790,30 @@ AudioEngine::~AudioEngine()
     // After the callback is gone — nothing pushes to the out-FIFO, the
     // pump drains or drops what's left, then midiOutputs can destruct.
     midiOutPump.stopThread (2000);
+}
+
+void AudioEngine::drainCallbackDiagnostics()
+{
+    const auto gated = earlyOutBlocks.load (std::memory_order_relaxed);
+    if (gated != lastReportedGated)
+    {
+        std::fprintf (stderr, "[Dusk Studio/AudioEngine] callback GATED (processingSuspended=true) — "
+                              "%lld silent block(s) since last report; if persistent, the gate is stuck\n",
+                      (long long) (gated - lastReportedGated));
+        lastReportedGated = gated;
+    }
+
+    const auto silent = silentBlocks.load (std::memory_order_relaxed);
+    if (silent != lastReportedSilent)
+    {
+        const auto dims = silentDims.load (std::memory_order_relaxed);
+        std::fprintf (stderr, "[Dusk Studio/AudioEngine] callback SILENT: engine buffers sized %d but device "
+                              "delivered %d samples — re-prepare missed the block size (%lld block(s))\n",
+                      (int) (dims >> 32),
+                      (int) (dims & 0xffffffffu),
+                      (long long) (silent - lastReportedSilent));
+        lastReportedSilent = silent;
+    }
 }
 
 void AudioEngine::play()
@@ -1170,8 +1223,12 @@ void AudioEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
     // getCurrentAudioDevice().
     hadLiveDevice_.store (true, std::memory_order_release);
 
-    // Fresh device, fresh xrun counter — drop the readout offset.
-    backendXrunBaseline.store (0, std::memory_order_relaxed);
+    // Baseline the readout to the device's CURRENT xrun count, not 0: a reused
+    // device object can carry the previous session's count into aboutToStart
+    // (it resets its own counter slightly later, in start()), and other backends
+    // give no such guarantee. Subtracting the live count makes getBackendXRunCount
+    // report only xruns accrued from here on.
+    backendXrunBaseline.store (device->getXRunCount(), std::memory_order_relaxed);
 
     // Detect the silent-failure mode where a per-device ALSA name resolves
     // to 0 active output channels (PipeWire's ALSA shim does this for the
@@ -1256,6 +1313,22 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
     // catches a future caller that gets this wrong.
     jassert (juce::MessageManager::existsAndIsCurrentThread());
 
+    // Gate the audio callback out for the whole re-prepare, then drain worker
+    // lanes. The gate makes the no-concurrent-callback invariant ENFORCED
+    // rather than assumed: any callback that still fires (a backend whose stop
+    // didn't join, a force-killed I/O thread's sibling, a path nobody
+    // enumerated) emits one silent buffer instead of racing the resizes and
+    // plugin prepareToPlay calls below. Quiesce then covers lanes orphaned by
+    // a force-killed dispatcher (they don't go through the gate).
+    suspendProcessing();
+    workerPool.quiesce();
+    struct ResumeGuard
+    {
+        AudioEngine& e;
+        ~ResumeGuard() { e.resumeProcessing(); }
+    };
+    const ResumeGuard resumeGuard { *this };
+
     currentSampleRate.store (sr, std::memory_order_relaxed);
     currentBlockSize.store  (bs, std::memory_order_relaxed);
 
@@ -1326,7 +1399,14 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
     for (auto& v : playbackScratchR) v.assign ((size_t) bs, 0.0f);
     for (auto& m : perTrackMidiScratch) m.ensureSize (4096);
     midiClockOutScratch.ensureSize (4096);
-    for (auto& q : midiOutQueue) q.events.ensureSize (4096);
+    {
+        // Serialize the resize with the MIDI pump: drainMidiOutQueue() reads
+        // slot.events under midiOutBankMutex on the pump thread, which keeps
+        // running across a device re-open. ensureSize() reallocates the buffer,
+        // so it must hold the same lock.
+        const std::lock_guard<std::mutex> lock (midiOutBankMutex);
+        for (auto& q : midiOutQueue) q.events.ensureSize (kMidiOutSlotBytes);
+    }
     silentInputScratch.assign ((size_t) bs, 0.0f);
 
     for (auto& a : laneAccum)
@@ -1339,35 +1419,81 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
         for (auto& v : a.auxR) v.assign ((size_t) bs, 0.0f);
     }
 
-    // Opt-in parallel strip DSP. Started once (block-size independent); the
-    // worker threads park until the first audioDeviceIOCallback dispatches a
-    // block. Unset / 0 → serial (default).
-    //
-    // Cap = cores - 2. The workers run at real-time priority and the audio
-    // callback thread spin-joins them, so `workers + audio-thread` must stay
-    // BELOW the core count — otherwise the real-time set saturates every core
-    // and starves the normal-priority message (UI) thread, freezing the app
-    // exactly under the heavy load this is meant to help. cores - 2 leaves one
-    // core for the UI + the OS on top of the audio thread.
+    // Parallel strip DSP. Start the worker pool ONCE, here on the first prepare
+    // (this initial call has no audio thread running yet, so the start is safe).
+    // The pool is block-size independent — its threads park until runBlock
+    // dispatches and only touch the per-block laneAccum buffers (resized above),
+    // so later device re-opens (buffer/rate changes) must NOT stop+start it:
+    // their prepare runs while the audio callback is still attached and a
+    // stop()/start() would race a live runBlock. Live worker-count changes go
+    // through applyDesiredWorkers (callback detached). 0 → serial.
     if (! workerPoolStarted)
     {
         workerPoolStarted = true;
-        if (const char* env = std::getenv ("DUSKSTUDIO_AUDIO_WORKERS"))
-        {
-            const int maxWorkers = juce::jmin (juce::SystemStats::getNumCpus() - 2,
-                                               kMaxDspLanes - 1);
-            const int n = juce::jlimit (0, juce::jmax (0, maxWorkers),
-                                        juce::String (env).getIntValue());
-            if (n > 0)
-            {
-                workerPool.start (n, [this] (int lane) { processStripLane (lane); });
-                // One-line stderr marker so it's obvious whether the opt-in
-                // parallel path is live (absent line == serial / default).
-                std::fprintf (stderr, "[DuskStudio] parallel strip DSP: %d worker(s)\n",
-                              workerPool.isActive() ? n : 0);
-            }
-        }
+        reconcileWorkerPool (resolveTargetWorkers());
     }
+}
+
+int AudioEngine::resolveTargetWorkers() const noexcept
+{
+    if (const char* env = std::getenv ("DUSKSTUDIO_AUDIO_WORKERS"))
+        return juce::String (env).getIntValue();
+    return desiredWorkers;
+}
+
+void AudioEngine::suspendProcessing()
+{
+    processingSuspended.store (true, std::memory_order_release);
+    int waitedMs = 0;
+    while (callbacksInFlight.load (std::memory_order_acquire) > 0)
+    {
+        juce::Thread::sleep (1);
+        if (++waitedMs % 1000 == 0)
+            std::fprintf (stderr,
+                          "[Dusk Studio/AudioEngine] suspendProcessing waiting %d s for an "
+                          "in-flight audio callback to drain (wedged plugin?)\n",
+                          waitedMs / 1000);
+    }
+}
+
+void AudioEngine::resumeProcessing() noexcept
+{
+    processingSuspended.store (false, std::memory_order_release);
+}
+
+void AudioEngine::applyDesiredWorkers()
+{
+    jassert (juce::MessageManager::existsAndIsCurrentThread());
+    workerPoolStarted = true;
+    reconcileWorkerPool (resolveTargetWorkers());
+}
+
+void AudioEngine::reconcileWorkerPool (int target)
+{
+    // Cap = cores - 2. The workers run at real-time priority alongside the
+    // audio callback thread, so `workers + audio-thread` must stay BELOW the
+    // core count — otherwise the real-time set saturates every core and starves
+    // the normal-priority message (UI) thread, freezing the app exactly under
+    // the heavy load this is meant to help. cores - 2 leaves one core for the
+    // UI + the OS on top of the audio thread.
+    const int cap = juce::jmin (juce::SystemStats::getNumCpus() - 2, kMaxDspLanes - 1);
+    const int n   = juce::jlimit (0, juce::jmax (0, cap), target);
+    const int cur = workerPool.isActive() ? workerPool.laneCount() - 1 : 0;
+    if (n == cur)
+        return;
+
+    workerPool.stop();
+    if (n > 0)
+        workerPool.start (n, [this] (int lane) { processStripLane (lane); },
+                          rt::queryRealtimePriority().jucePriority);
+
+    // One-line stderr marker so it's obvious whether the parallel path is live.
+    std::fprintf (stderr, "[DuskStudio] parallel strip DSP: %d worker(s)\n", n);
+}
+
+void AudioEngine::setWorkerCountForTest (int n)
+{
+    reconcileWorkerPool (n);
 }
 
 void AudioEngine::audioDeviceError (const juce::String& errorMessage)
@@ -1395,6 +1521,21 @@ void AudioEngine::audioDeviceError (const juce::String& errorMessage)
 
 void AudioEngine::audioDeviceStopped()
 {
+    // Drain any in-flight worker lanes FIRST, while the device's input buffers
+    // (which trackJobs points into) are still alive — the device close() that
+    // follows this callback frees them. Covers the force-killed-I/O-thread case
+    // where dispatched lanes outlive their dispatcher; a healthy stop makes
+    // this a no-op.
+    workerPool.quiesce();
+
+    // Same force-kill case for the callback-level gate: an I/O thread killed by
+    // stopThread()'s timeout can die mid-callback, before InFlightGuard
+    // decrements callbacksInFlight — leaking the count so the NEXT
+    // suspendProcessing() would wait on it forever. The I/O thread is confirmed
+    // stopped by the time this hook runs (no callback can be in flight), so
+    // reset the counter to reconcile any such leak.
+    callbacksInFlight.store (0, std::memory_order_release);
+
     // Stop any in-flight recording BEFORE clearing the sample rate: the
     // writer drain in stopRecording depends on recordSampleRate being
     // non-zero to map sample positions to seconds. Without this, a
@@ -1589,12 +1730,45 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
     // playhead) on a zero-length block.
     if (numSamples <= 0) return;
 
+    // Process gate (the Ardour _process_lock pattern, lock-free flavour).
+    // suspendProcessing() (message thread) raises the flag and waits for
+    // in-flight callbacks to drain; from then until resumeProcessing() every
+    // callback — from ANY backend thread, joined or not — emits one silent
+    // buffer instead of touching engine state mid-reconfigure. The double
+    // check around the counter closes the raise-after-first-load window.
+    auto clearOutputs = [&]
+    {
+        if (outputChannelData == nullptr) return;   // matches the guard below
+        for (int ch = 0; ch < numOutputChannels; ++ch)
+            if (auto* out = outputChannelData[ch])
+                juce::FloatVectorOperations::clear (out, numSamples);
+    };
+    if (processingSuspended.load (std::memory_order_acquire))
+    {
+        earlyOutBlocks.fetch_add (1, std::memory_order_relaxed);   // drained by diagTimer
+        clearOutputs();
+        return;
+    }
+    callbacksInFlight.fetch_add (1, std::memory_order_acq_rel);
+    if (processingSuspended.load (std::memory_order_acquire))
+    {
+        callbacksInFlight.fetch_sub (1, std::memory_order_acq_rel);
+        clearOutputs();
+        return;
+    }
+    struct InFlightGuard
+    {
+        std::atomic<int>& counter;
+        ~InFlightGuard() { counter.fetch_sub (1, std::memory_order_acq_rel); }
+    };
+    const InFlightGuard inFlightGuard { callbacksInFlight };
+
     const auto callbackStart = juce::Time::getHighResolutionTicks();
 
     // Section attribution (see PerfSections). One cached-bool branch per
     // lap when disabled; the mastering-stage shortcut and other early
     // returns simply never lap, so only full mixer passes are counted.
-    const bool perfOn = perf.enabled;
+    const bool perfOn = perf.enabled.load (std::memory_order_relaxed);
     juce::int64 perfMark = callbackStart;
     auto perfLap = [&] (int section) noexcept
     {
@@ -2519,6 +2693,9 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
 
     if ((int) mixL.size() < numSamples)
     {
+        silentDims.store (((juce::uint64) (juce::uint32) mixL.size() << 32)
+                          | (juce::uint32) numSamples, std::memory_order_relaxed);
+        silentBlocks.fetch_add (1, std::memory_order_relaxed);   // drained by diagTimer
         for (int ch = 0; ch < numOutputChannels; ++ch)
             if (auto* out = outputChannelData[ch])
                 std::memset (out, 0, sizeof (float) * (size_t) numSamples);
@@ -2547,6 +2724,16 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                                          * secondsPerTick * 1000.0;
             if (elapsedMs > bufferMs)
                 xrunCount.fetch_add (1, std::memory_order_relaxed);
+
+            // Drive the same DSP-load smoother the mix path uses, so the badge
+            // keeps updating in Mastering (this branch returns before the
+            // shared cpuUsage update below).
+            if (bufferMs > 0.0)
+            {
+                const float instant = (float) juce::jlimit (0.0, 2.0, elapsedMs / bufferMs);
+                const float prev = cpuUsage.load (std::memory_order_relaxed);
+                cpuUsage.store (prev + 0.2f * (instant - prev), std::memory_order_relaxed);
+            }
         }
         return;
     }
@@ -2785,12 +2972,17 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         {
             monoIn = deviceInput;
         }
-        else if (strips[(size_t) t].getPluginSlot().isLoaded())
+        else if (strips[(size_t) t].getPluginSlot().isLoaded()
+                 || session.track (t).hardwareInsert.pingPending.load (std::memory_order_acquire))
         {
             // Generator-style insert with no input source: feed a
             // pre-zeroed buffer so the chain runs and the plugin can
             // emit its output. Costs one extra strip per loaded-but-
             // unfed channel; effects feeding zero just produce zero.
+            // Same feed while a hardware-insert ping is in flight —
+            // with transport stopped and IN off the track has no
+            // source, and the slot needs to be serviced to run the
+            // chirp + capture.
             monoIn = silentInputScratch.data();
         }
 

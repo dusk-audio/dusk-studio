@@ -44,6 +44,8 @@ AudioPipelineSelfTest::SavedState AudioPipelineSelfTest::saveState() const
         s.solo[(size_t) t]         = ts.solo.load (std::memory_order_relaxed);
         s.recordArmed[(size_t) t]  = tt.recordArmed.load (std::memory_order_relaxed);
         s.inputMonitor[(size_t) t] = tt.inputMonitor.load (std::memory_order_relaxed);
+        s.mode[(size_t) t]         = tt.mode.load (std::memory_order_relaxed);
+        s.inputSource[(size_t) t]  = tt.inputSource.load (std::memory_order_relaxed);
         s.compEnabled[(size_t) t]  = ts.compEnabled.load (std::memory_order_relaxed);
         s.phaseInvert[(size_t) t]  = ts.phaseInvert.load (std::memory_order_relaxed);
         s.hpfEnabled[(size_t) t]   = ts.hpfEnabled.load (std::memory_order_relaxed);
@@ -62,6 +64,7 @@ AudioPipelineSelfTest::SavedState AudioPipelineSelfTest::saveState() const
     s.masterTapeEnabled = session.master().tapeEnabled.load (std::memory_order_relaxed);
     s.masterTapeHQ      = session.master().tapeHQ.load (std::memory_order_relaxed);
     s.masterCompEnabled = session.master().compEnabled.load (std::memory_order_relaxed);
+    s.oversamplingFactor = session.oversamplingFactor.load (std::memory_order_relaxed);
     return s;
 }
 
@@ -77,6 +80,8 @@ void AudioPipelineSelfTest::restoreState (const SavedState& s)
         ts.solo.store         (s.solo[(size_t) t],         std::memory_order_relaxed);
         tt.recordArmed.store  (s.recordArmed[(size_t) t],  std::memory_order_relaxed);
         tt.inputMonitor.store (s.inputMonitor[(size_t) t], std::memory_order_relaxed);
+        tt.mode.store         (s.mode[(size_t) t],         std::memory_order_relaxed);
+        tt.inputSource.store  (s.inputSource[(size_t) t],  std::memory_order_relaxed);
         ts.compEnabled.store  (s.compEnabled[(size_t) t],  std::memory_order_relaxed);
         ts.phaseInvert.store  (s.phaseInvert[(size_t) t],  std::memory_order_relaxed);
         ts.hpfEnabled.store   (s.hpfEnabled[(size_t) t],   std::memory_order_relaxed);
@@ -95,6 +100,7 @@ void AudioPipelineSelfTest::restoreState (const SavedState& s)
     session.master().tapeEnabled.store (s.masterTapeEnabled, std::memory_order_relaxed);
     session.master().tapeHQ.store      (s.masterTapeHQ,      std::memory_order_relaxed);
     session.master().compEnabled.store (s.masterCompEnabled, std::memory_order_relaxed);
+    session.oversamplingFactor.store (s.oversamplingFactor, std::memory_order_relaxed);
     // Bulk-write path bypassed the counter-aware setters; resync the RT
     // counters so anyTrackSoloed/Armed reads are correct in the test pass.
     session.recomputeRtCounters();
@@ -111,6 +117,11 @@ int AudioPipelineSelfTest::prepareCleanState()
     t0s.solo.store         (false, std::memory_order_relaxed);
     t0.recordArmed.store   (false, std::memory_order_relaxed);
     t0.inputMonitor.store  (true,  std::memory_order_relaxed);
+    // Audio mode + follow-track-index input so the synthetic tests' input-0
+    // injection actually reaches track 0 regardless of the loaded session
+    // (a MIDI-mode or remapped-input track 0 would silence them otherwise).
+    t0.mode.store          ((int) Track::Mode::Mono, std::memory_order_relaxed);
+    t0.inputSource.store   (-2, std::memory_order_relaxed);
     t0s.compEnabled.store  (false, std::memory_order_relaxed);  // bypassed
     t0s.phaseInvert.store  (false, std::memory_order_relaxed);
     t0s.hpfEnabled.store   (false, std::memory_order_relaxed);
@@ -971,6 +982,144 @@ juce::String AudioPipelineSelfTest::testBackendsOpenCleanly()
     return out;
 }
 
+juce::String AudioPipelineSelfTest::testParallelMatchesSerial()
+{
+    using juce::jmax;
+    using juce::jmin;
+    constexpr int    bs = 256, numIn = 16, numOut = 2;
+    constexpr double sr = 48000.0;
+    // Long warmup so every strip's IIR transient (notably the low-freq HPF,
+    // which has a slow settle) fully decays before measuring — otherwise two
+    // serial runs measured mid-transient differ and the baseline is noisy.
+    constexpr int    warmup = 256, measure = 16;
+    constexpr int    activeTracks = 16;        // spread across every worker lane
+
+    // Mirror the engine's own cap. 0 workers on hosts with < 3 cores — there the
+    // parallel path is the serial path, so the comparison is trivially equal.
+    const int testWorkers = jmax (0, jmin (juce::SystemStats::getNumCpus() - 2, 15));
+
+    // Active strips: monitor input (sine on every input channel), HPF + per-track-
+    // distinct 4-band EQ + fader so each lane carries decorrelated, non-trivial DSP
+    // output — making the serial-vs-parallel reduce a real float-reassociation test,
+    // not an all-zeros sum. Comp stays OFF deliberately: the donor compressor's
+    // envelope is not guaranteed to reset bit-identically across two prepare calls,
+    // and over a sustained tone a slow release would make even two SERIAL runs
+    // differ. EQ/IIR filters DO fully reset in prepare (see the IIR idempotency unit
+    // test), so per-strip output is deterministic and the test isolates the sum
+    // ordering, which is the only thing the worker pool changes.
+    prepareCleanState();
+    for (int t = 0; t < activeTracks; ++t)
+    {
+        auto& tr = session.track (t);
+        auto& ts = tr.strip;
+        tr.mode.store         ((int) Track::Mode::Mono, std::memory_order_relaxed);
+        tr.inputSource.store  (-2, std::memory_order_relaxed);   // follow track index
+        tr.inputMonitor.store (true, std::memory_order_relaxed);
+        ts.mute.store         (false, std::memory_order_relaxed);
+        ts.compEnabled.store  (false, std::memory_order_relaxed);
+        ts.hpfEnabled.store   (true,  std::memory_order_relaxed);
+        ts.lfGainDb.store     ((float) (t % 5) - 2.0f, std::memory_order_relaxed);
+        ts.lmGainDb.store     (1.0f - (float) (t % 4), std::memory_order_relaxed);
+        ts.hmGainDb.store     ((float) (t % 3) - 1.0f, std::memory_order_relaxed);
+        ts.hfGainDb.store     (2.0f - (float) (t % 3), std::memory_order_relaxed);
+        ts.faderDb.store      (-3.0f, std::memory_order_relaxed);
+        ts.pan.store          (((float) (t % 7) - 3.0f) / 6.0f, std::memory_order_relaxed);
+        // Route direct to master regardless of the loaded session's routing, so
+        // the active strips deterministically feed the mix the test measures.
+        for (int b = 0; b < ChannelStripParams::kNumBuses; ++b)
+            ts.busAssign[(size_t) b].store (false, std::memory_order_relaxed);
+    }
+    session.recomputeRtCounters();
+
+    auto capture = [&] (int workers, std::vector<float>& outL, std::vector<float>& outR)
+    {
+        // prepareForSelfTest reconciles the pool from env/desiredWorkers; override
+        // it AFTER so the requested count sticks. Both runs reset identical DSP
+        // state here (workers change only the sum order, never per-strip state).
+        engine.prepareForSelfTest (sr, bs);
+        engine.setWorkerCountForTest (workers);
+
+        std::vector<std::vector<float>> ins ((size_t) numIn, std::vector<float> ((size_t) bs, 0.0f));
+        std::vector<const float*> inP ((size_t) numIn);
+        for (int c = 0; c < numIn; ++c) inP[(size_t) c] = ins[(size_t) c].data();
+        std::vector<std::vector<float>> outs ((size_t) numOut, std::vector<float> ((size_t) bs, 0.0f));
+        std::vector<float*> outP ((size_t) numOut);
+        for (int c = 0; c < numOut; ++c) outP[(size_t) c] = outs[(size_t) c].data();
+
+        juce::AudioIODeviceCallbackContext ctx {};
+        const double inc = 2.0 * juce::MathConstants<double>::pi * (double) kToneHz / sr;
+        std::vector<double> phase ((size_t) numIn, 0.0);
+        outL.clear(); outR.clear();
+
+        for (int b = 0; b < warmup + measure; ++b)
+        {
+            for (int c = 0; c < numIn; ++c)
+            {
+                double ph = phase[(size_t) c] + (double) c * 0.13;  // per-channel offset
+                for (int s = 0; s < bs; ++s)
+                {
+                    ins[(size_t) c][(size_t) s] = kInputAmpMinusSixDb * (float) std::sin (ph);
+                    ph += inc;
+                }
+                phase[(size_t) c] += inc * (double) bs;
+            }
+            for (auto& o : outs) std::fill (o.begin(), o.end(), 0.0f);
+            engine.audioDeviceIOCallbackWithContext (inP.data(), numIn, outP.data(), numOut, bs, ctx);
+            if (b >= warmup)
+                for (int s = 0; s < bs; ++s)
+                {
+                    outL.push_back (outs[0][(size_t) s]);
+                    outR.push_back (outs[1][(size_t) s]);
+                }
+        }
+    };
+
+    std::vector<float> sL, sR, s2L, s2R, pL, pR;
+    capture (0, sL, sR);
+    capture (0, s2L, s2R);             // self-consistency: two serial runs must match
+    capture (testWorkers, pL, pR);
+    engine.setWorkerCountForTest (0);   // leave the engine serial for later tests
+
+    auto maxAbsDiff = [] (const std::vector<float>& a, const std::vector<float>& b)
+    {
+        const size_t m = juce::jmin (a.size(), b.size());
+        float d = 0.0f;
+        for (size_t i = 0; i < m; ++i) d = juce::jmax (d, std::abs (a[i] - b[i]));
+        return d;
+    };
+
+    const size_t n = jmin (sL.size(), pL.size());
+    float peak = 0.0f;
+    for (size_t i = 0; i < n; ++i)
+        peak = jmax (peak, std::abs (sL[i]), std::abs (sR[i]));
+
+    const float serialDiff   = jmax (maxAbsDiff (sL, s2L), maxAbsDiff (sR, s2R));
+    const float parallelDiff = jmax (maxAbsDiff (sL, pL),  maxAbsDiff (sR, pR));
+
+    // The real invariant: enabling workers must not change the mix any more than
+    // re-running serial does. We compare parallelDiff against the serial-vs-serial
+    // baseline (not an absolute floor) because the serial path itself isn't
+    // bit-deterministic across two prepare+drive cycles — and a buggy reduce
+    // (dropped/double-counted strip, wrong lane partition) would push parallelDiff
+    // to ~unity, far past serialDiff + the pure 16-way sum-reorder term.
+    constexpr float kReassocTol = 2.0e-5f;
+    const bool sizeOK    = sL.size() == pL.size() && sL.size() == s2L.size() && n > 0;
+    const bool signalOK  = peak > 1.0e-3f;                  // we actually drove signal
+    const bool matchOK   = testWorkers == 0 || parallelDiff <= serialDiff + kReassocTol;
+    const bool pass      = sizeOK && signalOK && matchOK;
+
+    return juce::String::formatted (
+        "%s Parallel Matches Serial (%d active tracks, %d workers vs serial)\n"
+        "      serial-vs-serial = %.3e   serial-vs-parallel = %.3e   (reassoc tol %.1e, peak %.4f)%s",
+        fmtPassFail (pass).toRawUTF8(),
+        activeTracks, testWorkers,
+        (double) serialDiff, (double) parallelDiff, (double) kReassocTol, (double) peak,
+        testWorkers == 0 ? "  [host < 3 cores: parallel == serial by construction]"
+        : ! signalOK      ? "  <-- no signal reached the mix"
+        : ! matchOK       ? "  <-- parallel diverged from serial beyond the serial baseline"
+                          : "");
+}
+
 juce::String AudioPipelineSelfTest::runAll()
 {
     juce::StringArray report;
@@ -1004,6 +1153,7 @@ juce::String AudioPipelineSelfTest::runAll()
     report.add (testCompEachMode());
     report.add (testCompHeavyGR());
     report.add (testCompPerTrack());
+    report.add (testParallelMatchesSerial());
     report.add ("");
 
    #if defined(__linux__)
@@ -1016,21 +1166,44 @@ juce::String AudioPipelineSelfTest::runAll()
     report.add ("");
    #endif
 
-    // Restore session state, then re-attach the engine BEFORE the backend
-    // cycle. Without this, every setCurrentAudioDeviceType / setAudioDeviceSetup
-    // below opens the hardware PCM with no audio callback registered, so the
-    // device thread streams whatever's in the kernel/driver buffer
-    // (uninitialised memory, stale samples, or PipeWire-graph residue).
-    // Audibly that's the "test button distortion" - speakers connected during
-    // the test cycle hear noise on each device transition. With the engine
-    // attached, the audio thread writes a silent master mix on every
-    // callback (no inputs to process), so transitions are clean.
-    restoreState (savedSession);
+    // Re-attach the engine BEFORE the backend cycle. Without an audio callback
+    // registered, every setCurrentAudioDeviceType / setAudioDeviceSetup below
+    // opens the hardware PCM and the device thread streams whatever's in the
+    // kernel/driver buffer (uninitialised memory, stale samples, PipeWire-graph
+    // residue) - the "test button distortion" speakers hear on each transition.
+    // With the engine attached the audio thread writes a silent master mix, so
+    // transitions are clean - BUT a restored armed/monitored track would route
+    // live input straight to the speakers while each device is open. So probe
+    // with monitoring forced OFF on every track, then restore the user's real
+    // session once the cycle (which opens real devices) is done.
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        session.track (t).inputMonitor.store (false, std::memory_order_relaxed);
+        session.track (t).recordArmed.store  (false, std::memory_order_relaxed);
+        // Clearing monitor/arm stops LIVE input, but a self-generating plugin
+        // (drone synth, noise box) on an unmuted track would still reach the
+        // speakers while real devices are open. Hard-mute + clear solo for
+        // unconditional silence (same enforcement prepareCleanState uses for the
+        // synthetic tests). restoreState(savedSession) below reverts both.
+        session.track (t).strip.mute.store (true,  std::memory_order_relaxed);
+        session.track (t).strip.solo.store (false, std::memory_order_relaxed);
+    }
+    // Bus solos too: a soloed bus gates the master mix via the SIP solo logic,
+    // so leave none set while probing.
+    for (int b = 0; b < Session::kNumBuses; ++b)
+        session.bus (b).strip.solo.store (false, std::memory_order_relaxed);
+    session.recomputeRtCounters();
+    // The synthetic tests force the engine serial (setWorkerCountForTest(0));
+    // restore the live configured worker pool before re-attaching.
+    engine.applyDesiredWorkers();
     deviceManager.addAudioCallback (&engine);
 
     report.add (testBackendsOpenCleanly());
     report.add ("");
     report.add (probeUMC1820AlsaFormat());
+
+    // Probe done (devices opened/closed) - reinstate the user's real session.
+    restoreState (savedSession);
 
     report.add ("");
     report.add ("=== End of Self-Test ===");
@@ -1042,7 +1215,8 @@ juce::String AudioPipelineSelfTest::runPerfBenchmark (const juce::String& label,
                                                       int numActiveTracks,
                                                       bool eqEnabled, bool compEnabled,
                                                       bool tapeOn, int oversamplingFactor,
-                                                      int numWarmupBlocks, int numMeasureBlocks)
+                                                      int numWarmupBlocks, int numMeasureBlocks,
+                                                      int workerCount)
 {
     // Configure session for the requested load. prepareCleanState mutes
     // tracks 1..15 - un-mute the requested count and force a non-trivial
@@ -1075,6 +1249,11 @@ juce::String AudioPipelineSelfTest::runPerfBenchmark (const juce::String& label,
     session.master().tapeHQ.store      (false, std::memory_order_relaxed);
 
     engine.prepareForSelfTest (sampleRate, blockSize);
+
+    // prepareForSelfTest reconciled the pool to env/desiredWorkers; override it
+    // so the caller can benchmark a specific worker count. <0 = leave as-is.
+    if (workerCount >= 0)
+        engine.setWorkerCountForTest (workerCount);
 
     // Per-input synthetic sine. Different freq per channel so each EQ band
     // sees real energy and the comp's detector isn't running on identical
@@ -1219,7 +1398,37 @@ juce::String AudioPipelineSelfTest::runPerfSuite()
         report.add ("");
     }
 
+    // Multicore scaling: the heavy full-mixer config (the one that actually
+    // saturates a core) at serial vs cores-2 workers. The two median figures
+    // are the real speedup — e.g. a 4-core Pi 5 with 2 workers should roughly
+    // halve the per-block strip-DSP time. Worker count 0 = serial; > 0 fans the
+    // 24 strips across the pool.
+    const int parW = juce::jmax (0, juce::jmin (juce::SystemStats::getNumCpus() - 2, 15));
+    if (parW > 0)
+    {
+        report.add ("--- Multicore scaling (48k/256, 16ch + EQ + comp @1x) ---");
+        report.add (runPerfBenchmark ("serial (0 workers)                          ",
+                                       48000.0, 256, 16, true, true, false, /*ox*/ 1,
+                                       warm, meas, /*workers*/ 0));
+        report.add (runPerfBenchmark (juce::String (parW) + " worker"
+                                          + (parW == 1 ? "" : "s")
+                                          + " (cores-2)" + juce::String::repeatedString (" ", 22),
+                                       48000.0, 256, 16, true, true, false, /*ox*/ 1,
+                                       warm, meas, /*workers*/ parW));
+        report.add ("  (divide serial median by parallel median for the speedup)");
+        report.add ("");
+        // Leave the engine serial for any later use.
+        engine.setWorkerCountForTest (0);
+    }
+    else
+    {
+        report.add ("--- Multicore scaling: host has < 3 cores; serial only ---");
+        report.add ("");
+    }
+
     restoreState (saved);
+    // The perf sweep forces the engine serial; restore the configured pool.
+    engine.applyDesiredWorkers();
     deviceManager.addAudioCallback (&engine);
 
     report.add ("=== End of Engine Perf Benchmark ===");

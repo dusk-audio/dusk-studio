@@ -147,13 +147,13 @@ Dusk Studio ships its own ALSA backend ([src/engine/alsa/](src/engine/alsa/)) pl
 
 The Dusk Studio-native ALSA backend handles USB hot-unplug by surfacing the device error to the engine, which finalises any in-flight take. Details in [docs/USER_GUIDE.md](docs/USER_GUIDE.md#troubleshooting).
 
-## Out-of-process plugin host (Linux only, currently)
+## Out-of-process plugin host (opt-in, all platforms)
 
 ```bash
 DUSKSTUDIO_USE_OOP_PLUGINS=1 ./build-linux/DuskStudio_artefacts/Release/DuskStudio
 ```
 
-Routes new plugin loads through the `dusk-studio-plugin-host` child process so a misbehaving plugin can't take down the host. Currently Linux-only via `memfd_create` + `futex`. macOS (Mach ports) and Windows (named pipes) ports land in 1.0.
+Routes new plugin loads through the `dusk-studio-plugin-host` child process so a misbehaving plugin can't take down the host. Implemented on all three OSes (Linux via `memfd_create` + `futex`, macOS via Mach ports, Windows via named pipes). In-process is the default for the lowest editor latency; set `DUSKSTUDIO_USE_OOP_PLUGINS=1` to opt into the crash-isolating sandbox. Plugin **scanning** is always sandboxed regardless of this flag.
 
 ## Packaging the Linux tarball
 

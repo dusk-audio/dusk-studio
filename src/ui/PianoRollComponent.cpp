@@ -102,8 +102,15 @@ public:
 
     void visibilityChanged() override
     {
-        if (isVisible())
-            editor.grabKeyboardFocus();
+        if (! isVisible()) return;
+        // Deferred: at this point the modal host may not have finished
+        // showing, and a synchronous grab silently fails — the user then
+        // has to click into the field before typing.
+        juce::Component::SafePointer<TextInputPanel> safe (this);
+        juce::MessageManager::callAsync ([safe]
+        {
+            if (safe != nullptr) safe->editor.grabKeyboardFocus();
+        });
     }
 
 private:

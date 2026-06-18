@@ -6,6 +6,7 @@
 #include <vector>
 #include "EmbeddedModal.h"
 #include "DuskComboBox.h"
+#include "DuskAudioDeviceSelector.h"
 
 namespace duskstudio
 {
@@ -37,7 +38,7 @@ private:
     juce::AudioDeviceManager& deviceManager;
     AudioEngine& engine;
     Session& session;
-    std::unique_ptr<juce::AudioDeviceSelectorComponent> selector;
+    std::unique_ptr<DuskAudioDeviceSelector> selector;
 
     // Physical output pair for the main mix. Defaults to outputs 1-2; pick
     // another pair when the device has more outputs enabled.
@@ -60,6 +61,12 @@ private:
     // and the master tape sat. Per-channel comp + EQ stay native.
     juce::Label    oversamplingLabel { {}, "Effect Oversampling" };
     DuskComboBox oversamplingCombo;
+
+    // Per-machine (AppConfig): fan the 24 strips' DSP across worker threads.
+    // Off / Auto (cores-2) / a pinned count. Live-applied via the same
+    // detach/reattach re-prepare as oversampling.
+    juce::Label    multicoreLabel { {}, "Multicore DSP" };
+    DuskComboBox multicoreCombo;
 
     // Engine resolves selection to a real input index on every
     // hot-plug rebuild and feeds clock bytes to MidiSyncReceiver.
@@ -115,7 +122,7 @@ private:
     juce::Label generalSectionLabel       { {}, "General" };
     juce::Label advancedSectionLabel      { {}, "Advanced" };
     juce::ToggleButton tapeStripExpandedToggle { "Expand tape strip by default" };
-    juce::Label        stopBehaviorLabel       { {}, "On Stop:" };
+    juce::Label        stopBehaviorLabel       { {}, "Playhead on Stop:" };
     juce::ComboBox     stopBehaviorCombo;
 
     // Captured during resized() + drawn by paint() as thin horizontal
@@ -126,6 +133,7 @@ private:
     void applyPeriodsChange();
 #endif
     void applyOversamplingChange();
+    void applyMulticoreChange();
     void applyUiScaleChange();
     void applyRescan();
     void openSelfTest();

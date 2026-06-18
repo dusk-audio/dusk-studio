@@ -1005,7 +1005,7 @@ struct MasteringParams
     // MasteringDigitalEq::prepare idle state.
     static constexpr int kNumEqBands = 5;
     std::atomic<bool>  eqEnabled       { false };
-    std::atomic<float> eqBandFreq[kNumEqBands]  { 80.0f, 250.0f, 1000.0f, 4000.0f, 12000.0f };
+    std::atomic<float> eqBandFreq[kNumEqBands]  { 50.0f, 250.0f, 1000.0f, 4000.0f, 12000.0f };
     std::atomic<float> eqBandGainDb[kNumEqBands]{ 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
     std::atomic<float> eqBandQ[kNumEqBands]     { 0.7f, 1.0f, 1.0f, 1.0f, 0.7f };
 
@@ -1149,7 +1149,7 @@ public:
     // 1 = native, 2 = 2× ox, 4 = 4× ox. Read by MasterBus + BusStrip in
     // prepare. Changing requires re-prepare. Atomic for future audio-
     // thread reads but today only message-thread prepare reads it.
-    std::atomic<int> oversamplingFactor { 4 };
+    std::atomic<int> oversamplingFactor { 1 };
 
     // tempoBpm = 0 disables beat-grid (metronome silent, snap falls
     // back to seconds). Atomics so audio picks up changes lock-free.

@@ -312,6 +312,7 @@ target_sources(DuskStudio PRIVATE
     src/ui/AudioSettingsPanel.cpp
     src/ui/AuxLaneComponent.cpp
     src/ui/DuskAlerts.cpp
+    src/ui/DuskAudioDeviceSelector.cpp
     src/ui/DuskComboBox.cpp
     src/ui/DuskContextMenu.cpp
     src/ui/CursorOverlay.cpp

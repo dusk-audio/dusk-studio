@@ -29,16 +29,16 @@ public:
 
         // Build the FileBrowserComponent. Flag bitmask follows juce's
         // contract: openMode/saveMode + canSelectFiles or canSelectDirectories.
-        int flags = (opts.mode == Mode::Save)
+        int browserFlags = (opts.mode == Mode::Save)
                         ? (int) juce::FileBrowserComponent::saveMode
                         : (int) juce::FileBrowserComponent::openMode;
-        flags |= opts.selectDirectories
+        browserFlags |= opts.selectDirectories
                     ? (int) juce::FileBrowserComponent::canSelectDirectories
                     : (int) juce::FileBrowserComponent::canSelectFiles;
         if (opts.mode == Mode::Save && opts.warnAboutOverwriting)
-            flags |= (int) juce::FileBrowserComponent::warnAboutOverwriting;
+            browserFlags |= (int) juce::FileBrowserComponent::warnAboutOverwriting;
         if (multi)
-            flags |= (int) juce::FileBrowserComponent::canSelectMultipleItems;
+            browserFlags |= (int) juce::FileBrowserComponent::canSelectMultipleItems;
 
         // Filter: simple wildcard filter. Empty pattern = any file.
         if (opts.filePatternsAllowed.isNotEmpty())
@@ -51,9 +51,17 @@ public:
                                 : juce::File::getSpecialLocation (
                                       juce::File::userHomeDirectory);
         browser = std::make_unique<juce::FileBrowserComponent> (
-            flags, initial, filter.get(), /*previewComp*/ nullptr);
+            browserFlags, initial, filter.get(), /*previewComp*/ nullptr);
         browser->addListener (this);
         addAndMakeVisible (*browser);
+
+        // FileBrowserComponent doesn't expose its filename label; retitle it
+        // for save dialogs where "file:" reads wrong next to a name field.
+        if (opts.mode == Mode::Save)
+            for (auto* child : browser->getChildren())
+                if (auto* l = dynamic_cast<juce::Label*> (child))
+                    if (l->getText() == TRANS ("file:"))
+                        l->setText (TRANS ("Name:"), juce::dontSendNotification);
 
         titleLabel.setText (opts.title.isNotEmpty() ? opts.title
                                                        : (opts.mode == Mode::Save ? "Save file"

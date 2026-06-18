@@ -8,6 +8,7 @@
 #include "DuskStudioLookAndFeel.h"
 #include "ConsoleView.h"
 #include "MultiImportTargetPicker.h"
+#include "AppConfig.h"
 #include "../engine/AudioEngine.h"
 #include "../session/Session.h"
 
@@ -172,7 +173,7 @@ private:
     void setLastWrittenAutosaveJson (const juce::String& json);
 
     Session session;
-    AudioEngine engine { session };
+    AudioEngine engine { session, appconfig::resolveWorkerCount() };
 
     DuskStudioLookAndFeel lookAndFeel;
 
@@ -234,6 +235,7 @@ private:
     EmbeddedModal importTargetModal;
     EmbeddedModal scanModal;
     EmbeddedModal shortcutsModal;
+    EmbeddedModal supportersModal;
     void openShortcuts();
 
     // Scan-on-startup runs asynchronously behind a progress modal. Triggered

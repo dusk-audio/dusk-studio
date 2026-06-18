@@ -77,6 +77,7 @@ private:
     juce::Label   emptyLabel;
     juce::Label   updateLabel;       // hidden until setUpdateAvailable
     bool          updateFlashOn = true;
+    int           updateBlinkCount = 0;
 
     juce::TableListBox table;
 

@@ -18,7 +18,7 @@ colorlinks: true
 
 Dusk Studio is a deliberately constrained, portastudio-style digital audio workstation. It records up to 24 tracks of audio or MIDI, runs every track through a fixed signal chain inspired by classic analog consoles, and bounces a finished mix to a stereo WAV. It does not host a thousand plug-ins on a thousand tracks. It does not have tabbed views or hidden panels. Everything is on screen, all the time.
 
-This manual covers Dusk Studio v1. It is written for musicians and engineers who want a reference for every control, every shortcut, and every workflow the program supports. Read it cover to cover the first time and skim by section thereafter.
+This manual covers Dusk Studio (Beta). It is written for musicians and engineers who want a reference for every control, every shortcut, and every workflow the program supports. Read it cover to cover the first time and skim by section thereafter.
 
 ## What's in the box
 
@@ -166,7 +166,7 @@ This chapter is a visual reference. Every numbered callout on the figures below 
 | 8   | Virtual keyboard | Opens the on-screen MIDI keyboard overlay.                                       |
 | 9   | Metronome        | Click on / off. Right-click for the click settings.                              |
 | 10  | C/I              | Count-in toggle. One bar of click before record starts.                          |
-| 11  | BPM              | Tempo at the playhead (read-only display). Set the tempo by right-clicking the timeline ruler; **TAP** sets the starting tempo. |
+| 11  | BPM              | Tempo at the playhead. Double-click to set it directly (in a session with tempo changes, edits the change governing the playhead); or set the tempo from the timeline ruler. **TAP** sets the starting tempo. |
 | 12  | TAP              | Tap repeatedly to set the **starting** tempo from your wrist.                    |
 | 13  | Time signature   | Click to choose. Custom signatures supported.                                    |
 | 14  | Clock display    | Bars.Beats.Ticks or mm:ss.mmm; right-click to flip.                              |
@@ -322,7 +322,7 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 - **macOS**: 14.4 (Sonoma) or later for the out-of-process plugin sandbox; older macOS still runs plugins in-process.
 - **Windows**: Windows 10 or later, ASIO driver recommended.
 
-Any modern multi-core CPU (Intel, AMD, or Apple Silicon) is sufficient for a 24-track session at 48 kHz. The compressor and EQ on every channel are oversampled when the global oversampling factor is raised; expect roughly 2–3× CPU on the mix engine when you select 4× oversampling.
+Any modern multi-core CPU (Intel, AMD, or Apple Silicon) is sufficient for a 24-track session at 48 kHz. With **Multicore DSP** set to Auto (the default — see *Settings → Advanced*), the channel-strip work is shared across the available cores, so even small machines such as a 4-core Raspberry Pi 5 can carry a full 24-track session with the per-channel EQ and compressor. The compressor and EQ on every channel are oversampled when the global oversampling factor is raised; expect roughly 2-3× the mix-engine CPU at 4× oversampling (keep oversampling at 1× on low-power machines).
 
 ## Installing Dusk Studio
 
@@ -456,8 +456,9 @@ A single button opens the **MIDI Bindings** panel, which lists every CC-to-contr
 
 ### Advanced
 
-- **Effect oversampling**: 1×, 2×, or 4×. Raises the internal sample rate of every channel EQ and compressor, every bus EQ and compressor, the master EQ and compressor, and the mastering EQ and compressor. Reduces aliasing on saturation stages at the cost of CPU. Tape saturation has its own internal oversampling controlled separately.
-- **Run self-test**: runs Dusk Studio's headless audio engine against a synthetic test signal and reports pass/fail.
+- **Effect oversampling**: 1×, 2×, or 4×. Defaults to 1× (native). Raises the internal sample rate of every channel EQ and compressor, every bus EQ and compressor, the master EQ and compressor, and the mastering EQ and compressor. Reduces aliasing on saturation stages at the cost of CPU — roughly 2-3× the mix-engine CPU at 4×, and needs a buffer of 256 samples or more at 48 kHz. Tape saturation follows this same setting.
+- **Multicore DSP**: spreads the per-block DSP of the 24 channel strips across several CPU cores instead of running them all on the single audio thread. **Auto** (default) uses *cores − 2* worker threads on machines with 4 or more cores — leaving one core for the interface and one for the operating system — and falls back to single-core on smaller machines. **Off** forces the single-core path; you can also pin an explicit worker count. This is a **per-machine** setting: it is stored on this computer and is **not** saved in the session, so a project made on a many-core workstation will not overload a smaller machine (a 4-core Raspberry Pi 5, say) when you open it there. The bus, aux, and master stages always run on the audio thread; only the channel strips fan out, and on a quad-core machine that heavy strip work runs roughly three times faster. Hosted plugins on those strips process on the worker threads too; in the unlikely event a specific plugin misbehaves with this enabled, switch it Off.
+- **Run self-test**: runs Dusk Studio's headless audio engine against a synthetic test signal and reports pass/fail. The suite includes a determinism check that the multicore mix matches the single-core mix sample-for-sample (within floating-point rounding).
 
 \newpage
 
@@ -516,7 +517,7 @@ From left to right:
 - **Virtual keyboard** (⌨). Opens an on-screen MIDI keyboard.
 - **Metronome** (♩). Toggles the click. Right-click for click settings.
 - **C/I**. Toggles count-in (one bar of click before record starts).
-- **BPM**. A read-only display of the tempo at the playhead (it follows tempo-map changes). Set the tempo by right-clicking the timeline ruler; **TAP** sets the starting tempo.
+- **BPM**. The tempo at the playhead (it follows tempo-map changes). Double-click it to set the tempo directly (in a session with tempo changes, this edits the change governing the playhead); you can also set it from the timeline ruler. **TAP** sets the starting tempo.
 - **TAP**. Click on each beat; Dusk Studio averages the last four intervals over a two-second window and sets the tempo.
 - **Time signature**. Click to choose from common signatures or enter a custom one.
 - **Clock display**. Shows the current playhead position. Right-click to flip between **Bars.Beats.Ticks** (e.g. `5.2.120`) and **mm:ss.mmm** (e.g. `01:23.456`).
@@ -698,7 +699,7 @@ The fader is automatable. The automation modes are **OFF** (no automation), **RE
 Below the fader:
 
 - **M** (mute). Lights red when on.
-- **S** (solo). Lights blue when on. Solo is **solo-in-place, additive**: every un-soloed track is muted while any track is soloed; soloing multiple tracks plays them all together. There is no PFL or AFL mode in v1.
+- **S** (solo). Lights blue when on. Solo is **solo-in-place, additive**: every un-soloed track is muted while any track is soloed; soloing multiple tracks plays them all together. There is no PFL or AFL mode.
 - **Ø** (phase invert). Lights yellow when on. Inverts the polarity of the channel's audio before the insert.
 
 ## Bus assigns
@@ -886,11 +887,13 @@ Three columns of DSP, each with its own enable toggle:
 
 ### Digital 5-band EQ
 
-A clean linear-phase-style mastering EQ.
+A clean linear-phase-style mastering EQ. A real-time spectrum analyzer (FFT)
+draws the post-EQ frequency content behind the response curve; toggle it with
+the **FFT** button in the panel's top-left.
 
 | Band | Type       | Default freq | Gain   | Q       |
 | ---- | ---------- | ------------ | ------ | ------- |
-| 0    | Low shelf  | 80 Hz        | ±12 dB | n/a     |
+| 0    | Low shelf  | 50 Hz        | ±12 dB | n/a     |
 | 1    | Peaking    | 250 Hz       | ±12 dB | 0.4–4.0 |
 | 2    | Peaking    | 1 kHz        | ±12 dB | 0.4–4.0 |
 | 3    | Peaking    | 4 kHz        | ±12 dB | 0.4–4.0 |
@@ -927,7 +930,7 @@ A streaming-platform preset picker (Spotify, Apple Music, YouTube, Netflix, etc.
 
 ## Exporting the master
 
-**Export master…** renders the mastering chain offline to `master.wav` in the session folder. A progress dialog shows the output path and a bar; the render runs as fast as the CPU allows and you can cancel mid-render. The output is **stereo 24-bit WAV at the current device sample rate** (Dusk Studio does not offer per-export format options in v1).
+**Export master…** renders the mastering chain offline to `master.wav` in the session folder. A progress dialog shows the output path and a bar; the render runs as fast as the CPU allows and you can cancel mid-render. The output is **stereo 24-bit WAV at the current device sample rate** (Dusk Studio does not offer per-export format options).
 
 \newpage
 
@@ -988,7 +991,7 @@ To repeat a section while you experiment:
 2. Click the **Loop** button on the transport bar.
 3. Press Play (for loop playback) or Record (for loop recording).
 
-In loop play, the transport wraps at the loop boundary indefinitely. In loop record, playback wraps but recording stays linear — you get a single take that extends from the loop start to wherever you press Stop. There is no take-stacking loop recording in v1.
+In loop play, the transport wraps at the loop boundary indefinitely. In loop record, playback wraps but recording stays linear — you get a single take that extends from the loop start to wherever you press Stop. There is no take-stacking loop recording.
 
 ## Where files are saved
 
@@ -1103,7 +1106,7 @@ Right-click a region to see a take submenu (if more than one take exists), or us
 
 ## Markers
 
-Press **M** to drop a marker at the current playhead. A marker pill appears in the ruler's lower band.
+Press **M** to drop a marker at the current playhead. A marker pill appears in the ruler's lower band, and a naming prompt opens with the auto-generated name pre-selected — type the real name and press Enter, or press Escape to keep the default. Adding a marker from the ruler's right-click menu prompts the same way.
 
 - Drag a marker pill to move it.
 - Right-click for **Rename** and **Delete**.
@@ -1159,7 +1162,7 @@ The top is a row of icon buttons:
 
 The region editor's edit-mode toolbar offers **Grab**, **Range**, **Cut**, **Draw**. Most editing uses Grab. Range lets you highlight a time band for split or fade-fit. Cut splits the region at every click. Draw is the automation pencil: with an automation lane selected (see below) it draws a freehand breakpoint curve; with no lane selected it does nothing (it never moves the region).
 
-**Tempo** is edited on the **timeline ruler** (the top band of the tape strip), in any edit mode — it's the only place tempo is set (the transport BPM field is a read-only playhead readout). **Double-click a tempo marker (its triangle or BPM number) to change its value**; double-click the dimmed bar-1 handle to set the starting tempo. **Drag a tempo marker left or right to move it** (it snaps to the grid when SNAP is on; the bar-1 starting tempo stays anchored). **Right-click** the ruler for the full menu: its *Tempo* section offers **Set tempo here…** on an empty spot (adds a tempo change at that bar — type the BPM); **Set tempo… / Delete tempo** on an existing marker (right-clicking anywhere in the ruler column under the number lands on it); and **Set starting tempo…** on the bar-1 handle before any changes exist. The bar grid re-flows to follow, and **MIDI playback and the metronome track the tempo changes** too. The first change you add seeds a point at bar 1 from the starting tempo, so the bars before it keep that tempo. (Audio regions are never time-stretched — only MIDI follows the tempo map.)
+**Tempo** is edited on the **timeline ruler** (the top band of the tape strip), in any edit mode — it's where the tempo map is edited (the transport BPM field shows the tempo at the playhead; double-click it to set that tempo directly — in a session with tempo changes it edits the change governing the playhead). **Double-click a tempo marker (its triangle or BPM number) to change its value**; double-click the dimmed bar-1 handle to set the starting tempo. **Drag a tempo marker left or right to move it** (it snaps to the grid when SNAP is on; the bar-1 starting tempo stays anchored). **Right-click** the ruler for the full menu: its *Tempo* section offers **Set tempo here…** on an empty spot (adds a tempo change at that bar — type the BPM); **Set tempo… / Delete tempo** on an existing marker (right-clicking anywhere in the ruler column under the number lands on it); and **Set starting tempo…** on the bar-1 handle before any changes exist. The bar grid re-flows to follow, and **MIDI playback and the metronome track the tempo changes** too. The first change you add seeds a point at bar 1 from the starting tempo, so the bars before it keep that tempo. (Audio regions are never time-stretched — only MIDI follows the tempo map.)
 
 The **Snap** toggle and its grid-resolution button sit in the header, to the left of the zoom (− / + / Fit) cluster — visible whenever the **TIMELINE** is open. Click **Snap** to turn grid snapping on/off; click the resolution button (e.g. *1/4 Note*) to pick the grid (Bar, 1/2, 1/4, 1/8, 1/16, 1/32, plus triplet and dotted variants). The setting is saved with the session.
 
@@ -1311,7 +1314,7 @@ Dusk Studio's solo is **solo-in-place, additive**:
 - Press **S** on a second track to add it to the solo set.
 - Press **S** again to remove it.
 
-There is no PFL (pre-fader listen) or AFL (after-fader listen) mode in v1. If you need to audition without the effects of the channel strip, set the **IN** monitor toggle and pull the rest of the mix down.
+There is no PFL (pre-fader listen) or AFL (after-fader listen) mode. If you need to audition without the effects of the channel strip, set the **IN** monitor toggle and pull the rest of the mix down.
 
 ## Automation
 
@@ -1470,7 +1473,7 @@ The status label shows one of:
 - `Detected: N samples (X.X ms)` — measurement succeeded, the value is filled in.
 - `Ping failed — check level / cables` — no correlation peak found.
 
-Run the ping after any change to your interface routing or your external gear's settings. There is no automatic re-ping on session load in v1; you ping when you set up the insert and re-ping if anything in the chain changes.
+Run the ping after any change to your interface routing or your external gear's settings. There is no automatic re-ping on session load; you ping when you set up the insert and re-ping if anything in the chain changes.
 
 ## Latency compensation
 
@@ -1533,7 +1536,7 @@ Once connected:
 - **Bank Left** / **Bank Right** step the bank by 8.
 - **Channel Left** / **Channel Right** step the selected channel by 1.
 - **Mute / Solo / Arm / Select** buttons mirror and drive the on-screen buttons. LEDs reflect state.
-- **V-pot** rotaries drive pan, sends, EQ band gain, or compressor depending on the **assign mode**. Press **Pan**, **Send** (repeated presses cycle sends 1–4), **EQ**, or the **Track** button (mapped to the compressor in Dusk Studio) to switch. The surface's **Plugin** and **Inst** assign buttons are not mapped in v1.
+- **V-pot** rotaries drive pan, sends, EQ band gain, or compressor depending on the **assign mode**. Press **Pan**, **Send** (repeated presses cycle sends 1–4), **EQ**, or the **Track** button (mapped to the compressor in Dusk Studio) to switch. The surface's **Plugin** and **Inst** assign buttons are not mapped.
 - **Transport buttons** map to Play, Stop, Record, Rewind, Forward, Loop.
 - **Jog wheel** scrubs the playhead.
 - **Touch sense** drives Touch automation: touching a fader on the surface puts it into touch-write mode while you hold it.
@@ -1677,7 +1680,7 @@ To export your finished mix as a stereo audio file:
 2. A file browser opens at the session folder; pick or rename the destination WAV and confirm.
 3. A progress dialog renders the project offline. **Cancel** stops the render.
 
-The output is always **stereo 24-bit WAV at the current device sample rate**, with a fixed 5-second tail so reverb and compression ringouts decay naturally. Dusk Studio offers no per-bounce format options in v1.
+The output is always **stereo 24-bit WAV at the current device sample rate**, with a fixed 5-second tail so reverb and compression ringouts decay naturally. Dusk Studio offers no per-bounce format options.
 
 Dusk Studio detaches from the realtime audio device and renders the project offline as fast as the CPU allows. When the bounce completes, the audio device is automatically re-attached.
 
@@ -1911,7 +1914,7 @@ The hardware-insert latency ping could not find a correlation peak.
 ## Session won't open
 
 - Check that the session folder contains both `session.json` and an `audio/` subfolder.
-- If `session.json` is missing but an autosave file exists (look for `session.autosave.json` in the same folder), rename it to `session.json` and try again.
+- If `session.json` is missing but an autosave file exists (look for `session.json.autosave` in the same folder), rename it to `session.json` and try again.
 - Open `session.json` in a text editor to confirm it parses as JSON — a power loss during a non-atomic save on an old filesystem could in theory corrupt it. The atomic-write strategy makes this extremely unlikely.
 
 ## Missing audio files
@@ -2041,6 +2044,12 @@ Two variants:
 - **When**: Help → About.
 - **Text**: "Dusk Studio [version]. Portastudio-style DAW. Built [date] [time]."
 - **Buttons**: OK (or click outside / Esc).
+
+### Supporters
+
+- **When**: Settings → Supporters.
+- **Shows**: the Patreon supporters who fund development, grouped by tier (Champions / Patrons / Supporters / Hugs, plus past supporters). Scrolls when the list outgrows the panel.
+- **Buttons**: Close (or click outside / Esc).
 
 ## Import / Export
 
@@ -2221,7 +2230,7 @@ The hardware-insert ping reports its result inline on the editor (not a modal), 
 | Block     | Param                            | Range         | Default     |
 | --------- | -------------------------------- | ------------- | ----------- |
 | EQ        | Enable                           | Off / On      | Off         |
-| EQ band 0 | Low shelf, 80 Hz, ±12 dB         |               | 0 dB        |
+| EQ band 0 | Low shelf, 50 Hz, ±12 dB         |               | 0 dB        |
 | EQ band 1 | Peaking, 250 Hz, ±12 dB, Q 0.4–4 |               | 0 dB, Q 1.0 |
 | EQ band 2 | Peaking, 1 kHz, ±12 dB, Q 0.4–4  |               | 0 dB, Q 1.0 |
 | EQ band 3 | Peaking, 4 kHz, ±12 dB, Q 0.4–4  |               | 0 dB, Q 1.0 |
