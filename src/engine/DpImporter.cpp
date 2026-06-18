@@ -68,16 +68,19 @@ constexpr int    kPanByte         = 18;
 constexpr int    kSentinelByte    = 19;
 constexpr juce::uint8 kSentinel   = 0x2A;
 constexpr juce::uint8 kFaderUnity = 0x69;   // power-on default == treat as 0 dB
+constexpr int kMuteArrayBase = 0x268;       // 1 byte per channel, 1 = muted (SONG_0005 ch6)
 
-// 3-band EQ bytes within a strip record (DP-24 manual p.101 CC mapping).
-constexpr int kEqSwByte    = 4;   // 0/1
-constexpr int kLowGainByte = 5;   // 0..24, 12 = 0 dB
-constexpr int kLowFreqByte = 6;   // index 0..31 into kFreqTable
-constexpr int kMidGainByte = 7;
-constexpr int kMidFreqByte = 8;   // index 0..63 into kFreqTable
-constexpr int kMidQByte    = 9;   // index 0..6 into kQTable
-constexpr int kHighGainByte = 10;
-constexpr int kHighFreqByte = 11; // index 0..31 -> kFreqTable[32 + idx]
+// 3-band EQ bytes within a strip record. Band order verified against the
+// SONG_0005 calibration song (ch1 LOW +6@70Hz, ch2 HIGH -6@7.5k, ch3 MID -4@1k
+// Q2): the device stores HIGH, MID, LOW in that order, NOT low-first.
+constexpr int kEqSwByte     = 4;   // 0/1
+constexpr int kHighGainByte = 5;   // 0..24, 12 = 0 dB
+constexpr int kHighFreqByte = 6;   // index 0..31 -> kFreqTable[32 + idx] (1.7k..18k)
+constexpr int kMidGainByte  = 7;
+constexpr int kMidFreqByte  = 8;   // index 0..63 into kFreqTable
+constexpr int kMidQByte     = 9;   // index 0..6 into kQTable
+constexpr int kLowGainByte  = 10;
+constexpr int kLowFreqByte  = 11;  // index 0..31 into kFreqTable (32..1.6k)
 
 // Shared 64-entry frequency table (Hz). Low band uses [0..31], Mid [0..63],
 // High [32..63]. Transcribed from the manual's Mid Freq list.
@@ -99,8 +102,9 @@ float faderByteToDb (juce::uint8 v) noexcept
         return (float) (v - kFaderUnity) / (127.0f - (float) kFaderUnity) * 6.0f;   // 0..+6 dB
     if (v == 0)
         return -100.0f;
-    // Below unity: perceptual taper down toward silence. Approximate.
-    const float db = 40.0f * std::log10 ((float) v / (float) kFaderUnity);
+    // Below unity: log taper toward silence, calibrated so byte 78 = -6.1 dB
+    // (SONG_0005 ground truth): coef = -6.1 / log10(78/105) ~= 47.3.
+    const float db = 47.3f * std::log10 ((float) v / (float) kFaderUnity);
     return juce::jlimit (-100.0f, 0.0f, db);
 }
 
@@ -151,20 +155,126 @@ std::vector<MixerStrip> decodeMixerScene (const juce::File& songSys)
         s.valid   = true;
         s.faderDb = faderByteToDb (rec[kFaderByte]);
         s.pan     = panByteToNorm (rec[kPanByte]);
-        s.mute    = false;   // no confidently-located per-strip mute flag yet
+        s.mute    = d[kMuteArrayBase + c] != 0;   // per-channel mute byte (1 = muted)
 
-        s.eqOn       = rec[kEqSwByte] != 0;
-        s.lowGainDb  = eqGainDb (rec[kLowGainByte]);
-        s.lowFreqHz  = freqAt   (rec[kLowFreqByte]);
+        s.highGainDb = eqGainDb (rec[kHighGainByte]);
+        s.highFreqHz = freqAt   (32 + (int) rec[kHighFreqByte]);
         s.midGainDb  = eqGainDb (rec[kMidGainByte]);
         s.midFreqHz  = freqAt   (rec[kMidFreqByte]);
         s.midQ       = qAt      (rec[kMidQByte]);
-        s.highGainDb = eqGainDb (rec[kHighGainByte]);
-        s.highFreqHz = freqAt   (32 + (int) rec[kHighFreqByte]);
+        s.lowGainDb  = eqGainDb (rec[kLowGainByte]);
+        s.lowFreqHz  = freqAt   (rec[kLowFreqByte]);
+        // byte 4 reads 0 even when EQ is set (SONG_0005), so it's not the on/off
+        // flag; enable when any band is non-flat.
+        s.eqOn = rec[kEqSwByte] != 0
+                 || s.lowGainDb != 0.0f || s.midGainDb != 0.0f || s.highGainDb != 0.0f;
 
         strips[(size_t) c] = s;
     }
     return strips;
+}
+
+// Clip timeline positions live in song.sys as u32 sample offsets (@ song SR) in
+// the metadata region between the two scene blocks. The device stores, per
+// placed clip, start and end (= start + length - 480; 480 = one 10ms overview
+// column). We don't need the exact record layout: collect every plausible u32
+// position in the region, then for each fragment (known length) find a start S
+// whose matching end S+length is also present. This pins each clip's start
+// without the still-unknown clip->track record fields. Verified on SONG_0002
+// (w/ mixdown) and SONG_0003 (no mixdown, same arrangement): identical, exact.
+//
+// Returns one start (in song-SR samples) per fragment in `lengths`, 0 when no
+// confident match (e.g. a take that sits at song start, or undecodable).
+constexpr int kPosRegionBegin = 0x340;   // after scene block 1, before the EQ-preset block
+constexpr int kPosRegionEnd   = 0x6a0;
+constexpr juce::int64 kEndTolerance = 600;   // ~12 ms slack on end = start + length
+
+constexpr int kSongLengthOffset = 0x364;   // u32 song length in samples @ song SR
+
+std::vector<juce::int64> decodeClipStarts (const juce::File& songSys,
+                                           const std::vector<juce::int64>& lengths)
+{
+    std::vector<juce::int64> starts (lengths.size(), 0);
+    juce::MemoryBlock mb;
+    if (! songSys.existsAsFile() || ! songSys.loadFileAsData (mb)) return starts;
+    if ((int) mb.getSize() != kSongSysSize) return starts;
+    const auto* d = (const juce::uint8*) mb.getData();
+
+    const juce::int64 songLen = (juce::int64) juce::ByteOrder::littleEndianInt (d + kSongLengthOffset);
+
+    // Candidate positions: every 4-byte-aligned u32 in [1, songLength] in the region.
+    std::vector<juce::int64> cand;
+    const juce::int64 hi = (songLen > 0 ? songLen : (juce::int64) 96000 * 60 * 60) + 2000;
+    for (int o = kPosRegionBegin; o + 4 <= kPosRegionEnd; o += 4)   // positions are 4-byte aligned
+    {
+        const juce::int64 v = (juce::int64) juce::ByteOrder::littleEndianInt (d + o);
+        if (v >= 1 && v <= hi) cand.push_back (v);
+    }
+    std::set<juce::int64> candSet (cand.begin(), cand.end());
+
+    // A near-full-length take spans the song and sits at 0; never length-match it
+    // (its hypothetical end coincides with song-end-ish values and false-matches).
+    const juce::int64 fullLenThresh = songLen > 0 ? (songLen * 85) / 100 : 0;
+
+    for (size_t i = 0; i < lengths.size(); ++i)
+    {
+        const juce::int64 L = lengths[i];
+        if (L <= 0) continue;
+        if (fullLenThresh > 0 && L >= fullLenThresh) continue;   // full-length take -> stays 0
+        juce::int64 best = -1;
+        for (const auto S : candSet)
+        {
+            if (S + L > hi) continue;
+            // accept if some candidate end is within tolerance of S + L.
+            bool endFound = false;
+            for (juce::int64 e = S + L - kEndTolerance; e <= S + L && ! endFound; ++e)
+                if (candSet.count (e)) endFound = true;
+            if (endFound && (best < 0 || S < best)) best = S;
+        }
+        if (best > 0) starts[i] = best;
+    }
+    return starts;
+}
+
+// Locate marks (intro/verse/chorus/punch/end) live in song.sys as stride-8
+// records {u32 position(samples), u32 index<<24} just past the clip-position
+// fields. Position must be in (0, songLen]; the second word's low 24 bits are
+// zero and the high byte is the 1-based mark number. Verified on
+// /Volumes/DP-24/MUSIC SONG_0002/3 (2 marks) and 003/Whiskey (7 marks @ 21/55/
+// 89/140/174/208/242 s).
+constexpr int kMarkerRegionBegin = 0x388;
+constexpr int kMarkerRegionEnd   = 0x460;
+constexpr int kTempoOffset = 0x6d8;   // u8 BPM; verified 107 (SONG_0004) / 93 (SONG_0005)
+
+// Song tempo from song.sys (u8 BPM). Returns 0 if undecodable / out of range.
+int readTempoBpm (const juce::File& songSys)
+{
+    juce::MemoryBlock mb;
+    if (! songSys.existsAsFile() || ! songSys.loadFileAsData (mb)) return 0;
+    if ((int) mb.getSize() != kSongSysSize) return 0;
+    const int bpm = ((const juce::uint8*) mb.getData())[kTempoOffset];
+    return (bpm >= 20 && bpm <= 250) ? bpm : 0;
+}
+
+std::vector<DpMarker> decodeMarkers (const juce::File& songSys)
+{
+    std::vector<DpMarker> out;
+    juce::MemoryBlock mb;
+    if (! songSys.existsAsFile() || ! songSys.loadFileAsData (mb)) return out;
+    if ((int) mb.getSize() != kSongSysSize) return out;
+    const auto* d = (const juce::uint8*) mb.getData();
+    const juce::int64 songLen = (juce::int64) juce::ByteOrder::littleEndianInt (d + kSongLengthOffset);
+    if (songLen <= 0) return out;
+
+    for (int o = kMarkerRegionBegin; o + 8 <= kMarkerRegionEnd; o += 8)
+    {
+        const juce::int64 pos  = (juce::int64) juce::ByteOrder::littleEndianInt (d + o);
+        const juce::uint32 iw  = (juce::uint32) juce::ByteOrder::littleEndianInt (d + o + 4);
+        const int idx = (int) (iw >> 24);
+        if (pos > 0 && pos <= songLen && (iw & 0x00FFFFFFu) == 0 && idx >= 1 && idx <= 64)
+            out.push_back ({ pos, idx });
+    }
+    return out;
 }
 } // namespace
 
@@ -282,6 +392,16 @@ SongScan scanSongFolder (const juce::File& folder)
                 warn.add (juce::String::formatted ("ZZ%04d: unreadable WAV header; skipped.", idx));
                 continue;
             }
+            // A real stereo pair is two equal-format mono files. Reject halves
+            // that disagree on sample rate / bit depth, or aren't single-channel.
+            if (std::abs (h1.sampleRate - h2.sampleRate) > 0.5
+                || h1.bitDepth != h2.bitDepth
+                || h1.numChannels != 1 || h2.numChannels != 1)
+            {
+                warn.add (juce::String::formatted (
+                    "ZZ%04d: stereo halves have mismatched format; skipped.", idx));
+                continue;
+            }
             if (h1.lengthSamples != h2.lengthSamples)
                 warn.add (juce::String::formatted ("ZZ%04d: stereo halves differ in length; using left length.", idx));
             frag.stereo        = true;
@@ -380,12 +500,36 @@ SongScan scanSongFolder (const juce::File& folder)
         scan.mixdownFile = f;
         if (stem.equalsIgnoreCase (folder.getFileName())) break;    // prefer <SongName>.WAV
     }
-    scan.timelineDecoded = false;
-    if (scan.hasMixdown)
-        warn.add ("Timeline can be aligned to the mixdown \"" + scan.mixdownFile.getFileName()
-                  + "\" (experimental); otherwise tracks land at song start.");
+    // Clip start positions from song.sys (device's own data; works with no mixdown).
+    std::vector<juce::int64> lengths;
+    lengths.reserve (scan.tracks.size());
+    for (const auto& t : scan.tracks) lengths.push_back (t.fragment.lengthSamples);
+    const auto starts = decodeClipStarts (folder.getChildFile ("song.sys"), lengths);
+    int placedFromSys = 0;
+    for (size_t i = 0; i < scan.tracks.size() && i < starts.size(); ++i)
+    {
+        scan.tracks[i].timelineStart = starts[i];   // song-SR samples
+        if (starts[i] > 0) ++placedFromSys;
+    }
+    scan.markers = decodeMarkers (folder.getChildFile ("song.sys"));
+    if (! scan.markers.empty())
+        warn.add (juce::String::formatted ("%d song marker(s) will be imported.",
+                                           (int) scan.markers.size()));
+
+    scan.tempoBpm = readTempoBpm (folder.getChildFile ("song.sys"));
+    if (scan.tempoBpm > 0)
+        warn.add (juce::String::formatted ("Song tempo %d BPM will be applied.", scan.tempoBpm));
+
+    scan.timelineDecoded = (placedFromSys > 0);
+    if (placedFromSys > 0)
+        warn.add (juce::String::formatted (
+            "Timeline positions recovered from song.sys for %d clip(s); the rest start at 0.",
+            placedFromSys));
+    else if (scan.hasMixdown)
+        warn.add ("No clip offsets in song.sys (all at song start); a mixdown is present for "
+                  "optional onset-alignment.");
     else
-        warn.add ("No mixdown in folder: timeline not reconstructed; tracks placed at song start.");
+        warn.add ("All clips start at song start (no stored offsets).");
 
     scan.warnings = warn.joinIntoString ("\n");
     scan.ok = true;

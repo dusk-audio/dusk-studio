@@ -58,6 +58,14 @@ struct ImportedTrack
     MixerStrip   mixer;
 };
 
+// A song-structure locate mark (intro/verse/chorus/punch/end). The device
+// stores position + index only (no name text).
+struct DpMarker
+{
+    juce::int64 positionSamples = 0;   // at song sample-rate
+    int         index = 0;
+};
+
 struct SongScan
 {
     bool         ok = false;            // at least one importable fragment found
@@ -68,10 +76,12 @@ struct SongScan
     int          discardedTakes = 0;       // on-disk fragments excluded as not-in-arrangement (File-List)
     juce::String deviceModel;              // "DP-24" / "DP-32" from edltable.sys, or empty
     int          deviceTrackLimit = 0;     // physical track faders: 18 (DP-24), 20 (DP-32), 0 unknown
+    int          tempoBpm = 0;             // song.sys 0x6d8 (u8 BPM); 0 = not decoded/default
     bool         mixerDecoded = false;     // song.sys parsed; strips look structurally valid
     bool         timelineDecoded = false;  // edltable.sys placement solved (not yet)
     bool         hasMixdown = false;       // an in-folder master WAV is present (enables alignment)
     juce::File   mixdownFile;              // the detected master mixdown, if any
+    std::vector<DpMarker> markers;         // song.sys locate marks -> session markers
     juce::String warnings;                 // human-readable caveats for the dialog
 };
 

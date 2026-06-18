@@ -2998,19 +2998,6 @@ juce::File makeStereoTempWav (const juce::File& left, const juce::File& right)
     const auto len = (int) juce::jmin (rl->lengthInSamples, rr->lengthInSamples);
     if (len <= 0 || rl->sampleRate <= 0.0) return {};
 
-    // Each fragment is a mono reader (channel 0 only), so read each into its
-    // own 1-ch buffer and assemble the interleaved pair by copy.
-    juce::AudioBuffer<float> lbuf (1, len), rbuf (1, len);
-    lbuf.clear();
-    rbuf.clear();
-    if (! rl->read (&lbuf, 0, len, 0, true, false)
-        || ! rr->read (&rbuf, 0, len, 0, true, false))
-        return {};
-
-    juce::AudioBuffer<float> out (2, len);
-    out.copyFrom (0, 0, lbuf, 0, 0, len);
-    out.copyFrom (1, 0, rbuf, 0, 0, len);
-
     const auto tmp = juce::File::createTempFile (".wav");
     std::unique_ptr<juce::FileOutputStream> stream (tmp.createOutputStream());
     if (stream == nullptr || ! stream->openedOk()) return {};
@@ -3018,8 +3005,28 @@ juce::File makeStereoTempWav (const juce::File& left, const juce::File& right)
     std::unique_ptr<juce::AudioFormatWriter> writer (
         wav.createWriterFor (stream.get(), rl->sampleRate, 2, 24, {}, 0));
     if (writer == nullptr) return {};
-    stream.release();
-    if (! writer->writeFromAudioSampleBuffer (out, 0, len)) { tmp.deleteFile(); return {}; }
+    stream.release();   // writer owns it now
+
+    // Each fragment is a mono reader (channel 0). Interleave the two halves into
+    // a 2-ch stream in fixed-size chunks so a long take doesn't allocate the
+    // whole file up front.
+    constexpr int kChunk = 1 << 16;   // 64k samples per pass
+    juce::AudioBuffer<float> lbuf (1, kChunk), rbuf (1, kChunk), out (2, kChunk);
+    for (int pos = 0; pos < len; pos += kChunk)
+    {
+        const int n = juce::jmin (kChunk, len - pos);
+        if (! rl->read (&lbuf, 0, n, pos, true, false)
+            || ! rr->read (&rbuf, 0, n, pos, true, false))
+        {
+            writer.reset(); tmp.deleteFile(); return {};
+        }
+        out.copyFrom (0, 0, lbuf, 0, 0, n);
+        out.copyFrom (1, 0, rbuf, 0, 0, n);
+        if (! writer->writeFromAudioSampleBuffer (out, 0, n))
+        {
+            writer.reset(); tmp.deleteFile(); return {};
+        }
+    }
     writer.reset();
     return tmp;
 }
@@ -3097,24 +3104,38 @@ void MainComponent::runDpImport (const dp::SongScan& scan,
     const double sr       = engine.getCurrentSampleRate();
     const auto   audioDir = session.getAudioDirectory();
 
-    // Timeline alignment: when requested and a mixdown is present, recover each
-    // fragment's position by onset-aligning it to the mixdown. positionSeconds
-    // is sample-rate independent; convert to session samples. Full-length takes
-    // and low-confidence (not-in-mix / discarded) fragments resolve to 0.
+    // Timeline placement (samples at the session SR). Primary source is the
+    // exact clip offsets stored in song.sys (decoded in scanSongFolder, in song
+    // SR samples). When a mixdown is present, onset-alignment fills any clips
+    // song.sys didn't place (e.g. comped fragments). Everything else -> 0.
     std::vector<juce::int64> placeAt ((size_t) n, 0);
-    int alignedCount = 0;
-    if (importTimeline && scan.hasMixdown)
+    int placedCount = 0;
+    if (importTimeline)
     {
-        std::vector<juce::File> sources;
-        sources.reserve ((size_t) n);
-        for (int i = 0; i < n; ++i) sources.push_back (scan.tracks[(size_t) i].fragment.mono1);
-        const auto al = dp::alignToMixdown (scan.mixdownFile, sources);
-        for (int i = 0; i < n && i < (int) al.size(); ++i)
-            if (al[(size_t) i].placed)
+        const double songSr = scan.sampleRate > 0.0 ? scan.sampleRate : sr;
+        for (int i = 0; i < n; ++i)
+        {
+            const auto ss = scan.tracks[(size_t) i].timelineStart;   // song-SR samples
+            if (ss > 0)
             {
-                placeAt[(size_t) i] = (juce::int64) std::llround (al[(size_t) i].positionSeconds * sr);
-                if (! al[(size_t) i].fullLength && placeAt[(size_t) i] > 0) ++alignedCount;
+                placeAt[(size_t) i] = (juce::int64) std::llround ((double) ss * sr / songSr);
+                ++placedCount;
             }
+        }
+        if (scan.hasMixdown)
+        {
+            std::vector<juce::File> sources;
+            sources.reserve ((size_t) n);
+            for (int i = 0; i < n; ++i) sources.push_back (scan.tracks[(size_t) i].fragment.mono1);
+            const auto al = dp::alignToMixdown (scan.mixdownFile, sources);
+            for (int i = 0; i < n && i < (int) al.size(); ++i)
+                if (placeAt[(size_t) i] == 0 && al[(size_t) i].placed
+                    && ! al[(size_t) i].fullLength && al[(size_t) i].positionSeconds > 0.0)
+                {
+                    placeAt[(size_t) i] = (juce::int64) std::llround (al[(size_t) i].positionSeconds * sr);
+                    ++placedCount;
+                }
+        }
     }
 
     int imported = 0;
@@ -3170,17 +3191,26 @@ void MainComponent::runDpImport (const dp::SongScan& scan,
             s.eqEnabled.store (m.eqOn, std::memory_order_relaxed);
             s.lfGainDb.store (juce::jlimit (-15.0f, 15.0f, m.lowGainDb), std::memory_order_relaxed);
             s.lfFreq  .store (juce::jlimit (20.0f, 400.0f, m.lowFreqHz), std::memory_order_relaxed);
+            // DP has one mid band -> Dusk has two (LM/HM). Drive the band that
+            // matches the frequency and reset the other to flat defaults, so an
+            // import into a non-empty session doesn't leave stale EQ behind.
             if (m.midFreqHz < 1500.0f)
             {
                 s.lmGainDb.store (juce::jlimit (-15.0f, 15.0f, m.midGainDb), std::memory_order_relaxed);
                 s.lmFreq  .store (juce::jlimit (100.0f, 4000.0f, m.midFreqHz), std::memory_order_relaxed);
                 s.lmQ     .store (juce::jlimit (0.4f, 4.0f, m.midQ), std::memory_order_relaxed);
+                s.hmGainDb.store (0.0f, std::memory_order_relaxed);
+                s.hmFreq  .store (2000.0f, std::memory_order_relaxed);
+                s.hmQ     .store (0.7f, std::memory_order_relaxed);
             }
             else
             {
                 s.hmGainDb.store (juce::jlimit (-15.0f, 15.0f, m.midGainDb), std::memory_order_relaxed);
                 s.hmFreq  .store (juce::jlimit (600.0f, 13000.0f, m.midFreqHz), std::memory_order_relaxed);
                 s.hmQ     .store (juce::jlimit (0.4f, 4.0f, m.midQ), std::memory_order_relaxed);
+                s.lmGainDb.store (0.0f, std::memory_order_relaxed);
+                s.lmFreq  .store (600.0f, std::memory_order_relaxed);
+                s.lmQ     .store (0.7f, std::memory_order_relaxed);
             }
             s.hfGainDb.store (juce::jlimit (-15.0f, 15.0f, m.highGainDb), std::memory_order_relaxed);
             s.hfFreq  .store (juce::jlimit (1000.0f, 20000.0f, m.highFreqHz), std::memory_order_relaxed);
@@ -3188,14 +3218,34 @@ void MainComponent::runDpImport (const dp::SongScan& scan,
         ++imported;
     }
 
+    // Song markers (intro/verse/chorus/punch/end) -> session markers.
+    int markersAdded = 0;
+    {
+        const double songSr = scan.sampleRate > 0.0 ? scan.sampleRate : sr;
+        for (const auto& mk : scan.markers)
+        {
+            const auto at = (juce::int64) std::llround ((double) mk.positionSamples * sr / songSr);
+            session.addMarker (at, "DP Mark " + juce::String (mk.index));
+            ++markersAdded;
+        }
+    }
+
+    // Song tempo (song.sys 0x6d8, BPM).
+    if (scan.tempoBpm > 0)
+        session.tempoBpm.store ((float) scan.tempoBpm, std::memory_order_relaxed);
+
     if (tapeStrip != nullptr) tapeStrip->repaint();
 
     juce::String msg;
     msg << "Imported " << imported << (imported == 1 ? " track." : " tracks.");
     if (scan.discardedTakes > 0)
         msg << "\nSkipped " << scan.discardedTakes << " discarded take(s).";
-    if (importTimeline && scan.hasMixdown)
-        msg << "\nAligned " << alignedCount << " region(s) to the mixdown; the rest at song start.";
+    if (importTimeline && placedCount > 0)
+        msg << "\nPlaced " << placedCount << " region(s) on the timeline; the rest at song start.";
+    if (markersAdded > 0)
+        msg << "\nImported " << markersAdded << " song marker(s).";
+    if (scan.tempoBpm > 0)
+        msg << "\nSet tempo to " << scan.tempoBpm << " BPM.";
     if (! skipped.isEmpty())
         msg << "\n\nSkipped " << skipped.size() << ":\n" << skipped.joinIntoString ("\n");
     showDuskAlert (*this, "Import DP Song", msg);

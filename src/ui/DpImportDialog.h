@@ -65,14 +65,17 @@ public:
                                                  : juce::Colour (0xff606068));
         addAndMakeVisible (mixerToggle);
 
-        timelineToggle.setButtonText (scan.hasMixdown
-                                          ? "Align regions to mixdown (experimental)"
-                                          : "Align regions to mixdown (no mixdown in folder)");
-        timelineToggle.setToggleState (scan.hasMixdown, juce::dontSendNotification);
-        timelineToggle.setEnabled (scan.hasMixdown);
+        const bool canPlace = scan.timelineDecoded || scan.hasMixdown;
+        timelineToggle.setButtonText (scan.timelineDecoded
+                                          ? "Reconstruct timeline positions (from song.sys)"
+                                          : scan.hasMixdown
+                                                ? "Align regions to mixdown (experimental)"
+                                                : "Reconstruct timeline positions (none stored)");
+        timelineToggle.setToggleState (canPlace, juce::dontSendNotification);
+        timelineToggle.setEnabled (canPlace);
         timelineToggle.setColour (juce::ToggleButton::textColourId,
-                                  scan.hasMixdown ? juce::Colour (0xffe0e0e4)
-                                                  : juce::Colour (0xff606068));
+                                  canPlace ? juce::Colour (0xffe0e0e4)
+                                           : juce::Colour (0xff606068));
         addAndMakeVisible (timelineToggle);
 
         cancelButton.onClick = [this] { if (onCancelFn) onCancelFn(); };

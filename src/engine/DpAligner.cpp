@@ -26,22 +26,27 @@ std::vector<float> decodeMono (juce::AudioFormatManager& fm, const juce::File& f
     if (len > 96000ll * 60ll * 60ll) return out;
 
     sampleRateOut = reader->sampleRate;
-    juce::AudioBuffer<float> buf (ch, (int) len);
+    // The AudioBuffer read overload only fills up to 2 channels (left/right
+    // flags), so mix from at most the first two. DP fragments are mono and
+    // mixdowns are stereo, so this covers every real input; for a >2-channel
+    // file we mix L+R and ignore the rest rather than averaging in zeros.
+    const int usedCh = juce::jmin (ch, 2);
+    juce::AudioBuffer<float> buf (usedCh, (int) len);
     buf.clear();
-    if (! reader->read (&buf, 0, (int) len, 0, true, ch > 1)) return out;
+    if (! reader->read (&buf, 0, (int) len, 0, true, usedCh > 1)) return out;
 
     out.resize ((size_t) len);
-    if (ch == 1)
+    if (usedCh == 1)
     {
         std::copy (buf.getReadPointer (0), buf.getReadPointer (0) + len, out.begin());
     }
     else
     {
-        const float inv = 1.0f / (float) ch;
+        const float inv = 1.0f / (float) usedCh;
         for (juce::int64 i = 0; i < len; ++i)
         {
             float s = 0.0f;
-            for (int c = 0; c < ch; ++c) s += buf.getSample (c, (int) i);
+            for (int c = 0; c < usedCh; ++c) s += buf.getSample (c, (int) i);
             out[(size_t) i] = s * inv;
         }
     }
