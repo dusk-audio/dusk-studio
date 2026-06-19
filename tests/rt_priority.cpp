@@ -32,7 +32,7 @@ TEST_CASE ("rt priority: result always fits under the ceiling", "[rt-priority]")
     for (int ceiling = 0; ceiling <= 120; ++ceiling)
     {
         const int p = jucePriorityForSchedCeiling (ceiling, 1, 99);
-        if (p > 0)
+        if (p >= 0)   // -1 = no RT; 0..10 are all valid levels that must fit
         {
             REQUIRE (forwardMap (p, 1, 99) <= ceiling);
             // Largest fitting: the next priority up must overshoot (or be > 10).
@@ -44,8 +44,18 @@ TEST_CASE ("rt priority: result always fits under the ceiling", "[rt-priority]")
 
 TEST_CASE ("rt priority: degenerate inputs return no-RT", "[rt-priority]")
 {
-    REQUIRE (jucePriorityForSchedCeiling (0, 1, 99) == 0);    // ceiling below rrMin
-    REQUIRE (jucePriorityForSchedCeiling (5, 1, 99) == 0);    // p=1 needs sched 10
-    REQUIRE (jucePriorityForSchedCeiling (95, 99, 1) == 0);   // rrMax <= rrMin
-    REQUIRE (jucePriorityForSchedCeiling (95, 50, 50) == 0);
+    // -1 is the no-RT sentinel (0 is a valid priority, so it can't be).
+    REQUIRE (jucePriorityForSchedCeiling (0, 1, 99) == -1);    // ceiling below rrMin
+    REQUIRE (jucePriorityForSchedCeiling (95, 99, 1) == -1);   // rrMax <= rrMin
+    REQUIRE (jucePriorityForSchedCeiling (95, 50, 50) == -1);  // rrMax == rrMin
+}
+
+TEST_CASE ("rt priority: lowest-but-valid ceiling maps to priority 0", "[rt-priority]")
+{
+    // A ceiling that admits only the lowest SCHED_RR level (sched_priority ==
+    // rrMin) yields JUCE priority 0 — a VALID level — not the -1 no-RT sentinel.
+    // (Previously this collapsed to the 0-sentinel and the thread silently ran
+    // non-RT even though sched_priority 1 was attainable.)
+    REQUIRE (jucePriorityForSchedCeiling (5, 1, 99) == 0);     // p=1 needs sched 10; p=0 → sched 1 fits
+    REQUIRE (jucePriorityForSchedCeiling (1, 1, 99) == 0);     // ceiling == rrMin exactly
 }

@@ -132,13 +132,15 @@ jobs:
 
       - name: Install libmp3lame (vcpkg)
         shell: bash
-        # MP3 bounce/export. static-md = a static mp3lame against the dynamic
-        # (/MD) CRT the app uses — links into the binary, so no mp3lame.dll has
-        # to ship in the MSI. CMake's find_library/find_path pick it up via
-        # CMAKE_PREFIX_PATH (forward-slashed so cmake parses the path cleanly).
+        # MP3 bounce/export. x64-windows-static = static mp3lame + /MT static
+        # CRT, matching the whole tree's CMAKE_MSVC_RUNTIME_LIBRARY (sfizz forces
+        # /MT). The -md triplet (/MD) would LNK2038 against the /MT objects. It
+        # links into the binary, so no mp3lame.dll ships in the MSI. CMake's
+        # find_library/find_path pick it up via CMAKE_PREFIX_PATH (forward-
+        # slashed so cmake parses the path cleanly).
         run: |
-          vcpkg install mp3lame:x64-windows-static-md
-          echo "LAME_PREFIX=${VCPKG_INSTALLATION_ROOT//\\//}/installed/x64-windows-static-md" >> "$GITHUB_ENV"
+          vcpkg install mp3lame:x64-windows-static
+          echo "LAME_PREFIX=${VCPKG_INSTALLATION_ROOT//\\//}/installed/x64-windows-static" >> "$GITHUB_ENV"
 
       - name: Configure (CMake / Visual Studio 17 2022 / x64)
         shell: bash

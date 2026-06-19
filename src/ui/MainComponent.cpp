@@ -3236,7 +3236,11 @@ void MainComponent::runDpImport (const dp::SongScan& scan,
     }
 
     const int    n        = juce::jmin ((int) scan.tracks.size(), Session::kNumTracks);
-    const double sr       = engine.getCurrentSampleRate();
+    double       sr       = engine.getCurrentSampleRate();
+    // Device not open yet → SR reads 0; FileImporter resamples content to 48k in
+    // that case, so use the same fallback here or every clip/marker would be
+    // placed at 0 (timeline offsets multiplied by sr).
+    if (sr <= 0.0) sr = 48000.0;
     const auto   audioDir = session.getAudioDirectory();
 
     // Timeline placement (samples at the session SR). Primary source is the

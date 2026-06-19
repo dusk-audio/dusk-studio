@@ -22,8 +22,11 @@ std::vector<float> decodeMono (juce::AudioFormatManager& fm, const juce::File& f
     const auto len = (juce::int64) reader->lengthInSamples;
     const int  ch  = (int) reader->numChannels;
     if (len <= 0 || ch <= 0 || reader->sampleRate <= 0.0) return out;
-    // Guard against absurd files (a multi-hour stem) eating all RAM.
-    if (len > 96000ll * 60ll * 60ll) return out;
+    // Guard against absurd files eating all RAM. A stereo decode allocates
+    // ~12 bytes/sample (the 2-ch buffer + the mono out), so this caps the
+    // worst case near ~1 GB — generous for any real DP song (15 min @ 96 k /
+    // 30 min @ 48 k) while refusing a pathological multi-hour file.
+    if (len > 96000ll * 60ll * 15ll) return out;
 
     sampleRateOut = reader->sampleRate;
     // The AudioBuffer read overload only fills up to 2 channels (left/right
@@ -58,7 +61,8 @@ std::vector<float> onsetEnvelope (const float* x, int n, int hop, int fftOrder)
 {
     const int fftSize = 1 << fftOrder;
     if (n < fftSize + hop) return {};
-    const int nfr = (n - fftSize) / hop;
+    // Frames whose full window fits: floor((n - fftSize) / hop) + 1.
+    const int nfr = (n - fftSize + hop) / hop;
     if (nfr < 2) return {};
 
     juce::dsp::FFT fft (fftOrder);

@@ -781,12 +781,13 @@ void AlsaAudioIODevice::start (juce::AudioIODeviceCallback* newCallback)
     // Run the I/O thread at real-time priority. The rlimit→priority mapping is
     // shared with the DSP worker pool (see RtPriority.h — the pool MUST run at
     // the same SCHED_RR level as this thread or the per-block join can starve a
-    // worker sharing this core). jucePriority == 0 means the rlimit admits no
-    // JUCE-reachable realtime level; don't bother asking.
+    // worker sharing this core). jucePriority < 0 means the rlimit admits no
+    // JUCE-reachable realtime level; don't bother asking. 0 IS a valid level
+    // (lowest SCHED_RR), so request RT for it too.
     const auto rtInfo = duskstudio::rt::queryRealtimePriority();
     const int  juceRtPrio = rtInfo.jucePriority;
 
-    const bool gotRT = juceRtPrio > 0
+    const bool gotRT = juceRtPrio >= 0
         && startRealtimeThread (juce::Thread::RealtimeOptions{}.withPriority (juceRtPrio));
     if (! gotRT)
         startThread (juce::Thread::Priority::high);
@@ -894,6 +895,8 @@ void AlsaAudioIODevice::rearmStream() noexcept
         for (int attempts = 0; done < frames && attempts < 16; ++attempts)
         {
             const auto n = snd_pcm_writei (outHandle, src + done * frameBytes, frames - done);
+            if (n == -EAGAIN)
+                break;      // NONBLOCK ring is full — prefilled as much as it holds; go start it
             if (n < 0)
             {
                 snd_pcm_recover (outHandle, (int) n, /*silent*/ 1);
