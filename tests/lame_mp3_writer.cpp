@@ -60,10 +60,23 @@ TEST_CASE ("LameMp3Writer emits a valid 48k/320k MP3 carrying the signal", "[mp3
         // a valid MP3 can carry an ID3/Xing header before frame 1, so the sync
         // isn't guaranteed at offset 0. (Our writer emits no such header, so this
         // finds offset 0 today; the scan keeps the test correct if that changes.)
+        // Reject false syncs: 0xFF + 111x also appears inside frame data, so
+        // require non-reserved version / layer / bitrate / sample-rate fields so
+        // only a genuine frame header matches. The specific 320k/48k values are
+        // asserted below, so this doesn't make those CHECKs tautological.
+        auto looksLikeFrameHeader = [] (const juce::uint8* h)
+        {
+            if (h[0] != 0xFF || (h[1] & 0xE0) != 0xE0) return false;
+            const int version  = (h[1] >> 3) & 0x3;   // 1 = reserved
+            const int layer    = (h[1] >> 1) & 0x3;   // 0 = reserved
+            const int bitrate  = (h[2] >> 4) & 0xF;   // 0 = free, 15 = reserved
+            const int samprate = (h[2] >> 2) & 0x3;   // 3 = reserved
+            return version != 1 && layer != 0 && bitrate != 0 && bitrate != 15 && samprate != 3;
+        };
         int off = -1;
         for (int i = 0; i + 4 <= sz; ++i)
-            if (d[i] == 0xFF && (d[i + 1] & 0xE0) == 0xE0) { off = i; break; }
-        REQUIRE (off >= 0);                     // a frame sync exists
+            if (looksLikeFrameHeader (d + i)) { off = i; break; }
+        REQUIRE (off >= 0);                     // a valid frame header exists
         const juce::uint8* h = d + off;
         CHECK (((h[1] >> 3) & 0x3) == 3);       // MPEG version 1
         CHECK (((h[1] >> 1) & 0x3) == 1);       // Layer III

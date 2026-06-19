@@ -158,6 +158,10 @@ private:
     // -1 if collapsed.
     int  visualRowForTrack (int trackIdx) const noexcept;
 
+    // Rightmost sample any content occupies (audio + MIDI regions + playhead).
+    // Shared by pixelsPerSecond() and zoomFit() so their extent can't diverge.
+    juce::int64 rightmostContentSample() const noexcept;
+
     double pixelsPerSecond() const noexcept;
     juce::int64 sampleAtX (int x) const noexcept;
     int xForSample (juce::int64 s) const noexcept;

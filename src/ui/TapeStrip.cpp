@@ -419,20 +419,30 @@ juce::Rectangle<int> TapeStrip::rowBounds (int trackIdx) const noexcept
     return juce::Rectangle<int> (col.getX(), y, col.getWidth(), rowHeight);
 }
 
+juce::int64 TapeStrip::rightmostContentSample() const noexcept
+{
+    // The rightmost sample any content occupies — audio AND MIDI regions, plus
+    // the playhead. Including MIDI keeps a MIDI-only session in view; an audio-
+    // only scan left its regions off-screen.
+    juce::int64 maxSample = engine.getTransport().getPlayhead();
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        for (const auto& r : session.track (t).regions)
+            maxSample = juce::jmax (maxSample, r.timelineStart + r.lengthInSamples);
+        for (const auto& m : session.track (t).midiRegions.current())
+            maxSample = juce::jmax (maxSample, m.timelineStart + m.lengthInSamples);
+    }
+    return maxSample;
+}
+
 double TapeStrip::pixelsPerSecond() const noexcept
 {
     const double sr = engine.getCurrentSampleRate();
     if (sr <= 0.0) return 0.0;
 
-    // Find the rightmost sample we need to show - either the longest region
-    // or the current playhead - then add a margin so there's always blank
-    // tape past the last recorded thing.
-    juce::int64 maxSample = engine.getTransport().getPlayhead();
-    for (int t = 0; t < Session::kNumTracks; ++t)
-        for (auto& r : session.track (t).regions)
-            maxSample = juce::jmax (maxSample, r.timelineStart + r.lengthInSamples);
-
-    const double maxSeconds = juce::jmax (60.0, (double) maxSample / sr * 1.20);
+    // Find the rightmost sample we need to show, then add a margin so there's
+    // always blank tape past the last recorded thing.
+    const double maxSeconds = juce::jmax (60.0, (double) rightmostContentSample() / sr * 1.20);
 
     auto col = tracksColumnBounds();
     if (col.getWidth() <= 0) return 0.0;
@@ -493,12 +503,7 @@ void TapeStrip::zoomFit() noexcept
         return;
     }
 
-    juce::int64 maxSample = engine.getTransport().getPlayhead();
-    for (int t = 0; t < Session::kNumTracks; ++t)
-        for (auto& r : session.track (t).regions)
-            maxSample = juce::jmax (maxSample, r.timelineStart + r.lengthInSamples);
-
-    const double contentSec    = (double) juce::jmax<juce::int64> (1, maxSample) / sr;
+    const double contentSec    = (double) juce::jmax<juce::int64> (1, rightmostContentSample()) / sr;
     const double autoFitBudget = juce::jmax (60.0, contentSec * 1.20);
     // pxPerSec at zoom 1 = col.width / autoFitBudget. We want the
     // visible window to equal contentSec exactly, so
@@ -510,6 +515,16 @@ void TapeStrip::zoomFit() noexcept
 
 void TapeStrip::refreshAfterSessionLoad()
 {
+    // New session in the same component instance: drop any edit state that
+    // points at the PREVIOUS session's regions, so shortcuts (delete / cut /
+    // nudge / take-cycle) can't act on a stale or now-different region.
+    selectedTrack     = -1;
+    selectedRegion    = -1;
+    selectedMidiTrack = -1;
+    selectedMidiRegion = -1;
+    drag = ActiveDrag{};
+    midiDrag.clear();
+
     rebuildVisibleTrackOrder (/*relayoutParent*/ true);
     zoomFit();    // resets scrollSamples + refits zoom, and repaints
     repaint();    // unconditional — the rebuild above early-outs when the
@@ -1237,9 +1252,7 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
         //     between them. Same track collapses the box to one row (range
         //     fill); a lower track grabs the whole vertical stack (e.g. a
         //     multitrack take) in one click instead of Cmd-clicking each.
-        const bool isBodyHit = (hit.op == RegionOp::Move
-                                 || hit.op == RegionOp::TrimStart
-                                 || hit.op == RegionOp::TrimEnd);
+        const bool isBodyHit = (hit.op == RegionOp::Move);
         if (e.mods.isShiftDown() && isBodyHit
             && selectedTrack >= 0 && selectedRegion >= 0
             && selectedTrack < Session::kNumTracks

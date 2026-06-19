@@ -652,14 +652,27 @@ juce::String AlsaAudioIODevice::open (const juce::BigInteger& inputChannels,
     // addresses the interleaved buffer (sized to the opened count) out of
     // bounds: out[frame * numDeviceChannels + col] with col past the last real
     // channel. That heap overflow is what crashes with "free(): invalid pointer".
+    juce::BigInteger clampedOutMask, clampedInMask;
     if (wantOutput)
         for (int i = 0; i <= outputChannels.getHighestBit(); ++i)
             if (outputChannels[i] && i < (int) outNumChannels)
+            {
                 activeOutDeviceChannelIndex.add (i);
+                clampedOutMask.setBit (i);
+            }
     if (wantInput)
         for (int i = 0; i <= inputChannels.getHighestBit(); ++i)
             if (inputChannels[i] && i < (int) inNumChannels)
+            {
                 activeInDeviceChannelIndex.add (i);
+                clampedInMask.setBit (i);
+            }
+    // Publish the actually-active masks. The requested mask can be wider than the
+    // device opened (32 asked, 12 real); without this, getActiveOutput/Input-
+    // Channels() reports enabled channels the callback never gets handed, and the
+    // main-output-pair menu offers pairs that don't physically exist.
+    currentOutputChannels = clampedOutMask;
+    currentInputChannels  = clampedInMask;
 
     // Pre-size scratch. Allocations on the audio thread are forbidden; the
     // sizing here is the size the I/O loop relies on.
