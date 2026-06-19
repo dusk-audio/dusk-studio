@@ -2695,6 +2695,13 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     }
     refreshSnapUi();   // snap on/off + resolution are serialized — reflect the loaded values
     resized();
+    // resized()'s indirect refresh of the tape strip (setConsoleVisibleRange /
+    // setBounds) no-ops when the reopened session has the same track layout +
+    // window size, so the freshly-loaded regions would never get drawn. Force an
+    // explicit rebuild + refit + repaint. Safe in a fullscreen stage too: the
+    // strip is hidden now but laid out (and repainted) on the next stage switch.
+    if (tapeStrip != nullptr)
+        tapeStrip->refreshAfterSessionLoad();
     const auto tAfterConsole = juce::Time::getMillisecondCounterHiRes();
 
     RecentSessions::add (dir);

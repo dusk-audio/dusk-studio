@@ -124,6 +124,15 @@ public:
     void zoomByFactor (float factor, int anchorX = -1);
     void zoomFit() noexcept;
 
+    // Explicit refresh for the session-load path. The strip otherwise relies on
+    // indirect side effects (setConsoleVisibleRange / setBounds / the 30 Hz
+    // timer) to repaint, and ALL of them no-op when a reopened session has the
+    // same track layout + window size as the current view — so freshly-loaded
+    // regions never get drawn. Rebuilds the visible rows, refits the horizontal
+    // zoom/scroll to the loaded content (a session saved while zoomed-in must not
+    // open with its regions scrolled off-screen), and repaints unconditionally.
+    void refreshAfterSessionLoad();
+
 private:
     void timerCallback() override;
     void changeListenerCallback (juce::ChangeBroadcaster*) override;

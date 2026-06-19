@@ -508,6 +508,15 @@ void TapeStrip::zoomFit() noexcept
     repaint();
 }
 
+void TapeStrip::refreshAfterSessionLoad()
+{
+    rebuildVisibleTrackOrder (/*relayoutParent*/ true);
+    zoomFit();    // resets scrollSamples + refits zoom, and repaints
+    repaint();    // unconditional — the rebuild above early-outs when the
+                  // visible set is unchanged, which is exactly the same-layout
+                  // reopen case that left the strip showing stale content.
+}
+
 juce::int64 TapeStrip::sampleAtX (int x) const noexcept
 {
     const double sr = engine.getCurrentSampleRate();
