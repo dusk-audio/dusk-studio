@@ -2783,7 +2783,11 @@ void MainComponent::openBounceDialog()
     {
         if (out == juce::File()) return;  // user cancelled
         auto outFile = out;
+       #if DUSKSTUDIO_HAS_LAME
         const bool mp3 = outFile.hasFileExtension ("mp3");
+       #else
+        const bool mp3 = false;   // no encoder in this build - a typed .mp3 falls back to WAV
+       #endif
         if (! mp3 && ! outFile.hasFileExtension ("wav"))
             outFile = outFile.withFileExtension ("wav");
         const auto fmt = mp3 ? BounceEngine::Format::Mp3 : BounceEngine::Format::Wav;
@@ -3734,7 +3738,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelMenuIndex,
         menu.addSeparator();
         addAccel (kMenuFileImport, "Import Audio or MIDI...", 'I',
                   juce::ModifierKeys::commandModifier);
-        menu.addItem (kMenuFileImportDp, "Import DP Song...");
+        menu.addItem (kMenuFileImportDp, "Import DP Song (experimental)...");
         menu.addSeparator();
         menu.addItem (kMenuFileMixdown, "Mixdown");
         addAccel (kMenuFileBounce, "Bounce...", 'B',

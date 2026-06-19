@@ -201,11 +201,16 @@ def find_headers(daw_root):
 
 
 def cpp_escape(s):
-    return s.replace("\\", "\\\\").replace('"', '\\"')
+    # Backslash first, then the rest, so a raw newline/CR in a display name
+    # doesn't break the generated C++ string literal at compile time.
+    return (s.replace("\\", "\\\\").replace('"', '\\"')
+             .replace("\n", "\\n").replace("\r", "\\r"))
 
 
 def cpp_unescape(s):
-    return s.replace('\\"', '"').replace("\\\\", "\\")
+    # Exact inverse of cpp_escape, undone in reverse order.
+    return (s.replace("\\r", "\r").replace("\\n", "\n")
+             .replace('\\"', '"').replace("\\\\", "\\"))
 
 
 def parse_array(text, name):
@@ -237,6 +242,14 @@ def main():
     if not CONFIG_PATH.is_file():
         sys.exit(f"Missing {CONFIG_PATH} — see the setup notes at the top "
                  "of this script.")
+    # The file holds access/refresh tokens + the client secret. If it was created
+    # with a permissive umask (group/world readable), tighten it to 0600 before
+    # reading so the secrets aren't left exposed. (No-op on a file already 0600.)
+    if CONFIG_PATH.stat().st_mode & 0o077:
+        try:
+            os.chmod(CONFIG_PATH, 0o600)
+        except OSError:
+            pass
     config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
     missing = [k for k in ("access_token", "refresh_token",
                            "client_id", "client_secret") if k not in config]

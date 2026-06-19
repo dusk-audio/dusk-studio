@@ -751,7 +751,11 @@ void MasteringView::doExport()
     {
         if (out == juce::File()) return;
         auto target = out;
+       #if DUSKSTUDIO_HAS_LAME
         const bool mp3 = target.hasFileExtension ("mp3");
+       #else
+        const bool mp3 = false;   // no encoder in this build - a typed .mp3 falls back to WAV
+       #endif
         if (! mp3 && ! target.hasFileExtension ("wav"))
             target = target.withFileExtension ("wav");
         const auto fmt = mp3 ? BounceEngine::Format::Mp3 : BounceEngine::Format::Wav;

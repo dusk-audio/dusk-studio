@@ -116,16 +116,12 @@ jobs:
           umask 077
           mkdir -p "${HOME}/.config/dusk-audio"
           cfg="${HOME}/.config/dusk-audio/patreon.json"
-          cat > "${cfg}" <<JSON
-          {
-            "access_token": "${PATREON_ACCESS_TOKEN}",
-            "refresh_token": "${PATREON_REFRESH_TOKEN}",
-            "client_id": "${PATREON_CLIENT_ID}",
-            "client_secret": "${PATREON_CLIENT_SECRET}"
-          }
-          JSON
+          # Always remove the credential file on exit, even if a step below fails.
+          trap 'rm -f "${cfg}"' EXIT
+          # json.dump escapes any special characters in the secrets; a raw heredoc
+          # would corrupt the JSON on a quote/backslash in a token.
+          python3 -c 'import json, os, sys; json.dump({"access_token": os.environ["PATREON_ACCESS_TOKEN"], "refresh_token": os.environ["PATREON_REFRESH_TOKEN"], "client_id": os.environ["PATREON_CLIENT_ID"], "client_secret": os.environ["PATREON_CLIENT_SECRET"]}, open(sys.argv[1], "w"))' "${cfg}"
           python3 scripts/update-patrons.py || echo "update-patrons.py failed - shipping the committed list."
-          rm -f "${cfg}"
 
       - name: Configure (Release)
         run: |

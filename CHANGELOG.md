@@ -5,7 +5,7 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
-## [0.11.0] - 2026-06-16
+## [0.11.0] - 2026-06-19
 
 Built to a production-grade bar; shipped as a Beta. 1.0.0 is reserved for
 the public stable declaration.
@@ -16,6 +16,16 @@ the public stable declaration.
   can write 320 kbps MP3 (CBR via libmp3lame) — name the output `.mp3` instead
   of `.wav`. WAV (stereo 24-bit) stays the default. libmp3lame is auto-detected
   at build time; absent, the option is hidden and bounces stay WAV-only.
+- **Import DP Song (experimental).** Reads a raw TASCAM DP-24 / DP-24SD / DP-32
+  song folder off the SD card and reconstructs the session — each recorded
+  fragment onto its own track with the right rate / bit-depth / stereo pairing,
+  a confirmation dialog of what was found, and (where decodable from `song.sys`
+  / a master mixdown) recovered clip positions, mixer fader/pan/EQ, tempo and
+  markers. Marked experimental: parts of the format are reverse-engineered.
+- **Plugin-scan validation.** A scan now drops dead entries — an empty / hollow
+  `.vst3` bundle or an LV2 whose bundle was uninstalled — so the picker never
+  offers a plugin that can't load. Filesystem + live-search-path checks only; no
+  plugin is instantiated.
 - **Dusk-native audio device selector.** Replaces JUCE's stock device-selector
   with a native backend / output / input / sample-rate / buffer-size picker that
   surfaces device-open errors as in-window alerts (no native popup), and opens
@@ -126,6 +136,25 @@ the public stable declaration.
 
 ### Fixed
 
+- **DP import offset-recovery works off macOS.** The fragment-to-mixdown onset
+  aligner ran its FFT in place, which silently produced garbage on the non-vDSP
+  backend used on Linux / Windows — so every fragment came back unplaced. Uses
+  distinct in/out buffers now.
+- **Shutdown / lifecycle.** The audio engine now removes its MIDI-input callback
+  on teardown (a shutdown use-after-free if MIDI arrived mid-close); seven UI
+  components stop their refresh timer in their destructor before members tear
+  down.
+- **Unsaved-changes prompt on more paths.** Open, Open Recent and New-from-
+  Template now warn before discarding unsaved work, matching New Session.
+- **Edit cursors on Linux/Wayland.** The piano-roll Grab hand and the tape-strip
+  scissors now render reliably (the previous hide path failed on some window
+  managers); the piano-roll "Key snap" toggle now actually snaps placed/dragged
+  notes to the scale; the tape-strip Cut shows a dashed cut-preview line.
+- **Session-load validation.** Out-of-range transport / master fields in a
+  hand-edited or corrupt `session.json` (zero tempo / beats-per-bar, NaN gains)
+  are clamped on load instead of dividing by zero or propagating NaN.
+- **MP3 export edges.** A failed writer no longer leaves a 0-byte file behind;
+  a typed `.mp3` falls back to WAV on a build without libmp3lame.
 - **Metronome count-in clicks land on the beat.** Count-in (negative-playhead)
   pre-roll no longer mis-times its clicks crossing the bar line.
 - **Tempo entry works on comma-decimal locales.** The BPM / tempo fields parse

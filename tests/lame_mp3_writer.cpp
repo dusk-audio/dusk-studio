@@ -52,12 +52,19 @@ TEST_CASE ("LameMp3Writer emits a valid 48k/320k MP3 carrying the signal", "[mp3
 
     // ── Frame header: first frame must be MPEG-1 Layer III, 320 kbps, 48 kHz. ──
     {
-        juce::FileInputStream in (sineMp3);
-        REQUIRE (in.openedOk());
-        juce::uint8 h[4] {};
-        REQUIRE (in.read (h, 4) == 4);
-        REQUIRE (h[0] == 0xFF);                 // frame sync
-        REQUIRE ((h[1] & 0xE0) == 0xE0);        // sync (top 3 bits of byte 1)
+        juce::MemoryBlock raw;
+        REQUIRE (sineMp3.loadFileAsData (raw));
+        const auto* d  = (const juce::uint8*) raw.getData();
+        const int    sz = (int) raw.getSize();
+        // Scan for the first MPEG frame sync (0xFF then 111x in the next byte) -
+        // a valid MP3 can carry an ID3/Xing header before frame 1, so the sync
+        // isn't guaranteed at offset 0. (Our writer emits no such header, so this
+        // finds offset 0 today; the scan keeps the test correct if that changes.)
+        int off = -1;
+        for (int i = 0; i + 4 <= sz; ++i)
+            if (d[i] == 0xFF && (d[i + 1] & 0xE0) == 0xE0) { off = i; break; }
+        REQUIRE (off >= 0);                     // a frame sync exists
+        const juce::uint8* h = d + off;
         CHECK (((h[1] >> 3) & 0x3) == 3);       // MPEG version 1
         CHECK (((h[1] >> 1) & 0x3) == 1);       // Layer III
         CHECK (((h[2] >> 4) & 0xF) == 14);      // bitrate index 14 = 320 kbps (MPEG1 L3)

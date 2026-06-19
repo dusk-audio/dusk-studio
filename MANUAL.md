@@ -1133,6 +1133,18 @@ Drag the bracket ends to adjust. The keyboard shortcuts **[** and **]** set the 
 
 Drop audio or MIDI files onto the tape strip. If you drop one file, the **Import target picker** opens to confirm the destination track. If you drop several, the **Multi-import target picker** opens with one row per file, each row showing the file name and a destination dropdown. Use the **Sequential** preset to spread files across adjacent tracks, or **Same track** to stack them as takes on a single track.
 
+## Import DP Song (experimental)
+
+**File → Import DP Song (experimental)…** reads a raw TASCAM DP-24 / DP-24SD / DP-32 song folder straight off the SD card — for when the device is gone and you can't run its own AudioDepot export. Point it at a `MUSIC/<SongName>/` folder and it reconstructs the session: each recorded audio fragment lands on its own track, with the correct sample rate, bit depth and stereo pairing.
+
+A confirmation dialog first shows what was found — track count, format, stereo pairs, and any warnings — before anything is imported.
+
+It is marked **experimental** because parts of the DP file format are reverse-engineered:
+
+- **Track grouping**: each `ZZ####` fragment is imported onto its own track, *not* grouped back into the device's original tracks (the fragment-to-track table isn't stored in a form we can read). Discarded takes are skipped.
+- **Timeline placement**: clip start positions are recovered from `song.sys` (and, when an in-folder master mixdown is present, by onset-aligning fragments to it) where they decode confidently; otherwise a clip lands at song start, which is correct for a full-length take. Re-check positions after import.
+- **Mixer recall** (fader / pan / 3-band EQ) and song tempo / markers are decoded where present and applied by track order. Re-check assignments.
+
 \newpage
 
 # The audio region editor

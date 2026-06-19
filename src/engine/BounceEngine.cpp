@@ -181,6 +181,9 @@ void BounceEngine::run()
     std::unique_ptr<juce::AudioFormatWriter> writer = makeWriter (std::move (outStream), writerErr);
     if (writer == nullptr)
     {
+        // Writer failed AFTER we truncated the file above - drop the now-zeroed
+        // file so we don't leave a 0-byte output behind (mirrors renderOneStem).
+        outputFile.deleteFile();
         {
             const juce::ScopedLock lock (lastErrorLock);
             lastError = writerErr;
