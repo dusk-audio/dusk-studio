@@ -331,14 +331,20 @@ struct TakeRef
 // rebuild the sample mapping; tick positions on events stay stable.
 constexpr int kMidiTicksPerQuarter = 480;
 
+inline double samplesToTicksFractional (juce::int64 samples,
+                                        double sampleRate,
+                                        float bpm) noexcept
+{
+    if (sampleRate <= 0.0 || bpm <= 0.0f) return 0.0;
+    return (double) samples * (double) bpm * (double) kMidiTicksPerQuarter
+             / (sampleRate * 60.0);
+}
+
 inline juce::int64 samplesToTicks (juce::int64 samples,
                                    double sampleRate,
                                    float bpm) noexcept
 {
-    if (sampleRate <= 0.0 || bpm <= 0.0f) return 0;
-    return (juce::int64) std::llround (
-        (double) samples * (double) bpm * (double) kMidiTicksPerQuarter
-            / (sampleRate * 60.0));
+    return (juce::int64) std::llround (samplesToTicksFractional (samples, sampleRate, bpm));
 }
 
 inline juce::int64 ticksToSamples (juce::int64 ticks,
@@ -424,9 +430,9 @@ public:
     }
 
     // Valid only when !empty(); returns 0 otherwise (use the constant path).
-    juce::int64 samplesToTicks (juce::int64 sample, double sr) const noexcept
+    double samplesToTicksFractional (juce::int64 sample, double sr) const noexcept
     {
-        if (sr <= 0.0 || sample <= 0 || points_.empty()) return 0;
+        if (sr <= 0.0 || sample <= 0 || points_.empty()) return 0.0;
 
         const double k = (double) kMidiTicksPerQuarter / (sr * 60.0);
         double ticks = 0.0;
@@ -440,7 +446,12 @@ public:
             const juce::int64 upTo = juce::jmin (sample, segEnd);
             ticks += (double) (upTo - segStart) * (double) points_[i].bpm * k;
         }
-        return (juce::int64) std::llround (ticks);
+        return ticks;
+    }
+
+    juce::int64 samplesToTicks (juce::int64 sample, double sr) const noexcept
+    {
+        return (juce::int64) std::llround (samplesToTicksFractional (sample, sr));
     }
 
     juce::int64 ticksToSamples (juce::int64 ticks, double sr) const noexcept
@@ -1178,6 +1189,15 @@ public:
         return tempoMap.empty()
                  ? ::duskstudio::samplesToTicks (samples, sr, tempoBpm.load (std::memory_order_relaxed))
                  : tempoMap.samplesToTicks (samples, sr);
+    }
+    // Fractional ticks (no rounding) for sub-tick-smooth UI like the piano-roll
+    // playhead — the integer path jumps in whole-tick steps (several pixels when
+    // zoomed in), which reads as a glitchy line.
+    double samplesToTicksFractional (juce::int64 samples, double sr) const noexcept
+    {
+        return tempoMap.empty()
+                 ? ::duskstudio::samplesToTicksFractional (samples, sr, tempoBpm.load (std::memory_order_relaxed))
+                 : tempoMap.samplesToTicksFractional (samples, sr);
     }
     juce::int64 ticksToSamples (juce::int64 ticks, double sr) const noexcept
     {

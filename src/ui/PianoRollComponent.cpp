@@ -3880,10 +3880,14 @@ int PianoRollComponent::transportPlayheadX (juce::Rectangle<int> gridArea) const
     const auto localSample = playheadSample - r->timelineStart;
     if (localSample < 0 || localSample > r->lengthInSamples) return -1;
     const double sr = juce::jmax (1.0, engine.getCurrentSampleRate());
-    const auto regStartTick = session.samplesToTicks (r->timelineStart, sr);
-    const auto localTick = session.samplesToTicks (localSample + r->timelineStart, sr) - regStartTick;
-    if (localTick < 0 || localTick > r->lengthInTicks) return -1;
-    const int x = xForTick (localTick);
+    // Fractional ticks so the playhead advances sub-tick smoothly. The integer
+    // samplesToTicks quantises to whole ticks, so x would jump in tick-sized
+    // steps (several pixels when zoomed in) — a glitchy line. xForTick's pixel
+    // math, inlined here against a double tick.
+    const double regStartTick = session.samplesToTicksFractional (r->timelineStart, sr);
+    const double localTick = session.samplesToTicksFractional (playheadSample, sr) - regStartTick;
+    if (localTick < 0.0 || localTick > (double) r->lengthInTicks) return -1;
+    const int x = kKeyboardWidth - scrollX + (int) std::round (localTick * pixelsPerTick);
     if (x < gridArea.getX() || x > gridArea.getRight()) return -1;
     return x;
 }
