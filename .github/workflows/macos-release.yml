@@ -95,8 +95,9 @@ jobs:
           PATREON_CLIENT_SECRET: ${{ secrets.PATREON_CLIENT_SECRET }}
           DUSK_PLUGINS_PATH: ${{ runner.temp }}/plugins-main
         run: |
-          if [ -z "${PATREON_REFRESH_TOKEN}" ]; then
-            echo "No Patreon secrets configured - shipping the committed supporters list."
+          if [ -z "${PATREON_REFRESH_TOKEN}" ] || [ -z "${PATREON_ACCESS_TOKEN}" ] \
+             || [ -z "${PATREON_CLIENT_ID}" ] || [ -z "${PATREON_CLIENT_SECRET}" ]; then
+            echo "Patreon secrets not fully configured - shipping the committed supporters list."
             exit 0
           fi
           umask 077

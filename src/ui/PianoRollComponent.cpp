@@ -408,6 +408,10 @@ PianoRollComponent::PianoRollComponent (Session& s, AudioEngine& e, int t, int r
     // discoverable as THE drawing tool.
     editModeToolbar = std::make_unique<EditModeToolbar> (engine);
     editModeToolbar->setVisibleModes ({ EditMode::Grab, EditMode::Draw });
+    // The piano roll's own grid combo is the resolution picker; the toolbar's
+    // resolution button drives session.snapResolution (the timeline), so hide it
+    // here to avoid a second, disconnected resolution control.
+    editModeToolbar->setSnapResolutionVisible (false);
     editModeToolbar->onEditModeChanged = [this] { syncEditModeToolbar(); };
     // The MIDI editor snaps on its OWN enable, independent of the timeline and
     // the audio editor; the grid combo stays the resolution picker.
@@ -2544,9 +2548,10 @@ void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
     n.velocity = 100;
     const auto rawStart = juce::jlimit<juce::int64> (0,
         juce::jmax ((juce::int64) 0, r->lengthInTicks - 1), tickForX (e.x));
-    // noteEntryMode adjusts the effective snap step for note-creation
-    // only - move / resize keep using `snapTicks` directly. Free skips
-    // snap entirely; Triplet / Dotted reshape the step.
+    // noteEntryMode reshapes the snap step for note CREATION only (Free skips
+    // snap, Triplet / Dotted bend the grid) so the pencil can place off-grid
+    // rhythms; move / resize go through the plain effectiveSnapTicks() so a
+    // dragged note lands on the same grid the ruler draws.
     const juce::int64 baseSnap = effectiveSnapTicks();   // 0 when MIDI snap is off
     juce::int64 createSnap = baseSnap;
     switch (noteEntryMode)

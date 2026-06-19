@@ -313,6 +313,8 @@ int PluginManager::scanInstalledPlugins (
                     break;
                 }
 
+        // getTypes() returns a COPY of the internal array (JUCE), so removeType()
+        // mutating the live list inside this loop can't invalidate the iteration.
         for (const auto& desc : knownPluginList.getTypes())
         {
             bool dead = pluginBackingLooksDead (desc.fileOrIdentifier);

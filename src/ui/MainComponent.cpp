@@ -3940,6 +3940,9 @@ void MainComponent::menuItemSelected (int menuItemID, int /*topLevelMenuIndex*/)
                     });
                     consoleView->setStripsMixingMode (
                         engine.getStage() == AudioEngine::Stage::Mixing);
+                    // Re-apply the compact/expanded strip mode the rebuilt view
+                    // would otherwise default away from (mirrors the ctor + load).
+                    consoleView->setStripsCompactMode (tapeStripExpanded);
                     if (tapeStrip != nullptr) tapeStrip->repaint();
                     resized();
                 });

@@ -342,6 +342,12 @@ void EditModeToolbar::setVisibleModes (juce::Array<EditMode> modes)
     resized();
 }
 
+void EditModeToolbar::setSnapResolutionVisible (bool shouldBeVisible)
+{
+    snapResolutionButton.setVisible (shouldBeVisible);
+    resized();
+}
+
 void EditModeToolbar::updateButtonStates()
 {
     const auto current = engine.getSession().editMode;
@@ -382,7 +388,10 @@ void EditModeToolbar::resized()
     }
     r.removeFromLeft (12);  // group separator
     snapToggleButton.setBounds (r.removeFromLeft (56));
-    r.removeFromLeft (4);
-    snapResolutionButton.setBounds (r.removeFromLeft (110));
+    if (snapResolutionButton.isVisible())
+    {
+        r.removeFromLeft (4);
+        snapResolutionButton.setBounds (r.removeFromLeft (110));
+    }
 }
 } // namespace duskstudio

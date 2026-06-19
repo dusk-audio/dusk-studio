@@ -2323,23 +2323,31 @@ void TapeStrip::refreshModeCursor()
     // the next move (on platforms where JUCE's NoCursor does the hiding).
     const bool overLanes = isMouseOver (true) && tracksColumnBounds().contains (p.x, p.y);
     bool wantGlyph = false;
+    juce::Range<int> cutLine;   // Cut: the region's Y span for the dashed preview line
     if (overLanes)
     {
         const auto hit      = hitTestRegion (p.x, p.y);
         const bool overMidi = overMidiRegionBody (p.x, p.y);
         if (mode == EditMode::Cut)
+        {
             wantGlyph = (hit.regionIdx >= 0);                        // scissors over audio (splittable) only
+            if (wantGlyph)
+            {
+                const auto rr = audioRegionScreenRect (hit.track, hit.regionIdx);
+                cutLine = { rr.getY(), rr.getBottom() };
+            }
+        }
         else if (mode == EditMode::Grab)
             wantGlyph = (hit.op == RegionOp::Move || overMidi);      // hand over a body
     }
     setMouseCursor (wantGlyph ? invisibleCursor()   // not NoCursor (Linux-WM-broken)
                               : juce::MouseCursor::NormalCursor);
-    // Mode flipped via toolbar / hotkey with no mouse event to follow -
-    // seed the overlay glyph from the current pointer so it appears
+    // Mode flipped via toolbar / hotkey with no mouse event to follow - seed the
+    // overlay glyph (+ Cut preview line) from the current pointer so it appears
     // immediately instead of waiting for the next move.
     if (onMouseMovedForCursor && onMouseExitedForCursor)
     {
-        if (wantGlyph) onMouseMovedForCursor (*this, { p.x, p.y }, mode, {});
+        if (wantGlyph) onMouseMovedForCursor (*this, { p.x, p.y }, mode, cutLine);
         else           onMouseExitedForCursor();
     }
 }

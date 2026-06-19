@@ -795,7 +795,7 @@ The render runs on a dedicated `juce::Thread` (not the audio thread). Progress i
 #### **9c. Format and metadata**
 
 * **Sample rate**: always the session sample rate. No upsample / downsample on bounce — the user can resample externally if they need 44.1k delivery from a 48k session.
-* **Bit depth**: bounces are 24-bit WAV by default (matches the recording format and the dithering pipeline in the Bit depth technical decision). An MP3 option (320 kbps CBR via libmp3lame) is available for handoff — selected by naming the output file `.mp3`. No 16-bit / no FLAC / no other lossy formats; those belong in an external converter.
+* **Bit depth**: bounces are 24-bit WAV by default (matches the recording format and the dithering pipeline in the Bit depth technical decision). An MP3 option (320 kbps CBR via libmp3lame) is available for handoff — selected by giving the output file a `.mp3` extension. No 16-bit / no FLAC / no other lossy formats; those belong in an external converter.
 * **Stereo only**: master mix and stems are always stereo (left/right). No surround. No mono master. (Mono sources are panned into stereo per the channel strip's pan; a mono source with pan centered produces an L=R bounce.)
 * **Click**: excluded by default. The export dialog has an "Include click track" checkbox (default off) — useful for practice tracks but never on by default.
 * **Filename**: defaults to `<sessionname>_<modename>_<NNN>.wav`, where `<NNN>` is an auto-incrementing 3-digit counter so consecutive bounces don't overwrite each other. The user can edit the filename before render.

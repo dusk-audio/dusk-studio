@@ -83,8 +83,10 @@ bool LameMp3Writer::encode (const float* left, const float* right, int numSample
 
 bool LameMp3Writer::write (const int** samplesToWrite, int numSamples)
 {
-    if (encoder == nullptr || samplesToWrite == nullptr || numSamples <= 0)
-        return encoder != nullptr;
+    if (numSamples <= 0)
+        return true;    // nothing to write - a legitimate no-op, not a failure
+    if (encoder == nullptr || samplesToWrite == nullptr)
+        return false;   // can't encode (consistent with the null-data check below)
 
     // JUCE hands writers 32-bit-left-justified ints; convert to float for LAME.
     scratchL.resize ((size_t) numSamples);

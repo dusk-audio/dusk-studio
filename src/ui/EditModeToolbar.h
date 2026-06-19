@@ -51,6 +51,11 @@ public:
     // (no-op on the note grid) don't clutter the toolbar.
     void setVisibleModes (juce::Array<EditMode> modes);
 
+    // Hide the snap-resolution picker. The PianoRoll drives snap from its own
+    // grid combo (not session.snapResolution), so this toolbar's resolution
+    // button would be a disconnected, misleading control there.
+    void setSnapResolutionVisible (bool shouldBeVisible);
+
     // Pure formatter for a grid resolution ("1/4 Note", "Bar", …). Static +
     // public so other surfaces (the header snap picker) can reuse it.
     static juce::String labelFor (SnapResolution r);

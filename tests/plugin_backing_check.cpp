@@ -25,7 +25,8 @@ TEST_CASE ("pluginBackingLooksDead never prunes URI identifiers (LV2)")
 TEST_CASE ("pluginBackingLooksDead classifies filesystem backings")
 {
     auto root = juce::File::getSpecialLocation (juce::File::tempDirectory)
-                    .getChildFile ("dusk_backing_check");
+                    .getChildFile ("dusk_backing_check_"
+                                     + juce::String (juce::Random::getSystemRandom().nextInt()));
     root.deleteRecursively();
     root.createDirectory();
 
