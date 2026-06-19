@@ -12,10 +12,11 @@ the public stable declaration.
 
 ### Added
 
-- **MP3 bounce / export.** Bounces, stems, and the mastering *Export master*
-  can write 320 kbps MP3 (CBR via libmp3lame) — name the output `.mp3` instead
-  of `.wav`. WAV (stereo 24-bit) stays the default. libmp3lame is auto-detected
-  at build time; absent, the option is hidden and bounces stay WAV-only.
+- **MP3 bounce / export.** Bounces and the mastering *Export master* can write
+  320 kbps MP3 (CBR via libmp3lame) — name the output `.mp3` instead of `.wav`.
+  WAV (stereo 24-bit) stays the default, and stems always stay WAV so they keep
+  sample-accurate alignment for re-import. libmp3lame is auto-detected at build
+  time; absent, the option is hidden and bounces stay WAV-only.
 - **Import DP Song (experimental).** Reads a raw TASCAM DP-24 / DP-24SD / DP-32
   song folder off the SD card and reconstructs the session — each recorded
   fragment onto its own track with the right rate / bit-depth / stereo pairing,

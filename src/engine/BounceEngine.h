@@ -55,13 +55,12 @@ public:
         safeName = juce::File::createLegalFileName (safeName);
         if (safeName.isEmpty()) safeName = "track";
 
-        // Stems follow the base file's container so an MP3 master bounce yields
-        // MP3 stems; default to .wav when the base has no extension.
-        auto ext = base.getFileExtension();
-        if (ext.isEmpty()) ext = ".wav";
-
+        // Stems are always WAV regardless of the base file's extension: start()
+        // forces Format::Wav for Stems mode (MP3 encoder delay + frame padding
+        // would shift each stem and break the sample-accurate alignment a
+        // re-import needs).
         const auto idx = juce::String (trackIndexZeroBased + 1).paddedLeft ('0', 2);
-        return dir.getChildFile (stem + "_" + idx + "_" + safeName + ext);
+        return dir.getChildFile (stem + "_" + idx + "_" + safeName + ".wav");
     }
 
     BounceEngine (AudioEngine& engine, Session& session,

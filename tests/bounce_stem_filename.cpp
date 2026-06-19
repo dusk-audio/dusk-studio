@@ -57,4 +57,14 @@ TEST_CASE ("stemOutputFile builds <dir>/<base>_<NN>_<safe>.wav", "[bounce][stems
         const auto f = BounceEngine::stemOutputFile (base, 0, "kick");
         REQUIRE (f.getParentDirectory() == temp);
     }
+
+    SECTION ("an .mp3 base still yields .wav stems")
+    {
+        // start() forces Format::Wav for Stems mode, so the stem extension must
+        // not follow an MP3 master bounce — that would write WAV data into a
+        // .mp3-named file and break sample-accurate re-import alignment.
+        const auto mp3Base = temp.getChildFile ("master.mp3");
+        REQUIRE (BounceEngine::stemOutputFile (mp3Base, 0, "kick").getFileName()
+                  == "master_01_kick.wav");
+    }
 }

@@ -1326,7 +1326,7 @@ Dusk Studio's solo is **solo-in-place, additive**:
 - Press **S** on a second track to add it to the solo set.
 - Press **S** again to remove it.
 
-There is no PFL (pre-fader listen) or AFL (after-fader listen) mode, and no dry pre-effects monitor — **IN** always monitors *through* the channel strip (EQ, comp, and any insert). To audition one track in isolation, solo it and pull the rest of the mix down; to hear it without processing, bypass the strip's EQ / comp sections.
+There is no PFL (pre-fader listen) or AFL (after-fader listen) mode, and no dry pre-effects monitor — **IN** always monitors *through* the channel strip (EQ, comp, and any insert). To audition one track in isolation, solo it and pull the rest of the mix down. Bypassing the strip's EQ and comp sections gets you closer to the raw recording, but it is not a true dry monitor — the HPF and any hardware/plugin insert still sit in the IN path.
 
 ## Automation
 

@@ -208,9 +208,19 @@ def cpp_escape(s):
 
 
 def cpp_unescape(s):
-    # Exact inverse of cpp_escape, undone in reverse order.
-    return (s.replace("\\r", "\r").replace("\\n", "\n")
-             .replace('\\"', '"').replace("\\\\", "\\"))
+    # Single pass: chained str.replace() would let one substitution synthesise an
+    # escape the next consumes (a literal "\\n" -> backslash+'n' would decode to a
+    # newline). cpp_escape only emits \\ \" \n \r, so decode exactly those.
+    out, i, n = [], 0, len(s)
+    decode = {"\\": "\\", '"': '"', "n": "\n", "r": "\r"}
+    while i < n:
+        if s[i] == "\\" and i + 1 < n and s[i + 1] in decode:
+            out.append(decode[s[i + 1]])
+            i += 2
+        else:
+            out.append(s[i])
+            i += 1
+    return "".join(out)
 
 
 def parse_array(text, name):
