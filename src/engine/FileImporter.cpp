@@ -15,15 +15,14 @@ namespace
 // "track{NN}_{timestamp}.wav" so imports sit next to recordings in the
 // session's audio directory and aren't visually distinct in the file
 // listing. "import_" prefix is the only differentiator.
-juce::String makeImportedFilename (int trackIndex)
+juce::String makeImportedFilename (int trackIndex, const juce::String& extension = ".wav")
 {
     const auto now = juce::Time::getCurrentTime();
     const auto stamp = juce::String::formatted ("%04d%02d%02d-%02d%02d%02d",
                                                   now.getYear(), now.getMonth() + 1, now.getDayOfMonth(),
                                                   now.getHours(), now.getMinutes(), now.getSeconds());
-    return juce::String::formatted ("import_track%02d_%s.wav",
-                                       trackIndex + 1,
-                                       stamp.toRawUTF8());
+    return juce::String::formatted ("import_track%02d_%s", trackIndex + 1, stamp.toRawUTF8())
+             + extension;
 }
 
 // Channel-conform `src` into `dst` (dst is pre-sized to (targetChannels,
@@ -143,6 +142,45 @@ AudioImportResult importAudio (const AudioImportRequest& req)
     if (srcLength > kMaxImportSamplesPerChannel)
     {
         result.errorMessage = "Audio file too long for import";
+        return result;
+    }
+
+    // Faithful fast path: when the source already matches the session's sample
+    // rate AND the requested channel layout, copy it in verbatim — no decode,
+    // no resample, no bit-depth change — so an import never alters audio the
+    // user didn't ask to change (a 16-bit or 32-float source is preserved
+    // exactly, in its original format). Only an actual rate or channel conform
+    // falls through to the decode + re-encode path below.
+    if (std::abs (srcSampleRate - sessionSr) <= 0.001
+        && srcChannels == req.targetChannels
+        && srcChannels >= 1 && srcChannels <= 2)
+    {
+        reader.reset();   // release the read handle before copying the bytes
+
+        const auto ext = req.source.getFileExtension();
+        const auto outFile = req.audioDir.getChildFile (
+            makeImportedFilename (req.trackIndex, ext.isNotEmpty() ? ext : juce::String (".wav")));
+
+        bool copied = false;
+        for (int attempt = 0; attempt < 5 && ! copied; ++attempt)
+        {
+            copied = req.source.copyFileTo (outFile);
+            if (! copied && attempt < 4)
+                juce::Thread::sleep (20);
+        }
+        if (! copied)
+        {
+            result.errorMessage = "Could not copy the file into the session audio folder: "
+                                + outFile.getFullPathName();
+            return result;
+        }
+
+        result.ok = true;
+        result.region.file            = outFile;
+        result.region.timelineStart   = req.timelineStart;
+        result.region.lengthInSamples = srcLength;
+        result.region.sourceOffset    = 0;
+        result.region.numChannels     = srcChannels;
         return result;
     }
 

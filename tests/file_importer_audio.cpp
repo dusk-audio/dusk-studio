@@ -24,7 +24,8 @@ void writeTestWav (const juce::File& outFile,
                     double sampleRate,
                     int numChannels,
                     int numSamples,
-                    Gen&& gen)
+                    Gen&& gen,
+                    int bitsPerSample = 24)
 {
     juce::AudioBuffer<float> buf (numChannels, numSamples);
     for (int c = 0; c < numChannels; ++c)
@@ -41,7 +42,7 @@ void writeTestWav (const juce::File& outFile,
     juce::WavAudioFormat wav;
     std::unique_ptr<juce::AudioFormatWriter> writer (
         wav.createWriterFor (stream.get(), sampleRate,
-                              (unsigned int) numChannels, 24, {}, 0));
+                              (unsigned int) numChannels, bitsPerSample, {}, 0));
     REQUIRE (writer != nullptr);
     stream.release();   // writer owns it now
     REQUIRE (writer->writeFromAudioSampleBuffer (buf, 0, numSamples));
@@ -255,4 +256,76 @@ TEST_CASE ("FileImporter: mono -> stereo duplicates to L and R", "[FileImporter]
     // 24-bit WAV round-trip loses ~1 ULP at this amplitude.
     REQUIRE_THAT (bufferPeak (rb.buffer, 0), WithinAbs (kAmp, 1.0e-4f));
     REQUIRE_THAT (bufferPeak (rb.buffer, 1), WithinAbs (kAmp, 1.0e-4f));
+}
+
+TEST_CASE ("FileImporter: matching rate and channels copies the source verbatim", "[FileImporter]")
+{
+    // When the source already matches the session rate AND the requested
+    // channel layout, the importer must copy it byte-for-byte — no decode,
+    // resample, or re-encode — so it never alters audio the user didn't ask
+    // to change. Asserts the imported file is bit-identical to the source.
+    TempScope tmp;
+    const auto src = tmp.dir.getChildFile ("match.wav");
+    constexpr double kSr  = 48000.0;
+    constexpr int    kLen = 4800;
+    writeTestWav (src, kSr, 2, kLen, [&] (int c, int n)
+    {
+        return (c == 0 ? 0.3f : -0.2f)
+             * (float) std::sin (2.0 * kPi * 330.0 * (double) n / kSr);
+    });
+
+    const auto audioDir = tmp.dir.getChildFile ("audio");
+    audioDir.createDirectory();
+
+    duskstudio::fileimport::AudioImportRequest req;
+    req.source            = src;
+    req.audioDir          = audioDir;
+    req.sessionSampleRate = kSr;   // matches source
+    req.targetChannels    = 2;     // matches source channels
+    req.timelineStart     = 7;
+
+    const auto res = duskstudio::fileimport::importAudio (req);
+    REQUIRE (res.ok);
+    REQUIRE (res.region.file.existsAsFile());
+    REQUIRE (res.region.file != src);                              // copied in, not referenced
+    REQUIRE (res.region.file.getParentDirectory() == audioDir);    // into the session audio dir
+
+    juce::MemoryBlock srcBytes, outBytes;
+    REQUIRE (src.loadFileAsData (srcBytes));
+    REQUIRE (res.region.file.loadFileAsData (outBytes));
+    REQUIRE (srcBytes.getSize() == outBytes.getSize());
+    REQUIRE (srcBytes == outBytes);
+
+    REQUIRE (res.region.numChannels     == 2);
+    REQUIRE (res.region.lengthInSamples == kLen);
+    REQUIRE (res.region.timelineStart   == 7);
+}
+
+TEST_CASE ("FileImporter: a matching 32-bit source is not truncated to 24-bit", "[FileImporter]")
+{
+    // The old path decoded to float and always re-wrote 24-bit, silently
+    // truncating a >24-bit source. The verbatim copy preserves the original
+    // bytes, so a 32-bit file survives intact.
+    TempScope tmp;
+    const auto src = tmp.dir.getChildFile ("wide.wav");
+    constexpr double kSr  = 48000.0;
+    constexpr int    kLen = 4800;
+    writeTestWav (src, kSr, 1, kLen, [&] (int, int n)
+    {
+        return 0.123456789f * (float) std::sin (2.0 * kPi * 100.0 * (double) n / kSr);
+    }, /*bitsPerSample*/ 32);
+
+    duskstudio::fileimport::AudioImportRequest req;
+    req.source            = src;
+    req.audioDir          = tmp.dir;
+    req.sessionSampleRate = kSr;
+    req.targetChannels    = 1;
+
+    const auto res = duskstudio::fileimport::importAudio (req);
+    REQUIRE (res.ok);
+
+    juce::MemoryBlock srcBytes, outBytes;
+    REQUIRE (src.loadFileAsData (srcBytes));
+    REQUIRE (res.region.file.loadFileAsData (outBytes));
+    REQUIRE (srcBytes == outBytes);   // 32-bit data preserved, not down-converted
 }
