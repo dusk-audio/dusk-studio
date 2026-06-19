@@ -338,6 +338,18 @@ public:
         onDeviceLostAlert_ = std::move (sink);
     }
 
+    // One-shot startup device-open outcome. Empty = the saved device opened.
+    // Non-empty when the saved device was busy and we fell back (or couldn't).
+    // The UI reads it ONCE after construction — the alert sinks above are still
+    // null while AudioEngine itself is being constructed, so the startup result
+    // can't go through them.
+    juce::String consumeStartupDeviceMessage()
+    {
+        auto m = startupDeviceMessage_;
+        startupDeviceMessage_.clear();
+        return m;
+    }
+
     // Fired when record() refuses to start (no track armed, or no audio
     // device open) so the UI can show an in-window alert instead of the
     // failure only reaching stderr. Set at startup (MainComponent), nullable.
@@ -669,6 +681,10 @@ private:
     // changeListenerCallback (message thread) don't race on the flag
     // itself. Acquire / release across the threads.
     std::atomic<bool>   hadLiveDevice_    { false };
+
+    // Set once in the constructor by the busy-device fallback; drained by
+    // consumeStartupDeviceMessage() after construction. Message-thread only.
+    juce::String        startupDeviceMessage_;
 
     DeviceLostAlertSink onDeviceLostAlert_;
     RecordBlockedSink   onRecordBlocked_;

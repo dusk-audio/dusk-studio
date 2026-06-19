@@ -572,6 +572,30 @@ MainComponent::MainComponent()
         showDuskAlert (*this, "Cannot record", msg);
     });
 
+    // Hot-unplug (H5): surface the runtime device-lost message in-window
+    // instead of only logging it. Distinct title from the startup alert below.
+    engine.setDeviceLostAlertSink ([this] (juce::String msg)
+    {
+        showDuskAlert (*this, "Audio device disconnected", msg);
+    });
+
+    // Startup: if the saved audio device was in use (held by PipeWire / JACK /
+    // another DAW), the engine ctor already tried to fall back to a working one.
+    // Tell the user what happened — switched to another device, or left with
+    // none — with a route into Audio Settings. Deferred so it paints over the
+    // main window, not a blank canvas. consume clears it (one-shot).
+    if (auto deviceMsg = engine.consumeStartupDeviceMessage(); deviceMsg.isNotEmpty())
+    {
+        juce::Component::SafePointer<MainComponent> safeThis (this);
+        juce::MessageManager::callAsync ([safeThis, deviceMsg]
+        {
+            if (auto* self = safeThis.getComponent())
+                showDuskConfirm (*self, "Audio device unavailable", deviceMsg,
+                                 "Open Audio Settings", [self] { self->openAudioSettings(); },
+                                 "Continue", [] {});
+        });
+    }
+
     // Defer the startup dialog to the next message-loop tick so the main
     // window paints first - otherwise the dialog can pop up over a blank
     // canvas. SafePointer guards the case where the user closes the app

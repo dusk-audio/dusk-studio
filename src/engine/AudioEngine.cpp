@@ -5,6 +5,7 @@
 #include "McuReceiver.h"
 #include "McuController.h"
 #include "../session/RegionEditActions.h"
+#include "DeviceFallbackMessage.h"
 #if defined(DUSKSTUDIO_HAS_ALSA)
   #include "alsa/AlsaAudioIODeviceType.h"
 #endif
@@ -214,6 +215,74 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
                       "[Dusk Studio/AudioEngine] device-manager init reported: %s\n",
                       err.toRawUTF8());
     }
+
+   #if defined(DUSKSTUDIO_HAS_ALSA)
+    // The saved setup can pin an ALSA hw: device that another app (PipeWire,
+    // JACK, another DAW) holds exclusively. JUCE's selectDefaultDeviceOnFailure
+    // only re-picks another device NAME on the same ALSA type — the same hw
+    // conflict — so it never falls through to JACK. Recover explicitly: JACK
+    // (routes through PipeWire and reaches the interface even while the raw hw
+    // handle is held) → the first ALSA device that opens → give up and tell the
+    // user. This runs BEFORE addAudioCallback / addChangeListener: the audio
+    // thread isn't attached and the engine isn't a change listener yet, so the
+    // setup-switch broadcasts reach no one (no re-entrancy, no fallback loop).
+    {
+        auto working = [this]
+        {
+            auto* d = deviceManager.getCurrentAudioDevice();
+            return d != nullptr && d->getCurrentSampleRate() > 0.0;
+        };
+
+        const juce::String savedName = savedDeviceState != nullptr
+            ? savedDeviceState->getStringAttribute ("audioOutputDeviceName",
+                  savedDeviceState->getStringAttribute ("audioInputDeviceName"))
+            : juce::String();
+
+        if (! working())
+        {
+            // Clear the pinned (busy) device name + use default channels, else
+            // setAudioDeviceSetup can short-circuit to a non-started, sr-0 setup.
+            auto openDefaultOnType = [this] (const char* typeName, const juce::String& devName)
+            {
+                deviceManager.setCurrentAudioDeviceType (typeName, /*treatAsChosen*/ true);
+                auto s = deviceManager.getAudioDeviceSetup();
+                s.inputDeviceName.clear();
+                s.outputDeviceName         = devName;   // empty = the type's default device
+                s.useDefaultInputChannels  = true;
+                s.useDefaultOutputChannels = true;
+                deviceManager.setAudioDeviceSetup (s, /*treatAsChosen*/ true);
+            };
+
+            // 1) JACK / PipeWire default.
+            openDefaultOnType ("JACK", juce::String());
+
+            // 2) Walk ALSA device names; the busy one fails, the next (Built-in
+            //    / HDMI / other interface) opens.
+            if (! working())
+                for (auto* t : deviceManager.getAvailableDeviceTypes())
+                {
+                    if (t == nullptr || t->getTypeName() != "ALSA") continue;
+                    t->scanForDevices();
+                    for (const auto& name : t->getDeviceNames (/*wantInputNames*/ false))
+                    {
+                        openDefaultOnType ("ALSA", name);
+                        if (working()) break;
+                    }
+                    break;
+                }
+        }
+
+        // Resolve the outcome unconditionally: this also catches the case where
+        // JUCE's own selectDefaultDeviceOnFailure SILENTLY moved us onto a
+        // different working device than the one saved — the user should still be
+        // told their interface wasn't available. startupDeviceMessage() returns
+        // empty when the saved device opened, so the normal path stays silent.
+        auto* dev = deviceManager.getCurrentAudioDevice();
+        const bool opened = dev != nullptr && dev->getCurrentSampleRate() > 0.0;
+        startupDeviceMessage_ = duskstudio::startupDeviceMessage (
+            opened, savedName, opened ? dev->getName() : juce::String());
+    }
+   #endif
 
     deviceManager.addAudioCallback (this);
 
