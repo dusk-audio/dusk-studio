@@ -1477,10 +1477,20 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
 
     if (auto tracks = root["tracks"]; tracks.isArray())
     {
-        const int n = juce::jmin (Session::kNumTracks, tracks.size());
-        for (int i = 0; i < n; ++i)
-            restoreTrack (s.track (i), tracks[i], sessionLoadBpm,
-                          s.getSessionDirectory(), s.missingAudioFilesAfterLoad);
+        // Restore EVERY track slot, not just the ones the JSON lists. A session
+        // with fewer tracks than this build (hand-edited, or written by a tool
+        // like the DP importer) must blank the surplus slots — otherwise they
+        // keep the PREVIOUS session's regions / MIDI / automation / plugin, i.e.
+        // ghost content that still plays back. Driving an absent slot through
+        // restoreTrack with an empty object runs the same unconditional clears
+        // the present-track path uses (regions, midiRegions, automation lanes,
+        // automation mode, plugin state).
+        const juce::var emptyTrack (new juce::DynamicObject());
+        for (int i = 0; i < Session::kNumTracks; ++i)
+            restoreTrack (s.track (i),
+                          i < tracks.size() ? tracks[i] : emptyTrack,
+                          sessionLoadBpm, s.getSessionDirectory(),
+                          s.missingAudioFilesAfterLoad);
     }
     if (auto busesArr = root["buses"]; busesArr.isArray())
     {
