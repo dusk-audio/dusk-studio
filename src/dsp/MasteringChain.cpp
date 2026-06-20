@@ -67,6 +67,7 @@ int MasteringChain::readScopeLatest (float* dest, int count) const noexcept
     if (ringSize == 0 || count <= 0 || dest == nullptr) return 0;
     count = juce::jmin (count, ringSize);
     const int mask = scopeRingMask.load (std::memory_order_relaxed);
+    if (mask == 0) return 0;   // matches pushScope; guards a mask-not-yet-stored race
     const long long wp = scopeWritePos.load (std::memory_order_acquire);
     const float* ring = scopeRing.getReadPointer (0);
     const long long start = wp - count;

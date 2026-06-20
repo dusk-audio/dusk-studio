@@ -654,15 +654,15 @@ juce::String AlsaAudioIODevice::open (const juce::BigInteger& inputChannels,
     // channel. That heap overflow is what crashes with "free(): invalid pointer".
     juce::BigInteger clampedOutMask, clampedInMask;
     if (wantOutput)
-        for (int i = 0; i <= outputChannels.getHighestBit(); ++i)
-            if (outputChannels[i] && i < (int) outNumChannels)
+        for (int i = 0; i < (int) outNumChannels; ++i)
+            if (outputChannels[i])
             {
                 activeOutDeviceChannelIndex.add (i);
                 clampedOutMask.setBit (i);
             }
     if (wantInput)
-        for (int i = 0; i <= inputChannels.getHighestBit(); ++i)
-            if (inputChannels[i] && i < (int) inNumChannels)
+        for (int i = 0; i < (int) inNumChannels; ++i)
+            if (inputChannels[i])
             {
                 activeInDeviceChannelIndex.add (i);
                 clampedInMask.setBit (i);
