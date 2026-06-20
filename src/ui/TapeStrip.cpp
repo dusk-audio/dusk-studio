@@ -522,6 +522,7 @@ void TapeStrip::refreshAfterSessionLoad()
     selectedRegion    = -1;
     selectedMidiTrack = -1;
     selectedMidiRegion = -1;
+    additionalSelections.clear();   // else allSelectedRegions() keeps stale group picks
     drag = ActiveDrag{};
     midiDrag.clear();
 

@@ -170,6 +170,7 @@ AudioImportResult importAudio (const AudioImportRequest& req)
         }
         if (! copied)
         {
+            outFile.deleteFile();   // drop any partial copy (matches the slow path)
             result.errorMessage = "Could not copy the file into the session audio folder: "
                                 + outFile.getFullPathName();
             return result;
