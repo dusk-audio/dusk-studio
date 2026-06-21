@@ -230,7 +230,11 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
         auto working = [this]
         {
             auto* d = deviceManager.getCurrentAudioDevice();
-            return d != nullptr && d->getCurrentSampleRate() > 0.0;
+            // A started SR alone isn't enough: a per-device ALSA name can resolve
+            // to 0 active outputs (see the silent-failure guard further down), so
+            // require real output channels too.
+            return d != nullptr && d->getCurrentSampleRate() > 0.0
+                && d->getActiveOutputChannels().countNumberOfSetBits() > 0;
         };
 
         const juce::String savedName = savedDeviceState != nullptr
@@ -250,6 +254,10 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
                 s.outputDeviceName         = devName;   // empty = the type's default device
                 s.useDefaultInputChannels  = true;
                 s.useDefaultOutputChannels = true;
+                // Drop the failed device's rate/buffer so JUCE picks each fallback
+                // device's own defaults instead of carrying over unsupported values.
+                s.sampleRate = 0;
+                s.bufferSize = 0;
                 deviceManager.setAudioDeviceSetup (s, /*treatAsChosen*/ true);
             };
 
@@ -278,7 +286,7 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
         // told their interface wasn't available. startupDeviceMessage() returns
         // empty when the saved device opened, so the normal path stays silent.
         auto* dev = deviceManager.getCurrentAudioDevice();
-        const bool opened = dev != nullptr && dev->getCurrentSampleRate() > 0.0;
+        const bool opened = working();
         startupDeviceMessage_ = duskstudio::startupDeviceMessage (
             opened, savedName, opened ? dev->getName() : juce::String());
     }

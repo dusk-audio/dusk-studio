@@ -153,13 +153,14 @@ AudioImportResult importAudio (const AudioImportRequest& req)
     // falls through to the decode + re-encode path below.
     if (std::abs (srcSampleRate - sessionSr) <= 0.001
         && srcChannels == req.targetChannels
-        && srcChannels >= 1 && srcChannels <= 2)
-    {
+        && srcChannels >= 1 && srcChannels <= 2
+        && req.source.getFileExtension().isNotEmpty())   // no extension -> can't safely
+    {                                                     // name a verbatim copy; re-encode below
         reader.reset();   // release the read handle before copying the bytes
 
         const auto ext = req.source.getFileExtension();
         const auto outFile = req.audioDir.getChildFile (
-            makeImportedFilename (req.trackIndex, ext.isNotEmpty() ? ext : juce::String (".wav")));
+            makeImportedFilename (req.trackIndex, ext));
 
         bool copied = false;
         for (int attempt = 0; attempt < 5 && ! copied; ++attempt)

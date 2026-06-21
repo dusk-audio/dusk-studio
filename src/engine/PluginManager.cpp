@@ -305,6 +305,8 @@ int PluginManager::scanInstalledPlugins (
 
         for (auto& entry : liveIdsByFormat)
             for (auto* format : formatManager.getFormats())
+            {
+                if (format == nullptr) continue;
                 if (format->getName() == entry.first)
                 {
                     entry.second = format->searchPathsForPlugins (
@@ -312,6 +314,7 @@ int PluginManager::scanInstalledPlugins (
                         /*allowAsync*/ false);
                     break;
                 }
+            }
 
         // getTypes() returns a COPY of the internal array (JUCE), so removeType()
         // mutating the live list inside this loop can't invalidate the iteration.

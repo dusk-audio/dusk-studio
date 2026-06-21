@@ -20,6 +20,8 @@ TEST_CASE ("loading a session with fewer tracks blanks the surplus slots",
                         .getChildFile ("dusk-shrink-"
                                          + juce::String (juce::Random::getSystemRandom().nextInt()));
     dir.createDirectory();
+    // RAII cleanup so a failing REQUIRE below never leaves the temp dir behind.
+    const struct ScopedDir { juce::File d; ~ScopedDir() { d.deleteRecursively(); } } scopedDir { dir };
 
     Session s;
     s.setSessionDirectory (dir);
@@ -54,6 +56,4 @@ TEST_CASE ("loading a session with fewer tracks blanks the surplus slots",
     REQUIRE (s.track (5).pluginDescriptionXml.isEmpty());
     REQUIRE (s.track (5).pluginStateBase64.isEmpty());
     REQUIRE (s.track (5).automationLanes[0].pointsConst().empty());
-
-    dir.deleteRecursively();
 }

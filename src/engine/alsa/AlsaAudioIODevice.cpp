@@ -667,6 +667,17 @@ juce::String AlsaAudioIODevice::open (const juce::BigInteger& inputChannels,
                 activeInDeviceChannelIndex.add (i);
                 clampedInMask.setBit (i);
             }
+    // A stale/invalid mask can select only channels the device doesn't have,
+    // leaving zero active channels after the clamp - open() still succeeds but the
+    // callback gets silence / no input. Fall back to the first available
+    // channel(s) (a default stereo pair) so we always have at least one.
+    if (wantOutput && clampedOutMask.isZero() && (int) outNumChannels > 0)
+        for (int i = 0; i < juce::jmin (2, (int) outNumChannels); ++i)
+        { activeOutDeviceChannelIndex.add (i); clampedOutMask.setBit (i); }
+    if (wantInput && clampedInMask.isZero() && (int) inNumChannels > 0)
+        for (int i = 0; i < juce::jmin (2, (int) inNumChannels); ++i)
+        { activeInDeviceChannelIndex.add (i); clampedInMask.setBit (i); }
+
     // Publish the actually-active masks. The requested mask can be wider than the
     // device opened (32 asked, 12 real); without this, getActiveOutput/Input-
     // Channels() reports enabled channels the callback never gets handed, and the

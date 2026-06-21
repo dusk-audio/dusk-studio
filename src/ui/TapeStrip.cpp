@@ -2224,13 +2224,13 @@ void TapeStrip::mouseMove (const juce::MouseEvent& e)
         // Over an audio region: scissors glyph + a dashed cut-preview line down
         // the region's height (matches the audio editor's Cut affordance).
         juce::Range<int> cutLine;
-        if (hit.regionIdx >= 0)
+        if (hit.op == RegionOp::Move)   // audio body only — not trim/fade/take sub-areas
         {
             const auto rr = audioRegionScreenRect (hit.track, hit.regionIdx);
             cutLine = { rr.getY(), rr.getBottom() };
         }
-        setHoverCursor (hit.regionIdx >= 0 ? juce::MouseCursor::NoCursor
-                                           : juce::MouseCursor::NormalCursor,
+        setHoverCursor (hit.op == RegionOp::Move ? juce::MouseCursor::NoCursor
+                                                 : juce::MouseCursor::NormalCursor,
                         e.x, e.y, cutLine);
         return;
     }
@@ -2353,7 +2353,7 @@ void TapeStrip::refreshModeCursor()
         const bool overMidi = overMidiRegionBody (p.x, p.y);
         if (mode == EditMode::Cut)
         {
-            wantGlyph = (hit.regionIdx >= 0);                        // scissors over audio (splittable) only
+            wantGlyph = (hit.op == RegionOp::Move);                  // scissors over audio body (splittable) only
             if (wantGlyph)
             {
                 const auto rr = audioRegionScreenRect (hit.track, hit.regionIdx);
