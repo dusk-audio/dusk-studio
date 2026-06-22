@@ -31,8 +31,20 @@ concurrency:
 
 jobs:
   release:
-    name: Build + package tarball (GCC Release, Ubuntu 22.04, amd64)
-    runs-on: ubuntu-22.04
+    name: Build + package tarball (${{ matrix.label }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      # Don't cancel the working amd64 build if arm64 fails to compile; a broken
+      # Pi build should show red on its own, not block the x86_64 release.
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-22.04
+            label: GCC Release, Ubuntu 22.04, amd64
+          - arch: aarch64
+            runner: ubuntu-22.04-arm
+            label: GCC Release, Ubuntu 22.04, arm64 (Raspberry Pi)
     env:
       RELEASES_REPO: dusk-audio/dusk-studio-releases
 
@@ -119,7 +131,7 @@ jobs:
         run: |
           if [ -z "${PATREON_REFRESH_TOKEN}" ] || [ -z "${PATREON_ACCESS_TOKEN}" ] \
              || [ -z "${PATREON_CLIENT_ID}" ] || [ -z "${PATREON_CLIENT_SECRET}" ]; then
-            echo "Patreon secrets not fully configured - shipping the committed supporters list."
+            echo "::warning::Patreon secrets not configured - shipping the committed supporters list (may be stale)."
             exit 0
           fi
           umask 077
@@ -130,7 +142,13 @@ jobs:
           # json.dump escapes any special characters in the secrets; a raw heredoc
           # would corrupt the JSON on a quote/backslash in a token.
           python3 -c 'import json, os, sys; json.dump({"access_token": os.environ["PATREON_ACCESS_TOKEN"], "refresh_token": os.environ["PATREON_REFRESH_TOKEN"], "client_id": os.environ["PATREON_CLIENT_ID"], "client_secret": os.environ["PATREON_CLIENT_SECRET"]}, open(sys.argv[1], "w"))' "${cfg}"
-          python3 scripts/update-patrons.py || echo "update-patrons.py failed - shipping the committed list."
+          # Secrets are configured, so this release must ship the live list.
+          # Fail loud instead of falling back to the committed (possibly stale)
+          # list. A blocked release beats a silently wrong one.
+          if ! python3 scripts/update-patrons.py; then
+            echo "::error::Patreon refresh failed despite configured secrets - refusing to ship a stale supporters list. Check the token/API and re-run."
+            exit 1
+          fi
 
       - name: Configure (Release)
         run: |
@@ -156,8 +174,9 @@ jobs:
           ctest --test-dir build-tests --output-on-failure
 
       - name: Package portable tarball
-        # scripts/package-tarball.sh emits dusk-studio-<version>-Linux-x86_64.tar.xz
-        # at the repo root: a portable program directory (run ./DuskStudio/DuskStudio
+        # scripts/package-tarball.sh emits dusk-studio-<version>-Linux-<arch>.tar.xz
+        # at the repo root (arch from uname -m, so the arm runner produces the
+        # aarch64 tarball): a portable program directory (run ./DuskStudio/DuskStudio
         # in place) plus install.sh for optional menu / PATH / session-file-type
         # integration. Needs ImageMagick (icon downscale).
         run: BUILD_DIR=build-linux scripts/package-tarball.sh
@@ -165,7 +184,8 @@ jobs:
       - name: Checksums
         run: |
           set -euo pipefail
-          sha256sum dusk-studio-*-Linux-x86_64.tar.xz | tee SHA256SUMS.linux
+          sha256sum dusk-studio-*-Linux-${{ matrix.arch }}.tar.xz \
+            | tee "SHA256SUMS.linux-${{ matrix.arch }}"
 
       - name: Publish tarball to the PRIVATE releases repo
         # Only on a real v* tag — dispatch runs are build validation.
@@ -175,22 +195,27 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF_NAME}"
-          NOTES="Unsigned Linux x86_64 tarball: extract, then run ./DuskStudio/DuskStudio (or ./install.sh for a menu entry, PATH launcher, and session-file association)."
+          ARCH="${{ matrix.arch }}"
+          NOTES="Unsigned Linux tarball: extract, then run ./DuskStudio/DuskStudio (or ./install.sh for a menu entry, PATH launcher, and session-file association). The aarch64 build targets 64-bit Raspberry Pi OS (Pi 3/4/5)."
 
           shopt -s nullglob
-          ASSETS=( dusk-studio-*-Linux-x86_64.tar.xz SHA256SUMS.linux )
+          ASSETS=( dusk-studio-*-Linux-${ARCH}.tar.xz "SHA256SUMS.linux-${ARCH}" )
           if [[ ${#ASSETS[@]} -eq 0 ]]; then
-            echo "::error::no Linux artifacts produced — packaging step failed" >&2
+            echo "::error::no Linux ${ARCH} artifacts produced, packaging step failed" >&2
             exit 1
           fi
 
+          # The amd64 + arm64 matrix jobs publish to the SAME tag in parallel, so
+          # the release may be absent when we look yet created by the sibling a
+          # moment later. Create best-effort (tolerate the race), then always
+          # upload our arch's assets with --clobber. Asset names carry the arch,
+          # so the two jobs never overwrite each other's tarballs.
           if ! gh release view "$TAG" --repo "$RELEASES_REPO" >/dev/null 2>&1; then
             gh release create "$TAG" \
               --repo "$RELEASES_REPO" \
               --title "Dusk Studio $TAG" \
               --notes "$NOTES" \
-              "${ASSETS[@]}"
-          else
-            gh release upload "$TAG" --repo "$RELEASES_REPO" --clobber "${ASSETS[@]}"
+              || echo "release create raced with the sibling arch job; uploading instead."
           fi
-          echo "Published ${#ASSETS[@]} asset(s) to ${RELEASES_REPO} @ ${TAG}"
+          gh release upload "$TAG" --repo "$RELEASES_REPO" --clobber "${ASSETS[@]}"
+          echo "Published ${#ASSETS[@]} ${ARCH} asset(s) to ${RELEASES_REPO} @ ${TAG}"

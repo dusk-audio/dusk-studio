@@ -388,11 +388,11 @@ Windows SmartScreen treats every new MSI hash as untrusted on first download; re
 
 ### Verifying your download
 
-Every release ships with a `SHA256SUMS.{linux,macos,windows}` file. To verify:
+Every release ships a `SHA256SUMS` file per platform. Linux is split by architecture: `SHA256SUMS.linux-x86_64` (PC) and `SHA256SUMS.linux-aarch64` (64-bit Raspberry Pi), alongside `SHA256SUMS.macos` and `SHA256SUMS.windows`. To verify:
 
 ```bash
 # Linux + macOS
-shasum -a 256 -c SHA256SUMS.linux         # or .macos
+shasum -a 256 -c SHA256SUMS.linux-x86_64    # or -aarch64 (Raspberry Pi), or SHA256SUMS.macos
 ```
 
 ```pwsh

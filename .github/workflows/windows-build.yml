@@ -90,7 +90,7 @@ jobs:
         run: |
           if [ -z "${PATREON_REFRESH_TOKEN}" ] || [ -z "${PATREON_ACCESS_TOKEN}" ] \
              || [ -z "${PATREON_CLIENT_ID}" ] || [ -z "${PATREON_CLIENT_SECRET}" ]; then
-            echo "Patreon secrets not fully configured - shipping the committed supporters list."
+            echo "::warning::Patreon secrets not configured - shipping the committed supporters list (may be stale)."
             exit 0
           fi
           umask 077
@@ -101,7 +101,13 @@ jobs:
           # json.dump escapes any special characters in the secrets; a raw heredoc
           # would corrupt the JSON on a quote/backslash in a token.
           python3 -c 'import json, os, sys; json.dump({"access_token": os.environ["PATREON_ACCESS_TOKEN"], "refresh_token": os.environ["PATREON_REFRESH_TOKEN"], "client_id": os.environ["PATREON_CLIENT_ID"], "client_secret": os.environ["PATREON_CLIENT_SECRET"]}, open(sys.argv[1], "w"))' "${cfg}"
-          python3 scripts/update-patrons.py || echo "update-patrons.py failed - shipping the committed list."
+          # Secrets are configured, so this release must ship the live list.
+          # Fail loud instead of falling back to the committed (possibly stale)
+          # list. A blocked release beats a silently wrong one.
+          if ! python3 scripts/update-patrons.py; then
+            echo "::error::Patreon refresh failed despite configured secrets - refusing to ship a stale supporters list. Check the token/API and re-run."
+            exit 1
+          fi
 
       - name: Fetch Steinberg ASIO SDK
         shell: bash
