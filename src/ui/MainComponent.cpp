@@ -1297,16 +1297,15 @@ void MainComponent::resized()
 
     auto area = getLocalBounds().reduced (8);
 
-    // Slim menu-bar row at the very top. The menu bar grows to fit its
-    // top-level menu names (~80 px); status text + system meters share
-    // the rest of the row to its right.
-    auto top = area.removeFromTop (22);
-    menuBar.setBounds (top.removeFromLeft (200));
-    top.removeFromLeft (8);
+    // Top menu row. Grown to host the centered stage selector (RECORDING /
+    // MIXING / MASTERING / AUX). File / Settings menu on the left, system meters
+    // on the right; the stage selector and the session status text are placed
+    // below, once the stage-tab width is known.
+    constexpr int kMenuRowH = 32;
+    const auto menuRow = area.removeFromTop (kMenuRowH);
+    menuBar.setBounds (menuRow.withWidth (200));
     if (systemStatusBar != nullptr)
-        systemStatusBar->setBounds (top.removeFromRight (300));
-    top.removeFromRight (8);
-    statusLabel.setBounds (top);
+        systemStatusBar->setBounds (menuRow.withTrimmedLeft (menuRow.getWidth() - 300));
     area.removeFromTop (4);
 
     const auto curStage = engine.getStage();
@@ -1338,7 +1337,6 @@ void MainComponent::resized()
     }
 
     constexpr int kStageBtnH = 28;
-    const int stageY = rowBounds.getY() + (rowBounds.getHeight() - kStageBtnH) / 2;
 
     // Banking decision: ConsoleView reports how many channel strips fit
     // alongside the always-anchored bus + master column at min width.
@@ -1366,46 +1364,42 @@ void MainComponent::resized()
     constexpr int kBankBtnGap = 6;
     constexpr int kBankBtnH  = 26;
 
-    // Center the stages + banks group within the row. Transport sits on
-    // the LEFT (TransportBar own widgets); BPM cluster sits on the RIGHT.
-    // The centered group reads: STAGES (4 tabs) [+ BANK 1..N buttons
-    // when 16 strips need banking].
-    constexpr int kStageToBankGap = 12;
-    const int bankClusterW = needsBanking
-                                ? (kStageToBankGap
-                                     + numBanks * kBankBtnW
-                                     + (numBanks - 1) * kBankBtnGap)
-                                : 0;
-    const int groupW       = stageBlockW + bankClusterW;
-    int stageX             = rowBounds.getX() + (rowBounds.getWidth() - groupW) / 2;
-
-    // Pure window-width centering walks over the transport bar's clock /
-    // timecode label at wide widths (the transport cluster is left-anchored,
-    // the stage tabs centre on the FULL row). Clamp the centred group so
-    // its left edge sits at least `kStageClockGap` past the clock's right
-    // edge — matches the gap conventions used elsewhere in this row.
-    if (transportBar != nullptr)
+    // Stage selector lives in the TOP menu row, centered between the File /
+    // Settings menu and the system meters. The session status text fills the
+    // gap to its left. (stageW / stageBlockW were computed above with the
+    // transport metrics so the tabs follow the same compact breakpoint.)
     {
-        constexpr int kStageClockGap = 12;
-        const int clockRight = rowBounds.getX() + transportBar->getClockRightX();
-        stageX = juce::jmax (stageX, clockRight + kStageClockGap);
+        const int menuStageY   = menuRow.getY() + (menuRow.getHeight() - kStageBtnH) / 2;
+        const int menuLeftPad  = menuRow.getX() + 200 + 12;            // past File / Settings
+        const int menuRightPad = menuRow.getRight()
+                                   - (systemStatusBar != nullptr ? 300 + 12 : 0);
+        int stageX = menuRow.getX() + (menuRow.getWidth() - stageBlockW) / 2;
+        stageX = juce::jlimit (menuLeftPad,
+                                 juce::jmax (menuLeftPad, menuRightPad - stageBlockW),
+                                 stageX);
+        recordingStageBtn.setBounds (stageX,              menuStageY, stageW, kStageBtnH);
+        mixingStageBtn   .setBounds (stageX + stageW,     menuStageY, stageW, kStageBtnH);
+        masteringStageBtn.setBounds (stageX + 2 * stageW, menuStageY, stageW, kStageBtnH);
+        auxStageBtn      .setBounds (stageX + 3 * stageW, menuStageY, stageW, kStageBtnH);
+
+        // Help text in the gap between the menu bar and the tabs.
+        const int statusW = juce::jmax (0, stageX - 12 - menuLeftPad);
+        statusLabel.setBounds (menuLeftPad, menuRow.getY(), statusW, menuRow.getHeight());
     }
 
-    recordingStageBtn.setBounds (stageX,                stageY, stageW, kStageBtnH);
-    mixingStageBtn   .setBounds (stageX + stageW,       stageY, stageW, kStageBtnH);
-    masteringStageBtn.setBounds (stageX + 2 * stageW,   stageY, stageW, kStageBtnH);
-    auxStageBtn      .setBounds (stageX + 3 * stageW,   stageY, stageW, kStageBtnH);
-    // Z-order is correct by construction: transportBar is added BEFORE
-    // the stage tabs + bank buttons in the ctor, so the overlays sit on
-    // top of the transport bar's painted background naturally.
-
-    // Rebuild bank-button row to match the current numBanks. Buttons
-    // sit inline immediately right of the centered stage block.
+    // Bank buttons centered in the TRANSPORT row (the stage selector vacated it),
+    // clamped past the clock so they never overlap it.
     syncBankButtons (needsBanking ? numBanks : 0);
     if (needsBanking && consoleView != nullptr)
     {
+        const int bankClusterW = numBanks * kBankBtnW + (numBanks - 1) * kBankBtnGap;
+        int bankX = rowBounds.getX() + (rowBounds.getWidth() - bankClusterW) / 2;
+        if (transportBar != nullptr)
+        {
+            const int clockRight = rowBounds.getX() + transportBar->getClockRightX();
+            bankX = juce::jmax (bankX, clockRight + 12);
+        }
         const int bankY = rowBounds.getY() + (rowBounds.getHeight() - kBankBtnH) / 2;
-        int bankX = stageX + stageBlockW + kStageToBankGap;
         const int activeBank = consoleView->getBank();
         for (int i = 0; i < (int) bankButtons.size(); ++i)
         {
