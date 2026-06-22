@@ -65,23 +65,31 @@ jobs:
             libwayland-dev libxkbcommon-dev libdecor-0-dev \
             imagemagick xz-utils
 
-      - name: Clone JUCE (plugdata-team Wayland fork, pinned)
+      - name: Clone JUCE (Dusk-owned Wayland mirror, pinned)
         # Linux ships against the Wayland fork, NOT upstream: it carries the
         # XEmbed mapping / X11-on-Wayland / peer-creation-latch commits that
         # plugin-editor hosting on Wayland depends on, plus the
         # SIMDNativeOps<long long> alias GCC needs for int64 SIMD (so no
         # separate patch step — re-applying it would duplicate the
-        # specialization and fail to compile). Pinned to an immutable commit
-        # for reproducible release builds; bump JUCE_REV when the fork advances.
+        # specialization and fail to compile).
+        #
+        # Pinned to a Dusk-OWNED mirror (dusk-audio/JUCE-wayland), NOT the
+        # upstream plugdata-team fork: that fork rebased + GC'd the exact commit
+        # we pinned (b970a99), which broke the release. The mirror is a tree-only
+        # snapshot of that known-good state under an immutable tag, so releases
+        # can't be broken by a third-party fork's history rewrite. To bump JUCE,
+        # push a new snapshot tag to the mirror and update JUCE_TAG / JUCE_REV.
         # Mac + Windows stay on upstream.
         env:
-          JUCE_REV: b970a992dfb650812b553da96e7b219d8441f45f
+          JUCE_MIRROR: https://github.com/dusk-audio/JUCE-wayland.git
+          JUCE_TAG: dusk-wayland-v1
+          JUCE_REV: 46ab52f4b6e12acf24309fefb6c349f3f78ed52e
         run: |
           set -euo pipefail
           git init -q "${RUNNER_TEMP}/JUCE-wayland"
           cd "${RUNNER_TEMP}/JUCE-wayland"
-          git remote add origin https://github.com/plugdata-team/JUCE.git
-          git fetch --depth 1 origin "${JUCE_REV}"
+          git remote add origin "${JUCE_MIRROR}"
+          git fetch --depth 1 origin "refs/tags/${JUCE_TAG}"
           git checkout -q FETCH_HEAD
           [[ "$(git rev-parse HEAD)" == "${JUCE_REV}" ]] || {
             echo "ERROR: JUCE checkout $(git rev-parse HEAD) != pinned ${JUCE_REV}" >&2; exit 1; }
