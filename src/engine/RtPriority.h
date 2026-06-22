@@ -21,25 +21,26 @@ namespace duskstudio::rt
 
 struct RtPriorityInfo
 {
-    int       jucePriority;   // 0 = realtime not attainable, use a normal thread
+    int       jucePriority;   // -1 = realtime not attainable; else a valid [0, 10]
     bool      haveRtLimit;
     long long rtLimit;        // -1 when unknown / unlimited
 };
 
-// Largest p in [1, 10] whose forward-mapped sched_priority fits under
+// Largest p in [0, 10] whose forward-mapped sched_priority fits under
 // ceilingSched. Walks down from 10 against the forward map directly — the
 // closed-form inverse mis-rounds in both directions under integer division.
-// 0 = nothing fits.
+// Returns -1 when nothing fits: 0 is a VALID JUCE priority (maps to the lowest
+// SCHED_RR level) so it cannot double as the "no RT" sentinel.
 inline int jucePriorityForSchedCeiling (int ceilingSched, int rrMin, int rrMax) noexcept
 {
     if (rrMax <= rrMin || ceilingSched < rrMin)
-        return 0;
+        return -1;
 
     const int span = rrMax - rrMin;
     int p = 10;
-    while (p >= 1 && rrMin + (p * span) / 10 > ceilingSched)
+    while (p >= 0 && rrMin + (p * span) / 10 > ceilingSched)
         --p;
-    return juce::jmax (0, p);
+    return juce::jmax (-1, p);
 }
 
 inline RtPriorityInfo queryRealtimePriority() noexcept
@@ -47,7 +48,7 @@ inline RtPriorityInfo queryRealtimePriority() noexcept
    #if JUCE_LINUX
     struct rlimit rl {};
     if (getrlimit (RLIMIT_RTPRIO, &rl) != 0)
-        return { 0, false, -1 };
+        return { -1, false, -1 };
 
     const int rrMin = juce::jmax (0, sched_get_priority_min (SCHED_RR));
     const int rrMax = juce::jmax (1, sched_get_priority_max (SCHED_RR));

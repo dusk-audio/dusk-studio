@@ -22,8 +22,11 @@ std::vector<float> decodeMono (juce::AudioFormatManager& fm, const juce::File& f
     const auto len = (juce::int64) reader->lengthInSamples;
     const int  ch  = (int) reader->numChannels;
     if (len <= 0 || ch <= 0 || reader->sampleRate <= 0.0) return out;
-    // Guard against absurd files (a multi-hour stem) eating all RAM.
-    if (len > 96000ll * 60ll * 60ll) return out;
+    // Guard against absurd files eating all RAM. A stereo decode allocates
+    // ~12 bytes/sample (the 2-ch buffer + the mono out), so this caps the
+    // worst case near ~1 GB — generous for any real DP song (15 min @ 96 k /
+    // 30 min @ 48 k) while refusing a pathological multi-hour file.
+    if (len > 96000ll * 60ll * 15ll) return out;
 
     sampleRateOut = reader->sampleRate;
     // The AudioBuffer read overload only fills up to 2 channels (left/right
@@ -58,7 +61,8 @@ std::vector<float> onsetEnvelope (const float* x, int n, int hop, int fftOrder)
 {
     const int fftSize = 1 << fftOrder;
     if (n < fftSize + hop) return {};
-    const int nfr = (n - fftSize) / hop;
+    // Frames whose full window fits: floor((n - fftSize) / hop) + 1.
+    const int nfr = (n - fftSize + hop) / hop;
     if (nfr < 2) return {};
 
     juce::dsp::FFT fft (fftOrder);
@@ -122,18 +126,23 @@ CorrResult crossCorrelate (const std::vector<float>& longEnv,
     while ((1 << order) < La + Lb) ++order;
     const int N = 1 << order;
 
-    std::vector<juce::dsp::Complex<float>> A ((size_t) N), B ((size_t) N), C ((size_t) N);
+    std::vector<juce::dsp::Complex<float>> A ((size_t) N), B ((size_t) N), C ((size_t) N),
+                                           Af ((size_t) N), Bf ((size_t) N), Cf ((size_t) N);
     for (int i = 0; i < N; ++i)
     {
         A[(size_t) i] = { i < La ? longEnv[(size_t) i]  : 0.0f, 0.0f };
         B[(size_t) i] = { i < Lb ? shortEnv[(size_t) i] : 0.0f, 0.0f };
     }
     juce::dsp::FFT fft (order);
-    fft.perform (A.data(), A.data(), false);
-    fft.perform (B.data(), B.data(), false);
+    // perform() must NOT alias input and output. macOS vDSP tolerates in-place,
+    // but the FFTFallback engine (Linux / any non-vDSP build) writes garbage
+    // when input == output — which silently zeroed the whole correlation and
+    // left every fragment unplaced. Keep the in/out buffers distinct.
+    fft.perform (A.data(), Af.data(), false);
+    fft.perform (B.data(), Bf.data(), false);
     for (int i = 0; i < N; ++i)
-        C[(size_t) i] = A[(size_t) i] * std::conj (B[(size_t) i]);
-    fft.perform (C.data(), C.data(), true);
+        Cf[(size_t) i] = Af[(size_t) i] * std::conj (Bf[(size_t) i]);
+    fft.perform (Cf.data(), C.data(), true);
 
     const int maxLag = La - Lb;
     // Peak + std over the valid lag range.

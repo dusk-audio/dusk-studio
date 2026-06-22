@@ -5,6 +5,7 @@
 #include "McuReceiver.h"
 #include "McuController.h"
 #include "../session/RegionEditActions.h"
+#include "DeviceFallbackMessage.h"
 #if defined(DUSKSTUDIO_HAS_ALSA)
   #include "alsa/AlsaAudioIODeviceType.h"
 #endif
@@ -214,6 +215,82 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
                       "[Dusk Studio/AudioEngine] device-manager init reported: %s\n",
                       err.toRawUTF8());
     }
+
+   #if defined(DUSKSTUDIO_HAS_ALSA)
+    // The saved setup can pin an ALSA hw: device that another app (PipeWire,
+    // JACK, another DAW) holds exclusively. JUCE's selectDefaultDeviceOnFailure
+    // only re-picks another device NAME on the same ALSA type — the same hw
+    // conflict — so it never falls through to JACK. Recover explicitly: JACK
+    // (routes through PipeWire and reaches the interface even while the raw hw
+    // handle is held) → the first ALSA device that opens → give up and tell the
+    // user. This runs BEFORE addAudioCallback / addChangeListener: the audio
+    // thread isn't attached and the engine isn't a change listener yet, so the
+    // setup-switch broadcasts reach no one (no re-entrancy, no fallback loop).
+    {
+        auto working = [this]
+        {
+            auto* d = deviceManager.getCurrentAudioDevice();
+            // A started SR alone isn't enough: a per-device ALSA name can resolve
+            // to 0 active outputs (see the silent-failure guard further down), so
+            // require real output channels too.
+            return d != nullptr && d->getCurrentSampleRate() > 0.0
+                && d->getActiveOutputChannels().countNumberOfSetBits() > 0;
+        };
+
+        const juce::String savedName = savedDeviceState != nullptr
+            ? savedDeviceState->getStringAttribute ("audioOutputDeviceName",
+                  savedDeviceState->getStringAttribute ("audioInputDeviceName"))
+            : juce::String();
+
+        if (! working())
+        {
+            // Clear the pinned (busy) device name + use default channels, else
+            // setAudioDeviceSetup can short-circuit to a non-started, sr-0 setup.
+            auto openDefaultOnType = [this] (const char* typeName, const juce::String& devName)
+            {
+                deviceManager.setCurrentAudioDeviceType (typeName, /*treatAsChosen*/ true);
+                auto s = deviceManager.getAudioDeviceSetup();
+                s.inputDeviceName.clear();
+                s.outputDeviceName         = devName;   // empty = the type's default device
+                s.useDefaultInputChannels  = true;
+                s.useDefaultOutputChannels = true;
+                // Drop the failed device's rate/buffer so JUCE picks each fallback
+                // device's own defaults instead of carrying over unsupported values.
+                s.sampleRate = 0;
+                s.bufferSize = 0;
+                deviceManager.setAudioDeviceSetup (s, /*treatAsChosen*/ true);
+            };
+
+            // 1) JACK / PipeWire default.
+            openDefaultOnType ("JACK", juce::String());
+
+            // 2) Walk ALSA device names; the busy one fails, the next (Built-in
+            //    / HDMI / other interface) opens.
+            if (! working())
+                for (auto* t : deviceManager.getAvailableDeviceTypes())
+                {
+                    if (t == nullptr || t->getTypeName() != "ALSA") continue;
+                    t->scanForDevices();
+                    for (const auto& name : t->getDeviceNames (/*wantInputNames*/ false))
+                    {
+                        openDefaultOnType ("ALSA", name);
+                        if (working()) break;
+                    }
+                    break;
+                }
+        }
+
+        // Resolve the outcome unconditionally: this also catches the case where
+        // JUCE's own selectDefaultDeviceOnFailure SILENTLY moved us onto a
+        // different working device than the one saved — the user should still be
+        // told their interface wasn't available. startupDeviceMessage() returns
+        // empty when the saved device opened, so the normal path stays silent.
+        auto* dev = deviceManager.getCurrentAudioDevice();
+        const bool opened = working();
+        startupDeviceMessage_ = duskstudio::startupDeviceMessage (
+            opened, savedName, opened ? dev->getName() : juce::String());
+    }
+   #endif
 
     deviceManager.addAudioCallback (this);
 
@@ -786,6 +863,7 @@ AudioEngine::~AudioEngine()
         recordManager.stopRecording (transport.getPlayhead());
     deviceManager.removeChangeListener (this);
     deviceManager.removeAudioCallback (this);
+    deviceManager.removeMidiInputDeviceCallback ({}, this);
     deviceManager.closeAudioDevice();
     // After the callback is gone — nothing pushes to the out-FIFO, the
     // pump drains or drops what's left, then midiOutputs can destruct.
@@ -1148,8 +1226,23 @@ void AudioEngine::consumePluginStateAfterLoad()
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         auto& track = session.track (t);
-        auto& slot  = strips[(size_t) t].getPluginSlot();
-        if (track.pluginDescriptionXml.isEmpty()) continue;   // no plugin to restore
+        auto& strip = strips[(size_t) t];
+        auto& slot  = strip.getPluginSlot();
+        if (track.pluginDescriptionXml.isEmpty())
+        {
+            slot.unload();   // session has no plugin here — clear any carried over from the prior one
+            // Reconstruct the insert mode from session state so a strip that ran
+            // a plugin in the previous session doesn't stay in kInsertPlugin and
+            // route around an enabled hardware insert (mirrors the aux path below).
+            strip.insertMode.store (
+                track.hardwareInsert.enabled.load (std::memory_order_relaxed)
+                    ? ChannelStrip::kInsertHardware : ChannelStrip::kInsertEmpty,
+                std::memory_order_release);
+            continue;
+        }
+        // Plugin intended on this track — pin the mode to Plugin (offline if the
+        // restore below fails) so a prior session's kInsertHardware can't linger.
+        strip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
         juce::String error;
         if (! slot.restoreFromSavedState (track.pluginDescriptionXml,
                                             track.pluginStateBase64, error))
@@ -1168,7 +1261,26 @@ void AudioEngine::consumePluginStateAfterLoad()
         {
             auto& slot = auxLaneStrips[(size_t) a].getPluginSlot (s);
             const auto& descXml = lane.pluginDescriptionXml[(size_t) s];
-            if (descXml.isEmpty()) continue;
+            if (descXml.isEmpty())
+            {
+                // No plugin in this slot — unload any instance left from the
+                // prior session and route around it (or through the hardware
+                // insert when this slot is in HW mode).
+                slot.unload();
+                const bool hw = lane.hardwareInserts[(size_t) s].enabled.load (std::memory_order_relaxed);
+                auxLaneStrips[(size_t) a].insertMode[(size_t) s].store (
+                    hw ? AuxLaneStrip::kInsertHardware : AuxLaneStrip::kInsertEmpty,
+                    std::memory_order_release);
+                continue;
+            }
+            // Plugin intended on this aux slot — pin the mode to Plugin BEFORE the
+            // restore (offline if it fails) so a prior session's mode can't linger.
+            // The crossfade gate defaults to kInsertEmpty after prepare() (routes
+            // AROUND the plugin); without this a reload leaves a restored plugin
+            // live but starved (meters dark, AUX output is the raw send sum).
+            // Mirrors the channel-strip path above.
+            auxLaneStrips[(size_t) a].insertMode[(size_t) s].store (
+                AuxLaneStrip::kInsertPlugin, std::memory_order_release);
             juce::String error;
             if (! slot.restoreFromSavedState (descXml,
                                                 lane.pluginStateBase64[(size_t) s], error))
@@ -1178,19 +1290,6 @@ void AudioEngine::consumePluginStateAfterLoad()
                 lastPluginLoadFailures.push_back ({
                     "Aux " + juce::String (a + 1) + " / slot " + juce::String (s + 1),
                     parsePluginName (descXml) });
-            }
-            else
-            {
-                // Flip the lane's slot to Plugin mode — the crossfade
-                // gate defaults to kInsertEmpty after prepare(), which
-                // routes audio AROUND the plugin (gate at 0 = pre-only
-                // pass-through). Without this, a session reload leaves
-                // the plugin instance live but starved: meters dark,
-                // AUX output is just the raw send sum.
-                auxLaneStrips[(size_t) a]
-                    .insertMode[(size_t) s]
-                    .store (AuxLaneStrip::kInsertPlugin,
-                             std::memory_order_release);
             }
         }
     }
@@ -2696,9 +2795,10 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         silentDims.store (((juce::uint64) (juce::uint32) mixL.size() << 32)
                           | (juce::uint32) numSamples, std::memory_order_relaxed);
         silentBlocks.fetch_add (1, std::memory_order_relaxed);   // drained by diagTimer
-        for (int ch = 0; ch < numOutputChannels; ++ch)
-            if (auto* out = outputChannelData[ch])
-                std::memset (out, 0, sizeof (float) * (size_t) numSamples);
+        if (outputChannelData != nullptr)
+            for (int ch = 0; ch < numOutputChannels; ++ch)
+                if (auto* out = outputChannelData[ch])
+                    std::memset (out, 0, sizeof (float) * (size_t) numSamples);
         return;
     }
 

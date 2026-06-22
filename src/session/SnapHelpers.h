@@ -94,15 +94,24 @@ namespace duskstudio::snap
     // session's active SnapResolution. Falls back to a 1-second step when
     // the resolution is musical but no tempo is set, preserving the prior
     // "snap to something" guarantee callers relied on.
-    inline juce::int64 snapDeltaToGrid (juce::int64 delta, const Session& s,
-                                        double sampleRate) noexcept
+    // Delta-snap math WITHOUT any enable gate — for callers that gate on their
+    // OWN snap flag (e.g. the audio editor's session.audioEditorSnap) and must
+    // not also require the global session.snapToGrid.
+    inline juce::int64 snapDeltaToGridUnchecked (juce::int64 delta, const Session& s,
+                                                 double sampleRate) noexcept
     {
-        if (! s.snapToGrid) return delta;
         const auto bpm = s.tempoBpm.load (std::memory_order_relaxed);
         const auto bpb = s.beatsPerBar.load (std::memory_order_relaxed);
         auto step = stepForResolution (s.snapResolution, sampleRate, bpm, bpb);
         if (step <= 0 && sampleRate > 0.0) step = (juce::int64) sampleRate;  // 1-second fallback
         return snapDelta (delta, step);
+    }
+
+    inline juce::int64 snapDeltaToGrid (juce::int64 delta, const Session& s,
+                                        double sampleRate) noexcept
+    {
+        if (! s.snapToGrid) return delta;
+        return snapDeltaToGridUnchecked (delta, s, sampleRate);
     }
 
     // Grid step in TICKS for a musical SnapResolution (tempo-independent: a
@@ -145,10 +154,11 @@ namespace duskstudio::snap
     // step is available (matches prior new-region behaviour). Musical
     // resolutions snap in tick space through the session tempo map, so the grid
     // follows tempo changes; the constant-tempo case is unchanged.
-    inline juce::int64 snapAbsoluteToGrid (juce::int64 sample, const Session& s,
-                                           double sampleRate) noexcept
+    // Absolute-snap math WITHOUT any enable gate — see snapDeltaToGridUnchecked.
+    inline juce::int64 snapAbsoluteToGridUnchecked (juce::int64 sample, const Session& s,
+                                                    double sampleRate) noexcept
     {
-        if (! s.snapToGrid || sampleRate <= 0.0) return sample;
+        if (sampleRate <= 0.0) return sample;
         const auto bpb = s.beatsPerBar.load (std::memory_order_relaxed);
         if (const auto tickStep = musicalTickStep (s.snapResolution, bpb); tickStep > 0)
         {
@@ -160,5 +170,12 @@ namespace duskstudio::snap
         const auto bpm = s.tempoBpm.load (std::memory_order_relaxed);
         return snapAbsolute (sample,
                               stepForResolution (s.snapResolution, sampleRate, bpm, bpb));
+    }
+
+    inline juce::int64 snapAbsoluteToGrid (juce::int64 sample, const Session& s,
+                                           double sampleRate) noexcept
+    {
+        if (! s.snapToGrid) return sample;
+        return snapAbsoluteToGridUnchecked (sample, s, sampleRate);
     }
 }

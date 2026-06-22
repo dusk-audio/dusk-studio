@@ -15,34 +15,43 @@ const juce::Colour kGlyphActive { 0xffffffff };
 
 void paintGrabGlyph (juce::Graphics& g, juce::Rectangle<float> r)
 {
-    // Stylised hand: square palm + four short fingers extended up + thumb
-    // angled off the left. Matches Ardour's Grab-Mode glyph at a glance
-    // without needing a bitmap asset.
+    // Pointing hand: index finger extended up, the other fingers curled into a
+    // fist with a thumb off the left — the classic Ardour Grab-Mode cursor.
+    // Drawn as one filled path (no bitmap asset).
     const float cx = r.getCentreX();
     const float cy = r.getCentreY();
     const float s  = juce::jmin (r.getWidth(), r.getHeight());
-    const float palmW  = s * 0.50f;
-    const float palmH  = s * 0.40f;
-    const float fingerW = s * 0.10f;
-    const float fingerH = s * 0.32f;
-    const float palmX  = cx - palmW * 0.5f;
-    const float palmY  = cy + s * 0.02f;     // palm sits slightly below centre
 
     juce::Path p;
-    p.addRoundedRectangle (palmX, palmY, palmW, palmH, 2.0f);
-    // Four fingers across the top of the palm, top edge above palmY.
-    for (int i = 0; i < 4; ++i)
+
+    // Fist (palm + curled fingers): rounded body in the lower half. The index
+    // sits over its LEFT edge, so bias the fist right of centre.
+    const float fistW = s * 0.46f;
+    const float fistH = s * 0.40f;
+    const float fistX = cx - fistW * 0.42f;
+    const float fistY = cy - s * 0.04f;
+    p.addRoundedRectangle (fistX, fistY, fistW, fistH, s * 0.10f);
+
+    // Index finger: a tall rounded bar rising straight out of the fist's left.
+    const float fingerW   = s * 0.15f;
+    const float fingerX   = fistX + fistW * 0.06f;
+    const float fingerTop = cy - s * 0.42f;
+    p.addRoundedRectangle (fingerX, fingerTop,
+                              fingerW, (fistY + fistH * 0.5f) - fingerTop,
+                              fingerW * 0.5f);
+
+    // Two knuckle bumps on top of the fist (right of the index) so it reads as
+    // curled fingers rather than a plain box.
+    for (int i = 0; i < 2; ++i)
     {
-        const float slot = palmW / 4.0f;
-        const float fx   = palmX + slot * (float) i + (slot - fingerW) * 0.5f;
-        p.addRoundedRectangle (fx, palmY - fingerH * 0.85f,
-                                  fingerW, fingerH, 1.5f);
+        const float kx = fingerX + fingerW + s * 0.02f + (float) i * (s * 0.13f);
+        p.addRoundedRectangle (kx, fistY - s * 0.045f, s * 0.11f, s * 0.16f, s * 0.05f);
     }
-    // Thumb on the left side, angled slightly outward via translation only
-    // (path-rotate isn't worth the indirection at this size).
-    p.addRoundedRectangle (palmX - fingerW * 0.85f,
-                              palmY + palmH * 0.15f,
-                              fingerW, palmH * 0.65f, 1.5f);
+
+    // Thumb: short bump on the left side of the fist.
+    p.addRoundedRectangle (fistX - s * 0.07f, fistY + fistH * 0.22f,
+                              s * 0.09f, fistH * 0.5f, s * 0.045f);
+
     g.fillPath (p);
 }
 
@@ -181,8 +190,13 @@ EditModeToolbar::EditModeToolbar (AudioEngine& engineRef) : engine (engineRef)
     gridButton.setTooltip  ("Grid Mode (edit tempo-map, drag/drop music-time grid)");
     drawButton.setTooltip  ("Draw Mode (draw and edit notes / region gain envelope)");
 
+    // Default the snap toggle to the timeline enable; editors override via
+    // setSnapEnabledAccessor so each surface snaps independently.
+    snapEnabledGet = [this] { return engine.getSession().snapToGrid; };
+    snapEnabledSet = [this] (bool v) { engine.getSession().snapToGrid = v; };
+
     snapToggleButton.setClickingTogglesState (true);
-    snapToggleButton.setToggleState (engine.getSession().snapToGrid, juce::dontSendNotification);
+    snapToggleButton.setToggleState (snapEnabledGet(), juce::dontSendNotification);
     snapToggleButton.setMouseClickGrabsKeyboardFocus (false);
     snapToggleButton.setWantsKeyboardFocus (false);
     // Toggle-on uses the same accent-rim colour as the active edit-mode
@@ -195,7 +209,7 @@ EditModeToolbar::EditModeToolbar (AudioEngine& engineRef) : engine (engineRef)
     snapToggleButton.setColour (juce::TextButton::textColourOffId,   kGlyph);
     snapToggleButton.onClick = [this]
     {
-        engine.getSession().snapToGrid = snapToggleButton.getToggleState();
+        if (snapEnabledSet) snapEnabledSet (snapToggleButton.getToggleState());
         if (onSnapChanged) onSnapChanged();
     };
     addAndMakeVisible (snapToggleButton);
@@ -292,8 +306,18 @@ void EditModeToolbar::showSnapResolutionMenu()
 void EditModeToolbar::syncFromSession()
 {
     updateButtonStates();
-    snapToggleButton.setToggleState (engine.getSession().snapToGrid, juce::dontSendNotification);
+    snapToggleButton.setToggleState (snapEnabledGet ? snapEnabledGet() : false,
+                                      juce::dontSendNotification);
     snapResolutionButton.setButtonText (labelFor (engine.getSession().snapResolution));
+}
+
+void EditModeToolbar::setSnapEnabledAccessor (std::function<bool()> get,
+                                                std::function<void (bool)> set)
+{
+    snapEnabledGet = std::move (get);
+    snapEnabledSet = std::move (set);
+    snapToggleButton.setToggleState (snapEnabledGet ? snapEnabledGet() : false,
+                                      juce::dontSendNotification);
 }
 
 void EditModeToolbar::setVisibleModes (juce::Array<EditMode> modes)
@@ -315,6 +339,12 @@ void EditModeToolbar::setVisibleModes (juce::Array<EditMode> modes)
     if (! modes.isEmpty() && ! modes.contains (engine.getSession().editMode))
         setEditMode (modes.getFirst());
 
+    resized();
+}
+
+void EditModeToolbar::setSnapResolutionVisible (bool shouldBeVisible)
+{
+    snapResolutionButton.setVisible (shouldBeVisible);
     resized();
 }
 
@@ -358,7 +388,10 @@ void EditModeToolbar::resized()
     }
     r.removeFromLeft (12);  // group separator
     snapToggleButton.setBounds (r.removeFromLeft (56));
-    r.removeFromLeft (4);
-    snapResolutionButton.setBounds (r.removeFromLeft (110));
+    if (snapResolutionButton.isVisible())
+    {
+        r.removeFromLeft (4);
+        snapResolutionButton.setBounds (r.removeFromLeft (110));
+    }
 }
 } // namespace duskstudio

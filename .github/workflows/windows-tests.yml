@@ -78,6 +78,16 @@ jobs:
           fi
           echo "ASIOSDK_PATH=${RUNNER_TEMP}/asiosdk-extract" >> "$GITHUB_ENV"
 
+      - name: Install libmp3lame (vcpkg)
+        shell: bash
+        # x64-windows-static = static lib + /MT static CRT, matching the whole
+        # tree's CMAKE_MSVC_RUNTIME_LIBRARY (sfizz forces /MT). The -md triplet
+        # (/MD) would LNK2038 against the /MT objects. CMake finds it via
+        # CMAKE_PREFIX_PATH.
+        run: |
+          vcpkg install mp3lame:x64-windows-static
+          echo "LAME_PREFIX=${VCPKG_INSTALLATION_ROOT//\\//}/installed/x64-windows-static" >> "$GITHUB_ENV"
+
       - name: Configure tests (CMake / Visual Studio 17 2022 / x64)
         shell: bash
         run: |
@@ -87,7 +97,8 @@ jobs:
             -DDUSKSTUDIO_BUILD_TESTS=ON \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
-            -DASIOSDK_PATH="${ASIOSDK_PATH}"
+            -DASIOSDK_PATH="${ASIOSDK_PATH}" \
+            -DCMAKE_PREFIX_PATH="${LAME_PREFIX}"
 
       - name: Build test binary
         # Build only the test target. The Catch2 binary depends on

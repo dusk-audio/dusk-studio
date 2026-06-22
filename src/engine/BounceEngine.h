@@ -31,6 +31,11 @@ public:
     //               to Mastering for the render.
     enum class Mode { MasterMix, Stems, MasteringChain };
 
+    // Output container. Wav = stereo 24-bit (always available). Mp3 = CBR via
+    // libmp3lame; only usable when the build found LAME (else start() fails with
+    // a clear error). The caller picks the matching file extension.
+    enum class Format { Wav, Mp3 };
+
     // <dir>/<base>_<NN>_<safe>.wav. Empty / default ("5") track names
     // fall back to "track" so the user doesn't open 24 files called
     // mix_05_5.wav. Inline so the unit test links without dragging in
@@ -50,6 +55,10 @@ public:
         safeName = juce::File::createLegalFileName (safeName);
         if (safeName.isEmpty()) safeName = "track";
 
+        // Stems are always WAV regardless of the base file's extension: start()
+        // forces Format::Wav for Stems mode (MP3 encoder delay + frame padding
+        // would shift each stem and break the sample-accurate alignment a
+        // re-import needs).
         const auto idx = juce::String (trackIndexZeroBased + 1).paddedLeft ('0', 2);
         return dir.getChildFile (stem + "_" + idx + "_" + safeName + ".wav");
     }
@@ -65,7 +74,9 @@ public:
                 double sampleRate = 0.0,
                 int blockSize = 1024,
                 double tailSeconds = 5.0,
-                Mode mode = Mode::MasterMix);
+                Mode mode = Mode::MasterMix,
+                Format format = Format::Wav,
+                int mp3BitrateKbps = 320);
 
     void cancel() noexcept { cancelRequested.store (true, std::memory_order_relaxed); }
 
@@ -103,6 +114,8 @@ private:
     double       tailSeconds      = 5.0;
     juce::int64  totalSamples     = 0;
     Mode         renderMode       = Mode::MasterMix;
+    Format       renderFormat     = Format::Wav;
+    int          renderBitrateKbps = 320;
 
     std::atomic<bool>  rendering        { false };
     std::atomic<bool>  cancelRequested  { false };
@@ -114,6 +127,12 @@ private:
     juce::CriticalSection lastErrorLock;
 
     juce::int64 computeBounceLength (double sampleRate, double tail) const;
+
+    // Create the WAV or MP3 writer for the chosen format over an already-opened
+    // (truncated) output stream. Returns null + sets errOut on failure. Takes
+    // ownership of outStream on success; on failure outStream is freed.
+    std::unique_ptr<juce::AudioFormatWriter>
+        makeWriter (std::unique_ptr<juce::FileOutputStream> outStream, juce::String& errOut) const;
 
     // Always restores original solo state before returning.
     bool runStemsMode();

@@ -1,4 +1,5 @@
 #include "AppConfig.h"
+#include "../engine/AudioEngine.h"   // AudioEngine::getMaxWorkerCount()
 
 namespace duskstudio::appconfig
 {
@@ -144,21 +145,30 @@ void setMulticoreDspMode (MulticoreDspMode m)
 
 int maxMulticoreWorkers()
 {
-    return juce::jmax (0, juce::SystemStats::getNumCpus() - 2);
+    // Never advertise more than the engine will actually use, regardless of CPU
+    // count — otherwise the settings UI / manual-worker cap drift above what
+    // resolveWorkerCount can request. AudioEngine is the single source of truth.
+    return juce::jlimit (0, AudioEngine::getMaxWorkerCount(),
+                          juce::SystemStats::getNumCpus() - 2);
 }
 
 int getMulticoreManualWorkers()
 {
+    // On a host with no spare cores maxMulticoreWorkers() is 0, and runtime
+    // clamps Manual to 0 too — so allow 0 here instead of forcing 1, otherwise
+    // the stored/displayed count (1) disagrees with what actually runs (0).
+    const int mx = maxMulticoreWorkers();
+    const int lo = juce::jmin (1, mx);   // 1 when workers are possible, else 0
     const auto raw = readKey (kKeyMulticoreManual);
-    const int dflt = juce::jmax (1, maxMulticoreWorkers());
-    if (raw.isEmpty()) return dflt;
-    return juce::jlimit (1, juce::jmax (1, maxMulticoreWorkers()), raw.getIntValue());
+    if (raw.isEmpty()) return mx;        // default to the full available count
+    return juce::jlimit (lo, mx, raw.getIntValue());
 }
 
 void setMulticoreManualWorkers (int n)
 {
-    writeKey (kKeyMulticoreManual,
-              juce::String (juce::jlimit (1, juce::jmax (1, maxMulticoreWorkers()), n)));
+    const int mx = maxMulticoreWorkers();
+    const int lo = juce::jmin (1, mx);
+    writeKey (kKeyMulticoreManual, juce::String (juce::jlimit (lo, mx, n)));
 }
 
 int resolveWorkerCount()

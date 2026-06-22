@@ -77,6 +77,32 @@ jobs:
             https://github.com/dusk-audio/dusk-audio-plugins.git \
             "${RUNNER_TEMP}/plugins"
 
+      - name: Refresh Patreon supporters (best-effort)
+        # See linux-release.yml for the rationale. Bakes the live list into the
+        # MSI; best-effort, ships the committed list with no secrets / on failure.
+        shell: bash
+        env:
+          PATREON_ACCESS_TOKEN: ${{ secrets.PATREON_ACCESS_TOKEN }}
+          PATREON_REFRESH_TOKEN: ${{ secrets.PATREON_REFRESH_TOKEN }}
+          PATREON_CLIENT_ID: ${{ secrets.PATREON_CLIENT_ID }}
+          PATREON_CLIENT_SECRET: ${{ secrets.PATREON_CLIENT_SECRET }}
+          DUSK_PLUGINS_PATH: ${{ runner.temp }}/plugins
+        run: |
+          if [ -z "${PATREON_REFRESH_TOKEN}" ] || [ -z "${PATREON_ACCESS_TOKEN}" ] \
+             || [ -z "${PATREON_CLIENT_ID}" ] || [ -z "${PATREON_CLIENT_SECRET}" ]; then
+            echo "Patreon secrets not fully configured - shipping the committed supporters list."
+            exit 0
+          fi
+          umask 077
+          mkdir -p "${HOME}/.config/dusk-audio"
+          cfg="${HOME}/.config/dusk-audio/patreon.json"
+          # Always remove the credential file on exit, even if a step below fails.
+          trap 'rm -f "${cfg}"' EXIT
+          # json.dump escapes any special characters in the secrets; a raw heredoc
+          # would corrupt the JSON on a quote/backslash in a token.
+          python3 -c 'import json, os, sys; json.dump({"access_token": os.environ["PATREON_ACCESS_TOKEN"], "refresh_token": os.environ["PATREON_REFRESH_TOKEN"], "client_id": os.environ["PATREON_CLIENT_ID"], "client_secret": os.environ["PATREON_CLIENT_SECRET"]}, open(sys.argv[1], "w"))' "${cfg}"
+          python3 scripts/update-patrons.py || echo "update-patrons.py failed - shipping the committed list."
+
       - name: Fetch Steinberg ASIO SDK
         shell: bash
         run: |
@@ -105,6 +131,18 @@ jobs:
           fi
           echo "ASIOSDK_PATH=${RUNNER_TEMP}/asiosdk-extract" >> "$GITHUB_ENV"
 
+      - name: Install libmp3lame (vcpkg)
+        shell: bash
+        # MP3 bounce/export. x64-windows-static = static mp3lame + /MT static
+        # CRT, matching the whole tree's CMAKE_MSVC_RUNTIME_LIBRARY (sfizz forces
+        # /MT). The -md triplet (/MD) would LNK2038 against the /MT objects. It
+        # links into the binary, so no mp3lame.dll ships in the MSI. CMake's
+        # find_library/find_path pick it up via CMAKE_PREFIX_PATH (forward-
+        # slashed so cmake parses the path cleanly).
+        run: |
+          vcpkg install mp3lame:x64-windows-static
+          echo "LAME_PREFIX=${VCPKG_INSTALLATION_ROOT//\\//}/installed/x64-windows-static" >> "$GITHUB_ENV"
+
       - name: Configure (CMake / Visual Studio 17 2022 / x64)
         shell: bash
         run: |
@@ -113,6 +151,7 @@ jobs:
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
             -DASIOSDK_PATH="${ASIOSDK_PATH}" \
+            -DCMAKE_PREFIX_PATH="${LAME_PREFIX}" \
             -DDUSKSTUDIO_ENABLE_LTO=ON
 
       - name: Build (Release)
@@ -133,7 +172,8 @@ jobs:
             -DDUSKSTUDIO_BUILD_TESTS=ON \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins" \
-            -DASIOSDK_PATH="${ASIOSDK_PATH}"
+            -DASIOSDK_PATH="${ASIOSDK_PATH}" \
+            -DCMAKE_PREFIX_PATH="${LAME_PREFIX}"
           cmake --build build-tests --config Release --target dusk-studio-tests -j
           ctest --test-dir build-tests --output-on-failure -C Release -E "FileImporter"
 

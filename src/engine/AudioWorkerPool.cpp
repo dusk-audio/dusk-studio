@@ -60,7 +60,7 @@ void AudioWorkerPool::start (int workers, std::function<void (int)> job, int rtJ
         // Same realtime priority as the audio I/O thread (RtPriority.h) so RR
         // round-robins fairly if a worker shares the audio thread's core; fall
         // back to the highest normal priority if the OS denies real-time.
-        const bool started = (rtJucePriority > 0
+        const bool started = (rtJucePriority >= 0
                                && w->startRealtimeThread (juce::Thread::RealtimeOptions{}
                                                               .withPriority (rtJucePriority)))
                           || w->startThread (juce::Thread::Priority::highest);

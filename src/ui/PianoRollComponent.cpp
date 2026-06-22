@@ -408,7 +408,17 @@ PianoRollComponent::PianoRollComponent (Session& s, AudioEngine& e, int t, int r
     // discoverable as THE drawing tool.
     editModeToolbar = std::make_unique<EditModeToolbar> (engine);
     editModeToolbar->setVisibleModes ({ EditMode::Grab, EditMode::Draw });
+    // The piano roll's own grid combo is the resolution picker; the toolbar's
+    // resolution button drives session.snapResolution (the timeline), so hide it
+    // here to avoid a second, disconnected resolution control.
+    editModeToolbar->setSnapResolutionVisible (false);
     editModeToolbar->onEditModeChanged = [this] { syncEditModeToolbar(); };
+    // The MIDI editor snaps on its OWN enable, independent of the timeline and
+    // the audio editor; the grid combo stays the resolution picker.
+    editModeToolbar->setSnapEnabledAccessor (
+        [this] { return session.midiEditorSnap; },
+        [this] (bool v) { session.midiEditorSnap = v; });
+    editModeToolbar->onSnapChanged = [this] { repaint(); };
     addAndMakeVisible (editModeToolbar.get());
 
     addAndMakeVisible (toggleCcButton);
@@ -624,22 +634,19 @@ void PianoRollComponent::syncEditModeToolbar()
     // happen. Mirrors the equivalent guard in mouseMove.
     const auto mode = session.editMode;
     const auto p    = getMouseXYRelative();
-    // Don't hand the overlay glyph the cursor mid-drag - a move/resize/box
-    // gesture owns a native cursor, and forcing NoCursor here (on a mode
-    // toolbar sync) would flash the overlay over it. Also skip when the pointer
-    // is over a note/edge: mouseMove suppresses the overlay glyph there, so
-    // hiding the native cursor would leave NO cursor at all until the next move.
+    // Seed the overlay glyph for the CURRENT pointer so a mode switch (toolbar /
+    // hotkey) updates the cursor immediately instead of waiting for the next
+    // mouse move. pushCursorPosition owns the overlay (and its own drag / edge /
+    // over-note rules); here we only match the native cursor — hide it exactly
+    // where the overlay paints so the two never show at once. invisibleCursor(),
+    // NOT MouseCursor::NoCursor (broken on some Linux WMs — see EditCursors.h).
+    pushCursorPosition (p.x, p.y);
     bool onEdge = false;
-    const bool overNote = noteGridArea().contains (p) && hitTestNote (p.x, p.y, onEdge) >= 0;
-    if (mode == EditMode::Draw
-        && dragMode == DragMode::None
-        && noteGridArea().contains (p)
-        && ! overNote)
-        // Draw's pencil glyph is overlay-painted; hide the native cursor.
-        // Grab keeps the arrow on empty grid (hand only over a note).
-        setMouseCursor (juce::MouseCursor::NoCursor);
-    else
-        setMouseCursor (juce::MouseCursor::NormalCursor);
+    const bool inContent = noteGridArea().contains (p);
+    const bool overNote  = inContent && hitTestNote (p.x, p.y, onEdge) >= 0;
+    const bool wantsGlyph = inContent && ! onEdge && dragMode == DragMode::None
+        && (mode == EditMode::Grab || (mode == EditMode::Draw && ! overNote));
+    setMouseCursor (wantsGlyph ? invisibleCursor() : juce::MouseCursor::NormalCursor);
 }
 
 juce::Rectangle<int> PianoRollComponent::noteGridArea() const noexcept
@@ -1858,6 +1865,23 @@ bool PianoRollComponent::isInScale (int noteNumber) const noexcept
     return false;
 }
 
+int PianoRollComponent::snapPitchToScale (int noteNumber) const noexcept
+{
+    // "Key snap": when armed with a scale, coerce a placed / dragged pitch to the
+    // nearest in-scale note (vertical analogue of the horizontal grid snap). No
+    // scale or toggle off → identity. Any chromatic note is at most a couple of
+    // semitones from a scale tone; search outward, preferring the lower on a tie.
+    if (! keySnap || scale == Scale::Off) return noteNumber;
+    noteNumber = juce::jlimit (0, kNumKeys - 1, noteNumber);
+    if (isInScale (noteNumber)) return noteNumber;
+    for (int d = 1; d < 12; ++d)
+    {
+        if (noteNumber - d >= 0            && isInScale (noteNumber - d)) return noteNumber - d;
+        if (noteNumber + d <= kNumKeys - 1 && isInScale (noteNumber + d)) return noteNumber + d;
+    }
+    return noteNumber;
+}
+
 void PianoRollComponent::showQuantizePopup()
 {
     juce::PopupMenu m;
@@ -2179,6 +2203,13 @@ static juce::int64 snapTick (juce::int64 t, juce::int64 step)
     return ((t + half) / step) * step;
 }
 
+juce::int64 PianoRollComponent::effectiveSnapTicks() const noexcept
+{
+    // Grid resolution gated by the MIDI editor's own snap-enable. Off -> 0,
+    // which snapTick() treats as "no snap".
+    return session.midiEditorSnap ? snapTicks : 0;
+}
+
 int PianoRollComponent::hitTestNote (int x, int y, bool& onRightEdge) const
 {
     onRightEdge = false;
@@ -2369,7 +2400,7 @@ void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
             const auto rawTick = tickForX (e.x);
             c.atTick = juce::jlimit<juce::int64> (0,
                 juce::jmax ((juce::int64) 0, r->lengthInTicks - 1),
-                snapTick (rawTick, snapTicks));
+                snapTick (rawTick, effectiveSnapTicks()));
             r->ccs.push_back (c);
             hit = (int) r->ccs.size() - 1;
         }
@@ -2458,7 +2489,7 @@ void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
     // off this position.
     editCursorTick = juce::jlimit<juce::int64> (0,
         juce::jmax ((juce::int64) 0, r->lengthInTicks),
-        snapTick (tickForX (e.x), snapTicks));
+        snapTick (tickForX (e.x), effectiveSnapTicks()));
 
     if (extendSelection)
     {
@@ -2513,19 +2544,21 @@ void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
 
     MidiNote n;
     n.channel = 1;
-    n.noteNumber = noteNumberForY (e.y);
+    n.noteNumber = snapPitchToScale (noteNumberForY (e.y));
     n.velocity = 100;
     const auto rawStart = juce::jlimit<juce::int64> (0,
         juce::jmax ((juce::int64) 0, r->lengthInTicks - 1), tickForX (e.x));
-    // noteEntryMode adjusts the effective snap step for note-creation
-    // only - move / resize keep using `snapTicks` directly. Free skips
-    // snap entirely; Triplet / Dotted reshape the step.
-    juce::int64 createSnap = snapTicks;
+    // noteEntryMode reshapes the snap step for note CREATION only (Free skips
+    // snap, Triplet / Dotted bend the grid) so the pencil can place off-grid
+    // rhythms; move / resize go through the plain effectiveSnapTicks() so a
+    // dragged note lands on the same grid the ruler draws.
+    const juce::int64 baseSnap = effectiveSnapTicks();   // 0 when MIDI snap is off
+    juce::int64 createSnap = baseSnap;
     switch (noteEntryMode)
     {
         case NoteEntryMode::Free:    createSnap = 0; break;
-        case NoteEntryMode::Triplet: createSnap = (snapTicks * 2) / 3; break;
-        case NoteEntryMode::Dotted:  createSnap = (snapTicks * 3) / 2; break;
+        case NoteEntryMode::Triplet: createSnap = (baseSnap * 2) / 3; break;
+        case NoteEntryMode::Dotted:  createSnap = (baseSnap * 3) / 2; break;
         case NoteEntryMode::Grid:    break;
     }
     n.startTick = juce::jlimit<juce::int64> (0,
@@ -2679,12 +2712,18 @@ void PianoRollComponent::mouseDrag (const juce::MouseEvent& e)
         // Compute the snapped delta against the anchor, then apply that
         // same delta to every selected note via applyGroupMove. This
         // keeps relative spacing across the whole selection.
-        const auto newAnchorStart = snapTick (tickForX (e.x) - dragOriginTick, snapTicks);
-        const int  newAnchorPitch = juce::jlimit (0, kNumKeys - 1, noteNumberForY (e.y));
+        const auto newAnchorStart = snapTick (tickForX (e.x) - dragOriginTick, effectiveSnapTicks());
+        const int  newAnchorPitch = snapPitchToScale (juce::jlimit (0, kNumKeys - 1, noteNumberForY (e.y)));
         const auto deltaTicks = newAnchorStart - dragNoteStartTick;
         const int  deltaPitch = newAnchorPitch - dragOriginNoteNum;
         applyGroupMove (deltaTicks, deltaPitch);
         repaint();
+        // Keep the Grab hand glyph tracking the pointer through the move: the
+        // native cursor is hidden (invisibleCursor) and pushCursorPosition bails
+        // during a drag, so push the overlay directly or the hand would freeze
+        // at the gesture's start (mirrors TapeStrip's mouseDrag re-push).
+        if (session.editMode == EditMode::Grab && onMouseMovedForCursor)
+            onMouseMovedForCursor (*this, juce::Point<int> (e.x, e.y), EditMode::Grab, {});
     }
     else if (dragMode == DragMode::EditVelocity)
     {
@@ -2702,7 +2741,7 @@ void PianoRollComponent::mouseDrag (const juce::MouseEvent& e)
         // Resize the anchor note only; multi-resize is ambiguous and
         // most DAWs match this behaviour.
         const auto rawEnd  = tickForX (e.x);
-        const auto snapped = snapTick (rawEnd, snapTicks);
+        const auto snapped = snapTick (rawEnd, effectiveSnapTicks());
         const auto endTick = juce::jlimit<juce::int64> (
             anchor.startTick + 1, r->lengthInTicks, snapped);
         anchor.lengthInTicks = endTick - anchor.startTick;
@@ -2747,10 +2786,14 @@ void PianoRollComponent::pushCursorPosition (int x, int y)
     // overlay glyph there so the two don't show at once (empty grid keeps it).
     bool onEdge = false;
     const bool overNote = inContent && hitTestNote (x, y, onEdge) >= 0;
-    // Only Draw paints a glyph on empty grid (pencil). Grab uses the plain
-    // arrow over empty grid and a native drag-hand over a note body, so it
-    // never needs the overlay glyph. Range / Cut / Grid stay native too.
-    const bool wantsGlyph = inContent && ! overNote && m == EditMode::Draw;
+    // Draw paints the pencil over empty grid. Grab paints the grab-hand across
+    // the WHOLE grid (empty or a note body). This deliberately differs from the
+    // audio / tape editors (hand only over a region body): the piano roll's
+    // notes are sparse, so a grid-wide hand reads as the mode indicator instead
+    // of a near-invisible one. Note EDGES keep the native resize cursor, so
+    // suppress the glyph there. Range / Cut / Grid stay native.
+    const bool wantsGlyph = inContent && ! onEdge
+        && (m == EditMode::Grab || (m == EditMode::Draw && ! overNote));
     if (wantsGlyph) onMouseMovedForCursor (*this, juce::Point<int> (x, y), m, {});
     else            onMouseExitedForCursor();
 }
@@ -2830,12 +2873,12 @@ void PianoRollComponent::mouseMove (const juce::MouseEvent& e)
     const int hit = hitTestNote (e.x, e.y, onEdge);
     if (hit < 0)
     {
-        // Empty grid: Draw = pencil (next click creates a note), painted by
-        // the CursorOverlay, so hide the native cursor. Grab gets the plain
-        // arrow here - the hand is reserved for hovering a note body. Other
-        // modes are inert on the grid - normal arrow.
-        if (mode == EditMode::Draw)
-            setMouseCursor (juce::MouseCursor::NoCursor);
+        // Empty grid: Draw (pencil) and Grab (hand) paint via the CursorOverlay,
+        // so hide the native cursor. invisibleCursor() (not MouseCursor::NoCursor,
+        // which is broken on some Linux WMs — see EditCursors.h). Other modes are
+        // inert here - normal arrow.
+        if (mode == EditMode::Draw || mode == EditMode::Grab)
+            setMouseCursor (invisibleCursor());
         else
             setMouseCursor (juce::MouseCursor::NormalCursor);
         return;
@@ -2845,8 +2888,15 @@ void PianoRollComponent::mouseMove (const juce::MouseEvent& e)
         setMouseCursor (juce::MouseCursor::UpDownResizeCursor);
         return;
     }
-    setMouseCursor (onEdge ? juce::MouseCursor::LeftRightResizeCursor
-                            : juce::MouseCursor::DraggingHandCursor);
+    // Note edges resize; in Grab a note body gets the overlay grab-hand (hide
+    // the native cursor so the glyph shows — invisibleCursor(), not the
+    // Linux-WM-broken MouseCursor::NoCursor), other modes keep JUCE's drag-hand.
+    if (onEdge)
+        setMouseCursor (juce::MouseCursor::LeftRightResizeCursor);
+    else if (mode == EditMode::Grab)
+        setMouseCursor (invisibleCursor());
+    else
+        setMouseCursor (juce::MouseCursor::DraggingHandCursor);
 }
 
 void PianoRollComponent::mouseUp (const juce::MouseEvent&)
@@ -3272,9 +3322,10 @@ bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
         && (k == juce::KeyPress::leftKey || k == juce::KeyPress::rightKey))
     {
         const bool coarse = k.getModifiers().isShiftDown();
+        const juce::int64 effSnap = effectiveSnapTicks();
         const juce::int64 step =
             coarse           ? kMidiTicksPerQuarter :
-            (snapTicks > 0)  ? snapTicks :
+            (effSnap > 0)    ? effSnap :
                                 30;
         nudgeSelectedTicks (k == juce::KeyPress::leftKey ? -step : step);
         repaint();
@@ -3829,10 +3880,14 @@ int PianoRollComponent::transportPlayheadX (juce::Rectangle<int> gridArea) const
     const auto localSample = playheadSample - r->timelineStart;
     if (localSample < 0 || localSample > r->lengthInSamples) return -1;
     const double sr = juce::jmax (1.0, engine.getCurrentSampleRate());
-    const auto regStartTick = session.samplesToTicks (r->timelineStart, sr);
-    const auto localTick = session.samplesToTicks (localSample + r->timelineStart, sr) - regStartTick;
-    if (localTick < 0 || localTick > r->lengthInTicks) return -1;
-    const int x = xForTick (localTick);
+    // Fractional ticks so the playhead advances sub-tick smoothly. The integer
+    // samplesToTicks quantises to whole ticks, so x would jump in tick-sized
+    // steps (several pixels when zoomed in) — a glitchy line. xForTick's pixel
+    // math, inlined here against a double tick.
+    const double regStartTick = session.samplesToTicksFractional (r->timelineStart, sr);
+    const double localTick = session.samplesToTicksFractional (playheadSample, sr) - regStartTick;
+    if (localTick < 0.0 || localTick > (double) r->lengthInTicks) return -1;
+    const int x = kKeyboardWidth - scrollX + (int) std::round (localTick * pixelsPerTick);
     if (x < gridArea.getX() || x > gridArea.getRight()) return -1;
     return x;
 }

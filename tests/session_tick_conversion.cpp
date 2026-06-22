@@ -106,3 +106,40 @@ TEST_CASE ("samplesToTicks: monotonic with increasing sample position",
         lastTicks = t;
     }
 }
+
+TEST_CASE ("samplesToTicksFractional: sub-tick resolution for a smooth playhead",
+            "[session][ticks]")
+{
+    // The piano-roll playhead maps sample -> tick -> pixel. Through the integer
+    // samplesToTicks the tick value is flat across a whole tick, so x jumps in
+    // tick-sized steps (a glitchy line when zoomed in). The fractional converter
+    // advances continuously. 120 bpm @ 48 kHz: one tick = 50 samples.
+    constexpr double sr  = 48000.0;
+    constexpr float  bpm = 120.0f;
+
+    // Integer rounds both to tick 0 (each < 0.5 ticks); fractional separates
+    // them — that continuous separation is what the playhead needs.
+    REQUIRE (duskstudio::samplesToTicks (10, sr, bpm) == 0);
+    REQUIRE (duskstudio::samplesToTicks (20, sr, bpm) == 0);
+    REQUIRE_THAT (duskstudio::samplesToTicksFractional (10, sr, bpm),
+                  Catch::Matchers::WithinAbs (0.2, 1e-9));
+    REQUIRE_THAT (duskstudio::samplesToTicksFractional (20, sr, bpm),
+                  Catch::Matchers::WithinAbs (0.4, 1e-9));
+    REQUIRE (duskstudio::samplesToTicksFractional (10, sr, bpm)
+               < duskstudio::samplesToTicksFractional (20, sr, bpm));
+
+    // Strictly non-decreasing across 30 Hz playhead steps so pixel-mapped x
+    // never stalls or jumps backward.
+    double prev = -1.0;
+    for (std::int64_t s = 0; s <= 96000; s += 1600)
+    {
+        const double f = duskstudio::samplesToTicksFractional (s, sr, bpm);
+        REQUIRE (f >= prev);
+        prev = f;
+    }
+
+    // Rounds to exactly the integer converter (shared math).
+    for (std::int64_t s : { (std::int64_t) 25, (std::int64_t) 51, (std::int64_t) 1234 })
+        REQUIRE (duskstudio::samplesToTicks (s, sr, bpm)
+                   == (std::int64_t) std::llround (duskstudio::samplesToTicksFractional (s, sr, bpm)));
+}

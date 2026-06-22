@@ -203,15 +203,19 @@ void MasteringLimiterEditor::paint (juce::Graphics& g)
         constexpr int numSegments = 20;
         constexpr float gap = 2.0f;
         const float segH = (inner.getHeight() - (numSegments - 1) * gap) / numSegments;
-        for (int s = 0; s < numSegments; ++s)
-        {
-            juce::Rectangle<float> seg (inner.getX(), inner.getY() + s * (segH + gap),
-                                         inner.getWidth(), segH);
-            g.setColour (juce::Colour (0xff242429));
-            g.fillRoundedRectangle (seg, 2.0f);
-            g.setColour (juce::Colour (0xff303036));
-            g.fillRect (seg.getX() + 2.0f, seg.getY() + 1.0f, seg.getWidth() - 4.0f, 1.0f);
-        }
+        // Skip the ladder entirely when the meter is too short to fit positive-
+        // height rungs (panel resized very small), so we never draw negative rects.
+        if (segH > 0.0f)
+            for (int s = 0; s < numSegments; ++s)
+            {
+                juce::Rectangle<float> seg (inner.getX(), inner.getY() + s * (segH + gap),
+                                             inner.getWidth(), segH);
+                g.setColour (juce::Colour (0xff242429));
+                g.fillRoundedRectangle (seg, 2.0f);
+                g.setColour (juce::Colour (0xff303036));
+                if (seg.getWidth() > 4.0f)
+                    g.fillRect (seg.getX() + 2.0f, seg.getY() + 1.0f, seg.getWidth() - 4.0f, 1.0f);
+            }
     };
 
     auto drawCaption = [&] (juce::Rectangle<int> meter, const juce::String& caption)

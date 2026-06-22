@@ -12,6 +12,7 @@
 #endif
 
 #include <algorithm>
+#include <cmath>
 
 namespace duskstudio
 {
@@ -1314,6 +1315,8 @@ juce::String SessionSerializer::serialize (const Session& s)
     tport->setProperty ("punch_in",      (juce::int64) s.savedPunchIn);
     tport->setProperty ("punch_out",     (juce::int64) s.savedPunchOut);
     tport->setProperty ("snap_to_grid",      s.snapToGrid);
+    tport->setProperty ("audio_editor_snap", s.audioEditorSnap);
+    tport->setProperty ("midi_editor_snap",  s.midiEditorSnap);
     tport->setProperty ("snap_resolution",   (int) s.snapResolution);
     tport->setProperty ("piano_roll_key_snap", s.pianoRollKeySnap);
     tport->setProperty ("tempo_bpm",         s.tempoBpm.load());
@@ -1474,10 +1477,20 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
 
     if (auto tracks = root["tracks"]; tracks.isArray())
     {
-        const int n = juce::jmin (Session::kNumTracks, tracks.size());
-        for (int i = 0; i < n; ++i)
-            restoreTrack (s.track (i), tracks[i], sessionLoadBpm,
-                          s.getSessionDirectory(), s.missingAudioFilesAfterLoad);
+        // Restore EVERY track slot, not just the ones the JSON lists. A session
+        // with fewer tracks than this build (hand-edited, or written by a tool
+        // like the DP importer) must blank the surplus slots — otherwise they
+        // keep the PREVIOUS session's regions / MIDI / automation / plugin, i.e.
+        // ghost content that still plays back. Driving an absent slot through
+        // restoreTrack with an empty object runs the same unconditional clears
+        // the present-track path uses (regions, midiRegions, automation lanes,
+        // automation mode, plugin state).
+        const juce::var emptyTrack (new juce::DynamicObject());
+        for (int i = 0; i < Session::kNumTracks; ++i)
+            restoreTrack (s.track (i),
+                          i < tracks.size() ? tracks[i] : emptyTrack,
+                          sessionLoadBpm, s.getSessionDirectory(),
+                          s.missingAudioFilesAfterLoad);
     }
     if (auto busesArr = root["buses"]; busesArr.isArray())
     {
@@ -1496,7 +1509,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
             if (auto str = v["name"].toString();   str.isNotEmpty()) lane.name   = str;
             if (auto str = v["colour"].toString(); str.isNotEmpty()) lane.colour = hexToColour (str, lane.colour);
             if (v.hasProperty ("return_level_db"))
-                lane.params.returnLevelDb.store ((float) (double) v["return_level_db"]);
+                lane.params.returnLevelDb.store (juce::jlimit (-100.0f, 12.0f, (float) (double) v["return_level_db"]));
             if (v.hasProperty ("mute"))
                 lane.params.mute.store ((bool) v["mute"]);
             if (v.hasProperty ("output_pair"))
@@ -1594,7 +1607,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
             if (! v.isObject()) continue;
             // Use the public addMarker so the inserted-sorted invariant
             // holds even if the JSON happened to be out of order.
-            const auto idx = s.addMarker ((juce::int64) v["time"], v["name"].toString());
+            const auto idx = s.addMarker ((juce::int64) v["time"], v["name"].toString().substring (0, 256));
             if (auto col = v["colour"].toString(); col.isNotEmpty())
                 s.getMarkers()[(size_t) idx].colour = hexToColour (col, juce::Colour (0xffe0a050));
         }
@@ -1605,7 +1618,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         // session (no pre-load reset), so a conditional store would inherit the
         // previously-loaded session's value. (Audible master state: level /
         // routing / mute.)
-        s.master().faderDb.store    (master.hasProperty ("fader_db")    ? (float) (double) master["fader_db"] : 0.0f);
+        s.master().faderDb.store    (master.hasProperty ("fader_db")    ? juce::jlimit (-100.0f, 12.0f, (float) (double) master["fader_db"]) : 0.0f);
         s.master().outputPair.store (master.hasProperty ("output_pair") ? (int) master["output_pair"]         : -1);
         s.master().mute.store       (master.hasProperty ("mute")        ? (bool) master["mute"]               : false);
         // Reset-when-absent too (same rationale as the level/routing/mute lines
@@ -1621,7 +1634,11 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         // the per-track / per-bus pattern).
         auto loadMasterFloat = [&master] (std::atomic<float>& dst, const char* key)
         {
-            if (master.hasProperty (key)) dst.store ((float) (double) master[key]);
+            if (master.hasProperty (key))
+            {
+                const float v = (float) (double) master[key];
+                if (std::isfinite (v)) dst.store (v);   // reject NaN/inf from a corrupt file — keep the default
+            }
         };
         auto loadMasterBool = [&master] (std::atomic<bool>& dst, const char* key)
         {
@@ -1737,7 +1754,19 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         if (tport.hasProperty ("punch_enabled")) s.savedPunchEnabled = (bool) tport["punch_enabled"];
         if (tport.hasProperty ("punch_in"))      s.savedPunchIn      = (juce::int64) tport["punch_in"];
         if (tport.hasProperty ("punch_out"))     s.savedPunchOut     = (juce::int64) tport["punch_out"];
-        if (tport.hasProperty ("snap_to_grid"))  s.snapToGrid        = (bool) tport["snap_to_grid"];
+        // Assign unconditionally (default false when absent) so a session
+        // missing the key doesn't inherit a stale snapToGrid from a prior load —
+        // the per-editor fallback below reads this value.
+        s.snapToGrid = tport.hasProperty ("snap_to_grid") && (bool) tport["snap_to_grid"];
+        // Per-editor snap is newer than snap_to_grid. Always assign (don't leave
+        // a stale value from a prior session when loading an older one): a
+        // pre-feature session followed one global snap, so migrate the audio
+        // editor to snap_to_grid; the piano roll historically always snapped, so
+        // default the MIDI editor on.
+        s.audioEditorSnap = tport.hasProperty ("audio_editor_snap")
+                              ? (bool) tport["audio_editor_snap"] : s.snapToGrid;
+        s.midiEditorSnap  = tport.hasProperty ("midi_editor_snap")
+                              ? (bool) tport["midi_editor_snap"]  : true;
         if (tport.hasProperty ("piano_roll_key_snap"))
             s.pianoRollKeySnap = (bool) tport["piano_roll_key_snap"];
         if (tport.hasProperty ("snap_resolution"))
@@ -1749,7 +1778,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         // state, not session content. A persisted Cut/Range would reload as the
         // tapestrip's tool with no on-screen selector to change it back. Always
         // start in the Session.h default (Grab).
-        if (tport.hasProperty ("tempo_bpm"))         s.tempoBpm.store         ((float) (double) tport["tempo_bpm"]);
+        if (tport.hasProperty ("tempo_bpm"))         s.tempoBpm.store         (juce::jlimit (30.0f, 300.0f, (float) (double) tport["tempo_bpm"]));
         if (tport.hasProperty ("tempo_points"))
         {
             std::vector<TempoPoint> pts;
@@ -1758,12 +1787,12 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                     if (auto* o = v.getDynamicObject())
                         if (o->hasProperty ("sample") && o->hasProperty ("bpm"))
                             pts.push_back ({ (juce::int64) o->getProperty ("sample"),
-                                             (float) (double) o->getProperty ("bpm") });
+                                             juce::jlimit (30.0f, 300.0f, (float) (double) o->getProperty ("bpm")) });
             s.tempoMap.setPoints (std::move (pts));
         }
         else
             s.tempoMap.setPoints ({});   // no map in the file → clear any stale map from a prior load
-        if (tport.hasProperty ("ui_stage"))          s.uiStage.store          ((int)  tport["ui_stage"]);
+        if (tport.hasProperty ("ui_stage"))          s.uiStage.store          (juce::jlimit (0, 3, (int) tport["ui_stage"]));
         if (tport.hasProperty ("sync_source_input"))
             s.syncSourceInputIdentifier = tport["sync_source_input"].toString();
         if (tport.hasProperty ("sync_follow_tempo"))
@@ -1783,10 +1812,10 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
             const int m = juce::jlimit (0, 6, (int) tport["mcu_assign_mode"]);
             s.mcu.assignMode.store (m, std::memory_order_relaxed);
         }
-        if (tport.hasProperty ("beats_per_bar"))     s.beatsPerBar.store      ((int)    tport["beats_per_bar"]);
-        if (tport.hasProperty ("beat_unit"))         s.beatUnit.store         ((int)    tport["beat_unit"]);
+        if (tport.hasProperty ("beats_per_bar"))     s.beatsPerBar.store      (juce::jlimit (1, 32, (int) tport["beats_per_bar"]));
+        if (tport.hasProperty ("beat_unit"))         s.beatUnit.store         (juce::jlimit (1, 32, (int) tport["beat_unit"]));
         if (tport.hasProperty ("metronome_enabled")) s.metronomeEnabled.store ((bool)   tport["metronome_enabled"]);
-        if (tport.hasProperty ("metronome_vol_db"))  s.metronomeVolDb.store   ((float) (double) tport["metronome_vol_db"]);
+        if (tport.hasProperty ("metronome_vol_db"))  s.metronomeVolDb.store   (juce::jlimit (-60.0f, 12.0f, (float) (double) tport["metronome_vol_db"]));
         if (tport.hasProperty ("metronome_click_recording"))
             s.metronomeClickWhileRecording.store ((bool) tport["metronome_click_recording"]);
         if (tport.hasProperty ("metronome_click_playing"))
@@ -1796,15 +1825,15 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         if (tport.hasProperty ("metronome_polyphonic"))
             s.metronomePolyphonic         .store ((bool) tport["metronome_polyphonic"]);
         if (tport.hasProperty ("count_in_enabled"))  s.countInEnabled.store   ((bool)   tport["count_in_enabled"]);
-        if (tport.hasProperty ("time_display_mode")) s.timeDisplayMode.store  ((int)    tport["time_display_mode"]);
+        if (tport.hasProperty ("time_display_mode")) s.timeDisplayMode.store  (juce::jlimit (0, 1, (int) tport["time_display_mode"]));
         // jumpback_seconds was a previous-version Session field powering
         // the standalone "« 5s" jumpback button; the button has been
         // removed in favor of the DP-24SD-style multi-action REW. We
         // silently ignore the legacy field on load so older session.json
         // files still parse cleanly.
         if (tport.hasProperty ("last_record_point")) s.lastRecordPointSamples.store ((juce::int64) tport["last_record_point"]);
-        if (tport.hasProperty ("pre_roll_seconds"))  s.preRollSeconds.store   ((float)  (double) tport["pre_roll_seconds"]);
-        if (tport.hasProperty ("post_roll_seconds")) s.postRollSeconds.store  ((float)  (double) tport["post_roll_seconds"]);
+        if (tport.hasProperty ("pre_roll_seconds"))  s.preRollSeconds.store   (juce::jlimit (0.0f, 300.0f, (float) (double) tport["pre_roll_seconds"]));
+        if (tport.hasProperty ("post_roll_seconds")) s.postRollSeconds.store  (juce::jlimit (0.0f, 300.0f, (float) (double) tport["post_roll_seconds"]));
         // Default true when absent (Session.h) so an older file lacking the key
         // doesn't inherit a disabled flag from a previously-loaded session.
         s.preRollEnabled.store  (tport.hasProperty ("pre_roll_enabled")  ? (bool) tport["pre_roll_enabled"]  : true);

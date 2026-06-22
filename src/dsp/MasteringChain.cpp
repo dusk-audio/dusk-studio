@@ -44,7 +44,7 @@ void MasteringChain::prepare (double sampleRate, int blockSize, int oversampling
     if (scopeRing.getNumSamples() != kScopeRingSize)
         scopeRing.setSize (1, kScopeRingSize, false, false, true);
     scopeRing.clear();
-    scopeRingMask = kScopeRingSize - 1;
+    scopeRingMask.store (kScopeRingSize - 1, std::memory_order_relaxed);
     scopeWritePos.store (0, std::memory_order_relaxed);
 
     preparedBlockSize = bs;
@@ -52,24 +52,27 @@ void MasteringChain::prepare (double sampleRate, int blockSize, int oversampling
 
 void MasteringChain::pushScope (const float* L, const float* R, int n) noexcept
 {
-    if (scopeRingMask == 0) return;
+    const int mask = scopeRingMask.load (std::memory_order_relaxed);
+    if (mask == 0) return;
     float* ring = scopeRing.getWritePointer (0);
     long long wp = scopeWritePos.load (std::memory_order_relaxed);
     for (int i = 0; i < n; ++i)
-        ring[(int) (wp++ & scopeRingMask)] = 0.5f * (L[i] + R[i]);
+        ring[(int) (wp++ & mask)] = 0.5f * (L[i] + R[i]);
     scopeWritePos.store (wp, std::memory_order_release);
 }
 
 int MasteringChain::readScopeLatest (float* dest, int count) const noexcept
 {
     const int ringSize = scopeRing.getNumSamples();
-    if (ringSize == 0 || count <= 0) return 0;
+    if (ringSize == 0 || count <= 0 || dest == nullptr) return 0;
     count = juce::jmin (count, ringSize);
+    const int mask = scopeRingMask.load (std::memory_order_relaxed);
+    if (mask == 0) return 0;   // matches pushScope; guards a mask-not-yet-stored race
     const long long wp = scopeWritePos.load (std::memory_order_acquire);
     const float* ring = scopeRing.getReadPointer (0);
     const long long start = wp - count;
     for (int i = 0; i < count; ++i)
-        dest[i] = ring[(int) ((start + i) & scopeRingMask)];
+        dest[i] = ring[(int) ((start + i) & mask)];
     return count;
 }
 

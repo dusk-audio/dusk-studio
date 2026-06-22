@@ -54,6 +54,11 @@ public:
     // while DUSKSTUDIO_AUDIO_WORKERS pins the count.
     void setDesiredWorkers (int n) noexcept { desiredWorkers = juce::jmax (0, n); }
 
+    // Largest worker count the engine can use: the strips fan out across at most
+    // kMaxDspLanes - 1 worker lanes (the audio callback runs the last lane
+    // itself). Single source of truth for AppConfig's settings/manual cap.
+    static constexpr int getMaxWorkerCount() noexcept { return kMaxDspLanes - 1; }
+
     // Message thread. CALLER MUST have removed this engine as the audio callback
     // first (so no audio thread is inside the worker pool's runBlock) — the
     // Audio Settings panel detaches around the change. Stops+restarts the pool
@@ -331,6 +336,18 @@ public:
     void setDeviceLostAlertSink (DeviceLostAlertSink sink) noexcept
     {
         onDeviceLostAlert_ = std::move (sink);
+    }
+
+    // One-shot startup device-open outcome. Empty = the saved device opened.
+    // Non-empty when the saved device was busy and we fell back (or couldn't).
+    // The UI reads it ONCE after construction — the alert sinks above are still
+    // null while AudioEngine itself is being constructed, so the startup result
+    // can't go through them.
+    juce::String consumeStartupDeviceMessage()
+    {
+        auto m = startupDeviceMessage_;
+        startupDeviceMessage_.clear();
+        return m;
     }
 
     // Fired when record() refuses to start (no track armed, or no audio
@@ -664,6 +681,10 @@ private:
     // changeListenerCallback (message thread) don't race on the flag
     // itself. Acquire / release across the threads.
     std::atomic<bool>   hadLiveDevice_    { false };
+
+    // Set once in the constructor by the busy-device fallback; drained by
+    // consumeStartupDeviceMessage() after construction. Message-thread only.
+    juce::String        startupDeviceMessage_;
 
     DeviceLostAlertSink onDeviceLostAlert_;
     RecordBlockedSink   onRecordBlocked_;

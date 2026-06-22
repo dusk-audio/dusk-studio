@@ -13,7 +13,7 @@ A guide to understanding, building, debugging, and extending Dusk Studio. It ass
 
 Dusk Studio is a **deliberately constrained, portastudio-style DAW** for Linux/macOS/Windows, written in **JUCE 8 / C++17**. It is one native desktop application — no server, no web component, no database. State lives in RAM (the `Session` object) and is serialized to a single `session.json` file plus a folder of WAV takes.
 
-It is ~**85,000 lines** of C++ across `src/`, plus a large `CMakeLists.txt` (~990 lines) and 50 Catch2 test files. The DSP (EQ, compressors, tape) is **not** written here — it is shared header code pulled in from a sibling repo of Dusk Audio plugins.
+It is ~**85,000 lines** of C++ across `src/`, plus a large `CMakeLists.txt` (~990 lines) and 51 Catch2 test files. The DSP (EQ, compressors, tape) is **not** written here — it is shared header code pulled in from a sibling repo of Dusk Audio plugins.
 
 The single most important mental model: **there are several threads, and the rules about what each may do are absolute.** Most bugs that look mysterious are thread-rule violations. Internalize Part 3 before you touch the audio path.
 

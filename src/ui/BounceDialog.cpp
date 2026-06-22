@@ -8,9 +8,12 @@ BounceDialog::BounceDialog (AudioEngine& e,
                               Session& s,
                               juce::AudioDeviceManager& dm,
                               const juce::File& f,
-                              BounceEngine::Mode mode)
+                              BounceEngine::Mode mode,
+                              BounceEngine::Format format,
+                              int mp3BitrateKbps)
     : engine (e), session (s), deviceManager (dm), outputFile (f),
-      renderMode (mode), progressBar (progressValue)
+      renderMode (mode), renderFormat (format), mp3Bitrate (mp3BitrateKbps),
+      progressBar (progressValue)
 {
     titleLabel.setJustificationType (juce::Justification::centredLeft);
     titleLabel.setFont (juce::Font (juce::FontOptions (14.0f, juce::Font::bold)));
@@ -63,7 +66,7 @@ BounceDialog::BounceDialog (AudioEngine& e,
     // atomics and updates the bar / status. This dodges all the lifetime
     // complexity of marshalling callbacks back to a Component that might be
     // closing.
-    if (! bounceEngine->start (outputFile, 0.0, 1024, 5.0, renderMode))
+    if (! bounceEngine->start (outputFile, 0.0, 1024, 5.0, renderMode, renderFormat, mp3Bitrate))
     {
         finished = true;
         succeeded = false;

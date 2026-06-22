@@ -915,8 +915,8 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     };
     styleCompactSectionBtn (eqCompactButton,   juce::Colour (0xff5fc46f));
     styleCompactSectionBtn (compCompactButton, juce::Colour (0xffe0c050));
-    eqCompactButton  .setTooltip ("Open the master EQ editor (program-style Tube EQ).");
-    compCompactButton.setTooltip ("Open the master comp editor (console-style glue compressor).");
+    eqCompactButton  .setTooltip ("Open the master EQ editor (program-style Tube EQ). Click again to close.");
+    compCompactButton.setTooltip ("Open the master comp editor (console-style glue compressor). Click again to close.");
     eqCompactButton  .onClick = [this] { openEqEditorPopup(); };
     compCompactButton.onClick = [this] { openCompEditorPopup(); };
     addChildComponent (eqCompactButton);
@@ -929,14 +929,11 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     addAndMakeVisible (compRatLabel); addAndMakeVisible (compAtkLabel);
     addAndMakeVisible (compRelLabel); addAndMakeVisible (compMakLabel);
 
-    // TAPE pill — left-click opens the popup editor; right-click toggles
-    // tapeEnabled (gives the timeline compact view a way to bypass without
-    // expanding the strip). Lit state reflects the
-    // tapeEnabled atom (synced from timerCallback) so the engine's
-    // auto-arm-on-edit still shows up here. Matches the expanded-
-    // mode CompHeaderButton's left/right grammar — different from
-    // EQ / COMP compact pills, which only have the popup editor as
-    // their bypass route via the in-popup enable LED.
+    // TAPE pill (compact / tape-strip mode only) — matches the EQ / COMP compact
+    // pills: any click opens the tape editor modal, where the on/off toggle
+    // lives. (The regular-mode tapeHeaderBtn keeps its own left-toggle /
+    // right-open grammar — unchanged.) Lit state still reflects the tapeEnabled
+    // atom (synced from timerCallback) so the engine's auto-arm-on-edit shows up.
     {
         const auto tapeAccent = juce::Colour (0xffd0a060);
         tapeButton.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff282830));
@@ -947,35 +944,30 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
         tapeButton.setClickingTogglesState (false);   // toggle path goes through the atom, not the button state
         tapeButton.setToggleState (params.tapeEnabled.load (std::memory_order_relaxed),
                                     juce::dontSendNotification);
-        tapeButton.setTooltip ("Left-click: open tape editor. Right-click: bypass / engage tape.");
-        tapeButton.onClick = [this]
-        {
-            openTapeMachineModal();
-        };
-        tapeButton.onRightClick = [this] (const juce::MouseEvent&)
-        {
-            const bool now = ! params.tapeEnabled.load (std::memory_order_relaxed);
-            params.tapeEnabled.store (now, std::memory_order_relaxed);
-            tapeButton.setToggleState (now, juce::dontSendNotification);
-        };
+        tapeButton.setTooltip ("Open the master tape-machine editor (toggle tape on/off inside).");
+        // Match the EQ / COMP compact pills: any click opens the editor modal;
+        // the on/off toggle lives inside it.
+        tapeButton.onClick      = [this] { openTapeMachineModal(); };
+        tapeButton.onRightClick = [this] (const juce::MouseEvent&) { openTapeMachineModal(); };
         addAndMakeVisible (tapeButton);
     }
 
-    // Regular-mode TAPE header — CompHeaderButton (LED + label). Tape has no
-    // inline controls, so its primary action (left-click) OPENS the editor and
-    // right-click toggles enable; the LED still reflects tapeEnabled. setCompactMode
-    // swaps visibility between this header and the compact tapeButton pill above.
+    // Regular-mode TAPE header — CompHeaderButton (LED + label). Left-click
+    // toggles enable (matches the EQ / COMP headers); right-click opens the
+    // editor (tape has no inline controls, so the popup is its only editor).
+    // The LED reflects tapeEnabled. setCompactMode swaps visibility between
+    // this header and the compact tapeButton pill above.
     tapeHeaderBtn = std::make_unique<CompHeaderButton> (
         /*getEnabled*/            [this] { return params.tapeEnabled.load (std::memory_order_relaxed); },
-        /*onToggle (left-click)*/ [this] { openTapeMachineModal(); },
-        /*onPickMode (right-click)*/ [this]
+        /*onToggle (left-click)*/ [this]
                         {
                             const bool now = ! params.tapeEnabled.load (std::memory_order_relaxed);
                             params.tapeEnabled.store (now, std::memory_order_relaxed);
                             if (tapeHeaderBtn != nullptr) tapeHeaderBtn->repaint();
-                        });
+                        },
+        /*onPickMode (right-click)*/ [this] { openTapeMachineModal(); });
     tapeHeaderBtn->setLabelText ("TAPE");
-    tapeHeaderBtn->setTooltip ("Left-click to open the tape-machine editor. Right-click to bypass / engage tape.");
+    tapeHeaderBtn->setTooltip ("Left-click to bypass / engage tape. Right-click to open the tape-machine editor.");
     addAndMakeVisible (tapeHeaderBtn.get());
 
     // Default mode is regular (compactMode = false). Hide the compact

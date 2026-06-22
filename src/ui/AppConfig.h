@@ -78,7 +78,9 @@ void             setMulticoreDspMode (MulticoreDspMode m);
 int  getMulticoreManualWorkers();
 void setMulticoreManualWorkers (int n);
 
-// Largest worker count this host allows: jmax(0, cores-2). 0 on <3-core hosts.
+// Largest worker count this host allows: cores-2, clamped to
+// [0, AudioEngine::getMaxWorkerCount()] (the engine's kMaxDspLanes-1). 0 on
+// <3-core hosts; never exceeds the engine's worker-lane cap on big machines.
 int maxMulticoreWorkers();
 
 // Concrete worker count for this host given the stored mode. 0 = serial.

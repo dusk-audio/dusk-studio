@@ -419,20 +419,30 @@ juce::Rectangle<int> TapeStrip::rowBounds (int trackIdx) const noexcept
     return juce::Rectangle<int> (col.getX(), y, col.getWidth(), rowHeight);
 }
 
+juce::int64 TapeStrip::rightmostContentSample() const noexcept
+{
+    // The rightmost sample any content occupies — audio AND MIDI regions, plus
+    // the playhead. Including MIDI keeps a MIDI-only session in view; an audio-
+    // only scan left its regions off-screen.
+    juce::int64 maxSample = engine.getTransport().getPlayhead();
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        for (const auto& r : session.track (t).regions)
+            maxSample = juce::jmax (maxSample, r.timelineStart + r.lengthInSamples);
+        for (const auto& m : session.track (t).midiRegions.current())
+            maxSample = juce::jmax (maxSample, m.timelineStart + m.lengthInSamples);
+    }
+    return maxSample;
+}
+
 double TapeStrip::pixelsPerSecond() const noexcept
 {
     const double sr = engine.getCurrentSampleRate();
     if (sr <= 0.0) return 0.0;
 
-    // Find the rightmost sample we need to show - either the longest region
-    // or the current playhead - then add a margin so there's always blank
-    // tape past the last recorded thing.
-    juce::int64 maxSample = engine.getTransport().getPlayhead();
-    for (int t = 0; t < Session::kNumTracks; ++t)
-        for (auto& r : session.track (t).regions)
-            maxSample = juce::jmax (maxSample, r.timelineStart + r.lengthInSamples);
-
-    const double maxSeconds = juce::jmax (60.0, (double) maxSample / sr * 1.20);
+    // Find the rightmost sample we need to show, then add a margin so there's
+    // always blank tape past the last recorded thing.
+    const double maxSeconds = juce::jmax (60.0, (double) rightmostContentSample() / sr * 1.20);
 
     auto col = tracksColumnBounds();
     if (col.getWidth() <= 0) return 0.0;
@@ -493,12 +503,7 @@ void TapeStrip::zoomFit() noexcept
         return;
     }
 
-    juce::int64 maxSample = engine.getTransport().getPlayhead();
-    for (int t = 0; t < Session::kNumTracks; ++t)
-        for (auto& r : session.track (t).regions)
-            maxSample = juce::jmax (maxSample, r.timelineStart + r.lengthInSamples);
-
-    const double contentSec    = (double) juce::jmax<juce::int64> (1, maxSample) / sr;
+    const double contentSec    = (double) juce::jmax<juce::int64> (1, rightmostContentSample()) / sr;
     const double autoFitBudget = juce::jmax (60.0, contentSec * 1.20);
     // pxPerSec at zoom 1 = col.width / autoFitBudget. We want the
     // visible window to equal contentSec exactly, so
@@ -506,6 +511,26 @@ void TapeStrip::zoomFit() noexcept
     const float fitZoom = (float) (autoFitBudget / juce::jmax (0.001, contentSec));
     userZoomFactor = juce::jlimit (0.1f, 32.0f, fitZoom);
     repaint();
+}
+
+void TapeStrip::refreshAfterSessionLoad()
+{
+    // New session in the same component instance: drop any edit state that
+    // points at the PREVIOUS session's regions, so shortcuts (delete / cut /
+    // nudge / take-cycle) can't act on a stale or now-different region.
+    selectedTrack     = -1;
+    selectedRegion    = -1;
+    selectedMidiTrack = -1;
+    selectedMidiRegion = -1;
+    additionalSelections.clear();   // else allSelectedRegions() keeps stale group picks
+    drag = ActiveDrag{};
+    midiDrag.clear();
+
+    rebuildVisibleTrackOrder (/*relayoutParent*/ true);
+    zoomFit();    // resets scrollSamples + refits zoom, and repaints
+    repaint();    // unconditional — the rebuild above early-outs when the
+                  // visible set is unchanged, which is exactly the same-layout
+                  // reopen case that left the strip showing stale content.
 }
 
 juce::int64 TapeStrip::sampleAtX (int x) const noexcept
@@ -1222,31 +1247,41 @@ void TapeStrip::mouseDown (const juce::MouseEvent& e)
         // even when other regions are selected. Group drag begins from a
         // plain (no-modifier) click on an already-selected region body.
         //   • Cmd-click  → toggle the clicked region.
-        //   • Shift-click on the same track as the primary → fill every
-        //     region between the primary and the clicked one (by
-        //     timelineStart order) into the selection.
-        //   • Shift-click on a different track → fall back to toggle.
-        const bool isBodyHit = (hit.op == RegionOp::Move
-                                 || hit.op == RegionOp::TrimStart
-                                 || hit.op == RegionOp::TrimEnd);
+        //   • Shift-click → box-select the RECTANGLE spanned by the primary
+        //     (anchor) region and the clicked region: every region on a track
+        //     between the two (inclusive) whose time extent overlaps the span
+        //     between them. Same track collapses the box to one row (range
+        //     fill); a lower track grabs the whole vertical stack (e.g. a
+        //     multitrack take) in one click instead of Cmd-clicking each.
+        const bool isBodyHit = (hit.op == RegionOp::Move);
         if (e.mods.isShiftDown() && isBodyHit
-            && selectedTrack == hit.track && selectedRegion >= 0)
+            && selectedTrack >= 0 && selectedRegion >= 0
+            && selectedTrack < Session::kNumTracks
+            && selectedRegion < (int) session.track (selectedTrack).regions.size())
         {
-            const auto& regs = session.track (hit.track).regions;
-            if (selectedRegion < (int) regs.size()
-                && hit.regionIdx < (int) regs.size())
+            const auto& anchorRegs = session.track (selectedTrack).regions;
+            const auto& clickRegs  = session.track (hit.track).regions;
+            if (hit.regionIdx < (int) clickRegs.size())
             {
-                const auto anchorTL = regs[(size_t) selectedRegion].timelineStart;
-                const auto clickTL  = regs[(size_t) hit.regionIdx].timelineStart;
-                const auto lo = juce::jmin (anchorTL, clickTL);
-                const auto hi = juce::jmax (anchorTL, clickTL);
-                for (int i = 0; i < (int) regs.size(); ++i)
+                const auto& a = anchorRegs[(size_t) selectedRegion];
+                const auto& c = clickRegs[(size_t) hit.regionIdx];
+                const auto lo = juce::jmin (a.timelineStart, c.timelineStart);
+                const auto hi = juce::jmax (a.timelineStart + a.lengthInSamples,
+                                             c.timelineStart + c.lengthInSamples);
+                const int trackLo = juce::jmin (selectedTrack, hit.track);
+                const int trackHi = juce::jmax (selectedTrack, hit.track);
+                for (int t = trackLo; t <= trackHi; ++t)
                 {
-                    const auto t = regs[(size_t) i].timelineStart;
-                    if (t < lo || t > hi) continue;
-                    if (i == selectedRegion) continue;
-                    if (! isRegionSelected (hit.track, i))
-                        toggleRegionSelected (hit.track, i);
+                    const auto& regs = session.track (t).regions;
+                    for (int i = 0; i < (int) regs.size(); ++i)
+                    {
+                        const auto s      = regs[(size_t) i].timelineStart;
+                        const auto regEnd = s + regs[(size_t) i].lengthInSamples;
+                        if (regEnd <= lo || s >= hi) continue;          // no time overlap
+                        if (t == selectedTrack && i == selectedRegion) continue;  // primary
+                        if (! isRegionSelected (t, i))
+                            toggleRegionSelected (t, i);
+                    }
                 }
                 drag.op = RegionOp::None;
                 repaint();
@@ -2186,9 +2221,17 @@ void TapeStrip::mouseMove (const juce::MouseEvent& e)
     // ruler / label column fall through so marker + loop/punch affordances work.
     if (mode == EditMode::Cut && tracksColumnBounds().contains (e.x, e.y))
     {
-        setHoverCursor (hit.regionIdx >= 0 ? juce::MouseCursor::NoCursor
-                                           : juce::MouseCursor::NormalCursor,
-                        e.x, e.y);
+        // Over an audio region: scissors glyph + a dashed cut-preview line down
+        // the region's height (matches the audio editor's Cut affordance).
+        juce::Range<int> cutLine;
+        if (hit.op == RegionOp::Move)   // audio body only — not trim/fade/take sub-areas
+        {
+            const auto rr = audioRegionScreenRect (hit.track, hit.regionIdx);
+            cutLine = { rr.getY(), rr.getBottom() };
+        }
+        setHoverCursor (hit.op == RegionOp::Move ? juce::MouseCursor::NoCursor
+                                                 : juce::MouseCursor::NormalCursor,
+                        e.x, e.y, cutLine);
         return;
     }
 
@@ -2275,13 +2318,19 @@ void TapeStrip::mouseMove (const juce::MouseEvent& e)
     }
 }
 
-void TapeStrip::setHoverCursor (const juce::MouseCursor& c, int x, int y)
+void TapeStrip::setHoverCursor (const juce::MouseCursor& c, int x, int y, juce::Range<int> cutLine)
 {
-    setMouseCursor (c);
+    // Callers pass MouseCursor::NoCursor as a sentinel for "hide the native
+    // cursor, the CursorOverlay paints the glyph". Honour it with
+    // invisibleCursor() — NOT MouseCursor::NoCursor, whose hide path is broken
+    // on some Linux WMs (see EditCursors.h). cutLine (Cut mode) is the region's
+    // Y span for the dashed cut-preview line; empty = full scissor, no line.
+    const bool wantGlyph = (c == juce::MouseCursor::NoCursor);
+    setMouseCursor (wantGlyph ? invisibleCursor() : c);
     if (! (onMouseMovedForCursor && onMouseExitedForCursor))
         return;
-    if (c == juce::MouseCursor::NoCursor)
-        onMouseMovedForCursor (*this, { x, y }, session.editMode, {});
+    if (wantGlyph)
+        onMouseMovedForCursor (*this, { x, y }, session.editMode, cutLine);
     else
         onMouseExitedForCursor();
 }
@@ -2297,23 +2346,31 @@ void TapeStrip::refreshModeCursor()
     // the next move (on platforms where JUCE's NoCursor does the hiding).
     const bool overLanes = isMouseOver (true) && tracksColumnBounds().contains (p.x, p.y);
     bool wantGlyph = false;
+    juce::Range<int> cutLine;   // Cut: the region's Y span for the dashed preview line
     if (overLanes)
     {
         const auto hit      = hitTestRegion (p.x, p.y);
         const bool overMidi = overMidiRegionBody (p.x, p.y);
         if (mode == EditMode::Cut)
-            wantGlyph = (hit.regionIdx >= 0);                        // scissors over audio (splittable) only
+        {
+            wantGlyph = (hit.op == RegionOp::Move);                  // scissors over audio body (splittable) only
+            if (wantGlyph)
+            {
+                const auto rr = audioRegionScreenRect (hit.track, hit.regionIdx);
+                cutLine = { rr.getY(), rr.getBottom() };
+            }
+        }
         else if (mode == EditMode::Grab)
             wantGlyph = (hit.op == RegionOp::Move || overMidi);      // hand over a body
     }
-    setMouseCursor (wantGlyph ? juce::MouseCursor::NoCursor
+    setMouseCursor (wantGlyph ? invisibleCursor()   // not NoCursor (Linux-WM-broken)
                               : juce::MouseCursor::NormalCursor);
-    // Mode flipped via toolbar / hotkey with no mouse event to follow -
-    // seed the overlay glyph from the current pointer so it appears
+    // Mode flipped via toolbar / hotkey with no mouse event to follow - seed the
+    // overlay glyph (+ Cut preview line) from the current pointer so it appears
     // immediately instead of waiting for the next move.
     if (onMouseMovedForCursor && onMouseExitedForCursor)
     {
-        if (wantGlyph) onMouseMovedForCursor (*this, { p.x, p.y }, mode, {});
+        if (wantGlyph) onMouseMovedForCursor (*this, { p.x, p.y }, mode, cutLine);
         else           onMouseExitedForCursor();
     }
 }

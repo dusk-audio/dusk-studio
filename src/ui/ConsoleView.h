@@ -19,6 +19,9 @@ public:
     // Engine ref so each ChannelStripComponent gets a PluginSlot
     // reference — UI calls slot.loadFromFile etc. on message thread.
     ConsoleView (Session& session, AudioEngine& engine);
+    // stopTimer() before derived members destruct — base Timer::~Timer runs
+    // too late (its callback could touch already-dead members).
+    ~ConsoleView() override { stopTimer(); }
 
     void paint (juce::Graphics&) override;
     void paintOverChildren (juce::Graphics&) override;

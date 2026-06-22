@@ -153,7 +153,7 @@ Physical-feeling transport controls:
 * **Marker jump** — left/right arrow buttons to jump between markers, or click markers in the tape strip
 * BPM display with tap tempo button
 * Timeline position display (bars:beats or minutes:seconds, togglable)
-* Bounce/Export button (renders master output to stereo WAV/FLAC)
+* Bounce/Export button (renders master output to stereo 24-bit WAV, or 320 kbps MP3 when the output is named `.mp3`)
 
 #### **Metronome / click track**
 
@@ -250,7 +250,7 @@ struct Track {
     Colour colour;
     InputMode inputMode;          // Mono, Stereo, MIDI
     int midiInputChannel;         // Internal 0-15, or -1 = omni (all channels).
-                                  // Use userChannelToInternal(1-24) at UI boundaries,
+                                  // Use userChannelToInternal(1-16) at UI boundaries,
                                   // internalChannelToUser(0-15) for display.
     String instrumentPluginId;    // only used if MIDI
     String instrumentPluginState; // serialized plugin state (base64)
@@ -434,7 +434,7 @@ State machine:
 * Marker navigation: "previous marker" / "next marker" buttons cycle through markers in timeline order.
 * Loop: when enabled and playhead reaches loop out point, jump back to loop in point.
 * Punch in/out: when armed, recording starts/stops at punch points during playback. Sample-accurate crossfades (64-sample raised cosine) at punch boundaries to prevent clicks. Punch range follows the `PunchRange validation invariants` above.
-* Bounce: render the master bus output to a stereo WAV/FLAC file for the selected range (or full session).
+* Bounce: render the master bus output to a stereo 24-bit WAV (or 320 kbps MP3) file for the selected range (or full session).
 
 **RECORD-arm requirement**: Pressing RECORD on the transport requires **at least one track to be record-armed** (each track has an arm button on its strip; arm state is persisted in `Track.recordArmed`). If the user presses RECORD with no armed tracks:
 
@@ -795,7 +795,7 @@ The render runs on a dedicated `juce::Thread` (not the audio thread). Progress i
 #### **9c. Format and metadata**
 
 * **Sample rate**: always the session sample rate. No upsample / downsample on bounce — the user can resample externally if they need 44.1k delivery from a 48k session.
-* **Bit depth**: 24-bit WAV by default (matches the recording format and the dithering pipeline in the Bit depth technical decision). FLAC option in the dialog for archive / handoff. No 16-bit / no MP3 / no other lossy formats in v1 — those belong in an external converter, not the DAW.
+* **Bit depth**: bounces are 24-bit WAV by default (matches the recording format and the dithering pipeline in the Bit depth technical decision). An MP3 option (320 kbps CBR via libmp3lame) is available for handoff — selected by giving the output file a `.mp3` extension. No 16-bit / no FLAC / no other lossy formats; those belong in an external converter.
 * **Stereo only**: master mix and stems are always stereo (left/right). No surround. No mono master. (Mono sources are panned into stereo per the channel strip's pan; a mono source with pan centered produces an L=R bounce.)
 * **Click**: excluded by default. The export dialog has an "Include click track" checkbox (default off) — useful for practice tracks but never on by default.
 * **Filename**: defaults to `<sessionname>_<modename>_<NNN>.wav`, where `<NNN>` is an auto-incrementing 3-digit counter so consecutive bounces don't overwrite each other. The user can edit the filename before render.

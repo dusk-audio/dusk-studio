@@ -8,6 +8,16 @@
 
 namespace duskstudio
 {
+namespace
+{
+// BPM can be fractional (the tempo field accepts e.g. 127.9). Show up to two
+// decimals but trim trailing zeros so whole tempos read "120", not "120.00".
+juce::String formatBpm (double bpm)
+{
+    return juce::String (bpm, 2).trimCharactersAtEnd ("0").trimCharactersAtEnd (".");
+}
+} // namespace
+
 TransportIconButton::TransportIconButton (const juce::String& name, Icon icon,
                                             juce::Colour active)
     : juce::Button (name), iconType (icon), activeColour (active)
@@ -560,7 +570,7 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
     bpmValue.setColour (juce::Label::outlineColourId,     juce::Colour (0xff2a2a32));
     bpmValue.setFont (juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(),
                                                       14.0f, juce::Font::bold)));
-    bpmValue.setText (juce::String ((int) engine.getSession().tempoBpm.load()),
+    bpmValue.setText (formatBpm (engine.getSession().tempoBpm.load()),
                        juce::dontSendNotification);
     // Shows the tempo at the playhead (following the tempo map). Not a
     // free-typing Label editor — double-click routes through the same
@@ -637,7 +647,7 @@ bool TransportBar::isTapeStripExpanded() const
     return tapeToggle.getToggleState();
 }
 
-TransportBar::~TransportBar() = default;
+TransportBar::~TransportBar() { stopTimer(); }   // before derived members destruct
 
 void TransportBar::timerCallback()
 {
@@ -961,8 +971,8 @@ void TransportBar::refreshButtonStates()
     // AT THE PLAYHEAD (follows the tempo map), not the constant bar-1 tempo —
     // otherwise this clobbers the playhead-driven value timerCallback just set.
     if (! bpmValue.isBeingEdited())
-        bpmValue.setText (juce::String ((int) std::round (
-                              engine.getSession().bpmAt (engine.getTransport().getPlayhead()))),
+        bpmValue.setText (formatBpm (
+                              engine.getSession().bpmAt (engine.getTransport().getPlayhead())),
                            juce::dontSendNotification);
 
     // BPM caption priority:
@@ -1296,7 +1306,7 @@ void TransportBar::promptEditTempoAtPlayhead()
             um.perform (new SetTempoMapAction (safe->engine,
                                                s2.tempoMap.points(),
                                                std::move (vec)));
-            safe->bpmValue.setText (juce::String ((int) b),
+            safe->bpmValue.setText (formatBpm (b),
                                       juce::dontSendNotification);
         });
 }
@@ -1449,7 +1459,7 @@ void TransportBar::confirmAndApplyBpm (float newBpm, float oldBpm)
     // round-trips fractional BPM, so an untouched OK stays a true no-op.
     if (std::abs (newBpm - oldBpm) < 0.005f)
     {
-        bpmValue.setText (juce::String ((int) newBpm), juce::dontSendNotification);
+        bpmValue.setText (formatBpm (newBpm), juce::dontSendNotification);
         return;
     }
 
@@ -1461,7 +1471,7 @@ void TransportBar::confirmAndApplyBpm (float newBpm, float oldBpm)
         auto pts = s.tempoMap.points();
         pts.front().bpm = newBpm;
         engine.setTempoPoints (std::move (pts));
-        bpmValue.setText (juce::String ((int) newBpm), juce::dontSendNotification);
+        bpmValue.setText (formatBpm (newBpm), juce::dontSendNotification);
         return;
     }
 
@@ -1487,7 +1497,7 @@ void TransportBar::confirmAndApplyBpm (float newBpm, float oldBpm)
     if (empty)
     {
         applyTempoChange (s, newBpm, engine.getCurrentSampleRate());
-        bpmValue.setText (juce::String ((int) newBpm), juce::dontSendNotification);
+        bpmValue.setText (formatBpm (newBpm), juce::dontSendNotification);
         return;
     }
 
@@ -1527,14 +1537,14 @@ void TransportBar::confirmAndApplyBpm (float newBpm, float oldBpm)
                            if (safe == nullptr) return;
                            applyTempoChange (safe->engine.getSession(), newBpm,
                                                safe->engine.getCurrentSampleRate());
-                           safe->bpmValue.setText (juce::String ((int) newBpm),
+                           safe->bpmValue.setText (formatBpm (newBpm),
                                                      juce::dontSendNotification);
                        },
                        /*secondary*/   "Cancel",
                        /*onSecondary*/ [safe, oldBpm]
                        {
                            if (safe == nullptr) return;
-                           safe->bpmValue.setText (juce::String ((int) oldBpm),
+                           safe->bpmValue.setText (formatBpm (oldBpm),
                                                      juce::dontSendNotification);
                        });
 }

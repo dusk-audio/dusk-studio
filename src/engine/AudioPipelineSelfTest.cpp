@@ -1192,6 +1192,15 @@ juce::String AudioPipelineSelfTest::runAll()
     // so leave none set while probing.
     for (int b = 0; b < Session::kNumBuses; ++b)
         session.bus (b).strip.solo.store (false, std::memory_order_relaxed);
+    // Aux returns too: a self-generating plugin or a decaying reverb/delay tail
+    // on an unmuted aux lane sums into the master while real devices are open.
+    // SavedState doesn't capture aux, so snapshot + restore the mute here.
+    std::array<bool, Session::kNumAuxLanes> savedAuxMute {};
+    for (int a = 0; a < Session::kNumAuxLanes; ++a)
+    {
+        savedAuxMute[(size_t) a] = session.auxLane (a).params.mute.load (std::memory_order_relaxed);
+        session.auxLane (a).params.mute.store (true, std::memory_order_relaxed);
+    }
     session.recomputeRtCounters();
     // The synthetic tests force the engine serial (setWorkerCountForTest(0));
     // restore the live configured worker pool before re-attaching.
@@ -1204,6 +1213,8 @@ juce::String AudioPipelineSelfTest::runAll()
 
     // Probe done (devices opened/closed) - reinstate the user's real session.
     restoreState (savedSession);
+    for (int a = 0; a < Session::kNumAuxLanes; ++a)
+        session.auxLane (a).params.mute.store (savedAuxMute[(size_t) a], std::memory_order_relaxed);
 
     report.add ("");
     report.add ("=== End of Self-Test ===");

@@ -57,7 +57,7 @@ public:
     // setMouseCursor + push the matching glyph into the CursorOverlay. When
     // c is NoCursor the overlay paints the Grab/Cut glyph at (x,y); any
     // other cursor clears it so only the native cursor shows.
-    void setHoverCursor (const juce::MouseCursor& c, int x, int y);
+    void setHoverCursor (const juce::MouseCursor& c, int x, int y, juce::Range<int> cutLine = {});
 
     // Called from MainComponent's keyboard handler. Returns true if the
     // op happened (caller decides whether to swallow the keypress).
@@ -124,6 +124,15 @@ public:
     void zoomByFactor (float factor, int anchorX = -1);
     void zoomFit() noexcept;
 
+    // Explicit refresh for the session-load path. The strip otherwise relies on
+    // indirect side effects (setConsoleVisibleRange / setBounds / the 30 Hz
+    // timer) to repaint, and ALL of them no-op when a reopened session has the
+    // same track layout + window size as the current view — so freshly-loaded
+    // regions never get drawn. Rebuilds the visible rows, refits the horizontal
+    // zoom/scroll to the loaded content (a session saved while zoomed-in must not
+    // open with its regions scrolled off-screen), and repaints unconditionally.
+    void refreshAfterSessionLoad();
+
 private:
     void timerCallback() override;
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
@@ -148,6 +157,10 @@ private:
     void rebuildVisibleTrackOrder (bool relayoutParent = true);
     // -1 if collapsed.
     int  visualRowForTrack (int trackIdx) const noexcept;
+
+    // Rightmost sample any content occupies (audio + MIDI regions + playhead).
+    // Shared by pixelsPerSecond() and zoomFit() so their extent can't diverge.
+    juce::int64 rightmostContentSample() const noexcept;
 
     double pixelsPerSecond() const noexcept;
     juce::int64 sampleAtX (int x) const noexcept;

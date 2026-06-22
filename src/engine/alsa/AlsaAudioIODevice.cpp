@@ -645,14 +645,45 @@ juce::String AlsaAudioIODevice::open (const juce::BigInteger& inputChannels,
     // channel `activeXXXDeviceChannelIndex[a]`. Mask is the user's UI ticks.
     activeOutDeviceChannelIndex.clearQuick();
     activeInDeviceChannelIndex.clearQuick();
+    // Clamp to the channel count the device actually opened. outNumChannels /
+    // inNumChannels can be smaller than the requested mask — a 12-output
+    // interface asked to open 32 negotiates down to 12. Without this clamp a
+    // device-channel index >= the opened count reaches the interleave loop and
+    // addresses the interleaved buffer (sized to the opened count) out of
+    // bounds: out[frame * numDeviceChannels + col] with col past the last real
+    // channel. That heap overflow is what crashes with "free(): invalid pointer".
+    juce::BigInteger clampedOutMask, clampedInMask;
     if (wantOutput)
-        for (int i = 0; i <= outputChannels.getHighestBit(); ++i)
+        for (int i = 0; i < (int) outNumChannels; ++i)
             if (outputChannels[i])
+            {
                 activeOutDeviceChannelIndex.add (i);
+                clampedOutMask.setBit (i);
+            }
     if (wantInput)
-        for (int i = 0; i <= inputChannels.getHighestBit(); ++i)
+        for (int i = 0; i < (int) inNumChannels; ++i)
             if (inputChannels[i])
+            {
                 activeInDeviceChannelIndex.add (i);
+                clampedInMask.setBit (i);
+            }
+    // A stale/invalid mask can select only channels the device doesn't have,
+    // leaving zero active channels after the clamp - open() still succeeds but the
+    // callback gets silence / no input. Fall back to the first available
+    // channel(s) (a default stereo pair) so we always have at least one.
+    if (wantOutput && clampedOutMask.isZero() && (int) outNumChannels > 0)
+        for (int i = 0; i < juce::jmin (2, (int) outNumChannels); ++i)
+        { activeOutDeviceChannelIndex.add (i); clampedOutMask.setBit (i); }
+    if (wantInput && clampedInMask.isZero() && (int) inNumChannels > 0)
+        for (int i = 0; i < juce::jmin (2, (int) inNumChannels); ++i)
+        { activeInDeviceChannelIndex.add (i); clampedInMask.setBit (i); }
+
+    // Publish the actually-active masks. The requested mask can be wider than the
+    // device opened (32 asked, 12 real); without this, getActiveOutput/Input-
+    // Channels() reports enabled channels the callback never gets handed, and the
+    // main-output-pair menu offers pairs that don't physically exist.
+    currentOutputChannels = clampedOutMask;
+    currentInputChannels  = clampedInMask;
 
     // Pre-size scratch. Allocations on the audio thread are forbidden; the
     // sizing here is the size the I/O loop relies on.
@@ -781,12 +812,13 @@ void AlsaAudioIODevice::start (juce::AudioIODeviceCallback* newCallback)
     // Run the I/O thread at real-time priority. The rlimit→priority mapping is
     // shared with the DSP worker pool (see RtPriority.h — the pool MUST run at
     // the same SCHED_RR level as this thread or the per-block join can starve a
-    // worker sharing this core). jucePriority == 0 means the rlimit admits no
-    // JUCE-reachable realtime level; don't bother asking.
+    // worker sharing this core). jucePriority < 0 means the rlimit admits no
+    // JUCE-reachable realtime level; don't bother asking. 0 IS a valid level
+    // (lowest SCHED_RR), so request RT for it too.
     const auto rtInfo = duskstudio::rt::queryRealtimePriority();
     const int  juceRtPrio = rtInfo.jucePriority;
 
-    const bool gotRT = juceRtPrio > 0
+    const bool gotRT = juceRtPrio >= 0
         && startRealtimeThread (juce::Thread::RealtimeOptions{}.withPriority (juceRtPrio));
     if (! gotRT)
         startThread (juce::Thread::Priority::high);
@@ -894,8 +926,13 @@ void AlsaAudioIODevice::rearmStream() noexcept
         for (int attempts = 0; done < frames && attempts < 16; ++attempts)
         {
             const auto n = snd_pcm_writei (outHandle, src + done * frameBytes, frames - done);
+            if (n == -EAGAIN)
+                break;      // NONBLOCK ring is full — prefilled as much as it holds; go start it
             if (n < 0)
+            {
                 snd_pcm_recover (outHandle, (int) n, /*silent*/ 1);
+                done = 0;   // recover re-prepares (empties) the ring — refill from the start
+            }
             else
                 done += (snd_pcm_uframes_t) n;
         }

@@ -69,7 +69,7 @@ inline int comparePrerelease (const juce::String& a, const juce::String& b)
             return d;
         }
     }
-    return pa.size() - pb.size();
+    return pa.size() < pb.size() ? -1 : (pa.size() > pb.size() ? 1 : 0);
 }
 
 inline bool isNewer (const ParsedVersion& candidate, const ParsedVersion& current)

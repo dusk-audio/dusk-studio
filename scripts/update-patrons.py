@@ -177,22 +177,50 @@ def fetch_members(config):
 
 
 def find_headers(daw_root):
+    found, seen = [], set()
+    bases = []
+    # CI / explicit override: point at the same plugins checkout the build uses
+    # for the donor DSP. The release workflows set this so the shipped binary
+    # gets the live supporters list, even though that clone isn't a sibling.
+    env_path = os.environ.get("DUSK_PLUGINS_PATH")
+    if env_path:
+        bases.append(Path(env_path))
     parent = daw_root.parent
-    found = []
-    for sibling in ("plugins-main", "plugins", "plugins-worktree",
-                    "plugins-multi-synth"):
-        h = parent / sibling / "plugins" / "shared" / "PatreonBackers.h"
-        if h.is_file():
-            found.append(h)
+    bases += [parent / s for s in ("plugins-main", "plugins",
+                                   "plugins-worktree", "plugins-multi-synth")]
+    for base in bases:
+        h = base / "plugins" / "shared" / "PatreonBackers.h"
+        if not h.is_file():
+            continue
+        key = h.resolve()
+        if key in seen:
+            continue
+        seen.add(key)
+        found.append(h)
     return found
 
 
 def cpp_escape(s):
-    return s.replace("\\", "\\\\").replace('"', '\\"')
+    # Backslash first, then the rest, so a raw newline/CR in a display name
+    # doesn't break the generated C++ string literal at compile time.
+    return (s.replace("\\", "\\\\").replace('"', '\\"')
+             .replace("\n", "\\n").replace("\r", "\\r"))
 
 
 def cpp_unescape(s):
-    return s.replace('\\"', '"').replace("\\\\", "\\")
+    # Single pass: chained str.replace() would let one substitution synthesise an
+    # escape the next consumes (a literal "\\n" -> backslash+'n' would decode to a
+    # newline). cpp_escape only emits \\ \" \n \r, so decode exactly those.
+    out, i, n = [], 0, len(s)
+    decode = {"\\": "\\", '"': '"', "n": "\n", "r": "\r"}
+    while i < n:
+        if s[i] == "\\" and i + 1 < n and s[i + 1] in decode:
+            out.append(decode[s[i + 1]])
+            i += 2
+        else:
+            out.append(s[i])
+            i += 1
+    return "".join(out)
 
 
 def parse_array(text, name):
@@ -224,6 +252,14 @@ def main():
     if not CONFIG_PATH.is_file():
         sys.exit(f"Missing {CONFIG_PATH} — see the setup notes at the top "
                  "of this script.")
+    # The file holds access/refresh tokens + the client secret. If it was created
+    # with a permissive umask (group/world readable), tighten it to 0600 before
+    # reading so the secrets aren't left exposed. (No-op on a file already 0600.)
+    if CONFIG_PATH.stat().st_mode & 0o077:
+        try:
+            os.chmod(CONFIG_PATH, 0o600)
+        except OSError:
+            pass
     config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
     missing = [k for k in ("access_token", "refresh_token",
                            "client_id", "client_secret") if k not in config]
@@ -305,13 +341,22 @@ def main():
         # truncated header behind (same pattern as write_config_secure).
         fd, tmp = tempfile.mkstemp(dir=str(header.parent),
                                    prefix="." + header.name + ".", suffix=".tmp")
+        fd_owned_by_file = False  # os.fdopen takes ownership only once it returns
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fd_owned_by_file = True
                 fh.write(text)
                 fh.flush()
                 os.fsync(fh.fileno())
             os.replace(tmp, header)
         except BaseException:
+            # If os.fdopen raised before the file object took ownership, the raw
+            # fd is still open — close it so it isn't leaked.
+            if not fd_owned_by_file:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
             try:
                 os.unlink(tmp)
             except OSError:

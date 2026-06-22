@@ -38,11 +38,23 @@ public:
     // MainComponent after session load / undo.
     void syncFromSession();
 
+    // Point the snap on/off toggle at a specific enable flag. Defaults to
+    // session.snapToGrid (the timeline / tape strip). The audio and MIDI
+    // editors override it with their own per-editor enable so the three
+    // surfaces snap independently.
+    void setSnapEnabledAccessor (std::function<bool()> get,
+                                  std::function<void (bool)> set);
+
     // Hide modes that aren't meaningful in the host editor. Default
     // shows all five; PianoRoll calls with { Grab, Draw } so the
     // pencil is the obvious note-drawing tool and Range / Cut / Grid
     // (no-op on the note grid) don't clutter the toolbar.
     void setVisibleModes (juce::Array<EditMode> modes);
+
+    // Hide the snap-resolution picker. The PianoRoll drives snap from its own
+    // grid combo (not session.snapResolution), so this toolbar's resolution
+    // button would be a disconnected, misleading control there.
+    void setSnapResolutionVisible (bool shouldBeVisible);
 
     // Pure formatter for a grid resolution ("1/4 Note", "Bar", …). Static +
     // public so other surfaces (the header snap picker) can reuse it.
@@ -72,6 +84,11 @@ private:
     ModeButton cutButton   { "Cut",   EditMode::Cut };
     ModeButton gridButton  { "Grid",  EditMode::Grid };
     ModeButton drawButton  { "Draw",  EditMode::Draw };
+
+    // Which enable the Snap toggle reads/writes. Defaults to session.snapToGrid;
+    // overridden per editor via setSnapEnabledAccessor.
+    std::function<bool()>      snapEnabledGet;
+    std::function<void (bool)> snapEnabledSet;
 
     juce::TextButton snapToggleButton     { "Snap" };
     // Drop-down style button: clicking opens a PopupMenu with musical

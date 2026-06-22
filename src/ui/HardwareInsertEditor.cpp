@@ -168,7 +168,7 @@ HardwareInsertEditor::HardwareInsertEditor (HardwareInsertParams& paramsRef,
     params.enabled.store (true, std::memory_order_relaxed);
 }
 
-HardwareInsertEditor::~HardwareInsertEditor() = default;
+HardwareInsertEditor::~HardwareInsertEditor() { stopTimer(); }   // before derived members destruct
 
 void HardwareInsertEditor::timerCallback()
 {

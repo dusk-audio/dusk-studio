@@ -57,8 +57,9 @@ jobs:
           [[ "v$(tr -d '[:space:]' < VERSION)" == "${GITHUB_REF_NAME}" ]] || {
             echo "Tag ${GITHUB_REF_NAME} != VERSION v$(tr -d '[:space:]' < VERSION)"; exit 1; }
 
-      - name: Install ninja + ccache
-        run: brew install ninja ccache
+      - name: Install ninja + ccache + lame
+        # lame: libmp3lame for MP3 bounce/export (CMake auto-detects it).
+        run: brew install ninja ccache lame
 
       - name: Cache ccache objects
         uses: actions/cache@v4
@@ -83,6 +84,32 @@ jobs:
             https://github.com/dusk-audio/dusk-audio-plugins.git \
             "${RUNNER_TEMP}/plugins-main"
 
+      - name: Refresh Patreon supporters (best-effort)
+        # See linux-release.yml for the rationale. Bakes the live list into the
+        # DMG; best-effort, ships the committed list with no secrets / on failure.
+        shell: bash
+        env:
+          PATREON_ACCESS_TOKEN: ${{ secrets.PATREON_ACCESS_TOKEN }}
+          PATREON_REFRESH_TOKEN: ${{ secrets.PATREON_REFRESH_TOKEN }}
+          PATREON_CLIENT_ID: ${{ secrets.PATREON_CLIENT_ID }}
+          PATREON_CLIENT_SECRET: ${{ secrets.PATREON_CLIENT_SECRET }}
+          DUSK_PLUGINS_PATH: ${{ runner.temp }}/plugins-main
+        run: |
+          if [ -z "${PATREON_REFRESH_TOKEN}" ] || [ -z "${PATREON_ACCESS_TOKEN}" ] \
+             || [ -z "${PATREON_CLIENT_ID}" ] || [ -z "${PATREON_CLIENT_SECRET}" ]; then
+            echo "Patreon secrets not fully configured - shipping the committed supporters list."
+            exit 0
+          fi
+          umask 077
+          mkdir -p "${HOME}/.config/dusk-audio"
+          cfg="${HOME}/.config/dusk-audio/patreon.json"
+          # Always remove the credential file on exit, even if a step below fails.
+          trap 'rm -f "${cfg}"' EXIT
+          # json.dump escapes any special characters in the secrets; a raw heredoc
+          # would corrupt the JSON on a quote/backslash in a token.
+          python3 -c 'import json, os, sys; json.dump({"access_token": os.environ["PATREON_ACCESS_TOKEN"], "refresh_token": os.environ["PATREON_REFRESH_TOKEN"], "client_id": os.environ["PATREON_CLIENT_ID"], "client_secret": os.environ["PATREON_CLIENT_SECRET"]}, open(sys.argv[1], "w"))' "${cfg}"
+          python3 scripts/update-patrons.py || echo "update-patrons.py failed - shipping the committed list."
+
       - name: Configure (Release)
         run: |
           # Ad-hoc codesign identity "-" — free, and required for the .app
@@ -90,6 +117,7 @@ jobs:
           # Apple Silicon. No Developer ID, no Hardened Runtime, no notary.
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$(brew --prefix)" \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main" \
             -DDUSKSTUDIO_CODESIGN_IDENTITY="-"
@@ -102,6 +130,7 @@ jobs:
         run: |
           cmake -S . -B build-tests -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$(brew --prefix)" \
             -DDUSKSTUDIO_BUILD_TESTS=ON \
             -DJUCE_PATH="${RUNNER_TEMP}/JUCE" \
             -DDUSK_PLUGINS_PATH="${RUNNER_TEMP}/plugins-main"

@@ -812,8 +812,8 @@ BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
     };
     styleCompactSectionBtn (eqCompactButton,   juce::Colour (0xff5fc46f));
     styleCompactSectionBtn (compCompactButton, juce::Colour (0xffe0c050));
-    eqCompactButton  .setTooltip ("Open the bus EQ editor (3-band British-style EQ).");
-    compCompactButton.setTooltip ("Open the bus comp editor (console-style glue compressor).");
+    eqCompactButton  .setTooltip ("Open the bus EQ editor (3-band British-style EQ). Click again to close.");
+    compCompactButton.setTooltip ("Open the bus comp editor (console-style glue compressor). Click again to close.");
     eqCompactButton  .onClick = [this] { openEqEditorPopup(); };
     compCompactButton.onClick = [this] { openCompEditorPopup(); };
     addChildComponent (eqCompactButton);

@@ -7,11 +7,14 @@
 namespace duskstudio::fileimport
 {
 // Message-thread orchestrator for bringing user-supplied audio / MIDI
-// files into a Dusk Studio session. Audio imports are decoded, channel-
-// conformed to a target mono/stereo layout, resampled to the session
-// sample-rate if needed, then written as a 24-bit WAV into the
-// session's audio directory - matching RecordManager's on-disk
-// convention so the session stays self-contained.
+// files into a Dusk Studio session, always copying into the session's
+// audio directory so the session stays self-contained.
+//
+// Audio: when the source already matches the session sample-rate AND the
+// requested channel layout, it is copied in verbatim (no decode / resample
+// / bit-depth change) so the import is bit-faithful. Only an actual rate or
+// channel conform decodes, channel-conforms, resamples, and writes a
+// 24-bit WAV.
 //
 // Strictly single-threaded (message thread). The audio thread never
 // touches FileImporter; the caller is responsible for committing the

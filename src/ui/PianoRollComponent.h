@@ -108,8 +108,12 @@ private:
     // 24 px/quarter at 480 PPQN = 0.05 px/tick.
     float pixelsPerTick = 0.05f;
 
-    // 0 = free positioning. 120 ticks = 1/16 at 480 PPQN.
+    // 0 = free positioning. 120 ticks = 1/16 at 480 PPQN. This is the chosen
+    // RESOLUTION (grid combo); the MIDI editor's own snap-enable
+    // (session.midiEditorSnap) decides whether it actually applies — see
+    // effectiveSnapTicks(), which returns 0 (no snap) when the enable is off.
     juce::int64 snapTicks = 120;
+    juce::int64 effectiveSnapTicks() const noexcept;
 
     int scrollY = (kNumKeys - 24) * kNoteHeight / 2;  // centre near middle C
     int scrollX = 0;
@@ -283,6 +287,8 @@ private:
 
     void nudgeSelectedTicks (juce::int64 deltaTicks);
     bool isInScale (int noteNumber) const noexcept;
+    // Coerce a pitch to the nearest in-scale note when "Key snap" is armed.
+    int  snapPitchToScale (int noteNumber) const noexcept;
 
     void showQuantizePopup();
     void showScalePopup();

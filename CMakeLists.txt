@@ -275,6 +275,7 @@ target_sources(DuskStudio PRIVATE
     src/engine/BounceEngine.cpp
     src/engine/DpAligner.cpp
     src/engine/DpImporter.cpp
+    src/engine/LameMp3Writer.cpp
     src/engine/FileImporter.cpp
     src/engine/MasteringPlayer.cpp
     src/engine/MidiClockEmitter.cpp
@@ -477,6 +478,20 @@ if(UNIX AND NOT APPLE)
         src/engine/alsa/AlsaPerformanceTest.cpp)
     target_link_libraries(DuskStudio PRIVATE asound X11)
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_ALSA=1)
+endif()
+
+# Optional MP3 bounce via libmp3lame (LAME). Detected at configure time on every
+# OS; when absent the MP3 export option is hidden and bounces stay WAV-only.
+# Install: libmp3lame-devel (openSUSE) / libmp3lame-dev (Debian) / `brew install lame`.
+find_path(LAME_INCLUDE_DIR NAMES lame/lame.h)
+find_library(LAME_LIBRARY NAMES mp3lame lame)
+if(LAME_INCLUDE_DIR AND LAME_LIBRARY)
+    message(STATUS "MP3 bounce: libmp3lame found (${LAME_LIBRARY})")
+    target_include_directories(DuskStudio PRIVATE "${LAME_INCLUDE_DIR}")
+    target_link_libraries(DuskStudio PRIVATE "${LAME_LIBRARY}")
+    target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_LAME=1)
+else()
+    message(STATUS "MP3 bounce: libmp3lame NOT found - MP3 export disabled (WAV only)")
 endif()
 
 # Out-of-process plugin hosting: shared IPC primitives + the parent-side
