@@ -1946,6 +1946,16 @@ Reconnect the interface (or pick a different device in **Settings → Audio**), 
 
 If the disconnect happened during a take, the WAV that was being written is committed up to the last full audio block. The region is added to your timeline at the take start position — same as if you'd pressed Stop manually. The session save / autosave path is independent of the audio device.
 
+## Audio device in use, or won't open at startup
+
+If the interface saved in your settings is held by another application when Dusk Studio launches — PipeWire or the JACK/PipeWire server, another DAW (Ardour, Reaper), a screen recorder, or browser audio holding the device in exclusive mode — Dusk Studio can't open it. Rather than load a silent, dead session, it recovers and tells you what happened:
+
+- It tries the JACK / PipeWire backend (which reaches your interface even while the raw device is held), then the next available device.
+- If that lands on a **different** working device, you keep working and see *"Your saved audio device … could not be opened … audio has switched to …"*. Your saved device is **not** changed — it's tried again on the next launch once you free it.
+- If nothing opens, you get a clear warning: the playhead and meters won't move and recording is disabled until a device is available.
+
+Either way, free the device in the other app (or run `pactl suspend-sink <sink-name> 1` to release a PipeWire/PulseAudio hold), then pick it again in **Settings → Audio**. Your saved device returns automatically next launch once it's free.
+
 # Accessibility
 
 Dusk Studio targets functional accessibility for screen reader users. The 24-channel strip is dense; the goal is for a screen reader to identify each control's role and read its current value without the user having to guess.

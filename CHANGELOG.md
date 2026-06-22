@@ -5,7 +5,7 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
-## [0.11.0] - 2026-06-19
+## [0.11.0] - 2026-06-22
 
 Built to a production-grade bar; shipped as a Beta. 1.0.0 is reserved for
 the public stable declaration.
