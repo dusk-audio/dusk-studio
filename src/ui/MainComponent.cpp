@@ -1402,7 +1402,6 @@ void MainComponent::resized()
     // Rebuild bank-button row to match the current numBanks. Buttons
     // sit inline immediately right of the centered stage block.
     syncBankButtons (needsBanking ? numBanks : 0);
-    int lastBankRight = stageX + stageBlockW;   // fallback when no banks
     if (needsBanking && consoleView != nullptr)
     {
         const int bankY = rowBounds.getY() + (rowBounds.getHeight() - kBankBtnH) / 2;
@@ -1421,14 +1420,14 @@ void MainComponent::resized()
             btn->setToggleState (i == activeBank, juce::dontSendNotification);
             bankX += kBankBtnW + kBankBtnGap;
         }
-        lastBankRight = bankX - kBankBtnGap;
     }
 
-    // SNAP + zoom cluster pinned in the gap between the rightmost bank
-    // tab and the tuner button (transport bar right edge - kBtnDia(36)
-    // - right padding). Hidden when there's no TapeStrip context (e.g.
-    // user in AUX/Mastering fullscreen views — strip controls don't
-    // apply there).
+    // SNAP + grid + zoom (- / + / Fit) cluster. It only acts on the timeline,
+    // so it is positioned in the tape strip ruler's top-right corner (in the
+    // tapeStrip->setBounds block below), NOT the transport row. Keeping it off
+    // the transport row means a narrow window can no longer make it overlap the
+    // BPM / tuner controls. Shown only with the timeline open and not in a
+    // fullscreen stage (AUX/Mastering), where the zoom buttons have no subject.
     constexpr int kHdrZoomBtnW = 30;
     constexpr int kHdrFitW     = 36;
     constexpr int kHdrSnapW    = 48;
@@ -1437,10 +1436,6 @@ void MainComponent::resized()
     constexpr int kHdrBtnH     = 24;
     constexpr int kHdrClusterW = kHdrSnapW + kHdrSnapResW + kHdrZoomBtnW * 2 + kHdrFitW
                                + kHdrBtnGap * 4;
-    // Only show when TapeStrip is actually expanded — when it's
-    // collapsed or the user is in a fullscreen stage (AUX/Mastering),
-    // the zoom buttons have no on-screen subject so they don't belong in
-    // the header. (Snap moved onto the edit-tools strip above the timeline.)
     const bool hdrClusterVisible = ! inFullscreenView
                                   && tapeStrip != nullptr
                                   && tapeStripExpanded;
@@ -1449,27 +1444,6 @@ void MainComponent::resized()
     hdrZoomFitBtn.setVisible (hdrClusterVisible);
     hdrSnapBtn   .setVisible (hdrClusterVisible);
     hdrSnapResBtn.setVisible (hdrClusterVisible);
-    if (hdrClusterVisible)
-    {
-        // Real tuner X (parent-local on transportBar = parent-local on
-        // our row, since transportBar.setBounds(rowBounds) puts them
-        // in the same coord space). The previous heuristic
-        // (rowBounds.getRight() - 56) was ~320 px off — tuner sits
-        // BEFORE the right-anchored BPM / tap / time-sig / tape cluster.
-        const int tunerLeftInBar = transportBar != nullptr ? transportBar->getTunerLeftX() : rowBounds.getWidth() - 56;
-        const int tunerLeft = rowBounds.getX() + tunerLeftInBar;
-        const int leftEdge  = lastBankRight + 16;
-        const int rightEdge = tunerLeft - 16;
-        const int gapW      = juce::jmax (0, rightEdge - leftEdge);
-        const int clusterX  = leftEdge + juce::jmax (0, (gapW - kHdrClusterW) / 2);
-        const int clusterY  = rowBounds.getY() + (rowBounds.getHeight() - kHdrBtnH) / 2;
-        int x = clusterX;
-        hdrSnapBtn   .setBounds (x, clusterY, kHdrSnapW,    kHdrBtnH); x += kHdrSnapW    + kHdrBtnGap;
-        hdrSnapResBtn.setBounds (x, clusterY, kHdrSnapResW, kHdrBtnH); x += kHdrSnapResW + kHdrBtnGap;
-        hdrZoomOutBtn.setBounds (x, clusterY, kHdrZoomBtnW, kHdrBtnH); x += kHdrZoomBtnW + kHdrBtnGap;
-        hdrZoomInBtn .setBounds (x, clusterY, kHdrZoomBtnW, kHdrBtnH); x += kHdrZoomBtnW + kHdrBtnGap;
-        hdrZoomFitBtn.setBounds (x, clusterY, kHdrFitW,    kHdrBtnH);
-    }
 
     area.removeFromTop (4);
 
@@ -1497,6 +1471,27 @@ void MainComponent::resized()
             const int wanted = tapeStrip->naturalHeight();
             const int cap    = juce::jmax (120, area.getHeight() / 2);
             tapeStrip->setBounds (area.removeFromTop (juce::jmin (wanted, cap)));
+
+            // Place the snap / grid / zoom cluster in the ruler's top-right
+            // corner, above the timeline it controls. The buttons were added
+            // before the tape strip (which paints over them), so lift them
+            // to front so they show in the ruler band.
+            if (hdrClusterVisible)
+            {
+                const auto slot = tapeStrip->headerControlSlot (kHdrClusterW)
+                                    + tapeStrip->getPosition();
+                int x = slot.getX();
+                const int cy = slot.getY();
+                hdrSnapBtn   .setBounds (x, cy, kHdrSnapW,    kHdrBtnH); x += kHdrSnapW    + kHdrBtnGap;
+                hdrSnapResBtn.setBounds (x, cy, kHdrSnapResW, kHdrBtnH); x += kHdrSnapResW + kHdrBtnGap;
+                hdrZoomOutBtn.setBounds (x, cy, kHdrZoomBtnW, kHdrBtnH); x += kHdrZoomBtnW + kHdrBtnGap;
+                hdrZoomInBtn .setBounds (x, cy, kHdrZoomBtnW, kHdrBtnH); x += kHdrZoomBtnW + kHdrBtnGap;
+                hdrZoomFitBtn.setBounds (x, cy, kHdrFitW,     kHdrBtnH);
+                hdrSnapBtn   .toFront (false); hdrSnapResBtn.toFront (false);
+                hdrZoomOutBtn.toFront (false); hdrZoomInBtn .toFront (false);
+                hdrZoomFitBtn.toFront (false);
+            }
+
             area.removeFromTop (4);
         }
 

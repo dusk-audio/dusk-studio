@@ -389,6 +389,17 @@ juce::Rectangle<int> TapeStrip::tracksColumnBounds() const noexcept
                                   juce::jmax (0, getHeight() - kRulerH));
 }
 
+juce::Rectangle<int> TapeStrip::headerControlSlot (int clampWidth) const noexcept
+{
+    const auto ruler = rulerBounds();
+    constexpr int pad   = 8;
+    constexpr int slotH = 24;
+    const int w = juce::jmin (clampWidth, juce::jmax (0, ruler.getWidth() - pad));
+    const int x = ruler.getRight() - pad - w;   // right-anchored; x stays >= ruler.getX()
+    const int y = ruler.getY() + (ruler.getHeight() - slotH) / 2;
+    return juce::Rectangle<int> (x, y, w, slotH);
+}
+
 void TapeStrip::refreshLabelColumnWidth()
 {
     // Measure every row's drawn text (name, or the 1-based number fallback) in

@@ -48,6 +48,13 @@ public:
 
     // Rows = armed ∪ has-content (or every track when SHOW ALL is on).
     int naturalHeight() const noexcept;
+
+    // Right-aligned slot in the ruler band for the host's snap/zoom header
+    // controls, in this strip's own coords. Width is clampWidth clamped to the
+    // ruler's free width; the slot never crosses the label column. The host
+    // positions its buttons inside (slot + getPosition()) so they sit in the
+    // ruler's top-right corner instead of the crowded transport row.
+    juce::Rectangle<int> headerControlSlot (int clampWidth) const noexcept;
     // Upper bound for layout code that needs an estimate before any
     // TapeStrip instance exists.
     static int maxNaturalHeight() noexcept;
