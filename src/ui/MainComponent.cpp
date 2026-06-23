@@ -352,10 +352,10 @@ MainComponent::MainComponent()
     styleStageButton (mixingStageBtn,    juce::Colour (0xff5a8ad0));   // mix-desk blue
     styleStageButton (auxStageBtn,       juce::Colour (0xff6e5ad0));   // aux indigo-violet
     styleStageButton (masteringStageBtn, juce::Colour (0xff8a5ad0));   // mastering purple
-    recordingStageBtn.setTooltip ("Recording stage - press 1");
-    mixingStageBtn   .setTooltip ("Mixing stage - press 2");
-    masteringStageBtn.setTooltip ("Mastering stage - press 3");
-    auxStageBtn      .setTooltip ("Aux send / return stage - press 4");
+    recordingStageBtn.setTooltip ("Recording stage - press Ctrl+1");
+    mixingStageBtn   .setTooltip ("Mixing stage - press Ctrl+2");
+    masteringStageBtn.setTooltip ("Mastering stage - press Ctrl+3");
+    auxStageBtn      .setTooltip ("Aux send / return stage - press Ctrl+4");
     recordingStageBtn.setConnectedEdges (juce::Button::ConnectedOnRight);
     mixingStageBtn   .setConnectedEdges (juce::Button::ConnectedOnLeft | juce::Button::ConnectedOnRight);
     masteringStageBtn.setConnectedEdges (juce::Button::ConnectedOnLeft | juce::Button::ConnectedOnRight);
@@ -790,27 +790,23 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         return true;
     }
 
-    // ── Bank switching: Cmd/Ctrl + 1/2/3 selects banks 1-8 / 9-16 / 17-24.
-    // Maps to ConsoleView::setBank which also publishes the active bank
-    // to the audio thread so bank-relative MIDI bindings retarget.
-    if (cmd && ! shift && consoleView != nullptr)
+    // ── Bank switching: plain 1/2/3/4 select the visible channel bank. Maps to
+    // ConsoleView::setBank which also publishes the active bank to the audio
+    // thread so bank-relative MIDI bindings retarget. Out-of-range digits (more
+    // banks than the window currently shows) fall through unhandled.
+    if (noMods && consoleView != nullptr)
     {
-        const int bankIndex = (code == '1') ? 0
-                            : (code == '2') ? 1
-                            : (code == '3') ? 2
-                                            : -1;
-        if (bankIndex >= 0)
+        const int bankIndex = (code >= '1' && code <= '4') ? (code - '1') : -1;
+        if (bankIndex >= 0 && bankIndex < consoleView->numBanks())
         {
-            consoleView->setBank (juce::jlimit (0,
-                                                  juce::jmax (0, consoleView->numBanks() - 1),
-                                                  bankIndex));
+            consoleView->setBank (bankIndex);
             return true;
         }
     }
 
-    // ── Stage switching: plain 1/2/3/4 select Recording / Mixing / Mastering /
-    // Aux. Cmd/Ctrl + digit is bank switching (above), so these stay unmodified.
-    if (noMods)
+    // ── Stage switching: Cmd/Ctrl + 1/2/3/4 select Recording / Mixing /
+    // Mastering / Aux. Plain digits are bank switching (above).
+    if (cmd && ! shift)
     {
         switch (code)
         {
@@ -1229,12 +1225,10 @@ void MainComponent::syncBankButtons (int desiredCount)
         {
             if (consoleView != nullptr) consoleView->setBank (idx);
         };
-        // Banks 1-3 are reachable via Cmd/Ctrl + 1/2/3 (see keyPressed).
+        // Banks 1-4 are reachable via the plain number keys 1/2/3/4 (see keyPressed).
         juce::String hint;
-        if (idx < 3)
-            hint = "  (" + juce::KeyPress ('1' + idx,
-                                             juce::ModifierKeys (juce::ModifierKeys::commandModifier), 0)
-                               .getTextDescriptionWithIcons() + ")";
+        if (idx < 4)
+            hint = "  (press " + juce::String (idx + 1) + ")";
         btn->setTooltip ("Channel bank " + juce::String (idx + 1) + hint);
         addAndMakeVisible (btn.get());
         bankButtons.push_back (std::move (btn));

@@ -144,8 +144,8 @@ This chapter is a visual reference. Every numbered callout on the figures below 
 | #   | Name              | Description                                                                                                                       |
 | --- | ----------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | 1   | Menu bar          | `File` and `Settings` menus only. No tabs, no hidden submenus.                                                                    |
-| 2   | Stage selector    | Four buttons: **RECORDING**, **MIXING**, **MASTERING**, **AUX** (keys 1–4). Picks which view fills the console area.                  |
-| 3   | Bank selector     | `1-8`, `9-16`, `17-24`. Only visible when the window is too narrow to show all 24 channel strips at once.                         |
+| 2   | Stage selector    | Four buttons: **RECORDING**, **MIXING**, **MASTERING**, **AUX** (Ctrl+1 to Ctrl+4). Picks which view fills the console area.          |
+| 3   | Bank selector     | The visible channel bank (e.g. `1-6`, `7-12`, ...), switched with the plain number keys 1 to 4. Only visible when the window is too narrow to show all channel strips at once. |
 | 4   | Transport bar     | Play, record, loop, punch, BPM, time signature, clock, tuner. See the next figure for the inventory.                              |
 | 5   | Tape strip toggle | `▾ TIMELINE` / `▴ TAPE`. Collapses or expands the timeline view below the bar.                                                     |
 | 6   | Console view      | Holds 24 channel strips, 4 buses, and the master strip. Replaced by the aux lane or mastering chain when those stages are active. |
@@ -500,7 +500,7 @@ Only one stage is visible at a time, but the same engine drives all four. Switch
 - **MASTERING** swaps the console view for the mastering chain, including a file picker for loading a finished mix.
 - **AUX** swaps the console view for the four aux return lanes, with a full-width view of each lane's plugin chain.
 
-Press **1 / 2 / 3 / 4** to jump straight to RECORDING / MIXING / MASTERING / AUX. The bank selector has its own keys — **Cmd/Ctrl+1 / 2 / 3** — so a plain digit changes stage and a modified digit changes bank. Hovering any tab or bank button shows its shortcut, and **?** opens a full keyboard-shortcut list (also under **Settings → Keyboard Shortcuts**).
+Press **Cmd/Ctrl+1 / 2 / 3 / 4** to jump straight to RECORDING / MIXING / MASTERING / AUX. The channel banks have the plain number keys **1 / 2 / 3 / 4**, so a modified digit changes stage and a plain digit changes bank. Hovering any tab or bank button shows its shortcut, and **?** opens a full keyboard-shortcut list (also under **Settings → Keyboard Shortcuts**).
 
 Switching into or out of MASTERING force-stops the transport. The mix engine and the mastering engine cannot run at the same time.
 
@@ -1775,6 +1775,13 @@ Shortcuts use **Cmd** on macOS and **Ctrl** on Linux and Windows unless noted.
 | **A**    | Toggle ARM on selected track  |
 | **S**    | Toggle SOLO on selected track |
 | **X**    | Toggle MUTE on selected track |
+
+## Stages & banks
+
+| Shortcut             | Action                                  |
+| -------------------- | --------------------------------------- |
+| **Cmd+1 … Cmd+4**    | Recording / Mixing / Mastering / Aux    |
+| **1 … 4**            | Select channel bank 1 to 4              |
 
 ## Timeline
 
