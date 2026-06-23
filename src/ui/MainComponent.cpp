@@ -1725,20 +1725,25 @@ void MainComponent::doMixdown()
                                                    engine.getDeviceManager(), target);
     panel->setSize (520, 200);
 
-    // Hand off to Mastering once the bounce finishes successfully. The
-    // dialog fires this on its message-thread "Close" path, well after the
-    // worker has restored engine state, so the stage flip is safe.
+    // Close the modal, then hand off to Mastering once the bounce finishes
+    // successfully. The handoff is deferred so the heavy stage swap does not
+    // run re-entrantly from inside the dialog's close-button callback.
     juce::Component::SafePointer<MainComponent> safeThis (this);
+    panel->onRequestClose = [safeThis] { if (safeThis != nullptr) safeThis->mixdownModal.close(); };
     panel->onSuccessfulFinish = [safeThis] (juce::File rendered)
     {
-        if (safeThis == nullptr) return;
-        safeThis->mixdownModal.close();
-        safeThis->switchToStage (AudioEngine::Stage::Mastering);
-        if (safeThis->masteringView != nullptr)
-            safeThis->masteringView->loadFile (rendered);
+        juce::MessageManager::callAsync ([safeThis, rendered]
+        {
+            if (safeThis == nullptr) return;
+            safeThis->switchToStage (AudioEngine::Stage::Mastering);
+            if (safeThis->masteringView != nullptr)
+                safeThis->masteringView->loadFile (rendered);
+        });
     };
 
-    mixdownModal.show (*this, std::move (panel));
+    // A render in progress must not be dismissed by a stray click / Escape -
+    // only the dialog's own Cancel / Close buttons drive teardown.
+    mixdownModal.show (*this, std::move (panel), {}, false, false);
 }
 
 void MainComponent::launchStartupDialog()
@@ -2829,7 +2834,9 @@ void MainComponent::openBounceDialog()
                                                        engine.getDeviceManager(), outFile,
                                                        BounceEngine::Mode::MasterMix, fmt);
         panel->setSize (520, 200);
-        bounceModal.show (*this, std::move (panel));
+        juce::Component::SafePointer<MainComponent> safeThis (this);
+        panel->onRequestClose = [safeThis] { if (safeThis != nullptr) safeThis->bounceModal.close(); };
+        bounceModal.show (*this, std::move (panel), {}, false, false);
     });
 }
 
@@ -2884,7 +2891,9 @@ void MainComponent::openBounceStemsDialog()
                                                            engine.getDeviceManager(), outFile,
                                                            BounceEngine::Mode::Stems);
             panel->setSize (520, 200);
-            bounceModal.show (*this, std::move (panel));
+            juce::Component::SafePointer<MainComponent> safeThis (this);
+            panel->onRequestClose = [safeThis] { if (safeThis != nullptr) safeThis->bounceModal.close(); };
+            bounceModal.show (*this, std::move (panel), {}, false, false);
         };
 
         if (conflicts.isEmpty())

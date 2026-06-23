@@ -43,19 +43,8 @@ BounceDialog::BounceDialog (AudioEngine& e,
     styleButton (cancelButton);
     styleButton (closeButton);
     closeButton.setVisible (false);  // shown after the render finishes
-    cancelButton.onClick = [this]
-    {
-        if (bounceEngine != nullptr && bounceEngine->isRendering())
-        {
-            statusLabel.setText ("Cancelling...", juce::dontSendNotification);
-            bounceEngine->cancel();
-        }
-        else
-        {
-            closeDialog();
-        }
-    };
-    closeButton.onClick = [this] { closeDialog(); };
+    cancelButton.onClick = [this] { closeDialog(); };
+    closeButton.onClick  = [this] { closeDialog(); };
     addAndMakeVisible (cancelButton);
     addAndMakeVisible (closeButton);
 
@@ -159,6 +148,11 @@ void BounceDialog::timerCallback()
             progressValue = 1.0;
             progressBar.repaint();
         }
+        else if (err == "Cancelled")
+        {
+            titleLabel.setText ("Bounce cancelled", juce::dontSendNotification);
+            statusLabel.setText ("No file was written.", juce::dontSendNotification);
+        }
         else
         {
             titleLabel.setText ("Bounce failed", juce::dontSendNotification);
@@ -173,29 +167,28 @@ void BounceDialog::timerCallback()
 
 void BounceDialog::closeDialog()
 {
-    // If the user hits Cancel and immediately closes, the worker may still be
-    // unwinding. Wait for it before returning so the engine is back on the
-    // device by the time the dialog is gone.
+    // Still rendering (Cancel pressed before the bounce finished): request a
+    // cancel and return. The 20 Hz timer flips the dialog to its finished
+    // state once the worker actually stops, then the Close button appears.
+    // We must NOT block the message thread waiting here - the worker's
+    // teardown re-attaches the audio device and needs the loop to keep
+    // turning, so a blocking wait deadlocks it (and freezes the UI).
     if (bounceEngine != nullptr && bounceEngine->isRendering())
     {
+        statusLabel.setText ("Cancelling...", juce::dontSendNotification);
+        cancelButton.setEnabled (false);
         bounceEngine->cancel();
-        // Pump the message loop briefly so the worker can publish its final
-        // state. We can't block the message thread outright - the worker
-        // re-attaches the engine via the device manager, which doesn't need
-        // the message thread, but Timer callbacks scheduled on this dialog
-        // would otherwise pile up.
-        const auto deadline = juce::Time::getMillisecondCounter() + 5000;
-        while (bounceEngine->isRendering()
-               && juce::Time::getMillisecondCounter() < deadline)
-        {
-            juce::Thread::sleep (20);
-        }
+        return;
     }
 
     if (succeeded && onSuccessfulFinish)
         onSuccessfulFinish (outputFile);
 
-    if (auto* parent = findParentComponentOfClass<juce::DialogWindow>())
+    // Embedded modal: the host closes us. Fall back to exitModalState for the
+    // rare DialogWindow host.
+    if (onRequestClose)
+        onRequestClose();
+    else if (auto* parent = findParentComponentOfClass<juce::DialogWindow>())
         parent->exitModalState (succeeded ? 1 : 0);
 }
 } // namespace duskstudio
