@@ -381,6 +381,18 @@ AudioSettingsPanel::AudioSettingsPanel (juce::AudioDeviceManager& dm,
     };
     addAndMakeVisible (tapeStripExpandedToggle);
 
+    followPlayheadToggle.setToggleState (appconfig::getFollowPlayheadDefault(),
+                                           juce::dontSendNotification);
+    followPlayheadToggle.setTooltip (
+        "When on, the timeline and editors start with Chase engaged, scrolling "
+        "to keep the playhead in view during playback. Saved per-machine; takes "
+        "effect on next launch.");
+    followPlayheadToggle.onClick = [this]
+    {
+        appconfig::setFollowPlayheadDefault (followPlayheadToggle.getToggleState());
+    };
+    addAndMakeVisible (followPlayheadToggle);
+
     stopBehaviorLabel.setJustificationType (juce::Justification::centredRight);
     addAndMakeVisible (stopBehaviorLabel);
     stopBehaviorCombo.addItem ("Stay where it is (pause)",      1);
@@ -522,6 +534,11 @@ void AudioSettingsPanel::resized()
         auto row = takeStdRow();
         row.removeFromLeft (kLabelW);
         tapeStripExpandedToggle.setBounds (row.reduced (4, 2));
+    }
+    {
+        auto row = takeStdRow();
+        row.removeFromLeft (kLabelW);
+        followPlayheadToggle.setBounds (row.reduced (4, 2));
     }
     {
         auto row = takeStdRow();

@@ -49,12 +49,6 @@ public:
     // Rows = armed ∪ has-content (or every track when SHOW ALL is on).
     int naturalHeight() const noexcept;
 
-    // Right-aligned slot in the ruler band for the host's snap/zoom header
-    // controls, in this strip's own coords. Width is clampWidth clamped to the
-    // ruler's free width; the slot never crosses the label column. The host
-    // positions its buttons inside (slot + getPosition()) so they sit in the
-    // ruler's top-right corner instead of the crowded transport row.
-    juce::Rectangle<int> headerControlSlot (int clampWidth) const noexcept;
     // Upper bound for layout code that needs an estimate before any
     // TapeStrip instance exists.
     static int maxNaturalHeight() noexcept;
@@ -130,6 +124,10 @@ public:
     // the cursor stays put.
     void zoomByFactor (float factor, int anchorX = -1);
     void zoomFit() noexcept;
+
+    // Follow the playhead: when on, the strip scrolls during playback so the
+    // playhead stays in view (no-op at fit-to-window zoom, where it always is).
+    void setChaseEnabled (bool enabled) noexcept { chaseEnabled_ = enabled; }
 
     // Explicit refresh for the session-load path. The strip otherwise relies on
     // indirect side effects (setConsoleVisibleRange / setBounds / the 30 Hz
@@ -247,6 +245,8 @@ private:
     // Leftmost visible sample when zoomed. 0 when factor == 1. Wheel +
     // zoom clamp it so the visible window stays inside content.
     juce::int64 scrollSamples = 0;
+
+    bool chaseEnabled_ = false;
 
     // Bold-text LookAndFeel for the SHOW ALL pill (TextButton has no setFont).
     // Declared before showAllToggle so the button is destroyed first.

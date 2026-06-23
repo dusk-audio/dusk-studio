@@ -1,4 +1,5 @@
 #include "AudioRegionEditor.h"
+#include "AppConfig.h"
 #include "DuskAlerts.h"
 #include "DuskContextMenu.h"
 #include "EditCursors.h"
@@ -68,8 +69,9 @@ AudioRegionEditor::AudioRegionEditor (Session& s, AudioEngine& e, int t, int r)
 
     // Chase: when on AND transport is playing AND the playhead leaves the
     // visible window, scroll the view forward so the playhead stays in
-    // sight. Stateless toggle - off by default.
+    // sight. Initial state follows the per-machine Follow-playhead setting.
     chaseToggle.setClickingTogglesState (true);
+    chaseToggle.setToggleState (appconfig::getFollowPlayheadDefault(), juce::dontSendNotification);
     chaseToggle.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff222226));
     chaseToggle.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff406030));
     chaseToggle.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xff909094));

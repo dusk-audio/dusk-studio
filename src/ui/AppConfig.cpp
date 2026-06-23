@@ -8,6 +8,7 @@ namespace
 constexpr const char* kKeyUiScale            = "ui_scale";
 constexpr const char* kKeyScanOnStartup      = "scan_plugins_on_startup";
 constexpr const char* kKeyTapeStripExpanded  = "tape_strip_expanded_default";
+constexpr const char* kKeyFollowPlayhead     = "follow_playhead_default";
 constexpr const char* kKeyStopBehavior       = "stop_behavior";
 constexpr const char* kKeyVkbCentreNote      = "vkb_centre_note";
 constexpr const char* kKeyMulticoreMode      = "multicore_dsp_mode";
@@ -110,6 +111,19 @@ bool getTapeStripExpandedDefault()
 void setTapeStripExpandedDefault (bool expanded)
 {
     writeKey (kKeyTapeStripExpanded, expanded ? "1" : "0");
+}
+
+bool getFollowPlayheadDefault()
+{
+    const auto raw = readKey (kKeyFollowPlayhead);
+    if (raw.isEmpty()) return false;   // default off — view stays put unless asked
+    return raw == "1" || raw.equalsIgnoreCase ("true")
+        || raw.equalsIgnoreCase ("yes");
+}
+
+void setFollowPlayheadDefault (bool follow)
+{
+    writeKey (kKeyFollowPlayhead, follow ? "1" : "0");
 }
 
 StopBehavior getStopBehavior()

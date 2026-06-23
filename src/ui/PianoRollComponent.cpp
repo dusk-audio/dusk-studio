@@ -1,4 +1,5 @@
 #include "PianoRollComponent.h"
+#include "AppConfig.h"
 #include "DuskContextMenu.h"
 #include "EditCursors.h"
 #include "EditModeToolbar.h"
@@ -425,9 +426,11 @@ PianoRollComponent::PianoRollComponent (Session& s, AudioEngine& e, int t, int r
     toggleCcButton.setTooltip ("Show / hide CC lane");
     toggleCcButton.onClick = [this] { toggleCcLane(); };
 
-    // Chase toggle - auto-scroll the grid to follow the transport
-    // playhead when it leaves the visible window. Off by default.
+    // Chase toggle - auto-scroll the grid to follow the transport playhead
+    // when it leaves the visible window. Initial state follows the per-machine
+    // Follow-playhead setting.
     chaseToggle.setClickingTogglesState (true);
+    chaseToggle.setToggleState (appconfig::getFollowPlayheadDefault(), juce::dontSendNotification);
     chaseToggle.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff222226));
     chaseToggle.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff406030));
     chaseToggle.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xff909094));

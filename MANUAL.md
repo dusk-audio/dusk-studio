@@ -172,9 +172,9 @@ This chapter is a visual reference. Every numbered callout on the figures below 
 | 14  | Clock display    | Bars.Beats.Ticks or mm:ss.mmm; right-click to flip.                              |
 | 15  | Tuner            | Opens the chromatic tuner against the selected input.                            |
 | 16  | TIMELINE / TAPE   | Same as the tape strip toggle below the bar.                                     |
-| 17  | − / + / Fit      | Timeline zoom out / in / fit-to-window (shown in the header when the timeline is expanded). |
+| 17  | − / + / Fit      | Timeline zoom out / in / fit-to-window (in the timeline toolbar above the tape strip, shown when the timeline is expanded). |
 
-In compact mode (window narrower than 1850 px) labels shorten; `SNAP` becomes `S`, `TIMELINE` becomes `▾`, and the time-format toggle hides — right-click the clock display to flip format instead.
+In compact mode (window narrower than 1850 px) labels shorten: `TIMELINE` becomes `▾` and the time-format toggle hides; right-click the clock display to flip format instead.
 
 ## The channel strip — MIXING stage
 
@@ -452,6 +452,7 @@ A single button opens the **MIDI Bindings** panel, which lists every CC-to-contr
 
 - **UI scale**: a global zoom factor for the entire interface. Restart Dusk Studio after changing this for best results.
 - **Expand tape strip by default**: show the tape strip on every session open.
+- **Follow playhead by default**: start the timeline and the audio / MIDI editors with Chase engaged, so the view scrolls to keep the playhead in sight during playback. Per-machine; takes effect on next launch.
 - **Scan plugins on startup**: re-run the plugin scanner every time Dusk Studio launches. Off by default; large plugin collections take 10–30 seconds to scan.
 
 ### Advanced
@@ -476,7 +477,7 @@ The window is structured as a stack of horizontal bands.
 ├───────────────────────────────────────────────────────┤
 │  1-8   9-16                                           │  Bank selector
 ├───────────────────────────────────────────────────────┤
-│ ◀◀  ▶  ▶▶  ●  ⟳  ◉   CLK ♩=120 4/4 00:01:23  SNAP ⊕⊖│  Transport bar
+│ ◀◀  ▶  ▶▶  ●  ⟳  ◉   CLK ♩=120 4/4 00:01:23         │  Transport bar
 ├───────────────────────────────────────────────────────┤
 │  ▾ TIMELINE                                            │  Tape strip toggle
 ├───────────────────────────────────────────────────────┤
@@ -524,12 +525,13 @@ From left to right:
 - **Tuner**. Opens a chromatic tuner that listens to the selected input.
 - **▾ TIMELINE / ▴ TAPE**. Collapses or expands the tape strip below the console.
 
-On the right end of the transport bar:
+When the timeline is expanded, a toolbar row sits directly above the tape strip:
 
-- **Snap**. Global grid snap toggle in the header (with a resolution button beside it). When on, region drags, trims, pastes, marker / loop / punch / tempo moves snap to the chosen grid resolution.
+- **Snap**. Global grid snap toggle, with a resolution button beside it. When on, region drags, trims, pastes, marker / loop / punch / tempo moves snap to the chosen grid resolution.
 - **−** / **+** / **Fit**. Timeline zoom out, in, and fit-to-window.
+- **Chase**. When on, the timeline scrolls during playback to keep the playhead in view. Its launch default is set by **Follow playhead by default** in Settings.
 
-In compact mode (window narrower than 1850 pixels), labels shorten: `SNAP` becomes `S`, `TIMELINE` becomes `▾`, and the time-format toggle hides — right-click the clock display to flip format instead.
+In compact mode (window narrower than 1850 pixels), `TIMELINE` becomes `▾` and the time-format toggle hides; right-click the clock display to flip format instead.
 
 \newpage
 
