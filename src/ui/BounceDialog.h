@@ -51,6 +51,7 @@ public:
 
 private:
     void timerCallback() override;
+    void finalizeIfStopped();
     void closeDialog();
 
     AudioEngine& engine;

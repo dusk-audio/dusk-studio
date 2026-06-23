@@ -127,7 +127,7 @@ public:
 
     // Follow the playhead: when on, the strip scrolls during playback so the
     // playhead stays in view (no-op at fit-to-window zoom, where it always is).
-    void setChaseEnabled (bool enabled) noexcept { chaseEnabled_ = enabled; }
+    void setChaseEnabled (bool enabled) noexcept { chaseEnabled = enabled; }
 
     // Explicit refresh for the session-load path. The strip otherwise relies on
     // indirect side effects (setConsoleVisibleRange / setBounds / the 30 Hz
@@ -246,7 +246,7 @@ private:
     // zoom clamp it so the visible window stays inside content.
     juce::int64 scrollSamples = 0;
 
-    bool chaseEnabled_ = false;
+    bool chaseEnabled = false;
 
     // Bold-text LookAndFeel for the SHOW ALL pill (TextButton has no setFont).
     // Declared before showAllToggle so the button is destroyed first.

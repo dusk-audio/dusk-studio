@@ -864,7 +864,7 @@ void TapeStrip::updatePlayheadBand()
     // (only possible when zoomed in past fit-to-window), re-anchor the scroll so
     // it lands at the left quarter, then full-repaint - the whole strip shifted,
     // so the thin-band optimisation below would be wrong.
-    if (chaseEnabled_ && engine.getTransport().isPlaying())
+    if (chaseEnabled && engine.getTransport().isPlaying())
     {
         const double sr = engine.getCurrentSampleRate();
         const double px = pixelsPerSecond();

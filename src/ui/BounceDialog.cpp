@@ -74,10 +74,13 @@ BounceDialog::~BounceDialog()
     stopTimer();
     if (bounceEngine != nullptr && bounceEngine->isRendering())
     {
-        // Defensive: should not happen because closeDialog() blocks until the
-        // worker exits before letting the user dismiss, but if the dialog is
-        // torn down some other way (app shutdown) we still want to stop the
-        // worker cleanly before its destructor runs.
+        // Defensive: shouldn't happen during normal use because the Close
+        // button stays hidden while a render is in flight, so the user can't
+        // dismiss us mid-bounce - closeDialog() just requests cancel() and
+        // returns, keeping the message loop free for the worker's teardown
+        // (which re-attaches the audio device). But if the dialog is torn down
+        // some other way (app shutdown) we still stop the worker cleanly before
+        // its destructor runs.
         bounceEngine->cancel();
     }
     bounceEngine.reset();
@@ -123,46 +126,57 @@ void BounceDialog::timerCallback()
         }
     }
 
-    if (! bounceEngine->isRendering() && ! finished)
-    {
-        finished = true;
-        const auto err = bounceEngine->getLastError();
-        succeeded = err.isEmpty();
+    finalizeIfStopped();
+}
 
-        if (succeeded)
+// Drive the dialog into its finished state once the worker stops. The `finished`
+// flag latches this so it runs exactly once - whether the 20 Hz timer notices
+// the stop first, or a Cancel click lands in the gap between the worker stopping
+// and the next tick (the button is still visible then). Calling it from both
+// paths guarantees `succeeded` is computed before closeDialog() decides whether
+// to fire onSuccessfulFinish, so a just-completed render isn't lost.
+void BounceDialog::finalizeIfStopped()
+{
+    if (bounceEngine == nullptr || finished || bounceEngine->isRendering())
+        return;
+
+    finished = true;
+    const auto err = bounceEngine->getLastError();
+    succeeded = err.isEmpty();
+
+    if (succeeded)
+    {
+        titleLabel.setText ("Bounce complete", juce::dontSendNotification);
+        if (renderMode == BounceEngine::Mode::Stems)
         {
-            titleLabel.setText ("Bounce complete", juce::dontSendNotification);
-            if (renderMode == BounceEngine::Mode::Stems)
-            {
-                const int total = bounceEngine->getTotalStemsToRender();
-                statusLabel.setText ("Wrote " + juce::String (total) + " stem"
-                                      + juce::String (total == 1 ? "" : "s")
-                                      + " to " + outputFile.getParentDirectory().getFullPathName(),
-                                      juce::dontSendNotification);
-            }
-            else
-            {
-                statusLabel.setText ("Wrote " + outputFile.getFullPathName(),
-                                      juce::dontSendNotification);
-            }
-            progressValue = 1.0;
-            progressBar.repaint();
-        }
-        else if (err == "Cancelled")
-        {
-            titleLabel.setText ("Bounce cancelled", juce::dontSendNotification);
-            statusLabel.setText ("No file was written.", juce::dontSendNotification);
+            const int total = bounceEngine->getTotalStemsToRender();
+            statusLabel.setText ("Wrote " + juce::String (total) + " stem"
+                                  + juce::String (total == 1 ? "" : "s")
+                                  + " to " + outputFile.getParentDirectory().getFullPathName(),
+                                  juce::dontSendNotification);
         }
         else
         {
-            titleLabel.setText ("Bounce failed", juce::dontSendNotification);
-            statusLabel.setText (err, juce::dontSendNotification);
+            statusLabel.setText ("Wrote " + outputFile.getFullPathName(),
+                                  juce::dontSendNotification);
         }
-
-        cancelButton.setVisible (false);
-        closeButton.setVisible (true);
-        stopTimer();
+        progressValue = 1.0;
+        progressBar.repaint();
     }
+    else if (err == BounceEngine::kCancelledError)
+    {
+        titleLabel.setText ("Bounce cancelled", juce::dontSendNotification);
+        statusLabel.setText ("No file was written.", juce::dontSendNotification);
+    }
+    else
+    {
+        titleLabel.setText ("Bounce failed", juce::dontSendNotification);
+        statusLabel.setText (err, juce::dontSendNotification);
+    }
+
+    cancelButton.setVisible (false);
+    closeButton.setVisible (true);
+    stopTimer();
 }
 
 void BounceDialog::closeDialog()
@@ -180,6 +194,11 @@ void BounceDialog::closeDialog()
         bounceEngine->cancel();
         return;
     }
+
+    // The worker may have stopped between timer ticks with the Cancel button
+    // still up; finalize now so `succeeded` reflects the real outcome before we
+    // decide whether to fire onSuccessfulFinish.
+    finalizeIfStopped();
 
     if (succeeded && onSuccessfulFinish)
         onSuccessfulFinish (outputFile);

@@ -1021,15 +1021,6 @@ void TransportBar::resized()
 {
     auto area = getLocalBounds().reduced (8, 6);
 
-   #if JUCE_MAC
-    int macTitlePad = 78;
-    if (auto* top = getTopLevelComponent())
-        if (auto* peer = top->getPeer())
-            if (peer->isFullScreen() || peer->isKioskMode())
-                macTitlePad = 0;
-    area.removeFromLeft (macTitlePad);
-   #endif
-
     constexpr int kBtnDia = 36;
     constexpr int kBtnGap = 4;
     auto buttons = area.removeFromLeft (kBtnDia * 8 + kBtnGap * 7);

@@ -729,8 +729,18 @@ void AudioRegionEditor::paintRuler (juce::Graphics& g, juce::Rectangle<int> area
         if (sr > 0.0)
         {
             const juce::int64 ticksPerBeat = kMidiTicksPerQuarter;
-            const auto startTick = session.samplesToTicks (anchorTimelineStart, sr);
-            const auto endTick   = session.samplesToTicks (anchorEndTimeline,   sr);
+            // Limit bar/beat generation to the clipped (visible) span: during
+            // playback the repaint clip is just the playhead column, so walking
+            // every bar in a long zoomed-in track is wasted work. Pad the window
+            // so a bar line just off-screen whose number label spills into view
+            // still draws; the per-tick x-clipping below keeps visuals exact.
+            const auto clip     = area.getIntersection (g.getClipBounds());
+            const auto winStart = juce::jmax (anchorTimelineStart,
+                                              timelineSampleForX (clip.getX()     - 48, area));
+            const auto winEnd   = juce::jmin (anchorEndTimeline,
+                                              timelineSampleForX (clip.getRight() + 48, area));
+            const auto startTick = session.samplesToTicks (winStart, sr);
+            const auto endTick   = session.samplesToTicks (winEnd,   sr);
             const int firstBar = (int) (startTick / ticksPerBar);
             const int lastBar  = (int) (endTick   / ticksPerBar) + 1;
 
