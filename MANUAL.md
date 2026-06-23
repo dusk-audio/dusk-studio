@@ -144,7 +144,7 @@ This chapter is a visual reference. Every numbered callout on the figures below 
 | #   | Name              | Description                                                                                                                       |
 | --- | ----------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | 1   | Menu bar          | `File` and `Settings` menus only. No tabs, no hidden submenus.                                                                    |
-| 2   | Stage selector    | Four buttons: **RECORDING**, **MIXING**, **MASTERING**, **AUX** (Ctrl+1 to Ctrl+4). Picks which view fills the console area.          |
+| 2   | Stage selector    | Four buttons: **RECORDING**, **MIXING**, **MASTERING**, **AUX** (Cmd/Ctrl+1 to 4). Picks which view fills the console area.            |
 | 3   | Bank selector     | The visible channel bank (e.g. `1-6`, `7-12`, ...), switched with the plain number keys 1 to 4. Only visible when the window is too narrow to show all channel strips at once. |
 | 4   | Transport bar     | Play, record, loop, punch, BPM, time signature, clock, tuner. See the next figure for the inventory.                              |
 | 5   | Tape strip toggle | `▾ TIMELINE` / `▴ TAPE`. Collapses or expands the timeline view below the bar.                                                     |

@@ -352,10 +352,16 @@ MainComponent::MainComponent()
     styleStageButton (mixingStageBtn,    juce::Colour (0xff5a8ad0));   // mix-desk blue
     styleStageButton (auxStageBtn,       juce::Colour (0xff6e5ad0));   // aux indigo-violet
     styleStageButton (masteringStageBtn, juce::Colour (0xff8a5ad0));   // mastering purple
-    recordingStageBtn.setTooltip ("Recording stage - press Ctrl+1");
-    mixingStageBtn   .setTooltip ("Mixing stage - press Ctrl+2");
-    masteringStageBtn.setTooltip ("Mastering stage - press Ctrl+3");
-    auxStageBtn      .setTooltip ("Aux send / return stage - press Ctrl+4");
+    // isCommandDown() is Cmd on macOS, Ctrl elsewhere - keep the hint in sync.
+   #if JUCE_MAC
+    const juce::String modKey = "Cmd";
+   #else
+    const juce::String modKey = "Ctrl";
+   #endif
+    recordingStageBtn.setTooltip ("Recording stage - press " + modKey + "+1");
+    mixingStageBtn   .setTooltip ("Mixing stage - press " + modKey + "+2");
+    masteringStageBtn.setTooltip ("Mastering stage - press " + modKey + "+3");
+    auxStageBtn      .setTooltip ("Aux send / return stage - press " + modKey + "+4");
     recordingStageBtn.setConnectedEdges (juce::Button::ConnectedOnRight);
     mixingStageBtn   .setConnectedEdges (juce::Button::ConnectedOnLeft | juce::Button::ConnectedOnRight);
     masteringStageBtn.setConnectedEdges (juce::Button::ConnectedOnLeft | juce::Button::ConnectedOnRight);

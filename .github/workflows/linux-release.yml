@@ -199,11 +199,15 @@ jobs:
           NOTES="Unsigned Linux tarball: extract, then run ./DuskStudio/DuskStudio (or ./install.sh for a menu entry, PATH launcher, and session-file association). The aarch64 build targets 64-bit Raspberry Pi OS (Pi 3/4/5)."
 
           shopt -s nullglob
-          ASSETS=( dusk-studio-*-Linux-${ARCH}.tar.xz "SHA256SUMS.linux-${ARCH}" )
-          if [[ ${#ASSETS[@]} -eq 0 ]]; then
-            echo "::error::no Linux ${ARCH} artifacts produced, packaging step failed" >&2
+          # Validate the TARBALL glob alone - a combined array would always carry
+          # the SHA256SUMS literal, so its length is never zero even if the
+          # packaging step produced no tarball.
+          TARBALLS=( dusk-studio-*-Linux-${ARCH}.tar.xz )
+          if [[ ${#TARBALLS[@]} -eq 0 ]]; then
+            echo "::error::no Linux ${ARCH} tarball produced, packaging step failed" >&2
             exit 1
           fi
+          ASSETS=( "${TARBALLS[@]}" "SHA256SUMS.linux-${ARCH}" )
 
           # The amd64 + arm64 matrix jobs publish to the SAME tag in parallel, so
           # the release may be absent when we look yet created by the sibling a
