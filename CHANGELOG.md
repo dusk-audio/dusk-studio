@@ -5,6 +5,52 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
+## [0.11.1] - 2026-06-24
+
+Patch release on the 0.11 Beta line: top-row layout, a playhead-chase option, an
+editor grid, shortcut cleanup, and a batch of fixes.
+
+### Added
+
+- **Chase / Follow playhead.** The timeline and the audio / MIDI editors can
+  scroll to keep the playhead in view during playback - a toolbar toggle plus a
+  "Follow playhead by default" option in Settings.
+- **Bar / beat grid in the region editors.** The audio and MIDI editors draw
+  adaptive beat / sub-beat ticks on the ruler and a grid over the content, denser
+  as you zoom in.
+- **Raspberry Pi (arm64) Linux tarball.** Release builds now publish an aarch64
+  tarball alongside x86_64.
+
+### Changed
+
+- **Top-row layout.** The stage selector (RECORDING / MIXING / MASTERING / AUX)
+  moved into the menu row; the timeline controls (Snap / zoom / Chase) sit in the
+  transport row, grouped with the bank buttons under the stage selector and shown
+  only when the timeline is open.
+- **Keyboard shortcuts.** Plain number keys 1-4 switch channel banks; Cmd/Ctrl+1
+  to 4 switch stages. **T** shows / hides the timeline. **Cmd/Ctrl+E** is the one
+  split shortcut everywhere (tape strip, audio editor, piano roll).
+
+### Fixed
+
+- **Audio device busy at startup.** When the saved device is in use or won't
+  open, Dusk Studio now falls back to another available device with a notice
+  instead of opening a silent session that can't play.
+- **ALSA crash** on interfaces with fewer than 32 channels (an out-of-range
+  channel index could corrupt the heap).
+- **Bounce dialog freeze / crash.** Closing or cancelling a bounce no longer
+  blocks the message thread or aborts on teardown.
+- **Reopened sessions** no longer show leftover regions from a previously larger
+  session.
+- **Verbatim audio import.** Imported audio is copied byte-for-byte when its
+  sample rate and channel count already match the session - no needless re-encode.
+- **MIDI editor playhead** is smooth when zoomed in (fractional-tick positioning).
+- **Tape-strip markers** no longer paint over the track-name column when the
+  timeline is scrolled.
+- **Tooltips** no longer cover the stage selector.
+- **Linux app icon.** The desktop entry's StartupWMClass now matches the window
+  class, so the dock / taskbar shows the Dusk Studio icon instead of a generic one.
+
 ## [0.11.0] - 2026-06-22
 
 Built to a production-grade bar; shipped as a Beta. 1.0.0 is reserved for
