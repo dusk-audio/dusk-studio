@@ -1481,13 +1481,16 @@ void MainComponent::resized()
                 tapeStrip->setConsoleVisibleRange (first1 - 1, last1 - first1 + 1);
             }
             // Dedicated timeline-toolbar row directly above the tape strip.
-            // Left-aligned [Snap | res | - | + | Fit | Chase]. Its own row, so
-            // no overlapping sibling and no toFront needed.
+            // Right-aligned [Snap | res | - | + | Fit | Chase] - view controls
+            // sit over the timeline they act on (and clear of the left-edge
+            // track-label column). Its own row, so no toFront needed.
             if (hdrClusterVisible)
             {
                 constexpr int kTimelineToolbarH = 28;
                 const auto bar = area.removeFromTop (kTimelineToolbarH);
-                int x = bar.getX();
+                const int clusterW = kHdrSnapW + kHdrSnapResW + kHdrZoomBtnW * 2
+                                   + kHdrFitW + kHdrChaseW + kHdrBtnGap * 5;
+                int x = bar.getRight() - clusterW - 8;
                 const int cy = bar.getY() + (bar.getHeight() - kHdrBtnH) / 2;
                 hdrSnapBtn   .setBounds (x, cy, kHdrSnapW,    kHdrBtnH); x += kHdrSnapW    + kHdrBtnGap;
                 hdrSnapResBtn.setBounds (x, cy, kHdrSnapResW, kHdrBtnH); x += kHdrSnapResW + kHdrBtnGap;
