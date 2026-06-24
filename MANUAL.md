@@ -1076,7 +1076,7 @@ Each region is drawn as a rounded coloured rectangle. Audio regions show a wavef
 
 ### Splitting
 
-Position the playhead and press **T** to split the selected region at the playhead. Or right-click and choose **Split**.
+Position the playhead and press **Cmd/Ctrl+E** to split the selected region at the playhead. Or right-click and choose **Split**. (**T** shows / hides the timeline.)
 
 ### Duplicating
 
@@ -1169,7 +1169,7 @@ You **cannot** edit individual samples. There is no pencil tool, no zoom-to-samp
 The top is a row of icon buttons:
 
 - **Undo / Redo** (also **Cmd+Z** and **Cmd+Shift+Z**).
-- **Split** at the edit cursor (also **S**).
+- **Split** at the edit cursor (also **Cmd/Ctrl+E**).
 - **Normalize** (peak-aligns the region to 0 dB by adjusting its gain).
 - **Properties** (file path, sample rate, channel count, length).
 - **Zoom out / Zoom in / Zoom fit** (also **−**, **+**, **0**).
@@ -1742,7 +1742,7 @@ Shortcuts use **Cmd** on macOS and **Ctrl** on Linux and Windows unless noted.
 | **Cmd+V**                   | Paste at playhead                      |
 | **Cmd+D**                   | Duplicate selected region              |
 | **Delete** / **Backspace**  | Delete selected region                 |
-| **T**                       | Split selected region at playhead      |
+| **Cmd+E**                   | Split selected region at playhead      |
 | **Cmd+←**                   | Nudge selected region one beat earlier |
 | **Cmd+→**                   | Nudge selected region one beat later   |
 | **Cmd+Shift+←**             | Nudge by one bar (earlier)             |
@@ -1785,11 +1785,12 @@ Shortcuts use **Cmd** on macOS and **Ctrl** on Linux and Windows unless noted.
 
 ## Timeline
 
-| Shortcut              | Action             |
-| --------------------- | ------------------ |
-| **=** / **+**         | Zoom in            |
-| **−**                 | Zoom out           |
-| **0**                 | Zoom fit           |
+| Shortcut              | Action                            |
+| --------------------- | --------------------------------- |
+| **T**                 | Show / hide timeline (tape strip) |
+| **=** / **+**         | Zoom in                           |
+| **−**                 | Zoom out                          |
+| **0**                 | Zoom fit                          |
 | **Cmd+wheel**         | Zoom around cursor |
 | **Shift+wheel**       | Horizontal scroll  |
 | **Middle-mouse drag** | Pan                |
@@ -1798,7 +1799,7 @@ Shortcuts use **Cmd** on macOS and **Ctrl** on Linux and Windows unless noted.
 
 | Shortcut              | Action                                             |
 | --------------------- | -------------------------------------------------- |
-| **S** / **Cmd+E**     | Split at edit cursor                               |
+| **Cmd+E**             | Split at edit cursor                               |
 | **G**                 | Grab (move / select) edit mode (used inside the region / piano-roll editors) |
 | **Cmd+]** / **Cmd+[** | Next / previous region                             |
 | **Esc**               | Close modal                                        |
@@ -1885,7 +1886,7 @@ Each aux return lane can be sent to its own physical output pair (see the aux la
 
 1. Record three or four passes into the same region, each fully containing the last. Each pass pushes the previous one into the take history.
 2. In the audio region editor, cycle through takes (**Alt+T** / **Alt+Shift+T**) and listen to each.
-3. Pick the best phrases by splitting (**S** or **T**) at the breaths, choosing the best take per phrase, and using fades to mask the joins.
+3. Pick the best phrases by splitting (**Cmd/Ctrl+E**) at the breaths, choosing the best take per phrase, and using fades to mask the joins.
 
 \newpage
 

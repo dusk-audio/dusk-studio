@@ -768,13 +768,14 @@ void TapeStrip::resized()
     // SHOW ALL toggle (which is pinned to that column's width).
     refreshLabelColumnWidth();
 
-    // SHOW ALL toggle pinned to the right edge of the label column at
-    // the top — lives in unused real estate above the row labels, fits
-    // in the kRulerH band so it doesn't compete with the time ruler.
+    // SHOW ALL toggle over the label column - centred in the kRulerH band
+    // (horizontally in the column, vertically in the band), in unused real
+    // estate above the row labels where it doesn't compete with the ruler.
     constexpr int kShowAllH = 14;
     constexpr int kShowAllInset = 8;   // a touch narrower than the full column
     const int allW = juce::jmax (24, labelColW - 2 * kShowAllInset);
-    showAllToggle.setBounds ((labelColW - allW) / 2, 2, allW, kShowAllH);
+    const int allY = (kRulerH - kShowAllH) / 2;
+    showAllToggle.setBounds ((labelColW - allW) / 2, allY, allW, kShowAllH);
     inheritCursorOnDescendants (*this);
 }
 
@@ -3764,6 +3765,11 @@ void TapeStrip::paint (juce::Graphics& g)
     // boundary is still readable on top.
     {
         g.setFont (juce::Font (juce::FontOptions (10.5f, juce::Font::bold)));
+        // Clip to the timeline so a marker scrolled just off the left edge
+        // (flag is left-anchored at its position) can't paint its pill or
+        // guideline over the track-name column.
+        juce::Graphics::ScopedSaveState markerClip (g);
+        g.reduceClipRegion (col.getX(), 0, getWidth() - col.getX(), getHeight());
         for (const auto& marker : session.getMarkers())
         {
             const int x = xForSample (marker.timelineSamples);

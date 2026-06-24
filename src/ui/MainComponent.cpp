@@ -844,11 +844,12 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         return true;
     }
 
-    // ── TIMELINE toggle: Cmd/Ctrl + \ shows / hides the tape strip.
-    // Mirrors the TransportBar's TIMELINE button so the user can flip
-    // the arrangement view without mousing. Backslash is otherwise
-    // unbound; \\ is what Reaper / Pro Tools use for similar toggles.
-    if (cmd && ! shift && key.getTextCharacter() == '\\')
+    // ── TIMELINE toggle: T (or Cmd/Ctrl + \) shows / hides the tape strip.
+    // Mirrors the TransportBar's TIMELINE button so the user can flip the
+    // arrangement view without mousing. Plain T is the mnemonic ("Timeline");
+    // \\ is the Reaper / Pro Tools-style alias. (Alt+T is take cycling below.)
+    if ((code == 'T' && noMods)
+        || (cmd && ! shift && key.getTextCharacter() == '\\'))
     {
         setTimelineVisible (! tapeStripExpanded);
         return true;
@@ -923,13 +924,11 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         {
             if (tapeStrip->deleteSelectedRegion()) return true;
         }
-        // 'T' (no modifiers) splits the selected region at the
-        // playhead - razor-tool equivalent without needing a tool
-        // mode. No-op when no region is selected or the playhead is
-        // outside it. Mnemonic: "Trim / spliT". 'B' (Reaper-style
-        // razor) is taken by Bounce; Cmd+T (Logic-style) was rejected
-        // for consistency with Dusk Studio's other no-mod transport hotkeys.
-        if (code == 'T' && noMods)
+        // Cmd/Ctrl+E splits the selected region at the playhead - razor
+        // without a tool mode. Pro Tools / Ableton convention, uniform with
+        // the audio + MIDI editors. No-op when nothing is selected or the
+        // playhead is outside the region. (Plain T is the timeline toggle.)
+        if (code == 'E' && cmd && ! shift)
         {
             if (tapeStrip->splitSelectedAtPlayhead()) return true;
         }
@@ -1384,6 +1383,9 @@ void MainComponent::resized()
     // Settings menu and the system meters. The session status text fills the
     // gap to its left. (stageW / stageBlockW were computed above with the
     // transport metrics so the tabs follow the same compact breakpoint.)
+    // stageCentreX is reused below to centre the bank / toolbar group directly
+    // under the stage selector.
+    int stageCentreX = rowBounds.getCentreX();
     {
         const int menuStageY   = menuRow.getY() + (menuRow.getHeight() - kStageBtnH) / 2;
         const int menuLeftPad  = menuRow.getX() + 200 + 12;            // past File / Settings
@@ -1393,6 +1395,7 @@ void MainComponent::resized()
         stageX = juce::jlimit (menuLeftPad,
                                  juce::jmax (menuLeftPad, menuRightPad - stageBlockW),
                                  stageX);
+        stageCentreX = stageX + stageBlockW / 2;
         recordingStageBtn.setBounds (stageX,              menuStageY, stageW, kStageBtnH);
         mixingStageBtn   .setBounds (stageX + stageW,     menuStageY, stageW, kStageBtnH);
         masteringStageBtn.setBounds (stageX + 2 * stageW, menuStageY, stageW, kStageBtnH);
@@ -1410,19 +1413,54 @@ void MainComponent::resized()
             juce::Rectangle<int> (stageX, menuRow.getY(), stageBlockW, menuRow.getHeight()));
     }
 
-    // Bank buttons centered in the TRANSPORT row (the stage selector vacated it),
-    // clamped past the clock so they never overlap it.
+    // Transport-row overlays: the bank buttons and, when the tape strip is
+    // open, the timeline toolbar to their right - centred together as one group
+    // directly under the stage selector above. The stage selector vacated this
+    // row (it lives in the menu row now).
+    constexpr int kHdrZoomBtnW = 30;
+    constexpr int kHdrFitW     = 36;
+    constexpr int kHdrSnapW    = 48;
+    constexpr int kHdrSnapResW = 78;
+    constexpr int kHdrChaseW   = 56;
+    constexpr int kHdrBtnGap   = 4;
+    constexpr int kHdrBtnH     = 24;
+    const int kHdrClusterW = kHdrSnapW + kHdrSnapResW + kHdrZoomBtnW * 2
+                           + kHdrFitW + kHdrChaseW + kHdrBtnGap * 5;
+    constexpr int kBankToolbarGap = 16;
+
     syncBankButtons (needsBanking ? numBanks : 0);
+    const int bankY = rowBounds.getY() + (rowBounds.getHeight() - kBankBtnH) / 2;
+    const int bankClusterW = needsBanking
+                           ? (numBanks * kBankBtnW + (numBanks - 1) * kBankBtnGap) : 0;
+
+    const int clockRight = rowBounds.getX()
+                         + (transportBar != nullptr ? transportBar->getClockRightX() : 0);
+    const int tunerLeft  = rowBounds.getX()
+                         + (transportBar != nullptr ? transportBar->getTunerLeftX()
+                                                      : rowBounds.getWidth());
+
+    // The toolbar joins the group only with the tape strip open AND when the
+    // combined group still fits between the clock and the BPM / tuner cluster.
+    const bool wantToolbar = ! inFullscreenView && tapeStrip != nullptr && tapeStripExpanded;
+    int  groupW = bankClusterW;
+    bool toolbarVisible = false;
+    if (wantToolbar)
+    {
+        const int combinedW = bankClusterW + (needsBanking ? kBankToolbarGap : 0) + kHdrClusterW;
+        const int gX = juce::jmax (clockRight + 12, stageCentreX - combinedW / 2);
+        if (gX + combinedW <= tunerLeft - 12)
+        {
+            toolbarVisible = true;
+            groupW = combinedW;
+        }
+    }
+
+    // Centre the group under the stage selector, clamped past the clock.
+    const int groupX = juce::jmax (clockRight + 12, stageCentreX - groupW / 2);
+
     if (needsBanking && consoleView != nullptr)
     {
-        const int bankClusterW = numBanks * kBankBtnW + (numBanks - 1) * kBankBtnGap;
-        int bankX = rowBounds.getX() + (rowBounds.getWidth() - bankClusterW) / 2;
-        if (transportBar != nullptr)
-        {
-            const int clockRight = rowBounds.getX() + transportBar->getClockRightX();
-            bankX = juce::jmax (bankX, clockRight + 12);
-        }
-        const int bankY = rowBounds.getY() + (rowBounds.getHeight() - kBankBtnH) / 2;
+        int bankX = groupX;
         const int activeBank = consoleView->getBank();
         for (int i = 0; i < (int) bankButtons.size(); ++i)
         {
@@ -1439,27 +1477,23 @@ void MainComponent::resized()
         }
     }
 
-    // SNAP + zoom (- / + / Fit) + Chase cluster. These only act on the
-    // timeline, so they live in a dedicated thin toolbar row directly above
-    // the tape strip (carved in the tapeStrip block below), NOT the transport
-    // row. Shown only with the timeline open and not in a fullscreen stage
-    // (AUX/Mastering), where they have no subject.
-    constexpr int kHdrZoomBtnW = 30;
-    constexpr int kHdrFitW     = 36;
-    constexpr int kHdrSnapW    = 48;
-    constexpr int kHdrSnapResW = 78;
-    constexpr int kHdrChaseW   = 56;
-    constexpr int kHdrBtnGap   = 4;
-    constexpr int kHdrBtnH     = 24;
-    const bool hdrClusterVisible = ! inFullscreenView
-                                  && tapeStrip != nullptr
-                                  && tapeStripExpanded;
-    hdrZoomOutBtn.setVisible (hdrClusterVisible);
-    hdrZoomInBtn .setVisible (hdrClusterVisible);
-    hdrZoomFitBtn.setVisible (hdrClusterVisible);
-    hdrSnapBtn   .setVisible (hdrClusterVisible);
-    hdrSnapResBtn.setVisible (hdrClusterVisible);
-    hdrChaseBtn  .setVisible (hdrClusterVisible);
+    hdrZoomOutBtn.setVisible (toolbarVisible);
+    hdrZoomInBtn .setVisible (toolbarVisible);
+    hdrZoomFitBtn.setVisible (toolbarVisible);
+    hdrSnapBtn   .setVisible (toolbarVisible);
+    hdrSnapResBtn.setVisible (toolbarVisible);
+    hdrChaseBtn  .setVisible (toolbarVisible);
+    if (toolbarVisible)
+    {
+        int x = groupX + bankClusterW + (needsBanking ? kBankToolbarGap : 0);
+        const int cy = rowBounds.getY() + (rowBounds.getHeight() - kHdrBtnH) / 2;
+        hdrSnapBtn   .setBounds (x, cy, kHdrSnapW,    kHdrBtnH); x += kHdrSnapW    + kHdrBtnGap;
+        hdrSnapResBtn.setBounds (x, cy, kHdrSnapResW, kHdrBtnH); x += kHdrSnapResW + kHdrBtnGap;
+        hdrZoomOutBtn.setBounds (x, cy, kHdrZoomBtnW, kHdrBtnH); x += kHdrZoomBtnW + kHdrBtnGap;
+        hdrZoomInBtn .setBounds (x, cy, kHdrZoomBtnW, kHdrBtnH); x += kHdrZoomBtnW + kHdrBtnGap;
+        hdrZoomFitBtn.setBounds (x, cy, kHdrFitW,     kHdrBtnH); x += kHdrFitW     + kHdrBtnGap;
+        hdrChaseBtn  .setBounds (x, cy, kHdrChaseW,   kHdrBtnH);
+    }
 
     area.removeFromTop (4);
 
@@ -1480,23 +1514,6 @@ void MainComponent::resized()
                     ConsoleView::rangeForBankAtWidth (bank, area.getWidth());
                 tapeStrip->setConsoleVisibleRange (first1 - 1, last1 - first1 + 1);
             }
-            // Dedicated timeline-toolbar row directly above the tape strip.
-            // Left-aligned [Snap | res | - | + | Fit | Chase]. Its own row, so
-            // no overlapping sibling and no toFront needed.
-            if (hdrClusterVisible)
-            {
-                constexpr int kTimelineToolbarH = 28;
-                const auto bar = area.removeFromTop (kTimelineToolbarH);
-                int x = bar.getX();
-                const int cy = bar.getY() + (bar.getHeight() - kHdrBtnH) / 2;
-                hdrSnapBtn   .setBounds (x, cy, kHdrSnapW,    kHdrBtnH); x += kHdrSnapW    + kHdrBtnGap;
-                hdrSnapResBtn.setBounds (x, cy, kHdrSnapResW, kHdrBtnH); x += kHdrSnapResW + kHdrBtnGap;
-                hdrZoomOutBtn.setBounds (x, cy, kHdrZoomBtnW, kHdrBtnH); x += kHdrZoomBtnW + kHdrBtnGap;
-                hdrZoomInBtn .setBounds (x, cy, kHdrZoomBtnW, kHdrBtnH); x += kHdrZoomBtnW + kHdrBtnGap;
-                hdrZoomFitBtn.setBounds (x, cy, kHdrFitW,     kHdrBtnH); x += kHdrFitW     + kHdrBtnGap;
-                hdrChaseBtn  .setBounds (x, cy, kHdrChaseW,   kHdrBtnH);
-            }
-
             // Cap the strip at ~half the available height so vertical
             // zoom (taller rows) can't swallow the console - past the cap
             // the rows scroll inside the strip. Console keeps a usable

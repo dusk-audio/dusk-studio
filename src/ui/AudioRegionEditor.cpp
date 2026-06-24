@@ -2625,12 +2625,12 @@ bool AudioRegionEditor::keyPressed (const juce::KeyPress& k)
         }
     }
 
-    // Split: 'S' or Cmd+E. With a range active, splits at BOTH
-    // boundaries (3 regions). Without a range, splits at the edit
-    // cursor (existing single-cut behaviour from splitAtCursor()).
     const auto ch = k.getTextCharacter();
-    const bool isSplit = (ch == 's' || ch == 'S')
-                          || (cmdOrCtrl && (k.getKeyCode() == 'E' || k.getKeyCode() == 'e'));
+
+    // Split: Cmd/Ctrl+E (uniform with the tape strip + MIDI editor). With a
+    // range active, splits at BOTH boundaries (3 regions). Without a range,
+    // splits at the edit cursor (existing single-cut from splitAtCursor()).
+    const bool isSplit = cmdOrCtrl && (k.getKeyCode() == 'E' || k.getKeyCode() == 'e');
     if (isSplit)
     {
         auto* r = region();
