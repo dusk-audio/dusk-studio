@@ -3764,6 +3764,11 @@ void TapeStrip::paint (juce::Graphics& g)
     // boundary is still readable on top.
     {
         g.setFont (juce::Font (juce::FontOptions (10.5f, juce::Font::bold)));
+        // Clip to the timeline so a marker scrolled just off the left edge
+        // (flag is left-anchored at its position) can't paint its pill or
+        // guideline over the track-name column.
+        juce::Graphics::ScopedSaveState markerClip (g);
+        g.reduceClipRegion (col.getX(), 0, getWidth() - col.getX(), getHeight());
         for (const auto& marker : session.getMarkers())
         {
             const int x = xForSample (marker.timelineSamples);
