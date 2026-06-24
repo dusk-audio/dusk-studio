@@ -7,6 +7,6 @@ Exec=DuskStudio %f
 Icon=DuskStudio
 Terminal=false
 Categories=AudioVideo;Audio;Recorder;Music;
-StartupWMClass=DuskStudio
+StartupWMClass=Dusk Studio
 Keywords=DAW;recording;mixer;multitrack;portastudio;
 MimeType=application/x-dusk-studio-session;
