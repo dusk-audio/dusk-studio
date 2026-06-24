@@ -35,7 +35,7 @@ Paid via [Patreon](https://www.patreon.com/cw/DuskAudio) (recurring) or [GitHub 
 
 ## Status
 
-**v0.11.0 (Beta).** Built to a production bar; released as Beta. Feature backlog effectively closed: every spec phase, Tascam DP-24SD parity, MTC + MIDI Clock sync, automatic cross-track plugin delay compensation, broad undo coverage (notes, automation, tempo, renames), portable session folders (relative audio paths, move/copy between machines), an optional out-of-process plugin sandbox with always-sandboxed plugin scanning, a true-peak mastering limiter, a piecewise tempo map (changing tempo within a song), session open-with, an update notice on launch, and the rename to Dusk Studio have shipped. Plugins host in-process by default for the most responsive editors; `DUSKSTUDIO_USE_OOP_PLUGINS=1` opts into the crash-isolating sandbox. All three OSes ship unsigned binaries (Linux tarball + Windows MSI + macOS DMG) to the private releases repo on each tag. Remaining work toward the public 1.0 is release-engineering polish, low-spec/Raspberry-Pi performance, and deeper accessibility.
+**v0.11.1 (Beta).** Built to a production bar; released as Beta. Feature backlog effectively closed: every spec phase, Tascam DP-24SD parity, MTC + MIDI Clock sync, automatic cross-track plugin delay compensation, broad undo coverage (notes, automation, tempo, renames), portable session folders (relative audio paths, move/copy between machines), an optional out-of-process plugin sandbox with always-sandboxed plugin scanning, a true-peak mastering limiter, a piecewise tempo map (changing tempo within a song), session open-with, an update notice on launch, and the rename to Dusk Studio have shipped. Plugins host in-process by default for the most responsive editors; `DUSKSTUDIO_USE_OOP_PLUGINS=1` opts into the crash-isolating sandbox. All three OSes ship unsigned binaries (Linux tarball + Windows MSI + macOS DMG) to the private releases repo on each tag. Remaining work toward the public 1.0 is release-engineering polish, low-spec/Raspberry-Pi performance, and deeper accessibility.
 
 | Stage | Status |
 |---|---|
@@ -65,7 +65,7 @@ Paid via [Patreon](https://www.patreon.com/cw/DuskAudio) (recurring) or [GitHub 
 | macOS DMG (unsigned, ad-hoc) | Working (CI publishes to private releases repo on tag) |
 | Deeper a11y (full screen-reader labels + keyboard-only mixer nav) | Floor only |
 
-214 Catch2 unit tests across 51 files. Linux (amd64 + arm64) + macOS + Windows builds run on every push; Windows tests run on every push + PR; Linux ThreadSanitizer runs on every PR + push.
+234 Catch2 unit tests across 58 files. Linux (amd64 + arm64) + macOS + Windows builds run on every push; Windows tests run on every push + PR; Linux ThreadSanitizer runs on every PR + push.
 
 ## Bug reports
 
@@ -115,7 +115,7 @@ src/
   session/     # Session model + JSON serialisation
   ui/          # MainComponent, ConsoleView, channel/aux/master strips, mastering view
   util/        # CrashHandler (FileLogger + signal-handler reports)
-tests/         # 214 Catch2 unit tests (session, recording, MIDI, IPC, DSP)
+tests/         # 234 Catch2 unit tests (session, recording, MIDI, IPC, DSP)
 packaging/     # .desktop, AppStream, MIME, macOS bundle — for tarball + DMG builds
 DuskStudio.md  # authoritative product spec
 MANUAL.md      # end-user manual (Pandoc-buildable to PDF via packaging/build-pdf.sh)
