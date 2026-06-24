@@ -15,9 +15,12 @@ class Session;
 // marshalled to the message thread via SafePointer + MessageManager::callAsync
 // so the panel can update its progress bar / status label safely.
 //
-// Lifetime: launched from MainComponent's "Bounce..." button. The bounce
-// runs to completion or cancellation before the dialog is dismissed; closing
-// the dialog while a render is in flight requests a cancel and waits.
+// Lifetime: launched from MainComponent's "Bounce..." button. Closing the
+// dialog while a render is in flight requests a cancel and returns immediately;
+// the 20 Hz timer flips the dialog to its finished state once the worker
+// actually stops (the close never blocks the message thread - the worker's
+// teardown re-attaches the audio device and needs the loop to keep turning).
+// The host wires onRequestClose to dismiss the embedded modal.
 class BounceDialog final : public juce::Component,
                             private juce::Timer
 {
@@ -37,10 +40,18 @@ public:
     // Fired once when the dialog is dismissed AFTER a successful render.
     // Not fired on cancel or failure. Caller can use it to chain post-bounce
     // workflow (e.g. Mixdown → switch to Mastering with the new file loaded).
+    // Defer any heavy work (stage switches, etc.) via callAsync - this fires
+    // from inside the close-button callback.
     std::function<void(juce::File)> onSuccessfulFinish;
+
+    // Fired to dismiss the dialog. The host (which owns the EmbeddedModal)
+    // wires this to its modal.close(). Without it the embedded dialog has no
+    // way to close itself (exitModalState only works for a real DialogWindow).
+    std::function<void()> onRequestClose;
 
 private:
     void timerCallback() override;
+    void finalizeIfStopped();
     void closeDialog();
 
     AudioEngine& engine;

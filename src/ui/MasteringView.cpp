@@ -764,7 +764,9 @@ void MasteringView::doExport()
                                                        engine.getDeviceManager(), target,
                                                        BounceEngine::Mode::MasteringChain, fmt);
         panel->setSize (520, 200);
-        exportModal.show (*this, std::move (panel));
+        juce::Component::SafePointer<MasteringView> safeThis (this);
+        panel->onRequestClose = [safeThis] { if (safeThis != nullptr) safeThis->exportModal.close(); };
+        exportModal.show (*this, std::move (panel), {}, false, false);
     });
 }
 } // namespace duskstudio

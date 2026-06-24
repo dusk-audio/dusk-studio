@@ -299,6 +299,7 @@ private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
 
     void paintRuler         (juce::Graphics&, juce::Rectangle<int> area);
+    void paintBarGrid       (juce::Graphics&, juce::Rectangle<int> waveArea);
     void paintWaveform      (juce::Graphics&, juce::Rectangle<int> area);
     void paintFadeEnvelopes (juce::Graphics&, juce::Rectangle<int> area);
     // Loop (green) + punch (red) brackets over the ruler + waveform, read

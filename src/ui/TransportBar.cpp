@@ -1021,15 +1021,6 @@ void TransportBar::resized()
 {
     auto area = getLocalBounds().reduced (8, 6);
 
-   #if JUCE_MAC
-    int macTitlePad = 78;
-    if (auto* top = getTopLevelComponent())
-        if (auto* peer = top->getPeer())
-            if (peer->isFullScreen() || peer->isKioskMode())
-                macTitlePad = 0;
-    area.removeFromLeft (macTitlePad);
-   #endif
-
     constexpr int kBtnDia = 36;
     constexpr int kBtnGap = 4;
     auto buttons = area.removeFromLeft (kBtnDia * 8 + kBtnGap * 7);
@@ -1073,7 +1064,7 @@ void TransportBar::resized()
         sectionLabel.setBounds (area.removeFromLeft (juce::jmin (textW, maxW)).reduced (0, 4));
     }
 
-    tapeToggle.setBounds (area.removeFromRight (compact ? 32 : 84).reduced (1));
+    tapeToggle.setBounds (area.removeFromRight (compact ? 48 : 84).reduced (1));
     area.removeFromRight (12);
 
     countInToggle.setBounds (area.removeFromRight (compact ? 34 : 44).reduced (1, 4));
@@ -1170,9 +1161,11 @@ void TransportBar::syncCompactLabels (bool compact)
     const bool tapeExpanded = tapeToggle.getToggleState();
     if (compact)
     {
+        // Keep a short "TL" tag beside the chevron so the control still reads
+        // as the TIMELINE toggle - a bare chevron is too cryptic on its own.
         tapeToggle .setButtonText (tapeExpanded
-            ? juce::CharPointer_UTF8 ("\xe2\x96\xbe")    // "▾"
-            : juce::CharPointer_UTF8 ("\xe2\x96\xb8")); // "▸"
+            ? juce::CharPointer_UTF8 ("\xe2\x96\xbe TL")    // "▾ TL"
+            : juce::CharPointer_UTF8 ("\xe2\x96\xb8 TL")); // "▸ TL"
     }
     else
     {

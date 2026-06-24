@@ -70,6 +70,15 @@ public:
         return juce::Font (juce::FontOptions (18.5f));
     }
 
+    // The menu-row band that tooltips live in, and the stage-tab block they
+    // must NOT cover. MainComponent::resized() keeps these current; both are
+    // in MainComponent-local coords (the space getTooltipBounds returns).
+    void setTooltipPlacement (juce::Rectangle<int> row, juce::Rectangle<int> avoid) noexcept
+    {
+        tooltipRow_   = row;
+        tooltipAvoid_ = avoid;
+    }
+
     // Anchor in the top menu-bar row (same row as File/Settings) so
     // tooltips never overlap the control they describe. JUCE's default
     // cursor-follow kept landing over UI the user was about to click.
@@ -86,12 +95,36 @@ public:
         const juce::Font font { juce::FontOptions (kFontPx) };
         const auto flat = tipText.replaceCharacter ('\n', ' ');
         const int textW = (int) std::ceil (font.getStringWidthFloat (flat)) + 32;   // +padding (must match drawTooltip's natural width)
-        const int textH = (int) std::ceil (kFontPx) + 10;
-        // Top menu bar row is ~28 px tall; centre the tooltip
-        // vertically in that band.
+        const int h     = (int) std::ceil (kFontPx) + 10;
+
+        if (! tooltipRow_.isEmpty())
+        {
+            // Place inside the menu-row band, dodging the centred stage tabs:
+            // a centred tip would always sit on top of them. Prefer the side
+            // gap that fits the natural width (left/status gap first), else the
+            // wider side, clamping width so the tip never overlaps the tabs.
+            const int y = tooltipRow_.getY() + juce::jmax (0, (tooltipRow_.getHeight() - h) / 2);
+            constexpr int gap = 12;
+            int w = juce::jmin (textW, tooltipRow_.getWidth());
+            int x = tooltipRow_.getCentreX() - w / 2;
+
+            if (! tooltipAvoid_.isEmpty()
+                  && juce::Rectangle<int> (x, y, w, h).intersects (tooltipAvoid_))
+            {
+                const int leftRoom  = juce::jmax (0, tooltipAvoid_.getX() - gap - tooltipRow_.getX());
+                const int rightRoom = juce::jmax (0, tooltipRow_.getRight() - (tooltipAvoid_.getRight() + gap));
+                if (w <= leftRoom)              { x = tooltipRow_.getX(); }
+                else if (w <= rightRoom)        { x = tooltipAvoid_.getRight() + gap; }
+                else if (leftRoom >= rightRoom) { w = leftRoom;  x = tooltipRow_.getX(); }
+                else                            { w = rightRoom; x = tooltipRow_.getRight() - w; }
+            }
+            return juce::Rectangle<int> (x, y, juce::jmax (0, w), h).constrainedWithin (tooltipRow_);
+        }
+
+        // Fallback before the first layout pass sets a placement: centre the
+        // tip in a top band the height of the original menu row.
         constexpr int kMenuRowH = 28;
         const int w = juce::jmin (textW, juce::jmax (60, parentArea.getWidth() - 16));
-        const int h = textH;
         const int x = parentArea.getCentreX() - w / 2;
         const int y = parentArea.getY() + juce::jmax (0, (kMenuRowH - h) / 2);
         return juce::Rectangle<int> (x, y, w, h).constrainedWithin (parentArea);
@@ -372,6 +405,10 @@ public:
         g.setColour (juce::Colour (0x80000000));
         g.drawEllipse (tipX - tipR, tipY - tipR, tipR * 2.0f, tipR * 2.0f, 0.5f);
     }
+
+private:
+    juce::Rectangle<int> tooltipRow_;     // menu-row band tooltips live in
+    juce::Rectangle<int> tooltipAvoid_;   // stage-tab block they must not cover
 };
 
 // 4K band/section palette. Names also drive the track colour-picker labels.

@@ -352,10 +352,16 @@ MainComponent::MainComponent()
     styleStageButton (mixingStageBtn,    juce::Colour (0xff5a8ad0));   // mix-desk blue
     styleStageButton (auxStageBtn,       juce::Colour (0xff6e5ad0));   // aux indigo-violet
     styleStageButton (masteringStageBtn, juce::Colour (0xff8a5ad0));   // mastering purple
-    recordingStageBtn.setTooltip ("Recording stage - press 1");
-    mixingStageBtn   .setTooltip ("Mixing stage - press 2");
-    masteringStageBtn.setTooltip ("Mastering stage - press 3");
-    auxStageBtn      .setTooltip ("Aux send / return stage - press 4");
+    // isCommandDown() is Cmd on macOS, Ctrl elsewhere - keep the hint in sync.
+   #if JUCE_MAC
+    const juce::String modKey = "Cmd";
+   #else
+    const juce::String modKey = "Ctrl";
+   #endif
+    recordingStageBtn.setTooltip ("Recording stage - press " + modKey + "+1");
+    mixingStageBtn   .setTooltip ("Mixing stage - press " + modKey + "+2");
+    masteringStageBtn.setTooltip ("Mastering stage - press " + modKey + "+3");
+    auxStageBtn      .setTooltip ("Aux send / return stage - press " + modKey + "+4");
     recordingStageBtn.setConnectedEdges (juce::Button::ConnectedOnRight);
     mixingStageBtn   .setConnectedEdges (juce::Button::ConnectedOnLeft | juce::Button::ConnectedOnRight);
     masteringStageBtn.setConnectedEdges (juce::Button::ConnectedOnLeft | juce::Button::ConnectedOnRight);
@@ -419,6 +425,21 @@ MainComponent::MainComponent()
     hdrSnapResBtn.onClick = [this] { showSnapResolutionMenu(); };
     addAndMakeVisible (hdrSnapBtn);
     addAndMakeVisible (hdrSnapResBtn);
+
+    // Chase toggle - green when on, matching the audio / MIDI editors.
+    hdrChaseBtn.setClickingTogglesState (true);
+    hdrChaseBtn.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff262630));
+    hdrChaseBtn.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff406030));
+    hdrChaseBtn.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xffd0d0d4));
+    hdrChaseBtn.setColour (juce::TextButton::textColourOnId,   juce::Colours::white);
+    hdrChaseBtn.setMouseClickGrabsKeyboardFocus (false);
+    hdrChaseBtn.setToggleState (appconfig::getFollowPlayheadDefault(), juce::dontSendNotification);
+    hdrChaseBtn.setTooltip ("Scroll the timeline to follow the playhead during playback");
+    hdrChaseBtn.onClick = [this]
+    {
+        if (tapeStrip != nullptr) tapeStrip->setChaseEnabled (hdrChaseBtn.getToggleState());
+    };
+    addAndMakeVisible (hdrChaseBtn);
     refreshSnapUi();
 
     // Bank-button row is rebuilt by syncBankButtons() each layout pass
@@ -448,6 +469,7 @@ MainComponent::MainComponent()
     tapeStripExpanded = appconfig::getTapeStripExpandedDefault();
     tapeStrip = std::make_unique<TapeStrip> (session, engine);
     tapeStrip->setVisible (tapeStripExpanded);
+    tapeStrip->setChaseEnabled (appconfig::getFollowPlayheadDefault());
     tapeStrip->onMidiRegionDoubleClicked  = [this] (int t, int r) { openPianoRoll   (t, r); };
     tapeStrip->onAudioRegionDoubleClicked = [this] (int t, int r) { openAudioEditor (t, r); };
     tapeStrip->onFilesDropped = [this] (juce::Array<juce::File> files,
@@ -774,27 +796,23 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         return true;
     }
 
-    // ── Bank switching: Cmd/Ctrl + 1/2/3 selects banks 1-8 / 9-16 / 17-24.
-    // Maps to ConsoleView::setBank which also publishes the active bank
-    // to the audio thread so bank-relative MIDI bindings retarget.
-    if (cmd && ! shift && consoleView != nullptr)
+    // ── Bank switching: plain 1/2/3/4 select the visible channel bank. Maps to
+    // ConsoleView::setBank which also publishes the active bank to the audio
+    // thread so bank-relative MIDI bindings retarget. Out-of-range digits (more
+    // banks than the window currently shows) fall through unhandled.
+    if (noMods && consoleView != nullptr)
     {
-        const int bankIndex = (code == '1') ? 0
-                            : (code == '2') ? 1
-                            : (code == '3') ? 2
-                                            : -1;
-        if (bankIndex >= 0)
+        const int bankIndex = (code >= '1' && code <= '4') ? (code - '1') : -1;
+        if (bankIndex >= 0 && bankIndex < consoleView->numBanks())
         {
-            consoleView->setBank (juce::jlimit (0,
-                                                  juce::jmax (0, consoleView->numBanks() - 1),
-                                                  bankIndex));
+            consoleView->setBank (bankIndex);
             return true;
         }
     }
 
-    // ── Stage switching: plain 1/2/3/4 select Recording / Mixing / Mastering /
-    // Aux. Cmd/Ctrl + digit is bank switching (above), so these stay unmodified.
-    if (noMods)
+    // ── Stage switching: Cmd/Ctrl + 1/2/3/4 select Recording / Mixing /
+    // Mastering / Aux. Plain digits are bank switching (above).
+    if (cmd && ! shift)
     {
         switch (code)
         {
@@ -1213,12 +1231,10 @@ void MainComponent::syncBankButtons (int desiredCount)
         {
             if (consoleView != nullptr) consoleView->setBank (idx);
         };
-        // Banks 1-3 are reachable via Cmd/Ctrl + 1/2/3 (see keyPressed).
+        // Banks 1-4 are reachable via the plain number keys 1/2/3/4 (see keyPressed).
         juce::String hint;
-        if (idx < 3)
-            hint = "  (" + juce::KeyPress ('1' + idx,
-                                             juce::ModifierKeys (juce::ModifierKeys::commandModifier), 0)
-                               .getTextDescriptionWithIcons() + ")";
+        if (idx < 4)
+            hint = "  (press " + juce::String (idx + 1) + ")";
         btn->setTooltip ("Channel bank " + juce::String (idx + 1) + hint);
         addAndMakeVisible (btn.get());
         bankButtons.push_back (std::move (btn));
@@ -1297,16 +1313,15 @@ void MainComponent::resized()
 
     auto area = getLocalBounds().reduced (8);
 
-    // Slim menu-bar row at the very top. The menu bar grows to fit its
-    // top-level menu names (~80 px); status text + system meters share
-    // the rest of the row to its right.
-    auto top = area.removeFromTop (22);
-    menuBar.setBounds (top.removeFromLeft (200));
-    top.removeFromLeft (8);
+    // Top menu row. Grown to host the centered stage selector (RECORDING /
+    // MIXING / MASTERING / AUX). File / Settings menu on the left, system meters
+    // on the right; the stage selector and the session status text are placed
+    // below, once the stage-tab width is known.
+    constexpr int kMenuRowH = 32;
+    const auto menuRow = area.removeFromTop (kMenuRowH);
+    menuBar.setBounds (menuRow.withWidth (200));
     if (systemStatusBar != nullptr)
-        systemStatusBar->setBounds (top.removeFromRight (300));
-    top.removeFromRight (8);
-    statusLabel.setBounds (top);
+        systemStatusBar->setBounds (menuRow.withTrimmedLeft (menuRow.getWidth() - 300));
     area.removeFromTop (4);
 
     const auto curStage = engine.getStage();
@@ -1338,7 +1353,6 @@ void MainComponent::resized()
     }
 
     constexpr int kStageBtnH = 28;
-    const int stageY = rowBounds.getY() + (rowBounds.getHeight() - kStageBtnH) / 2;
 
     // Banking decision: ConsoleView reports how many channel strips fit
     // alongside the always-anchored bus + master column at min width.
@@ -1366,47 +1380,49 @@ void MainComponent::resized()
     constexpr int kBankBtnGap = 6;
     constexpr int kBankBtnH  = 26;
 
-    // Center the stages + banks group within the row. Transport sits on
-    // the LEFT (TransportBar own widgets); BPM cluster sits on the RIGHT.
-    // The centered group reads: STAGES (4 tabs) [+ BANK 1..N buttons
-    // when 16 strips need banking].
-    constexpr int kStageToBankGap = 12;
-    const int bankClusterW = needsBanking
-                                ? (kStageToBankGap
-                                     + numBanks * kBankBtnW
-                                     + (numBanks - 1) * kBankBtnGap)
-                                : 0;
-    const int groupW       = stageBlockW + bankClusterW;
-    int stageX             = rowBounds.getX() + (rowBounds.getWidth() - groupW) / 2;
-
-    // Pure window-width centering walks over the transport bar's clock /
-    // timecode label at wide widths (the transport cluster is left-anchored,
-    // the stage tabs centre on the FULL row). Clamp the centred group so
-    // its left edge sits at least `kStageClockGap` past the clock's right
-    // edge — matches the gap conventions used elsewhere in this row.
-    if (transportBar != nullptr)
+    // Stage selector lives in the TOP menu row, centered between the File /
+    // Settings menu and the system meters. The session status text fills the
+    // gap to its left. (stageW / stageBlockW were computed above with the
+    // transport metrics so the tabs follow the same compact breakpoint.)
     {
-        constexpr int kStageClockGap = 12;
-        const int clockRight = rowBounds.getX() + transportBar->getClockRightX();
-        stageX = juce::jmax (stageX, clockRight + kStageClockGap);
+        const int menuStageY   = menuRow.getY() + (menuRow.getHeight() - kStageBtnH) / 2;
+        const int menuLeftPad  = menuRow.getX() + 200 + 12;            // past File / Settings
+        const int menuRightPad = menuRow.getRight()
+                                   - (systemStatusBar != nullptr ? 300 + 12 : 0);
+        int stageX = menuRow.getX() + (menuRow.getWidth() - stageBlockW) / 2;
+        stageX = juce::jlimit (menuLeftPad,
+                                 juce::jmax (menuLeftPad, menuRightPad - stageBlockW),
+                                 stageX);
+        recordingStageBtn.setBounds (stageX,              menuStageY, stageW, kStageBtnH);
+        mixingStageBtn   .setBounds (stageX + stageW,     menuStageY, stageW, kStageBtnH);
+        masteringStageBtn.setBounds (stageX + 2 * stageW, menuStageY, stageW, kStageBtnH);
+        auxStageBtn      .setBounds (stageX + 3 * stageW, menuStageY, stageW, kStageBtnH);
+
+        // Help text in the gap between the menu bar and the tabs.
+        const int statusW = juce::jmax (0, stageX - 12 - menuLeftPad);
+        statusLabel.setBounds (menuLeftPad, menuRow.getY(), statusW, menuRow.getHeight());
+
+        // Parameter tooltips live in this same band; keep them off the tabs.
+        lookAndFeel.setTooltipPlacement (
+            juce::Rectangle<int> (menuLeftPad, menuRow.getY(),
+                                    juce::jmax (0, menuRightPad - menuLeftPad),
+                                    menuRow.getHeight()),
+            juce::Rectangle<int> (stageX, menuRow.getY(), stageBlockW, menuRow.getHeight()));
     }
 
-    recordingStageBtn.setBounds (stageX,                stageY, stageW, kStageBtnH);
-    mixingStageBtn   .setBounds (stageX + stageW,       stageY, stageW, kStageBtnH);
-    masteringStageBtn.setBounds (stageX + 2 * stageW,   stageY, stageW, kStageBtnH);
-    auxStageBtn      .setBounds (stageX + 3 * stageW,   stageY, stageW, kStageBtnH);
-    // Z-order is correct by construction: transportBar is added BEFORE
-    // the stage tabs + bank buttons in the ctor, so the overlays sit on
-    // top of the transport bar's painted background naturally.
-
-    // Rebuild bank-button row to match the current numBanks. Buttons
-    // sit inline immediately right of the centered stage block.
+    // Bank buttons centered in the TRANSPORT row (the stage selector vacated it),
+    // clamped past the clock so they never overlap it.
     syncBankButtons (needsBanking ? numBanks : 0);
-    int lastBankRight = stageX + stageBlockW;   // fallback when no banks
     if (needsBanking && consoleView != nullptr)
     {
+        const int bankClusterW = numBanks * kBankBtnW + (numBanks - 1) * kBankBtnGap;
+        int bankX = rowBounds.getX() + (rowBounds.getWidth() - bankClusterW) / 2;
+        if (transportBar != nullptr)
+        {
+            const int clockRight = rowBounds.getX() + transportBar->getClockRightX();
+            bankX = juce::jmax (bankX, clockRight + 12);
+        }
         const int bankY = rowBounds.getY() + (rowBounds.getHeight() - kBankBtnH) / 2;
-        int bankX = stageX + stageBlockW + kStageToBankGap;
         const int activeBank = consoleView->getBank();
         for (int i = 0; i < (int) bankButtons.size(); ++i)
         {
@@ -1421,26 +1437,20 @@ void MainComponent::resized()
             btn->setToggleState (i == activeBank, juce::dontSendNotification);
             bankX += kBankBtnW + kBankBtnGap;
         }
-        lastBankRight = bankX - kBankBtnGap;
     }
 
-    // SNAP + zoom cluster pinned in the gap between the rightmost bank
-    // tab and the tuner button (transport bar right edge - kBtnDia(36)
-    // - right padding). Hidden when there's no TapeStrip context (e.g.
-    // user in AUX/Mastering fullscreen views — strip controls don't
-    // apply there).
+    // SNAP + zoom (- / + / Fit) + Chase cluster. These only act on the
+    // timeline, so they live in a dedicated thin toolbar row directly above
+    // the tape strip (carved in the tapeStrip block below), NOT the transport
+    // row. Shown only with the timeline open and not in a fullscreen stage
+    // (AUX/Mastering), where they have no subject.
     constexpr int kHdrZoomBtnW = 30;
     constexpr int kHdrFitW     = 36;
     constexpr int kHdrSnapW    = 48;
     constexpr int kHdrSnapResW = 78;
+    constexpr int kHdrChaseW   = 56;
     constexpr int kHdrBtnGap   = 4;
     constexpr int kHdrBtnH     = 24;
-    constexpr int kHdrClusterW = kHdrSnapW + kHdrSnapResW + kHdrZoomBtnW * 2 + kHdrFitW
-                               + kHdrBtnGap * 4;
-    // Only show when TapeStrip is actually expanded — when it's
-    // collapsed or the user is in a fullscreen stage (AUX/Mastering),
-    // the zoom buttons have no on-screen subject so they don't belong in
-    // the header. (Snap moved onto the edit-tools strip above the timeline.)
     const bool hdrClusterVisible = ! inFullscreenView
                                   && tapeStrip != nullptr
                                   && tapeStripExpanded;
@@ -1449,27 +1459,7 @@ void MainComponent::resized()
     hdrZoomFitBtn.setVisible (hdrClusterVisible);
     hdrSnapBtn   .setVisible (hdrClusterVisible);
     hdrSnapResBtn.setVisible (hdrClusterVisible);
-    if (hdrClusterVisible)
-    {
-        // Real tuner X (parent-local on transportBar = parent-local on
-        // our row, since transportBar.setBounds(rowBounds) puts them
-        // in the same coord space). The previous heuristic
-        // (rowBounds.getRight() - 56) was ~320 px off — tuner sits
-        // BEFORE the right-anchored BPM / tap / time-sig / tape cluster.
-        const int tunerLeftInBar = transportBar != nullptr ? transportBar->getTunerLeftX() : rowBounds.getWidth() - 56;
-        const int tunerLeft = rowBounds.getX() + tunerLeftInBar;
-        const int leftEdge  = lastBankRight + 16;
-        const int rightEdge = tunerLeft - 16;
-        const int gapW      = juce::jmax (0, rightEdge - leftEdge);
-        const int clusterX  = leftEdge + juce::jmax (0, (gapW - kHdrClusterW) / 2);
-        const int clusterY  = rowBounds.getY() + (rowBounds.getHeight() - kHdrBtnH) / 2;
-        int x = clusterX;
-        hdrSnapBtn   .setBounds (x, clusterY, kHdrSnapW,    kHdrBtnH); x += kHdrSnapW    + kHdrBtnGap;
-        hdrSnapResBtn.setBounds (x, clusterY, kHdrSnapResW, kHdrBtnH); x += kHdrSnapResW + kHdrBtnGap;
-        hdrZoomOutBtn.setBounds (x, clusterY, kHdrZoomBtnW, kHdrBtnH); x += kHdrZoomBtnW + kHdrBtnGap;
-        hdrZoomInBtn .setBounds (x, clusterY, kHdrZoomBtnW, kHdrBtnH); x += kHdrZoomBtnW + kHdrBtnGap;
-        hdrZoomFitBtn.setBounds (x, clusterY, kHdrFitW,    kHdrBtnH);
-    }
+    hdrChaseBtn  .setVisible (hdrClusterVisible);
 
     area.removeFromTop (4);
 
@@ -1490,6 +1480,23 @@ void MainComponent::resized()
                     ConsoleView::rangeForBankAtWidth (bank, area.getWidth());
                 tapeStrip->setConsoleVisibleRange (first1 - 1, last1 - first1 + 1);
             }
+            // Dedicated timeline-toolbar row directly above the tape strip.
+            // Left-aligned [Snap | res | - | + | Fit | Chase]. Its own row, so
+            // no overlapping sibling and no toFront needed.
+            if (hdrClusterVisible)
+            {
+                constexpr int kTimelineToolbarH = 28;
+                const auto bar = area.removeFromTop (kTimelineToolbarH);
+                int x = bar.getX();
+                const int cy = bar.getY() + (bar.getHeight() - kHdrBtnH) / 2;
+                hdrSnapBtn   .setBounds (x, cy, kHdrSnapW,    kHdrBtnH); x += kHdrSnapW    + kHdrBtnGap;
+                hdrSnapResBtn.setBounds (x, cy, kHdrSnapResW, kHdrBtnH); x += kHdrSnapResW + kHdrBtnGap;
+                hdrZoomOutBtn.setBounds (x, cy, kHdrZoomBtnW, kHdrBtnH); x += kHdrZoomBtnW + kHdrBtnGap;
+                hdrZoomInBtn .setBounds (x, cy, kHdrZoomBtnW, kHdrBtnH); x += kHdrZoomBtnW + kHdrBtnGap;
+                hdrZoomFitBtn.setBounds (x, cy, kHdrFitW,     kHdrBtnH); x += kHdrFitW     + kHdrBtnGap;
+                hdrChaseBtn  .setBounds (x, cy, kHdrChaseW,   kHdrBtnH);
+            }
+
             // Cap the strip at ~half the available height so vertical
             // zoom (taller rows) can't swallow the console - past the cap
             // the rows scroll inside the strip. Console keeps a usable
@@ -1497,6 +1504,7 @@ void MainComponent::resized()
             const int wanted = tapeStrip->naturalHeight();
             const int cap    = juce::jmax (120, area.getHeight() / 2);
             tapeStrip->setBounds (area.removeFromTop (juce::jmin (wanted, cap)));
+
             area.removeFromTop (4);
         }
 
@@ -1723,20 +1731,25 @@ void MainComponent::doMixdown()
                                                    engine.getDeviceManager(), target);
     panel->setSize (520, 200);
 
-    // Hand off to Mastering once the bounce finishes successfully. The
-    // dialog fires this on its message-thread "Close" path, well after the
-    // worker has restored engine state, so the stage flip is safe.
+    // Close the modal, then hand off to Mastering once the bounce finishes
+    // successfully. The handoff is deferred so the heavy stage swap does not
+    // run re-entrantly from inside the dialog's close-button callback.
     juce::Component::SafePointer<MainComponent> safeThis (this);
+    panel->onRequestClose = [safeThis] { if (safeThis != nullptr) safeThis->mixdownModal.close(); };
     panel->onSuccessfulFinish = [safeThis] (juce::File rendered)
     {
-        if (safeThis == nullptr) return;
-        safeThis->mixdownModal.close();
-        safeThis->switchToStage (AudioEngine::Stage::Mastering);
-        if (safeThis->masteringView != nullptr)
-            safeThis->masteringView->loadFile (rendered);
+        juce::MessageManager::callAsync ([safeThis, rendered]
+        {
+            if (safeThis == nullptr) return;
+            safeThis->switchToStage (AudioEngine::Stage::Mastering);
+            if (safeThis->masteringView != nullptr)
+                safeThis->masteringView->loadFile (rendered);
+        });
     };
 
-    mixdownModal.show (*this, std::move (panel));
+    // A render in progress must not be dismissed by a stray click / Escape -
+    // only the dialog's own Cancel / Close buttons drive teardown.
+    mixdownModal.show (*this, std::move (panel), {}, false, false);
 }
 
 void MainComponent::launchStartupDialog()
@@ -2827,7 +2840,9 @@ void MainComponent::openBounceDialog()
                                                        engine.getDeviceManager(), outFile,
                                                        BounceEngine::Mode::MasterMix, fmt);
         panel->setSize (520, 200);
-        bounceModal.show (*this, std::move (panel));
+        juce::Component::SafePointer<MainComponent> safeThis (this);
+        panel->onRequestClose = [safeThis] { if (safeThis != nullptr) safeThis->bounceModal.close(); };
+        bounceModal.show (*this, std::move (panel), {}, false, false);
     });
 }
 
@@ -2882,7 +2897,9 @@ void MainComponent::openBounceStemsDialog()
                                                            engine.getDeviceManager(), outFile,
                                                            BounceEngine::Mode::Stems);
             panel->setSize (520, 200);
-            bounceModal.show (*this, std::move (panel));
+            juce::Component::SafePointer<MainComponent> safeThis (this);
+            panel->onRequestClose = [safeThis] { if (safeThis != nullptr) safeThis->bounceModal.close(); };
+            bounceModal.show (*this, std::move (panel), {}, false, false);
         };
 
         if (conflicts.isEmpty())

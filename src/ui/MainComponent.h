@@ -226,6 +226,9 @@ private:
     // region / marker / loop / tempo drag on.
     juce::TextButton hdrSnapBtn    { "Snap" };
     juce::TextButton hdrSnapResBtn { {}     };
+    // Chase: scroll the tape strip to keep the playhead in view during
+    // playback. Live toggle; its launch default comes from AppConfig.
+    juce::TextButton hdrChaseBtn   { "Chase" };
     void showSnapResolutionMenu();
     void refreshSnapUi();
 

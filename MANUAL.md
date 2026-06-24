@@ -144,8 +144,8 @@ This chapter is a visual reference. Every numbered callout on the figures below 
 | #   | Name              | Description                                                                                                                       |
 | --- | ----------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | 1   | Menu bar          | `File` and `Settings` menus only. No tabs, no hidden submenus.                                                                    |
-| 2   | Stage selector    | Four buttons: **RECORDING**, **MIXING**, **MASTERING**, **AUX** (keys 1–4). Picks which view fills the console area.                  |
-| 3   | Bank selector     | `1-8`, `9-16`, `17-24`. Only visible when the window is too narrow to show all 24 channel strips at once.                         |
+| 2   | Stage selector    | Four buttons: **RECORDING**, **MIXING**, **MASTERING**, **AUX** (Cmd/Ctrl+1 to 4). Picks which view fills the console area.            |
+| 3   | Bank selector     | The visible channel bank (e.g. `1-6`, `7-12`, ...), switched with the plain number keys 1 to 4. Only visible when the window is too narrow to show all channel strips at once. |
 | 4   | Transport bar     | Play, record, loop, punch, BPM, time signature, clock, tuner. See the next figure for the inventory.                              |
 | 5   | Tape strip toggle | `▾ TIMELINE` / `▴ TAPE`. Collapses or expands the timeline view below the bar.                                                     |
 | 6   | Console view      | Holds 24 channel strips, 4 buses, and the master strip. Replaced by the aux lane or mastering chain when those stages are active. |
@@ -172,9 +172,9 @@ This chapter is a visual reference. Every numbered callout on the figures below 
 | 14  | Clock display    | Bars.Beats.Ticks or mm:ss.mmm; right-click to flip.                              |
 | 15  | Tuner            | Opens the chromatic tuner against the selected input.                            |
 | 16  | TIMELINE / TAPE   | Same as the tape strip toggle below the bar.                                     |
-| 17  | − / + / Fit      | Timeline zoom out / in / fit-to-window (shown in the header when the timeline is expanded). |
+| 17  | − / + / Fit      | Timeline zoom out / in / fit-to-window (in the timeline toolbar above the tape strip, shown when the timeline is expanded). |
 
-In compact mode (window narrower than 1850 px) labels shorten; `SNAP` becomes `S`, `TIMELINE` becomes `▾`, and the time-format toggle hides — right-click the clock display to flip format instead.
+In compact mode (window narrower than 1850 px) labels shorten: `TIMELINE` becomes `▾` and the time-format toggle hides; right-click the clock display to flip format instead.
 
 ## The channel strip — MIXING stage
 
@@ -388,11 +388,11 @@ Windows SmartScreen treats every new MSI hash as untrusted on first download; re
 
 ### Verifying your download
 
-Every release ships with a `SHA256SUMS.{linux,macos,windows}` file. To verify:
+Every release ships a `SHA256SUMS` file per platform. Linux is split by architecture: `SHA256SUMS.linux-x86_64` (PC) and `SHA256SUMS.linux-aarch64` (64-bit Raspberry Pi), alongside `SHA256SUMS.macos` and `SHA256SUMS.windows`. To verify:
 
 ```bash
 # Linux + macOS
-shasum -a 256 -c SHA256SUMS.linux         # or .macos
+shasum -a 256 -c SHA256SUMS.linux-x86_64    # or -aarch64 (Raspberry Pi), or SHA256SUMS.macos
 ```
 
 ```pwsh
@@ -452,6 +452,7 @@ A single button opens the **MIDI Bindings** panel, which lists every CC-to-contr
 
 - **UI scale**: a global zoom factor for the entire interface. Restart Dusk Studio after changing this for best results.
 - **Expand tape strip by default**: show the tape strip on every session open.
+- **Follow playhead by default**: start the timeline and the audio / MIDI editors with Chase engaged, so the view scrolls to keep the playhead in sight during playback. Per-machine; takes effect on next launch.
 - **Scan plugins on startup**: re-run the plugin scanner every time Dusk Studio launches. Off by default; large plugin collections take 10–30 seconds to scan.
 
 ### Advanced
@@ -476,7 +477,7 @@ The window is structured as a stack of horizontal bands.
 ├───────────────────────────────────────────────────────┤
 │  1-8   9-16                                           │  Bank selector
 ├───────────────────────────────────────────────────────┤
-│ ◀◀  ▶  ▶▶  ●  ⟳  ◉   CLK ♩=120 4/4 00:01:23  SNAP ⊕⊖│  Transport bar
+│ ◀◀  ▶  ▶▶  ●  ⟳  ◉   CLK ♩=120 4/4 00:01:23         │  Transport bar
 ├───────────────────────────────────────────────────────┤
 │  ▾ TIMELINE                                            │  Tape strip toggle
 ├───────────────────────────────────────────────────────┤
@@ -499,7 +500,7 @@ Only one stage is visible at a time, but the same engine drives all four. Switch
 - **MASTERING** swaps the console view for the mastering chain, including a file picker for loading a finished mix.
 - **AUX** swaps the console view for the four aux return lanes, with a full-width view of each lane's plugin chain.
 
-Press **1 / 2 / 3 / 4** to jump straight to RECORDING / MIXING / MASTERING / AUX. The bank selector has its own keys — **Cmd/Ctrl+1 / 2 / 3** — so a plain digit changes stage and a modified digit changes bank. Hovering any tab or bank button shows its shortcut, and **?** opens a full keyboard-shortcut list (also under **Settings → Keyboard Shortcuts**).
+Press **Cmd/Ctrl+1 / 2 / 3 / 4** to jump straight to RECORDING / MIXING / MASTERING / AUX. The channel banks have the plain number keys **1 / 2 / 3 / 4**, so a modified digit changes stage and a plain digit changes bank. Hovering any tab or bank button shows its shortcut, and **?** opens a full keyboard-shortcut list (also under **Settings → Keyboard Shortcuts**).
 
 Switching into or out of MASTERING force-stops the transport. The mix engine and the mastering engine cannot run at the same time.
 
@@ -524,12 +525,13 @@ From left to right:
 - **Tuner**. Opens a chromatic tuner that listens to the selected input.
 - **▾ TIMELINE / ▴ TAPE**. Collapses or expands the tape strip below the console.
 
-On the right end of the transport bar:
+When the timeline is expanded, a toolbar row sits directly above the tape strip:
 
-- **Snap**. Global grid snap toggle in the header (with a resolution button beside it). When on, region drags, trims, pastes, marker / loop / punch / tempo moves snap to the chosen grid resolution.
+- **Snap**. Global grid snap toggle, with a resolution button beside it. When on, region drags, trims, pastes, marker / loop / punch / tempo moves snap to the chosen grid resolution.
 - **−** / **+** / **Fit**. Timeline zoom out, in, and fit-to-window.
+- **Chase**. When on, the timeline scrolls during playback to keep the playhead in view. Its launch default is set by **Follow playhead by default** in Settings.
 
-In compact mode (window narrower than 1850 pixels), labels shorten: `SNAP` becomes `S`, `TIMELINE` becomes `▾`, and the time-format toggle hides — right-click the clock display to flip format instead.
+In compact mode (window narrower than 1850 pixels), `TIMELINE` becomes `▾` and the time-format toggle hides; right-click the clock display to flip format instead.
 
 \newpage
 
@@ -1773,6 +1775,13 @@ Shortcuts use **Cmd** on macOS and **Ctrl** on Linux and Windows unless noted.
 | **A**    | Toggle ARM on selected track  |
 | **S**    | Toggle SOLO on selected track |
 | **X**    | Toggle MUTE on selected track |
+
+## Stages & banks
+
+| Shortcut             | Action                                  |
+| -------------------- | --------------------------------------- |
+| **Cmd+1 … Cmd+4**    | Recording / Mixing / Mastering / Aux    |
+| **1 … 4**            | Select channel bank 1 to 4              |
 
 ## Timeline
 

@@ -1,4 +1,5 @@
 #include "PianoRollComponent.h"
+#include "AppConfig.h"
 #include "DuskContextMenu.h"
 #include "EditCursors.h"
 #include "EditModeToolbar.h"
@@ -425,9 +426,11 @@ PianoRollComponent::PianoRollComponent (Session& s, AudioEngine& e, int t, int r
     toggleCcButton.setTooltip ("Show / hide CC lane");
     toggleCcButton.onClick = [this] { toggleCcLane(); };
 
-    // Chase toggle - auto-scroll the grid to follow the transport
-    // playhead when it leaves the visible window. Off by default.
+    // Chase toggle - auto-scroll the grid to follow the transport playhead
+    // when it leaves the visible window. Initial state follows the per-machine
+    // Follow-playhead setting.
     chaseToggle.setClickingTogglesState (true);
+    chaseToggle.setToggleState (appconfig::getFollowPlayheadDefault(), juce::dontSendNotification);
     chaseToggle.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff222226));
     chaseToggle.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff406030));
     chaseToggle.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xff909094));
@@ -1038,30 +1041,44 @@ void PianoRollComponent::paintBeatRuler (juce::Graphics& g, juce::Rectangle<int>
     if (mode == TimeDisplayMode::Bars)
     {
         const float pxPerBeat = (float) ticksPerBeat * pixelsPerTick;
-        const bool showSubBeats = pxPerBeat >= 40.0f;
+        const bool showBeatTicks = pxPerBeat >= 9.0f;   // beat tick marks
+        const bool showSubBeats  = pxPerBeat >= 40.0f;  // beat-number labels
+        const int  beatTop = area.getBottom() - (int) (area.getHeight() * 0.45f);
         for (int bar = 0; bar <= totalBars; ++bar)
         {
-            const int bx = xForTick ((juce::int64) bar * ticksPerBar);
+            const juce::int64 barTick = (juce::int64) bar * ticksPerBar;
+            const int bx = xForTick (barTick);
             if (bx >= kKeyboardWidth && bx <= area.getRight())
             {
+                g.setColour (kBarLine);
+                g.drawVerticalLine (bx, (float) area.getY(), (float) area.getBottom());
+                g.setColour (kHeaderText);
+                g.setFont (juce::Font (juce::FontOptions (12.5f, juce::Font::bold)));
                 g.drawText (juce::String (bar + 1), bx + 3, area.getY(),
                              48, area.getHeight(), juce::Justification::centredLeft, false);
+            }
+            if (showBeatTicks)
+            {
+                g.setColour (kBeatLine.withAlpha (0.7f));
+                for (int beat = 1; beat < beatsPerBar; ++beat)
+                {
+                    const int bbx = xForTick (barTick + (juce::int64) beat * ticksPerBeat);
+                    if (bbx < kKeyboardWidth || bbx > area.getRight()) continue;
+                    g.drawVerticalLine (bbx, (float) beatTop, (float) area.getBottom());
+                }
             }
             if (! showSubBeats) continue;
             g.setFont (juce::Font (juce::FontOptions (10.5f, juce::Font::plain)));
             g.setColour (kHeaderText.withAlpha (0.65f));
             for (int beat = 1; beat < beatsPerBar; ++beat)
             {
-                const int bbx = xForTick ((juce::int64) bar * ticksPerBar
-                                              + (juce::int64) beat * ticksPerBeat);
+                const int bbx = xForTick (barTick + (juce::int64) beat * ticksPerBeat);
                 if (bbx < kKeyboardWidth || bbx > area.getRight()) continue;
                 g.drawText (juce::String (bar + 1) + "." + juce::String (beat + 1),
                              bbx + 3, area.getY(),
                              48, area.getHeight(),
                              juce::Justification::centredLeft, false);
             }
-            g.setFont (juce::Font (juce::FontOptions (12.5f, juce::Font::bold)));
-            g.setColour (kHeaderText);
         }
     }
     else

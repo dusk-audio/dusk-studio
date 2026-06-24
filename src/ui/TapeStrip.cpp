@@ -860,6 +860,29 @@ void TapeStrip::updatePlayheadBand()
     const auto now = engine.getTransport().getPlayhead();
     if (now == lastPlayhead) return;
 
+    // Chase: when on and playing, if the playhead has run off the tracks column
+    // (only possible when zoomed in past fit-to-window), re-anchor the scroll so
+    // it lands at the left quarter, then full-repaint - the whole strip shifted,
+    // so the thin-band optimisation below would be wrong.
+    if (chaseEnabled && engine.getTransport().isPlaying())
+    {
+        const double sr = engine.getCurrentSampleRate();
+        const double px = pixelsPerSecond();
+        const auto  col = tracksColumnBounds();
+        if (sr > 0.0 && px > 0.0 && col.getWidth() > 0)
+        {
+            const int phX = xForSample (now);
+            if (phX < col.getX() || phX > col.getRight())
+            {
+                const juce::int64 viewSamples = (juce::int64) std::llround ((double) col.getWidth() / px * sr);
+                scrollSamples = juce::jmax<juce::int64> (0, now - viewSamples / 4);
+                lastPlayhead  = now;
+                repaint();
+                return;
+            }
+        }
+    }
+
     const int oldX = xForSample (lastPlayhead < 0 ? 0 : lastPlayhead);
     const int newX = xForSample (now);
     lastPlayhead = now;

@@ -122,6 +122,7 @@ private:
     juce::Label generalSectionLabel       { {}, "General" };
     juce::Label advancedSectionLabel      { {}, "Advanced" };
     juce::ToggleButton tapeStripExpandedToggle { "Expand tape strip by default" };
+    juce::ToggleButton followPlayheadToggle    { "Follow playhead by default" };
     juce::Label        stopBehaviorLabel       { {}, "Playhead on Stop:" };
     juce::ComboBox     stopBehaviorCombo;
 

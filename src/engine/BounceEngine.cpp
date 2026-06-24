@@ -301,7 +301,7 @@ void BounceEngine::run()
     {
         succeeded = false;
         const juce::ScopedLock lock (lastErrorLock);
-        lastError = "Cancelled";
+        lastError = kCancelledError;
     }
 
     writer.reset();  // flush + close
@@ -522,7 +522,7 @@ bool BounceEngine::runStemsMode()
     if (cancelRequested.load (std::memory_order_relaxed))
     {
         const juce::ScopedLock lock (lastErrorLock);
-        lastError = "Cancelled";
+        lastError = kCancelledError;
         succeeded = false;
     }
     return succeeded;

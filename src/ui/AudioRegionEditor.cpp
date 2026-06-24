@@ -1,4 +1,5 @@
 #include "AudioRegionEditor.h"
+#include "AppConfig.h"
 #include "DuskAlerts.h"
 #include "DuskContextMenu.h"
 #include "EditCursors.h"
@@ -68,8 +69,9 @@ AudioRegionEditor::AudioRegionEditor (Session& s, AudioEngine& e, int t, int r)
 
     // Chase: when on AND transport is playing AND the playhead leaves the
     // visible window, scroll the view forward so the playhead stays in
-    // sight. Stateless toggle - off by default.
+    // sight. Initial state follows the per-machine Follow-playhead setting.
     chaseToggle.setClickingTogglesState (true);
+    chaseToggle.setToggleState (appconfig::getFollowPlayheadDefault(), juce::dontSendNotification);
     chaseToggle.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff222226));
     chaseToggle.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff406030));
     chaseToggle.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xff909094));
@@ -545,6 +547,7 @@ void AudioRegionEditor::paint (juce::Graphics& g)
 
     paintRuler         (g, rulerArea);
     paintWaveform      (g, waveArea);
+    paintBarGrid       (g, waveArea);
     paintFadeEnvelopes (g, waveArea);
     paintLoopPunchBrackets (g, rulerArea, waveArea);
 
@@ -725,23 +728,70 @@ void AudioRegionEditor::paintRuler (juce::Graphics& g, juce::Rectangle<int> area
 
         if (sr > 0.0)
         {
-            const auto startTick = session.samplesToTicks (anchorTimelineStart, sr);
-            const auto endTick   = session.samplesToTicks (anchorEndTimeline,   sr);
+            const juce::int64 ticksPerBeat = kMidiTicksPerQuarter;
+            // Limit bar/beat generation to the clipped (visible) span: during
+            // playback the repaint clip is just the playhead column, so walking
+            // every bar in a long zoomed-in track is wasted work. Pad the window
+            // so a bar line just off-screen whose number label spills into view
+            // still draws; the per-tick x-clipping below keeps visuals exact.
+            const auto clip     = area.getIntersection (g.getClipBounds());
+            const auto winStart = juce::jmax (anchorTimelineStart,
+                                              timelineSampleForX (clip.getX()     - 48, area));
+            const auto winEnd   = juce::jmin (anchorEndTimeline,
+                                              timelineSampleForX (clip.getRight() + 48, area));
+            const auto startTick = session.samplesToTicks (winStart, sr);
+            const auto endTick   = session.samplesToTicks (winEnd,   sr);
             const int firstBar = (int) (startTick / ticksPerBar);
             const int lastBar  = (int) (endTick   / ticksPerBar) + 1;
 
+            // Beat / sub-beat tick density follows the zoom: beats appear once a
+            // beat is wide enough to read, sub-beats once they are wider still.
+            const float bpm = session.tempoBpm.load (std::memory_order_relaxed);
+            const double pxPerBeat = bpm > 0.0f
+                ? (double) pixelsPerSample * (sr * 60.0 / (double) bpm) : 0.0;
+            const bool showBeats = pxPerBeat >= 9.0;
+            const int  subdiv    = pxPerBeat >= 80.0 ? 4 : (pxPerBeat >= 36.0 ? 2 : 1);
+            const int  beatTop   = area.getBottom() - (int) (area.getHeight() * 0.45);
+            const int  subTop    = area.getBottom() - (int) (area.getHeight() * 0.28);
+
+            const auto drawTick = [&] (juce::int64 tick, int top, juce::Colour c)
+            {
+                const auto timeline = session.ticksToSamples (tick, sr);
+                if (timeline < anchorTimelineStart || timeline > anchorEndTimeline) return;
+                const int x = xForTimelineSample (timeline, area);
+                if (x < area.getX() || x > area.getRight()) return;
+                g.setColour (c);
+                g.drawVerticalLine (x, (float) top, (float) area.getBottom());
+            };
+
             for (int bar = firstBar; bar <= lastBar; ++bar)
             {
-                const auto barTimeline = session.ticksToSamples ((juce::int64) bar * ticksPerBar, sr);
-                if (barTimeline < anchorTimelineStart || barTimeline > anchorEndTimeline) continue;
-                const int x = xForTimelineSample (barTimeline, area);
-                if (x < area.getX() || x > area.getRight()) continue;
-                g.setColour (kBarLine);
-                g.drawVerticalLine (x, (float) area.getY(), (float) area.getBottom());
-                g.setColour (kHeaderText);
-                g.drawText (juce::String (bar + 1),
-                             juce::Rectangle<int> (x + 3, area.getY(), 40, area.getHeight()),
-                             juce::Justification::centredLeft, false);
+                const juce::int64 barTick = (juce::int64) bar * ticksPerBar;
+                const auto barTimeline = session.ticksToSamples (barTick, sr);
+                if (barTimeline >= anchorTimelineStart && barTimeline <= anchorEndTimeline)
+                {
+                    const int x = xForTimelineSample (barTimeline, area);
+                    if (x >= area.getX() && x <= area.getRight())
+                    {
+                        g.setColour (kBarLine);
+                        g.drawVerticalLine (x, (float) area.getY(), (float) area.getBottom());
+                        g.setColour (kHeaderText);
+                        g.drawText (juce::String (bar + 1),
+                                     juce::Rectangle<int> (x + 3, area.getY(), 40, area.getHeight()),
+                                     juce::Justification::centredLeft, false);
+                    }
+                }
+                if (! showBeats) continue;
+                for (int beat = 0; beat < beatsPerBar; ++beat)
+                {
+                    if (beat > 0)
+                        drawTick (barTick + (juce::int64) beat * ticksPerBeat,
+                                   beatTop, kBarLine.withAlpha (0.55f));
+                    for (int s = 1; s < subdiv; ++s)
+                        drawTick (barTick + (juce::int64) beat * ticksPerBeat
+                                      + (juce::int64) s * ticksPerBeat / subdiv,
+                                   subTop, kBarLine.withAlpha (0.30f));
+                }
             }
         }
     }
@@ -774,6 +824,49 @@ void AudioRegionEditor::paintRuler (juce::Graphics& g, juce::Rectangle<int> area
             g.drawText (juce::String::formatted ("%d:%02d", mins, secs),
                          juce::Rectangle<int> (x + 3, area.getY(), 60, area.getHeight()),
                          juce::Justification::centredLeft, false);
+        }
+    }
+}
+
+void AudioRegionEditor::paintBarGrid (juce::Graphics& g, juce::Rectangle<int> area)
+{
+    // Faint bar / beat lines over the waveform so edits read against the grid.
+    // Bars-mode only; the time ruler has no musical grid to mirror.
+    const auto* r = region();
+    if (r == nullptr || r->lengthInSamples <= 0) return;
+    if ((TimeDisplayMode) session.timeDisplayMode.load (std::memory_order_relaxed)
+          != TimeDisplayMode::Bars) return;
+
+    const double sr = juce::jmax (1.0,
+        loadedFileSampleRate > 0.0 ? loadedFileSampleRate
+                                    : engine.getCurrentSampleRate());
+    const float bpm = session.tempoBpm.load (std::memory_order_relaxed);
+    if (bpm <= 0.0f) return;
+    const double pxPerBeat = (double) pixelsPerSample * (sr * 60.0 / (double) bpm);
+    if (pxPerBeat < 6.0) return;   // too dense to be anything but noise
+
+    const int beatsPerBar = juce::jmax (1, session.beatsPerBar.load (std::memory_order_relaxed));
+    const juce::int64 ticksPerBeat = kMidiTicksPerQuarter;
+    const juce::int64 ticksPerBar  = (juce::int64) beatsPerBar * ticksPerBeat;
+    const juce::int64 anchorEndTimeline = anchorTimelineStart + anchorTimelineLength;
+    const auto startTick = session.samplesToTicks (anchorTimelineStart, sr);
+    const auto endTick   = session.samplesToTicks (anchorEndTimeline,   sr);
+    const int firstBar = (int) (startTick / ticksPerBar);
+    const int lastBar  = (int) (endTick   / ticksPerBar) + 1;
+
+    juce::Graphics::ScopedSaveState saved (g);
+    g.reduceClipRegion (area);
+    for (int bar = firstBar; bar <= lastBar; ++bar)
+    {
+        const juce::int64 barTick = (juce::int64) bar * ticksPerBar;
+        for (int beat = 0; beat < beatsPerBar; ++beat)
+        {
+            const auto timeline = session.ticksToSamples (barTick + (juce::int64) beat * ticksPerBeat, sr);
+            if (timeline < anchorTimelineStart || timeline > anchorEndTimeline) continue;
+            const int x = xForTimelineSample (timeline, area);
+            if (x < area.getX() || x > area.getRight()) continue;
+            g.setColour (kBarLine.withAlpha (beat == 0 ? 0.28f : 0.12f));
+            g.drawVerticalLine (x, (float) area.getY(), (float) area.getBottom());
         }
     }
 }

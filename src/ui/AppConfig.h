@@ -37,6 +37,13 @@ void setScanPluginsOnStartup (bool scan);
 bool getTapeStripExpandedDefault();
 void setTapeStripExpandedDefault (bool expanded);
 
+// Follow the playhead by default on app launch: when true, the timeline
+// (and the audio / MIDI editors) start with Chase engaged so the view
+// scrolls to keep the playhead in sight during playback. Default false.
+// Persisted per-machine.
+bool getFollowPlayheadDefault();
+void setFollowPlayheadDefault (bool follow);
+
 // Tape-head behaviour on Stop. Mirrors the equivalent option in Pro Tools
 // (Operation > Transport > "Audio During Fast Forward / Rewind") and
 // Logic (Preferences > Recording > "Stop returns to playback start").

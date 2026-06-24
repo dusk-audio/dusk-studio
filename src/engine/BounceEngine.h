@@ -36,6 +36,11 @@ public:
     // a clear error). The caller picks the matching file extension.
     enum class Format { Wav, Mp3 };
 
+    // lastError value set when a render is cancelled. Shared so the dialog can
+    // tell a user cancel from a real failure without a string literal that
+    // silently drifts out of sync with run().
+    static constexpr const char* kCancelledError = "Cancelled";
+
     // <dir>/<base>_<NN>_<safe>.wav. Empty / default ("5") track names
     // fall back to "track" so the user doesn't open 24 files called
     // mix_05_5.wav. Inline so the unit test links without dragging in

@@ -24,7 +24,11 @@ concurrency:
 
 jobs:
   tests:
-    name: Catch2 tests (MSVC x64 Release, Windows 2022)
+    # Runner-agnostic name on purpose: the required-status-check context in the
+    # branch ruleset matches this string, so it must NOT carry the runner image
+    # version. Re-pinning runs-on below (when an image is retired) then never
+    # renames the check and silently breaks the gate.
+    name: Catch2 tests (MSVC x64 Release, Windows)
     # Pinned to windows-2022: windows-latest migrated to windows-2025, whose
     # image no longer resolves the "Visual Studio 17 2022" CMake generator.
     runs-on: windows-2022
