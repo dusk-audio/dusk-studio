@@ -45,7 +45,8 @@ public:
                 { "A", "Arm" }, { "S", "Solo" }, { "X", "Mute" } } },
             { "Tools & view", {
                 { "G", "Grab / move edit mode" }, { "C", "Metronome on / off" },
-                { "K", "Virtual MIDI keyboard" }, { mod ('\\'), "Show / hide timeline" },
+                { "K", "Virtual MIDI keyboard" }, { "T", "Show / hide timeline" },
+                { mod ('E'), "Split region at playhead / cursor" },
                 { "F11", "Fullscreen" }, { alt + "T", "Cycle take (Shift = back)" },
                 { "?", "This shortcut list" } } },
             { "Zoom", {

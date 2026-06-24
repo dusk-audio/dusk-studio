@@ -844,11 +844,12 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         return true;
     }
 
-    // ── TIMELINE toggle: Cmd/Ctrl + \ shows / hides the tape strip.
-    // Mirrors the TransportBar's TIMELINE button so the user can flip
-    // the arrangement view without mousing. Backslash is otherwise
-    // unbound; \\ is what Reaper / Pro Tools use for similar toggles.
-    if (cmd && ! shift && key.getTextCharacter() == '\\')
+    // ── TIMELINE toggle: T (or Cmd/Ctrl + \) shows / hides the tape strip.
+    // Mirrors the TransportBar's TIMELINE button so the user can flip the
+    // arrangement view without mousing. Plain T is the mnemonic ("Timeline");
+    // \\ is the Reaper / Pro Tools-style alias. (Alt+T is take cycling below.)
+    if ((code == 'T' && noMods)
+        || (cmd && ! shift && key.getTextCharacter() == '\\'))
     {
         setTimelineVisible (! tapeStripExpanded);
         return true;
@@ -923,13 +924,11 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         {
             if (tapeStrip->deleteSelectedRegion()) return true;
         }
-        // 'T' (no modifiers) splits the selected region at the
-        // playhead - razor-tool equivalent without needing a tool
-        // mode. No-op when no region is selected or the playhead is
-        // outside it. Mnemonic: "Trim / spliT". 'B' (Reaper-style
-        // razor) is taken by Bounce; Cmd+T (Logic-style) was rejected
-        // for consistency with Dusk Studio's other no-mod transport hotkeys.
-        if (code == 'T' && noMods)
+        // Cmd/Ctrl+E splits the selected region at the playhead - razor
+        // without a tool mode. Pro Tools / Ableton convention, uniform with
+        // the audio + MIDI editors. No-op when nothing is selected or the
+        // playhead is outside the region. (Plain T is the timeline toggle.)
+        if (code == 'E' && cmd && ! shift)
         {
             if (tapeStrip->splitSelectedAtPlayhead()) return true;
         }

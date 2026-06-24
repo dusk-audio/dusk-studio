@@ -3114,6 +3114,13 @@ bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
             repaint();
             return true;
         }
+        // Split at the edit cursor: Cmd/Ctrl+E, uniform with the tape strip +
+        // audio editor.
+        if (cmdOrCtrl && (k.getKeyCode() == 'E' || k.getKeyCode() == 'e'))
+        {
+            splitSelectedAtCursor();
+            return true;
+        }
         // Loop / punch points against the edit cursor. Bare [ / ] set the loop
         // in/out; Shift+[ / Shift+] set the punch in/out; bare P toggles punch.
         // Mirrors the audio region editor, but the roll works in ticks so the
