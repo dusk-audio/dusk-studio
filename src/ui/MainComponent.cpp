@@ -1376,12 +1376,7 @@ void MainComponent::resized()
     // (now centered) transport cluster at the OS minimum window width.
     const int stageW = transportCompact ? 92 : 110;
     const int stageBlockW = stageW * 4;
-    // Compact the banks to the short "1-6" pills (not "BANK 1 (1-6)") when the
-    // window is narrow OR the tape strip is open - the latter frees room for
-    // the timeline toolbar that sits to the banks' right.
-    const bool banksCompact = transportCompact
-                            || (tapeStripExpanded && ! inFullscreenView);
-    const int  kBankBtnW   = banksCompact ? 70 : 100;
+    const int  kBankBtnW   = transportCompact ? 70 : 100;
     constexpr int kBankBtnGap = 6;
     constexpr int kBankBtnH  = 26;
 
@@ -1389,6 +1384,9 @@ void MainComponent::resized()
     // Settings menu and the system meters. The session status text fills the
     // gap to its left. (stageW / stageBlockW were computed above with the
     // transport metrics so the tabs follow the same compact breakpoint.)
+    // stageCentreX is reused below to centre the bank / toolbar group directly
+    // under the stage selector.
+    int stageCentreX = rowBounds.getCentreX();
     {
         const int menuStageY   = menuRow.getY() + (menuRow.getHeight() - kStageBtnH) / 2;
         const int menuLeftPad  = menuRow.getX() + 200 + 12;            // past File / Settings
@@ -1398,6 +1396,7 @@ void MainComponent::resized()
         stageX = juce::jlimit (menuLeftPad,
                                  juce::jmax (menuLeftPad, menuRightPad - stageBlockW),
                                  stageX);
+        stageCentreX = stageX + stageBlockW / 2;
         recordingStageBtn.setBounds (stageX,              menuStageY, stageW, kStageBtnH);
         mixingStageBtn   .setBounds (stageX + stageW,     menuStageY, stageW, kStageBtnH);
         masteringStageBtn.setBounds (stageX + 2 * stageW, menuStageY, stageW, kStageBtnH);
@@ -1415,9 +1414,10 @@ void MainComponent::resized()
             juce::Rectangle<int> (stageX, menuRow.getY(), stageBlockW, menuRow.getHeight()));
     }
 
-    // Transport-row overlays: bank buttons (centered, clamped past the clock)
-    // and, when the tape strip is open, the timeline toolbar immediately to
-    // their right. The stage selector vacated this row (now in the menu row).
+    // Transport-row overlays: the bank buttons and, when the tape strip is
+    // open, the timeline toolbar to their right - centred together as one group
+    // directly under the stage selector above. The stage selector vacated this
+    // row (it lives in the menu row now).
     constexpr int kHdrZoomBtnW = 30;
     constexpr int kHdrFitW     = 36;
     constexpr int kHdrSnapW    = 48;
@@ -1425,28 +1425,49 @@ void MainComponent::resized()
     constexpr int kHdrChaseW   = 56;
     constexpr int kHdrBtnGap   = 4;
     constexpr int kHdrBtnH     = 24;
+    const int kHdrClusterW = kHdrSnapW + kHdrSnapResW + kHdrZoomBtnW * 2
+                           + kHdrFitW + kHdrChaseW + kHdrBtnGap * 5;
+    constexpr int kBankToolbarGap = 16;
 
     syncBankButtons (needsBanking ? numBanks : 0);
     const int bankY = rowBounds.getY() + (rowBounds.getHeight() - kBankBtnH) / 2;
-    // Where the timeline toolbar starts: just past the banks, or past the clock
-    // when no banks are shown.
-    int banksRightX = rowBounds.getX()
-                    + (transportBar != nullptr ? transportBar->getClockRightX() : 0) + 12;
+    const int bankClusterW = needsBanking
+                           ? (numBanks * kBankBtnW + (numBanks - 1) * kBankBtnGap) : 0;
+
+    const int clockRight = rowBounds.getX()
+                         + (transportBar != nullptr ? transportBar->getClockRightX() : 0);
+    const int tunerLeft  = rowBounds.getX()
+                         + (transportBar != nullptr ? transportBar->getTunerLeftX()
+                                                      : rowBounds.getWidth());
+
+    // The toolbar joins the group only with the tape strip open AND when the
+    // combined group still fits between the clock and the BPM / tuner cluster.
+    const bool wantToolbar = ! inFullscreenView && tapeStrip != nullptr && tapeStripExpanded;
+    int  groupW = bankClusterW;
+    bool toolbarVisible = false;
+    if (wantToolbar)
+    {
+        const int combinedW = bankClusterW + (needsBanking ? kBankToolbarGap : 0) + kHdrClusterW;
+        const int gX = juce::jmax (clockRight + 12, stageCentreX - combinedW / 2);
+        if (gX + combinedW <= tunerLeft - 12)
+        {
+            toolbarVisible = true;
+            groupW = combinedW;
+        }
+    }
+
+    // Centre the group under the stage selector, clamped past the clock.
+    const int groupX = juce::jmax (clockRight + 12, stageCentreX - groupW / 2);
+
     if (needsBanking && consoleView != nullptr)
     {
-        const int bankClusterW = numBanks * kBankBtnW + (numBanks - 1) * kBankBtnGap;
-        int bankX = rowBounds.getX() + (rowBounds.getWidth() - bankClusterW) / 2;
-        if (transportBar != nullptr)
-        {
-            const int clockRight = rowBounds.getX() + transportBar->getClockRightX();
-            bankX = juce::jmax (bankX, clockRight + 12);
-        }
+        int bankX = groupX;
         const int activeBank = consoleView->getBank();
         for (int i = 0; i < (int) bankButtons.size(); ++i)
         {
             auto* btn = bankButtons[(size_t) i].get();
             const auto range = ConsoleView::rangeForBankAtWidth (i, consoleTargetWidth);
-            btn->setButtonText (banksCompact
+            btn->setButtonText (transportCompact
                                   ? (juce::String (range.first) + "-" + juce::String (range.second))
                                   : (juce::String ("BANK ") + juce::String (i + 1) + "  ("
                                        + juce::String (range.first) + "-"
@@ -1455,23 +1476,8 @@ void MainComponent::resized()
             btn->setToggleState (i == activeBank, juce::dontSendNotification);
             bankX += kBankBtnW + kBankBtnGap;
         }
-        banksRightX = bankX;
     }
 
-    // Timeline toolbar (Snap / res / - / + / Fit / Chase) only acts on the
-    // timeline, so it appears only when the tape strip is open - inline to the
-    // right of the banks, clamped left of the transport bar's BPM / tuner
-    // cluster. Hidden when there isn't room (no fallback row).
-    const int kHdrClusterW = kHdrSnapW + kHdrSnapResW + kHdrZoomBtnW * 2
-                           + kHdrFitW + kHdrChaseW + kHdrBtnGap * 5;
-    const int toolbarX = banksRightX + 8;
-    const int toolbarMaxRight = rowBounds.getX()
-                              + (transportBar != nullptr ? transportBar->getTunerLeftX()
-                                                          : rowBounds.getWidth()) - 12;
-    const bool toolbarVisible = ! inFullscreenView
-                              && tapeStrip != nullptr
-                              && tapeStripExpanded
-                              && (toolbarX + kHdrClusterW <= toolbarMaxRight);
     hdrZoomOutBtn.setVisible (toolbarVisible);
     hdrZoomInBtn .setVisible (toolbarVisible);
     hdrZoomFitBtn.setVisible (toolbarVisible);
@@ -1480,7 +1486,7 @@ void MainComponent::resized()
     hdrChaseBtn  .setVisible (toolbarVisible);
     if (toolbarVisible)
     {
-        int x = toolbarX;
+        int x = groupX + bankClusterW + (needsBanking ? kBankToolbarGap : 0);
         const int cy = rowBounds.getY() + (rowBounds.getHeight() - kHdrBtnH) / 2;
         hdrSnapBtn   .setBounds (x, cy, kHdrSnapW,    kHdrBtnH); x += kHdrSnapW    + kHdrBtnGap;
         hdrSnapResBtn.setBounds (x, cy, kHdrSnapResW, kHdrBtnH); x += kHdrSnapResW + kHdrBtnGap;
