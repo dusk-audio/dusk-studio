@@ -4,6 +4,16 @@
 
 namespace duskstudio
 {
+// Always-on console drive for the channel EQ. The BritishEQProcessor's
+// ConsoleSaturation is an ADAA polynomial waveshaper; this fixed amount sets
+// the large-format-console harmonic signature to the real hardware's bench
+// THD: E-series (Brown) ≈ 0.02 % THD (H2 ≈ -74 dB) at 0 VU (-18 dBFS), the
+// published SSL 4000E channel figure; G-series (Black) lands ~12 dB cleaner
+// (~0.005 %), matching the more refined G path. E vs G character is selected
+// automatically from the strip's Brown/Black mode. It aliases mildly at the
+// realtime 1× default but renders alias-free in the 4× offline bounce.
+constexpr float kConsoleSaturationDrive = 22.0f;  // 0..100, calibrated to 4000E THD
+
 void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFactor)
 {
     constexpr double rampSeconds = 0.020;
@@ -279,25 +289,34 @@ void ChannelStrip::updateEqParameters() noexcept
     // actually changed since last block. Skipping setParameters() when they
     // haven't avoids a full BritishEQProcessor coefficient recompute (8-14
     // biquads) on every silent block on every channel.
+    //
+    // The console saturation is the channel's always-on console floor, so the
+    // EQ processor runs every block regardless of the EQ bypass. When the EQ
+    // section is bypassed we leave the filter params at their flat value-init
+    // defaults (filters off, every band 0 dB) so only the saturation +
+    // transformer character is applied — the tone shaping is what bypasses.
     BritishEQProcessor::Parameters p {};
-    p.hpfEnabled = paramsRef->hpfEnabled.load (std::memory_order_relaxed);
-    p.hpfFreq    = paramsRef->hpfFreq.load    (std::memory_order_relaxed);
-    p.lpfEnabled = paramsRef->lpfEnabled.load (std::memory_order_relaxed);
-    p.lpfFreq    = paramsRef->lpfFreq.load    (std::memory_order_relaxed);
-    p.lfGain     = paramsRef->lfGainDb.load (std::memory_order_relaxed);
-    p.lfFreq     = paramsRef->lfFreq.load   (std::memory_order_relaxed);
-    p.lfBell     = false;
-    p.lmGain     = paramsRef->lmGainDb.load (std::memory_order_relaxed);
-    p.lmFreq     = paramsRef->lmFreq.load   (std::memory_order_relaxed);
-    p.lmQ        = paramsRef->lmQ.load      (std::memory_order_relaxed);
-    p.hmGain     = paramsRef->hmGainDb.load (std::memory_order_relaxed);
-    p.hmFreq     = paramsRef->hmFreq.load   (std::memory_order_relaxed);
-    p.hmQ        = paramsRef->hmQ.load      (std::memory_order_relaxed);
-    p.hfGain     = paramsRef->hfGainDb.load (std::memory_order_relaxed);
-    p.hfFreq     = paramsRef->hfFreq.load   (std::memory_order_relaxed);
-    p.hfBell     = false;
+    if (paramsRef->eqEnabled.load (std::memory_order_relaxed))
+    {
+        p.hpfEnabled = paramsRef->hpfEnabled.load (std::memory_order_relaxed);
+        p.hpfFreq    = paramsRef->hpfFreq.load    (std::memory_order_relaxed);
+        p.lpfEnabled = paramsRef->lpfEnabled.load (std::memory_order_relaxed);
+        p.lpfFreq    = paramsRef->lpfFreq.load    (std::memory_order_relaxed);
+        p.lfGain     = paramsRef->lfGainDb.load (std::memory_order_relaxed);
+        p.lfFreq     = paramsRef->lfFreq.load   (std::memory_order_relaxed);
+        p.lfBell     = false;
+        p.lmGain     = paramsRef->lmGainDb.load (std::memory_order_relaxed);
+        p.lmFreq     = paramsRef->lmFreq.load   (std::memory_order_relaxed);
+        p.lmQ        = paramsRef->lmQ.load      (std::memory_order_relaxed);
+        p.hmGain     = paramsRef->hmGainDb.load (std::memory_order_relaxed);
+        p.hmFreq     = paramsRef->hmFreq.load   (std::memory_order_relaxed);
+        p.hmQ        = paramsRef->hmQ.load      (std::memory_order_relaxed);
+        p.hfGain     = paramsRef->hfGainDb.load (std::memory_order_relaxed);
+        p.hfFreq     = paramsRef->hfFreq.load   (std::memory_order_relaxed);
+        p.hfBell     = false;
+    }
     p.isBlackMode = paramsRef->eqBlackMode.load (std::memory_order_relaxed);
-    p.saturation  = 0.0f;
+    p.saturation  = kConsoleSaturationDrive;
     p.inputGain   = 0.0f;
     p.outputGain  = 0.0f;
     if (std::memcmp (&p, &lastEqParams, sizeof (p)) != 0)
@@ -596,19 +615,19 @@ void ChannelStrip::processAndAccumulate (const float* inL,
     updateEqParameters();
     updateCompParameters();
 
-    // Hoist eqEnabled once per block (constant for the whole pass) so the
-    // four call-sites below all see the same value. On a false->true
-    // transition reset the EQ so stale filter history from before the
-    // bypass doesn't ring out as a transient burst when re-enabled.
+    // Hoist eqEnabled once per block. The EQ processor itself always runs (it
+    // carries the always-on console saturation); eqEnabled only flattens the
+    // tone-shaping filters (see updateEqParameters). On a false->true
+    // transition reset the EQ so stale filter history from before the bypass
+    // doesn't ring out as a transient burst when the filters re-engage.
     const bool eqEnabled = paramsRef->eqEnabled.load (std::memory_order_relaxed);
     if (eqEnabled && ! prevEqEnabled)
         eq.reset();
     prevEqEnabled = eqEnabled;
 
-    // Comp engaged this block. Both eqEnabled and compEnabled gate the
-    // oversampler: the per-strip OS exists only to band-limit EQ console
-    // saturation and comp saturation, so with neither stage active the up/down
-    // pass (and the comp processBlock) is pure waste and is skipped entirely.
+    // Comp engaged this block. The per-strip oversampler always runs now (it
+    // band-limits the always-on console saturation in eq.process); compEnabled
+    // additionally gates the comp processBlock inside the wrap.
     const bool compEnabled = paramsRef->compEnabled.load (std::memory_order_relaxed);
 
     // Source-pointer set used by the accumulation loop below. For mono,
@@ -706,12 +725,12 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             }
         };
 
-        if (oversamplerStages > 0 && oversamplerMono != nullptr && (eqEnabled || compEnabled))
+        if (oversamplerStages > 0 && oversamplerMono != nullptr)
         {
-            // Oversampled chain: upsample tempMono, run EQ + Comp on the
-            // upsampled view, then downsample back into tempMono. Donor
-            // saturation aliasing is suppressed by the half-band filters
-            // inside juce::dsp::Oversampling.
+            // Oversampled chain: the EQ (carrying the always-on console
+            // saturation) and, when engaged, the comp run on the upsampled view,
+            // then downsample back into tempMono. Donor saturation aliasing is
+            // suppressed by the half-band filters inside juce::dsp::Oversampling.
             const float* readPtrs[1]  = { tempMono.data() };
             float*       writePtrs[1] = { tempMono.data() };
             juce::dsp::AudioBlock<const float> nativeIn  (readPtrs,  1, (size_t) numSamples);
@@ -721,39 +740,22 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             const int upN = (int) upBlock.getNumSamples();
             float* upPtrs[1] = { upBlock.getChannelPointer (0) };
             juce::AudioBuffer<float> upBuf (upPtrs, 1, upN);
-            if (eqEnabled)
-                eq.process (upBuf);
+            eq.process (upBuf);
             if (compEnabled)
                 runComp (upPtrs[0], upN);
 
             oversamplerMono->processSamplesDown (nativeOut);
         }
-        else if (eqEnabled || compEnabled)
+        else
         {
-            // Native-rate path (factor == 1, or a single active stage that
-            // still wants processing without the OS round-trip).
-            if (eqEnabled)
-            {
-                float* monoChannel[1] = { tempMono.data() };
-                juce::AudioBuffer<float> monoBuf (monoChannel, 1, numSamples);
-                eq.process (monoBuf);
-            }
+            // Native-rate path (factor == 1). The EQ (with the always-on
+            // console saturation) always runs; the comp runs when engaged.
+            float* monoChannel[1] = { tempMono.data() };
+            juce::AudioBuffer<float> monoBuf (monoChannel, 1, numSamples);
+            eq.process (monoBuf);
             if (compEnabled)
                 runComp (tempMono.data(), numSamples);
         }
-        else if (osLatencySamples > 0)
-        {
-            // EQ and comp both off → no nonlinear stage, so we skip the
-            // oversampler round-trip. Delay the dry signal by the oversampler's
-            // latency so this strip stays aligned with strips that did
-            // oversample (see osSkipDelayL rationale in the header).
-            for (int i = 0; i < numSamples; ++i)
-            {
-                osSkipDelayL.pushSample (0, tempMono[(size_t) i]);
-                tempMono[(size_t) i] = osSkipDelayL.popSample (0);
-            }
-        }
-        // else (factor == 1, both off): tempMono passes through untouched.
 
         // When bypassed, force the GR atom to 0 so the meter doesn't hold
         // the last-computed reduction (the donor's getGainReduction()
@@ -869,7 +871,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             }
         };
 
-        if (oversamplerStages > 0 && oversamplerStereo != nullptr && (eqEnabled || compEnabled))
+        if (oversamplerStages > 0 && oversamplerStereo != nullptr)
         {
             const float* readPtrs[2]  = { L, R };
             float*       writePtrs[2] = { L, R };
@@ -881,35 +883,22 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             float* upPtrs[2] = { upBlock.getChannelPointer (0),
                                   upBlock.getChannelPointer (1) };
             juce::AudioBuffer<float> upBuf (upPtrs, 2, upN);
-            if (eqEnabled)
-                eq.process (upBuf);
+            eq.process (upBuf);
             if (compEnabled)
                 runCompStereo (upPtrs[0], upPtrs[1], upN);
 
             oversamplerStereo->processSamplesDown (nativeOut);
         }
-        else if (eqEnabled || compEnabled)
+        else
         {
-            if (eqEnabled)
-            {
-                float* stereoChannels[2] = { L, R };
-                juce::AudioBuffer<float> stereoBuf (stereoChannels, 2, numSamples);
-                eq.process (stereoBuf);
-            }
+            // Native-rate path (factor == 1). EQ (with console saturation)
+            // always runs; comp when engaged.
+            float* stereoChannels[2] = { L, R };
+            juce::AudioBuffer<float> stereoBuf (stereoChannels, 2, numSamples);
+            eq.process (stereoBuf);
             if (compEnabled)
                 runCompStereo (L, R, numSamples);
         }
-        else if (osLatencySamples > 0)
-        {
-            // OS skipped (both stages off) — delay L/R by the oversampler
-            // latency to hold alignment with strips that oversampled.
-            for (int i = 0; i < numSamples; ++i)
-            {
-                osSkipDelayL.pushSample (0, L[i]);  L[i] = osSkipDelayL.popSample (0);
-                osSkipDelayR.pushSample (0, R[i]);  R[i] = osSkipDelayR.popSample (0);
-            }
-        }
-        // else (factor == 1, both off): L/R pass through untouched.
 
         // See mono-path comment above — zero the GR atom when bypassed so
         // the meter doesn't pin at the last reduction value.

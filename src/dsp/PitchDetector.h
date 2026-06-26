@@ -71,6 +71,7 @@ public:
         float runningCMND = 0.0f;
         int   bestTau    = -1;
         float bestValue  = std::numeric_limits<float>::max();
+        bool  inDip      = false;
         constexpr float kCMNDThreshold = 0.15f;  // YIN's harmonic threshold
 
         for (int tau = minLag_; tau <= maxLag_; ++tau)
@@ -87,13 +88,23 @@ public:
             const float meanD = runningCMND / static_cast<float> (tau - minLag_ + 1);
             const float cmnd  = (meanD > 0.0f) ? d / meanD : 1.0f;
 
-            if (cmnd < kCMNDThreshold && cmnd < bestValue)
+            // YIN absolute-threshold step: once cmnd dips below the threshold,
+            // follow the dip DOWN to its local minimum rather than taking the
+            // first crossing. Breaking on the first sub-threshold value lands on
+            // the downslope (period too short → pitch reads sharp); the true
+            // period sits at the bottom of the dip.
+            if (inDip)
             {
+                if (cmnd < bestValue) { bestValue = cmnd; bestTau = tau; }
+                else break;                       // climbed back out → local min found
+            }
+            else if (cmnd < kCMNDThreshold)
+            {
+                inDip     = true;
                 bestValue = cmnd;
                 bestTau   = tau;
-                break;  // confident enough
             }
-            if (cmnd < bestValue)
+            else if (cmnd < bestValue)            // pre-dip: keep global min as fallback
             {
                 bestValue = cmnd;
                 bestTau   = tau;

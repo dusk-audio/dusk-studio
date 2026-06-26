@@ -61,7 +61,7 @@ Install per your platform. On first launch, Dusk Studio opens a blank session ca
 
 You can also open an existing session directly: pass its `session.json` (or the session folder) on the command line — `DuskStudio path/to/session.json` — or double-click a `session.json` in your file manager (Linux file-type association is installed with the app). If Dusk Studio is already running, the session opens in the existing window.
 
-The Startup dialog also performs a quick update check against the public repository: if a release newer than your build exists, a flashing **UPDATE** badge with the new version number appears in the dialog's sidebar. The check is silent when you're up to date or offline, and nothing is sent beyond the request itself.
+The Startup dialog also performs a quick update check against the public repository: if a release newer than your build exists, a flashing **Update available** banner with the new version number appears above the Recent Sessions list. The check is silent when you're up to date or offline, and nothing is sent beyond the request itself.
 
 ![First-launch window with the Startup dialog visible.](docs/images/qg-01-startup.png)
 
@@ -1145,7 +1145,7 @@ It is marked **experimental** because parts of the DP file format are reverse-en
 
 - **Track grouping**: each `ZZ####` fragment is imported onto its own track, *not* grouped back into the device's original tracks (the fragment-to-track table isn't stored in a form we can read). Discarded takes are skipped.
 - **Timeline placement**: clip start positions are recovered from `song.sys` (and, when an in-folder master mixdown is present, by onset-aligning fragments to it) where they decode confidently; otherwise a clip lands at song start, which is correct for a full-length take. Re-check positions after import.
-- **Mixer recall** (fader / pan / 3-band EQ) and song tempo / markers are decoded where present and applied by track order. Re-check assignments.
+- **Mixer recall** (fader / pan / 3-band EQ), song tempo, time signature, and markers are decoded where present and applied by track order. Re-check assignments.
 
 \newpage
 

@@ -63,12 +63,27 @@ constexpr int    kSongSysSize     = 2996;
 constexpr int    kStripBase       = 0x14;
 constexpr int    kStripStride     = 20;
 constexpr int    kNumStrips       = 24;
-constexpr int    kFaderByte       = 16;
-constexpr int    kPanByte         = 18;
 constexpr int    kSentinelByte    = 19;
 constexpr juce::uint8 kSentinel   = 0x2A;
-constexpr juce::uint8 kFaderUnity = 0x69;   // power-on default == treat as 0 dB
 constexpr int kMuteArrayBase = 0x268;       // 1 byte per channel, 1 = muted (SONG_0005 ch6)
+
+// Channel faders live in their OWN array, NOT in the 0x14 strip records: a byte
+// per mixer fader at 0xc4, stride 20 (mirrored in scene block 2). The DP-24 has
+// 18 faders - 12 mono tracks + 6 stereo-pair faders for tracks 13..24 - so a
+// paired track reads its half's shared fader. Verified against SONG_0002 (24
+// faders set to known dB; see kFaderCal). The old strip+16 lookup read unity
+// garbage and is gone.
+constexpr int kFaderArrayBase   = 0xc4;
+constexpr int kFaderArrayStride = 20;
+constexpr int kNumFaders        = 18;
+constexpr int kPanInRecord      = 2;   // pan byte within a fader record (64 = centre)
+
+// Map a 0-based track index (0..23) to its fader-array entry (0..17).
+int faderEntryForTrack (int track) noexcept
+{
+    if (track < 12) return track;          // tracks 1..12 are mono, one fader each
+    return 12 + (track - 12) / 2;          // tracks 13..24 are 6 stereo pairs
+}
 
 // 3-band EQ bytes within a strip record. Band order verified against the
 // SONG_0005 calibration song (ch1 LOW +6@70Hz, ch2 HIGH -6@7.5k, ch3 MID -4@1k
@@ -96,16 +111,32 @@ float eqGainDb (juce::uint8 v) noexcept { return (float) juce::jlimit (0, 24, (i
 float freqAt   (int idx) noexcept { return kFreqTable[(size_t) juce::jlimit (0, 63, idx)]; }
 float qAt      (juce::uint8 v) noexcept { return kQTable[(size_t) juce::jlimit (0, 6, (int) v)]; }
 
+// Fader byte -> dB, calibrated from SONG_0002 (24 faders set to known values,
+// read off the device display). Monotonic anchor table; linear-interpolate
+// between points. Unity (0 dB) = byte 106, full off = 0 -> -100 (session's
+// -inf sentinel), max = 127 -> +6 dB.
+struct FaderCal { int byte; float db; };
+constexpr FaderCal kFaderCal[] = {
+    {   0, -100.0f }, {   3, -72.0f }, {  16, -45.3f }, {  26, -34.0f },
+    {  40, -20.0f }, {  42, -19.1f }, {  55, -13.2f }, {  65,  -9.3f },
+    {  74,  -7.3f }, {  85,  -4.8f }, {  94,  -2.5f }, { 100,  -1.0f },
+    { 106,   0.0f }, { 107,   0.3f }, { 112,   1.8f }, { 118,   3.6f },
+    { 120,   4.2f }, { 127,   6.0f },
+};
+
 float faderByteToDb (juce::uint8 v) noexcept
 {
-    if (v >= kFaderUnity)
-        return (float) (v - kFaderUnity) / (127.0f - (float) kFaderUnity) * 6.0f;   // 0..+6 dB
-    if (v == 0)
-        return -100.0f;
-    // Below unity: log taper toward silence, calibrated so byte 78 = -6.1 dB
-    // (SONG_0005 ground truth): coef = -6.1 / log10(78/105) ~= 47.3.
-    const float db = 47.3f * std::log10 ((float) v / (float) kFaderUnity);
-    return juce::jlimit (-100.0f, 0.0f, db);
+    constexpr int n = (int) (sizeof (kFaderCal) / sizeof (kFaderCal[0]));
+    if (v <= kFaderCal[0].byte)     return kFaderCal[0].db;
+    if (v >= kFaderCal[n - 1].byte) return kFaderCal[n - 1].db;
+    for (int i = 1; i < n; ++i)
+        if (v <= kFaderCal[i].byte)
+        {
+            const float span = (float) (kFaderCal[i].byte - kFaderCal[i - 1].byte);
+            const float t    = (float) (v - kFaderCal[i - 1].byte) / span;
+            return kFaderCal[i - 1].db + t * (kFaderCal[i].db - kFaderCal[i - 1].db);
+        }
+    return kFaderCal[n - 1].db;
 }
 
 float panByteToNorm (juce::uint8 v) noexcept
@@ -132,7 +163,9 @@ int readDeviceModel (const juce::File& edl, juce::String& modelOut)
 
 // Decode the scene block. Returns 24 strips with valid=true when the block is
 // structurally sound (size, sentinels). Returns empty on any mismatch.
-std::vector<MixerStrip> decodeMixerScene (const juce::File& songSys)
+// deviceTrackLimit (18 = DP-24, 20 = DP-32, 0 = unknown) gates the fader/pan
+// array layout, which is verified on DP-24 only.
+std::vector<MixerStrip> decodeMixerScene (const juce::File& songSys, int deviceTrackLimit)
 {
     std::vector<MixerStrip> strips;
     juce::MemoryBlock mb;
@@ -147,14 +180,25 @@ std::vector<MixerStrip> decodeMixerScene (const juce::File& songSys)
         if (d[kStripBase + c * kStripStride + kSentinelByte] != kSentinel)
             return strips;   // not the layout we know - decode nothing
 
+    // The fader/pan array (0xc4, 18 entries with stereo pairing for tracks
+    // 13..24) is verified on DP-24 ONLY. Apply it solely for a confirmed DP-24
+    // (deviceTrackLimit == 18). DP-32 (20) has an unmapped layout, and an
+    // unknown/unreadable model (0) could be either — in both cases leave the
+    // strip defaults (0 dB / centre) rather than read the wrong entries.
+    const bool faderPanKnown = (deviceTrackLimit == 18);
+
     strips.resize ((size_t) kNumStrips);
     for (int c = 0; c < kNumStrips; ++c)
     {
         const auto* rec = d + kStripBase + c * kStripStride;
         MixerStrip s;
         s.valid   = true;
-        s.faderDb = faderByteToDb (rec[kFaderByte]);
-        s.pan     = panByteToNorm (rec[kPanByte]);
+        if (faderPanKnown)
+        {
+            const int faderRec = kFaderArrayBase + faderEntryForTrack (c) * kFaderArrayStride;
+            s.faderDb = faderByteToDb (d[faderRec]);
+            s.pan     = panByteToNorm (d[faderRec + kPanInRecord]);
+        }
         s.mute    = d[kMuteArrayBase + c] != 0;   // per-channel mute byte (1 = muted)
 
         s.highGainDb = eqGainDb (rec[kHighGainByte]);
@@ -257,6 +301,34 @@ int readTempoBpm (const juce::File& songSys)
     if ((int) mb.getSize() != kSongSysSize) return 0;
     const int bpm = ((const juce::uint8*) mb.getData())[kTempoOffset];
     return (bpm >= 20 && bpm <= 250) ? bpm : 0;
+}
+
+constexpr int kTimeSigOffset = 0x6d9;   // one byte, immediately after tempo
+
+// Song time signature from song.sys. The byte packs both fields:
+//   byte = 12 * log2(denominator) + (numerator - 1)
+// numerator is 1..12 and denominator is one of 1/2/4/8 (the DP units offer no
+// other values), so the valid byte range is 0..47. Verified against four songs
+// authored on the device: 1/1=0, 3/2=14, 12/8=47, 8/4=31.
+// Sets num + den and returns true on a valid decode; leaves them 0 otherwise.
+bool readTimeSignature (const juce::File& songSys, int& num, int& den)
+{
+    num = 0;
+    den = 0;
+    juce::MemoryBlock mb;
+    if (! songSys.existsAsFile() || ! songSys.loadFileAsData (mb)) return false;
+    if ((int) mb.getSize() != kSongSysSize) return false;
+    const auto* d = (const juce::uint8*) mb.getData();
+    // Reject non-DP / corrupt files (same magic gate as decodeMixerScene);
+    // otherwise byte 0 decodes to a bogus 1/1 for any 2996-byte blob.
+    if (std::memcmp (d, "DP-24", 5) != 0 && std::memcmp (d, "DP-32", 5) != 0)
+        return false;
+    const int packed = d[kTimeSigOffset];
+    const int denExp = packed / 12;       // 0..3 → 1/2/4/8
+    if (denExp > 3) return false;         // out of the device's range → treat as garbage
+    num = (packed % 12) + 1;              // 1..12
+    den = 1 << denExp;
+    return true;
 }
 
 std::vector<DpMarker> decodeMarkers (const juce::File& songSys)
@@ -481,14 +553,22 @@ SongScan scanSongFolder (const juce::File& folder)
     // Mixer scene (fader/pan/EQ calibrated from the DP-24 manual). Strips are
     // indexed by device input channel; the fragment->channel mapping is part of
     // the unsolved placement table, so we apply strips positionally (track order).
-    const auto strips = decodeMixerScene (folder.getChildFile ("song.sys"));
+    const auto strips = decodeMixerScene (folder.getChildFile ("song.sys"), scan.deviceTrackLimit);
     if (! strips.empty())
     {
         scan.mixerDecoded = true;
         for (size_t i = 0; i < scan.tracks.size() && i < strips.size(); ++i)
             scan.tracks[i].mixer = strips[i];
-        warn.add ("Mixer fader/pan/EQ decoded; mapped to tracks by order "
-                  "(channel mapping isn't stored, so re-check assignments).");
+        if (scan.deviceTrackLimit == 18)
+            warn.add ("Mixer fader/pan/EQ decoded; mapped to tracks by order "
+                      "(channel mapping isn't stored, so re-check assignments).");
+        else if (scan.deviceTrackLimit == 20)
+            warn.add ("Mixer EQ decoded; fader/pan recall is skipped on DP-32 "
+                      "(its fader layout isn't mapped yet). Re-check levels.");
+        else
+            warn.add ("Mixer EQ decoded; fader/pan recall skipped (device model "
+                      "not identified, so the fader layout can't be trusted). "
+                      "Re-check levels.");
     }
 
     // Timeline placement: not in the .sys files. If an in-folder master mixdown
@@ -526,6 +606,10 @@ SongScan scanSongFolder (const juce::File& folder)
     scan.tempoBpm = readTempoBpm (folder.getChildFile ("song.sys"));
     if (scan.tempoBpm > 0)
         warn.add (juce::String::formatted ("Song tempo %d BPM will be applied.", scan.tempoBpm));
+
+    if (readTimeSignature (folder.getChildFile ("song.sys"), scan.timeSigNum, scan.timeSigDen))
+        warn.add (juce::String::formatted ("Time signature %d/%d will be applied.",
+                                            scan.timeSigNum, scan.timeSigDen));
 
     scan.timelineDecoded = (placedFromSys > 0);
     if (placedFromSys > 0)

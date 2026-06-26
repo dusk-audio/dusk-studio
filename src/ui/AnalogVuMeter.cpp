@@ -18,6 +18,18 @@ const juce::Colour kPivotHousing   { 0xff1c1c20 };
 const juce::Colour kPeakLedOff     { 0xff5a1a1a };
 const juce::Colour kPeakLedOn      { 0xffff3030 };
 
+// Warm-cream "rich" palette (TEAC/Tascam look), used only when richStyle is on.
+const juce::Colour kCreamCore      { 0xfff6f1e3 };  // lit ivory centre
+const juce::Colour kCreamRim       { 0xffe6dcc4 };  // aged cream at the edges
+const juce::Colour kVignette       { 0x33000000 };  // corner darken (aging)
+const juce::Colour kBezelHi        { 0xff4a4038 };  // top/left frame lip (lit)
+const juce::Colour kBezelLo        { 0xff120d09 };  // bottom/right frame lip
+const juce::Colour kGlassSheen     { 0xffffffff };  // specular reflection (low alpha)
+const juce::Colour kHubHi          { 0xffe8e8ee };  // chrome dome highlight
+const juce::Colour kHubMid         { 0xff8e8e96 };
+const juce::Colour kHubLo          { 0xff2a2a30 };  // chrome dome shadow
+const juce::Colour kRedWashCol     { 0xffb02020 };  // ink-wash under the 0..+3 arc
+
 // Scale endpoints in VU dB (mirrors TapeMachine clamp).
 constexpr float kVuMin = -20.0f;
 constexpr float kVuMax =   3.0f;
@@ -33,7 +45,7 @@ constexpr float kOvershootStiff    = 180.0f;
 // Below this face width the numeric scale labels are suppressed - they
 // collide on narrow bus strips, ticks alone read clearly. Matches the
 // existing width-aware pattern.
-constexpr int   kLabelMinWidth   = 110;
+constexpr int   kLabelMinWidth   = 88;
 constexpr float kPeakHoldMs      = 600.0f;
 constexpr float kPeakTriggerVuDb = 4.0f;
 
@@ -97,7 +109,7 @@ const ScaleMark kMarks[] =
     {  -3.0f,  "3",  false, true  },
     {  -2.0f, nullptr, false, false },
     {  -1.0f, nullptr, false, false },
-    {   0.0f,  "0",  true,  true  },
+    {   0.0f,  "0",  false, true  },   // "0" numeral is black; the red zone arc still starts here
     {   1.0f, nullptr, true,  false },
     {   2.0f, nullptr, true,  false },
     {   3.0f,  "+3", true,  true  },
@@ -129,6 +141,32 @@ void AnalogVuMeter::setCompactScale (bool compact)
     rebuildCachedFace();
     repaint();
 }
+
+void AnalogVuMeter::setRichStyle (bool rich)
+{
+    if (richStyle == rich) return;
+    richStyle = rich;
+    rebuildCachedFace();
+    repaint();
+}
+
+namespace
+{
+// Display scale the cache should rasterise at, so the baked face stays crisp on
+// HiDPI screens (the cache was previously allocated in logical px and softened
+// when the OS upscaled it). Uses the scale of the monitor the component is
+// actually on (not the primary) so a meter dragged to a different-DPI screen
+// re-rasterises at the right resolution. Falls back to the primary, then 1x.
+float currentDisplayScale (const juce::Component& comp) noexcept
+{
+    auto& displays = juce::Desktop::getInstance().getDisplays();
+    if (auto* d = displays.getDisplayForRect (comp.getScreenBounds()))
+        return juce::jlimit (1.0f, 4.0f, (float) d->scale);
+    if (auto* d = displays.getPrimaryDisplay())
+        return juce::jlimit (1.0f, 4.0f, (float) d->scale);
+    return 1.0f;
+}
+} // namespace
 
 void AnalogVuMeter::resized()
 {
@@ -216,6 +254,11 @@ void AnalogVuMeter::timerCallback()
     if (maxRaw >= kPeakTriggerVuDb)
         peakHoldUntilMs = juce::Time::getMillisecondCounter() + (juce::uint32) kPeakHoldMs;
 
+    // Re-bake the cache if the window moved to a different-DPI monitor so the
+    // face stays crisp (resize already rebuilds for size changes).
+    if (cachedFace.isValid() && std::abs (currentDisplayScale (*this) - lastScale) > 0.01f)
+        rebuildCachedFace();
+
     repaint();
 }
 
@@ -229,8 +272,15 @@ void AnalogVuMeter::rebuildCachedFace()
         return;
     }
 
-    cachedFace = juce::Image (juce::Image::ARGB, w, h, true);
+    // Rasterise the cache at the display's physical resolution, then draw in
+    // logical coords via a scale transform. paint() blits it back 1:1 so the
+    // baked face (ticks, labels, gradients, glass) stays sharp on HiDPI.
+    lastScale = currentDisplayScale (*this);
+    const int pw = juce::jmax (1, juce::roundToInt ((float) w * lastScale));
+    const int ph = juce::jmax (1, juce::roundToInt ((float) h * lastScale));
+    cachedFace = juce::Image (juce::Image::ARGB, pw, ph, true);
     juce::Graphics g (cachedFace);
+    g.addTransform (juce::AffineTransform::scale (lastScale));
     const auto bounds = juce::Rectangle<float> (0.0f, 0.0f, (float) w, (float) h);
 
     // Bezel + face. Two-tone outline + cream paper fill with a vertical
@@ -242,6 +292,31 @@ void AnalogVuMeter::rebuildCachedFace()
     g.fillRoundedRectangle (bounds.reduced (1.0f), corner * 0.85f);
 
     auto faceRect = bounds.reduced (2.0f);
+    if (richStyle)
+    {
+        // Warm cream lit from just above the pivot: ivory core radiating out to
+        // an aged-cream rim, then a second radial pass darkening the corners
+        // (aging vignette). TEAC/Tascam look.
+        juce::ColourGradient cream (kCreamCore, pivot.x, pivot.y - arcRadius * 0.35f,
+                                     kCreamRim, faceRect.getX(), faceRect.getY(), true);
+        g.setGradientFill (cream);
+        g.fillRoundedRectangle (faceRect, corner * 0.7f);
+
+        juce::ColourGradient vig (juce::Colours::transparentBlack,
+                                   faceRect.getCentreX(), faceRect.getCentreY(),
+                                   kVignette, faceRect.getX(), faceRect.getBottom(), true);
+        g.setGradientFill (vig);
+        g.fillRoundedRectangle (faceRect, corner * 0.7f);
+
+        // Recessed inner shadow along the top/left so the face reads as set
+        // behind the bezel lip.
+        juce::ColourGradient innerTop (kBezelLo.withAlpha (0.45f), faceRect.getX(), faceRect.getY(),
+                                        juce::Colours::transparentBlack,
+                                        faceRect.getX(), faceRect.getY() + arcRadius * 0.18f, false);
+        g.setGradientFill (innerTop);
+        g.fillRoundedRectangle (faceRect, corner * 0.7f);
+    }
+    else
     {
         juce::ColourGradient grad (kFaceTop, faceRect.getX(), faceRect.getY(),
                                     kFaceBottom, faceRect.getX(), faceRect.getBottom(), false);
@@ -275,7 +350,7 @@ void AnalogVuMeter::rebuildCachedFace()
     // face reads as the simpler member of the visual family. The
     // master VU keeps the full numbered scale.
     const bool  showLabels  = (! compactScale) && (w >= kLabelMinWidth);
-    const float labelFont   = juce::jlimit (7.0f, 14.0f, arcRadius * 0.16f);
+    const float labelFont   = juce::jlimit (6.0f, 11.0f, arcRadius * 0.13f);
     const float tickLenMaj  = arcRadius * 0.12f;
     const float tickLenMin  = arcRadius * 0.06f;
     baselineRad             = arcRadius * 0.78f;
@@ -389,10 +464,24 @@ void AnalogVuMeter::rebuildCachedFace()
                      -jucePi * 0.5f, jucePi * 0.5f, false);
         hub.lineTo (pivot.x + hubR, pivot.y);
         hub.closeSubPath();
-        g.setColour (kPivotHousing);
-        g.fillPath (hub);
-        g.setColour (juce::Colour (0xff3a3a40));
-        g.strokePath (hub, juce::PathStrokeType (0.8f));
+        if (richStyle)
+        {
+            // Chrome screw dome: radial steel highlight -> shadow.
+            juce::ColourGradient chrome (kHubHi, pivot.x - hubR * 0.4f, pivot.y - hubR * 0.7f,
+                                          kHubLo, pivot.x + hubR * 0.7f, pivot.y, true);
+            chrome.addColour (0.55, kHubMid);
+            g.setGradientFill (chrome);
+            g.fillPath (hub);
+            g.setColour (kHubLo);
+            g.strokePath (hub, juce::PathStrokeType (0.8f));
+        }
+        else
+        {
+            g.setColour (kPivotHousing);
+            g.fillPath (hub);
+            g.setColour (juce::Colour (0xff3a3a40));
+            g.strokePath (hub, juce::PathStrokeType (0.8f));
+        }
     }
 
     // PEAK indicator — small LED in the upper-right corner of the face,
@@ -435,13 +524,51 @@ void AnalogVuMeter::rebuildCachedFace()
                                                 vuCy - vuBoxH * 0.5f,
                                                 vuBoxW, vuBoxH),
                      juce::Justification::centred, false);
+
+        // Rich master face adds the small "OUTPUT LEVEL" sub-caption under the
+        // VU badge, matching the TEAC/Tascam face.
+        if (richStyle)
+        {
+            const float subFont = juce::jlimit (5.0f, 9.0f, arcRadius * 0.085f);
+            g.setFont (juce::Font (juce::FontOptions (subFont, juce::Font::plain)));
+            g.setColour (kInkSoft);
+            g.drawText ("OUTPUT LEVEL",
+                         juce::Rectangle<float> (vuCx - vuBoxW,
+                                                    vuCy + vuBoxH * 0.5f,
+                                                    vuBoxW * 2.0f, subFont * 1.4f),
+                         juce::Justification::centred, false);
+        }
+    }
+
+    // Glass specular — drawn LAST so the printed scale reads as if under convex
+    // glass. Rich face only; baked into the cache (zero per-frame cost).
+    if (richStyle)
+    {
+        g.saveState();
+        g.reduceClipRegion (faceRect.toNearestInt());
+        juce::Path sweep;
+        sweep.startNewSubPath (faceRect.getX(), faceRect.getY());
+        sweep.lineTo (faceRect.getX() + faceRect.getWidth()  * 0.62f, faceRect.getY());
+        sweep.lineTo (faceRect.getX(), faceRect.getY() + faceRect.getHeight() * 0.62f);
+        sweep.closeSubPath();
+        juce::ColourGradient sheen (kGlassSheen.withAlpha (0.18f), faceRect.getX(), faceRect.getY(),
+                                     juce::Colours::transparentBlack,
+                                     faceRect.getCentreX(), faceRect.getCentreY(), false);
+        g.setGradientFill (sheen);
+        g.fillPath (sweep);
+        g.setColour (kGlassSheen.withAlpha (0.12f));   // top meniscus streak
+        g.drawLine (faceRect.getX() + corner, faceRect.getY() + 1.2f,
+                     faceRect.getRight() - corner, faceRect.getY() + 1.2f, 1.0f);
+        g.restoreState();
     }
 }
 
 void AnalogVuMeter::paint (juce::Graphics& g)
 {
+    // Blit the physical-resolution cache back to logical bounds 1:1 so it stays
+    // crisp on HiDPI (cache was rasterised at lastScale in rebuildCachedFace).
     if (cachedFace.isValid())
-        g.drawImageAt (cachedFace, 0, 0);
+        g.drawImageTransformed (cachedFace, juce::AffineTransform::scale (1.0f / lastScale));
 
     auto drawNeedle = [&] (float angleFrac, juce::Colour c, float thickness)
     {
@@ -459,11 +586,56 @@ void AnalogVuMeter::paint (juce::Graphics& g)
         g.drawLine (juce::Line<float> (base, tip), thickness);
     };
 
+    // Rich needle: a tapered blade (wide at the hub, fine point at the tip)
+    // with a soft offset shadow so it reads as a physical pointer above the
+    // face. Built into the hoisted needlePath (clear()'d each frame) and
+    // rotated with a single AffineTransform — allocation- and trig-per-point-
+    // free. Canonical needle points straight up (angleFrac 0); rotate by the
+    // angle so the tip lands on the scale.
+    auto drawRichNeedle = [&] (float angleFrac, juce::Colour c)
+    {
+        const float tipR  = baselineRad - arcRadius * 0.02f;
+        const float halfW = juce::jmax (1.1f, arcRadius * 0.020f);
+        const float px = pivot.x, py = pivot.y;
+        needlePath.clear();
+        needlePath.startNewSubPath (px, py - tipR);   // fine tip
+        needlePath.lineTo (px + halfW, py);           // base right
+        needlePath.lineTo (px - halfW, py);           // base left
+        needlePath.closeSubPath();
+        const auto rot = juce::AffineTransform::rotation (
+            juce::degreesToRadians (angleFrac * halfArcDeg), px, py);
+        g.setColour (juce::Colour (0x33000000));      // soft shadow
+        g.fillPath (needlePath, rot.followedBy (juce::AffineTransform::translation (1.0f, 1.5f)));
+        g.setColour (c);                              // body
+        g.fillPath (needlePath, rot);
+    };
+
     // Right needle slightly behind the left one (drawn first) so a centred-
     // pan stereo signal shows the mono read-out cleanly with the L on top.
-    if (rightRms != nullptr)
-        drawNeedle (needlePosR, kNeedleR, 1.2f);
-    drawNeedle (needlePosL, kNeedle, 1.4f);
+    if (richStyle)
+    {
+        if (rightRms != nullptr) drawRichNeedle (needlePosR, kNeedleR);
+        drawRichNeedle (needlePosL, kNeedle);
+
+        // Chrome hub cap over the needle bases (dynamic counterpart of the
+        // baked dome) so the bases tuck under a polished pivot.
+        const float capR = juce::jmax (3.0f, arcRadius * 0.085f);
+        juce::ColourGradient capG (kHubHi, pivot.x - capR * 0.4f, pivot.y - capR * 0.5f,
+                                    kHubLo, pivot.x + capR * 0.5f, pivot.y, true);
+        capG.addColour (0.55, kHubMid);
+        g.setGradientFill (capG);
+        g.fillEllipse (pivot.x - capR, pivot.y - capR, capR * 2.0f, capR * 2.0f);
+        g.setColour (kHubLo);
+        g.drawEllipse (pivot.x - capR, pivot.y - capR, capR * 2.0f, capR * 2.0f, 0.7f);
+        g.setColour (kGlassSheen.withAlpha (0.6f));   // specular dot
+        g.fillEllipse (pivot.x - capR * 0.35f, pivot.y - capR * 0.55f, capR * 0.5f, capR * 0.5f);
+    }
+    else
+    {
+        if (rightRms != nullptr)
+            drawNeedle (needlePosR, kNeedleR, 1.2f);
+        drawNeedle (needlePosL, kNeedle, 1.4f);
+    }
 
     // PEAK LED overlay - lit while the hold timer is still in the future.
     // Wrap-safe compare: juce::Time::getMillisecondCounter wraps every ~49

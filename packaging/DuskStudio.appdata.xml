@@ -30,6 +30,17 @@
   <content_rating type="oars-1.1"/>
   <releases>
     <!-- scripts/bump-version.sh prepends new <release> entries here. -->
+    <release version="0.11.1" date="2026-06-24">
+      <description>
+        <p>Patch release on the 0.11 Beta line. Chase / follow playhead in the
+        timeline and editors, a bar / beat grid in the audio and MIDI editors,
+        a reworked top-row layout with the stage selector in the menu row, and a
+        keyboard-shortcut cleanup. Fixes a startup hang when the saved audio
+        device is busy (falls back to another device with a notice) and an ALSA
+        crash on interfaces with fewer than 32 channels. Adds a Raspberry Pi
+        (arm64) Linux tarball.</p>
+      </description>
+    </release>
     <release version="0.11.0" date="2026-06-12">
       <description>
         <p>Beta release. Optional out-of-process plugin sandbox with

@@ -655,6 +655,7 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     // ballistics applied to the linear RMS amplitudes. Two needles (L + R).
     vuMeter = std::make_unique<AnalogVuMeter> (
         &params.meterPostMasterRmsL, &params.meterPostMasterRmsR);
+    vuMeter->setRichStyle (true);   // warm-cream photoreal face on the master only (bus meters stay plain)
     addAndMakeVisible (*vuMeter);
 
     auto styleToggle = [] (juce::TextButton& b, juce::Colour onColour)
@@ -1414,6 +1415,17 @@ void MasterStripComponent::paint (juce::Graphics& g)
         g.setColour (juce::Colour (0xff7da8c5).withAlpha (0.40f));
         g.drawRoundedRectangle (compArea.toFloat().reduced (0.5f), 3.0f, 0.8f);
     }
+    if (! tapeArea.isEmpty())
+    {
+        // Warm tape-deck chassis (TEAC/Studer brown) + amber accent — ties to
+        // the tape pill's amber and gives the header its own band so it reads
+        // as a section, not part of the fader area below. The transparent
+        // CompHeaderButton lets this tint show through, same as EQ / COMP.
+        g.setColour (juce::Colour (0xff261d12));
+        g.fillRoundedRectangle (tapeArea.toFloat(), 3.0f);
+        g.setColour (juce::Colour (0xffd0a060).withAlpha (0.45f));
+        g.drawRoundedRectangle (tapeArea.toFloat().reduced (0.5f), 3.0f, 0.8f);
+    }
 
     // Stereo LED meter - two vertical bars (L | R) inside meterArea.
     if (! meterArea.isEmpty())
@@ -1800,7 +1812,12 @@ void MasterStripComponent::resized()
     // header dimensions for the LED + label pairing.
     const int tapeRowH = compactMode ? 20 : 22;
     const int tapeReduceX = compactMode ? 4 : 2;
-    auto buttonRow = area.removeFromTop (tapeRowH).reduced (tapeReduceX, 0);
+    auto tapeRow = area.removeFromTop (tapeRowH);
+    // Regular mode: frame the TAPE header in its own chassis band (like EQ /
+    // COMP) so it reads as a distinct section, not part of the fader area
+    // below. Compact mode already has the amber pill, so no band there.
+    tapeArea = compactMode ? juce::Rectangle<int>() : tapeRow;
+    auto buttonRow = tapeRow.reduced (tapeReduceX, 0);
     if (compactMode)                              tapeButton.setBounds (buttonRow);
     else if (tapeHeaderBtn != nullptr)            tapeHeaderBtn->setBounds (buttonRow);
 

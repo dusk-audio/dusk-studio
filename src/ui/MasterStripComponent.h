@@ -149,6 +149,7 @@ private:
     juce::Rectangle<int> faderScaleArea;
     juce::Rectangle<int> eqArea;
     juce::Rectangle<int> compArea;
+    juce::Rectangle<int> tapeArea;   // framed band behind the TAPE header (regular mode)
     juce::TextButton eqCompactButton  { "EQ"   };
     juce::TextButton compCompactButton { "COMP" };
     EmbeddedModal eqEditorModal;

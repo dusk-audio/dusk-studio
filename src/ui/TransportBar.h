@@ -79,6 +79,11 @@ public:
     // no errors are pending.
     void notifyRecordStopped();
 
+    // Re-sync the cached time-signature button text from session.beatsPerBar /
+    // beatUnit. Call after changing the time signature outside this bar (e.g. a
+    // DP song import) - the 20 Hz refresh does not touch this button.
+    void refreshTimeSigButton();
+
 private:
     void timerCallback() override;
     void refreshButtonStates();
@@ -129,7 +134,6 @@ private:
     void showTimeSigMenu();
     void promptCustomTimeSig();
     void applyTimeSig (int numerator, int denominator);
-    void refreshTimeSigButton();
     TransportIconButton tuneButton  { "Tune",
                                           TransportIconButton::Icon::Tuner,
                                           juce::Colour (0xff70d0a0) };

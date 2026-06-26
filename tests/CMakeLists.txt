@@ -31,6 +31,7 @@ add_executable(dusk-studio-tests
     session_region_bounds.cpp
     session_transport_bounds.cpp
     session_corrupted_recovery.cpp
+    session_clamp_corrupt_values.cpp
     session_format_version.cpp
     session_write_atomic.cpp
     session_portable_paths.cpp
@@ -39,10 +40,16 @@ add_executable(dusk-studio-tests
     update_checker_version.cpp
     session_schema_migration.cpp
     dsp_components_test.cpp
+    chord_analyzer.cpp
+    ${CMAKE_SOURCE_DIR}/src/dsp/ChordAnalyzer.cpp
+    pitch_detector.cpp
     recording_byte_accuracy.cpp
     midi_fifo_overflow.cpp
     midi_time_code_decode.cpp
     midi_time_code_emit.cpp
+    midi_clock_drift.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/MidiClockEmitter.cpp
+    smpte_wrap.cpp
     automation_thinning.cpp
     automation_lane_snapshot.cpp
     pdc_math.cpp
@@ -74,6 +81,8 @@ add_executable(dusk-studio-tests
     ${CMAKE_SOURCE_DIR}/src/ui/DuskFileBrowser.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/DimOverlay.cpp
     ${CMAKE_SOURCE_DIR}/src/dsp/BrickwallLimiter.cpp
+    mastering_digital_eq.cpp
+    ${CMAKE_SOURCE_DIR}/src/dsp/MasteringDigitalEq.cpp
     ${CMAKE_SOURCE_DIR}/src/dsp/HardwareInsertSlot.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/FileImporter.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/DpImporter.cpp
@@ -87,6 +96,17 @@ add_executable(dusk-studio-tests
 target_include_directories(dusk-studio-tests PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/external/projucer-shim)
+
+# Console-saturation calibration test + the donor DSP headers it needs
+# (BritishEQProcessor.h + its header-only ConsoleSaturation/ADAA/SafeFloat deps).
+# Gated on the donor being available, so a no-donor build doesn't try to compile
+# a test whose includes can't be resolved.
+if(DEFINED DUSK_PLUGINS_PATH)
+    target_sources(dusk-studio-tests PRIVATE console_saturation.cpp)
+    target_include_directories(dusk-studio-tests SYSTEM PRIVATE
+        ${DUSK_PLUGINS_PATH}/plugins/multi-q
+        ${DUSK_PLUGINS_PATH}/plugins/shared)
+endif()
 
 target_compile_definitions(dusk-studio-tests PRIVATE
     JUCE_WEB_BROWSER=0

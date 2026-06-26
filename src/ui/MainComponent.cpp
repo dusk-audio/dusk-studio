@@ -28,6 +28,7 @@
 #include "UpdateChecker.h"
 #include "SystemStatusBar.h"
 #include "TapeStrip.h"
+#include "MiniTimelineStrip.h"
 #include "TransportBar.h"
 #include "../session/MarkerEditActions.h"
 #include "../session/RecentSessions.h"
@@ -488,6 +489,11 @@ MainComponent::MainComponent()
             enqueueImports (std::move (files), timelineStart, trackHint);
     };
     addAndMakeVisible (tapeStrip.get());
+
+    // Song-map ribbon shown only when the tape strip is collapsed (resized()
+    // owns its bounds + visibility from tapeStripExpanded / fullscreen state).
+    miniTimeline = std::make_unique<MiniTimelineStrip> (session, engine);
+    addChildComponent (miniTimeline.get());
 
     // Sync the transport-bar TAPE toggle with the collapsed default.
     if (transportBar != nullptr)
@@ -1497,6 +1503,9 @@ void MainComponent::resized()
 
     area.removeFromTop (4);
 
+    if (miniTimeline != nullptr && inFullscreenView)
+        miniTimeline->setVisible (false);
+
     if (! inFullscreenView)
     {
         if (tapeStrip != nullptr && tapeStripExpanded)
@@ -1522,6 +1531,15 @@ void MainComponent::resized()
             const int cap    = juce::jmax (120, area.getHeight() / 2);
             tapeStrip->setBounds (area.removeFromTop (juce::jmin (wanted, cap)));
 
+            area.removeFromTop (4);
+            if (miniTimeline != nullptr) miniTimeline->setVisible (false);
+        }
+        else if (miniTimeline != nullptr)
+        {
+            // Collapsed timeline: show the thin song-map ribbon in the band
+            // the tape strip would have occupied.
+            miniTimeline->setVisible (true);
+            miniTimeline->setBounds (area.removeFromTop (20));
             area.removeFromTop (4);
         }
 
@@ -3438,6 +3456,17 @@ void MainComponent::runDpImport (const dp::SongScan& scan,
     if (scan.tempoBpm > 0)
         session.tempoBpm.store ((float) scan.tempoBpm, std::memory_order_relaxed);
 
+    // Song time signature (song.sys 0x6d9).
+    if (scan.timeSigNum > 0 && scan.timeSigDen > 0)
+    {
+        session.beatsPerBar.store (scan.timeSigNum, std::memory_order_relaxed);
+        session.beatUnit   .store (scan.timeSigDen, std::memory_order_relaxed);
+        // The ruler / grid read these on repaint, but the transport bar's
+        // time-sig button caches its text and the 20 Hz refresh doesn't touch
+        // it - re-sync it so it doesn't contradict the import.
+        if (transportBar != nullptr) transportBar->refreshTimeSigButton();
+    }
+
     if (tapeStrip != nullptr) tapeStrip->repaint();
 
     juce::String msg;
@@ -3450,6 +3479,8 @@ void MainComponent::runDpImport (const dp::SongScan& scan,
         msg << "\nImported " << markersAdded << " song marker(s).";
     if (scan.tempoBpm > 0)
         msg << "\nSet tempo to " << scan.tempoBpm << " BPM.";
+    if (scan.timeSigNum > 0 && scan.timeSigDen > 0)
+        msg << "\nSet time signature to " << scan.timeSigNum << "/" << scan.timeSigDen << ".";
     if (! skipped.isEmpty())
         msg << "\n\nSkipped " << skipped.size() << ":\n" << skipped.joinIntoString ("\n");
     showDuskAlert (*this, "Import DP Song", msg);

@@ -86,16 +86,42 @@ public:
                                               juce::Point<int> /*screenPos*/,
                                               juce::Rectangle<int> parentArea) override
     {
-        // Force single-line — measure without wrap. parentArea is in
-        // local-to-parent (MainComponent owns the TooltipWindow), NOT
-        // screen coords; TopLevelWindow::getScreenBounds returns the
-        // wrong space and the resulting Y gets clamped back inside
+        // parentArea is in local-to-parent (MainComponent owns the
+        // TooltipWindow), NOT screen coords; TopLevelWindow::getScreenBounds
+        // returns the wrong space and the resulting Y gets clamped back inside
         // parentArea (tooltip lands below the tab row otherwise).
         constexpr float kFontPx = 13.0f;
+        constexpr int   kPadX   = 16;   // total inner horizontal padding
+        constexpr int   kPadY   = 8;    // total inner vertical padding
         const juce::Font font { juce::FontOptions (kFontPx) };
         const auto flat = tipText.replaceCharacter ('\n', ' ');
-        const int textW = (int) std::ceil (font.getStringWidthFloat (flat)) + 32;   // +padding (must match drawTooltip's natural width)
-        const int h     = (int) std::ceil (kFontPx) + 10;
+
+        // Natural single-line width via TextLayout (Font::getStringWidthFloat is
+        // deprecated in JUCE 8).
+        const int textW = [&]
+        {
+            juce::AttributedString as;
+            as.setWordWrap (juce::AttributedString::none);
+            as.append (flat, font, juce::Colours::white);
+            juce::TextLayout tl;
+            tl.createLayout (as, 1.0e6f);
+            return (int) std::ceil (tl.getWidth()) + kPadX;
+        }();
+
+        // Height needed to render `flat` word-wrapped inside a box `boxW` wide.
+        // A long tip that won't fit one line wraps and grows DOWNWARD instead
+        // of overflowing a single-line box (the bug: centred no-wrap text
+        // spilled past both edges and got clipped middle-out). Must match
+        // drawTooltip's layout width (boxW - kPadX).
+        auto wrappedHeight = [&] (int boxW)
+        {
+            juce::AttributedString as;
+            as.setWordWrap (juce::AttributedString::byWord);
+            as.append (flat, font, juce::Colours::white);
+            juce::TextLayout tl;
+            tl.createLayout (as, (float) juce::jmax (1, boxW - kPadX));
+            return (int) std::ceil (tl.getHeight()) + kPadY;
+        };
 
         if (! tooltipRow_.isEmpty())
         {
@@ -103,39 +129,57 @@ public:
             // a centred tip would always sit on top of them. Prefer the side
             // gap that fits the natural width (left/status gap first), else the
             // wider side, clamping width so the tip never overlaps the tabs.
-            const int y = tooltipRow_.getY() + juce::jmax (0, (tooltipRow_.getHeight() - h) / 2);
             constexpr int gap = 12;
             int w = juce::jmin (textW, tooltipRow_.getWidth());
             int x = tooltipRow_.getCentreX() - w / 2;
 
             if (! tooltipAvoid_.isEmpty()
-                  && juce::Rectangle<int> (x, y, w, h).intersects (tooltipAvoid_))
+                  && juce::Rectangle<int> (x, tooltipRow_.getY(), w, tooltipRow_.getHeight())
+                        .intersects (tooltipAvoid_))
             {
                 const int leftRoom  = juce::jmax (0, tooltipAvoid_.getX() - gap - tooltipRow_.getX());
                 const int rightRoom = juce::jmax (0, tooltipRow_.getRight() - (tooltipAvoid_.getRight() + gap));
                 if (w <= leftRoom)              { x = tooltipRow_.getX(); }
                 else if (w <= rightRoom)        { x = tooltipAvoid_.getRight() + gap; }
                 else if (leftRoom >= rightRoom) { w = leftRoom;  x = tooltipRow_.getX(); }
-                else                            { w = rightRoom; x = tooltipRow_.getRight() - w; }
+                else                            { w = rightRoom; x = tooltipAvoid_.getRight() + gap; }
             }
-            return juce::Rectangle<int> (x, y, juce::jmax (0, w), h).constrainedWithin (tooltipRow_);
+
+            // Clamp w/h to the parent BEFORE measuring/returning so
+            // constrainedWithin only repositions (never resizes) - a resize
+            // would shrink the box below the width wrappedHeight used and
+            // re-introduce clipping.
+            w = juce::jlimit (1, parentArea.getWidth(), w);
+            const int h = juce::jmin (wrappedHeight (w), parentArea.getHeight());
+            // Single line: centre vertically in the row. Wrapped (taller than
+            // the row): start at the row top and grow downward over the
+            // transport row below - a transient tip may briefly cover content.
+            const int y = (h <= tooltipRow_.getHeight())
+                            ? tooltipRow_.getY() + (tooltipRow_.getHeight() - h) / 2
+                            : tooltipRow_.getY();
+            return juce::Rectangle<int> (x, y, w, h).constrainedWithin (parentArea);
         }
 
         // Fallback before the first layout pass sets a placement: centre the
         // tip in a top band the height of the original menu row.
         constexpr int kMenuRowH = 28;
-        const int w = juce::jmin (textW, juce::jmax (60, parentArea.getWidth() - 16));
+        const int w = juce::jlimit (1, parentArea.getWidth(),
+                                     juce::jmin (textW, juce::jmax (60, parentArea.getWidth() - 16)));
+        const int h = juce::jmin (wrappedHeight (w), parentArea.getHeight());
         const int x = parentArea.getCentreX() - w / 2;
         const int y = parentArea.getY() + juce::jmax (0, (kMenuRowH - h) / 2);
+        // w/h fit parentArea, so constrainedWithin only repositions (no resize
+        // that would diverge from wrappedHeight's wrapping width).
         return juce::Rectangle<int> (x, y, w, h).constrainedWithin (parentArea);
     }
 
     void drawTooltip (juce::Graphics& g, const juce::String& text,
                        int width, int height) override
     {
-        // V4 routes through layoutTooltipText which hard-caps TextLayout
-        // wrap at ~400 px → long tips wrap to 2-3 lines and clip against
-        // the menu row's single-line height. Render with word-wrap off.
+        // Word-wrap ON: getTooltipBounds sized the box (incl. height) to the
+        // wrapped text, so long tips flow onto multiple lines instead of
+        // overflowing a single line and clipping middle-out. Layout width must
+        // match getTooltipBounds' measure (width - kPadX, kPadX = 16).
         const juce::Rectangle<float> bounds (0.0f, 0.0f, (float) width, (float) height);
         g.setColour (findColour (juce::TooltipWindow::backgroundColourId));
         g.fillRect (bounds);
@@ -145,13 +189,15 @@ public:
         const auto flat = text.replaceCharacter ('\n', ' ');
         juce::AttributedString as;
         as.setJustification (juce::Justification::centred);
-        as.setWordWrap (juce::AttributedString::none);
+        as.setWordWrap (juce::AttributedString::byWord);
         as.append (flat,
                     juce::Font (juce::FontOptions (13.0f)),
                     findColour (juce::TooltipWindow::textColourId));
         juce::TextLayout layout;
-        layout.createLayout (as, (float) width);
-        layout.draw (g, bounds);
+        const float innerW = (float) juce::jmax (1, width - 16);
+        layout.createLayout (as, innerW);
+        const float ty = juce::jmax (0.0f, ((float) height - layout.getHeight()) * 0.5f);
+        layout.draw (g, juce::Rectangle<float> (8.0f, ty, innerW, layout.getHeight()));
     }
 
     // Override V2's 8 px top/bottom reduce — default reduce makes the

@@ -6,6 +6,11 @@
 
 namespace duskstudio
 {
+// Offline renders force 4× oversampling on the saturating analog stages
+// (console / comp / tube / tape) so the printed file is alias-free, while
+// realtime monitoring stays at the user's lighter Effect Oversampling setting.
+static constexpr int kRenderOversamplingFactor = 4;
+
 BounceEngine::BounceEngine (AudioEngine& e, Session& s,
                               juce::AudioDeviceManager& dm) noexcept
     : juce::Thread ("Dusk Studio bounce"), engine (e), session (s), deviceManager (dm)
@@ -197,6 +202,9 @@ void BounceEngine::run()
     // callback ourselves at non-realtime pace. State is restored at the
     // bottom of this function regardless of how we exit.
     deviceManager.removeAudioCallback (&engine);
+    // Render the saturating stages at 4× so the bounce is alias-free; cleared
+    // before the live re-prepare below.
+    engine.setRenderOversamplingOverride (kRenderOversamplingFactor);
     engine.prepareForSelfTest (renderSampleRate, renderBlockSize);
 
     // Synthetic input buffers - silent, since the bounce is master-mix
@@ -320,6 +328,8 @@ void BounceEngine::run()
         engine.getMasteringPlayer().setPlayhead (0);
     }
     engine.setStage (savedStage);
+    // Back to the user's realtime oversampling before the live re-prepare.
+    engine.setRenderOversamplingOverride (0);
     deviceManager.addAudioCallback (&engine);
 
     rendering.store (false, std::memory_order_relaxed);
@@ -472,6 +482,9 @@ bool BounceEngine::runStemsMode()
     // Detach engine + prepare for offline rate just once. Each stem
     // re-uses the same prepared state.
     deviceManager.removeAudioCallback (&engine);
+    // Stems render through the full strip path too, so oversample them 4× for
+    // alias-free output; cleared before the live re-prepare below.
+    engine.setRenderOversamplingOverride (kRenderOversamplingFactor);
     engine.prepareForSelfTest (renderSampleRate, renderBlockSize);
 
     auto& transport = engine.getTransport();
@@ -517,6 +530,8 @@ bool BounceEngine::runStemsMode()
     transport.setState (savedTransportState);
     transport.setPlayhead (savedPlayhead);
     engine.setStage (savedStage);
+    // Back to the user's realtime oversampling before the live re-prepare.
+    engine.setRenderOversamplingOverride (0);
     deviceManager.addAudioCallback (&engine);
 
     if (cancelRequested.load (std::memory_order_relaxed))

@@ -348,6 +348,7 @@ target_sources(DuskStudio PRIVATE
     src/ui/SystemStatusBar.cpp
     src/ui/EditModeToolbar.cpp
     src/ui/TapeStrip.cpp
+    src/ui/MiniTimelineStrip.cpp
     src/ui/TransportBar.cpp
     src/ui/VirtualKeyboardComponent.cpp
     src/ui/WindowState.cpp)

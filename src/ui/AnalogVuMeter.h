@@ -43,6 +43,13 @@ public:
     // with the master VU so the visual family reads as one unit.
     void setCompactScale (bool compact);
 
+    // Opt-in "rich" photoreal face: warm-cream radial gradient + aging
+    // vignette, glass specular sheen, beveled bezel, chrome screw hub, and a
+    // tapered shadowed needle. Default OFF = the plain face every meter has
+    // shipped with. Enabled only on the master meter for now so the bus meters
+    // stay unchanged for an A/B. Triggers a face rebuild.
+    void setRichStyle (bool rich);
+
     void paint (juce::Graphics&) override;
     void resized() override;
 
@@ -54,6 +61,16 @@ private:
     const std::atomic<float>* rightRms = nullptr;
     float referenceDbFs = -18.0f;
     bool  compactScale  = false;
+    bool  richStyle     = false;   // warm-cream photoreal face (master only)
+
+    // Re-used per frame for the tapered needle so paint() stays allocation-free
+    // (clear() + rebuild rather than constructing a Path each tick).
+    juce::Path needlePath;
+
+    // Display scale the cachedFace was rasterised at, so paint() can blit it
+    // back to logical size 1:1 (HiDPI sharpness) and we can rebuild if the
+    // window moves to a different-DPI monitor.
+    float lastScale = 1.0f;
 
     // Needle position per channel as an angleFrac in [-1, +1] — -1 is the
     // resting left endstop (-20 VU), +1 is the +3 VU endstop. Mapped to a

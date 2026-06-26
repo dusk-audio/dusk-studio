@@ -202,29 +202,12 @@ void MasteringEqEditor::timerCallback()
 
 float MasteringEqEditor::bandResponseDb (int idx, float freqHz) const noexcept
 {
-    const float fc = lastFreq[(size_t) idx];
-    const float G  = lastGain[(size_t) idx];
-    const float Q  = juce::jmax (0.1f, lastQ[(size_t) idx]);
-    if (std::fabs (G) < 0.01f || fc <= 0.0f) return 0.0f;
-
-    const float ratio = freqHz / fc;
-    if (idx == 0)
-    {
-        // Low shelf - smooth tanh transition centred at fc, 1.5 octaves wide.
-        const float octaves = std::log2 (ratio);
-        return G * 0.5f * (1.0f - std::tanh (octaves * 1.4f));
-    }
-    if (idx == 4)
-    {
-        // High shelf - mirror of low shelf.
-        const float octaves = std::log2 (ratio);
-        return G * 0.5f * (1.0f + std::tanh (octaves * 1.4f));
-    }
-    // Peaking bell - gaussian-ish response in log frequency. Wider Q -> wider
-    // bump. Falls off at the band edges by ~Q*4 dB per octave.
-    const float octaves = std::log2 (ratio);
-    const float k = octaves * Q * 1.8f;
-    return G / (1.0f + k * k);
+    // Plot the actual biquad magnitude (shared coefficient math with the DSP)
+    // at the real sample rate, so the curve is what the audio path applies —
+    // including HF shelf/bell cramping near Nyquist — not an approximation.
+    const double sr = (chain != nullptr) ? chain->getScopeSampleRate() : 48000.0;
+    return duskstudio::MasteringDigitalEq::magnitudeDb (
+        idx, sr, lastFreq[(size_t) idx], lastQ[(size_t) idx], lastGain[(size_t) idx], freqHz);
 }
 
 float MasteringEqEditor::totalResponseDb (float freqHz) const noexcept

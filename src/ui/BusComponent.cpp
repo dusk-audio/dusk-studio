@@ -512,11 +512,10 @@ BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
     // one face (L = black, R = oxblood).
     vuMeter = std::make_unique<AnalogVuMeter> (
         &bus.strip.meterPostBusRmsL, &bus.strip.meterPostBusRmsR);
-    // Bus VUs use the compact Sifam / Mixbus-style scale (no numerals, "-"
-    // and "+" endpoint glyphs). Same white face as the master VU keeps the
-    // visual family consistent; the compact scale just removes the noise
-    // that crowds a small bus face.
-    vuMeter->setCompactScale (true);
+    // Bus VUs use the full numbered scale (like the master), not the compact
+    // "-" / "+" endpoints. Warm-cream rich face matches the master so the
+    // visual family reads as one unit.
+    vuMeter->setRichStyle (true);
     addAndMakeVisible (*vuMeter);
 
     const auto eqGreen = juce::Colour (0xff80c090);

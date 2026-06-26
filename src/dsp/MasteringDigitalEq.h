@@ -20,9 +20,10 @@ namespace duskstudio
 // (preserves transient timing) - for now the minimum-phase path keeps
 // CPU low and matches what most digital console EQs use.
 //
-// Threading: setBand* / setEnabled run on the message thread; process()
-// runs on the audio thread. Coefficients are cached in atomic<float>s
-// and re-applied at the start of each block.
+// Threading: the param setters are lock-free and allocation-free, so they
+// are safe to call from either thread. The chain pulls the latest param
+// atomics at block start and the audio thread re-applies any changed band's
+// coefficients in place (no heap allocation — see writeCoeffs / computeCoeffs).
 class MasteringDigitalEq
 {
 public:
@@ -36,8 +37,9 @@ public:
     // Audio thread.
     void processInPlace (float* L, float* R, int numSamples) noexcept;
 
-    // Message thread setters. Each call flags coeffs-dirty for the
-    // affected band; the audio thread re-applies before the next block.
+    // Param setters. Each flags coeffs-dirty for the affected band ONLY when
+    // the value actually changes; the audio thread re-applies (in place)
+    // before the next block. Lock-free and allocation-free.
     void setEnabled (bool e) noexcept              { enabled.store (e, std::memory_order_relaxed); }
     void setBandFreq    (int idx, float hz) noexcept;
     void setBandGainDb  (int idx, float dB) noexcept;
@@ -48,6 +50,17 @@ public:
     float getBandGainDb (int idx) const noexcept;
     float getBandQ      (int idx) const noexcept;
 
+    // Normalized biquad coefficients (a0 == 1). Single source of truth for
+    // both the audio path and the UI response curve, so the displayed curve
+    // is the actual filter magnitude rather than an approximation.
+    struct Coeffs { float b0 = 1.0f, b1 = 0.0f, b2 = 0.0f, a1 = 0.0f, a2 = 0.0f; };
+    static Coeffs computeCoeffs (int bandIdx, double sampleRate,
+                                 float freq, float q, float gainDb) noexcept;
+    // Magnitude (dB) of band `bandIdx` at `atHz`. Used by the editor to plot
+    // the real filter response. Returns 0 dB for inert (|gain| ~ 0) bands.
+    static float magnitudeDb (int bandIdx, double sampleRate,
+                              float freq, float q, float gainDb, double atHz) noexcept;
+
 private:
     enum class BandType { LowShelf, Peak, HighShelf };
     static BandType bandType (int idx) noexcept
@@ -56,6 +69,12 @@ private:
         if (idx == kNumBands - 1) return BandType::HighShelf;
         return BandType::Peak;
     }
+
+    using Filter = juce::dsp::IIR::Filter<float>;
+    // Pre-allocate a passthrough coefficient object (message thread, in
+    // prepare) so the audio thread can overwrite its 5 raw taps in place.
+    static void initCoeffs  (Filter& f);
+    static void writeCoeffs (Filter& f, const Coeffs& c) noexcept;
 
     void rebuildIfDirty (int idx) noexcept;
 
@@ -71,11 +90,9 @@ private:
     };
     std::array<Band, kNumBands> bands;
 
-    // Per channel × per band biquad. JUCE's IIR::Filter is mono - stereo
-    // = 2 instances with shared coefficients. We don't share coeffs
-    // (each filter owns its state) so we just call setCoefficients on
-    // the L and R filter independently.
-    using Filter = juce::dsp::IIR::Filter<float>;
+    // Per channel × per band biquad. JUCE's IIR::Filter is mono, so L/R are
+    // separate instances. Each owns its own coefficient object (pre-allocated
+    // in prepare); rebuildIfDirty writes identical taps into both in place.
     std::array<Filter, kNumBands> filtersL, filtersR;
 };
 } // namespace duskstudio

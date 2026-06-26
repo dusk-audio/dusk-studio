@@ -1445,7 +1445,13 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
     // prepare). Aux lanes host plugin chains only (no Dusk EQ/Comp), so they
     // don't take the factor. The cost only materialises when a strip is
     // actually processing audio — silent / skipped strips dodge the chain.
-    const int oxFactor = session.oversamplingFactor.load (std::memory_order_relaxed);
+    // An offline bounce overrides the factor (e.g. 4×) so the printed mix is
+    // alias-free even though realtime monitoring runs at the user's lighter
+    // setting; the override is cleared before the engine re-prepares for live.
+    const int oxOverride = renderOversamplingOverride.load (std::memory_order_relaxed);
+    const int oxFactor   = (oxOverride > 0)
+                             ? oxOverride
+                             : session.oversamplingFactor.load (std::memory_order_relaxed);
 
     for (auto& s : strips)        s.prepare (sr, bs, oxFactor);
     for (auto& a : busStrips)     a.prepare (sr, bs, oxFactor);

@@ -236,6 +236,15 @@ public:
     // synthetic buffers.
     void prepareForSelfTest (double sampleRate, int blockSize);
 
+    // Offline-render oversampling override. When > 0, the next prepare uses
+    // this factor instead of session.oversamplingFactor, so an offline bounce
+    // can render the saturating analog stages (console/comp/tube/tape) alias-
+    // free at e.g. 4× while realtime monitoring stays at the user's lighter
+    // factor. BounceEngine sets it around its render and clears it (0) before
+    // the engine is re-prepared for live playback.
+    void setRenderOversamplingOverride (int factor) noexcept
+        { renderOversamplingOverride.store (factor, std::memory_order_relaxed); }
+
     // Cross-track Plugin Delay Compensation. Reads each track's reported insert
     // latency (plugin OR hardware, gated by mode; MIDI tracks count 0 because
     // their instrument latency is already absorbed by the MIDI scheduling
@@ -435,6 +444,10 @@ private:
     // Deepest per-track insert latency in the session (samples). Set by
     // recomputePdc; read by BounceEngine to trim the render's lead-in.
     std::atomic<int> aggregatePdcLatencySamples { 0 };
+
+    // Render-time oversampling override (0 = use session factor). See
+    // setRenderOversamplingOverride.
+    std::atomic<int> renderOversamplingOverride { 0 };
 
     std::array<ChannelStrip, Session::kNumTracks> strips;
     std::array<BusStrip,  Session::kNumBuses> busStrips;

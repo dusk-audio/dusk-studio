@@ -288,6 +288,7 @@ private:
     std::unique_ptr<ConsoleView> consoleView;
     std::unique_ptr<class TransportBar>      transportBar;
     std::unique_ptr<class TapeStrip>         tapeStrip;
+    std::unique_ptr<class MiniTimelineStrip> miniTimeline;   // song map shown when the tape strip is collapsed
     std::unique_ptr<class SystemStatusBar>  systemStatusBar;
     bool tapeStripExpanded = false;
 
