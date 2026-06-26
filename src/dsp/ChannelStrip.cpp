@@ -70,13 +70,6 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     pdcDelayR.reset();
     pdcSilentRun = (juce::int64) kMaxPdcSamples;
 
-    // OS-skip alignment delay lines (delay set below once the oversampler
-    // latency is known). 1-channel each, mirroring the PDC pair.
-    osSkipDelayL.prepare (pdcSpec);
-    osSkipDelayR.prepare (pdcSpec);
-    osSkipDelayL.setMaximumDelayInSamples (kMaxOsLatency);
-    osSkipDelayR.setMaximumDelayInSamples (kMaxOsLatency);
-
     // Pre-size the MIDI scratch buffers so the audio thread's addEvent /
     // processBlock calls never grow them. 4 KB covers ~400-800 typical
     // channel-voice messages per block; far above any sane density even
@@ -128,10 +121,6 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
         oversamplerStereo.reset();
         osLatencySamples = 0;
     }
-    osSkipDelayL.setDelay ((float) osLatencySamples);
-    osSkipDelayR.setDelay ((float) osLatencySamples);
-    osSkipDelayL.reset();
-    osSkipDelayR.reset();
 
     const double prepSr = sampleRate * (double) factor;
     const int    prepBs = bsClamped * factor;
@@ -582,11 +571,12 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         // the normal path; relatchPdcIfDrained there advances pdcSilentRun, and
         // once it reaches the applied length this skip re-engages. (Empty insert
         // ⇒ post-insert == input, so the input-peak silence test is exact.)
-        // The PDC delay line and the OS-skip alignment line are in SERIES (insert
-        // -> PDC delay -> osSkipDelay), both fed the post-insert signal that
-        // pdcSilentRun tracks. So when both are active the trailing tail is the
-        // SUM of their lengths; draining only to max(pdc, os) would truncate the
-        // shorter line's tail. When only one is active it's that one's length.
+        // The PDC delay line and the oversampler are in SERIES (insert -> PDC
+        // delay -> oversampler), both fed the post-insert signal that
+        // pdcSilentRun tracks. The oversampler holds osLatencySamples of
+        // half-band filter-state tail, so when both are active the trailing tail
+        // is the SUM (pdc + os); draining only to max(pdc, os) would truncate the
+        // shorter one. When only one is active it's that one's length.
         const juce::int64 requiredDrain =
             (pdcAppliedSamples > 0 && osLatencySamples > 0)
                 ? (juce::int64) pdcAppliedSamples + (juce::int64) osLatencySamples

@@ -161,15 +161,12 @@ private:
     juce::int64  pdcSilentRun = 0;
     void relatchPdcIfDrained (float blockPeakAbs, int numSamples) noexcept;
 
-    // When EQ + comp are both off we skip the per-strip oversampler entirely.
-    // The oversampler imposes ~3-4.4 native samples of latency though, so a
-    // skipped strip would lead the strips that DID oversample and comb against
-    // correlated sources at the master sum. Delay the skip path by the
-    // oversampler's rounded latency to hold alignment. Integer (None) delay is
-    // enough: the <0.5-sample rounding residual nulls above 50 kHz, inaudible.
+    // The per-strip oversampler's rounded internal latency (half-band filter
+    // state). The EQ — which carries the always-on console saturation — runs
+    // every block, so the oversampler is never skipped; this value is kept only
+    // so the silent-skip can account for the oversampler's tail before dropping
+    // a block (see requiredDrain in processAndAccumulate).
     static constexpr int kMaxOsLatency = 16;
-    PdcDelayLine osSkipDelayL { kMaxOsLatency };
-    PdcDelayLine osSkipDelayR { kMaxOsLatency };
     int          osLatencySamples = 0;
 
     // Empty buffer for the channel insert plugin; PluginSlot's

@@ -390,8 +390,13 @@ TEST_CASE ("Bus mode matches analytic reduction at the chosen ratio", "[compress
     {
         const float inRmsDb = 0.0f;
         const float ampIn   = juce::Decibels::decibelsToGain (inRmsDb) * std::sqrt (2.0f);
-        const float expectedGrDb = (inRmsDb - (-10.0f)) * (1.0f - 1.0f / 4.0f);
-        const float expectedOutDb = inRmsDb - expectedGrDb;
+        // The SSL bus comp is a FEEDBACK detector (taps the compressed output)
+        // with an RMS sidechain and over-easy knee, so the steady-state output
+        // solves out = in - (out - thresh)*(1 - 1/ratio), not the feed-forward
+        // in - (in - thresh)*(1 - 1/ratio). 10 dB over the threshold is well past
+        // the 10 dB knee, so the hard-region ratio applies.
+        const float g = 1.0f - 1.0f / 4.0f;             // 0.75 at 4:1
+        const float expectedOutDb = (inRmsDb + (-10.0f) * g) / (1.0f + g);
         const float outDb = measureRmsDb (*comp, ampIn);
         REQUIRE_THAT (outDb, WithinAbs (expectedOutDb, 3.0));
     }
