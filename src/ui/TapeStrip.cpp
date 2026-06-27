@@ -2542,6 +2542,20 @@ void TapeStrip::showRegionContextMenu (const RegionHit& hit, juce::Point<int> sc
                     safeThis->clearAllSelections();
                     safeThis->repaint();
                 });
+
+    // Reverse — non-destructive: renders a reversed WAV into takes/ and
+    // repoints this region at it. Single region (the one right-clicked).
+    m.addItem ("Reverse region",
+                [safeThis = juce::Component::SafePointer<TapeStrip> (this),
+                 track = hit.track, regionIdx = hit.regionIdx]
+                {
+                    if (safeThis == nullptr) return;
+                    auto& um = safeThis->engine.getUndoManager();
+                    um.beginNewTransaction ("Reverse region");
+                    um.perform (new ReverseRegionAction (
+                        safeThis->session, safeThis->engine, track, regionIdx));
+                    safeThis->repaint();
+                });
     m.addSeparator();
 
     // Rename / clear-label action. Single-region only - giving every

@@ -823,6 +823,87 @@ bool RecordCommitAction::undo()
     return true;
 }
 
+// ── ReverseRegionAction ───────────────────────────────────────────────────
+
+ReverseRegionAction::ReverseRegionAction (Session& s, AudioEngine& e,
+                                            int t, int idx)
+    : session (s), engine (e), trackIdx (t), regionIdx (idx)
+{}
+
+bool ReverseRegionAction::perform()
+{
+    if (! indexValid (session, trackIdx, regionIdx)) return false;
+    if (frozenLocked (session, trackIdx)) return false;
+
+    // First perform renders the reversed WAV + captures before/after; redo just
+    // re-applies the captured after-state.
+    if (! firstPerformDone)
+    {
+        beforeState = session.track (trackIdx).regions[(size_t) regionIdx];
+
+        juce::AudioFormatManager fm;
+        fm.registerBasicFormats();
+        std::unique_ptr<juce::AudioFormatReader> rdr (fm.createReaderFor (beforeState.file));
+        if (rdr == nullptr) return false;
+
+        const int chs = juce::jmax (1, (int) beforeState.numChannels);
+        const int len = (int) juce::jlimit<juce::int64> (
+            1, std::numeric_limits<int>::max(), beforeState.lengthInSamples);
+        juce::AudioBuffer<float> buf (chs, len);
+        buf.clear();
+        rdr->read (&buf, 0, len, beforeState.sourceOffset, true, chs > 1);
+        const double sr   = rdr->sampleRate;
+        const int    bits = juce::jmax (16, (int) rdr->bitsPerSample);
+        for (int c = 0; c < chs; ++c)
+            std::reverse (buf.getWritePointer (c), buf.getWritePointer (c) + len);
+
+        auto takesDir = session.getSessionDirectory().getChildFile ("takes");
+        if (! takesDir.exists() && takesDir.createDirectory().failed()) return false;
+        auto outFile = takesDir.getNonexistentChildFile (
+            beforeState.file.getFileNameWithoutExtension() + "-reversed", ".wav", false);
+        juce::WavAudioFormat wav;
+        std::unique_ptr<juce::FileOutputStream> out (outFile.createOutputStream());
+        if (out == nullptr) return false;
+        std::unique_ptr<juce::AudioFormatWriter> writer (
+            wav.createWriterFor (out.get(), sr, (juce::uint32) chs, bits, {}, 0));
+        if (writer == nullptr) { out.reset(); outFile.deleteFile(); return false; }
+        out.release();   // ownership → writer
+        if (! writer->writeFromAudioSampleBuffer (buf, 0, len))
+        {
+            writer.reset();
+            outFile.deleteFile();
+            return false;
+        }
+        writer.reset();
+        renderedFile = outFile;
+
+        afterState = beforeState;
+        afterState.file            = outFile;
+        afterState.sourceOffset    = 0;
+        afterState.lengthInSamples = len;
+        afterState.numChannels     = chs;
+        // Reversed audio's head is the original tail, so swap the fades to keep
+        // each ramp on the same material.
+        std::swap (afterState.fadeInSamples, afterState.fadeOutSamples);
+        std::swap (afterState.fadeInShape,   afterState.fadeOutShape);
+        std::swap (afterState.fadeInAuto,    afterState.fadeOutAuto);
+        firstPerformDone = true;
+    }
+
+    if (! indexValid (session, trackIdx, regionIdx)) return false;
+    session.track (trackIdx).regions[(size_t) regionIdx] = afterState;
+    rebuildPlaybackIfStopped (engine);
+    return true;
+}
+
+bool ReverseRegionAction::undo()
+{
+    if (! indexValid (session, trackIdx, regionIdx)) return false;
+    session.track (trackIdx).regions[(size_t) regionIdx] = beforeState;
+    rebuildPlaybackIfStopped (engine);
+    return true;
+}
+
 SetTempoMapAction::SetTempoMapAction (AudioEngine& e,
                                         std::vector<TempoPoint> b,
                                         std::vector<TempoPoint> a)

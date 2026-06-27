@@ -188,6 +188,33 @@ private:
     bool firstPerformDone = false;
 };
 
+// Reverses a single audio region's content non-destructively: reads the
+// region's source samples, reverses each channel, renders a fresh WAV into
+// <session>/takes/, and repoints the region at it (sourceOffset 0, fades
+// swapped so the envelope stays on the same material). The original file is
+// untouched; undo restores the pre-reverse region. Frozen tracks are
+// edit-locked (perform bails). Single region.
+class ReverseRegionAction final : public juce::UndoableAction
+{
+public:
+    ReverseRegionAction (Session& session, AudioEngine& engine,
+                          int trackIdx, int regionIdx);
+
+    bool perform() override;
+    bool undo()    override;
+    int  getSizeInUnits() override { return 4; }
+
+private:
+    Session& session;
+    AudioEngine& engine;
+    int trackIdx;
+    int regionIdx;
+    AudioRegion beforeState;
+    AudioRegion afterState;
+    juce::File  renderedFile;
+    bool firstPerformDone = false;
+};
+
 // MIDI counterpart to DeleteRegionAction. Mutates through the
 // AtomicSnapshot's currentMutable() since midiRegions is a swap-load
 // vector; same race profile every other piano-roll edit accepts.
