@@ -78,14 +78,12 @@ void PlaybackEngine::preparePlayback()
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         // A frozen track plays its single baked WAV (frozenRegion) instead of
-        // its recorded regions — a frozen MIDI track has no audio regions at
-        // all, so this is the only source that produces sound. frozenRegion is
-        // populated by AudioEngine::freezeTrack / on session load before this
-        // runs. Everything downstream (reader open, fades, readForTrack) is
-        // identical to a normal region.
-        const bool frozen = session.track (t).frozen.load (std::memory_order_acquire)
-                         && session.track (t).mode.load (std::memory_order_relaxed)
-                                == (int) Track::Mode::Midi;
+        // its recorded regions / instrument. For a MIDI track that's the only
+        // source of sound; for an audio track it replaces the recorded regions
+        // (their audio is baked into the WAV). frozenRegion is populated by
+        // commitFreeze / on session load before this runs. Everything downstream
+        // (reader open, fades, readForTrack) is identical to a normal region.
+        const bool frozen = session.track (t).frozen.load (std::memory_order_acquire);
         const std::vector<AudioRegion> frozenOne =
             frozen ? std::vector<AudioRegion> { session.track (t).frozenRegion }
                    : std::vector<AudioRegion> {};

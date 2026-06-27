@@ -34,6 +34,15 @@ bool indexValid (Session& s, int trackIdx, int regionIdx)
     auto& regs = s.track (trackIdx).regions;
     return regionIdx >= 0 && regionIdx < (int) regs.size();
 }
+
+// Frozen tracks are edit-locked: their audio/MIDI is baked into a rendered WAV,
+// so any region edit would silently desync it. Region actions bail here (the
+// gesture reverts, model unchanged) — unfreeze to edit.
+bool frozenLocked (Session& s, int trackIdx)
+{
+    return trackIdx >= 0 && trackIdx < Session::kNumTracks
+        && s.track (trackIdx).frozen.load (std::memory_order_relaxed);
+}
 } // namespace
 
 // ── RegionEditAction ──────────────────────────────────────────────────────
@@ -48,6 +57,7 @@ RegionEditAction::RegionEditAction (Session& s, AudioEngine& e,
 bool RegionEditAction::perform()
 {
     if (! indexValid (session, trackIdx, regionIdx)) return false;
+    if (frozenLocked (session, trackIdx)) return false;
     session.track (trackIdx).regions[(size_t) regionIdx] = afterState;
     rebuildPlaybackIfStopped (engine);
     return true;
@@ -73,9 +83,7 @@ MidiRegionEditAction::MidiRegionEditAction (Session& s, AudioEngine& e,
 bool MidiRegionEditAction::perform()
 {
     if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return false;
-    // Frozen tracks are edit-locked: editing the MIDI would desync the baked
-    // WAV. Refusing the action leaves the model unchanged (the gesture reverts).
-    if (session.track (trackIdx).frozen.load (std::memory_order_relaxed)) return false;
+    if (frozenLocked (session, trackIdx)) return false;
     auto& v = session.track (trackIdx).midiRegions.currentMutable();
     if (regionIdx < 0 || regionIdx >= (int) v.size()) return false;
     v[(size_t) regionIdx] = afterState;
@@ -103,6 +111,7 @@ SplitRegionAction::SplitRegionAction (Session& s, AudioEngine& e,
 bool SplitRegionAction::perform()
 {
     if (! indexValid (session, trackIdx, regionIdx)) return false;
+    if (frozenLocked (session, trackIdx)) return false;
     auto& regs = session.track (trackIdx).regions;
     auto& orig = regs[(size_t) regionIdx];
 
@@ -163,6 +172,7 @@ PasteRegionAction::PasteRegionAction (Session& s, AudioEngine& e,
 bool PasteRegionAction::perform()
 {
     if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return false;
+    if (frozenLocked (session, trackIdx)) return false;
     auto& regs = session.track (trackIdx).regions;
     insertedAt = (int) regs.size();
     regs.push_back (regionToInsert);
@@ -244,6 +254,7 @@ DeleteRegionAction::DeleteRegionAction (Session& s, AudioEngine& e,
 bool DeleteRegionAction::perform()
 {
     if (! indexValid (session, trackIdx, regionIdx)) return false;
+    if (frozenLocked (session, trackIdx)) return false;
     auto& regs = session.track (trackIdx).regions;
     removed = regs[(size_t) regionIdx];
     haveRemoved = true;
@@ -274,8 +285,7 @@ DeleteMidiRegionAction::DeleteMidiRegionAction (Session& s, AudioEngine& e,
 bool DeleteMidiRegionAction::perform()
 {
     if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return false;
-    // Frozen tracks are edit-locked — see MidiRegionEditAction::perform.
-    if (session.track (trackIdx).frozen.load (std::memory_order_relaxed)) return false;
+    if (frozenLocked (session, trackIdx)) return false;
     auto& v = session.track (trackIdx).midiRegions.currentMutable();
     if (regionIdx < 0 || regionIdx >= (int) v.size()) return false;
     removed = v[(size_t) regionIdx];
@@ -584,6 +594,7 @@ JoinRegionsAction::JoinRegionsAction (Session& s, AudioEngine& e,
 bool JoinRegionsAction::perform()
 {
     if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return false;
+    if (frozenLocked (session, trackIdx)) return false;
     auto& regs = session.track (trackIdx).regions;
     if (indices.size() < 2) return false;
 

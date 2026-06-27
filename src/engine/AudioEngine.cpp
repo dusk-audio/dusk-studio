@@ -452,18 +452,23 @@ bool AudioEngine::freezePrepare (int trackIndex, juce::File& outFile, juce::int6
         { lastFreezeError = "Invalid track"; return false; }
 
     auto& track = session.track (trackIndex);
-    if (track.mode.load (std::memory_order_relaxed) != (int) Track::Mode::Midi)
-        { lastFreezeError = "Freeze applies to MIDI tracks only"; return false; }
     if (track.frozen.load (std::memory_order_relaxed))
         { lastFreezeError = "Track is already frozen"; return false; }
 
-    // Render length: the track's MIDI content end + a tail so the instrument's
-    // release and the EQ/comp ringout decay before the WAV cuts.
+    // Render length: the track's content end + a tail so the instrument's
+    // release / FX ringout decays before the WAV cuts. MIDI tracks freeze the
+    // instrument + EQ/comp; audio tracks freeze the recorded audio through its
+    // insert + EQ/comp (a big win at high oversampling).
+    const bool isMidi = track.mode.load (std::memory_order_relaxed) == (int) Track::Mode::Midi;
     juce::int64 contentEnd = 0;
-    for (const auto& mr : track.midiRegions.current())
-        contentEnd = juce::jmax (contentEnd, mr.timelineStart + mr.lengthInSamples);
+    if (isMidi)
+        for (const auto& mr : track.midiRegions.current())
+            contentEnd = juce::jmax (contentEnd, mr.timelineStart + mr.lengthInSamples);
+    else
+        for (const auto& r : track.regions)
+            contentEnd = juce::jmax (contentEnd, r.timelineStart + r.lengthInSamples);
     if (contentEnd <= 0)
-        { lastFreezeError = "Track has no MIDI content to freeze"; return false; }
+        { lastFreezeError = "Track has no content to freeze"; return false; }
 
     const double sr = getCurrentSampleRate();
     if (sr <= 0.0)
@@ -3086,14 +3091,13 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         const bool monitorEnabled = session.track (t).inputMonitor.load (std::memory_order_relaxed);
         const bool midiTrack = session.track (t).mode.load (std::memory_order_relaxed)
                                    == (int) Track::Mode::Midi;
-        // Frozen: this (MIDI) track plays a pre-rendered WAV through the strip
-        // with the instrument + EQ/comp bypassed (baked in). Acquire pairs with
-        // the release store in AudioEngine::freezeTrack so the source switch and
-        // the frozen-strip path observe a consistent frozenRegion. Require
-        // midiTrack so a track that somehow flipped to audio mode while a frozen
-        // flag lingered can never play the now-orphaned baked WAV.
-        const bool isFrozen = midiTrack
-                           && session.track (t).frozen.load (std::memory_order_acquire);
+        // Frozen: this track plays a pre-rendered WAV through the strip with the
+        // instrument/insert + EQ/comp bypassed (baked in). Works for MIDI and
+        // audio tracks alike. Acquire pairs with the release store in
+        // commitFreeze so the source switch + the frozen-strip path observe a
+        // consistent frozenRegion. A frozen track's mode is locked, so the flag
+        // can't strand on a mode that didn't bake the WAV.
+        const bool isFrozen = session.track (t).frozen.load (std::memory_order_acquire);
 
         // The track will read from disk during Play, or during Record on
         // un-armed tracks (so other tracks keep playing while we record into

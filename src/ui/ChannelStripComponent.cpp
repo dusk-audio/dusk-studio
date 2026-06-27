@@ -1088,10 +1088,15 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
                              "(effects baked in). Off = clean input recorded; effects only at playback.");
     printButton.onClick = [this]
     {
-        const bool isMidi = track.mode.load (std::memory_order_relaxed)
-                                == (int) Track::Mode::Midi;
-        if (isMidi)
-            handleFreezeClick();           // MIDI: FREEZE / unfreeze command
+        // Branch on the SAME condition refreshPrintButtonForMode uses to label
+        // the button: FREEZE for any MIDI track or a recorded audio track,
+        // PRINT for an empty audio track.
+        const bool isMidi  = track.mode.load (std::memory_order_relaxed)
+                                 == (int) Track::Mode::Midi;
+        const bool frozen  = track.frozen.load (std::memory_order_relaxed);
+        const bool freeze  = frozen || isMidi || ! track.regions.empty();
+        if (freeze)
+            handleFreezeClick();           // FREEZE / unfreeze command
         else
             track.printEffects.store (printButton.getToggleState(), std::memory_order_relaxed);
     };
@@ -2504,10 +2509,18 @@ void ChannelStripComponent::refreshPrintButtonForMode()
 {
     const bool isMidi = (track.mode.load (std::memory_order_relaxed)
                         == (int) Track::Mode::Midi);
+    const bool frozen = track.frozen.load (std::memory_order_relaxed);
 
-    if (! isMidi)
+    // The button is FREEZE for any MIDI track, and for an audio track once it
+    // has a recorded take — at that point PRINT (a capture-time decision) is
+    // moot and you'd rather bake the insert + EQ/comp to reclaim CPU (a big win
+    // at high oversampling). An empty audio track keeps PRINT. Driven each timer
+    // tick, so the button flips to FREEZE the moment a recording lands.
+    const bool showFreeze = frozen || isMidi || ! track.regions.empty();
+
+    if (! showFreeze)
     {
-        // Audio track: PRINT toggle (capture post-EQ/comp to the recorded WAV).
+        // Empty audio track: PRINT toggle (capture post-EQ/comp into the take).
         printButton.setClickingTogglesState (true);
         printButton.setEnabled (true);
         printButton.setButtonText ("PRINT");
@@ -2522,10 +2535,11 @@ void ChannelStripComponent::refreshPrintButtonForMode()
         return;
     }
 
-    // MIDI track: the button is FREEZE. PRINT is meaningless here (the audio is
-    // synthesised at playback), so instead we render the instrument + EQ/comp to
-    // a WAV and bypass the plugin to free CPU. A frozen track shows a snowflake.
-    const bool frozen = track.frozen.load (std::memory_order_relaxed);
+    // FREEZE: render the track (MIDI instrument or recorded audio, plus its
+    // insert + EQ + comp) to a WAV and bypass that DSP to free CPU. A frozen
+    // track shows a snowflake; click toggles freeze/unfreeze.
+    const juce::String what = isMidi ? "instrument + EQ + comp"
+                                      : "insert + EQ + comp";
     printButton.setClickingTogglesState (false);
     printButton.setEnabled (true);
     printButton.setButtonText (frozen
@@ -2536,10 +2550,10 @@ void ChannelStripComponent::refreshPrintButtonForMode()
     printButton.setColour (juce::TextButton::textColourOffId,
                             frozen ? juce::Colour (0xffbfe4ff) : juce::Colour (0xff8a7060));
     printButton.setTooltip (frozen
-        ? "FROZEN - the instrument + EQ/comp are rendered to audio and the "
-          "plugin is bypassed to free CPU. Click to unfreeze and edit again."
-        : "FREEZE - render this MIDI track (instrument + EQ + comp) to audio and "
-          "bypass the plugin to free CPU. Click again to unfreeze.");
+        ? "FROZEN - the " + what + " are rendered to audio and bypassed to free "
+          "CPU. Click to unfreeze and edit again."
+        : "FREEZE - render this track (" + what + ") to audio and bypass that "
+          "DSP to free CPU. Click again to unfreeze.");
 }
 
 void ChannelStripComponent::handleFreezeClick()
@@ -2985,6 +2999,11 @@ void ChannelStripComponent::timerCallback()
     // Plugin-slot button reflects the slot's current load state. Cheap -
     // just an atomic-pointer read + string compare against the cached name.
     refreshPluginSlotButton();
+
+    // PRINT↔FREEZE flips on an audio track the moment a recording lands (or its
+    // last region is deleted). Idempotent + cheap (setButtonText/Colour are
+    // no-ops when unchanged), so polling here avoids a cross-component signal.
+    refreshPrintButtonForMode();
 
     // Fader-group chip: relayout + repaint only when this strip's group, or
     // its master status, actually changes - the group can be edited from

@@ -4345,6 +4345,17 @@ void MainComponent::closePianoRollAnimated()
 
 void MainComponent::openAudioEditor (int trackIdx, int regionIdx)
 {
+    // Frozen tracks are edit-locked: the audio is baked into the rendered WAV,
+    // so trimming/fading a region would silently desync it. Block the editor
+    // until the user unfreezes (mirrors openPianoRoll for MIDI).
+    if (trackIdx >= 0 && trackIdx < Session::kNumTracks
+        && session.track (trackIdx).frozen.load (std::memory_order_relaxed))
+    {
+        showDuskAlert (*this, "Track is frozen",
+                        "Unfreeze this track to edit its audio.");
+        return;
+    }
+
     // Drop any pending collapse-teardown (see openPianoRoll).
     editorTeardownTimer.reset();
 
