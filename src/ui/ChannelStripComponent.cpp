@@ -1059,6 +1059,16 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     armButton.setTooltip ("Record arm - press REC on the transport to capture this input");
     armButton.onClick = [this]
     {
+        // A frozen track can't record (playback is the baked WAV) — captured
+        // MIDI would be silent and desync the rendering. Refuse + restore the
+        // toggle; unfreeze to record.
+        if (armButton.getToggleState()
+            && track.frozen.load (std::memory_order_relaxed))
+        {
+            armButton.setToggleState (false, juce::dontSendNotification);
+            showDuskAlert (*this, "Track is frozen", "Unfreeze this track to record.");
+            return;
+        }
         session.setTrackArmed (trackIndex, armButton.getToggleState());
     };
     armButton.addMouseListener (this, false);
@@ -2561,7 +2571,10 @@ void ChannelStripComponent::handleFreezeClick()
 
     auto* parent = findParentComponentOfClass<juce::Component>();
     if (parent == nullptr) parent = this;
-    freezeModal.show (*parent, std::move (dialog));
+    // Non-dismissable by stray click / Escape: only the dialog's Cancel / Close
+    // buttons drive teardown, so a render is never torn down out from under the
+    // worker (which would join the thread on the message thread mid-render).
+    freezeModal.show (*parent, std::move (dialog), {}, false, false);
 }
 
 void ChannelStripComponent::refreshIoConfigButton()

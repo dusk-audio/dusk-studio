@@ -83,6 +83,14 @@ bool RecordManager::startRecording (double sampleRate, juce::int64 startSample)
         if (! session.track (t).recordArmed.load (std::memory_order_relaxed))
             continue;
 
+        // Frozen tracks never record: their playback is the baked WAV, so
+        // captured MIDI/audio would be silent on playback and silently desync
+        // the rendered audio from midiRegions. The arm UI also blocks this, but
+        // this is the engine-side backstop for any other arm path (MCU, MIDI
+        // bindings). Unfreeze to record.
+        if (session.track (t).frozen.load (std::memory_order_relaxed))
+            continue;
+
         // MIDI tracks: spin up the MIDI capture FIFO and skip the WAV
         // writer entirely. The audio thread will push events into the
         // FIFO via writeMidiBlock; stopRecording drains it into a

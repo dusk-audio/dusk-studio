@@ -73,6 +73,9 @@ MidiRegionEditAction::MidiRegionEditAction (Session& s, AudioEngine& e,
 bool MidiRegionEditAction::perform()
 {
     if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return false;
+    // Frozen tracks are edit-locked: editing the MIDI would desync the baked
+    // WAV. Refusing the action leaves the model unchanged (the gesture reverts).
+    if (session.track (trackIdx).frozen.load (std::memory_order_relaxed)) return false;
     auto& v = session.track (trackIdx).midiRegions.currentMutable();
     if (regionIdx < 0 || regionIdx >= (int) v.size()) return false;
     v[(size_t) regionIdx] = afterState;
@@ -271,6 +274,8 @@ DeleteMidiRegionAction::DeleteMidiRegionAction (Session& s, AudioEngine& e,
 bool DeleteMidiRegionAction::perform()
 {
     if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return false;
+    // Frozen tracks are edit-locked — see MidiRegionEditAction::perform.
+    if (session.track (trackIdx).frozen.load (std::memory_order_relaxed)) return false;
     auto& v = session.track (trackIdx).midiRegions.currentMutable();
     if (regionIdx < 0 || regionIdx >= (int) v.size()) return false;
     removed = v[(size_t) regionIdx];
@@ -520,6 +525,10 @@ bool CloneTrackAction::perform()
     if (srcIdx < 0 || srcIdx >= Session::kNumTracks) return false;
     if (dstIdx < 0 || dstIdx >= Session::kNumTracks) return false;
     if (srcIdx == dstIdx) return false;
+    // The clone snapshot doesn't carry the frozen flag / frozenRegion, so
+    // cloning to or from a frozen track would desync. Refuse — unfreeze first.
+    if (session.track (srcIdx).frozen.load (std::memory_order_relaxed)
+        || session.track (dstIdx).frozen.load (std::memory_order_relaxed)) return false;
 
     // First perform: capture both before-state of the destination
     // (for undo) and after-state from the source (for redo). Subsequent

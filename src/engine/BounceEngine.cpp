@@ -578,7 +578,16 @@ bool BounceEngine::startFreeze (int trackIndex, const juce::File& outFile,
     { const juce::ScopedLock lock (lastErrorLock); lastError.clear(); }
     rendering.store (true, std::memory_order_relaxed);
 
-    startThread();   // → run() → renderFreezeTrack on the worker thread
+    // run() owns clearing `rendering`, so if the thread never starts we must
+    // clear it here — otherwise isRendering() stays true forever and the dialog
+    // wedges. Routes the caller into FreezeDialog's failBeforeStart path.
+    if (! startThread())   // → run() → renderFreezeTrack on the worker thread
+    {
+        rendering.store (false, std::memory_order_relaxed);
+        const juce::ScopedLock lock (lastErrorLock);
+        lastError = "Could not start the freeze render thread";
+        return false;
+    }
     return true;
 }
 
