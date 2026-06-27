@@ -3897,6 +3897,19 @@ void ChannelStripComponent::onTrackModeChanged()
     const int id = modeSelector.getSelectedId();
     const int mode = juce::jlimit (0, 2, id - 1);  // 0..2 = Track::Mode
 
+    // A frozen track is locked to MIDI mode — its baked WAV + bypassed
+    // instrument assume it. Block the switch (restoring the selector) until the
+    // user unfreezes; otherwise the frozen WAV would keep playing on a track
+    // the UI now calls audio, with no FREEZE button left to unfreeze it.
+    if (track.frozen.load (std::memory_order_relaxed)
+        && mode != (int) Track::Mode::Midi)
+    {
+        modeSelector.setSelectedId ((int) Track::Mode::Midi + 1, juce::dontSendNotification);
+        showDuskAlert (*this, "Track is frozen",
+                        "Unfreeze this track before changing its mode.");
+        return;
+    }
+
     // Auto-unload a mode-mismatched plugin: the picker filter prevents
     // loading the wrong type in the first place, but flipping a track's
     // mode after-the-fact bypasses that gate and would leave the strip

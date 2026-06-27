@@ -83,7 +83,9 @@ void PlaybackEngine::preparePlayback()
         // populated by AudioEngine::freezeTrack / on session load before this
         // runs. Everything downstream (reader open, fades, readForTrack) is
         // identical to a normal region.
-        const bool frozen = session.track (t).frozen.load (std::memory_order_acquire);
+        const bool frozen = session.track (t).frozen.load (std::memory_order_acquire)
+                         && session.track (t).mode.load (std::memory_order_relaxed)
+                                == (int) Track::Mode::Midi;
         const std::vector<AudioRegion> frozenOne =
             frozen ? std::vector<AudioRegion> { session.track (t).frozenRegion }
                    : std::vector<AudioRegion> {};

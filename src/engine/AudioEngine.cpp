@@ -3090,8 +3090,11 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         // Frozen: this (MIDI) track plays a pre-rendered WAV through the strip
         // with the instrument + EQ/comp bypassed (baked in). Acquire pairs with
         // the release store in AudioEngine::freezeTrack so the source switch and
-        // the frozen-strip path observe a consistent frozenRegion.
-        const bool isFrozen = session.track (t).frozen.load (std::memory_order_acquire);
+        // the frozen-strip path observe a consistent frozenRegion. Require
+        // midiTrack so a track that somehow flipped to audio mode while a frozen
+        // flag lingered can never play the now-orphaned baked WAV.
+        const bool isFrozen = midiTrack
+                           && session.track (t).frozen.load (std::memory_order_acquire);
 
         // The track will read from disk during Play, or during Record on
         // un-armed tracks (so other tracks keep playing while we record into
