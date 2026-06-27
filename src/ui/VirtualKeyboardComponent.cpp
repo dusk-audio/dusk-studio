@@ -142,8 +142,15 @@ bool VirtualKeyboardComponent::keyPressed (const juce::KeyPress& k)
     const int note = noteForKeyCode (code);
     if (note < 0) return false;
 
-    // Auto-repeat fires keyPressed again for an already-held key — ignore.
-    if (held[(size_t) code].note >= 0) return true;
+    // Auto-repeat fires keyPressed again for an already-held key. Don't
+    // re-trigger Note On — just clear the release debounce: this keyPressed
+    // proves the key is still physically down even if isKeyCurrentlyDown
+    // momentarily read false in the auto-repeat gap.
+    if (held[(size_t) code].note >= 0)
+    {
+        held[(size_t) code].silentScans = 0;
+        return true;
+    }
 
     held[(size_t) code] = { note, channel };
     sendNoteOn (note, velocity, channel);
@@ -158,7 +165,15 @@ void VirtualKeyboardComponent::timerCallback()
     {
         auto& slot = held[(size_t) code];
         if (slot.note < 0) continue;
-        if (! juce::KeyPress::isKeyCurrentlyDown (code))
+        if (juce::KeyPress::isKeyCurrentlyDown (code))
+        {
+            slot.silentScans = 0;
+            continue;
+        }
+        // Not down this scan. Only fire Note Off after it stays not-down for
+        // kReleaseScans in a row — a single false read is an auto-repeat gap,
+        // not a real release.
+        if (++slot.silentScans >= kReleaseScans)
         {
             sendNoteOff (slot.note, slot.channel);
             slot = {};

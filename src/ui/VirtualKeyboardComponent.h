@@ -25,6 +25,14 @@ namespace duskstudio
 // tracked code — when a key is no longer down, the matching Note Off is
 // emitted on whatever channel/note the original Note On used (so an
 // octave/channel shift mid-press doesn't orphan the off).
+//
+// Auto-repeat debounce: under the Wayland/XEmbed peer, OS key auto-repeat
+// delivers spurious key-up/down pairs, so isKeyCurrentlyDown briefly reads
+// false between repeats. Acting on the first false read would fire Note
+// Off, and the next repeat's keyPressed would re-trigger Note On — one held
+// key turns into a stream of notes. So a key must read not-down for
+// kReleaseScans consecutive scans before its Note Off fires, and each
+// auto-repeat keyPressed resets that counter as a "still-held" heartbeat.
 class VirtualKeyboardComponent final : public juce::Component,
                                           private juce::Timer
 {
@@ -81,7 +89,15 @@ private:
     {
         int note    { -1 };
         int channel { -1 };
+        // Consecutive timer scans this code has read not-down. Reset to 0
+        // by isKeyCurrentlyDown==true and by an auto-repeat keyPressed.
+        // Note Off fires once it reaches kReleaseScans (see debounce note above).
+        int silentScans { 0 };
     };
+    // ~130 ms at the 30 Hz scan rate: long enough to span the auto-repeat
+    // gap (so a held key never drops out), short enough that release latency
+    // is imperceptible.
+    static constexpr int kReleaseScans = 4;
     std::array<HeldNote, 128> held {};
 
     // Single slot for the note currently being mouse-pressed (separate
