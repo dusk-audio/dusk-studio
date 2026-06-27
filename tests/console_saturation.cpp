@@ -29,7 +29,7 @@ struct Harmonics { float h1Db, h2RelDb, h3RelDb; };
 // Drive a continuous on-bin sine through a flat BritishEQProcessor at the given
 // saturation drive and console mode, then FFT the settled block and return the
 // H2 / H3 levels relative to the fundamental, in dB.
-Harmonics measure (float drive, bool blackMode)
+Harmonics measure (float drive, bool blackMode, int h1Bin = kH1Bin)
 {
     BritishEQProcessor eq;
     eq.prepare (kSr, kN, 1);
@@ -39,7 +39,7 @@ Harmonics measure (float drive, bool blackMode)
     p.saturation  = drive;
     eq.setParameters (p);
 
-    const double freq = (double) kH1Bin * kSr / (double) kN;   // exact bin
+    const double freq = (double) h1Bin * kSr / (double) kN;   // exact bin
     const float  amp  = juce::Decibels::decibelsToGain (-18.0f); // nominal -18 dBFS
     const double w    = juce::MathConstants<double>::twoPi * freq / kSr;
 
@@ -62,9 +62,9 @@ Harmonics measure (float drive, bool blackMode)
     juce::dsp::FFT fft (kOrder);
     fft.performFrequencyOnlyForwardTransform (fftData.data());
 
-    const float h1 = fftData[(size_t) kH1Bin];
-    const float h2 = fftData[(size_t) (2 * kH1Bin)];
-    const float h3 = fftData[(size_t) (3 * kH1Bin)];
+    const float h1 = fftData[(size_t) h1Bin];
+    const float h2 = fftData[(size_t) (2 * h1Bin)];
+    const float h3 = fftData[(size_t) (3 * h1Bin)];
 
     Harmonics out;
     out.h1Db    = juce::Decibels::gainToDecibels (h1, -200.0f);
@@ -99,4 +99,30 @@ TEST_CASE ("Channel console saturation sits at the calibrated harmonic floor", "
         REQUIRE_THAT (g.h2RelDb, WithinAbs (-86.0f, 4.0f));
         REQUIRE (e.h2RelDb > g.h2RelDb);   // E grittier than G
     }
+}
+
+TEST_CASE ("E-series transformer core adds LF-weighted saturation", "[console][transformer]")
+{
+    // The E-series transformer's iron saturates where flux is highest (LF), so
+    // it adds odd-harmonic (H3) content that is weighted toward the low end —
+    // the console "weight". G-series has no transformer, only broadband console
+    // saturation. Isolate the effect by comparing how much MORE LF harmonics
+    // than HF each mode produces: the E-series must be more LF-weighted than G.
+    constexpr int   kLfBin = 27;     // ~79 Hz, exactly on a bin (H3 at bin 81)
+    constexpr float drive  = 60.0f;  // moderate saturation so the core engages
+
+    const Harmonics eLf = measure (drive, /*G=*/false, kLfBin);
+    const Harmonics eHf = measure (drive, /*G=*/false);          // 999 Hz default
+    const Harmonics gLf = measure (drive, /*G=*/true,  kLfBin);
+    const Harmonics gHf = measure (drive, /*G=*/true);
+
+    const float eLfWeight = eLf.h3RelDb - eHf.h3RelDb;   // LF harmonics minus HF
+    const float gLfWeight = gLf.h3RelDb - gHf.h3RelDb;
+    WARN ("LF-weighting  E=" << eLfWeight << " dB  G=" << gLfWeight << " dB");
+    REQUIRE (eLfWeight > gLfWeight + 3.0f);              // E's transformer adds LF weight
+
+    // With saturation off, the transformer contributes nothing — the E-series
+    // low end is clean (harmonics at the noise floor).
+    const Harmonics eClean = measure (0.0f, /*G=*/false, kLfBin);
+    REQUIRE (eClean.h3RelDb < eLf.h3RelDb - 10.0f);
 }
