@@ -491,6 +491,12 @@ MainComponent::MainComponent()
     // owns its bounds + visibility from tapeStripExpanded / fullscreen state).
     miniTimeline = std::make_unique<MiniTimelineStrip> (session, engine);
     addChildComponent (miniTimeline.get());
+    // Double-clicking a marker on the mini strip renames it (same flow as the
+    // tape strip's marker rename, so undo + the modal are shared).
+    miniTimeline->onMarkerEdit = [this] (int idx)
+    {
+        if (tapeStrip != nullptr) tapeStrip->promptRenameMarker (idx, "Rename marker");
+    };
 
     // Sync the transport-bar TAPE toggle with the collapsed default.
     if (transportBar != nullptr)

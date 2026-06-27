@@ -118,28 +118,33 @@ void MiniTimelineStrip::paint (juce::Graphics& g)
                     active ? 2.0f : 1.4f);
     }
 
-    // Active marker name as a small flag right of its tick — the current-section
-    // readout, so the strip carries the arrangement at a glance.
-    if (activeIdx >= 0)
+    // Marker names: a small flag right of each tick, clipped to the gap before
+    // the next marker so adjacent labels never overlap (ellipsised if cramped).
+    // The active marker's flag is brightened. Rects are recorded so a click on
+    // the visible label — not just the tick — hits the marker.
+    markerFlags.clear();
+    const juce::Font nameFont { juce::FontOptions (11.0f, juce::Font::bold) };
+    g.setFont (nameFont);
+    for (int i = 0; i < (int) markers.size(); ++i)
     {
-        const auto& mk  = markers[(size_t) activeIdx];
-        const int   mx  = xForSample (mk.timelineSamples, end);
+        const auto& mk    = markers[(size_t) i];
+        const int   mx    = xForSample (mk.timelineSamples, end);
+        const int   nextX = (i + 1 < (int) markers.size())
+                              ? xForSample (markers[(size_t) (i + 1)].timelineSamples, end)
+                              : (int) b.getRight();
+        const int   textX = mx + 5;
+        const int   avail = juce::jmin ((int) b.getRight() - textX - 3, nextX - textX - 2);
+        if (avail < 12) continue;
+
+        const bool  active = (i == activeIdx);
         const auto  col = mk.colour.isTransparent() ? kMarkerDim : mk.colour;
-        const juce::Font f { juce::FontOptions (11.0f, juce::Font::bold) };
-        g.setFont (f);
-        const int textX = mx + 5;
-        const int avail = (int) b.getRight() - textX - 4;
-        if (avail > 10)
-        {
-            const int tw = juce::jmin (avail, f.getStringWidth (mk.name) + 6);
-            const juce::Rectangle<float> tr ((float) textX, b.getY() + 2.0f,
-                                             (float) tw, b.getHeight() - 4.0f);
-            g.setColour (kBg.withAlpha (0.85f));
-            g.fillRoundedRectangle (tr, 2.0f);
-            g.setColour (col.brighter (0.35f));
-            g.drawText (mk.name, tr.reduced (3.0f, 0.0f),
-                        juce::Justification::centredLeft, true);
-        }
+        const int   tw  = juce::jmin (avail, nameFont.getStringWidth (mk.name) + 6);
+        const juce::Rectangle<int> ri (textX, (int) b.getY() + 2, tw, (int) b.getHeight() - 4);
+        g.setColour (kBg.withAlpha (active ? 0.9f : 0.72f));
+        g.fillRoundedRectangle (ri.toFloat(), 2.0f);
+        g.setColour (active ? col.brighter (0.35f) : col.withAlpha (0.9f));
+        g.drawText (mk.name, ri.reduced (3, 0), juce::Justification::centredLeft, true);
+        markerFlags.push_back ({ i, ri });
     }
 
     // Playhead: full-height line + small triangle head.
@@ -153,10 +158,19 @@ void MiniTimelineStrip::paint (juce::Graphics& g)
     g.fillPath (tri);
 }
 
+int MiniTimelineStrip::markerAtX (int x) const noexcept
+{
+    const int n = (int) session.getMarkers().size();
+    for (const auto& f : markerFlags)
+        if (f.first < n && x >= f.second.getX() - 2 && x <= f.second.getRight() + 2)
+            return f.first;
+    return markerIndexAtX (x, songEndSamples());
+}
+
 void MiniTimelineStrip::mouseDown (const juce::MouseEvent& ev)
 {
     const juce::int64 end = songEndSamples();
-    const int mi = markerIndexAtX (ev.x, end);
+    const int mi = markerAtX (ev.x);
     if (mi >= 0)
         engine.getTransport().setPlayhead (session.getMarkers()[(size_t) mi].timelineSamples);
     else
@@ -164,10 +178,18 @@ void MiniTimelineStrip::mouseDown (const juce::MouseEvent& ev)
     repaint();
 }
 
+void MiniTimelineStrip::mouseDoubleClick (const juce::MouseEvent& ev)
+{
+    const int mi = markerAtX (ev.x);
+    if (mi >= 0 && onMarkerEdit)
+        onMarkerEdit (mi);
+}
+
 void MiniTimelineStrip::mouseMove (const juce::MouseEvent& ev)
 {
-    const int mi = markerIndexAtX (ev.x, songEndSamples());
-    setTooltip (mi >= 0 ? session.getMarkers()[(size_t) mi].name : juce::String());
+    const int mi = markerAtX (ev.x);
+    const auto& mk = session.getMarkers();
+    setTooltip (mi >= 0 && mi < (int) mk.size() ? mk[(size_t) mi].name : juce::String());
     setMouseCursor (mi >= 0 ? juce::MouseCursor::PointingHandCursor
                             : juce::MouseCursor::NormalCursor);
 }

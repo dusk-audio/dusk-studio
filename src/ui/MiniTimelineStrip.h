@@ -2,6 +2,10 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include <functional>
+#include <utility>
+#include <vector>
+
 namespace duskstudio
 {
 class Session;
@@ -23,7 +27,11 @@ public:
 
     void paint (juce::Graphics&) override;
     void mouseDown (const juce::MouseEvent&) override;
+    void mouseDoubleClick (const juce::MouseEvent&) override;
     void mouseMove (const juce::MouseEvent&) override;
+
+    // Set by MainComponent: double-clicking a marker (tick or name) edits it.
+    std::function<void (int markerIdx)> onMarkerEdit;
 
 private:
     void timerCallback() override;
@@ -34,11 +42,17 @@ private:
     int         xForSample (juce::int64 s, juce::int64 end) const noexcept;
     juce::int64 sampleForX (int x, juce::int64 end) const noexcept;
     int         markerIndexAtX (int x, juce::int64 end) const noexcept;
+    // Marker hit: tick proximity OR a name-flag rect recorded by the last paint.
+    int         markerAtX (int x) const noexcept;
 
     Session&     session;
     AudioEngine& engine;
     juce::int64  lastPlayhead = -1;
     size_t       lastContentSig = 0;   // region/marker counts + extent, for refresh polling
+
+    // Per-marker name-flag rects from the last paint, for mouse hit-testing
+    // (so clicking the visible label, not just the tick, hits the marker).
+    std::vector<std::pair<int, juce::Rectangle<int>>> markerFlags;
 
     static constexpr int kPadL = 6;
     static constexpr int kPadR = 6;
