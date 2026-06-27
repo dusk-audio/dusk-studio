@@ -2279,6 +2279,42 @@ void AudioRegionEditor::mouseUp (const juce::MouseEvent&)
     repaint();
 }
 
+bool AudioRegionEditor::cutRange()
+{
+    auto* r = region();
+    if (r == nullptr || ! rangeActive) return false;
+
+    // Cut the selected range to the clipboard: split at both edges, delete the
+    // middle slice. Editor stays open on the left slice (regionIdx stays valid —
+    // SplitRegionAction inserts the right slice at regionIdx+1).
+    auto& clip = engine.getRegionClipboard();
+    auto& um   = engine.getUndoManager();
+
+    const auto a = juce::jmin (rangeStartSample, rangeEndSample);
+    const auto b = juce::jmax (rangeStartSample, rangeEndSample);
+    AudioRegion chunk = *r;
+    chunk.sourceOffset    = a;
+    chunk.lengthInSamples = b - a;
+    chunk.timelineStart   = 0;
+    chunk.fadeInSamples   = 0;
+    chunk.fadeOutSamples  = 0;
+    chunk.previousTakes.clear();
+    clip.region      = chunk;
+    clip.sourceTrack = trackIdx;
+    clip.hasContent  = true;
+
+    const auto tlA = r->timelineStart + (a - r->sourceOffset);
+    const auto tlB = r->timelineStart + (b - r->sourceOffset);
+    um.beginNewTransaction ("Cut chunk");
+    um.perform (new SplitRegionAction (session, engine, trackIdx, regionIdx, tlB));
+    um.perform (new SplitRegionAction (session, engine, trackIdx, regionIdx, tlA));
+    um.perform (new DeleteRegionAction (session, engine, trackIdx, regionIdx + 1));
+    rangeActive = false;
+    refreshStatusBarReadouts();
+    repaint();
+    return true;
+}
+
 void AudioRegionEditor::showContextMenu (juce::Point<int> screenPos)
 {
     auto* r = region();
@@ -2286,6 +2322,7 @@ void AudioRegionEditor::showContextMenu (juce::Point<int> screenPos)
 
     juce::PopupMenu m;
     m.addItem (1, "Split at edit cursor");
+    m.addItem (7, "Cut range", /*enabled*/ rangeActive);
     m.addItem (6, "Join selected regions",
                 /*enabled*/ ! additionalSelectedRegions.empty());
     m.addSeparator();
@@ -2343,6 +2380,12 @@ void AudioRegionEditor::showContextMenu (juce::Point<int> screenPos)
                 if (self->regionIdx >= total) self->regionIdx = total - 1;
                 self->refreshStatusBarReadouts();
                 self->repaint();
+                return;
+            }
+
+            if (chosen == 7)
+            {
+                self->cutRange();
                 return;
             }
 
@@ -2725,36 +2768,7 @@ bool AudioRegionEditor::keyPressed (const juce::KeyPress& k)
         auto& clip = engine.getRegionClipboard();
         auto& um = engine.getUndoManager();
 
-        if (rangeActive)
-        {
-            // Cut chunk: same shape as Copy + the Backspace-with-range
-            // path. Editor stays open on the left slice (regionIdx
-            // remains valid because SplitRegionAction inserts the
-            // right slice at regionIdx+1).
-            const auto a = juce::jmin (rangeStartSample, rangeEndSample);
-            const auto b = juce::jmax (rangeStartSample, rangeEndSample);
-            AudioRegion chunk = *r;
-            chunk.sourceOffset    = a;
-            chunk.lengthInSamples = b - a;
-            chunk.timelineStart   = 0;
-            chunk.fadeInSamples   = 0;
-            chunk.fadeOutSamples  = 0;
-            chunk.previousTakes.clear();
-            clip.region      = chunk;
-            clip.sourceTrack = trackIdx;
-            clip.hasContent  = true;
-
-            const auto tlA = r->timelineStart + (a - r->sourceOffset);
-            const auto tlB = r->timelineStart + (b - r->sourceOffset);
-            um.beginNewTransaction ("Cut chunk");
-            um.perform (new SplitRegionAction (session, engine, trackIdx, regionIdx, tlB));
-            um.perform (new SplitRegionAction (session, engine, trackIdx, regionIdx, tlA));
-            um.perform (new DeleteRegionAction (session, engine, trackIdx, regionIdx + 1));
-            rangeActive = false;
-            refreshStatusBarReadouts();
-            repaint();
-            return true;
-        }
+        if (cutRange()) return true;
 
         // Whole-region cut. Editor closes (its anchor region is gone).
         clip.region      = *r;

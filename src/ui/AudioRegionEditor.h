@@ -142,6 +142,11 @@ private:
     // All actions through the engine's UndoManager.
     void showContextMenu (juce::Point<int> screenPos);
 
+    // Cut the active range to the clipboard (split at both edges, delete the
+    // middle slice). Shared by Cmd+X and the right-click "Cut range" item.
+    // No-op + returns false when no range is active.
+    bool cutRange();
+
     void showFadeShapeMenu (juce::Point<int> screenPos, bool isFadeIn);
 
     // Parallel mouse surface to right-click — used to alias into
