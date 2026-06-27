@@ -28,6 +28,7 @@ add_executable(dusk-studio-tests
     file_importer_audio.cpp
     hardware_insert.cpp
     session_round_trip.cpp
+    session_freeze_roundtrip.cpp
     session_region_bounds.cpp
     session_transport_bounds.cpp
     session_corrupted_recovery.cpp
