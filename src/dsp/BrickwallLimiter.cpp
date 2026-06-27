@@ -11,6 +11,13 @@ inline float onePoleCoef (float timeMs, double rate) noexcept
     const float t = timeMs * 0.001f * (float) rate;
     return (t > 0.0f) ? 1.0f - std::exp (-1.0f / t) : 1.0f;
 }
+
+// Maps the smoothed reduction depth (linear, 0..1) to the fast↔slow release
+// blend. 2.0 → full slow at ~6 dB of sustained GR, mostly fast at ≤1 dB.
+constexpr float kReleaseAdaptGain = 2.0f;
+// Time constant of the reduction-depth tracker that drives the blend — short
+// enough to follow program, long enough that a lone transient stays "fast".
+constexpr float kRelDepthTrackMs  = 30.0f;
 } // namespace
 
 void BrickwallLimiter::prepare (double sampleRate, int maxBlockSize, double lookaheadMs)
@@ -46,13 +53,19 @@ void BrickwallLimiter::prepare (double sampleRate, int maxBlockSize, double look
         dqHead[c] = dqCount[c] = 0;
         env[c] = 1.0f;
         holdCounter[c] = 0;
+        relDepth[c] = 0.0f;
     }
     sampleCounter = 0;
 
     holdOs        = juce::jmax (0, (int) (osRate * 5.0 / 1000.0));   // default (Modern)
     lastReleaseMs = -1.0f;   // force release/hold recompute on first block
     lastMode      = -1;
-    releaseCoef   = onePoleCoef (releaseMs.load (std::memory_order_relaxed), osRate);
+    {
+        const float relMs0 = releaseMs.load (std::memory_order_relaxed);
+        releaseCoefFast = onePoleCoef (relMs0 * 0.5f, osRate);
+        releaseCoefSlow = onePoleCoef (relMs0 * 2.0f, osRate);
+    }
+    relDepthCoef  = onePoleCoef (kRelDepthTrackMs, osRate);
 
     const int osLat = (int) std::lround (oversampler->getLatencyInSamples());
     const int lookaheadBase = (lookaheadOs + osFactor / 2) / osFactor;   // round to nearest base sample
@@ -72,6 +85,7 @@ void BrickwallLimiter::reset() noexcept
         dqHead[c] = dqCount[c] = 0;
         env[c] = 1.0f;
         holdCounter[c] = 0;
+        relDepth[c] = 0.0f;
     }
     if (oversampler != nullptr)
         oversampler->reset();
@@ -109,7 +123,8 @@ void BrickwallLimiter::processInPlace (float* L, float* R, int numSamples) noexc
                 case 2:  holdMs = 12.0f; effRelMs = relMs * 2.0f; break;  // Punchy
                 default: holdMs = 5.0f;  effRelMs = relMs;        break;  // Modern
             }
-            releaseCoef = onePoleCoef (effRelMs, osRate);
+            releaseCoefFast = onePoleCoef (effRelMs * 0.5f, osRate);
+            releaseCoefSlow = onePoleCoef (effRelMs * 2.0f, osRate);
             holdOs      = juce::jmax (0, (int) (osRate * (double) holdMs / 1000.0));
         }
     }
@@ -188,8 +203,16 @@ void BrickwallLimiter::processInPlace (float* L, float* R, int numSamples) noexc
             }
             else
             {
-                env[c] += (wmin - env[c]) * releaseCoef;
+                // Program-dependent release: blend fast↔slow by the smoothed
+                // reduction depth carried from the (deep, sustained vs brief)
+                // limiting that preceded this recovery.
+                const float blend = juce::jlimit (0.0f, 1.0f, relDepth[c] * kReleaseAdaptGain);
+                const float coef  = releaseCoefFast + (releaseCoefSlow - releaseCoefFast) * blend;
+                env[c] += (wmin - env[c]) * coef;
             }
+
+            // Track how deep/sustained the reduction is (drives the blend above).
+            relDepth[c] += ((1.0f - env[c]) - relDepth[c]) * relDepthCoef;
         }
 
         const int readPos = (writePos + 1) % delayLen;

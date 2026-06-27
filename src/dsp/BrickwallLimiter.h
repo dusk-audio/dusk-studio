@@ -110,13 +110,23 @@ private:
     long long sampleCounter = 0;
 
     // Per-channel gain smoother (runs at the oversampled rate): instant attack
-    // to the lookahead-window minimum, hold, one-pole release.
+    // to the lookahead-window minimum, hold, then a program-dependent release.
     float env[2]         = { 1.0f, 1.0f };
     int   holdCounter[2] = { 0, 0 };
-    float releaseCoef = 0.0f;
     int   holdOs      = 0;
     float lastReleaseMs = -1.0f;
     int   lastMode      = -1;
+
+    // Program-dependent (dual-time-constant) release: the effective release
+    // coefficient blends between a fast and a slow one-pole by how deep and
+    // sustained the gain reduction is. Brief/shallow GR recovers fast (keeps
+    // transients open); deep/sustained GR recovers slow (no pumping on dense,
+    // bass-heavy masters). relDepth[c] is the smoothed reduction driving the
+    // blend, so a single transient stays fast while a held passage goes slow.
+    float releaseCoefFast = 0.0f;
+    float releaseCoefSlow = 0.0f;
+    float relDepthCoef    = 0.0f;
+    float relDepth[2]     = { 0.0f, 0.0f };
 
     std::atomic<bool>  enabled    { true };
     std::atomic<float> inputDrive { 0.0f };  // dB

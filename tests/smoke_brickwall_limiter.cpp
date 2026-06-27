@@ -270,3 +270,56 @@ TEST_CASE ("BrickwallLimiter: every mode holds the ceiling", "[BrickwallLimiter]
         REQUIRE (lim.getCurrentGrDb() < 0.0f);
     }
 }
+
+TEST_CASE ("BrickwallLimiter: release is program-dependent (deep GR recovers slower)",
+           "[BrickwallLimiter]")
+{
+    // After a sustained limiting passage, release into silence and measure the
+    // fraction of the original reduction still present over a fixed window. The
+    // fraction is normalised by the starting depth, so it isolates the release
+    // RATE (not the distance): a deeper, more sustained reduction must hold a
+    // higher fraction (slower recovery) than a shallow one.
+    auto remainingFraction = [] (float driveDb) -> float
+    {
+        duskstudio::BrickwallLimiter lim;
+        lim.prepare (kSr, kBlock, kLookahead);
+        lim.setCeilingDb (-1.0f);
+        lim.setReleaseMs (200.0f);
+        lim.setMode (0);              // Modern
+        lim.setEnabled (true);
+
+        std::vector<float> L (kBlock), R (kBlock);
+        double phase = 0.0;
+        const float amp = juce::Decibels::decibelsToGain (driveDb);
+
+        float gr0 = 0.0f;            // settle the depth tracker
+        for (int b = 0; b < 40; ++b)
+        {
+            fillSine (L, R, phase, 1000.0, amp);
+            lim.processInPlace (L.data(), R.data(), kBlock);
+            gr0 = lim.getCurrentGrDb();
+        }
+        const float env0 = juce::Decibels::decibelsToGain (gr0);
+        if (1.0f - env0 < 1.0e-3f) return 0.0f;   // no meaningful reduction
+
+        float fracSum = 0.0f; int n = 0;
+        for (int b = 0; b < 6; ++b)
+        {
+            std::fill (L.begin(), L.end(), 0.0f);
+            std::fill (R.begin(), R.end(), 0.0f);
+            lim.processInPlace (L.data(), R.data(), kBlock);
+            if (b >= 2)   // skip the blocks still flushing the lookahead tail
+            {
+                const float envT = juce::Decibels::decibelsToGain (lim.getCurrentGrDb());
+                fracSum += (1.0f - envT) / (1.0f - env0);
+                ++n;
+            }
+        }
+        return fracSum / (float) n;
+    };
+
+    const float deep    = remainingFraction (12.0f);   // deep, sustained GR
+    const float shallow = remainingFraction (1.5f);    // shallow GR
+    INFO ("remaining-GR fraction: deep=" << deep << "  shallow=" << shallow);
+    REQUIRE (deep > shallow + 0.05f);   // deeper reduction releases more slowly
+}
