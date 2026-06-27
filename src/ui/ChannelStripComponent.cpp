@@ -177,6 +177,7 @@ void styleCompactKnob (juce::Slider& k, juce::Colour fill)
     k.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
     k.setColour (juce::Slider::rotarySliderFillColourId, fill);
     k.setColour (juce::Slider::rotarySliderOutlineColourId, juce::Colour (0xff404048));
+    markEqKnob (k);   // SSL-console knob look (this styler is EQ-only)
 }
 
 void enableValueLabel (juce::Slider& k, const juce::String& suffix, int decimals,

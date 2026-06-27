@@ -180,6 +180,7 @@ ChannelEqEditor::ChannelEqEditor (Track& t) : track (t)
             k.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
             k.setColour (juce::Slider::rotarySliderFillColourId, fill);
             k.setColour (juce::Slider::rotarySliderOutlineColourId, juce::Colour (0xff404048));
+            markEqKnob (k);   // SSL-console knob look
             const double step = (interval > 0.0) ? interval : (mn < 0 ? 0.1 : 1.0);
             k.setRange (mn, mx, step);
             if (skewMid > 0) k.setSkewFactorFromMidPoint (skewMid);
@@ -264,9 +265,10 @@ ChannelEqEditor::ChannelEqEditor (Track& t) : track (t)
         }
     }
 
-    // Tight fit to the content: HPF (84) + HF (88) + HM (158) + LM (158)
-    // + LF (84) = 572 + header/gaps (~32) + outer padding (24) = ~628.
-    setSize (380, 628);
+    // Tight fit to the content: HPF (84) + HF (88) + HM (160) + LM (160)
+    // + LF (84) = 576 + header/gaps (~32) + outer padding (24) = ~640. The bell
+    // rows are 2 px taller now that the Q block matches the gain/freq block.
+    setSize (380, 640);
 }
 
 ChannelEqEditor::~ChannelEqEditor() = default;
@@ -303,7 +305,7 @@ void ChannelEqEditor::resized()
     constexpr int kValueH       = 18;
     constexpr int kKnobBlockH   = kKnobSize + kValueH + 6;            // 80
     constexpr int kQKnobSize    = 56;
-    constexpr int kQBlockH      = kQKnobSize + kValueH;               // 74
+    constexpr int kQBlockH      = kKnobBlockH;   // match gain/freq so the Q knob renders the same diameter
     constexpr int kFreqYStagger = 2;
     constexpr int kHpfRowH      = kKnobBlockH;
     constexpr int kShelfRowH    = kKnobBlockH + kFreqYStagger + 2;

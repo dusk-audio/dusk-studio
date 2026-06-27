@@ -182,7 +182,10 @@ public:
         // Thumb override — styleEditorKnob doesn't explicitly set thumb
         // colour; cream pointer reads against the black bakelite body.
         for (auto* k : { &lfBoost, &lfAtten, &hfBoost, &hfAtten, &hfBandwidth })
+        {
             k->setColour (juce::Slider::thumbColourId, pultecCream);
+            markEqKnob (*k);   // SSL-console knob look
+        }
 
         // program-EQ discrete-frequency rotaries (dented knobs). Same range
         // / format logic as the inline strip version — snaps to the
@@ -192,6 +195,7 @@ public:
                                                                        std::atomic<float>& atom)
         {
             k.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
+            markEqKnob (k);   // SSL-console knob look
             k.setColour (juce::Slider::rotarySliderFillColourId,    pultecGold);
             k.setColour (juce::Slider::rotarySliderOutlineColourId, juce::Colour (0xff0a0a0c));
             k.setColour (juce::Slider::thumbColourId,               pultecCream);
@@ -707,7 +711,10 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     // body. Override thumb to cream so the pointer reads as the white
     // stencilled indicator on a program-EQ EQP-1A knob.
     for (auto* k : { &eqLfBoost, &eqLfAtten, &eqHfBoost, &eqHfAtten })
+    {
         k->setColour (juce::Slider::thumbColourId, pultecCream);
+        markEqKnob (*k);   // SSL-console knob look
+    }
 
     // Auto-arm the master program-EQ EQ on any band touch. EQ defaults to
     // off (Session.h) so the LED only lights once the engineer shapes
@@ -743,6 +750,7 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
                                    std::function<juce::String (int)> fmt)
     {
         k.setRange (0.0, (double) (count - 1), 1.0);
+        markEqKnob (k);   // SSL-console knob look
         k.setColour (juce::Slider::rotarySliderFillColourId,    pultecBlack);
         k.setColour (juce::Slider::rotarySliderOutlineColourId, juce::Colour (0xff0a0a0c));
         k.setColour (juce::Slider::thumbColourId,               pultecCream);

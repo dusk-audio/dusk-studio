@@ -544,6 +544,7 @@ BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
     styleSmallKnob (eqLfGain,  -9.0, 9.0, 0.0, bus.strip.eqLfGainDb.load(),  eqGreen, "", 1);
     styleSmallKnob (eqMidGain, -9.0, 9.0, 0.0, bus.strip.eqMidGainDb.load(), eqGreen, "", 1);
     styleSmallKnob (eqHfGain,  -9.0, 9.0, 0.0, bus.strip.eqHfGainDb.load(),  eqGreen, "", 1);
+    markEqKnob (eqLfGain); markEqKnob (eqMidGain); markEqKnob (eqHfGain);   // SSL-console knob look (EQ only, not the shared comp knobs)
     eqLfGain .setTooltip ("Bus EQ low shelf @ 300 Hz (-9..+9 dB). Double-click to reset; Shift-drag for fine.");
     eqMidGain.setTooltip ("Bus EQ mid bell @ 800 Hz, Q 0.7 (-9..+9 dB). Double-click to reset; Shift-drag for fine.");
     eqHfGain .setTooltip ("Bus EQ high shelf @ 2 kHz (-9..+9 dB). Double-click to reset; Shift-drag for fine.");
