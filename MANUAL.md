@@ -85,7 +85,7 @@ Click **IN** to enable input monitoring. Play the source and watch the input met
 
 ![Channel strip 1 armed, input picked, monitor on.](docs/images/qg-03-arm-track.png)
 
-If you want to track _through_ the channel's EQ and compressor, also engage **PRINT**. The recorded file will contain the post-effects signal. With PRINT off (the default) you can tweak EQ and compression after the take without re-recording. PRINT applies to **audio tracks only**; MIDI tracks always record raw MIDI events and ignore the PRINT button.
+If you want to track _through_ the channel's EQ and compressor, also engage **PRINT**. The recorded file will contain the post-effects signal. With PRINT off (the default) you can tweak EQ and compression after the take without re-recording. PRINT applies to **audio tracks only**; on a MIDI track the same button reads **FREEZE** instead (render the track to audio and bypass the instrument to save CPU — see [ARM, IN, PRINT / FREEZE](#arm-in-print--freeze-recording-stage)).
 
 ## Record
 
@@ -211,7 +211,7 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 | --- | ---------------- | ------------------------------------------------------------------------------------------------------------- |
 | 1   | Mode             | **Mono**, **Stereo**, or **MIDI**.                                                                            |
 | 2   | Input picker     | Audio device input (mono / stereo), or MIDI port (MIDI). `−2: follow track index` matches input N to track N. |
-| 3   | ARM / IN / PRINT | ARM marks for record. IN enables input monitoring. PRINT commits EQ + comp + insert to the recorded file.     |
+| 3   | ARM / IN / PRINT&nbsp;·&nbsp;FREEZE | ARM marks for record. IN enables input monitoring. PRINT (audio) commits EQ + comp + insert to the recorded file; on MIDI tracks the button is FREEZE — render to audio + bypass the instrument to save CPU. |
 | 4   | Activity LED     | Blinks green when MIDI arrives on the chosen channel (MIDI mode only).                                        |
 
 ## The bus strip
@@ -577,11 +577,12 @@ This block is only visible in the RECORDING stage. In other stages it collapses 
 - **MIDI output** (MIDI mode): optional external MIDI output to drive a hardware synth as you play.
 - **Activity LED**: blinks green when MIDI arrives on the chosen channel.
 
-## ARM, IN, PRINT (RECORDING stage)
+## ARM, IN, PRINT / FREEZE (RECORDING stage)
 
 - **ARM**: light red when on. Marks the track for recording on the next Record press.
 - **IN**: input monitor. When on, you hear the live input through the channel strip. Useful for tracking with effects.
-- **PRINT** (audio tracks only): when on, the channel's EQ, compressor, and insert are committed to the recorded file. When off (the default), they are kept live, so you can tweak them after the take. MIDI tracks ignore PRINT — they always record raw MIDI events; the instrument plugin's audio is rendered on playback, not on capture, so there is nothing to "print to disk" for a MIDI track.
+- **PRINT** (audio tracks): when on, the channel's EQ, compressor, and insert are committed to the recorded file. When off (the default), they are kept live, so you can tweak them after the take.
+- **FREEZE** (MIDI tracks): the same button reads **FREEZE** on a MIDI track. Click it to render the track — instrument plugin plus the channel EQ and compressor — to an audio file, then bypass the instrument so it stops using CPU. The button turns to a snowflake to show the track is frozen. Freezing is the way to reclaim CPU from a heavy synth or sample library once you're happy with a part: the frozen track plays back from the rendered audio, with the fader, pan, and aux sends still live so you can keep mixing. Click the snowflake to unfreeze and edit the part again (the rendered file is discarded). Frozen state is saved with the session. To change the notes or the instrument, unfreeze first.
 
 ## Insert slot
 
