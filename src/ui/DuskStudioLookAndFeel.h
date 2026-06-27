@@ -389,14 +389,15 @@ public:
     void drawSslKnob (juce::Graphics& g, float cx, float cy, float R,
                       float angle, float startAngle, float endAngle, juce::Colour fill)
     {
-        const float bodyR = R * 0.80f;   // coloured knob; dots sit in the margin
+        const float bodyR = R * 0.94f;   // coloured knob fills nearly the bounds;
+                                          // dots ride the rim so the body stays big
 
         // Scale dots around the knob (SSL position markers), evenly along the
-        // rotary sweep, in the margin between the body and the rim.
+        // rotary sweep, riding the rim of the body.
         {
             const int   nDots   = 11;
-            const float dotRing = R * 0.93f;
-            const float dotSz   = juce::jmax (0.8f, R * 0.055f);
+            const float dotRing = R * 0.99f;
+            const float dotSz   = juce::jmax (0.7f, R * 0.05f);
             g.setColour (juce::Colour (0xff6a6a72));
             for (int i = 0; i < nDots; ++i)
             {
