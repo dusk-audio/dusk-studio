@@ -507,11 +507,20 @@ public:
         g.setColour (juce::Colour (0xff0a0a0a));
         g.drawEllipse (cx - R, cy - R, R * 2.0f, R * 2.0f, 1.2f);
 
-        // Recessed groove where the cap meets the skirt.
-        const float capR = R * 0.58f;
-        g.setColour (juce::Colour (0xff141417));
-        g.drawEllipse (cx - capR - 1.5f, cy - capR - 1.5f,
-                       (capR + 1.5f) * 2.0f, (capR + 1.5f) * 2.0f, 2.0f);
+        // Coloured cap radius scales with knob size: small knobs keep a large
+        // cap (thin milled rim) so the colour stays prominent and they don't read
+        // as tiny dots; big knobs get the full SSL skirt (0.58 R).
+        const float capFrac = juce::jlimit (0.58f, 0.82f, 0.82f - (R - 12.0f) * (0.24f / 12.0f));
+        const float capR = R * capFrac;
+
+        // Recessed groove where the cap meets the skirt — only where the skirt is
+        // wide enough to read it (big knobs).
+        if (R > 16.0f)
+        {
+            g.setColour (juce::Colour (0xff141417));
+            g.drawEllipse (cx - capR - 1.5f, cy - capR - 1.5f,
+                           (capR + 1.5f) * 2.0f, (capR + 1.5f) * 2.0f, 2.0f);
+        }
 
         // Coloured centre cap — slightly domed (radial highlight top-left).
         {
