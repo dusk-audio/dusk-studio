@@ -444,19 +444,6 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
     };
     addAndMakeVisible (clockLabel);
 
-    // Current-section pill: muted-amber accent, sits just right of the clock.
-    // Starts hidden; the timer shows it once a marker is at/before the playhead.
-    sectionLabel.setJustificationType (juce::Justification::centredLeft);
-    sectionLabel.setColour (juce::Label::textColourId,       juce::Colour (0xffd0a050));
-    sectionLabel.setColour (juce::Label::backgroundColourId, juce::Colour (0xff121214));
-    sectionLabel.setColour (juce::Label::outlineColourId,    juce::Colour (0xff2a2a32));
-    sectionLabel.setFont (juce::Font (juce::FontOptions (12.0f, juce::Font::bold)));
-    sectionLabel.setMinimumHorizontalScale (1.0f);
-    sectionLabel.setTooltip ("Current song section - the most recent marker at "
-                              "or before the playhead. Add markers with M.");
-    sectionLabel.setVisible (false);
-    addAndMakeVisible (sectionLabel);
-
     timeFormatToggle.setTooltip ("Flip display between Bars/Beats and mm:ss.ms. "
                                    "Affects the clock, tape ruler, and editor rulers. "
                                    "Right-click the clock to flip when this button is hidden.");
@@ -691,29 +678,6 @@ void TransportBar::timerCallback()
 
     // BPM field tracks the tempo at the playhead (refreshButtonStates() below
     // sets it; it reads the playhead too so the two never disagree).
-
-    // Current-section pill: name of the latest marker at or before the
-    // playhead. Empty (hidden) when there are no markers or the playhead
-    // sits before the first one. Re-lays out + re-clamps the stage tabs only
-    // when the text actually changes (rare — marker-boundary crossings).
-    {
-        const auto& markers = engine.getSession().getMarkers();
-        const Marker* cur = nullptr;
-        for (const auto& mk : markers)
-            if (mk.timelineSamples <= playhead
-                && (cur == nullptr || mk.timelineSamples > cur->timelineSamples))
-                cur = &mk;
-        const juce::String text = cur != nullptr
-            ? juce::String (juce::CharPointer_UTF8 ("\xe2\x96\xb8 ")) + cur->name   // "▸ "
-            : juce::String();
-        if (text != sectionLabel.getText())
-        {
-            sectionLabel.setText (text, juce::dontSendNotification);
-            sectionLabel.setVisible (text.isNotEmpty());
-            resized();
-            if (onSectionChanged) onSectionChanged();
-        }
-    }
 
     // Skip the periodic refresh while the user is mid-edit so we don't
     // stomp their typed input. Same pattern the BPM editor uses below.
@@ -1054,15 +1018,6 @@ void TransportBar::resized()
         area.removeFromLeft (6);
     }
     clockLabel.setBounds (area.removeFromLeft (compact ? 110 : 130));
-
-    // Current-section pill, sized to its text, just right of the clock.
-    if (sectionLabel.isVisible())
-    {
-        area.removeFromLeft (8);
-        const int textW = sectionLabel.getFont().getStringWidth (sectionLabel.getText()) + 16;
-        const int maxW  = compact ? 110 : 190;
-        sectionLabel.setBounds (area.removeFromLeft (juce::jmin (textW, maxW)).reduced (0, 4));
-    }
 
     tapeToggle.setBounds (area.removeFromRight (compact ? 48 : 84).reduced (1));
     area.removeFromRight (12);

@@ -9,9 +9,9 @@ class AudioEngine;
 
 // Thin "song map" shown when the tape strip is collapsed: song start, marker
 // ticks, song end, and the playhead, drawn full-song-fit (no horizontal scroll).
-// Click to seek; click a marker tick to jump to it. Marker names appear as hover
-// tooltips - the transport bar's "▸ Verse" chip remains the textual readout, so
-// this strip stays purely graphical and uncrowded at ~20 px tall.
+// Click to seek; click a marker tick to jump to it. The active marker's name is
+// drawn as a small flag next to its tick (the textual section readout lives here
+// now, not in the transport bar); other names appear as hover tooltips.
 class MiniTimelineStrip final : public juce::Component,
                                 public juce::SettableTooltipClient,
                                 private juce::Timer,

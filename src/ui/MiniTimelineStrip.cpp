@@ -118,6 +118,30 @@ void MiniTimelineStrip::paint (juce::Graphics& g)
                     active ? 2.0f : 1.4f);
     }
 
+    // Active marker name as a small flag right of its tick — the current-section
+    // readout, so the strip carries the arrangement at a glance.
+    if (activeIdx >= 0)
+    {
+        const auto& mk  = markers[(size_t) activeIdx];
+        const int   mx  = xForSample (mk.timelineSamples, end);
+        const auto  col = mk.colour.isTransparent() ? kMarkerDim : mk.colour;
+        const juce::Font f { juce::FontOptions (11.0f, juce::Font::bold) };
+        g.setFont (f);
+        const int textX = mx + 5;
+        const int avail = (int) b.getRight() - textX - 4;
+        if (avail > 10)
+        {
+            const int tw = juce::jmin (avail, f.getStringWidth (mk.name) + 6);
+            const juce::Rectangle<float> tr ((float) textX, b.getY() + 2.0f,
+                                             (float) tw, b.getHeight() - 4.0f);
+            g.setColour (kBg.withAlpha (0.85f));
+            g.fillRoundedRectangle (tr, 2.0f);
+            g.setColour (col.brighter (0.35f));
+            g.drawText (mk.name, tr.reduced (3.0f, 0.0f),
+                        juce::Justification::centredLeft, true);
+        }
+    }
+
     // Playhead: full-height line + small triangle head.
     const int phX = xForSample (ph, end);
     g.setColour (kPlayhead);

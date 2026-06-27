@@ -344,9 +344,6 @@ MainComponent::MainComponent()
         // pushed off the bottom of the strip and become unusable.
         setTimelineVisible (expanded);
     };
-    // The current-section pill changes the clock's effective right edge; re-run
-    // the header layout so the centered stage tabs re-clamp past it.
-    transportBar->onSectionChanged = [this] { resized(); };
     addAndMakeVisible (transportBar.get());
 
     styleStageButton (recordingStageBtn, juce::Colour (0xffd03030));   // red, like REC
