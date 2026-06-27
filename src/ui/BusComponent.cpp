@@ -1456,22 +1456,17 @@ void BusComponent::resized()
     // section below at narrow strip widths.
     if (vuMeter != nullptr)
     {
-        // When the TIMELINE tape strip is expanded the bus fader needs
-        // more room, so the VU shrinks. Shrink BOTH dimensions so the
-        // dial keeps the same 12:7 aspect ratio as the expanded form
-        // (just smaller) - earlier code only reduced the height which
-        // left a wide-and-flat box with a tiny dial floating inside.
-        constexpr int kRatioW = 12;
-        constexpr int kRatioH = 7;
+        // Width matches the EQ/COMP pill row below (reduced(4,0)) so the meter
+        // and the section pills line up. The dial inside is aspect-locked and
+        // centres itself, so the box can take the full pill width without
+        // distorting (and the dial grows to its height cap). Height still drives
+        // the dial size: it shrinks when the TIMELINE tape strip is expanded
+        // (the fader needs the room).
         const int stripW = area.getWidth();
-        // Compact heightDriver = stripW * 6/12; gives vuW = stripW * 6/7
-        // (~86% of strip) so the VU fills most of the horizontal room
-        // without crowding the fader stack. Expanded uses 7/12 height
-        // -> vuW = full strip width.
         const int heightDriver = compactVu ? stripW * 6 / 12 : stripW * 7 / 12;
         const int minH = compactVu ? 32 : 36;
         const int vuH  = juce::jmax (minH, heightDriver);
-        const int vuW  = juce::jmin (stripW, vuH * kRatioW / kRatioH);
+        const int vuW  = juce::jmax (1, stripW - 8);
         auto slot = area.removeFromTop (vuH);
         vuMeter->setBounds (slot.withSizeKeepingCentre (vuW, vuH));
         area.removeFromTop (3);

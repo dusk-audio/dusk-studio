@@ -1654,20 +1654,19 @@ void MasterStripComponent::resized()
         area.removeFromBottom (4);
     }
 
-    // Analog VU meter at the top - same proportions as the bus strips so
-    // the meter row reads consistently across the console. Shrink both
-    // dimensions in compact mode (TIMELINE tape strip expanded) so the
-    // dial keeps its 12:7 aspect ratio instead of stretching wide and
-    // flat with a tiny dial inside.
+    // Analog VU meter at the top - same proportions as the bus strips so the
+    // meter row reads consistently across the console. Width matches the
+    // EQ/COMP/TAPE pill row below (reduced(4,0)) so they line up; the dial
+    // inside is aspect-locked and centres, so the box can take the pill width
+    // without the dial distorting. Height shrinks in compact mode (TIMELINE
+    // tape strip expanded) so the fader stack keeps its room.
     if (vuMeter != nullptr)
     {
-        constexpr int kRatioW = 12;
-        constexpr int kRatioH = 7;
         const int stripW = area.getWidth();
         const int heightDriver = compactVu ? stripW * 6 / 12 : stripW * 7 / 12;
         const int minH = compactVu ? 36 : 40;
         const int vuH  = juce::jmax (minH, heightDriver);
-        const int vuW  = juce::jmin (stripW, vuH * kRatioW / kRatioH);
+        const int vuW  = juce::jmax (1, stripW - 8);
         auto slot = area.removeFromTop (vuH);
         vuMeter->setBounds (slot.withSizeKeepingCentre (vuW, vuH));
         area.removeFromTop (4);
