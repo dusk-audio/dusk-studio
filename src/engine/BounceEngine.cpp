@@ -542,4 +542,170 @@ bool BounceEngine::runStemsMode()
     }
     return succeeded;
 }
+
+bool BounceEngine::renderFreezeTrack (int trackIndex, const juce::File& outFile,
+                                      juce::int64 lenSamples, double sampleRate, int blockSize)
+{
+    if (rendering.load (std::memory_order_relaxed))
+    {
+        const juce::ScopedLock lock (lastErrorLock);
+        lastError = "A render is already in progress";
+        return false;
+    }
+    if (trackIndex < 0 || trackIndex >= Session::kNumTracks || lenSamples <= 0)
+    {
+        const juce::ScopedLock lock (lastErrorLock);
+        lastError = "Invalid freeze render request";
+        return false;
+    }
+
+    renderSampleRate = (sampleRate > 0.0) ? sampleRate : renderSampleRate;
+    renderBlockSize  = juce::jmax (16, blockSize);
+    renderFormat     = Format::Wav;   // freeze is always WAV (sample-accurate re-import)
+
+    // Open the writer first — a failure here means we never touch engine state.
+    std::unique_ptr<juce::FileOutputStream> outStream (outFile.createOutputStream());
+    if (outStream == nullptr)
+    {
+        const juce::ScopedLock lock (lastErrorLock);
+        lastError = "Could not open freeze file " + outFile.getFullPathName();
+        return false;
+    }
+    outStream->setPosition (0);
+    outStream->truncate();
+
+    constexpr int kNumChannels = 2;
+    juce::String writerErr;
+    std::unique_ptr<juce::AudioFormatWriter> writer = makeWriter (std::move (outStream), writerErr);
+    if (writer == nullptr)
+    {
+        outFile.deleteFile();   // drop the 0-byte file we just truncated
+        const juce::ScopedLock lock (lastErrorLock);
+        lastError = writerErr;
+        return false;
+    }
+
+    rendering.store (true, std::memory_order_relaxed);
+    cancelRequested.store (false, std::memory_order_relaxed);
+
+    // Detach + offline-prepare, exactly like the stem path.
+    deviceManager.removeAudioCallback (&engine);
+    engine.setRenderOversamplingOverride (kRenderOversamplingFactor);
+    engine.prepareForSelfTest (renderSampleRate, renderBlockSize);
+
+    constexpr int kNumIn = 16;
+    std::vector<std::vector<float>> inputs (kNumIn,
+                                              std::vector<float> ((size_t) renderBlockSize, 0.0f));
+    std::vector<const float*> inputPtrs (kNumIn);
+    for (int c = 0; c < kNumIn; ++c) inputPtrs[(size_t) c] = inputs[(size_t) c].data();
+
+    std::vector<std::vector<float>> outputs (kNumChannels,
+                                               std::vector<float> ((size_t) renderBlockSize, 0.0f));
+    std::vector<float*> outputPtrs (kNumChannels);
+    for (int c = 0; c < kNumChannels; ++c) outputPtrs[(size_t) c] = outputs[(size_t) c].data();
+
+    // Pre-fader capture scratch the target strip fills each block. Cleared
+    // per-block so a strip early-return writes silence, never a stale block.
+    std::vector<float> capL ((size_t) renderBlockSize, 0.0f);
+    std::vector<float> capR ((size_t) renderBlockSize, 0.0f);
+
+    juce::AudioIODeviceCallbackContext ctx {};
+
+    auto& transport = engine.getTransport();
+    const auto savedTransportState = transport.getState();
+    const auto savedPlayhead       = transport.getPlayhead();
+    const auto savedStage          = engine.getStage();
+
+    std::array<bool, (size_t) Session::kNumTracks> savedSolo {};
+    for (int t = 0; t < Session::kNumTracks; ++t)
+        savedSolo[(size_t) t] = session.track (t).strip.solo.load (std::memory_order_relaxed);
+
+    engine.setStage (AudioEngine::Stage::Mixing);
+    // Solo the target exclusively. The capture tap is pre-gate so this isn't
+    // strictly required, but it keeps the render deterministic and skips the
+    // other tracks' mix contribution.
+    for (int t = 0; t < Session::kNumTracks; ++t)
+        if (t != trackIndex) session.setTrackSoloed (t, false);
+    session.setTrackSoloed (trackIndex, true);
+
+    transport.setPlayhead (0);
+    transport.setState (Transport::State::Playing);
+    engine.getPlaybackEngine().preparePlayback();
+
+    engine.getChannelStrip (trackIndex).setFreezeCapture (capL.data(), capR.data());
+
+    // Same PDC lead-in trim as the stems: the strip path delays the signal by
+    // the deepest track latency. Drop those leading samples so the WAV starts
+    // at timeline 0; the live PDC re-applies on frozen playback.
+    const juce::int64 leadIn   = (juce::int64) engine.getAggregatePdcLatencySamples();
+    const juce::int64 toRender = lenSamples + leadIn;
+
+    juce::int64 done = 0, written = 0, dropped = 0;
+    bool ok = true;
+    while (done < toRender && ! cancelRequested.load (std::memory_order_relaxed))
+    {
+        const int remaining = (int) juce::jmin ((juce::int64) renderBlockSize, toRender - done);
+        for (auto& o : outputs) std::fill (o.begin(), o.end(), 0.0f);
+        std::fill (capL.begin(), capL.end(), 0.0f);
+        std::fill (capR.begin(), capR.end(), 0.0f);
+
+        engine.audioDeviceIOCallbackWithContext (inputPtrs.data(), kNumIn,
+                                                   outputPtrs.data(), kNumChannels,
+                                                   remaining, ctx);
+
+        int writeStart = 0;
+        if (dropped < leadIn)
+        {
+            writeStart = (int) juce::jmin ((juce::int64) remaining, leadIn - dropped);
+            dropped += writeStart;
+        }
+        const int writeCount = remaining - writeStart;
+        if (writeCount > 0)
+        {
+            float* capPtrs[kNumChannels] = { capL.data() + writeStart, capR.data() + writeStart };
+            if (! writer->writeFromFloatArrays (capPtrs, kNumChannels, writeCount))
+            {
+                const juce::ScopedLock lock (lastErrorLock);
+                lastError = "Writer failed mid-freeze at " + juce::String (written) + " samples";
+                ok = false;
+                break;
+            }
+            written += writeCount;
+        }
+
+        done += remaining;
+        renderedSamples.store (written, std::memory_order_relaxed);
+        const float p = (float) ((double) written / (double) lenSamples);
+        progress.store (juce::jlimit (0.0f, 1.0f, p), std::memory_order_relaxed);
+        if (onProgressUpdated) onProgressUpdated (progress.load (std::memory_order_relaxed));
+    }
+
+    // Drop the capture tap BEFORE re-preparing / re-attaching the live device.
+    engine.getChannelStrip (trackIndex).setFreezeCapture (nullptr, nullptr);
+    engine.getPlaybackEngine().stopPlayback();
+    writer.reset();   // flush + close before any deleteFile
+
+    // Restore everything — solo, transport, stage, oversampling, device callback.
+    for (int t = 0; t < Session::kNumTracks; ++t)
+        session.setTrackSoloed (t, savedSolo[(size_t) t]);
+    transport.setState (savedTransportState);
+    transport.setPlayhead (savedPlayhead);
+    engine.setStage (savedStage);
+    engine.setRenderOversamplingOverride (0);
+    deviceManager.addAudioCallback (&engine);
+
+    rendering.store (false, std::memory_order_relaxed);
+
+    if (! ok || cancelRequested.load (std::memory_order_relaxed))
+    {
+        outFile.deleteFile();
+        if (cancelRequested.load (std::memory_order_relaxed))
+        {
+            const juce::ScopedLock lock (lastErrorLock);
+            lastError = kCancelledError;
+        }
+        return false;
+    }
+    return true;
+}
 } // namespace duskstudio

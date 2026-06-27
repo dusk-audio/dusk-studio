@@ -85,6 +85,18 @@ public:
 
     void cancel() noexcept { cancelRequested.store (true, std::memory_order_relaxed); }
 
+    // Synchronous single-track FREEZE render (message thread; transport must be
+    // stopped). Bakes trackIndex's PRE-FADER signal — instrument + EQ + comp,
+    // before fader/pan/sends — to a 24-bit stereo WAV at outFile, lenSamples
+    // long at sampleRate. Reuses the offline drive (detach device, 4× oversample,
+    // PDC lead-in trim) like the stem path, but captures the strip's pre-fader
+    // tap (ChannelStrip::setFreezeCapture) instead of the master mix. Blocks
+    // until done; unlike start() it does NOT spin the worker thread. Returns
+    // false on failure (getLastError set); deletes a partial file on failure.
+    bool renderFreezeTrack (int trackIndex, const juce::File& outFile,
+                            juce::int64 lenSamples, double sampleRate,
+                            int blockSize = 1024);
+
     bool         isRendering() const noexcept { return rendering.load (std::memory_order_relaxed); }
     float        getProgress() const noexcept { return progress.load (std::memory_order_relaxed); }
     // Stems mode: 1-based current stem (1..total). 0 before first stem
