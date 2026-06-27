@@ -382,7 +382,7 @@ public:
         // so only EQ knobs get it (comp / pan / send knobs keep the ball).
         if ((bool) slider.getProperties().getWithDefault ("sslEqKnob", false))
         {
-            drawSslEqKnob (g, cx, cy, outerR, angle, fill);
+            drawSslEqKnob (g, cx, cy, outerR, angle, rotaryStartAngle, rotaryEndAngle, fill);
             return;
         }
 
@@ -461,78 +461,64 @@ public:
         g.drawEllipse (tipX - tipR, tipY - tipR, tipR * 2.0f, tipR * 2.0f, 0.5f);
     }
 
-    // Collet EQ knob: a flat coloured cap sitting on a wider FLUTED grey skirt
-    // (radial ridges/grooves seen from the top), like a hardware skirted knob.
-    // R is the full radius; `fill` is the band accent (cap colour); `angle` is
-    // the value angle.
+    // SSL E-EQ knob: a SOLID coloured domed knob with a fat white pointer, a
+    // small black moulded notch at the rim, and a ring of dark scale dots around
+    // it (the SSL position markers). R is the full radius; `fill` is the band
+    // colour; `angle` the value angle; start/end the rotary sweep for the dots.
     void drawSslEqKnob (juce::Graphics& g, float cx, float cy, float R,
-                        float angle, juce::Colour fill)
+                        float angle, float startAngle, float endAngle, juce::Colour fill)
     {
-        const float capR = R * 0.60f;   // coloured cap; the rest is fluted skirt
+        const float bodyR = R * 0.80f;   // coloured knob; dots sit in the margin
 
-        // Drop shadow under the whole knob.
+        // Scale dots around the knob (SSL position markers), evenly along the
+        // rotary sweep, in the margin between the body and the rim.
         {
-            juce::ColourGradient shadow (juce::Colour (0x70000000), cx, cy + R * 0.2f,
-                                         juce::Colour (0x00000000), cx, cy + R + 5.0f, true);
+            const int   nDots   = 11;
+            const float dotRing = R * 0.93f;
+            const float dotSz   = juce::jmax (0.8f, R * 0.055f);
+            g.setColour (juce::Colour (0xff6a6a72));
+            for (int i = 0; i < nDots; ++i)
+            {
+                const float t = (float) i / (float) (nDots - 1);
+                const float a = startAngle + t * (endAngle - startAngle)
+                                - juce::MathConstants<float>::halfPi;
+                const float px = cx + dotRing * std::cos (a);
+                const float py = cy + dotRing * std::sin (a);
+                g.fillEllipse (px - dotSz, py - dotSz, dotSz * 2.0f, dotSz * 2.0f);
+            }
+        }
+
+        // Drop shadow under the body.
+        {
+            juce::ColourGradient shadow (juce::Colour (0x66000000), cx, cy + bodyR * 0.25f,
+                                         juce::Colour (0x00000000), cx, cy + bodyR + 5.0f, true);
             g.setGradientFill (shadow);
-            g.fillEllipse (cx - R - 1.0f, cy - R + 1.0f, (R + 1.0f) * 2.0f, (R + 1.0f) * 2.0f);
+            g.fillEllipse (cx - bodyR - 1.0f, cy - bodyR + 1.0f, (bodyR + 1.0f) * 2.0f, (bodyR + 1.0f) * 2.0f);
         }
 
-        // Grey skirt base.
-        g.setColour (juce::Colour (0xff4c4c52));
-        g.fillEllipse (cx - R, cy - R, R * 2.0f, R * 2.0f);
-
-        // Flutes — alternating lit-ridge / shadowed-groove radial wedges from the
-        // cap edge out to the rim. This is the fluted skirt of a collet knob.
-        const int   flutes = juce::jlimit (8, 26, (int) std::lround ((double) R * 0.85));
-        const float inner  = capR / R;
-        const float step   = juce::MathConstants<float>::twoPi / (float) flutes;
-        for (int i = 0; i < flutes; ++i)
+        // Solid coloured domed body (radial highlight top-left).
         {
-            const float a0 = step * (float) i;
-            juce::Path ridge, groove;
-            ridge .addPieSegment (cx - R, cy - R, R * 2.0f, R * 2.0f, a0,                a0 + step * 0.5f, inner);
-            groove.addPieSegment (cx - R, cy - R, R * 2.0f, R * 2.0f, a0 + step * 0.5f,  a0 + step,        inner);
-            g.setColour (juce::Colour (0xff727279));   // lit ridge
-            g.fillPath (ridge);
-            g.setColour (juce::Colour (0xff303036));   // shadowed groove
-            g.fillPath (groove);
+            juce::ColourGradient body (fill.brighter (0.20f), cx - bodyR * 0.45f, cy - bodyR * 0.5f,
+                                       fill.darker  (0.40f),  cx + bodyR * 0.5f,  cy + bodyR * 0.55f, true);
+            g.setGradientFill (body);
+            g.fillEllipse (cx - bodyR, cy - bodyR, bodyR * 2.0f, bodyR * 2.0f);
         }
+        g.setColour (juce::Colour (0x24ffffff));   // top sheen
+        g.fillEllipse (cx - bodyR * 0.7f, cy - bodyR * 0.88f, bodyR * 1.4f, bodyR * 0.55f);
+        g.setColour (juce::Colour (0xff0b0b0d));    // dark rim
+        g.drawEllipse (cx - bodyR, cy - bodyR, bodyR * 2.0f, bodyR * 2.0f, 1.0f);
 
-        // 3-D dome shading over the skirt (light top-left, shadow bottom-right).
-        {
-            juce::ColourGradient dome (juce::Colour (0x36ffffff), cx - R * 0.45f, cy - R * 0.5f,
-                                       juce::Colour (0x48000000), cx + R * 0.55f, cy + R * 0.6f, true);
-            g.setGradientFill (dome);
-            g.fillEllipse (cx - R, cy - R, R * 2.0f, R * 2.0f);
-        }
-
-        // Outer rim.
-        g.setColour (juce::Colour (0xff141417));
-        g.drawEllipse (cx - R, cy - R, R * 2.0f, R * 2.0f, 1.2f);
-
-        // Raised coloured cap — a flat matte disc (NOT a glossy ball), lifted off
-        // the skirt with a soft shadow and a dark seating ring.
-        g.setColour (juce::Colour (0x66000000));
-        g.fillEllipse (cx - capR - 1.0f, cy - capR + 1.2f, (capR + 1.0f) * 2.0f, (capR + 1.0f) * 2.0f);
-        {
-            juce::ColourGradient cap (fill.brighter (0.12f), cx, cy - capR,
-                                      fill.darker  (0.30f),  cx, cy + capR, false);
-            g.setGradientFill (cap);
-            g.fillEllipse (cx - capR, cy - capR, capR * 2.0f, capR * 2.0f);
-        }
-        g.setColour (juce::Colour (0x55000000));   // seating ring
-        g.drawEllipse (cx - capR, cy - capR, capR * 2.0f, capR * 2.0f, 1.0f);
-        g.setColour (juce::Colour (0x2effffff));   // soft top gloss
-        g.fillEllipse (cx - capR * 0.78f, cy - capR * 0.9f, capR * 1.56f, capR * 0.55f);
-
-        // Pointer — a single white line on the cap (centre to cap edge).
+        // Black moulded notch at the rim + a fat white pointer, at the value angle.
         const float dx = std::cos (angle - juce::MathConstants<float>::halfPi);
         const float dy = std::sin (angle - juce::MathConstants<float>::halfPi);
+        g.setColour (juce::Colour (0xff0c0c0e));
+        g.drawLine (cx + bodyR * 0.82f * dx, cy + bodyR * 0.82f * dy,
+                    cx + bodyR * 1.0f  * dx, cy + bodyR * 1.0f  * dy,
+                    juce::jmax (2.4f, R * 0.13f));
         g.setColour (juce::Colours::white);
-        g.drawLine (cx + R * 0.08f * dx, cy + R * 0.08f * dy,
-                    cx + capR * 0.94f * dx, cy + capR * 0.94f * dy,
-                    juce::jmax (1.6f, R * 0.08f));
+        g.drawLine (cx + bodyR * 0.16f * dx, cy + bodyR * 0.16f * dy,
+                    cx + bodyR * 0.76f * dx, cy + bodyR * 0.76f * dy,
+                    juce::jmax (2.0f, R * 0.10f));
     }
 
 private:
