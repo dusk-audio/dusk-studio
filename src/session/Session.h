@@ -799,6 +799,15 @@ struct Track
     juce::String pluginDescriptionXml;
     juce::String pluginStateBase64;
 
+    // Track freeze (MIDI tracks): the instrument + pre-fader strip is rendered
+    // to a WAV, the plugin is bypassed to free CPU, and playback reads the WAV
+    // instead of synthesising. `frozen` gates the audio path; `frozenAudioPath`
+    // is the rendered file (relative-portable, like region files); `frozenRegion`
+    // is rebuilt from it on the message thread for the PlaybackEngine to read.
+    std::atomic<bool> frozen { false };
+    juce::String      frozenAudioPath;
+    AudioRegion       frozenRegion;
+
     std::atomic<float> meterGrDb     { 0.0f };     // <= 0
     std::atomic<float> meterInputDb  { -100.0f };
     // Stereo R-input peak. -100 for mono/midi.

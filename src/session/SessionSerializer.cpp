@@ -336,6 +336,10 @@ juce::DynamicObject::Ptr trackToObject (const Track& t, const juce::File& sessio
     obj->setProperty ("midi_output_id",  t.midiOutputIdentifier);
     obj->setProperty ("midi_channel",    t.midiChannel.load());
     obj->setProperty ("track_mode",     t.mode.load());
+    obj->setProperty ("frozen",         t.frozen.load());
+    if (! t.frozenAudioPath.isEmpty())
+        obj->setProperty ("frozen_audio_path",
+                          portablePath (juce::File (t.frozenAudioPath), sessionDir));
 
     juce::Array<juce::var> buses;
     for (int i = 0; i < ChannelStripParams::kNumBuses; ++i)
@@ -745,6 +749,9 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm,
     }
     setInt   (t.midiChannel,        "midi_channel");
     setInt   (t.mode,               "track_mode");
+    setBool  (t.frozen,             "frozen");
+    if (auto fp = v["frozen_audio_path"].toString(); fp.isNotEmpty())
+        t.frozenAudioPath = resolvePortablePath (fp, sessionDir, missingFiles).getFullPathName();
 
     if (auto buses = v["bus_assign"]; buses.isArray())
     {
