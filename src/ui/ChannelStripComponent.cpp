@@ -2541,6 +2541,10 @@ void ChannelStripComponent::refreshPrintButtonForMode()
     const juce::String what = isMidi ? "instrument + EQ + comp"
                                       : "insert + EQ + comp";
     printButton.setClickingTogglesState (false);
+    // Clear any leftover toggle bit from a prior PRINT-ON state — otherwise the
+    // button paints with buttonOnColourId/textColourOnId (the orange PRINT-on
+    // look) instead of the FREEZE/snowflake colours set below.
+    printButton.setToggleState (false, juce::dontSendNotification);
     printButton.setEnabled (true);
     printButton.setButtonText (frozen
         ? juce::String::charToString ((juce::juce_wchar) 0x2744)   // ❄ snowflake
