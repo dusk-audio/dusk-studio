@@ -8,6 +8,7 @@
 #include "EmbeddedModal.h"
 #include "HardwareInsertEditor.h"
 #include "PluginPickerHelpers.h"
+#include "DuskAlerts.h"
 #include "../engine/AudioEngine.h"
 #include "../engine/PluginSlot.h"
 #include "../engine/PluginManager.h"
@@ -1076,7 +1077,12 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
                              "(effects baked in). Off = clean input recorded; effects only at playback.");
     printButton.onClick = [this]
     {
-        track.printEffects.store (printButton.getToggleState(), std::memory_order_relaxed);
+        const bool isMidi = track.mode.load (std::memory_order_relaxed)
+                                == (int) Track::Mode::Midi;
+        if (isMidi)
+            handleFreezeClick();           // MIDI: FREEZE / unfreeze command
+        else
+            track.printEffects.store (printButton.getToggleState(), std::memory_order_relaxed);
     };
     addAndMakeVisible (printButton);
     // Mode-aware enabled state. PRINT only commits post-effects
@@ -2487,19 +2493,61 @@ void ChannelStripComponent::refreshPrintButtonForMode()
 {
     const bool isMidi = (track.mode.load (std::memory_order_relaxed)
                         == (int) Track::Mode::Midi);
-    printButton.setEnabled (! isMidi);
-    if (isMidi)
-        printButton.setTooltip ("PRINT does not apply to MIDI tracks - they "
-                                  "record raw note events. The instrument "
-                                  "plugin's audio is rendered on playback, "
-                                  "not on capture, so there is nothing to "
-                                  "commit. Use Bounce to render a MIDI take "
-                                  "to disk.");
-    else
+
+    if (! isMidi)
+    {
+        // Audio track: PRINT toggle (capture post-EQ/comp to the recorded WAV).
+        printButton.setClickingTogglesState (true);
+        printButton.setEnabled (true);
+        printButton.setButtonText ("PRINT");
+        printButton.setColour (juce::TextButton::buttonColourId,  juce::Colour (0xff202024));
+        printButton.setColour (juce::TextButton::textColourOffId, juce::Colour (0xff8a7060));
+        printButton.setToggleState (track.printEffects.load (std::memory_order_relaxed),
+                                     juce::dontSendNotification);
         printButton.setTooltip ("PRINT - when on, the recorded WAV captures "
                                   "the post-EQ/post-comp signal (effects baked "
                                   "in). Off = clean input recorded; effects "
                                   "only at playback.");
+        return;
+    }
+
+    // MIDI track: the button is FREEZE. PRINT is meaningless here (the audio is
+    // synthesised at playback), so instead we render the instrument + EQ/comp to
+    // a WAV and bypass the plugin to free CPU. A frozen track shows a snowflake.
+    const bool frozen = track.frozen.load (std::memory_order_relaxed);
+    printButton.setClickingTogglesState (false);
+    printButton.setEnabled (true);
+    printButton.setButtonText (frozen
+        ? juce::String::charToString ((juce::juce_wchar) 0x2744)   // ❄ snowflake
+        : juce::String ("FREEZE"));
+    printButton.setColour (juce::TextButton::buttonColourId,
+                            frozen ? juce::Colour (0xff2a5a78) : juce::Colour (0xff202024));
+    printButton.setColour (juce::TextButton::textColourOffId,
+                            frozen ? juce::Colour (0xffbfe4ff) : juce::Colour (0xff8a7060));
+    printButton.setTooltip (frozen
+        ? "FROZEN - the instrument + EQ/comp are rendered to audio and the "
+          "plugin is bypassed to free CPU. Click to unfreeze and edit again."
+        : "FREEZE - render this MIDI track (instrument + EQ + comp) to audio and "
+          "bypass the plugin to free CPU. Click again to unfreeze.");
+}
+
+void ChannelStripComponent::handleFreezeClick()
+{
+    if (track.frozen.load (std::memory_order_relaxed))
+    {
+        engine.unfreezeTrack (trackIndex);
+    }
+    else
+    {
+        // freezeTrack renders offline on the message thread — it can take a
+        // moment, so show a wait cursor while it blocks.
+        juce::MouseCursor::showWaitCursor();
+        const bool ok = engine.freezeTrack (trackIndex);
+        juce::MouseCursor::hideWaitCursor();
+        if (! ok)
+            showDuskAlert (*this, "Freeze failed", engine.getLastFreezeError());
+    }
+    refreshPrintButtonForMode();
 }
 
 void ChannelStripComponent::refreshIoConfigButton()

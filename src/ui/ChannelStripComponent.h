@@ -241,6 +241,9 @@ private:
     // the button + swap the tooltip in MIDI mode. Called from the ctor
     // and from onTrackModeChanged().
     void refreshPrintButtonForMode();
+    // MIDI tracks: the PRINT button becomes FREEZE. Renders the track to audio
+    // and bypasses the instrument (or unfreezes). Blocks briefly on the render.
+    void handleFreezeClick();
 
     // Re-renders one aux send's value label (e.g. after a pre/post
     // toggle from the right-click menu). Reads the current dB +
