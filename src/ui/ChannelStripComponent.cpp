@@ -4606,14 +4606,14 @@ void ChannelStripComponent::resized()
     //     space, freq stays on the right.
     //   • HPF lives at the top of the block as a single centred knob.
     //   • Shelf rows are short; bell rows are taller (gain block + Q block).
-    // EQ knobs are larger than the AUX sends so the SSL milled-skirt knob reads
-    // (a knurled ring + coloured cap needs the diameter). Q matches gain/freq;
-    // no subordinate-size knob.
-    constexpr int kKnobSize    = 30;
+    // EQ knobs sit just a touch larger than the 24 px AUX / COMP knobs — big
+    // enough for the SSL milled-skirt knob to read, small enough that the EQ
+    // block doesn't eat fader height. Q matches gain/freq; no subordinate size.
+    constexpr int kKnobSize    = 26;
     constexpr int kValueLabelH = 12;
-    constexpr int kKnobBlockH  = kKnobSize + kValueLabelH + 2;        // 44
-    constexpr int kQKnobSize   = 30;
-    constexpr int kQBlockH     = kQKnobSize + kValueLabelH;           // 42
+    constexpr int kKnobBlockH  = kKnobSize + kValueLabelH + 2;
+    constexpr int kQKnobSize   = 26;
+    constexpr int kQBlockH     = kQKnobSize + kValueLabelH;
     constexpr int kFreqYStagger = 2;                                  // tighter SSL nudge - was 4
     constexpr int kEqHeaderH   = 16;  // matches COMP header row height for visual parity
     constexpr int kFilterLabelH = 10;                                 // small HPF/LPF captions above the white knobs
