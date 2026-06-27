@@ -338,8 +338,14 @@ juce::DynamicObject::Ptr trackToObject (const Track& t, const juce::File& sessio
     obj->setProperty ("track_mode",     t.mode.load());
     obj->setProperty ("frozen",         t.frozen.load());
     if (! t.frozenAudioPath.isEmpty())
+    {
         obj->setProperty ("frozen_audio_path",
                           portablePath (juce::File (t.frozenAudioPath), sessionDir));
+        // Length + channels so load rebuilds frozenRegion without opening the
+        // WAV (PlaybackEngine needs frozenRegion populated to play it back).
+        obj->setProperty ("frozen_len",      (juce::int64) t.frozenRegion.lengthInSamples);
+        obj->setProperty ("frozen_channels", t.frozenRegion.numChannels);
+    }
 
     juce::Array<juce::var> buses;
     for (int i = 0; i < ChannelStripParams::kNumBuses; ++i)
@@ -751,7 +757,30 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm,
     setInt   (t.mode,               "track_mode");
     setBool  (t.frozen,             "frozen");
     if (auto fp = v["frozen_audio_path"].toString(); fp.isNotEmpty())
-        t.frozenAudioPath = resolvePortablePath (fp, sessionDir, missingFiles).getFullPathName();
+    {
+        const auto wav = resolvePortablePath (fp, sessionDir, missingFiles);
+        t.frozenAudioPath = wav.getFullPathName();
+        // Rebuild frozenRegion so PlaybackEngine can open the baked WAV. The
+        // instrument re-bypass is engine state, re-applied after load by
+        // AudioEngine::reapplyFreezeState (the serializer can't reach strips).
+        auto& fr = t.frozenRegion;
+        fr = AudioRegion {};
+        fr.file            = wav;
+        fr.timelineStart   = 0;
+        fr.lengthInSamples = (juce::int64) v.getProperty ("frozen_len", 0);
+        fr.sourceOffset    = 0;
+        fr.numChannels     = (int) v.getProperty ("frozen_channels", 2);
+        fr.gainDb          = 0.0f;
+        // A frozen flag with no usable WAV (missing file, zero length) is
+        // meaningless — clear it so the track falls back to its live instrument.
+        if (! wav.existsAsFile() || fr.lengthInSamples <= 0)
+            t.frozen.store (false);
+    }
+    else
+    {
+        // frozen_audio_path absent ⇒ not frozen, regardless of a stale flag.
+        t.frozen.store (false);
+    }
 
     if (auto buses = v["bus_assign"]; buses.isArray())
     {

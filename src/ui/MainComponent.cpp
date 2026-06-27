@@ -2721,6 +2721,9 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     }
     const auto tAfterPlugins = juce::Time::getMillisecondCounterHiRes();
     engine.consumeTransportStateAfterLoad();
+    // Bypass instruments on tracks the session restored as frozen (frozenRegion
+    // was rebuilt during deserialize; this is the engine-side half).
+    engine.reapplyFreezeState();
 
     // Re-resolve MIDI input routing from the just-loaded session. The load
     // restores the saved identifiers (MCU input, sync source, per-track MIDI

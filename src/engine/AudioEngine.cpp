@@ -532,6 +532,13 @@ void AudioEngine::unfreezeTrack (int trackIndex)
     track.frozenRegion = AudioRegion {};
 }
 
+void AudioEngine::reapplyFreezeState() noexcept
+{
+    for (int t = 0; t < Session::kNumTracks; ++t)
+        if (session.track (t).frozen.load (std::memory_order_relaxed))
+            strips[(size_t) t].getPluginSlot().setBypassed (true);
+}
+
 void AudioEngine::reresolveTrackMidiFromSession()
 {
     // Re-map saved per-track MIDI identifiers to runtime indices against the

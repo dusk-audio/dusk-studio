@@ -95,6 +95,12 @@ public:
     void unfreezeTrack (int trackIndex);
     juce::String getLastFreezeError() const { return lastFreezeError; }
 
+    // After a session load, bypass the instrument on every track restored as
+    // frozen so the engine-side state matches a same-session freeze (the
+    // serializer rebuilds frozenRegion but can't reach the strips). The atomic
+    // store survives the async plugin load. Call after plugin restore.
+    void reapplyFreezeState() noexcept;
+
     Session&          getSession()        noexcept { return session; }
     const Session&    getSession() const   noexcept { return session; }
     Transport&        getTransport()      noexcept { return transport; }
