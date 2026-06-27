@@ -21,6 +21,10 @@ MiniTimelineStrip::MiniTimelineStrip (Session& s, AudioEngine& e)
     : session (s), engine (e)
 {
     setInterceptsMouseClicks (true, false);
+    // Base help (mouseMove refines it to the marker under the cursor). Set here
+    // too so hovering empty timeline / between markers still surfaces help.
+    setTooltip ("Mini timeline - click to seek; click a marker to jump, "
+                "double-click a marker to rename.");
     startTimerHz (30);
     engine.getUndoManager().addChangeListener (this);
 }
@@ -189,7 +193,10 @@ void MiniTimelineStrip::mouseMove (const juce::MouseEvent& ev)
 {
     const int mi = markerAtX (ev.x);
     const auto& mk = session.getMarkers();
-    setTooltip (mi >= 0 && mi < (int) mk.size() ? mk[(size_t) mi].name : juce::String());
+    if (mi >= 0 && mi < (int) mk.size())
+        setTooltip (mk[(size_t) mi].name + " - click to jump, double-click to rename");
+    else
+        setTooltip ("Mini timeline - click to seek; double-click a marker to rename.");
     setMouseCursor (mi >= 0 ? juce::MouseCursor::PointingHandCursor
                             : juce::MouseCursor::NormalCursor);
 }
