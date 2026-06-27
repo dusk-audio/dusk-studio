@@ -461,87 +461,78 @@ public:
         g.drawEllipse (tipX - tipR, tipY - tipR, tipR * 2.0f, tipR * 2.0f, 0.5f);
     }
 
-    // SSL-console knob: a milled grey skirt (knurled rim) around a coloured
-    // centre cap, with a pointer that spans the cap and the skirt. R is the full
-    // radius; `fill` is the band accent (cap colour); `angle` the value angle.
+    // Collet EQ knob: a flat coloured cap sitting on a wider FLUTED grey skirt
+    // (radial ridges/grooves seen from the top), like a hardware skirted knob.
+    // R is the full radius; `fill` is the band accent (cap colour); `angle` is
+    // the value angle.
     void drawSslEqKnob (juce::Graphics& g, float cx, float cy, float R,
                         float angle, juce::Colour fill)
     {
-        // Soft drop shadow under the knob.
+        const float capR = R * 0.60f;   // coloured cap; the rest is fluted skirt
+
+        // Drop shadow under the whole knob.
         {
-            juce::ColourGradient shadow (juce::Colour (0x66000000), cx, cy,
-                                         juce::Colour (0x00000000), cx, cy + R + 6.0f, true);
+            juce::ColourGradient shadow (juce::Colour (0x70000000), cx, cy + R * 0.2f,
+                                         juce::Colour (0x00000000), cx, cy + R + 5.0f, true);
             g.setGradientFill (shadow);
-            g.fillEllipse (cx - R - 2.0f, cy - R, (R + 2.0f) * 2.0f, (R + 2.0f) * 2.0f);
+            g.fillEllipse (cx - R - 1.0f, cy - R + 1.0f, (R + 1.0f) * 2.0f, (R + 1.0f) * 2.0f);
         }
 
-        // Milled grey skirt — flat metal diagonal sheen (light top-left).
+        // Grey skirt base.
+        g.setColour (juce::Colour (0xff4c4c52));
+        g.fillEllipse (cx - R, cy - R, R * 2.0f, R * 2.0f);
+
+        // Flutes — alternating lit-ridge / shadowed-groove radial wedges from the
+        // cap edge out to the rim. This is the fluted skirt of a collet knob.
+        const int   flutes = juce::jlimit (8, 26, (int) std::lround ((double) R * 0.85));
+        const float inner  = capR / R;
+        const float step   = juce::MathConstants<float>::twoPi / (float) flutes;
+        for (int i = 0; i < flutes; ++i)
         {
-            juce::ColourGradient skirt (juce::Colour (0xff74747e), cx - R, cy - R,
-                                        juce::Colour (0xff26262b), cx + R, cy + R, false);
-            g.setGradientFill (skirt);
+            const float a0 = step * (float) i;
+            juce::Path ridge, groove;
+            ridge .addPieSegment (cx - R, cy - R, R * 2.0f, R * 2.0f, a0,                a0 + step * 0.5f, inner);
+            groove.addPieSegment (cx - R, cy - R, R * 2.0f, R * 2.0f, a0 + step * 0.5f,  a0 + step,        inner);
+            g.setColour (juce::Colour (0xff727279));   // lit ridge
+            g.fillPath (ridge);
+            g.setColour (juce::Colour (0xff303036));   // shadowed groove
+            g.fillPath (groove);
+        }
+
+        // 3-D dome shading over the skirt (light top-left, shadow bottom-right).
+        {
+            juce::ColourGradient dome (juce::Colour (0x36ffffff), cx - R * 0.45f, cy - R * 0.5f,
+                                       juce::Colour (0x48000000), cx + R * 0.55f, cy + R * 0.6f, true);
+            g.setGradientFill (dome);
             g.fillEllipse (cx - R, cy - R, R * 2.0f, R * 2.0f);
         }
 
-        // Knurling — short radial teeth (alternating light edge / dark gap) around
-        // the rim. Static (uniform), so it reads the same as a rotating knurl.
-        // Skipped only on the very smallest knobs where it would just be noise.
-        if (R > 12.0f)
-        {
-            constexpr int teeth = 32;
-            const float r0 = R * 0.84f, r1 = R * 0.99f;
-            const float half = juce::MathConstants<float>::twoPi * 0.5f / (float) teeth;
-            for (int i = 0; i < teeth; ++i)
-            {
-                const float a = juce::MathConstants<float>::twoPi * (float) i / (float) teeth;
-                const float ca = std::cos (a), sa = std::sin (a);
-                g.setColour (juce::Colour (0x40ffffff));
-                g.drawLine (cx + r0 * ca, cy + r0 * sa, cx + r1 * ca, cy + r1 * sa, 1.0f);
-                const float c2 = std::cos (a + half), s2 = std::sin (a + half);
-                g.setColour (juce::Colour (0x55000000));
-                g.drawLine (cx + r0 * c2, cy + r0 * s2, cx + r1 * c2, cy + r1 * s2, 1.0f);
-            }
-        }
-
-        // Outer dark rim.
-        g.setColour (juce::Colour (0xff0a0a0a));
+        // Outer rim.
+        g.setColour (juce::Colour (0xff141417));
         g.drawEllipse (cx - R, cy - R, R * 2.0f, R * 2.0f, 1.2f);
 
-        // Coloured cap radius scales gently with knob size: small knobs get a
-        // slightly larger cap so the colour stays readable, big knobs the full
-        // SSL skirt (0.58 R). Kept modest so the milled grey ring is always
-        // visible (the colour never swallows the skirt).
-        const float capFrac = juce::jlimit (0.58f, 0.64f, 0.64f - (R - 12.0f) * (0.06f / 12.0f));
-        const float capR = R * capFrac;
-
-        // Recessed groove where the cap meets the skirt.
-        if (R > 12.0f)
+        // Raised coloured cap — a flat matte disc (NOT a glossy ball), lifted off
+        // the skirt with a soft shadow and a dark seating ring.
+        g.setColour (juce::Colour (0x66000000));
+        g.fillEllipse (cx - capR - 1.0f, cy - capR + 1.2f, (capR + 1.0f) * 2.0f, (capR + 1.0f) * 2.0f);
         {
-            g.setColour (juce::Colour (0xff141417));
-            g.drawEllipse (cx - capR - 1.5f, cy - capR - 1.5f,
-                           (capR + 1.5f) * 2.0f, (capR + 1.5f) * 2.0f, 2.0f);
-        }
-
-        // Coloured centre cap — slightly domed (radial highlight top-left).
-        {
-            juce::ColourGradient cap (fill.brighter (0.18f), cx - capR * 0.4f, cy - capR * 0.4f,
-                                      fill.darker (0.50f),   cx + capR * 0.55f, cy + capR * 0.55f, true);
+            juce::ColourGradient cap (fill.brighter (0.12f), cx, cy - capR,
+                                      fill.darker  (0.30f),  cx, cy + capR, false);
             g.setGradientFill (cap);
             g.fillEllipse (cx - capR, cy - capR, capR * 2.0f, capR * 2.0f);
         }
-        g.setColour (juce::Colour (0x22ffffff));   // cap sheen
-        g.fillEllipse (cx - capR * 0.7f, cy - capR * 0.85f, capR * 1.4f, capR * 0.6f);
+        g.setColour (juce::Colour (0x55000000));   // seating ring
+        g.drawEllipse (cx - capR, cy - capR, capR * 2.0f, capR * 2.0f, 1.0f);
+        g.setColour (juce::Colour (0x2effffff));   // soft top gloss
+        g.fillEllipse (cx - capR * 0.78f, cy - capR * 0.9f, capR * 1.56f, capR * 0.55f);
 
-        // Pointer — white line across the cap plus a thicker tick on the skirt at
-        // the value angle, so the position reads on both (like a real SSL knob).
+        // Pointer — a single white line on the cap (centre to cap edge).
         const float dx = std::cos (angle - juce::MathConstants<float>::halfPi);
         const float dy = std::sin (angle - juce::MathConstants<float>::halfPi);
         g.setColour (juce::Colours::white);
-        g.drawLine (cx + R * 0.12f * dx, cy + R * 0.12f * dy,
-                    cx + capR * 0.95f * dx, cy + capR * 0.95f * dy, 2.0f);
-        g.drawLine (cx + capR * 1.10f * dx, cy + capR * 1.10f * dy,
-                    cx + R * 0.95f * dx, cy + R * 0.95f * dy,
-                    juce::jmax (1.6f, R * 0.07f));
+        g.drawLine (cx + R * 0.08f * dx, cy + R * 0.08f * dy,
+                    cx + capR * 0.94f * dx, cy + capR * 0.94f * dy,
+                    juce::jmax (1.6f, R * 0.08f));
     }
 
 private:
