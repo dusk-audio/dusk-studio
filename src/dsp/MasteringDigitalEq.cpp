@@ -113,7 +113,15 @@ MasteringDigitalEq::Coeffs MasteringDigitalEq::computeCoeffs (int idx, double sa
                                                              float freq, float q, float gainDb) noexcept
 {
     Coeffs out;
-    if (sampleRate <= 0.0) return out;
+    // Guard every input up front: clamping freq alone still lets a NaN/inf q or
+    // gainDb flow into std::pow / std::sin / std::sqrt and produce NaN taps that
+    // would blow up the filter. Non-finite anything → passthrough.
+    if (sampleRate <= 0.0
+        || ! std::isfinite (sampleRate)
+        || ! std::isfinite (freq)
+        || ! std::isfinite (q)
+        || ! std::isfinite (gainDb))
+        return out;
 
     const double f0    = juce::jlimit (10.0, sampleRate * 0.49, (double) freq);
     const double w0    = juce::MathConstants<double>::twoPi * f0 / sampleRate;
@@ -236,10 +244,28 @@ void MasteringDigitalEq::processInPlace (float* L, float* R, int numSamples) noe
         for (int b = 0; b < kNumBands; ++b)
         {
             const float g = bands[(size_t) b].gainDb.load (std::memory_order_relaxed);
-            if (std::abs (g) < 0.05f) continue;  // ≤ 0.05 dB is inaudible
+            if (std::abs (g) < 0.05f)   // ≤ 0.05 dB is inaudible
+            {
+                // Skipped this block: clear the band's filter so re-engaging it
+                // (gain automated back up) starts clean instead of ringing out
+                // the stale state frozen while it was bypassed.
+                filtersL[(size_t) b].reset();
+                filtersR[(size_t) b].reset();
+                continue;
+            }
 
             for (int i = 0; i < upN; ++i) uL[i] = filtersL[(size_t) b].processSample (uL[i]);
             for (int i = 0; i < upN; ++i) uR[i] = filtersR[(size_t) b].processSample (uR[i]);
+        }
+    }
+    else
+    {
+        // EQ disengaged: keep every band's filter clear so toggling it back on
+        // doesn't leak the pre-bypass tail.
+        for (int b = 0; b < kNumBands; ++b)
+        {
+            filtersL[(size_t) b].reset();
+            filtersR[(size_t) b].reset();
         }
     }
 

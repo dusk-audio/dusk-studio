@@ -83,6 +83,16 @@ bool BounceEngine::start (const juce::File& outFile, double sr, int bs, double t
 {
     if (rendering.load (std::memory_order_relaxed)) return false;
 
+    // FreezeTrack is reachable only through startFreeze(), which initialises
+    // freezeTrackIndex / freezeLenSamples. Entering the generic path would run a
+    // default-initialised (-1 / 0) freeze render.
+    if (mode == Mode::FreezeTrack)
+    {
+        const juce::ScopedLock lock (lastErrorLock);
+        lastError = "FreezeTrack render must go through startFreeze()";
+        return false;
+    }
+
     outputFile  = outFile;
     renderSampleRate = (sr > 0.0) ? sr : engine.getCurrentSampleRate();
     if (renderSampleRate <= 0.0) renderSampleRate = 48000.0;

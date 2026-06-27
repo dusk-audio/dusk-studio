@@ -106,12 +106,17 @@ TEST_CASE ("Tape J-A traces a hysteresis loop (output depends on history)", "[ta
     auto loopOpening = [] (JilesAthertonHysteresis& ja) -> float
     {
         const float w = kTwoPi * 300.0f / 192000.0f;
-        for (int i = 0; i < 8000; ++i)            // settle the loop
-            ja.processSample (0.6f * std::sin (w * (float) i), 1.8f, 0.5f);
+        // Settle the loop; keep the LAST sample's in/out as the measurement's
+        // prev. (Re-processing i=7999 separately would advance the JA state an
+        // extra step for the same input and skew the loop opening.)
+        float prevIn = 0.0f, prevOut = 0.0f;
+        for (int i = 0; i < 8000; ++i)
+        {
+            prevIn  = 0.6f * std::sin (w * (float) i);
+            prevOut = ja.processSample (prevIn, 1.8f, 0.5f);
+        }
 
         const int   cycle = (int) (kTwoPi / w) + 2;
-        float prevIn  = 0.6f * std::sin (w * 7999.0f);
-        float prevOut = ja.processSample (prevIn, 1.8f, 0.5f);
         float risingOut = 0.0f, fallingOut = 0.0f;
         bool  gotR = false, gotF = false;
         for (int i = 8000; i < 8000 + cycle; ++i)

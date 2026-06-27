@@ -529,8 +529,15 @@ void AudioEngine::unfreezeTrack (int trackIndex)
     // BEFORE deleting the file.
     playbackEngine.preparePlayback();
 
+    // Delete the baked WAV — but only one we created: inside the session's audio
+    // dir and named like our freeze output. A corrupt session could otherwise
+    // point frozenAudioPath at an unrelated user file, and deleteFile() is
+    // destructive.
     const juce::File wav (track.frozenAudioPath);
-    if (wav.existsAsFile())
+    const bool engineOwned = wav.getParentDirectory() == session.getAudioDirectory()
+                          && wav.getFileName().startsWith ("freeze_track")
+                          && wav.hasFileExtension ("wav");
+    if (engineOwned && wav.existsAsFile())
         wav.deleteFile();
     track.frozenAudioPath.clear();
     track.frozenRegion = AudioRegion {};

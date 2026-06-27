@@ -207,6 +207,7 @@ CreateMidiRegionAction::CreateMidiRegionAction (Session& s,
 bool CreateMidiRegionAction::perform()
 {
     if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return false;
+    if (frozenLocked (session, trackIdx)) return false;
 
     MidiRegion region;
     region.timelineStart   = timelineStart;

@@ -46,7 +46,12 @@ inline AutomationPoint parseAutomationPoint (const juce::var& pv, double fallbac
     const float safeFallback = std::isfinite (fallbackBpm) ? (float) fallbackBpm : 120.0f;
     AutomationPoint pt;
     pt.timeSamples   = juce::jmax ((juce::int64) 0, (juce::int64) pv["t"]);
-    pt.value         = juce::jlimit (0.0f, 1.0f, (float) (double) pv["v"]);
+    // NaN slips through jlimit unchanged (NaN compares false both ways), so it
+    // would otherwise poison the lane's binary search / a DSP param. Map it to a
+    // safe default; ±inf is already clamped to the [0,1] range by jlimit.
+    float rawV = (float) (double) pv["v"];
+    if (std::isnan (rawV)) rawV = 0.0f;
+    pt.value         = juce::jlimit (0.0f, 1.0f, rawV);
     const float bpm  = pv.hasProperty ("bpm") ? (float) (double) pv["bpm"]
                                               : safeFallback;
     pt.recordedAtBPM = std::isfinite (bpm) ? bpm : safeFallback;
@@ -769,12 +774,17 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm,
         fr.timelineStart   = 0;
         fr.lengthInSamples = (juce::int64) v.getProperty ("frozen_len", 0);
         fr.sourceOffset    = 0;
-        fr.numChannels     = (int) v.getProperty ("frozen_channels", 2);
+        fr.numChannels     = juce::jlimit (1, 2, (int) v.getProperty ("frozen_channels", 2));
         fr.gainDb          = 0.0f;
         // A frozen flag with no usable WAV (missing file, zero length) is
-        // meaningless — clear it so the track falls back to its live instrument.
+        // meaningless — drop the whole freeze (flag + path + region) so it can't
+        // be re-saved as phantom state, and the track falls back to live.
         if (! wav.existsAsFile() || fr.lengthInSamples <= 0)
+        {
             t.frozen.store (false);
+            t.frozenAudioPath.clear();
+            t.frozenRegion = AudioRegion {};
+        }
     }
     else
     {

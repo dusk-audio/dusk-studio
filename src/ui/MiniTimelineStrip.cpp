@@ -214,6 +214,16 @@ void MiniTimelineStrip::timerCallback()
     // marker changes — don't go through it. Poll a cheap content signature
     // (region + marker counts and the song extent) so those still refresh.
     size_t sig = session.getMarkers().size();
+    // Hash each marker's content that affects rendering / hit-testing — position,
+    // name, colour — not just the count, so a rename / recolour / move that
+    // doesn't change the count or song extent still invalidates (the undo
+    // change-listener covers undoable edits; this is the direct-mutation backstop).
+    for (const auto& mk : session.getMarkers())
+    {
+        sig = sig * 131 + (size_t) mk.timelineSamples;
+        sig = sig * 131 + (size_t) (juce::uint32) mk.name.hashCode();
+        sig = sig * 131 + (size_t) mk.colour.getARGB();
+    }
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         sig = sig * 131 + session.track (t).regions.size();
