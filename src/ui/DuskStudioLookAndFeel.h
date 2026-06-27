@@ -485,8 +485,8 @@ public:
 
         // Knurling — short radial teeth (alternating light edge / dark gap) around
         // the rim. Static (uniform), so it reads the same as a rotating knurl.
-        // Skipped on tiny inline knobs where it would just be noise.
-        if (R > 16.0f)
+        // Skipped only on the very smallest knobs where it would just be noise.
+        if (R > 12.0f)
         {
             constexpr int teeth = 32;
             const float r0 = R * 0.84f, r1 = R * 0.99f;
@@ -507,15 +507,15 @@ public:
         g.setColour (juce::Colour (0xff0a0a0a));
         g.drawEllipse (cx - R, cy - R, R * 2.0f, R * 2.0f, 1.2f);
 
-        // Coloured cap radius scales with knob size: small knobs keep a large
-        // cap (thin milled rim) so the colour stays prominent and they don't read
-        // as tiny dots; big knobs get the full SSL skirt (0.58 R).
-        const float capFrac = juce::jlimit (0.58f, 0.82f, 0.82f - (R - 12.0f) * (0.24f / 12.0f));
+        // Coloured cap radius scales gently with knob size: small knobs get a
+        // slightly larger cap so the colour stays readable, big knobs the full
+        // SSL skirt (0.58 R). Kept modest so the milled grey ring is always
+        // visible (the colour never swallows the skirt).
+        const float capFrac = juce::jlimit (0.58f, 0.64f, 0.64f - (R - 12.0f) * (0.06f / 12.0f));
         const float capR = R * capFrac;
 
-        // Recessed groove where the cap meets the skirt — only where the skirt is
-        // wide enough to read it (big knobs).
-        if (R > 16.0f)
+        // Recessed groove where the cap meets the skirt.
+        if (R > 12.0f)
         {
             g.setColour (juce::Colour (0xff141417));
             g.drawEllipse (cx - capR - 1.5f, cy - capR - 1.5f,
