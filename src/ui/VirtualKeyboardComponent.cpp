@@ -1,5 +1,8 @@
 #include "VirtualKeyboardComponent.h"
 #include "AppConfig.h"
+#if defined(__linux__)
+ #include "KeyboardStateLinux.h"
+#endif
 
 namespace duskstudio
 {
@@ -48,6 +51,21 @@ bool isBlackKey (int midiNote) noexcept
 {
     const int pc = ((midiNote % 12) + 12) % 12;
     return pc == 1 || pc == 3 || pc == 6 || pc == 8 || pc == 10;
+}
+
+// Is the typing key for this JUCE key code physically held? On Linux this
+// queries the X server's physical key state (see KeyboardStateLinux), which is
+// reliable under XWayland auto-repeat; juce::KeyPress::isKeyCurrentlyDown there
+// goes stale mid-repeat and would drop a held note. Elsewhere (and if the X
+// query is unavailable) it falls back to the JUCE query.
+bool isCodePhysicallyDown (int code) noexcept
+{
+   #if defined(__linux__)
+    const int phys = isKeyPhysicallyDown (code);
+    if (phys >= 0)
+        return phys == 1;
+   #endif
+    return juce::KeyPress::isKeyCurrentlyDown (code);
 }
 } // namespace
 
@@ -165,14 +183,13 @@ void VirtualKeyboardComponent::timerCallback()
     {
         auto& slot = held[(size_t) code];
         if (slot.note < 0) continue;
-        if (juce::KeyPress::isKeyCurrentlyDown (code))
+        if (isCodePhysicallyDown (code))
         {
             slot.silentScans = 0;
             continue;
         }
         // Not down this scan. Only fire Note Off after it stays not-down for
-        // kReleaseScans in a row — a single false read is an auto-repeat gap,
-        // not a real release.
+        // kReleaseScans in a row — cheap guard against a one-off stale read.
         if (++slot.silentScans >= kReleaseScans)
         {
             sendNoteOff (slot.note, slot.channel);

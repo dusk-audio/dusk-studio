@@ -476,7 +476,8 @@ if(UNIX AND NOT APPLE)
     target_sources(DuskStudio PRIVATE
         src/engine/alsa/AlsaAudioIODevice.cpp
         src/engine/alsa/AlsaAudioIODeviceType.cpp
-        src/engine/alsa/AlsaPerformanceTest.cpp)
+        src/engine/alsa/AlsaPerformanceTest.cpp
+        src/ui/KeyboardStateLinux.cpp)
     target_link_libraries(DuskStudio PRIVATE asound X11)
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_ALSA=1)
 endif()
