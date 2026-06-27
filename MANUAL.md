@@ -913,11 +913,12 @@ A true-peak brickwall limiter with lookahead. **Enabled by default.** It runs th
 
 - **Ceiling**: −12 to 0 dB. Default **−0.3 dB** (matches the headroom expected by most streaming platforms).
 - **Threshold**: 0 to −20 dB (drag the handle on the input meter). Pull it down to drive more signal into the ceiling — louder and denser. (Internally it adds up to +20 dB of input gain; the ceiling then holds the peak.)
-- **Release**: 50 to 300 ms.
+- **Release**: 50 to 300 ms. The release is program-dependent — it recovers quickly from brief transients (keeping them open) and more slowly from deep, sustained reduction (no pumping on dense, bass-heavy material).
+- **Lookahead**: 0.1 to 10 ms (default **2 ms**). More lookahead lets the gain finish ramping further ahead of each peak, catching transients more cleanly, at the cost of more latency.
 - **Mode**: shapes the hold + release character — **Modern** (balanced default), **Transparent** (fast recovery, minimal pumping), **Punchy** (longer hold, denser).
 - **Stereo link**: on (default) matches the gain reduction across L/R to preserve the stereo image; off limits each channel independently.
 
-The lookahead adds a small, fixed latency that the engine compensates for. True-peak control is to 4× resolution; for very-high-frequency masters reserve a little extra ceiling headroom.
+The lookahead adds latency (set by the Lookahead control) on the mastering output. True-peak control is to 4× resolution; for very-high-frequency masters reserve a little extra ceiling headroom.
 
 ## Loudness metering
 

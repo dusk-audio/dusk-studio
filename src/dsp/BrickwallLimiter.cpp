@@ -18,9 +18,13 @@ constexpr float kReleaseAdaptGain = 2.0f;
 // Time constant of the reduction-depth tracker that drives the blend — short
 // enough to follow program, long enough that a lone transient stays "fast".
 constexpr float kRelDepthTrackMs  = 30.0f;
+// Lookahead bounds. The delay/deque are sized for the max so the active value
+// can change at runtime without reallocating.
+constexpr float kMinLookaheadMs   = 0.1f;
+constexpr float kMaxLookaheadMs   = 10.0f;
 } // namespace
 
-void BrickwallLimiter::prepare (double sampleRate, int maxBlockSize, double lookaheadMs)
+void BrickwallLimiter::prepare (double sampleRate, int maxBlockSize, double initialLookaheadMs)
 {
     sr       = sampleRate > 0.0 ? sampleRate : 44100.0;
     osFactor = 4;
@@ -38,14 +42,15 @@ void BrickwallLimiter::prepare (double sampleRate, int maxBlockSize, double look
     oversampler->initProcessing ((size_t) bs);
     oversampler->reset();
 
-    lookaheadOs = juce::jmax (1, (int) (osRate * lookaheadMs / 1000.0));
-    delayLen    = lookaheadOs + 1;
-    delayL.assign ((size_t) delayLen, 0.0f);
-    delayR.assign ((size_t) delayLen, 0.0f);
+    // Size the delay + deque for the MAX lookahead; the active read offset is
+    // set below (and re-settable at runtime) within this allocation.
+    maxLookaheadOs = juce::jmax (1, (int) (osRate * kMaxLookaheadMs / 1000.0));
+    bufLen         = maxLookaheadOs + 1;
+    delayL.assign ((size_t) bufLen, 0.0f);
+    delayR.assign ((size_t) bufLen, 0.0f);
     writePos = 0;
 
-    windowLen = lookaheadOs + 1;
-    const int cap = windowLen + 1;
+    const int cap = maxLookaheadOs + 2;   // max window (maxLookaheadOs + 1) + 1
     for (int c = 0; c < 2; ++c)
     {
         dqVal[c].assign ((size_t) cap, 1.0f);
@@ -67,11 +72,28 @@ void BrickwallLimiter::prepare (double sampleRate, int maxBlockSize, double look
     }
     relDepthCoef  = onePoleCoef (kRelDepthTrackMs, osRate);
 
-    const int osLat = (int) std::lround (oversampler->getLatencyInSamples());
-    const int lookaheadBase = (lookaheadOs + osFactor / 2) / osFactor;   // round to nearest base sample
-    latencySamplesBase.store (osLat + lookaheadBase, std::memory_order_relaxed);
+    osLatencyBase = (int) std::lround (oversampler->getLatencyInSamples());
+    lookaheadMs.store (juce::jlimit (kMinLookaheadMs, kMaxLookaheadMs, (float) initialLookaheadMs),
+                       std::memory_order_relaxed);
+    recomputeActiveLookahead();
 
     currentGrDb.store (0.0f, std::memory_order_relaxed);
+}
+
+void BrickwallLimiter::setLookaheadMs (float ms) noexcept
+{
+    lookaheadMs.store (juce::jlimit (kMinLookaheadMs, kMaxLookaheadMs, ms), std::memory_order_relaxed);
+    recomputeActiveLookahead();
+}
+
+void BrickwallLimiter::recomputeActiveLookahead() noexcept
+{
+    if (osRate <= 0.0 || maxLookaheadOs <= 0) return;
+    const float ms = lookaheadMs.load (std::memory_order_relaxed);
+    const int laOs = juce::jlimit (1, maxLookaheadOs, (int) (osRate * ms / 1000.0));
+    activeLookaheadOs.store (laOs, std::memory_order_relaxed);
+    const int lookaheadBase = (laOs + osFactor / 2) / osFactor;   // round to nearest base sample
+    latencySamplesBase.store (osLatencyBase + lookaheadBase, std::memory_order_relaxed);
 }
 
 void BrickwallLimiter::reset() noexcept
@@ -94,7 +116,7 @@ void BrickwallLimiter::reset() noexcept
 
 void BrickwallLimiter::processInPlace (float* L, float* R, int numSamples) noexcept
 {
-    if (oversampler == nullptr || delayLen == 0 || numSamples == 0)
+    if (oversampler == nullptr || bufLen == 0 || numSamples == 0)
         return;
 
     juce::ScopedNoDenormals noDenormals;
@@ -142,6 +164,10 @@ void BrickwallLimiter::processInPlace (float* L, float* R, int numSamples) noexc
     float* uR = up.getChannelPointer (1);
 
     const int cap = (int) dqVal[0].size();
+    // Active lookahead read once per block — keeps the read offset and the
+    // deque window consistent even if setLookaheadMs() runs mid-stream.
+    const int laOs      = activeLookaheadOs.load (std::memory_order_relaxed);
+    const int windowLen = laOs + 1;
     float blockMinEnv = 1.0f;
 
     for (int i = 0; i < osN; ++i)
@@ -215,7 +241,7 @@ void BrickwallLimiter::processInPlace (float* L, float* R, int numSamples) noexc
             relDepth[c] += ((1.0f - env[c]) - relDepth[c]) * relDepthCoef;
         }
 
-        const int readPos = (writePos + 1) % delayLen;
+        const int readPos = (writePos + bufLen - laOs) % bufLen;
         float oL = delayL[(size_t) readPos] * (active ? env[0] : 1.0f);
         float oR = delayR[(size_t) readPos] * (active ? env[1] : 1.0f);
         if (active)
@@ -229,7 +255,7 @@ void BrickwallLimiter::processInPlace (float* L, float* R, int numSamples) noexc
         if (active)
             blockMinEnv = juce::jmin (blockMinEnv, juce::jmin (env[0], env[1]));
 
-        writePos = (writePos + 1) % delayLen;
+        writePos = (writePos + 1) % bufLen;
         ++sampleCounter;
     }
 

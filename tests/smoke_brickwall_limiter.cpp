@@ -323,3 +323,51 @@ TEST_CASE ("BrickwallLimiter: release is program-dependent (deep GR recovers slo
     INFO ("remaining-GR fraction: deep=" << deep << "  shallow=" << shallow);
     REQUIRE (deep > shallow + 0.05f);   // deeper reduction releases more slowly
 }
+
+TEST_CASE ("BrickwallLimiter: lookahead is adjustable and holds the ceiling across its range",
+           "[BrickwallLimiter]")
+{
+    const float ceiling = juce::Decibels::decibelsToGain (-1.0f);
+
+    SECTION ("setter clamps and the reported latency tracks the lookahead")
+    {
+        duskstudio::BrickwallLimiter lim;
+        lim.prepare (kSr, kBlock, 2.0);
+
+        lim.setLookaheadMs (0.5f);
+        REQUIRE_THAT (lim.getLookaheadMs(), WithinAbs (0.5f, 1.0e-6f));
+        const int latShort = lim.getLatencySamples();
+
+        lim.setLookaheadMs (8.0f);
+        REQUIRE_THAT (lim.getLookaheadMs(), WithinAbs (8.0f, 1.0e-6f));
+        REQUIRE (lim.getLatencySamples() > latShort);   // more lookahead = more latency
+
+        lim.setLookaheadMs (100.0f);  REQUIRE (lim.getLookaheadMs() <= 10.0f);   // clamped high
+        lim.setLookaheadMs (0.0f);    REQUIRE (lim.getLookaheadMs() >= 0.1f);    // clamped low
+    }
+
+    SECTION ("ceiling held at the lookahead extremes (variable read offset is correct)")
+    {
+        for (float la : { 0.2f, 9.5f })
+        {
+            duskstudio::BrickwallLimiter lim;
+            lim.prepare (kSr, kBlock, 2.0);
+            lim.setLookaheadMs (la);
+            lim.setCeilingDb (-1.0f);
+            lim.setEnabled  (true);
+
+            std::vector<float> L (kBlock), R (kBlock);
+            double phase = 0.0;
+            float steadyPeak = 0.0f;
+            for (int b = 0; b < 14; ++b)
+            {
+                fillSine (L, R, phase, 1000.0, juce::Decibels::decibelsToGain (9.0f));
+                lim.processInPlace (L.data(), R.data(), kBlock);
+                if (b >= 6) steadyPeak = std::max (steadyPeak, blockPeak (L, R));
+            }
+            INFO ("lookahead = " << la);
+            REQUIRE (steadyPeak <= ceiling + 1.0e-4f);
+            REQUIRE (lim.getCurrentGrDb() < 0.0f);
+        }
+    }
+}

@@ -45,7 +45,7 @@ public:
     // Message thread. Sizes the delay + history buffers and the oversampler
     // for the configured lookahead. Must be called before processInPlace.
     void prepare (double sampleRate, int maxBlockSize,
-                   double lookaheadMs = 2.0);
+                   double initialLookaheadMs = 2.0);
     void reset() noexcept;
 
     // Message thread (atomic stores; audio thread reads).
@@ -57,6 +57,10 @@ public:
     // release knob. Stereo link off = independent per-channel gain reduction.
     void setMode       (int m) noexcept            { mode.store (m, std::memory_order_relaxed); }
     void setStereoLink (bool b) noexcept           { stereoLink.store (b, std::memory_order_relaxed); }
+    // Active lookahead, in ms. The delay/deque are pre-allocated for a fixed
+    // maximum in prepare(), so this only re-derives the active read offset,
+    // window and reported latency — no allocation, safe from the message thread.
+    void setLookaheadMs (float ms) noexcept;
 
     bool  isEnabled() const noexcept    { return enabled.load (std::memory_order_relaxed); }
     float getInputDriveDb() const noexcept { return inputDrive.load (std::memory_order_relaxed); }
@@ -64,6 +68,7 @@ public:
     float getReleaseMs() const noexcept { return releaseMs.load (std::memory_order_relaxed); }
     int   getMode() const noexcept      { return mode.load (std::memory_order_relaxed); }
     bool  getStereoLink() const noexcept { return stereoLink.load (std::memory_order_relaxed); }
+    float getLookaheadMs() const noexcept { return lookaheadMs.load (std::memory_order_relaxed); }
 
     // Audio thread. In-place stereo process; L and R must be at least
     // `numSamples` floats. `numSamples` must not exceed the maxBlockSize passed
@@ -81,6 +86,10 @@ public:
     int getLatencySamples() const noexcept { return latencySamplesBase.load (std::memory_order_relaxed); }
 
 private:
+    // Re-derives the active lookahead (read offset, window, latency) from the
+    // lookaheadMs atomic. Message thread; writes atomics the audio thread reads.
+    void recomputeActiveLookahead() noexcept;
+
     double sr     = 0.0;
     double osRate = 0.0;
     int    osFactor = 4;
@@ -88,21 +97,24 @@ private:
     // Atomic so the message-thread reader (getLatencySamples) and the
     // setup-thread writer (prepare) don't race on a plain int.
     std::atomic<int> latencySamplesBase { 0 };
+    int osLatencyBase = 0;   // oversampler FIR latency, base-rate samples
 
     std::unique_ptr<juce::dsp::Oversampling<float>> oversampler;
 
-    // Stereo delay line at the OVERSAMPLED rate - circular, length lookaheadOs + 1.
-    int lookaheadOs = 0;
-    int delayLen    = 0;
+    // Stereo delay line at the OVERSAMPLED rate — circular, sized for the max
+    // lookahead. The active read offset (activeLookaheadOs) is variable, so the
+    // lookahead can change at runtime without reallocating.
+    int maxLookaheadOs = 0;
+    int bufLen         = 0;
     std::vector<float> delayL, delayR;
     int writePos = 0;
+    std::atomic<int> activeLookaheadOs { 0 };
 
-    // Per-channel monotonic min deque over the lookahead window
-    // (size lookaheadOs + 1), stored in a fixed ring so the sliding-window
+    // Per-channel monotonic min deque over the active lookahead window
+    // (activeLookaheadOs + 1), stored in a fixed ring so the sliding-window
     // minimum is O(1) amortized with no per-sample scan and no allocation.
-    // Capacity = window + 1. Two independent channels so stereo-link can be
+    // Capacity = max window + 1. Two independent channels so stereo-link can be
     // disabled; when linked both are fed the same (max-of-L/R) target.
-    int                    windowLen = 0;
     std::vector<float>     dqVal[2];
     std::vector<long long> dqIdx[2];
     int       dqHead[2]  = { 0, 0 };
@@ -134,6 +146,7 @@ private:
     std::atomic<float> releaseMs  { 100.0f };
     std::atomic<int>   mode       { 0 };
     std::atomic<bool>  stereoLink { true };
+    std::atomic<float> lookaheadMs { 2.0f };
 
     mutable std::atomic<float> currentGrDb { 0.0f };
 };

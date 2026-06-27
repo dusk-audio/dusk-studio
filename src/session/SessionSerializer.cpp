@@ -1314,6 +1314,7 @@ juce::String SessionSerializer::serialize (const Session& s)
     mast->setProperty ("limiter_drive_db",    s.mastering().limiterDriveDb.load());
     mast->setProperty ("limiter_ceiling_db",  s.mastering().limiterCeilingDb.load());
     mast->setProperty ("limiter_release_ms",  s.mastering().limiterReleaseMs.load());
+    mast->setProperty ("limiter_lookahead_ms", s.mastering().limiterLookaheadMs.load());
     mast->setProperty ("limiter_mode",        s.mastering().limiterMode.load());
     mast->setProperty ("limiter_stereo_link", s.mastering().limiterStereoLink.load());
     mast->setProperty ("target_preset",     s.mastering().targetPresetIndex.load());
@@ -1754,6 +1755,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         m.limiterDriveDb.store    (mast.hasProperty ("limiter_drive_db")    ? (float) (double) mast["limiter_drive_db"]   : 0.0f);
         m.limiterCeilingDb.store  (mast.hasProperty ("limiter_ceiling_db")  ? (float) (double) mast["limiter_ceiling_db"] : -0.3f);
         m.limiterReleaseMs.store  (mast.hasProperty ("limiter_release_ms")  ? (float) (double) mast["limiter_release_ms"] : 100.0f);
+        m.limiterLookaheadMs.store (mast.hasProperty ("limiter_lookahead_ms") ? (float) (double) mast["limiter_lookahead_ms"] : 2.0f);
         m.limiterMode.store       (mast.hasProperty ("limiter_mode")        ? (int) mast["limiter_mode"]                  : 0);
         m.limiterStereoLink.store (mast.hasProperty ("limiter_stereo_link") ? (bool) mast["limiter_stereo_link"]          : true);
         if (mast.hasProperty ("target_preset"))

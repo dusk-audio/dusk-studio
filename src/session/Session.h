@@ -1047,6 +1047,9 @@ struct MasteringParams
     // off = independent per-channel limiting.
     std::atomic<int>   limiterMode       { 0 };
     std::atomic<bool>  limiterStereoLink { true };
+    // Lookahead, ms. More lookahead = the gain finishes ramping further ahead
+    // of the peak (cleaner transients) at the cost of more latency.
+    std::atomic<float> limiterLookaheadMs { 2.0f };
 
     mutable std::atomic<float> meterPostMasterLDb  { -100.0f };
     mutable std::atomic<float> meterPostMasterRDb  { -100.0f };
