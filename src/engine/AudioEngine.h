@@ -82,6 +82,19 @@ public:
     void setWorkerCountForTest (int n);
 
     juce::AudioDeviceManager& getDeviceManager() noexcept { return deviceManager; }
+
+    // Track FREEZE (message thread only — heavy: offline render + file I/O +
+    // preparePlayback). freezeTrack renders the MIDI track's pre-fader signal
+    // (instrument + EQ + comp) to a WAV in the session's audio dir, points
+    // frozenRegion at it, bypasses the instrument and flags the track frozen so
+    // the audio thread plays the WAV with the plugin + EQ/comp skipped. Returns
+    // false (and changes nothing) if the track isn't a MIDI track, is already
+    // frozen, has no MIDI content, or the render fails — getLastFreezeError()
+    // then holds why. unfreezeTrack reverts: live instrument, WAV deleted.
+    bool freezeTrack (int trackIndex);
+    void unfreezeTrack (int trackIndex);
+    juce::String getLastFreezeError() const { return lastFreezeError; }
+
     Session&          getSession()        noexcept { return session; }
     const Session&    getSession() const   noexcept { return session; }
     Transport&        getTransport()      noexcept { return transport; }
@@ -378,6 +391,10 @@ public:
 private:
     Session& session;
     juce::AudioDeviceManager deviceManager;
+
+    // Last freezeTrack failure reason, surfaced via getLastFreezeError().
+    // Message-thread-only.
+    juce::String lastFreezeError;
 
     Transport       transport;
     // Heap-allocated so we can pass &session.tempoBpm / &currentSampleRate

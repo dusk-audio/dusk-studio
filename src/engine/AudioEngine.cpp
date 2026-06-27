@@ -1,4 +1,5 @@
 #include "AudioEngine.h"
+#include "BounceEngine.h"
 #include "PdcMath.h"
 #include "RtPriority.h"
 #include "../dsp/OutputPairRouting.h"
@@ -442,6 +443,93 @@ void AudioEngine::recomputePdc() noexcept
     for (int t = 0; t < Session::kNumTracks; ++t)
         strips[(size_t) t].setPdcCompensationSamples (comp[t]);
     aggregatePdcLatencySamples.store (deepest, std::memory_order_relaxed);
+}
+
+bool AudioEngine::freezeTrack (int trackIndex)
+{
+    lastFreezeError.clear();
+    if (trackIndex < 0 || trackIndex >= Session::kNumTracks)
+        { lastFreezeError = "Invalid track"; return false; }
+
+    auto& track = session.track (trackIndex);
+    if (track.mode.load (std::memory_order_relaxed) != (int) Track::Mode::Midi)
+        { lastFreezeError = "Freeze applies to MIDI tracks only"; return false; }
+    if (track.frozen.load (std::memory_order_relaxed))
+        { lastFreezeError = "Track is already frozen"; return false; }
+
+    // Render length: the track's MIDI content end + a tail so the instrument's
+    // release and the EQ/comp ringout decay before the WAV cuts.
+    juce::int64 contentEnd = 0;
+    for (const auto& mr : track.midiRegions.current())
+        contentEnd = juce::jmax (contentEnd, mr.timelineStart + mr.lengthInSamples);
+    if (contentEnd <= 0)
+        { lastFreezeError = "Track has no MIDI content to freeze"; return false; }
+
+    const double sr = getCurrentSampleRate();
+    if (sr <= 0.0)
+        { lastFreezeError = "Audio device not running"; return false; }
+    constexpr double kFreezeTailSeconds = 5.0;
+    const juce::int64 lenSamples = contentEnd + (juce::int64) (sr * kFreezeTailSeconds);
+
+    auto audioDir = session.getAudioDirectory();
+    if (! audioDir.createDirectory())
+        { lastFreezeError = "Could not create audio directory"; return false; }
+    const auto outFile = audioDir.getChildFile (
+        "freeze_track" + juce::String (trackIndex + 1).paddedLeft ('0', 2) + ".wav");
+
+    // Synchronous offline render (detaches the device for its duration).
+    BounceEngine bounce (*this, session, deviceManager);
+    if (! bounce.renderFreezeTrack (trackIndex, outFile, lenSamples, sr))
+    {
+        lastFreezeError = bounce.getLastError();
+        return false;
+    }
+
+    // Point frozenRegion at the baked WAV: one stereo region spanning the song
+    // from timeline 0 at unity, no fades.
+    auto& fr = track.frozenRegion;
+    fr = AudioRegion {};
+    fr.file            = outFile;
+    fr.timelineStart   = 0;
+    fr.lengthInSamples = lenSamples;
+    fr.sourceOffset    = 0;
+    fr.numChannels     = 2;
+    fr.gainDb          = 0.0f;
+    track.frozenAudioPath = outFile.getFullPathName();
+
+    // Bypass the instrument (defensive — the frozen strip path already skips
+    // it) then publish frozen with release so the audio thread sees the flag
+    // only after frozenRegion + the path are fully written.
+    strips[(size_t) trackIndex].getPluginSlot().setBypassed (true);
+    track.frozen.store (true, std::memory_order_release);
+
+    // Open the frozen WAV reader (and rebuild every track's readers).
+    playbackEngine.preparePlayback();
+    return true;
+}
+
+void AudioEngine::unfreezeTrack (int trackIndex)
+{
+    if (trackIndex < 0 || trackIndex >= Session::kNumTracks)
+        return;
+    auto& track = session.track (trackIndex);
+    if (! track.frozen.load (std::memory_order_relaxed))
+        return;
+
+    // Re-enable the instrument before clearing the flag so a block observed
+    // between the two reads still routes through a live (not bypassed) plugin.
+    strips[(size_t) trackIndex].getPluginSlot().setBypassed (false);
+    track.frozen.store (false, std::memory_order_release);
+
+    // Rebuild readers without the frozen stream (closes the frozen WAV handle)
+    // BEFORE deleting the file.
+    playbackEngine.preparePlayback();
+
+    const juce::File wav (track.frozenAudioPath);
+    if (wav.existsAsFile())
+        wav.deleteFile();
+    track.frozenAudioPath.clear();
+    track.frozenRegion = AudioRegion {};
 }
 
 void AudioEngine::reresolveTrackMidiFromSession()
@@ -2992,6 +3080,11 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         const bool monitorEnabled = session.track (t).inputMonitor.load (std::memory_order_relaxed);
         const bool midiTrack = session.track (t).mode.load (std::memory_order_relaxed)
                                    == (int) Track::Mode::Midi;
+        // Frozen: this (MIDI) track plays a pre-rendered WAV through the strip
+        // with the instrument + EQ/comp bypassed (baked in). Acquire pairs with
+        // the release store in AudioEngine::freezeTrack so the source switch and
+        // the frozen-strip path observe a consistent frozenRegion.
+        const bool isFrozen = session.track (t).frozen.load (std::memory_order_acquire);
 
         // The track will read from disk during Play, or during Record on
         // un-armed tracks (so other tracks keep playing while we record into
@@ -3068,8 +3161,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         {
             // Stereo tracks read both channels from disk; mono tracks pass
             // nullptr for outR which makes readForTrack skip the second
-            // channel entirely.
-            float* outR = stereoTrackInput ? playbackScratchR[(size_t) t].data() : nullptr;
+            // channel entirely. A frozen track's baked WAV is always stereo.
+            float* outR = (stereoTrackInput || isFrozen) ? playbackScratchR[(size_t) t].data() : nullptr;
             playbackEngine.readForTrack (t, blockStartSamples,
                                           playbackScratch[(size_t) t].data(), outR,
                                           numSamples);
@@ -3079,8 +3172,9 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         {
             monoIn = deviceInput;
         }
-        else if (strips[(size_t) t].getPluginSlot().isLoaded()
-                 || session.track (t).hardwareInsert.pingPending.load (std::memory_order_acquire))
+        else if (! isFrozen
+                 && (strips[(size_t) t].getPluginSlot().isLoaded()
+                     || session.track (t).hardwareInsert.pingPending.load (std::memory_order_acquire)))
         {
             // Generator-style insert with no input source: feed a
             // pre-zeroed buffer so the chain runs and the plugin can
@@ -3185,8 +3279,10 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         // The strip's instrument plugin then sees one unified buffer.
         // Note: scratch already cleared above by the flush block, plus any
         // emitted All Notes Off events. Both source paths add to those.
-        if (willReadFromDisk)
+        if (willReadFromDisk && ! isFrozen)
         {
+            // Frozen tracks skip MIDI scheduling — the instrument is bypassed
+            // and the notes are already baked into the WAV being read above.
             // Acquire on tempoBpm pairs with the release store in
             // duskstudio::applyTempoChange so this MIDI scheduling block
             // observes the BPM that matches the published-with-release
@@ -3394,7 +3490,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         //     point monoInR at that buffer.
         //   • Live input: source from the user's R input mapping.
         const float* monoInR = nullptr;
-        if (stereoTrackInput && monoIn != nullptr)
+        if ((stereoTrackInput || isFrozen) && monoIn != nullptr)
         {
             if (willReadFromDisk)
             {
@@ -3416,11 +3512,18 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         }
 
         // MIDI tracks have no audio input - their gate is just mute/solo.
-        // Audio tracks still require a non-null source to pass.
-        const bool stripPasses = midiTrack ? passes : (passes && monoIn != nullptr);
+        // Audio tracks (and frozen tracks, which read a WAV) require a non-null
+        // source to pass.
+        const bool stripPasses = (midiTrack && ! isFrozen) ? passes
+                                                           : (passes && monoIn != nullptr);
 
+        // A frozen track runs the strip's frozen path: stereo source from the
+        // baked WAV (monoIn/monoInR), instrument + EQ/comp skipped. isMidi is
+        // therefore false (the plugin path is bypassed); the frozen flag drives
+        // the strip. stereoInput true so the R channel is recognised.
         trackJobs[(size_t) t] = { monoIn, monoInR, deviceInput,
-                                  midiTrack, stripPasses, armed, stereoTrackInput };
+                                  midiTrack && ! isFrozen, stripPasses, armed,
+                                  stereoTrackInput || isFrozen, isFrozen };
     }
 
     // ── DSP pass ─────────────────────────────────────────────────────────
