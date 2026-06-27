@@ -195,11 +195,12 @@ float MasteringDigitalEq::magnitudeDb (int idx, double sampleRate,
 void MasteringDigitalEq::rebuildIfDirty (int idx) noexcept
 {
     auto& b = bands[(size_t) idx];
-    // Acquire pairs with the setters' release store: once we observe dirty, the
-    // freq/q/gainDb writes that preceded it are visible, so the relaxed reads
-    // below are safe.
-    if (! b.dirty.load (std::memory_order_acquire)) return;
-    b.dirty.store (false, std::memory_order_relaxed);
+    // Atomically read-and-clear: exchange (not load + separate store) so a
+    // setter's dirty=true that lands concurrently can't be clobbered by the
+    // clear and silently lost. Acquire pairs with the setters' release store, so
+    // once we observe dirty the freq/q/gainDb writes that preceded it are
+    // visible and the relaxed reads below are safe.
+    if (! b.dirty.exchange (false, std::memory_order_acquire)) return;
 
     const float freq = juce::jlimit (10.0f, (float) (sr * 0.49), b.freq.load (std::memory_order_relaxed));
     const float qVal = juce::jlimit (0.1f, 10.0f, b.q.load (std::memory_order_relaxed));

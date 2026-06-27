@@ -73,8 +73,8 @@ void BrickwallLimiter::prepare (double sampleRate, int maxBlockSize, double init
     relDepthCoef  = onePoleCoef (kRelDepthTrackMs, osRate);
 
     osLatencyBase = (int) std::lround (oversampler->getLatencyInSamples());
-    lookaheadMs.store (juce::jlimit (kMinLookaheadMs, kMaxLookaheadMs, (float) initialLookaheadMs),
-                       std::memory_order_relaxed);
+    const float la0 = std::isfinite ((float) initialLookaheadMs) ? (float) initialLookaheadMs : 2.0f;
+    lookaheadMs.store (juce::jlimit (kMinLookaheadMs, kMaxLookaheadMs, la0), std::memory_order_relaxed);
     recomputeActiveLookahead();
 
     currentGrDb.store (0.0f, std::memory_order_relaxed);
@@ -82,6 +82,10 @@ void BrickwallLimiter::prepare (double sampleRate, int maxBlockSize, double init
 
 void BrickwallLimiter::setLookaheadMs (float ms) noexcept
 {
+    // Guard against non-finite input: jlimit would pass NaN through (NaN
+    // compares false against both bounds) and recomputeActiveLookahead would
+    // then cast NaN to int — undefined. Ignore garbage, keep the last value.
+    if (! std::isfinite (ms)) return;
     lookaheadMs.store (juce::jlimit (kMinLookaheadMs, kMaxLookaheadMs, ms), std::memory_order_relaxed);
     recomputeActiveLookahead();
 }
