@@ -1762,7 +1762,8 @@ void AudioEngine::accumulateStrip (int t, float* mL, float* mR,
                                              mL, mR, bL, bR, aL, aR,
                                              numSamples, job.passes,
                                              currentDeviceInputs,  numCurrentDeviceInputs,
-                                             currentDeviceOutputs, numCurrentDeviceOutputs);
+                                             currentDeviceOutputs, numCurrentDeviceOutputs,
+                                             job.frozen);
 }
 
 void AudioEngine::processStripLane (int lane) noexcept

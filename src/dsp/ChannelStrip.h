@@ -106,7 +106,20 @@ public:
                                const float* const* deviceInputs  = nullptr,
                                int   numDeviceInputs             = 0,
                                float* const*       deviceOutputs = nullptr,
-                               int   numDeviceOutputs            = 0) noexcept;
+                               int   numDeviceOutputs            = 0,
+                               bool  isFrozen                    = false) noexcept;
+
+    // Track freeze. When a frozen track plays back, inL/inR carry the
+    // pre-rendered (instrument + EQ + comp) audio, so the strip skips the
+    // instrument plugin and the EQ/comp stage (they're baked into the WAV)
+    // but keeps PDC + fader/pan/sends live. Pass isFrozen=true above.
+    //
+    // setFreezeCapture points the strip at a stereo scratch the offline
+    // freeze render reads each block: after the EQ/comp stage (pre-fader),
+    // srcL/srcR are copied there. nullptr (the default) disables the tap, so
+    // it costs nothing on the live path. Message thread only, set while the
+    // engine is detached for the offline render — never during live audio.
+    void setFreezeCapture (float* l, float* r) noexcept { freezeCapL = l; freezeCapR = r; }
 
 private:
     const ChannelStripParams* paramsRef = nullptr;
@@ -247,6 +260,11 @@ private:
     const float* lastProcessedR   = nullptr;
     int          lastProcessedSamples = 0;
     bool         needsProcessedMono = false;
+
+    // Pre-fader capture destinations for the offline freeze render (see
+    // setFreezeCapture). nullptr on the live path.
+    float* freezeCapL = nullptr;
+    float* freezeCapR = nullptr;
 
     void updateGainTargets() noexcept;
     void updateEqParameters() noexcept;

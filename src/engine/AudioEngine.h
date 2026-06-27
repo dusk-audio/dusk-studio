@@ -488,6 +488,7 @@ private:
         bool         passes      = false;
         bool         armed       = false;
         bool         stereoInput = false;
+        bool         frozen      = false;   // play pre-rendered WAV, skip plugin + EQ/comp
     };
     std::array<TrackDspJob, Session::kNumTracks> trackJobs;
 

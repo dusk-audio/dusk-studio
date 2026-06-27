@@ -442,7 +442,8 @@ void ChannelStrip::processAndAccumulate (const float* inL,
                                          const float* const* deviceInputs,
                                          int   numDeviceInputs,
                                          float* const*       deviceOutputs,
-                                         int   numDeviceOutputs) noexcept
+                                         int   numDeviceOutputs,
+                                         bool  isFrozen) noexcept
 {
     juce::ScopedNoDenormals noDenormals;
 
@@ -490,8 +491,9 @@ void ChannelStrip::processAndAccumulate (const float* inL,
 
     // MIDI tracks always run a stereo audio path: the instrument plugin fills
     // L+R from MIDI events and the rest of the strip processes that as a
-    // stereo signal. Mono / Stereo audio tracks behave as before.
-    const bool stereo = (inR != nullptr) || isMidi;
+    // stereo signal. Mono / Stereo audio tracks behave as before. A frozen
+    // track also takes the stereo path — inL/inR carry its pre-rendered audio.
+    const bool stereo = (inR != nullptr) || isMidi || isFrozen;
 
     // No params, or an audio track with no input → tick the smoothers down
     // (so M/S transitions sound smooth) and bail. MIDI tracks are exempt
@@ -769,7 +771,21 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         auto* L = tempStereoBuffer.getWritePointer (0);
         auto* R = tempStereoBuffer.getWritePointer (1);
 
-        if (isMidi)
+        if (isFrozen)
+        {
+            // Frozen track: inL/inR are the pre-rendered (instrument + EQ +
+            // comp) audio. Copy it in as the source; the instrument plugin and
+            // the EQ/comp stage below are skipped (baked into the WAV). PDC and
+            // fader/pan/sends still run. Keep the insert-gate smoother ticking
+            // so an un-freeze mid-session resumes click-free.
+            if (inL != nullptr) std::memcpy (L, inL, sizeof (float) * (size_t) numSamples);
+            else                juce::FloatVectorOperations::clear (L, numSamples);
+            if (inR != nullptr) std::memcpy (R, inR, sizeof (float) * (size_t) numSamples);
+            else                std::memcpy (R, L,   sizeof (float) * (size_t) numSamples);
+            for (int i = 0; i < numSamples; ++i)
+                activeInsertGain.getNextValue();
+        }
+        else if (isMidi)
         {
             juce::FloatVectorOperations::clear (L, numSamples);
             juce::FloatVectorOperations::clear (R, numSamples);
@@ -861,38 +877,44 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             }
         };
 
-        if (oversamplerStages > 0 && oversamplerStereo != nullptr)
+        // Frozen tracks skip EQ/comp entirely — both were baked into the WAV
+        // during the freeze render, so re-running them would double-process.
+        if (! isFrozen)
         {
-            const float* readPtrs[2]  = { L, R };
-            float*       writePtrs[2] = { L, R };
-            juce::dsp::AudioBlock<const float> nativeIn  (readPtrs,  2, (size_t) numSamples);
-            juce::dsp::AudioBlock<float>       nativeOut (writePtrs, 2, (size_t) numSamples);
+            if (oversamplerStages > 0 && oversamplerStereo != nullptr)
+            {
+                const float* readPtrs[2]  = { L, R };
+                float*       writePtrs[2] = { L, R };
+                juce::dsp::AudioBlock<const float> nativeIn  (readPtrs,  2, (size_t) numSamples);
+                juce::dsp::AudioBlock<float>       nativeOut (writePtrs, 2, (size_t) numSamples);
 
-            auto upBlock = oversamplerStereo->processSamplesUp (nativeIn);
-            const int upN = (int) upBlock.getNumSamples();
-            float* upPtrs[2] = { upBlock.getChannelPointer (0),
-                                  upBlock.getChannelPointer (1) };
-            juce::AudioBuffer<float> upBuf (upPtrs, 2, upN);
-            eq.process (upBuf);
-            if (compEnabled)
-                runCompStereo (upPtrs[0], upPtrs[1], upN);
+                auto upBlock = oversamplerStereo->processSamplesUp (nativeIn);
+                const int upN = (int) upBlock.getNumSamples();
+                float* upPtrs[2] = { upBlock.getChannelPointer (0),
+                                      upBlock.getChannelPointer (1) };
+                juce::AudioBuffer<float> upBuf (upPtrs, 2, upN);
+                eq.process (upBuf);
+                if (compEnabled)
+                    runCompStereo (upPtrs[0], upPtrs[1], upN);
 
-            oversamplerStereo->processSamplesDown (nativeOut);
+                oversamplerStereo->processSamplesDown (nativeOut);
+            }
+            else
+            {
+                // Native-rate path (factor == 1). EQ (with console saturation)
+                // always runs; comp when engaged.
+                float* stereoChannels[2] = { L, R };
+                juce::AudioBuffer<float> stereoBuf (stereoChannels, 2, numSamples);
+                eq.process (stereoBuf);
+                if (compEnabled)
+                    runCompStereo (L, R, numSamples);
+            }
         }
-        else
-        {
-            // Native-rate path (factor == 1). EQ (with console saturation)
-            // always runs; comp when engaged.
-            float* stereoChannels[2] = { L, R };
-            juce::AudioBuffer<float> stereoBuf (stereoChannels, 2, numSamples);
-            eq.process (stereoBuf);
-            if (compEnabled)
-                runCompStereo (L, R, numSamples);
-        }
 
-        // See mono-path comment above — zero the GR atom when bypassed so
-        // the meter doesn't pin at the last reduction value.
-        currentGrDb.store (compEnabled ? compressor.getGainReduction() : 0.0f,
+        // See mono-path comment above — zero the GR atom when bypassed (or
+        // frozen, where comp didn't run) so the meter doesn't pin at the
+        // last-computed reduction value.
+        currentGrDb.store ((! isFrozen && compEnabled) ? compressor.getGainReduction() : 0.0f,
                             std::memory_order_relaxed);
 #endif
 
@@ -904,6 +926,16 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         lastProcessedPtr = L;
         lastProcessedR   = R;
         lastProcessedSamples = numSamples;
+    }
+
+    // Offline freeze render tap: srcL/srcR are the post-EQ/comp, pre-fader
+    // signal — exactly what the freeze WAV must bake. Captured regardless of
+    // the pass gate below so a soloed-out render block is still written. Costs
+    // nothing live (freezeCapL is nullptr unless a render set it).
+    if (freezeCapL != nullptr && srcL != nullptr)
+    {
+        juce::FloatVectorOperations::copy (freezeCapL, srcL, numSamples);
+        juce::FloatVectorOperations::copy (freezeCapR, srcR != nullptr ? srcR : srcL, numSamples);
     }
 
     if (! passByGate)
