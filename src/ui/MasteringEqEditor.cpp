@@ -1,6 +1,5 @@
 #include "MasteringEqEditor.h"
 #include "CompHeaderButton.h"
-#include "DuskStudioLookAndFeel.h"   // markEqKnob
 #include <cmath>
 
 namespace duskstudio
@@ -45,7 +44,6 @@ void styleKnob (juce::Slider& s, juce::Colour fill, double mn, double mx,
     s.setSliderStyle (juce::Slider::RotaryVerticalDrag);
     s.setColour (juce::Slider::rotarySliderFillColourId, fill);
     s.setColour (juce::Slider::rotarySliderOutlineColourId, juce::Colour (0xff404048));
-    markEqKnob (s);   // SSL-console knob look (this styler is EQ-only)
     s.setRange (mn, mx, 0.01);
     if (skewMid > 0) s.setSkewFactorFromMidPoint (skewMid);
     s.setDoubleClickReturnValue (true, defaultVal);

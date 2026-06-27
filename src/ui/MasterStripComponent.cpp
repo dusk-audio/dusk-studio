@@ -184,7 +184,6 @@ public:
         for (auto* k : { &lfBoost, &lfAtten, &hfBoost, &hfAtten, &hfBandwidth })
         {
             k->setColour (juce::Slider::thumbColourId, pultecCream);
-            markEqKnob (*k);   // SSL-console knob look
         }
 
         // program-EQ discrete-frequency rotaries (dented knobs). Same range
@@ -195,7 +194,6 @@ public:
                                                                        std::atomic<float>& atom)
         {
             k.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
-            markEqKnob (k);   // SSL-console knob look
             k.setColour (juce::Slider::rotarySliderFillColourId,    pultecGold);
             k.setColour (juce::Slider::rotarySliderOutlineColourId, juce::Colour (0xff0a0a0c));
             k.setColour (juce::Slider::thumbColourId,               pultecCream);
@@ -713,7 +711,6 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     for (auto* k : { &eqLfBoost, &eqLfAtten, &eqHfBoost, &eqHfAtten })
     {
         k->setColour (juce::Slider::thumbColourId, pultecCream);
-        markEqKnob (*k);   // SSL-console knob look
     }
 
     // Auto-arm the master program-EQ EQ on any band touch. EQ defaults to
@@ -750,7 +747,6 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
                                    std::function<juce::String (int)> fmt)
     {
         k.setRange (0.0, (double) (count - 1), 1.0);
-        markEqKnob (k);   // SSL-console knob look
         k.setColour (juce::Slider::rotarySliderFillColourId,    pultecBlack);
         k.setColour (juce::Slider::rotarySliderOutlineColourId, juce::Colour (0xff0a0a0c));
         k.setColour (juce::Slider::thumbColourId,               pultecCream);

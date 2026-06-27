@@ -377,96 +377,17 @@ public:
         const float angle = rotaryStartAngle + sliderPos * (rotaryEndAngle - rotaryStartAngle);
         const auto fill = slider.findColour (juce::Slider::rotarySliderFillColourId);
 
-        // SSL-hardware EQ knob: a milled grey skirt around a smaller coloured
-        // centre cap, instead of the glossy ball. Scoped by a per-slider property
-        // so only EQ knobs get it (comp / pan / send knobs keep the ball).
-        if ((bool) slider.getProperties().getWithDefault ("sslEqKnob", false))
-        {
-            drawSslEqKnob (g, cx, cy, outerR, angle, rotaryStartAngle, rotaryEndAngle, fill);
-            return;
-        }
-
-        // Value ring in the annulus around the body — an at-a-glance value
-        // readout that lifts knob contrast against the dark panels. Only on
-        // larger knobs (mastering / master): tiny channel-strip knobs keep the
-        // clean capped look so the ring doesn't crowd a 28 px body.
-        float radius = outerR;
-        const bool drawRing = outerR > 15.0f;
-        if (drawRing)
-        {
-            const float ringR     = outerR - 1.0f;
-            const float ringThick = juce::jmax (2.5f, outerR * 0.13f);
-            juce::Path track;
-            track.addCentredArc (cx, cy, ringR, ringR, 0.0f,
-                                 rotaryStartAngle, rotaryEndAngle, true);
-            g.setColour (juce::Colour (0xff31313c));
-            g.strokePath (track, juce::PathStrokeType (ringThick, juce::PathStrokeType::curved,
-                                                       juce::PathStrokeType::rounded));
-            juce::Path val;
-            val.addCentredArc (cx, cy, ringR, ringR, 0.0f,
-                               rotaryStartAngle, angle, true);
-            g.setColour (fill.brighter (0.30f));
-            g.strokePath (val, juce::PathStrokeType (ringThick, juce::PathStrokeType::curved,
-                                                     juce::PathStrokeType::rounded));
-            radius = ringR - ringThick - 1.5f;   // body sits inside the ring
-            if (radius <= 2.0f) return;
-        }
-
-        // Soft drop shadow under the body.
-        {
-            juce::ColourGradient shadow (juce::Colour (0x60000000), cx, cy,
-                                         juce::Colour (0x00000000), cx, cy + radius + 6.0f, true);
-            g.setGradientFill (shadow);
-            g.fillEllipse (cx - radius - 2.0f, cy - radius, (radius + 2.0f) * 2.0f, (radius + 2.0f) * 2.0f);
-        }
-
-        // Body - fully coloured in the slider's accent (SSL-style).
-        // Radial gradient: top-left highlight, bottom-right shadow.
-        {
-            juce::ColourGradient body (fill.brighter (0.15f), cx - radius * 0.55f, cy - radius * 0.55f,
-                                       fill.darker  (0.55f),  cx + radius * 0.55f, cy + radius * 0.55f, true);
-            g.setGradientFill (body);
-            g.fillEllipse (cx - radius, cy - radius, radius * 2.0f, radius * 2.0f);
-        }
-
-        // Subtle plastic-sheen highlight at the top.
-        g.setColour (juce::Colour (0x20ffffff));
-        g.fillEllipse (cx - radius * 0.85f, cy - radius * 0.95f, radius * 1.7f, radius * 0.7f);
-
-        // Crisp dark rim.
-        g.setColour (juce::Colour (0xff0a0a0a));
-        g.drawEllipse (cx - radius, cy - radius, radius * 2.0f, radius * 2.0f, 1.2f);
-
-        // Indicator - white line from inner radius to near the rim, plus a
-        // small white dot at the tip. Replaces the old coloured cap.
-        const float dx = std::cos (angle - juce::MathConstants<float>::halfPi);
-        const float dy = std::sin (angle - juce::MathConstants<float>::halfPi);
-        const float lineInnerR = radius * 0.30f;
-        const float lineOuterR = radius * 0.92f;
-        const float tipR       = juce::jmax (1.5f, radius * 0.12f);
-        const float lineX1 = cx + lineInnerR * dx;
-        const float lineY1 = cy + lineInnerR * dy;
-        const float lineX2 = cx + lineOuterR * dx;
-        const float lineY2 = cy + lineOuterR * dy;
-
-        g.setColour (juce::Colours::white);
-        g.drawLine (lineX1, lineY1, lineX2, lineY2, 2.0f);
-
-        // Tip dot.
-        const float tipX = cx + (lineOuterR - tipR * 0.4f) * dx;
-        const float tipY = cy + (lineOuterR - tipR * 0.4f) * dy;
-        g.setColour (juce::Colours::white);
-        g.fillEllipse (tipX - tipR, tipY - tipR, tipR * 2.0f, tipR * 2.0f);
-        g.setColour (juce::Colour (0x80000000));
-        g.drawEllipse (tipX - tipR, tipY - tipR, tipR * 2.0f, tipR * 2.0f, 0.5f);
+        // One knob look across the whole app (SSL-console style).
+        drawSslKnob (g, cx, cy, outerR, angle, rotaryStartAngle, rotaryEndAngle, fill);
     }
 
-    // SSL E-EQ knob: a SOLID coloured domed knob with a fat white pointer, a
-    // small black moulded notch at the rim, and a ring of dark scale dots around
-    // it (the SSL position markers). R is the full radius; `fill` is the band
-    // colour; `angle` the value angle; start/end the rotary sweep for the dots.
-    void drawSslEqKnob (juce::Graphics& g, float cx, float cy, float R,
-                        float angle, float startAngle, float endAngle, juce::Colour fill)
+    // SSL E-EQ style knob, used for EVERY rotary in the app: a SOLID coloured
+    // domed body with a fat white pointer, a small black moulded notch at the
+    // rim, and a ring of dark scale dots around it (the position markers). R is
+    // the full radius; `fill` is the slider's accent colour; `angle` the value
+    // angle; start/end the rotary sweep for the dots.
+    void drawSslKnob (juce::Graphics& g, float cx, float cy, float R,
+                      float angle, float startAngle, float endAngle, juce::Colour fill)
     {
         const float bodyR = R * 0.80f;   // coloured knob; dots sit in the margin
 
@@ -554,9 +475,4 @@ namespace sslEqColors
     // share this so they read as a pair.
     inline constexpr juce::uint32 kFilterWhite = 0xffe0e0e4;
 }
-
-// Tag a rotary slider so DuskStudioLookAndFeel::drawRotarySlider paints it as an
-// SSL-console knob (milled grey skirt + coloured cap) instead of the glossy ball.
-// Call on EQ knobs only.
-inline void markEqKnob (juce::Slider& s) { s.getProperties().set ("sslEqKnob", true); }
 } // namespace duskstudio

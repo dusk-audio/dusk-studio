@@ -180,7 +180,6 @@ ChannelEqEditor::ChannelEqEditor (Track& t) : track (t)
             k.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
             k.setColour (juce::Slider::rotarySliderFillColourId, fill);
             k.setColour (juce::Slider::rotarySliderOutlineColourId, juce::Colour (0xff404048));
-            markEqKnob (k);   // SSL-console knob look
             const double step = (interval > 0.0) ? interval : (mn < 0 ? 0.1 : 1.0);
             k.setRange (mn, mx, step);
             if (skewMid > 0) k.setSkewFactorFromMidPoint (skewMid);
