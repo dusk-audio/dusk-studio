@@ -36,7 +36,9 @@ public:
     // integrated reading reflects only the current source.
     void resetLoudness();
 
-    int getLatencySamples() const noexcept { return limiter.getLatencySamples(); }
+    // EQ (oversampler) and limiter are in series, so their latencies add.
+    int getLatencySamples() const noexcept
+        { return digitalEq.getLatencySamples() + limiter.getLatencySamples(); }
 
     // UI-side accessors. The Mastering view embeds the UniversalCompressor's
     // own AudioProcessorEditor for the Multi-Comp panel and drives the

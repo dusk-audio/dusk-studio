@@ -108,6 +108,25 @@ TEST_CASE ("MasteringDigitalEq processInPlace applies the shared response", "[ma
     REQUIRE_THAT (dspDb, WithinAbs (curveDb, 0.2f));
 }
 
+TEST_CASE ("MasteringDigitalEq oversampling de-crams an HF bell", "[mastering][eq]")
+{
+    // Near Nyquist an RBJ peak craps: the bilinear transform warps the upper
+    // skirt so the band shape deviates from its analog prototype. The audio
+    // path runs the biquads oversampled (kOversample), pushing Nyquist out of
+    // band so the shape tracks the analog. Ground truth = the same filter
+    // heavily oversampled (16x), where it has converged to its analog shape.
+    // Measure off-centre, where the bandwidth distortion shows (the centre gain
+    // is exact at any rate).
+    const float fc = 15000.0f, Q = 2.0f, gain = 6.0f, at = 19000.0;
+    const float truth = MasteringDigitalEq::magnitudeDb (2, 44100.0 * 16, fc, Q, gain, at);
+    const float base  = MasteringDigitalEq::magnitudeDb (2, 44100.0,      fc, Q, gain, at);
+    const float os    = MasteringDigitalEq::magnitudeDb (2, 44100.0 * MasteringDigitalEq::kOversample,
+                                                         fc, Q, gain, at);
+    INFO ("19 kHz (bell @15k): analog=" << truth << "  base=" << base << "  os=" << os);
+    REQUIRE (std::abs (os - truth) < std::abs (base - truth));   // oversampled is closer to analog
+    REQUIRE (std::abs (os - truth) < 0.5f);                      // and close in absolute terms
+}
+
 TEST_CASE ("MasteringDigitalEq per-block param re-push is inert", "[mastering][eq]")
 {
     // The chain re-pushes every band's params on every audio block. With

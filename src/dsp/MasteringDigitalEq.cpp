@@ -4,7 +4,10 @@ namespace duskstudio
 {
 void MasteringDigitalEq::prepare (double sampleRate, int blockSize)
 {
-    sr = sampleRate;
+    // The biquads run oversampled, so their coefficients are computed (and the
+    // filters prepared) at the oversampled rate.
+    sr = sampleRate * (double) kOversample;
+    const int bs = juce::jmax (1, blockSize);
 
     // Mastering-friendly defaults - symmetric across the spectrum, every
     // band starts at unity gain so engaging the EQ doesn't change tone.
@@ -19,7 +22,17 @@ void MasteringDigitalEq::prepare (double sampleRate, int blockSize)
         bands[(size_t) i].dirty.store  (true);
     }
 
-    juce::dsp::ProcessSpec spec { sampleRate, (juce::uint32) juce::jmax (1, blockSize), 1 };
+    // Oversampler (stereo). IIR polyphase = low latency, no pre-ringing.
+    // 2^stages == kOversample (1 stage = 2x, 2 stages = 4x).
+    const size_t osStages = (kOversample >= 4) ? 2 : 1;
+    oversampler = std::make_unique<juce::dsp::Oversampling<float>> (
+        2, osStages,
+        juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, true /* max quality */);
+    oversampler->initProcessing ((size_t) bs);
+    oversampler->reset();
+    latencySamples = (int) std::lround (oversampler->getLatencyInSamples());
+
+    juce::dsp::ProcessSpec spec { sr, (juce::uint32) (bs * kOversample), 1 };
     for (auto& f : filtersL) { f.prepare (spec); initCoeffs (f); }
     for (auto& f : filtersR) { f.prepare (spec); initCoeffs (f); }
 
@@ -30,6 +43,7 @@ void MasteringDigitalEq::reset()
 {
     for (auto& f : filtersL) f.reset();
     for (auto& f : filtersR) f.reset();
+    if (oversampler != nullptr) oversampler->reset();
 }
 
 void MasteringDigitalEq::setBandFreq (int idx, float hz) noexcept
@@ -199,21 +213,35 @@ void MasteringDigitalEq::rebuildIfDirty (int idx) noexcept
 
 void MasteringDigitalEq::processInPlace (float* L, float* R, int numSamples) noexcept
 {
-    if (sr <= 0.0 || L == nullptr || R == nullptr) return;
-    if (! enabled.load (std::memory_order_relaxed)) return;
+    if (sr <= 0.0 || L == nullptr || R == nullptr || oversampler == nullptr) return;
 
     for (int b = 0; b < kNumBands; ++b)
         rebuildIfDirty (b);
 
-    // Bypass any band whose gain rounds to 0 dB AND whose coefficient
-    // pointer hasn't been built yet. Cheaper than running an inert biquad.
-    for (int b = 0; b < kNumBands; ++b)
-    {
-        const float g = bands[(size_t) b].gainDb.load (std::memory_order_relaxed);
-        if (std::abs (g) < 0.05f) continue;  // ≤ 0.05 dB is inaudible
+    const bool active = enabled.load (std::memory_order_relaxed);
 
-        for (int i = 0; i < numSamples; ++i) L[i] = filtersL[(size_t) b].processSample (L[i]);
-        for (int i = 0; i < numSamples; ++i) R[i] = filtersR[(size_t) b].processSample (R[i]);
+    // Always run the oversampler round-trip so the reported latency is constant
+    // whether the EQ is engaged or not (matches the limiter's always-latent
+    // bypass — a toggle never shifts the master). Bands apply only when active.
+    float* io[2] = { L, R };
+    juce::dsp::AudioBlock<float> block (io, 2, (size_t) numSamples);
+    auto up = oversampler->processSamplesUp (block);
+
+    if (active)
+    {
+        const int   upN = (int) up.getNumSamples();
+        float* const uL = up.getChannelPointer (0);
+        float* const uR = up.getChannelPointer (1);
+        for (int b = 0; b < kNumBands; ++b)
+        {
+            const float g = bands[(size_t) b].gainDb.load (std::memory_order_relaxed);
+            if (std::abs (g) < 0.05f) continue;  // ≤ 0.05 dB is inaudible
+
+            for (int i = 0; i < upN; ++i) uL[i] = filtersL[(size_t) b].processSample (uL[i]);
+            for (int i = 0; i < upN; ++i) uR[i] = filtersR[(size_t) b].processSample (uR[i]);
+        }
     }
+
+    oversampler->processSamplesDown (block);
 }
 } // namespace duskstudio

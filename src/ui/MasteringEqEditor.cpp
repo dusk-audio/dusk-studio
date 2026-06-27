@@ -202,10 +202,11 @@ void MasteringEqEditor::timerCallback()
 
 float MasteringEqEditor::bandResponseDb (int idx, float freqHz) const noexcept
 {
-    // Plot the actual biquad magnitude (shared coefficient math with the DSP)
-    // at the real sample rate, so the curve is what the audio path applies —
-    // including HF shelf/bell cramping near Nyquist — not an approximation.
-    const double sr = (chain != nullptr) ? chain->getScopeSampleRate() : 48000.0;
+    // Plot the actual biquad magnitude (shared coefficient math with the DSP).
+    // The DSP runs the biquads oversampled, so evaluate the curve at the same
+    // oversampled rate — that's the de-crammed response the audio applies.
+    const double sr = (chain != nullptr ? chain->getScopeSampleRate() : 48000.0)
+                        * (double) duskstudio::MasteringDigitalEq::kOversample;
     return duskstudio::MasteringDigitalEq::magnitudeDb (
         idx, sr, lastFreq[(size_t) idx], lastQ[(size_t) idx], lastGain[(size_t) idx], freqHz);
 }
