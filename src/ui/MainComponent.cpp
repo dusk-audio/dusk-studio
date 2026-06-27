@@ -4197,6 +4197,17 @@ void animateEditorOpen (juce::Component& editor, juce::Component& dim,
 
 void MainComponent::openPianoRoll (int trackIdx, int regionIdx)
 {
+    // Frozen tracks are edit-locked: their MIDI is baked into the rendered WAV,
+    // so editing notes would silently desync the audio. Block the editor (the
+    // single entry point for every MIDI-edit gesture) until the user unfreezes.
+    if (trackIdx >= 0 && trackIdx < Session::kNumTracks
+        && session.track (trackIdx).frozen.load (std::memory_order_relaxed))
+    {
+        showDuskAlert (*this, "Track is frozen",
+                        "Unfreeze this track to edit its MIDI.");
+        return;
+    }
+
     // Drop any pending collapse-teardown so a stale timer can't tear down
     // the editor we're about to open (swap mid-collapse).
     editorTeardownTimer.reset();
