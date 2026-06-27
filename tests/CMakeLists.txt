@@ -196,6 +196,7 @@ if(DEFINED DUSK_PLUGINS_PATH)
         comp_static_curve.cpp
         comp_timing.cpp
         bus_stereo_link.cpp
+        tape_hysteresis.cpp
         bus_strip.cpp
         mastering_chain.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/BusStrip.cpp
@@ -223,7 +224,8 @@ if(DEFINED DUSK_PLUGINS_PATH)
         "${DUSK_PLUGINS_PATH}/plugins/shared/channel-comp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-q"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp"
-        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/HardwareEmulation")
+        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/HardwareEmulation"
+        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source")
 
     target_compile_definitions(dusk-studio-tests PRIVATE
         DUSKSTUDIO_HAS_DUSK_DSP=1
