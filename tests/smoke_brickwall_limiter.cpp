@@ -340,7 +340,11 @@ TEST_CASE ("BrickwallLimiter: lookahead is adjustable and holds the ceiling acro
 
         lim.setLookaheadMs (8.0f);
         REQUIRE_THAT (lim.getLookaheadMs(), WithinAbs (8.0f, 1.0e-6f));
-        REQUIRE (lim.getLatencySamples() > latShort);   // more lookahead = more latency
+        // The latency DELTA must track the lookahead delta (7.5 ms at the base
+        // rate), not merely move the right direction — this guards the read-offset
+        // math, not just its sign.
+        const int expectedDelta = (int) std::lround ((8.0 - 0.5) * 0.001 * kSr);   // 360
+        REQUIRE (std::abs ((lim.getLatencySamples() - latShort) - expectedDelta) <= 1);
 
         lim.setLookaheadMs (100.0f);  REQUIRE (lim.getLookaheadMs() <= 10.0f);   // clamped high
         lim.setLookaheadMs (0.0f);    REQUIRE (lim.getLookaheadMs() >= 0.1f);    // clamped low

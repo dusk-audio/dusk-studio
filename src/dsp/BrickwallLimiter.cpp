@@ -214,6 +214,19 @@ void BrickwallLimiter::processInPlace (float* L, float* R, int numSamples) noexc
             }
             const float wmin = dqVal[c][(size_t) dqHead[c]];
 
+            // When bypassed, hold the smoother neutral. The target/deque above
+            // still track (so the window is warm on re-enable), but env and the
+            // program-dependent depth tracker must NOT accumulate reduction from
+            // material the limiter isn't actually reducing — otherwise the first
+            // release after re-enabling would be biased by stale history.
+            if (! active)
+            {
+                env[c] = 1.0f;
+                holdCounter[c] = 0;
+                relDepth[c] = 0.0f;
+                continue;
+            }
+
             // Instant attack to the lookahead-guaranteed gain (env never sits
             // above wmin, so the output peak lands at the ceiling), then hold,
             // then a smooth one-pole release. The lookahead delay means the snap

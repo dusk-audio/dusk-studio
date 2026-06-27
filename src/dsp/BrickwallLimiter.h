@@ -59,7 +59,8 @@ public:
     void setStereoLink (bool b) noexcept           { stereoLink.store (b, std::memory_order_relaxed); }
     // Active lookahead, in ms. The delay/deque are pre-allocated for a fixed
     // maximum in prepare(), so this only re-derives the active read offset,
-    // window and reported latency — no allocation, safe from the message thread.
+    // window and reported latency. Called every block from the mastering chain
+    // (audio thread), so it must stay RT-safe — no allocation, lock or I/O.
     void setLookaheadMs (float ms) noexcept;
 
     bool  isEnabled() const noexcept    { return enabled.load (std::memory_order_relaxed); }
@@ -87,7 +88,10 @@ public:
 
 private:
     // Re-derives the active lookahead (read offset, window, latency) from the
-    // lookaheadMs atomic. Message thread; writes atomics the audio thread reads.
+    // lookaheadMs atomic. Runs on the audio thread (via setLookaheadMs), so it
+    // stays RT-safe. Reads the plain members osRate/maxLookaheadOs/osFactor/
+    // osLatencyBase, which only prepare() writes — safe because the engine
+    // suspends audio around prepare(), so it never overlaps process().
     void recomputeActiveLookahead() noexcept;
 
     double sr     = 0.0;

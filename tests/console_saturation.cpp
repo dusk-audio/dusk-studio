@@ -121,8 +121,20 @@ TEST_CASE ("E-series transformer core adds LF-weighted saturation", "[console][t
     WARN ("LF-weighting  E=" << eLfWeight << " dB  G=" << gLfWeight << " dB");
     REQUIRE (eLfWeight > gLfWeight + 3.0f);              // E's transformer adds LF weight
 
-    // With saturation off, the transformer contributes nothing — the E-series
-    // low end is clean (harmonics at the noise floor).
-    const Harmonics eClean = measure (0.0f, /*G=*/false, kLfBin);
-    REQUIRE (eClean.h3RelDb < eLf.h3RelDb - 10.0f);
+    // Isolate the transformer: the E-vs-G LF gap must be SATURATION-GATED, not an
+    // always-on structural difference (e.g. the phase all-pass). With saturation
+    // off neither mode has a nonlinearity, so their LF harmonics coincide; the
+    // gap only opens up once saturation engages.
+    const Harmonics eOff = measure (0.0f, /*G=*/false, kLfBin);
+    const Harmonics gOff = measure (0.0f, /*G=*/true,  kLfBin);
+    const float onGap  = eLf.h3RelDb  - gLf.h3RelDb;            // E above G, saturation on
+    const float offGap = std::abs (eOff.h3RelDb - gOff.h3RelDb);
+    REQUIRE (onGap > offGap + 6.0f);
+
+    // The effect must also be present at the shipped channel drive (not only at
+    // the over-driven probe level), or the "console weight" is inaudible in use.
+    constexpr float shipDrive = 22.0f;   // ChannelStrip::kConsoleSaturationDrive
+    const float eShipWeight = measure (shipDrive, false, kLfBin).h3RelDb - measure (shipDrive, false).h3RelDb;
+    const float gShipWeight = measure (shipDrive, true,  kLfBin).h3RelDb - measure (shipDrive, true ).h3RelDb;
+    REQUIRE (eShipWeight > gShipWeight + 1.0f);
 }
