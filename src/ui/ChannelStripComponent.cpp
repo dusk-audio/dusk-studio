@@ -9,6 +9,7 @@
 #include "HardwareInsertEditor.h"
 #include "PluginPickerHelpers.h"
 #include "DuskAlerts.h"
+#include "FreezeDialog.h"
 #include "../engine/AudioEngine.h"
 #include "../engine/PluginSlot.h"
 #include "../engine/PluginManager.h"
@@ -2533,21 +2534,34 @@ void ChannelStripComponent::refreshPrintButtonForMode()
 
 void ChannelStripComponent::handleFreezeClick()
 {
+    // Unfreeze is cheap (no render) — do it inline and refresh the button.
     if (track.frozen.load (std::memory_order_relaxed))
     {
         engine.unfreezeTrack (trackIndex);
+        refreshPrintButtonForMode();
+        return;
     }
-    else
+
+    // Freeze renders offline; run it async behind a progress + cancel modal so a
+    // long render never wedges the UI. The dialog commits the freeze on success;
+    // we just refresh the button (snowflake) when it closes.
+    auto dialog = std::make_unique<FreezeDialog> (engine, session,
+                                                   engine.getDeviceManager(), trackIndex);
+    dialog->setSize (440, 150);
+
+    juce::Component::SafePointer<ChannelStripComponent> safe (this);
+    dialog->onRequestClose = [safe]
     {
-        // freezeTrack renders offline on the message thread — it can take a
-        // moment, so show a wait cursor while it blocks.
-        juce::MouseCursor::showWaitCursor();
-        const bool ok = engine.freezeTrack (trackIndex);
-        juce::MouseCursor::hideWaitCursor();
-        if (! ok)
-            showDuskAlert (*this, "Freeze failed", engine.getLastFreezeError());
-    }
-    refreshPrintButtonForMode();
+        if (auto* self = safe.getComponent())
+        {
+            self->freezeModal.close();
+            self->refreshPrintButtonForMode();
+        }
+    };
+
+    auto* parent = findParentComponentOfClass<juce::Component>();
+    if (parent == nullptr) parent = this;
+    freezeModal.show (*parent, std::move (dialog));
 }
 
 void ChannelStripComponent::refreshIoConfigButton()

@@ -322,6 +322,7 @@ target_sources(DuskStudio PRIVATE
     src/ui/AuxView.cpp
     src/ui/BusComponent.cpp
     src/ui/BounceDialog.cpp
+    src/ui/FreezeDialog.cpp
     src/ui/ChannelCompEditor.cpp
     src/ui/ChannelEqEditor.cpp
     src/ui/ChannelStripComponent.cpp

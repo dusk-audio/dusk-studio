@@ -164,6 +164,21 @@ void BounceEngine::run()
         return;
     }
 
+    if (renderMode == Mode::FreezeTrack)
+    {
+        const bool ok = renderFreezeTrack (freezeTrackIndex, outputFile,
+                                            freezeLenSamples, renderSampleRate,
+                                            renderBlockSize);
+        rendering.store (false, std::memory_order_relaxed);
+        juce::String errSnapshot;
+        {
+            const juce::ScopedLock lock (lastErrorLock);
+            errSnapshot = lastError;
+        }
+        if (onFinished) onFinished (ok, errSnapshot);
+        return;
+    }
+
     // Open the writer first - failure here means we don't bother touching the
     // engine state.
     std::unique_ptr<juce::FileOutputStream> outStream (outputFile.createOutputStream());
@@ -543,15 +558,35 @@ bool BounceEngine::runStemsMode()
     return succeeded;
 }
 
+bool BounceEngine::startFreeze (int trackIndex, const juce::File& outFile,
+                                juce::int64 lenSamples, double sampleRate, int blockSize)
+{
+    if (rendering.load (std::memory_order_relaxed))
+        return false;
+
+    outputFile       = outFile;
+    renderSampleRate = (sampleRate > 0.0) ? sampleRate : renderSampleRate;
+    renderBlockSize  = juce::jmax (16, blockSize);
+    renderMode       = Mode::FreezeTrack;
+    renderFormat     = Format::Wav;
+    freezeTrackIndex = trackIndex;
+    freezeLenSamples = lenSamples;
+
+    cancelRequested.store (false, std::memory_order_relaxed);
+    progress.store (0.0f, std::memory_order_relaxed);
+    renderedSamples.store (0, std::memory_order_relaxed);
+    { const juce::ScopedLock lock (lastErrorLock); lastError.clear(); }
+    rendering.store (true, std::memory_order_relaxed);
+
+    startThread();   // → run() → renderFreezeTrack on the worker thread
+    return true;
+}
+
 bool BounceEngine::renderFreezeTrack (int trackIndex, const juce::File& outFile,
                                       juce::int64 lenSamples, double sampleRate, int blockSize)
 {
-    if (rendering.load (std::memory_order_relaxed))
-    {
-        const juce::ScopedLock lock (lastErrorLock);
-        lastError = "A render is already in progress";
-        return false;
-    }
+    // Caller (startFreeze / run, or a direct synchronous test) owns the
+    // rendering + cancelRequested flags; this method only does the render.
     if (trackIndex < 0 || trackIndex >= Session::kNumTracks || lenSamples <= 0)
     {
         const juce::ScopedLock lock (lastErrorLock);
@@ -584,9 +619,6 @@ bool BounceEngine::renderFreezeTrack (int trackIndex, const juce::File& outFile,
         lastError = writerErr;
         return false;
     }
-
-    rendering.store (true, std::memory_order_relaxed);
-    cancelRequested.store (false, std::memory_order_relaxed);
 
     // Detach + offline-prepare, exactly like the stem path.
     deviceManager.removeAudioCallback (&engine);
@@ -693,8 +725,6 @@ bool BounceEngine::renderFreezeTrack (int trackIndex, const juce::File& outFile,
     engine.setStage (savedStage);
     engine.setRenderOversamplingOverride (0);
     deviceManager.addAudioCallback (&engine);
-
-    rendering.store (false, std::memory_order_relaxed);
 
     if (! ok || cancelRequested.load (std::memory_order_relaxed))
     {

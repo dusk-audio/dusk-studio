@@ -308,6 +308,8 @@ private:
     // an EmbeddedModal owned by this strip.
     void openHardwareInsertEditor();
     EmbeddedModal hardwareInsertModal;
+    // Async freeze progress (FreezeDialog) hosted as an EmbeddedModal.
+    EmbeddedModal freezeModal;
     void showPluginSlotMenu();
     void togglePluginEditor();
     void openPluginEditor();

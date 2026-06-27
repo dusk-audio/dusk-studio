@@ -445,7 +445,7 @@ void AudioEngine::recomputePdc() noexcept
     aggregatePdcLatencySamples.store (deepest, std::memory_order_relaxed);
 }
 
-bool AudioEngine::freezeTrack (int trackIndex)
+bool AudioEngine::freezePrepare (int trackIndex, juce::File& outFile, juce::int64& lenSamples)
 {
     lastFreezeError.clear();
     if (trackIndex < 0 || trackIndex >= Session::kNumTracks)
@@ -469,21 +469,21 @@ bool AudioEngine::freezeTrack (int trackIndex)
     if (sr <= 0.0)
         { lastFreezeError = "Audio device not running"; return false; }
     constexpr double kFreezeTailSeconds = 5.0;
-    const juce::int64 lenSamples = contentEnd + (juce::int64) (sr * kFreezeTailSeconds);
+    lenSamples = contentEnd + (juce::int64) (sr * kFreezeTailSeconds);
 
     auto audioDir = session.getAudioDirectory();
     if (! audioDir.createDirectory())
         { lastFreezeError = "Could not create audio directory"; return false; }
-    const auto outFile = audioDir.getChildFile (
+    outFile = audioDir.getChildFile (
         "freeze_track" + juce::String (trackIndex + 1).paddedLeft ('0', 2) + ".wav");
+    return true;
+}
 
-    // Synchronous offline render (detaches the device for its duration).
-    BounceEngine bounce (*this, session, deviceManager);
-    if (! bounce.renderFreezeTrack (trackIndex, outFile, lenSamples, sr))
-    {
-        lastFreezeError = bounce.getLastError();
-        return false;
-    }
+void AudioEngine::commitFreeze (int trackIndex, const juce::File& outFile, juce::int64 lenSamples)
+{
+    if (trackIndex < 0 || trackIndex >= Session::kNumTracks)
+        return;
+    auto& track = session.track (trackIndex);
 
     // Point frozenRegion at the baked WAV: one stereo region spanning the song
     // from timeline 0 at unity, no fades.
@@ -505,7 +505,6 @@ bool AudioEngine::freezeTrack (int trackIndex)
 
     // Open the frozen WAV reader (and rebuild every track's readers).
     playbackEngine.preparePlayback();
-    return true;
 }
 
 void AudioEngine::unfreezeTrack (int trackIndex)

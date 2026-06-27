@@ -83,15 +83,20 @@ public:
 
     juce::AudioDeviceManager& getDeviceManager() noexcept { return deviceManager; }
 
-    // Track FREEZE (message thread only — heavy: offline render + file I/O +
-    // preparePlayback). freezeTrack renders the MIDI track's pre-fader signal
-    // (instrument + EQ + comp) to a WAV in the session's audio dir, points
-    // frozenRegion at it, bypasses the instrument and flags the track frozen so
-    // the audio thread plays the WAV with the plugin + EQ/comp skipped. Returns
-    // false (and changes nothing) if the track isn't a MIDI track, is already
-    // frozen, has no MIDI content, or the render fails — getLastFreezeError()
-    // then holds why. unfreezeTrack reverts: live instrument, WAV deleted.
-    bool freezeTrack (int trackIndex);
+    // Track FREEZE (message thread). The render is ASYNC (BounceEngine::
+    // startFreeze on a worker thread) so a long render never wedges the UI, so
+    // the engine exposes the two message-thread halves the dialog drives:
+    //   freezePrepare — validate the track (MIDI, not already frozen, has
+    //     content) and compute the output WAV path + render length. Returns
+    //     false + getLastFreezeError() on reject; renders nothing.
+    //   commitFreeze  — after the worker render lands, point frozenRegion at the
+    //     WAV, bypass the instrument, flag the track frozen (release), and
+    //     reopen the readers so the audio thread plays the WAV with the plugin +
+    //     EQ/comp skipped.
+    // unfreezeTrack reverts (live instrument, WAV deleted) — it's cheap, no
+    // render, so it stays synchronous.
+    bool freezePrepare (int trackIndex, juce::File& outFile, juce::int64& lenSamples);
+    void commitFreeze  (int trackIndex, const juce::File& outFile, juce::int64 lenSamples);
     void unfreezeTrack (int trackIndex);
     juce::String getLastFreezeError() const { return lastFreezeError; }
 
