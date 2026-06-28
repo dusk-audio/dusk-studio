@@ -5011,8 +5011,7 @@ void ChannelStripComponent::resized()
     // is squeezed below its design min width.
     constexpr int kBusColumnW   = 18;
     constexpr int kBusColumnGap = 3;
-    constexpr int kBusButtonH   = 20;
-    constexpr int kBusButtonGap = 2;
+    constexpr int kBusButtonGap = 2;   // bus button height now spans the 0→off scale
     juce::Rectangle<int> busColumn;
 
     juce::Rectangle<int> meterColumn, scaleColumn;
@@ -5176,20 +5175,26 @@ void ChannelStripComponent::resized()
     }
     faderSlider.setBounds (sliderBounds);
 
-    // Bus buttons (1-4): stack upward from the fader's "off" tick so the
-    // bottom of #4 lines up with the "off" scale label. faderYForDb gives
-    // the exact tick Y for both the normal and threshold fader layouts;
-    // anchoring to the meter column would miss it on strips that reserve
+    // Bus buttons (1-4): span the fader scale from the "0" tick (top of #1) to
+    // the "off" tick (bottom of #4), dividing the range into four equal slots.
+    // faderYForDb gives the exact tick Y for both the normal and threshold fader
+    // layouts; anchoring to the meter column would miss it on strips that reserve
     // peak-label space below the meter.
     {
-        const int totalButtonsH = ChannelStripParams::kNumBuses * kBusButtonH
-                                + (ChannelStripParams::kNumBuses - 1) * kBusButtonGap;
-        const int offY = (int) std::lround (duskstudio::faderYForDb (faderSlider, -90.0f));
-        int y = offY - totalButtonsH;
+        const int zeroY = (int) std::lround (duskstudio::faderYForDb (faderSlider, 0.0f));
+        const int offY  = (int) std::lround (duskstudio::faderYForDb (faderSlider, -90.0f));
+        const int span  = juce::jmax (ChannelStripParams::kNumBuses, offY - zeroY);
         for (int i = 0; i < ChannelStripParams::kNumBuses; ++i)
         {
-            busButtons[(size_t) i]->setBounds (busColumn.getX(), y, kBusColumnW, kBusButtonH);
-            y += kBusButtonH + kBusButtonGap;
+            // Slot the [zeroY, offY] range so #1's top == zeroY and #4's bottom
+            // == offY exactly (rounding distributes; gaps stay uniform).
+            const int top = zeroY + (int) std::lround (
+                (double) (span + kBusButtonGap) * i / ChannelStripParams::kNumBuses);
+            const int bot = zeroY + (int) std::lround (
+                (double) (span + kBusButtonGap) * (i + 1) / ChannelStripParams::kNumBuses)
+                - kBusButtonGap;
+            busButtons[(size_t) i]->setBounds (busColumn.getX(), top,
+                                                kBusColumnW, juce::jmax (1, bot - top));
         }
     }
 
