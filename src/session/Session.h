@@ -950,6 +950,13 @@ struct AuxLane
     std::array<juce::String, AuxLaneParams::kMaxLanePlugins> pluginDescriptionXml;
     std::array<juce::String, AuxLaneParams::kMaxLanePlugins> pluginStateBase64;
 
+    // Native CLAP host alternative to the JUCE plugin above. When nativeClapPath is
+    // non-empty the slot hosts a .clap via NativeClapSlot instead of a JUCE plugin;
+    // nativeClapStateBase64 is the CLAP state blob. Mutually exclusive with the JUCE
+    // pair (a slot is JUCE / native-CLAP / hardware / empty).
+    std::array<juce::String, AuxLaneParams::kMaxLanePlugins> nativeClapPath;
+    std::array<juce::String, AuxLaneParams::kMaxLanePlugins> nativeClapStateBase64;
+
     std::array<HardwareInsertParams, AuxLaneParams::kMaxLanePlugins> hardwareInserts;
 };
 

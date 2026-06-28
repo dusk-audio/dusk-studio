@@ -1223,6 +1223,14 @@ juce::String SessionSerializer::serialize (const Session& s)
             slot->setProperty ("plugin_desc_xml", lane.pluginDescriptionXml[(size_t) p]);
             slot->setProperty ("plugin_state",    lane.pluginStateBase64[(size_t) p]);
 
+            // Native CLAP slot (mutually exclusive with the JUCE plugin). Only emit
+            // when set, so JUCE-only sessions are unchanged.
+            if (lane.nativeClapPath[(size_t) p].isNotEmpty())
+            {
+                slot->setProperty ("native_clap_path",  lane.nativeClapPath[(size_t) p]);
+                slot->setProperty ("native_clap_state", lane.nativeClapStateBase64[(size_t) p]);
+            }
+
             // Hardware-insert side of this slot. Same shape as the
             // Track::hardwareInsert block above.
             auto* hwi = new juce::DynamicObject();
@@ -1610,6 +1618,8 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                     if (! sv.isObject()) continue;
                     lane.pluginDescriptionXml[(size_t) p] = sv["plugin_desc_xml"].toString();
                     lane.pluginStateBase64[(size_t) p]    = sv["plugin_state"]   .toString();
+                    lane.nativeClapPath[(size_t) p]        = sv["native_clap_path"] .toString();
+                    lane.nativeClapStateBase64[(size_t) p] = sv["native_clap_state"].toString();
 
                     // Same default-off rationale as the track hardware_insert.
                     {

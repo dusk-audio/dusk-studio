@@ -1276,9 +1276,26 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
         auto& lane = session.auxLane (a);
         for (int s = 0; s < AuxLaneParams::kMaxLanePlugins; ++s)
         {
-            auto& slot = auxLaneStrips[(size_t) a].getPluginSlot (s);
+            auto& strip = auxLaneStrips[(size_t) a];
+            auto& slot  = strip.getPluginSlot (s);
             lane.pluginDescriptionXml[(size_t) s] = slot.getDescriptionXmlForSave (parkSleepMs);
             lane.pluginStateBase64[(size_t) s]    = slot.getStateBase64ForSave   (parkSleepMs);
+
+            // Native CLAP slot (parallel to the JUCE plugin; at most one is loaded).
+            if (strip.isNativeClapLoaded (s))
+            {
+                lane.nativeClapPath[(size_t) s] = strip.getNativeClapSlot (s).getPath();
+                std::vector<uint8_t> blob;
+                if (strip.getNativeClapSlot (s).saveState (blob) && ! blob.empty())
+                    lane.nativeClapStateBase64[(size_t) s] = juce::Base64::toBase64 (blob.data(), blob.size());
+                else
+                    lane.nativeClapStateBase64[(size_t) s].clear();
+            }
+            else
+            {
+                lane.nativeClapPath[(size_t) s].clear();
+                lane.nativeClapStateBase64[(size_t) s].clear();
+            }
         }
     }
 
