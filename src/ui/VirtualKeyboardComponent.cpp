@@ -160,12 +160,24 @@ bool VirtualKeyboardComponent::keyPressed (const juce::KeyPress& k)
     const int note = noteForKeyCode (code);
     if (note < 0) return false;
 
-    // Auto-repeat fires keyPressed again for an already-held key. Don't
-    // re-trigger Note On — just clear the release debounce: this keyPressed
-    // proves the key is still physically down even if isKeyCurrentlyDown
-    // momentarily read false in the auto-repeat gap.
+    // keyPressed fires again for an already-held key from two sources:
+    //   • auto-repeat — the key never left the board; silentScans stays 0
+    //     because timerCallback (which uses the reliable X11 physical-state
+    //     query) keeps seeing it down. Swallow: don't re-trigger Note On.
+    //   • a genuine fast re-press — the key was released and pressed again
+    //     before the kReleaseScans debounce fired Note Off; the timer observed
+    //     it physically up, so silentScans > 0. Retrigger: Note Off the still-
+    //     sounding old note, then Note On the new one.
     if (held[(size_t) code].note >= 0)
     {
+        if (held[(size_t) code].silentScans > 0)
+        {
+            sendNoteOff (held[(size_t) code].note, held[(size_t) code].channel);
+            held[(size_t) code] = { note, channel };
+            sendNoteOn (note, velocity, channel);
+            repaint();
+            return true;
+        }
         held[(size_t) code].silentScans = 0;
         return true;
     }

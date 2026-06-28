@@ -70,11 +70,16 @@ juce::int64 MiniTimelineStrip::sampleForX (int x, juce::int64 end) const noexcep
 
 int MiniTimelineStrip::markerIndexAtX (int x, juce::int64 end) const noexcept
 {
+    // Nearest marker within the hit radius, not the first — when two ticks fall
+    // inside kMarkerHitPx, the closer one should win.
     const auto& markers = session.getMarkers();
+    int best = -1, bestDist = kMarkerHitPx + 1;
     for (int i = 0; i < (int) markers.size(); ++i)
-        if (std::abs (xForSample (markers[(size_t) i].timelineSamples, end) - x) <= kMarkerHitPx)
-            return i;
-    return -1;
+    {
+        const int d = std::abs (xForSample (markers[(size_t) i].timelineSamples, end) - x);
+        if (d <= kMarkerHitPx && d < bestDist) { bestDist = d; best = i; }
+    }
+    return best;
 }
 
 void MiniTimelineStrip::paint (juce::Graphics& g)

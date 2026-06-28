@@ -342,7 +342,10 @@ juce::DynamicObject::Ptr trackToObject (const Track& t, const juce::File& sessio
     obj->setProperty ("midi_channel",    t.midiChannel.load());
     obj->setProperty ("track_mode",     t.mode.load());
     obj->setProperty ("frozen",         t.frozen.load());
-    if (! t.frozenAudioPath.isEmpty())
+    // Only emit freeze fields when the track is actually frozen AND has a path —
+    // a stale path left on a since-unfrozen (or reused) Session must not write
+    // phantom freeze state that load() would then resurrect.
+    if (t.frozen.load() && ! t.frozenAudioPath.isEmpty())
     {
         obj->setProperty ("frozen_audio_path",
                           portablePath (juce::File (t.frozenAudioPath), sessionDir));
@@ -350,6 +353,8 @@ juce::DynamicObject::Ptr trackToObject (const Track& t, const juce::File& sessio
         // WAV (PlaybackEngine needs frozenRegion populated to play it back).
         obj->setProperty ("frozen_len",      (juce::int64) t.frozenRegion.lengthInSamples);
         obj->setProperty ("frozen_channels", t.frozenRegion.numChannels);
+        // Pre-freeze bypass so unfreeze-after-reload restores the user's setting.
+        obj->setProperty ("frozen_plugin_bypass", t.frozenPluginBypass.load());
     }
 
     juce::Array<juce::var> buses;
@@ -776,6 +781,7 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm,
         fr.sourceOffset    = 0;
         fr.numChannels     = juce::jlimit (1, 2, (int) v.getProperty ("frozen_channels", 2));
         fr.gainDb          = 0.0f;
+        t.frozenPluginBypass.store ((bool) v.getProperty ("frozen_plugin_bypass", false));
         // A frozen flag with no usable WAV (missing file, zero length) is
         // meaningless — drop the whole freeze (flag + path + region) so it can't
         // be re-saved as phantom state, and the track falls back to live.
@@ -784,12 +790,18 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm,
             t.frozen.store (false);
             t.frozenAudioPath.clear();
             t.frozenRegion = AudioRegion {};
+            t.frozenPluginBypass.store (false);
         }
     }
     else
     {
         // frozen_audio_path absent ⇒ not frozen, regardless of a stale flag.
+        // Fully reset freeze state (not just the flag) so a reused Session can't
+        // carry a stale path / region forward and re-save it as phantom freeze.
         t.frozen.store (false);
+        t.frozenAudioPath.clear();
+        t.frozenRegion = AudioRegion {};
+        t.frozenPluginBypass.store (false);
     }
 
     if (auto buses = v["bus_assign"]; buses.isArray())

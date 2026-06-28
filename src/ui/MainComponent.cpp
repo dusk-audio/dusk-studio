@@ -3465,8 +3465,10 @@ void MainComponent::runDpImport (const dp::SongScan& scan,
     // Song time signature (song.sys 0x6d9).
     if (scan.timeSigNum > 0 && scan.timeSigDen > 0)
     {
-        session.beatsPerBar.store (scan.timeSigNum, std::memory_order_relaxed);
-        session.beatUnit   .store (scan.timeSigDen, std::memory_order_relaxed);
+        // Clamp to the same [1, 32] range SessionSerializer enforces so the
+        // in-memory model can't hold a value the serializer would reject.
+        session.beatsPerBar.store (juce::jlimit (1, 32, scan.timeSigNum), std::memory_order_relaxed);
+        session.beatUnit   .store (juce::jlimit (1, 32, scan.timeSigDen), std::memory_order_relaxed);
         // The ruler / grid read these on repaint, but the transport bar's
         // time-sig button caches its text and the 20 Hz refresh doesn't touch
         // it - re-sync it so it doesn't contradict the import.

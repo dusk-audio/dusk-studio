@@ -49,8 +49,8 @@ sfizz (SFZ / SoundFont sampler engine — powers the multisample instrument)
                - pugixml       MIT          external/sfizz/src/external/pugixml/
                - spline        BSD-3-Clause  external/sfizz/src/external/spline/
                - tunings       MIT          external/sfizz/src/external/tunings/
-               - cpuid         permissive   external/sfizz/src/external/cpuid/
-               - hiir          permissive   external/sfizz/src/external/hiir/
+               - cpuid         BSD-3-Clause external/sfizz/src/external/cpuid/  (Steinwurf ApS)
+               - hiir          WTFPL        external/sfizz/src/external/hiir/   (Laurent de Soras)
                - simde         MIT / CC0    external/sfizz/external/simde/
 
 Catch2 (test framework — TEST BUILDS ONLY, not bundled in Dusk Studio)
@@ -68,9 +68,12 @@ LAME / libmp3lame (MP3 bounce export — optional)
   Path     : not vendored — system shared library found at configure time via
              find_library(mp3lame); linked only when present
              (DUSKSTUDIO_HAS_LAME). Builds without it fall back to WAV-only.
-  Notes    : Dynamically linked, so the LGPL relinking obligation is satisfied
-             by the shared-library boundary. Present in a binary only if that
-             build was configured with libmp3lame available.
+  Notes    : Linked against the system SHARED library (e.g. libmp3lame.so),
+             never statically — find_library resolves the distro / Homebrew
+             shared object at configure time (verified: release Linux build
+             links /usr/lib64/libmp3lame.so). The LGPL-2.1 §6 relink obligation
+             is met by that dynamic-link boundary. Present in a binary only if
+             the build was configured with libmp3lame available.
   Upstream : https://lame.sourceforge.io/
 
 

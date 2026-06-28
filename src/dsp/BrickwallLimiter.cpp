@@ -76,6 +76,7 @@ void BrickwallLimiter::prepare (double sampleRate, int maxBlockSize, double init
     const float la0 = std::isfinite ((float) initialLookaheadMs) ? (float) initialLookaheadMs : 2.0f;
     lookaheadMs.store (juce::jlimit (kMinLookaheadMs, kMaxLookaheadMs, la0), std::memory_order_relaxed);
     recomputeActiveLookahead();
+    lastActiveLaOs = activeLookaheadOs.load (std::memory_order_relaxed);
 
     currentGrDb.store (0.0f, std::memory_order_relaxed);
 }
@@ -94,9 +95,14 @@ void BrickwallLimiter::recomputeActiveLookahead() noexcept
 {
     if (osRate <= 0.0 || maxLookaheadOs <= 0) return;
     const float ms = lookaheadMs.load (std::memory_order_relaxed);
-    const int laOs = juce::jlimit (1, maxLookaheadOs, (int) (osRate * ms / 1000.0));
-    activeLookaheadOs.store (laOs, std::memory_order_relaxed);
-    const int lookaheadBase = (laOs + osFactor / 2) / osFactor;   // round to nearest base sample
+    // Quantize the lookahead in BASE-rate samples FIRST, then derive the
+    // oversampled count from it. This keeps laOs an exact multiple of osFactor,
+    // so the reported latency (lookaheadBase, base samples) equals the delay
+    // actually applied (laOs / osFactor) — no sub-sample drift between them.
+    const int maxLookaheadBase = juce::jmax (1, maxLookaheadOs / osFactor);
+    const int lookaheadBase = juce::jlimit (1, maxLookaheadBase,
+                                            (int) std::lround (sr * (double) ms / 1000.0));
+    activeLookaheadOs.store (lookaheadBase * osFactor, std::memory_order_relaxed);
     latencySamplesBase.store (osLatencyBase + lookaheadBase, std::memory_order_relaxed);
 }
 
@@ -113,6 +119,7 @@ void BrickwallLimiter::reset() noexcept
         holdCounter[c] = 0;
         relDepth[c] = 0.0f;
     }
+    lastActiveLaOs = activeLookaheadOs.load (std::memory_order_relaxed);
     if (oversampler != nullptr)
         oversampler->reset();
     currentGrDb.store (0.0f, std::memory_order_relaxed);
@@ -173,6 +180,18 @@ void BrickwallLimiter::processInPlace (float* L, float* R, int numSamples) noexc
     const int laOs      = activeLookaheadOs.load (std::memory_order_relaxed);
     const int windowLen = laOs + 1;
     float blockMinEnv = 1.0f;
+
+    // Lookahead changed since the last block: rebuild the min-deque FORWARD from
+    // empty instead of extending the existing window in place. A grown window
+    // would otherwise need older samples this deque already dropped, leaving the
+    // running minimum under-covered; clearing it re-warms cleanly over the next
+    // windowLen samples (env untouched, so no gain step; the terminal base-rate
+    // clamp still guarantees the ceiling during the re-warm).
+    if (laOs != lastActiveLaOs)
+    {
+        for (int c = 0; c < 2; ++c) { dqHead[c] = 0; dqCount[c] = 0; }
+        lastActiveLaOs = laOs;
+    }
 
     for (int i = 0; i < osN; ++i)
     {

@@ -502,10 +502,14 @@ void AudioEngine::commitFreeze (int trackIndex, const juce::File& outFile, juce:
     fr.gainDb          = 0.0f;
     track.frozenAudioPath = outFile.getFullPathName();
 
-    // Bypass the instrument (defensive — the frozen strip path already skips
-    // it) then publish frozen with release so the audio thread sees the flag
-    // only after frozenRegion + the path are fully written.
-    strips[(size_t) trackIndex].getPluginSlot().setBypassed (true);
+    // Capture the user's current bypass before forcing it on, so unfreeze can
+    // restore it (freeze always bypasses to free CPU). Then bypass the
+    // instrument (defensive — the frozen strip path already skips it) and
+    // publish frozen with release so the audio thread sees the flag only after
+    // frozenRegion + the path are fully written.
+    auto& slot = strips[(size_t) trackIndex].getPluginSlot();
+    track.frozenPluginBypass.store (slot.isBypassed(), std::memory_order_relaxed);
+    slot.setBypassed (true);
     track.frozen.store (true, std::memory_order_release);
 
     // Open the frozen WAV reader (and rebuild every track's readers).
@@ -520,9 +524,11 @@ void AudioEngine::unfreezeTrack (int trackIndex)
     if (! track.frozen.load (std::memory_order_relaxed))
         return;
 
-    // Re-enable the instrument before clearing the flag so a block observed
-    // between the two reads still routes through a live (not bypassed) plugin.
-    strips[(size_t) trackIndex].getPluginSlot().setBypassed (false);
+    // Restore the pre-freeze bypass (not a blanket false) before clearing the
+    // flag so a block observed between the two reads still routes through a
+    // plugin in the user's intended bypass state.
+    strips[(size_t) trackIndex].getPluginSlot().setBypassed (
+        track.frozenPluginBypass.load (std::memory_order_relaxed));
     track.frozen.store (false, std::memory_order_release);
 
     // Rebuild readers without the frozen stream (closes the frozen WAV handle)
@@ -534,9 +540,13 @@ void AudioEngine::unfreezeTrack (int trackIndex)
     // point frozenAudioPath at an unrelated user file, and deleteFile() is
     // destructive.
     const juce::File wav (track.frozenAudioPath);
+    // Match the EXACT name freezePrepare generates for THIS track, not just the
+    // "freeze_track*" prefix — so a corrupt path can't delete another track's
+    // freeze WAV (or any other freeze_track*.wav) by accident.
+    const auto expectedName = "freeze_track"
+                            + juce::String (trackIndex + 1).paddedLeft ('0', 2) + ".wav";
     const bool engineOwned = wav.getParentDirectory() == session.getAudioDirectory()
-                          && wav.getFileName().startsWith ("freeze_track")
-                          && wav.hasFileExtension ("wav");
+                          && wav.getFileName() == expectedName;
     if (engineOwned && wav.existsAsFile())
         wav.deleteFile();
     track.frozenAudioPath.clear();
@@ -1124,7 +1134,16 @@ void AudioEngine::record()
     }
 
     if (! recordManager.startRecording (sr, startSample))
+    {
+        std::fprintf (stderr, "[Dusk Studio/AudioEngine] record(): startRecording failed; "
+                              "no armed track could be set up (e.g. all frozen, or the take "
+                              "file could not be created).\n");
+        if (onRecordBlocked_)
+            onRecordBlocked_ ("Recording could not start.\n\nThe armed track(s) could not be "
+                              "set up — a frozen track can't record (unfreeze it first), or "
+                              "the take file could not be created.");
         return;
+    }
 
     activeRecordStart.store (startSample, std::memory_order_relaxed);
 

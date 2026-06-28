@@ -807,6 +807,9 @@ struct Track
     std::atomic<bool> frozen { false };
     juce::String      frozenAudioPath;
     AudioRegion       frozenRegion;
+    // The plugin-slot bypass state captured at freeze time, so unfreeze restores
+    // the user's setting instead of force-clearing it (freeze always bypasses).
+    std::atomic<bool> frozenPluginBypass { false };
 
     std::atomic<float> meterGrDb     { 0.0f };     // <= 0
     std::atomic<float> meterInputDb  { -100.0f };

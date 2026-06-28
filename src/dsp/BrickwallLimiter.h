@@ -113,6 +113,11 @@ private:
     std::vector<float> delayL, delayR;
     int writePos = 0;
     std::atomic<int> activeLookaheadOs { 0 };
+    // Last laOs the process loop actually ran with. When activeLookaheadOs
+    // changes (live lookahead drag), the min-deque is rebuilt forward from
+    // empty rather than extended in place over a window whose older samples it
+    // already dropped — see processInPlace.
+    int lastActiveLaOs = 0;
 
     // Per-channel monotonic min deque over the active lookahead window
     // (activeLookaheadOs + 1), stored in a fixed ring so the sliding-window

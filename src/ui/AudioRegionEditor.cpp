@@ -1733,6 +1733,12 @@ void AudioRegionEditor::mouseDown (const juce::MouseEvent& e)
                 regionIdx = hitIdx;
                 if (auto* nr = region())
                     regionAtDragStart = *nr;
+                // Drop the edit cursor on the click too (same mapping as the
+                // normal click-to-focus flow), now that sampleForX maps against
+                // the new focus — so split / paste / loop-at-cursor stay aligned
+                // with the slice the range was taken on.
+                editCursorSample = snapFileSampleToGrid (sampleForX (e.x, waveArea),
+                                                         e.mods.isCommandDown());
                 refreshStatusBarReadouts();
             }
 

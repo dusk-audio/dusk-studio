@@ -20,9 +20,11 @@ juce::File writeSession (const juce::String& json)
     auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
                   .getChildFile ("dusk-studio-clamp-"
                                     + juce::String (juce::Random::getSystemRandom().nextInt()));
-    dir.createDirectory();
+    // Fail at the source if setup can't write the fixture, so a later
+    // SessionSerializer::load failure can't be misread as the contract breaking.
+    REQUIRE (dir.createDirectory().wasOk());
     auto target = dir.getChildFile ("session.json");
-    target.replaceWithText (json);
+    REQUIRE (target.replaceWithText (json));
     return target;
 }
 } // namespace
