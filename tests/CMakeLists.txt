@@ -9,6 +9,8 @@ FetchContent_MakeAvailable(Catch2)
 
 add_executable(dusk-studio-tests
     smoke_brickwall_limiter.cpp
+    clap_bundle_load.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/clap/ClapBundle.cpp
     plugin_scan_protocol.cpp
     plugin_backing_check.cpp
     session_tick_conversion.cpp
@@ -100,7 +102,8 @@ add_executable(dusk-studio-tests
 
 target_include_directories(dusk-studio-tests PRIVATE
     ${CMAKE_SOURCE_DIR}/src
-    ${CMAKE_SOURCE_DIR}/external/projucer-shim)
+    ${CMAKE_SOURCE_DIR}/external/projucer-shim
+    ${CMAKE_SOURCE_DIR}/external/clap/include)
 
 # Console-saturation calibration test + the donor DSP headers it needs
 # (BritishEQProcessor.h + its header-only ConsoleSaturation/ADAA/SafeFloat deps).

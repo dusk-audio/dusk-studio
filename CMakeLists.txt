@@ -270,6 +270,7 @@ endif()
 target_sources(DuskStudio PRIVATE
     src/Main.cpp
     src/DuskStudioApp.cpp
+    src/engine/clap/ClapBundle.cpp   # native CLAP host (aux-first) — see docs/native-clap-host-plan.md
     src/engine/AudioEngine.cpp
     src/engine/AudioWorkerPool.cpp
     src/engine/BounceEngine.cpp
@@ -604,7 +605,8 @@ endif()
 
 target_include_directories(DuskStudio PRIVATE
     src
-    external/projucer-shim)  # JuceHeader.h shim used by vendored plugin DSP headers
+    external/projucer-shim   # JuceHeader.h shim used by vendored plugin DSP headers
+    external/clap/include)    # CLAP C API (native plugin host)
 
 if(DEFINED DUSK_PLUGINS_PATH)
     # Per-plugin DSP headers from the Dusk plugins repo's main branch. Each
