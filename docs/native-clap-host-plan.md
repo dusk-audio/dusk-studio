@@ -66,7 +66,7 @@ until native VST3/LV2 land.
 | **3a** | `NativeClapSlot`: aux plugin slot owning bundle+instance, lock-free `ready` gate. | Catch2: load→process→unload. | ✅ `8b74136` |
 | **3b** | Route `AuxLaneStrip`'s plugin insert through `NativeClapSlot` when loaded (else JUCE slot). Inert by default. | Builds; aux byte-identical with no native CLAP. | ✅ `6b2ee90` |
 | **3c** | UI: aux picker selects a `.clap`; `AuxLaneComponent` reveals the `ClapEditor` on tab switch (instant). Session persists+restores the lane's native CLAP. | **You, live Wayland**: pick → load → instant editor; save/reload. | ⏳ held — UI, needs live verify |
-| **4** | Scanning + state: `ClapScanner` (`.clap` discovery), `ClapInstance` state save/load. *(params/automation still TODO.)* | Catch2 scan + state round-trip. | ✅ scan `3bba3e5`, state `1d452dc`; params TODO |
+| **4** | Scanning + state + params: `ClapScanner` (`.clap` discovery), `ClapInstance` state save/load, param enumerate/read + automate via a per-block CLAP event list. | Catch2 scan + state round-trip + param-change applied. | ✅ scan `3bba3e5`, state `1d452dc`, params `ce0272a` (+hardening `2f1ff3e`) |
 | **RT** | Empty event lists moved off function-statics → members (no audio-thread static-init guard). | Catch2 still processes DuskVerb. | ✅ `bcc3100` |
 | **5** | Hardening; flip `DUSKSTUDIO_AUX_NATIVE_CLAP` default on for aux. | Soak + your live sign-off. | ⏳ |
 
@@ -88,7 +88,9 @@ the X11 embed, so it must be checked on the live compositor:
    (`NativeClapSlot::saveState/loadState`); only the serializer fields + restore call remain.
 
 API already in place: `AuxLaneStrip::{loadNativeClap,unloadNativeClap,isNativeClapLoaded,getNativeClapSlot}`,
-`NativeClapSlot::{saveState,loadState,getInstance}`, `ClapScanner::scan`.
+`NativeClapSlot::{saveState,loadState,getInstance,paramCount,paramInfo,getParamValue,setParamValue}`,
+`ClapScanner::scan`. Params: `setParamValue` (message thread, single producer) queues a change applied on
+the next audio block — wire MIDI-map / automation through it.
 
 ## What stays JUCE during transition
 
