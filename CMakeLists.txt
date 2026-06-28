@@ -271,6 +271,8 @@ target_sources(DuskStudio PRIVATE
     src/Main.cpp
     src/DuskStudioApp.cpp
     src/engine/clap/ClapBundle.cpp   # native CLAP host (aux-first) — see docs/native-clap-host-plan.md
+    src/engine/clap/ClapHost.cpp
+    src/engine/clap/ClapInstance.cpp
     src/engine/AudioEngine.cpp
     src/engine/AudioWorkerPool.cpp
     src/engine/BounceEngine.cpp
