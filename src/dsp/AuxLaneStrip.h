@@ -60,6 +60,10 @@ public:
     clap::NativeClapSlot&       getNativeClapSlot (int idx)       noexcept { jassert (idx >= 0 && idx < kMaxPlugins); return nativeClapSlots[(size_t) idx]; }
     const clap::NativeClapSlot& getNativeClapSlot (int idx) const noexcept { jassert (idx >= 0 && idx < kMaxPlugins); return nativeClapSlots[(size_t) idx]; }
 
+    // True when a sample-rate re-prepare reload of a loaded native CLAP failed (the
+    // slot is now empty). The UI reads this to report which lane lost its plugin.
+    bool nativeClapReloadFailed (int slotIdx) const noexcept { jassert (slotIdx >= 0 && slotIdx < kMaxPlugins); return nativeReloadFailed[(size_t) slotIdx].load (std::memory_order_relaxed); }
+
     enum InsertMode : int { kInsertEmpty = 0, kInsertPlugin = 1, kInsertHardware = 2 };
 
     std::array<std::atomic<int>, kMaxPlugins> insertMode {};
@@ -80,6 +84,7 @@ private:
     std::array<PluginSlot, kMaxPlugins> slots;
     std::array<HardwareInsertSlot, kMaxPlugins> hardwareSlots;
     std::array<clap::NativeClapSlot, kMaxPlugins> nativeClapSlots;
+    std::array<std::atomic<bool>,    kMaxPlugins> nativeReloadFailed {};
 
     // Stashed in prepare so loadNativeClap (and re-prepare across a sample-rate
     // change) can (re)activate a native CLAP at the engine's current spec.

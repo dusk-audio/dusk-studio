@@ -20,7 +20,11 @@ void AuxLaneStrip::prepare (double sampleRate, int blockSize)
         {
             const juce::File p (ncs.getPath());
             std::string err;
-            ncs.load (p, preparedSampleRate, preparedBlockSize, err);
+            // Don't swallow a failed reload: load() unloads up front, so a refused
+            // new spec / moved .clap leaves the slot empty. Record it for the UI
+            // instead of silently dropping the plugin from the chain.
+            const bool ok = ncs.load (p, preparedSampleRate, preparedBlockSize, err);
+            nativeReloadFailed[(size_t) s].store (! ok, std::memory_order_relaxed);
         }
     }
 
