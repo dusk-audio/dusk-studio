@@ -9,28 +9,16 @@
 
 namespace duskstudio::clap
 {
-namespace
+ClapInstance::ClapInstance()
 {
-// Empty event lists for a process() call that carries no events (this increment).
-const clap_input_events_t& emptyInputEvents()
-{
-    static const clap_input_events_t e {
-        nullptr,
-        [] (const clap_input_events*) -> uint32_t { return 0; },
-        [] (const clap_input_events*, uint32_t) -> const clap_event_header_t* { return nullptr; }
-    };
-    return e;
-}
+    // Empty event lists reused by every process() call (no params/events yet).
+    emptyIn.ctx  = nullptr;
+    emptyIn.size = [] (const clap_input_events*) -> uint32_t { return 0; };
+    emptyIn.get  = [] (const clap_input_events*, uint32_t) -> const clap_event_header_t* { return nullptr; };
 
-const clap_output_events_t& emptyOutputEvents()
-{
-    static const clap_output_events_t e {
-        nullptr,
-        [] (const clap_output_events*, const clap_event_header_t*) -> bool { return true; }
-    };
-    return e;
+    emptyOut.ctx      = nullptr;
+    emptyOut.try_push = [] (const clap_output_events*, const clap_event_header_t*) -> bool { return true; };
 }
-} // namespace
 
 ClapInstance::~ClapInstance()
 {
@@ -169,8 +157,8 @@ void ClapInstance::processStereo (const float* inL, const float* inR,
     p.audio_inputs_count  = 1;
     p.audio_outputs       = &outBuf;
     p.audio_outputs_count = 1;
-    p.in_events           = &emptyInputEvents();
-    p.out_events          = &emptyOutputEvents();
+    p.in_events           = &emptyIn;
+    p.out_events          = &emptyOut;
 
     const auto status = plugin->process (plugin, &p);
     if (status == CLAP_PROCESS_ERROR)

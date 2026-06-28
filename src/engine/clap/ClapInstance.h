@@ -2,6 +2,8 @@
 
 #include "ClapHost.h"
 
+#include <clap/events.h>
+
 #include <string>
 #include <vector>
 
@@ -19,7 +21,7 @@ class ClapBundle;
 class ClapInstance
 {
 public:
-    ClapInstance() = default;
+    ClapInstance();
     ~ClapInstance();
     ClapInstance (const ClapInstance&)            = delete;
     ClapInstance& operator= (const ClapInstance&) = delete;
@@ -63,5 +65,11 @@ private:
     // Separate input + output scratch so we never assume the plugin supports
     // in-place processing. Sized in activate().
     std::vector<float> inScratchL, inScratchR, outScratchL, outScratchR;
+
+    // Empty event lists handed to every process() call (no params/events yet).
+    // Members rather than function-statics so the audio thread's first process()
+    // never trips a thread-safe-static-init guard. Wired in the constructor.
+    clap_input_events_t  emptyIn  {};
+    clap_output_events_t emptyOut {};
 };
 } // namespace duskstudio::clap
