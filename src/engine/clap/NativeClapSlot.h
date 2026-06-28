@@ -41,6 +41,16 @@ public:
     bool saveState (std::vector<uint8_t>& out) const;
     bool loadState (const std::vector<uint8_t>& in);
 
+    // Parameters (message thread for read/enumerate; setParamValue is the control
+    // entry — queued and applied on the next audio block). No-op / empty when unloaded.
+    int paramCount() const noexcept { return instance != nullptr ? instance->paramCount() : 0; }
+    const ClapInstance::ParamInfo* paramInfo (int index) const noexcept
+        { return instance != nullptr ? instance->paramInfo (index) : nullptr; }
+    bool getParamValue (clap_id id, double& out) const
+        { return instance != nullptr && instance->getParamValue (id, out); }
+    void setParamValue (clap_id id, double value)
+        { if (instance != nullptr) instance->setParamValue (id, value); }
+
     // Audio thread: process stereo through the plugin; clears the outputs + returns
     // when no plugin is loaded.
     void processStereo (const float* inL, const float* inR,

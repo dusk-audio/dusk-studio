@@ -13,6 +13,7 @@ add_executable(dusk-studio-tests
     clap_instance_process.cpp
     clap_native_slot.cpp
     clap_scanner.cpp
+    clap_params.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/clap/ClapBundle.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/clap/ClapHost.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/clap/ClapInstance.cpp

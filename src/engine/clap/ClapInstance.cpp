@@ -12,10 +12,18 @@ namespace duskstudio::clap
 {
 ClapInstance::ClapInstance()
 {
-    // Empty event lists reused by every process() call (no params/events yet).
-    emptyIn.ctx  = nullptr;
-    emptyIn.size = [] (const clap_input_events*) -> uint32_t { return 0; };
-    emptyIn.get  = [] (const clap_input_events*, uint32_t) -> const clap_event_header_t* { return nullptr; };
+    // Input event list backed by eventScratch[0..eventCount); reports 0 events when
+    // nothing is queued, so it is also the "empty" list. Drained from the ring each
+    // process() block. Members (not function-statics) so the audio thread never trips
+    // a thread-safe-static-init guard.
+    inEvents.ctx  = this;
+    inEvents.size = [] (const clap_input_events* l) -> uint32_t
+        { return static_cast<const ClapInstance*> (l->ctx)->eventCount; };
+    inEvents.get  = [] (const clap_input_events* l, uint32_t idx) -> const clap_event_header_t*
+    {
+        const auto* self = static_cast<const ClapInstance*> (l->ctx);
+        return idx < self->eventCount ? &self->eventScratch[(size_t) idx].header : nullptr;
+    };
 
     emptyOut.ctx      = nullptr;
     emptyOut.try_push = [] (const clap_output_events*, const clap_event_header_t*) -> bool { return true; };
@@ -73,6 +81,29 @@ bool ClapInstance::create (const ClapBundle& bundle, const std::string& pluginId
         owningBundle = nullptr;
         return false;
     }
+
+    // Snapshot the parameter list for automation / display. [main-thread]
+    paramsExt = static_cast<const clap_plugin_params_t*> (
+        plugin->get_extension (plugin, CLAP_EXT_PARAMS));
+    if (paramsExt != nullptr && paramsExt->count != nullptr && paramsExt->get_info != nullptr)
+    {
+        const uint32_t n = paramsExt->count (plugin);
+        params.reserve (n);
+        for (uint32_t i = 0; i < n; ++i)
+        {
+            clap_param_info_t info {};
+            if (! paramsExt->get_info (plugin, i, &info)) continue;
+            ParamInfo pi;
+            pi.id           = info.id;
+            pi.name         = info.name;   // char[CLAP_NAME_SIZE], NUL-terminated
+            pi.minValue     = info.min_value;
+            pi.maxValue     = info.max_value;
+            pi.defaultValue = info.default_value;
+            pi.flags        = info.flags;
+            pi.cookie       = info.cookie;
+            params.push_back (std::move (pi));
+        }
+    }
     return true;
 }
 
@@ -92,6 +123,7 @@ bool ClapInstance::activate (double sampleRate, int maxBlock, std::string& error
     inScratchR .assign ((size_t) maxFrames, 0.0f);
     outScratchL.assign ((size_t) maxFrames, 0.0f);
     outScratchR.assign ((size_t) maxFrames, 0.0f);
+    eventScratch.assign ((size_t) kParamRingCap, clap_event_param_value_t {});
     return true;
 }
 
@@ -158,6 +190,34 @@ bool ClapInstance::loadState (const std::vector<uint8_t>& in)
     return st->load (plugin, &is);
 }
 
+bool ClapInstance::getParamValue (clap_id id, double& out) const
+{
+    if (plugin == nullptr || paramsExt == nullptr || paramsExt->get_value == nullptr) return false;
+    return paramsExt->get_value (plugin, id, &out);
+}
+
+bool ClapInstance::paramValueToText (clap_id id, double value, std::string& out) const
+{
+    if (plugin == nullptr || paramsExt == nullptr || paramsExt->value_to_text == nullptr) return false;
+    char buf[256] {};
+    if (! paramsExt->value_to_text (plugin, id, value, buf, sizeof (buf))) return false;
+    out = buf;
+    return true;
+}
+
+void ClapInstance::setParamValue (clap_id id, double value) noexcept
+{
+    void* cookie = nullptr;
+    for (const auto& p : params) if (p.id == id) { cookie = p.cookie; break; }
+
+    const uint32_t w    = ringWrite.load (std::memory_order_relaxed);
+    const uint32_t next = (w + 1u) % (uint32_t) kParamRingCap;
+    if (next == ringRead.load (std::memory_order_acquire))
+        return;   // ring full — drop (only under a pathological flood)
+    paramRing[(size_t) w] = { id, value, cookie };
+    ringWrite.store (next, std::memory_order_release);
+}
+
 void ClapInstance::processStereo (const float* inL, const float* inR,
                                   float* outL, float* outR, int numFrames) noexcept
 {
@@ -195,6 +255,34 @@ void ClapInstance::processStereo (const float* inL, const float* inR,
         processing = true;
     }
 
+    // Drain queued parameter changes into this block's CLAP event list (audio thread
+    // = single consumer). All at time 0 — sample-accurate automation is a later step.
+    eventCount = 0;
+    {
+        uint32_t r = ringRead.load (std::memory_order_relaxed);
+        const uint32_t w   = ringWrite.load (std::memory_order_acquire);
+        const uint32_t cap = (uint32_t) eventScratch.size();
+        while (r != w && eventCount < cap)
+        {
+            const ParamChange pc = paramRing[(size_t) r];
+            auto& ev = eventScratch[(size_t) eventCount++];
+            ev.header.size     = sizeof (clap_event_param_value_t);
+            ev.header.time     = 0;
+            ev.header.space_id = CLAP_CORE_EVENT_SPACE_ID;
+            ev.header.type     = CLAP_EVENT_PARAM_VALUE;
+            ev.header.flags    = 0;
+            ev.param_id        = pc.id;
+            ev.cookie          = pc.cookie;
+            ev.note_id         = -1;
+            ev.port_index      = -1;
+            ev.channel         = -1;
+            ev.key             = -1;
+            ev.value           = pc.value;
+            r = (r + 1u) % (uint32_t) kParamRingCap;
+        }
+        ringRead.store (r, std::memory_order_release);
+    }
+
     const auto n = (size_t) numFrames;
     std::memcpy (inScratchL.data(), inL, sizeof (float) * n);
     std::memcpy (inScratchR.data(), inR != nullptr ? inR : inL, sizeof (float) * n);
@@ -218,7 +306,7 @@ void ClapInstance::processStereo (const float* inL, const float* inR,
     p.audio_inputs_count  = 1;
     p.audio_outputs       = &outBuf;
     p.audio_outputs_count = 1;
-    p.in_events           = &emptyIn;
+    p.in_events           = &inEvents;
     p.out_events          = &emptyOut;
 
     const auto status = plugin->process (plugin, &p);

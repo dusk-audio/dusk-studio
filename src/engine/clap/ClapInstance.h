@@ -4,6 +4,8 @@
 
 #include <clap/events.h>
 
+#include <array>
+#include <atomic>
 #include <string>
 #include <vector>
 
@@ -17,10 +19,21 @@ class ClapBundle;
 // fixed sample rate / max block, and process stereo audio through it. Manages the
 // full lifecycle (init → activate → start_processing → process → stop_processing
 // → deactivate → destroy). Setup is message-thread; processStereo is the audio
-// path. No parameter / event handling yet — that lands in a later increment.
+// path. Parameters are enumerated at create(); changes are queued from any non-audio
+// thread and consumed as CLAP events by the next process() block.
 class ClapInstance
 {
 public:
+    // One plugin parameter (snapshot of clap_param_info at create()).
+    struct ParamInfo
+    {
+        clap_id id = 0;
+        std::string name;
+        double minValue = 0.0, maxValue = 1.0, defaultValue = 0.0;
+        clap_param_info_flags flags = 0;
+        void* cookie = nullptr;
+    };
+
     ClapInstance();
     ~ClapInstance();
     ClapInstance (const ClapInstance&)            = delete;
@@ -51,6 +64,18 @@ public:
     bool saveState (std::vector<uint8_t>& out) const;
     bool loadState (const std::vector<uint8_t>& in);
 
+    // Parameters (message thread). Enumerated once at create().
+    int               paramCount() const noexcept { return (int) params.size(); }
+    const ParamInfo*  paramInfo (int index) const noexcept
+        { return (index >= 0 && index < (int) params.size()) ? &params[(size_t) index] : nullptr; }
+    bool getParamValue    (clap_id id, double& out) const;
+    bool paramValueToText (clap_id id, double value, std::string& out) const;
+
+    // Queue a parameter change from a non-audio thread (automation / MIDI map / UI).
+    // Applied on the next process() block — i.e. the next audio buffer while the
+    // device runs. Silently dropped only if the ring overflows (pathological flood).
+    void setParamValue (clap_id id, double value) noexcept;
+
     bool isCreated()      const noexcept { return plugin != nullptr; }
     bool isActive()       const noexcept { return active; }
     int  inputChannels()  const noexcept { return inCh; }
@@ -74,10 +99,26 @@ private:
     // in-place processing. Sized in activate().
     std::vector<float> inScratchL, inScratchR, outScratchL, outScratchR;
 
-    // Empty event lists handed to every process() call (no params/events yet).
-    // Members rather than function-statics so the audio thread's first process()
-    // never trips a thread-safe-static-init guard. Wired in the constructor.
-    clap_input_events_t  emptyIn  {};
+    // Output event list handed to every process() call. We accept and ignore the
+    // plugin's outgoing events for now (try_push returns true). Member, not a
+    // function-static, so the audio thread's first process() never trips a
+    // thread-safe-static-init guard. Wired in the constructor.
     clap_output_events_t emptyOut {};
+
+    // Parameter automation. Single-producer (message thread, setParamValue) /
+    // single-consumer (audio thread, processStereo) ring of pending changes, drained
+    // into a per-block CLAP event list. inEvents reports eventCount (0 ⇒ no changes),
+    // so it doubles as the "empty" list when nothing is queued.
+    struct ParamChange { clap_id id; double value; void* cookie; };
+    static constexpr int kParamRingCap = 512;
+    std::array<ParamChange, (size_t) kParamRingCap> paramRing {};
+    std::atomic<uint32_t> ringWrite { 0 };
+    std::atomic<uint32_t> ringRead  { 0 };
+    std::vector<clap_event_param_value_t> eventScratch;   // sized in activate(), never RT-grown
+    uint32_t             eventCount = 0;
+    clap_input_events_t  inEvents {};
+
+    const clap_plugin_params_t* paramsExt = nullptr;
+    std::vector<ParamInfo>      params;
 };
 } // namespace duskstudio::clap
