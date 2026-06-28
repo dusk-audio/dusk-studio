@@ -6,6 +6,24 @@ namespace duskstudio
 {
 void AuxLaneStrip::prepare (double sampleRate, int blockSize)
 {
+    preparedSampleRate = sampleRate;
+    preparedBlockSize  = juce::jmax (1, blockSize);
+
+    // A loaded native CLAP was activated at the prior spec; re-activate at the
+    // new one. Reload by path (the instance has no in-place re-prepare) — a
+    // sample-rate change resets DSP state anyway. Engine fences this via its
+    // process gate, so the audio thread never sees a half-swapped slot.
+    for (int s = 0; s < kMaxPlugins; ++s)
+    {
+        auto& ncs = nativeClapSlots[(size_t) s];
+        if (ncs.isLoaded())
+        {
+            const juce::File p (ncs.getPath());
+            std::string err;
+            ncs.load (p, preparedSampleRate, preparedBlockSize, err);
+        }
+    }
+
     constexpr double rampSeconds = 0.020;
     returnGain.reset (sampleRate, rampSeconds);
     returnGain.setCurrentAndTargetValue (1.0f);
@@ -37,6 +55,20 @@ void AuxLaneStrip::bindHardwareInsert (int slotIdx, const HardwareInsertParams& 
 {
     jassert (slotIdx >= 0 && slotIdx < kMaxPlugins);
     hardwareSlots[(size_t) slotIdx].bind (params);
+}
+
+bool AuxLaneStrip::loadNativeClap (int slotIdx, const juce::File& path, std::string& errorOut)
+{
+    jassert (slotIdx >= 0 && slotIdx < kMaxPlugins);
+    if (preparedSampleRate <= 0.0 || preparedBlockSize <= 0)
+    { errorOut = "aux lane not prepared"; return false; }
+    return nativeClapSlots[(size_t) slotIdx].load (path, preparedSampleRate, preparedBlockSize, errorOut);
+}
+
+void AuxLaneStrip::unloadNativeClap (int slotIdx) noexcept
+{
+    jassert (slotIdx >= 0 && slotIdx < kMaxPlugins);
+    nativeClapSlots[(size_t) slotIdx].unload();
 }
 
 void AuxLaneStrip::updateGainTarget() noexcept
@@ -131,7 +163,12 @@ void AuxLaneStrip::processStereoBlock (float* L, float* R, int numSamples,
 
         if (activeInsertMode[sIdx] == kInsertPlugin)
         {
-            slots[sIdx].processStereoBlock (L, R, numSamples, pluginMidiScratch);
+            // Native CLAP host takes the slot when loaded; otherwise the JUCE
+            // PluginSlot. processStereo is in-place safe (own scratch buffers).
+            if (nativeClapSlots[sIdx].isLoaded())
+                nativeClapSlots[sIdx].processStereo (L, R, L, R, numSamples);
+            else
+                slots[sIdx].processStereoBlock (L, R, numSamples, pluginMidiScratch);
         }
         else if (activeInsertMode[sIdx] == kInsertHardware)
         {
