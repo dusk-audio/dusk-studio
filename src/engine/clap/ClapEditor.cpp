@@ -117,8 +117,42 @@ void ClapEditor::close()
     created = embedded = mapped = false;
 }
 
+void ClapEditor::drainPendingCallbacks()
+{
+    // Message thread. Process a destroy first so a coalesced resize/show after it
+    // can't drive a torn-down GUI.
+    if (pendingClosed.exchange (false))
+    {
+        if (pendingClosedWasDestroyed.load())
+        {
+            // CLAP gui.h: on was_destroyed the host MUST call destroy() to ack.
+            if (plugin != nullptr && gui != nullptr && gui->destroy != nullptr)
+                gui->destroy (plugin);
+            gui = nullptr;            // the GUI is gone — stop treating it as live
+            created = embedded = false;
+        }
+        if (onClosed) onClosed();
+    }
+
+    if (pendingResize.exchange (false))
+    {
+        const int w = pendingW.load (std::memory_order_relaxed);
+        const int h = pendingH.load (std::memory_order_relaxed);
+        prefW = w; prefH = h;
+        if (display != nullptr && hostWindow != 0)
+            XResizeWindow ((Display*) display, hostWindow,
+                           (unsigned) std::max (1, w), (unsigned) std::max (1, h));
+        if (onResize) onResize (w, h);
+    }
+
+    if (pendingShow.exchange (false)) reveal();
+    if (pendingHide.exchange (false)) hide();
+}
+
 void ClapEditor::pump (double elapsedMs)
 {
+    drainPendingCallbacks();
+
     if (hostPtr != nullptr) hostPtr->pumpGui (elapsedMs);
 
     // Drain our host-window connection so its event queue (ConfigureNotify, etc.)
@@ -135,17 +169,23 @@ void ClapEditor::pump (double elapsedMs)
     }
 }
 
+// These four may be called from the plugin's own thread (CLAP marks them
+// [thread-safe]). They only record intent; drainPendingCallbacks() applies it on the
+// message thread. request_resize returning true means "acknowledged, applied async".
 bool ClapEditor::onRequestResize (uint32_t w, uint32_t h)
 {
-    prefW = (int) w;
-    prefH = (int) h;
-    if (display != nullptr && hostWindow != 0)
-        XResizeWindow ((Display*) display, hostWindow, w, h);
-    if (onResize) onResize ((int) w, (int) h);
+    pendingW.store ((int) w, std::memory_order_relaxed);
+    pendingH.store ((int) h, std::memory_order_relaxed);
+    pendingResize.store (true, std::memory_order_release);
     return true;
 }
 
-bool ClapEditor::onRequestShow() { reveal(); return true; }
-bool ClapEditor::onRequestHide() { hide();   return true; }
-void ClapEditor::onGuiClosed (bool) { if (onClosed) onClosed(); }
+bool ClapEditor::onRequestShow() { pendingShow.store (true, std::memory_order_release); return true; }
+bool ClapEditor::onRequestHide() { pendingHide.store (true, std::memory_order_release); return true; }
+
+void ClapEditor::onGuiClosed (bool wasDestroyed)
+{
+    pendingClosedWasDestroyed.store (wasDestroyed, std::memory_order_relaxed);
+    pendingClosed.store (true, std::memory_order_release);
+}
 } // namespace duskstudio::clap

@@ -2,6 +2,7 @@
 
 #include "ClapHost.h"
 
+#include <atomic>
 #include <functional>
 #include <string>
 
@@ -55,6 +56,12 @@ public:
     void onGuiClosed (bool wasDestroyed) override;
 
 private:
+    // The plugin's gui host callbacks are [thread-safe] — it may call request_resize/
+    // show/hide/closed from a non-message thread. Those handlers only stash these
+    // atomics; drainPendingCallbacks() (from pump(), on the message thread) does all
+    // the X11 + JUCE work, so nothing touches Xlib / a JUCE Component off-thread.
+    void drainPendingCallbacks();
+
     const ::clap_plugin*     plugin = nullptr;
     const clap_plugin_gui_t* gui    = nullptr;
     ClapHost* hostPtr = nullptr;
@@ -63,5 +70,12 @@ private:
     unsigned long hostWindow = 0;         // Window
     int  prefW = 0, prefH = 0;
     bool created = false, embedded = false, mapped = false;
+
+    std::atomic<bool> pendingResize { false };
+    std::atomic<int>  pendingW { 0 }, pendingH { 0 };
+    std::atomic<bool> pendingShow   { false };
+    std::atomic<bool> pendingHide   { false };
+    std::atomic<bool> pendingClosed { false };
+    std::atomic<bool> pendingClosedWasDestroyed { false };
 };
 } // namespace duskstudio::clap
