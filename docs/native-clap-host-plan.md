@@ -58,17 +58,37 @@ until native VST3/LV2 land.
 
 ## Staged increments (each independently buildable + verifiable)
 
-| # | Increment | Verify |
-|---|---|---|
-| **0** | Foundation: vendor the CLAP C API as a git submodule at `external/clap` (`free-audio/clap`), `src/engine/clap/` skeleton, `ClapBundle` load + enumerate. | Catch2: load a `.clap`, list plugins. |
-| **1** | `ClapInstance` audio: load + activate + `process` offline. | Catch2 A/B: silence→silence, a gain/known plugin matches reference. |
-| **2** | `ClapEditor` native X11 embed: create/set_parent/map/unmap + fd/timer pump, pre-create + cache. | **You, live Wayland**: instant first open, no flash, correct render/resize/close. |
-| **3** | Aux integration: `NativeClapSlot` in `AuxLaneStrip` behind the flag; route one lane through it. Build DuskVerb as CLAP. | End-to-end: load session, aux plays via native CLAP, editor opens instantly. |
-| **4** | Scanning + params/state: `.clap` scan (crash-isolated), param automation, session save/load of native-CLAP aux plugins. | Catch2 round-trip + scan test. |
-| **5** | Hardening; flip `DUSKSTUDIO_AUX_NATIVE_CLAP` default on for aux. | Soak + your live sign-off. |
+| # | Increment | Verify | Status |
+|---|---|---|---|
+| **0** | Foundation: vendor the CLAP C API as a git submodule at `external/clap` (`free-audio/clap`), `src/engine/clap/` skeleton, `ClapBundle` load + enumerate. | Catch2: load a `.clap`, list plugins. | ✅ `ba9ff67` |
+| **1** | `ClapInstance` audio: load + activate + `process` offline. | Catch2 A/B: silence→silence, a gain/known plugin matches reference. | ✅ `7738d73` (vs DuskVerb) |
+| **2** | `ClapEditor` native X11 embed: create/set_parent/map/unmap + fd/timer pump, pre-create + cache. | **You, live Wayland**: instant first open, no flash, correct render/resize/close. | ✅ `667fa02` — renders DuskVerb under Xvfb; **live-Wayland confirm pending** |
+| **3a** | `NativeClapSlot`: aux plugin slot owning bundle+instance, lock-free `ready` gate. | Catch2: load→process→unload. | ✅ `8b74136` |
+| **3b** | Route `AuxLaneStrip`'s plugin insert through `NativeClapSlot` when loaded (else JUCE slot). Inert by default. | Builds; aux byte-identical with no native CLAP. | ✅ `6b2ee90` |
+| **3c** | UI: aux picker selects a `.clap`; `AuxLaneComponent` reveals the `ClapEditor` on tab switch (instant). Session persists+restores the lane's native CLAP. | **You, live Wayland**: pick → load → instant editor; save/reload. | ⏳ held — UI, needs live verify |
+| **4** | Scanning + state: `ClapScanner` (`.clap` discovery), `ClapInstance` state save/load. *(params/automation still TODO.)* | Catch2 scan + state round-trip. | ✅ scan `3bba3e5`, state `1d452dc`; params TODO |
+| **RT** | Empty event lists moved off function-statics → members (no audio-thread static-init guard). | Catch2 still processes DuskVerb. | ✅ `bcc3100` |
+| **5** | Hardening; flip `DUSKSTUDIO_AUX_NATIVE_CLAP` default on for aux. | Soak + your live sign-off. | ⏳ |
 
 Later (separate efforts): channel strips + master; native VST3 (`IRunLoop` +
 `IPlugView`) + LV2 (`lilv`/`suil`) for 3rd-party; full JUCE-hosting removal.
+
+### Next: 3c wiring (needs live-Wayland verify — held while away)
+
+The non-UI foundation is done and unit-verified. What remains is glue that drives
+the X11 embed, so it must be checked on the live compositor:
+
+1. **Picker** — surface `ClapScanner::scan()` results in the aux plugin picker
+   (`AuxLaneComponent` / `PluginPickerHelpers`). On choose: `auxLane.loadNativeClap(slot, file)`.
+2. **Editor** — when a lane's `NativeClapSlot::isLoaded()`, host a `ClapEditor`
+   (via `ClapPluginEditorComponent`) in `AuxLaneComponent` instead of the JUCE
+   editor; **reveal on tab switch** (pre-created + `XMapWindow`) for the instant open.
+3. **Session** — persist `{ native_clap_path, base64(state) }` per aux slot in
+   `SessionSerializer`; on load, `loadNativeClap` then `loadState`. Mechanics exist
+   (`NativeClapSlot::saveState/loadState`); only the serializer fields + restore call remain.
+
+API already in place: `AuxLaneStrip::{loadNativeClap,unloadNativeClap,isNativeClapLoaded,getNativeClapSlot}`,
+`NativeClapSlot::{saveState,loadState,getInstance}`, `ClapScanner::scan`.
 
 ## What stays JUCE during transition
 
