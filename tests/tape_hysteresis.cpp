@@ -17,6 +17,7 @@
 
 #include "ImprovedTapeEmulation.h"   // JilesAthertonHysteresis is header-only
 
+#include <algorithm>   // std::max
 #include <cmath>
 #include <vector>
 

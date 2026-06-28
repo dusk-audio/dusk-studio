@@ -2302,15 +2302,21 @@ bool AudioRegionEditor::cutRange()
 {
     auto* r = region();
     if (r == nullptr || ! rangeActive) return false;
-
-    // Cut the selected range to the clipboard: split at both edges, delete the
-    // middle slice. Editor stays open on the left slice (regionIdx stays valid —
-    // SplitRegionAction inserts the right slice at regionIdx+1).
-    auto& clip = engine.getRegionClipboard();
-    auto& um   = engine.getUndoManager();
+    // A locked region or a frozen track is edit-locked everywhere else; the
+    // range-cut path mutates via Split/Delete, so it must honour the same lock.
+    if (r->locked || session.track (trackIdx).frozen.load (std::memory_order_relaxed))
+        return false;
 
     const auto a = juce::jmin (rangeStartSample, rangeEndSample);
     const auto b = juce::jmax (rangeStartSample, rangeEndSample);
+    if (b <= a) return false;   // empty selection — nothing to cut
+
+    // Cut the selected range to the clipboard, then remove that slice from the
+    // region. Compute the timeline edges + whether each needs a split against r
+    // BEFORE any perform() mutates / relocates the regions vector.
+    auto& clip = engine.getRegionClipboard();
+    auto& um   = engine.getUndoManager();
+
     AudioRegion chunk = *r;
     chunk.sourceOffset    = a;
     chunk.lengthInSamples = b - a;
@@ -2322,12 +2328,26 @@ bool AudioRegionEditor::cutRange()
     clip.sourceTrack = trackIdx;
     clip.hasContent  = true;
 
+    const auto regionStart = r->timelineStart;
+    const auto regionEnd   = r->timelineStart + r->lengthInSamples;
     const auto tlA = r->timelineStart + (a - r->sourceOffset);
     const auto tlB = r->timelineStart + (b - r->sourceOffset);
+    // A split exactly at a region edge is a no-op (SplitRegionAction rejects it),
+    // so don't assume it produced a slice. Branch on which edges are interior so
+    // the correct slice gets deleted for [start,mid) / [mid,end) / [start,end).
+    const bool needLeft  = tlA > regionStart;
+    const bool needRight = tlB < regionEnd;
+
     um.beginNewTransaction ("Cut chunk");
-    um.perform (new SplitRegionAction (session, engine, trackIdx, regionIdx, tlB));
-    um.perform (new SplitRegionAction (session, engine, trackIdx, regionIdx, tlA));
-    um.perform (new DeleteRegionAction (session, engine, trackIdx, regionIdx + 1));
+    if (needRight)
+        um.perform (new SplitRegionAction (session, engine, trackIdx, regionIdx, tlB));
+    int deleteIdx = regionIdx;          // left/whole slice when the range hits the start
+    if (needLeft)
+    {
+        um.perform (new SplitRegionAction (session, engine, trackIdx, regionIdx, tlA));
+        deleteIdx = regionIdx + 1;      // middle slice (left part stays at regionIdx)
+    }
+    um.perform (new DeleteRegionAction (session, engine, trackIdx, deleteIdx));
     rangeActive = false;
     refreshStatusBarReadouts();
     repaint();
@@ -2339,9 +2359,11 @@ void AudioRegionEditor::showContextMenu (juce::Point<int> screenPos)
     auto* r = region();
     if (r == nullptr) return;
 
+    const bool editLocked = r->locked
+        || session.track (trackIdx).frozen.load (std::memory_order_relaxed);
     juce::PopupMenu m;
     m.addItem (1, "Split at edit cursor");
-    m.addItem (7, "Cut range", /*enabled*/ rangeActive);
+    m.addItem (7, "Cut range", /*enabled*/ rangeActive && ! editLocked);
     m.addItem (6, "Join selected regions",
                 /*enabled*/ ! additionalSelectedRegions.empty());
     m.addSeparator();

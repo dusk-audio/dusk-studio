@@ -264,10 +264,11 @@ ChannelEqEditor::ChannelEqEditor (Track& t) : track (t)
         }
     }
 
-    // Tight fit to the content: HPF (84) + HF (88) + HM (160) + LM (160)
-    // + LF (84) = 576 + header/gaps (~32) + outer padding (24) = ~640. The bell
-    // rows are 2 px taller now that the Q block matches the gain/freq block.
-    setSize (380, 640);
+    // Tight fit to resized()'s layout: header 24 + gap 8 + HPF 80 + gap 4
+    // + rows[ HF 84 + HM 160 + LM 160 + LF 84, each + 4 gap = 504 ] = 620 inner,
+    // + outer reduced(12) padding 24 = 644. The bell rows are full-height now
+    // that the Q block matches the gain/freq block (kQBlockH == kKnobBlockH).
+    setSize (380, 648);
 }
 
 ChannelEqEditor::~ChannelEqEditor() = default;

@@ -688,7 +688,12 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             const auto rng = juce::FloatVectorOperations::findMinAndMax (tempMono.data(), numSamples);
             relatchPdcIfDrained (juce::jmax (std::abs (rng.getStart()), std::abs (rng.getEnd())),
                                   numSamples);
-            if (pdcAppliedSamples > 0)
+            // Skip PDC while freeze-capturing: the strip's delay-comp is an
+            // inter-track alignment shift, not part of the track's audio. Baking
+            // it in would double-apply it on frozen playback (which re-runs PDC),
+            // and the frozen-track PDC differs anyway (bypassed plugin → 0 native
+            // latency). Capture pre-PDC; playback applies the right amount once.
+            if (pdcAppliedSamples > 0 && freezeCapL == nullptr)
                 for (int i = 0; i < numSamples; ++i)
                 {
                     pdcDelayL.pushSample (0, tempMono[(size_t) i]);
@@ -851,7 +856,9 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             const float pk = juce::jmax (std::abs (rL.getStart()), std::abs (rL.getEnd()),
                                           std::abs (rR.getStart()), std::abs (rR.getEnd()));
             relatchPdcIfDrained (pk, numSamples);
-            if (pdcAppliedSamples > 0)
+            // See the mono path: skip PDC while freeze-capturing so the baked WAV
+            // is pre-PDC and frozen playback applies the alignment delay once.
+            if (pdcAppliedSamples > 0 && freezeCapL == nullptr)
                 for (int i = 0; i < numSamples; ++i)
                 {
                     pdcDelayL.pushSample (0, L[i]);  L[i] = pdcDelayL.popSample (0);

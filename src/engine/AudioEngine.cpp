@@ -3128,7 +3128,9 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         // The track will read from disk during Play, or during Record on
         // un-armed tracks (so other tracks keep playing while we record into
         // an armed one). Otherwise the strip's source is live device input.
-        const bool willReadFromDisk = isPlaying || (isRecording && ! armed);
+        // A frozen track ALWAYS reads its baked WAV — even if some non-UI arm
+        // path armed it, frozen playback is the render, never live input.
+        const bool willReadFromDisk = isFrozen || isPlaying || (isRecording && ! armed);
 
         // Live-input monitor gate. IN is the ONLY control over live-input
         // monitoring. ARM is purely a recorder-enable; it does NOT gate

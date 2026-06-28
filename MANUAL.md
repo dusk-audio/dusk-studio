@@ -1149,7 +1149,7 @@ It is marked **experimental** because parts of the DP file format are reverse-en
 
 - **Track grouping**: each `ZZ####` fragment is imported onto its own track, *not* grouped back into the device's original tracks (the fragment-to-track table isn't stored in a form we can read). Discarded takes are skipped.
 - **Timeline placement**: clip start positions are recovered from `song.sys` (and, when an in-folder master mixdown is present, by onset-aligning fragments to it) where they decode confidently; otherwise a clip lands at song start, which is correct for a full-length take. Re-check positions after import.
-- **Mixer recall** (fader / pan / 3-band EQ), song tempo, time signature, and markers are decoded where present and applied by track order. Re-check assignments.
+- **Mixer recall** (fader / pan / 3-band EQ) is decoded where present and applied to tracks **by order** — the device's channel-to-track mapping isn't stored, so re-check assignments. Song **tempo**, **time signature**, and **markers** are decoded where present and applied to the session as a whole (they are not track-scoped).
 
 \newpage
 

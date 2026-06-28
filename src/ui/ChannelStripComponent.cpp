@@ -2645,7 +2645,7 @@ void ChannelStripComponent::openEqEditorPopup()
         otherBox->dismiss();
 
     auto panel = std::make_unique<ChannelEqEditor> (track);
-    panel->setSize (380, 628);
+    panel->setSize (380, 648);   // match ChannelEqEditor's intrinsic height (full bell rows)
 
     auto* topLevel = getTopLevelComponent();
     if (topLevel == nullptr) topLevel = this;

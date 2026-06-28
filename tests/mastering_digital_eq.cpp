@@ -50,7 +50,7 @@ TEST_CASE ("MasteringDigitalEq magnitudeDb matches expected RBJ response", "[mas
     {
         for (double f : { 50.0, 500.0, 5000.0, 19000.0 })
             REQUIRE_THAT (MasteringDigitalEq::magnitudeDb (2, kSr, 1000.0f, 1.0f, 0.0f, f),
-                          WithinAbs (0.0f, 1.0e-9f));
+                          WithinAbs (0.0f, 1.0e-4f));   // float magnitudeDb: near-flat, not bit-exact
     }
 
     SECTION ("low shelf boosts the low end, leaves the top alone")

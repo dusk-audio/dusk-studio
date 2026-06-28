@@ -205,8 +205,11 @@ float MasteringEqEditor::bandResponseDb (int idx, float freqHz) const noexcept
     // Plot the actual biquad magnitude (shared coefficient math with the DSP).
     // The DSP runs the biquads oversampled, so evaluate the curve at the same
     // oversampled rate — that's the de-crammed response the audio applies.
-    const double sr = (chain != nullptr ? chain->getScopeSampleRate() : 48000.0)
-                        * (double) duskstudio::MasteringDigitalEq::kOversample;
+    // Guard a null chain AND an invalid scope rate (0 / negative / non-finite) —
+    // either would push a bad sample rate into magnitudeDb. Matches drawSpectrum.
+    double base = (chain != nullptr) ? chain->getScopeSampleRate() : 48000.0;
+    if (! (base > 0.0) || ! std::isfinite (base)) base = 48000.0;
+    const double sr = base * (double) duskstudio::MasteringDigitalEq::kOversample;
     return duskstudio::MasteringDigitalEq::magnitudeDb (
         idx, sr, lastFreq[(size_t) idx], lastQ[(size_t) idx], lastGain[(size_t) idx], freqHz);
 }

@@ -3032,6 +3032,15 @@ void MainComponent::runAudioImportFlow (const juce::File& source,
             }
 
             auto& track = self->session.track (trackIndex);
+            // A frozen track's playback is its baked WAV; adding a region would
+            // desync it. Same guard as the editor entry points.
+            if (track.frozen.load (std::memory_order_relaxed))
+            {
+                showImportError ("Import audio",
+                                 "This track is frozen. Unfreeze it before importing onto it.");
+                self->cancelImportChain();
+                return;
+            }
             const auto mode = (Track::Mode) track.mode.load (std::memory_order_relaxed);
 
             duskstudio::fileimport::AudioImportRequest req;
@@ -3587,6 +3596,15 @@ void MainComponent::commitImportNoModal (
     }
 
     auto& track = session.track (a.trackIndex);
+    // A frozen track's playback is its baked WAV; reject the commit (skip this
+    // file, continue the batch) rather than desync it.
+    if (track.frozen.load (std::memory_order_relaxed))
+    {
+        showImportError (a.isMidi ? "Import MIDI" : "Import audio",
+                          "This track is frozen. Unfreeze it before importing onto it.");
+        kickNextImport();
+        return;
+    }
 
     if (a.isMidi)
     {

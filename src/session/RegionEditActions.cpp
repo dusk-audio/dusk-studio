@@ -699,7 +699,8 @@ bool JoinRegionsAction::perform()
         if (regSamples == 0) continue;
         juce::AudioBuffer<float> tmp (chs, regSamples);
         tmp.clear();
-        rdr->read (&tmp, 0, regSamples, reg.sourceOffset, true, chs > 1);
+        if (! rdr->read (&tmp, 0, regSamples, reg.sourceOffset, true, chs > 1))
+            continue;   // unreadable region body — skip it rather than mix garbage/silence
         const int destOffset = (int) (reg.timelineStart - firstStart);
         for (int c = 0; c < chs; ++c)
             mixBuf.addFrom (c, destOffset, tmp, c, 0, regSamples);
@@ -847,15 +848,10 @@ bool ReverseRegionAction::perform()
         if (rdr == nullptr) return false;
 
         const int chs = juce::jmax (1, (int) beforeState.numChannels);
-        const int len = (int) juce::jlimit<juce::int64> (
+        const juce::int64 len = juce::jlimit<juce::int64> (
             1, std::numeric_limits<int>::max(), beforeState.lengthInSamples);
-        juce::AudioBuffer<float> buf (chs, len);
-        buf.clear();
-        rdr->read (&buf, 0, len, beforeState.sourceOffset, true, chs > 1);
         const double sr   = rdr->sampleRate;
         const int    bits = juce::jmax (16, (int) rdr->bitsPerSample);
-        for (int c = 0; c < chs; ++c)
-            std::reverse (buf.getWritePointer (c), buf.getWritePointer (c) + len);
 
         auto takesDir = session.getSessionDirectory().getChildFile ("takes");
         if (! takesDir.exists() && takesDir.createDirectory().failed()) return false;
@@ -868,13 +864,30 @@ bool ReverseRegionAction::perform()
             wav.createWriterFor (out.get(), sr, (juce::uint32) chs, bits, {}, 0));
         if (writer == nullptr) { out.reset(); outFile.deleteFile(); return false; }
         out.release();   // ownership → writer
-        if (! writer->writeFromAudioSampleBuffer (buf, 0, len))
+
+        // Stream the source tail-first in bounded chunks: read the chunk ending
+        // at `remaining`, reverse each channel, append it. This reverses the
+        // whole region without ever holding it all in RAM, and a failed read or
+        // write aborts + discards the partial file instead of committing garbage.
+        constexpr int kChunk = 1 << 16;   // 64k frames per chunk
+        juce::AudioBuffer<float> chunk (chs, kChunk);
+        juce::int64 remaining = len;
+        bool ioOk = true;
+        while (remaining > 0)
         {
-            writer.reset();
-            outFile.deleteFile();
-            return false;
+            const int n = (int) juce::jmin ((juce::int64) kChunk, remaining);
+            chunk.clear();
+            if (! rdr->read (&chunk, 0, n,
+                             beforeState.sourceOffset + (remaining - n), true, chs > 1))
+            { ioOk = false; break; }
+            for (int c = 0; c < chs; ++c)
+                std::reverse (chunk.getWritePointer (c), chunk.getWritePointer (c) + n);
+            if (! writer->writeFromAudioSampleBuffer (chunk, 0, n))
+            { ioOk = false; break; }
+            remaining -= n;
         }
-        writer.reset();
+        writer.reset();   // close the file before any delete
+        if (! ioOk) { outFile.deleteFile(); return false; }
         renderedFile = outFile;
 
         afterState = beforeState;

@@ -54,7 +54,9 @@ inline AutomationPoint parseAutomationPoint (const juce::var& pv, double fallbac
     pt.value         = juce::jlimit (0.0f, 1.0f, rawV);
     const float bpm  = pv.hasProperty ("bpm") ? (float) (double) pv["bpm"]
                                               : safeFallback;
-    pt.recordedAtBPM = std::isfinite (bpm) ? bpm : safeFallback;
+    // A zero / negative bpm would break tempo-retime math (division by it),
+    // so accept only a finite, strictly-positive value; else fall back.
+    pt.recordedAtBPM = (std::isfinite (bpm) && bpm > 0.0f) ? bpm : safeFallback;
     return pt;
 }
 } // namespace
@@ -1813,7 +1815,14 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         m.limiterDriveDb.store    (mast.hasProperty ("limiter_drive_db")    ? (float) (double) mast["limiter_drive_db"]   : 0.0f);
         m.limiterCeilingDb.store  (mast.hasProperty ("limiter_ceiling_db")  ? (float) (double) mast["limiter_ceiling_db"] : -0.3f);
         m.limiterReleaseMs.store  (mast.hasProperty ("limiter_release_ms")  ? (float) (double) mast["limiter_release_ms"] : 100.0f);
-        m.limiterLookaheadMs.store (mast.hasProperty ("limiter_lookahead_ms") ? (float) (double) mast["limiter_lookahead_ms"] : 2.0f);
+        {
+            // Validate before storing: a NaN/±inf here would otherwise sit in the
+            // limiter param (and the UI knob) until the next set; fall back to the
+            // default so a corrupt session can't strand non-finite lookahead.
+            const float la = mast.hasProperty ("limiter_lookahead_ms")
+                                ? (float) (double) mast["limiter_lookahead_ms"] : 2.0f;
+            m.limiterLookaheadMs.store (std::isfinite (la) ? la : 2.0f);
+        }
         m.limiterMode.store       (mast.hasProperty ("limiter_mode")        ? (int) mast["limiter_mode"]                  : 0);
         m.limiterStereoLink.store (mast.hasProperty ("limiter_stereo_link") ? (bool) mast["limiter_stereo_link"]          : true);
         if (mast.hasProperty ("target_preset"))

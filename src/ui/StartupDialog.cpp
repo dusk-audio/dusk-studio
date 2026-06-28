@@ -145,7 +145,10 @@ StartupDialog::StartupDialog (juce::Array<juce::File> r)
 
     updateLabel.setFont (juce::Font (juce::FontOptions (12.0f, juce::Font::bold)));
     updateLabel.setJustificationType (juce::Justification::centredLeft);
-    updateLabel.setInterceptsMouseClicks (false, false);
+    // Keep hit-testing ON so the banner can become the hovered component and its
+    // "update available" tooltip (set in setUpdateAvailable) actually shows. It
+    // sits in its own reserved row above the heading, so it blocks nothing.
+    updateLabel.setInterceptsMouseClicks (true, false);
     addChildComponent (updateLabel);   // hidden until setUpdateAvailable; banner above the heading
 
     styleSidebarTab (recentTab, true);

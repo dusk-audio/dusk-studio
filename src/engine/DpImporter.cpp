@@ -323,6 +323,12 @@ bool readTimeSignature (const juce::File& songSys, int& num, int& den)
     // otherwise byte 0 decodes to a bogus 1/1 for any 2996-byte blob.
     if (std::memcmp (d, "DP-24", 5) != 0 && std::memcmp (d, "DP-32", 5) != 0)
         return false;
+    // Same structural sentinel check decodeMixerScene uses: every strip record
+    // must end in 0x2A. A blob carrying only the DP magic but not the real
+    // song.sys layout fails here, so it can't yield a phantom time signature.
+    for (int c = 0; c < kNumStrips; ++c)
+        if (d[kStripBase + c * kStripStride + kSentinelByte] != kSentinel)
+            return false;
     const int packed = d[kTimeSigOffset];
     const int denExp = packed / 12;       // 0..3 → 1/2/4/8
     if (denExp > 3) return false;         // out of the device's range → treat as garbage
