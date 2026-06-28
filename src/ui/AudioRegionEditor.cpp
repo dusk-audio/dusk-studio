@@ -1723,6 +1723,19 @@ void AudioRegionEditor::mouseDown (const juce::MouseEvent& e)
         // region body free for cursor-drop / move in Grab Mode.
         if (mode == EditMode::Range || e.mods.isShiftDown() || hitIdx < 0)
         {
+            // Range tool on a non-focused slice: click-to-focus FIRST so the
+            // range (and the cut/copy/delete that follow, which key off
+            // regionIdx) land on the slice under the cursor, not the previously
+            // focused one. sampleForX below then maps against the new focus.
+            if (mode == EditMode::Range && hitIdx >= 0 && hitIdx != regionIdx)
+            {
+                additionalSelectedRegions.clear();
+                regionIdx = hitIdx;
+                if (auto* nr = region())
+                    regionAtDragStart = *nr;
+                refreshStatusBarReadouts();
+            }
+
             rangeStartSample = sampleForX (e.x, waveArea);
             rangeEndSample   = rangeStartSample;
             rangeActive      = false;
