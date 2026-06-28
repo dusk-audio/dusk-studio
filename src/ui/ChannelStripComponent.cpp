@@ -866,7 +866,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
             juce::Font::getDefaultMonospacedFontName(), 14.0f, juce::Font::bold)));
         auto formatDb = [] (double db) -> juce::String
         {
-            return (db <= -89.95) ? juce::String ("off")
+            return (db <= -89.95) ? juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x9e"))   /* ∞ = -inf dB / fully off */
                                   : juce::String (db, 1);
         };
         faderValueLabel.setText (formatDb (faderSlider.getValue()),
@@ -2993,7 +2993,7 @@ void ChannelStripComponent::detachDimOverlay()
 void ChannelStripComponent::refreshFaderValueLabel()
 {
     const double db = faderSlider.getValue();
-    faderValueLabel.setText (db <= -89.95 ? juce::String ("off")
+    faderValueLabel.setText (db <= -89.95 ? juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x9e"))   /* ∞ = -inf dB / fully off */
                                           : juce::String (db, 1),
                              juce::dontSendNotification);
 }
@@ -4453,7 +4453,7 @@ void ChannelStripComponent::paint (juce::Graphics& g)
             g.setFont (font);
             constexpr float kSharedXOver  = 24.0f;
             const float labelRight = trackLx - kSharedXOver - 6.0f;
-            const juce::String label = isBottom ? juce::String ("off")
+            const juce::String label = isBottom ? juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x9e"))   /* ∞ = -inf dB / fully off */
                                                 : juce::String (t.label);
             // Visible glyph spans (baseline - ascent) to (baseline + descent).
             // For visible centre == tick y → baseline = y + (ascent - descent)/2.
@@ -4490,8 +4490,8 @@ void ChannelStripComponent::paint (juce::Graphics& g)
         {
             // Hardware-fader style: a horizontal tick line on the LEFT
             // side of the scale column (pointing toward the meter) with
-            // the number right-aligned next to it. "-90 dB" becomes "off"
-            // at the bottom of the range to match the analogue grammar.
+            // the number right-aligned next to it. "-90 dB" becomes "∞"
+            // (−inf / fully off) at the bottom of the range.
             for (const auto& t : kFaderTicks)
             {
                 if (t.db < (float) faderRange.start - 0.01f
@@ -4519,7 +4519,7 @@ void ChannelStripComponent::paint (juce::Graphics& g)
                 const auto labelRect = juce::Rectangle<float> (tickX1 + 1.0f, y - 7.0f,
                                                                  (float) scale.getRight() - (tickX1 + 1.0f),
                                                                  14.0f);
-                const juce::String label = isBottom ? juce::String ("off") : juce::String (t.label);
+                const juce::String label = isBottom ? juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x9e"))   /* ∞ = -inf dB / fully off */ : juce::String (t.label);
                 g.drawText (label, labelRect, juce::Justification::centredLeft, false);
             }
         }
