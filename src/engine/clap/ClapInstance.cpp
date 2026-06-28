@@ -54,7 +54,8 @@ bool ClapInstance::create (const ClapBundle& bundle, const std::string& pluginId
     // a full port-config negotiation comes with the multi-port increment).
     inCh = outCh = 0;
     if (const auto* ap = static_cast<const clap_plugin_audio_ports_t*> (
-            plugin->get_extension (plugin, CLAP_EXT_AUDIO_PORTS)))
+            plugin->get_extension (plugin, CLAP_EXT_AUDIO_PORTS));
+        ap != nullptr && ap->count != nullptr && ap->get != nullptr)
     {
         clap_audio_port_info_t info {};
         if (ap->count (plugin, true)  > 0 && ap->get (plugin, 0, true,  &info)) inCh  = (int) info.channel_count;
@@ -86,6 +87,7 @@ bool ClapInstance::activate (double sampleRate, int maxBlock, std::string& error
     { errorOut = "activate() failed"; return false; }
 
     active = true;
+    startFailed = false;   // a fresh activation may try start_processing again
     inScratchL .assign ((size_t) maxFrames, 0.0f);
     inScratchR .assign ((size_t) maxFrames, 0.0f);
     outScratchL.assign ((size_t) maxFrames, 0.0f);
@@ -98,8 +100,16 @@ void ClapInstance::deactivate()
     if (plugin != nullptr && active)
     {
         if (processing && plugin->stop_processing != nullptr)
+        {
+            // stop_processing is [audio-thread], but deactivate runs on the message
+            // thread (the engine process gate has quiesced the real audio thread, so
+            // exactly one thread is the "audio thread" right now). Re-designate this
+            // thread so the plugin's thread-check inside stop_processing is satisfied.
+            hostObj.setAudioThread (std::this_thread::get_id());
             plugin->stop_processing (plugin);
-        processing = false;
+        }
+        processing  = false;
+        startFailed = false;
         if (plugin->deactivate != nullptr)
             plugin->deactivate (plugin);
     }
@@ -164,12 +174,20 @@ void ClapInstance::processStereo (const float* inL, const float* inR,
         return;
     }
 
+    if (startFailed)   // plugin already refused to start — stay silent, don't hammer it every block
+    {
+        std::memset (outL, 0, sizeof (float) * (size_t) numFrames);
+        std::memset (outR, 0, sizeof (float) * (size_t) numFrames);
+        return;
+    }
+
     if (! processing)
     {
         // The calling thread is the audio thread for this instance.
         hostObj.setAudioThread (std::this_thread::get_id());
         if (plugin->start_processing != nullptr && ! plugin->start_processing (plugin))
         {
+            startFailed = true;
             std::memset (outL, 0, sizeof (float) * (size_t) numFrames);
             std::memset (outR, 0, sizeof (float) * (size_t) numFrames);
             return;

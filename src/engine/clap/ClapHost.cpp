@@ -57,7 +57,8 @@ bool ClapHost::isMainThread (const clap_host_t* h) noexcept
 
 bool ClapHost::isAudioThread (const clap_host_t* h) noexcept
 {
-    return std::this_thread::get_id() == self (h).audioThreadId;
+    return self (h).audioThreadHash.load (std::memory_order_acquire)
+             == std::hash<std::thread::id>{} (std::this_thread::get_id());
 }
 
 void ClapHost::logMsg (const clap_host_t* h, clap_log_severity sev, const char* msg) noexcept

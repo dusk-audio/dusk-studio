@@ -66,6 +66,7 @@ private:
     const ::clap_plugin* plugin = nullptr;
     bool active     = false;
     bool processing = false;
+    bool startFailed = false;   // plugin refused start_processing — stay asleep, don't retry every block
     int  inCh = 0, outCh = 0;
     int  maxFrames = 0;
 

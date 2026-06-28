@@ -2,6 +2,8 @@
 
 #include <clap/clap.h>
 
+#include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <thread>
 #include <vector>
@@ -33,7 +35,12 @@ public:
 
     const clap_host_t* get() const noexcept { return &host; }
 
-    void setAudioThread (std::thread::id id) noexcept { audioThreadId = id; }
+    // The plugin's thread-check ext is [thread-safe] — it may read the audio-thread
+    // identity from any thread while the audio thread publishes it. Store a hash in a
+    // lock-free atomic (the write happens on the audio thread, so it must not lock):
+    // release on publish, acquire on read.
+    void setAudioThread (std::thread::id id) noexcept
+        { audioThreadHash.store (std::hash<std::thread::id>{} (id), std::memory_order_release); }
     void setPlugin (const clap_plugin* p) noexcept    { plugin = p; }
     void setCallbacks (Callbacks* c) noexcept         { callbacks = c; }
 
@@ -81,6 +88,6 @@ private:
     clap_id nextTimerId = 1;
 
     const std::thread::id mainThreadId { std::this_thread::get_id() };
-    std::thread::id       audioThreadId {};
+    std::atomic<std::size_t> audioThreadHash { 0 };
 };
 } // namespace duskstudio::clap
