@@ -88,14 +88,16 @@ bool ClapInstance::create (const ClapBundle& bundle, const std::string& pluginId
     if (paramsExt != nullptr && paramsExt->count != nullptr && paramsExt->get_info != nullptr)
     {
         const uint32_t n = paramsExt->count (plugin);
-        params.reserve (n);
+        params.reserve (std::min<uint32_t> (n, 4096u));   // clamp: count is plugin-supplied
         for (uint32_t i = 0; i < n; ++i)
         {
             clap_param_info_t info {};
             if (! paramsExt->get_info (plugin, i, &info)) continue;
             ParamInfo pi;
             pi.id           = info.id;
-            pi.name         = info.name;   // char[CLAP_NAME_SIZE], NUL-terminated
+            // Bound the copy at the buffer size — don't trust a third-party plugin to
+            // NUL-terminate its fixed char[] (an unterminated name would over-read).
+            pi.name.assign (info.name, ::strnlen (info.name, sizeof (info.name)));
             pi.minValue     = info.min_value;
             pi.maxValue     = info.max_value;
             pi.defaultValue = info.default_value;
@@ -117,13 +119,16 @@ bool ClapInstance::activate (double sampleRate, int maxBlock, std::string& error
         || ! plugin->activate (plugin, sampleRate, 1, (uint32_t) maxFrames))
     { errorOut = "activate() failed"; return false; }
 
-    active = true;
-    startFailed = false;   // a fresh activation may try start_processing again
+    // Size every process-time buffer BEFORE marking active, so the audio thread can
+    // never observe active==true with unsized scratch.
     inScratchL .assign ((size_t) maxFrames, 0.0f);
     inScratchR .assign ((size_t) maxFrames, 0.0f);
     outScratchL.assign ((size_t) maxFrames, 0.0f);
     outScratchR.assign ((size_t) maxFrames, 0.0f);
     eventScratch.assign ((size_t) kParamRingCap, clap_event_param_value_t {});
+
+    startFailed = false;   // a fresh activation may try start_processing again
+    active = true;
     return true;
 }
 
@@ -201,7 +206,7 @@ bool ClapInstance::paramValueToText (clap_id id, double value, std::string& out)
     if (plugin == nullptr || paramsExt == nullptr || paramsExt->value_to_text == nullptr) return false;
     char buf[256] {};
     if (! paramsExt->value_to_text (plugin, id, value, buf, sizeof (buf))) return false;
-    out = buf;
+    out.assign (buf, ::strnlen (buf, sizeof (buf)));   // bound: don't trust plugin NUL-termination
     return true;
 }
 

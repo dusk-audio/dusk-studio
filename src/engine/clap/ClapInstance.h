@@ -19,8 +19,8 @@ class ClapBundle;
 // fixed sample rate / max block, and process stereo audio through it. Manages the
 // full lifecycle (init → activate → start_processing → process → stop_processing
 // → deactivate → destroy). Setup is message-thread; processStereo is the audio
-// path. Parameters are enumerated at create(); changes are queued from any non-audio
-// thread and consumed as CLAP events by the next process() block.
+// path. Parameters are enumerated at create(); changes are queued (message thread,
+// single producer) and consumed as CLAP events by the next process() block.
 class ClapInstance
 {
 public:
@@ -71,9 +71,10 @@ public:
     bool getParamValue    (clap_id id, double& out) const;
     bool paramValueToText (clap_id id, double value, std::string& out) const;
 
-    // Queue a parameter change from a non-audio thread (automation / MIDI map / UI).
-    // Applied on the next process() block — i.e. the next audio buffer while the
-    // device runs. Silently dropped only if the ring overflows (pathological flood).
+    // Queue a parameter change. SINGLE PRODUCER: call from the message thread only
+    // (the ring has no inter-producer synchronisation). Applied on the next process()
+    // block — i.e. the next audio buffer while the device runs. Silently dropped only
+    // if the ring overflows (pathological flood).
     void setParamValue (clap_id id, double value) noexcept;
 
     bool isCreated()      const noexcept { return plugin != nullptr; }
