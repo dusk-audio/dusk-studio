@@ -274,6 +274,7 @@ target_sources(DuskStudio PRIVATE
     src/engine/clap/ClapHost.cpp
     src/engine/clap/ClapInstance.cpp
     src/engine/clap/ClapEditor.cpp
+    src/engine/clap/NativeClapSlot.cpp
     src/ui/ClapPluginEditorComponent.cpp
     src/engine/AudioEngine.cpp
     src/engine/AudioWorkerPool.cpp
