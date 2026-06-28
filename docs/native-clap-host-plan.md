@@ -83,9 +83,14 @@ the X11 embed, so it must be checked on the live compositor:
 2. **Editor** — when a lane's `NativeClapSlot::isLoaded()`, host a `ClapEditor`
    (via `ClapPluginEditorComponent`) in `AuxLaneComponent` instead of the JUCE
    editor; **reveal on tab switch** (pre-created + `XMapWindow`) for the instant open.
-3. **Session** — persist `{ native_clap_path, base64(state) }` per aux slot in
-   `SessionSerializer`; on load, `loadNativeClap` then `loadState`. Mechanics exist
-   (`NativeClapSlot::saveState/loadState`); only the serializer fields + restore call remain.
+3. **Session** — the persist FORMAT is done (`AuxLane::nativeClapPath/nativeClapStateBase64`,
+   serializer keys `native_clap_path`/`native_clap_state`, save-side capture in
+   `publishPluginStateForSave`, round-trip tested). What remains is restore-on-load: the
+   `consumePluginStateAfterLoad` path runs BEFORE `prepare`, but `NativeClapSlot::load`
+   activates immediately and needs the sample rate — so add a pending-restore on
+   `AuxLaneStrip` that `prepare()` consummates (SR known there), fenced by the engine
+   process gate. Do this alongside the picker so the full pick→save→reload→play loop is
+   integration-tested in one go.
 
 API already in place: `AuxLaneStrip::{loadNativeClap,unloadNativeClap,isNativeClapLoaded,getNativeClapSlot}`,
 `NativeClapSlot::{saveState,loadState,getInstance,paramCount,paramInfo,getParamValue,setParamValue}`,
