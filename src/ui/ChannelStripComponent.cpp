@@ -4448,8 +4448,10 @@ void ChannelStripComponent::paint (juce::Graphics& g)
                                 : juce::Colour (0xffb8b8c0));
             // Uniform font for every label so weight differences don't
             // throw off the visual right-alignment — the brighter colour
-            // alone marks 0 dB.
-            const juce::Font font (juce::FontOptions (10.5f, juce::Font::plain));
+            // alone marks 0 dB. The ∞ glyph renders visually smaller than the
+            // digits at a given point size, so upsize it to match their height.
+            const juce::Font font (juce::FontOptions (isBottom ? 16.0f : 10.5f,
+                                                      juce::Font::plain));
             g.setFont (font);
             constexpr float kSharedXOver  = 24.0f;
             const float labelRight = trackLx - kSharedXOver - 6.0f;
@@ -4513,9 +4515,11 @@ void ChannelStripComponent::paint (juce::Graphics& g)
 
                 g.setColour (isZero ? juce::Colour (0xffffffff)
                                     : juce::Colour (0xffc0c0c8));
-                g.setFont (juce::Font (juce::FontOptions (isZero ? 10.5f : 9.5f,
-                                                            isZero ? juce::Font::bold
-                                                                    : juce::Font::plain)));
+                // ∞ upsized to match the digit height (it renders small at a
+                // given point size); 0 dB bold; the rest plain.
+                g.setFont (juce::Font (juce::FontOptions (
+                    isBottom ? 14.0f : (isZero ? 10.5f : 9.5f),
+                    isZero ? juce::Font::bold : juce::Font::plain)));
                 const auto labelRect = juce::Rectangle<float> (tickX1 + 1.0f, y - 7.0f,
                                                                  (float) scale.getRight() - (tickX1 + 1.0f),
                                                                  14.0f);
@@ -5011,7 +5015,7 @@ void ChannelStripComponent::resized()
     // is squeezed below its design min width.
     constexpr int kBusColumnW   = 18;
     constexpr int kBusColumnGap = 3;
-    constexpr int kBusButtonGap = 2;   // bus button height now spans the 0→off scale
+    constexpr int kBusButtonH   = 20;   // fixed height; evenly spaced across the 0→∞ scale
     juce::Rectangle<int> busColumn;
 
     juce::Rectangle<int> meterColumn, scaleColumn;
@@ -5181,20 +5185,18 @@ void ChannelStripComponent::resized()
     // layouts; anchoring to the meter column would miss it on strips that reserve
     // peak-label space below the meter.
     {
+        // Fixed-height buttons, evenly spaced: #1's top lines up with the "0"
+        // tick and #4's bottom with the "∞" tick. Distribute the TOPs linearly
+        // across [zeroY, offY - kBusButtonH]; the inter-button gap falls out as
+        // (span - kNumBuses*H)/(kNumBuses-1).
         const int zeroY = (int) std::lround (duskstudio::faderYForDb (faderSlider, 0.0f));
         const int offY  = (int) std::lround (duskstudio::faderYForDb (faderSlider, -90.0f));
-        const int span  = juce::jmax (ChannelStripParams::kNumBuses, offY - zeroY);
+        const int span  = juce::jmax (ChannelStripParams::kNumBuses * kBusButtonH, offY - zeroY);
         for (int i = 0; i < ChannelStripParams::kNumBuses; ++i)
         {
-            // Slot the [zeroY, offY] range so #1's top == zeroY and #4's bottom
-            // == offY exactly (rounding distributes; gaps stay uniform).
             const int top = zeroY + (int) std::lround (
-                (double) (span + kBusButtonGap) * i / ChannelStripParams::kNumBuses);
-            const int bot = zeroY + (int) std::lround (
-                (double) (span + kBusButtonGap) * (i + 1) / ChannelStripParams::kNumBuses)
-                - kBusButtonGap;
-            busButtons[(size_t) i]->setBounds (busColumn.getX(), top,
-                                                kBusColumnW, juce::jmax (1, bot - top));
+                (double) (span - kBusButtonH) * i / (ChannelStripParams::kNumBuses - 1));
+            busButtons[(size_t) i]->setBounds (busColumn.getX(), top, kBusColumnW, kBusButtonH);
         }
     }
 
