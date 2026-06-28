@@ -2545,10 +2545,13 @@ void TapeStrip::showRegionContextMenu (const RegionHit& hit, juce::Point<int> sc
 
     // Reverse — non-destructive: renders a reversed WAV into takes/ and
     // repoints this region at it. Single region (the one right-clicked).
-    // Disabled on a frozen track — its regions are edit-locked (the baked WAV
-    // would desync), matching the other edit-locked actions.
+    // Disabled on a frozen track OR a locked region — both are edit-locked (the
+    // baked WAV would desync; locked regions are protected like other edits).
     const bool reverseFrozen = session.track (hit.track).frozen.load (std::memory_order_relaxed);
-    m.addItem ("Reverse region", /*enabled*/ ! reverseFrozen, /*ticked*/ false,
+    const auto& reverseRegs  = session.track (hit.track).regions;
+    const bool reverseLocked = hit.regionIdx >= 0 && hit.regionIdx < (int) reverseRegs.size()
+                               && reverseRegs[(size_t) hit.regionIdx].locked;
+    m.addItem ("Reverse region", /*enabled*/ ! reverseFrozen && ! reverseLocked, /*ticked*/ false,
                 [safeThis = juce::Component::SafePointer<TapeStrip> (this),
                  track = hit.track, regionIdx = hit.regionIdx]
                 {

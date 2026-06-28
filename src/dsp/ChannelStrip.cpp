@@ -939,7 +939,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
     // signal — exactly what the freeze WAV must bake. Captured regardless of
     // the pass gate below so a soloed-out render block is still written. Costs
     // nothing live (freezeCapL is nullptr unless a render set it).
-    if (freezeCapL != nullptr && srcL != nullptr)
+    if (freezeCapL != nullptr && freezeCapR != nullptr && srcL != nullptr)
     {
         juce::FloatVectorOperations::copy (freezeCapL, srcL, numSamples);
         juce::FloatVectorOperations::copy (freezeCapR, srcR != nullptr ? srcR : srcL, numSamples);

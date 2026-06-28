@@ -484,7 +484,7 @@ if(UNIX AND NOT APPLE)
         src/engine/alsa/AlsaAudioIODeviceType.cpp
         src/engine/alsa/AlsaPerformanceTest.cpp
         src/ui/KeyboardStateLinux.cpp)
-    target_link_libraries(DuskStudio PRIVATE asound X11)
+    target_link_libraries(DuskStudio PRIVATE asound X11 ${CMAKE_DL_LIBS})  # dl: ClapBundle dlopen
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_ALSA=1)
 endif()
 

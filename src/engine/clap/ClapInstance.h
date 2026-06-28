@@ -6,10 +6,11 @@
 #include <vector>
 
 struct clap_plugin;
-struct clap_plugin_factory;
 
 namespace duskstudio::clap
 {
+class ClapBundle;
+
 // One CLAP plugin instance: create from a factory + plugin id, activate at a
 // fixed sample rate / max block, and process stereo audio through it. Manages the
 // full lifecycle (init → activate → start_processing → process → stop_processing
@@ -23,9 +24,12 @@ public:
     ClapInstance (const ClapInstance&)            = delete;
     ClapInstance& operator= (const ClapInstance&) = delete;
 
-    // Create + init the plugin `pluginId` from `factory`. False (+ errorOut) on failure.
-    bool create (const ::clap_plugin_factory* factory, const std::string& pluginId,
-                 std::string& errorOut);
+    // Create + init the plugin `pluginId` from `bundle`. The bundle owns the
+    // dlopen'd .clap whose code backs the plugin's vtable, so it MUST outlive this
+    // instance — we keep a reference to make that dependency explicit. Requires a
+    // stereo-in / stereo-out plugin (the aux path; relaxed in a later increment).
+    // False (+ errorOut) on failure.
+    bool create (const ClapBundle& bundle, const std::string& pluginId, std::string& errorOut);
 
     // Activate at the given config (sizes the process scratch; no later RT alloc).
     bool activate (double sampleRate, int maxBlock, std::string& errorOut);
@@ -49,6 +53,7 @@ public:
 
 private:
     ClapHost hostObj;
+    const ClapBundle*    owningBundle = nullptr;   // must outlive this instance (non-owning)
     const ::clap_plugin* plugin = nullptr;
     bool active     = false;
     bool processing = false;

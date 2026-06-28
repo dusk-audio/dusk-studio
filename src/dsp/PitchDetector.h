@@ -96,7 +96,9 @@ public:
             if (inDip)
             {
                 if (cmnd < bestValue) { bestValue = cmnd; bestTau = tau; }
-                else break;                       // climbed back out → local min found
+                else if (cmnd > bestValue) break; // truly climbed back out → local min found
+                // cmnd == bestValue: flat plateau at the minimum (quantised CMNDF) —
+                // keep scanning so a deeper dip just past the plateau isn't missed.
             }
             else if (cmnd < kCMNDThreshold)
             {

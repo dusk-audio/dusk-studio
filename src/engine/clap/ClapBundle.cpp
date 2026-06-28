@@ -31,6 +31,7 @@ bool ClapBundle::load (const std::string& path, std::string& errorOut)
                                        { errorOut = "incompatible CLAP version";   unload(); return false; }
     if (entry->init == nullptr || ! entry->init (path.c_str()))
                                        { errorOut = "clap entry init() failed";    unload(); return false; }
+    initialised = true;   // only now is it valid to call entry->deinit()
 
     factory = reinterpret_cast<const ::clap_plugin_factory*> (
         entry->get_factory != nullptr ? entry->get_factory (CLAP_PLUGIN_FACTORY_ID) : nullptr);
@@ -59,8 +60,11 @@ void ClapBundle::unload()
 {
     descriptors.clear();
     factory = nullptr;
-    if (entry != nullptr && entry->deinit != nullptr)
+    // deinit() is only valid after a successful init() — failure paths that set
+    // `entry` from dlsym but never initialised it must not call it.
+    if (entry != nullptr && initialised && entry->deinit != nullptr)
         entry->deinit();
+    initialised = false;
     entry = nullptr;
     if (handle != nullptr)
     {

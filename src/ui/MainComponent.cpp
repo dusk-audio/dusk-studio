@@ -3150,6 +3150,15 @@ void MainComponent::runMidiImportFlow (const juce::File& source,
             }
 
             auto& track = self->session.track (trackIndex);
+            // A frozen track's playback is its baked WAV; adding a region would
+            // desync it. Same guard as the audio-import path.
+            if (track.frozen.load (std::memory_order_relaxed))
+            {
+                showImportError ("Import MIDI",
+                                 "This track is frozen. Unfreeze it before importing onto it.");
+                self->cancelImportChain();
+                return;
+            }
 
             duskstudio::fileimport::MidiImportRequest req;
             req.source            = source;
@@ -3383,6 +3392,14 @@ void MainComponent::runDpImport (const dp::SongScan& scan,
         const auto& it   = scan.tracks[(size_t) i];
         const auto& frag = it.fragment;
         auto& track      = session.track (i);
+
+        // A frozen track's playback is its baked WAV — don't overwrite it with an
+        // imported fragment. Skip it (the bulk import continues with the rest).
+        if (track.frozen.load (std::memory_order_relaxed))
+        {
+            skipped.add (it.name + ": target track is frozen (unfreeze to import)");
+            continue;
+        }
 
         juce::File src, tmp;
         const int channels = frag.stereo ? 2 : 1;

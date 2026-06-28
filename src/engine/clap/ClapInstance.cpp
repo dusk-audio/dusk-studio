@@ -1,9 +1,11 @@
 #include "ClapInstance.h"
+#include "ClapBundle.h"
 
 #include <clap/clap.h>
 
 #include <algorithm>
 #include <cstring>
+#include <string>
 
 namespace duskstudio::clap
 {
@@ -40,11 +42,13 @@ ClapInstance::~ClapInstance()
     }
 }
 
-bool ClapInstance::create (const ::clap_plugin_factory* factory, const std::string& pluginId,
+bool ClapInstance::create (const ClapBundle& bundle, const std::string& pluginId,
                            std::string& errorOut)
 {
+    const auto* factory = bundle.getFactory();
     if (factory == nullptr || factory->create_plugin == nullptr)
     { errorOut = "no plugin factory"; return false; }
+    owningBundle = &bundle;   // the .clap backing the plugin vtable must stay loaded
 
     plugin = factory->create_plugin (factory, hostObj.get(), pluginId.c_str());
     if (plugin == nullptr) { errorOut = "create_plugin returned null"; return false; }
@@ -66,6 +70,18 @@ bool ClapInstance::create (const ::clap_plugin_factory* factory, const std::stri
         clap_audio_port_info_t info {};
         if (ap->count (plugin, true)  > 0 && ap->get (plugin, 0, true,  &info)) inCh  = (int) info.channel_count;
         if (ap->count (plugin, false) > 0 && ap->get (plugin, 0, false, &info)) outCh = (int) info.channel_count;
+    }
+
+    // processStereo drives a single stereo in + stereo out port. Reject anything
+    // else for now (the aux path is stereo); multi-port support is a later step.
+    if (inCh != 2 || outCh != 2)
+    {
+        errorOut = "plugin is not stereo-in/stereo-out (got "
+                 + std::to_string (inCh) + " in / " + std::to_string (outCh) + " out)";
+        plugin->destroy (plugin);
+        plugin = nullptr;
+        owningBundle = nullptr;
+        return false;
     }
     return true;
 }
@@ -107,14 +123,26 @@ void ClapInstance::processStereo (const float* inL, const float* inR,
     if (! active || plugin == nullptr || plugin->process == nullptr
         || numFrames <= 0 || numFrames > maxFrames
         || inL == nullptr || outL == nullptr || outR == nullptr)
+    {
+        // Clear the outputs so a reused buffer can't leak stale audio on a no-op.
+        if (numFrames > 0)
+        {
+            if (outL != nullptr) std::memset (outL, 0, sizeof (float) * (size_t) numFrames);
+            if (outR != nullptr) std::memset (outR, 0, sizeof (float) * (size_t) numFrames);
+        }
         return;
+    }
 
     if (! processing)
     {
         // The calling thread is the audio thread for this instance.
         hostObj.setAudioThread (std::this_thread::get_id());
         if (plugin->start_processing != nullptr && ! plugin->start_processing (plugin))
+        {
+            std::memset (outL, 0, sizeof (float) * (size_t) numFrames);
+            std::memset (outR, 0, sizeof (float) * (size_t) numFrames);
             return;
+        }
         processing = true;
     }
 

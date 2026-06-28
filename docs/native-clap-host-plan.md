@@ -60,7 +60,7 @@ until native VST3/LV2 land.
 
 | # | Increment | Verify |
 |---|---|---|
-| **0** | Foundation: vendor CLAP headers (CMake FetchContent `free-audio/clap`), `src/engine/clap/` skeleton, `ClapBundle` load + enumerate. | Catch2: load a `.clap`, list plugins. |
+| **0** | Foundation: vendor the CLAP C API as a git submodule at `external/clap` (`free-audio/clap`), `src/engine/clap/` skeleton, `ClapBundle` load + enumerate. | Catch2: load a `.clap`, list plugins. |
 | **1** | `ClapInstance` audio: load + activate + `process` offline. | Catch2 A/B: silence→silence, a gain/known plugin matches reference. |
 | **2** | `ClapEditor` native X11 embed: create/set_parent/map/unmap + fd/timer pump, pre-create + cache. | **You, live Wayland**: instant first open, no flash, correct render/resize/close. |
 | **3** | Aux integration: `NativeClapSlot` in `AuxLaneStrip` behind the flag; route one lane through it. Build DuskVerb as CLAP. | End-to-end: load session, aux plays via native CLAP, editor opens instantly. |
@@ -86,6 +86,7 @@ without working plugins mid-migration.
 
 ## First step
 
-Increment 0 — additive, safe, doesn't touch the working app: wire CLAP headers via
-FetchContent, scaffold `src/engine/clap/ClapBundle`, and a Catch2 test that loads a
-`.clap` and lists its plugins. Proves the foundation + the toolchain.
+Increment 0 — additive, safe, doesn't touch the working app: vendor the CLAP C API
+as a git submodule at `external/clap`, scaffold `src/engine/clap/ClapBundle`, and a
+Catch2 test that loads a `.clap` and lists its plugins. Proves the foundation + the
+toolchain.

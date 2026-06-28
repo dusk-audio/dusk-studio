@@ -2854,22 +2854,40 @@ bool AudioRegionEditor::keyPressed (const juce::KeyPress& k)
         auto* r = region();
         if (rangeActive && r != nullptr)
         {
-            auto& um = engine.getUndoManager();
-            um.beginNewTransaction ("Delete chunk");
+            // Locked region / frozen track is edit-locked — consume the key, no-op.
+            if (r->locked || session.track (trackIdx).frozen.load (std::memory_order_relaxed))
+                return true;
+
             const auto a = juce::jmin (rangeStartSample, rangeEndSample);
             const auto b = juce::jmax (rangeStartSample, rangeEndSample);
-            const auto tlA = r->timelineStart + (a - r->sourceOffset);
-            const auto tlB = r->timelineStart + (b - r->sourceOffset);
-            // Split at B first, then A, so regionIdx still points at
-            // the LEFT slice after both splits. The middle slice is
-            // then regionIdx + 1.
-            um.perform (new SplitRegionAction (session, engine, trackIdx, regionIdx, tlB));
-            um.perform (new SplitRegionAction (session, engine, trackIdx, regionIdx, tlA));
-            um.perform (new DeleteRegionAction (session, engine, trackIdx, regionIdx + 1));
-            rangeActive = false;
-            refreshStatusBarReadouts();
-            repaint();
-            return true;
+            if (b > a)
+            {
+                auto& um = engine.getUndoManager();
+                um.beginNewTransaction ("Delete chunk");
+                const auto regionStart = r->timelineStart;
+                const auto regionEnd   = r->timelineStart + r->lengthInSamples;
+                const auto tlA = r->timelineStart + (a - r->sourceOffset);
+                const auto tlB = r->timelineStart + (b - r->sourceOffset);
+                // Edge-aware (mirrors cutRange): a split exactly at a region edge is
+                // a no-op, so branch on which edges are interior to delete the right
+                // slice for [start,mid) / [mid,end) / [start,end) instead of always
+                // removing regionIdx + 1.
+                const bool needLeft  = tlA > regionStart;
+                const bool needRight = tlB < regionEnd;
+                if (needRight)
+                    um.perform (new SplitRegionAction (session, engine, trackIdx, regionIdx, tlB));
+                int deleteIdx = regionIdx;
+                if (needLeft)
+                {
+                    um.perform (new SplitRegionAction (session, engine, trackIdx, regionIdx, tlA));
+                    deleteIdx = regionIdx + 1;
+                }
+                um.perform (new DeleteRegionAction (session, engine, trackIdx, deleteIdx));
+                rangeActive = false;
+                refreshStatusBarReadouts();
+                repaint();
+            }
+            return true;   // range selected → Delete acts on the range (consume the key)
         }
         auto& um = engine.getUndoManager();
         // After deleting, keep the editor open on a surviving region (e.g. the

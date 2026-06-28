@@ -22,7 +22,7 @@ bool ClapPluginEditorComponent::load (const juce::File& clapPath, juce::String& 
     if (bundle.plugins().empty())
     { errorOut = "no plugins in bundle"; return false; }
 
-    if (! instance.create (bundle.getFactory(), bundle.plugins().front().id, err))
+    if (! instance.create (bundle, bundle.plugins().front().id, err))
     { errorOut = "create: " + juce::String (err); return false; }
     if (! instance.activate (48000.0, 1024, err))   // editor doesn't need the real rate
     { errorOut = "activate: " + juce::String (err); return false; }

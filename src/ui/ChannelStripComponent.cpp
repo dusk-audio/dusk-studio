@@ -2558,6 +2558,10 @@ void ChannelStripComponent::refreshPrintButtonForMode()
           "CPU. Click to unfreeze and edit again."
         : "FREEZE - render this track (" + what + ") to audio and bypass that "
           "DSP to free CPU. Click again to unfreeze.");
+    // Keep assistive-tech metadata in step with the current mode (not the old
+    // "print effects on record" label).
+    printButton.setTitle (frozen ? "Unfreeze track" : "Freeze track");
+    printButton.setHelpText (printButton.getTooltip());
 }
 
 void ChannelStripComponent::handleFreezeClick()

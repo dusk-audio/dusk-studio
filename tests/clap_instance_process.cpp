@@ -31,7 +31,8 @@ TEST_CASE ("ClapInstance loads + processes a real CLAP plugin", "[clap][instance
     REQUIRE_FALSE (bundle.plugins().empty());
 
     duskstudio::clap::ClapInstance inst;
-    REQUIRE (inst.create (bundle.getFactory(), bundle.plugins().front().id, err));
+    // Single-plugin fixture (e.g. DuskVerb), so front() is deterministic.
+    REQUIRE (inst.create (bundle, bundle.plugins().front().id, err));
     REQUIRE (inst.activate (48000.0, 512, err));
     REQUIRE (inst.outputChannels() >= 1);
 
@@ -53,7 +54,7 @@ TEST_CASE ("ClapInstance loads + processes a real CLAP plugin", "[clap][instance
             {
                 REQUIRE (std::isfinite (outL[(size_t) i]));
                 REQUIRE (std::isfinite (outR[(size_t) i]));
-                peak = std::max (peak, std::abs (outL[(size_t) i]));
+                peak = std::max ({ peak, std::abs (outL[(size_t) i]), std::abs (outR[(size_t) i]) });
             }
         }
         REQUIRE (peak < 1.0e-3f);   // silence in → silence out
@@ -77,7 +78,7 @@ TEST_CASE ("ClapInstance loads + processes a real CLAP plugin", "[clap][instance
             {
                 REQUIRE (std::isfinite (outL[(size_t) i]));
                 REQUIRE (std::isfinite (outR[(size_t) i]));
-                peakOut = std::max (peakOut, std::abs (outL[(size_t) i]));
+                peakOut = std::max ({ peakOut, std::abs (outL[(size_t) i]), std::abs (outR[(size_t) i]) });
             }
         }
         REQUIRE (peakOut > 1.0e-3f);   // signal passes through the plugin

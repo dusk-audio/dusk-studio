@@ -45,6 +45,7 @@ public:
 private:
     void* handle = nullptr;                          // dlopen handle
     const ::clap_plugin_entry*   entry   = nullptr;
+    bool  initialised = false;                       // entry->init() succeeded
     const ::clap_plugin_factory* factory = nullptr;
     std::vector<PluginDesc> descriptors;
     std::string bundlePath;

@@ -128,6 +128,7 @@ target_compile_definitions(dusk-studio-tests PRIVATE
 
 target_link_libraries(dusk-studio-tests PRIVATE
     Catch2::Catch2WithMain
+    ${CMAKE_DL_LIBS}   # dl: ClapBundle dlopen
     juce::juce_audio_basics
     # juce_audio_devices required by SessionSerializer.cpp for
     # juce::MidiInput::getAvailableDevices() — resolves Track::

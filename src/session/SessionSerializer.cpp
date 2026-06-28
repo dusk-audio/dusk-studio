@@ -343,11 +343,15 @@ juce::DynamicObject::Ptr trackToObject (const Track& t, const juce::File& sessio
     obj->setProperty ("midi_output_id",  t.midiOutputIdentifier);
     obj->setProperty ("midi_channel",    t.midiChannel.load());
     obj->setProperty ("track_mode",     t.mode.load());
-    obj->setProperty ("frozen",         t.frozen.load());
+    // Never write frozen=true without a restorable capture — a frozen flag with no
+    // path would load as a locked track with no audio. Gate the flag on both, same
+    // as the freeze fields below.
+    const bool emitFrozen = t.frozen.load() && ! t.frozenAudioPath.isEmpty();
+    obj->setProperty ("frozen",         emitFrozen);
     // Only emit freeze fields when the track is actually frozen AND has a path —
     // a stale path left on a since-unfrozen (or reused) Session must not write
     // phantom freeze state that load() would then resurrect.
-    if (t.frozen.load() && ! t.frozenAudioPath.isEmpty())
+    if (emitFrozen)
     {
         obj->setProperty ("frozen_audio_path",
                           portablePath (juce::File (t.frozenAudioPath), sessionDir));
@@ -1875,8 +1879,14 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                 for (const auto& v : *arr)
                     if (auto* o = v.getDynamicObject())
                         if (o->hasProperty ("sample") && o->hasProperty ("bpm"))
+                        {
+                            // Guard finiteness before jlimit (NaN/inf slip through it);
+                            // skip a corrupt point rather than poison the tempo map.
+                            const double bpm = (double) o->getProperty ("bpm");
+                            if (! std::isfinite (bpm)) continue;
                             pts.push_back ({ (juce::int64) o->getProperty ("sample"),
-                                             juce::jlimit (30.0f, 300.0f, (float) (double) o->getProperty ("bpm")) });
+                                             juce::jlimit (30.0f, 300.0f, (float) bpm) });
+                        }
             s.tempoMap.setPoints (std::move (pts));
         }
         else

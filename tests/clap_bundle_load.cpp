@@ -20,19 +20,15 @@ TEST_CASE ("ClapBundle fails gracefully on a missing bundle", "[clap][bundle]")
     REQUIRE (b.getFactory() == nullptr);
 }
 
-TEST_CASE ("ClapBundle load on a non-CLAP shared object reports an error", "[clap][bundle]")
+TEST_CASE ("ClapBundle rejects a real shared object that is not a CLAP bundle", "[clap][bundle]")
 {
-    // libc is a valid shared object with no clap_entry symbol — load() must
-    // dlopen it but then reject it for the missing entry, leaving us unloaded.
+    // libc is a valid shared object that dlopens fine but has no clap_entry, so
+    // this exercises the post-dlopen rejection path specifically — load() must get
+    // past dlopen, then fail for the missing entry, leaving us unloaded.
     duskstudio::clap::ClapBundle b;
     std::string err;
-
-    const bool ok = b.load ("libc.so.6", err);
-    if (ok)
-        REQUIRE (b.isLoaded());           // wildly unexpected, but keep the invariant honest
-    else
-    {
-        REQUIRE_FALSE (err.empty());
-        REQUIRE_FALSE (b.isLoaded());
-    }
+    REQUIRE_FALSE (b.load ("libc.so.6", err));
+    REQUIRE_FALSE (b.isLoaded());
+    REQUIRE_FALSE (err.empty());
+    INFO ("rejection reason: " << err);
 }

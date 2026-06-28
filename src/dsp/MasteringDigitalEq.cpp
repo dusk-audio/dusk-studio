@@ -27,10 +27,13 @@ void MasteringDigitalEq::prepare (double sampleRate, int blockSize)
     const size_t osStages = (kOversample >= 4) ? 2 : 1;
     oversampler = std::make_unique<juce::dsp::Oversampling<float>> (
         2, osStages,
-        juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, true /* max quality */);
+        juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR,
+        true /* max quality */, true /* integer latency */);
     oversampler->initProcessing ((size_t) bs);
     oversampler->reset();
-    latencySamples = (int) std::lround (oversampler->getLatencyInSamples());
+    // Integer-latency mode above makes the group delay a whole number of samples,
+    // so the reported value is exact — no rounding needed for PDC.
+    latencySamples = (int) oversampler->getLatencyInSamples();
 
     juce::dsp::ProcessSpec spec { sr, (juce::uint32) (bs * kOversample), 1 };
     for (auto& f : filtersL) { f.prepare (spec); initCoeffs (f); }
@@ -176,6 +179,13 @@ MasteringDigitalEq::Coeffs MasteringDigitalEq::computeCoeffs (int idx, double sa
     out.b2 = (float) (b2 * inv);
     out.a1 = (float) (a1 * inv);
     out.a2 = (float) (a2 * inv);
+
+    // A pathological gainDb (huge A) can still overflow a tap to NaN/Inf even with
+    // finite inputs; never hand the live filters non-finite coefficients — fall
+    // back to passthrough (the default Coeffs: b0 = 1, rest 0).
+    if (! (std::isfinite (out.b0) && std::isfinite (out.b1) && std::isfinite (out.b2)
+           && std::isfinite (out.a1) && std::isfinite (out.a2)))
+        return Coeffs {};
     return out;
 }
 

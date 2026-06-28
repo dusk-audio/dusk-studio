@@ -60,9 +60,11 @@ bool ClapHost::isAudioThread (const clap_host_t* h) noexcept
     return std::this_thread::get_id() == self (h).audioThreadId;
 }
 
-void ClapHost::logMsg (const clap_host_t*, clap_log_severity sev, const char* msg) noexcept
+void ClapHost::logMsg (const clap_host_t* h, clap_log_severity sev, const char* msg) noexcept
 {
-    if (sev >= CLAP_LOG_WARNING)
+    // The plugin may log from the audio thread (inside process()), where fprintf
+    // is a real-time violation. Only emit from the main thread; drop otherwise.
+    if (sev >= CLAP_LOG_WARNING && std::this_thread::get_id() == self (h).mainThreadId)
         std::fprintf (stderr, "[clap host] sev=%d %s\n", (int) sev, msg != nullptr ? msg : "");
 }
 

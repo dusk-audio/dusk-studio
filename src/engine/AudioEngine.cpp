@@ -427,7 +427,11 @@ void AudioEngine::recomputePdc() noexcept
         // their output is timeline-aligned as if zero-latency.
         const bool midi = session.track (t).mode.load (std::memory_order_relaxed)
                               == (int) Track::Mode::Midi;
-        if (! midi)
+        // A frozen track plays its baked WAV with the insert bypassed, so its
+        // plugin / hardware latency must not count toward PDC — it's a zero-latency
+        // disk source (the bake was captured pre-PDC; see ChannelStrip freeze tap).
+        const bool frozen = session.track (t).frozen.load (std::memory_order_relaxed);
+        if (! midi && ! frozen)
         {
             const int mode = strip.insertMode.load (std::memory_order_relaxed);
             if (mode == ChannelStrip::kInsertPlugin)
@@ -501,6 +505,11 @@ void AudioEngine::commitFreeze (int trackIndex, const juce::File& outFile, juce:
     fr.numChannels     = 2;
     fr.gainDb          = 0.0f;
     track.frozenAudioPath = outFile.getFullPathName();
+
+    // A frozen track can't record (playback is the baked WAV), so it must not stay
+    // record-armed — disarm via setTrackArmed so armedTrackCount stays consistent
+    // (done before frozen is set; setTrackArmed only refuses to ARM a frozen track).
+    session.setTrackArmed (trackIndex, false);
 
     // Capture the user's current bypass before forcing it on, so unfreeze can
     // restore it (freeze always bypasses to free CPU). Then bypass the
@@ -3128,9 +3137,10 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         // The track will read from disk during Play, or during Record on
         // un-armed tracks (so other tracks keep playing while we record into
         // an armed one). Otherwise the strip's source is live device input.
-        // A frozen track ALWAYS reads its baked WAV — even if some non-UI arm
-        // path armed it, frozen playback is the render, never live input.
-        const bool willReadFromDisk = isFrozen || isPlaying || (isRecording && ! armed);
+        // A frozen track reads its baked WAV during Play/Record even if armed
+        // (frozen playback is the render, never live input) — but it stays silent
+        // when stopped, like any other disk track.
+        const bool willReadFromDisk = isPlaying || (isRecording && (isFrozen || ! armed));
 
         // Live-input monitor gate. IN is the ONLY control over live-input
         // monitoring. ARM is purely a recorder-enable; it does NOT gate

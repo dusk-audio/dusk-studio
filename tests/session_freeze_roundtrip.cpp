@@ -12,8 +12,9 @@ juce::File makeTempSessionDir()
     auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
                   .getChildFile ("dusk-studio-freeze-roundtrip-"
                                     + juce::String (juce::Random::getSystemRandom().nextInt()));
-    dir.createDirectory();
-    dir.getChildFile ("audio").createDirectory();
+    // Fail at the source if setup can't create the dirs, not later in the serializer.
+    REQUIRE (dir.createDirectory().wasOk());
+    REQUIRE (dir.getChildFile ("audio").createDirectory().wasOk());
     return dir;
 }
 } // namespace

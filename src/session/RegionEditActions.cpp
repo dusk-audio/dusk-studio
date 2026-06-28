@@ -700,7 +700,8 @@ bool JoinRegionsAction::perform()
         juce::AudioBuffer<float> tmp (chs, regSamples);
         tmp.clear();
         if (! rdr->read (&tmp, 0, regSamples, reg.sourceOffset, true, chs > 1))
-            continue;   // unreadable region body — skip it rather than mix garbage/silence
+            return false;   // unreadable region body — abort the join, leave regions unchanged
+                            // (no output file created yet, nothing to clean up)
         const int destOffset = (int) (reg.timelineStart - firstStart);
         for (int c = 0; c < chs; ++c)
             mixBuf.addFrom (c, destOffset, tmp, c, 0, regSamples);
@@ -835,6 +836,7 @@ bool ReverseRegionAction::perform()
 {
     if (! indexValid (session, trackIdx, regionIdx)) return false;
     if (frozenLocked (session, trackIdx)) return false;
+    if (session.track (trackIdx).regions[(size_t) regionIdx].locked) return false;   // locked region
 
     // First perform renders the reversed WAV + captures before/after; redo just
     // re-applies the captured after-state.
