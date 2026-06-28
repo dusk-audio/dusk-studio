@@ -39,6 +39,16 @@ void NativeClapSlot::unload()
     loadedPath.clear();
 }
 
+bool NativeClapSlot::saveState (std::vector<uint8_t>& out) const
+{
+    return instance != nullptr && instance->saveState (out);
+}
+
+bool NativeClapSlot::loadState (const std::vector<uint8_t>& in)
+{
+    return instance != nullptr && instance->loadState (in);
+}
+
 void NativeClapSlot::processStereo (const float* inL, const float* inR,
                                     float* outL, float* outR, int numFrames) noexcept
 {

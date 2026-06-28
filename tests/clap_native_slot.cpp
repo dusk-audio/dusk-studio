@@ -68,3 +68,43 @@ TEST_CASE ("NativeClapSlot loads, processes, and unloads cleanly", "[clap][slot]
         }
     }
 }
+
+TEST_CASE ("NativeClapSlot state round-trips into a fresh slot", "[clap][slot][state]")
+{
+    const char* path = std::getenv ("DUSKSTUDIO_TEST_CLAP");
+    if (path == nullptr || *path == '\0')
+    {
+        SUCCEED ("DUSKSTUDIO_TEST_CLAP not set — skipping live CLAP-state test");
+        return;
+    }
+
+    constexpr int kBlock = 512;
+    const juce::File bundle { juce::String (path) };
+
+    duskstudio::clap::NativeClapSlot a;
+    std::string err;
+    REQUIRE (a.load (bundle, 48000.0, kBlock, err));
+
+    std::vector<uint8_t> blob;
+    if (! a.saveState (blob))
+    {
+        SUCCEED ("plugin has no CLAP state extension — nothing to round-trip");
+        return;
+    }
+    REQUIRE_FALSE (blob.empty());
+
+    // Restore into a fresh slot and confirm it loads + processes finite audio.
+    duskstudio::clap::NativeClapSlot b;
+    REQUIRE (b.load (bundle, 48000.0, kBlock, err));
+    REQUIRE (b.loadState (blob));
+
+    std::vector<float> inL ((size_t) kBlock, 0.1f), inR ((size_t) kBlock, 0.1f),
+                       outL ((size_t) kBlock), outR ((size_t) kBlock);
+    for (int blk = 0; blk < 8; ++blk)
+        b.processStereo (inL.data(), inR.data(), outL.data(), outR.data(), kBlock);
+    for (int i = 0; i < kBlock; ++i)
+    {
+        REQUIRE (std::isfinite (outL[(size_t) i]));
+        REQUIRE (std::isfinite (outR[(size_t) i]));
+    }
+}

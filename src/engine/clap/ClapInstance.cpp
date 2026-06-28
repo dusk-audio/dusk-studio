@@ -4,6 +4,7 @@
 #include <clap/clap.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <cstring>
 #include <string>
 
@@ -103,6 +104,48 @@ void ClapInstance::deactivate()
             plugin->deactivate (plugin);
     }
     active = false;
+}
+
+bool ClapInstance::saveState (std::vector<uint8_t>& out) const
+{
+    out.clear();
+    if (plugin == nullptr) return false;
+    const auto* st = static_cast<const clap_plugin_state_t*> (
+        plugin->get_extension (plugin, CLAP_EXT_STATE));
+    if (st == nullptr || st->save == nullptr) return false;
+
+    clap_ostream_t os {};
+    os.ctx   = &out;
+    os.write = [] (const clap_ostream_t* s, const void* buffer, uint64_t size) -> int64_t
+    {
+        auto* v = static_cast<std::vector<uint8_t>*> (s->ctx);
+        const auto* b = static_cast<const uint8_t*> (buffer);
+        v->insert (v->end(), b, b + size);
+        return (int64_t) size;
+    };
+    return st->save (plugin, &os);
+}
+
+bool ClapInstance::loadState (const std::vector<uint8_t>& in)
+{
+    if (plugin == nullptr || in.empty()) return false;
+    const auto* st = static_cast<const clap_plugin_state_t*> (
+        plugin->get_extension (plugin, CLAP_EXT_STATE));
+    if (st == nullptr || st->load == nullptr) return false;
+
+    struct ReadCursor { const uint8_t* data; size_t size; size_t pos; };
+    ReadCursor cur { in.data(), in.size(), 0 };
+
+    clap_istream_t is {};
+    is.ctx  = &cur;
+    is.read = [] (const clap_istream_t* s, void* buffer, uint64_t size) -> int64_t
+    {
+        auto* c = static_cast<ReadCursor*> (s->ctx);
+        const size_t n = std::min ((size_t) size, c->size - c->pos);
+        if (n > 0) { std::memcpy (buffer, c->data + c->pos, n); c->pos += n; }
+        return (int64_t) n;   // 0 = EOF
+    };
+    return st->load (plugin, &is);
 }
 
 void ClapInstance::processStereo (const float* inL, const float* inR,

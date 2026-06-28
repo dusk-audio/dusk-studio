@@ -44,6 +44,13 @@ public:
     void processStereo (const float* inL, const float* inR,
                         float* outL, float* outR, int numFrames) noexcept;
 
+    // Message thread: serialise / restore the plugin's state via the CLAP state
+    // extension. saveState appends the plugin's blob to `out`; loadState feeds `in`
+    // back. False if the plugin has no state extension or the call fails. Used for
+    // session persistence of a native CLAP.
+    bool saveState (std::vector<uint8_t>& out) const;
+    bool loadState (const std::vector<uint8_t>& in);
+
     bool isCreated()      const noexcept { return plugin != nullptr; }
     bool isActive()       const noexcept { return active; }
     int  inputChannels()  const noexcept { return inCh; }

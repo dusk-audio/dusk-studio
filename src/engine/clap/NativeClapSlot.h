@@ -6,8 +6,10 @@
 #include <juce_core/juce_core.h>
 
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace duskstudio::clap
 {
@@ -33,6 +35,11 @@ public:
 
     bool isLoaded() const noexcept { return ready.load (std::memory_order_acquire); }
     const juce::String& getPath() const noexcept { return loadedPath; }
+
+    // Message thread: serialise / restore the loaded plugin's state for session
+    // persistence. No-op (false) when nothing is loaded.
+    bool saveState (std::vector<uint8_t>& out) const;
+    bool loadState (const std::vector<uint8_t>& in);
 
     // Audio thread: process stereo through the plugin; clears the outputs + returns
     // when no plugin is loaded.
