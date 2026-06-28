@@ -399,7 +399,7 @@ public:
             const int   nDots   = 11;
             const float dotRing = R * 0.965f;
             const float dotSz   = juce::jmax (0.9f, R * 0.06f);
-            g.setColour (juce::Colour (0xff6a6a72));
+            g.setColour (juce::Colour (0xffc8c8d2));   // light marker — high contrast on the dark margin
             for (int i = 0; i < nDots; ++i)
             {
                 const float t = (float) i / (float) (nDots - 1);
