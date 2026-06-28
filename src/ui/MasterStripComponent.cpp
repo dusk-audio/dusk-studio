@@ -1002,7 +1002,7 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     faderSlider.setVelocityModeParameters (1.0, 1, 0.0, true);
     auto formatFaderDb = [] (double db) -> juce::String
     {
-        return (db <= -89.95) ? juce::String ("off")
+        return (db <= -89.95) ? juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x9e"))
                               : juce::String (db, 1);
     };
     faderSlider.onValueChange = [this, formatFaderDb]
@@ -1223,7 +1223,7 @@ void MasterStripComponent::timerCallback()
         {
             displayedLiveFaderDb = live;
             faderSlider.setValue (live, juce::dontSendNotification);
-            faderValueLabel.setText ((live <= -89.95f) ? juce::String ("off")
+            faderValueLabel.setText ((live <= -89.95f) ? juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x9e"))
                                                        : juce::String (live, 1),
                                        juce::dontSendNotification);
         }
@@ -1572,9 +1572,11 @@ void MasterStripComponent::paint (juce::Graphics& g)
 
             g.setColour (isZero ? juce::Colour (0xffffffff)
                                 : juce::Colour (0xffb8b8c0));
-            const juce::Font font (juce::FontOptions (10.5f, juce::Font::plain));
+            // ∞ renders visually smaller than the digits at a given point size,
+            // so upsize it to match their height.
+            const juce::Font font (juce::FontOptions (isBottom ? 16.0f : 10.5f, juce::Font::plain));
             g.setFont (font);
-            const juce::String label = isBottom ? juce::String ("off")
+            const juce::String label = isBottom ? juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x9e"))   /* ∞ = -inf dB / fully off */
                                                 : juce::String (t.label);
             const float ascent  = font.getAscent();
             const float descent = font.getDescent();
