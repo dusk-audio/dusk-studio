@@ -1,5 +1,6 @@
 #include "DuskStudioApp.h"
 #include "ui/AppConfig.h"
+#include "ui/ClapPluginEditorComponent.h"
 #include "ui/ConsoleView.h"
 #include "ui/MainComponent.h"
 #include "ui/WindowState.h"
@@ -968,6 +969,33 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
         runHeadlessSessionPerf (juce::String (path));
         quit();
         return;
+    }
+
+    // DUSKSTUDIO_CLAP_EDITOR_TEST=/path/to.clap — standalone live-verification of
+    // the native CLAP editor embed (no engine, no main window). Opens the plugin's
+    // embedded-X11 editor through our own host in a plain window. Close it to quit.
+    if (const char* path = std::getenv ("DUSKSTUDIO_CLAP_EDITOR_TEST"); path != nullptr && *path)
+    {
+       #if JUCE_LINUX
+        duskstudio::platform::preferX11ForNextNativeWindow();   // editor host needs an X11 peer
+       #endif
+        auto comp = std::make_unique<duskstudio::ClapPluginEditorComponent>();
+        juce::String err;
+        if (! comp->load (juce::File (juce::String (path)), err))
+        {
+            std::fprintf (stderr, "[clap editor test] load failed: %s\n", err.toRawUTF8());
+            quit();
+            return;
+        }
+        const int w = juce::jmax (200, comp->getWidth());
+        const int h = juce::jmax (200, comp->getHeight());
+        clapEditorTestWindow = std::make_unique<juce::DocumentWindow> (
+            "Dusk — CLAP editor test", juce::Colours::black, juce::DocumentWindow::allButtons);
+        clapEditorTestWindow->setUsingNativeTitleBar (true);
+        clapEditorTestWindow->setContentOwned (comp.release(), true);
+        clapEditorTestWindow->centreWithSize (w, h);
+        clapEditorTestWindow->setVisible (true);
+        return;   // standalone — skip the normal engine + main-window startup
     }
 
     // DUSKSTUDIO_REPLACE_TEST=A.vst3:B.vst3 — exercises the Replace plugin...

@@ -43,6 +43,10 @@ public:
     int  inputChannels()  const noexcept { return inCh; }
     int  outputChannels() const noexcept { return outCh; }
 
+    // For the editor: the live plugin + the host that owns its callback/pump state.
+    const ::clap_plugin* getPlugin() const noexcept { return plugin; }
+    ClapHost&            getHost()         noexcept  { return hostObj; }
+
 private:
     ClapHost hostObj;
     const ::clap_plugin* plugin = nullptr;
