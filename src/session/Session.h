@@ -52,8 +52,11 @@ struct AutomationPoint
 
     bool operator== (const AutomationPoint& o) const noexcept
     {
-        return timeSamples == o.timeSamples && value == o.value
-            && recordedAtBPM == o.recordedAtBPM;
+        // Bit-exact compares (juce::exactlyEqual) — these are value-identity checks, not
+        // tolerance compares, and exactlyEqual silences -Wfloat-equal (a CI -Werror).
+        return timeSamples == o.timeSamples
+            && juce::exactlyEqual (value, o.value)
+            && juce::exactlyEqual (recordedAtBPM, o.recordedAtBPM);
     }
     bool operator!= (const AutomationPoint& o) const noexcept { return ! (*this == o); }
 };
