@@ -46,8 +46,8 @@ TEST_CASE ("SessionSerializer::load clamps corrupt automation + EQ values",
         {
           "automation": {
             "fader_db": [
-              { "t": -48000, "v": 5.0,  "bpm": 1e999 },
-              { "t": 96000,  "v": 0.25, "bpm": 120.0 }
+              { "t": 96000,  "v": 0.25, "bpm": 120.0 },
+              { "t": -48000, "v": 5.0,  "bpm": 1e999 }
             ]
           },
           "eq": {
@@ -59,6 +59,12 @@ TEST_CASE ("SessionSerializer::load clamps corrupt automation + EQ values",
     )JSON");
 
     Session s;
+    // Seed an explicit, non-default session tempo so the per-point bpm fallback is
+    // tested against a known value rather than coupling the assertion to whatever the
+    // Session default tempo happens to be. The fixture JSON sets no transport tempo,
+    // so this seeded value survives the load and is what the corrupt (+inf) point
+    // falls back to.
+    s.tempoBpm.store (100.0f);
     REQUIRE (SessionSerializer::load (s, target));
 
     const auto& pts = s.track (0).automationLanes[(size_t) AutomationParam::FaderDb].pointsConst();
@@ -75,9 +81,9 @@ TEST_CASE ("SessionSerializer::load clamps corrupt automation + EQ values",
     REQUIRE_THAT (pts[0].value, WithinAbs (1.0f, 1e-6f));
     REQUIRE_THAT (pts[1].value, WithinAbs (0.25f, 1e-6f));
 
-    // Non-finite bpm rejected — falls back to the session tempo (default 120).
+    // Non-finite bpm rejected — falls back to the seeded session tempo (100).
     REQUIRE (std::isfinite (pts[0].recordedAtBPM));
-    REQUIRE_THAT (pts[0].recordedAtBPM, WithinAbs (120.0f, 1e-3f));
+    REQUIRE_THAT (pts[0].recordedAtBPM, WithinAbs (100.0f, 1e-3f));
 
     // Non-finite EQ gain rejected — the in-memory default (0 dB) is kept.
     const float lmGain = s.track (0).strip.lmGainDb.load();

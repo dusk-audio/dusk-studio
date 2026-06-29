@@ -2349,8 +2349,9 @@ bool AudioRegionEditor::cutRange()
     }
     um.perform (new DeleteRegionAction (session, engine, trackIdx, deleteIdx));
     rangeActive = false;
-    refreshStatusBarReadouts();
-    repaint();
+    // The active slice was just removed — reanchor regionIdx onto a survivor (or
+    // close) so it isn't left pointing at a deleted region.
+    reanchorOrClose();
     return true;
 }
 
@@ -2810,6 +2811,10 @@ bool AudioRegionEditor::keyPressed (const juce::KeyPress& k)
         auto& um = engine.getUndoManager();
 
         if (cutRange()) return true;
+        // A range was selected but cutRange() refused it (locked region / frozen
+        // track). Don't fall through to the whole-region delete below — that would
+        // nuke the entire region on a Ctrl+X the user meant as a no-op range cut.
+        if (rangeActive) return true;
 
         // Whole-region cut. Editor closes (its anchor region is gone).
         clip.region      = *r;
@@ -2884,28 +2889,11 @@ bool AudioRegionEditor::keyPressed (const juce::KeyPress& k)
                 }
                 um.perform (new DeleteRegionAction (session, engine, trackIdx, deleteIdx));
                 rangeActive = false;
-                refreshStatusBarReadouts();
-                repaint();
+                reanchorOrClose();
             }
             return true;   // range selected → Delete acts on the range (consume the key)
         }
         auto& um = engine.getUndoManager();
-        // After deleting, keep the editor open on a surviving region (e.g. the
-        // other half after a split) by re-anchoring regionIdx; only close when
-        // the track has no regions left to edit.
-        auto reanchorOrClose = [this]
-        {
-            additionalSelectedRegions.clear();
-            const int total = (int) session.track (trackIdx).regions.size();
-            if (total <= 0)
-            {
-                if (onCloseRequested) onCloseRequested();
-                return;
-            }
-            regionIdx = juce::jlimit (0, total - 1, regionIdx);
-            refreshStatusBarReadouts();
-            repaint();
-        };
 
         // Multi-select Delete: remove every additional region first
         // (descending index order so earlier deletes don't shift later
@@ -3368,6 +3356,27 @@ juce::String formatBarBeatTickAt (juce::int64 sliceFileSample,
     return juce::String ((int) bar + 1) + "."
          + juce::String ((int) beat + 1) + "."
          + juce::String (juce::jlimit (0, 999, sub)).paddedLeft ('0', 3);
+}
+
+void AudioRegionEditor::reanchorOrClose()
+{
+    additionalSelectedRegions.clear();
+    const int total = (int) session.track (trackIdx).regions.size();
+    if (total <= 0)
+    {
+        if (onCloseRequested) onCloseRequested();
+        return;
+    }
+    regionIdx = juce::jlimit (0, total - 1, regionIdx);
+    // Keep the edit cursor inside the surviving region's source range. A left-edge
+    // delete shifts the survivor's sourceOffset / length, so the prior cursor can fall
+    // outside the new audio and mis-align a subsequent split / paste.
+    if (auto* r = region())
+        editCursorSample = juce::jlimit (r->sourceOffset,
+                                          r->sourceOffset + r->lengthInSamples,
+                                          editCursorSample);
+    refreshStatusBarReadouts();
+    repaint();
 }
 
 void AudioRegionEditor::refreshStatusBarReadouts()

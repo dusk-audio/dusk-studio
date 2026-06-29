@@ -167,6 +167,7 @@ void MasteringEqEditor::rebuildKnobValues()
         lastQ   [(size_t) i] = params.eqBandQ[i]      .load (std::memory_order_relaxed);
     }
     lastEnabled = params.eqEnabled.load (std::memory_order_relaxed);
+    lastScopeSampleRate = (chain != nullptr) ? chain->getScopeSampleRate() : 0.0;
 }
 
 void MasteringEqEditor::timerCallback()
@@ -185,6 +186,11 @@ void MasteringEqEditor::timerCallback()
     const bool en = params.eqEnabled.load (std::memory_order_relaxed);
     const bool enabledChanged = (en != lastEnabled);
     if (enabledChanged) changed = true;
+
+    // Re-evaluate the curve when the audio device's scope rate changes (bandResponseDb
+    // depends on it), even if no band parameter moved.
+    const double scopeSr = (chain != nullptr) ? chain->getScopeSampleRate() : 0.0;
+    if (scopeSr != lastScopeSampleRate) changed = true;
 
     if (changed)
     {

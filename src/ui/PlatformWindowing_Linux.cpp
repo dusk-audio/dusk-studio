@@ -195,6 +195,15 @@ void bringWindowToFront (juce::ComponentPeer& peer)
                    SubstructureRedirectMask | SubstructureNotifyMask,
                    &act);
 
+    // EWMH activate marks the window as the X focus target, but Mutter's XWayland
+    // bridge doesn't actually route keyboard input to it until the user clicks —
+    // so every widget needs two clicks (first focuses, second hits). Force input
+    // focus directly. Guard on viewability: XSetInputFocus on an unmapped window
+    // is a BadMatch.
+    ::XWindowAttributes attrs {};
+    if (::XGetWindowAttributes (d, win, &attrs) != 0 && attrs.map_state == IsViewable)
+        ::XSetInputFocus (d, win, RevertToParent, CurrentTime);
+
     ::XFlush (d);
 }
 

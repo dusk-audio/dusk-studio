@@ -208,6 +208,11 @@ void MiniTimelineStrip::mouseMove (const juce::MouseEvent& ev)
 
 void MiniTimelineStrip::timerCallback()
 {
+    // Collapsed timeline: the strip is hidden but the timer keeps firing. The content
+    // signature below scans every track's regions + markers, so skip it entirely when
+    // off-screen — nothing to repaint, and it re-syncs on the next visible tick.
+    if (! isShowing()) return;
+
     bool dirty = false;
 
     // Repaint on playhead motion.

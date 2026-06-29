@@ -127,7 +127,7 @@ void BrickwallLimiter::reset() noexcept
 
 void BrickwallLimiter::processInPlace (float* L, float* R, int numSamples) noexcept
 {
-    if (oversampler == nullptr || bufLen == 0 || numSamples == 0)
+    if (oversampler == nullptr || bufLen == 0 || numSamples <= 0 || L == nullptr || R == nullptr)
         return;
 
     juce::ScopedNoDenormals noDenormals;

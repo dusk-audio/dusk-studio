@@ -171,13 +171,14 @@ void MasteringLimiterEditor::timerCallback()
             releaseKnob.setValue (rel, juce::dontSendNotification);
     }
 
-    if (! lookaheadKnob.isMouseButtonDown())
+    const bool editingLookahead = lookaheadKnob.isMouseButtonDown()
+                               || lookaheadKnob.hasKeyboardFocus (true);
+    if (! editingLookahead)
     {
         const float la = params.limiterLookaheadMs.load (std::memory_order_relaxed);
         if (std::abs ((float) lookaheadKnob.getValue() - la) > 0.01f)
             lookaheadKnob.setValue (la, juce::dontSendNotification);
     }
-
     const float gr = limiter.getCurrentGrDb();
     if (gr < displayedGrDb) displayedGrDb = gr;
     else                    displayedGrDb += (gr - displayedGrDb) * 0.18f;

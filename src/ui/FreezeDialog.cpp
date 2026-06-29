@@ -57,7 +57,11 @@ FreezeDialog::FreezeDialog (AudioEngine& e, Session& s,
 
     titleLabel.setText ("Freezing " + session.track (trackIndex).name + "...",
                          juce::dontSendNotification);
-    statusLabel.setText ("Rendering instrument + EQ + comp to audio...",
+    const bool isMidi = session.track (trackIndex).mode.load (std::memory_order_relaxed)
+                          == (int) Track::Mode::Midi;
+    statusLabel.setText (isMidi
+                             ? "Rendering instrument + insert + EQ + comp to audio..."
+                             : "Rendering insert + EQ + comp to audio...",
                          juce::dontSendNotification);
 
     // Async render on the worker thread; the timer polls progress. No worker→UI
@@ -66,7 +70,12 @@ FreezeDialog::FreezeDialog (AudioEngine& e, Session& s,
     if (! bounceEngine->startFreeze (trackIndex, outFile, lenSamples,
                                       engine.getCurrentSampleRate()))
     {
-        failBeforeStart ("Freeze failed", "A render is already in progress.");
+        // Surface the engine's actual start-failure reason (e.g. "Could not start the
+        // freeze render thread"); only fall back to the generic message if it's empty.
+        const auto startErr = bounceEngine->getLastError();
+        failBeforeStart ("Freeze failed",
+                         startErr.isNotEmpty() ? startErr
+                                               : juce::String ("A render is already in progress."));
         return;
     }
 

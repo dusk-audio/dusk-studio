@@ -575,7 +575,8 @@ bool BounceEngine::startFreeze (int trackIndex, const juce::File& outFile,
         return false;
 
     outputFile       = outFile;
-    renderSampleRate = (sampleRate > 0.0) ? sampleRate : renderSampleRate;
+    renderSampleRate = (sampleRate > 0.0) ? sampleRate : engine.getCurrentSampleRate();
+    if (renderSampleRate <= 0.0) renderSampleRate = 48000.0;
     renderBlockSize  = juce::jmax (16, blockSize);
     renderMode       = Mode::FreezeTrack;
     renderFormat     = Format::Wav;
@@ -604,6 +605,11 @@ bool BounceEngine::startFreeze (int trackIndex, const juce::File& outFile,
 bool BounceEngine::renderFreezeTrack (int trackIndex, const juce::File& outFile,
                                       juce::int64 lenSamples, double sampleRate, int blockSize)
 {
+    // Clear any stale error from a prior render at the API boundary: a direct
+    // synchronous call (test harness) doesn't go through startFreeze (which clears
+    // it), so getLastError() must reflect THIS render's outcome, not the last one.
+    { const juce::ScopedLock lock (lastErrorLock); lastError.clear(); }
+
     // Caller (startFreeze / run, or a direct synchronous test) owns the
     // rendering + cancelRequested flags; this method only does the render.
     if (trackIndex < 0 || trackIndex >= Session::kNumTracks || lenSamples <= 0)
@@ -688,8 +694,8 @@ bool BounceEngine::renderFreezeTrack (int trackIndex, const juce::File& outFile,
     // Same PDC lead-in trim as the stems: the strip path delays the signal by
     // the deepest track latency. Drop those leading samples so the WAV starts
     // at timeline 0; the live PDC re-applies on frozen playback.
-    const juce::int64 leadIn   = (juce::int64) engine.getAggregatePdcLatencySamples();
-    const juce::int64 toRender = lenSamples + leadIn;
+    const juce::int64 leadIn   = 0;
+    const juce::int64 toRender = lenSamples;
 
     juce::int64 done = 0, written = 0, dropped = 0;
     bool ok = true;

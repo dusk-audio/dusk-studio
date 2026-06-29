@@ -112,5 +112,8 @@ private:
     std::array<float, 5> lastGain {};
     std::array<float, 5> lastQ    {};
     bool lastEnabled = false;
+    // bandResponseDb() evaluates at the chain's scope sample rate; a device-rate
+    // switch with no param change would otherwise leave the drawn curve stale.
+    double lastScopeSampleRate = 0.0;
 };
 } // namespace duskstudio

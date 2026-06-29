@@ -66,6 +66,7 @@ bool RegionEditAction::perform()
 bool RegionEditAction::undo()
 {
     if (! indexValid (session, trackIdx, regionIdx)) return false;
+    if (frozenLocked (session, trackIdx)) return false;
     session.track (trackIdx).regions[(size_t) regionIdx] = beforeState;
     rebuildPlaybackIfStopped (engine);
     return true;
@@ -94,6 +95,7 @@ bool MidiRegionEditAction::perform()
 bool MidiRegionEditAction::undo()
 {
     if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return false;
+    if (frozenLocked (session, trackIdx)) return false;
     auto& v = session.track (trackIdx).midiRegions.currentMutable();
     if (regionIdx < 0 || regionIdx >= (int) v.size()) return false;
     v[(size_t) regionIdx] = beforeState;
@@ -148,6 +150,7 @@ bool SplitRegionAction::perform()
 bool SplitRegionAction::undo()
 {
     if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return false;
+    if (frozenLocked (session, trackIdx)) return false;
     auto& regs = session.track (trackIdx).regions;
 
     // Remove the right half (idx+1) and restore the left to its full extent.
@@ -184,6 +187,7 @@ bool PasteRegionAction::undo()
 {
     if (insertedAt < 0) return false;
     if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return false;
+    if (frozenLocked (session, trackIdx)) return false;
     auto& regs = session.track (trackIdx).regions;
     if (insertedAt >= (int) regs.size()) return false;
     regs.erase (regs.begin() + insertedAt);
@@ -229,6 +233,7 @@ bool CreateMidiRegionAction::perform()
 bool CreateMidiRegionAction::undo()
 {
     if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return false;
+    if (frozenLocked (session, trackIdx)) return false;
     if (insertedAt < 0) return false;
 
     bool removed = false;
@@ -268,6 +273,7 @@ bool DeleteRegionAction::undo()
 {
     if (! haveRemoved) return false;
     if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return false;
+    if (frozenLocked (session, trackIdx)) return false;
     auto& regs = session.track (trackIdx).regions;
 
     const int insertAt = juce::jmin (regionIdx, (int) regs.size());
@@ -300,6 +306,7 @@ bool DeleteMidiRegionAction::undo()
 {
     if (! haveRemoved) return false;
     if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return false;
+    if (frozenLocked (session, trackIdx)) return false;
     auto& v = session.track (trackIdx).midiRegions.currentMutable();
     const int insertAt = juce::jmin (regionIdx, (int) v.size());
     v.insert (v.begin() + insertAt, removed);
@@ -563,6 +570,10 @@ bool CloneTrackAction::undo()
 {
     if (beforeState == nullptr) return false;
     if (dstIdx < 0 || dstIdx >= Session::kNumTracks) return false;
+    // The Impl snapshot doesn't carry frozen state, so restoring beforeState onto a
+    // now-frozen destination would desync its baked WAV. Refuse — mirrors perform()'s
+    // frozen guard. Unfreeze first to undo.
+    if (session.track (dstIdx).frozen.load (std::memory_order_relaxed)) return false;
     applyTrack (session.track (dstIdx), engine, dstIdx, *beforeState);
     rebuildPlaybackIfStopped (engine);
     return true;
@@ -758,6 +769,7 @@ bool JoinRegionsAction::perform()
 bool JoinRegionsAction::undo()
 {
     if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return false;
+    if (frozenLocked (session, trackIdx)) return false;
     if (resultInsertedAt < 0) return false;
     auto& regs = session.track (trackIdx).regions;
     if (resultInsertedAt >= (int) regs.size()) return false;
@@ -849,7 +861,11 @@ bool ReverseRegionAction::perform()
         std::unique_ptr<juce::AudioFormatReader> rdr (fm.createReaderFor (beforeState.file));
         if (rdr == nullptr) return false;
 
-        const int chs = juce::jmax (1, (int) beforeState.numChannels);
+        // Bound the channel count: corrupt session data could carry a wild
+        // numChannels and blow up the buffer allocation. Cap to 1-2 (the app is
+        // stereo-max) and to what the reader actually has.
+        const int chs = juce::jlimit (1, juce::jmin (2, (int) rdr->numChannels),
+                                       (int) beforeState.numChannels);
         const juce::int64 len = juce::jlimit<juce::int64> (
             1, std::numeric_limits<int>::max(), beforeState.lengthInSamples);
         const double sr   = rdr->sampleRate;
@@ -914,6 +930,7 @@ bool ReverseRegionAction::perform()
 bool ReverseRegionAction::undo()
 {
     if (! indexValid (session, trackIdx, regionIdx)) return false;
+    if (frozenLocked (session, trackIdx)) return false;
     session.track (trackIdx).regions[(size_t) regionIdx] = beforeState;
     rebuildPlaybackIfStopped (engine);
     return true;

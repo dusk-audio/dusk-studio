@@ -286,6 +286,11 @@ private:
     void layoutStatusBar (juce::Rectangle<int>);
     void refreshStatusBarReadouts();
 
+    // After a delete, keep the editor open on a surviving region by re-anchoring
+    // regionIdx, or close when the track has no regions left. Shared by the
+    // keyboard-Delete and range-Cut paths so neither leaves regionIdx dangling.
+    void reanchorOrClose();
+
     // Honours session.audioEditorSnap + active snapResolution. bypass
     // short-circuits to input (Cmd-bypass during drags). Shared so
     // every gesture lands on the same grid.

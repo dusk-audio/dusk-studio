@@ -162,7 +162,9 @@ TEST_CASE ("MasteringDigitalEq per-block param re-push is inert", "[mastering][e
         every.processInPlace (lb.data(), rb.data(), 256);
 
         for (int i = 0; i < 256; ++i)
-            if (! juce::exactlyEqual (la[(size_t) i], lb[(size_t) i])) { identical = false; break; }
+            if (! juce::exactlyEqual (la[(size_t) i], lb[(size_t) i])
+                || ! juce::exactlyEqual (ra[(size_t) i], rb[(size_t) i]))
+            { identical = false; break; }
         if (! identical) break;
     }
     REQUIRE (identical);

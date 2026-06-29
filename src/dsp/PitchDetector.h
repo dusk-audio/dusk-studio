@@ -106,11 +106,10 @@ public:
                 bestValue = cmnd;
                 bestTau   = tau;
             }
-            else if (cmnd < bestValue)            // pre-dip: keep global min as fallback
-            {
-                bestValue = cmnd;
-                bestTau   = tau;
-            }
+            // No pre-dip fallback: committing the global CMNDF minimum even when nothing
+            // ever crosses the threshold defeats YIN's voicing gate — aperiodic / noisy
+            // input would report a bogus pitch. bestTau stays -1 until a real dip, so
+            // unvoiced input falls through to the 0 Hz return below.
         }
 
         if (bestTau < 0)

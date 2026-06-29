@@ -565,10 +565,14 @@ void AnalogVuMeter::rebuildCachedFace()
 
 void AnalogVuMeter::paint (juce::Graphics& g)
 {
-    // Blit the physical-resolution cache back to logical bounds 1:1 so it stays
-    // crisp on HiDPI (cache was rasterised at lastScale in rebuildCachedFace).
-    if (cachedFace.isValid())
-        g.drawImageTransformed (cachedFace, juce::AffineTransform::scale (1.0f / lastScale));
+    // Blit the physical-resolution cache back to logical bounds so it stays crisp on
+    // HiDPI. Derive the inverse scale from the cache's ACTUAL pixel dimensions vs the
+    // logical size — the cache size was rounded to integer px in rebuildCachedFace, so
+    // 1/lastScale would be slightly off at fractional DPI and soften the blit.
+    if (cachedFace.isValid() && getWidth() > 0 && getHeight() > 0)
+        g.drawImageTransformed (cachedFace, juce::AffineTransform::scale (
+            (float) getWidth()  / (float) cachedFace.getWidth(),
+            (float) getHeight() / (float) cachedFace.getHeight()));
 
     auto drawNeedle = [&] (float angleFrac, juce::Colour c, float thickness)
     {

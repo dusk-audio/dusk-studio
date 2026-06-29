@@ -63,6 +63,16 @@ TEST_CASE ("MTC round-trip: a 24h playhead decodes back to ~0", "[mtc][smpte][wr
 
     juce::MidiBuffer buf;
     e.generateBlock (0, 512, playhead, true, MidiTimeCodeReceiver::Fps30, buf);
+
+    // Assert emission, not just receiver state: without a startup full-frame SysEx the
+    // receiver stays near its initial zero and the frame check below would pass for the
+    // wrong reason (nothing was sent).
+    bool hasFullFrame = false;
+    for (const auto m : buf)
+        if (m.getMessage().isSysEx() && m.getMessage().getRawDataSize() >= 6)
+        { hasFullFrame = true; break; }
+    REQUIRE (hasFullFrame);
+
     rx.process (buf, 0, 512);
 
     // The full-frame sysex carried wrapped 00:00:00:00, so the receiver's

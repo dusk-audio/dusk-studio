@@ -40,9 +40,10 @@ void writeTestWav (const juce::File& outFile, double sampleRate,
 
 // Build a minimal valid 2996-byte song.sys: "DP-24   " magic + 24 strip
 // records that satisfy the importer's sentinel/format check. fader and pan
-// bytes default to unity (0x69) / centre (0x40).
+// bytes default to calibrated unity 0 dB (0x6A = 106) / centre (0x40). 0x69 is the
+// DP-24 power-on default, which the importer maps slightly below 0 dB — not unity.
 void writeSongSys (const juce::File& f,
-                   juce::uint8 fader0 = 0x69, juce::uint8 pan0 = 0x40)
+                   juce::uint8 fader0 = 0x6A, juce::uint8 pan0 = 0x40)
 {
     juce::MemoryBlock mb;
     mb.setSize (2996, true);

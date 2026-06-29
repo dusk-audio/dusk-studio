@@ -37,7 +37,7 @@ TEST_CASE ("SessionSerializer round-trips track freeze state", "[session][serial
 
     SECTION ("frozen track with a present WAV reloads frozen + region intact")
     {
-        wav.replaceWithText ("not really audio, but existsAsFile() is all the loader checks");
+        REQUIRE (wav.replaceWithText ("not really audio, but existsAsFile() is all the loader checks"));
 
         Session a;
         auto& t0 = a.track (0);
@@ -80,7 +80,13 @@ TEST_CASE ("SessionSerializer round-trips track freeze state", "[session][serial
 
         Session b;
         REQUIRE (SessionSerializer::load (b, target));
-        REQUIRE_FALSE (b.track (0).frozen.load (std::memory_order_relaxed));
+        auto& r = b.track (0);
+        REQUIRE_FALSE (r.frozen.load (std::memory_order_relaxed));
+        // Dropping the flag isn't enough — the stale baked-WAV payload must be reset too,
+        // or a later re-freeze / save could resurrect the missing file.
+        REQUIRE (r.frozenAudioPath.isEmpty());
+        REQUIRE (r.frozenRegion.file == juce::File());
+        REQUIRE (r.frozenRegion.lengthInSamples == 0);
     }
 
     dir.deleteRecursively();

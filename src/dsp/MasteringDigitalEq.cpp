@@ -5,8 +5,11 @@ namespace duskstudio
 void MasteringDigitalEq::prepare (double sampleRate, int blockSize)
 {
     // The biquads run oversampled, so their coefficients are computed (and the
-    // filters prepared) at the oversampled rate.
-    sr = sampleRate * (double) kOversample;
+    // filters prepared) at the oversampled rate. Clamp the base rate first: a 0 or
+    // non-finite sampleRate from a bad device-rate transition would otherwise poison
+    // sr (and the oversampler / ProcessSpec) — mirrors the BounceEngine fallback.
+    const double baseSr = (sampleRate > 0.0 && std::isfinite (sampleRate)) ? sampleRate : 48000.0;
+    sr = baseSr * (double) kOversample;
     const int bs = juce::jmax (1, blockSize);
 
     // Mastering-friendly defaults - symmetric across the spectrum, every
@@ -192,7 +195,11 @@ MasteringDigitalEq::Coeffs MasteringDigitalEq::computeCoeffs (int idx, double sa
 float MasteringDigitalEq::magnitudeDb (int idx, double sampleRate,
                                        float freq, float q, float gainDb, double atHz) noexcept
 {
-    if (std::abs (gainDb) < 0.01f || sampleRate <= 0.0) return 0.0f;
+    if (std::abs (gainDb) < 0.01f
+        || sampleRate <= 0.0
+        || ! std::isfinite (sampleRate)
+        || ! std::isfinite (atHz))
+        return 0.0f;
 
     const Coeffs c = computeCoeffs (idx, sampleRate, freq, q, gainDb);
     const double w   = juce::MathConstants<double>::twoPi * atHz / sampleRate;
@@ -232,7 +239,8 @@ void MasteringDigitalEq::rebuildIfDirty (int idx) noexcept
 
 void MasteringDigitalEq::processInPlace (float* L, float* R, int numSamples) noexcept
 {
-    if (sr <= 0.0 || L == nullptr || R == nullptr || oversampler == nullptr) return;
+    if (sr <= 0.0 || numSamples <= 0 || L == nullptr || R == nullptr || oversampler == nullptr)
+        return;
 
     for (int b = 0; b < kNumBands; ++b)
         rebuildIfDirty (b);

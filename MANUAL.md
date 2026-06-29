@@ -1101,10 +1101,11 @@ A right-click on any region shows a context menu:
 - **Mute** the region (silences it without deleting it).
 - **Lock** the region (prevents accidental edits).
 - **Takes** submenu (when more than one take exists on the region).
+- **Reverse region** (non-destructive: renders a reversed copy into `takes/` and points the region at it; undoable).
 - **Color**: a palette of 8 accent hues plus **Reset to track colour**.
 - **Delete**.
 
-Reverse and Normalize are not on this menu — they live in the audio region editor (double-click the region).
+Normalize is not on this menu — it lives in the audio region editor (double-click the region).
 
 ### Take cycling
 

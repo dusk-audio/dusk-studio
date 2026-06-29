@@ -267,7 +267,7 @@ public:
     // factor. BounceEngine sets it around its render and clears it (0) before
     // the engine is re-prepared for live playback.
     void setRenderOversamplingOverride (int factor) noexcept
-        { renderOversamplingOverride.store (factor, std::memory_order_relaxed); }
+        { renderOversamplingOverride.store (juce::jmax (0, factor), std::memory_order_relaxed); }
 
     // Cross-track Plugin Delay Compensation. Reads each track's reported insert
     // latency (plugin OR hardware, gated by mode; MIDI tracks count 0 because
