@@ -13,6 +13,7 @@ class PluginSlot;
 class AuxLaneStrip;
 class AudioEngine;
 class HardwareInsertEditor;
+class ClapPluginEditorComponent;
 
 // AUX return lane. Three-column layout: aux-return strip (name, mute,
 // return fader, output meter) on the left, plugin slot in the center,
@@ -29,6 +30,12 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+
+    // Shutdown: tear down this lane's native CLAP editor(s) now, while the main peer
+    // + message loop are alive (the editor's own X11 Display close hangs if deferred
+    // to the destructor cascade). See MainComponent::beginSafeShutdown phase 4.
+    void dropAllClapEditors();
+
     void childBoundsChanged (juce::Component* child) override;
     void mouseDown (const juce::MouseEvent&) override;
     void visibilityChanged() override;
@@ -53,6 +60,8 @@ private:
     void detachEditorForSlot (int slotIdx);
     void attachHardwareInsertForSlot (int slotIdx);
     void detachHardwareInsertForSlot (int slotIdx);
+    void loadNativeClapForSlot (int slotIdx, const juce::File& clapFile);
+    void detachClapEditorForSlot (int slotIdx);
     void hideEditorsKeepingAlive();
     void layoutEditorForSlot (int slotIdx);
     void scheduleEditorRefits (int slotIdx);
@@ -120,6 +129,9 @@ private:
         //   kInsertHardware → `hwInsertEditor` (HardwareInsertEditor panel)
         std::unique_ptr<juce::AudioProcessorEditor> editor;
         std::unique_ptr<HardwareInsertEditor>       hwInsertEditor;
+        // Native CLAP editor (when strip.isNativeClapLoaded(i)); shares the lane's
+        // NativeClapSlot instance. Mutually exclusive with `editor` above.
+        std::unique_ptr<ClapPluginEditorComponent>  clapEditor;
         juce::String displayedName;
     };
     std::array<SlotUI, AuxLaneParams::kMaxLanePlugins> slots;

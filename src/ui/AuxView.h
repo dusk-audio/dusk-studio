@@ -36,6 +36,11 @@ public:
     int  getActiveLane() const noexcept { return activeLaneIndex; }
     void setActiveLane (int index);
 
+    // Shutdown: close every lane's native CLAP editor (X11 Display + host window)
+    // while the main peer + message loop are still alive. See
+    // MainComponent::beginSafeShutdown phase 4.
+    void dropAllClapEditors();
+
 private:
     void timerCallback() override;
     void promptRenameLane (int index);

@@ -26,6 +26,11 @@ bool ClapEditor::open (const ::clap_plugin* p, ClapHost& host, std::string& erro
     host.setCallbacks (this);
     created = true;
 
+    // A non-resizable plugin (u-he Satin, etc.) ABORTS if the host calls set_size on
+    // it — so we must only ever set_size when this is true, and otherwise size our host
+    // window to the plugin's own preferred size.
+    resizable = (gui->can_resize != nullptr) && gui->can_resize (p);
+
     uint32_t w = 0, h = 0;
     if (gui->get_size != nullptr && gui->get_size (p, &w, &h))
     { prefW = (int) w; prefH = (int) h; }
@@ -43,16 +48,22 @@ bool ClapEditor::embed (unsigned long parentX11, int x, int y, int w, int h, std
     const int ww = w > 0 ? w : (prefW > 0 ? prefW : 400);
     const int hh = h > 0 ? h : (prefH > 0 ? prefH : 300);
 
+    // Solid (black) background, NOT background_pixmap=None: on map the server fills
+    // the window with this pixel instead of leaving stale framebuffer behind it
+    // (otherwise the mixer underneath shows through until the plugin's child paints).
     XSetWindowAttributes swa {};
-    swa.background_pixmap = None;
-    swa.border_pixel      = 0;
-    swa.event_mask        = StructureNotifyMask;
+    swa.background_pixel = BlackPixel (dpy, DefaultScreen (dpy));
+    swa.border_pixel     = 0;
+    swa.event_mask       = StructureNotifyMask;
     hostWindow = XCreateWindow (dpy, (Window) parentX11, x, y,
                                 (unsigned) ww, (unsigned) hh, 0,
                                 CopyFromParent, InputOutput, CopyFromParent,
-                                CWBackPixmap | CWBorderPixel | CWEventMask, &swa);
-    // Deliberately NOT mapped: born as a child of the app window but hidden until
-    // reveal(), so the plugin can embed + render with no stray-window flash.
+                                CWBackPixel | CWBorderPixel | CWEventMask, &swa);
+    // Map the host window BEFORE set_parent: some plugins (u-he Satin) abort() when
+    // reparented into a non-viewable window. tryEmbed only runs when this component is
+    // on-screen, so showing the host now is correct — it sits at the lane's coords with
+    // a solid bg until the plugin paints (no stale content, no stray-window flash).
+    XMapWindow (dpy, hostWindow);
     XSync (dpy, False);
 
     clap_window_t win {};
@@ -61,12 +72,12 @@ bool ClapEditor::embed (unsigned long parentX11, int x, int y, int w, int h, std
     if (gui->set_parent == nullptr || ! gui->set_parent (plugin, &win))
     { errorOut = "gui set_parent() failed"; close(); return false; }
 
-    if (gui->set_size != nullptr) gui->set_size (plugin, (uint32_t) ww, (uint32_t) hh);
-    // show() builds + maps the plugin's own window as a child of our (still
-    // unmapped) host — invisible until reveal() maps the host.
-    if (gui->show != nullptr) gui->show (plugin);
+    if (resizable && gui->set_size != nullptr) gui->set_size (plugin, (uint32_t) ww, (uint32_t) hh);
+    if (gui->show != nullptr && ! gui->show (plugin))
+    { errorOut = "gui show() failed"; close(); return false; }
 
     embedded = true;
+    mapped   = true;
     return true;
 }
 
@@ -76,7 +87,7 @@ void ClapEditor::setBounds (int x, int y, int w, int h)
     auto* dpy = (Display*) display;
     XMoveResizeWindow (dpy, hostWindow, x, y,
                        (unsigned) std::max (1, w), (unsigned) std::max (1, h));
-    if (gui != nullptr && gui->set_size != nullptr && w > 0 && h > 0)
+    if (resizable && gui != nullptr && gui->set_size != nullptr && w > 0 && h > 0)
         gui->set_size (plugin, (uint32_t) w, (uint32_t) h);
     XFlush (dpy);
 }
@@ -99,7 +110,9 @@ void ClapEditor::hide()
 
 void ClapEditor::close()
 {
-    if (plugin != nullptr && gui != nullptr)
+    // On shutdown, leak the plugin GUI — u-he's gui->destroy hangs. Otherwise tear
+    // it down normally.
+    if (plugin != nullptr && gui != nullptr && ! leakOnClose)
     {
         if (gui->hide != nullptr)    gui->hide (plugin);
         if (gui->destroy != nullptr) gui->destroy (plugin);
@@ -108,6 +121,9 @@ void ClapEditor::close()
     if (display != nullptr)
     {
         if (hostWindow != 0) XDestroyWindow ((Display*) display, hostWindow);
+        // Let the server process the destroy (against a still-valid parent peer)
+        // before we drop this connection — avoids a cross-connection teardown hang.
+        XSync ((Display*) display, False);
         XCloseDisplay ((Display*) display);
         display = nullptr;
     }
@@ -130,8 +146,18 @@ void ClapEditor::drainPendingCallbacks()
                 gui->destroy (plugin);
             gui = nullptr;            // the GUI is gone — stop treating it as live
             created = embedded = false;
+            // The plugin tore down its own GUI; unmap our now-empty host window so it
+            // doesn't linger as a black rectangle until close(). The display + window
+            // are fully released in close().
+            hide();
         }
         if (onClosed) onClosed();
+        // The GUI is gone — drop any coalesced resize/show/hide so a queued show
+        // can't remap (or a resize can't poke) the now-empty host window.
+        pendingResize.exchange (false);
+        pendingShow.exchange (false);
+        pendingHide.exchange (false);
+        return;
     }
 
     if (pendingResize.exchange (false))

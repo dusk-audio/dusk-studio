@@ -8,6 +8,7 @@
 #include "CompMeterStrip.h"
 #include "EmbeddedModal.h"
 #include "DuskComboBox.h"
+#include "SectionPillButton.h"
 #include "../session/Session.h"
 
 namespace duskstudio
@@ -325,6 +326,12 @@ private:
     std::unique_ptr<juce::AudioProcessorEditor> pluginEditor;
     juce::AudioProcessor* pluginEditorOwner = nullptr;
 
+    // Native CLAP insert editor (shares the strip's NativeClapSlot instance). Kept
+    // alive across modal opens — showBorrowed hides on close rather than destroying
+    // (u-he hangs in gui->destroy); leaked on shutdown via dropPluginEditor.
+    std::unique_ptr<class ClapPluginEditorComponent> clapEditor;
+    void loadNativeClapForChannel (const juce::File& clapFile);
+
    #if JUCE_LINUX && DUSKSTUDIO_HAS_OOP_PLUGINS
     // OOP: child plugin's X11 Window wrapped in XEmbedComponent fed
     // to PluginEditorWindow as the body. Lifetime matches pluginEditor.
@@ -349,9 +356,9 @@ public:
 private:
 
     bool compactMode = false;
-    juce::TextButton eqCompactButton   { "EQ" };
-    juce::TextButton compCompactButton { "COMP" };
-    juce::TextButton auxCompactButton  { "AUX" };
+    SectionPillButton eqCompactButton   { "EQ" };
+    SectionPillButton compCompactButton { "COMP" };
+    juce::TextButton  auxCompactButton  { "AUX" };
     juce::Component::SafePointer<juce::CallOutBox> activeEqBox;
     juce::Component::SafePointer<juce::CallOutBox> activeCompBox;
     juce::Component::SafePointer<juce::CallOutBox> activeAuxBox;

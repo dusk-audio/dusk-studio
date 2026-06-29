@@ -6,6 +6,13 @@
 
 namespace duskstudio::clap
 {
+bool PluginDesc::isInstrument() const
+{
+    for (const auto& f : features)
+        if (f == CLAP_PLUGIN_FEATURE_INSTRUMENT) return true;
+    return false;
+}
+
 ClapBundle::~ClapBundle() { unload(); }
 
 bool ClapBundle::load (const std::string& path, std::string& errorOut)
@@ -51,6 +58,9 @@ bool ClapBundle::load (const std::string& path, std::string& errorOut)
         pd.vendor      = d->vendor      != nullptr ? d->vendor      : "";
         pd.version     = d->version     != nullptr ? d->version     : "";
         pd.description = d->description != nullptr ? d->description : "";
+        if (d->features != nullptr)
+            for (const char* const* f = d->features; *f != nullptr; ++f)
+                pd.features.emplace_back (*f);
         descriptors.push_back (std::move (pd));
     }
     return true;

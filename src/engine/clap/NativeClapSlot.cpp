@@ -31,11 +31,27 @@ bool NativeClapSlot::load (const juce::File& path, double sampleRate, int maxBlo
     return true;
 }
 
+bool NativeClapSlot::reactivate (double sampleRate, int maxBlock, std::string& errorOut)
+{
+    if (instance == nullptr) { errorOut = "no instance"; return false; }
+    // `ready`/`instance` are unchanged across the call; the audio thread (fenced by the
+    // engine gate) sees active==false mid-swap and no-ops, then resumes after activate.
+    return instance->reactivate (sampleRate, maxBlock, errorOut);
+}
+
 void NativeClapSlot::unload()
 {
     ready.store (false, std::memory_order_release);
     instance.reset();   // destroys the plugin first (deactivate → destroy)
     bundle.reset();     // then unloads the .so
+    loadedPath.clear();
+}
+
+void NativeClapSlot::leakForShutdown() noexcept
+{
+    ready.store (false, std::memory_order_release);
+    (void) instance.release();   // leak: skip deactivate/plugin->destroy
+    (void) bundle.release();     //       and dlclose — u-he hangs there
     loadedPath.clear();
 }
 
@@ -58,6 +74,24 @@ void NativeClapSlot::processStereo (const float* inL, const float* inR,
         {
             if (outL != nullptr) std::memset (outL, 0, sizeof (float) * (size_t) numFrames);
             if (outR != nullptr) std::memset (outR, 0, sizeof (float) * (size_t) numFrames);
+        }
+        return;
+    }
+    if (bypassed.load (std::memory_order_relaxed))
+    {
+        // Passthrough — copy in→out (a no-op when called in-place).
+        if (numFrames > 0)
+        {
+            if (inL == nullptr)
+            {
+                if (outL != nullptr) std::memset (outL, 0, sizeof (float) * (size_t) numFrames);
+                if (outR != nullptr) std::memset (outR, 0, sizeof (float) * (size_t) numFrames);
+                return;
+            }
+            const size_t n = sizeof (float) * (size_t) numFrames;
+            if (outL != nullptr && outL != inL) std::memcpy (outL, inL, n);
+            const float* r = (inR != nullptr) ? inR : inL;
+            if (outR != nullptr && outR != r)   std::memcpy (outR, r, n);
         }
         return;
     }

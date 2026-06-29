@@ -47,6 +47,10 @@ enum class PluginKind { Effects, Instruments };
 // HardwareInsertEditor modal. Empty/null callback hides the menu entry
 // (preserves the existing menu shape for surfaces that don't support
 // hardware inserts).
+// `onPickNativeClap`, when set, MERGES native-CLAP plugins (PluginManager's CLAP
+// scan) into the list tagged "(CLAP)" and routes a CLAP selection here (the .clap
+// bundle path) instead of the JUCE loader — used by surfaces with a native CLAP host
+// (aux lanes). Unset → no CLAP rows (e.g. channel strips, which host via JUCE only).
 void openPickerMenu (PluginSlot& slot,
                       juce::Component& target,
                       std::unique_ptr<juce::FileChooser>& chooserOwner,
@@ -54,7 +58,8 @@ void openPickerMenu (PluginSlot& slot,
                       PluginKind kind,
                       juce::Point<int> screenPosition = { -1, -1 },
                       std::function<void()> onPickHardwareInsert = {},
-                      bool suppressSecondaryButtons = false);
+                      bool suppressSecondaryButtons = false,
+                      std::function<void (const juce::File&)> onPickNativeClap = {});
 
 // Two-step insert flow. Step 1 shows a small modal with three big
 // buttons — Hardware Insert / Soundfont / Plugin — letting the user
@@ -72,7 +77,8 @@ void openInsertChooser (PluginSlot& slot,
                          std::unique_ptr<juce::FileChooser>& chooserOwner,
                          std::function<void()> onChange,
                          PluginKind kind,
-                         std::function<void()> onPickHardwareInsert = {});
+                         std::function<void()> onPickHardwareInsert = {},
+                         std::function<void (const juce::File&)> onPickNativeClap = {});
 
 // Synchronous scan. Blocks the message thread during scanInstalledPlugins().
 // Shows a Dusk in-window completion alert in `parent` (top-level Component)

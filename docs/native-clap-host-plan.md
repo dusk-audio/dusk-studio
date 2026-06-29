@@ -65,7 +65,7 @@ until native VST3/LV2 land.
 | **2** | `ClapEditor` native X11 embed: create/set_parent/map/unmap + fd/timer pump, pre-create + cache. | **You, live Wayland**: instant first open, no flash, correct render/resize/close. | ✅ `667fa02` — renders DuskVerb under Xvfb; **live-Wayland confirm pending** |
 | **3a** | `NativeClapSlot`: aux plugin slot owning bundle+instance, lock-free `ready` gate. | Catch2: load→process→unload. | ✅ `8b74136` |
 | **3b** | Route `AuxLaneStrip`'s plugin insert through `NativeClapSlot` when loaded (else JUCE slot). Inert by default. | Builds; aux byte-identical with no native CLAP. | ✅ `6b2ee90` |
-| **3c** | UI: aux picker selects a `.clap`; `AuxLaneComponent` reveals the `ClapEditor` on tab switch (instant). Session persists+restores the lane's native CLAP. | **You, live Wayland**: pick → load → instant editor; save/reload. | ⏳ held — UI, needs live verify |
+| **3c** | UI: aux picker selects a `.clap`; `AuxLaneComponent` reveals the `ClapEditor` on tab switch (instant). Session persists+restores the lane's native CLAP. | **You, live Wayland**: pick → load → instant editor; save/reload. | ✅ implemented + offline-verified (unified picker, inline editor, persist+restore, post-load AuxView pre-warm); **live-Wayland sign-off pending** |
 | **4** | Scanning + state + params: `ClapScanner` (`.clap` discovery), `ClapInstance` state save/load, param enumerate/read + automate via a per-block CLAP event list. | Catch2 scan + state round-trip + param-change applied. | ✅ scan `3bba3e5`, state `1d452dc`, params `ce0272a` (+hardening `2f1ff3e`) |
 | **RT** | Empty event lists moved off function-statics → members (no audio-thread static-init guard). | Catch2 still processes DuskVerb. | ✅ `bcc3100` |
 | **5** | Hardening; flip `DUSKSTUDIO_AUX_NATIVE_CLAP` default on for aux. | Soak + your live sign-off. | ⏳ |
@@ -73,24 +73,26 @@ until native VST3/LV2 land.
 Later (separate efforts): channel strips + master; native VST3 (`IRunLoop` +
 `IPlugView`) + LV2 (`lilv`/`suil`) for 3rd-party; full JUCE-hosting removal.
 
-### Next: 3c wiring (needs live-Wayland verify — held while away)
+### 3c wiring — DONE (offline-verified; live-Wayland sign-off pending)
 
-The non-UI foundation is done and unit-verified. What remains is glue that drives
-the X11 embed, so it must be checked on the live compositor:
+All three pieces are implemented; the remaining gate is the user's live-compositor
+sign-off (the X11 embed + first-paint can only be eyeballed on the live session):
 
-1. **Picker** — surface `ClapScanner::scan()` results in the aux plugin picker
-   (`AuxLaneComponent` / `PluginPickerHelpers`). On choose: `auxLane.loadNativeClap(slot, file)`.
-2. **Editor** — when a lane's `NativeClapSlot::isLoaded()`, host a `ClapEditor`
-   (via `ClapPluginEditorComponent`) in `AuxLaneComponent` instead of the JUCE
-   editor; **reveal on tab switch** (pre-created + `XMapWindow`) for the instant open.
-3. **Session** — the persist FORMAT is done (`AuxLane::nativeClapPath/nativeClapStateBase64`,
-   serializer keys `native_clap_path`/`native_clap_state`, save-side capture in
-   `publishPluginStateForSave`, round-trip tested). What remains is restore-on-load: the
-   `consumePluginStateAfterLoad` path runs BEFORE `prepare`, but `NativeClapSlot::load`
-   activates immediately and needs the sample rate — so add a pending-restore on
-   `AuxLaneStrip` that `prepare()` consummates (SR known there), fenced by the engine
-   process gate. Do this alongside the picker so the full pick→save→reload→play loop is
-   integration-tested in one go.
+1. **Picker** — native `.clap` effects are merged into the unified insert picker
+   (`PluginManager::getClapEffectDescriptions` → `PluginPickerHelpers::openPickerMenu`'s
+   `onPickNativeClap`); a CLAP row routes to `loadNativeClap`. Aux **and** channel strips.
+2. **Editor** — when a slot's `NativeClapSlot::isLoaded()`, `AuxLaneComponent` /
+   `ChannelStripComponent` host a `ClapEditor` (via `ClapPluginEditorComponent`); the aux
+   editor is inline + revealed on tab switch, the channel editor is modal. A post-load
+   `MainComponent::ensureAuxView()` pre-warm builds the editors off the first-switch path.
+3. **Session** — persist + restore both done: `nativeClapPath/nativeClapStateBase64`
+   (track + aux) with serializer keys `native_clap_path`/`native_clap_state`; save-side
+   capture in `publishPluginStateForSave`; restore via `consumePluginStateAfterLoad`
+   (load-if-prepared else stash a pending restore that `prepare()` consummates at the
+   known SR, fenced by the engine process gate). Round-trip unit-tested.
+
+Done beyond the original 3c plan: channel-strip port, the oversampling-reprepare
+`reactivate` fix (no instance teardown under an open editor), and shutdown leak-release.
 
 API already in place: `AuxLaneStrip::{loadNativeClap,unloadNativeClap,isNativeClapLoaded,getNativeClapSlot}`,
 `NativeClapSlot::{saveState,loadState,getInstance,paramCount,paramInfo,getParamValue,setParamValue}`,

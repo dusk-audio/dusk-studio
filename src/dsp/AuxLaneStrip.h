@@ -60,6 +60,14 @@ public:
     clap::NativeClapSlot&       getNativeClapSlot (int idx)       noexcept { jassert (idx >= 0 && idx < kMaxPlugins); return nativeClapSlots[(size_t) idx]; }
     const clap::NativeClapSlot& getNativeClapSlot (int idx) const noexcept { jassert (idx >= 0 && idx < kMaxPlugins); return nativeClapSlots[(size_t) idx]; }
 
+    bool isPrepared() const noexcept { return preparedSampleRate > 0.0 && preparedBlockSize > 0; }
+
+    // Session restore: load() needs the sample rate, but consumePluginStateAfterLoad
+    // can run before the engine is prepared. Stash the saved {path, state}; prepare()
+    // loads it once the SR is known. (When already prepared, the engine loads directly
+    // and never calls this.)
+    void setPendingNativeClap (int slotIdx, const juce::File& path, std::vector<uint8_t> state) noexcept;
+
     // True when a sample-rate re-prepare reload of a loaded native CLAP failed (the
     // slot is now empty). The UI reads this to report which lane lost its plugin.
     bool nativeClapReloadFailed (int slotIdx) const noexcept { jassert (slotIdx >= 0 && slotIdx < kMaxPlugins); return nativeReloadFailed[(size_t) slotIdx].load (std::memory_order_relaxed); }
@@ -85,6 +93,10 @@ private:
     std::array<HardwareInsertSlot, kMaxPlugins> hardwareSlots;
     std::array<clap::NativeClapSlot, kMaxPlugins> nativeClapSlots;
     std::array<std::atomic<bool>,    kMaxPlugins> nativeReloadFailed {};
+
+    // Pending session-restore load, consummated by prepare() (see setPendingNativeClap).
+    std::array<juce::String,           kMaxPlugins> pendingClapPath;
+    std::array<std::vector<uint8_t>,   kMaxPlugins> pendingClapState;
 
     // Stashed in prepare so loadNativeClap (and re-prepare across a sample-rate
     // change) can (re)activate a native CLAP at the engine's current spec.

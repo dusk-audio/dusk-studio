@@ -989,7 +989,15 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
         }
         const int w = juce::jmax (200, comp->getWidth());
         const int h = juce::jmax (200, comp->getHeight());
-        clapEditorTestWindow = std::make_unique<juce::DocumentWindow> (
+        // Plain juce::DocumentWindow's title-bar close button is a no-op; this dev
+        // harness is "close the window to quit", so route it through systemRequestedQuit.
+        struct TestWindow final : juce::DocumentWindow
+        {
+            using juce::DocumentWindow::DocumentWindow;
+            void closeButtonPressed() override
+            { juce::JUCEApplication::getInstance()->systemRequestedQuit(); }
+        };
+        clapEditorTestWindow = std::make_unique<TestWindow> (
             "Dusk — CLAP editor test", juce::Colours::black, juce::DocumentWindow::allButtons);
         clapEditorTestWindow->setUsingNativeTitleBar (true);
         clapEditorTestWindow->setContentOwned (comp.release(), true);
@@ -1272,6 +1280,7 @@ void DuskStudioApp::shutdown()
             main->leakAllPluginInstancesForShutdown();
 
     mainWindow.reset();
+    clapEditorTestWindow.reset();   // dev CLAP-editor test path: release its component deterministically
 
     // Tear down the FileLogger installed by crash_handler::install so
     // JUCE's leak detector doesn't complain at exit. The crash callback

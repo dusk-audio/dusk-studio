@@ -50,6 +50,12 @@ public:
     bool activate (double sampleRate, int maxBlock, std::string& errorOut);
     void deactivate();
 
+    // Re-activate the SAME plugin at a new sample-rate / block-size (device-rate or
+    // oversampling-factor change). Deactivate → activate without destroying the plugin,
+    // so an open editor's GUI and the plugin's parameter state both survive. Caller
+    // must fence the audio thread (engine process gate) around the call.
+    bool reactivate (double sampleRate, int maxBlock, std::string& errorOut);
+
     // Audio thread. Process `numFrames` (<= maxBlock) of stereo through the plugin:
     // inL/inR → outL/outR. A null inR is treated as mono (duplicated). out may not
     // alias in. Starts processing lazily on the first call. No-op if not active or
@@ -58,9 +64,9 @@ public:
                         float* outL, float* outR, int numFrames) noexcept;
 
     // Message thread: serialise / restore the plugin's state via the CLAP state
-    // extension. saveState appends the plugin's blob to `out`; loadState feeds `in`
-    // back. False if the plugin has no state extension or the call fails. Used for
-    // session persistence of a native CLAP.
+    // extension. saveState REPLACES `out` with the plugin's blob (clears it first);
+    // loadState feeds `in` back. False if the plugin has no state extension or the
+    // call fails. Used for session persistence of a native CLAP.
     bool saveState (std::vector<uint8_t>& out) const;
     bool loadState (const std::vector<uint8_t>& in);
 

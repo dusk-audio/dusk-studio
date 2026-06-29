@@ -37,6 +37,11 @@ public:
     void hide();     // XUnmapWindow
     void close();
 
+    // App shutdown: leak the plugin GUI instead of destroying it. u-he (Satin/Diva)
+    // hang in gui->destroy on teardown — same reason the JUCE host leaks plugins on
+    // quit. close() then skips gui->hide/gui->destroy; the process is exiting anyway.
+    void setLeakOnClose (bool b) noexcept { leakOnClose = b; }
+
     // Message thread, ~60 Hz: pump the plugin's fds/timers + drain our X events.
     void pump (double elapsedMs);
 
@@ -70,6 +75,8 @@ private:
     unsigned long hostWindow = 0;         // Window
     int  prefW = 0, prefH = 0;
     bool created = false, embedded = false, mapped = false;
+    bool resizable = false;   // gui->can_resize: calling set_size when false aborts some plugins (u-he)
+    bool leakOnClose = false; // shutdown: skip gui->destroy (u-he hangs there)
 
     std::atomic<bool> pendingResize { false };
     std::atomic<int>  pendingW { 0 }, pendingH { 0 };

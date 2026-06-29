@@ -18,13 +18,26 @@ void AuxLaneStrip::prepare (double sampleRate, int blockSize)
         auto& ncs = nativeClapSlots[(size_t) s];
         if (ncs.isLoaded())
         {
-            const juce::File p (ncs.getPath());
+            // Re-activate in place (NOT a full reload): a reload destroys the instance
+            // the editor's GUI is attached to — plugin->destroy with a live GUI aborts
+            // u-he plugins — and resets the plugin's parameters. reactivate keeps the
+            // instance + GUI + state and only re-sizes for the new spec.
             std::string err;
-            // Don't swallow a failed reload: load() unloads up front, so a refused
-            // new spec / moved .clap leaves the slot empty. Record it for the UI
-            // instead of silently dropping the plugin from the chain.
-            const bool ok = ncs.load (p, preparedSampleRate, preparedBlockSize, err);
+            const bool ok = ncs.reactivate (preparedSampleRate, preparedBlockSize, err);
             nativeReloadFailed[(size_t) s].store (! ok, std::memory_order_relaxed);
+        }
+        else if (pendingClapPath[(size_t) s].isNotEmpty())
+        {
+            // Pending session-restore load — SR is known now. insertMode was already
+            // set to kInsertPlugin by the engine before it stashed this.
+            const juce::File p (pendingClapPath[(size_t) s]);
+            std::string err;
+            const bool ok = ncs.load (p, preparedSampleRate, preparedBlockSize, err);
+            if (ok && ! pendingClapState[(size_t) s].empty())
+                ncs.loadState (pendingClapState[(size_t) s]);
+            nativeReloadFailed[(size_t) s].store (! ok, std::memory_order_relaxed);
+            pendingClapPath[(size_t) s].clear();
+            pendingClapState[(size_t) s].clear();
         }
     }
 
@@ -66,13 +79,27 @@ bool AuxLaneStrip::loadNativeClap (int slotIdx, const juce::File& path, std::str
     jassert (slotIdx >= 0 && slotIdx < kMaxPlugins);
     if (preparedSampleRate <= 0.0 || preparedBlockSize <= 0)
     { errorOut = "aux lane not prepared"; return false; }
-    return nativeClapSlots[(size_t) slotIdx].load (path, preparedSampleRate, preparedBlockSize, errorOut);
+    const bool ok = nativeClapSlots[(size_t) slotIdx].load (path, preparedSampleRate, preparedBlockSize, errorOut);
+    if (ok)
+        nativeReloadFailed[(size_t) slotIdx].store (false, std::memory_order_relaxed);   // recovered
+    return ok;
 }
 
 void AuxLaneStrip::unloadNativeClap (int slotIdx) noexcept
 {
     jassert (slotIdx >= 0 && slotIdx < kMaxPlugins);
     nativeClapSlots[(size_t) slotIdx].unload();
+    nativeReloadFailed[(size_t) slotIdx].store (false, std::memory_order_relaxed);   // slot reset — clear stale failure
+    pendingClapPath[(size_t) slotIdx].clear();
+    pendingClapState[(size_t) slotIdx].clear();
+}
+
+void AuxLaneStrip::setPendingNativeClap (int slotIdx, const juce::File& path,
+                                          std::vector<uint8_t> state) noexcept
+{
+    jassert (slotIdx >= 0 && slotIdx < kMaxPlugins);
+    pendingClapPath[(size_t) slotIdx]  = path.getFullPathName();
+    pendingClapState[(size_t) slotIdx] = std::move (state);
 }
 
 void AuxLaneStrip::updateGainTarget() noexcept

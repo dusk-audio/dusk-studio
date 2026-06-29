@@ -743,6 +743,13 @@ MainComponent::~MainComponent()
     if (consoleView != nullptr)
         consoleView->dropAllPluginEditors();
 
+    // Aux native-CLAP editors need the same early teardown while the main peer +
+    // message loop are still alive. beginSafeShutdown() does this, but a quit path
+    // that skips it (SIGTERM / WM kill) must still leak-release them here rather than
+    // leave them for the late ~AuxView cascade.
+    if (auxView != nullptr)
+        auxView->dropAllClapEditors();
+
     // Force-delete any modal body we launched, synchronously. close()
     // would defer body destruction to the next message-loop tick — but
     // the dispatch loop has already exited on this path, so the deferred
@@ -1695,6 +1702,21 @@ void MainComponent::switchToStage (AudioEngine::Stage s)
     resized();
 }
 
+AuxView* MainComponent::ensureAuxView()
+{
+    if (auxView == nullptr)
+    {
+        // addChildComponent (not addAndMakeVisible): stays hidden until a switch — or a
+        // pre-warm — needs it. The AuxLaneComponent ctors run rebuildSlots here, which
+        // is what builds the native-CLAP editors (gui->create). Bounds come from the
+        // next resized() (it lays out auxView whenever Aux is the active stage), and the
+        // X11 embed stays deferred to first-show via ClapPluginEditorComponent.
+        auxView = std::make_unique<AuxView> (session, engine);
+        addChildComponent (auxView.get());
+    }
+    return auxView.get();
+}
+
 void MainComponent::syncStageUi (AudioEngine::Stage s)
 {
     // Mixing/Recording share the console + tape strip; Mastering swaps to
@@ -1729,19 +1751,7 @@ void MainComponent::syncStageUi (AudioEngine::Stage s)
 
     if (wantAux)
     {
-        if (auxView == nullptr)
-        {
-            std::fprintf (stderr, "[MainComponent] syncStageUi(Aux): constructing AuxView\n");
-            std::fflush (stderr);
-            auxView = std::make_unique<AuxView> (session, engine);
-            addAndMakeVisible (auxView.get());
-            std::fprintf (stderr, "[MainComponent] syncStageUi(Aux): AuxView constructed + addAndMakeVisible'd\n");
-            std::fflush (stderr);
-        }
-        auxView->setVisible (true);
-        std::fprintf (stderr, "[MainComponent] syncStageUi(Aux): auxView setVisible(true), bounds=%d,%d %dx%d\n",
-                      auxView->getX(), auxView->getY(), auxView->getWidth(), auxView->getHeight());
-        std::fflush (stderr);
+        ensureAuxView()->setVisible (true);
     }
     else if (auxView != nullptr)
     {
@@ -2409,10 +2419,13 @@ void MainComponent::beginSafeShutdown()
     markPhase ("phase 4: drop plugin editor windows");
     if (consoleView != nullptr)
         consoleView->dropAllPluginEditors();
-    // AUX plugin editors are inline children of their AuxLaneComponent —
-    // they tear down with the normal ~MainWindow → ~AuxView cascade. The
-    // mutter focus race that required an explicit pre-shutdown pass only
-    // applied to the old floating-window editors.
+    // JUCE AUX plugin editors tear down fine with the normal ~MainWindow → ~AuxView
+    // cascade. NATIVE CLAP editors do NOT: each opens its own X11 Display + a host
+    // window parented into the main peer, and its close() (gui->destroy + XCloseDisplay)
+    // hangs if it runs in the late cascade after the main peer is gone. Tear them down
+    // here — main peer + message loop alive, audio callback already detached (phase 3).
+    if (auxView != nullptr)
+        auxView->dropAllClapEditors();
 
     markPhase ("phase 5: flush window operations");
     duskstudio::platform::flushWindowOperations();
@@ -2810,6 +2823,41 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
                   (int) (tAfterMidiOuts - tAfterPlugins),
                   (int) (tAfterConsole  - tAfterMidiOuts),
                   (int) (tAfterConsole  - t0));
+
+    // Loading churns the component tree (console + stage rebuild) and, on
+    // XWayland, can leave the main window without input focus — the toolbar then
+    // renders in its inactive/dimmed state and the first click only re-focuses.
+    // Reassert front + keyboard focus once the rebuild settles.
+    juce::Component::SafePointer<MainComponent> safeThis (this);
+    juce::MessageManager::callAsync ([safeThis]
+    {
+        auto* self = safeThis.getComponent();
+        if (self == nullptr) return;
+        if (auto* peer = self->getPeer())
+            duskstudio::platform::bringWindowToFront (*peer);
+        // Bring the window forward always, but don't yank keyboard focus when a modal
+        // is up (a missing-plugin / missing-audio alert raised by the load) — that
+        // would steal focus from the dialog the user needs to dismiss.
+        if (juce::ModalComponentManager::getInstance()->getNumModalComponents() == 0)
+            self->grabKeyboardFocus();
+
+        // Pre-warm the AUX view if this session has any aux insert loaded. Building it
+        // here (hidden) moves the AuxView construction + the native-CLAP gui->create off
+        // the first Mixing→Aux switch, so that switch isn't stalled building plugin
+        // editors. Deferred to this post-load callAsync so the main window paints first;
+        // the native slots are already loaded (consumePluginStateAfterLoad ran above).
+        bool anyAuxInsert = false;
+        for (int a = 0; a < Session::kNumAuxLanes && ! anyAuxInsert; ++a)
+        {
+            const auto& lane = self->session.auxLane (a);
+            for (int s = 0; s < AuxLaneParams::kMaxLanePlugins; ++s)
+                if (lane.nativeClapPath[(size_t) s].isNotEmpty()
+                    || lane.pluginDescriptionXml[(size_t) s].isNotEmpty())
+                { anyAuxInsert = true; break; }
+        }
+        if (anyAuxInsert)
+            self->ensureAuxView();   // bounds + X11 embed stay deferred to the first switch
+    });
     return true;
 }
 

@@ -87,8 +87,8 @@ bool ClapInstance::create (const ClapBundle& bundle, const std::string& pluginId
         plugin->get_extension (plugin, CLAP_EXT_PARAMS));
     if (paramsExt != nullptr && paramsExt->count != nullptr && paramsExt->get_info != nullptr)
     {
-        const uint32_t n = paramsExt->count (plugin);
-        params.reserve (std::min<uint32_t> (n, 4096u));   // clamp: count is plugin-supplied
+        const uint32_t n = std::min<uint32_t> (paramsExt->count (plugin), 4096u);   // clamp: count is plugin-supplied
+        params.reserve (n);
         for (uint32_t i = 0; i < n; ++i)
         {
             clap_param_info_t info {};
@@ -115,21 +115,28 @@ bool ClapInstance::activate (double sampleRate, int maxBlock, std::string& error
     if (active) return true;
 
     maxFrames = std::max (1, maxBlock);
-    if (plugin->activate == nullptr
-        || ! plugin->activate (plugin, sampleRate, 1, (uint32_t) maxFrames))
-    { errorOut = "activate() failed"; return false; }
-
-    // Size every process-time buffer BEFORE marking active, so the audio thread can
-    // never observe active==true with unsized scratch.
     inScratchL .assign ((size_t) maxFrames, 0.0f);
     inScratchR .assign ((size_t) maxFrames, 0.0f);
     outScratchL.assign ((size_t) maxFrames, 0.0f);
     outScratchR.assign ((size_t) maxFrames, 0.0f);
     eventScratch.assign ((size_t) kParamRingCap, clap_event_param_value_t {});
 
+    if (plugin->activate == nullptr
+        || ! plugin->activate (plugin, sampleRate, 1, (uint32_t) maxFrames))
+    { errorOut = "activate() failed"; return false; }
+
     startFailed = false;   // a fresh activation may try start_processing again
     active = true;
     return true;
+}
+
+bool ClapInstance::reactivate (double sampleRate, int maxBlock, std::string& errorOut)
+{
+    // deactivate() resets `active`/`processing`/startFailed; activate() re-sizes the
+    // scratch + re-arms start_processing. The plugin object (and its open GUI) is never
+    // destroyed, so this is safe to run while the editor is showing.
+    deactivate();
+    return activate (sampleRate, maxBlock, errorOut);
 }
 
 void ClapInstance::deactivate()
@@ -165,17 +172,25 @@ bool ClapInstance::saveState (std::vector<uint8_t>& out) const
     os.ctx   = &out;
     os.write = [] (const clap_ostream_t* s, const void* buffer, uint64_t size) -> int64_t
     {
-        auto* v = static_cast<std::vector<uint8_t>*> (s->ctx);
-        const auto* b = static_cast<const uint8_t*> (buffer);
-        v->insert (v->end(), b, b + size);
-        return (int64_t) size;
+        // The plugin calls this across a C boundary — an allocation failure in
+        // insert() must not throw out of the callback. Report a short write (<0).
+        try
+        {
+            auto* v = static_cast<std::vector<uint8_t>*> (s->ctx);
+            const auto* b = static_cast<const uint8_t*> (buffer);
+            v->insert (v->end(), b, b + size);
+            return (int64_t) size;
+        }
+        catch (...) { return -1; }
     };
     return st->save (plugin, &os);
 }
 
 bool ClapInstance::loadState (const std::vector<uint8_t>& in)
 {
-    if (plugin == nullptr || in.empty()) return false;
+    // Don't reject an empty buffer up front — a plugin with zero-byte state is a valid
+    // round-trip; let it flow through the stream (read() returns EOF immediately).
+    if (plugin == nullptr) return false;
     const auto* st = static_cast<const clap_plugin_state_t*> (
         plugin->get_extension (plugin, CLAP_EXT_STATE));
     if (st == nullptr || st->load == nullptr) return false;

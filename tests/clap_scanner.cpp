@@ -20,7 +20,8 @@ TEST_CASE ("ClapScanner default search paths are existing directories", "[clap][
 TEST_CASE ("ClapScanner finds nothing in an empty directory", "[clap][scan]")
 {
     auto tmp = juce::File::getSpecialLocation (juce::File::tempDirectory)
-                   .getChildFile ("dusk_clap_scan_empty");
+                   .getChildFile ("dusk_clap_scan_empty_"
+                                    + juce::String (juce::Random::getSystemRandom().nextInt()));
     tmp.deleteRecursively();
     REQUIRE (tmp.createDirectory());
 

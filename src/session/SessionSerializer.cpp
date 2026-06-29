@@ -43,9 +43,14 @@ inline void storeFiniteFloat (std::atomic<float>& dst, const juce::var& src) noe
 // is range-limited to [0, 1].
 inline AutomationPoint parseAutomationPoint (const juce::var& pv, double fallbackBpm) noexcept
 {
-    const float safeFallback = std::isfinite (fallbackBpm) ? (float) fallbackBpm : 120.0f;
+    // The fallback itself must be strictly positive + finite — a 0/negative session
+    // tempo would otherwise pass straight through as recordedAtBPM and break retime math.
+    const float safeFallback = (std::isfinite (fallbackBpm) && fallbackBpm > 0.0) ? (float) fallbackBpm : 120.0f;
     AutomationPoint pt;
-    pt.timeSamples   = juce::jmax ((juce::int64) 0, (juce::int64) pv["t"]);
+    // Validate finiteness BEFORE narrowing to int64 — casting a +inf double (1e999 in a
+    // hand-edited file) to int64 is UB. Non-finite / negative time → 0.
+    const double rawT = (double) pv["t"];
+    pt.timeSamples   = (std::isfinite (rawT) && rawT > 0.0) ? (juce::int64) rawT : (juce::int64) 0;
     // NaN slips through jlimit unchanged (NaN compares false both ways), so it
     // would otherwise poison the lane's binary search / a DSP param. Map it to a
     // safe default; ±inf is already clamped to the [0,1] range by jlimit.
@@ -321,6 +326,11 @@ juce::DynamicObject::Ptr trackToObject (const Track& t, const juce::File& sessio
         obj->setProperty ("plugin_desc_xml", t.pluginDescriptionXml);
     if (t.pluginStateBase64.isNotEmpty())
         obj->setProperty ("plugin_state",    t.pluginStateBase64);
+    if (t.nativeClapPath.isNotEmpty())
+    {
+        obj->setProperty ("native_clap_path",  t.nativeClapPath);
+        obj->setProperty ("native_clap_state", t.nativeClapStateBase64);
+    }
 
     obj->setProperty ("fader_db",       t.strip.faderDb.load());
     obj->setProperty ("pan",            t.strip.pan.load());
@@ -712,6 +722,8 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm,
     // reads these back and asks each PluginSlot to reinstantiate.
     t.pluginDescriptionXml = v["plugin_desc_xml"].toString();
     t.pluginStateBase64    = v["plugin_state"]   .toString();
+    t.nativeClapPath        = v["native_clap_path"] .toString();
+    t.nativeClapStateBase64 = v["native_clap_state"].toString();
 
     auto setFloat = [&v] (std::atomic<float>& a, const char* key)
     {
@@ -774,7 +786,10 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm,
     setBool  (t.frozen,             "frozen");
     if (auto fp = v["frozen_audio_path"].toString(); fp.isNotEmpty())
     {
-        const auto wav = resolvePortablePath (fp, sessionDir, missingFiles);
+        // Engine-owned freeze WAV: a missing/zero-length one is dropped + recovered
+        // transparently below, so it must NOT surface as a user-facing missing file.
+        std::vector<juce::String> freezeIgnored;
+        const auto wav = resolvePortablePath (fp, sessionDir, freezeIgnored);
         t.frozenAudioPath = wav.getFullPathName();
         // Rebuild frozenRegion so PlaybackEngine can open the baked WAV. The
         // instrument re-bypass is engine state, re-applied after load by

@@ -11,7 +11,7 @@ ClapPluginEditorComponent::~ClapPluginEditorComponent()
 {
     stopTimer();
     editor.close();
-    instance.deactivate();
+    if (ownsInstance) instance.deactivate();   // attach() mode: the slot owns it
 }
 
 bool ClapPluginEditorComponent::load (const juce::File& clapPath, juce::String& errorOut)
@@ -27,7 +27,20 @@ bool ClapPluginEditorComponent::load (const juce::File& clapPath, juce::String& 
     if (! instance.activate (48000.0, 1024, err))   // editor doesn't need the real rate
     { errorOut = "activate: " + juce::String (err); return false; }
 
-    if (! editor.open (instance.getPlugin(), instance.getHost(), err))
+    ownsInstance = true;
+    return openEditorOn (instance, errorOut);
+}
+
+bool ClapPluginEditorComponent::attach (clap::ClapInstance& shared, juce::String& errorOut)
+{
+    ownsInstance = false;
+    return openEditorOn (shared, errorOut);
+}
+
+bool ClapPluginEditorComponent::openEditorOn (clap::ClapInstance& inst, juce::String& errorOut)
+{
+    std::string err;
+    if (! editor.open (inst.getPlugin(), inst.getHost(), err))
     { errorOut = "editor: " + juce::String (err); return false; }
 
     // The plugin asked to resize → resize this component (which re-bounds the host
@@ -36,7 +49,9 @@ bool ClapPluginEditorComponent::load (const juce::File& clapPath, juce::String& 
     {
         if (w > 0 && h > 0) setSize (w, h);
     };
-    editor.onClosed = [this] { embedded = false; };
+    // GUI was_destroyed: tear down our state fully. Leaving `loaded` set would let
+    // tryEmbed()/the timer keep poking an already-destroyed editor.
+    editor.onClosed = [this] { embedded = false; loaded = false; stopTimer(); };
 
     const int w = editor.preferredWidth()  > 0 ? editor.preferredWidth()  : 480;
     const int h = editor.preferredHeight() > 0 ? editor.preferredHeight() : 320;
@@ -57,6 +72,10 @@ unsigned long ClapPluginEditorComponent::peerX11() const
 
 void ClapPluginEditorComponent::tryEmbed()
 {
+    // Embed ONLY when actually on-screen. Some plugins (u-he Satin) abort() if asked
+    // to set_parent/show into a parent that isn't viewable yet — so no pre-warm: build
+    // + map when shown, exactly like the JUCE editor path. The kept-alive remap on a
+    // later tab switch keeps re-opens instant.
     if (! loaded || embedded || ! isShowing()) return;
     const auto parent = peerX11();
     if (parent == 0) return;
@@ -67,11 +86,17 @@ void ClapPluginEditorComponent::tryEmbed()
                       juce::jmax (1, area.getWidth()), juce::jmax (1, area.getHeight()), err))
     {
         embedded = true;
-        editor.reveal();   // visible now (this is the on-screen, shown case)
+        editor.reveal();
     }
     else
     {
         std::fprintf (stderr, "[clap editor] embed failed: %s\n", err.c_str());
+        // A failed embed tears the ClapEditor down (set_parent/show call close()), so
+        // the GUI is gone. Stop treating this component as live — otherwise the next
+        // resized()/visibilityChanged would retry embed against a destroyed editor
+        // every frame.
+        loaded = false;
+        stopTimer();
     }
 }
 
@@ -101,8 +126,24 @@ void ClapPluginEditorComponent::visibilityChanged()
     }
 }
 
+void ClapPluginEditorComponent::leakForShutdown()
+{
+    stopTimer();
+    editor.setLeakOnClose (true);
+}
+
 void ClapPluginEditorComponent::timerCallback()
 {
+    // Keep the native X11 window's mapped state in sync with our real on-screen
+    // visibility. visibilityChanged() does NOT fire for ancestor (aux-tab / stage)
+    // changes, so without this poll the window stays mapped — floating over whatever
+    // view replaced the aux lane. reveal()/hide() are idempotent (guarded by `mapped`).
+    if (embedded)
+    {
+        if (isShowing()) editor.reveal();
+        else             editor.hide();
+    }
+
     const auto now = juce::Time::getMillisecondCounter();
     const auto elapsed = (double) (now - lastPumpMs);
     lastPumpMs = now;

@@ -609,6 +609,14 @@ if(_duskstudio_oop_enabled)
     add_dependencies(DuskStudio dusk-studio-plugin-host)
 endif()
 
+# Fail early with a clear message if the CLAP submodule wasn't checked out, rather
+# than deep in a "clap/clap.h: No such file" compile error.
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/clap/include/clap/clap.h")
+    message(FATAL_ERROR
+        "CLAP headers missing at external/clap/include/clap/clap.h — "
+        "run: git submodule update --init external/clap")
+endif()
+
 target_include_directories(DuskStudio PRIVATE
     src
     external/projucer-shim   # JuceHeader.h shim used by vendored plugin DSP headers

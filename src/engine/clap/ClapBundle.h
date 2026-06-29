@@ -14,6 +14,11 @@ namespace duskstudio::clap
 struct PluginDesc
 {
     std::string id, name, vendor, version, description;
+    std::vector<std::string> features;   // CLAP plugin-feature tags (e.g. "audio-effect", "instrument")
+
+    // True when the plugin is an instrument (no audio input) — not hostable on an
+    // effects-only AUX return lane.
+    bool isInstrument() const;
 };
 
 // Loads a .clap shared object (dlopen), runs its entry init(), and exposes the

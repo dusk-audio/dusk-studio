@@ -799,6 +799,11 @@ struct Track
     juce::String pluginDescriptionXml;
     juce::String pluginStateBase64;
 
+    // Native CLAP insert alternative to the JUCE plugin above (mutually exclusive).
+    // When nativeClapPath is non-empty the insert hosts a .clap via NativeClapSlot.
+    juce::String nativeClapPath;
+    juce::String nativeClapStateBase64;
+
     // Track freeze (MIDI tracks): the instrument + pre-fader strip is rendered
     // to a WAV, the plugin is bypassed to free CPU, and playback reads the WAV
     // instead of synthesising. `frozen` gates the audio path; `frozenAudioPath`

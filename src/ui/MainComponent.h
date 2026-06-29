@@ -84,6 +84,10 @@ private:
     // consoleView lands in the right mode even when engine stage
     // didn't change.
     void syncStageUi (AudioEngine::Stage);
+    // Construct the (heavy) AuxView lazily, hidden, if it doesn't exist yet. Returns
+    // the live view. syncStageUi shows it; the post-load pre-warm leaves it hidden so
+    // a session with aux inserts builds the plugin editors off the first-switch path.
+    class AuxView* ensureAuxView();
     void doMixdown();
 
     bool saveSessionTo (const juce::File& sessionDir);

@@ -34,7 +34,8 @@ TEST_CASE ("NativeClapSlot loads, processes, and unloads cleanly", "[clap][slot]
     SECTION ("loaded: signal passes through, output finite + non-silent")
     {
         double phase = 0.0;
-        const double dw = 2.0 * M_PI * 1000.0 / 48000.0;
+        constexpr double kPi = 3.14159265358979323846;   // M_PI is non-standard
+        const double dw = 2.0 * kPi * 1000.0 / 48000.0;
         float peak = 0.0f;
         for (int b = 0; b < 40; ++b)
         {
@@ -67,6 +68,53 @@ TEST_CASE ("NativeClapSlot loads, processes, and unloads cleanly", "[clap][slot]
             REQUIRE (outR[(size_t) i] == 0.0f);
         }
     }
+}
+
+TEST_CASE ("NativeClapSlot reactivate keeps the same instance (no destroy)", "[clap][slot][reactivate]")
+{
+    // Regression: changing the global oversampling factor (or device rate) re-prepares
+    // the strip. The old code did a full reload, destroying the instance the editor's
+    // GUI was attached to — plugin->destroy with a live GUI aborts u-he plugins
+    // ("host forgot to destroy the gui" → terminate). reactivate must re-activate the
+    // SAME instance so the GUI and parameter state survive.
+    const char* path = std::getenv ("DUSKSTUDIO_TEST_CLAP");
+    if (path == nullptr || *path == '\0')
+    {
+        SUCCEED ("DUSKSTUDIO_TEST_CLAP not set — skipping live CLAP-reactivate test");
+        return;
+    }
+
+    duskstudio::clap::NativeClapSlot slot;
+    std::string err;
+    REQUIRE (slot.load (juce::File (juce::String (path)), 48000.0, 512, err));
+    auto* before = slot.getInstance();
+    REQUIRE (before != nullptr);
+
+    // Re-activate at a different rate + block size (4× → 1× changes both for an
+    // oversampled chain). The instance pointer must be identical afterwards.
+    REQUIRE (slot.reactivate (96000.0, 256, err));
+    REQUIRE (slot.isLoaded());
+    REQUIRE (slot.getInstance() == before);   // not torn down + rebuilt
+
+    constexpr int kBlock = 256;
+    std::vector<float> inL ((size_t) kBlock), inR ((size_t) kBlock),
+                       outL ((size_t) kBlock), outR ((size_t) kBlock);
+    double phase = 0.0;
+    constexpr double kPi = 3.14159265358979323846;
+    const double dw = 2.0 * kPi * 1000.0 / 96000.0;
+    float peak = 0.0f;
+    for (int b = 0; b < 40; ++b)
+    {
+        for (int i = 0; i < kBlock; ++i) { const float s = 0.25f * (float) std::sin (phase); phase += dw; inL[(size_t) i] = inR[(size_t) i] = s; }
+        slot.processStereo (inL.data(), inR.data(), outL.data(), outR.data(), kBlock);
+        for (int i = 0; i < kBlock; ++i)
+        {
+            REQUIRE (std::isfinite (outL[(size_t) i]));
+            REQUIRE (std::isfinite (outR[(size_t) i]));
+            peak = std::max ({ peak, std::abs (outL[(size_t) i]), std::abs (outR[(size_t) i]) });
+        }
+    }
+    REQUIRE (peak > 1.0e-3f);
 }
 
 TEST_CASE ("NativeClapSlot state round-trips into a fresh slot", "[clap][slot][state]")

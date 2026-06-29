@@ -6,6 +6,8 @@
 
 #include "engine/clap/ClapBundle.h"
 
+#include <cstdio>
+#include <dlfcn.h>
 #include <string>
 
 TEST_CASE ("ClapBundle fails gracefully on a missing bundle", "[clap][bundle]")
@@ -22,12 +24,18 @@ TEST_CASE ("ClapBundle fails gracefully on a missing bundle", "[clap][bundle]")
 
 TEST_CASE ("ClapBundle rejects a real shared object that is not a CLAP bundle", "[clap][bundle]")
 {
-    // libc is a valid shared object that dlopens fine but has no clap_entry, so
-    // this exercises the post-dlopen rejection path specifically — load() must get
-    // past dlopen, then fail for the missing entry, leaving us unloaded.
+    // A valid shared object that dlopens fine but has no clap_entry exercises the
+    // post-dlopen rejection path. Resolve the host libc portably (its soname differs
+    // across libc / OS) via dladdr instead of hardcoding libc.so.6.
+    Dl_info info {};
+    if (dladdr (reinterpret_cast<void*> (&std::printf), &info) == 0 || info.dli_fname == nullptr)
+    {
+        SUCCEED ("dladdr could not resolve a host shared object — skipping");
+        return;
+    }
     duskstudio::clap::ClapBundle b;
     std::string err;
-    REQUIRE_FALSE (b.load ("libc.so.6", err));
+    REQUIRE_FALSE (b.load (info.dli_fname, err));
     REQUIRE_FALSE (b.isLoaded());
     REQUIRE_FALSE (err.empty());
     INFO ("rejection reason: " << err);

@@ -19,7 +19,10 @@ ClapHost::ClapHost()
     host.get_extension = &ClapHost::getExtension;
     host.request_restart  = [] (const clap_host_t*) {};
     host.request_process  = [] (const clap_host_t*) {};
-    host.request_callback = [] (const clap_host_t*) {};
+    // request_callback is [thread-safe]: record the request and drain it on the main
+    // thread in pumpGui by calling plugin->on_main_thread().
+    host.request_callback = [] (const clap_host_t* h)
+        { self (h).callbackRequested.store (true, std::memory_order_release); };
 
     logExt.log                     = &ClapHost::logMsg;
     threadCheckExt.is_main_thread  = &ClapHost::isMainThread;
@@ -72,23 +75,23 @@ void ClapHost::logMsg (const clap_host_t* h, clap_log_severity sev, const char* 
 // ── gui ──────────────────────────────────────────────────────────────────────
 void ClapHost::resizeHintsChanged (const clap_host_t* h) noexcept
 {
-    if (auto* c = self (h).callbacks) c->onResizeHintsChanged();
+    if (auto* c = self (h).callbacks.load (std::memory_order_acquire)) c->onResizeHintsChanged();
 }
 bool ClapHost::requestResize (const clap_host_t* h, uint32_t w, uint32_t hgt) noexcept
 {
-    auto* c = self (h).callbacks; return c != nullptr && c->onRequestResize (w, hgt);
+    auto* c = self (h).callbacks.load (std::memory_order_acquire); return c != nullptr && c->onRequestResize (w, hgt);
 }
 bool ClapHost::requestShow (const clap_host_t* h) noexcept
 {
-    auto* c = self (h).callbacks; return c != nullptr && c->onRequestShow();
+    auto* c = self (h).callbacks.load (std::memory_order_acquire); return c != nullptr && c->onRequestShow();
 }
 bool ClapHost::requestHide (const clap_host_t* h) noexcept
 {
-    auto* c = self (h).callbacks; return c != nullptr && c->onRequestHide();
+    auto* c = self (h).callbacks.load (std::memory_order_acquire); return c != nullptr && c->onRequestHide();
 }
 void ClapHost::guiClosed (const clap_host_t* h, bool wasDestroyed) noexcept
 {
-    if (auto* c = self (h).callbacks) c->onGuiClosed (wasDestroyed);
+    if (auto* c = self (h).callbacks.load (std::memory_order_acquire)) c->onGuiClosed (wasDestroyed);
 }
 
 // ── posix-fd ─────────────────────────────────────────────────────────────────
@@ -96,7 +99,10 @@ bool ClapHost::registerFd (const clap_host_t* h, int fd, clap_posix_fd_flags_t f
 {
     auto& s = self (h);
     for (auto& r : s.fds) if (r.fd == fd) { r.flags = flags; return true; }
-    s.fds.push_back ({ fd, flags });
+    // noexcept callback: an allocation failure must return false, not propagate
+    // across the C boundary (std::terminate).
+    try { s.fds.push_back ({ fd, flags }); }
+    catch (...) { return false; }
     return true;
 }
 bool ClapHost::modifyFd (const clap_host_t* h, int fd, clap_posix_fd_flags_t flags) noexcept
@@ -117,8 +123,12 @@ bool ClapHost::registerTimer (const clap_host_t* h, uint32_t periodMs, clap_id* 
 {
     if (idOut == nullptr) return false;
     auto& s = self (h);
-    const auto id = s.nextTimerId++;
-    s.timers.push_back ({ id, std::max<uint32_t> (1, periodMs), 0.0 });
+    const auto id = s.nextTimerId;
+    // noexcept callback: catch an allocation failure instead of terminating. Only
+    // bump nextTimerId after the push succeeds so a retry reuses the id.
+    try { s.timers.push_back ({ id, std::max<uint32_t> (1, periodMs), 0.0 }); }
+    catch (...) { return false; }
+    s.nextTimerId++;
     *idOut = id;
     return true;
 }
@@ -134,6 +144,11 @@ bool ClapHost::unregisterTimer (const clap_host_t* h, clap_id id) noexcept
 void ClapHost::pumpGui (double elapsedMs)
 {
     if (plugin == nullptr) return;
+
+    // Deliver any pending main-thread callback the plugin requested.
+    if (callbackRequested.exchange (false, std::memory_order_acquire)
+        && plugin->on_main_thread != nullptr)
+        plugin->on_main_thread (plugin);
 
     if (! fds.empty())
     {
@@ -153,10 +168,15 @@ void ClapHost::pumpGui (double elapsedMs)
                 for (const auto& p : pfds)   // iterates the local snapshot — on_fd may (un)register
                 {
                     clap_posix_fd_flags_t f = 0;
-                    if (p.revents & POLLIN)               f |= CLAP_POSIX_FD_READ;
-                    if (p.revents & POLLOUT)              f |= CLAP_POSIX_FD_WRITE;
-                    if (p.revents & (POLLERR | POLLHUP))  f |= CLAP_POSIX_FD_ERROR;
-                    if (f != 0) fdSup->on_fd (plugin, p.fd, f);
+                    if (p.revents & POLLIN)                          f |= CLAP_POSIX_FD_READ;
+                    if (p.revents & POLLOUT)                         f |= CLAP_POSIX_FD_WRITE;
+                    if (p.revents & (POLLERR | POLLHUP | POLLNVAL))  f |= CLAP_POSIX_FD_ERROR;
+                    if (f == 0) continue;
+                    // A prior on_fd() in this loop may have unregistered this fd; skip
+                    // it so we don't dispatch a stale descriptor (mirrors the timer path).
+                    bool stillRegistered = false;
+                    for (const auto& r : fds) if (r.fd == p.fd) { stillRegistered = true; break; }
+                    if (stillRegistered) fdSup->on_fd (plugin, p.fd, f);
                 }
         }
     }
@@ -175,7 +195,13 @@ void ClapHost::pumpGui (double elapsedMs)
                 if (t.accumMs >= (double) t.periodMs) { t.accumMs = 0.0; due.push_back (t.id); }
             }
             for (const auto id : due)
-                tSup->on_timer (plugin, id);
+            {
+                // A prior on_timer() may have unregistered a later-due timer; skip it.
+                bool stillRegistered = false;
+                for (const auto& t : timers) if (t.id == id) { stillRegistered = true; break; }
+                if (stillRegistered)
+                    tSup->on_timer (plugin, id);
+            }
         }
     }
 }

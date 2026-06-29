@@ -83,6 +83,29 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     // change, the slot re-preps it for the new config.
     pluginSlot.prepareToPlay (sampleRate, juce::jmax (1, blockSize));
 
+    // Native CLAP insert (mirrors AuxLaneStrip). Stash the spec; re-activate a loaded
+    // slot at the new rate; consummate a pending session-restore now the SR is known.
+    // Engine fences this via its process gate.
+    preparedSampleRate = sampleRate;
+    preparedBlockSize  = juce::jmax (1, blockSize);
+    if (nativeClapSlot.isLoaded())
+    {
+        // Re-activate in place — a full reload would destroy the instance the editor's
+        // GUI is attached to (plugin->destroy with a live GUI aborts u-he plugins) and
+        // reset the plugin's parameters.
+        std::string err;
+        nativeClapSlot.reactivate (preparedSampleRate, preparedBlockSize, err);
+    }
+    else if (pendingClapPath.isNotEmpty())
+    {
+        const juce::File p (pendingClapPath);
+        std::string err;
+        if (nativeClapSlot.load (p, preparedSampleRate, preparedBlockSize, err) && ! pendingClapState.empty())
+            nativeClapSlot.loadState (pendingClapState);
+        pendingClapPath.clear();
+        pendingClapState.clear();
+    }
+
     // Oversampling: build a Dusk Studio-side wrapper around (EQ + Comp) when the
     // user picks 2× / 4× in Audio Settings. The donor's BritishEQ console
     // saturation and ChannelComp/UC saturation alias hard at native rate;
@@ -405,6 +428,26 @@ void ChannelStrip::bindHardwareInsert (const HardwareInsertParams& params) noexc
     hardwareSlot.bind (params);
 }
 
+bool ChannelStrip::loadNativeClap (const juce::File& path, std::string& errorOut)
+{
+    if (preparedSampleRate <= 0.0 || preparedBlockSize <= 0)
+    { errorOut = "channel strip not prepared"; return false; }
+    return nativeClapSlot.load (path, preparedSampleRate, preparedBlockSize, errorOut);
+}
+
+void ChannelStrip::unloadNativeClap() noexcept
+{
+    nativeClapSlot.unload();
+    pendingClapPath.clear();
+    pendingClapState.clear();
+}
+
+void ChannelStrip::setPendingNativeClap (const juce::File& path, std::vector<uint8_t> state) noexcept
+{
+    pendingClapPath  = path.getFullPathName();
+    pendingClapState = std::move (state);
+}
+
 void ChannelStrip::relatchPdcIfDrained (float blockPeakAbs, int numSamples) noexcept
 {
     // Track how long the signal feeding the delay has been silent. We only
@@ -655,8 +698,23 @@ void ChannelStrip::processAndAccumulate (const float* inL,
                       sizeof (float) * (size_t) numSamples);
         if (activeInsertMode == kInsertPlugin)
         {
-            pluginMidiScratch.clear();
-            pluginSlot.processMonoBlock (tempMono.data(), numSamples, pluginMidiScratch);
+            if (nativeClapSlot.isLoaded())
+            {
+                // Native CLAP is stereo-only — duplicate mono to L+R, process, average
+                // back (same collapse as the hardware mono path). insertScratchR is free
+                // here (only the hardware branch uses it).
+                std::memcpy (insertScratchR.data(), tempMono.data(), sizeof (float) * (size_t) numSamples);
+                nativeClapSlot.processStereo (tempMono.data(), insertScratchR.data(),
+                                              tempMono.data(), insertScratchR.data(), numSamples);
+                for (int i = 0; i < numSamples; ++i)
+                    tempMono[(size_t) i] = 0.5f
+                        * (tempMono[(size_t) i] + insertScratchR[(size_t) i]);
+            }
+            else
+            {
+                pluginMidiScratch.clear();
+                pluginSlot.processMonoBlock (tempMono.data(), numSamples, pluginMidiScratch);
+            }
         }
         else if (activeInsertMode == kInsertHardware)
         {
@@ -827,8 +885,13 @@ void ChannelStrip::processAndAccumulate (const float* inL,
 
             if (activeInsertMode == kInsertPlugin)
             {
-                pluginMidiScratch.clear();
-                pluginSlot.processStereoBlock (L, R, numSamples, pluginMidiScratch);
+                if (nativeClapSlot.isLoaded())
+                    nativeClapSlot.processStereo (L, R, L, R, numSamples);
+                else
+                {
+                    pluginMidiScratch.clear();
+                    pluginSlot.processStereoBlock (L, R, numSamples, pluginMidiScratch);
+                }
             }
             else if (activeInsertMode == kInsertHardware)
             {

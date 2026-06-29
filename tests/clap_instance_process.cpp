@@ -63,7 +63,8 @@ TEST_CASE ("ClapInstance loads + processes a real CLAP plugin", "[clap][instance
     SECTION ("signal in produces finite, non-silent output")
     {
         double phase = 0.0;
-        const double dw = 2.0 * M_PI * 1000.0 / 48000.0;
+        constexpr double kPi = 3.14159265358979323846;   // M_PI is non-standard
+        const double dw = 2.0 * kPi * 1000.0 / 48000.0;
         float peakOut = 0.0f;
         for (int b = 0; b < kBlocks; ++b)
         {

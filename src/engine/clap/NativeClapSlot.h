@@ -33,8 +33,22 @@ public:
     bool load (const juce::File& path, double sampleRate, int maxBlock, std::string& errorOut);
     void unload();
 
+    // Re-activate the already-loaded instance at a new sample-rate / block-size WITHOUT
+    // tearing it down — used on a device-rate or oversampling-factor change so an open
+    // editor and the plugin's state survive. No-op (false) when nothing is loaded. Caller
+    // fences the audio thread via the engine process gate.
+    bool reactivate (double sampleRate, int maxBlock, std::string& errorOut);
+
+    // App shutdown: release the instance + bundle WITHOUT destroying (u-he plugins
+    // hang in deactivate/destroy/dlclose). The process is exiting; the OS reclaims it.
+    void leakForShutdown() noexcept;
+
     bool isLoaded() const noexcept { return ready.load (std::memory_order_acquire); }
     const juce::String& getPath() const noexcept { return loadedPath; }
+
+    // Bypass: processStereo passes audio through untouched (the plugin still loaded).
+    void setBypassed (bool b) noexcept { bypassed.store (b, std::memory_order_relaxed); }
+    bool isBypassed()   const noexcept { return bypassed.load (std::memory_order_relaxed); }
 
     // Message thread: serialise / restore the loaded plugin's state for session
     // persistence. No-op (false) when nothing is loaded.
@@ -65,7 +79,8 @@ private:
     // vtable, which lives in the bundle's .so) must tear down before the .so unloads.
     std::unique_ptr<ClapBundle>   bundle;
     std::unique_ptr<ClapInstance> instance;
-    std::atomic<bool> ready { false };
+    std::atomic<bool> ready    { false };
+    std::atomic<bool> bypassed { false };
     juce::String      loadedPath;
 };
 } // namespace duskstudio::clap

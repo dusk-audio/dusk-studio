@@ -8,6 +8,7 @@
 #include "EmbeddedModal.h"
 #include "HardwareInsertEditor.h"
 #include "PluginPickerHelpers.h"
+#include "ClapPluginEditorComponent.h"
 #include "DuskAlerts.h"
 #include "FreezeDialog.h"
 #include "../engine/AudioEngine.h"
@@ -16,6 +17,7 @@
 #include "PlatformWindowing.h"
 #include "../session/ParamEditAction.h"
 #include "../session/RegionEditActions.h"
+#include <cstdio>
 
 namespace duskstudio
 {
@@ -1426,7 +1428,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         "open the routing editor."));
     pluginSlotButton.onClick = [this]
     {
-        if (pluginSlot.isLoaded())
+        if (pluginSlot.isLoaded() || engine.getChannelStrip (trackIndex).isNativeClapLoaded())
         {
             togglePluginEditor();
             return;
@@ -1456,13 +1458,20 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     eqCompactButton  .setButtonText ("EQ");
     compCompactButton.setButtonText ("COMP");
     auxCompactButton .setButtonText ("AUX");
-    eqCompactButton  .setTooltip ("Click to open the EQ editor (click again to close). "
-                                    "Button is illuminated when the section is enabled.");
-    compCompactButton.setTooltip ("Click to open the compressor editor (click again to close). "
-                                    "Button is illuminated when the section is enabled.");
+    // Same grammar as the expanded EQ/COMP headers: left-click toggles the section
+    // on/off, right-click opens the editor. The illuminated background (driven by the
+    // 30 Hz refresh) reflects the enabled state.
+    eqCompactButton  .setTooltip ("Left-click EQ on/off. Right-click to open the editor.");
+    compCompactButton.setTooltip ("Left-click comp on/off. Right-click to open the editor.");
     auxCompactButton .setTooltip ("Click to open the AUX sends panel (click again to close).");
-    eqCompactButton  .onClick = [this] { openEqEditorPopup(); };
-    compCompactButton.onClick = [this] { openCompEditorPopup(); };
+    eqCompactButton  .onClick = [this]
+    {
+        track.strip.eqEnabled.store (! track.strip.eqEnabled.load (std::memory_order_relaxed),
+                                      std::memory_order_release);
+    };
+    eqCompactButton  .onRightClick = [this] (const juce::MouseEvent&) { openEqEditorPopup(); };
+    compCompactButton.onClick      = [this] { setCompEnabled (! track.strip.compEnabled.load (std::memory_order_relaxed)); };
+    compCompactButton.onRightClick = [this] (const juce::MouseEvent&) { openCompEditorPopup(); };
     auxCompactButton .onClick = [this] { openAuxEditorPopup(); };
     addChildComponent (eqCompactButton);    // hidden until compact mode flips on
     addChildComponent (compCompactButton);
@@ -1830,6 +1839,16 @@ void ChannelStripComponent::openPluginPicker (bool useChooser)
                                         });
                                     };
 
+    // Native CLAP route — effects (audio) slots only; CLAP instruments aren't hosted
+    // natively yet. Selecting a CLAP row loads it through the channel's native host.
+    std::function<void (const juce::File&)> onClap;
+    if (kind == pluginpicker::PluginKind::Effects)
+        onClap = [safe] (const juce::File& f)
+        {
+            if (auto* self = safe.getComponent())
+                self->loadNativeClapForChannel (f);
+        };
+
     if (useChooser)
     {
         pluginpicker::openInsertChooser (pluginSlot,
@@ -1837,7 +1856,8 @@ void ChannelStripComponent::openPluginPicker (bool useChooser)
                                           activePluginChooser,
                                           std::move (onChange),
                                           kind,
-                                          std::move (openHwEditor));
+                                          std::move (openHwEditor),
+                                          std::move (onClap));
     }
     else
     {
@@ -1851,7 +1871,8 @@ void ChannelStripComponent::openPluginPicker (bool useChooser)
                                        kind,
                                        { -1, -1 },
                                        /*onPickHardwareInsert*/ {},
-                                       /*suppressSecondaryButtons*/ true);
+                                       /*suppressSecondaryButtons*/ true,
+                                       std::move (onClap));
     }
 }
 
@@ -1890,6 +1911,23 @@ void ChannelStripComponent::unloadPluginSlot()
     // holds a reference back to the AudioProcessor and would crash on
     // teardown otherwise.
     closePluginEditor();
+
+    // Native CLAP insert: drop our editor + tear down the slot under the engine
+    // gate, then return the strip to the empty-insert resting state.
+    auto& strip = engine.getChannelStrip (trackIndex);
+    if (strip.isNativeClapLoaded())
+    {
+        clapEditor.reset();
+        engine.suspendProcessing();
+        strip.unloadNativeClap();
+        strip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
+        engine.resumeProcessing();
+        track.nativeClapPath = {};
+        track.nativeClapStateBase64 = {};
+        refreshPluginSlotButton();
+        return;
+    }
+
     pluginSlot.unload();
     refreshPluginSlotButton();
 }
@@ -1897,7 +1935,8 @@ void ChannelStripComponent::unloadPluginSlot()
 void ChannelStripComponent::showPluginSlotMenu()
 {
     juce::PopupMenu menu;
-    if (pluginSlot.isLoaded())
+    const bool nativeLoaded = engine.getChannelStrip (trackIndex).isNativeClapLoaded();
+    if (pluginSlot.isLoaded() || nativeLoaded)
     {
         // Editor toggle headline so right-click ALSO becomes a way to open
         // the plugin GUI (some users find right-click more discoverable).
@@ -1906,18 +1945,23 @@ void ChannelStripComponent::showPluginSlotMenu()
         menu.addSeparator();
         menu.addItem (2002, "Replace plugin...");
         menu.addItem (2003, "Remove plugin");
-        if (pluginSlot.wasCrashed())
-            menu.addItem (2004, "Re-enable plugin (crashed)");
-        else if (pluginSlot.wasAutoBypassed())
-            menu.addItem (2004, "Re-enable plugin (auto-bypassed)");
-        // MIDI Learn for the last parameter the user touched via the
-        // plugin's own UI. Disabled when no parameter has been touched
-        // since the slot loaded (no last-touched stamp to bind to).
-        menu.addSeparator();
-        const int lastParam = pluginSlot.getLastTouchedParamIndex();
-        menu.addItem (2005,
-                       "MIDI Learn last-touched parameter",
-                       lastParam >= 0);
+        // Crash/auto-bypass recovery + last-touched MIDI Learn are JUCE-slot
+        // concepts; the native CLAP host doesn't expose them yet.
+        if (! nativeLoaded)
+        {
+            if (pluginSlot.wasCrashed())
+                menu.addItem (2004, "Re-enable plugin (crashed)");
+            else if (pluginSlot.wasAutoBypassed())
+                menu.addItem (2004, "Re-enable plugin (auto-bypassed)");
+            // MIDI Learn for the last parameter the user touched via the
+            // plugin's own UI. Disabled when no parameter has been touched
+            // since the slot loaded (no last-touched stamp to bind to).
+            menu.addSeparator();
+            const int lastParam = pluginSlot.getLastTouchedParamIndex();
+            menu.addItem (2005,
+                           "MIDI Learn last-touched parameter",
+                           lastParam >= 0);
+        }
     }
     else
     {
@@ -1963,6 +2007,21 @@ void ChannelStripComponent::refreshInsertButtonForCapture()
 
 void ChannelStripComponent::refreshPluginSlotButton()
 {
+    // Native CLAP insert — name from the loaded .clap bundle. The JUCE pluginSlot is
+    // empty for a native insert, so this must precede the slot-based bookkeeping below
+    // (which would otherwise mislabel "Insert" and drop the live clap editor).
+    if (engine.getChannelStrip (trackIndex).isNativeClapLoaded())
+    {
+        const auto nm = juce::File (engine.getChannelStrip (trackIndex)
+                                      .getNativeClapSlot().getPath())
+                          .getFileNameWithoutExtension();
+        const auto label = juce::String (juce::CharPointer_UTF8 ("\xe2\x96\xbe ")) + nm;
+        if (label == lastSlotName) return;
+        lastSlotName = label;
+        pluginSlotButton.setButtonText (label);
+        return;
+    }
+
     const int mode = engine.getChannelStrip (trackIndex)
                        .insertMode.load (std::memory_order_relaxed);
     juce::String label;
@@ -2066,6 +2125,22 @@ void ChannelStripComponent::openPluginEditor()
         if (auto* self = safe.getComponent())
             self->closePluginEditor();
     };
+
+    // Native CLAP insert — show our editor (shared instance) borrowed in the modal,
+    // so closing hides (not destroys) it. Takes precedence over the JUCE editor.
+    if (engine.getChannelStrip (trackIndex).isNativeClapLoaded())
+    {
+        auto* inst = engine.getChannelStrip (trackIndex).getNativeClapSlot().getInstance();
+        if (inst == nullptr) return;
+        if (clapEditor == nullptr)
+        {
+            clapEditor = std::make_unique<ClapPluginEditorComponent>();
+            juce::String err;
+            if (! clapEditor->attach (*inst, err)) { clapEditor.reset(); return; }
+        }
+        pluginEditorModal.showBorrowed (*parent, *clapEditor, onClose);
+        return;
+    }
 
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
     if (pluginSlot.isRemote())
@@ -2284,6 +2359,15 @@ void ChannelStripComponent::closePluginEditor()
 void ChannelStripComponent::dropPluginEditor()
 {
     closePluginEditor();
+
+    // Native CLAP editor: leak rather than destroy — u-he plugins hang in
+    // gui->destroy on shutdown (same class as the JUCE leak-on-shutdown). The
+    // shared instance is leaked separately by the engine's shutdown loop.
+    if (clapEditor != nullptr)
+    {
+        clapEditor->leakForShutdown();
+        clapEditor.reset();
+    }
     // ~AudioProcessorEditor tears down the plugin's internal X11
     // children synchronously (colour pickers, preset browsers,
     // transient popups). On a Wayland session, any of those could
@@ -2317,6 +2401,54 @@ void ChannelStripComponent::dropPluginEditor()
     // hide/destroy it cleanly. Mac: nullptr — no-op.
     remoteForeignEmbed.reset();
    #endif
+}
+
+void ChannelStripComponent::loadNativeClapForChannel (const juce::File& clapFile)
+{
+    auto& strip = engine.getChannelStrip (trackIndex);
+
+    // One insert per strip — tear down whatever editor is open first. The app is
+    // alive here (not shutdown), so a plain reset destroys the old clap editor
+    // cleanly; only shutdown needs the leak path.
+    closePluginEditor();
+    clapEditor.reset();
+    pluginEditor.reset();
+    pluginEditorOwner = nullptr;
+    // Release any OOP-side embed too — replacing a remote (OOP) plugin with a native
+    // CLAP would otherwise leave the foreign X11 / HWND wrapper behind (mirrors
+    // dropPluginEditor's teardown).
+   #if JUCE_LINUX && DUSKSTUDIO_HAS_OOP_PLUGINS
+    remoteEditorEmbed.reset();
+   #endif
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS && ! JUCE_LINUX
+    remoteForeignEmbed.reset();
+   #endif
+
+    // NativeClapSlot::load is NOT RT-safe (tears down + rebuilds the instance), so
+    // fence the audio thread with the engine process gate around the swap.
+    std::string err;
+    engine.suspendProcessing();
+    pluginSlot.unload();                       // ensure no JUCE plugin lingers
+    const bool ok = strip.loadNativeClap (clapFile, err);
+    if (ok)
+        strip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
+    engine.resumeProcessing();
+
+    if (! ok)
+    {
+        std::fprintf (stderr, "[chan clap] load failed: %s\n", err.c_str());
+        showDuskAlert (*this, "Couldn't load CLAP plugin",
+                       clapFile.getFileNameWithoutExtension() + ":\n" + juce::String (err));
+        // The runtime slot is now empty — clear the persisted native-CLAP refs so a
+        // save doesn't carry a stale path/state for a slot the user sees as empty.
+        track.nativeClapPath = {};
+        track.nativeClapStateBase64 = {};
+        return;
+    }
+
+    track.nativeClapPath = clapFile.getFullPathName();
+    refreshPluginSlotButton();
+    openPluginEditor();
 }
 
 namespace
@@ -2532,6 +2664,10 @@ void ChannelStripComponent::refreshPrintButtonForMode()
                                   "the post-EQ/post-comp signal (effects baked "
                                   "in). Off = clean input recorded; effects "
                                   "only at playback.");
+        // Restore the PRINT-specific a11y metadata — otherwise a FREEZE→PRINT flip
+        // leaves the stale "Freeze track" title/help for assistive tech.
+        printButton.setTitle ("Print effects on record");
+        printButton.setHelpText (printButton.getTooltip());
         return;
     }
 
@@ -3851,7 +3987,7 @@ void ChannelStripComponent::showColourMenu()
     // Plugin slot menu items, only meaningful when a plugin is loaded.
     // Replace/Remove live here (rather than on the slot button itself) so
     // the slot button's primary click stays as a toggle for the editor.
-    if (pluginSlot.isLoaded())
+    if (pluginSlot.isLoaded() || engine.getChannelStrip (trackIndex).isNativeClapLoaded())
     {
         menu.addSeparator();
         menu.addItem (1010, "Replace plugin...");
@@ -3978,6 +4114,12 @@ void ChannelStripComponent::onTrackModeChanged()
         const bool isInstrument = pluginSlot.isLoadedPluginInstrument();
         if (willBeMidi != isInstrument)
             unloadPluginSlot();
+    }
+    else if (engine.getChannelStrip (trackIndex).isNativeClapLoaded()
+             && mode == (int) Track::Mode::Midi)
+    {
+        // Native CLAP inserts are effects-only; a MIDI strip can't host one.
+        unloadPluginSlot();
     }
 
     track.mode.store (mode, std::memory_order_relaxed);
