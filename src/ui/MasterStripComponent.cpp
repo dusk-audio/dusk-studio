@@ -680,7 +680,7 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     const auto compGold    = juce::Colour (0xff7da8c5);   // SSL G-bus comp powder blue (legacy var name)
 
     // EQ header — shared CompHeaderButton pill (green LED + bold label).
-    // No pickFn: master EQ has a single program-EQ topology, no mode picker.
+    // Left-click toggles; right-click opens the EQ editor (matches COMP / TAPE).
     eqHeaderBtn = std::make_unique<CompHeaderButton> (
         /*getEnabled*/ [this] { return params.eqEnabled.load (std::memory_order_relaxed); },
         /*onToggle*/   [this]
@@ -688,9 +688,10 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
                             const bool now = ! params.eqEnabled.load (std::memory_order_relaxed);
                             params.eqEnabled.store (now, std::memory_order_release);
                             if (eqHeaderBtn != nullptr) eqHeaderBtn->repaint();
-                        });
+                        },
+        /*onPick*/     [this] { openEqEditorPopup(); });
     eqHeaderBtn->setLabelText ("EQ");
-    eqHeaderBtn->setTooltip ("program-style Tube EQ on/off");
+    eqHeaderBtn->setTooltip ("Left-click EQ on/off. Right-click to open the editor.");
     addAndMakeVisible (eqHeaderBtn.get());
 
     // Suffixes intentionally empty - section labels already convey the
@@ -834,7 +835,8 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
                             const bool now = ! params.compEnabled.load (std::memory_order_relaxed);
                             params.compEnabled.store (now, std::memory_order_relaxed);
                             if (compHeaderBtn != nullptr) compHeaderBtn->repaint();
-                        });
+                        },
+        /*onPick*/     [this] { openCompEditorPopup(); });
     addAndMakeVisible (compHeaderBtn.get());
 
     CompMeterStrip::Source compSrc;
@@ -920,10 +922,27 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     };
     styleCompactSectionBtn (eqCompactButton,   juce::Colour (0xff5fc46f));
     styleCompactSectionBtn (compCompactButton, juce::Colour (0xffe0c050));
-    eqCompactButton  .setTooltip ("Open the master EQ editor (program-style Tube EQ). Click again to close.");
-    compCompactButton.setTooltip ("Open the master comp editor (console-style glue compressor). Click again to close.");
-    eqCompactButton  .onClick = [this] { openEqEditorPopup(); };
-    compCompactButton.onClick = [this] { openCompEditorPopup(); };
+    eqCompactButton  .setTooltip ("Left-click EQ on/off. Right-click to open the editor.");
+    compCompactButton.setTooltip ("Left-click comp on/off. Right-click to open the editor.");
+    // Same grammar as the expanded headers: left-click toggles, right-click opens
+    // the editor. (Was: any click opened the modal — inconsistent with expanded mode.)
+    eqCompactButton.onClick = [this]
+    {
+        const bool now = ! params.eqEnabled.load (std::memory_order_relaxed);
+        params.eqEnabled.store (now, std::memory_order_release);
+        eqCompactButton.setToggleState (now, juce::dontSendNotification);
+    };
+    eqCompactButton.onRightClick = [this] (const juce::MouseEvent&) { openEqEditorPopup(); };
+    eqCompactButton.setToggleState (params.eqEnabled.load (std::memory_order_relaxed), juce::dontSendNotification);
+
+    compCompactButton.onClick = [this]
+    {
+        const bool now = ! params.compEnabled.load (std::memory_order_relaxed);
+        params.compEnabled.store (now, std::memory_order_relaxed);
+        compCompactButton.setToggleState (now, juce::dontSendNotification);
+    };
+    compCompactButton.onRightClick = [this] (const juce::MouseEvent&) { openCompEditorPopup(); };
+    compCompactButton.setToggleState (params.compEnabled.load (std::memory_order_relaxed), juce::dontSendNotification);
     addChildComponent (eqCompactButton);
     addChildComponent (compCompactButton);
 
@@ -949,10 +968,15 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
         tapeButton.setClickingTogglesState (false);   // toggle path goes through the atom, not the button state
         tapeButton.setToggleState (params.tapeEnabled.load (std::memory_order_relaxed),
                                     juce::dontSendNotification);
-        tapeButton.setTooltip ("Open the master tape-machine editor (toggle tape on/off inside).");
-        // Match the EQ / COMP compact pills: any click opens the editor modal;
-        // the on/off toggle lives inside it.
-        tapeButton.onClick      = [this] { openTapeMachineModal(); };
+        tapeButton.setTooltip ("Left-click tape on/off. Right-click to open the editor.");
+        // Same grammar as the expanded headers + the EQ/COMP pills: left-click toggles,
+        // right-click opens the editor.
+        tapeButton.onClick = [this]
+        {
+            const bool now = ! params.tapeEnabled.load (std::memory_order_relaxed);
+            params.tapeEnabled.store (now, std::memory_order_relaxed);
+            tapeButton.setToggleState (now, juce::dontSendNotification);
+        };
         tapeButton.onRightClick = [this] (const juce::MouseEvent&) { openTapeMachineModal(); };
         addAndMakeVisible (tapeButton);
     }
@@ -1154,6 +1178,10 @@ void MasterStripComponent::timerCallback()
         if (eqOn != lastCompactEqOn)
         {
             lastCompactEqOn = eqOn;
+            // Track the atom, not the last click: EQ enable can change via the popup
+            // editor / MIDI without touching this button. The toggle state drives the
+            // lit (buttonOnColourId) appearance.
+            eqCompactButton.setToggleState (eqOn != 0, juce::dontSendNotification);
             eqCompactButton.setColour (juce::TextButton::buttonColourId,
                                          eqOn != 0 ? eqAccent.darker (0.55f)
                                                     : juce::Colour (0xff282830));
@@ -1162,6 +1190,7 @@ void MasterStripComponent::timerCallback()
         if (compOn != lastCompactCompOn)
         {
             lastCompactCompOn = compOn;
+            compCompactButton.setToggleState (compOn != 0, juce::dontSendNotification);
             compCompactButton.setColour (juce::TextButton::buttonColourId,
                                            compOn != 0 ? compAccent.darker (0.55f)
                                                         : juce::Colour (0xff282830));

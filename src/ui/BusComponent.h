@@ -7,6 +7,7 @@
 #include "CompMeterStrip.h"
 #include "CompHeaderButton.h"
 #include "EmbeddedModal.h"
+#include "SectionPillButton.h"
 
 namespace duskstudio
 {
@@ -125,8 +126,8 @@ private:
     // click does nothing (tooltip explains the TIMELINE toggle owns the
     // expand/collapse). Mirrors ChannelStripComponent's eqCompactButton
     // / compCompactButton grammar.
-    juce::TextButton eqCompactButton  { "EQ"   };
-    juce::TextButton compCompactButton { "COMP" };
+    SectionPillButton eqCompactButton  { "EQ"   };
+    SectionPillButton compCompactButton { "COMP" };
     // Compact-mode popups: clicking the placeholder button shows a
     // mini-editor mirroring the bus's EQ / COMP knobs so the user can
     // tweak without expanding the strip back to full mode.

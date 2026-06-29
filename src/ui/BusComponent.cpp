@@ -811,10 +811,27 @@ BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
     };
     styleCompactSectionBtn (eqCompactButton,   juce::Colour (0xff5fc46f));
     styleCompactSectionBtn (compCompactButton, juce::Colour (0xffe0c050));
-    eqCompactButton  .setTooltip ("Open the bus EQ editor (3-band British-style EQ). Click again to close.");
-    compCompactButton.setTooltip ("Open the bus comp editor (console-style glue compressor). Click again to close.");
-    eqCompactButton  .onClick = [this] { openEqEditorPopup(); };
-    compCompactButton.onClick = [this] { openCompEditorPopup(); };
+    // Same grammar as the expanded EQ/COMP headers: left-click toggles the section
+    // on/off, right-click opens the editor. The illuminated background (driven by the
+    // 30 Hz refresh) reflects the enabled state.
+    eqCompactButton  .setTooltip ("Left-click EQ on/off. Right-click to open the editor.");
+    compCompactButton.setTooltip ("Left-click comp on/off. Right-click to open the editor.");
+    eqCompactButton  .onClick = [this]
+    {
+        const bool now = ! bus.strip.eqEnabled.load (std::memory_order_relaxed);
+        bus.strip.eqEnabled.store (now, std::memory_order_release);
+        // Mirror into the button's own toggle state so the pill text palette
+        // (textColourOnId vs Off) reflects the new state immediately, not 33 ms later.
+        eqCompactButton.setToggleState (now, juce::dontSendNotification);
+    };
+    eqCompactButton  .onRightClick = [this] (const juce::MouseEvent&) { openEqEditorPopup(); };
+    compCompactButton.onClick = [this]
+    {
+        const bool now = ! bus.strip.compEnabled.load (std::memory_order_relaxed);
+        bus.strip.compEnabled.store (now, std::memory_order_release);
+        compCompactButton.setToggleState (now, juce::dontSendNotification);
+    };
+    compCompactButton.onRightClick = [this] (const juce::MouseEvent&) { openCompEditorPopup(); };
     addChildComponent (eqCompactButton);
     addChildComponent (compCompactButton);
 
@@ -995,6 +1012,9 @@ void BusComponent::timerCallback()
         if (eqOn != lastCompactEqOn)
         {
             lastCompactEqOn = eqOn;
+            // Track the atom (it can change via the popup editor) so the pill stays
+            // in sync regardless of how the section was toggled.
+            eqCompactButton.setToggleState (eqOn != 0, juce::dontSendNotification);
             eqCompactButton.setColour (juce::TextButton::buttonColourId,
                                          eqOn != 0 ? eqAccent.darker (0.55f)
                                                     : juce::Colour (0xff282830));
@@ -1003,6 +1023,7 @@ void BusComponent::timerCallback()
         if (compOn != lastCompactCompOn)
         {
             lastCompactCompOn = compOn;
+            compCompactButton.setToggleState (compOn != 0, juce::dontSendNotification);
             compCompactButton.setColour (juce::TextButton::buttonColourId,
                                            compOn != 0 ? compAccent.darker (0.55f)
                                                         : juce::Colour (0xff282830));
