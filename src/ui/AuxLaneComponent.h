@@ -60,7 +60,10 @@ private:
     void detachEditorForSlot (int slotIdx);
     void attachHardwareInsertForSlot (int slotIdx);
     void detachHardwareInsertForSlot (int slotIdx);
-    void loadNativeClapForSlot (int slotIdx, const juce::File& clapFile);
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+    void loadNativeClapForSlot (int slotIdx, const juce::File& clapFile);   // Linux-only
+#endif
+    // Stubbed (no-op body) off Linux so the many callers don't each need a guard.
     void detachClapEditorForSlot (int slotIdx);
     void hideEditorsKeepingAlive();
     void layoutEditorForSlot (int slotIdx);
@@ -130,8 +133,10 @@ private:
         std::unique_ptr<juce::AudioProcessorEditor> editor;
         std::unique_ptr<HardwareInsertEditor>       hwInsertEditor;
         // Native CLAP editor (when strip.isNativeClapLoaded(i)); shares the lane's
-        // NativeClapSlot instance. Mutually exclusive with `editor` above.
+        // NativeClapSlot instance. Mutually exclusive with `editor` above. Linux-only.
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
         std::unique_ptr<ClapPluginEditorComponent>  clapEditor;
+#endif
         juce::String displayedName;
     };
     std::array<SlotUI, AuxLaneParams::kMaxLanePlugins> slots;

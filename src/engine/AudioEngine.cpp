@@ -1273,6 +1273,9 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
         track.pluginStateBase64    = slot.getStateBase64ForSave   (parkSleepMs);
 
         // Native CLAP insert (parallel to the JUCE plugin; at most one is loaded).
+        // Linux-only; on other platforms the saved path/state are preserved untouched
+        // so a session authored on Linux round-trips through a non-Linux build.
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
         if (strip.isNativeClapLoaded())
         {
             track.nativeClapPath = strip.getNativeClapSlot().getPath();
@@ -1287,6 +1290,7 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
             track.nativeClapPath.clear();
             track.nativeClapStateBase64.clear();
         }
+#endif
     }
     for (int a = 0; a < Session::kNumAuxLanes; ++a)
     {
@@ -1299,6 +1303,8 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
             lane.pluginStateBase64[(size_t) s]    = slot.getStateBase64ForSave   (parkSleepMs);
 
             // Native CLAP slot (parallel to the JUCE plugin; at most one is loaded).
+            // Linux-only; preserved untouched elsewhere (see the track block above).
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
             if (strip.isNativeClapLoaded (s))
             {
                 lane.nativeClapPath[(size_t) s] = strip.getNativeClapSlot (s).getPath();
@@ -1313,6 +1319,7 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
                 lane.nativeClapPath[(size_t) s].clear();
                 lane.nativeClapStateBase64[(size_t) s].clear();
             }
+#endif
         }
     }
 
@@ -1346,13 +1353,17 @@ void AudioEngine::leakAllPluginInstancesForShutdown()
     for (auto& strip : strips)
     {
         strip.getPluginSlot().leakInstanceForShutdown();
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
         strip.getNativeClapSlot().leakForShutdown();   // u-he hangs in destroy/dlclose
+#endif
     }
     for (auto& laneStrip : auxLaneStrips)
         for (int s = 0; s < AuxLaneParams::kMaxLanePlugins; ++s)
         {
             laneStrip.getPluginSlot (s).leakInstanceForShutdown();
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
             laneStrip.getNativeClapSlot (s).leakForShutdown();   // u-he hangs in destroy/dlclose
+#endif
         }
 }
 
@@ -1405,7 +1416,10 @@ void AudioEngine::consumePluginStateAfterLoad()
 
         // Native CLAP insert (takes precedence over the JUCE plugin). load() needs the
         // sample rate: load directly when prepared (device running), else stash a
-        // pending restore that ChannelStrip::prepare() consummates.
+        // pending restore that ChannelStrip::prepare() consummates. Linux-only; on
+        // other platforms the saved path is ignored (the strip restores empty) but
+        // kept in the session model so a re-save round-trips it back to Linux.
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
         if (track.nativeClapPath.isNotEmpty())
         {
             slot.unload();
@@ -1440,6 +1454,7 @@ void AudioEngine::consumePluginStateAfterLoad()
             }
             continue;
         }
+#endif
 
         // No native CLAP in this session for this strip — tear down any native
         // instance carried over from the previously-loaded session before the JUCE
@@ -1490,7 +1505,9 @@ void AudioEngine::consumePluginStateAfterLoad()
             // Native CLAP slot (takes precedence over the JUCE plugin). load() needs
             // the sample rate: load directly when the engine is already prepared (a
             // session opened while the device runs), else stash a pending restore that
-            // AuxLaneStrip::prepare() consummates when the SR is known.
+            // AuxLaneStrip::prepare() consummates when the SR is known. Linux-only;
+            // elsewhere the saved path is ignored but preserved in the session model.
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
             if (lane.nativeClapPath[(size_t) s].isNotEmpty())
             {
                 slot.unload();   // ensure no JUCE plugin lingers in this slot
@@ -1525,6 +1542,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                 }
                 continue;   // native handled — skip the JUCE restore for this slot
             }
+#endif
 
             // No native CLAP for this slot — tear down any instance carried over from
             // the previous session before the JUCE restore (fence when live).

@@ -328,9 +328,11 @@ private:
 
     // Native CLAP insert editor (shares the strip's NativeClapSlot instance). Kept
     // alive across modal opens — showBorrowed hides on close rather than destroying
-    // (u-he hangs in gui->destroy); leaked on shutdown via dropPluginEditor.
+    // (u-he hangs in gui->destroy); leaked on shutdown via dropPluginEditor. Linux-only.
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
     std::unique_ptr<class ClapPluginEditorComponent> clapEditor;
     void loadNativeClapForChannel (const juce::File& clapFile);
+#endif
 
    #if JUCE_LINUX && DUSKSTUDIO_HAS_OOP_PLUGINS
     // OOP: child plugin's X11 Window wrapped in XEmbedComponent fed

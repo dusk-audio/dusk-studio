@@ -7,7 +7,9 @@
 
 #include "ipc/PluginScanProtocol.h"
 #include "PluginBackingCheck.h"
-#include "clap/ClapScanner.h"
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+  #include "clap/ClapScanner.h"   // Linux-only native CLAP discovery
+#endif
 
 #include <map>
 
@@ -354,6 +356,7 @@ int PluginManager::scanInstalledPlugins (
 void PluginManager::scanClapPlugins()
 {
     clapDescriptions.clearQuick();
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
     for (const auto& s : clap::ClapScanner::scan())
     {
         juce::PluginDescription d;
@@ -365,6 +368,7 @@ void PluginManager::scanClapPlugins()
         d.isInstrument     = s.desc.isInstrument();
         clapDescriptions.add (d);
     }
+#endif
 }
 
 juce::Array<juce::PluginDescription> PluginManager::getClapEffectDescriptions() const

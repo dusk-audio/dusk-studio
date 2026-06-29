@@ -9,16 +9,7 @@ FetchContent_MakeAvailable(Catch2)
 
 add_executable(dusk-studio-tests
     smoke_brickwall_limiter.cpp
-    clap_bundle_load.cpp
-    clap_instance_process.cpp
-    clap_native_slot.cpp
-    clap_scanner.cpp
-    clap_params.cpp
-    ${CMAKE_SOURCE_DIR}/src/engine/clap/ClapBundle.cpp
-    ${CMAKE_SOURCE_DIR}/src/engine/clap/ClapHost.cpp
-    ${CMAKE_SOURCE_DIR}/src/engine/clap/ClapInstance.cpp
-    ${CMAKE_SOURCE_DIR}/src/engine/clap/NativeClapSlot.cpp
-    ${CMAKE_SOURCE_DIR}/src/engine/clap/ClapScanner.cpp
+    # Native CLAP tests + sources are Linux-only (dlopen/poll) — added conditionally below.
     plugin_scan_protocol.cpp
     plugin_backing_check.cpp
     session_tick_conversion.cpp
@@ -130,6 +121,23 @@ target_compile_definitions(dusk-studio-tests PRIVATE
     JUCE_STANDALONE_APPLICATION=1
     $<$<BOOL:${DUSKSTUDIO_JUCE_HAS_FREE_ADD_FORMATS}>:DUSKSTUDIO_JUCE_HAS_FREE_ADD_FORMATS=1>
     DUSKSTUDIO_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+
+# Native CLAP host is Linux-only (dlopen/poll) — gate its tests + sources to match
+# the app build (DUSKSTUDIO_NATIVE_CLAP). clap_bundle_load also needs dladdr.
+if(DUSKSTUDIO_NATIVE_CLAP)
+    target_sources(dusk-studio-tests PRIVATE
+        clap_bundle_load.cpp
+        clap_instance_process.cpp
+        clap_native_slot.cpp
+        clap_scanner.cpp
+        clap_params.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/clap/ClapBundle.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/clap/ClapHost.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/clap/ClapInstance.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/clap/NativeClapSlot.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/clap/ClapScanner.cpp)
+    target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_NATIVE_CLAP=1)
+endif()
 
 target_link_libraries(dusk-studio-tests PRIVATE
     Catch2::Catch2WithMain

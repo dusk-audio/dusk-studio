@@ -7,7 +7,9 @@
 #include <vector>
 #include "../session/Session.h"
 #include "../engine/PluginSlot.h"
-#include "../engine/clap/NativeClapSlot.h"
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+  #include "../engine/clap/NativeClapSlot.h"   // Linux-only native CLAP host
+#endif
 #include "HardwareInsertSlot.h"
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
@@ -55,14 +57,20 @@ public:
     // Native CLAP host path (replaces JUCE hosting for this insert when loaded). When
     // a native CLAP is loaded, the insert pass runs through it instead of pluginSlot.
     // Mirrors AuxLaneStrip. Message thread; engine fences load/unload via its gate.
+    // Linux-only (DUSKSTUDIO_HAS_NATIVE_CLAP); stubbed elsewhere so callers compile.
+    bool isPrepared() const noexcept { return preparedSampleRate > 0.0 && preparedBlockSize > 0; }
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
     bool loadNativeClap   (const juce::File& path, std::string& errorOut);
     void unloadNativeClap() noexcept;
     bool isNativeClapLoaded() const noexcept { return nativeClapSlot.isLoaded(); }
     clap::NativeClapSlot&       getNativeClapSlot()       noexcept { return nativeClapSlot; }
     const clap::NativeClapSlot& getNativeClapSlot() const noexcept { return nativeClapSlot; }
-    bool isPrepared() const noexcept { return preparedSampleRate > 0.0 && preparedBlockSize > 0; }
     // Session restore before the engine is prepared: stash {path,state}; prepare() loads it.
     void setPendingNativeClap (const juce::File& path, std::vector<uint8_t> state) noexcept;
+#else
+    bool isNativeClapLoaded() const noexcept { return false; }
+    void unloadNativeClap() noexcept {}
+#endif
 
     // Hardware vs plugin insert: one runs per block, chosen by
     // insertMode + 20 ms crossfade gate.
@@ -163,14 +171,18 @@ private:
 
     // Sits between phase invert and the EQ stage.
     PluginSlot pluginSlot;
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
     clap::NativeClapSlot nativeClapSlot;   // native CLAP alternative to pluginSlot
+#endif
     HardwareInsertSlot hardwareSlot;
 
     // Stashed in prepare() so loadNativeClap / pending-restore can (re)activate at spec.
     double preparedSampleRate = 0.0;
     int    preparedBlockSize  = 0;
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
     juce::String         pendingClapPath;    // session-restore load consummated by prepare()
     std::vector<uint8_t> pendingClapState;
+#endif
 
     // activeInsertMode = what we're currently running; insertMode = what
     // the UI wants. Mismatch triggers ramp-out / swap / ramp-in.

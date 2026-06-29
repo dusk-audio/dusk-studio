@@ -13,6 +13,7 @@ void AuxLaneStrip::prepare (double sampleRate, int blockSize)
     // new one. Reload by path (the instance has no in-place re-prepare) — a
     // sample-rate change resets DSP state anyway. Engine fences this via its
     // process gate, so the audio thread never sees a half-swapped slot.
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
     for (int s = 0; s < kMaxPlugins; ++s)
     {
         auto& ncs = nativeClapSlots[(size_t) s];
@@ -40,6 +41,7 @@ void AuxLaneStrip::prepare (double sampleRate, int blockSize)
             pendingClapState[(size_t) s].clear();
         }
     }
+#endif
 
     constexpr double rampSeconds = 0.020;
     returnGain.reset (sampleRate, rampSeconds);
@@ -74,6 +76,7 @@ void AuxLaneStrip::bindHardwareInsert (int slotIdx, const HardwareInsertParams& 
     hardwareSlots[(size_t) slotIdx].bind (params);
 }
 
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
 bool AuxLaneStrip::loadNativeClap (int slotIdx, const juce::File& path, std::string& errorOut)
 {
     jassert (slotIdx >= 0 && slotIdx < kMaxPlugins);
@@ -101,6 +104,7 @@ void AuxLaneStrip::setPendingNativeClap (int slotIdx, const juce::File& path,
     pendingClapPath[(size_t) slotIdx]  = path.getFullPathName();
     pendingClapState[(size_t) slotIdx] = std::move (state);
 }
+#endif
 
 void AuxLaneStrip::updateGainTarget() noexcept
 {
@@ -196,9 +200,11 @@ void AuxLaneStrip::processStereoBlock (float* L, float* R, int numSamples,
         {
             // Native CLAP host takes the slot when loaded; otherwise the JUCE
             // PluginSlot. processStereo is in-place safe (own scratch buffers).
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
             if (nativeClapSlots[sIdx].isLoaded())
                 nativeClapSlots[sIdx].processStereo (L, R, L, R, numSamples);
             else
+#endif
                 slots[sIdx].processStereoBlock (L, R, numSamples, pluginMidiScratch);
         }
         else if (activeInsertMode[sIdx] == kInsertHardware)

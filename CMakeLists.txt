@@ -20,6 +20,15 @@ file(READ "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" DUSKSTUDIO_VERSION_RAW)
 string(STRIP "${DUSKSTUDIO_VERSION_RAW}" DUSKSTUDIO_VERSION)
 project(DuskStudio VERSION ${DUSKSTUDIO_VERSION} LANGUAGES C CXX)
 
+# Native CLAP host (src/engine/clap/ + the X11 editor) is POSIX + X11 — Linux only.
+# Default ON for Linux, OFF elsewhere; can be forced off on Linux for testing the
+# gated (DUSKSTUDIO_HAS_NATIVE_CLAP) build path with -DDUSKSTUDIO_NATIVE_CLAP=OFF.
+if(UNIX AND NOT APPLE)
+    option(DUSKSTUDIO_NATIVE_CLAP "Build the native CLAP plugin host (Linux/X11 only)" ON)
+else()
+    set(DUSKSTUDIO_NATIVE_CLAP OFF)
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -270,13 +279,8 @@ endif()
 target_sources(DuskStudio PRIVATE
     src/Main.cpp
     src/DuskStudioApp.cpp
-    src/engine/clap/ClapBundle.cpp   # native CLAP host (aux-first) — see docs/native-clap-host-plan.md
-    src/engine/clap/ClapHost.cpp
-    src/engine/clap/ClapInstance.cpp
-    src/engine/clap/ClapEditor.cpp
-    src/engine/clap/NativeClapSlot.cpp
-    src/engine/clap/ClapScanner.cpp
-    src/ui/ClapPluginEditorComponent.cpp
+    # Native CLAP host is Linux-only (dlopen + poll + X11 editor) — added in the
+    # UNIX-AND-NOT-APPLE block below, gated by DUSKSTUDIO_HAS_NATIVE_CLAP.
     src/engine/AudioEngine.cpp
     src/engine/AudioWorkerPool.cpp
     src/engine/BounceEngine.cpp
@@ -486,8 +490,22 @@ if(UNIX AND NOT APPLE)
         src/engine/alsa/AlsaAudioIODeviceType.cpp
         src/engine/alsa/AlsaPerformanceTest.cpp
         src/ui/KeyboardStateLinux.cpp)
-    target_link_libraries(DuskStudio PRIVATE asound X11 ${CMAKE_DL_LIBS})  # dl: ClapBundle dlopen
+    target_link_libraries(DuskStudio PRIVATE asound X11 ${CMAKE_DL_LIBS})  # X11/dl: clap host + windowing
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_ALSA=1)
+endif()
+
+# Native CLAP host — POSIX (dlopen/poll) + X11 editor embed. Gated by DUSKSTUDIO_NATIVE_CLAP
+# (ON for Linux). DUSKSTUDIO_HAS_NATIVE_CLAP guards every #if in the source.
+if(DUSKSTUDIO_NATIVE_CLAP)
+    target_sources(DuskStudio PRIVATE
+        src/engine/clap/ClapBundle.cpp
+        src/engine/clap/ClapHost.cpp
+        src/engine/clap/ClapInstance.cpp
+        src/engine/clap/ClapEditor.cpp
+        src/engine/clap/NativeClapSlot.cpp
+        src/engine/clap/ClapScanner.cpp
+        src/ui/ClapPluginEditorComponent.cpp)
+    target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_NATIVE_CLAP=1)
 endif()
 
 # Optional MP3 bounce via libmp3lame (LAME). Detected at configure time on every
@@ -610,8 +628,10 @@ if(_duskstudio_oop_enabled)
 endif()
 
 # Fail early with a clear message if the CLAP submodule wasn't checked out, rather
-# than deep in a "clap/clap.h: No such file" compile error.
-if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/clap/include/clap/clap.h")
+# than deep in a "clap/clap.h: No such file" compile error. Only the Linux host build
+# compiles the CLAP sources, so only gate there.
+if(DUSKSTUDIO_NATIVE_CLAP
+   AND NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/clap/include/clap/clap.h")
     message(FATAL_ERROR
         "CLAP headers missing at external/clap/include/clap/clap.h — "
         "run: git submodule update --init external/clap")

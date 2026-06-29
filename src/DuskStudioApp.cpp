@@ -1,6 +1,8 @@
 #include "DuskStudioApp.h"
 #include "ui/AppConfig.h"
-#include "ui/ClapPluginEditorComponent.h"
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+  #include "ui/ClapPluginEditorComponent.h"   // Linux-only native CLAP editor test
+#endif
 #include "ui/ConsoleView.h"
 #include "ui/MainComponent.h"
 #include "ui/WindowState.h"
@@ -974,11 +976,11 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
     // DUSKSTUDIO_CLAP_EDITOR_TEST=/path/to.clap — standalone live-verification of
     // the native CLAP editor embed (no engine, no main window). Opens the plugin's
     // embedded-X11 editor through our own host in a plain window. Close it to quit.
+    // Linux-only (the native CLAP host + X11 embed).
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
     if (const char* path = std::getenv ("DUSKSTUDIO_CLAP_EDITOR_TEST"); path != nullptr && *path)
     {
-       #if JUCE_LINUX
         duskstudio::platform::preferX11ForNextNativeWindow();   // editor host needs an X11 peer
-       #endif
         auto comp = std::make_unique<duskstudio::ClapPluginEditorComponent>();
         juce::String err;
         if (! comp->load (juce::File (juce::String (path)), err))
@@ -1005,6 +1007,7 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
         clapEditorTestWindow->setVisible (true);
         return;   // standalone — skip the normal engine + main-window startup
     }
+#endif // DUSKSTUDIO_HAS_NATIVE_CLAP
 
     // DUSKSTUDIO_REPLACE_TEST=A.vst3:B.vst3 — exercises the Replace plugin...
     // swap pattern under live processing. Loads A, runs audio, swaps to

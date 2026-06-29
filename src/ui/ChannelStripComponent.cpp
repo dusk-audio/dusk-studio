@@ -8,7 +8,9 @@
 #include "EmbeddedModal.h"
 #include "HardwareInsertEditor.h"
 #include "PluginPickerHelpers.h"
-#include "ClapPluginEditorComponent.h"
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+  #include "ClapPluginEditorComponent.h"   // Linux-only native CLAP editor
+#endif
 #include "DuskAlerts.h"
 #include "FreezeDialog.h"
 #include "../engine/AudioEngine.h"
@@ -1841,13 +1843,16 @@ void ChannelStripComponent::openPluginPicker (bool useChooser)
 
     // Native CLAP route — effects (audio) slots only; CLAP instruments aren't hosted
     // natively yet. Selecting a CLAP row loads it through the channel's native host.
+    // Linux-only; elsewhere the callback stays empty so the picker shows no CLAP rows.
     std::function<void (const juce::File&)> onClap;
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
     if (kind == pluginpicker::PluginKind::Effects)
         onClap = [safe] (const juce::File& f)
         {
             if (auto* self = safe.getComponent())
                 self->loadNativeClapForChannel (f);
         };
+#endif
 
     if (useChooser)
     {
@@ -1913,7 +1918,8 @@ void ChannelStripComponent::unloadPluginSlot()
     closePluginEditor();
 
     // Native CLAP insert: drop our editor + tear down the slot under the engine
-    // gate, then return the strip to the empty-insert resting state.
+    // gate, then return the strip to the empty-insert resting state. Linux-only.
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
     auto& strip = engine.getChannelStrip (trackIndex);
     if (strip.isNativeClapLoaded())
     {
@@ -1927,6 +1933,7 @@ void ChannelStripComponent::unloadPluginSlot()
         refreshPluginSlotButton();
         return;
     }
+#endif
 
     pluginSlot.unload();
     refreshPluginSlotButton();
@@ -2009,7 +2016,8 @@ void ChannelStripComponent::refreshPluginSlotButton()
 {
     // Native CLAP insert — name from the loaded .clap bundle. The JUCE pluginSlot is
     // empty for a native insert, so this must precede the slot-based bookkeeping below
-    // (which would otherwise mislabel "Insert" and drop the live clap editor).
+    // (which would otherwise mislabel "Insert" and drop the live clap editor). Linux-only.
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
     if (engine.getChannelStrip (trackIndex).isNativeClapLoaded())
     {
         const auto nm = juce::File (engine.getChannelStrip (trackIndex)
@@ -2021,6 +2029,7 @@ void ChannelStripComponent::refreshPluginSlotButton()
         pluginSlotButton.setButtonText (label);
         return;
     }
+#endif
 
     const int mode = engine.getChannelStrip (trackIndex)
                        .insertMode.load (std::memory_order_relaxed);
@@ -2127,7 +2136,8 @@ void ChannelStripComponent::openPluginEditor()
     };
 
     // Native CLAP insert — show our editor (shared instance) borrowed in the modal,
-    // so closing hides (not destroys) it. Takes precedence over the JUCE editor.
+    // so closing hides (not destroys) it. Takes precedence over the JUCE editor. Linux-only.
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
     if (engine.getChannelStrip (trackIndex).isNativeClapLoaded())
     {
         auto* inst = engine.getChannelStrip (trackIndex).getNativeClapSlot().getInstance();
@@ -2141,6 +2151,7 @@ void ChannelStripComponent::openPluginEditor()
         pluginEditorModal.showBorrowed (*parent, *clapEditor, onClose);
         return;
     }
+#endif
 
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
     if (pluginSlot.isRemote())
@@ -2362,12 +2373,14 @@ void ChannelStripComponent::dropPluginEditor()
 
     // Native CLAP editor: leak rather than destroy — u-he plugins hang in
     // gui->destroy on shutdown (same class as the JUCE leak-on-shutdown). The
-    // shared instance is leaked separately by the engine's shutdown loop.
+    // shared instance is leaked separately by the engine's shutdown loop. Linux-only.
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
     if (clapEditor != nullptr)
     {
         clapEditor->leakForShutdown();
         clapEditor.reset();
     }
+#endif
     // ~AudioProcessorEditor tears down the plugin's internal X11
     // children synchronously (colour pickers, preset browsers,
     // transient popups). On a Wayland session, any of those could
@@ -2403,6 +2416,7 @@ void ChannelStripComponent::dropPluginEditor()
    #endif
 }
 
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
 void ChannelStripComponent::loadNativeClapForChannel (const juce::File& clapFile)
 {
     auto& strip = engine.getChannelStrip (trackIndex);
@@ -2450,6 +2464,7 @@ void ChannelStripComponent::loadNativeClapForChannel (const juce::File& clapFile
     refreshPluginSlotButton();
     openPluginEditor();
 }
+#endif // DUSKSTUDIO_HAS_NATIVE_CLAP
 
 namespace
 {

@@ -88,6 +88,7 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     // Engine fences this via its process gate.
     preparedSampleRate = sampleRate;
     preparedBlockSize  = juce::jmax (1, blockSize);
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
     if (nativeClapSlot.isLoaded())
     {
         // Re-activate in place — a full reload would destroy the instance the editor's
@@ -105,6 +106,7 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
         pendingClapPath.clear();
         pendingClapState.clear();
     }
+#endif
 
     // Oversampling: build a Dusk Studio-side wrapper around (EQ + Comp) when the
     // user picks 2× / 4× in Audio Settings. The donor's BritishEQ console
@@ -428,6 +430,7 @@ void ChannelStrip::bindHardwareInsert (const HardwareInsertParams& params) noexc
     hardwareSlot.bind (params);
 }
 
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
 bool ChannelStrip::loadNativeClap (const juce::File& path, std::string& errorOut)
 {
     if (preparedSampleRate <= 0.0 || preparedBlockSize <= 0)
@@ -447,6 +450,7 @@ void ChannelStrip::setPendingNativeClap (const juce::File& path, std::vector<uin
     pendingClapPath  = path.getFullPathName();
     pendingClapState = std::move (state);
 }
+#endif
 
 void ChannelStrip::relatchPdcIfDrained (float blockPeakAbs, int numSamples) noexcept
 {
@@ -698,6 +702,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
                       sizeof (float) * (size_t) numSamples);
         if (activeInsertMode == kInsertPlugin)
         {
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
             if (nativeClapSlot.isLoaded())
             {
                 // Native CLAP is stereo-only — duplicate mono to L+R, process, average
@@ -711,6 +716,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
                         * (tempMono[(size_t) i] + insertScratchR[(size_t) i]);
             }
             else
+#endif
             {
                 pluginMidiScratch.clear();
                 pluginSlot.processMonoBlock (tempMono.data(), numSamples, pluginMidiScratch);
@@ -885,9 +891,11 @@ void ChannelStrip::processAndAccumulate (const float* inL,
 
             if (activeInsertMode == kInsertPlugin)
             {
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
                 if (nativeClapSlot.isLoaded())
                     nativeClapSlot.processStereo (L, R, L, R, numSamples);
                 else
+#endif
                 {
                     pluginMidiScratch.clear();
                     pluginSlot.processStereoBlock (L, R, numSamples, pluginMidiScratch);
