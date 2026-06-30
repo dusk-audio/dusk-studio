@@ -512,11 +512,10 @@ BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
     // one face (L = black, R = oxblood).
     vuMeter = std::make_unique<AnalogVuMeter> (
         &bus.strip.meterPostBusRmsL, &bus.strip.meterPostBusRmsR);
-    // Bus VUs use the compact Sifam / Mixbus-style scale (no numerals, "-"
-    // and "+" endpoint glyphs). Same white face as the master VU keeps the
-    // visual family consistent; the compact scale just removes the noise
-    // that crowds a small bus face.
-    vuMeter->setCompactScale (true);
+    // Bus VUs use the full numbered scale (like the master), not the compact
+    // "-" / "+" endpoints. Warm-cream rich face matches the master so the
+    // visual family reads as one unit.
+    vuMeter->setRichStyle (true);
     addAndMakeVisible (*vuMeter);
 
     const auto eqGreen = juce::Colour (0xff80c090);
@@ -705,7 +704,7 @@ BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
     faderSlider.setVelocityModeParameters (1.0, 1, 0.0, true);
     auto formatFaderDb = [] (double db) -> juce::String
     {
-        return (db <= -89.95) ? juce::String ("off")
+        return (db <= -89.95) ? juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x9e"))
                               : juce::String (db, 1);
     };
     faderSlider.onValueChange = [this, formatFaderDb]
@@ -812,10 +811,27 @@ BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
     };
     styleCompactSectionBtn (eqCompactButton,   juce::Colour (0xff5fc46f));
     styleCompactSectionBtn (compCompactButton, juce::Colour (0xffe0c050));
-    eqCompactButton  .setTooltip ("Open the bus EQ editor (3-band British-style EQ). Click again to close.");
-    compCompactButton.setTooltip ("Open the bus comp editor (console-style glue compressor). Click again to close.");
-    eqCompactButton  .onClick = [this] { openEqEditorPopup(); };
-    compCompactButton.onClick = [this] { openCompEditorPopup(); };
+    // Same grammar as the expanded EQ/COMP headers: left-click toggles the section
+    // on/off, right-click opens the editor. The illuminated background (driven by the
+    // 30 Hz refresh) reflects the enabled state.
+    eqCompactButton  .setTooltip ("Left-click EQ on/off. Right-click to open the editor.");
+    compCompactButton.setTooltip ("Left-click comp on/off. Right-click to open the editor.");
+    eqCompactButton  .onClick = [this]
+    {
+        const bool now = ! bus.strip.eqEnabled.load (std::memory_order_relaxed);
+        bus.strip.eqEnabled.store (now, std::memory_order_release);
+        // Mirror into the button's own toggle state so the pill text palette
+        // (textColourOnId vs Off) reflects the new state immediately, not 33 ms later.
+        eqCompactButton.setToggleState (now, juce::dontSendNotification);
+    };
+    eqCompactButton  .onRightClick = [this] (const juce::MouseEvent&) { openEqEditorPopup(); };
+    compCompactButton.onClick = [this]
+    {
+        const bool now = ! bus.strip.compEnabled.load (std::memory_order_relaxed);
+        bus.strip.compEnabled.store (now, std::memory_order_release);
+        compCompactButton.setToggleState (now, juce::dontSendNotification);
+    };
+    compCompactButton.onRightClick = [this] (const juce::MouseEvent&) { openCompEditorPopup(); };
     addChildComponent (eqCompactButton);
     addChildComponent (compCompactButton);
 
@@ -996,6 +1012,9 @@ void BusComponent::timerCallback()
         if (eqOn != lastCompactEqOn)
         {
             lastCompactEqOn = eqOn;
+            // Track the atom (it can change via the popup editor) so the pill stays
+            // in sync regardless of how the section was toggled.
+            eqCompactButton.setToggleState (eqOn != 0, juce::dontSendNotification);
             eqCompactButton.setColour (juce::TextButton::buttonColourId,
                                          eqOn != 0 ? eqAccent.darker (0.55f)
                                                     : juce::Colour (0xff282830));
@@ -1004,6 +1023,7 @@ void BusComponent::timerCallback()
         if (compOn != lastCompactCompOn)
         {
             lastCompactCompOn = compOn;
+            compCompactButton.setToggleState (compOn != 0, juce::dontSendNotification);
             compCompactButton.setColour (juce::TextButton::buttonColourId,
                                            compOn != 0 ? compAccent.darker (0.55f)
                                                         : juce::Colour (0xff282830));
@@ -1061,7 +1081,7 @@ void BusComponent::timerCallback()
         {
             displayedLiveFaderDb = live;
             faderSlider.setValue (live, juce::dontSendNotification);
-            faderValueLabel.setText ((live <= -89.95f) ? juce::String ("off")
+            faderValueLabel.setText ((live <= -89.95f) ? juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x9e"))
                                                         : juce::String (live, 1),
                                        juce::dontSendNotification);
         }
@@ -1382,9 +1402,11 @@ void BusComponent::paint (juce::Graphics& g)
 
             g.setColour (isZero ? juce::Colour (0xffffffff)
                                 : juce::Colour (0xffb8b8c0));
-            const juce::Font font (juce::FontOptions (10.5f, juce::Font::plain));
+            // ∞ renders visually smaller than the digits at a given point size,
+            // so upsize it to match their height.
+            const juce::Font font (juce::FontOptions (isBottom ? 16.0f : 10.5f, juce::Font::plain));
             g.setFont (font);
-            const juce::String label = isBottom ? juce::String ("off")
+            const juce::String label = isBottom ? juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x9e"))   /* ∞ = -inf dB / fully off */
                                                 : juce::String (t.label);
             const float ascent  = font.getAscent();
             const float descent = font.getDescent();
@@ -1457,22 +1479,17 @@ void BusComponent::resized()
     // section below at narrow strip widths.
     if (vuMeter != nullptr)
     {
-        // When the TIMELINE tape strip is expanded the bus fader needs
-        // more room, so the VU shrinks. Shrink BOTH dimensions so the
-        // dial keeps the same 12:7 aspect ratio as the expanded form
-        // (just smaller) - earlier code only reduced the height which
-        // left a wide-and-flat box with a tiny dial floating inside.
-        constexpr int kRatioW = 12;
-        constexpr int kRatioH = 7;
+        // Width matches the EQ/COMP pill row below (reduced(4,0)) so the meter
+        // and the section pills line up. The dial inside is aspect-locked and
+        // centres itself, so the box can take the full pill width without
+        // distorting (and the dial grows to its height cap). Height still drives
+        // the dial size: it shrinks when the TIMELINE tape strip is expanded
+        // (the fader needs the room).
         const int stripW = area.getWidth();
-        // Compact heightDriver = stripW * 6/12; gives vuW = stripW * 6/7
-        // (~86% of strip) so the VU fills most of the horizontal room
-        // without crowding the fader stack. Expanded uses 7/12 height
-        // -> vuW = full strip width.
         const int heightDriver = compactVu ? stripW * 6 / 12 : stripW * 7 / 12;
         const int minH = compactVu ? 32 : 36;
         const int vuH  = juce::jmax (minH, heightDriver);
-        const int vuW  = juce::jmin (stripW, vuH * kRatioW / kRatioH);
+        const int vuW  = juce::jmax (1, stripW - 8);
         auto slot = area.removeFromTop (vuH);
         vuMeter->setBounds (slot.withSizeKeepingCentre (vuW, vuH));
         area.removeFromTop (3);

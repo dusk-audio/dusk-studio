@@ -114,6 +114,12 @@ void Session::setTrackFaderGrouped (int ti, float newDb) noexcept
 void Session::setTrackArmed (int trackIndex, bool armed) noexcept
 {
     if (trackIndex < 0 || trackIndex >= kNumTracks) return;
+    // A frozen track can't record (playback is the baked WAV). Refuse arming it
+    // from ANY path — the strip button, the selected-track shortcut, MCU, MIDI
+    // bindings all route through here. (The strip button still shows its own
+    // alert + toggle rollback for UI feedback; this is the shared backstop.)
+    if (armed && tracks[(size_t) trackIndex].frozen.load (std::memory_order_relaxed))
+        return;
     auto& a = tracks[(size_t) trackIndex].recordArmed;
     const bool prev = a.exchange (armed, std::memory_order_relaxed);
     if (prev != armed)

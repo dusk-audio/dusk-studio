@@ -76,16 +76,19 @@ TEST_CASE ("MasteringChain: silence in -> silence out", "[MasteringChain]")
     REQUIRE (outPeak < 1.0e-4f);
 }
 
-TEST_CASE ("MasteringChain: latency matches the brickwall limiter", "[MasteringChain]")
+TEST_CASE ("MasteringChain: latency is the EQ oversampler plus the limiter", "[MasteringChain]")
 {
     duskstudio::MasteringChain chain;
     chain.prepare (kSr, kBlock, 1);
 
-    duskstudio::BrickwallLimiter ref;
-    ref.prepare (kSr, kBlock);
+    duskstudio::BrickwallLimiter limRef;
+    limRef.prepare (kSr, kBlock);
+    duskstudio::MasteringDigitalEq eqRef;
+    eqRef.prepare (kSr, kBlock);
 
+    // EQ and limiter are in series; the chain reports the sum.
     REQUIRE (chain.getLatencySamples() > 0);
-    REQUIRE (chain.getLatencySamples() == ref.getLatencySamples());
+    REQUIRE (chain.getLatencySamples() == eqRef.getLatencySamples() + limRef.getLatencySamples());
 }
 
 TEST_CASE ("MasteringChain: comp over silent input adds no noise floor",

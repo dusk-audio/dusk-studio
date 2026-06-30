@@ -45,7 +45,7 @@ public:
     // Message thread. Sizes the delay + history buffers and the oversampler
     // for the configured lookahead. Must be called before processInPlace.
     void prepare (double sampleRate, int maxBlockSize,
-                   double lookaheadMs = 2.0);
+                   double initialLookaheadMs = 2.0);
     void reset() noexcept;
 
     // Message thread (atomic stores; audio thread reads).
@@ -57,6 +57,11 @@ public:
     // release knob. Stereo link off = independent per-channel gain reduction.
     void setMode       (int m) noexcept            { mode.store (m, std::memory_order_relaxed); }
     void setStereoLink (bool b) noexcept           { stereoLink.store (b, std::memory_order_relaxed); }
+    // Active lookahead, in ms. The delay/deque are pre-allocated for a fixed
+    // maximum in prepare(), so this only re-derives the active read offset,
+    // window and reported latency. Called every block from the mastering chain
+    // (audio thread), so it must stay RT-safe — no allocation, lock or I/O.
+    void setLookaheadMs (float ms) noexcept;
 
     bool  isEnabled() const noexcept    { return enabled.load (std::memory_order_relaxed); }
     float getInputDriveDb() const noexcept { return inputDrive.load (std::memory_order_relaxed); }
@@ -64,6 +69,7 @@ public:
     float getReleaseMs() const noexcept { return releaseMs.load (std::memory_order_relaxed); }
     int   getMode() const noexcept      { return mode.load (std::memory_order_relaxed); }
     bool  getStereoLink() const noexcept { return stereoLink.load (std::memory_order_relaxed); }
+    float getLookaheadMs() const noexcept { return lookaheadMs.load (std::memory_order_relaxed); }
 
     // Audio thread. In-place stereo process; L and R must be at least
     // `numSamples` floats. `numSamples` must not exceed the maxBlockSize passed
@@ -81,6 +87,13 @@ public:
     int getLatencySamples() const noexcept { return latencySamplesBase.load (std::memory_order_relaxed); }
 
 private:
+    // Re-derives the active lookahead (read offset, window, latency) from the
+    // lookaheadMs atomic. Runs on the audio thread (via setLookaheadMs), so it
+    // stays RT-safe. Reads the plain members osRate/maxLookaheadOs/osFactor/
+    // osLatencyBase, which only prepare() writes — safe because the engine
+    // suspends audio around prepare(), so it never overlaps process().
+    void recomputeActiveLookahead() noexcept;
+
     double sr     = 0.0;
     double osRate = 0.0;
     int    osFactor = 4;
@@ -88,21 +101,29 @@ private:
     // Atomic so the message-thread reader (getLatencySamples) and the
     // setup-thread writer (prepare) don't race on a plain int.
     std::atomic<int> latencySamplesBase { 0 };
+    int osLatencyBase = 0;   // oversampler FIR latency, base-rate samples
 
     std::unique_ptr<juce::dsp::Oversampling<float>> oversampler;
 
-    // Stereo delay line at the OVERSAMPLED rate - circular, length lookaheadOs + 1.
-    int lookaheadOs = 0;
-    int delayLen    = 0;
+    // Stereo delay line at the OVERSAMPLED rate — circular, sized for the max
+    // lookahead. The active read offset (activeLookaheadOs) is variable, so the
+    // lookahead can change at runtime without reallocating.
+    int maxLookaheadOs = 0;
+    int bufLen         = 0;
     std::vector<float> delayL, delayR;
     int writePos = 0;
+    std::atomic<int> activeLookaheadOs { 0 };
+    // Last laOs the process loop actually ran with. When activeLookaheadOs
+    // changes (live lookahead drag), the min-deque is rebuilt forward from
+    // empty rather than extended in place over a window whose older samples it
+    // already dropped — see processInPlace.
+    int lastActiveLaOs = 0;
 
-    // Per-channel monotonic min deque over the lookahead window
-    // (size lookaheadOs + 1), stored in a fixed ring so the sliding-window
+    // Per-channel monotonic min deque over the active lookahead window
+    // (activeLookaheadOs + 1), stored in a fixed ring so the sliding-window
     // minimum is O(1) amortized with no per-sample scan and no allocation.
-    // Capacity = window + 1. Two independent channels so stereo-link can be
+    // Capacity = max window + 1. Two independent channels so stereo-link can be
     // disabled; when linked both are fed the same (max-of-L/R) target.
-    int                    windowLen = 0;
     std::vector<float>     dqVal[2];
     std::vector<long long> dqIdx[2];
     int       dqHead[2]  = { 0, 0 };
@@ -110,13 +131,23 @@ private:
     long long sampleCounter = 0;
 
     // Per-channel gain smoother (runs at the oversampled rate): instant attack
-    // to the lookahead-window minimum, hold, one-pole release.
+    // to the lookahead-window minimum, hold, then a program-dependent release.
     float env[2]         = { 1.0f, 1.0f };
     int   holdCounter[2] = { 0, 0 };
-    float releaseCoef = 0.0f;
     int   holdOs      = 0;
     float lastReleaseMs = -1.0f;
     int   lastMode      = -1;
+
+    // Program-dependent (dual-time-constant) release: the effective release
+    // coefficient blends between a fast and a slow one-pole by how deep and
+    // sustained the gain reduction is. Brief/shallow GR recovers fast (keeps
+    // transients open); deep/sustained GR recovers slow (no pumping on dense,
+    // bass-heavy masters). relDepth[c] is the smoothed reduction driving the
+    // blend, so a single transient stays fast while a held passage goes slow.
+    float releaseCoefFast = 0.0f;
+    float releaseCoefSlow = 0.0f;
+    float relDepthCoef    = 0.0f;
+    float relDepth[2]     = { 0.0f, 0.0f };
 
     std::atomic<bool>  enabled    { true };
     std::atomic<float> inputDrive { 0.0f };  // dB
@@ -124,6 +155,7 @@ private:
     std::atomic<float> releaseMs  { 100.0f };
     std::atomic<int>   mode       { 0 };
     std::atomic<bool>  stereoLink { true };
+    std::atomic<float> lookaheadMs { 2.0f };
 
     mutable std::atomic<float> currentGrDb { 0.0f };
 };

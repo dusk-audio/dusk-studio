@@ -1,4 +1,5 @@
 #include "AriaGuiComponent.h"
+#include "../DuskComboBox.h"
 #include "../../engine/multisample/DuskMultisampleProcessor.h"
 
 namespace duskstudio
@@ -348,7 +349,7 @@ void AriaGuiComponent::buildChildren()
             }
             case AriaWidgetKind::OptionMenu:
             {
-                auto cb = std::make_unique<juce::ComboBox>();
+                auto cb = std::make_unique<DuskComboBox>();
                 for (size_t i = 0; i < w.options.size(); ++i)
                     cb->addItem(w.options[i].text, (int) i + 1);
                 // Initial selection: the option whose normalized value is

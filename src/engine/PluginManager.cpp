@@ -7,6 +7,9 @@
 
 #include "ipc/PluginScanProtocol.h"
 #include "PluginBackingCheck.h"
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+  #include "clap/ClapScanner.h"   // Linux-only native CLAP discovery
+#endif
 
 #include <map>
 
@@ -344,7 +347,37 @@ int PluginManager::scanInstalledPlugins (
 
     const bool blacklistGrew = knownPluginList.getBlacklistedFiles().size() != blacklistBefore;
     if (added > 0 || pruned > 0 || blacklistGrew) saveCache();
+
+    if (! aborting)
+        scanClapPlugins();   // CLAP isn't a juce format — scan it alongside the JUCE pass
     return added;
+}
+
+void PluginManager::scanClapPlugins()
+{
+    clapDescriptions.clearQuick();
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+    for (const auto& s : clap::ClapScanner::scan())
+    {
+        juce::PluginDescription d;
+        d.name             = juce::String (juce::CharPointer_UTF8 (s.desc.name.c_str()));
+        d.manufacturerName = juce::String (juce::CharPointer_UTF8 (s.desc.vendor.c_str()));
+        d.version          = juce::String (juce::CharPointer_UTF8 (s.desc.version.c_str()));
+        d.pluginFormatName = "CLAP";
+        d.fileOrIdentifier = s.bundlePath;
+        d.isInstrument     = s.desc.isInstrument();
+        clapDescriptions.add (d);
+    }
+#endif
+}
+
+juce::Array<juce::PluginDescription> PluginManager::getClapEffectDescriptions() const
+{
+    juce::Array<juce::PluginDescription> effects;
+    for (const auto& d : clapDescriptions)
+        if (! d.isInstrument)
+            effects.add (d);
+    return effects;
 }
 
 juce::Array<juce::PluginDescription> PluginManager::getInstrumentDescriptions() const

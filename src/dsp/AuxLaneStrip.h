@@ -5,6 +5,9 @@
 #include <vector>
 #include "../session/Session.h"
 #include "../engine/PluginSlot.h"
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+  #include "../engine/clap/NativeClapSlot.h"   // Linux-only native CLAP host
+#endif
 #include "HardwareInsertSlot.h"
 
 namespace duskstudio
@@ -49,6 +52,36 @@ public:
     HardwareInsertSlot&       getHardwareInsertSlot (int idx)       noexcept { jassert (idx >= 0 && idx < kMaxPlugins); return hardwareSlots[(size_t) idx]; }
     const HardwareInsertSlot& getHardwareInsertSlot (int idx) const noexcept { jassert (idx >= 0 && idx < kMaxPlugins); return hardwareSlots[(size_t) idx]; }
 
+    // Native CLAP host path. When a slot's native CLAP is loaded, processStereoBlock
+    // routes the kInsertPlugin pass through it INSTEAD of the JUCE PluginSlot — this
+    // is the JUCE-hosting replacement (see docs/native-clap-host-plan.md). Empty by
+    // default, so a lane with no native CLAP behaves exactly as before. Message thread.
+    bool isPrepared() const noexcept { return preparedSampleRate > 0.0 && preparedBlockSize > 0; }
+
+    // Linux-only native CLAP host (DUSKSTUDIO_HAS_NATIVE_CLAP); stubbed elsewhere so the
+    // bool/void API still compiles. getNativeClapSlot returns a clap type → Linux-only.
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+    bool loadNativeClap   (int slotIdx, const juce::File& path, std::string& errorOut);
+    void unloadNativeClap (int slotIdx) noexcept;
+    bool isNativeClapLoaded (int slotIdx) const noexcept { jassert (slotIdx >= 0 && slotIdx < kMaxPlugins); return nativeClapSlots[(size_t) slotIdx].isLoaded(); }
+    clap::NativeClapSlot&       getNativeClapSlot (int idx)       noexcept { jassert (idx >= 0 && idx < kMaxPlugins); return nativeClapSlots[(size_t) idx]; }
+    const clap::NativeClapSlot& getNativeClapSlot (int idx) const noexcept { jassert (idx >= 0 && idx < kMaxPlugins); return nativeClapSlots[(size_t) idx]; }
+
+    // Session restore: load() needs the sample rate, but consumePluginStateAfterLoad
+    // can run before the engine is prepared. Stash the saved {path, state}; prepare()
+    // loads it once the SR is known. (When already prepared, the engine loads directly
+    // and never calls this.)
+    void setPendingNativeClap (int slotIdx, const juce::File& path, std::vector<uint8_t> state) noexcept;
+
+    // True when a sample-rate re-prepare reload of a loaded native CLAP failed (the
+    // slot is now empty). The UI reads this to report which lane lost its plugin.
+    bool nativeClapReloadFailed (int slotIdx) const noexcept { jassert (slotIdx >= 0 && slotIdx < kMaxPlugins); return nativeReloadFailed[(size_t) slotIdx].load (std::memory_order_relaxed); }
+#else
+    bool isNativeClapLoaded (int) const noexcept { return false; }
+    void unloadNativeClap (int) noexcept {}
+    bool nativeClapReloadFailed (int) const noexcept { return false; }
+#endif
+
     enum InsertMode : int { kInsertEmpty = 0, kInsertPlugin = 1, kInsertHardware = 2 };
 
     std::array<std::atomic<int>, kMaxPlugins> insertMode {};
@@ -68,6 +101,19 @@ private:
 
     std::array<PluginSlot, kMaxPlugins> slots;
     std::array<HardwareInsertSlot, kMaxPlugins> hardwareSlots;
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+    std::array<clap::NativeClapSlot, kMaxPlugins> nativeClapSlots;
+    std::array<std::atomic<bool>,    kMaxPlugins> nativeReloadFailed {};
+
+    // Pending session-restore load, consummated by prepare() (see setPendingNativeClap).
+    std::array<juce::String,           kMaxPlugins> pendingClapPath;
+    std::array<std::vector<uint8_t>,   kMaxPlugins> pendingClapState;
+#endif
+
+    // Stashed in prepare so loadNativeClap (and re-prepare across a sample-rate
+    // change) can (re)activate a native CLAP at the engine's current spec.
+    double preparedSampleRate = 0.0;
+    int    preparedBlockSize  = 0;
 
     // activeInsertMode[s] = currently running; insertMode[s] = UI target.
     // Mismatch triggers ramp-out / swap / ramp-in via activeInsertGain[s].

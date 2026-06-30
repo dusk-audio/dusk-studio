@@ -28,6 +28,7 @@
 #include "UpdateChecker.h"
 #include "SystemStatusBar.h"
 #include "TapeStrip.h"
+#include "MiniTimelineStrip.h"
 #include "TransportBar.h"
 #include "../session/MarkerEditActions.h"
 #include "../session/RecentSessions.h"
@@ -343,9 +344,6 @@ MainComponent::MainComponent()
         // pushed off the bottom of the strip and become unusable.
         setTimelineVisible (expanded);
     };
-    // The current-section pill changes the clock's effective right edge; re-run
-    // the header layout so the centered stage tabs re-clamp past it.
-    transportBar->onSectionChanged = [this] { resized(); };
     addAndMakeVisible (transportBar.get());
 
     styleStageButton (recordingStageBtn, juce::Colour (0xffd03030));   // red, like REC
@@ -488,6 +486,17 @@ MainComponent::MainComponent()
             enqueueImports (std::move (files), timelineStart, trackHint);
     };
     addAndMakeVisible (tapeStrip.get());
+
+    // Song-map ribbon shown only when the tape strip is collapsed (resized()
+    // owns its bounds + visibility from tapeStripExpanded / fullscreen state).
+    miniTimeline = std::make_unique<MiniTimelineStrip> (session, engine);
+    addChildComponent (miniTimeline.get());
+    // Double-clicking a marker on the mini strip renames it (same flow as the
+    // tape strip's marker rename, so undo + the modal are shared).
+    miniTimeline->onMarkerEdit = [this] (int idx)
+    {
+        if (tapeStrip != nullptr) tapeStrip->promptRenameMarker (idx, "Rename marker");
+    };
 
     // Sync the transport-bar TAPE toggle with the collapsed default.
     if (transportBar != nullptr)
@@ -733,6 +742,13 @@ MainComponent::~MainComponent()
     // window-manager-initiated kill).
     if (consoleView != nullptr)
         consoleView->dropAllPluginEditors();
+
+    // Aux native-CLAP editors need the same early teardown while the main peer +
+    // message loop are still alive. beginSafeShutdown() does this, but a quit path
+    // that skips it (SIGTERM / WM kill) must still leak-release them here rather than
+    // leave them for the late ~AuxView cascade.
+    if (auxView != nullptr)
+        auxView->dropAllClapEditors();
 
     // Force-delete any modal body we launched, synchronously. close()
     // would defer body destruction to the next message-loop tick — but
@@ -1497,6 +1513,9 @@ void MainComponent::resized()
 
     area.removeFromTop (4);
 
+    if (miniTimeline != nullptr && inFullscreenView)
+        miniTimeline->setVisible (false);
+
     if (! inFullscreenView)
     {
         if (tapeStrip != nullptr && tapeStripExpanded)
@@ -1522,6 +1541,15 @@ void MainComponent::resized()
             const int cap    = juce::jmax (120, area.getHeight() / 2);
             tapeStrip->setBounds (area.removeFromTop (juce::jmin (wanted, cap)));
 
+            area.removeFromTop (4);
+            if (miniTimeline != nullptr) miniTimeline->setVisible (false);
+        }
+        else if (miniTimeline != nullptr)
+        {
+            // Collapsed timeline: show the thin song-map ribbon in the band
+            // the tape strip would have occupied.
+            miniTimeline->setVisible (true);
+            miniTimeline->setBounds (area.removeFromTop (20));
             area.removeFromTop (4);
         }
 
@@ -1674,6 +1702,21 @@ void MainComponent::switchToStage (AudioEngine::Stage s)
     resized();
 }
 
+AuxView* MainComponent::ensureAuxView()
+{
+    if (auxView == nullptr)
+    {
+        // addChildComponent (not addAndMakeVisible): stays hidden until a switch — or a
+        // pre-warm — needs it. The AuxLaneComponent ctors run rebuildSlots here, which
+        // is what builds the native-CLAP editors (gui->create). Bounds come from the
+        // next resized() (it lays out auxView whenever Aux is the active stage), and the
+        // X11 embed stays deferred to first-show via ClapPluginEditorComponent.
+        auxView = std::make_unique<AuxView> (session, engine);
+        addChildComponent (auxView.get());
+    }
+    return auxView.get();
+}
+
 void MainComponent::syncStageUi (AudioEngine::Stage s)
 {
     // Mixing/Recording share the console + tape strip; Mastering swaps to
@@ -1708,19 +1751,7 @@ void MainComponent::syncStageUi (AudioEngine::Stage s)
 
     if (wantAux)
     {
-        if (auxView == nullptr)
-        {
-            std::fprintf (stderr, "[MainComponent] syncStageUi(Aux): constructing AuxView\n");
-            std::fflush (stderr);
-            auxView = std::make_unique<AuxView> (session, engine);
-            addAndMakeVisible (auxView.get());
-            std::fprintf (stderr, "[MainComponent] syncStageUi(Aux): AuxView constructed + addAndMakeVisible'd\n");
-            std::fflush (stderr);
-        }
-        auxView->setVisible (true);
-        std::fprintf (stderr, "[MainComponent] syncStageUi(Aux): auxView setVisible(true), bounds=%d,%d %dx%d\n",
-                      auxView->getX(), auxView->getY(), auxView->getWidth(), auxView->getHeight());
-        std::fflush (stderr);
+        ensureAuxView()->setVisible (true);
     }
     else if (auxView != nullptr)
     {
@@ -2388,10 +2419,13 @@ void MainComponent::beginSafeShutdown()
     markPhase ("phase 4: drop plugin editor windows");
     if (consoleView != nullptr)
         consoleView->dropAllPluginEditors();
-    // AUX plugin editors are inline children of their AuxLaneComponent —
-    // they tear down with the normal ~MainWindow → ~AuxView cascade. The
-    // mutter focus race that required an explicit pre-shutdown pass only
-    // applied to the old floating-window editors.
+    // JUCE AUX plugin editors tear down fine with the normal ~MainWindow → ~AuxView
+    // cascade. NATIVE CLAP editors do NOT: each opens its own X11 Display + a host
+    // window parented into the main peer, and its close() (gui->destroy + XCloseDisplay)
+    // hangs if it runs in the late cascade after the main peer is gone. Tear them down
+    // here — main peer + message loop alive, audio callback already detached (phase 3).
+    if (auxView != nullptr)
+        auxView->dropAllClapEditors();
 
     markPhase ("phase 5: flush window operations");
     duskstudio::platform::flushWindowOperations();
@@ -2700,6 +2734,9 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     }
     const auto tAfterPlugins = juce::Time::getMillisecondCounterHiRes();
     engine.consumeTransportStateAfterLoad();
+    // Bypass instruments on tracks the session restored as frozen (frozenRegion
+    // was rebuilt during deserialize; this is the engine-side half).
+    engine.reapplyFreezeState();
 
     // Re-resolve MIDI input routing from the just-loaded session. The load
     // restores the saved identifiers (MCU input, sync source, per-track MIDI
@@ -2786,6 +2823,41 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
                   (int) (tAfterMidiOuts - tAfterPlugins),
                   (int) (tAfterConsole  - tAfterMidiOuts),
                   (int) (tAfterConsole  - t0));
+
+    // Loading churns the component tree (console + stage rebuild) and, on
+    // XWayland, can leave the main window without input focus — the toolbar then
+    // renders in its inactive/dimmed state and the first click only re-focuses.
+    // Reassert front + keyboard focus once the rebuild settles.
+    juce::Component::SafePointer<MainComponent> safeThis (this);
+    juce::MessageManager::callAsync ([safeThis]
+    {
+        auto* self = safeThis.getComponent();
+        if (self == nullptr) return;
+        if (auto* peer = self->getPeer())
+            duskstudio::platform::bringWindowToFront (*peer);
+        // Bring the window forward always, but don't yank keyboard focus when a modal
+        // is up (a missing-plugin / missing-audio alert raised by the load) — that
+        // would steal focus from the dialog the user needs to dismiss.
+        if (juce::ModalComponentManager::getInstance()->getNumModalComponents() == 0)
+            self->grabKeyboardFocus();
+
+        // Pre-warm the AUX view if this session has any aux insert loaded. Building it
+        // here (hidden) moves the AuxView construction + the native-CLAP gui->create off
+        // the first Mixing→Aux switch, so that switch isn't stalled building plugin
+        // editors. Deferred to this post-load callAsync so the main window paints first;
+        // the native slots are already loaded (consumePluginStateAfterLoad ran above).
+        bool anyAuxInsert = false;
+        for (int a = 0; a < Session::kNumAuxLanes && ! anyAuxInsert; ++a)
+        {
+            const auto& lane = self->session.auxLane (a);
+            for (int s = 0; s < AuxLaneParams::kMaxLanePlugins; ++s)
+                if (lane.nativeClapPath[(size_t) s].isNotEmpty()
+                    || lane.pluginDescriptionXml[(size_t) s].isNotEmpty())
+                { anyAuxInsert = true; break; }
+        }
+        if (anyAuxInsert)
+            self->ensureAuxView();   // bounds + X11 embed stay deferred to the first switch
+    });
     return true;
 }
 
@@ -3008,6 +3080,15 @@ void MainComponent::runAudioImportFlow (const juce::File& source,
             }
 
             auto& track = self->session.track (trackIndex);
+            // A frozen track's playback is its baked WAV; adding a region would
+            // desync it. Same guard as the editor entry points.
+            if (track.frozen.load (std::memory_order_relaxed))
+            {
+                showImportError ("Import audio",
+                                 "This track is frozen. Unfreeze it before importing onto it.");
+                self->cancelImportChain();
+                return;
+            }
             const auto mode = (Track::Mode) track.mode.load (std::memory_order_relaxed);
 
             duskstudio::fileimport::AudioImportRequest req;
@@ -3117,6 +3198,15 @@ void MainComponent::runMidiImportFlow (const juce::File& source,
             }
 
             auto& track = self->session.track (trackIndex);
+            // A frozen track's playback is its baked WAV; adding a region would
+            // desync it. Same guard as the audio-import path.
+            if (track.frozen.load (std::memory_order_relaxed))
+            {
+                showImportError ("Import MIDI",
+                                 "This track is frozen. Unfreeze it before importing onto it.");
+                self->cancelImportChain();
+                return;
+            }
 
             duskstudio::fileimport::MidiImportRequest req;
             req.source            = source;
@@ -3351,6 +3441,14 @@ void MainComponent::runDpImport (const dp::SongScan& scan,
         const auto& frag = it.fragment;
         auto& track      = session.track (i);
 
+        // A frozen track's playback is its baked WAV — don't overwrite it with an
+        // imported fragment. Skip it (the bulk import continues with the rest).
+        if (track.frozen.load (std::memory_order_relaxed))
+        {
+            skipped.add (it.name + ": target track is frozen (unfreeze to import)");
+            continue;
+        }
+
         juce::File src, tmp;
         const int channels = frag.stereo ? 2 : 1;
         if (frag.stereo)
@@ -3438,6 +3536,19 @@ void MainComponent::runDpImport (const dp::SongScan& scan,
     if (scan.tempoBpm > 0)
         session.tempoBpm.store ((float) scan.tempoBpm, std::memory_order_relaxed);
 
+    // Song time signature (song.sys 0x6d9).
+    if (scan.timeSigNum > 0 && scan.timeSigDen > 0)
+    {
+        // Clamp to the same [1, 32] range SessionSerializer enforces so the
+        // in-memory model can't hold a value the serializer would reject.
+        session.beatsPerBar.store (juce::jlimit (1, 32, scan.timeSigNum), std::memory_order_relaxed);
+        session.beatUnit   .store (juce::jlimit (1, 32, scan.timeSigDen), std::memory_order_relaxed);
+        // The ruler / grid read these on repaint, but the transport bar's
+        // time-sig button caches its text and the 20 Hz refresh doesn't touch
+        // it - re-sync it so it doesn't contradict the import.
+        if (transportBar != nullptr) transportBar->refreshTimeSigButton();
+    }
+
     if (tapeStrip != nullptr) tapeStrip->repaint();
 
     juce::String msg;
@@ -3450,6 +3561,8 @@ void MainComponent::runDpImport (const dp::SongScan& scan,
         msg << "\nImported " << markersAdded << " song marker(s).";
     if (scan.tempoBpm > 0)
         msg << "\nSet tempo to " << scan.tempoBpm << " BPM.";
+    if (scan.timeSigNum > 0 && scan.timeSigDen > 0)
+        msg << "\nSet time signature to " << scan.timeSigNum << "/" << scan.timeSigDen << ".";
     if (! skipped.isEmpty())
         msg << "\n\nSkipped " << skipped.size() << ":\n" << skipped.joinIntoString ("\n");
     showDuskAlert (*this, "Import DP Song", msg);
@@ -3548,6 +3661,15 @@ void MainComponent::commitImportNoModal (
     }
 
     auto& track = session.track (a.trackIndex);
+    // A frozen track's playback is its baked WAV; reject the commit (skip this
+    // file, continue the batch) rather than desync it.
+    if (track.frozen.load (std::memory_order_relaxed))
+    {
+        showImportError (a.isMidi ? "Import MIDI" : "Import audio",
+                          "This track is frozen. Unfreeze it before importing onto it.");
+        kickNextImport();
+        return;
+    }
 
     if (a.isMidi)
     {
@@ -4160,6 +4282,17 @@ void animateEditorOpen (juce::Component& editor, juce::Component& dim,
 
 void MainComponent::openPianoRoll (int trackIdx, int regionIdx)
 {
+    // Frozen tracks are edit-locked: their MIDI is baked into the rendered WAV,
+    // so editing notes would silently desync the audio. Block the editor (the
+    // single entry point for every MIDI-edit gesture) until the user unfreezes.
+    if (trackIdx >= 0 && trackIdx < Session::kNumTracks
+        && session.track (trackIdx).frozen.load (std::memory_order_relaxed))
+    {
+        showDuskAlert (*this, "Track is frozen",
+                        "Unfreeze this track to edit its MIDI.");
+        return;
+    }
+
     // Drop any pending collapse-teardown so a stale timer can't tear down
     // the editor we're about to open (swap mid-collapse).
     editorTeardownTimer.reset();
@@ -4297,6 +4430,17 @@ void MainComponent::closePianoRollAnimated()
 
 void MainComponent::openAudioEditor (int trackIdx, int regionIdx)
 {
+    // Frozen tracks are edit-locked: the audio is baked into the rendered WAV,
+    // so trimming/fading a region would silently desync it. Block the editor
+    // until the user unfreezes (mirrors openPianoRoll for MIDI).
+    if (trackIdx >= 0 && trackIdx < Session::kNumTracks
+        && session.track (trackIdx).frozen.load (std::memory_order_relaxed))
+    {
+        showDuskAlert (*this, "Track is frozen",
+                        "Unfreeze this track to edit its audio.");
+        return;
+    }
+
     // Drop any pending collapse-teardown (see openPianoRoll).
     editorTeardownTimer.reset();
 

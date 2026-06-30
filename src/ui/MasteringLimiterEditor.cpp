@@ -104,6 +104,21 @@ MasteringLimiterEditor::MasteringLimiterEditor (MasteringParams& p,
     releaseLabel.setColour (juce::Label::textColourId, juce::Colour (0xffa0a0a8));
     addAndMakeVisible (releaseLabel);
 
+    styleKnob (lookaheadKnob, accent, 0.1, 10.0, 2.0, " ms", 1);
+    lookaheadKnob.setValue (params.limiterLookaheadMs.load (std::memory_order_relaxed),
+                              juce::dontSendNotification);
+    lookaheadKnob.setTooltip ("More lookahead catches transients more cleanly but adds latency.");
+    lookaheadKnob.onValueChange = [this]
+    {
+        params.limiterLookaheadMs.store ((float) lookaheadKnob.getValue(), std::memory_order_relaxed);
+    };
+    addAndMakeVisible (lookaheadKnob);
+
+    lookaheadLabel.setJustificationType (juce::Justification::centred);
+    lookaheadLabel.setFont (juce::Font (juce::FontOptions (10.5f, juce::Font::bold)));
+    lookaheadLabel.setColour (juce::Label::textColourId, juce::Colour (0xffa0a0a8));
+    addAndMakeVisible (lookaheadLabel);
+
     stereoLinkToggle.setColour (juce::ToggleButton::textColourId, juce::Colour (0xffd0d0d0));
     stereoLinkToggle.setToggleState (params.limiterStereoLink.load (std::memory_order_relaxed),
                                       juce::dontSendNotification);
@@ -156,6 +171,14 @@ void MasteringLimiterEditor::timerCallback()
             releaseKnob.setValue (rel, juce::dontSendNotification);
     }
 
+    const bool editingLookahead = lookaheadKnob.isMouseButtonDown()
+                               || lookaheadKnob.hasKeyboardFocus (true);
+    if (! editingLookahead)
+    {
+        const float la = params.limiterLookaheadMs.load (std::memory_order_relaxed);
+        if (std::abs ((float) lookaheadKnob.getValue() - la) > 0.01f)
+            lookaheadKnob.setValue (la, juce::dontSendNotification);
+    }
     const float gr = limiter.getCurrentGrDb();
     if (gr < displayedGrDb) displayedGrDb = gr;
     else                    displayedGrDb += (gr - displayedGrDb) * 0.18f;
@@ -435,6 +458,14 @@ void MasteringLimiterEditor::resized()
         const int knobW = juce::jmin (col.getWidth(), kRelKnobH);
         const int knobX = col.getX() + (col.getWidth() - knobW) / 2;
         releaseKnob.setBounds (knobX, knobY, knobW, kRelKnobH);
+        col.removeFromTop (kRelKnobH + 2);
+
+        col.removeFromTop (8);
+        lookaheadLabel.setBounds (col.removeFromTop (14));
+        const int laY = col.getY();
+        const int laW = juce::jmin (col.getWidth(), kRelKnobH);
+        const int laX = col.getX() + (col.getWidth() - laW) / 2;
+        lookaheadKnob.setBounds (laX, laY, laW, kRelKnobH);
         col.removeFromTop (kRelKnobH + 2);
 
         col.removeFromTop (8);

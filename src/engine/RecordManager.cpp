@@ -78,9 +78,22 @@ bool RecordManager::startRecording (double sampleRate, juce::int64 startSample)
 
     const auto stamp = juce::Time::getCurrentTime().formatted ("%Y%m%d-%H%M%S");
 
+    // Tracks whether any track actually got a writer / MIDI capture. If every
+    // armed track is skipped (e.g. all frozen), starting would arm a no-op
+    // recording that captures nothing — fail instead so the caller can surface it.
+    bool anyArmedSetup = false;
+
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         if (! session.track (t).recordArmed.load (std::memory_order_relaxed))
+            continue;
+
+        // Frozen tracks never record: their playback is the baked WAV, so
+        // captured MIDI/audio would be silent on playback and silently desync
+        // the rendered audio from midiRegions. The arm UI also blocks this, but
+        // this is the engine-side backstop for any other arm path (MCU, MIDI
+        // bindings). Unfreeze to record.
+        if (session.track (t).frozen.load (std::memory_order_relaxed))
             continue;
 
         // MIDI tracks: spin up the MIDI capture FIFO and skip the WAV
@@ -93,6 +106,7 @@ bool RecordManager::startRecording (double sampleRate, juce::int64 startSample)
             auto cap = std::make_unique<PerTrackMidi>();
             cap->fifo.reset();
             midiCaptures[(size_t) t] = std::move (cap);
+            anyArmedSetup = true;
             std::fprintf (stderr,
                           "[Dusk Studio/RecordManager] startRecording: track %d set up MIDI capture "
                           "(midiInputIndex=%d, midiChannel=%d).\n",
@@ -195,6 +209,14 @@ bool RecordManager::startRecording (double sampleRate, juce::int64 startSample)
             continue;
         }
         writers[(size_t) t] = std::move (perTrack);
+        anyArmedSetup = true;
+    }
+
+    if (! anyArmedSetup)
+    {
+        std::fprintf (stderr, "[Dusk Studio/RecordManager] startRecording: every armed track "
+                              "was skipped (frozen, or setup failed); nothing to record.\n");
+        return false;
     }
 
     active.store (true, std::memory_order_release);

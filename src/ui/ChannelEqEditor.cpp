@@ -264,9 +264,11 @@ ChannelEqEditor::ChannelEqEditor (Track& t) : track (t)
         }
     }
 
-    // Tight fit to the content: HPF (84) + HF (88) + HM (158) + LM (158)
-    // + LF (84) = 572 + header/gaps (~32) + outer padding (24) = ~628.
-    setSize (380, 628);
+    // Tight fit to resized()'s layout: header 24 + gap 8 + HPF 80 + gap 4
+    // + rows[ HF 84 + HM 160 + LM 160 + LF 84, each + 4 gap = 504 ] = 620 inner,
+    // + outer reduced(12) padding 24 = 644. The bell rows are full-height now
+    // that the Q block matches the gain/freq block (kQBlockH == kKnobBlockH).
+    setSize (380, 648);
 }
 
 ChannelEqEditor::~ChannelEqEditor() = default;
@@ -303,7 +305,7 @@ void ChannelEqEditor::resized()
     constexpr int kValueH       = 18;
     constexpr int kKnobBlockH   = kKnobSize + kValueH + 6;            // 80
     constexpr int kQKnobSize    = 56;
-    constexpr int kQBlockH      = kQKnobSize + kValueH;               // 74
+    constexpr int kQBlockH      = kKnobBlockH;   // match gain/freq so the Q knob renders the same diameter
     constexpr int kFreqYStagger = 2;
     constexpr int kHpfRowH      = kKnobBlockH;
     constexpr int kShelfRowH    = kKnobBlockH + kFreqYStagger + 2;

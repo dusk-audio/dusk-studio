@@ -33,7 +33,9 @@ void MasteringChain::prepare (double sampleRate, int blockSize, int oversampling
     bindCompParams();
 #endif
 
-    limiter.prepare (sampleRate, bs);
+    const double initialLookaheadMs = (paramsRef != nullptr)
+        ? (double) paramsRef->limiterLookaheadMs.load (std::memory_order_relaxed) : 2.0;
+    limiter.prepare (sampleRate, bs, initialLookaheadMs);
     limiter.reset();
 
     loudnessMeter.prepare (sampleRate, bs);
@@ -152,6 +154,7 @@ void MasteringChain::updateLimiterParameters() noexcept
     limiter.setInputDriveDb (paramsRef->limiterDriveDb.load (std::memory_order_relaxed));
     limiter.setCeilingDb  (paramsRef->limiterCeilingDb.load (std::memory_order_relaxed));
     limiter.setReleaseMs  (paramsRef->limiterReleaseMs.load (std::memory_order_relaxed));
+    limiter.setLookaheadMs (paramsRef->limiterLookaheadMs.load (std::memory_order_relaxed));
     limiter.setMode       (paramsRef->limiterMode.load (std::memory_order_relaxed));
     limiter.setStereoLink (paramsRef->limiterStereoLink.load (std::memory_order_relaxed));
 }

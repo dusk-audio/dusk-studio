@@ -1723,6 +1723,25 @@ void AudioRegionEditor::mouseDown (const juce::MouseEvent& e)
         // region body free for cursor-drop / move in Grab Mode.
         if (mode == EditMode::Range || e.mods.isShiftDown() || hitIdx < 0)
         {
+            // Range tool on a non-focused slice: click-to-focus FIRST so the
+            // range (and the cut/copy/delete that follow, which key off
+            // regionIdx) land on the slice under the cursor, not the previously
+            // focused one. sampleForX below then maps against the new focus.
+            if (mode == EditMode::Range && hitIdx >= 0 && hitIdx != regionIdx)
+            {
+                additionalSelectedRegions.clear();
+                regionIdx = hitIdx;
+                if (auto* nr = region())
+                    regionAtDragStart = *nr;
+                // Drop the edit cursor on the click too (same mapping as the
+                // normal click-to-focus flow), now that sampleForX maps against
+                // the new focus — so split / paste / loop-at-cursor stay aligned
+                // with the slice the range was taken on.
+                editCursorSample = snapFileSampleToGrid (sampleForX (e.x, waveArea),
+                                                         e.mods.isCommandDown());
+                refreshStatusBarReadouts();
+            }
+
             rangeStartSample = sampleForX (e.x, waveArea);
             rangeEndSample   = rangeStartSample;
             rangeActive      = false;
@@ -2279,13 +2298,73 @@ void AudioRegionEditor::mouseUp (const juce::MouseEvent&)
     repaint();
 }
 
+bool AudioRegionEditor::cutRange()
+{
+    auto* r = region();
+    if (r == nullptr || ! rangeActive) return false;
+    // A locked region or a frozen track is edit-locked everywhere else; the
+    // range-cut path mutates via Split/Delete, so it must honour the same lock.
+    if (r->locked || session.track (trackIdx).frozen.load (std::memory_order_relaxed))
+        return false;
+
+    const auto a = juce::jmin (rangeStartSample, rangeEndSample);
+    const auto b = juce::jmax (rangeStartSample, rangeEndSample);
+    if (b <= a) return false;   // empty selection — nothing to cut
+
+    // Cut the selected range to the clipboard, then remove that slice from the
+    // region. Compute the timeline edges + whether each needs a split against r
+    // BEFORE any perform() mutates / relocates the regions vector.
+    auto& clip = engine.getRegionClipboard();
+    auto& um   = engine.getUndoManager();
+
+    AudioRegion chunk = *r;
+    chunk.sourceOffset    = a;
+    chunk.lengthInSamples = b - a;
+    chunk.timelineStart   = 0;
+    chunk.fadeInSamples   = 0;
+    chunk.fadeOutSamples  = 0;
+    chunk.previousTakes.clear();
+    clip.region      = chunk;
+    clip.sourceTrack = trackIdx;
+    clip.hasContent  = true;
+
+    const auto regionStart = r->timelineStart;
+    const auto regionEnd   = r->timelineStart + r->lengthInSamples;
+    const auto tlA = r->timelineStart + (a - r->sourceOffset);
+    const auto tlB = r->timelineStart + (b - r->sourceOffset);
+    // A split exactly at a region edge is a no-op (SplitRegionAction rejects it),
+    // so don't assume it produced a slice. Branch on which edges are interior so
+    // the correct slice gets deleted for [start,mid) / [mid,end) / [start,end).
+    const bool needLeft  = tlA > regionStart;
+    const bool needRight = tlB < regionEnd;
+
+    um.beginNewTransaction ("Cut chunk");
+    if (needRight)
+        um.perform (new SplitRegionAction (session, engine, trackIdx, regionIdx, tlB));
+    int deleteIdx = regionIdx;          // left/whole slice when the range hits the start
+    if (needLeft)
+    {
+        um.perform (new SplitRegionAction (session, engine, trackIdx, regionIdx, tlA));
+        deleteIdx = regionIdx + 1;      // middle slice (left part stays at regionIdx)
+    }
+    um.perform (new DeleteRegionAction (session, engine, trackIdx, deleteIdx));
+    rangeActive = false;
+    // The active slice was just removed — reanchor regionIdx onto a survivor (or
+    // close) so it isn't left pointing at a deleted region.
+    reanchorOrClose();
+    return true;
+}
+
 void AudioRegionEditor::showContextMenu (juce::Point<int> screenPos)
 {
     auto* r = region();
     if (r == nullptr) return;
 
+    const bool editLocked = r->locked
+        || session.track (trackIdx).frozen.load (std::memory_order_relaxed);
     juce::PopupMenu m;
     m.addItem (1, "Split at edit cursor");
+    m.addItem (7, "Cut range", /*enabled*/ rangeActive && ! editLocked);
     m.addItem (6, "Join selected regions",
                 /*enabled*/ ! additionalSelectedRegions.empty());
     m.addSeparator();
@@ -2343,6 +2422,12 @@ void AudioRegionEditor::showContextMenu (juce::Point<int> screenPos)
                 if (self->regionIdx >= total) self->regionIdx = total - 1;
                 self->refreshStatusBarReadouts();
                 self->repaint();
+                return;
+            }
+
+            if (chosen == 7)
+            {
+                self->cutRange();
                 return;
             }
 
@@ -2725,36 +2810,11 @@ bool AudioRegionEditor::keyPressed (const juce::KeyPress& k)
         auto& clip = engine.getRegionClipboard();
         auto& um = engine.getUndoManager();
 
-        if (rangeActive)
-        {
-            // Cut chunk: same shape as Copy + the Backspace-with-range
-            // path. Editor stays open on the left slice (regionIdx
-            // remains valid because SplitRegionAction inserts the
-            // right slice at regionIdx+1).
-            const auto a = juce::jmin (rangeStartSample, rangeEndSample);
-            const auto b = juce::jmax (rangeStartSample, rangeEndSample);
-            AudioRegion chunk = *r;
-            chunk.sourceOffset    = a;
-            chunk.lengthInSamples = b - a;
-            chunk.timelineStart   = 0;
-            chunk.fadeInSamples   = 0;
-            chunk.fadeOutSamples  = 0;
-            chunk.previousTakes.clear();
-            clip.region      = chunk;
-            clip.sourceTrack = trackIdx;
-            clip.hasContent  = true;
-
-            const auto tlA = r->timelineStart + (a - r->sourceOffset);
-            const auto tlB = r->timelineStart + (b - r->sourceOffset);
-            um.beginNewTransaction ("Cut chunk");
-            um.perform (new SplitRegionAction (session, engine, trackIdx, regionIdx, tlB));
-            um.perform (new SplitRegionAction (session, engine, trackIdx, regionIdx, tlA));
-            um.perform (new DeleteRegionAction (session, engine, trackIdx, regionIdx + 1));
-            rangeActive = false;
-            refreshStatusBarReadouts();
-            repaint();
-            return true;
-        }
+        if (cutRange()) return true;
+        // A range was selected but cutRange() refused it (locked region / frozen
+        // track). Don't fall through to the whole-region delete below — that would
+        // nuke the entire region on a Ctrl+X the user meant as a no-op range cut.
+        if (rangeActive) return true;
 
         // Whole-region cut. Editor closes (its anchor region is gone).
         clip.region      = *r;
@@ -2799,40 +2859,41 @@ bool AudioRegionEditor::keyPressed (const juce::KeyPress& k)
         auto* r = region();
         if (rangeActive && r != nullptr)
         {
-            auto& um = engine.getUndoManager();
-            um.beginNewTransaction ("Delete chunk");
+            // Locked region / frozen track is edit-locked — consume the key, no-op.
+            if (r->locked || session.track (trackIdx).frozen.load (std::memory_order_relaxed))
+                return true;
+
             const auto a = juce::jmin (rangeStartSample, rangeEndSample);
             const auto b = juce::jmax (rangeStartSample, rangeEndSample);
-            const auto tlA = r->timelineStart + (a - r->sourceOffset);
-            const auto tlB = r->timelineStart + (b - r->sourceOffset);
-            // Split at B first, then A, so regionIdx still points at
-            // the LEFT slice after both splits. The middle slice is
-            // then regionIdx + 1.
-            um.perform (new SplitRegionAction (session, engine, trackIdx, regionIdx, tlB));
-            um.perform (new SplitRegionAction (session, engine, trackIdx, regionIdx, tlA));
-            um.perform (new DeleteRegionAction (session, engine, trackIdx, regionIdx + 1));
-            rangeActive = false;
-            refreshStatusBarReadouts();
-            repaint();
-            return true;
+            if (b > a)
+            {
+                auto& um = engine.getUndoManager();
+                um.beginNewTransaction ("Delete chunk");
+                const auto regionStart = r->timelineStart;
+                const auto regionEnd   = r->timelineStart + r->lengthInSamples;
+                const auto tlA = r->timelineStart + (a - r->sourceOffset);
+                const auto tlB = r->timelineStart + (b - r->sourceOffset);
+                // Edge-aware (mirrors cutRange): a split exactly at a region edge is
+                // a no-op, so branch on which edges are interior to delete the right
+                // slice for [start,mid) / [mid,end) / [start,end) instead of always
+                // removing regionIdx + 1.
+                const bool needLeft  = tlA > regionStart;
+                const bool needRight = tlB < regionEnd;
+                if (needRight)
+                    um.perform (new SplitRegionAction (session, engine, trackIdx, regionIdx, tlB));
+                int deleteIdx = regionIdx;
+                if (needLeft)
+                {
+                    um.perform (new SplitRegionAction (session, engine, trackIdx, regionIdx, tlA));
+                    deleteIdx = regionIdx + 1;
+                }
+                um.perform (new DeleteRegionAction (session, engine, trackIdx, deleteIdx));
+                rangeActive = false;
+                reanchorOrClose();
+            }
+            return true;   // range selected → Delete acts on the range (consume the key)
         }
         auto& um = engine.getUndoManager();
-        // After deleting, keep the editor open on a surviving region (e.g. the
-        // other half after a split) by re-anchoring regionIdx; only close when
-        // the track has no regions left to edit.
-        auto reanchorOrClose = [this]
-        {
-            additionalSelectedRegions.clear();
-            const int total = (int) session.track (trackIdx).regions.size();
-            if (total <= 0)
-            {
-                if (onCloseRequested) onCloseRequested();
-                return;
-            }
-            regionIdx = juce::jlimit (0, total - 1, regionIdx);
-            refreshStatusBarReadouts();
-            repaint();
-        };
 
         // Multi-select Delete: remove every additional region first
         // (descending index order so earlier deletes don't shift later
@@ -3295,6 +3356,27 @@ juce::String formatBarBeatTickAt (juce::int64 sliceFileSample,
     return juce::String ((int) bar + 1) + "."
          + juce::String ((int) beat + 1) + "."
          + juce::String (juce::jlimit (0, 999, sub)).paddedLeft ('0', 3);
+}
+
+void AudioRegionEditor::reanchorOrClose()
+{
+    additionalSelectedRegions.clear();
+    const int total = (int) session.track (trackIdx).regions.size();
+    if (total <= 0)
+    {
+        if (onCloseRequested) onCloseRequested();
+        return;
+    }
+    regionIdx = juce::jlimit (0, total - 1, regionIdx);
+    // Keep the edit cursor inside the surviving region's source range. A left-edge
+    // delete shifts the survivor's sourceOffset / length, so the prior cursor can fall
+    // outside the new audio and mis-align a subsequent split / paste.
+    if (auto* r = region())
+        editCursorSample = juce::jlimit (r->sourceOffset,
+                                          r->sourceOffset + r->lengthInSamples,
+                                          editCursorSample);
+    refreshStatusBarReadouts();
+    repaint();
 }
 
 void AudioRegionEditor::refreshStatusBarReadouts()

@@ -390,13 +390,18 @@ void openPickerMenu (PluginSlot& slot,
                       PluginKind kind,
                       juce::Point<int> /*screenPosition*/,
                       std::function<void()> onPickHardwareInsert,
-                      bool suppressSecondaryButtons)
+                      bool suppressSecondaryButtons,
+                      std::function<void (const juce::File&)> onPickNativeClap)
 {
     auto& manager = slot.getManagerForUi();
 
     auto descriptions = (kind == PluginKind::Instruments)
                           ? manager.getInstrumentDescriptions()
                           : manager.getEffectDescriptions();
+
+    // Merge native-CLAP effects into the unified list when the caller can host them.
+    if (onPickNativeClap && kind == PluginKind::Effects)
+        descriptions.addArray (manager.getClapEffectDescriptions());
 
     auto* parent = target.getTopLevelComponent();
     if (parent == nullptr) parent = &target;
@@ -418,7 +423,7 @@ void openPickerMenu (PluginSlot& slot,
     cb.onCancel = closeModal;
 
     cb.onScan = [closeModal, slotPtr, safeTarget, safeParent, chooserOwnerPtr,
-                  onChange, kind, onPickHardwareInsert]() mutable
+                  onChange, kind, onPickHardwareInsert, onPickNativeClap]() mutable
     {
         closeModal();
 
@@ -428,12 +433,13 @@ void openPickerMenu (PluginSlot& slot,
         // was added before the picker, so JUCE z-order puts the picker
         // on top), making the result message invisible.
         auto reopenPicker = [slotPtr, safeTarget, chooserOwnerPtr,
-                              onChange, kind, onPickHardwareInsert]() mutable
+                              onChange, kind, onPickHardwareInsert, onPickNativeClap]() mutable
         {
             if (auto* t = safeTarget.getComponent())
                 openPickerMenu (*slotPtr, *t, *chooserOwnerPtr,
                                   std::move (onChange), kind, { -1, -1 },
-                                  std::move (onPickHardwareInsert));
+                                  std::move (onPickHardwareInsert), false,
+                                  std::move (onPickNativeClap));
         };
         runScanModal (slotPtr->getManagerForUi(), safeParent.getComponent(),
                        std::move (reopenPicker));
@@ -476,11 +482,22 @@ void openPickerMenu (PluginSlot& slot,
     }
    #endif
 
-    cb.onPickPlugin = [closeModal, slotPtr, safeTarget, safeParent, onChange, kind]
+    cb.onPickPlugin = [closeModal, slotPtr, safeTarget, safeParent, onChange, kind, onPickNativeClap]
                         (const juce::PluginDescription& desc) mutable
     {
         closeModal();
         if (safeTarget.getComponent() == nullptr) return;
+
+        // Native CLAP rows route to the native host, not the JUCE loader. The
+        // onPickNativeClap handler does its own success refresh + failure alert
+        // (loadNativeClapForSlot / loadNativeClapForChannel), so DON'T also fire the
+        // generic onChange here — on a failed load it would refresh state as if the
+        // slot loaded (the JUCE path only refreshes on a successful async load).
+        if (desc.pluginFormatName == "CLAP")
+        {
+            if (onPickNativeClap) onPickNativeClap (juce::File (desc.fileOrIdentifier));
+            return;
+        }
 
         // Defence-in-depth: getInstrument/EffectDescriptions already
         // filtered by kind, but a stale KnownPluginList entry could slip
@@ -662,7 +679,8 @@ void openInsertChooser (PluginSlot& slot,
                          std::unique_ptr<juce::FileChooser>& chooserOwner,
                          std::function<void()> onChange,
                          PluginKind kind,
-                         std::function<void()> onPickHardwareInsert)
+                         std::function<void()> onPickHardwareInsert,
+                         std::function<void (const juce::File&)> onPickNativeClap)
 {
     auto* parent = target.getTopLevelComponent();
     if (parent == nullptr) parent = &target;
@@ -708,14 +726,15 @@ void openInsertChooser (PluginSlot& slot,
     };
 
     auto onPlugin = [closeChooser, slotPtr, safeTarget, chooserOwnerPtr,
-                       onChange, kind]() mutable
+                       onChange, kind, onPickNativeClap]() mutable
     {
         closeChooser();
         if (auto* t = safeTarget.getComponent())
             openPickerMenu (*slotPtr, *t, *chooserOwnerPtr,
                               std::move (onChange), kind, { -1, -1 },
                               /*onPickHardwareInsert*/ {},
-                              /*suppressSecondaryButtons*/ true);
+                              /*suppressSecondaryButtons*/ true,
+                              std::move (onPickNativeClap));
     };
 
     auto onCancel = closeChooser;

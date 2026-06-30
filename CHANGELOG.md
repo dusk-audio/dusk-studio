@@ -5,6 +5,35 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
+## [Unreleased]
+
+### Added
+
+- **DP import decodes time signature.** A song's time signature (numerator /
+  denominator) is read from `song.sys` and applied on import, alongside the
+  existing tempo / marker / mixer recall.
+
+### Fixed
+
+- **DP import fader + pan recall.** Channel faders and pan are now read from the
+  device's actual mixer array (0xC4) with a calibrated byte-to-dB curve, instead
+  of the wrong record offset that recalled unity / centre for every track.
+
+- **Tuner pitch accuracy.** The pitch detector read consistently sharp (about a
+  semitone at low notes); it now locks on the true period and reads within a
+  few cents.
+- **Long help text.** Menu-bar tooltips that exceed one line now wrap instead of
+  clipping the text at both ends.
+- **MTC.** SMPTE hours wrap at the 24-hour boundary (the emitted hours field
+  stays within the 0-23 spec range).
+- **Session load hardening.** Out-of-range automation times and non-finite
+  values in a hand-edited or corrupt `session.json` are clamped on load.
+
+### Changed
+
+- **Update notice.** The "update available" badge moved from the startup
+  dialog's sidebar to a banner above the Recent Sessions list.
+
 ## [0.11.1] - 2026-06-24
 
 Patch release on the 0.11 Beta line: top-row layout, a playhead-chase option, an

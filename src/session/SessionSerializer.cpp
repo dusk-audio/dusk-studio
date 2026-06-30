@@ -26,6 +26,44 @@ namespace
 // can read older files via migrateSession; older Dusk Studio refusing
 // newer files is safer than silently dropping fields).
 constexpr int kFormatVersion = 3;
+
+// Store a float from JSON only when it's finite, so a corrupt or hand-edited
+// session.json can't push NaN / inf into a DSP parameter — the in-memory
+// default is kept instead. Mirrors the master Pultec EQ's loadMasterFloat.
+inline void storeFiniteFloat (std::atomic<float>& dst, const juce::var& src) noexcept
+{
+    const float v = (float) (double) src;
+    if (std::isfinite (v)) dst.store (v);
+}
+
+// Parse one automation point from JSON, hardening every field against a
+// hand-edited or truncated file: timeSamples >= 0 and recordedAtBPM finite.
+// The lane evaluator's binary search assumes non-negative, sorted times, and
+// no downstream retime math should ever see a non-finite anchor tempo. value
+// is range-limited to [0, 1].
+inline AutomationPoint parseAutomationPoint (const juce::var& pv, double fallbackBpm) noexcept
+{
+    // The fallback itself must be strictly positive + finite — a 0/negative session
+    // tempo would otherwise pass straight through as recordedAtBPM and break retime math.
+    const float safeFallback = (std::isfinite (fallbackBpm) && fallbackBpm > 0.0) ? (float) fallbackBpm : 120.0f;
+    AutomationPoint pt;
+    // Validate finiteness BEFORE narrowing to int64 — casting a +inf double (1e999 in a
+    // hand-edited file) to int64 is UB. Non-finite / negative time → 0.
+    const double rawT = (double) pv["t"];
+    pt.timeSamples   = (std::isfinite (rawT) && rawT > 0.0) ? (juce::int64) rawT : (juce::int64) 0;
+    // NaN slips through jlimit unchanged (NaN compares false both ways), so it
+    // would otherwise poison the lane's binary search / a DSP param. Map it to a
+    // safe default; ±inf is already clamped to the [0,1] range by jlimit.
+    float rawV = (float) (double) pv["v"];
+    if (std::isnan (rawV)) rawV = 0.0f;
+    pt.value         = juce::jlimit (0.0f, 1.0f, rawV);
+    const float bpm  = pv.hasProperty ("bpm") ? (float) (double) pv["bpm"]
+                                              : safeFallback;
+    // A zero / negative bpm would break tempo-retime math (division by it),
+    // so accept only a finite, strictly-positive value; else fall back.
+    pt.recordedAtBPM = (std::isfinite (bpm) && bpm > 0.0f) ? bpm : safeFallback;
+    return pt;
+}
 } // namespace
 
 // Forward-migrate `root` from a known older version to kFormatVersion
@@ -288,6 +326,11 @@ juce::DynamicObject::Ptr trackToObject (const Track& t, const juce::File& sessio
         obj->setProperty ("plugin_desc_xml", t.pluginDescriptionXml);
     if (t.pluginStateBase64.isNotEmpty())
         obj->setProperty ("plugin_state",    t.pluginStateBase64);
+    if (t.nativeClapPath.isNotEmpty())
+    {
+        obj->setProperty ("native_clap_path",  t.nativeClapPath);
+        obj->setProperty ("native_clap_state", t.nativeClapStateBase64);
+    }
 
     obj->setProperty ("fader_db",       t.strip.faderDb.load());
     obj->setProperty ("pan",            t.strip.pan.load());
@@ -310,6 +353,25 @@ juce::DynamicObject::Ptr trackToObject (const Track& t, const juce::File& sessio
     obj->setProperty ("midi_output_id",  t.midiOutputIdentifier);
     obj->setProperty ("midi_channel",    t.midiChannel.load());
     obj->setProperty ("track_mode",     t.mode.load());
+    // Never write frozen=true without a restorable capture — a frozen flag with no
+    // path would load as a locked track with no audio. Gate the flag on both, same
+    // as the freeze fields below.
+    const bool emitFrozen = t.frozen.load() && ! t.frozenAudioPath.isEmpty();
+    obj->setProperty ("frozen",         emitFrozen);
+    // Only emit freeze fields when the track is actually frozen AND has a path —
+    // a stale path left on a since-unfrozen (or reused) Session must not write
+    // phantom freeze state that load() would then resurrect.
+    if (emitFrozen)
+    {
+        obj->setProperty ("frozen_audio_path",
+                          portablePath (juce::File (t.frozenAudioPath), sessionDir));
+        // Length + channels so load rebuilds frozenRegion without opening the
+        // WAV (PlaybackEngine needs frozenRegion populated to play it back).
+        obj->setProperty ("frozen_len",      (juce::int64) t.frozenRegion.lengthInSamples);
+        obj->setProperty ("frozen_channels", t.frozenRegion.numChannels);
+        // Pre-freeze bypass so unfreeze-after-reload restores the user's setting.
+        obj->setProperty ("frozen_plugin_bypass", t.frozenPluginBypass.load());
+    }
 
     juce::Array<juce::var> buses;
     for (int i = 0; i < ChannelStripParams::kNumBuses; ++i)
@@ -660,6 +722,8 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm,
     // reads these back and asks each PluginSlot to reinstantiate.
     t.pluginDescriptionXml = v["plugin_desc_xml"].toString();
     t.pluginStateBase64    = v["plugin_state"]   .toString();
+    t.nativeClapPath        = v["native_clap_path"] .toString();
+    t.nativeClapStateBase64 = v["native_clap_state"].toString();
 
     auto setFloat = [&v] (std::atomic<float>& a, const char* key)
     {
@@ -719,6 +783,47 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm,
     }
     setInt   (t.midiChannel,        "midi_channel");
     setInt   (t.mode,               "track_mode");
+    setBool  (t.frozen,             "frozen");
+    if (auto fp = v["frozen_audio_path"].toString(); fp.isNotEmpty())
+    {
+        // Engine-owned freeze WAV: a missing/zero-length one is dropped + recovered
+        // transparently below, so it must NOT surface as a user-facing missing file.
+        std::vector<juce::String> freezeIgnored;
+        const auto wav = resolvePortablePath (fp, sessionDir, freezeIgnored);
+        t.frozenAudioPath = wav.getFullPathName();
+        // Rebuild frozenRegion so PlaybackEngine can open the baked WAV. The
+        // instrument re-bypass is engine state, re-applied after load by
+        // AudioEngine::reapplyFreezeState (the serializer can't reach strips).
+        auto& fr = t.frozenRegion;
+        fr = AudioRegion {};
+        fr.file            = wav;
+        fr.timelineStart   = 0;
+        fr.lengthInSamples = (juce::int64) v.getProperty ("frozen_len", 0);
+        fr.sourceOffset    = 0;
+        fr.numChannels     = juce::jlimit (1, 2, (int) v.getProperty ("frozen_channels", 2));
+        fr.gainDb          = 0.0f;
+        t.frozenPluginBypass.store ((bool) v.getProperty ("frozen_plugin_bypass", false));
+        // A frozen flag with no usable WAV (missing file, zero length) is
+        // meaningless — drop the whole freeze (flag + path + region) so it can't
+        // be re-saved as phantom state, and the track falls back to live.
+        if (! wav.existsAsFile() || fr.lengthInSamples <= 0)
+        {
+            t.frozen.store (false);
+            t.frozenAudioPath.clear();
+            t.frozenRegion = AudioRegion {};
+            t.frozenPluginBypass.store (false);
+        }
+    }
+    else
+    {
+        // frozen_audio_path absent ⇒ not frozen, regardless of a stale flag.
+        // Fully reset freeze state (not just the flag) so a reused Session can't
+        // carry a stale path / region forward and re-save it as phantom freeze.
+        t.frozen.store (false);
+        t.frozenAudioPath.clear();
+        t.frozenRegion = AudioRegion {};
+        t.frozenPluginBypass.store (false);
+    }
 
     if (auto buses = v["bus_assign"]; buses.isArray())
     {
@@ -765,9 +870,9 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm,
         {
             auto b = eq[key];
             if (! b.isObject()) return;
-            if (gain && b.hasProperty ("gain")) gain->store ((float) (double) b["gain"]);
-            if (freq && b.hasProperty ("freq")) freq->store ((float) (double) b["freq"]);
-            if (q    && b.hasProperty ("q"))    q->store    ((float) (double) b["q"]);
+            if (gain && b.hasProperty ("gain")) storeFiniteFloat (*gain, b["gain"]);
+            if (freq && b.hasProperty ("freq")) storeFiniteFloat (*freq, b["freq"]);
+            if (q    && b.hasProperty ("q"))    storeFiniteFloat (*q,    b["q"]);
         };
         restoreBand ("lf", &t.strip.lfGainDb, &t.strip.lfFreq, nullptr);
         restoreBand ("lm", &t.strip.lmGainDb, &t.strip.lmFreq, &t.strip.lmQ);
@@ -866,16 +971,10 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm,
             {
                 auto pv = pts[k];
                 if (! pv.isObject()) continue;
-                AutomationPoint pt;
-                pt.timeSamples   = (juce::int64) pv["t"];
-                pt.value         = juce::jlimit (0.0f, 1.0f, (float) (double) pv["v"]);
                 // Legacy / hand-edited points with no bpm anchor to the
                 // session's load-time tempo (not a hard-coded 120) so a later
                 // tempo change retimes them against the right reference.
-                pt.recordedAtBPM = pv.hasProperty ("bpm")
-                    ? (float) (double) pv["bpm"]
-                    : (float) defaultRecordBpm;
-                tmp.push_back (pt);
+                tmp.push_back (parseAutomationPoint (pv, defaultRecordBpm));
             }
             // Belt-and-braces sort - hand-edited JSON or out-of-order
             // writers can't violate the binary-search invariant in
@@ -1059,9 +1158,9 @@ void restoreBus (Bus& a, const juce::var& v, double defaultRecordBpm)
     if (v.hasProperty ("solo"))                           a.strip.solo.store ((bool) v["solo"]);
 
     if (v.hasProperty ("eq_enabled"))   a.strip.eqEnabled  .store ((bool)  v["eq_enabled"]);
-    if (v.hasProperty ("eq_lf_db"))     a.strip.eqLfGainDb .store ((float) (double) v["eq_lf_db"]);
-    if (v.hasProperty ("eq_mid_db"))    a.strip.eqMidGainDb.store ((float) (double) v["eq_mid_db"]);
-    if (v.hasProperty ("eq_hf_db"))     a.strip.eqHfGainDb .store ((float) (double) v["eq_hf_db"]);
+    if (v.hasProperty ("eq_lf_db"))     storeFiniteFloat (a.strip.eqLfGainDb,  v["eq_lf_db"]);
+    if (v.hasProperty ("eq_mid_db"))    storeFiniteFloat (a.strip.eqMidGainDb, v["eq_mid_db"]);
+    if (v.hasProperty ("eq_hf_db"))     storeFiniteFloat (a.strip.eqHfGainDb,  v["eq_hf_db"]);
 
     if (v.hasProperty ("comp_enabled"))    a.strip.compEnabled  .store ((bool)  v["comp_enabled"]);
     if (v.hasProperty ("comp_thresh_db"))  a.strip.compThreshDb .store ((float) (double) v["comp_thresh_db"]);
@@ -1089,13 +1188,7 @@ void restoreBus (Bus& a, const juce::var& v, double defaultRecordBpm)
             {
                 auto pv = pts[k];
                 if (! pv.isObject()) continue;
-                AutomationPoint pt;
-                pt.timeSamples   = (juce::int64) pv["t"];
-                pt.value         = juce::jlimit (0.0f, 1.0f, (float) (double) pv["v"]);
-                pt.recordedAtBPM = pv.hasProperty ("bpm")
-                    ? (float) (double) pv["bpm"]
-                    : (float) defaultRecordBpm;
-                tmp.push_back (pt);
+                tmp.push_back (parseAutomationPoint (pv, defaultRecordBpm));
             }
             std::sort (tmp.begin(), tmp.end(),
                 [] (const AutomationPoint& x, const AutomationPoint& y)
@@ -1144,6 +1237,14 @@ juce::String SessionSerializer::serialize (const Session& s)
             auto* slot = new juce::DynamicObject();
             slot->setProperty ("plugin_desc_xml", lane.pluginDescriptionXml[(size_t) p]);
             slot->setProperty ("plugin_state",    lane.pluginStateBase64[(size_t) p]);
+
+            // Native CLAP slot (mutually exclusive with the JUCE plugin). Only emit
+            // when set, so JUCE-only sessions are unchanged.
+            if (lane.nativeClapPath[(size_t) p].isNotEmpty())
+            {
+                slot->setProperty ("native_clap_path",  lane.nativeClapPath[(size_t) p]);
+                slot->setProperty ("native_clap_state", lane.nativeClapStateBase64[(size_t) p]);
+            }
 
             // Hardware-insert side of this slot. Same shape as the
             // Track::hardwareInsert block above.
@@ -1300,6 +1401,7 @@ juce::String SessionSerializer::serialize (const Session& s)
     mast->setProperty ("limiter_drive_db",    s.mastering().limiterDriveDb.load());
     mast->setProperty ("limiter_ceiling_db",  s.mastering().limiterCeilingDb.load());
     mast->setProperty ("limiter_release_ms",  s.mastering().limiterReleaseMs.load());
+    mast->setProperty ("limiter_lookahead_ms", s.mastering().limiterLookaheadMs.load());
     mast->setProperty ("limiter_mode",        s.mastering().limiterMode.load());
     mast->setProperty ("limiter_stereo_link", s.mastering().limiterStereoLink.load());
     mast->setProperty ("target_preset",     s.mastering().targetPresetIndex.load());
@@ -1472,7 +1574,13 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
     if (auto tportPeek = root["transport"]; tportPeek.isObject())
     {
         if (tportPeek.hasProperty ("tempo_bpm"))
-            sessionLoadBpm = (double) tportPeek["tempo_bpm"];
+        {
+            const double peeked = (double) tportPeek["tempo_bpm"];
+            // Clamp to the same 30-300 range the final tempoBpm store uses, so
+            // the automation / MIDI fallback tempo stays aligned with the loaded
+            // session tempo instead of using a raw out-of-range value.
+            if (std::isfinite (peeked)) sessionLoadBpm = juce::jlimit (30.0, 300.0, peeked);
+        }
     }
 
     if (auto tracks = root["tracks"]; tracks.isArray())
@@ -1525,6 +1633,8 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                     if (! sv.isObject()) continue;
                     lane.pluginDescriptionXml[(size_t) p] = sv["plugin_desc_xml"].toString();
                     lane.pluginStateBase64[(size_t) p]    = sv["plugin_state"]   .toString();
+                    lane.nativeClapPath[(size_t) p]        = sv["native_clap_path"] .toString();
+                    lane.nativeClapStateBase64[(size_t) p] = sv["native_clap_state"].toString();
 
                     // Same default-off rationale as the track hardware_insert.
                     {
@@ -1574,13 +1684,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                     {
                         auto pv = pts[k];
                         if (! pv.isObject()) continue;
-                        AutomationPoint pt;
-                        pt.timeSamples   = (juce::int64) pv["t"];
-                        pt.value         = juce::jlimit (0.0f, 1.0f, (float) (double) pv["v"]);
-                        pt.recordedAtBPM = pv.hasProperty ("bpm")
-                            ? (float) (double) pv["bpm"]
-                            : (float) sessionLoadBpm;
-                        tmp.push_back (pt);
+                        tmp.push_back (parseAutomationPoint (pv, sessionLoadBpm));
                     }
                     // Sort by time so the lane evaluator's binary search holds,
                     // matching the track / bus / master restore paths (a
@@ -1681,14 +1785,13 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                 {
                     auto pv = pts[k];
                     if (! pv.isObject()) continue;
-                    AutomationPoint pt;
-                    pt.timeSamples   = (juce::int64) pv["t"];
-                    pt.value         = juce::jlimit (0.0f, 1.0f, (float) (double) pv["v"]);
-                    pt.recordedAtBPM = pv.hasProperty ("bpm")
-                        ? (float) (double) pv["bpm"]
-                        : (float) sessionLoadBpm;
-                    tmp.push_back (pt);
+                    tmp.push_back (parseAutomationPoint (pv, sessionLoadBpm));
                 }
+                // Sort by time so the lane evaluator's binary search holds,
+                // matching the track / bus / aux restore paths.
+                std::sort (tmp.begin(), tmp.end(),
+                    [] (const AutomationPoint& a, const AutomationPoint& b)
+                    { return a.timeSamples < b.timeSamples; });
                 s.master().automationLanes[(size_t) p].publishPoints (std::move (tmp));
             }
         }
@@ -1741,6 +1844,14 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         m.limiterDriveDb.store    (mast.hasProperty ("limiter_drive_db")    ? (float) (double) mast["limiter_drive_db"]   : 0.0f);
         m.limiterCeilingDb.store  (mast.hasProperty ("limiter_ceiling_db")  ? (float) (double) mast["limiter_ceiling_db"] : -0.3f);
         m.limiterReleaseMs.store  (mast.hasProperty ("limiter_release_ms")  ? (float) (double) mast["limiter_release_ms"] : 100.0f);
+        {
+            // Validate before storing: a NaN/±inf here would otherwise sit in the
+            // limiter param (and the UI knob) until the next set; fall back to the
+            // default so a corrupt session can't strand non-finite lookahead.
+            const float la = mast.hasProperty ("limiter_lookahead_ms")
+                                ? (float) (double) mast["limiter_lookahead_ms"] : 2.0f;
+            m.limiterLookaheadMs.store (std::isfinite (la) ? la : 2.0f);
+        }
         m.limiterMode.store       (mast.hasProperty ("limiter_mode")        ? (int) mast["limiter_mode"]                  : 0);
         m.limiterStereoLink.store (mast.hasProperty ("limiter_stereo_link") ? (bool) mast["limiter_stereo_link"]          : true);
         if (mast.hasProperty ("target_preset"))
@@ -1778,7 +1889,14 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         // state, not session content. A persisted Cut/Range would reload as the
         // tapestrip's tool with no on-screen selector to change it back. Always
         // start in the Session.h default (Grab).
-        if (tport.hasProperty ("tempo_bpm"))         s.tempoBpm.store         (juce::jlimit (30.0f, 300.0f, (float) (double) tport["tempo_bpm"]));
+        if (tport.hasProperty ("tempo_bpm"))
+        {
+            // Guard finiteness before jlimit: a non-finite value (e.g. 1e999 ->
+            // +inf in a corrupt file) would clamp to 300, silently overwriting
+            // the session's real tempo. Keep the existing tempo instead.
+            const double bpm = (double) tport["tempo_bpm"];
+            if (std::isfinite (bpm)) s.tempoBpm.store (juce::jlimit (30.0f, 300.0f, (float) bpm));
+        }
         if (tport.hasProperty ("tempo_points"))
         {
             std::vector<TempoPoint> pts;
@@ -1786,8 +1904,14 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                 for (const auto& v : *arr)
                     if (auto* o = v.getDynamicObject())
                         if (o->hasProperty ("sample") && o->hasProperty ("bpm"))
+                        {
+                            // Guard finiteness before jlimit (NaN/inf slip through it);
+                            // skip a corrupt point rather than poison the tempo map.
+                            const double bpm = (double) o->getProperty ("bpm");
+                            if (! std::isfinite (bpm)) continue;
                             pts.push_back ({ (juce::int64) o->getProperty ("sample"),
-                                             juce::jlimit (30.0f, 300.0f, (float) (double) o->getProperty ("bpm")) });
+                                             juce::jlimit (30.0f, 300.0f, (float) bpm) });
+                        }
             s.tempoMap.setPoints (std::move (pts));
         }
         else

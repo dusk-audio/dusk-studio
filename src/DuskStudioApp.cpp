@@ -1,5 +1,8 @@
 #include "DuskStudioApp.h"
 #include "ui/AppConfig.h"
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+  #include "ui/ClapPluginEditorComponent.h"   // Linux-only native CLAP editor test
+#endif
 #include "ui/ConsoleView.h"
 #include "ui/MainComponent.h"
 #include "ui/WindowState.h"
@@ -970,6 +973,42 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
         return;
     }
 
+    // DUSKSTUDIO_CLAP_EDITOR_TEST=/path/to.clap — standalone live-verification of
+    // the native CLAP editor embed (no engine, no main window). Opens the plugin's
+    // embedded-X11 editor through our own host in a plain window. Close it to quit.
+    // Linux-only (the native CLAP host + X11 embed).
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+    if (const char* path = std::getenv ("DUSKSTUDIO_CLAP_EDITOR_TEST"); path != nullptr && *path)
+    {
+        duskstudio::platform::preferX11ForNextNativeWindow();   // editor host needs an X11 peer
+        auto comp = std::make_unique<duskstudio::ClapPluginEditorComponent>();
+        juce::String err;
+        if (! comp->load (juce::File (juce::String (path)), err))
+        {
+            std::fprintf (stderr, "[clap editor test] load failed: %s\n", err.toRawUTF8());
+            quit();
+            return;
+        }
+        const int w = juce::jmax (200, comp->getWidth());
+        const int h = juce::jmax (200, comp->getHeight());
+        // Plain juce::DocumentWindow's title-bar close button is a no-op; this dev
+        // harness is "close the window to quit", so route it through systemRequestedQuit.
+        struct TestWindow final : juce::DocumentWindow
+        {
+            using juce::DocumentWindow::DocumentWindow;
+            void closeButtonPressed() override
+            { juce::JUCEApplication::getInstance()->systemRequestedQuit(); }
+        };
+        clapEditorTestWindow = std::make_unique<TestWindow> (
+            "Dusk — CLAP editor test", juce::Colours::black, juce::DocumentWindow::allButtons);
+        clapEditorTestWindow->setUsingNativeTitleBar (true);
+        clapEditorTestWindow->setContentOwned (comp.release(), true);
+        clapEditorTestWindow->centreWithSize (w, h);
+        clapEditorTestWindow->setVisible (true);
+        return;   // standalone — skip the normal engine + main-window startup
+    }
+#endif // DUSKSTUDIO_HAS_NATIVE_CLAP
+
     // DUSKSTUDIO_REPLACE_TEST=A.vst3:B.vst3 — exercises the Replace plugin...
     // swap pattern under live processing. Loads A, runs audio, swaps to
     // B mid-stream via loadFromDescription, runs more audio. Mirrors the
@@ -1244,6 +1283,7 @@ void DuskStudioApp::shutdown()
             main->leakAllPluginInstancesForShutdown();
 
     mainWindow.reset();
+    clapEditorTestWindow.reset();   // dev CLAP-editor test path: release its component deterministically
 
     // Tear down the FileLogger installed by crash_handler::install so
     // JUCE's leak detector doesn't complain at exit. The crash callback

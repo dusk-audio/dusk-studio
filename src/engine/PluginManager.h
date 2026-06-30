@@ -34,6 +34,15 @@ public:
     juce::Array<juce::PluginDescription> getInstrumentDescriptions() const;
     juce::Array<juce::PluginDescription> getEffectDescriptions() const;
 
+    // Native-CLAP plugins — scanned separately (CLAP is NOT a juce::AudioPluginFormat).
+    // Synthesised PluginDescriptions: pluginFormatName "CLAP", fileOrIdentifier = the
+    // .clap bundle path. The unified picker merges these in for surfaces that have a
+    // native CLAP host (aux lanes); routing keys on pluginFormatName == "CLAP".
+    juce::Array<juce::PluginDescription> getClapEffectDescriptions() const;
+    // Rescan CLAP search paths (slow — loads each bundle). Folded into the Scan button
+    // via scanInstalledPlugins; result cached in memory for the session.
+    void scanClapPlugins();
+
     // Synchronous instantiation. May take 100s of ms. Returns nullptr on
     // failure and sets errorMessage. Caller runs prepareToPlay before
     // processing audio. Success adds the description to knownPluginList.
@@ -84,6 +93,7 @@ public:
 private:
     juce::AudioPluginFormatManager formatManager;
     juce::KnownPluginList          knownPluginList;
+    juce::Array<juce::PluginDescription> clapDescriptions;   // native CLAP (scanned separately)
     bool                           oopEnabled { false };
 
     void loadCache();

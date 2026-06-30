@@ -142,6 +142,11 @@ private:
     // All actions through the engine's UndoManager.
     void showContextMenu (juce::Point<int> screenPos);
 
+    // Cut the active range to the clipboard (split at both edges, delete the
+    // middle slice). Shared by Cmd+X and the right-click "Cut range" item.
+    // No-op + returns false when no range is active.
+    bool cutRange();
+
     void showFadeShapeMenu (juce::Point<int> screenPos, bool isFadeIn);
 
     // Parallel mouse surface to right-click — used to alias into
@@ -280,6 +285,11 @@ private:
     void layoutIconRow   (juce::Rectangle<int>);
     void layoutStatusBar (juce::Rectangle<int>);
     void refreshStatusBarReadouts();
+
+    // After a delete, keep the editor open on a surviving region by re-anchoring
+    // regionIdx, or close when the track has no regions left. Shared by the
+    // keyboard-Delete and range-Cut paths so neither leaves regionIdx dangling.
+    void reanchorOrClose();
 
     // Honours session.audioEditorSnap + active snapResolution. bypass
     // short-circuits to input (Cmd-bypass during drags). Shared so

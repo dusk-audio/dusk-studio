@@ -167,6 +167,7 @@ void MasteringEqEditor::rebuildKnobValues()
         lastQ   [(size_t) i] = params.eqBandQ[i]      .load (std::memory_order_relaxed);
     }
     lastEnabled = params.eqEnabled.load (std::memory_order_relaxed);
+    lastScopeSampleRate = (chain != nullptr) ? chain->getScopeSampleRate() : 0.0;
 }
 
 void MasteringEqEditor::timerCallback()
@@ -186,6 +187,11 @@ void MasteringEqEditor::timerCallback()
     const bool enabledChanged = (en != lastEnabled);
     if (enabledChanged) changed = true;
 
+    // Re-evaluate the curve when the audio device's scope rate changes (bandResponseDb
+    // depends on it), even if no band parameter moved.
+    const double scopeSr = (chain != nullptr) ? chain->getScopeSampleRate() : 0.0;
+    if (scopeSr != lastScopeSampleRate) changed = true;
+
     if (changed)
     {
         rebuildKnobValues();
@@ -202,29 +208,16 @@ void MasteringEqEditor::timerCallback()
 
 float MasteringEqEditor::bandResponseDb (int idx, float freqHz) const noexcept
 {
-    const float fc = lastFreq[(size_t) idx];
-    const float G  = lastGain[(size_t) idx];
-    const float Q  = juce::jmax (0.1f, lastQ[(size_t) idx]);
-    if (std::fabs (G) < 0.01f || fc <= 0.0f) return 0.0f;
-
-    const float ratio = freqHz / fc;
-    if (idx == 0)
-    {
-        // Low shelf - smooth tanh transition centred at fc, 1.5 octaves wide.
-        const float octaves = std::log2 (ratio);
-        return G * 0.5f * (1.0f - std::tanh (octaves * 1.4f));
-    }
-    if (idx == 4)
-    {
-        // High shelf - mirror of low shelf.
-        const float octaves = std::log2 (ratio);
-        return G * 0.5f * (1.0f + std::tanh (octaves * 1.4f));
-    }
-    // Peaking bell - gaussian-ish response in log frequency. Wider Q -> wider
-    // bump. Falls off at the band edges by ~Q*4 dB per octave.
-    const float octaves = std::log2 (ratio);
-    const float k = octaves * Q * 1.8f;
-    return G / (1.0f + k * k);
+    // Plot the actual biquad magnitude (shared coefficient math with the DSP).
+    // The DSP runs the biquads oversampled, so evaluate the curve at the same
+    // oversampled rate — that's the de-crammed response the audio applies.
+    // Guard a null chain AND an invalid scope rate (0 / negative / non-finite) —
+    // either would push a bad sample rate into magnitudeDb. Matches drawSpectrum.
+    double base = (chain != nullptr) ? chain->getScopeSampleRate() : 48000.0;
+    if (! (base > 0.0) || ! std::isfinite (base)) base = 48000.0;
+    const double sr = base * (double) duskstudio::MasteringDigitalEq::kOversample;
+    return duskstudio::MasteringDigitalEq::magnitudeDb (
+        idx, sr, lastFreq[(size_t) idx], lastQ[(size_t) idx], lastGain[(size_t) idx], freqHz);
 }
 
 float MasteringEqEditor::totalResponseDb (float freqHz) const noexcept

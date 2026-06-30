@@ -238,6 +238,13 @@ void AuxView::setActiveLane (int index)
     resized();
 }
 
+void AuxView::dropAllClapEditors()
+{
+    for (auto& lane : lanes)
+        if (lane != nullptr)
+            lane->dropAllClapEditors();
+}
+
 void AuxView::paint (juce::Graphics& g)
 {
     g.fillAll (juce::Colour (0xff121214));

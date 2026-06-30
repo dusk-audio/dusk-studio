@@ -81,6 +81,10 @@ void framesToSmpte (juce::int64 frames,
         mm = (int) (totalMinutes % 60);
         hh = (int) (totalMinutes / 60);
     }
+
+    // SMPTE timecode is a 24-hour clock; wrap so the emitted hours field stays
+    // in spec (0-23) past the 24h boundary instead of overflowing the field.
+    hh %= 24;
 }
 } // namespace
 

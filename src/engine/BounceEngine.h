@@ -29,7 +29,7 @@ public:
     // MasteringChain : MasteringPlayer -> MasteringChain. Length =
     //               player's source file + tail. Engine stage forced
     //               to Mastering for the render.
-    enum class Mode { MasterMix, Stems, MasteringChain };
+    enum class Mode { MasterMix, Stems, MasteringChain, FreezeTrack };
 
     // Output container. Wav = stereo 24-bit (always available). Mp3 = CBR via
     // libmp3lame; only usable when the build found LAME (else start() fails with
@@ -85,6 +85,25 @@ public:
 
     void cancel() noexcept { cancelRequested.store (true, std::memory_order_relaxed); }
 
+    // Synchronous single-track FREEZE render (message thread; transport must be
+    // stopped). Bakes trackIndex's PRE-FADER signal — instrument + EQ + comp,
+    // before fader/pan/sends — to a 24-bit stereo WAV at outFile, lenSamples
+    // long at sampleRate. Reuses the offline drive (detach device, 4× oversample,
+    // PDC lead-in trim) like the stem path, but captures the strip's pre-fader
+    // tap (ChannelStrip::setFreezeCapture) instead of the master mix. Blocks
+    // until done; unlike start() it does NOT spin the worker thread. Returns
+    // false on failure (getLastError set); deletes a partial file on failure.
+    bool renderFreezeTrack (int trackIndex, const juce::File& outFile,
+                            juce::int64 lenSamples, double sampleRate,
+                            int blockSize = 1024);
+
+    // Async wrapper around renderFreezeTrack: spins the worker thread (like
+    // start()) so the message thread isn't wedged during a long render. Poll
+    // isRendering()/getProgress(), cancel() to abort, onFinished fires on the
+    // worker thread when done. False if a render is already in flight.
+    bool startFreeze (int trackIndex, const juce::File& outFile,
+                      juce::int64 lenSamples, double sampleRate, int blockSize = 1024);
+
     bool         isRendering() const noexcept { return rendering.load (std::memory_order_relaxed); }
     float        getProgress() const noexcept { return progress.load (std::memory_order_relaxed); }
     // Stems mode: 1-based current stem (1..total). 0 before first stem
@@ -121,6 +140,8 @@ private:
     Mode         renderMode       = Mode::MasterMix;
     Format       renderFormat     = Format::Wav;
     int          renderBitrateKbps = 320;
+    int          freezeTrackIndex = -1;   // Mode::FreezeTrack target
+    juce::int64  freezeLenSamples = 0;
 
     std::atomic<bool>  rendering        { false };
     std::atomic<bool>  cancelRequested  { false };

@@ -4,6 +4,16 @@
 
 namespace duskstudio
 {
+// Always-on console drive for the channel EQ. The BritishEQProcessor's
+// ConsoleSaturation is an ADAA polynomial waveshaper; this fixed amount sets
+// the large-format-console harmonic signature to the real hardware's bench
+// THD: E-series (Brown) ≈ 0.02 % THD (H2 ≈ -74 dB) at 0 VU (-18 dBFS), the
+// published SSL 4000E channel figure; G-series (Black) lands ~12 dB cleaner
+// (~0.005 %), matching the more refined G path. E vs G character is selected
+// automatically from the strip's Brown/Black mode. It aliases mildly at the
+// realtime 1× default but renders alias-free in the 4× offline bounce.
+constexpr float kConsoleSaturationDrive = 22.0f;  // 0..100, calibrated to 4000E THD
+
 void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFactor)
 {
     constexpr double rampSeconds = 0.020;
@@ -60,13 +70,6 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     pdcDelayR.reset();
     pdcSilentRun = (juce::int64) kMaxPdcSamples;
 
-    // OS-skip alignment delay lines (delay set below once the oversampler
-    // latency is known). 1-channel each, mirroring the PDC pair.
-    osSkipDelayL.prepare (pdcSpec);
-    osSkipDelayR.prepare (pdcSpec);
-    osSkipDelayL.setMaximumDelayInSamples (kMaxOsLatency);
-    osSkipDelayR.setMaximumDelayInSamples (kMaxOsLatency);
-
     // Pre-size the MIDI scratch buffers so the audio thread's addEvent /
     // processBlock calls never grow them. 4 KB covers ~400-800 typical
     // channel-voice messages per block; far above any sane density even
@@ -79,6 +82,31 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     // is essentially a no-op; if a plugin is loaded across a device-rate
     // change, the slot re-preps it for the new config.
     pluginSlot.prepareToPlay (sampleRate, juce::jmax (1, blockSize));
+
+    // Native CLAP insert (mirrors AuxLaneStrip). Stash the spec; re-activate a loaded
+    // slot at the new rate; consummate a pending session-restore now the SR is known.
+    // Engine fences this via its process gate.
+    preparedSampleRate = sampleRate;
+    preparedBlockSize  = juce::jmax (1, blockSize);
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+    if (nativeClapSlot.isLoaded())
+    {
+        // Re-activate in place — a full reload would destroy the instance the editor's
+        // GUI is attached to (plugin->destroy with a live GUI aborts u-he plugins) and
+        // reset the plugin's parameters.
+        std::string err;
+        nativeClapSlot.reactivate (preparedSampleRate, preparedBlockSize, err);
+    }
+    else if (pendingClapPath.isNotEmpty())
+    {
+        const juce::File p (pendingClapPath);
+        std::string err;
+        if (nativeClapSlot.load (p, preparedSampleRate, preparedBlockSize, err) && ! pendingClapState.empty())
+            nativeClapSlot.loadState (pendingClapState);
+        pendingClapPath.clear();
+        pendingClapState.clear();
+    }
+#endif
 
     // Oversampling: build a Dusk Studio-side wrapper around (EQ + Comp) when the
     // user picks 2× / 4× in Audio Settings. The donor's BritishEQ console
@@ -118,10 +146,6 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
         oversamplerStereo.reset();
         osLatencySamples = 0;
     }
-    osSkipDelayL.setDelay ((float) osLatencySamples);
-    osSkipDelayR.setDelay ((float) osLatencySamples);
-    osSkipDelayL.reset();
-    osSkipDelayR.reset();
 
     const double prepSr = sampleRate * (double) factor;
     const int    prepBs = bsClamped * factor;
@@ -279,25 +303,34 @@ void ChannelStrip::updateEqParameters() noexcept
     // actually changed since last block. Skipping setParameters() when they
     // haven't avoids a full BritishEQProcessor coefficient recompute (8-14
     // biquads) on every silent block on every channel.
+    //
+    // The console saturation is the channel's always-on console floor, so the
+    // EQ processor runs every block regardless of the EQ bypass. When the EQ
+    // section is bypassed we leave the filter params at their flat value-init
+    // defaults (filters off, every band 0 dB) so only the saturation +
+    // transformer character is applied — the tone shaping is what bypasses.
     BritishEQProcessor::Parameters p {};
-    p.hpfEnabled = paramsRef->hpfEnabled.load (std::memory_order_relaxed);
-    p.hpfFreq    = paramsRef->hpfFreq.load    (std::memory_order_relaxed);
-    p.lpfEnabled = paramsRef->lpfEnabled.load (std::memory_order_relaxed);
-    p.lpfFreq    = paramsRef->lpfFreq.load    (std::memory_order_relaxed);
-    p.lfGain     = paramsRef->lfGainDb.load (std::memory_order_relaxed);
-    p.lfFreq     = paramsRef->lfFreq.load   (std::memory_order_relaxed);
-    p.lfBell     = false;
-    p.lmGain     = paramsRef->lmGainDb.load (std::memory_order_relaxed);
-    p.lmFreq     = paramsRef->lmFreq.load   (std::memory_order_relaxed);
-    p.lmQ        = paramsRef->lmQ.load      (std::memory_order_relaxed);
-    p.hmGain     = paramsRef->hmGainDb.load (std::memory_order_relaxed);
-    p.hmFreq     = paramsRef->hmFreq.load   (std::memory_order_relaxed);
-    p.hmQ        = paramsRef->hmQ.load      (std::memory_order_relaxed);
-    p.hfGain     = paramsRef->hfGainDb.load (std::memory_order_relaxed);
-    p.hfFreq     = paramsRef->hfFreq.load   (std::memory_order_relaxed);
-    p.hfBell     = false;
+    if (paramsRef->eqEnabled.load (std::memory_order_relaxed))
+    {
+        p.hpfEnabled = paramsRef->hpfEnabled.load (std::memory_order_relaxed);
+        p.hpfFreq    = paramsRef->hpfFreq.load    (std::memory_order_relaxed);
+        p.lpfEnabled = paramsRef->lpfEnabled.load (std::memory_order_relaxed);
+        p.lpfFreq    = paramsRef->lpfFreq.load    (std::memory_order_relaxed);
+        p.lfGain     = paramsRef->lfGainDb.load (std::memory_order_relaxed);
+        p.lfFreq     = paramsRef->lfFreq.load   (std::memory_order_relaxed);
+        p.lfBell     = false;
+        p.lmGain     = paramsRef->lmGainDb.load (std::memory_order_relaxed);
+        p.lmFreq     = paramsRef->lmFreq.load   (std::memory_order_relaxed);
+        p.lmQ        = paramsRef->lmQ.load      (std::memory_order_relaxed);
+        p.hmGain     = paramsRef->hmGainDb.load (std::memory_order_relaxed);
+        p.hmFreq     = paramsRef->hmFreq.load   (std::memory_order_relaxed);
+        p.hmQ        = paramsRef->hmQ.load      (std::memory_order_relaxed);
+        p.hfGain     = paramsRef->hfGainDb.load (std::memory_order_relaxed);
+        p.hfFreq     = paramsRef->hfFreq.load   (std::memory_order_relaxed);
+        p.hfBell     = false;
+    }
     p.isBlackMode = paramsRef->eqBlackMode.load (std::memory_order_relaxed);
-    p.saturation  = 0.0f;
+    p.saturation  = kConsoleSaturationDrive;
     p.inputGain   = 0.0f;
     p.outputGain  = 0.0f;
     if (std::memcmp (&p, &lastEqParams, sizeof (p)) != 0)
@@ -397,6 +430,28 @@ void ChannelStrip::bindHardwareInsert (const HardwareInsertParams& params) noexc
     hardwareSlot.bind (params);
 }
 
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+bool ChannelStrip::loadNativeClap (const juce::File& path, std::string& errorOut)
+{
+    if (preparedSampleRate <= 0.0 || preparedBlockSize <= 0)
+    { errorOut = "channel strip not prepared"; return false; }
+    return nativeClapSlot.load (path, preparedSampleRate, preparedBlockSize, errorOut);
+}
+
+void ChannelStrip::unloadNativeClap() noexcept
+{
+    nativeClapSlot.unload();
+    pendingClapPath.clear();
+    pendingClapState.clear();
+}
+
+void ChannelStrip::setPendingNativeClap (const juce::File& path, std::vector<uint8_t> state) noexcept
+{
+    pendingClapPath  = path.getFullPathName();
+    pendingClapState = std::move (state);
+}
+#endif
+
 void ChannelStrip::relatchPdcIfDrained (float blockPeakAbs, int numSamples) noexcept
 {
     // Track how long the signal feeding the delay has been silent. We only
@@ -434,7 +489,8 @@ void ChannelStrip::processAndAccumulate (const float* inL,
                                          const float* const* deviceInputs,
                                          int   numDeviceInputs,
                                          float* const*       deviceOutputs,
-                                         int   numDeviceOutputs) noexcept
+                                         int   numDeviceOutputs,
+                                         bool  isFrozen) noexcept
 {
     juce::ScopedNoDenormals noDenormals;
 
@@ -482,8 +538,9 @@ void ChannelStrip::processAndAccumulate (const float* inL,
 
     // MIDI tracks always run a stereo audio path: the instrument plugin fills
     // L+R from MIDI events and the rest of the strip processes that as a
-    // stereo signal. Mono / Stereo audio tracks behave as before.
-    const bool stereo = (inR != nullptr) || isMidi;
+    // stereo signal. Mono / Stereo audio tracks behave as before. A frozen
+    // track also takes the stereo path — inL/inR carry its pre-rendered audio.
+    const bool stereo = (inR != nullptr) || isMidi || isFrozen;
 
     // No params, or an audio track with no input → tick the smoothers down
     // (so M/S transitions sound smooth) and bail. MIDI tracks are exempt
@@ -563,11 +620,12 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         // the normal path; relatchPdcIfDrained there advances pdcSilentRun, and
         // once it reaches the applied length this skip re-engages. (Empty insert
         // ⇒ post-insert == input, so the input-peak silence test is exact.)
-        // The PDC delay line and the OS-skip alignment line are in SERIES (insert
-        // -> PDC delay -> osSkipDelay), both fed the post-insert signal that
-        // pdcSilentRun tracks. So when both are active the trailing tail is the
-        // SUM of their lengths; draining only to max(pdc, os) would truncate the
-        // shorter line's tail. When only one is active it's that one's length.
+        // The PDC delay line and the oversampler are in SERIES (insert -> PDC
+        // delay -> oversampler), both fed the post-insert signal that
+        // pdcSilentRun tracks. The oversampler holds osLatencySamples of
+        // half-band filter-state tail, so when both are active the trailing tail
+        // is the SUM (pdc + os); draining only to max(pdc, os) would truncate the
+        // shorter one. When only one is active it's that one's length.
         const juce::int64 requiredDrain =
             (pdcAppliedSamples > 0 && osLatencySamples > 0)
                 ? (juce::int64) pdcAppliedSamples + (juce::int64) osLatencySamples
@@ -596,19 +654,19 @@ void ChannelStrip::processAndAccumulate (const float* inL,
     updateEqParameters();
     updateCompParameters();
 
-    // Hoist eqEnabled once per block (constant for the whole pass) so the
-    // four call-sites below all see the same value. On a false->true
-    // transition reset the EQ so stale filter history from before the
-    // bypass doesn't ring out as a transient burst when re-enabled.
+    // Hoist eqEnabled once per block. The EQ processor itself always runs (it
+    // carries the always-on console saturation); eqEnabled only flattens the
+    // tone-shaping filters (see updateEqParameters). On a false->true
+    // transition reset the EQ so stale filter history from before the bypass
+    // doesn't ring out as a transient burst when the filters re-engage.
     const bool eqEnabled = paramsRef->eqEnabled.load (std::memory_order_relaxed);
     if (eqEnabled && ! prevEqEnabled)
         eq.reset();
     prevEqEnabled = eqEnabled;
 
-    // Comp engaged this block. Both eqEnabled and compEnabled gate the
-    // oversampler: the per-strip OS exists only to band-limit EQ console
-    // saturation and comp saturation, so with neither stage active the up/down
-    // pass (and the comp processBlock) is pure waste and is skipped entirely.
+    // Comp engaged this block. The per-strip oversampler always runs now (it
+    // band-limits the always-on console saturation in eq.process); compEnabled
+    // additionally gates the comp processBlock inside the wrap.
     const bool compEnabled = paramsRef->compEnabled.load (std::memory_order_relaxed);
 
     // Source-pointer set used by the accumulation loop below. For mono,
@@ -644,8 +702,25 @@ void ChannelStrip::processAndAccumulate (const float* inL,
                       sizeof (float) * (size_t) numSamples);
         if (activeInsertMode == kInsertPlugin)
         {
-            pluginMidiScratch.clear();
-            pluginSlot.processMonoBlock (tempMono.data(), numSamples, pluginMidiScratch);
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+            if (nativeClapSlot.isLoaded())
+            {
+                // Native CLAP is stereo-only — duplicate mono to L+R, process, average
+                // back (same collapse as the hardware mono path). insertScratchR is free
+                // here (only the hardware branch uses it).
+                std::memcpy (insertScratchR.data(), tempMono.data(), sizeof (float) * (size_t) numSamples);
+                nativeClapSlot.processStereo (tempMono.data(), insertScratchR.data(),
+                                              tempMono.data(), insertScratchR.data(), numSamples);
+                for (int i = 0; i < numSamples; ++i)
+                    tempMono[(size_t) i] = 0.5f
+                        * (tempMono[(size_t) i] + insertScratchR[(size_t) i]);
+            }
+            else
+#endif
+            {
+                pluginMidiScratch.clear();
+                pluginSlot.processMonoBlock (tempMono.data(), numSamples, pluginMidiScratch);
+            }
         }
         else if (activeInsertMode == kInsertHardware)
         {
@@ -677,7 +752,12 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             const auto rng = juce::FloatVectorOperations::findMinAndMax (tempMono.data(), numSamples);
             relatchPdcIfDrained (juce::jmax (std::abs (rng.getStart()), std::abs (rng.getEnd())),
                                   numSamples);
-            if (pdcAppliedSamples > 0)
+            // Skip PDC while freeze-capturing: the strip's delay-comp is an
+            // inter-track alignment shift, not part of the track's audio. Baking
+            // it in would double-apply it on frozen playback (which re-runs PDC),
+            // and the frozen-track PDC differs anyway (bypassed plugin → 0 native
+            // latency). Capture pre-PDC; playback applies the right amount once.
+            if (pdcAppliedSamples > 0 && freezeCapL == nullptr)
                 for (int i = 0; i < numSamples; ++i)
                 {
                     pdcDelayL.pushSample (0, tempMono[(size_t) i]);
@@ -706,12 +786,12 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             }
         };
 
-        if (oversamplerStages > 0 && oversamplerMono != nullptr && (eqEnabled || compEnabled))
+        if (oversamplerStages > 0 && oversamplerMono != nullptr)
         {
-            // Oversampled chain: upsample tempMono, run EQ + Comp on the
-            // upsampled view, then downsample back into tempMono. Donor
-            // saturation aliasing is suppressed by the half-band filters
-            // inside juce::dsp::Oversampling.
+            // Oversampled chain: the EQ (carrying the always-on console
+            // saturation) and, when engaged, the comp run on the upsampled view,
+            // then downsample back into tempMono. Donor saturation aliasing is
+            // suppressed by the half-band filters inside juce::dsp::Oversampling.
             const float* readPtrs[1]  = { tempMono.data() };
             float*       writePtrs[1] = { tempMono.data() };
             juce::dsp::AudioBlock<const float> nativeIn  (readPtrs,  1, (size_t) numSamples);
@@ -721,39 +801,22 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             const int upN = (int) upBlock.getNumSamples();
             float* upPtrs[1] = { upBlock.getChannelPointer (0) };
             juce::AudioBuffer<float> upBuf (upPtrs, 1, upN);
-            if (eqEnabled)
-                eq.process (upBuf);
+            eq.process (upBuf);
             if (compEnabled)
                 runComp (upPtrs[0], upN);
 
             oversamplerMono->processSamplesDown (nativeOut);
         }
-        else if (eqEnabled || compEnabled)
+        else
         {
-            // Native-rate path (factor == 1, or a single active stage that
-            // still wants processing without the OS round-trip).
-            if (eqEnabled)
-            {
-                float* monoChannel[1] = { tempMono.data() };
-                juce::AudioBuffer<float> monoBuf (monoChannel, 1, numSamples);
-                eq.process (monoBuf);
-            }
+            // Native-rate path (factor == 1). The EQ (with the always-on
+            // console saturation) always runs; the comp runs when engaged.
+            float* monoChannel[1] = { tempMono.data() };
+            juce::AudioBuffer<float> monoBuf (monoChannel, 1, numSamples);
+            eq.process (monoBuf);
             if (compEnabled)
                 runComp (tempMono.data(), numSamples);
         }
-        else if (osLatencySamples > 0)
-        {
-            // EQ and comp both off → no nonlinear stage, so we skip the
-            // oversampler round-trip. Delay the dry signal by the oversampler's
-            // latency so this strip stays aligned with strips that did
-            // oversample (see osSkipDelayL rationale in the header).
-            for (int i = 0; i < numSamples; ++i)
-            {
-                osSkipDelayL.pushSample (0, tempMono[(size_t) i]);
-                tempMono[(size_t) i] = osSkipDelayL.popSample (0);
-            }
-        }
-        // else (factor == 1, both off): tempMono passes through untouched.
 
         // When bypassed, force the GR atom to 0 so the meter doesn't hold
         // the last-computed reduction (the donor's getGainReduction()
@@ -777,7 +840,21 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         auto* L = tempStereoBuffer.getWritePointer (0);
         auto* R = tempStereoBuffer.getWritePointer (1);
 
-        if (isMidi)
+        if (isFrozen)
+        {
+            // Frozen track: inL/inR are the pre-rendered (instrument + EQ +
+            // comp) audio. Copy it in as the source; the instrument plugin and
+            // the EQ/comp stage below are skipped (baked into the WAV). PDC and
+            // fader/pan/sends still run. Keep the insert-gate smoother ticking
+            // so an un-freeze mid-session resumes click-free.
+            if (inL != nullptr) std::memcpy (L, inL, sizeof (float) * (size_t) numSamples);
+            else                juce::FloatVectorOperations::clear (L, numSamples);
+            if (inR != nullptr) std::memcpy (R, inR, sizeof (float) * (size_t) numSamples);
+            else                std::memcpy (R, L,   sizeof (float) * (size_t) numSamples);
+            for (int i = 0; i < numSamples; ++i)
+                activeInsertGain.getNextValue();
+        }
+        else if (isMidi)
         {
             juce::FloatVectorOperations::clear (L, numSamples);
             juce::FloatVectorOperations::clear (R, numSamples);
@@ -814,8 +891,15 @@ void ChannelStrip::processAndAccumulate (const float* inL,
 
             if (activeInsertMode == kInsertPlugin)
             {
-                pluginMidiScratch.clear();
-                pluginSlot.processStereoBlock (L, R, numSamples, pluginMidiScratch);
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+                if (nativeClapSlot.isLoaded())
+                    nativeClapSlot.processStereo (L, R, L, R, numSamples);
+                else
+#endif
+                {
+                    pluginMidiScratch.clear();
+                    pluginSlot.processStereoBlock (L, R, numSamples, pluginMidiScratch);
+                }
             }
             else if (activeInsertMode == kInsertHardware)
             {
@@ -843,7 +927,9 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             const float pk = juce::jmax (std::abs (rL.getStart()), std::abs (rL.getEnd()),
                                           std::abs (rR.getStart()), std::abs (rR.getEnd()));
             relatchPdcIfDrained (pk, numSamples);
-            if (pdcAppliedSamples > 0)
+            // See the mono path: skip PDC while freeze-capturing so the baked WAV
+            // is pre-PDC and frozen playback applies the alignment delay once.
+            if (pdcAppliedSamples > 0 && freezeCapL == nullptr)
                 for (int i = 0; i < numSamples; ++i)
                 {
                     pdcDelayL.pushSample (0, L[i]);  L[i] = pdcDelayL.popSample (0);
@@ -869,51 +955,44 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             }
         };
 
-        if (oversamplerStages > 0 && oversamplerStereo != nullptr && (eqEnabled || compEnabled))
+        // Frozen tracks skip EQ/comp entirely — both were baked into the WAV
+        // during the freeze render, so re-running them would double-process.
+        if (! isFrozen)
         {
-            const float* readPtrs[2]  = { L, R };
-            float*       writePtrs[2] = { L, R };
-            juce::dsp::AudioBlock<const float> nativeIn  (readPtrs,  2, (size_t) numSamples);
-            juce::dsp::AudioBlock<float>       nativeOut (writePtrs, 2, (size_t) numSamples);
-
-            auto upBlock = oversamplerStereo->processSamplesUp (nativeIn);
-            const int upN = (int) upBlock.getNumSamples();
-            float* upPtrs[2] = { upBlock.getChannelPointer (0),
-                                  upBlock.getChannelPointer (1) };
-            juce::AudioBuffer<float> upBuf (upPtrs, 2, upN);
-            if (eqEnabled)
-                eq.process (upBuf);
-            if (compEnabled)
-                runCompStereo (upPtrs[0], upPtrs[1], upN);
-
-            oversamplerStereo->processSamplesDown (nativeOut);
-        }
-        else if (eqEnabled || compEnabled)
-        {
-            if (eqEnabled)
+            if (oversamplerStages > 0 && oversamplerStereo != nullptr)
             {
+                const float* readPtrs[2]  = { L, R };
+                float*       writePtrs[2] = { L, R };
+                juce::dsp::AudioBlock<const float> nativeIn  (readPtrs,  2, (size_t) numSamples);
+                juce::dsp::AudioBlock<float>       nativeOut (writePtrs, 2, (size_t) numSamples);
+
+                auto upBlock = oversamplerStereo->processSamplesUp (nativeIn);
+                const int upN = (int) upBlock.getNumSamples();
+                float* upPtrs[2] = { upBlock.getChannelPointer (0),
+                                      upBlock.getChannelPointer (1) };
+                juce::AudioBuffer<float> upBuf (upPtrs, 2, upN);
+                eq.process (upBuf);
+                if (compEnabled)
+                    runCompStereo (upPtrs[0], upPtrs[1], upN);
+
+                oversamplerStereo->processSamplesDown (nativeOut);
+            }
+            else
+            {
+                // Native-rate path (factor == 1). EQ (with console saturation)
+                // always runs; comp when engaged.
                 float* stereoChannels[2] = { L, R };
                 juce::AudioBuffer<float> stereoBuf (stereoChannels, 2, numSamples);
                 eq.process (stereoBuf);
-            }
-            if (compEnabled)
-                runCompStereo (L, R, numSamples);
-        }
-        else if (osLatencySamples > 0)
-        {
-            // OS skipped (both stages off) — delay L/R by the oversampler
-            // latency to hold alignment with strips that oversampled.
-            for (int i = 0; i < numSamples; ++i)
-            {
-                osSkipDelayL.pushSample (0, L[i]);  L[i] = osSkipDelayL.popSample (0);
-                osSkipDelayR.pushSample (0, R[i]);  R[i] = osSkipDelayR.popSample (0);
+                if (compEnabled)
+                    runCompStereo (L, R, numSamples);
             }
         }
-        // else (factor == 1, both off): L/R pass through untouched.
 
-        // See mono-path comment above — zero the GR atom when bypassed so
-        // the meter doesn't pin at the last reduction value.
-        currentGrDb.store (compEnabled ? compressor.getGainReduction() : 0.0f,
+        // See mono-path comment above — zero the GR atom when bypassed (or
+        // frozen, where comp didn't run) so the meter doesn't pin at the
+        // last-computed reduction value.
+        currentGrDb.store ((! isFrozen && compEnabled) ? compressor.getGainReduction() : 0.0f,
                             std::memory_order_relaxed);
 #endif
 
@@ -925,6 +1004,16 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         lastProcessedPtr = L;
         lastProcessedR   = R;
         lastProcessedSamples = numSamples;
+    }
+
+    // Offline freeze render tap: srcL/srcR are the post-EQ/comp, pre-fader
+    // signal — exactly what the freeze WAV must bake. Captured regardless of
+    // the pass gate below so a soloed-out render block is still written. Costs
+    // nothing live (freezeCapL is nullptr unless a render set it).
+    if (freezeCapL != nullptr && freezeCapR != nullptr && srcL != nullptr)
+    {
+        juce::FloatVectorOperations::copy (freezeCapL, srcL, numSamples);
+        juce::FloatVectorOperations::copy (freezeCapR, srcR != nullptr ? srcR : srcL, numSamples);
     }
 
     if (! passByGate)

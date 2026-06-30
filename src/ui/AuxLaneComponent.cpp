@@ -1,4 +1,8 @@
 #include "AuxLaneComponent.h"
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+  #include "ClapPluginEditorComponent.h"   // Linux-only native CLAP editor
+#endif
+#include "DuskAlerts.h"
 #include "DuskContextMenu.h"
 #include "HardwareInsertEditor.h"
 #include "PlatformWindowing.h"
@@ -316,8 +320,10 @@ AuxLaneComponent::AuxLaneComponent (AuxLane& l, AuxLaneStrip& s, int idx,
         s.openOrAddButton.onClick = [this, i]
         {
             auto& slotRef = strip.getPluginSlot (i);
-            if (slotRef.isLoaded())
+            if (slotRef.isLoaded() || strip.isNativeClapLoaded (i))
             {
+                // Native CLAP fills the inline editor area when loaded (same as a JUCE
+                // plugin); clicking the name must not re-open the picker over it.
                 toggleEditorForSlot (i);
             }
             else
@@ -333,10 +339,20 @@ AuxLaneComponent::AuxLaneComponent (AuxLane& l, AuxLaneStrip& s, int idx,
         s.bypassButton.setTooltip ("Bypass this plugin slot");
         s.bypassButton.onClick = [this, i]
         {
-            auto& slotRef = strip.getPluginSlot (i);
-            auto& uiRef   = slots[(size_t) i];
-            slotRef.setBypassed (uiRef.bypassButton.getToggleState());
-            if (slotRef.wasAutoBypassed()) slotRef.clearAutoBypass();
+            auto& uiRef = slots[(size_t) i];
+            const bool on = uiRef.bypassButton.getToggleState();
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+            if (strip.isNativeClapLoaded (i))
+            {
+                strip.getNativeClapSlot (i).setBypassed (on);
+            }
+            else
+#endif
+            {
+                auto& slotRef = strip.getPluginSlot (i);
+                slotRef.setBypassed (on);
+                if (slotRef.wasAutoBypassed()) slotRef.clearAutoBypass();
+            }
             refreshSlotControls (i);
         };
         addChildComponent (s.bypassButton);
@@ -632,6 +648,28 @@ void AuxLaneComponent::refreshSlotControls (int i)
         return;
     }
 
+    // Native CLAP lives in the NativeClapSlot, not the JUCE PluginSlot (which stays
+    // empty), so the loaded/offline checks below would hide the header controls. Show
+    // the name + remove (X) here. Bypass isn't wired for the native path yet. Linux-only.
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+    if (strip.isNativeClapLoaded (i))
+    {
+        const auto name = juce::File (strip.getNativeClapSlot (i).getPath())
+                              .getFileNameWithoutExtension();
+        if (name != ui.displayedName)
+        {
+            ui.displayedName = name;
+            ui.openOrAddButton.setButtonText (name);
+            resized();   // lay out the header strip (name + BYP + X)
+        }
+        ui.bypassButton.setVisible (true);
+        ui.bypassButton.setToggleState (strip.getNativeClapSlot (i).isBypassed(),
+                                        juce::dontSendNotification);
+        ui.removeButton.setVisible (true);
+        return;
+    }
+#endif
+
     if (slotRef.isLoaded())
     {
         const auto name = slotRef.getLoadedName();
@@ -681,7 +719,7 @@ void AuxLaneComponent::refreshSlotControls (int i)
     else
     {
         ui.displayedName.clear();
-        ui.openOrAddButton.setButtonText ("Insert");
+        ui.openOrAddButton.setButtonText ("Click to add an insert");
         ui.bypassButton.setVisible (false);
         ui.removeButton.setVisible (false);
     }
@@ -689,8 +727,19 @@ void AuxLaneComponent::refreshSlotControls (int i)
 
 void AuxLaneComponent::openPickerForSlot (int slotIdx)
 {
+    // Unified picker — JUCE formats (VST3/AU/LV2) + native CLAP in one list. CLAP
+    // rows route to our native host; the rest to JUCE. Effects only (aux is a return).
     const auto cursor = juce::Desktop::getMousePosition();
     juce::Component::SafePointer<AuxLaneComponent> safe (this);
+    // Native CLAP route — Linux-only; empty elsewhere so the picker shows no CLAP rows.
+    std::function<void (const juce::File&)> onClap;
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+    onClap = [safe, slotIdx] (const juce::File& clapFile)
+    {
+        if (auto* self = safe.getComponent())
+            self->loadNativeClapForSlot (slotIdx, clapFile);
+    };
+#endif
     pluginpicker::openPickerMenu (strip.getPluginSlot (slotIdx),
                                     slots[(size_t) slotIdx].openOrAddButton,
                                     activePluginChooser,
@@ -698,7 +747,6 @@ void AuxLaneComponent::openPickerForSlot (int slotIdx)
                                     {
                                         if (auto* self = safe.getComponent())
                                         {
-                                            // Picking a plugin flips this slot back to Plugin mode.
                                             self->strip.insertMode[(size_t) slotIdx]
                                                 .store (AuxLaneStrip::kInsertPlugin,
                                                          std::memory_order_release);
@@ -712,7 +760,9 @@ void AuxLaneComponent::openPickerForSlot (int slotIdx)
                                     {
                                         if (auto* self = safe.getComponent())
                                             self->openHardwareInsertEditor (slotIdx);
-                                    });
+                                    },
+                                    /*suppressSecondaryButtons*/ false,
+                                    std::move (onClap));
 }
 
 void AuxLaneComponent::openHardwareInsertEditor (int slotIdx)
@@ -749,7 +799,20 @@ void AuxLaneComponent::unloadSlot (int slotIdx)
         if (self == nullptr) return;
         self->detachEditorForSlot (slotIdx);
         self->detachHardwareInsertForSlot (slotIdx);
+        const bool hadNative = self->strip.isNativeClapLoaded (slotIdx);
+        if (hadNative) self->engine.suspendProcessing();
+        // Tear the shared CLAP editor down INSIDE the suspended window: its destructor
+        // runs gui->destroy, and doing that while the audio thread is quiesced keeps it
+        // off the same ClapInstance the audio path is reading.
+        self->detachClapEditorForSlot (slotIdx);
         self->strip.getPluginSlot (slotIdx).unload();
+        if (hadNative)
+        {
+            self->strip.unloadNativeClap (slotIdx);
+            self->engine.resumeProcessing();
+            self->lane.nativeClapPath[(size_t) slotIdx].clear();
+            self->lane.nativeClapStateBase64[(size_t) slotIdx].clear();
+        }
         // Clear the model's enabled flag so any consumer that polls
         // lane.hardwareInserts[slotIdx].enabled sees a disabled slot
         // after unload — without this the flag could stay true and
@@ -804,6 +867,69 @@ void AuxLaneComponent::detachEditorForSlot (int slotIdx)
     // half-destructed editor.
     removeChildComponent (ui.editor.get());
     ui.editor.reset();
+}
+
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+void AuxLaneComponent::loadNativeClapForSlot (int slotIdx, const juce::File& clapFile)
+{
+    if (slotIdx < 0 || slotIdx >= AuxLaneParams::kMaxLanePlugins) return;
+
+    // A slot hosts exactly one thing — drop any JUCE plugin / hardware / native-CLAP
+    // editor first. The native editor shares the slot's ClapInstance, so it MUST be
+    // detached before loadNativeClap destroys that instance — otherwise the stale
+    // editor's destructor (in the later rebuildSlots) calls gui->destroy on a freed
+    // plugin (use-after-free).
+    detachEditorForSlot (slotIdx);
+    detachHardwareInsertForSlot (slotIdx);
+    detachClapEditorForSlot (slotIdx);
+
+    // NativeClapSlot::load is NOT RT-safe (it tears down + rebuilds the instance),
+    // so fence the audio thread with the engine process gate around the swap.
+    std::string err;
+    bool ok = false;
+    engine.suspendProcessing();
+    strip.getPluginSlot (slotIdx).unload();   // ensure no JUCE plugin lingers
+    ok = strip.loadNativeClap (slotIdx, clapFile, err);
+    if (ok)
+        strip.insertMode[(size_t) slotIdx].store (AuxLaneStrip::kInsertPlugin,
+                                                   std::memory_order_release);
+    engine.resumeProcessing();
+
+    if (! ok)
+    {
+        std::fprintf (stderr, "[aux clap] load failed: %s\n", err.c_str());
+        showDuskAlert (*this, "Couldn't load CLAP plugin",
+                       clapFile.getFileNameWithoutExtension() + ":\n" + juce::String (err));
+        return;
+    }
+    lane.nativeClapPath[(size_t) slotIdx] = clapFile.getFullPathName();
+    refreshSlotControls (slotIdx);
+    rebuildSlots();
+}
+#endif // DUSKSTUDIO_HAS_NATIVE_CLAP
+
+void AuxLaneComponent::detachClapEditorForSlot (int slotIdx)
+{
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+    auto& ui = slots[(size_t) slotIdx];
+    if (ui.clapEditor == nullptr) return;
+    removeChildComponent (ui.clapEditor.get());
+    ui.clapEditor.reset();
+#else
+    juce::ignoreUnused (slotIdx);
+#endif
+}
+
+void AuxLaneComponent::dropAllClapEditors()
+{
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+    for (int i = 0; i < AuxLaneParams::kMaxLanePlugins; ++i)
+    {
+        if (slots[(size_t) i].clapEditor != nullptr)
+            slots[(size_t) i].clapEditor->leakForShutdown();   // u-he hangs in gui->destroy
+        detachClapEditorForSlot (i);
+    }
+#endif
 }
 
 void AuxLaneComponent::hideEditorsKeepingAlive()
@@ -861,6 +987,10 @@ void AuxLaneComponent::layoutEditorForSlot (int slotIdx)
     juce::Component* body = nullptr;
     if (ui.editor != nullptr && ui.editor->getParentComponent() == this)
         body = ui.editor.get();
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+    else if (ui.clapEditor != nullptr && ui.clapEditor->getParentComponent() == this)
+        body = ui.clapEditor.get();
+#endif
     else if (ui.hwInsertEditor != nullptr && ui.hwInsertEditor->getParentComponent() == this)
         body = ui.hwInsertEditor.get();
     if (body == nullptr) return;
@@ -868,7 +998,8 @@ void AuxLaneComponent::layoutEditorForSlot (int slotIdx)
     auto center = getCenterArea();
     auto& slot = strip.getPluginSlot (slotIdx);
     const int mode = strip.insertMode[(size_t) slotIdx].load (std::memory_order_relaxed);
-    if (slot.isLoaded() || slot.isOffline() || mode == AuxLaneStrip::kInsertHardware)
+    if (slot.isLoaded() || slot.isOffline() || mode == AuxLaneStrip::kInsertHardware
+        || strip.isNativeClapLoaded (slotIdx))
         center.removeFromTop (kSlotHeaderH + 4);
 
     if (center.isEmpty()) return;
@@ -934,6 +1065,37 @@ void AuxLaneComponent::rebuildSlots()
         else
         {
             if (ui.hwInsertEditor != nullptr) detachHardwareInsertForSlot (i);
+
+            // Native CLAP slot owns the center editor area when loaded. The editor
+            // embeds only when actually shown (ClapPluginEditorComponent gates on
+            // isShowing — some plugins abort embedding into a non-viewable parent);
+            // its own visibilityChanged maps/unmaps as the tab shows/hides. Linux-only.
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+            if (strip.isNativeClapLoaded (i))
+            {
+                if (ui.editor != nullptr) detachEditorForSlot (i);   // can't coexist
+                auto* clapInst = strip.getNativeClapSlot (i).getInstance();
+                if (ui.clapEditor == nullptr && clapInst != nullptr)
+                {
+                    auto ed = std::make_unique<ClapPluginEditorComponent>();
+                    juce::String err;
+                    if (ed->attach (*clapInst, err))
+                    {
+                        ui.clapEditor = std::move (ed);
+                        addAndMakeVisible (*ui.clapEditor);
+                        layoutEditorForSlot (i);
+                    }
+                    else
+                        std::fprintf (stderr, "[aux clap] editor attach failed: %s\n", err.toRawUTF8());
+                }
+                else if (ui.clapEditor != nullptr)
+                {
+                    layoutEditorForSlot (i);
+                }
+                continue;
+            }
+            detachClapEditorForSlot (i);   // native unloaded (no-op stub off Linux)
+#endif
 
             auto* instance = strip.getPluginSlot (i).getInstance();
 
@@ -1022,7 +1184,12 @@ void AuxLaneComponent::parentHierarchyChanged()
     if (auto* peer = getPeer(); peer != nullptr && peer != lastSeenPeer)
     {
         for (int i = 0; i < AuxLaneParams::kMaxLanePlugins; ++i)
+        {
             detachEditorForSlot (i);
+            // The native CLAP editor's embedded X11 window is also parented to the
+            // destroyed peer; tear it down so rebuildSlots re-embeds it on the new one.
+            detachClapEditorForSlot (i);
+        }
         lastSeenPeer = peer;
     }
 
@@ -1098,12 +1265,13 @@ void AuxLaneComponent::resized()
     // and removeButton — made visible by refreshSlotControls in HW
     // mode — would never get bounds and the user couldn't dismiss
     // the HW insert.
-    if (slot0.isLoaded() || slot0.isOffline() || hardware)
+    const bool nativeClap = strip.isNativeClapLoaded (0);
+    if (slot0.isLoaded() || slot0.isOffline() || hardware || nativeClap)
     {
         auto headerStrip = center.removeFromTop (kSlotHeaderH);
         ui.removeButton.setBounds (headerStrip.removeFromRight (28));
         headerStrip.removeFromRight (4);
-        if (slot0.isLoaded())
+        if (slot0.isLoaded() || nativeClap)
         {
             ui.bypassButton.setBounds (headerStrip.removeFromRight (44));
             headerStrip.removeFromRight (4);

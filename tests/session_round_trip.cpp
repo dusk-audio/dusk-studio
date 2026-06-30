@@ -121,3 +121,32 @@ TEST_CASE ("SessionSerializer save is atomic - tmp file gone after success",
 
     dir.deleteRecursively();
 }
+
+// Native CLAP aux slots persist as a path + base64 state pair, parallel to the
+// JUCE plugin pair. The picker (3c) and engine restore consume these; this guards
+// the serializer format so the data survives a save/reload before that lands.
+TEST_CASE ("SessionSerializer round-trips an aux native-CLAP slot", "[session][serializer][clap]")
+{
+    using duskstudio::Session;
+    using duskstudio::SessionSerializer;
+
+    const auto dir = makeTempSessionDir();
+    const auto target = dir.getChildFile ("session.json");
+
+    Session a;
+    auto& lane = a.auxLane (1);
+    lane.nativeClapPath[0]        = "/home/user/.clap/DuskVerb.clap";
+    lane.nativeClapStateBase64[0] = "Q0xBUFNUQVRFYmxvYg==";
+    REQUIRE (SessionSerializer::save (a, target));
+
+    Session b;
+    REQUIRE (SessionSerializer::load (b, target));
+    REQUIRE (b.auxLane (1).nativeClapPath[0]        == "/home/user/.clap/DuskVerb.clap");
+    REQUIRE (b.auxLane (1).nativeClapStateBase64[0] == "Q0xBUFNUQVRFYmxvYg==");
+
+    // A lane with no native CLAP stays empty (keys omitted on write).
+    REQUIRE (b.auxLane (0).nativeClapPath[0].isEmpty());
+    REQUIRE (b.auxLane (0).nativeClapStateBase64[0].isEmpty());
+
+    dir.deleteRecursively();
+}

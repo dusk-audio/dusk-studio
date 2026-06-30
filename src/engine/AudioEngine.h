@@ -82,6 +82,30 @@ public:
     void setWorkerCountForTest (int n);
 
     juce::AudioDeviceManager& getDeviceManager() noexcept { return deviceManager; }
+
+    // Track FREEZE (message thread). The render is ASYNC (BounceEngine::
+    // startFreeze on a worker thread) so a long render never wedges the UI, so
+    // the engine exposes the two message-thread halves the dialog drives:
+    //   freezePrepare — validate the track (MIDI, not already frozen, has
+    //     content) and compute the output WAV path + render length. Returns
+    //     false + getLastFreezeError() on reject; renders nothing.
+    //   commitFreeze  — after the worker render lands, point frozenRegion at the
+    //     WAV, bypass the instrument, flag the track frozen (release), and
+    //     reopen the readers so the audio thread plays the WAV with the plugin +
+    //     EQ/comp skipped.
+    // unfreezeTrack reverts (live instrument, WAV deleted) — it's cheap, no
+    // render, so it stays synchronous.
+    bool freezePrepare (int trackIndex, juce::File& outFile, juce::int64& lenSamples);
+    void commitFreeze  (int trackIndex, const juce::File& outFile, juce::int64 lenSamples);
+    void unfreezeTrack (int trackIndex);
+    juce::String getLastFreezeError() const { return lastFreezeError; }
+
+    // After a session load, bypass the instrument on every track restored as
+    // frozen so the engine-side state matches a same-session freeze (the
+    // serializer rebuilds frozenRegion but can't reach the strips). The atomic
+    // store survives the async plugin load. Call after plugin restore.
+    void reapplyFreezeState() noexcept;
+
     Session&          getSession()        noexcept { return session; }
     const Session&    getSession() const   noexcept { return session; }
     Transport&        getTransport()      noexcept { return transport; }
@@ -236,6 +260,15 @@ public:
     // synthetic buffers.
     void prepareForSelfTest (double sampleRate, int blockSize);
 
+    // Offline-render oversampling override. When > 0, the next prepare uses
+    // this factor instead of session.oversamplingFactor, so an offline bounce
+    // can render the saturating analog stages (console/comp/tube/tape) alias-
+    // free at e.g. 4× while realtime monitoring stays at the user's lighter
+    // factor. BounceEngine sets it around its render and clears it (0) before
+    // the engine is re-prepared for live playback.
+    void setRenderOversamplingOverride (int factor) noexcept
+        { renderOversamplingOverride.store (juce::jmax (0, factor), std::memory_order_relaxed); }
+
     // Cross-track Plugin Delay Compensation. Reads each track's reported insert
     // latency (plugin OR hardware, gated by mode; MIDI tracks count 0 because
     // their instrument latency is already absorbed by the MIDI scheduling
@@ -370,6 +403,10 @@ private:
     Session& session;
     juce::AudioDeviceManager deviceManager;
 
+    // Last freezeTrack failure reason, surfaced via getLastFreezeError().
+    // Message-thread-only.
+    juce::String lastFreezeError;
+
     Transport       transport;
     // Heap-allocated so we can pass &session.tempoBpm / &currentSampleRate
     // from the ctor body, after those addresses are known.
@@ -436,6 +473,10 @@ private:
     // recomputePdc; read by BounceEngine to trim the render's lead-in.
     std::atomic<int> aggregatePdcLatencySamples { 0 };
 
+    // Render-time oversampling override (0 = use session factor). See
+    // setRenderOversamplingOverride.
+    std::atomic<int> renderOversamplingOverride { 0 };
+
     std::array<ChannelStrip, Session::kNumTracks> strips;
     std::array<BusStrip,  Session::kNumBuses> busStrips;
     std::array<AuxLaneStrip, Session::kNumAuxLanes> auxLaneStrips;
@@ -475,6 +516,7 @@ private:
         bool         passes      = false;
         bool         armed       = false;
         bool         stereoInput = false;
+        bool         frozen      = false;   // play pre-rendered WAV, skip plugin + EQ/comp
     };
     std::array<TrackDspJob, Session::kNumTracks> trackJobs;
 

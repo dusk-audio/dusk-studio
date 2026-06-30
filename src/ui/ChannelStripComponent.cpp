@@ -8,12 +8,18 @@
 #include "EmbeddedModal.h"
 #include "HardwareInsertEditor.h"
 #include "PluginPickerHelpers.h"
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+  #include "ClapPluginEditorComponent.h"   // Linux-only native CLAP editor
+#endif
+#include "DuskAlerts.h"
+#include "FreezeDialog.h"
 #include "../engine/AudioEngine.h"
 #include "../engine/PluginSlot.h"
 #include "../engine/PluginManager.h"
 #include "PlatformWindowing.h"
 #include "../session/ParamEditAction.h"
 #include "../session/RegionEditActions.h"
+#include <cstdio>
 
 namespace duskstudio
 {
@@ -864,7 +870,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
             juce::Font::getDefaultMonospacedFontName(), 14.0f, juce::Font::bold)));
         auto formatDb = [] (double db) -> juce::String
         {
-            return (db <= -89.95) ? juce::String ("off")
+            return (db <= -89.95) ? juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x9e"))   /* ∞ = -inf dB / fully off */
                                   : juce::String (db, 1);
         };
         faderValueLabel.setText (formatDb (faderSlider.getValue()),
@@ -1057,6 +1063,16 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     armButton.setTooltip ("Record arm - press REC on the transport to capture this input");
     armButton.onClick = [this]
     {
+        // A frozen track can't record (playback is the baked WAV) — captured
+        // MIDI would be silent and desync the rendering. Refuse + restore the
+        // toggle; unfreeze to record.
+        if (armButton.getToggleState()
+            && track.frozen.load (std::memory_order_relaxed))
+        {
+            armButton.setToggleState (false, juce::dontSendNotification);
+            showDuskAlert (*this, "Track is frozen", "Unfreeze this track to record.");
+            return;
+        }
         session.setTrackArmed (trackIndex, armButton.getToggleState());
     };
     armButton.addMouseListener (this, false);
@@ -1076,7 +1092,17 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
                              "(effects baked in). Off = clean input recorded; effects only at playback.");
     printButton.onClick = [this]
     {
-        track.printEffects.store (printButton.getToggleState(), std::memory_order_relaxed);
+        // Branch on the SAME condition refreshPrintButtonForMode uses to label
+        // the button: FREEZE for any MIDI track or a recorded audio track,
+        // PRINT for an empty audio track.
+        const bool isMidi  = track.mode.load (std::memory_order_relaxed)
+                                 == (int) Track::Mode::Midi;
+        const bool frozen  = track.frozen.load (std::memory_order_relaxed);
+        const bool freeze  = frozen || isMidi || ! track.regions.empty();
+        if (freeze)
+            handleFreezeClick();           // FREEZE / unfreeze command
+        else
+            track.printEffects.store (printButton.getToggleState(), std::memory_order_relaxed);
     };
     addAndMakeVisible (printButton);
     // Mode-aware enabled state. PRINT only commits post-effects
@@ -1404,7 +1430,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         "open the routing editor."));
     pluginSlotButton.onClick = [this]
     {
-        if (pluginSlot.isLoaded())
+        if (pluginSlot.isLoaded() || engine.getChannelStrip (trackIndex).isNativeClapLoaded())
         {
             togglePluginEditor();
             return;
@@ -1434,13 +1460,20 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     eqCompactButton  .setButtonText ("EQ");
     compCompactButton.setButtonText ("COMP");
     auxCompactButton .setButtonText ("AUX");
-    eqCompactButton  .setTooltip ("Click to open the EQ editor (click again to close). "
-                                    "Button is illuminated when the section is enabled.");
-    compCompactButton.setTooltip ("Click to open the compressor editor (click again to close). "
-                                    "Button is illuminated when the section is enabled.");
+    // Same grammar as the expanded EQ/COMP headers: left-click toggles the section
+    // on/off, right-click opens the editor. The illuminated background (driven by the
+    // 30 Hz refresh) reflects the enabled state.
+    eqCompactButton  .setTooltip ("Left-click EQ on/off. Right-click to open the editor.");
+    compCompactButton.setTooltip ("Left-click comp on/off. Right-click to open the editor.");
     auxCompactButton .setTooltip ("Click to open the AUX sends panel (click again to close).");
-    eqCompactButton  .onClick = [this] { openEqEditorPopup(); };
-    compCompactButton.onClick = [this] { openCompEditorPopup(); };
+    eqCompactButton  .onClick = [this]
+    {
+        track.strip.eqEnabled.store (! track.strip.eqEnabled.load (std::memory_order_relaxed),
+                                      std::memory_order_release);
+    };
+    eqCompactButton  .onRightClick = [this] (const juce::MouseEvent&) { openEqEditorPopup(); };
+    compCompactButton.onClick      = [this] { setCompEnabled (! track.strip.compEnabled.load (std::memory_order_relaxed)); };
+    compCompactButton.onRightClick = [this] (const juce::MouseEvent&) { openCompEditorPopup(); };
     auxCompactButton .onClick = [this] { openAuxEditorPopup(); };
     addChildComponent (eqCompactButton);    // hidden until compact mode flips on
     addChildComponent (compCompactButton);
@@ -1808,6 +1841,19 @@ void ChannelStripComponent::openPluginPicker (bool useChooser)
                                         });
                                     };
 
+    // Native CLAP route — effects (audio) slots only; CLAP instruments aren't hosted
+    // natively yet. Selecting a CLAP row loads it through the channel's native host.
+    // Linux-only; elsewhere the callback stays empty so the picker shows no CLAP rows.
+    std::function<void (const juce::File&)> onClap;
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+    if (kind == pluginpicker::PluginKind::Effects)
+        onClap = [safe] (const juce::File& f)
+        {
+            if (auto* self = safe.getComponent())
+                self->loadNativeClapForChannel (f);
+        };
+#endif
+
     if (useChooser)
     {
         pluginpicker::openInsertChooser (pluginSlot,
@@ -1815,7 +1861,8 @@ void ChannelStripComponent::openPluginPicker (bool useChooser)
                                           activePluginChooser,
                                           std::move (onChange),
                                           kind,
-                                          std::move (openHwEditor));
+                                          std::move (openHwEditor),
+                                          std::move (onClap));
     }
     else
     {
@@ -1829,7 +1876,8 @@ void ChannelStripComponent::openPluginPicker (bool useChooser)
                                        kind,
                                        { -1, -1 },
                                        /*onPickHardwareInsert*/ {},
-                                       /*suppressSecondaryButtons*/ true);
+                                       /*suppressSecondaryButtons*/ true,
+                                       std::move (onClap));
     }
 }
 
@@ -1868,6 +1916,25 @@ void ChannelStripComponent::unloadPluginSlot()
     // holds a reference back to the AudioProcessor and would crash on
     // teardown otherwise.
     closePluginEditor();
+
+    // Native CLAP insert: drop our editor + tear down the slot under the engine
+    // gate, then return the strip to the empty-insert resting state. Linux-only.
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+    auto& strip = engine.getChannelStrip (trackIndex);
+    if (strip.isNativeClapLoaded())
+    {
+        clapEditor.reset();
+        engine.suspendProcessing();
+        strip.unloadNativeClap();
+        strip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
+        engine.resumeProcessing();
+        track.nativeClapPath = {};
+        track.nativeClapStateBase64 = {};
+        refreshPluginSlotButton();
+        return;
+    }
+#endif
+
     pluginSlot.unload();
     refreshPluginSlotButton();
 }
@@ -1875,7 +1942,8 @@ void ChannelStripComponent::unloadPluginSlot()
 void ChannelStripComponent::showPluginSlotMenu()
 {
     juce::PopupMenu menu;
-    if (pluginSlot.isLoaded())
+    const bool nativeLoaded = engine.getChannelStrip (trackIndex).isNativeClapLoaded();
+    if (pluginSlot.isLoaded() || nativeLoaded)
     {
         // Editor toggle headline so right-click ALSO becomes a way to open
         // the plugin GUI (some users find right-click more discoverable).
@@ -1884,18 +1952,23 @@ void ChannelStripComponent::showPluginSlotMenu()
         menu.addSeparator();
         menu.addItem (2002, "Replace plugin...");
         menu.addItem (2003, "Remove plugin");
-        if (pluginSlot.wasCrashed())
-            menu.addItem (2004, "Re-enable plugin (crashed)");
-        else if (pluginSlot.wasAutoBypassed())
-            menu.addItem (2004, "Re-enable plugin (auto-bypassed)");
-        // MIDI Learn for the last parameter the user touched via the
-        // plugin's own UI. Disabled when no parameter has been touched
-        // since the slot loaded (no last-touched stamp to bind to).
-        menu.addSeparator();
-        const int lastParam = pluginSlot.getLastTouchedParamIndex();
-        menu.addItem (2005,
-                       "MIDI Learn last-touched parameter",
-                       lastParam >= 0);
+        // Crash/auto-bypass recovery + last-touched MIDI Learn are JUCE-slot
+        // concepts; the native CLAP host doesn't expose them yet.
+        if (! nativeLoaded)
+        {
+            if (pluginSlot.wasCrashed())
+                menu.addItem (2004, "Re-enable plugin (crashed)");
+            else if (pluginSlot.wasAutoBypassed())
+                menu.addItem (2004, "Re-enable plugin (auto-bypassed)");
+            // MIDI Learn for the last parameter the user touched via the
+            // plugin's own UI. Disabled when no parameter has been touched
+            // since the slot loaded (no last-touched stamp to bind to).
+            menu.addSeparator();
+            const int lastParam = pluginSlot.getLastTouchedParamIndex();
+            menu.addItem (2005,
+                           "MIDI Learn last-touched parameter",
+                           lastParam >= 0);
+        }
     }
     else
     {
@@ -1941,6 +2014,23 @@ void ChannelStripComponent::refreshInsertButtonForCapture()
 
 void ChannelStripComponent::refreshPluginSlotButton()
 {
+    // Native CLAP insert — name from the loaded .clap bundle. The JUCE pluginSlot is
+    // empty for a native insert, so this must precede the slot-based bookkeeping below
+    // (which would otherwise mislabel "Insert" and drop the live clap editor). Linux-only.
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+    if (engine.getChannelStrip (trackIndex).isNativeClapLoaded())
+    {
+        const auto nm = juce::File (engine.getChannelStrip (trackIndex)
+                                      .getNativeClapSlot().getPath())
+                          .getFileNameWithoutExtension();
+        const auto label = juce::String (juce::CharPointer_UTF8 ("\xe2\x96\xbe ")) + nm;
+        if (label == lastSlotName) return;
+        lastSlotName = label;
+        pluginSlotButton.setButtonText (label);
+        return;
+    }
+#endif
+
     const int mode = engine.getChannelStrip (trackIndex)
                        .insertMode.load (std::memory_order_relaxed);
     juce::String label;
@@ -2044,6 +2134,24 @@ void ChannelStripComponent::openPluginEditor()
         if (auto* self = safe.getComponent())
             self->closePluginEditor();
     };
+
+    // Native CLAP insert — show our editor (shared instance) borrowed in the modal,
+    // so closing hides (not destroys) it. Takes precedence over the JUCE editor. Linux-only.
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+    if (engine.getChannelStrip (trackIndex).isNativeClapLoaded())
+    {
+        auto* inst = engine.getChannelStrip (trackIndex).getNativeClapSlot().getInstance();
+        if (inst == nullptr) return;
+        if (clapEditor == nullptr)
+        {
+            clapEditor = std::make_unique<ClapPluginEditorComponent>();
+            juce::String err;
+            if (! clapEditor->attach (*inst, err)) { clapEditor.reset(); return; }
+        }
+        pluginEditorModal.showBorrowed (*parent, *clapEditor, onClose);
+        return;
+    }
+#endif
 
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
     if (pluginSlot.isRemote())
@@ -2262,6 +2370,17 @@ void ChannelStripComponent::closePluginEditor()
 void ChannelStripComponent::dropPluginEditor()
 {
     closePluginEditor();
+
+    // Native CLAP editor: leak rather than destroy — u-he plugins hang in
+    // gui->destroy on shutdown (same class as the JUCE leak-on-shutdown). The
+    // shared instance is leaked separately by the engine's shutdown loop. Linux-only.
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+    if (clapEditor != nullptr)
+    {
+        clapEditor->leakForShutdown();
+        clapEditor.reset();
+    }
+#endif
     // ~AudioProcessorEditor tears down the plugin's internal X11
     // children synchronously (colour pickers, preset browsers,
     // transient popups). On a Wayland session, any of those could
@@ -2296,6 +2415,56 @@ void ChannelStripComponent::dropPluginEditor()
     remoteForeignEmbed.reset();
    #endif
 }
+
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+void ChannelStripComponent::loadNativeClapForChannel (const juce::File& clapFile)
+{
+    auto& strip = engine.getChannelStrip (trackIndex);
+
+    // One insert per strip — tear down whatever editor is open first. The app is
+    // alive here (not shutdown), so a plain reset destroys the old clap editor
+    // cleanly; only shutdown needs the leak path.
+    closePluginEditor();
+    clapEditor.reset();
+    pluginEditor.reset();
+    pluginEditorOwner = nullptr;
+    // Release any OOP-side embed too — replacing a remote (OOP) plugin with a native
+    // CLAP would otherwise leave the foreign X11 / HWND wrapper behind (mirrors
+    // dropPluginEditor's teardown).
+   #if JUCE_LINUX && DUSKSTUDIO_HAS_OOP_PLUGINS
+    remoteEditorEmbed.reset();
+   #endif
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS && ! JUCE_LINUX
+    remoteForeignEmbed.reset();
+   #endif
+
+    // NativeClapSlot::load is NOT RT-safe (tears down + rebuilds the instance), so
+    // fence the audio thread with the engine process gate around the swap.
+    std::string err;
+    engine.suspendProcessing();
+    pluginSlot.unload();                       // ensure no JUCE plugin lingers
+    const bool ok = strip.loadNativeClap (clapFile, err);
+    if (ok)
+        strip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
+    engine.resumeProcessing();
+
+    if (! ok)
+    {
+        std::fprintf (stderr, "[chan clap] load failed: %s\n", err.c_str());
+        showDuskAlert (*this, "Couldn't load CLAP plugin",
+                       clapFile.getFileNameWithoutExtension() + ":\n" + juce::String (err));
+        // The runtime slot is now empty — clear the persisted native-CLAP refs so a
+        // save doesn't carry a stale path/state for a slot the user sees as empty.
+        track.nativeClapPath = {};
+        track.nativeClapStateBase64 = {};
+        return;
+    }
+
+    track.nativeClapPath = clapFile.getFullPathName();
+    refreshPluginSlotButton();
+    openPluginEditor();
+}
+#endif // DUSKSTUDIO_HAS_NATIVE_CLAP
 
 namespace
 {
@@ -2487,19 +2656,98 @@ void ChannelStripComponent::refreshPrintButtonForMode()
 {
     const bool isMidi = (track.mode.load (std::memory_order_relaxed)
                         == (int) Track::Mode::Midi);
-    printButton.setEnabled (! isMidi);
-    if (isMidi)
-        printButton.setTooltip ("PRINT does not apply to MIDI tracks - they "
-                                  "record raw note events. The instrument "
-                                  "plugin's audio is rendered on playback, "
-                                  "not on capture, so there is nothing to "
-                                  "commit. Use Bounce to render a MIDI take "
-                                  "to disk.");
-    else
+    const bool frozen = track.frozen.load (std::memory_order_relaxed);
+
+    // The button is FREEZE for any MIDI track, and for an audio track once it
+    // has a recorded take — at that point PRINT (a capture-time decision) is
+    // moot and you'd rather bake the insert + EQ/comp to reclaim CPU (a big win
+    // at high oversampling). An empty audio track keeps PRINT. Driven each timer
+    // tick, so the button flips to FREEZE the moment a recording lands.
+    const bool showFreeze = frozen || isMidi || ! track.regions.empty();
+
+    if (! showFreeze)
+    {
+        // Empty audio track: PRINT toggle (capture post-EQ/comp into the take).
+        printButton.setClickingTogglesState (true);
+        printButton.setEnabled (true);
+        printButton.setButtonText ("PRINT");
+        printButton.setColour (juce::TextButton::buttonColourId,  juce::Colour (0xff202024));
+        printButton.setColour (juce::TextButton::textColourOffId, juce::Colour (0xff8a7060));
+        printButton.setToggleState (track.printEffects.load (std::memory_order_relaxed),
+                                     juce::dontSendNotification);
         printButton.setTooltip ("PRINT - when on, the recorded WAV captures "
                                   "the post-EQ/post-comp signal (effects baked "
                                   "in). Off = clean input recorded; effects "
                                   "only at playback.");
+        // Restore the PRINT-specific a11y metadata — otherwise a FREEZE→PRINT flip
+        // leaves the stale "Freeze track" title/help for assistive tech.
+        printButton.setTitle ("Print effects on record");
+        printButton.setHelpText (printButton.getTooltip());
+        return;
+    }
+
+    // FREEZE: render the track (MIDI instrument or recorded audio, plus its
+    // insert + EQ + comp) to a WAV and bypass that DSP to free CPU. A frozen
+    // track shows a snowflake; click toggles freeze/unfreeze.
+    const juce::String what = isMidi ? "instrument + EQ + comp"
+                                      : "insert + EQ + comp";
+    printButton.setClickingTogglesState (false);
+    // Clear any leftover toggle bit from a prior PRINT-ON state — otherwise the
+    // button paints with buttonOnColourId/textColourOnId (the orange PRINT-on
+    // look) instead of the FREEZE/snowflake colours set below.
+    printButton.setToggleState (false, juce::dontSendNotification);
+    printButton.setEnabled (true);
+    printButton.setButtonText (frozen
+        ? juce::String::charToString ((juce::juce_wchar) 0x2744)   // ❄ snowflake
+        : juce::String ("FREEZE"));
+    printButton.setColour (juce::TextButton::buttonColourId,
+                            frozen ? juce::Colour (0xff2a5a78) : juce::Colour (0xff202024));
+    printButton.setColour (juce::TextButton::textColourOffId,
+                            frozen ? juce::Colour (0xffbfe4ff) : juce::Colour (0xff8a7060));
+    printButton.setTooltip (frozen
+        ? "FROZEN - the " + what + " are rendered to audio and bypassed to free "
+          "CPU. Click to unfreeze and edit again."
+        : "FREEZE - render this track (" + what + ") to audio and bypass that "
+          "DSP to free CPU. Click again to unfreeze.");
+    // Keep assistive-tech metadata in step with the current mode (not the old
+    // "print effects on record" label).
+    printButton.setTitle (frozen ? "Unfreeze track" : "Freeze track");
+    printButton.setHelpText (printButton.getTooltip());
+}
+
+void ChannelStripComponent::handleFreezeClick()
+{
+    // Unfreeze is cheap (no render) — do it inline and refresh the button.
+    if (track.frozen.load (std::memory_order_relaxed))
+    {
+        engine.unfreezeTrack (trackIndex);
+        refreshPrintButtonForMode();
+        return;
+    }
+
+    // Freeze renders offline; run it async behind a progress + cancel modal so a
+    // long render never wedges the UI. The dialog commits the freeze on success;
+    // we just refresh the button (snowflake) when it closes.
+    auto dialog = std::make_unique<FreezeDialog> (engine, session,
+                                                   engine.getDeviceManager(), trackIndex);
+    dialog->setSize (440, 150);
+
+    juce::Component::SafePointer<ChannelStripComponent> safe (this);
+    dialog->onRequestClose = [safe]
+    {
+        if (auto* self = safe.getComponent())
+        {
+            self->freezeModal.close();
+            self->refreshPrintButtonForMode();
+        }
+    };
+
+    auto* parent = findParentComponentOfClass<juce::Component>();
+    if (parent == nullptr) parent = this;
+    // Non-dismissable by stray click / Escape: only the dialog's Cancel / Close
+    // buttons drive teardown, so a render is never torn down out from under the
+    // worker (which would join the thread on the message thread mid-render).
+    freezeModal.show (*parent, std::move (dialog), {}, false, false);
 }
 
 void ChannelStripComponent::refreshIoConfigButton()
@@ -2552,7 +2800,7 @@ void ChannelStripComponent::openEqEditorPopup()
         otherBox->dismiss();
 
     auto panel = std::make_unique<ChannelEqEditor> (track);
-    panel->setSize (380, 628);
+    panel->setSize (380, 648);   // match ChannelEqEditor's intrinsic height (full bell rows)
 
     auto* topLevel = getTopLevelComponent();
     if (topLevel == nullptr) topLevel = this;
@@ -2900,7 +3148,7 @@ void ChannelStripComponent::detachDimOverlay()
 void ChannelStripComponent::refreshFaderValueLabel()
 {
     const double db = faderSlider.getValue();
-    faderValueLabel.setText (db <= -89.95 ? juce::String ("off")
+    faderValueLabel.setText (db <= -89.95 ? juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x9e"))   /* ∞ = -inf dB / fully off */
                                           : juce::String (db, 1),
                              juce::dontSendNotification);
 }
@@ -2910,6 +3158,11 @@ void ChannelStripComponent::timerCallback()
     // Plugin-slot button reflects the slot's current load state. Cheap -
     // just an atomic-pointer read + string compare against the cached name.
     refreshPluginSlotButton();
+
+    // PRINT↔FREEZE flips on an audio track the moment a recording lands (or its
+    // last region is deleted). Idempotent + cheap (setButtonText/Colour are
+    // no-ops when unchanged), so polling here avoids a cross-component signal.
+    refreshPrintButtonForMode();
 
     // Fader-group chip: relayout + repaint only when this strip's group, or
     // its master status, actually changes - the group can be edited from
@@ -3749,7 +4002,7 @@ void ChannelStripComponent::showColourMenu()
     // Plugin slot menu items, only meaningful when a plugin is loaded.
     // Replace/Remove live here (rather than on the slot button itself) so
     // the slot button's primary click stays as a toggle for the editor.
-    if (pluginSlot.isLoaded())
+    if (pluginSlot.isLoaded() || engine.getChannelStrip (trackIndex).isNativeClapLoaded())
     {
         menu.addSeparator();
         menu.addItem (1010, "Replace plugin...");
@@ -3849,6 +4102,19 @@ void ChannelStripComponent::onTrackModeChanged()
     const int id = modeSelector.getSelectedId();
     const int mode = juce::jlimit (0, 2, id - 1);  // 0..2 = Track::Mode
 
+    // A frozen track is locked to its current mode — its baked WAV + bypassed
+    // DSP assume it. Block ANY change (restoring the selector to the track's
+    // real mode) until the user unfreezes. Audio tracks freeze too now, so this
+    // must restore Mono/Stereo, not hardcode MIDI.
+    const int currentMode = track.mode.load (std::memory_order_relaxed);
+    if (track.frozen.load (std::memory_order_relaxed) && mode != currentMode)
+    {
+        modeSelector.setSelectedId (currentMode + 1, juce::dontSendNotification);
+        showDuskAlert (*this, "Track is frozen",
+                        "Unfreeze this track before changing its mode.");
+        return;
+    }
+
     // Auto-unload a mode-mismatched plugin: the picker filter prevents
     // loading the wrong type in the first place, but flipping a track's
     // mode after-the-fact bypasses that gate and would leave the strip
@@ -3863,6 +4129,12 @@ void ChannelStripComponent::onTrackModeChanged()
         const bool isInstrument = pluginSlot.isLoadedPluginInstrument();
         if (willBeMidi != isInstrument)
             unloadPluginSlot();
+    }
+    else if (engine.getChannelStrip (trackIndex).isNativeClapLoaded()
+             && mode == (int) Track::Mode::Midi)
+    {
+        // Native CLAP inserts are effects-only; a MIDI strip can't host one.
+        unloadPluginSlot();
     }
 
     track.mode.store (mode, std::memory_order_relaxed);
@@ -4337,12 +4609,14 @@ void ChannelStripComponent::paint (juce::Graphics& g)
                                 : juce::Colour (0xffb8b8c0));
             // Uniform font for every label so weight differences don't
             // throw off the visual right-alignment — the brighter colour
-            // alone marks 0 dB.
-            const juce::Font font (juce::FontOptions (10.5f, juce::Font::plain));
+            // alone marks 0 dB. The ∞ glyph renders visually smaller than the
+            // digits at a given point size, so upsize it to match their height.
+            const juce::Font font (juce::FontOptions (isBottom ? 16.0f : 10.5f,
+                                                      juce::Font::plain));
             g.setFont (font);
             constexpr float kSharedXOver  = 24.0f;
             const float labelRight = trackLx - kSharedXOver - 6.0f;
-            const juce::String label = isBottom ? juce::String ("off")
+            const juce::String label = isBottom ? juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x9e"))   /* ∞ = -inf dB / fully off */
                                                 : juce::String (t.label);
             // Visible glyph spans (baseline - ascent) to (baseline + descent).
             // For visible centre == tick y → baseline = y + (ascent - descent)/2.
@@ -4379,8 +4653,8 @@ void ChannelStripComponent::paint (juce::Graphics& g)
         {
             // Hardware-fader style: a horizontal tick line on the LEFT
             // side of the scale column (pointing toward the meter) with
-            // the number right-aligned next to it. "-90 dB" becomes "off"
-            // at the bottom of the range to match the analogue grammar.
+            // the number right-aligned next to it. "-90 dB" becomes "∞"
+            // (−inf / fully off) at the bottom of the range.
             for (const auto& t : kFaderTicks)
             {
                 if (t.db < (float) faderRange.start - 0.01f
@@ -4402,13 +4676,15 @@ void ChannelStripComponent::paint (juce::Graphics& g)
 
                 g.setColour (isZero ? juce::Colour (0xffffffff)
                                     : juce::Colour (0xffc0c0c8));
-                g.setFont (juce::Font (juce::FontOptions (isZero ? 10.5f : 9.5f,
-                                                            isZero ? juce::Font::bold
-                                                                    : juce::Font::plain)));
+                // ∞ upsized to match the digit height (it renders small at a
+                // given point size); 0 dB bold; the rest plain.
+                g.setFont (juce::Font (juce::FontOptions (
+                    isBottom ? 14.0f : (isZero ? 10.5f : 9.5f),
+                    isZero ? juce::Font::bold : juce::Font::plain)));
                 const auto labelRect = juce::Rectangle<float> (tickX1 + 1.0f, y - 7.0f,
                                                                  (float) scale.getRight() - (tickX1 + 1.0f),
                                                                  14.0f);
-                const juce::String label = isBottom ? juce::String ("off") : juce::String (t.label);
+                const juce::String label = isBottom ? juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x9e"))   /* ∞ = -inf dB / fully off */ : juce::String (t.label);
                 g.drawText (label, labelRect, juce::Justification::centredLeft, false);
             }
         }
@@ -4495,14 +4771,14 @@ void ChannelStripComponent::resized()
     //     space, freq stays on the right.
     //   • HPF lives at the top of the block as a single centred knob.
     //   • Shelf rows are short; bell rows are taller (gain block + Q block).
-    // Every EQ knob shares the AUX-send diameter (24 px) - uniform sizing
-    // keeps the block compact for the fader and reads consistently with the
-    // SEND row below. Q matches gain/freq; no subordinate-size knob.
-    constexpr int kKnobSize    = 24;
+    // EQ knobs sit just a touch larger than the 24 px AUX / COMP knobs — big
+    // enough for the SSL milled-skirt knob to read, small enough that the EQ
+    // block doesn't eat fader height. Q matches gain/freq; no subordinate size.
+    constexpr int kKnobSize    = 26;
     constexpr int kValueLabelH = 12;
-    constexpr int kKnobBlockH  = kKnobSize + kValueLabelH + 2;        // 38
-    constexpr int kQKnobSize   = 24;
-    constexpr int kQBlockH     = kQKnobSize + kValueLabelH;           // 36
+    constexpr int kKnobBlockH  = kKnobSize + kValueLabelH + 2;
+    constexpr int kQKnobSize   = 26;
+    constexpr int kQBlockH     = kQKnobSize + kValueLabelH;
     constexpr int kFreqYStagger = 2;                                  // tighter SSL nudge - was 4
     constexpr int kEqHeaderH   = 16;  // matches COMP header row height for visual parity
     constexpr int kFilterLabelH = 10;                                 // small HPF/LPF captions above the white knobs
@@ -4900,8 +5176,7 @@ void ChannelStripComponent::resized()
     // is squeezed below its design min width.
     constexpr int kBusColumnW   = 18;
     constexpr int kBusColumnGap = 3;
-    constexpr int kBusButtonH   = 20;
-    constexpr int kBusButtonGap = 2;
+    constexpr int kBusButtonH   = 20;   // fixed height; evenly spaced across the 0→∞ scale
     juce::Rectangle<int> busColumn;
 
     juce::Rectangle<int> meterColumn, scaleColumn;
@@ -5065,20 +5340,24 @@ void ChannelStripComponent::resized()
     }
     faderSlider.setBounds (sliderBounds);
 
-    // Bus buttons (1-4): stack upward from the fader's "off" tick so the
-    // bottom of #4 lines up with the "off" scale label. faderYForDb gives
-    // the exact tick Y for both the normal and threshold fader layouts;
-    // anchoring to the meter column would miss it on strips that reserve
+    // Bus buttons (1-4): span the fader scale from the "0" tick (top of #1) to
+    // the "off" tick (bottom of #4), dividing the range into four equal slots.
+    // faderYForDb gives the exact tick Y for both the normal and threshold fader
+    // layouts; anchoring to the meter column would miss it on strips that reserve
     // peak-label space below the meter.
     {
-        const int totalButtonsH = ChannelStripParams::kNumBuses * kBusButtonH
-                                + (ChannelStripParams::kNumBuses - 1) * kBusButtonGap;
-        const int offY = (int) std::lround (duskstudio::faderYForDb (faderSlider, -90.0f));
-        int y = offY - totalButtonsH;
+        // Fixed-height buttons, evenly spaced: #1's top lines up with the "0"
+        // tick and #4's bottom with the "∞" tick. Distribute the TOPs linearly
+        // across [zeroY, offY - kBusButtonH]; the inter-button gap falls out as
+        // (span - kNumBuses*H)/(kNumBuses-1).
+        const int zeroY = (int) std::lround (duskstudio::faderYForDb (faderSlider, 0.0f));
+        const int offY  = (int) std::lround (duskstudio::faderYForDb (faderSlider, -90.0f));
+        const int span  = juce::jmax (ChannelStripParams::kNumBuses * kBusButtonH, offY - zeroY);
         for (int i = 0; i < ChannelStripParams::kNumBuses; ++i)
         {
-            busButtons[(size_t) i]->setBounds (busColumn.getX(), y, kBusColumnW, kBusButtonH);
-            y += kBusButtonH + kBusButtonGap;
+            const int top = zeroY + (int) std::lround (
+                (double) (span - kBusButtonH) * i / (ChannelStripParams::kNumBuses - 1));
+            busButtons[(size_t) i]->setBounds (busColumn.getX(), top, kBusColumnW, kBusButtonH);
         }
     }
 

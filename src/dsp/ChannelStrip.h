@@ -7,6 +7,9 @@
 #include <vector>
 #include "../session/Session.h"
 #include "../engine/PluginSlot.h"
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+  #include "../engine/clap/NativeClapSlot.h"   // Linux-only native CLAP host
+#endif
 #include "HardwareInsertSlot.h"
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
@@ -50,6 +53,24 @@ public:
     void bindPluginManager (PluginManager& mgr) noexcept { pluginSlot.setManager (mgr); }
     PluginSlot&       getPluginSlot()       noexcept { return pluginSlot; }
     const PluginSlot& getPluginSlot() const noexcept { return pluginSlot; }
+
+    // Native CLAP host path (replaces JUCE hosting for this insert when loaded). When
+    // a native CLAP is loaded, the insert pass runs through it instead of pluginSlot.
+    // Mirrors AuxLaneStrip. Message thread; engine fences load/unload via its gate.
+    // Linux-only (DUSKSTUDIO_HAS_NATIVE_CLAP); stubbed elsewhere so callers compile.
+    bool isPrepared() const noexcept { return preparedSampleRate > 0.0 && preparedBlockSize > 0; }
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+    bool loadNativeClap   (const juce::File& path, std::string& errorOut);
+    void unloadNativeClap() noexcept;
+    bool isNativeClapLoaded() const noexcept { return nativeClapSlot.isLoaded(); }
+    clap::NativeClapSlot&       getNativeClapSlot()       noexcept { return nativeClapSlot; }
+    const clap::NativeClapSlot& getNativeClapSlot() const noexcept { return nativeClapSlot; }
+    // Session restore before the engine is prepared: stash {path,state}; prepare() loads it.
+    void setPendingNativeClap (const juce::File& path, std::vector<uint8_t> state) noexcept;
+#else
+    bool isNativeClapLoaded() const noexcept { return false; }
+    void unloadNativeClap() noexcept {}
+#endif
 
     // Hardware vs plugin insert: one runs per block, chosen by
     // insertMode + 20 ms crossfade gate.
@@ -106,7 +127,20 @@ public:
                                const float* const* deviceInputs  = nullptr,
                                int   numDeviceInputs             = 0,
                                float* const*       deviceOutputs = nullptr,
-                               int   numDeviceOutputs            = 0) noexcept;
+                               int   numDeviceOutputs            = 0,
+                               bool  isFrozen                    = false) noexcept;
+
+    // Track freeze. When a frozen track plays back, inL/inR carry the
+    // pre-rendered (instrument + EQ + comp) audio, so the strip skips the
+    // instrument plugin and the EQ/comp stage (they're baked into the WAV)
+    // but keeps PDC + fader/pan/sends live. Pass isFrozen=true above.
+    //
+    // setFreezeCapture points the strip at a stereo scratch the offline
+    // freeze render reads each block: after the EQ/comp stage (pre-fader),
+    // srcL/srcR are copied there. nullptr (the default) disables the tap, so
+    // it costs nothing on the live path. Message thread only, set while the
+    // engine is detached for the offline render — never during live audio.
+    void setFreezeCapture (float* l, float* r) noexcept { freezeCapL = l; freezeCapR = r; }
 
 private:
     const ChannelStripParams* paramsRef = nullptr;
@@ -137,7 +171,18 @@ private:
 
     // Sits between phase invert and the EQ stage.
     PluginSlot pluginSlot;
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+    clap::NativeClapSlot nativeClapSlot;   // native CLAP alternative to pluginSlot
+#endif
     HardwareInsertSlot hardwareSlot;
+
+    // Stashed in prepare() so loadNativeClap / pending-restore can (re)activate at spec.
+    double preparedSampleRate = 0.0;
+    int    preparedBlockSize  = 0;
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+    juce::String         pendingClapPath;    // session-restore load consummated by prepare()
+    std::vector<uint8_t> pendingClapState;
+#endif
 
     // activeInsertMode = what we're currently running; insertMode = what
     // the UI wants. Mismatch triggers ramp-out / swap / ramp-in.
@@ -161,15 +206,12 @@ private:
     juce::int64  pdcSilentRun = 0;
     void relatchPdcIfDrained (float blockPeakAbs, int numSamples) noexcept;
 
-    // When EQ + comp are both off we skip the per-strip oversampler entirely.
-    // The oversampler imposes ~3-4.4 native samples of latency though, so a
-    // skipped strip would lead the strips that DID oversample and comb against
-    // correlated sources at the master sum. Delay the skip path by the
-    // oversampler's rounded latency to hold alignment. Integer (None) delay is
-    // enough: the <0.5-sample rounding residual nulls above 50 kHz, inaudible.
+    // The per-strip oversampler's rounded internal latency (half-band filter
+    // state). The EQ — which carries the always-on console saturation — runs
+    // every block, so the oversampler is never skipped; this value is kept only
+    // so the silent-skip can account for the oversampler's tail before dropping
+    // a block (see requiredDrain in processAndAccumulate).
     static constexpr int kMaxOsLatency = 16;
-    PdcDelayLine osSkipDelayL { kMaxOsLatency };
-    PdcDelayLine osSkipDelayR { kMaxOsLatency };
     int          osLatencySamples = 0;
 
     // Empty buffer for the channel insert plugin; PluginSlot's
@@ -250,6 +292,11 @@ private:
     const float* lastProcessedR   = nullptr;
     int          lastProcessedSamples = 0;
     bool         needsProcessedMono = false;
+
+    // Pre-fader capture destinations for the offline freeze render (see
+    // setFreezeCapture). nullptr on the live path.
+    float* freezeCapL = nullptr;
+    float* freezeCapR = nullptr;
 
     void updateGainTargets() noexcept;
     void updateEqParameters() noexcept;

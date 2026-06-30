@@ -32,6 +32,27 @@ Dusk Audio plugins (donor DSP cores)
     - TapeMachine  (full tape emulation)
     - shared/AnalogEmulation (TubeEmulation, TransformerEmulation, etc.)
 
+sfizz (SFZ / SoundFont sampler engine — powers the multisample instrument)
+  Version  : 1.2.3
+  License  : BSD-2-Clause (external/sfizz/LICENSE)
+  Path     : external/sfizz/ (git submodule, built as a static library)
+  Upstream : https://github.com/sfztools/sfizz
+  Notes    : Built library-only — JACK / render / LV2 / VST3 / AU / demos /
+             tests / devtools are all disabled, so their dependencies are not
+             compiled in. The sub-components below ship vendored inside sfizz
+             and ARE compiled into the Dusk Studio binary; each keeps its own
+             permissive license (full text at external/sfizz/**/LICENSE):
+               - abseil-cpp    Apache-2.0   external/sfizz/external/abseil-cpp/
+               - st_audiofile  BSD-2-Clause  external/sfizz/external/st_audiofile/
+               - atomic_queue  MIT          external/sfizz/external/atomic_queue/
+               - kiss_fft      BSD-3-Clause  external/sfizz/src/external/kiss_fft/
+               - pugixml       MIT          external/sfizz/src/external/pugixml/
+               - spline        BSD-3-Clause  external/sfizz/src/external/spline/
+               - tunings       MIT          external/sfizz/src/external/tunings/
+               - cpuid         BSD-3-Clause external/sfizz/src/external/cpuid/  (Steinwurf ApS)
+               - hiir          WTFPL        external/sfizz/src/external/hiir/   (Laurent de Soras)
+               - simde         MIT / CC0    external/sfizz/external/simde/
+
 Catch2 (test framework — TEST BUILDS ONLY, not bundled in Dusk Studio)
   Version  : v3.5.4
   License  : Boost Software License 1.0
@@ -41,6 +62,20 @@ Catch2 (test framework — TEST BUILDS ONLY, not bundled in Dusk Studio)
 
 PLATFORM-SPECIFIC OPTIONAL DEPENDENCIES
 ---------------------------------------
+
+LAME / libmp3lame (MP3 bounce export — optional)
+  License  : LGPL-2.1-or-later
+  Path     : not vendored — system shared library found at configure time via
+             find_library(mp3lame); linked only when present
+             (DUSKSTUDIO_HAS_LAME). Builds without it fall back to WAV-only.
+  Notes    : Linked against the system SHARED library (e.g. libmp3lame.so),
+             never statically — find_library resolves the distro / Homebrew
+             shared object at configure time (verified: release Linux build
+             links /usr/lib64/libmp3lame.so). The LGPL-2.1 §6 relink obligation
+             is met by that dynamic-link boundary. Present in a binary only if
+             the build was configured with libmp3lame available.
+  Upstream : https://lame.sourceforge.io/
+
 
 Steinberg ASIO SDK (Windows only, optional)
   License  : Steinberg ASIO SDK Licensing Agreement (proprietary)

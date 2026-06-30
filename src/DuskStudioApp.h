@@ -22,5 +22,7 @@ public:
 private:
     class MainWindow;
     std::unique_ptr<MainWindow> mainWindow;
+    // DUSKSTUDIO_CLAP_EDITOR_TEST standalone window (native CLAP editor embed).
+    std::unique_ptr<juce::DocumentWindow> clapEditorTestWindow;
 };
 } // namespace duskstudio

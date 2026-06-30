@@ -52,8 +52,11 @@ struct AutomationPoint
 
     bool operator== (const AutomationPoint& o) const noexcept
     {
-        return timeSamples == o.timeSamples && value == o.value
-            && recordedAtBPM == o.recordedAtBPM;
+        // Bit-exact compares (juce::exactlyEqual) — these are value-identity checks, not
+        // tolerance compares, and exactlyEqual silences -Wfloat-equal (a CI -Werror).
+        return timeSamples == o.timeSamples
+            && juce::exactlyEqual (value, o.value)
+            && juce::exactlyEqual (recordedAtBPM, o.recordedAtBPM);
     }
     bool operator!= (const AutomationPoint& o) const noexcept { return ! (*this == o); }
 };
@@ -799,6 +802,23 @@ struct Track
     juce::String pluginDescriptionXml;
     juce::String pluginStateBase64;
 
+    // Native CLAP insert alternative to the JUCE plugin above (mutually exclusive).
+    // When nativeClapPath is non-empty the insert hosts a .clap via NativeClapSlot.
+    juce::String nativeClapPath;
+    juce::String nativeClapStateBase64;
+
+    // Track freeze (MIDI tracks): the instrument + pre-fader strip is rendered
+    // to a WAV, the plugin is bypassed to free CPU, and playback reads the WAV
+    // instead of synthesising. `frozen` gates the audio path; `frozenAudioPath`
+    // is the rendered file (relative-portable, like region files); `frozenRegion`
+    // is rebuilt from it on the message thread for the PlaybackEngine to read.
+    std::atomic<bool> frozen { false };
+    juce::String      frozenAudioPath;
+    AudioRegion       frozenRegion;
+    // The plugin-slot bypass state captured at freeze time, so unfreeze restores
+    // the user's setting instead of force-clearing it (freeze always bypasses).
+    std::atomic<bool> frozenPluginBypass { false };
+
     std::atomic<float> meterGrDb     { 0.0f };     // <= 0
     std::atomic<float> meterInputDb  { -100.0f };
     // Stereo R-input peak. -100 for mono/midi.
@@ -938,6 +958,13 @@ struct AuxLane
     std::array<juce::String, AuxLaneParams::kMaxLanePlugins> pluginDescriptionXml;
     std::array<juce::String, AuxLaneParams::kMaxLanePlugins> pluginStateBase64;
 
+    // Native CLAP host alternative to the JUCE plugin above. When nativeClapPath is
+    // non-empty the slot hosts a .clap via NativeClapSlot instead of a JUCE plugin;
+    // nativeClapStateBase64 is the CLAP state blob. Mutually exclusive with the JUCE
+    // pair (a slot is JUCE / native-CLAP / hardware / empty).
+    std::array<juce::String, AuxLaneParams::kMaxLanePlugins> nativeClapPath;
+    std::array<juce::String, AuxLaneParams::kMaxLanePlugins> nativeClapStateBase64;
+
     std::array<HardwareInsertParams, AuxLaneParams::kMaxLanePlugins> hardwareInserts;
 };
 
@@ -1047,6 +1074,9 @@ struct MasteringParams
     // off = independent per-channel limiting.
     std::atomic<int>   limiterMode       { 0 };
     std::atomic<bool>  limiterStereoLink { true };
+    // Lookahead, ms. More lookahead = the gain finishes ramping further ahead
+    // of the peak (cleaner transients) at the cost of more latency.
+    std::atomic<float> limiterLookaheadMs { 2.0f };
 
     mutable std::atomic<float> meterPostMasterLDb  { -100.0f };
     mutable std::atomic<float> meterPostMasterRDb  { -100.0f };

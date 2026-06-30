@@ -9,6 +9,7 @@ FetchContent_MakeAvailable(Catch2)
 
 add_executable(dusk-studio-tests
     smoke_brickwall_limiter.cpp
+    # Native CLAP tests + sources are Linux-only (dlopen/poll) — added conditionally below.
     plugin_scan_protocol.cpp
     plugin_backing_check.cpp
     session_tick_conversion.cpp
@@ -28,9 +29,11 @@ add_executable(dusk-studio-tests
     file_importer_audio.cpp
     hardware_insert.cpp
     session_round_trip.cpp
+    session_freeze_roundtrip.cpp
     session_region_bounds.cpp
     session_transport_bounds.cpp
     session_corrupted_recovery.cpp
+    session_clamp_corrupt_values.cpp
     session_format_version.cpp
     session_write_atomic.cpp
     session_portable_paths.cpp
@@ -39,10 +42,16 @@ add_executable(dusk-studio-tests
     update_checker_version.cpp
     session_schema_migration.cpp
     dsp_components_test.cpp
+    chord_analyzer.cpp
+    ${CMAKE_SOURCE_DIR}/src/dsp/ChordAnalyzer.cpp
+    pitch_detector.cpp
     recording_byte_accuracy.cpp
     midi_fifo_overflow.cpp
     midi_time_code_decode.cpp
     midi_time_code_emit.cpp
+    midi_clock_drift.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/MidiClockEmitter.cpp
+    smpte_wrap.cpp
     automation_thinning.cpp
     automation_lane_snapshot.cpp
     pdc_math.cpp
@@ -73,7 +82,13 @@ add_executable(dusk-studio-tests
     ${CMAKE_SOURCE_DIR}/src/ui/multisample/AriaGuiComponent.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/DuskFileBrowser.cpp
     ${CMAKE_SOURCE_DIR}/src/ui/DimOverlay.cpp
+    # DuskComboBox.cpp carries the vtable for duskstudio::DuskComboBox, which the
+    # multisample editor now uses (its showPopup override) — link it so the
+    # editor TU resolves.
+    ${CMAKE_SOURCE_DIR}/src/ui/DuskComboBox.cpp
     ${CMAKE_SOURCE_DIR}/src/dsp/BrickwallLimiter.cpp
+    mastering_digital_eq.cpp
+    ${CMAKE_SOURCE_DIR}/src/dsp/MasteringDigitalEq.cpp
     ${CMAKE_SOURCE_DIR}/src/dsp/HardwareInsertSlot.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/FileImporter.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/DpImporter.cpp
@@ -86,7 +101,19 @@ add_executable(dusk-studio-tests
 
 target_include_directories(dusk-studio-tests PRIVATE
     ${CMAKE_SOURCE_DIR}/src
-    ${CMAKE_SOURCE_DIR}/external/projucer-shim)
+    ${CMAKE_SOURCE_DIR}/external/projucer-shim
+    ${CMAKE_SOURCE_DIR}/external/clap/include)
+
+# Console-saturation calibration test + the donor DSP headers it needs
+# (BritishEQProcessor.h + its header-only ConsoleSaturation/ADAA/SafeFloat deps).
+# Gated on the donor being available, so a no-donor build doesn't try to compile
+# a test whose includes can't be resolved.
+if(DUSK_PLUGINS_PATH)
+    target_sources(dusk-studio-tests PRIVATE console_saturation.cpp)
+    target_include_directories(dusk-studio-tests SYSTEM PRIVATE
+        ${DUSK_PLUGINS_PATH}/plugins/multi-q
+        ${DUSK_PLUGINS_PATH}/plugins/shared)
+endif()
 
 target_compile_definitions(dusk-studio-tests PRIVATE
     JUCE_WEB_BROWSER=0
@@ -95,8 +122,26 @@ target_compile_definitions(dusk-studio-tests PRIVATE
     $<$<BOOL:${DUSKSTUDIO_JUCE_HAS_FREE_ADD_FORMATS}>:DUSKSTUDIO_JUCE_HAS_FREE_ADD_FORMATS=1>
     DUSKSTUDIO_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
+# Native CLAP host is Linux-only (dlopen/poll) — gate its tests + sources to match
+# the app build (DUSKSTUDIO_NATIVE_CLAP). clap_bundle_load also needs dladdr.
+if(DUSKSTUDIO_NATIVE_CLAP)
+    target_sources(dusk-studio-tests PRIVATE
+        clap_bundle_load.cpp
+        clap_instance_process.cpp
+        clap_native_slot.cpp
+        clap_scanner.cpp
+        clap_params.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/clap/ClapBundle.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/clap/ClapHost.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/clap/ClapInstance.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/clap/NativeClapSlot.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/clap/ClapScanner.cpp)
+    target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_NATIVE_CLAP=1)
+endif()
+
 target_link_libraries(dusk-studio-tests PRIVATE
     Catch2::Catch2WithMain
+    ${CMAKE_DL_LIBS}   # dl: ClapBundle dlopen
     juce::juce_audio_basics
     # juce_audio_devices required by SessionSerializer.cpp for
     # juce::MidiInput::getAvailableDevices() — resolves Track::
@@ -171,10 +216,12 @@ endif()
 # UniversalCompressor (multi-comp donor) tests — gated on the donor being
 # available. Mirrors the main app's DUSK_PLUGINS_PATH wiring exactly so the
 # tests link against the same DSP code paths the channel strip uses.
-if(DEFINED DUSK_PLUGINS_PATH)
+if(DUSK_PLUGINS_PATH)
     target_sources(dusk-studio-tests PRIVATE
         comp_static_curve.cpp
         comp_timing.cpp
+        bus_stereo_link.cpp
+        tape_hysteresis.cpp
         bus_strip.cpp
         mastering_chain.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/BusStrip.cpp
@@ -202,7 +249,8 @@ if(DEFINED DUSK_PLUGINS_PATH)
         "${DUSK_PLUGINS_PATH}/plugins/shared/channel-comp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-q"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp"
-        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/HardwareEmulation")
+        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/HardwareEmulation"
+        "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source")
 
     target_compile_definitions(dusk-studio-tests PRIVATE
         DUSKSTUDIO_HAS_DUSK_DSP=1

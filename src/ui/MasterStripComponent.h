@@ -9,6 +9,7 @@
 #include "CompHeaderButton.h"
 #include "DuskComboBox.h"
 #include "EmbeddedModal.h"
+#include "SectionPillButton.h"
 
 // Forward decl unconditional; the definition is only #included from the
 // .cpp when DUSKSTUDIO_HAS_DUSK_DSP is set. Pointer parameter stays
@@ -101,21 +102,7 @@ private:
     // symmetric with the expanded-mode CompHeaderButton's left/right
     // behaviour. The lit state is driven by the tapeEnabled atom (synced
     // from the 30 Hz timer) so the editor's auto-arm is still reflected here.
-    struct TapePillButton final : public juce::TextButton
-    {
-        using juce::TextButton::TextButton;
-        std::function<void(const juce::MouseEvent&)> onRightClick;
-        void mouseDown (const juce::MouseEvent& e) override
-        {
-            if (e.mods.isPopupMenu() && onRightClick)
-            {
-                onRightClick (e);
-                return;
-            }
-            juce::TextButton::mouseDown (e);
-        }
-    };
-    TapePillButton tapeButton { "TAPE" };
+    SectionPillButton tapeButton { "TAPE" };
     // Expanded-mode header: shared CompHeaderButton (matches EQ/COMP
     // grammar). Right-click opens TapeMachine editor via pickFn.
     std::unique_ptr<CompHeaderButton> tapeHeaderBtn;
@@ -149,8 +136,9 @@ private:
     juce::Rectangle<int> faderScaleArea;
     juce::Rectangle<int> eqArea;
     juce::Rectangle<int> compArea;
-    juce::TextButton eqCompactButton  { "EQ"   };
-    juce::TextButton compCompactButton { "COMP" };
+    juce::Rectangle<int> tapeArea;   // framed band behind the TAPE header (regular mode)
+    SectionPillButton eqCompactButton  { "EQ"   };
+    SectionPillButton compCompactButton { "COMP" };
     EmbeddedModal eqEditorModal;
     EmbeddedModal compEditorModal;
     void openEqEditorPopup();

@@ -1,4 +1,5 @@
 #include "AudioEngine.h"
+#include "BounceEngine.h"
 #include "PdcMath.h"
 #include "RtPriority.h"
 #include "../dsp/OutputPairRouting.h"
@@ -426,7 +427,11 @@ void AudioEngine::recomputePdc() noexcept
         // their output is timeline-aligned as if zero-latency.
         const bool midi = session.track (t).mode.load (std::memory_order_relaxed)
                               == (int) Track::Mode::Midi;
-        if (! midi)
+        // A frozen track plays its baked WAV with the insert bypassed, so its
+        // plugin / hardware latency must not count toward PDC — it's a zero-latency
+        // disk source (the bake was captured pre-PDC; see ChannelStrip freeze tap).
+        const bool frozen = session.track (t).frozen.load (std::memory_order_relaxed);
+        if (! midi && ! frozen)
         {
             const int mode = strip.insertMode.load (std::memory_order_relaxed);
             if (mode == ChannelStrip::kInsertPlugin)
@@ -442,6 +447,126 @@ void AudioEngine::recomputePdc() noexcept
     for (int t = 0; t < Session::kNumTracks; ++t)
         strips[(size_t) t].setPdcCompensationSamples (comp[t]);
     aggregatePdcLatencySamples.store (deepest, std::memory_order_relaxed);
+}
+
+bool AudioEngine::freezePrepare (int trackIndex, juce::File& outFile, juce::int64& lenSamples)
+{
+    lastFreezeError.clear();
+    if (trackIndex < 0 || trackIndex >= Session::kNumTracks)
+        { lastFreezeError = "Invalid track"; return false; }
+
+    auto& track = session.track (trackIndex);
+    if (track.frozen.load (std::memory_order_relaxed))
+        { lastFreezeError = "Track is already frozen"; return false; }
+
+    // Render length: the track's content end + a tail so the instrument's
+    // release / FX ringout decays before the WAV cuts. MIDI tracks freeze the
+    // instrument + EQ/comp; audio tracks freeze the recorded audio through its
+    // insert + EQ/comp (a big win at high oversampling).
+    const bool isMidi = track.mode.load (std::memory_order_relaxed) == (int) Track::Mode::Midi;
+    juce::int64 contentEnd = 0;
+    if (isMidi)
+        for (const auto& mr : track.midiRegions.current())
+            contentEnd = juce::jmax (contentEnd, mr.timelineStart + mr.lengthInSamples);
+    else
+        for (const auto& r : track.regions)
+            contentEnd = juce::jmax (contentEnd, r.timelineStart + r.lengthInSamples);
+    if (contentEnd <= 0)
+        { lastFreezeError = "Track has no content to freeze"; return false; }
+
+    const double sr = getCurrentSampleRate();
+    if (sr <= 0.0)
+        { lastFreezeError = "Audio device not running"; return false; }
+    constexpr double kFreezeTailSeconds = 5.0;
+    lenSamples = contentEnd + (juce::int64) (sr * kFreezeTailSeconds);
+
+    auto audioDir = session.getAudioDirectory();
+    if (! audioDir.createDirectory())
+        { lastFreezeError = "Could not create audio directory"; return false; }
+    outFile = audioDir.getChildFile (
+        "freeze_track" + juce::String (trackIndex + 1).paddedLeft ('0', 2) + ".wav");
+    return true;
+}
+
+void AudioEngine::commitFreeze (int trackIndex, const juce::File& outFile, juce::int64 lenSamples)
+{
+    if (trackIndex < 0 || trackIndex >= Session::kNumTracks)
+        return;
+    auto& track = session.track (trackIndex);
+
+    // Point frozenRegion at the baked WAV: one stereo region spanning the song
+    // from timeline 0 at unity, no fades.
+    auto& fr = track.frozenRegion;
+    fr = AudioRegion {};
+    fr.file            = outFile;
+    fr.timelineStart   = 0;
+    fr.lengthInSamples = lenSamples;
+    fr.sourceOffset    = 0;
+    fr.numChannels     = 2;
+    fr.gainDb          = 0.0f;
+    track.frozenAudioPath = outFile.getFullPathName();
+
+    // A frozen track can't record (playback is the baked WAV), so it must not stay
+    // record-armed — disarm via setTrackArmed so armedTrackCount stays consistent
+    // (done before frozen is set; setTrackArmed only refuses to ARM a frozen track).
+    session.setTrackArmed (trackIndex, false);
+
+    // Capture the user's current bypass before forcing it on, so unfreeze can
+    // restore it (freeze always bypasses to free CPU). Then bypass the
+    // instrument (defensive — the frozen strip path already skips it) and
+    // publish frozen with release so the audio thread sees the flag only after
+    // frozenRegion + the path are fully written.
+    auto& slot = strips[(size_t) trackIndex].getPluginSlot();
+    track.frozenPluginBypass.store (slot.isBypassed(), std::memory_order_relaxed);
+    slot.setBypassed (true);
+    track.frozen.store (true, std::memory_order_release);
+
+    // Open the frozen WAV reader (and rebuild every track's readers).
+    playbackEngine.preparePlayback();
+}
+
+void AudioEngine::unfreezeTrack (int trackIndex)
+{
+    if (trackIndex < 0 || trackIndex >= Session::kNumTracks)
+        return;
+    auto& track = session.track (trackIndex);
+    if (! track.frozen.load (std::memory_order_relaxed))
+        return;
+
+    // Restore the pre-freeze bypass (not a blanket false) before clearing the
+    // flag so a block observed between the two reads still routes through a
+    // plugin in the user's intended bypass state.
+    strips[(size_t) trackIndex].getPluginSlot().setBypassed (
+        track.frozenPluginBypass.load (std::memory_order_relaxed));
+    track.frozen.store (false, std::memory_order_release);
+
+    // Rebuild readers without the frozen stream (closes the frozen WAV handle)
+    // BEFORE deleting the file.
+    playbackEngine.preparePlayback();
+
+    // Delete the baked WAV — but only one we created: inside the session's audio
+    // dir and named like our freeze output. A corrupt session could otherwise
+    // point frozenAudioPath at an unrelated user file, and deleteFile() is
+    // destructive.
+    const juce::File wav (track.frozenAudioPath);
+    // Match the EXACT name freezePrepare generates for THIS track, not just the
+    // "freeze_track*" prefix — so a corrupt path can't delete another track's
+    // freeze WAV (or any other freeze_track*.wav) by accident.
+    const auto expectedName = "freeze_track"
+                            + juce::String (trackIndex + 1).paddedLeft ('0', 2) + ".wav";
+    const bool engineOwned = wav.getParentDirectory() == session.getAudioDirectory()
+                          && wav.getFileName() == expectedName;
+    if (engineOwned && wav.existsAsFile())
+        wav.deleteFile();
+    track.frozenAudioPath.clear();
+    track.frozenRegion = AudioRegion {};
+}
+
+void AudioEngine::reapplyFreezeState() noexcept
+{
+    for (int t = 0; t < Session::kNumTracks; ++t)
+        if (session.track (t).frozen.load (std::memory_order_relaxed))
+            strips[(size_t) t].getPluginSlot().setBypassed (true);
 }
 
 void AudioEngine::reresolveTrackMidiFromSession()
@@ -1018,7 +1143,16 @@ void AudioEngine::record()
     }
 
     if (! recordManager.startRecording (sr, startSample))
+    {
+        std::fprintf (stderr, "[Dusk Studio/AudioEngine] record(): startRecording failed; "
+                              "no armed track could be set up (e.g. all frozen, or the take "
+                              "file could not be created).\n");
+        if (onRecordBlocked_)
+            onRecordBlocked_ ("Recording could not start.\n\nThe armed track(s) could not be "
+                              "set up — a frozen track can't record (unfreeze it first), or "
+                              "the take file could not be created.");
         return;
+    }
 
     activeRecordStart.store (startSample, std::memory_order_relaxed);
 
@@ -1133,18 +1267,59 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         auto& track = session.track (t);
-        auto& slot  = strips[(size_t) t].getPluginSlot();
+        auto& strip = strips[(size_t) t];
+        auto& slot  = strip.getPluginSlot();
         track.pluginDescriptionXml = slot.getDescriptionXmlForSave (parkSleepMs);
         track.pluginStateBase64    = slot.getStateBase64ForSave   (parkSleepMs);
+
+        // Native CLAP insert (parallel to the JUCE plugin; at most one is loaded).
+        // Linux-only; on other platforms the saved path/state are preserved untouched
+        // so a session authored on Linux round-trips through a non-Linux build.
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+        if (strip.isNativeClapLoaded())
+        {
+            track.nativeClapPath = strip.getNativeClapSlot().getPath();
+            std::vector<uint8_t> blob;
+            if (strip.getNativeClapSlot().saveState (blob) && ! blob.empty())
+                track.nativeClapStateBase64 = juce::Base64::toBase64 (blob.data(), blob.size());
+            else
+                track.nativeClapStateBase64.clear();
+        }
+        else
+        {
+            track.nativeClapPath.clear();
+            track.nativeClapStateBase64.clear();
+        }
+#endif
     }
     for (int a = 0; a < Session::kNumAuxLanes; ++a)
     {
         auto& lane = session.auxLane (a);
         for (int s = 0; s < AuxLaneParams::kMaxLanePlugins; ++s)
         {
-            auto& slot = auxLaneStrips[(size_t) a].getPluginSlot (s);
+            auto& strip = auxLaneStrips[(size_t) a];
+            auto& slot  = strip.getPluginSlot (s);
             lane.pluginDescriptionXml[(size_t) s] = slot.getDescriptionXmlForSave (parkSleepMs);
             lane.pluginStateBase64[(size_t) s]    = slot.getStateBase64ForSave   (parkSleepMs);
+
+            // Native CLAP slot (parallel to the JUCE plugin; at most one is loaded).
+            // Linux-only; preserved untouched elsewhere (see the track block above).
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+            if (strip.isNativeClapLoaded (s))
+            {
+                lane.nativeClapPath[(size_t) s] = strip.getNativeClapSlot (s).getPath();
+                std::vector<uint8_t> blob;
+                if (strip.getNativeClapSlot (s).saveState (blob) && ! blob.empty())
+                    lane.nativeClapStateBase64[(size_t) s] = juce::Base64::toBase64 (blob.data(), blob.size());
+                else
+                    lane.nativeClapStateBase64[(size_t) s].clear();
+            }
+            else
+            {
+                lane.nativeClapPath[(size_t) s].clear();
+                lane.nativeClapStateBase64[(size_t) s].clear();
+            }
+#endif
         }
     }
 
@@ -1176,10 +1351,20 @@ void AudioEngine::releaseAllPluginResources()
 void AudioEngine::leakAllPluginInstancesForShutdown()
 {
     for (auto& strip : strips)
+    {
         strip.getPluginSlot().leakInstanceForShutdown();
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+        strip.getNativeClapSlot().leakForShutdown();   // u-he hangs in destroy/dlclose
+#endif
+    }
     for (auto& laneStrip : auxLaneStrips)
         for (int s = 0; s < AuxLaneParams::kMaxLanePlugins; ++s)
+        {
             laneStrip.getPluginSlot (s).leakInstanceForShutdown();
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+            laneStrip.getNativeClapSlot (s).leakForShutdown();   // u-he hangs in destroy/dlclose
+#endif
+        }
 }
 
 void AudioEngine::publishTransportStateForSave()
@@ -1228,6 +1413,61 @@ void AudioEngine::consumePluginStateAfterLoad()
         auto& track = session.track (t);
         auto& strip = strips[(size_t) t];
         auto& slot  = strip.getPluginSlot();
+
+        // Native CLAP insert (takes precedence over the JUCE plugin). load() needs the
+        // sample rate: load directly when prepared (device running), else stash a
+        // pending restore that ChannelStrip::prepare() consummates. Linux-only; on
+        // other platforms the saved path is ignored (the strip restores empty) but
+        // kept in the session model so a re-save round-trips it back to Linux.
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+        if (track.nativeClapPath.isNotEmpty())
+        {
+            slot.unload();
+            strip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
+
+            std::vector<uint8_t> blob;
+            if (const auto& st = track.nativeClapStateBase64; st.isNotEmpty())
+            {
+                juce::MemoryBlock mb;
+                if (mb.fromBase64Encoding (st) && mb.getSize() > 0)
+                    blob.assign (static_cast<const uint8_t*> (mb.getData()),
+                                 static_cast<const uint8_t*> (mb.getData()) + mb.getSize());
+            }
+
+            const juce::File clapFile (track.nativeClapPath);
+            if (strip.isPrepared())
+            {
+                suspendProcessing();
+                std::string err;
+                const bool ok = strip.loadNativeClap (clapFile, err);
+                if (ok && ! blob.empty())
+                    strip.getNativeClapSlot().loadState (blob);
+                resumeProcessing();
+                if (! ok)
+                    lastPluginLoadFailures.push_back ({
+                        "Track " + juce::String (t + 1),
+                        clapFile.getFileNameWithoutExtension() });
+            }
+            else
+            {
+                strip.setPendingNativeClap (clapFile, std::move (blob));
+            }
+            continue;
+        }
+#endif
+
+        // No native CLAP in this session for this strip — tear down any native
+        // instance carried over from the previously-loaded session before the JUCE
+        // restore below (unload destroys the instance, so fence it when live).
+        if (strip.isNativeClapLoaded())
+        {
+            suspendProcessing();
+            strip.unloadNativeClap();
+            resumeProcessing();
+        }
+        else
+            strip.unloadNativeClap();   // no live instance: just clears any stale pending
+
         if (track.pluginDescriptionXml.isEmpty())
         {
             slot.unload();   // session has no plugin here — clear any carried over from the prior one
@@ -1259,7 +1499,62 @@ void AudioEngine::consumePluginStateAfterLoad()
         auto& lane = session.auxLane (a);
         for (int s = 0; s < AuxLaneParams::kMaxLanePlugins; ++s)
         {
-            auto& slot = auxLaneStrips[(size_t) a].getPluginSlot (s);
+            auto& strip = auxLaneStrips[(size_t) a];
+            auto& slot  = strip.getPluginSlot (s);
+
+            // Native CLAP slot (takes precedence over the JUCE plugin). load() needs
+            // the sample rate: load directly when the engine is already prepared (a
+            // session opened while the device runs), else stash a pending restore that
+            // AuxLaneStrip::prepare() consummates when the SR is known. Linux-only;
+            // elsewhere the saved path is ignored but preserved in the session model.
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+            if (lane.nativeClapPath[(size_t) s].isNotEmpty())
+            {
+                slot.unload();   // ensure no JUCE plugin lingers in this slot
+                strip.insertMode[(size_t) s].store (AuxLaneStrip::kInsertPlugin, std::memory_order_release);
+
+                std::vector<uint8_t> blob;
+                if (const auto& st = lane.nativeClapStateBase64[(size_t) s]; st.isNotEmpty())
+                {
+                    juce::MemoryBlock mb;
+                    if (mb.fromBase64Encoding (st) && mb.getSize() > 0)
+                        blob.assign (static_cast<const uint8_t*> (mb.getData()),
+                                     static_cast<const uint8_t*> (mb.getData()) + mb.getSize());
+                }
+
+                const juce::File clapFile (lane.nativeClapPath[(size_t) s]);
+                if (strip.isPrepared())
+                {
+                    suspendProcessing();   // load is not RT-safe; fence the audio thread
+                    std::string err;
+                    const bool ok = strip.loadNativeClap (s, clapFile, err);
+                    if (ok && ! blob.empty())
+                        strip.getNativeClapSlot (s).loadState (blob);
+                    resumeProcessing();
+                    if (! ok)
+                        lastPluginLoadFailures.push_back ({
+                            "Aux " + juce::String (a + 1) + " slot " + juce::String (s + 1),
+                            clapFile.getFileNameWithoutExtension() });
+                }
+                else
+                {
+                    strip.setPendingNativeClap (s, clapFile, std::move (blob));
+                }
+                continue;   // native handled — skip the JUCE restore for this slot
+            }
+#endif
+
+            // No native CLAP for this slot — tear down any instance carried over from
+            // the previous session before the JUCE restore (fence when live).
+            if (strip.isNativeClapLoaded (s))
+            {
+                suspendProcessing();
+                strip.unloadNativeClap (s);
+                resumeProcessing();
+            }
+            else
+                strip.unloadNativeClap (s);   // clears any stale pending restore
+
             const auto& descXml = lane.pluginDescriptionXml[(size_t) s];
             if (descXml.isEmpty())
             {
@@ -1445,7 +1740,13 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
     // prepare). Aux lanes host plugin chains only (no Dusk EQ/Comp), so they
     // don't take the factor. The cost only materialises when a strip is
     // actually processing audio — silent / skipped strips dodge the chain.
-    const int oxFactor = session.oversamplingFactor.load (std::memory_order_relaxed);
+    // An offline bounce overrides the factor (e.g. 4×) so the printed mix is
+    // alias-free even though realtime monitoring runs at the user's lighter
+    // setting; the override is cleared before the engine re-prepares for live.
+    const int oxOverride = renderOversamplingOverride.load (std::memory_order_relaxed);
+    const int oxFactor   = (oxOverride > 0)
+                             ? oxOverride
+                             : session.oversamplingFactor.load (std::memory_order_relaxed);
 
     for (auto& s : strips)        s.prepare (sr, bs, oxFactor);
     for (auto& a : busStrips)     a.prepare (sr, bs, oxFactor);
@@ -1756,7 +2057,8 @@ void AudioEngine::accumulateStrip (int t, float* mL, float* mR,
                                              mL, mR, bL, bR, aL, aR,
                                              numSamples, job.passes,
                                              currentDeviceInputs,  numCurrentDeviceInputs,
-                                             currentDeviceOutputs, numCurrentDeviceOutputs);
+                                             currentDeviceOutputs, numCurrentDeviceOutputs,
+                                             job.frozen);
 }
 
 void AudioEngine::processStripLane (int lane) noexcept
@@ -2985,11 +3287,21 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         const bool monitorEnabled = session.track (t).inputMonitor.load (std::memory_order_relaxed);
         const bool midiTrack = session.track (t).mode.load (std::memory_order_relaxed)
                                    == (int) Track::Mode::Midi;
+        // Frozen: this track plays a pre-rendered WAV through the strip with the
+        // instrument/insert + EQ/comp bypassed (baked in). Works for MIDI and
+        // audio tracks alike. Acquire pairs with the release store in
+        // commitFreeze so the source switch + the frozen-strip path observe a
+        // consistent frozenRegion. A frozen track's mode is locked, so the flag
+        // can't strand on a mode that didn't bake the WAV.
+        const bool isFrozen = session.track (t).frozen.load (std::memory_order_acquire);
 
         // The track will read from disk during Play, or during Record on
         // un-armed tracks (so other tracks keep playing while we record into
         // an armed one). Otherwise the strip's source is live device input.
-        const bool willReadFromDisk = isPlaying || (isRecording && ! armed);
+        // A frozen track reads its baked WAV during Play/Record even if armed
+        // (frozen playback is the render, never live input) — but it stays silent
+        // when stopped, like any other disk track.
+        const bool willReadFromDisk = isPlaying || (isRecording && (isFrozen || ! armed));
 
         // Live-input monitor gate. IN is the ONLY control over live-input
         // monitoring. ARM is purely a recorder-enable; it does NOT gate
@@ -3061,8 +3373,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         {
             // Stereo tracks read both channels from disk; mono tracks pass
             // nullptr for outR which makes readForTrack skip the second
-            // channel entirely.
-            float* outR = stereoTrackInput ? playbackScratchR[(size_t) t].data() : nullptr;
+            // channel entirely. A frozen track's baked WAV is always stereo.
+            float* outR = (stereoTrackInput || isFrozen) ? playbackScratchR[(size_t) t].data() : nullptr;
             playbackEngine.readForTrack (t, blockStartSamples,
                                           playbackScratch[(size_t) t].data(), outR,
                                           numSamples);
@@ -3072,8 +3384,9 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         {
             monoIn = deviceInput;
         }
-        else if (strips[(size_t) t].getPluginSlot().isLoaded()
-                 || session.track (t).hardwareInsert.pingPending.load (std::memory_order_acquire))
+        else if (! isFrozen
+                 && (strips[(size_t) t].getPluginSlot().isLoaded()
+                     || session.track (t).hardwareInsert.pingPending.load (std::memory_order_acquire)))
         {
             // Generator-style insert with no input source: feed a
             // pre-zeroed buffer so the chain runs and the plugin can
@@ -3178,8 +3491,10 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         // The strip's instrument plugin then sees one unified buffer.
         // Note: scratch already cleared above by the flush block, plus any
         // emitted All Notes Off events. Both source paths add to those.
-        if (willReadFromDisk)
+        if (willReadFromDisk && ! isFrozen)
         {
+            // Frozen tracks skip MIDI scheduling — the instrument is bypassed
+            // and the notes are already baked into the WAV being read above.
             // Acquire on tempoBpm pairs with the release store in
             // duskstudio::applyTempoChange so this MIDI scheduling block
             // observes the BPM that matches the published-with-release
@@ -3387,7 +3702,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         //     point monoInR at that buffer.
         //   • Live input: source from the user's R input mapping.
         const float* monoInR = nullptr;
-        if (stereoTrackInput && monoIn != nullptr)
+        if ((stereoTrackInput || isFrozen) && monoIn != nullptr)
         {
             if (willReadFromDisk)
             {
@@ -3409,11 +3724,18 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         }
 
         // MIDI tracks have no audio input - their gate is just mute/solo.
-        // Audio tracks still require a non-null source to pass.
-        const bool stripPasses = midiTrack ? passes : (passes && monoIn != nullptr);
+        // Audio tracks (and frozen tracks, which read a WAV) require a non-null
+        // source to pass.
+        const bool stripPasses = (midiTrack && ! isFrozen) ? passes
+                                                           : (passes && monoIn != nullptr);
 
+        // A frozen track runs the strip's frozen path: stereo source from the
+        // baked WAV (monoIn/monoInR), instrument + EQ/comp skipped. isMidi is
+        // therefore false (the plugin path is bypassed); the frozen flag drives
+        // the strip. stereoInput true so the R channel is recognised.
         trackJobs[(size_t) t] = { monoIn, monoInR, deviceInput,
-                                  midiTrack, stripPasses, armed, stereoTrackInput };
+                                  midiTrack && ! isFrozen, stripPasses, armed,
+                                  stereoTrackInput || isFrozen, isFrozen };
     }
 
     // ── DSP pass ─────────────────────────────────────────────────────────

@@ -143,10 +143,13 @@ StartupDialog::StartupDialog (juce::Array<juce::File> r)
     addAndMakeVisible (emptyLabel);
     emptyLabel.setVisible (rows.empty());
 
-    updateLabel.setFont (juce::Font (juce::FontOptions (11.0f, juce::Font::bold)));
-    updateLabel.setJustificationType (juce::Justification::centred);
-    updateLabel.setInterceptsMouseClicks (false, false);
-    addChildComponent (updateLabel);   // hidden until setUpdateAvailable
+    updateLabel.setFont (juce::Font (juce::FontOptions (12.0f, juce::Font::bold)));
+    updateLabel.setJustificationType (juce::Justification::centredLeft);
+    // Keep hit-testing ON so the banner can become the hovered component and its
+    // "update available" tooltip (set in setUpdateAvailable) actually shows. It
+    // sits in its own reserved row above the heading, so it blocks nothing.
+    updateLabel.setInterceptsMouseClicks (true, false);
+    addChildComponent (updateLabel);   // hidden until setUpdateAvailable; banner above the heading
 
     styleSidebarTab (recentTab, true);
     styleSidebarTab (openTab,   false);
@@ -340,8 +343,6 @@ void StartupDialog::resized()
     recentTab.setBounds (sidebar.removeFromTop (36));
     openTab  .setBounds (sidebar.removeFromTop (36));
     newTab   .setBounds (sidebar.removeFromTop (36));
-    sidebar.removeFromTop (16);
-    updateLabel.setBounds (sidebar.removeFromTop (32));
 
     // Footer.
     constexpr int footerH = 52;
@@ -350,8 +351,14 @@ void StartupDialog::resized()
     footer.removeFromRight (8);
     quitButton.setBounds (footer.removeFromRight (90));
 
-    // Main panel: heading + table.
+    // Main panel: optional update banner, then heading + table. The banner
+    // only takes space once an update was found, pushing the heading down.
     auto main = bounds.reduced (16, 12);
+    if (updateLabel.isVisible())
+    {
+        updateLabel.setBounds (main.removeFromTop (24));
+        main.removeFromTop (6);
+    }
     tableHeading.setBounds (main.removeFromTop (22));
     main.removeFromTop (8);
 
@@ -369,10 +376,11 @@ void StartupDialog::resized()
 
 void StartupDialog::setUpdateAvailable (const juce::String& tagName)
 {
-    updateLabel.setText ("UPDATE\n" + tagName, juce::dontSendNotification);
+    updateLabel.setText ("Update available: " + tagName, juce::dontSendNotification);
     updateLabel.setTooltip ("A newer Dusk Studio release (" + tagName + ") is available.");
     updateLabel.setColour (juce::Label::textColourId, juce::Colour (0xffe0a050));
     updateLabel.setVisible (true);
+    resized();   // reserve the banner row above the heading now that it's shown
     updateBlinkCount = 0;
     startTimer (500);
 }

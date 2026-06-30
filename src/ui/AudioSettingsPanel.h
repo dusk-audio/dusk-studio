@@ -124,7 +124,7 @@ private:
     juce::ToggleButton tapeStripExpandedToggle { "Expand tape strip by default" };
     juce::ToggleButton followPlayheadToggle    { "Follow playhead by default" };
     juce::Label        stopBehaviorLabel       { {}, "Playhead on Stop:" };
-    juce::ComboBox     stopBehaviorCombo;
+    DuskComboBox       stopBehaviorCombo;
 
     // Captured during resized() + drawn by paint() as thin horizontal
     // rules between section groups.

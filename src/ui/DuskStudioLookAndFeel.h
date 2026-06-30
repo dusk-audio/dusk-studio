@@ -86,16 +86,42 @@ public:
                                               juce::Point<int> /*screenPos*/,
                                               juce::Rectangle<int> parentArea) override
     {
-        // Force single-line — measure without wrap. parentArea is in
-        // local-to-parent (MainComponent owns the TooltipWindow), NOT
-        // screen coords; TopLevelWindow::getScreenBounds returns the
-        // wrong space and the resulting Y gets clamped back inside
+        // parentArea is in local-to-parent (MainComponent owns the
+        // TooltipWindow), NOT screen coords; TopLevelWindow::getScreenBounds
+        // returns the wrong space and the resulting Y gets clamped back inside
         // parentArea (tooltip lands below the tab row otherwise).
         constexpr float kFontPx = 13.0f;
+        constexpr int   kPadX   = 16;   // total inner horizontal padding
+        constexpr int   kPadY   = 8;    // total inner vertical padding
         const juce::Font font { juce::FontOptions (kFontPx) };
         const auto flat = tipText.replaceCharacter ('\n', ' ');
-        const int textW = (int) std::ceil (font.getStringWidthFloat (flat)) + 32;   // +padding (must match drawTooltip's natural width)
-        const int h     = (int) std::ceil (kFontPx) + 10;
+
+        // Natural single-line width via TextLayout (Font::getStringWidthFloat is
+        // deprecated in JUCE 8).
+        const int textW = [&]
+        {
+            juce::AttributedString as;
+            as.setWordWrap (juce::AttributedString::none);
+            as.append (flat, font, juce::Colours::white);
+            juce::TextLayout tl;
+            tl.createLayout (as, 1.0e6f);
+            return (int) std::ceil (tl.getWidth()) + kPadX;
+        }();
+
+        // Height needed to render `flat` word-wrapped inside a box `boxW` wide.
+        // A long tip that won't fit one line wraps and grows DOWNWARD instead
+        // of overflowing a single-line box (the bug: centred no-wrap text
+        // spilled past both edges and got clipped middle-out). Must match
+        // drawTooltip's layout width (boxW - kPadX).
+        auto wrappedHeight = [&] (int boxW)
+        {
+            juce::AttributedString as;
+            as.setWordWrap (juce::AttributedString::byWord);
+            as.append (flat, font, juce::Colours::white);
+            juce::TextLayout tl;
+            tl.createLayout (as, (float) juce::jmax (1, boxW - kPadX));
+            return (int) std::ceil (tl.getHeight()) + kPadY;
+        };
 
         if (! tooltipRow_.isEmpty())
         {
@@ -103,39 +129,57 @@ public:
             // a centred tip would always sit on top of them. Prefer the side
             // gap that fits the natural width (left/status gap first), else the
             // wider side, clamping width so the tip never overlaps the tabs.
-            const int y = tooltipRow_.getY() + juce::jmax (0, (tooltipRow_.getHeight() - h) / 2);
             constexpr int gap = 12;
             int w = juce::jmin (textW, tooltipRow_.getWidth());
             int x = tooltipRow_.getCentreX() - w / 2;
 
             if (! tooltipAvoid_.isEmpty()
-                  && juce::Rectangle<int> (x, y, w, h).intersects (tooltipAvoid_))
+                  && juce::Rectangle<int> (x, tooltipRow_.getY(), w, tooltipRow_.getHeight())
+                        .intersects (tooltipAvoid_))
             {
                 const int leftRoom  = juce::jmax (0, tooltipAvoid_.getX() - gap - tooltipRow_.getX());
                 const int rightRoom = juce::jmax (0, tooltipRow_.getRight() - (tooltipAvoid_.getRight() + gap));
                 if (w <= leftRoom)              { x = tooltipRow_.getX(); }
                 else if (w <= rightRoom)        { x = tooltipAvoid_.getRight() + gap; }
                 else if (leftRoom >= rightRoom) { w = leftRoom;  x = tooltipRow_.getX(); }
-                else                            { w = rightRoom; x = tooltipRow_.getRight() - w; }
+                else                            { w = rightRoom; x = tooltipAvoid_.getRight() + gap; }
             }
-            return juce::Rectangle<int> (x, y, juce::jmax (0, w), h).constrainedWithin (tooltipRow_);
+
+            // Clamp w/h to the parent BEFORE measuring/returning so
+            // constrainedWithin only repositions (never resizes) - a resize
+            // would shrink the box below the width wrappedHeight used and
+            // re-introduce clipping.
+            w = juce::jlimit (1, parentArea.getWidth(), w);
+            const int h = juce::jmin (wrappedHeight (w), parentArea.getHeight());
+            // Single line: centre vertically in the row. Wrapped (taller than
+            // the row): start at the row top and grow downward over the
+            // transport row below - a transient tip may briefly cover content.
+            const int y = (h <= tooltipRow_.getHeight())
+                            ? tooltipRow_.getY() + (tooltipRow_.getHeight() - h) / 2
+                            : tooltipRow_.getY();
+            return juce::Rectangle<int> (x, y, w, h).constrainedWithin (parentArea);
         }
 
         // Fallback before the first layout pass sets a placement: centre the
         // tip in a top band the height of the original menu row.
         constexpr int kMenuRowH = 28;
-        const int w = juce::jmin (textW, juce::jmax (60, parentArea.getWidth() - 16));
+        const int w = juce::jlimit (1, parentArea.getWidth(),
+                                     juce::jmin (textW, juce::jmax (60, parentArea.getWidth() - 16)));
+        const int h = juce::jmin (wrappedHeight (w), parentArea.getHeight());
         const int x = parentArea.getCentreX() - w / 2;
         const int y = parentArea.getY() + juce::jmax (0, (kMenuRowH - h) / 2);
+        // w/h fit parentArea, so constrainedWithin only repositions (no resize
+        // that would diverge from wrappedHeight's wrapping width).
         return juce::Rectangle<int> (x, y, w, h).constrainedWithin (parentArea);
     }
 
     void drawTooltip (juce::Graphics& g, const juce::String& text,
                        int width, int height) override
     {
-        // V4 routes through layoutTooltipText which hard-caps TextLayout
-        // wrap at ~400 px → long tips wrap to 2-3 lines and clip against
-        // the menu row's single-line height. Render with word-wrap off.
+        // Word-wrap ON: getTooltipBounds sized the box (incl. height) to the
+        // wrapped text, so long tips flow onto multiple lines instead of
+        // overflowing a single line and clipping middle-out. Layout width must
+        // match getTooltipBounds' measure (width - kPadX, kPadX = 16).
         const juce::Rectangle<float> bounds (0.0f, 0.0f, (float) width, (float) height);
         g.setColour (findColour (juce::TooltipWindow::backgroundColourId));
         g.fillRect (bounds);
@@ -145,13 +189,15 @@ public:
         const auto flat = text.replaceCharacter ('\n', ' ');
         juce::AttributedString as;
         as.setJustification (juce::Justification::centred);
-        as.setWordWrap (juce::AttributedString::none);
+        as.setWordWrap (juce::AttributedString::byWord);
         as.append (flat,
                     juce::Font (juce::FontOptions (13.0f)),
                     findColour (juce::TooltipWindow::textColourId));
         juce::TextLayout layout;
-        layout.createLayout (as, (float) width);
-        layout.draw (g, bounds);
+        const float innerW = (float) juce::jmax (1, width - 16);
+        layout.createLayout (as, innerW);
+        const float ty = juce::jmax (0.0f, ((float) height - layout.getHeight()) * 0.5f);
+        layout.draw (g, juce::Rectangle<float> (8.0f, ty, innerW, layout.getHeight()));
     }
 
     // Override V2's 8 px top/bottom reduce — default reduce makes the
@@ -331,79 +377,71 @@ public:
         const float angle = rotaryStartAngle + sliderPos * (rotaryEndAngle - rotaryStartAngle);
         const auto fill = slider.findColour (juce::Slider::rotarySliderFillColourId);
 
-        // Value ring in the annulus around the body — an at-a-glance value
-        // readout that lifts knob contrast against the dark panels. Only on
-        // larger knobs (mastering / master): tiny channel-strip knobs keep the
-        // clean capped look so the ring doesn't crowd a 28 px body.
-        float radius = outerR;
-        const bool drawRing = outerR > 15.0f;
-        if (drawRing)
+        // One knob look across the whole app (SSL-console style).
+        drawSslKnob (g, cx, cy, outerR, angle, rotaryStartAngle, rotaryEndAngle, fill);
+    }
+
+    // SSL E-EQ style knob, used for EVERY rotary in the app: a SOLID coloured
+    // domed body with a fat white pointer, a small black moulded notch at the
+    // rim, and a ring of dark scale dots around it (the position markers). R is
+    // the full radius; `fill` is the slider's accent colour; `angle` the value
+    // angle; start/end the rotary sweep for the dots.
+    void drawSslKnob (juce::Graphics& g, float cx, float cy, float R,
+                      float angle, float startAngle, float endAngle, juce::Colour fill)
+    {
+        const float bodyR = R * 0.94f;   // coloured knob fills nearly the bounds;
+                                          // dots straddle the rim so the body stays big
+
+        // Scale dots around the knob (SSL position markers), evenly along the
+        // rotary sweep, straddling the rim (mostly in the margin) so they read
+        // without shrinking the coloured body.
         {
-            const float ringR     = outerR - 1.0f;
-            const float ringThick = juce::jmax (2.5f, outerR * 0.13f);
-            juce::Path track;
-            track.addCentredArc (cx, cy, ringR, ringR, 0.0f,
-                                 rotaryStartAngle, rotaryEndAngle, true);
-            g.setColour (juce::Colour (0xff31313c));
-            g.strokePath (track, juce::PathStrokeType (ringThick, juce::PathStrokeType::curved,
-                                                       juce::PathStrokeType::rounded));
-            juce::Path val;
-            val.addCentredArc (cx, cy, ringR, ringR, 0.0f,
-                               rotaryStartAngle, angle, true);
-            g.setColour (fill.brighter (0.30f));
-            g.strokePath (val, juce::PathStrokeType (ringThick, juce::PathStrokeType::curved,
-                                                     juce::PathStrokeType::rounded));
-            radius = ringR - ringThick - 1.5f;   // body sits inside the ring
-            if (radius <= 2.0f) return;
+            const int   nDots   = 11;
+            const float dotRing = R * 0.965f;
+            const float dotSz   = juce::jmax (0.9f, R * 0.06f);
+            g.setColour (juce::Colour (0xffc8c8d2));   // light marker — high contrast on the dark margin
+            for (int i = 0; i < nDots; ++i)
+            {
+                const float t = (float) i / (float) (nDots - 1);
+                const float a = startAngle + t * (endAngle - startAngle)
+                                - juce::MathConstants<float>::halfPi;
+                const float px = cx + dotRing * std::cos (a);
+                const float py = cy + dotRing * std::sin (a);
+                g.fillEllipse (px - dotSz, py - dotSz, dotSz * 2.0f, dotSz * 2.0f);
+            }
         }
 
-        // Soft drop shadow under the body.
+        // Drop shadow under the body.
         {
-            juce::ColourGradient shadow (juce::Colour (0x60000000), cx, cy,
-                                         juce::Colour (0x00000000), cx, cy + radius + 6.0f, true);
+            juce::ColourGradient shadow (juce::Colour (0x66000000), cx, cy + bodyR * 0.25f,
+                                         juce::Colour (0x00000000), cx, cy + bodyR + 5.0f, true);
             g.setGradientFill (shadow);
-            g.fillEllipse (cx - radius - 2.0f, cy - radius, (radius + 2.0f) * 2.0f, (radius + 2.0f) * 2.0f);
+            g.fillEllipse (cx - bodyR - 1.0f, cy - bodyR + 1.0f, (bodyR + 1.0f) * 2.0f, (bodyR + 1.0f) * 2.0f);
         }
 
-        // Body - fully coloured in the slider's accent (SSL-style).
-        // Radial gradient: top-left highlight, bottom-right shadow.
+        // Solid coloured domed body (radial highlight top-left).
         {
-            juce::ColourGradient body (fill.brighter (0.15f), cx - radius * 0.55f, cy - radius * 0.55f,
-                                       fill.darker  (0.55f),  cx + radius * 0.55f, cy + radius * 0.55f, true);
+            juce::ColourGradient body (fill.brighter (0.20f), cx - bodyR * 0.45f, cy - bodyR * 0.5f,
+                                       fill.darker  (0.40f),  cx + bodyR * 0.5f,  cy + bodyR * 0.55f, true);
             g.setGradientFill (body);
-            g.fillEllipse (cx - radius, cy - radius, radius * 2.0f, radius * 2.0f);
+            g.fillEllipse (cx - bodyR, cy - bodyR, bodyR * 2.0f, bodyR * 2.0f);
         }
+        g.setColour (juce::Colour (0x24ffffff));   // top sheen
+        g.fillEllipse (cx - bodyR * 0.7f, cy - bodyR * 0.88f, bodyR * 1.4f, bodyR * 0.55f);
+        g.setColour (juce::Colour (0xff0b0b0d));    // dark rim
+        g.drawEllipse (cx - bodyR, cy - bodyR, bodyR * 2.0f, bodyR * 2.0f, 1.0f);
 
-        // Subtle plastic-sheen highlight at the top.
-        g.setColour (juce::Colour (0x20ffffff));
-        g.fillEllipse (cx - radius * 0.85f, cy - radius * 0.95f, radius * 1.7f, radius * 0.7f);
-
-        // Crisp dark rim.
-        g.setColour (juce::Colour (0xff0a0a0a));
-        g.drawEllipse (cx - radius, cy - radius, radius * 2.0f, radius * 2.0f, 1.2f);
-
-        // Indicator - white line from inner radius to near the rim, plus a
-        // small white dot at the tip. Replaces the old coloured cap.
+        // Black moulded notch at the rim + a fat white pointer, at the value angle.
         const float dx = std::cos (angle - juce::MathConstants<float>::halfPi);
         const float dy = std::sin (angle - juce::MathConstants<float>::halfPi);
-        const float lineInnerR = radius * 0.30f;
-        const float lineOuterR = radius * 0.92f;
-        const float tipR       = juce::jmax (1.5f, radius * 0.12f);
-        const float lineX1 = cx + lineInnerR * dx;
-        const float lineY1 = cy + lineInnerR * dy;
-        const float lineX2 = cx + lineOuterR * dx;
-        const float lineY2 = cy + lineOuterR * dy;
-
+        g.setColour (juce::Colour (0xff0c0c0e));
+        g.drawLine (cx + bodyR * 0.82f * dx, cy + bodyR * 0.82f * dy,
+                    cx + bodyR * 1.0f  * dx, cy + bodyR * 1.0f  * dy,
+                    juce::jmax (2.4f, R * 0.13f));
         g.setColour (juce::Colours::white);
-        g.drawLine (lineX1, lineY1, lineX2, lineY2, 2.0f);
-
-        // Tip dot.
-        const float tipX = cx + (lineOuterR - tipR * 0.4f) * dx;
-        const float tipY = cy + (lineOuterR - tipR * 0.4f) * dy;
-        g.setColour (juce::Colours::white);
-        g.fillEllipse (tipX - tipR, tipY - tipR, tipR * 2.0f, tipR * 2.0f);
-        g.setColour (juce::Colour (0x80000000));
-        g.drawEllipse (tipX - tipR, tipY - tipR, tipR * 2.0f, tipR * 2.0f, 0.5f);
+        g.drawLine (cx + bodyR * 0.16f * dx, cy + bodyR * 0.16f * dy,
+                    cx + bodyR * 0.76f * dx, cy + bodyR * 0.76f * dy,
+                    juce::jmax (2.0f, R * 0.10f));
     }
 
 private:

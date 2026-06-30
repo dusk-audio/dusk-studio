@@ -77,6 +77,8 @@ struct SongScan
     juce::String deviceModel;              // "DP-24" / "DP-32" from edltable.sys, or empty
     int          deviceTrackLimit = 0;     // physical track faders: 18 (DP-24), 20 (DP-32), 0 unknown
     int          tempoBpm = 0;             // song.sys 0x6d8 (u8 BPM); 0 = not decoded/default
+    int          timeSigNum = 0;           // song.sys 0x6d9 numerator (1..12); 0 = not decoded
+    int          timeSigDen = 0;           // denominator (1/2/4/8); 0 = not decoded
     bool         mixerDecoded = false;     // song.sys parsed; strips look structurally valid
     bool         timelineDecoded = false;  // edltable.sys placement solved (not yet)
     bool         hasMixdown = false;       // an in-folder master WAV is present (enables alignment)

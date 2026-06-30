@@ -182,7 +182,9 @@ public:
         // Thumb override — styleEditorKnob doesn't explicitly set thumb
         // colour; cream pointer reads against the black bakelite body.
         for (auto* k : { &lfBoost, &lfAtten, &hfBoost, &hfAtten, &hfBandwidth })
+        {
             k->setColour (juce::Slider::thumbColourId, pultecCream);
+        }
 
         // program-EQ discrete-frequency rotaries (dented knobs). Same range
         // / format logic as the inline strip version — snaps to the
@@ -655,6 +657,7 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     // ballistics applied to the linear RMS amplitudes. Two needles (L + R).
     vuMeter = std::make_unique<AnalogVuMeter> (
         &params.meterPostMasterRmsL, &params.meterPostMasterRmsR);
+    vuMeter->setRichStyle (true);   // warm-cream photoreal face on the master only (bus meters stay plain)
     addAndMakeVisible (*vuMeter);
 
     auto styleToggle = [] (juce::TextButton& b, juce::Colour onColour)
@@ -677,7 +680,7 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     const auto compGold    = juce::Colour (0xff7da8c5);   // SSL G-bus comp powder blue (legacy var name)
 
     // EQ header — shared CompHeaderButton pill (green LED + bold label).
-    // No pickFn: master EQ has a single program-EQ topology, no mode picker.
+    // Left-click toggles; right-click opens the EQ editor (matches COMP / TAPE).
     eqHeaderBtn = std::make_unique<CompHeaderButton> (
         /*getEnabled*/ [this] { return params.eqEnabled.load (std::memory_order_relaxed); },
         /*onToggle*/   [this]
@@ -685,9 +688,10 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
                             const bool now = ! params.eqEnabled.load (std::memory_order_relaxed);
                             params.eqEnabled.store (now, std::memory_order_release);
                             if (eqHeaderBtn != nullptr) eqHeaderBtn->repaint();
-                        });
+                        },
+        /*onPick*/     [this] { openEqEditorPopup(); });
     eqHeaderBtn->setLabelText ("EQ");
-    eqHeaderBtn->setTooltip ("program-style Tube EQ on/off");
+    eqHeaderBtn->setTooltip ("Left-click EQ on/off. Right-click to open the editor.");
     addAndMakeVisible (eqHeaderBtn.get());
 
     // Suffixes intentionally empty - section labels already convey the
@@ -706,7 +710,9 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     // body. Override thumb to cream so the pointer reads as the white
     // stencilled indicator on a program-EQ EQP-1A knob.
     for (auto* k : { &eqLfBoost, &eqLfAtten, &eqHfBoost, &eqHfAtten })
+    {
         k->setColour (juce::Slider::thumbColourId, pultecCream);
+    }
 
     // Auto-arm the master program-EQ EQ on any band touch. EQ defaults to
     // off (Session.h) so the LED only lights once the engineer shapes
@@ -829,7 +835,8 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
                             const bool now = ! params.compEnabled.load (std::memory_order_relaxed);
                             params.compEnabled.store (now, std::memory_order_relaxed);
                             if (compHeaderBtn != nullptr) compHeaderBtn->repaint();
-                        });
+                        },
+        /*onPick*/     [this] { openCompEditorPopup(); });
     addAndMakeVisible (compHeaderBtn.get());
 
     CompMeterStrip::Source compSrc;
@@ -915,10 +922,27 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     };
     styleCompactSectionBtn (eqCompactButton,   juce::Colour (0xff5fc46f));
     styleCompactSectionBtn (compCompactButton, juce::Colour (0xffe0c050));
-    eqCompactButton  .setTooltip ("Open the master EQ editor (program-style Tube EQ). Click again to close.");
-    compCompactButton.setTooltip ("Open the master comp editor (console-style glue compressor). Click again to close.");
-    eqCompactButton  .onClick = [this] { openEqEditorPopup(); };
-    compCompactButton.onClick = [this] { openCompEditorPopup(); };
+    eqCompactButton  .setTooltip ("Left-click EQ on/off. Right-click to open the editor.");
+    compCompactButton.setTooltip ("Left-click comp on/off. Right-click to open the editor.");
+    // Same grammar as the expanded headers: left-click toggles, right-click opens
+    // the editor. (Was: any click opened the modal — inconsistent with expanded mode.)
+    eqCompactButton.onClick = [this]
+    {
+        const bool now = ! params.eqEnabled.load (std::memory_order_relaxed);
+        params.eqEnabled.store (now, std::memory_order_release);
+        eqCompactButton.setToggleState (now, juce::dontSendNotification);
+    };
+    eqCompactButton.onRightClick = [this] (const juce::MouseEvent&) { openEqEditorPopup(); };
+    eqCompactButton.setToggleState (params.eqEnabled.load (std::memory_order_relaxed), juce::dontSendNotification);
+
+    compCompactButton.onClick = [this]
+    {
+        const bool now = ! params.compEnabled.load (std::memory_order_relaxed);
+        params.compEnabled.store (now, std::memory_order_relaxed);
+        compCompactButton.setToggleState (now, juce::dontSendNotification);
+    };
+    compCompactButton.onRightClick = [this] (const juce::MouseEvent&) { openCompEditorPopup(); };
+    compCompactButton.setToggleState (params.compEnabled.load (std::memory_order_relaxed), juce::dontSendNotification);
     addChildComponent (eqCompactButton);
     addChildComponent (compCompactButton);
 
@@ -944,10 +968,15 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
         tapeButton.setClickingTogglesState (false);   // toggle path goes through the atom, not the button state
         tapeButton.setToggleState (params.tapeEnabled.load (std::memory_order_relaxed),
                                     juce::dontSendNotification);
-        tapeButton.setTooltip ("Open the master tape-machine editor (toggle tape on/off inside).");
-        // Match the EQ / COMP compact pills: any click opens the editor modal;
-        // the on/off toggle lives inside it.
-        tapeButton.onClick      = [this] { openTapeMachineModal(); };
+        tapeButton.setTooltip ("Left-click tape on/off. Right-click to open the editor.");
+        // Same grammar as the expanded headers + the EQ/COMP pills: left-click toggles,
+        // right-click opens the editor.
+        tapeButton.onClick = [this]
+        {
+            const bool now = ! params.tapeEnabled.load (std::memory_order_relaxed);
+            params.tapeEnabled.store (now, std::memory_order_relaxed);
+            tapeButton.setToggleState (now, juce::dontSendNotification);
+        };
         tapeButton.onRightClick = [this] (const juce::MouseEvent&) { openTapeMachineModal(); };
         addAndMakeVisible (tapeButton);
     }
@@ -997,7 +1026,7 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     faderSlider.setVelocityModeParameters (1.0, 1, 0.0, true);
     auto formatFaderDb = [] (double db) -> juce::String
     {
-        return (db <= -89.95) ? juce::String ("off")
+        return (db <= -89.95) ? juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x9e"))
                               : juce::String (db, 1);
     };
     faderSlider.onValueChange = [this, formatFaderDb]
@@ -1149,6 +1178,10 @@ void MasterStripComponent::timerCallback()
         if (eqOn != lastCompactEqOn)
         {
             lastCompactEqOn = eqOn;
+            // Track the atom, not the last click: EQ enable can change via the popup
+            // editor / MIDI without touching this button. The toggle state drives the
+            // lit (buttonOnColourId) appearance.
+            eqCompactButton.setToggleState (eqOn != 0, juce::dontSendNotification);
             eqCompactButton.setColour (juce::TextButton::buttonColourId,
                                          eqOn != 0 ? eqAccent.darker (0.55f)
                                                     : juce::Colour (0xff282830));
@@ -1157,6 +1190,7 @@ void MasterStripComponent::timerCallback()
         if (compOn != lastCompactCompOn)
         {
             lastCompactCompOn = compOn;
+            compCompactButton.setToggleState (compOn != 0, juce::dontSendNotification);
             compCompactButton.setColour (juce::TextButton::buttonColourId,
                                            compOn != 0 ? compAccent.darker (0.55f)
                                                         : juce::Colour (0xff282830));
@@ -1218,7 +1252,7 @@ void MasterStripComponent::timerCallback()
         {
             displayedLiveFaderDb = live;
             faderSlider.setValue (live, juce::dontSendNotification);
-            faderValueLabel.setText ((live <= -89.95f) ? juce::String ("off")
+            faderValueLabel.setText ((live <= -89.95f) ? juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x9e"))
                                                        : juce::String (live, 1),
                                        juce::dontSendNotification);
         }
@@ -1414,6 +1448,17 @@ void MasterStripComponent::paint (juce::Graphics& g)
         g.setColour (juce::Colour (0xff7da8c5).withAlpha (0.40f));
         g.drawRoundedRectangle (compArea.toFloat().reduced (0.5f), 3.0f, 0.8f);
     }
+    if (! tapeArea.isEmpty())
+    {
+        // Warm tape-deck chassis (TEAC/Studer brown) + amber accent — ties to
+        // the tape pill's amber and gives the header its own band so it reads
+        // as a section, not part of the fader area below. The transparent
+        // CompHeaderButton lets this tint show through, same as EQ / COMP.
+        g.setColour (juce::Colour (0xff261d12));
+        g.fillRoundedRectangle (tapeArea.toFloat(), 3.0f);
+        g.setColour (juce::Colour (0xffd0a060).withAlpha (0.45f));
+        g.drawRoundedRectangle (tapeArea.toFloat().reduced (0.5f), 3.0f, 0.8f);
+    }
 
     // Stereo LED meter - two vertical bars (L | R) inside meterArea.
     if (! meterArea.isEmpty())
@@ -1556,9 +1601,11 @@ void MasterStripComponent::paint (juce::Graphics& g)
 
             g.setColour (isZero ? juce::Colour (0xffffffff)
                                 : juce::Colour (0xffb8b8c0));
-            const juce::Font font (juce::FontOptions (10.5f, juce::Font::plain));
+            // ∞ renders visually smaller than the digits at a given point size,
+            // so upsize it to match their height.
+            const juce::Font font (juce::FontOptions (isBottom ? 16.0f : 10.5f, juce::Font::plain));
             g.setFont (font);
-            const juce::String label = isBottom ? juce::String ("off")
+            const juce::String label = isBottom ? juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x9e"))   /* ∞ = -inf dB / fully off */
                                                 : juce::String (t.label);
             const float ascent  = font.getAscent();
             const float descent = font.getDescent();
@@ -1642,20 +1689,19 @@ void MasterStripComponent::resized()
         area.removeFromBottom (4);
     }
 
-    // Analog VU meter at the top - same proportions as the bus strips so
-    // the meter row reads consistently across the console. Shrink both
-    // dimensions in compact mode (TIMELINE tape strip expanded) so the
-    // dial keeps its 12:7 aspect ratio instead of stretching wide and
-    // flat with a tiny dial inside.
+    // Analog VU meter at the top - same proportions as the bus strips so the
+    // meter row reads consistently across the console. Width matches the
+    // EQ/COMP/TAPE pill row below (reduced(4,0)) so they line up; the dial
+    // inside is aspect-locked and centres, so the box can take the pill width
+    // without the dial distorting. Height shrinks in compact mode (TIMELINE
+    // tape strip expanded) so the fader stack keeps its room.
     if (vuMeter != nullptr)
     {
-        constexpr int kRatioW = 12;
-        constexpr int kRatioH = 7;
         const int stripW = area.getWidth();
         const int heightDriver = compactVu ? stripW * 6 / 12 : stripW * 7 / 12;
         const int minH = compactVu ? 36 : 40;
         const int vuH  = juce::jmax (minH, heightDriver);
-        const int vuW  = juce::jmin (stripW, vuH * kRatioW / kRatioH);
+        const int vuW  = juce::jmax (1, stripW - 8);
         auto slot = area.removeFromTop (vuH);
         vuMeter->setBounds (slot.withSizeKeepingCentre (vuW, vuH));
         area.removeFromTop (4);
@@ -1800,7 +1846,12 @@ void MasterStripComponent::resized()
     // header dimensions for the LED + label pairing.
     const int tapeRowH = compactMode ? 20 : 22;
     const int tapeReduceX = compactMode ? 4 : 2;
-    auto buttonRow = area.removeFromTop (tapeRowH).reduced (tapeReduceX, 0);
+    auto tapeRow = area.removeFromTop (tapeRowH);
+    // Regular mode: frame the TAPE header in its own chassis band (like EQ /
+    // COMP) so it reads as a distinct section, not part of the fader area
+    // below. Compact mode already has the amber pill, so no band there.
+    tapeArea = compactMode ? juce::Rectangle<int>() : tapeRow;
+    auto buttonRow = tapeRow.reduced (tapeReduceX, 0);
     if (compactMode)                              tapeButton.setBounds (buttonRow);
     else if (tapeHeaderBtn != nullptr)            tapeHeaderBtn->setBounds (buttonRow);
 

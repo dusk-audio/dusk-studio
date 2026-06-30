@@ -8,6 +8,7 @@
 #include "CompMeterStrip.h"
 #include "EmbeddedModal.h"
 #include "DuskComboBox.h"
+#include "SectionPillButton.h"
 #include "../session/Session.h"
 
 namespace duskstudio
@@ -241,6 +242,9 @@ private:
     // the button + swap the tooltip in MIDI mode. Called from the ctor
     // and from onTrackModeChanged().
     void refreshPrintButtonForMode();
+    // MIDI tracks: the PRINT button becomes FREEZE. Renders the track to audio
+    // and bypasses the instrument (or unfreezes). Blocks briefly on the render.
+    void handleFreezeClick();
 
     // Re-renders one aux send's value label (e.g. after a pre/post
     // toggle from the right-click menu). Reads the current dB +
@@ -305,6 +309,8 @@ private:
     // an EmbeddedModal owned by this strip.
     void openHardwareInsertEditor();
     EmbeddedModal hardwareInsertModal;
+    // Async freeze progress (FreezeDialog) hosted as an EmbeddedModal.
+    EmbeddedModal freezeModal;
     void showPluginSlotMenu();
     void togglePluginEditor();
     void openPluginEditor();
@@ -319,6 +325,14 @@ private:
     EmbeddedModal pluginEditorModal;
     std::unique_ptr<juce::AudioProcessorEditor> pluginEditor;
     juce::AudioProcessor* pluginEditorOwner = nullptr;
+
+    // Native CLAP insert editor (shares the strip's NativeClapSlot instance). Kept
+    // alive across modal opens — showBorrowed hides on close rather than destroying
+    // (u-he hangs in gui->destroy); leaked on shutdown via dropPluginEditor. Linux-only.
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+    std::unique_ptr<class ClapPluginEditorComponent> clapEditor;
+    void loadNativeClapForChannel (const juce::File& clapFile);
+#endif
 
    #if JUCE_LINUX && DUSKSTUDIO_HAS_OOP_PLUGINS
     // OOP: child plugin's X11 Window wrapped in XEmbedComponent fed
@@ -344,9 +358,9 @@ public:
 private:
 
     bool compactMode = false;
-    juce::TextButton eqCompactButton   { "EQ" };
-    juce::TextButton compCompactButton { "COMP" };
-    juce::TextButton auxCompactButton  { "AUX" };
+    SectionPillButton eqCompactButton   { "EQ" };
+    SectionPillButton compCompactButton { "COMP" };
+    juce::TextButton  auxCompactButton  { "AUX" };
     juce::Component::SafePointer<juce::CallOutBox> activeEqBox;
     juce::Component::SafePointer<juce::CallOutBox> activeCompBox;
     juce::Component::SafePointer<juce::CallOutBox> activeAuxBox;

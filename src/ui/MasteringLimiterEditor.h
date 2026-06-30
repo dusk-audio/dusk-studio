@@ -57,6 +57,9 @@ private:
     juce::Slider releaseKnob;
     juce::Label  releaseLabel { {}, "Release" };
 
+    juce::Slider lookaheadKnob;
+    juce::Label  lookaheadLabel { {}, "Lookahead" };
+
     juce::ToggleButton stereoLinkToggle { "Stereo link" };
 
     // Threshold and Ceiling meter columns. dB ranges:

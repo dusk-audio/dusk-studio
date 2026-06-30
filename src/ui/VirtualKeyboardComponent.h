@@ -21,10 +21,22 @@ namespace duskstudio
 //
 // Note Off detection: keyPressed fires only for key-down (and for OS
 // auto-repeat); JUCE doesn't deliver key-up events. A 30 Hz timer scans
-// the held set and queries juce::KeyPress::isKeyCurrentlyDown for each
-// tracked code — when a key is no longer down, the matching Note Off is
-// emitted on whatever channel/note the original Note On used (so an
-// octave/channel shift mid-press doesn't orphan the off).
+// the held set and, for each tracked code, asks whether its typing key is
+// still physically down — when it isn't, the matching Note Off is emitted on
+// whatever channel/note the original Note On used (so an octave/channel
+// shift mid-press doesn't orphan the off).
+//
+// The "still down?" query is the subtle part. On Linux/XWayland JUCE's
+// juce::KeyPress::isKeyCurrentlyDown derives state from the X11 event stream,
+// which goes stale during OS key auto-repeat (a held key reads false between
+// repeats) — so a held note would drop after ~the debounce window and the
+// next repeat's keyPressed would re-trigger it: one held key becomes a stream
+// of notes. So the scan uses isCodePhysicallyDown(), which on Linux reads the
+// X server's physical key state via XQueryKeymap (auto-repeat-immune; see
+// KeyboardStateLinux) and falls back to the JUCE query elsewhere. A small
+// kReleaseScans debounce still guards a one-off stale read, and each
+// auto-repeat keyPressed resets it as a "still-held" heartbeat for the
+// fallback path.
 class VirtualKeyboardComponent final : public juce::Component,
                                           private juce::Timer
 {
@@ -81,7 +93,15 @@ private:
     {
         int note    { -1 };
         int channel { -1 };
+        // Consecutive timer scans this code has read not-down. Reset to 0
+        // when the key reads physically down and by an auto-repeat keyPressed.
+        // Note Off fires once it reaches kReleaseScans (see debounce note above).
+        int silentScans { 0 };
     };
+    // ~66 ms at the 30 Hz scan rate. With XQueryKeymap ground truth a single
+    // scan would do; this just absorbs a one-off stale read while keeping
+    // release latency imperceptible.
+    static constexpr int kReleaseScans = 2;
     std::array<HeldNote, 128> held {};
 
     // Single slot for the note currently being mouse-pressed (separate

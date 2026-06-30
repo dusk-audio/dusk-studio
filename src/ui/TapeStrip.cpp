@@ -2165,6 +2165,12 @@ void TapeStrip::mouseDoubleClick (const juce::MouseEvent& e)
         != (int) Track::Mode::Midi)
         return;
 
+    // Frozen tracks are edit-locked — don't create new MIDI regions on them
+    // (the baked WAV wouldn't include the new notes). openPianoRoll blocks the
+    // edit path too; this just avoids leaving a stray empty region behind.
+    if (session.track (trackIdx).frozen.load (std::memory_order_relaxed))
+        return;
+
     // Don't create on top of an existing region - that's the click-to-
     // edit path. mouseDown's MIDI hit-test would have already opened
     // the piano roll for that region, so the second click of the
@@ -2534,6 +2540,26 @@ void TapeStrip::showRegionContextMenu (const RegionHit& hit, juce::Point<int> sc
                     um.perform (new JoinRegionsAction (
                         safeThis->session, safeThis->engine, track, joinIdxs));
                     safeThis->clearAllSelections();
+                    safeThis->repaint();
+                });
+
+    // Reverse — non-destructive: renders a reversed WAV into takes/ and
+    // repoints this region at it. Single region (the one right-clicked).
+    // Disabled on a frozen track OR a locked region — both are edit-locked (the
+    // baked WAV would desync; locked regions are protected like other edits).
+    const bool reverseFrozen = session.track (hit.track).frozen.load (std::memory_order_relaxed);
+    const auto& reverseRegs  = session.track (hit.track).regions;
+    const bool reverseLocked = hit.regionIdx >= 0 && hit.regionIdx < (int) reverseRegs.size()
+                               && reverseRegs[(size_t) hit.regionIdx].locked;
+    m.addItem ("Reverse region", /*enabled*/ ! reverseFrozen && ! reverseLocked, /*ticked*/ false,
+                [safeThis = juce::Component::SafePointer<TapeStrip> (this),
+                 track = hit.track, regionIdx = hit.regionIdx]
+                {
+                    if (safeThis == nullptr) return;
+                    auto& um = safeThis->engine.getUndoManager();
+                    um.beginNewTransaction ("Reverse region");
+                    um.perform (new ReverseRegionAction (
+                        safeThis->session, safeThis->engine, track, regionIdx));
                     safeThis->repaint();
                 });
     m.addSeparator();

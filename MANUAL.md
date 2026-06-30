@@ -61,7 +61,7 @@ Install per your platform. On first launch, Dusk Studio opens a blank session ca
 
 You can also open an existing session directly: pass its `session.json` (or the session folder) on the command line — `DuskStudio path/to/session.json` — or double-click a `session.json` in your file manager (Linux file-type association is installed with the app). If Dusk Studio is already running, the session opens in the existing window.
 
-The Startup dialog also performs a quick update check against the public repository: if a release newer than your build exists, a flashing **UPDATE** badge with the new version number appears in the dialog's sidebar. The check is silent when you're up to date or offline, and nothing is sent beyond the request itself.
+The Startup dialog also performs a quick update check against the public repository: if a release newer than your build exists, a flashing **Update available** banner with the new version number appears above the Recent Sessions list. The check is silent when you're up to date or offline, and nothing is sent beyond the request itself.
 
 ![First-launch window with the Startup dialog visible.](docs/images/qg-01-startup.png)
 
@@ -85,7 +85,7 @@ Click **IN** to enable input monitoring. Play the source and watch the input met
 
 ![Channel strip 1 armed, input picked, monitor on.](docs/images/qg-03-arm-track.png)
 
-If you want to track _through_ the channel's EQ and compressor, also engage **PRINT**. The recorded file will contain the post-effects signal. With PRINT off (the default) you can tweak EQ and compression after the take without re-recording. PRINT applies to **audio tracks only**; MIDI tracks always record raw MIDI events and ignore the PRINT button.
+If you want to track _through_ the channel's EQ and compressor, also engage **PRINT**. The recorded file will contain the post-effects signal. With PRINT off (the default) you can tweak EQ and compression after the take without re-recording. PRINT shows on an **empty audio track**; once the track holds a take — and on every MIDI track — the button becomes **FREEZE** instead (render the track to audio and bypass its DSP to save CPU — see [ARM, IN, PRINT / FREEZE](#arm-in-print--freeze-recording-stage)).
 
 ## Record
 
@@ -211,7 +211,7 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 | --- | ---------------- | ------------------------------------------------------------------------------------------------------------- |
 | 1   | Mode             | **Mono**, **Stereo**, or **MIDI**.                                                                            |
 | 2   | Input picker     | Audio device input (mono / stereo), or MIDI port (MIDI). `−2: follow track index` matches input N to track N. |
-| 3   | ARM / IN / PRINT | ARM marks for record. IN enables input monitoring. PRINT commits EQ + comp + insert to the recorded file.     |
+| 3   | ARM / IN / PRINT&nbsp;·&nbsp;FREEZE | ARM marks for record. IN enables input monitoring. PRINT (empty audio track) commits EQ + comp + insert to the recorded file; once a track has a take — and on MIDI tracks — the button is FREEZE: render to audio + bypass the DSP to save CPU. |
 | 4   | Activity LED     | Blinks green when MIDI arrives on the chosen channel (MIDI mode only).                                        |
 
 ## The bus strip
@@ -577,11 +577,14 @@ This block is only visible in the RECORDING stage. In other stages it collapses 
 - **MIDI output** (MIDI mode): optional external MIDI output to drive a hardware synth as you play.
 - **Activity LED**: blinks green when MIDI arrives on the chosen channel.
 
-## ARM, IN, PRINT (RECORDING stage)
+## ARM, IN, PRINT / FREEZE (RECORDING stage)
 
 - **ARM**: light red when on. Marks the track for recording on the next Record press.
 - **IN**: input monitor. When on, you hear the live input through the channel strip. Useful for tracking with effects.
-- **PRINT** (audio tracks only): when on, the channel's EQ, compressor, and insert are committed to the recorded file. When off (the default), they are kept live, so you can tweak them after the take. MIDI tracks ignore PRINT — they always record raw MIDI events; the instrument plugin's audio is rendered on playback, not on capture, so there is nothing to "print to disk" for a MIDI track.
+- **PRINT** (empty audio track): when on, the channel's EQ, compressor, and insert are committed to the recorded file as you record. When off (the default), they are kept live, so you can tweak them after the take.
+- **FREEZE** (MIDI tracks, and audio tracks once recorded): the same button reads **FREEZE**. Click it to render the track to an audio file and bypass the DSP that produced it, to reclaim CPU — the frozen track plays back from the rendered audio with the fader, pan, and aux sends still live so you can keep mixing. The button turns to a snowflake while frozen; click it again to unfreeze (the rendered file is discarded). Frozen state is saved with the session, and a frozen track is locked — unfreeze first to edit, re-record, or change its mode.
+  - On a **MIDI track** freeze bakes the instrument plugin plus the channel EQ and compressor — the way to reclaim CPU from a heavy synth or sample library once you're happy with a part.
+  - On an **audio track** the PRINT button becomes FREEZE once the track holds a recorded take. Freeze bakes the recorded audio through its insert, EQ, and compressor — a large CPU saving when you run high effect oversampling, since the oversampled processing no longer runs on playback.
 
 ## Insert slot
 
@@ -913,11 +916,12 @@ A true-peak brickwall limiter with lookahead. **Enabled by default.** It runs th
 
 - **Ceiling**: −12 to 0 dB. Default **−0.3 dB** (matches the headroom expected by most streaming platforms).
 - **Threshold**: 0 to −20 dB (drag the handle on the input meter). Pull it down to drive more signal into the ceiling — louder and denser. (Internally it adds up to +20 dB of input gain; the ceiling then holds the peak.)
-- **Release**: 50 to 300 ms.
+- **Release**: 50 to 300 ms. The release is program-dependent — it recovers quickly from brief transients (keeping them open) and more slowly from deep, sustained reduction (no pumping on dense, bass-heavy material).
+- **Lookahead**: 0.1 to 10 ms (default **2 ms**). More lookahead lets the gain finish ramping further ahead of each peak, catching transients more cleanly, at the cost of more latency.
 - **Mode**: shapes the hold + release character — **Modern** (balanced default), **Transparent** (fast recovery, minimal pumping), **Punchy** (longer hold, denser).
 - **Stereo link**: on (default) matches the gain reduction across L/R to preserve the stereo image; off limits each channel independently.
 
-The lookahead adds a small, fixed latency that the engine compensates for. True-peak control is to 4× resolution; for very-high-frequency masters reserve a little extra ceiling headroom.
+The lookahead adds latency (set by the Lookahead control) on the mastering output. True-peak control is to 4× resolution; for very-high-frequency masters reserve a little extra ceiling headroom.
 
 ## Loudness metering
 
@@ -1097,10 +1101,11 @@ A right-click on any region shows a context menu:
 - **Mute** the region (silences it without deleting it).
 - **Lock** the region (prevents accidental edits).
 - **Takes** submenu (when more than one take exists on the region).
+- **Reverse region** (non-destructive: renders a reversed copy into `takes/` and points the region at it; undoable).
 - **Color**: a palette of 8 accent hues plus **Reset to track colour**.
 - **Delete**.
 
-Reverse and Normalize are not on this menu — they live in the audio region editor (double-click the region).
+Normalize is not on this menu — it lives in the audio region editor (double-click the region).
 
 ### Take cycling
 
@@ -1114,7 +1119,7 @@ Press **M** to drop a marker at the current playhead. A marker pill appears in t
 - Right-click for **Rename** and **Delete**.
 - **Rewind** and **Forward** transport buttons jump to the previous and next marker.
 
-Once a song has markers, the transport bar shows a **current-section pill** just right of the clock (e.g. *▸ Verse 2*) — the name of the most recent marker at or before the playhead. It tracks the arrangement as you play, so you always know which section is current even with the **TIMELINE** collapsed. It is hidden until the playhead reaches the first marker.
+Once a song has markers, the mini timeline strip (shown below the transport when the **TIMELINE** is collapsed) draws a tick and a name flag for **every** marker, with the **current section** — the most recent marker at or before the playhead — brightened. It tracks the arrangement as you play. Click a marker (tick or name) to jump to it; **double-click** a marker to rename it.
 
 ## Loop and punch brackets
 
@@ -1145,7 +1150,7 @@ It is marked **experimental** because parts of the DP file format are reverse-en
 
 - **Track grouping**: each `ZZ####` fragment is imported onto its own track, *not* grouped back into the device's original tracks (the fragment-to-track table isn't stored in a form we can read). Discarded takes are skipped.
 - **Timeline placement**: clip start positions are recovered from `song.sys` (and, when an in-folder master mixdown is present, by onset-aligning fragments to it) where they decode confidently; otherwise a clip lands at song start, which is correct for a full-length take. Re-check positions after import.
-- **Mixer recall** (fader / pan / 3-band EQ) and song tempo / markers are decoded where present and applied by track order. Re-check assignments.
+- **Mixer recall** (fader / pan / 3-band EQ) is decoded where present and applied to tracks **by order** — the device's channel-to-track mapping isn't stored, so re-check assignments. Song **tempo**, **time signature**, and **markers** are decoded where present and applied to the session as a whole (they are not track-scoped).
 
 \newpage
 

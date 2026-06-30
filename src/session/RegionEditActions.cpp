@@ -34,6 +34,15 @@ bool indexValid (Session& s, int trackIdx, int regionIdx)
     auto& regs = s.track (trackIdx).regions;
     return regionIdx >= 0 && regionIdx < (int) regs.size();
 }
+
+// Frozen tracks are edit-locked: their audio/MIDI is baked into a rendered WAV,
+// so any region edit would silently desync it. Region actions bail here (the
+// gesture reverts, model unchanged) — unfreeze to edit.
+bool frozenLocked (Session& s, int trackIdx)
+{
+    return trackIdx >= 0 && trackIdx < Session::kNumTracks
+        && s.track (trackIdx).frozen.load (std::memory_order_relaxed);
+}
 } // namespace
 
 // ── RegionEditAction ──────────────────────────────────────────────────────
@@ -48,6 +57,7 @@ RegionEditAction::RegionEditAction (Session& s, AudioEngine& e,
 bool RegionEditAction::perform()
 {
     if (! indexValid (session, trackIdx, regionIdx)) return false;
+    if (frozenLocked (session, trackIdx)) return false;
     session.track (trackIdx).regions[(size_t) regionIdx] = afterState;
     rebuildPlaybackIfStopped (engine);
     return true;
@@ -56,6 +66,7 @@ bool RegionEditAction::perform()
 bool RegionEditAction::undo()
 {
     if (! indexValid (session, trackIdx, regionIdx)) return false;
+    if (frozenLocked (session, trackIdx)) return false;
     session.track (trackIdx).regions[(size_t) regionIdx] = beforeState;
     rebuildPlaybackIfStopped (engine);
     return true;
@@ -73,6 +84,7 @@ MidiRegionEditAction::MidiRegionEditAction (Session& s, AudioEngine& e,
 bool MidiRegionEditAction::perform()
 {
     if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return false;
+    if (frozenLocked (session, trackIdx)) return false;
     auto& v = session.track (trackIdx).midiRegions.currentMutable();
     if (regionIdx < 0 || regionIdx >= (int) v.size()) return false;
     v[(size_t) regionIdx] = afterState;
@@ -83,6 +95,7 @@ bool MidiRegionEditAction::perform()
 bool MidiRegionEditAction::undo()
 {
     if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return false;
+    if (frozenLocked (session, trackIdx)) return false;
     auto& v = session.track (trackIdx).midiRegions.currentMutable();
     if (regionIdx < 0 || regionIdx >= (int) v.size()) return false;
     v[(size_t) regionIdx] = beforeState;
@@ -100,6 +113,7 @@ SplitRegionAction::SplitRegionAction (Session& s, AudioEngine& e,
 bool SplitRegionAction::perform()
 {
     if (! indexValid (session, trackIdx, regionIdx)) return false;
+    if (frozenLocked (session, trackIdx)) return false;
     auto& regs = session.track (trackIdx).regions;
     auto& orig = regs[(size_t) regionIdx];
 
@@ -136,6 +150,7 @@ bool SplitRegionAction::perform()
 bool SplitRegionAction::undo()
 {
     if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return false;
+    if (frozenLocked (session, trackIdx)) return false;
     auto& regs = session.track (trackIdx).regions;
 
     // Remove the right half (idx+1) and restore the left to its full extent.
@@ -160,6 +175,7 @@ PasteRegionAction::PasteRegionAction (Session& s, AudioEngine& e,
 bool PasteRegionAction::perform()
 {
     if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return false;
+    if (frozenLocked (session, trackIdx)) return false;
     auto& regs = session.track (trackIdx).regions;
     insertedAt = (int) regs.size();
     regs.push_back (regionToInsert);
@@ -171,6 +187,7 @@ bool PasteRegionAction::undo()
 {
     if (insertedAt < 0) return false;
     if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return false;
+    if (frozenLocked (session, trackIdx)) return false;
     auto& regs = session.track (trackIdx).regions;
     if (insertedAt >= (int) regs.size()) return false;
     regs.erase (regs.begin() + insertedAt);
@@ -194,6 +211,7 @@ CreateMidiRegionAction::CreateMidiRegionAction (Session& s,
 bool CreateMidiRegionAction::perform()
 {
     if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return false;
+    if (frozenLocked (session, trackIdx)) return false;
 
     MidiRegion region;
     region.timelineStart   = timelineStart;
@@ -215,6 +233,7 @@ bool CreateMidiRegionAction::perform()
 bool CreateMidiRegionAction::undo()
 {
     if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return false;
+    if (frozenLocked (session, trackIdx)) return false;
     if (insertedAt < 0) return false;
 
     bool removed = false;
@@ -241,6 +260,7 @@ DeleteRegionAction::DeleteRegionAction (Session& s, AudioEngine& e,
 bool DeleteRegionAction::perform()
 {
     if (! indexValid (session, trackIdx, regionIdx)) return false;
+    if (frozenLocked (session, trackIdx)) return false;
     auto& regs = session.track (trackIdx).regions;
     removed = regs[(size_t) regionIdx];
     haveRemoved = true;
@@ -253,6 +273,7 @@ bool DeleteRegionAction::undo()
 {
     if (! haveRemoved) return false;
     if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return false;
+    if (frozenLocked (session, trackIdx)) return false;
     auto& regs = session.track (trackIdx).regions;
 
     const int insertAt = juce::jmin (regionIdx, (int) regs.size());
@@ -271,6 +292,7 @@ DeleteMidiRegionAction::DeleteMidiRegionAction (Session& s, AudioEngine& e,
 bool DeleteMidiRegionAction::perform()
 {
     if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return false;
+    if (frozenLocked (session, trackIdx)) return false;
     auto& v = session.track (trackIdx).midiRegions.currentMutable();
     if (regionIdx < 0 || regionIdx >= (int) v.size()) return false;
     removed = v[(size_t) regionIdx];
@@ -284,6 +306,7 @@ bool DeleteMidiRegionAction::undo()
 {
     if (! haveRemoved) return false;
     if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return false;
+    if (frozenLocked (session, trackIdx)) return false;
     auto& v = session.track (trackIdx).midiRegions.currentMutable();
     const int insertAt = juce::jmin (regionIdx, (int) v.size());
     v.insert (v.begin() + insertAt, removed);
@@ -520,6 +543,10 @@ bool CloneTrackAction::perform()
     if (srcIdx < 0 || srcIdx >= Session::kNumTracks) return false;
     if (dstIdx < 0 || dstIdx >= Session::kNumTracks) return false;
     if (srcIdx == dstIdx) return false;
+    // The clone snapshot doesn't carry the frozen flag / frozenRegion, so
+    // cloning to or from a frozen track would desync. Refuse — unfreeze first.
+    if (session.track (srcIdx).frozen.load (std::memory_order_relaxed)
+        || session.track (dstIdx).frozen.load (std::memory_order_relaxed)) return false;
 
     // First perform: capture both before-state of the destination
     // (for undo) and after-state from the source (for redo). Subsequent
@@ -543,6 +570,10 @@ bool CloneTrackAction::undo()
 {
     if (beforeState == nullptr) return false;
     if (dstIdx < 0 || dstIdx >= Session::kNumTracks) return false;
+    // The Impl snapshot doesn't carry frozen state, so restoring beforeState onto a
+    // now-frozen destination would desync its baked WAV. Refuse — mirrors perform()'s
+    // frozen guard. Unfreeze first to undo.
+    if (session.track (dstIdx).frozen.load (std::memory_order_relaxed)) return false;
     applyTrack (session.track (dstIdx), engine, dstIdx, *beforeState);
     rebuildPlaybackIfStopped (engine);
     return true;
@@ -575,6 +606,7 @@ JoinRegionsAction::JoinRegionsAction (Session& s, AudioEngine& e,
 bool JoinRegionsAction::perform()
 {
     if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return false;
+    if (frozenLocked (session, trackIdx)) return false;
     auto& regs = session.track (trackIdx).regions;
     if (indices.size() < 2) return false;
 
@@ -678,7 +710,9 @@ bool JoinRegionsAction::perform()
         if (regSamples == 0) continue;
         juce::AudioBuffer<float> tmp (chs, regSamples);
         tmp.clear();
-        rdr->read (&tmp, 0, regSamples, reg.sourceOffset, true, chs > 1);
+        if (! rdr->read (&tmp, 0, regSamples, reg.sourceOffset, true, chs > 1))
+            return false;   // unreadable region body — abort the join, leave regions unchanged
+                            // (no output file created yet, nothing to clean up)
         const int destOffset = (int) (reg.timelineStart - firstStart);
         for (int c = 0; c < chs; ++c)
             mixBuf.addFrom (c, destOffset, tmp, c, 0, regSamples);
@@ -735,6 +769,7 @@ bool JoinRegionsAction::perform()
 bool JoinRegionsAction::undo()
 {
     if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return false;
+    if (frozenLocked (session, trackIdx)) return false;
     if (resultInsertedAt < 0) return false;
     auto& regs = session.track (trackIdx).regions;
     if (resultInsertedAt >= (int) regs.size()) return false;
@@ -798,6 +833,105 @@ bool RecordCommitAction::undo()
         session.track (d.trackIndex).midiRegions.mutate (
             [&d] (std::vector<MidiRegion>& mregs) { mregs = d.midiBefore; });
     }
+    rebuildPlaybackIfStopped (engine);
+    return true;
+}
+
+// ── ReverseRegionAction ───────────────────────────────────────────────────
+
+ReverseRegionAction::ReverseRegionAction (Session& s, AudioEngine& e,
+                                            int t, int idx)
+    : session (s), engine (e), trackIdx (t), regionIdx (idx)
+{}
+
+bool ReverseRegionAction::perform()
+{
+    if (! indexValid (session, trackIdx, regionIdx)) return false;
+    if (frozenLocked (session, trackIdx)) return false;
+    if (session.track (trackIdx).regions[(size_t) regionIdx].locked) return false;   // locked region
+
+    // First perform renders the reversed WAV + captures before/after; redo just
+    // re-applies the captured after-state.
+    if (! firstPerformDone)
+    {
+        beforeState = session.track (trackIdx).regions[(size_t) regionIdx];
+
+        juce::AudioFormatManager fm;
+        fm.registerBasicFormats();
+        std::unique_ptr<juce::AudioFormatReader> rdr (fm.createReaderFor (beforeState.file));
+        if (rdr == nullptr) return false;
+
+        // Bound the channel count: corrupt session data could carry a wild
+        // numChannels and blow up the buffer allocation. Cap to 1-2 (the app is
+        // stereo-max) and to what the reader actually has.
+        const int chs = juce::jlimit (1, juce::jmin (2, (int) rdr->numChannels),
+                                       (int) beforeState.numChannels);
+        const juce::int64 len = juce::jlimit<juce::int64> (
+            1, std::numeric_limits<int>::max(), beforeState.lengthInSamples);
+        const double sr   = rdr->sampleRate;
+        const int    bits = juce::jmax (16, (int) rdr->bitsPerSample);
+
+        auto takesDir = session.getSessionDirectory().getChildFile ("takes");
+        if (! takesDir.exists() && takesDir.createDirectory().failed()) return false;
+        auto outFile = takesDir.getNonexistentChildFile (
+            beforeState.file.getFileNameWithoutExtension() + "-reversed", ".wav", false);
+        juce::WavAudioFormat wav;
+        std::unique_ptr<juce::FileOutputStream> out (outFile.createOutputStream());
+        if (out == nullptr) return false;
+        std::unique_ptr<juce::AudioFormatWriter> writer (
+            wav.createWriterFor (out.get(), sr, (juce::uint32) chs, bits, {}, 0));
+        if (writer == nullptr) { out.reset(); outFile.deleteFile(); return false; }
+        out.release();   // ownership → writer
+
+        // Stream the source tail-first in bounded chunks: read the chunk ending
+        // at `remaining`, reverse each channel, append it. This reverses the
+        // whole region without ever holding it all in RAM, and a failed read or
+        // write aborts + discards the partial file instead of committing garbage.
+        constexpr int kChunk = 1 << 16;   // 64k frames per chunk
+        juce::AudioBuffer<float> chunk (chs, kChunk);
+        juce::int64 remaining = len;
+        bool ioOk = true;
+        while (remaining > 0)
+        {
+            const int n = (int) juce::jmin ((juce::int64) kChunk, remaining);
+            chunk.clear();
+            if (! rdr->read (&chunk, 0, n,
+                             beforeState.sourceOffset + (remaining - n), true, chs > 1))
+            { ioOk = false; break; }
+            for (int c = 0; c < chs; ++c)
+                std::reverse (chunk.getWritePointer (c), chunk.getWritePointer (c) + n);
+            if (! writer->writeFromAudioSampleBuffer (chunk, 0, n))
+            { ioOk = false; break; }
+            remaining -= n;
+        }
+        writer.reset();   // close the file before any delete
+        if (! ioOk) { outFile.deleteFile(); return false; }
+        renderedFile = outFile;
+
+        afterState = beforeState;
+        afterState.file            = outFile;
+        afterState.sourceOffset    = 0;
+        afterState.lengthInSamples = len;
+        afterState.numChannels     = chs;
+        // Reversed audio's head is the original tail, so swap the fades to keep
+        // each ramp on the same material.
+        std::swap (afterState.fadeInSamples, afterState.fadeOutSamples);
+        std::swap (afterState.fadeInShape,   afterState.fadeOutShape);
+        std::swap (afterState.fadeInAuto,    afterState.fadeOutAuto);
+        firstPerformDone = true;
+    }
+
+    if (! indexValid (session, trackIdx, regionIdx)) return false;
+    session.track (trackIdx).regions[(size_t) regionIdx] = afterState;
+    rebuildPlaybackIfStopped (engine);
+    return true;
+}
+
+bool ReverseRegionAction::undo()
+{
+    if (! indexValid (session, trackIdx, regionIdx)) return false;
+    if (frozenLocked (session, trackIdx)) return false;
+    session.track (trackIdx).regions[(size_t) regionIdx] = beforeState;
     rebuildPlaybackIfStopped (engine);
     return true;
 }
