@@ -1761,9 +1761,26 @@ void ChannelStripComponent::openPluginPicker (bool useChooser)
                                         if (self == nullptr) return;
                                         // Picking a plugin flips the strip back to Plugin mode
                                         // (overriding any prior Hardware selection on this slot).
-                                        self->engine.getChannelStrip (self->trackIndex)
-                                                  .insertMode.store (ChannelStrip::kInsertPlugin,
-                                                                       std::memory_order_release);
+                                        auto& chStrip = self->engine.getChannelStrip (self->trackIndex);
+                                        chStrip.insertMode.store (ChannelStrip::kInsertPlugin,
+                                                                  std::memory_order_release);
+
+                                        // One host per insert: a successful JUCE load evicts any
+                                        // native slot — the audio chain checks natives first, so a
+                                        // lingering native would silently shadow the picked plugin.
+                                        if (self->pluginSlot.isLoaded()
+                                            && (chStrip.isNativeClapLoaded() || chStrip.isNativeLv2Loaded()))
+                                        {
+   #if DUSKSTUDIO_HAS_NATIVE_CLAP
+                                            self->clapEditor.reset();   // references the dying instance
+   #endif
+                                            self->engine.suspendProcessing();
+                                            chStrip.unloadNativeClap();
+                                            chStrip.unloadNativeLv2();
+                                            self->engine.resumeProcessing();
+                                            self->track.nativeClapPath = {};
+                                            self->track.nativeClapStateBase64 = {};
+                                        }
 
                                         // Loading an instrument (soundfont or VST/LV2 synth) on a
                                         // non-MIDI track leaves the strip silent — instrument

@@ -118,7 +118,8 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
         const bool ok = nativeLv2Slot.reactivate (preparedSampleRate, preparedBlockSize, err);
         lv2ReloadFailed.store (! ok, std::memory_order_relaxed);
     }
-    else if (pendingLv2Path.isNotEmpty())
+    else if (pendingLv2Path.isNotEmpty()
+             && ! isNativeClapLoaded())   // both pendings set (corrupt session): CLAP wins
     {
         const juce::File p (pendingLv2Path);
         std::string err;
@@ -458,6 +459,11 @@ bool ChannelStrip::loadNativeClap (const juce::File& path, std::string& errorOut
 {
     if (preparedSampleRate <= 0.0 || preparedBlockSize <= 0)
     { errorOut = "channel strip not prepared"; return false; }
+    // One host per insert: evict the other native format and any JUCE plugin so
+    // the audio-thread chain (CLAP → LV2 → JUCE) can never see two loaded at once.
+    // Callers fence the audio thread around this call.
+    unloadNativeLv2();
+    pluginSlot.unload();
     const bool ok = nativeClapSlot.load (path, preparedSampleRate, preparedBlockSize, errorOut);
     // A user-initiated load is not a restore, so it always ends any "failed restore"
     // state — whether it succeeds (recovered) or fails (caller clears the persisted
@@ -486,6 +492,9 @@ bool ChannelStrip::loadNativeLv2 (const juce::File& path, std::string& errorOut)
 {
     if (preparedSampleRate <= 0.0 || preparedBlockSize <= 0)
     { errorOut = "channel strip not prepared"; return false; }
+    // One host per insert — see loadNativeClap.
+    unloadNativeClap();
+    pluginSlot.unload();
     const bool ok = nativeLv2Slot.load (path, preparedSampleRate, preparedBlockSize, errorOut);
     // A user-initiated load always ends any "failed restore" state (see loadNativeClap).
     lv2ReloadFailed.store (false, std::memory_order_relaxed);
