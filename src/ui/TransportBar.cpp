@@ -315,13 +315,13 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
 
     // REW / FFWD - dual-action.
     //   Brief press (< kHoldThresholdMs):
-    //     Stopped -> REW = goto zero, FFWD = goto last record point.
-    //     Rolling -> REW = jump to prev marker, FFWD = jump to next marker.
+    //     REW = jump to prev marker, FFWD = jump to next marker.
+    //     Stopped with no markers falls back to goto zero / goto last record point.
     //   Held: 10x scrub via the timer (drives the playhead while button down).
-    rewButton.setTooltip  ("Rewind: hold = 10x scrub. Tap = prev marker (rolling) "
-                            "or jump to zero (stopped).");
-    ffwdButton.setTooltip ("Forward: hold = 10x scrub. Tap = next marker (rolling) "
-                            "or jump to last record point (stopped).");
+    rewButton.setTooltip  ("Rewind. Hold to scrub back at 10x. Tap for previous marker "
+                            "(jumps to zero when stopped with no markers).");
+    ffwdButton.setTooltip ("Forward. Hold to scrub forward at 10x. Tap for next marker "
+                            "(jumps to last record point when stopped with no markers).");
 
     rewButton.onStateChange = [this]
     {
@@ -332,14 +332,13 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
         }
         else if (rewPressedAtMs != 0)
         {
-            const auto held = juce::Time::currentTimeMillis() - rewPressedAtMs;
             rewPressedAtMs = 0;
-            if (rewIsScrubbing) { rewIsScrubbing = false; }
-            else if (held < kHoldThresholdMs)
-            {
-                if (engine.getTransport().isStopped()) engine.jumpToZero();
-                else                                    engine.jumpToPrevMarker();
-            }
+            if (rewIsScrubbing)
+                rewIsScrubbing = false;   // was a hold-scrub, not a tap
+            else if (engine.getTransport().isStopped() && engine.getSession().getMarkers().empty())
+                engine.jumpToZero();
+            else
+                engine.jumpToPrevMarker();
         }
     };
 
@@ -352,14 +351,13 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
         }
         else if (ffwdPressedAtMs != 0)
         {
-            const auto held = juce::Time::currentTimeMillis() - ffwdPressedAtMs;
             ffwdPressedAtMs = 0;
-            if (ffwdIsScrubbing) { ffwdIsScrubbing = false; }
-            else if (held < kHoldThresholdMs)
-            {
-                if (engine.getTransport().isStopped()) engine.jumpToLastRecordPoint();
-                else                                    engine.jumpToNextMarker();
-            }
+            if (ffwdIsScrubbing)
+                ffwdIsScrubbing = false;   // was a hold-scrub, not a tap
+            else if (engine.getTransport().isStopped() && engine.getSession().getMarkers().empty())
+                engine.jumpToLastRecordPoint();
+            else
+                engine.jumpToNextMarker();
         }
     };
 
