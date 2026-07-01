@@ -150,6 +150,9 @@ PluginManager::PluginManager()
    #endif
 
     loadCache();
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+    loadClapCache();   // restore native CLAP descriptions so the picker has them at launch
+#endif
 }
 
 PluginManager::~PluginManager() = default;
@@ -368,8 +371,49 @@ void PluginManager::scanClapPlugins()
         d.isInstrument     = s.desc.isInstrument();
         clapDescriptions.add (d);
     }
+    saveClapCache();   // persist so the picker has CLAP at next launch without a re-scan
 #endif
 }
+
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+juce::File PluginManager::getClapCacheFile() const
+{
+    const auto base = getCacheFile();
+    return base == juce::File() ? juce::File() : base.getSiblingFile ("clap-cache.xml");
+}
+
+void PluginManager::loadClapCache()
+{
+    const auto file = getClapCacheFile();
+    if (file == juce::File() || ! file.existsAsFile())
+        return;
+
+    if (auto xml = juce::parseXML (file))
+    {
+        clapDescriptions.clearQuick();
+        for (auto* child : xml->getChildIterator())
+        {
+            juce::PluginDescription d;
+            // Drop entries whose .clap bundle is gone since the cache was written, so
+            // the picker never offers a removed plugin until the next rescan rebuilds it.
+            if (d.loadFromXml (*child) && juce::File (d.fileOrIdentifier).exists())
+                clapDescriptions.add (d);
+        }
+    }
+}
+
+void PluginManager::saveClapCache() const
+{
+    const auto file = getClapCacheFile();
+    if (file == juce::File())
+        return;
+
+    juce::XmlElement root ("CLAP_PLUGINS");
+    for (const auto& d : clapDescriptions)
+        root.addChildElement (d.createXml().release());
+    root.writeTo (file);
+}
+#endif
 
 juce::Array<juce::PluginDescription> PluginManager::getClapEffectDescriptions() const
 {
