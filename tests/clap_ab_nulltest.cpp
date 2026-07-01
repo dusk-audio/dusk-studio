@@ -1,9 +1,9 @@
-// F5 A/B null-test: the generalized processBlock (driven through the InsertAdapter,
-// exactly as the DSP call sites will be after F6/F7) must produce the same audio as
-// the legacy processStereo for a stereo plugin. Two fresh instances of the same
-// plugin are fed identical input; their outputs must match sample-for-sample.
-// Gated on DUSKSTUDIO_TEST_CLAP=/path/to.clap so CI without a plugin stays green;
-// assumes a deterministic effect (the test fixture, e.g. DuskVerb).
+// A/B null-test: the generalized processBlock (driven through the InsertAdapter,
+// as the production slot runs it) must produce the same audio as the legacy
+// processStereo for a stereo plugin. Fresh instances of the same plugin are fed
+// identical input; their outputs must match within the plugin's own instance-to-
+// instance variance. Gated on DUSKSTUDIO_TEST_CLAP=/path/to.clap so CI without a
+// plugin stays green.
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>

@@ -8,10 +8,9 @@
 #include <string>
 #include <vector>
 
-// Phase F1 of the native VST3/LV2 host: the shared, host-agnostic foundation
-// (PortLayout / PortBuffers / INativeInstance). No format code yet — this test
-// pins the descriptor semantics the InsertAdapter and every host will rely on,
-// and proves INativeInstance is a complete, implementable interface.
+// The shared, host-agnostic native-host foundation (PortLayout / PortBuffers /
+// INativeInstance). This pins the descriptor semantics the InsertAdapter and every
+// host rely on, and proves INativeInstance is a complete, implementable interface.
 
 using namespace duskstudio::hosting;
 

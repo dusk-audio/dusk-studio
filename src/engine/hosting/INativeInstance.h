@@ -9,7 +9,7 @@
 
 namespace duskstudio::hosting
 {
-// The format-agnostic contract a NativeInsertSlot drives, generalising the
+// The format-agnostic contract a plugin slot drives, generalising the
 // lifecycle ClapInstance already implements so VST3 / LV2 / CLAP instances are
 // interchangeable behind one pointer. Construction stays concrete (each format's
 // create() takes its own bundle + id / URI); this interface begins once the

@@ -23,9 +23,9 @@ class ClapBundle;
 // path. Parameters are enumerated at create(); changes are queued (message thread,
 // single producer) and consumed as CLAP events by the next process() block.
 //
-// Implements the host-agnostic INativeInstance so a NativeInsertSlot can drive
-// CLAP, VST3 and LV2 through one pointer. processStereo() is the legacy stereo
-// entry, kept as the A/B reference until the call sites move to processBlock.
+// Implements the host-agnostic INativeInstance so one plugin slot can drive
+// CLAP, VST3 and LV2 through a single pointer. processStereo() is the legacy
+// stereo entry, retained as the reference for verifying processBlock's output.
 class ClapInstance : public hosting::INativeInstance
 {
 public:
@@ -77,8 +77,8 @@ public:
     int getLatencySamples() const noexcept override { return latencySamples; }
 
     // Audio thread. Legacy stereo entry — inL/inR → outL/outR through the plugin.
-    // Kept as the A/B reference for processBlock until the call sites migrate; the
-    // NativeInsertSlot + DSP call sites move to processBlock in a following phase.
+    // Superseded by processBlock (the slot routes production audio through that);
+    // retained as the reference implementation for the processBlock equivalence test.
     void processStereo (const float* inL, const float* inR,
                         float* outL, float* outR, int numFrames) noexcept;
 

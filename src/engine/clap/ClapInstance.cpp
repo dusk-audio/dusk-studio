@@ -70,9 +70,9 @@ bool ClapInstance::create (const ClapBundle& bundle, const std::string& pluginId
         if (ap->count (plugin, false) > 0 && ap->get (plugin, 0, false, &info)) outCh = (int) info.channel_count;
     }
 
-    // processStereo drives a single stereo in + stereo out port. Reject anything
-    // else for now (the aux path is stereo); the reject relaxes when the call
-    // sites move to processBlock + InsertAdapter (F6/F7).
+    // Reject anything but stereo-in / stereo-out for now. The generalized
+    // processBlock + InsertAdapter path handles other layouts, but the DSP call
+    // sites still assume stereo, so gate non-stereo plugins out here until they migrate.
     if (inCh != 2 || outCh != 2)
     {
         errorOut = "plugin is not stereo-in/stereo-out (got "

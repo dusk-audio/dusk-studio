@@ -6,11 +6,11 @@
 #include <string>
 #include <vector>
 
-// Phase F2: InsertAdapter reconciles a plugin's arbitrary PortLayout to the
-// mixer's fixed stereo-in/stereo-out insert. These tests pin every fold rule
-// (mono sum, mono-out broadcast, multi-out drop, sidechain fill/silence,
-// instrument source) using a stub instance whose processBlock is a known
-// transform, so a fold regression is a hard assertion failure.
+// InsertAdapter reconciles a plugin's arbitrary PortLayout to the mixer's fixed
+// stereo-in/stereo-out insert. These tests pin every fold rule (mono sum, mono-out
+// broadcast, multi-out drop, sidechain fill/silence, instrument source) using a
+// stub instance whose processBlock is a known transform, so a fold regression is a
+// hard assertion failure.
 
 using namespace duskstudio::hosting;
 using Catch::Matchers::WithinAbs;
