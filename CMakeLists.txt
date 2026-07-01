@@ -536,7 +536,8 @@ endif()
 if(DUSKSTUDIO_NATIVE_LV2)
     target_sources(DuskStudio PRIVATE
         src/engine/lv2/Lv2Bundle.cpp
-        src/engine/lv2/Lv2Instance.cpp)
+        src/engine/lv2/Lv2Instance.cpp
+        src/engine/lv2/NativeLv2Slot.cpp)
     target_link_libraries(DuskStudio PRIVATE PkgConfig::LILV PkgConfig::SUIL PkgConfig::LV2)
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_NATIVE_LV2=1)
 endif()
