@@ -145,6 +145,16 @@ if(DUSKSTUDIO_NATIVE_CLAP)
     target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_NATIVE_CLAP=1)
 endif()
 
+# Native LV2 host — lilv/suil (ISC), ON when the dev libs are present (detected in
+# the top-level CMakeLists; PkgConfig::LILV etc. are GLOBAL imported targets).
+if(DUSKSTUDIO_NATIVE_LV2)
+    target_sources(dusk-studio-tests PRIVATE
+        lv2_bundle_load.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/lv2/Lv2Bundle.cpp)
+    target_link_libraries(dusk-studio-tests PRIVATE PkgConfig::LILV PkgConfig::SUIL PkgConfig::LV2)
+    target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_NATIVE_LV2=1)
+endif()
+
 target_link_libraries(dusk-studio-tests PRIVATE
     Catch2::Catch2WithMain
     ${CMAKE_DL_LIBS}   # dl: ClapBundle dlopen

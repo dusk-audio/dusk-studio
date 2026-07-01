@@ -29,6 +29,27 @@ else()
     set(DUSKSTUDIO_NATIVE_CLAP OFF)
 endif()
 
+# Native LV2 host (src/engine/lv2/) via lilv + suil (both ISC). Linux-only, ON when
+# the dev libraries are present (like the optional LAME dep); OFF otherwise. The
+# pkg_check_modules IMPORTED_TARGETs (PkgConfig::LILV etc.) are linked further down.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        # GLOBAL so the imported targets are visible in the tests/ subdirectory too.
+        pkg_check_modules(LILV IMPORTED_TARGET GLOBAL lilv-0)
+        pkg_check_modules(SUIL IMPORTED_TARGET GLOBAL suil-0)
+        pkg_check_modules(LV2  IMPORTED_TARGET GLOBAL lv2)
+    endif()
+    if(LILV_FOUND AND SUIL_FOUND AND LV2_FOUND)
+        option(DUSKSTUDIO_NATIVE_LV2 "Build the native LV2 plugin host (Linux, needs lilv/suil)" ON)
+    else()
+        set(DUSKSTUDIO_NATIVE_LV2 OFF)
+        message(STATUS "Native LV2 host: lilv/suil/lv2 not all found - disabled")
+    endif()
+else()
+    set(DUSKSTUDIO_NATIVE_LV2 OFF)
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -256,16 +277,12 @@ endif()
 #
 # Resolution priority:
 #   1. -DDUSK_PLUGINS_PATH (explicit override)
-#   2. sibling ../plugins-main — a permanent worktree pinned to plugins-`main`.
-#      Use this when the working ../plugins checkout is on a feature branch
-#      that may not have the donor API Dusk Studio expects. Create with:
-#          cd ../plugins && git worktree add ../plugins-main main
-#   3. sibling ../plugins (the usual checkout)
+#   2. sibling ../plugins — the single donor checkout, kept on main as its resting
+#      state (the stable donor API). If ../plugins is on a feature branch, you build
+#      against that branch. (The former ../plugins-main worktree was removed; the
+#      plugins repo is consolidated to one directory.)
 if(DEFINED DUSK_PLUGINS_PATH)
     message(STATUS "Using Dusk plugins from: ${DUSK_PLUGINS_PATH}")
-elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../plugins-main/plugins/shared")
-    set(DUSK_PLUGINS_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../plugins-main")
-    message(STATUS "Using Dusk plugins from sibling worktree (plugins-main): ${DUSK_PLUGINS_PATH}")
 elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../plugins/plugins/shared")
     set(DUSK_PLUGINS_PATH "${CMAKE_CURRENT_SOURCE_DIR}/../plugins")
     message(STATUS "Using Dusk plugins from sibling directory: ${DUSK_PLUGINS_PATH}")
@@ -494,12 +511,16 @@ if(UNIX AND NOT APPLE)
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_ALSA=1)
 endif()
 
+# Shared native-host layer (format-agnostic) — compiled whenever any native host
+# is on, so it isn't double-added by the per-format blocks below.
+if(DUSKSTUDIO_NATIVE_CLAP OR DUSKSTUDIO_NATIVE_LV2)
+    target_sources(DuskStudio PRIVATE src/engine/hosting/InsertAdapter.cpp)
+endif()
+
 # Native CLAP host — POSIX (dlopen/poll) + X11 editor embed. Gated by DUSKSTUDIO_NATIVE_CLAP
 # (ON for Linux). DUSKSTUDIO_HAS_NATIVE_CLAP guards every #if in the source.
 if(DUSKSTUDIO_NATIVE_CLAP)
     target_sources(DuskStudio PRIVATE
-        # Shared native-host layer (format-agnostic); CLAP is its first consumer.
-        src/engine/hosting/InsertAdapter.cpp
         src/engine/clap/ClapBundle.cpp
         src/engine/clap/ClapHost.cpp
         src/engine/clap/ClapInstance.cpp
@@ -508,6 +529,15 @@ if(DUSKSTUDIO_NATIVE_CLAP)
         src/engine/clap/ClapScanner.cpp
         src/ui/ClapPluginEditorComponent.cpp)
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_NATIVE_CLAP=1)
+endif()
+
+# Native LV2 host — lilv (discovery/instantiation) + suil (UI embed), both ISC.
+# Gated by DUSKSTUDIO_NATIVE_LV2 (ON on Linux when the dev libs are present).
+if(DUSKSTUDIO_NATIVE_LV2)
+    target_sources(DuskStudio PRIVATE
+        src/engine/lv2/Lv2Bundle.cpp)
+    target_link_libraries(DuskStudio PRIVATE PkgConfig::LILV PkgConfig::SUIL PkgConfig::LV2)
+    target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_NATIVE_LV2=1)
 endif()
 
 # Optional MP3 bounce via libmp3lame (LAME). Detected at configure time on every
