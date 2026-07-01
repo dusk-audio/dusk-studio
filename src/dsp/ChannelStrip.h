@@ -67,9 +67,13 @@ public:
     const clap::NativeClapSlot& getNativeClapSlot() const noexcept { return nativeClapSlot; }
     // Session restore before the engine is prepared: stash {path,state}; prepare() loads it.
     void setPendingNativeClap (const juce::File& path, std::vector<uint8_t> state) noexcept;
+    // True when the last prepare()-time reactivate / pending-restore load failed. Lets
+    // the save path tell "failed restore" (keep the persisted path) from "user removed".
+    bool nativeClapReloadFailed() const noexcept { return nativeReloadFailed.load (std::memory_order_relaxed); }
 #else
     bool isNativeClapLoaded() const noexcept { return false; }
     void unloadNativeClap() noexcept {}
+    bool nativeClapReloadFailed() const noexcept { return false; }
 #endif
 
     // Hardware vs plugin insert: one runs per block, chosen by
@@ -173,6 +177,7 @@ private:
     PluginSlot pluginSlot;
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
     clap::NativeClapSlot nativeClapSlot;   // native CLAP alternative to pluginSlot
+    std::atomic<bool>    nativeReloadFailed { false };   // prepare()-time reactivate/restore failed
 #endif
     HardwareInsertSlot hardwareSlot;
 

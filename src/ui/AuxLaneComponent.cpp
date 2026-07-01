@@ -900,9 +900,16 @@ void AuxLaneComponent::loadNativeClapForSlot (int slotIdx, const juce::File& cla
         std::fprintf (stderr, "[aux clap] load failed: %s\n", err.c_str());
         showDuskAlert (*this, "Couldn't load CLAP plugin",
                        clapFile.getFileNameWithoutExtension() + ":\n" + juce::String (err));
+        // Slot is empty now — drop any persisted refs (incl. a previous plugin's state
+        // blob) so a save doesn't carry a stale path/state for a slot the user sees empty.
+        lane.nativeClapPath[(size_t) slotIdx].clear();
+        lane.nativeClapStateBase64[(size_t) slotIdx].clear();
         return;
     }
     lane.nativeClapPath[(size_t) slotIdx] = clapFile.getFullPathName();
+    // Fresh plugin: don't inherit the previous slot occupant's state blob. The next
+    // save re-captures this plugin's real state.
+    lane.nativeClapStateBase64[(size_t) slotIdx].clear();
     refreshSlotControls (slotIdx);
     rebuildSlots();
 }

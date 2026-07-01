@@ -251,7 +251,8 @@ private:
     // pre-fader bool from the session atoms and pushes the formatted
     // text into auxKnobLabels[auxIdx].
     void refreshAuxSendLabel (int auxIdx);
-    juce::Component::SafePointer<juce::CallOutBox> activeIoBox;
+    // I/O config popup (mode + input routing) hosted as a centred EmbeddedModal.
+    EmbeddedModal ioConfigModal;
     // Repainted by the 30 Hz timer when engine sets track.midiActivity
     // (clear-on-read).
     struct MidiActivityLed : juce::Component
@@ -361,19 +362,17 @@ private:
     SectionPillButton eqCompactButton   { "EQ" };
     SectionPillButton compCompactButton { "COMP" };
     juce::TextButton  auxCompactButton  { "AUX" };
-    juce::Component::SafePointer<juce::CallOutBox> activeEqBox;
-    juce::Component::SafePointer<juce::CallOutBox> activeCompBox;
-    juce::Component::SafePointer<juce::CallOutBox> activeAuxBox;
+    // EQ / COMP / AUX compact editors, each a centred EmbeddedModal (dim
+    // backdrop, Esc / click-outside dismiss, transport-key forwarding, focus
+    // restore all handled internally). Mutually exclusive — opening one closes
+    // the others.
+    EmbeddedModal eqEditorModal;
+    EmbeddedModal compEditorModal;
+    EmbeddedModal auxEditorModal;
     void openEqEditorPopup();
     void openCompEditorPopup();
     void openAuxEditorPopup();
     void setAuxSectionVisible (bool visible);
-
-    // Translucent shade on the top-level while either popup is open.
-    // Removed by timerCallback once both are gone.
-    std::unique_ptr<class DimOverlay> activeDimOverlay;
-    void attachDimOverlay();
-    void detachDimOverlay();
 
     void setEqSectionVisible (bool visible);
     void setCompSectionVisible (bool visible);

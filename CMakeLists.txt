@@ -23,7 +23,7 @@ project(DuskStudio VERSION ${DUSKSTUDIO_VERSION} LANGUAGES C CXX)
 # Native CLAP host (src/engine/clap/ + the X11 editor) is POSIX + X11 — Linux only.
 # Default ON for Linux, OFF elsewhere; can be forced off on Linux for testing the
 # gated (DUSKSTUDIO_HAS_NATIVE_CLAP) build path with -DDUSKSTUDIO_NATIVE_CLAP=OFF.
-if(UNIX AND NOT APPLE)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     option(DUSKSTUDIO_NATIVE_CLAP "Build the native CLAP plugin host (Linux/X11 only)" ON)
 else()
     set(DUSKSTUDIO_NATIVE_CLAP OFF)

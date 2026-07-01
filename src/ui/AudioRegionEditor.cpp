@@ -2816,6 +2816,12 @@ bool AudioRegionEditor::keyPressed (const juce::KeyPress& k)
         // nuke the entire region on a Ctrl+X the user meant as a no-op range cut.
         if (rangeActive) return true;
 
+        // Whole-region cut path: a locked region / frozen track is edit-locked
+        // everywhere else (cutRange, the Delete handler) — consume the key as a no-op
+        // rather than clipboarding + deleting content the user can't edit.
+        if (r->locked || session.track (trackIdx).frozen.load (std::memory_order_relaxed))
+            return true;
+
         // Whole-region cut. Editor closes (its anchor region is gone).
         clip.region      = *r;
         clip.sourceTrack = trackIdx;

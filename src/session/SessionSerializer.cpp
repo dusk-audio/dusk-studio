@@ -1,5 +1,7 @@
 #include "SessionSerializer.h"
 #include <juce_audio_devices/juce_audio_devices.h>
+#include <cmath>
+#include <limits>
 
 #if JUCE_LINUX || JUCE_MAC
  #include <fcntl.h>
@@ -32,8 +34,12 @@ constexpr int kFormatVersion = 3;
 // default is kept instead. Mirrors the master Pultec EQ's loadMasterFloat.
 inline void storeFiniteFloat (std::atomic<float>& dst, const juce::var& src) noexcept
 {
-    const float v = (float) (double) src;
-    if (std::isfinite (v)) dst.store (v);
+    // Range-check the ORIGINAL double before narrowing: casting an out-of-float-range
+    // double to float is UB, so reject non-finite / oversized values up front rather
+    // than relying on the post-cast isfinite catching an inf the narrowing produced.
+    const double d = (double) src;
+    if (std::isfinite (d) && std::abs (d) <= (double) std::numeric_limits<float>::max())
+        dst.store ((float) d);
 }
 
 // Parse one automation point from JSON, hardening every field against a

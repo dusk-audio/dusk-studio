@@ -45,13 +45,17 @@ private:
 
     std::unique_ptr<BounceEngine> bounceEngine;
 
+    // progressValue is declared BEFORE progressBar: the ctor constructs progressBar
+    // with a reference to it, so it must already be alive at that point.
+    double progressValue = 0.0;   // bound to ProgressBar
+
     juce::Label       titleLabel;
     juce::Label       statusLabel;
     juce::ProgressBar progressBar;
     juce::TextButton  cancelButton { "Cancel" };
     juce::TextButton  closeButton  { "Close" };
 
-    double progressValue = 0.0;   // bound to ProgressBar
+    bool   isMidiTrack = false;   // cached in ctor — picks the audio vs instrument message
     bool   finished  = false;
     bool   succeeded = false;
     bool   committed = false;     // commitFreeze runs exactly once

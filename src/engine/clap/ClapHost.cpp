@@ -1,6 +1,7 @@
 #include "ClapHost.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 
@@ -192,7 +193,16 @@ void ClapHost::pumpGui (double elapsedMs)
             for (auto& t : timers)
             {
                 t.accumMs += elapsedMs;
-                if (t.accumMs >= (double) t.periodMs) { t.accumMs = 0.0; due.push_back (t.id); }
+                // Keep the sub-period remainder instead of zeroing, so a UI stall that
+                // overshoots doesn't drop time and the timer stays on-rate. fmod (not a
+                // single subtract) also BOUNDS the accumulator: a timer whose period is
+                // shorter than the pump interval would otherwise grow accumMs without
+                // limit. Fire at most once per pump — no catch-up storm.
+                if (t.accumMs >= (double) t.periodMs)
+                {
+                    t.accumMs = std::fmod (t.accumMs, (double) t.periodMs);
+                    due.push_back (t.id);
+                }
             }
             for (const auto id : due)
             {

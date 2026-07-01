@@ -481,9 +481,14 @@ bool AudioEngine::freezePrepare (int trackIndex, juce::File& outFile, juce::int6
     lenSamples = contentEnd + (juce::int64) (sr * kFreezeTailSeconds);
 
     auto audioDir = session.getAudioDirectory();
-    if (! audioDir.createDirectory())
+    if (audioDir.createDirectory().failed())
         { lastFreezeError = "Could not create audio directory"; return false; }
-    outFile = audioDir.getChildFile (
+    // Freeze WAVs live in a dedicated subdir so they can never overwrite (and later be
+    // deleted by unfreezeTrack) a user file that happens to share the freeze name.
+    auto freezeDir = audioDir.getChildFile ("freeze");
+    if (freezeDir.createDirectory().failed())
+        { lastFreezeError = "Could not create freeze directory"; return false; }
+    outFile = freezeDir.getChildFile (
         "freeze_track" + juce::String (trackIndex + 1).paddedLeft ('0', 2) + ".wav");
     return true;
 }
@@ -554,7 +559,13 @@ void AudioEngine::unfreezeTrack (int trackIndex)
     // freeze WAV (or any other freeze_track*.wav) by accident.
     const auto expectedName = "freeze_track"
                             + juce::String (trackIndex + 1).paddedLeft ('0', 2) + ".wav";
-    const bool engineOwned = wav.getParentDirectory() == session.getAudioDirectory()
+    const auto audioDir  = session.getAudioDirectory();
+    const auto freezeDir = audioDir.getChildFile ("freeze");
+    const auto parent    = wav.getParentDirectory();
+    // Current freezes live in <audio>/freeze/; older sessions wrote straight into
+    // <audio>/. Accept either parent so both round-trip, but still require the exact
+    // per-track name so a corrupt path can't delete an unrelated file.
+    const bool engineOwned = (parent == freezeDir || parent == audioDir)
                           && wav.getFileName() == expectedName;
     if (engineOwned && wav.existsAsFile())
         wav.deleteFile();
@@ -1285,8 +1296,13 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
             else
                 track.nativeClapStateBase64.clear();
         }
-        else
+        else if (! strip.nativeClapReloadFailed())
         {
+            // Slot genuinely empty (user removed it, or never had one) — drop the
+            // persisted refs. When a restore FAILED (e.g. the .clap was missing this
+            // launch) the slot is also empty, but we keep the path/state so the
+            // reference survives to reconnect on a future launch — mirrors how an
+            // offline JUCE plugin preserves its descXml.
             track.nativeClapPath.clear();
             track.nativeClapStateBase64.clear();
         }
@@ -1314,8 +1330,11 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
                 else
                     lane.nativeClapStateBase64[(size_t) s].clear();
             }
-            else
+            else if (! strip.nativeClapReloadFailed (s))
             {
+                // See the track block above: keep the persisted refs when a restore
+                // failed (path preserved to reconnect later); clear only a genuinely
+                // empty / user-removed slot.
                 lane.nativeClapPath[(size_t) s].clear();
                 lane.nativeClapStateBase64[(size_t) s].clear();
             }
@@ -3309,7 +3328,9 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         // defaulting to false — the user must explicitly click IN to
         // open the live-input → master path. Disk playback always passes
         // (independent of IN).
-        const bool monitorPasses = willReadFromDisk ? true : monitorEnabled;
+        // A frozen track plays its baked WAV only — never live input. When stopped it
+        // stays silent instead of monitoring the device through a frozen (bypassed) strip.
+        const bool monitorPasses = willReadFromDisk ? true : (monitorEnabled && ! isFrozen);
 
         // SIP-style bus solo (matches Pro Tools / Logic / Cubase): when any
         // bus is soloed, a track is audible ONLY if it feeds a soloed bus.
@@ -3380,7 +3401,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                                           numSamples);
             monoIn = playbackScratch[(size_t) t].data();
         }
-        else if (deviceInput != nullptr && (armed || monitorEnabled))
+        else if (deviceInput != nullptr && (armed || monitorEnabled) && ! isFrozen)
         {
             monoIn = deviceInput;
         }

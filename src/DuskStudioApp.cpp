@@ -1004,7 +1004,12 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
         clapEditorTestWindow->setUsingNativeTitleBar (true);
         clapEditorTestWindow->setContentOwned (comp.release(), true);
         clapEditorTestWindow->centreWithSize (w, h);
-        clapEditorTestWindow->setVisible (true);
+        clapEditorTestWindow->setVisible (true);   // creates the peer → consumes the X11 latch
+        // Match MainWindow's native-window setup: release the X11 latch now the peer
+        // exists, and install the non-fatal X error handler so a dying CLAP editor
+        // window can't core-dump this harness.
+        duskstudio::platform::clearPreferX11ForNativeWindow();
+        duskstudio::platform::installNonFatalXErrorHandler();
         return;   // standalone — skip the normal engine + main-window startup
     }
 #endif // DUSKSTUDIO_HAS_NATIVE_CLAP

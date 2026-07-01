@@ -121,11 +121,11 @@ private:
     // share one visual grammar.
     juce::Rectangle<int> eqArea;
     juce::Rectangle<int> compArea;
-    // Compact-mode placeholder buttons. Hidden when compactMode=false;
-    // visible (and the section knobs hidden) when true. Decorative —
-    // click does nothing (tooltip explains the TIMELINE toggle owns the
-    // expand/collapse). Mirrors ChannelStripComponent's eqCompactButton
-    // / compCompactButton grammar.
+    // Compact-mode section pills. Hidden when compactMode=false; visible (and the
+    // section knobs hidden) when true. Left-click toggles the EQ / COMP enable state;
+    // right-click opens the matching editor popup (openEqEditorPopup / openCompEditorPopup)
+    // so the user can tweak without expanding the strip. Mirrors ChannelStripComponent's
+    // eqCompactButton / compCompactButton grammar.
     SectionPillButton eqCompactButton  { "EQ"   };
     SectionPillButton compCompactButton { "COMP" };
     // Compact-mode popups: clicking the placeholder button shows a
