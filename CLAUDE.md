@@ -26,15 +26,11 @@ Single canonical build dir on both OSes: `build/` (app) and `build-tests/` (Catc
 | OS    | App build | Tests build      | JUCE source                              | Plugins source                 |
 |-------|-----------|------------------|------------------------------------------|--------------------------------|
 | macOS | `build/`  | `build-tests/`   | `../JUCE` (upstream)                     | `../plugins` (any branch)      |
-| Linux | `build/`  | `build-tests/`   | `../JUCE-wayland` (plugdata-team fork)   | `../plugins-main` (worktree)   |
+| Linux | `build/`  | `build-tests/`   | `../JUCE-wayland` (plugdata-team fork)   | `../plugins` (single checkout, main) |
 
 CMake auto-detects:
 - **JUCE** — on Linux it prefers `../JUCE-wayland` if present, falls back to `../JUCE`. The wayland fork has 5 local commits Dusk Studio depends on (XEmbed mapping, X11-on-Wayland fix, peer-creation latch — see [memory](../../.claude/projects/-home-marc-projects-Dusk Studio/memory/linux_juce_wayland_pin.md)) and a divergent `addDefaultFormatsToManager` free function.
-- **Plugins** — prefers `../plugins-main` over `../plugins`. The `plugins-main` directory is a git worktree pinned to the plugins repo's `main` branch so feature-branch work in `../plugins/` doesn't break Dusk Studio's expected donor API. Set up once on Linux:
-  ```bash
-  cd ../plugins && git worktree add ../plugins-main main
-  ```
-  Mac dev typically stays on `main` of `../plugins` and skips the worktree.
+- **Plugins** — the donor is a single checkout at `../plugins`, kept on `main` as its resting state (the stable donor API). Auto-detected from the sibling `../plugins` directory; override with `-DDUSK_PLUGINS_PATH=/path/to/plugins`. If `../plugins` is ever on a feature branch when you build, you build against *that* branch — check it out to `main` first if you need the released donor API. (The former `../plugins-main` worktree was removed; the repo is consolidated to one directory. Do NOT run `git worktree add ../plugins-main main` — `main` is already checked out at `../plugins` and git will refuse it.)
 
 The upstream-vs-fork `addDefaultFormats` API split is hidden behind [src/engine/JuceCompat.h](src/engine/JuceCompat.h) — call `duskstudio::juce_compat::addDefaultFormats(fm)` and the `#if defined(__linux__)` lives in one place. Don't sprinkle new platform `#ifdef`s into call sites.
 
