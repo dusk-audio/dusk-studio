@@ -10,6 +10,9 @@
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
   #include "../engine/clap/NativeClapSlot.h"   // Linux-only native CLAP host
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+  #include "../engine/lv2/NativeLv2Slot.h"     // Linux-only native LV2 host
+#endif
 #include "HardwareInsertSlot.h"
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
@@ -74,6 +77,21 @@ public:
     bool isNativeClapLoaded() const noexcept { return false; }
     void unloadNativeClap() noexcept {}
     bool nativeClapReloadFailed() const noexcept { return false; }
+#endif
+
+    // Native LV2 host path — same contract as the CLAP block above.
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+    bool loadNativeLv2   (const juce::File& path, std::string& errorOut);
+    void unloadNativeLv2() noexcept;
+    bool isNativeLv2Loaded() const noexcept { return nativeLv2Slot.isLoaded(); }
+    lv2::NativeLv2Slot&       getNativeLv2Slot()       noexcept { return nativeLv2Slot; }
+    const lv2::NativeLv2Slot& getNativeLv2Slot() const noexcept { return nativeLv2Slot; }
+    void setPendingNativeLv2 (const juce::File& path, std::vector<uint8_t> state) noexcept;
+    bool nativeLv2ReloadFailed() const noexcept { return lv2ReloadFailed.load (std::memory_order_relaxed); }
+#else
+    bool isNativeLv2Loaded() const noexcept { return false; }
+    void unloadNativeLv2() noexcept {}
+    bool nativeLv2ReloadFailed() const noexcept { return false; }
 #endif
 
     // Hardware vs plugin insert: one runs per block, chosen by
@@ -179,6 +197,10 @@ private:
     clap::NativeClapSlot nativeClapSlot;   // native CLAP alternative to pluginSlot
     std::atomic<bool>    nativeReloadFailed { false };   // prepare()-time reactivate/restore failed
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+    lv2::NativeLv2Slot nativeLv2Slot;      // native LV2 alternative to pluginSlot
+    std::atomic<bool>  lv2ReloadFailed { false };
+#endif
     HardwareInsertSlot hardwareSlot;
 
     // Stashed in prepare() so loadNativeClap / pending-restore can (re)activate at spec.
@@ -187,6 +209,10 @@ private:
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
     juce::String         pendingClapPath;    // session-restore load consummated by prepare()
     std::vector<uint8_t> pendingClapState;
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+    juce::String         pendingLv2Path;
+    std::vector<uint8_t> pendingLv2State;
 #endif
 
     // activeInsertMode = what we're currently running; insertMode = what

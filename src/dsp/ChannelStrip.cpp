@@ -111,6 +111,25 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
         pendingClapState.clear();
     }
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+    if (nativeLv2Slot.isLoaded())
+    {
+        std::string err;
+        const bool ok = nativeLv2Slot.reactivate (preparedSampleRate, preparedBlockSize, err);
+        lv2ReloadFailed.store (! ok, std::memory_order_relaxed);
+    }
+    else if (pendingLv2Path.isNotEmpty())
+    {
+        const juce::File p (pendingLv2Path);
+        std::string err;
+        const bool ok = nativeLv2Slot.load (p, preparedSampleRate, preparedBlockSize, err);
+        if (ok && ! pendingLv2State.empty())
+            nativeLv2Slot.loadState (pendingLv2State);
+        lv2ReloadFailed.store (! ok, std::memory_order_relaxed);
+        pendingLv2Path.clear();
+        pendingLv2State.clear();
+    }
+#endif
 
     // Oversampling: build a Dusk Studio-side wrapper around (EQ + Comp) when the
     // user picks 2× / 4× in Audio Settings. The donor's BritishEQ console
@@ -462,6 +481,32 @@ void ChannelStrip::setPendingNativeClap (const juce::File& path, std::vector<uin
 }
 #endif
 
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+bool ChannelStrip::loadNativeLv2 (const juce::File& path, std::string& errorOut)
+{
+    if (preparedSampleRate <= 0.0 || preparedBlockSize <= 0)
+    { errorOut = "channel strip not prepared"; return false; }
+    const bool ok = nativeLv2Slot.load (path, preparedSampleRate, preparedBlockSize, errorOut);
+    // A user-initiated load always ends any "failed restore" state (see loadNativeClap).
+    lv2ReloadFailed.store (false, std::memory_order_relaxed);
+    return ok;
+}
+
+void ChannelStrip::unloadNativeLv2() noexcept
+{
+    nativeLv2Slot.unload();
+    lv2ReloadFailed.store (false, std::memory_order_relaxed);
+    pendingLv2Path.clear();
+    pendingLv2State.clear();
+}
+
+void ChannelStrip::setPendingNativeLv2 (const juce::File& path, std::vector<uint8_t> state) noexcept
+{
+    pendingLv2Path  = path.getFullPathName();
+    pendingLv2State = std::move (state);
+}
+#endif
+
 void ChannelStrip::relatchPdcIfDrained (float blockPeakAbs, int numSamples) noexcept
 {
     // Track how long the signal feeding the delay has been silent. We only
@@ -727,6 +772,19 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             }
             else
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+            if (nativeLv2Slot.isLoaded())
+            {
+                // Same stereo-only mono fold as the CLAP branch above.
+                std::memcpy (insertScratchR.data(), tempMono.data(), sizeof (float) * (size_t) numSamples);
+                nativeLv2Slot.processStereo (tempMono.data(), insertScratchR.data(),
+                                             tempMono.data(), insertScratchR.data(), numSamples);
+                for (int i = 0; i < numSamples; ++i)
+                    tempMono[(size_t) i] = 0.5f
+                        * (tempMono[(size_t) i] + insertScratchR[(size_t) i]);
+            }
+            else
+#endif
             {
                 pluginMidiScratch.clear();
                 pluginSlot.processMonoBlock (tempMono.data(), numSamples, pluginMidiScratch);
@@ -904,6 +962,11 @@ void ChannelStrip::processAndAccumulate (const float* inL,
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
                 if (nativeClapSlot.isLoaded())
                     nativeClapSlot.processStereo (L, R, L, R, numSamples);
+                else
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+                if (nativeLv2Slot.isLoaded())
+                    nativeLv2Slot.processStereo (L, R, L, R, numSamples);
                 else
 #endif
                 {
