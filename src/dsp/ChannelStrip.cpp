@@ -93,16 +93,20 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     {
         // Re-activate in place — a full reload would destroy the instance the editor's
         // GUI is attached to (plugin->destroy with a live GUI aborts u-he plugins) and
-        // reset the plugin's parameters.
+        // reset the plugin's parameters. Track failure so the save path keeps the
+        // persisted path instead of mistaking a failed re-activate for a user removal.
         std::string err;
-        nativeClapSlot.reactivate (preparedSampleRate, preparedBlockSize, err);
+        const bool ok = nativeClapSlot.reactivate (preparedSampleRate, preparedBlockSize, err);
+        nativeReloadFailed.store (! ok, std::memory_order_relaxed);
     }
     else if (pendingClapPath.isNotEmpty())
     {
         const juce::File p (pendingClapPath);
         std::string err;
-        if (nativeClapSlot.load (p, preparedSampleRate, preparedBlockSize, err) && ! pendingClapState.empty())
+        const bool ok = nativeClapSlot.load (p, preparedSampleRate, preparedBlockSize, err);
+        if (ok && ! pendingClapState.empty())
             nativeClapSlot.loadState (pendingClapState);
+        nativeReloadFailed.store (! ok, std::memory_order_relaxed);
         pendingClapPath.clear();
         pendingClapState.clear();
     }
@@ -435,12 +439,18 @@ bool ChannelStrip::loadNativeClap (const juce::File& path, std::string& errorOut
 {
     if (preparedSampleRate <= 0.0 || preparedBlockSize <= 0)
     { errorOut = "channel strip not prepared"; return false; }
-    return nativeClapSlot.load (path, preparedSampleRate, preparedBlockSize, errorOut);
+    const bool ok = nativeClapSlot.load (path, preparedSampleRate, preparedBlockSize, errorOut);
+    // A user-initiated load is not a restore, so it always ends any "failed restore"
+    // state — whether it succeeds (recovered) or fails (caller clears the persisted
+    // refs). Clearing unconditionally keeps the flag's meaning independent of the caller.
+    nativeReloadFailed.store (false, std::memory_order_relaxed);
+    return ok;
 }
 
 void ChannelStrip::unloadNativeClap() noexcept
 {
     nativeClapSlot.unload();
+    nativeReloadFailed.store (false, std::memory_order_relaxed);   // slot reset — clear stale failure
     pendingClapPath.clear();
     pendingClapState.clear();
 }

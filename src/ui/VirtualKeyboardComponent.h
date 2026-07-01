@@ -98,10 +98,12 @@ private:
         // Note Off fires once it reaches kReleaseScans (see debounce note above).
         int silentScans { 0 };
     };
-    // ~66 ms at the 30 Hz scan rate. With XQueryKeymap ground truth a single
-    // scan would do; this just absorbs a one-off stale read while keeping
-    // release latency imperceptible.
-    static constexpr int kReleaseScans = 2;
+    // ~100 ms at the 30 Hz scan rate. With XQueryKeymap ground truth a single
+    // scan would do; the extra scans absorb a one-off stale read while keeping
+    // release latency imperceptible — and leave a window (silentScans in
+    // [kReleaseScans-1, kReleaseScans)) where a fast re-press can retrigger on
+    // CONFIRMED release evidence rather than a lone stale increment.
+    static constexpr int kReleaseScans = 3;
     std::array<HeldNote, 128> held {};
 
     // Single slot for the note currently being mouse-pressed (separate

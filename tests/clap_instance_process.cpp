@@ -34,7 +34,9 @@ TEST_CASE ("ClapInstance loads + processes a real CLAP plugin", "[clap][instance
     // Single-plugin fixture (e.g. DuskVerb), so front() is deterministic.
     REQUIRE (inst.create (bundle, bundle.plugins().front().id, err));
     REQUIRE (inst.activate (48000.0, 512, err));
-    REQUIRE (inst.outputChannels() >= 1);
+    // create() rejects anything but stereo-in/stereo-out, so a plugin that reaches here
+    // is 2/2 — assert it before driving the stereo processStereo assertions below.
+    REQUIRE (inst.outputChannels() == 2);
 
     constexpr int kBlock = 512;
     constexpr int kBlocks = 40;   // drive enough blocks for any tail to settle

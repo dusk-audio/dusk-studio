@@ -53,6 +53,7 @@ private:
 
     juce::Label titleLabel;
     juce::TextEditor filterEditor;
+    juce::TextButton groupBtn       { "Group: Maker" };
     juce::TextButton cancelBtn      { "Close" };
     juce::TextButton scanBtn        { "Scan plugins" };
     juce::TextButton browseBtn      { "Browse file..." };
@@ -60,6 +61,7 @@ private:
     juce::TextButton soundfontBtn   { "Load Soundfont" };
 
     std::unique_ptr<ListBody> listBody;
+    bool groupByType { false };
 
     static constexpr int kPad      = 10;
     static constexpr int kTitleH   = 28;

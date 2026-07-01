@@ -57,9 +57,9 @@ FreezeDialog::FreezeDialog (AudioEngine& e, Session& s,
 
     titleLabel.setText ("Freezing " + session.track (trackIndex).name + "...",
                          juce::dontSendNotification);
-    const bool isMidi = session.track (trackIndex).mode.load (std::memory_order_relaxed)
-                          == (int) Track::Mode::Midi;
-    statusLabel.setText (isMidi
+    isMidiTrack = session.track (trackIndex).mode.load (std::memory_order_relaxed)
+                    == (int) Track::Mode::Midi;
+    statusLabel.setText (isMidiTrack
                              ? "Rendering instrument + insert + EQ + comp to audio..."
                              : "Rendering insert + EQ + comp to audio...",
                          juce::dontSendNotification);
@@ -139,7 +139,9 @@ void FreezeDialog::finalizeIfStopped()
             committed = true;
         }
         titleLabel.setText ("Track frozen", juce::dontSendNotification);
-        statusLabel.setText ("Instrument bypassed — playing from rendered audio.",
+        statusLabel.setText (isMidiTrack
+                                 ? "Instrument bypassed — playing from rendered audio."
+                                 : "Insert + EQ + comp bypassed — playing from rendered audio.",
                              juce::dontSendNotification);
         progressValue = 1.0;
         progressBar.repaint();

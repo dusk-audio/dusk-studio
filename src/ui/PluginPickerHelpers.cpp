@@ -646,18 +646,19 @@ public:
 
         constexpr int kBigBtnH = 44;
         constexpr int kGap     = 8;
-        if (hwVisible)
-        {
-            hwBtn.setBounds (area.removeFromTop (kBigBtnH));
-            area.removeFromTop (kGap);
-        }
+        pluginBtn.setBounds (area.removeFromTop (kBigBtnH));
+        area.removeFromTop (kGap);
         if (sfVisible)
         {
             sfBtn.setBounds (area.removeFromTop (kBigBtnH));
             area.removeFromTop (kGap);
         }
-        pluginBtn.setBounds (area.removeFromTop (kBigBtnH));
-        area.removeFromTop (14);
+        if (hwVisible)
+        {
+            hwBtn.setBounds (area.removeFromTop (kBigBtnH));
+            area.removeFromTop (kGap);
+        }
+        area.removeFromTop (14 - kGap);
 
         // Cancel pinned to the bottom, slightly narrower so it reads as
         // secondary action vs the three big choice buttons above.

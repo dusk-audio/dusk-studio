@@ -170,7 +170,11 @@ bool VirtualKeyboardComponent::keyPressed (const juce::KeyPress& k)
     //     sounding old note, then Note On the new one.
     if (held[(size_t) code].note >= 0)
     {
-        if (held[(size_t) code].silentScans > 0)
+        // Retrigger only on CONFIRMED release evidence — the key must have read
+        // not-down for at least kReleaseScans-1 consecutive scans. A lone silentScans
+        // increment (one stale read) coinciding with an auto-repeat keyPressed must NOT
+        // fire a spurious Note Off / Note On on a note that's really still held.
+        if (held[(size_t) code].silentScans >= kReleaseScans - 1)
         {
             sendNoteOff (held[(size_t) code].note, held[(size_t) code].channel);
             held[(size_t) code] = { note, channel };

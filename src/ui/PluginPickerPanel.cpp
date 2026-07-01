@@ -10,39 +10,77 @@ namespace duskstudio
 class PluginPickerPanel::ListBody final : public juce::Component
 {
 public:
+    enum class Group { Manufacturer, Type };
+
     ListBody (juce::Array<juce::PluginDescription> descs,
               std::function<void (const juce::PluginDescription&)> picker)
-        : onPick (std::move (picker))
+        : rawDescs (std::move (descs)), onPick (std::move (picker))
     {
+        rebuild();
+    }
+
+    void setGroup (Group g)
+    {
+        if (g == group) return;
+        group = g;
+        rebuild();
+    }
+
+    // Header key a description sorts/groups under, per current group mode.
+    static juce::String groupKeyFor (const juce::PluginDescription& d, Group g)
+    {
+        if (g == Group::Manufacturer)
+            return d.manufacturerName.isEmpty() ? juce::String ("(unknown)")
+                                                : d.manufacturerName;
+
+        // Type: the plugin category, reduced to its most specific token
+        // ("Fx|EQ" -> "EQ"). Falls back to instrument/effect when the
+        // scanned description carries no category (e.g. native CLAP).
+        auto cat = d.category.trim();
+        if (cat.containsChar ('|'))
+            cat = cat.fromLastOccurrenceOf ("|", false, false).trim();
+        if (cat.isNotEmpty())
+            return cat;
+        return d.isInstrument ? juce::String ("Instrument") : juce::String ("Effect");
+    }
+
+    void rebuild()
+    {
+        auto descs = rawDescs;
+        const auto g = group;
         std::sort (descs.begin(), descs.end(),
-            [] (const juce::PluginDescription& a, const juce::PluginDescription& b)
+            [g] (const juce::PluginDescription& a, const juce::PluginDescription& b)
             {
-                if (a.manufacturerName != b.manufacturerName)
-                    return a.manufacturerName.compareIgnoreCase (b.manufacturerName) < 0;
+                const auto ka = groupKeyFor (a, g);
+                const auto kb = groupKeyFor (b, g);
+                if (ka != kb) return ka.compareIgnoreCase (kb) < 0;
                 return a.name.compareIgnoreCase (b.name) < 0;
             });
 
-        juce::String currentManu;
+        allEntries.clear();
+        juce::String currentKey;
+        bool first = true;
         for (int i = 0; i < descs.size(); ++i)
         {
             const auto& d = descs.getReference (i);
-            const auto manu = d.manufacturerName.isEmpty() ? juce::String ("(unknown)")
-                                                            : d.manufacturerName;
-            if (manu != currentManu)
+            const auto key = groupKeyFor (d, g);
+            if (first || key != currentKey)
             {
-                allEntries.push_back ({ true, manu, {} });
-                currentManu = manu;
+                allEntries.push_back ({ true, key, {} });
+                currentKey = key;
+                first = false;
             }
             juce::String label = d.name;
             if (d.pluginFormatName.isNotEmpty())
                 label += "  (" + d.pluginFormatName + ")";
             allEntries.push_back ({ false, label, d });
         }
-        applyFilter ({});
+        applyFilter (currentFilter);
     }
 
     void applyFilter (const juce::String& needle)
     {
+        currentFilter = needle;
         visibleEntries.clear();
         if (needle.isEmpty())
         {
@@ -216,6 +254,9 @@ private:
         g.fillRect (x + 1, thumbY, kScrollbarW - 2, thumbH);
     }
 
+    juce::Array<juce::PluginDescription> rawDescs;
+    Group group = Group::Manufacturer;
+    juce::String currentFilter;
     std::vector<Entry> allEntries;
     std::vector<Entry> visibleEntries;
     std::function<void (const juce::PluginDescription&)> onPick;
@@ -258,6 +299,18 @@ PluginPickerPanel::PluginPickerPanel (juce::Array<juce::PluginDescription> descr
     styleBtn (browseBtn);
     styleBtn (hwInsertBtn);
     styleBtn (soundfontBtn);
+    styleBtn (groupBtn);
+
+    groupBtn.setTooltip ("Toggle plugin list grouping between manufacturer and type.");
+    groupBtn.onClick = [this]
+    {
+        groupByType = ! groupByType;
+        groupBtn.setButtonText (groupByType ? "Group: Type" : "Group: Maker");
+        if (listBody != nullptr)
+            listBody->setGroup (groupByType ? ListBody::Group::Type
+                                            : ListBody::Group::Manufacturer);
+    };
+    addAndMakeVisible (groupBtn);
 
     cancelBtn.onClick     = [this] { if (callbacks_.onCancel)         callbacks_.onCancel(); };
     scanBtn.onClick       = [this] { if (callbacks_.onScan)           callbacks_.onScan(); };
@@ -305,6 +358,8 @@ void PluginPickerPanel::resized()
     area.removeFromTop (6);
 
     auto filterRow = area.removeFromTop (kFilterH);
+    groupBtn.setBounds (filterRow.removeFromRight (110));
+    filterRow.removeFromRight (6);
     filterEditor.setBounds (filterRow);
     area.removeFromTop (8);
 

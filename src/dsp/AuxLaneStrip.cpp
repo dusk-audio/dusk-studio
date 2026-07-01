@@ -83,8 +83,9 @@ bool AuxLaneStrip::loadNativeClap (int slotIdx, const juce::File& path, std::str
     if (preparedSampleRate <= 0.0 || preparedBlockSize <= 0)
     { errorOut = "aux lane not prepared"; return false; }
     const bool ok = nativeClapSlots[(size_t) slotIdx].load (path, preparedSampleRate, preparedBlockSize, errorOut);
-    if (ok)
-        nativeReloadFailed[(size_t) slotIdx].store (false, std::memory_order_relaxed);   // recovered
+    // User-initiated load always ends any "failed restore" state (see ChannelStrip::
+    // loadNativeClap) — clear regardless of outcome so the flag stays caller-independent.
+    nativeReloadFailed[(size_t) slotIdx].store (false, std::memory_order_relaxed);
     return ok;
 }
 

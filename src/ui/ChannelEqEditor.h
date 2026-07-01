@@ -9,7 +9,7 @@ namespace duskstudio
 {
 // Overlay editor for a channel's 4-band EQ. Constructed each time the user
 // clicks the strip's "EQ" button - controls bind to the same atomics on the
-// Track, so values persist across open/close. Designed for juce::CallOutBox.
+// Track, so values persist across open/close. Hosted in an EmbeddedModal.
 class ChannelEqEditor final : public juce::Component
 {
 public:

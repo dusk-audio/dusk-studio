@@ -816,6 +816,7 @@ bool RecordCommitAction::perform()
     for (const auto& d : diffs)
     {
         if (d.trackIndex < 0 || d.trackIndex >= Session::kNumTracks) continue;
+        if (frozenLocked (session, d.trackIndex)) continue;   // frozen track is edit-locked
         session.track (d.trackIndex).regions = d.audioAfter;
         session.track (d.trackIndex).midiRegions.mutate (
             [&d] (std::vector<MidiRegion>& mregs) { mregs = d.midiAfter; });
@@ -829,6 +830,7 @@ bool RecordCommitAction::undo()
     for (const auto& d : diffs)
     {
         if (d.trackIndex < 0 || d.trackIndex >= Session::kNumTracks) continue;
+        if (frozenLocked (session, d.trackIndex)) continue;   // frozen track is edit-locked
         session.track (d.trackIndex).regions = d.audioBefore;
         session.track (d.trackIndex).midiRegions.mutate (
             [&d] (std::vector<MidiRegion>& mregs) { mregs = d.midiBefore; });

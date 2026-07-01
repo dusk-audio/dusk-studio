@@ -1265,7 +1265,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     refreshInputSelectorVisibility();
 
     // I/O config button. Replaces the inline mode/input/midi rows; opens a
-    // CallOutBox populated with those widgets when clicked. Saves ~60 px
+    // modal populated with those widgets when clicked. Saves ~60 px
     // vertical per strip without losing access to any setting.
     ioConfigButton.setColour (juce::TextButton::buttonColourId,  juce::Colour (0xff222226));
     ioConfigButton.setColour (juce::TextButton::textColourOffId, juce::Colour (0xffa0a8b8));
@@ -1509,16 +1509,13 @@ ChannelStripComponent::~ChannelStripComponent()
     // window is closing), force-delete it so its content (which references
     // `track`) doesn't outlive us. Same SafePointer pattern as the audio
     // settings dialog in MainComponent.
-    // CallOutBoxes auto-clean themselves when their content is deleted, but
-    // we dismiss any in-flight box so it disappears immediately rather than
-    // lingering through the next message-loop tick.
-    if (auto* eq   = activeEqBox.getComponent())   eq->dismiss();
-    if (auto* cmp  = activeCompBox.getComponent()) cmp->dismiss();
-    if (auto* aux  = activeAuxBox.getComponent())  aux->dismiss();
-    // I/O popup holds references to this strip's modeSelector / inputSelector
-    // children — must dismiss before the strip dies so the CallOutBox + its
-    // re-parented controls tear down cleanly.
-    if (auto* io   = activeIoBox.getComponent())   io->dismiss();
+    eqEditorModal.close();
+    compEditorModal.close();
+    auxEditorModal.close();
+    // I/O popup re-parents this strip's modeSelector / inputSelector children,
+    // so it must close LAST — before those combo members destruct — so its
+    // deferred body teardown doesn't outlive the controls it borrowed.
+    ioConfigModal.close();
     // Drop the cached editor BEFORE the strip's PluginSlot destructs,
     // since the editor's destructor calls editorBeingDeleted on its
     // owning AudioProcessor. dropPluginEditor() also closes the modal.
@@ -2461,6 +2458,9 @@ void ChannelStripComponent::loadNativeClapForChannel (const juce::File& clapFile
     }
 
     track.nativeClapPath = clapFile.getFullPathName();
+    // Fresh bundle: don't reuse the previous plugin's state blob. The next save
+    // re-captures this plugin's real state.
+    track.nativeClapStateBase64 = {};
     refreshPluginSlotButton();
     openPluginEditor();
 }
@@ -2472,27 +2472,6 @@ namespace
 // (+ MIDI activity LED) into a single column. When the popup closes the
 // widgets become orphans; ChannelStripComponent retains ownership and
 // state lives on Track atoms, so reopening the popup just re-parents.
-// CallOutBox subclass that ignores dismissal attempts while a nested
-// JUCE PopupMenu (e.g. a child ComboBox's dropdown) is the topmost
-// modal. The stock CallOutBox dismisses on any input outside its own
-// screen bounds — and the native ComboBox popup renders OUTSIDE those
-// bounds, so clicking Mono/Stereo/MIDI items in the IO popup's combo
-// otherwise closes the whole IO modal before the selection lands.
-class StickyCallOutBox : public juce::CallOutBox
-{
-public:
-    StickyCallOutBox (juce::Component& content,
-                       juce::Rectangle<int> areaToPointTo,
-                       juce::Component* parent)
-        : juce::CallOutBox (content, areaToPointTo, parent) {}
-
-    void inputAttemptWhenModal() override
-    {
-        if (juce::Component::getCurrentlyModalComponent() != this) return;
-        juce::CallOutBox::inputAttemptWhenModal();
-    }
-};
-
 class IoConfigPopup : public juce::Component
 {
 public:
@@ -2568,7 +2547,7 @@ private:
 
 void ChannelStripComponent::openIoConfigPopup()
 {
-    if (auto* existing = activeIoBox.getComponent()) { existing->dismiss(); return; }
+    if (ioConfigModal.isOpen()) { ioConfigModal.close(); return; }
 
     auto panel = std::make_unique<IoConfigPopup> (modeSelector, inputSelector, inputSelectorR,
                                                    midiInputSelector, midiChannelSelector,
@@ -2579,37 +2558,14 @@ void ChannelStripComponent::openIoConfigPopup()
 
     auto* topLevel = getTopLevelComponent();
     if (topLevel == nullptr) topLevel = this;
-    const auto anchor = topLevel->getLocalArea (this, ioConfigButton.getBounds());
 
-    // Replicate juce::CallOutBox::launchAsynchronously, but with the
-    // StickyCallOutBox subclass that holds itself open while a child
-    // ComboBox's native PopupMenu is the topmost modal.
-    auto* box = new StickyCallOutBox (*panel, anchor, topLevel);
-    box->setDismissalMouseClicksAreAlwaysConsumed (false);
-    box->setVisible (true);
-    box->enterModalState (true,
-        juce::ModalCallbackFunction::create (
-            [owned = std::move (panel)] (int) mutable
-            {
-                owned.reset();
-                // Return keyboard focus to the main view on dismiss. Without
-                // this the CallOutBox's modal exit leaves focus orphaned (on
-                // XWayland the focus traverser doesn't drill back into the
-                // content component), so Space / transport keys die until the
-                // user clicks the canvas. Mirrors EmbeddedModal::close().
-                if (auto* mc = EmbeddedModal::focusRestoreTarget().getComponent())
-                {
-                    mc->grabKeyboardFocus();
-                    juce::Component::SafePointer<juce::Component> safe (mc);
-                    juce::MessageManager::callAsync ([safe]() mutable
-                    {
-                        if (auto* c = safe.getComponent()) c->grabKeyboardFocus();
-                    });
-                }
-            }),
-        /*deleteWhenDismissed*/ true);
-    attachTransportKeyForwarder (*box);
-    activeIoBox = box;
+    // The panel borrows this strip's live combo children; owning show() adds
+    // them as its children and close() releases them back (re-parented on the
+    // next open). The DuskComboBox dropdowns render as nested in-window modals,
+    // so no CallOutBox-style "sticky while a native popup is up" guard is needed.
+    ioConfigModal.show (*topLevel, std::move (panel),
+                        /*onDismiss*/ {}, /*dismissOnClickOutside*/ true,
+                        /*dismissOnEscape*/ true, kEditorDimAlpha);
 }
 
 void ChannelStripComponent::refreshAuxSendLabel (int auxIdx)
@@ -2783,76 +2739,40 @@ void ChannelStripComponent::refreshIoConfigButton()
 
 void ChannelStripComponent::openEqEditorPopup()
 {
-    // Toggle: clicking EQ while EQ is up dismisses it. With CallOutBox the
-    // click that lands on the button while the box is open is consumed by
-    // the box's dismissal handler (setDismissalMouseClicksAreAlwaysConsumed
-    // below), so we never actually re-enter this function on the second
-    // click - the box dismisses itself and the button never sees the click.
-    // This branch handles programmatic toggle calls (e.g. keyboard shortcut).
-    if (auto* existing = activeEqBox.getComponent())
-    {
-        existing->dismiss();
-        return;
-    }
+    if (eqEditorModal.isOpen()) { eqEditorModal.close(); return; }
 
-    // Mutual exclusion: close the COMP popup if it's open.
-    if (auto* otherBox = activeCompBox.getComponent())
-        otherBox->dismiss();
+    // Mutual exclusion — one processing editor at a time.
+    if (compEditorModal.isOpen()) compEditorModal.close();
+    if (auxEditorModal.isOpen())  auxEditorModal.close();
 
     auto panel = std::make_unique<ChannelEqEditor> (track);
     panel->setSize (380, 648);   // match ChannelEqEditor's intrinsic height (full bell rows)
 
     auto* topLevel = getTopLevelComponent();
     if (topLevel == nullptr) topLevel = this;
-    const auto anchor = topLevel->getLocalArea (this, eqCompactButton.getBounds());
 
-    attachDimOverlay();
-    auto& box = juce::CallOutBox::launchAsynchronously (
-        std::move (panel), anchor, topLevel);
-    box.setDismissalMouseClicksAreAlwaysConsumed (true);
-    attachTransportKeyForwarder (box);
-    // Force the popup to fire from the RIGHT side of the button by
-    // restricting the available fit-area to the strip's right edge onward.
-    // Without this, JUCE's CallOutBox picks whichever side has the most
-    // space, which can drop below the button when the strip is centred.
-    {
-        const auto rightFit = topLevel->getLocalBounds()
-                                  .withTrimmedLeft (anchor.getRight());
-        box.updatePosition (anchor, rightFit);
-    }
-    activeEqBox = &box;
+    eqEditorModal.show (*topLevel, std::move (panel),
+                        /*onDismiss*/ {}, /*dismissOnClickOutside*/ true,
+                        /*dismissOnEscape*/ true, kEditorDimAlpha);
 }
 
 void ChannelStripComponent::openCompEditorPopup()
 {
-    if (auto* existing = activeCompBox.getComponent())
-    {
-        existing->dismiss();
-        return;
-    }
-    if (auto* otherBox = activeEqBox.getComponent())
-        otherBox->dismiss();
+    if (compEditorModal.isOpen()) { compEditorModal.close(); return; }
 
+    if (eqEditorModal.isOpen())  eqEditorModal.close();
+    if (auxEditorModal.isOpen()) auxEditorModal.close();
+
+    // ChannelCompEditor sizes itself in its ctor (uniform height across all
+    // comp modes — see refreshLabelsForMode), so it's fully sized before show().
     auto panel = std::make_unique<ChannelCompEditor> (track);
-    // Editor sets its own size based on the active comp mode (Opto is
-    // shorter than FET/VCA). The CallOutBox follows via childBoundsChanged.
 
     auto* topLevel = getTopLevelComponent();
     if (topLevel == nullptr) topLevel = this;
-    const auto anchor = topLevel->getLocalArea (this, compCompactButton.getBounds());
 
-    attachDimOverlay();
-    auto& box = juce::CallOutBox::launchAsynchronously (
-        std::move (panel), anchor, topLevel);
-    box.setDismissalMouseClicksAreAlwaysConsumed (true);
-    attachTransportKeyForwarder (box);
-    // Force right-side placement (same logic as the EQ popup).
-    {
-        const auto rightFit = topLevel->getLocalBounds()
-                                  .withTrimmedLeft (anchor.getRight());
-        box.updatePosition (anchor, rightFit);
-    }
-    activeCompBox = &box;
+    compEditorModal.show (*topLevel, std::move (panel),
+                          /*onDismiss*/ {}, /*dismissOnClickOutside*/ true,
+                          /*dismissOnEscape*/ true, kEditorDimAlpha);
 }
 
 namespace
@@ -3063,55 +2983,20 @@ private:
 
 void ChannelStripComponent::openAuxEditorPopup()
 {
-    if (auto* existing = activeAuxBox.getComponent())
-    {
-        existing->dismiss();
-        return;
-    }
-    // Mutual exclusion with the EQ / COMP popups.
-    if (auto* otherBox = activeEqBox.getComponent())   otherBox->dismiss();
-    if (auto* otherBox = activeCompBox.getComponent()) otherBox->dismiss();
+    if (auxEditorModal.isOpen()) { auxEditorModal.close(); return; }
 
+    if (eqEditorModal.isOpen())   eqEditorModal.close();
+    if (compEditorModal.isOpen()) compEditorModal.close();
+
+    // AuxSendsCompactPanel sizes itself in its ctor (setSize 260x130).
     auto panel = std::make_unique<AuxSendsCompactPanel> (track, session);
 
     auto* topLevel = getTopLevelComponent();
     if (topLevel == nullptr) topLevel = this;
-    const auto anchor = topLevel->getLocalArea (this, auxCompactButton.getBounds());
 
-    attachDimOverlay();
-    auto& box = juce::CallOutBox::launchAsynchronously (
-        std::move (panel), anchor, topLevel);
-    box.setDismissalMouseClicksAreAlwaysConsumed (true);
-    attachTransportKeyForwarder (box);
-    {
-        const auto rightFit = topLevel->getLocalBounds()
-                                  .withTrimmedLeft (anchor.getRight());
-        box.updatePosition (anchor, rightFit);
-    }
-    activeAuxBox = &box;
-}
-
-void ChannelStripComponent::attachDimOverlay()
-{
-    if (activeDimOverlay != nullptr) return;
-
-    auto* topLevel = getTopLevelComponent();
-    if (topLevel == nullptr) return;
-
-    // Lighter editor dim — the compact COMP/EQ/AUX callouts are processing
-    // editors; keep the strip meters behind readable while auditioning.
-    activeDimOverlay = std::make_unique<DimOverlay> (kEditorDimAlpha);
-    activeDimOverlay->setBounds (topLevel->getLocalBounds());
-    activeDimOverlay->onClick = [this]
-    {
-        if (auto* eq  = activeEqBox.getComponent())   eq->dismiss();
-        if (auto* cmp = activeCompBox.getComponent()) cmp->dismiss();
-        if (auto* aux = activeAuxBox.getComponent())  aux->dismiss();
-    };
-    topLevel->addAndMakeVisible (activeDimOverlay.get());
-    // CallOutBox::launchAsynchronously adds the box to the desktop / top
-    // level after this call returns; since it's added later, it ends up
-    // above the dim in z-order — exactly what we want.
+    auxEditorModal.show (*topLevel, std::move (panel),
+                         /*onDismiss*/ {}, /*dismissOnClickOutside*/ true,
+                         /*dismissOnEscape*/ true, kEditorDimAlpha);
 }
 
 int ChannelStripComponent::groupMasterIndex() const noexcept
@@ -3122,27 +3007,6 @@ int ChannelStripComponent::groupMasterIndex() const noexcept
         if (session.track (t).strip.faderGroupId.load (std::memory_order_relaxed) == gid)
             return t;
     return -1;
-}
-
-void ChannelStripComponent::detachDimOverlay()
-{
-    activeDimOverlay.reset();
-
-    // The compact COMP/EQ/AUX callouts just closed (only reached once all three
-    // SafePointers are null - see timerCallback). CallOutBox modal exit leaves
-    // keyboard focus orphaned on XWayland, so Space/transport keys die until the
-    // user clicks the UI. Return focus to the main view, same as
-    // openIoConfigPopup's dismissal path. Sync grab + a deferred one because the
-    // box's own teardown can re-steal focus after we return.
-    if (auto* target = EmbeddedModal::focusRestoreTarget().getComponent())
-    {
-        target->grabKeyboardFocus();
-        juce::Component::SafePointer<juce::Component> safe (target);
-        juce::MessageManager::callAsync ([safe]() mutable
-        {
-            if (auto* c = safe.getComponent()) c->grabKeyboardFocus();
-        });
-    }
 }
 
 void ChannelStripComponent::refreshFaderValueLabel()
@@ -3202,16 +3066,6 @@ void ChannelStripComponent::timerCallback()
         const auto& laneName = session.auxLane (i).name;
         if (! lbl.isBeingEdited() && lbl.getText (false) != laneName)
             lbl.setText (laneName, juce::dontSendNotification);
-    }
-
-    // Tear down the dim overlay once all popups have closed. Polling at
-    // 30 Hz is cheaper than wiring a ComponentListener on each CallOutBox.
-    if (activeDimOverlay != nullptr
-        && activeEqBox.getComponent() == nullptr
-        && activeCompBox.getComponent() == nullptr
-        && activeAuxBox.getComponent() == nullptr)
-    {
-        detachDimOverlay();
     }
 
     // MIDI activity LED. Read-and-clear the engine's flag each tick — a
@@ -4142,26 +3996,21 @@ void ChannelStripComponent::onTrackModeChanged()
     refreshPluginSlotButton();
     refreshIoConfigButton();
     refreshPrintButtonForMode();
-    // If the I/O popup is open it needs to grow / shrink (rows differ
-    // per mode: 2 for audio, 4 for MIDI). Setting the content's size
-    // triggers CallOutBox's auto-reflow — it repositions itself to
-    // accommodate the new content height. Walking the box's children
-    // and calling resized() alone is insufficient: that re-runs layout
-    // within the existing bounds, so the MIDI rows render outside the
-    // popup's visible area and the user only sees the mode dropdown.
-    //
-    // Also call resized() unconditionally after setSize: mono ↔ stereo
-    // both use rows == 2 so the height doesn't change, setSize becomes
-    // a no-op, and IoConfigPopup::resized() wouldn't fire — the inner
-    // layout (full-width mono input vs L/R halves) would stay frozen
-    // on whichever mode the popup was opened with.
-    if (auto* box = activeIoBox.getComponent())
+    // If the I/O popup is open it needs to grow / shrink (rows differ per
+    // mode: 2 for audio, 4 for MIDI), then re-centre — EmbeddedModal centres
+    // only at show() time, so a plain setSize would leave the grown MIDI panel
+    // anchored off-centre with its extra rows clipped. resized() runs
+    // unconditionally after setSize because mono ↔ stereo both use rows == 2
+    // (no height change → setSize no-ops), yet the inner layout still differs
+    // (full-width mono input vs L/R halves) and must re-lay-out.
+    if (ioConfigModal.isOpen())
     {
-        if (auto* content = box->getChildComponent (0))
+        if (auto* body = ioConfigModal.getBody())
         {
             const int rows = (mode == 2) ? 4 : 2;
-            content->setSize (240, 8 + rows * 24 + (rows - 1) * 6 + 8);
-            content->resized();
+            body->setSize (240, 8 + rows * 24 + (rows - 1) * 6 + 8);
+            body->resized();
+            ioConfigModal.recenterBody();
         }
     }
     // Resize so the layout reflects the new mode (extra dropdown for stereo,

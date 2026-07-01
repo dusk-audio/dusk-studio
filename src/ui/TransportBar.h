@@ -109,7 +109,9 @@ private:
 
     // < threshold = brief press (marker jump / stop modifier on mouse-up).
     // >= threshold = hold (scrub timer drives playhead until release).
-    static constexpr int kHoldThresholdMs   = 180;
+    // Kept well above natural single-click duration (~100-300 ms) so a
+    // deliberate tap is never misread as a scrub-hold and swallowed.
+    static constexpr int kHoldThresholdMs   = 400;
     static constexpr float kScrubMultiplier = 10.0f;
     juce::int64 rewPressedAtMs  = 0;
     juce::int64 ffwdPressedAtMs = 0;

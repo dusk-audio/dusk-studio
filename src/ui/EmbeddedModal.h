@@ -318,6 +318,21 @@ public:
                                               topLeftInParent.y - kBackdropMargin);
     }
 
+    // Re-centre the body (and its backdrop) on the host after the caller has
+    // resized it while the modal is open. show() centres once at open time; a
+    // body that grows/shrinks in place (e.g. the I/O popup gaining MIDI rows)
+    // must call this or it stays anchored at its old top-left, off-centre.
+    void recenterBody()
+    {
+        auto* body = getBody();
+        if (body == nullptr || host == nullptr) return;
+        const auto bounds = host->getLocalBounds();
+        const auto bodyBounds = bounds.withSizeKeepingCentre (
+            juce::jmin (juce::jmax (1, body->getWidth()),  bounds.getWidth()  - 16),
+            juce::jmin (juce::jmax (1, body->getHeight()), bounds.getHeight() - 16));
+        repositionBody (bodyBounds.getTopLeft());
+    }
+
 private:
     bool keyPressed (const juce::KeyPress& k, juce::Component*) override
     {

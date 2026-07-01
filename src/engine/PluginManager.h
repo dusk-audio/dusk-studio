@@ -98,6 +98,14 @@ private:
 
     void loadCache();
     void saveCache() const;
+
+    // Native CLAP descriptions persist in their own sidecar cache (knownPluginList is
+    // JUCE-formats only). Loaded at construction, rewritten after each scanClapPlugins.
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+    juce::File getClapCacheFile() const;
+    void loadClapCache();
+    void saveClapCache() const;
+#endif
 };
 
 inline juce::String PluginManager::getHostExecutablePath() const

@@ -49,8 +49,9 @@ enum class PluginKind { Effects, Instruments };
 // hardware inserts).
 // `onPickNativeClap`, when set, MERGES native-CLAP plugins (PluginManager's CLAP
 // scan) into the list tagged "(CLAP)" and routes a CLAP selection here (the .clap
-// bundle path) instead of the JUCE loader — used by surfaces with a native CLAP host
-// (aux lanes). Unset → no CLAP rows (e.g. channel strips, which host via JUCE only).
+// bundle path) instead of the JUCE loader. Used by every surface with a native CLAP
+// host — aux lanes AND channel-strip effect slots — which expose CLAP rows alongside
+// their JUCE-hosted VST3/LV2/AU. Unset → no CLAP rows (surfaces without a native host).
 void openPickerMenu (PluginSlot& slot,
                       juce::Component& target,
                       std::unique_ptr<juce::FileChooser>& chooserOwner,
