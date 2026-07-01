@@ -42,6 +42,30 @@ void AuxLaneStrip::prepare (double sampleRate, int blockSize)
         }
     }
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+    for (int s = 0; s < kMaxPlugins; ++s)
+    {
+        auto& nls = nativeLv2Slots[(size_t) s];
+        if (nls.isLoaded())
+        {
+            std::string err;
+            const bool ok = nls.reactivate (preparedSampleRate, preparedBlockSize, err);
+            lv2ReloadFailed[(size_t) s].store (! ok, std::memory_order_relaxed);
+        }
+        else if (pendingLv2Path[(size_t) s].isNotEmpty()
+                 && ! isNativeClapLoaded (s))   // both pendings set (corrupt session): CLAP wins
+        {
+            const juce::File p (pendingLv2Path[(size_t) s]);
+            std::string err;
+            const bool ok = nls.load (p, preparedSampleRate, preparedBlockSize, err);
+            if (ok && ! pendingLv2State[(size_t) s].empty())
+                nls.loadState (pendingLv2State[(size_t) s]);
+            lv2ReloadFailed[(size_t) s].store (! ok, std::memory_order_relaxed);
+            pendingLv2Path[(size_t) s].clear();
+            pendingLv2State[(size_t) s].clear();
+        }
+    }
+#endif
 
     constexpr double rampSeconds = 0.020;
     returnGain.reset (sampleRate, rampSeconds);
@@ -82,6 +106,11 @@ bool AuxLaneStrip::loadNativeClap (int slotIdx, const juce::File& path, std::str
     jassert (slotIdx >= 0 && slotIdx < kMaxPlugins);
     if (preparedSampleRate <= 0.0 || preparedBlockSize <= 0)
     { errorOut = "aux lane not prepared"; return false; }
+    // One host per slot: evict the other native format and any JUCE plugin so the
+    // audio chain (CLAP → LV2 → JUCE) never sees two loaded. Callers fence the
+    // audio thread around this call.
+    unloadNativeLv2 (slotIdx);
+    slots[(size_t) slotIdx].unload();
     const bool ok = nativeClapSlots[(size_t) slotIdx].load (path, preparedSampleRate, preparedBlockSize, errorOut);
     // User-initiated load always ends any "failed restore" state (see ChannelStrip::
     // loadNativeClap) — clear regardless of outcome so the flag stays caller-independent.
@@ -104,6 +133,38 @@ void AuxLaneStrip::setPendingNativeClap (int slotIdx, const juce::File& path,
     jassert (slotIdx >= 0 && slotIdx < kMaxPlugins);
     pendingClapPath[(size_t) slotIdx]  = path.getFullPathName();
     pendingClapState[(size_t) slotIdx] = std::move (state);
+}
+#endif
+
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+bool AuxLaneStrip::loadNativeLv2 (int slotIdx, const juce::File& path, std::string& errorOut)
+{
+    jassert (slotIdx >= 0 && slotIdx < kMaxPlugins);
+    if (preparedSampleRate <= 0.0 || preparedBlockSize <= 0)
+    { errorOut = "aux lane not prepared"; return false; }
+    // One host per slot — see loadNativeClap.
+    unloadNativeClap (slotIdx);
+    slots[(size_t) slotIdx].unload();
+    const bool ok = nativeLv2Slots[(size_t) slotIdx].load (path, preparedSampleRate, preparedBlockSize, errorOut);
+    lv2ReloadFailed[(size_t) slotIdx].store (false, std::memory_order_relaxed);
+    return ok;
+}
+
+void AuxLaneStrip::unloadNativeLv2 (int slotIdx) noexcept
+{
+    jassert (slotIdx >= 0 && slotIdx < kMaxPlugins);
+    nativeLv2Slots[(size_t) slotIdx].unload();
+    lv2ReloadFailed[(size_t) slotIdx].store (false, std::memory_order_relaxed);
+    pendingLv2Path[(size_t) slotIdx].clear();
+    pendingLv2State[(size_t) slotIdx].clear();
+}
+
+void AuxLaneStrip::setPendingNativeLv2 (int slotIdx, const juce::File& path,
+                                         std::vector<uint8_t> state) noexcept
+{
+    jassert (slotIdx >= 0 && slotIdx < kMaxPlugins);
+    pendingLv2Path[(size_t) slotIdx]  = path.getFullPathName();
+    pendingLv2State[(size_t) slotIdx] = std::move (state);
 }
 #endif
 
@@ -204,6 +265,11 @@ void AuxLaneStrip::processStereoBlock (float* L, float* R, int numSamples,
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
             if (nativeClapSlots[sIdx].isLoaded())
                 nativeClapSlots[sIdx].processStereo (L, R, L, R, numSamples);
+            else
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+            if (nativeLv2Slots[sIdx].isLoaded())
+                nativeLv2Slots[sIdx].processStereo (L, R, L, R, numSamples);
             else
 #endif
                 slots[sIdx].processStereoBlock (L, R, numSamples, pluginMidiScratch);

@@ -750,6 +750,23 @@ void AuxLaneComponent::openPickerForSlot (int slotIdx)
                                             self->strip.insertMode[(size_t) slotIdx]
                                                 .store (AuxLaneStrip::kInsertPlugin,
                                                          std::memory_order_release);
+
+                                            // One host per slot: a successful JUCE load evicts any
+                                            // native slot — the audio chain checks natives first, so
+                                            // a lingering native would shadow the picked plugin.
+                                            if (self->strip.getPluginSlot (slotIdx).isLoaded()
+                                                && (self->strip.isNativeClapLoaded (slotIdx)
+                                                    || self->strip.isNativeLv2Loaded (slotIdx)))
+                                            {
+                                                self->detachClapEditorForSlot (slotIdx);
+                                                self->engine.suspendProcessing();
+                                                self->strip.unloadNativeClap (slotIdx);
+                                                self->strip.unloadNativeLv2 (slotIdx);
+                                                self->engine.resumeProcessing();
+                                                self->lane.nativeClapPath[(size_t) slotIdx].clear();
+                                                self->lane.nativeClapStateBase64[(size_t) slotIdx].clear();
+                                            }
+
                                             self->refreshSlotControls (slotIdx);
                                             self->rebuildSlots();
                                         }
@@ -799,7 +816,8 @@ void AuxLaneComponent::unloadSlot (int slotIdx)
         if (self == nullptr) return;
         self->detachEditorForSlot (slotIdx);
         self->detachHardwareInsertForSlot (slotIdx);
-        const bool hadNative = self->strip.isNativeClapLoaded (slotIdx);
+        const bool hadNative = self->strip.isNativeClapLoaded (slotIdx)
+                            || self->strip.isNativeLv2Loaded (slotIdx);
         if (hadNative) self->engine.suspendProcessing();
         // Tear the shared CLAP editor down INSIDE the suspended window: its destructor
         // runs gui->destroy, and doing that while the audio thread is quiesced keeps it
@@ -809,6 +827,7 @@ void AuxLaneComponent::unloadSlot (int slotIdx)
         if (hadNative)
         {
             self->strip.unloadNativeClap (slotIdx);
+            self->strip.unloadNativeLv2 (slotIdx);
             self->engine.resumeProcessing();
             self->lane.nativeClapPath[(size_t) slotIdx].clear();
             self->lane.nativeClapStateBase64[(size_t) slotIdx].clear();
