@@ -16,8 +16,8 @@ class Lv2Bundle;
 // lilv/lv2 stay behind a pImpl so this header pulls in no LV2 headers.
 //
 // LV2 fixes the sample rate at instantiate (unlike CLAP's activate), so reactivate
-// re-instantiates the plugin; preserving parameter state across that re-instantiate
-// is not yet wired. Audio processing only — no state persistence, no editor yet.
+// re-instantiates the plugin, carrying control-port values across; state-extension
+// blobs are not yet wired. Audio processing only — no state persistence, no editor yet.
 class Lv2Instance : public hosting::INativeInstance
 {
 public:

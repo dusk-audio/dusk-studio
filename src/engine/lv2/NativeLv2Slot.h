@@ -21,9 +21,8 @@ namespace duskstudio::lv2
 // the DSP call sites and session code treat CLAP and LV2 alike.
 //
 // Concurrency: a load / unload while the audio thread might be mid-process must be
-// fenced by the engine's process gate (suspend → silent buffers → swap → resume),
-// per [[project_multicore_dsp]]; the slot itself only guards the steady state via
-// the acquire/release `ready` flag.
+// fenced by the engine's process gate (suspend → silent buffers → swap → resume);
+// the slot itself only guards the steady state via the acquire/release `ready` flag.
 class NativeLv2Slot
 {
 public:
@@ -35,9 +34,9 @@ public:
     void unload();
 
     // Re-activate the already-loaded instance at a new sample-rate / block-size.
-    // LV2 fixes the rate at instantiate, so this re-instantiates the plugin (its
-    // parameter state resets to defaults — state persistence isn't wired yet). No-op
-    // (false) when nothing is loaded. Caller fences the audio thread.
+    // LV2 fixes the rate at instantiate, so this re-instantiates the plugin; its
+    // control-port values carry across (state-extension blobs aren't wired yet).
+    // No-op (false) when nothing is loaded. Caller fences the audio thread.
     bool reactivate (double sampleRate, int maxBlock, std::string& errorOut);
 
     // App shutdown: release the instance + bundle WITHOUT destroying, matching the

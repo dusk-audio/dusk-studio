@@ -100,7 +100,12 @@ struct Lv2Instance::Impl
 
     // Port classification (indices into the plugin's port list).
     std::vector<uint32_t> audioInPorts, audioOutPorts, controlPorts, atomInPorts, atomOutPorts;
+    std::vector<uint32_t> otherPorts;   // CV / unclassified — LV2 requires every port connected
     int latencyPortIndex = -1;
+
+    // Per-port scratch backing otherPorts: maxFrames floats each, so an audio-rate
+    // CV port can safely read silence or sink its output.
+    std::vector<std::vector<float>> otherScratch;
 
     // Persistent per-port float storage; control ports are connected to these once
     // and hold their (default) value across blocks. Sized to the port count.
@@ -145,6 +150,7 @@ bool Lv2Instance::create (const Lv2Bundle& bundle, const std::string& uri, std::
 
     impl->audioInPorts.clear();  impl->audioOutPorts.clear();
     impl->controlPorts.clear();  impl->atomInPorts.clear(); impl->atomOutPorts.clear();
+    impl->otherPorts.clear();
     impl->latencyPortIndex = -1;
 
     const uint32_t numPorts = lilv_plugin_get_num_ports (impl->plugin);
@@ -159,7 +165,8 @@ bool Lv2Instance::create (const Lv2Bundle& bundle, const std::string& uri, std::
             impl->controlPorts.push_back (i);
         else if (lilv_port_is_a (impl->plugin, port, atomClass))
             (isInput ? impl->atomInPorts : impl->atomOutPorts).push_back (i);
-        // CV / other ports fall through; connected to silence scratch in activate().
+        else
+            impl->otherPorts.push_back (i);   // CV / unknown → scratch in activate()
     }
 
     // The port designated lv2:latency (an output control port) reports plugin
@@ -259,6 +266,22 @@ bool Lv2Instance::activate (double sampleRate, int maxBlockFrames, std::string& 
     for (uint32_t idx : impl->atomInPorts)  connectAtom (idx, true);
     for (uint32_t idx : impl->atomOutPorts) connectAtom (idx, false);
 
+    // CV / unclassified ports: LV2 requires every port connected before run(), so
+    // each gets its own block-sized scratch (silence in, sink out).
+    impl->otherScratch.clear();
+    impl->otherScratch.reserve (impl->otherPorts.size());
+    for (uint32_t idx : impl->otherPorts)
+    {
+        impl->otherScratch.emplace_back ((size_t) impl->maxFrames, 0.0f);
+        lilv_instance_connect_port (impl->instance, idx, impl->otherScratch.back().data());
+    }
+
+    // Seed latency with the port default so getLatencySamples() is sane before the
+    // first run() refreshes it.
+    impl->latencySamples.store (impl->latencyPortIndex >= 0
+                                  ? (int) impl->portValues[(size_t) impl->latencyPortIndex] : 0,
+                                std::memory_order_relaxed);
+
     lilv_instance_activate (impl->instance);
     impl->active = true;
     return true;
@@ -269,10 +292,15 @@ void Lv2Instance::deactivate() { impl->freeInstance(); }
 bool Lv2Instance::reactivate (double sampleRate, int maxBlockFrames, std::string& errorOut)
 {
     // LV2 fixes the sample rate at instantiate, so a rate/block change means a fresh
-    // instance. Parameter state is reset to defaults here; preserving it across the
-    // re-instantiate is not yet wired.
+    // instance. Carry the control-port values across so the user's live settings
+    // survive; full state-extension persistence is a later step.
+    const std::vector<float> saved = impl->portValues;
     impl->freeInstance();
-    return activate (sampleRate, maxBlockFrames, errorOut);
+    if (! activate (sampleRate, maxBlockFrames, errorOut)) return false;
+    if (saved.size() == impl->portValues.size())
+        for (uint32_t idx : impl->controlPorts)
+            impl->portValues[(size_t) idx] = saved[(size_t) idx];
+    return true;
 }
 
 void Lv2Instance::processBlock (const hosting::PortBuffers& io) noexcept
@@ -298,7 +326,8 @@ void Lv2Instance::processBlock (const hosting::PortBuffers& io) noexcept
     // Connect audio ports to the caller's buffers for this block. Extra plugin
     // channels beyond what the adapter supplies get silence (mainIn) or a scratch
     // sink; the adapter already sized to the negotiated counts.
-    const int nin  = std::min (io.mainInChannels,  (int) impl->audioInPorts.size());
+    const int nin  = io.mainIn != nullptr
+                       ? std::min (io.mainInChannels, (int) impl->audioInPorts.size()) : 0;
     const int nout = std::min (io.mainOutChannels, (int) impl->audioOutPorts.size());
     for (int c = 0; c < nin;  ++c)
         lilv_instance_connect_port (impl->instance, impl->audioInPorts[(size_t) c], io.mainIn[c]);
