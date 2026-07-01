@@ -150,7 +150,9 @@ endif()
 if(DUSKSTUDIO_NATIVE_LV2)
     target_sources(dusk-studio-tests PRIVATE
         lv2_bundle_load.cpp
-        ${CMAKE_SOURCE_DIR}/src/engine/lv2/Lv2Bundle.cpp)
+        lv2_instance_process.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/lv2/Lv2Bundle.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/lv2/Lv2Instance.cpp)
     target_link_libraries(dusk-studio-tests PRIVATE PkgConfig::LILV PkgConfig::SUIL PkgConfig::LV2)
     target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_NATIVE_LV2=1)
 endif()
