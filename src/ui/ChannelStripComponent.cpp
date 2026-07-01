@@ -1505,17 +1505,18 @@ ChannelStripComponent::~ChannelStripComponent()
     stopTimer();   // before derived members destruct (base Timer::~Timer is too late)
     engine.removeChangeListener (this);
 
-    // If a popup editor is still on screen when the strip dies (e.g. the
-    // window is closing), force-delete it so its content (which references
-    // `track`) doesn't outlive us. Same SafePointer pattern as the audio
-    // settings dialog in MainComponent.
-    eqEditorModal.close();
-    compEditorModal.close();
-    auxEditorModal.close();
-    // I/O popup re-parents this strip's modeSelector / inputSelector children,
-    // so it must close LAST — before those combo members destruct — so its
-    // deferred body teardown doesn't outlive the controls it borrowed.
-    ioConfigModal.close();
+    // If a popup editor is still open when the strip dies, destroy its body
+    // NOW (synchronously) rather than via close()'s deferred callAsync: on the
+    // app-quit path the message loop has already exited, so a deferred body
+    // teardown never runs (leak) or fires during MessageManager shutdown after
+    // members are gone. The I/O popup additionally re-parents this strip's live
+    // modeSelector / midiActivityLed children, so its body must be gone while
+    // those members are still alive — closeAndDeleteBodyNow() runs here, before
+    // any member destructs. Same variant MainComponent uses for shutdown.
+    eqEditorModal.closeAndDeleteBodyNow();
+    compEditorModal.closeAndDeleteBodyNow();
+    auxEditorModal.closeAndDeleteBodyNow();
+    ioConfigModal.closeAndDeleteBodyNow();
     // Drop the cached editor BEFORE the strip's PluginSlot destructs,
     // since the editor's destructor calls editorBeingDeleted on its
     // owning AudioProcessor. dropPluginEditor() also closes the modal.
@@ -2559,10 +2560,13 @@ void ChannelStripComponent::openIoConfigPopup()
     auto* topLevel = getTopLevelComponent();
     if (topLevel == nullptr) topLevel = this;
 
-    // The panel borrows this strip's live combo children; owning show() adds
-    // them as its children and close() releases them back (re-parented on the
-    // next open). The DuskComboBox dropdowns render as nested in-window modals,
-    // so no CallOutBox-style "sticky while a native popup is up" guard is needed.
+    // The panel borrows this strip's live combo children; owning show() re-parents
+    // them into the panel. On close the panel is destroyed and the combos are left
+    // parentless (still owned as strip members, so they survive) — invisible until
+    // the next open re-parents them, which is what we want: compact mode shows the
+    // ioConfigButton, never the bare combos. The DuskComboBox dropdowns render as
+    // nested in-window modals, so no CallOutBox-style "sticky while a native popup
+    // is up" guard is needed.
     ioConfigModal.show (*topLevel, std::move (panel),
                         /*onDismiss*/ {}, /*dismissOnClickOutside*/ true,
                         /*dismissOnEscape*/ true, kEditorDimAlpha);

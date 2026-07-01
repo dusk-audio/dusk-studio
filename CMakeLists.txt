@@ -498,6 +498,8 @@ endif()
 # (ON for Linux). DUSKSTUDIO_HAS_NATIVE_CLAP guards every #if in the source.
 if(DUSKSTUDIO_NATIVE_CLAP)
     target_sources(DuskStudio PRIVATE
+        # Shared native-host layer (format-agnostic); CLAP is its first consumer.
+        src/engine/hosting/InsertAdapter.cpp
         src/engine/clap/ClapBundle.cpp
         src/engine/clap/ClapHost.cpp
         src/engine/clap/ClapInstance.cpp

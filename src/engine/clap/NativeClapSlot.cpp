@@ -26,6 +26,7 @@ bool NativeClapSlot::load (const juce::File& path, double sampleRate, int maxBlo
     // `ready` pairs with this release so it never sees a half-built instance.
     bundle     = std::move (b);
     instance   = std::move (inst);
+    adapter.prepare (instance->portLayout(), maxBlock);   // size the fold scratch
     loadedPath = path.getFullPathName();
     ready.store (true, std::memory_order_release);
     return true;
@@ -36,7 +37,9 @@ bool NativeClapSlot::reactivate (double sampleRate, int maxBlock, std::string& e
     if (instance == nullptr) { errorOut = "no instance"; return false; }
     // `ready`/`instance` are unchanged across the call; the audio thread (fenced by the
     // engine gate) sees active==false mid-swap and no-ops, then resumes after activate.
-    return instance->reactivate (sampleRate, maxBlock, errorOut);
+    if (! instance->reactivate (sampleRate, maxBlock, errorOut)) return false;
+    adapter.prepare (instance->portLayout(), maxBlock);   // block size may have changed
+    return true;
 }
 
 void NativeClapSlot::unload()
@@ -68,33 +71,49 @@ bool NativeClapSlot::loadState (const std::vector<uint8_t>& in)
 void NativeClapSlot::processStereo (const float* inL, const float* inR,
                                     float* outL, float* outR, int numFrames) noexcept
 {
-    if (! ready.load (std::memory_order_acquire) || instance == nullptr)
+    auto clearOutputs = [&]
     {
-        if (numFrames > 0)
-        {
-            if (outL != nullptr) std::memset (outL, 0, sizeof (float) * (size_t) numFrames);
-            if (outR != nullptr) std::memset (outR, 0, sizeof (float) * (size_t) numFrames);
-        }
+        if (numFrames <= 0) return;
+        const size_t n = sizeof (float) * (size_t) numFrames;
+        if (outL != nullptr) std::memset (outL, 0, n);
+        if (outR != nullptr) std::memset (outR, 0, n);
+    };
+
+    // Clear when empty or momentarily inactive (mid-reactivate, fenced by the
+    // engine gate) — matches the pre-adapter behaviour of a no-op silent pass.
+    if (! ready.load (std::memory_order_acquire) || instance == nullptr
+        || ! instance->isActive() || inL == nullptr)
+    {
+        clearOutputs();
         return;
     }
+
+    if (numFrames <= 0) return;
+    const size_t n = sizeof (float) * (size_t) numFrames;
+
     if (bypassed.load (std::memory_order_relaxed))
     {
         // Passthrough — copy in→out (a no-op when called in-place).
-        if (numFrames > 0)
-        {
-            if (inL == nullptr)
-            {
-                if (outL != nullptr) std::memset (outL, 0, sizeof (float) * (size_t) numFrames);
-                if (outR != nullptr) std::memset (outR, 0, sizeof (float) * (size_t) numFrames);
-                return;
-            }
-            const size_t n = sizeof (float) * (size_t) numFrames;
-            if (outL != nullptr && outL != inL) std::memcpy (outL, inL, n);
-            const float* r = (inR != nullptr) ? inR : inL;
-            if (outR != nullptr && outR != r)   std::memcpy (outR, r, n);
-        }
+        if (outL != nullptr && outL != inL) std::memcpy (outL, inL, n);
+        const float* r = (inR != nullptr) ? inR : inL;
+        if (outR != nullptr && outR != r)   std::memcpy (outR, r, n);
         return;
     }
-    instance->processStereo (inL, inR, outL, outR, numFrames);
+
+    // The adapter needs both output buffers to process in place; a missing one is
+    // the same silent no-op the pre-adapter path gave it.
+    if (outL == nullptr || outR == nullptr)
+    {
+        clearOutputs();
+        return;
+    }
+
+    // The InsertAdapter processes in place, so stage the input into the output
+    // buffers first (a no-op for the in-place call sites where out == in).
+    if (outL != inL) std::memcpy (outL, inL, n);
+    const float* r = (inR != nullptr) ? inR : inL;
+    if (outR != r)  std::memcpy (outR, r, n);
+
+    adapter.process (*instance, outL, outR, numFrames);
 }
 } // namespace duskstudio::clap

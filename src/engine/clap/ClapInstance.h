@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ClapHost.h"
+#include "../hosting/INativeInstance.h"
 
 #include <clap/events.h>
 
@@ -16,12 +17,16 @@ namespace duskstudio::clap
 class ClapBundle;
 
 // One CLAP plugin instance: create from a factory + plugin id, activate at a
-// fixed sample rate / max block, and process stereo audio through it. Manages the
+// fixed sample rate / max block, and process audio through it. Manages the
 // full lifecycle (init → activate → start_processing → process → stop_processing
-// → deactivate → destroy). Setup is message-thread; processStereo is the audio
+// → deactivate → destroy). Setup is message-thread; processBlock is the audio
 // path. Parameters are enumerated at create(); changes are queued (message thread,
 // single producer) and consumed as CLAP events by the next process() block.
-class ClapInstance
+//
+// Implements the host-agnostic INativeInstance so a NativeInsertSlot can drive
+// CLAP, VST3 and LV2 through one pointer. processStereo() is the legacy stereo
+// entry, kept as the A/B reference until the call sites move to processBlock.
+class ClapInstance : public hosting::INativeInstance
 {
 public:
     // One plugin parameter (snapshot of clap_param_info at create()).
@@ -46,20 +51,34 @@ public:
     // False (+ errorOut) on failure.
     bool create (const ClapBundle& bundle, const std::string& pluginId, std::string& errorOut);
 
+    // The negotiated bus/port shape, populated at create(). [INativeInstance]
+    const hosting::PortLayout& portLayout() const noexcept override { return layout; }
+
     // Activate at the given config (sizes the process scratch; no later RT alloc).
-    bool activate (double sampleRate, int maxBlock, std::string& errorOut);
-    void deactivate();
+    bool activate (double sampleRate, int maxBlock, std::string& errorOut) override;
+    void deactivate() override;
 
     // Re-activate the SAME plugin at a new sample-rate / block-size (device-rate or
     // oversampling-factor change). Deactivate → activate without destroying the plugin,
     // so an open editor's GUI and the plugin's parameter state both survive. Caller
     // must fence the audio thread (engine process gate) around the call.
-    bool reactivate (double sampleRate, int maxBlock, std::string& errorOut);
+    bool reactivate (double sampleRate, int maxBlock, std::string& errorOut) override;
 
-    // Audio thread. Process `numFrames` (<= maxBlock) of stereo through the plugin:
-    // inL/inR → outL/outR. A null inR is treated as mono (duplicated). out may not
-    // alias in. Starts processing lazily on the first call. No-op if not active or
-    // numFrames is out of range.
+    bool isActive() const noexcept override { return active; }
+
+    // Audio thread. Bus-aware process entry [INativeInstance]: reads io.mainIn,
+    // writes io.mainOut (pointers into the caller's pre-sized scratch — the plugin
+    // writes CLAP output directly there, no instance-owned copy). Starts processing
+    // lazily on the first call. No-op if not active or io.numFrames is out of range.
+    void processBlock (const hosting::PortBuffers& io) noexcept override;
+
+    // Plugin-reported latency in samples at the active config (CLAP_EXT_LATENCY);
+    // 0 until activate() or if the plugin has no latency extension. [INativeInstance]
+    int getLatencySamples() const noexcept override { return latencySamples; }
+
+    // Audio thread. Legacy stereo entry — inL/inR → outL/outR through the plugin.
+    // Kept as the A/B reference for processBlock until the call sites migrate; the
+    // NativeInsertSlot + DSP call sites move to processBlock in a following phase.
     void processStereo (const float* inL, const float* inR,
                         float* outL, float* outR, int numFrames) noexcept;
 
@@ -67,8 +86,8 @@ public:
     // extension. saveState REPLACES `out` with the plugin's blob (clears it first);
     // loadState feeds `in` back. False if the plugin has no state extension or the
     // call fails. Used for session persistence of a native CLAP.
-    bool saveState (std::vector<uint8_t>& out) const;
-    bool loadState (const std::vector<uint8_t>& in);
+    bool saveState (std::vector<uint8_t>& out) const override;
+    bool loadState (const std::vector<uint8_t>& in) override;
 
     // Parameters (message thread). Enumerated once at create().
     int               paramCount() const noexcept { return (int) params.size(); }
@@ -84,9 +103,8 @@ public:
     void setParamValue (clap_id id, double value) noexcept;
 
     bool isCreated()      const noexcept { return plugin != nullptr; }
-    bool isActive()       const noexcept { return active; }
-    int  inputChannels()  const noexcept { return inCh; }
-    int  outputChannels() const noexcept { return outCh; }
+    int  inputChannels()  const noexcept { return layout.mainInChannels(); }
+    int  outputChannels() const noexcept { return layout.mainOutChannels(); }
 
     // For the editor: the live plugin + the host that owns its callback/pump state.
     const ::clap_plugin* getPlugin() const noexcept { return plugin; }
@@ -99,12 +117,20 @@ private:
     bool active     = false;
     bool processing = false;
     bool startFailed = false;   // plugin refused start_processing — stay asleep, don't retry every block
-    int  inCh = 0, outCh = 0;
     int  maxFrames = 0;
 
+    hosting::PortLayout layout;   // negotiated at create()
+    int latencySamples = 0;       // cached at activate() from CLAP_EXT_LATENCY
+
     // Separate input + output scratch so we never assume the plugin supports
-    // in-place processing. Sized in activate().
+    // in-place processing. Sized in activate(). Used by the legacy processStereo.
     std::vector<float> inScratchL, inScratchR, outScratchL, outScratchR;
+
+    // Per-channel pointer arrays the CLAP process buffers point at. processBlock
+    // fills these from PortBuffers each block (pointers into the caller's scratch),
+    // so the plugin writes its output straight there — no instance-owned audio copy.
+    // Sized in activate() to the negotiated channel counts.
+    std::vector<float*> clapInData, clapOutData;
 
     // Output event list handed to every process() call. We accept and ignore the
     // plugin's outgoing events for now (try_push returns true). Member, not a
@@ -124,6 +150,10 @@ private:
     std::vector<clap_event_param_value_t> eventScratch;   // sized in activate(), never RT-grown
     uint32_t             eventCount = 0;
     clap_input_events_t  inEvents {};
+
+    // Audio thread. Refills eventScratch[0..eventCount) from the param ring; shared
+    // by processStereo and processBlock.
+    void drainParamRing() noexcept;
 
     const clap_plugin_params_t* paramsExt = nullptr;
     std::vector<ParamInfo>      params;

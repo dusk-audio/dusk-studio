@@ -9,6 +9,11 @@ FetchContent_MakeAvailable(Catch2)
 
 add_executable(dusk-studio-tests
     smoke_brickwall_limiter.cpp
+    # Shared native-host foundation (PortLayout / PortBuffers / INativeInstance)
+    # is header-only + platform-neutral, so it links in the base target.
+    hosting_port_layout.cpp
+    hosting_insert_adapter.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/hosting/InsertAdapter.cpp
     # Native CLAP tests + sources are Linux-only (dlopen/poll) — added conditionally below.
     plugin_scan_protocol.cpp
     plugin_backing_check.cpp
@@ -128,6 +133,7 @@ if(DUSKSTUDIO_NATIVE_CLAP)
     target_sources(dusk-studio-tests PRIVATE
         clap_bundle_load.cpp
         clap_instance_process.cpp
+        clap_ab_nulltest.cpp
         clap_native_slot.cpp
         clap_scanner.cpp
         clap_params.cpp
