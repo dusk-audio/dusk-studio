@@ -106,8 +106,10 @@ struct Lv2Instance::Impl
     // and hold their (default) value across blocks. Sized to the port count.
     std::vector<float> portValues;
 
-    // One atom buffer per atom port (empty input sequence / output chunk capacity).
+    // One atom buffer per atom port: inputs first (empty sequences), then outputs
+    // (chunk-capacity buffers). atomChunkType re-advertises output capacity per block.
     std::vector<std::vector<uint8_t>> atomBuffers;
+    LV2_URID atomChunkType = 0;
 
     void freeInstance()
     {
@@ -232,6 +234,7 @@ bool Lv2Instance::activate (double sampleRate, int maxBlockFrames, std::string& 
     // an effect that declares them doesn't run against unconnected memory.
     const LV2_URID seqType   = Impl::mapUri (impl.get(), LV2_ATOM__Sequence);
     const LV2_URID chunkType = Impl::mapUri (impl.get(), LV2_ATOM__Chunk);
+    impl->atomChunkType = chunkType;
     impl->atomBuffers.clear();
     auto connectAtom = [&] (uint32_t idx, bool input)
     {
@@ -301,6 +304,17 @@ void Lv2Instance::processBlock (const hosting::PortBuffers& io) noexcept
         lilv_instance_connect_port (impl->instance, impl->audioInPorts[(size_t) c], io.mainIn[c]);
     for (int c = 0; c < nout; ++c)
         lilv_instance_connect_port (impl->instance, impl->audioOutPorts[(size_t) c], io.mainOut[c]);
+
+    // Re-advertise output-atom capacity before every run(): the plugin overwrites
+    // atom->size with the bytes it wrote last block, so without this the buffer
+    // reads as monotonically shrinking (never-recovering) capacity. Output atom
+    // buffers follow the input ones in atomBuffers (inputs connected first).
+    for (size_t i = impl->atomInPorts.size(); i < impl->atomBuffers.size(); ++i)
+    {
+        auto* atom = reinterpret_cast<LV2_Atom*> (impl->atomBuffers[i].data());
+        atom->type = impl->atomChunkType;
+        atom->size = (uint32_t) (impl->atomBuffers[i].size() - sizeof (LV2_Atom));
+    }
 
     lilv_instance_run (impl->instance, (uint32_t) numFrames);
 
