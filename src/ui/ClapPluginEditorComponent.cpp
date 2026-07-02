@@ -5,6 +5,9 @@ namespace duskstudio
 ClapPluginEditorComponent::ClapPluginEditorComponent()
 {
     setOpaque (false);
+    // EmbeddedModal hides tagged editors while a modal is up — see the same tag
+    // in Lv2PluginEditorComponent.
+    getProperties().set ("dusk_pluginEditor", true);
 }
 
 ClapPluginEditorComponent::~ClapPluginEditorComponent()

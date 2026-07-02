@@ -7,6 +7,10 @@ namespace duskstudio
 Lv2PluginEditorComponent::Lv2PluginEditorComponent()
 {
     setOpaque (false);
+    // EmbeddedModal hides tagged editors while a modal is up — the native X11
+    // window otherwise paints ABOVE the modal regardless of JUCE z-order,
+    // burying dialogs under the plugin UI.
+    getProperties().set ("dusk_pluginEditor", true);
 }
 
 Lv2PluginEditorComponent::~Lv2PluginEditorComponent()
