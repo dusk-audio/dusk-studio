@@ -125,6 +125,22 @@ public:
             strip.getNativeVst3Slot().drainQueuedParamBindings();
 #endif
         }
+        for (int a = 0; a < Session::kNumAuxLanes; ++a)
+        {
+            auto& lane = engine.getAuxLaneStrip (a);
+            for (int s = 0; s < AuxLaneParams::kMaxLanePlugins; ++s)
+            {
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+                lane.getNativeClapSlot (s).drainQueuedParamBindings();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+                lane.getNativeLv2Slot (s).drainQueuedParamBindings();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+                lane.getNativeVst3Slot (s).drainQueuedParamBindings();
+#endif
+            }
+        }
 
 #if DUSKSTUDIO_HAS_NATIVE_VST3
         // A plugin that signalled kLatencyChanged only reports the new value
@@ -3335,6 +3351,44 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                                 }
 #endif
                                 strip.getPluginSlot()
+                                    .setParamNormalised (b.paramIndex, frac);
+                            }
+                            break;
+                        }
+                        case MidiBindingTarget::AuxPluginParam:
+                        {
+                            // Same shape as TrackPluginParam: the loaded host
+                            // owns the slot (CLAP → LV2 → VST3 → JUCE).
+                            if (b.targetIndex >= 0
+                                && b.targetIndex < Session::kNumAuxLanes
+                                && b.paramIndex >= 0)
+                            {
+                                auto& lane = auxLaneStrips[(size_t) b.targetIndex];
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+                                if (lane.isNativeClapLoaded (0))
+                                {
+                                    lane.getNativeClapSlot (0)
+                                        .queueParamBinding ((uint32_t) b.paramIndex, frac);
+                                    break;
+                                }
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+                                if (lane.isNativeLv2Loaded (0))
+                                {
+                                    lane.getNativeLv2Slot (0)
+                                        .queueParamBinding ((uint32_t) b.paramIndex, frac);
+                                    break;
+                                }
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+                                if (lane.isNativeVst3Loaded (0))
+                                {
+                                    lane.getNativeVst3Slot (0)
+                                        .queueParamBinding ((uint32_t) b.paramIndex, frac);
+                                    break;
+                                }
+#endif
+                                lane.getPluginSlot (0)
                                     .setParamNormalised (b.paramIndex, frac);
                             }
                             break;

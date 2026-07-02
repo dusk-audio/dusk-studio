@@ -860,6 +860,35 @@ void TransportBar::timerCallback()
                     return;
                 }
             }
+            if (b.target == MidiBindingTarget::AuxPluginParam
+                && b.targetIndex >= 0
+                && b.targetIndex < Session::kNumAuxLanes)
+            {
+                // Same shape as the track resolve above, against the lane's slot.
+                auto& lane = engine.getAuxLaneStrip (b.targetIndex);
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+                if (lane.isNativeClapLoaded (0))
+                    b.paramIndex = lane.getNativeClapSlot (0).lastTouchedParamIndex();
+                else
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+                if (lane.isNativeLv2Loaded (0))
+                    b.paramIndex = lane.getNativeLv2Slot (0).lastTouchedParamIndex();
+                else
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+                if (lane.isNativeVst3Loaded (0))
+                    b.paramIndex = lane.getNativeVst3Slot (0).lastTouchedParamIndex();
+                else
+#endif
+                    b.paramIndex = lane.getPluginSlot (0).getLastTouchedParamIndex();
+                if (b.paramIndex < 0)
+                {
+                    s.midiLearnCapture.store (0, std::memory_order_relaxed);
+                    s.midiLearnPending.store (-1, std::memory_order_relaxed);
+                    return;
+                }
+            }
             // Drop any existing binding from the same source before
             // appending the new one - prevents stacking duplicate
             // mappings if a user re-learns the same fader.

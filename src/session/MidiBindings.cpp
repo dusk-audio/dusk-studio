@@ -156,6 +156,8 @@ juce::String describeBindingTarget (const MidiBinding& b,
         case MidiBindingTarget::BusSolo:         return "Bus " + trk() + " solo";
         case MidiBindingTarget::AuxLaneFader:    return "AUX " + trk() + " return";
         case MidiBindingTarget::AuxLaneMute:     return "AUX " + trk() + " mute";
+        case MidiBindingTarget::AuxPluginParam:  return "AUX " + trk() + " plugin param "
+                                                        + juce::String (b.paramIndex + 1);
         case MidiBindingTarget::MasterFader:     return "Master fader";
 
         // Mirror the grammar of the track / bus / master labels so the
@@ -233,6 +235,7 @@ const char* nameForTarget (MidiBindingTarget t) noexcept
         case MidiBindingTarget::BusSolo:         return "Bus solo";
         case MidiBindingTarget::AuxLaneFader:    return "AUX return";
         case MidiBindingTarget::AuxLaneMute:     return "AUX mute";
+        case MidiBindingTarget::AuxPluginParam:  return "AUX plugin parameter";
         case MidiBindingTarget::MasterFader:     return "Master fader";
 
         // Short category names for the bindings-panel section headers
@@ -589,6 +592,7 @@ std::optional<std::vector<MidiBinding>> deserializeBindingsPreset (const juce::S
             case MidiBindingTarget::BusSolo:
             case MidiBindingTarget::AuxLaneFader:
             case MidiBindingTarget::AuxLaneMute:
+            case MidiBindingTarget::AuxPluginParam:
             case MidiBindingTarget::MasterFader:
             // Bank-relative variants — were silently dropped, breaking preset
             // round-trip for any banked binding.

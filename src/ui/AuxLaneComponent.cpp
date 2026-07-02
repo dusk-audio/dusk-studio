@@ -324,6 +324,7 @@ AuxLaneComponent::AuxLaneComponent (AuxLane& l, AuxLaneStrip& s, int idx,
         s.openOrAddButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff5a4880));
         s.openOrAddButton.setColour (juce::TextButton::textColourOffId, juce::Colour (0xff9080c0));
         s.openOrAddButton.setColour (juce::TextButton::textColourOnId,  juce::Colours::white);
+        s.openOrAddButton.addMouseListener (this, false);   // right-click → MIDI Learn
         s.openOrAddButton.onClick = [this, i]
         {
             auto& slotRef = strip.getPluginSlot (i);
@@ -1691,6 +1692,23 @@ void AuxLaneComponent::mouseDown (const juce::MouseEvent& e)
     {
         midilearn::showLearnMenu (muteButton, session,
                                     MidiBindingTarget::AuxLaneMute, laneIndex);
+        return;
+    }
+    // Slot name button → learn the plugin parameter the user last moved in the
+    // slot's editor. Only offered while some host has a plugin loaded (the
+    // resolve site reads that host's last-touched tracker when the MIDI source
+    // arrives, so an untouched plugin just cancels the learn).
+    for (int i = 0; i < AuxLaneParams::kMaxLanePlugins; ++i)
+    {
+        auto& ui = slots[(size_t) i];
+        if (e.eventComponent != &ui.openOrAddButton) continue;
+        const bool loaded = strip.getPluginSlot (i).isLoaded()
+                         || strip.isNativeClapLoaded (i)
+                         || strip.isNativeLv2Loaded (i)
+                         || strip.isNativeVst3Loaded (i);
+        if (loaded)
+            midilearn::showLearnMenu (ui.openOrAddButton, session,
+                                        MidiBindingTarget::AuxPluginParam, laneIndex);
         return;
     }
 }

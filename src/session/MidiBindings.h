@@ -90,6 +90,9 @@ enum class MidiBindingTarget : int
 
     AuxLaneFader      = 160,
     AuxLaneMute       = 161,
+    AuxPluginParam    = 162, // targetIndex = lane; paramIndex = plugin parameter.
+                              // Single insert slot per lane today — the layout
+                              // block that grows kMaxLanePlugins revisits this.
 
     MasterFader       = 200,
 
@@ -155,6 +158,7 @@ constexpr bool isContinuousTarget (MidiBindingTarget t) noexcept
         || t == MidiBindingTarget::BusFader
         || t == MidiBindingTarget::BusPan
         || t == MidiBindingTarget::AuxLaneFader
+        || t == MidiBindingTarget::AuxPluginParam
         || t == MidiBindingTarget::MasterFader
         // Continuous bus + master targets.
         || t == MidiBindingTarget::BusEqGain
@@ -206,7 +210,8 @@ constexpr bool needsBusIndex (MidiBindingTarget t) noexcept
 constexpr bool needsAuxLaneIndex (MidiBindingTarget t) noexcept
 {
     return t == MidiBindingTarget::AuxLaneFader
-        || t == MidiBindingTarget::AuxLaneMute;
+        || t == MidiBindingTarget::AuxLaneMute
+        || t == MidiBindingTarget::AuxPluginParam;
 }
 
 // Only the absolute-track variant. TrackAuxSendBank uses a smaller
