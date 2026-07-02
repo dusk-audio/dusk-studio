@@ -35,7 +35,7 @@ public:
 
     // Re-activate the already-loaded instance at a new sample-rate / block-size.
     // LV2 fixes the rate at instantiate, so this re-instantiates the plugin; its
-    // control-port values carry across (state-extension blobs aren't wired yet).
+    // state (control ports + state:interface blob) carries across.
     // No-op (false) when nothing is loaded. Caller fences the audio thread.
     bool reactivate (double sampleRate, int maxBlock, std::string& errorOut);
 

@@ -96,4 +96,34 @@ TEST_CASE ("Lv2Instance instantiates + processes an LV2 effect via InsertAdapter
         }
         REQUIRE (peak > 1.0e-4f);   // audio makes it through the plugin
     }
+
+    SECTION ("state round-trips through saveState/loadState")
+    {
+        std::vector<uint8_t> blob;
+        REQUIRE (inst.saveState (blob));
+        REQUIRE_FALSE (blob.empty());
+
+        // A fresh instance fed the saved state must accept it; the blob is
+        // Turtle, so it should at least mention the plugin's state subject.
+        lv2::Lv2Instance other;
+        REQUIRE (other.create (bundle, uri, err));
+        REQUIRE (other.activate (48000.0, kBlock, err));
+        REQUIRE (other.loadState (blob));
+
+        // And the restored instance's own save must be non-empty again.
+        std::vector<uint8_t> blob2;
+        REQUIRE (other.saveState (blob2));
+        REQUIRE_FALSE (blob2.empty());
+    }
+
+    SECTION ("reactivate keeps state (fresh save matches post-reactivate save)")
+    {
+        std::vector<uint8_t> before;
+        REQUIRE (inst.saveState (before));
+        REQUIRE (inst.reactivate (44100.0, kBlock, err));
+        REQUIRE (inst.isActive());
+        std::vector<uint8_t> after;
+        REQUIRE (inst.saveState (after));
+        REQUIRE (before == after);
+    }
 }

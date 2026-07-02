@@ -7,6 +7,7 @@
 #include <lv2/buf-size/buf-size.h>
 #include <lv2/options/options.h>
 #include <lv2/parameters/parameters.h>
+#include <lv2/state/state.h>
 #include <lv2/urid/urid.h>
 
 #include <algorithm>
@@ -141,6 +142,57 @@ struct Lv2Instance::Impl
             instance = nullptr;
         }
         active = false;
+    }
+
+    int portIndexForSymbol (const char* symbol) const
+    {
+        if (plugin == nullptr || symbol == nullptr) return -1;
+        const uint32_t numPorts = lilv_plugin_get_num_ports (plugin);
+        for (uint32_t i = 0; i < numPorts; ++i)
+        {
+            const LilvPort* port = lilv_plugin_get_port_by_index (plugin, i);
+            const LilvNode* sym  = lilv_port_get_symbol (plugin, port);
+            if (sym != nullptr && std::strcmp (lilv_node_as_string (sym), symbol) == 0)
+                return (int) i;
+        }
+        return -1;
+    }
+
+    // lilv state callbacks (message thread; save/restore are fenced by the caller
+    // when the instance is live, same contract as activate/deactivate).
+    static const void* getPortValue (const char* symbol, void* userData,
+                                     uint32_t* size, uint32_t* type)
+    {
+        auto* self = static_cast<Impl*> (userData);
+        const int idx = self->portIndexForSymbol (symbol);
+        if (idx < 0 || (size_t) idx >= self->portValues.size())
+        { *size = 0; *type = 0; return nullptr; }
+        *size = sizeof (float);
+        *type = mapUri (self, LV2_ATOM__Float);
+        return &self->portValues[(size_t) idx];
+    }
+
+    static void setPortValue (const char* symbol, void* userData,
+                              const void* value, uint32_t size, uint32_t type)
+    {
+        auto* self = static_cast<Impl*> (userData);
+        const int idx = self->portIndexForSymbol (symbol);
+        if (idx < 0 || (size_t) idx >= self->portValues.size() || value == nullptr)
+            return;
+
+        // States written by other hosts may carry any numeric atom type.
+        float v = 0.0f;
+        const LV2_URID tFloat  = mapUri (self, LV2_ATOM__Float);
+        const LV2_URID tDouble = mapUri (self, LV2_ATOM__Double);
+        const LV2_URID tInt    = mapUri (self, LV2_ATOM__Int);
+        const LV2_URID tLong   = mapUri (self, LV2_ATOM__Long);
+        if      (type == tFloat  && size >= sizeof (float))   v = *static_cast<const float*> (value);
+        else if (type == tDouble && size >= sizeof (double))  v = (float) *static_cast<const double*> (value);
+        else if (type == tInt    && size >= sizeof (int32_t)) v = (float) *static_cast<const int32_t*> (value);
+        else if (type == tLong   && size >= sizeof (int64_t)) v = (float) *static_cast<const int64_t*> (value);
+        else return;
+        if (! std::isfinite (v)) return;
+        self->portValues[(size_t) idx] = v;
     }
 };
 
@@ -317,15 +369,20 @@ void Lv2Instance::deactivate() { impl->freeInstance(); }
 
 bool Lv2Instance::reactivate (double sampleRate, int maxBlockFrames, std::string& errorOut)
 {
-    // LV2 fixes the sample rate at instantiate, so a rate/block change means a fresh
-    // instance. Carry the control-port values across so the user's live settings
-    // survive; full state-extension persistence is a later step.
+    // LV2 fixes the sample rate at instantiate, so a rate/block change means a
+    // fresh instance. Carry the full state across (control ports + the plugin's
+    // state:interface blob); the raw port values back it up for plugins whose
+    // state extension is absent or fails.
+    std::vector<uint8_t> blob;
+    saveState (blob);
     const std::vector<float> saved = impl->portValues;
     impl->freeInstance();
     if (! activate (sampleRate, maxBlockFrames, errorOut)) return false;
     if (saved.size() == impl->portValues.size())
         for (uint32_t idx : impl->controlPorts)
             impl->portValues[(size_t) idx] = saved[(size_t) idx];
+    if (! blob.empty())
+        loadState (blob);
     return true;
 }
 
@@ -392,8 +449,50 @@ void Lv2Instance::processBlock (const hosting::PortBuffers& io) noexcept
                                     std::memory_order_relaxed);
 }
 
-bool Lv2Instance::saveState (std::vector<uint8_t>&) const { return false; }   // state save/load not yet wired
-bool Lv2Instance::loadState (const std::vector<uint8_t>&) { return false; }   // state save/load not yet wired
+bool Lv2Instance::saveState (std::vector<uint8_t>& out) const
+{
+    out.clear();
+    if (impl->instance == nullptr || impl->plugin == nullptr || impl->world == nullptr)
+        return false;
+
+    // Snapshot control-port values + the plugin's state:interface blob (JUCE-
+    // wrapped plugins keep everything there) into a lilv state, serialized as
+    // Turtle. No file directories are passed, so file-writing plugins keep
+    // their state abstract/in-memory — fine for effects.
+    LilvState* state = lilv_state_new_from_instance (
+        impl->plugin, impl->instance, &impl->mapFeature,
+        nullptr, nullptr, nullptr, nullptr,
+        &Impl::getPortValue, impl.get(),
+        LV2_STATE_IS_POD | LV2_STATE_IS_PORTABLE, impl->features.data());
+    if (state == nullptr) return false;
+
+    char* ttl = lilv_state_to_string (impl->world, &impl->mapFeature, &impl->unmapFeature,
+                                      state, "urn:duskstudio:lv2state", nullptr);
+    lilv_state_free (state);
+    if (ttl == nullptr) return false;
+
+    out.assign (ttl, ttl + std::strlen (ttl));
+    lilv_free (ttl);
+    return ! out.empty();
+}
+
+bool Lv2Instance::loadState (const std::vector<uint8_t>& in)
+{
+    if (impl->instance == nullptr || impl->world == nullptr || in.empty())
+        return false;
+
+    const std::string ttl (in.begin(), in.end());
+    LilvState* state = lilv_state_new_from_string (impl->world, &impl->mapFeature, ttl.c_str());
+    if (state == nullptr) return false;
+
+    // Restores control ports through setPortValue (the plugin reads portValues on
+    // its next run()) and hands the state:interface blob to the plugin. Callers
+    // fence the audio thread when the instance is live — same as activate().
+    lilv_state_restore (state, impl->instance, &Impl::setPortValue, impl.get(),
+                        0, impl->features.data());
+    lilv_state_free (state);
+    return true;
+}
 
 void*       Lv2Instance::lilvWorld()        const noexcept { return impl->world; }
 const void* Lv2Instance::lilvPlugin()       const noexcept { return impl->plugin; }
@@ -415,16 +514,6 @@ void Lv2Instance::setControlPortValue (uint32_t portIndex, float value) noexcept
 
 int Lv2Instance::portIndexForSymbol (const char* symbol) const noexcept
 {
-    if (impl->plugin == nullptr || symbol == nullptr) return -1;
-    // The port symbol is resolvable without the world: walk the ports and compare.
-    const uint32_t numPorts = lilv_plugin_get_num_ports (impl->plugin);
-    for (uint32_t i = 0; i < numPorts; ++i)
-    {
-        const LilvPort* port = lilv_plugin_get_port_by_index (impl->plugin, i);
-        const LilvNode* sym  = lilv_port_get_symbol (impl->plugin, port);
-        if (sym != nullptr && std::strcmp (lilv_node_as_string (sym), symbol) == 0)
-            return (int) i;
-    }
-    return -1;
+    return impl->portIndexForSymbol (symbol);
 }
 } // namespace duskstudio::lv2

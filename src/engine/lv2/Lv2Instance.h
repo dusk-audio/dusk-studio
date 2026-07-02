@@ -16,9 +16,9 @@ class Lv2Bundle;
 // lilv/lv2 stay behind a pImpl so this header pulls in no LV2 headers.
 //
 // LV2 fixes the sample rate at instantiate (unlike CLAP's activate), so reactivate
-// re-instantiates the plugin, carrying control-port values across; state-extension
-// blobs are not yet wired (saveState/loadState return false). The suil editor
-// attaches through the opaque accessors below (Lv2Editor).
+// re-instantiates the plugin, carrying the full state across (control ports + the
+// plugin's state:interface blob via saveState/loadState — lilv state serialized
+// as Turtle). The suil editor attaches through the opaque accessors below.
 class Lv2Instance : public hosting::INativeInstance
 {
 public:

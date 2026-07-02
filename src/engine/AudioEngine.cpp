@@ -1326,9 +1326,8 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
         {
             track.nativeLv2Path = strip.getNativeLv2Slot().getPath();
             std::vector<uint8_t> blob;
-            // Lv2Instance state persistence isn't wired yet (saveState returns
-            // false) — keep whatever blob the session already carries rather than
-            // wiping it on every save round-trip.
+            // Preserve the carried blob when a plugin can't serialize (no state
+            // extension / save failure) — don't wipe it on a save round-trip.
             if (strip.getNativeLv2Slot().saveState (blob) && ! blob.empty())
                 track.nativeLv2StateBase64 = juce::Base64::toBase64 (blob.data(), blob.size());
         }
@@ -1375,8 +1374,8 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
             {
                 lane.nativeLv2Path[(size_t) s] = strip.getNativeLv2Slot (s).getPath();
                 std::vector<uint8_t> blob;
-                // See the track block above: preserve the carried blob until LV2
-                // state serialization is wired.
+                // See the track block above: preserve the carried blob when the
+                // plugin can't serialize.
                 if (strip.getNativeLv2Slot (s).saveState (blob) && ! blob.empty())
                     lane.nativeLv2StateBase64[(size_t) s] = juce::Base64::toBase64 (blob.data(), blob.size());
             }
