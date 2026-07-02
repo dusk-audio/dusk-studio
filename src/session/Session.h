@@ -802,10 +802,15 @@ struct Track
     juce::String pluginDescriptionXml;
     juce::String pluginStateBase64;
 
-    // Native CLAP insert alternative to the JUCE plugin above (mutually exclusive).
-    // When nativeClapPath is non-empty the insert hosts a .clap via NativeClapSlot.
+    // Native insert alternatives to the JUCE plugin above. An insert hosts at most
+    // ONE of {JUCE plugin, native CLAP, native LV2}: when nativeClapPath is non-empty
+    // the insert is a .clap via NativeClapSlot, when nativeLv2Path is non-empty a
+    // .lv2 via NativeLv2Slot (CLAP wins if both are somehow set). Always present so
+    // non-Linux builds round-trip the fields untouched.
     juce::String nativeClapPath;
     juce::String nativeClapStateBase64;
+    juce::String nativeLv2Path;
+    juce::String nativeLv2StateBase64;
 
     // Track freeze (MIDI tracks): the instrument + pre-fader strip is rendered
     // to a WAV, the plugin is bypassed to free CPU, and playback reads the WAV
@@ -958,12 +963,14 @@ struct AuxLane
     std::array<juce::String, AuxLaneParams::kMaxLanePlugins> pluginDescriptionXml;
     std::array<juce::String, AuxLaneParams::kMaxLanePlugins> pluginStateBase64;
 
-    // Native CLAP host alternative to the JUCE plugin above. When nativeClapPath is
-    // non-empty the slot hosts a .clap via NativeClapSlot instead of a JUCE plugin;
-    // nativeClapStateBase64 is the CLAP state blob. Mutually exclusive with the JUCE
-    // pair (a slot is JUCE / native-CLAP / hardware / empty).
+    // Native host alternatives to the JUCE plugin above. A slot is JUCE /
+    // native-CLAP / native-LV2 / hardware / empty — at most one host per slot
+    // (CLAP wins if both native paths are somehow set). Always present so
+    // non-Linux builds round-trip the fields untouched.
     std::array<juce::String, AuxLaneParams::kMaxLanePlugins> nativeClapPath;
     std::array<juce::String, AuxLaneParams::kMaxLanePlugins> nativeClapStateBase64;
+    std::array<juce::String, AuxLaneParams::kMaxLanePlugins> nativeLv2Path;
+    std::array<juce::String, AuxLaneParams::kMaxLanePlugins> nativeLv2StateBase64;
 
     std::array<HardwareInsertParams, AuxLaneParams::kMaxLanePlugins> hardwareInserts;
 };

@@ -1307,6 +1307,24 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
             track.nativeClapStateBase64.clear();
         }
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+        if (strip.isNativeLv2Loaded())
+        {
+            track.nativeLv2Path = strip.getNativeLv2Slot().getPath();
+            std::vector<uint8_t> blob;
+            // Lv2Instance state persistence isn't wired yet (saveState returns
+            // false) — the path alone restores the plugin at its defaults.
+            if (strip.getNativeLv2Slot().saveState (blob) && ! blob.empty())
+                track.nativeLv2StateBase64 = juce::Base64::toBase64 (blob.data(), blob.size());
+            else
+                track.nativeLv2StateBase64.clear();
+        }
+        else if (! strip.nativeLv2ReloadFailed())
+        {
+            track.nativeLv2Path.clear();
+            track.nativeLv2StateBase64.clear();
+        }
+#endif
     }
     for (int a = 0; a < Session::kNumAuxLanes; ++a)
     {
@@ -1337,6 +1355,22 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
                 // empty / user-removed slot.
                 lane.nativeClapPath[(size_t) s].clear();
                 lane.nativeClapStateBase64[(size_t) s].clear();
+            }
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+            if (strip.isNativeLv2Loaded (s))
+            {
+                lane.nativeLv2Path[(size_t) s] = strip.getNativeLv2Slot (s).getPath();
+                std::vector<uint8_t> blob;
+                if (strip.getNativeLv2Slot (s).saveState (blob) && ! blob.empty())
+                    lane.nativeLv2StateBase64[(size_t) s] = juce::Base64::toBase64 (blob.data(), blob.size());
+                else
+                    lane.nativeLv2StateBase64[(size_t) s].clear();
+            }
+            else if (! strip.nativeLv2ReloadFailed (s))
+            {
+                lane.nativeLv2Path[(size_t) s].clear();
+                lane.nativeLv2StateBase64[(size_t) s].clear();
             }
 #endif
         }
@@ -1375,6 +1409,9 @@ void AudioEngine::leakAllPluginInstancesForShutdown()
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
         strip.getNativeClapSlot().leakForShutdown();   // u-he hangs in destroy/dlclose
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+        strip.getNativeLv2Slot().leakForShutdown();
+#endif
     }
     for (auto& laneStrip : auxLaneStrips)
         for (int s = 0; s < AuxLaneParams::kMaxLanePlugins; ++s)
@@ -1382,6 +1419,9 @@ void AudioEngine::leakAllPluginInstancesForShutdown()
             laneStrip.getPluginSlot (s).leakInstanceForShutdown();
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
             laneStrip.getNativeClapSlot (s).leakForShutdown();   // u-he hangs in destroy/dlclose
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+            laneStrip.getNativeLv2Slot (s).leakForShutdown();
 #endif
         }
 }
@@ -1469,23 +1509,67 @@ void AudioEngine::consumePluginStateAfterLoad()
             }
             else
             {
+                // Not prepared → no live audio; safe to clear a carried-over LV2
+                // unfenced (the prepared path's loadNativeClap evicts it itself).
+                strip.unloadNativeLv2();
                 strip.setPendingNativeClap (clapFile, std::move (blob));
             }
             continue;
         }
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+        if (track.nativeLv2Path.isNotEmpty())
+        {
+            slot.unload();
+            strip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
 
-        // No native CLAP in this session for this strip — tear down any native
+            std::vector<uint8_t> blob;
+            if (const auto& st = track.nativeLv2StateBase64; st.isNotEmpty())
+            {
+                juce::MemoryBlock mb;
+                if (mb.fromBase64Encoding (st) && mb.getSize() > 0)
+                    blob.assign (static_cast<const uint8_t*> (mb.getData()),
+                                 static_cast<const uint8_t*> (mb.getData()) + mb.getSize());
+            }
+
+            const juce::File lv2File (track.nativeLv2Path);
+            if (strip.isPrepared())
+            {
+                suspendProcessing();
+                std::string err;
+                const bool ok = strip.loadNativeLv2 (lv2File, err);
+                if (ok && ! blob.empty())
+                    strip.getNativeLv2Slot().loadState (blob);
+                resumeProcessing();
+                if (! ok)
+                    lastPluginLoadFailures.push_back ({
+                        "Track " + juce::String (t + 1),
+                        lv2File.getFileNameWithoutExtension() });
+            }
+            else
+            {
+                strip.unloadNativeClap();   // see the CLAP pending branch above
+                strip.setPendingNativeLv2 (lv2File, std::move (blob));
+            }
+            continue;
+        }
+#endif
+
+        // No native host in this session for this strip — tear down any native
         // instance carried over from the previously-loaded session before the JUCE
         // restore below (unload destroys the instance, so fence it when live).
-        if (strip.isNativeClapLoaded())
+        if (strip.isNativeClapLoaded() || strip.isNativeLv2Loaded())
         {
             suspendProcessing();
             strip.unloadNativeClap();
+            strip.unloadNativeLv2();
             resumeProcessing();
         }
         else
+        {
             strip.unloadNativeClap();   // no live instance: just clears any stale pending
+            strip.unloadNativeLv2();
+        }
 
         if (track.pluginDescriptionXml.isEmpty())
         {
@@ -1557,22 +1641,65 @@ void AudioEngine::consumePluginStateAfterLoad()
                 }
                 else
                 {
+                    // Not prepared → no live audio; clear a carried-over LV2 unfenced.
+                    strip.unloadNativeLv2 (s);
                     strip.setPendingNativeClap (s, clapFile, std::move (blob));
                 }
                 continue;   // native handled — skip the JUCE restore for this slot
             }
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+            if (lane.nativeLv2Path[(size_t) s].isNotEmpty())
+            {
+                slot.unload();
+                strip.insertMode[(size_t) s].store (AuxLaneStrip::kInsertPlugin, std::memory_order_release);
 
-            // No native CLAP for this slot — tear down any instance carried over from
+                std::vector<uint8_t> blob;
+                if (const auto& st = lane.nativeLv2StateBase64[(size_t) s]; st.isNotEmpty())
+                {
+                    juce::MemoryBlock mb;
+                    if (mb.fromBase64Encoding (st) && mb.getSize() > 0)
+                        blob.assign (static_cast<const uint8_t*> (mb.getData()),
+                                     static_cast<const uint8_t*> (mb.getData()) + mb.getSize());
+                }
+
+                const juce::File lv2File (lane.nativeLv2Path[(size_t) s]);
+                if (strip.isPrepared())
+                {
+                    suspendProcessing();   // load is not RT-safe; fence the audio thread
+                    std::string err;
+                    const bool ok = strip.loadNativeLv2 (s, lv2File, err);
+                    if (ok && ! blob.empty())
+                        strip.getNativeLv2Slot (s).loadState (blob);
+                    resumeProcessing();
+                    if (! ok)
+                        lastPluginLoadFailures.push_back ({
+                            "Aux " + juce::String (a + 1) + " slot " + juce::String (s + 1),
+                            lv2File.getFileNameWithoutExtension() });
+                }
+                else
+                {
+                    strip.unloadNativeClap (s);   // see the CLAP pending branch above
+                    strip.setPendingNativeLv2 (s, lv2File, std::move (blob));
+                }
+                continue;   // native handled — skip the JUCE restore for this slot
+            }
+#endif
+
+            // No native host for this slot — tear down any instance carried over from
             // the previous session before the JUCE restore (fence when live).
-            if (strip.isNativeClapLoaded (s))
+            if (strip.isNativeClapLoaded (s) || strip.isNativeLv2Loaded (s))
             {
                 suspendProcessing();
                 strip.unloadNativeClap (s);
+                strip.unloadNativeLv2 (s);
                 resumeProcessing();
             }
             else
+            {
                 strip.unloadNativeClap (s);   // clears any stale pending restore
+                strip.unloadNativeLv2 (s);
+            }
 
             const auto& descXml = lane.pluginDescriptionXml[(size_t) s];
             if (descXml.isEmpty())

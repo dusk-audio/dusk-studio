@@ -150,3 +150,34 @@ TEST_CASE ("SessionSerializer round-trips an aux native-CLAP slot", "[session][s
 
     dir.deleteRecursively();
 }
+
+// Same guard for the native-LV2 pair, on both a track and an aux slot.
+TEST_CASE ("SessionSerializer round-trips native-LV2 slots", "[session][serializer][lv2]")
+{
+    using duskstudio::Session;
+    using duskstudio::SessionSerializer;
+
+    const auto dir = makeTempSessionDir();
+    const auto target = dir.getChildFile ("session.json");
+
+    Session a;
+    a.track (2).nativeLv2Path         = "/home/user/.lv2/SilkVerb.lv2";
+    a.track (2).nativeLv2StateBase64  = "TFYyU1RBVEVibG9i";
+    auto& lane = a.auxLane (1);
+    lane.nativeLv2Path[0]        = "/usr/lib64/lv2/a-comp.lv2";
+    lane.nativeLv2StateBase64[0] = "TFYyU1RBVEVibG9i";
+    REQUIRE (SessionSerializer::save (a, target));
+
+    Session b;
+    REQUIRE (SessionSerializer::load (b, target));
+    REQUIRE (b.track (2).nativeLv2Path        == "/home/user/.lv2/SilkVerb.lv2");
+    REQUIRE (b.track (2).nativeLv2StateBase64 == "TFYyU1RBVEVibG9i");
+    REQUIRE (b.auxLane (1).nativeLv2Path[0]        == "/usr/lib64/lv2/a-comp.lv2");
+    REQUIRE (b.auxLane (1).nativeLv2StateBase64[0] == "TFYyU1RBVEVibG9i");
+
+    // Untouched slots stay empty (keys omitted on write).
+    REQUIRE (b.track (0).nativeLv2Path.isEmpty());
+    REQUIRE (b.auxLane (0).nativeLv2Path[0].isEmpty());
+
+    dir.deleteRecursively();
+}
