@@ -2,6 +2,7 @@
 
 #include "ClapHost.h"
 #include "../hosting/INativeInstance.h"
+#include "../hosting/SpscRing.h"
 
 #include <clap/events.h>
 
@@ -138,15 +139,13 @@ private:
     // thread-safe-static-init guard. Wired in the constructor.
     clap_output_events_t emptyOut {};
 
-    // Parameter automation. Single-producer (message thread, setParamValue) /
-    // single-consumer (audio thread, processStereo) ring of pending changes, drained
-    // into a per-block CLAP event list. inEvents reports eventCount (0 ⇒ no changes),
-    // so it doubles as the "empty" list when nothing is queued.
+    // Parameter automation. UI→RT ring of pending changes (message-thread
+    // setParamValue → audio-thread drain), turned into a per-block CLAP event
+    // list. inEvents reports eventCount (0 ⇒ no changes), so it doubles as the
+    // "empty" list when nothing is queued.
     struct ParamChange { clap_id id; double value; void* cookie; };
-    static constexpr int kParamRingCap = 512;
-    std::array<ParamChange, (size_t) kParamRingCap> paramRing {};
-    std::atomic<uint32_t> ringWrite { 0 };
-    std::atomic<uint32_t> ringRead  { 0 };
+    static constexpr uint32_t kParamRingCap = 512;
+    hosting::SpscRing<ParamChange, kParamRingCap> paramRing;
     std::vector<clap_event_param_value_t> eventScratch;   // sized in activate(), never RT-grown
     uint32_t             eventCount = 0;
     clap_input_events_t  inEvents {};
