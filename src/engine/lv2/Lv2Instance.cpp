@@ -89,6 +89,7 @@ struct Lv2Instance::Impl
     }
 
     // ── plugin + instance ──
+    LilvWorld*        world  = nullptr;   // owned by the bundle
     const LilvPlugin* plugin = nullptr;   // owned by the bundle's world
     LilvInstance*     instance = nullptr;
     bool   active = false;
@@ -142,6 +143,7 @@ bool Lv2Instance::create (const Lv2Bundle& bundle, const std::string& uri, std::
     if (impl->plugin == nullptr) { errorOut = "plugin URI not found in bundle: " + uri; return false; }
 
     auto* world = static_cast<LilvWorld*> (bundle.world());
+    impl->world = world;
     LilvNode* audioClass   = lilv_new_uri (world, LV2_CORE__AudioPort);
     LilvNode* controlClass = lilv_new_uri (world, LV2_CORE__ControlPort);
     LilvNode* inputClass   = lilv_new_uri (world, LV2_CORE__InputPort);
@@ -354,4 +356,31 @@ void Lv2Instance::processBlock (const hosting::PortBuffers& io) noexcept
 
 bool Lv2Instance::saveState (std::vector<uint8_t>&) const { return false; }   // state save/load not yet wired
 bool Lv2Instance::loadState (const std::vector<uint8_t>&) { return false; }   // state save/load not yet wired
+
+void*       Lv2Instance::lilvWorld()        const noexcept { return impl->world; }
+const void* Lv2Instance::lilvPlugin()       const noexcept { return impl->plugin; }
+void*       Lv2Instance::lilvInstance()     const noexcept { return impl->instance; }
+void*       Lv2Instance::uridMapFeature()   const noexcept { return &impl->mapFeatureStruct; }
+void*       Lv2Instance::uridUnmapFeature() const noexcept { return &impl->unmapFeatureStruct; }
+
+void Lv2Instance::setControlPortValue (uint32_t portIndex, float value) noexcept
+{
+    if ((size_t) portIndex < impl->portValues.size())
+        impl->portValues[(size_t) portIndex] = value;
+}
+
+int Lv2Instance::portIndexForSymbol (const char* symbol) const noexcept
+{
+    if (impl->plugin == nullptr || symbol == nullptr) return -1;
+    // The port symbol is resolvable without the world: walk the ports and compare.
+    const uint32_t numPorts = lilv_plugin_get_num_ports (impl->plugin);
+    for (uint32_t i = 0; i < numPorts; ++i)
+    {
+        const LilvPort* port = lilv_plugin_get_port_by_index (impl->plugin, i);
+        const LilvNode* sym  = lilv_port_get_symbol (impl->plugin, port);
+        if (sym != nullptr && std::strcmp (lilv_node_as_string (sym), symbol) == 0)
+            return (int) i;
+    }
+    return -1;
+}
 } // namespace duskstudio::lv2
