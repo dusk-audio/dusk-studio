@@ -43,6 +43,12 @@ public:
     // via scanInstalledPlugins; result cached in memory for the session.
     void scanClapPlugins();
 
+    // Native-LV2 plugins, scanned separately from JUCE's LV2 format (which stays as
+    // the fallback host). pluginFormatName "LV2-Native", fileOrIdentifier = the .lv2
+    // bundle directory. Audio effects only; discovery is manifest-only via lilv.
+    juce::Array<juce::PluginDescription> getLv2EffectDescriptions() const;
+    void scanLv2Plugins();
+
     // Synchronous instantiation. May take 100s of ms. Returns nullptr on
     // failure and sets errorMessage. Caller runs prepareToPlay before
     // processing audio. Success adds the description to knownPluginList.
@@ -94,6 +100,7 @@ private:
     juce::AudioPluginFormatManager formatManager;
     juce::KnownPluginList          knownPluginList;
     juce::Array<juce::PluginDescription> clapDescriptions;   // native CLAP (scanned separately)
+    juce::Array<juce::PluginDescription> lv2Descriptions;    // native LV2 (scanned separately)
     bool                           oopEnabled { false };
 
     void loadCache();
@@ -105,6 +112,11 @@ private:
     juce::File getClapCacheFile() const;
     void loadClapCache();
     void saveClapCache() const;
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+    juce::File getLv2CacheFile() const;
+    void loadLv2Cache();
+    void saveLv2Cache() const;
 #endif
 };
 
