@@ -63,6 +63,9 @@ private:
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
     void loadNativeClapForSlot (int slotIdx, const juce::File& clapFile);   // Linux-only
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+    void loadNativeLv2ForSlot (int slotIdx, const juce::File& bundleDir);   // Linux-only, no editor yet
+#endif
     // Stubbed (no-op body) off Linux so the many callers don't each need a guard.
     void detachClapEditorForSlot (int slotIdx);
     void hideEditorsKeepingAlive();

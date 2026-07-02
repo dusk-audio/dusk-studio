@@ -320,7 +320,7 @@ AuxLaneComponent::AuxLaneComponent (AuxLane& l, AuxLaneStrip& s, int idx,
         s.openOrAddButton.onClick = [this, i]
         {
             auto& slotRef = strip.getPluginSlot (i);
-            if (slotRef.isLoaded() || strip.isNativeClapLoaded (i))
+            if (slotRef.isLoaded() || strip.isNativeClapLoaded (i) || strip.isNativeLv2Loaded (i))
             {
                 // Native CLAP fills the inline editor area when loaded (same as a JUCE
                 // plugin); clicking the name must not re-open the picker over it.
@@ -345,6 +345,13 @@ AuxLaneComponent::AuxLaneComponent (AuxLane& l, AuxLaneStrip& s, int idx,
             if (strip.isNativeClapLoaded (i))
             {
                 strip.getNativeClapSlot (i).setBypassed (on);
+            }
+            else
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+            if (strip.isNativeLv2Loaded (i))
+            {
+                strip.getNativeLv2Slot (i).setBypassed (on);
             }
             else
 #endif
@@ -669,6 +676,24 @@ void AuxLaneComponent::refreshSlotControls (int i)
         return;
     }
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+    if (strip.isNativeLv2Loaded (i))
+    {
+        const auto name = juce::File (strip.getNativeLv2Slot (i).getPath())
+                              .getFileNameWithoutExtension();
+        if (name != ui.displayedName)
+        {
+            ui.displayedName = name;
+            ui.openOrAddButton.setButtonText (name);
+            resized();
+        }
+        ui.bypassButton.setVisible (true);
+        ui.bypassButton.setToggleState (strip.getNativeLv2Slot (i).isBypassed(),
+                                        juce::dontSendNotification);
+        ui.removeButton.setVisible (true);
+        return;
+    }
+#endif
 
     if (slotRef.isLoaded())
     {
@@ -740,6 +765,14 @@ void AuxLaneComponent::openPickerForSlot (int slotIdx)
             self->loadNativeClapForSlot (slotIdx, clapFile);
     };
 #endif
+    std::function<void (const juce::File&)> onLv2;
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+    onLv2 = [safe, slotIdx] (const juce::File& bundleDir)
+    {
+        if (auto* self = safe.getComponent())
+            self->loadNativeLv2ForSlot (slotIdx, bundleDir);
+    };
+#endif
     pluginpicker::openPickerMenu (strip.getPluginSlot (slotIdx),
                                     slots[(size_t) slotIdx].openOrAddButton,
                                     activePluginChooser,
@@ -765,6 +798,8 @@ void AuxLaneComponent::openPickerForSlot (int slotIdx)
                                                 self->engine.resumeProcessing();
                                                 self->lane.nativeClapPath[(size_t) slotIdx].clear();
                                                 self->lane.nativeClapStateBase64[(size_t) slotIdx].clear();
+                                                self->lane.nativeLv2Path[(size_t) slotIdx].clear();
+                                                self->lane.nativeLv2StateBase64[(size_t) slotIdx].clear();
                                             }
 
                                             self->refreshSlotControls (slotIdx);
@@ -779,7 +814,8 @@ void AuxLaneComponent::openPickerForSlot (int slotIdx)
                                             self->openHardwareInsertEditor (slotIdx);
                                     },
                                     /*suppressSecondaryButtons*/ false,
-                                    std::move (onClap));
+                                    std::move (onClap),
+                                    std::move (onLv2));
 }
 
 void AuxLaneComponent::openHardwareInsertEditor (int slotIdx)
@@ -831,6 +867,8 @@ void AuxLaneComponent::unloadSlot (int slotIdx)
             self->engine.resumeProcessing();
             self->lane.nativeClapPath[(size_t) slotIdx].clear();
             self->lane.nativeClapStateBase64[(size_t) slotIdx].clear();
+            self->lane.nativeLv2Path[(size_t) slotIdx].clear();
+            self->lane.nativeLv2StateBase64[(size_t) slotIdx].clear();
         }
         // Clear the model's enabled flag so any consumer that polls
         // lane.hardwareInserts[slotIdx].enabled sees a disabled slot
@@ -929,10 +967,53 @@ void AuxLaneComponent::loadNativeClapForSlot (int slotIdx, const juce::File& cla
     // Fresh plugin: don't inherit the previous slot occupant's state blob. The next
     // save re-captures this plugin's real state.
     lane.nativeClapStateBase64[(size_t) slotIdx].clear();
+    // The load evicted any native LV2 in this slot — drop its persisted refs too.
+    lane.nativeLv2Path[(size_t) slotIdx].clear();
+    lane.nativeLv2StateBase64[(size_t) slotIdx].clear();
     refreshSlotControls (slotIdx);
     rebuildSlots();
 }
 #endif // DUSKSTUDIO_HAS_NATIVE_CLAP
+
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+void AuxLaneComponent::loadNativeLv2ForSlot (int slotIdx, const juce::File& bundleDir)
+{
+    if (slotIdx < 0 || slotIdx >= AuxLaneParams::kMaxLanePlugins) return;
+
+    // A slot hosts exactly one thing — drop any editor first (the CLAP editor
+    // references an instance the load below evicts). Mirrors loadNativeClapForSlot.
+    detachEditorForSlot (slotIdx);
+    detachHardwareInsertForSlot (slotIdx);
+    detachClapEditorForSlot (slotIdx);
+
+    // NativeLv2Slot::load is NOT RT-safe; fence the audio thread around the swap.
+    // loadNativeLv2 itself evicts the CLAP + JUCE occupants.
+    std::string err;
+    bool ok = false;
+    engine.suspendProcessing();
+    ok = strip.loadNativeLv2 (slotIdx, bundleDir, err);
+    if (ok)
+        strip.insertMode[(size_t) slotIdx].store (AuxLaneStrip::kInsertPlugin,
+                                                   std::memory_order_release);
+    engine.resumeProcessing();
+
+    if (! ok)
+    {
+        std::fprintf (stderr, "[aux lv2] load failed: %s\n", err.c_str());
+        showDuskAlert (*this, "Couldn't load LV2 plugin",
+                       bundleDir.getFileNameWithoutExtension() + ":\n" + juce::String (err));
+        lane.nativeLv2Path[(size_t) slotIdx].clear();
+        lane.nativeLv2StateBase64[(size_t) slotIdx].clear();
+        return;
+    }
+    lane.nativeLv2Path[(size_t) slotIdx] = bundleDir.getFullPathName();
+    lane.nativeLv2StateBase64[(size_t) slotIdx].clear();
+    lane.nativeClapPath[(size_t) slotIdx].clear();
+    lane.nativeClapStateBase64[(size_t) slotIdx].clear();
+    refreshSlotControls (slotIdx);
+    rebuildSlots();
+}
+#endif // DUSKSTUDIO_HAS_NATIVE_LV2
 
 void AuxLaneComponent::detachClapEditorForSlot (int slotIdx)
 {
@@ -1025,7 +1106,7 @@ void AuxLaneComponent::layoutEditorForSlot (int slotIdx)
     auto& slot = strip.getPluginSlot (slotIdx);
     const int mode = strip.insertMode[(size_t) slotIdx].load (std::memory_order_relaxed);
     if (slot.isLoaded() || slot.isOffline() || mode == AuxLaneStrip::kInsertHardware
-        || strip.isNativeClapLoaded (slotIdx))
+        || strip.isNativeClapLoaded (slotIdx) || strip.isNativeLv2Loaded (slotIdx))
         center.removeFromTop (kSlotHeaderH + 4);
 
     if (center.isEmpty()) return;
@@ -1291,13 +1372,13 @@ void AuxLaneComponent::resized()
     // and removeButton — made visible by refreshSlotControls in HW
     // mode — would never get bounds and the user couldn't dismiss
     // the HW insert.
-    const bool nativeClap = strip.isNativeClapLoaded (0);
-    if (slot0.isLoaded() || slot0.isOffline() || hardware || nativeClap)
+    const bool nativeLoaded = strip.isNativeClapLoaded (0) || strip.isNativeLv2Loaded (0);
+    if (slot0.isLoaded() || slot0.isOffline() || hardware || nativeLoaded)
     {
         auto headerStrip = center.removeFromTop (kSlotHeaderH);
         ui.removeButton.setBounds (headerStrip.removeFromRight (28));
         headerStrip.removeFromRight (4);
-        if (slot0.isLoaded() || nativeClap)
+        if (slot0.isLoaded() || nativeLoaded)
         {
             ui.bypassButton.setBounds (headerStrip.removeFromRight (44));
             headerStrip.removeFromRight (4);
