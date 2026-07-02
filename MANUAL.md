@@ -1374,7 +1374,7 @@ A few rules:
 
 Dusk Studio scans and hosts:
 
-- **VST3** on Linux, macOS, and Windows.
+- **VST3** on Linux, macOS, and Windows. On Linux, effects load through Dusk Studio's own native VST3 host (rows tagged **VST3-Native**); instruments — and VST3 everywhere else — load through the standard host.
 - **LV2** on Linux. Effects load through Dusk Studio's own native LV2 host (rows tagged **LV2-Native**); LV2 instruments load through the standard host.
 - **CLAP** on Linux, through the native host. Effects only.
 - **AU** on macOS only.
@@ -1392,7 +1392,7 @@ Plugin scan results are cached in:
 - macOS: `~/Library/Application Support/Dusk Studio/plugin-cache.xml`
 - Windows: `%APPDATA%\Dusk Studio\plugin-cache.xml`
 
-On Linux the native hosts keep their own sidecar caches next to it (`clap-cache.xml`, `lv2-native-cache.xml`), rebuilt by the same **Scan plugins** button. The native LV2 scan reads only the bundles' manifests — it never loads the plugin binary, so a broken bundle cannot crash the scan; it is simply skipped (or reported when you try to load it).
+On Linux the native hosts keep their own sidecar caches next to it (`clap-cache.xml`, `lv2-native-cache.xml`, `vst3-native-cache.xml`), rebuilt by the same **Scan plugins** button. The native LV2 scan reads only the bundles' manifests — it never loads the plugin binary, so a broken bundle cannot crash the scan; it is simply skipped (or reported when you try to load it).
 
 To re-scan on every launch, enable **Settings → General → Scan plugins on startup**. The startup scan runs in the background behind a progress window (it shows the plugin currently being scanned and a progress bar), so the app stays responsive instead of appearing to hang while a large collection is scanned.
 
@@ -1402,10 +1402,10 @@ In the **plugin picker** modal:
 
 - Use the filter field at the top to narrow by name.
 - The list is grouped by manufacturer. Click a manufacturer to expand or collapse.
-- Each row shows the plugin name and its format (VST3 / LV2 / AU / CLAP / LV2-Native).
+- Each row shows the plugin name and its format (VST3 / LV2 / AU / CLAP / LV2-Native / VST3-Native).
 - Click a row to load and dismiss.
 
-On Linux, effect slots list LV2 plugins as **LV2-Native** rows — the same plugins, hosted by Dusk Studio's native LV2 host instead of the standard one. Each plugin appears once; there is no duplicate plain-LV2 row.
+On Linux, effect slots list LV2 and VST3 plugins as **LV2-Native** / **VST3-Native** rows — the same plugins, hosted by Dusk Studio's native hosts instead of the standard one. Each plugin appears once; there is no duplicate plain-LV2 or plain-VST3 row.
 
 The picker filters by intent: only effect plugins appear when you're loading onto a channel insert or aux lane; only instruments appear when you're loading onto a MIDI track.
 
@@ -1424,17 +1424,17 @@ This holds on all platforms, including the macOS out-of-process sandbox. Rather 
 
 ## Native plugin hosting (Linux)
 
-On Linux, CLAP plugins and LV2 effects are hosted by Dusk Studio's own plugin hosts rather than the standard hosting layer. This exists for one reason: plugin editor windows embedded through the standard layer are the biggest source of UI breakage on Wayland desktops. The native hosts own the editor embedding directly and sidestep that class of problem.
+On Linux, CLAP plugins and LV2/VST3 effects are hosted by Dusk Studio's own plugin hosts rather than the standard hosting layer. This exists for one reason: plugin editor windows embedded through the standard layer are the biggest source of UI breakage on Wayland desktops. The native hosts own the editor embedding directly and sidestep that class of problem.
 
 In practice the differences are small:
 
-- Rows tagged **CLAP** or **LV2-Native** in the picker load through the native hosts; everything else about picking, replacing, and removing is identical.
+- Rows tagged **CLAP**, **LV2-Native**, or **VST3-Native** in the picker load through the native hosts; everything else about picking, replacing, and removing is identical.
 - Editors open the same way (centred modal on channel slots, inline on aux lanes) and their settings persist in the session like any other plugin.
-- Native-hosted plugins always run in-process; the OOP sandbox does not apply to them. Scanning is still crash-safe — CLAP discovery is isolated and native LV2 discovery never executes plugin code.
+- Native-hosted plugins always run in-process; the OOP sandbox does not apply to them. Native LV2 discovery never executes plugin code; CLAP and native VST3 discovery load each module to read its factory, like any host's VST3 scan.
 - Insert latency reported by a native-hosted plugin feeds plugin delay compensation like any other insert.
-- A slot holds one plugin regardless of host: loading a CLAP, an LV2-Native, or a standard-host plugin into the same slot replaces whatever was there.
+- A slot holds one plugin regardless of host: loading a CLAP, an LV2-Native, a VST3-Native, or a standard-host plugin into the same slot replaces whatever was there.
 
-One caveat: a plugin's saved state does not transfer between hosting layers. If a session carried a plugin under the standard LV2 host and you load the same plugin as LV2-Native (or vice versa), it starts from its defaults — set it up once and save.
+One caveat: a plugin's saved state does not transfer between hosting layers. If a session carried a plugin under the standard LV2 or VST3 host and you load the same plugin as a native row (or vice versa), it starts from its defaults — set it up once and save.
 
 ## Out-of-process sandboxing
 

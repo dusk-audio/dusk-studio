@@ -41,6 +41,12 @@ public:
     void visibilityChanged() override;
     void parentHierarchyChanged() override;
 
+    // Stage switches flip AuxView's OWN visible flag; the lanes' flags don't
+    // change, so their visibilityChanged never fires. AuxView forwards its
+    // change here so the active lane (re)builds its inline editors on first
+    // show and hides them when the stage goes away.
+    void refreshEditorsForShowState();
+
     static constexpr int kStripWidth      = 150;
     static constexpr int kSendPanelWidth  = 280;
     static constexpr int kColumnGap       = 8;
@@ -66,9 +72,13 @@ private:
 #if DUSKSTUDIO_HAS_NATIVE_LV2
     void loadNativeLv2ForSlot (int slotIdx, const juce::File& bundleDir);   // Linux-only, no editor yet
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+    void loadNativeVst3ForSlot (int slotIdx, const juce::File& vst3File);   // Linux-only
+#endif
     // Stubbed (no-op body) off Linux so the many callers don't each need a guard.
     void detachClapEditorForSlot (int slotIdx);
     void detachLv2EditorForSlot (int slotIdx);
+    void detachVst3EditorForSlot (int slotIdx);
     void hideEditorsKeepingAlive();
     void layoutEditorForSlot (int slotIdx);
     void scheduleEditorRefits (int slotIdx);
@@ -144,6 +154,10 @@ private:
         // Native LV2 (suil) editor — same contract as clapEditor.
 #if DUSKSTUDIO_HAS_NATIVE_LV2
         std::unique_ptr<class Lv2PluginEditorComponent> lv2Editor;
+#endif
+        // Native VST3 (IPlugView) editor — same contract as clapEditor.
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+        std::unique_ptr<class Vst3PluginEditorComponent> vst3Editor;
 #endif
         juce::String displayedName;
     };

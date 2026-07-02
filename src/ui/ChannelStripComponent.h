@@ -340,6 +340,11 @@ private:
     std::unique_ptr<class Lv2PluginEditorComponent> lv2Editor;
     void loadNativeLv2ForChannel (const juce::File& bundleDir);
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+    // Native VST3 insert editor (IPlugView) — same lifecycle as clapEditor above.
+    std::unique_ptr<class Vst3PluginEditorComponent> vst3Editor;
+    void loadNativeVst3ForChannel (const juce::File& vst3File);
+#endif
 
    #if JUCE_LINUX && DUSKSTUDIO_HAS_OOP_PLUGINS
     // OOP: child plugin's X11 Window wrapped in XEmbedComponent fed

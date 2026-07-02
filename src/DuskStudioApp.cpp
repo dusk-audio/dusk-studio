@@ -7,6 +7,11 @@
   #include "engine/lv2/NativeLv2Slot.h"       // Linux-only native LV2 editor test
   #include "ui/Lv2PluginEditorComponent.h"
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+  #include "engine/vst3/Vst3Bundle.h"         // Linux-only native VST3 editor test
+  #include "engine/vst3/Vst3Instance.h"
+  #include "ui/Vst3PluginEditorComponent.h"
+#endif
 #include "ui/ConsoleView.h"
 #include "ui/MainComponent.h"
 #include "ui/WindowState.h"
@@ -931,6 +936,15 @@ struct DuskStudioApp::Lv2EditorTest
 };
 #endif
 
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+struct DuskStudioApp::Vst3EditorTest
+{
+    duskstudio::vst3::Vst3Bundle bundle;            // backs the instance's vtables
+    duskstudio::vst3::Vst3Instance instance;
+    std::unique_ptr<juce::DocumentWindow> window;   // declared last → destroyed first
+};
+#endif
+
 void DuskStudioApp::initialise (const juce::String& commandLine)
 {
     // --version: print app + JUCE versions + platform string and exit
@@ -1068,6 +1082,60 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
         return;
     }
 #endif // DUSKSTUDIO_HAS_NATIVE_LV2
+
+    // DUSKSTUDIO_VST3_EDITOR_TEST=/path/to.vst3 — same standalone live-verification
+    // for the native VST3 (IPlugView) editor embed. Close the window to quit.
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+    if (const char* path = std::getenv ("DUSKSTUDIO_VST3_EDITOR_TEST"); path != nullptr && *path)
+    {
+        duskstudio::platform::preferX11ForNextNativeWindow();   // editor host needs an X11 peer
+        vst3EditorTest = std::make_unique<Vst3EditorTest>();
+        std::string err;
+        if (! vst3EditorTest->bundle.load (path, err))
+        {
+            std::fprintf (stderr, "[vst3 editor test] load failed: %s\n", err.c_str());
+            quit();
+            return;
+        }
+        std::string classId;
+        for (const auto& d : vst3EditorTest->bundle.plugins())
+            if (! d.isInstrument) { classId = d.id; break; }
+        if (classId.empty()
+            || ! vst3EditorTest->instance.create (vst3EditorTest->bundle, classId, err)
+            || ! vst3EditorTest->instance.activate (48000.0, 1024, err))
+        {
+            std::fprintf (stderr, "[vst3 editor test] create failed: %s\n",
+                          classId.empty() ? "no effect class in module" : err.c_str());
+            quit();
+            return;
+        }
+        auto comp = std::make_unique<duskstudio::Vst3PluginEditorComponent>();
+        juce::String jerr;
+        if (! comp->attach (vst3EditorTest->instance, jerr))
+        {
+            std::fprintf (stderr, "[vst3 editor test] attach failed: %s\n", jerr.toRawUTF8());
+            quit();
+            return;
+        }
+        const int w = juce::jmax (200, comp->getWidth());
+        const int h = juce::jmax (200, comp->getHeight());
+        struct TestWindow final : juce::DocumentWindow
+        {
+            using juce::DocumentWindow::DocumentWindow;
+            void closeButtonPressed() override
+            { juce::JUCEApplication::getInstance()->systemRequestedQuit(); }
+        };
+        vst3EditorTest->window = std::make_unique<TestWindow> (
+            "Dusk — VST3 editor test", juce::Colours::black, juce::DocumentWindow::allButtons);
+        vst3EditorTest->window->setUsingNativeTitleBar (true);
+        vst3EditorTest->window->setContentOwned (comp.release(), true);
+        vst3EditorTest->window->centreWithSize (w, h);
+        vst3EditorTest->window->setVisible (true);   // creates the peer → consumes the X11 latch
+        duskstudio::platform::clearPreferX11ForNativeWindow();
+        duskstudio::platform::installNonFatalXErrorHandler();
+        return;
+    }
+#endif // DUSKSTUDIO_HAS_NATIVE_VST3
 
     // DUSKSTUDIO_REPLACE_TEST=A.vst3:B.vst3 — exercises the Replace plugin...
     // swap pattern under live processing. Loads A, runs audio, swaps to
@@ -1346,6 +1414,9 @@ void DuskStudioApp::shutdown()
     clapEditorTestWindow.reset();   // dev CLAP-editor test path: release its component deterministically
 #if DUSKSTUDIO_HAS_NATIVE_LV2
     lv2EditorTest.reset();          // dev LV2-editor test path: window first, then its slot
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+    vst3EditorTest.reset();         // dev VST3-editor test path: window first, then instance/bundle
 #endif
 
     // Tear down the FileLogger installed by crash_handler::install so

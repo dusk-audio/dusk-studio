@@ -30,6 +30,7 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+    void visibilityChanged() override;
 
     void mouseDoubleClick (const juce::MouseEvent&) override;
 

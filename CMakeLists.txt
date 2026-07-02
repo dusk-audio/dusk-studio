@@ -50,6 +50,22 @@ else()
     set(DUSKSTUDIO_NATIVE_LV2 OFF)
 endif()
 
+# Native VST3 host — Steinberg SDK hosting subset from the Dusk-owned mirror
+# (external/vst3sdk submodule, tag dusk-vst3sdk-v1; see DUSK-MIRROR.md there).
+# GPL-3.0 arm of the SDK's dual license — see LICENSES.txt. Linux-only like the
+# other native hosts.
+if(UNIX AND NOT APPLE)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/vst3sdk/pluginterfaces/base/funknown.cpp")
+        option(DUSKSTUDIO_NATIVE_VST3 "Build the native VST3 plugin host (Linux)" ON)
+    else()
+        set(DUSKSTUDIO_NATIVE_VST3 OFF)
+        message(STATUS "Native VST3 host: external/vst3sdk submodule missing - disabled "
+                       "(git submodule update --init external/vst3sdk)")
+    endif()
+else()
+    set(DUSKSTUDIO_NATIVE_VST3 OFF)
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -543,6 +559,61 @@ if(DUSKSTUDIO_NATIVE_LV2)
         src/ui/Lv2PluginEditorComponent.cpp)
     target_link_libraries(DuskStudio PRIVATE PkgConfig::LILV PkgConfig::SUIL PkgConfig::LV2)
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_NATIVE_LV2=1)
+endif()
+
+# Native VST3 host — the Steinberg SDK's hosting subset compiled as a private
+# static lib (the SDK's own CMake pulls vstgui and plugin-side machinery a host
+# never needs). SYSTEM includes + -w keep third-party code out of our -Werror
+# surface; the SDK requires exactly one of DEVELOPMENT/RELEASE defined.
+if(DUSKSTUDIO_NATIVE_VST3)
+    set(VST3SDK_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external/vst3sdk)
+    add_library(dusk-vst3-hosting STATIC
+        ${VST3SDK_DIR}/pluginterfaces/base/conststringtable.cpp
+        ${VST3SDK_DIR}/pluginterfaces/base/coreiids.cpp
+        ${VST3SDK_DIR}/pluginterfaces/base/funknown.cpp
+        ${VST3SDK_DIR}/pluginterfaces/base/ustring.cpp
+        ${VST3SDK_DIR}/base/source/baseiids.cpp
+        ${VST3SDK_DIR}/base/source/fbuffer.cpp
+        ${VST3SDK_DIR}/base/source/fdebug.cpp
+        ${VST3SDK_DIR}/base/source/fdynlib.cpp
+        ${VST3SDK_DIR}/base/source/fobject.cpp
+        ${VST3SDK_DIR}/base/source/fstreamer.cpp
+        ${VST3SDK_DIR}/base/source/fstring.cpp
+        ${VST3SDK_DIR}/base/source/timer.cpp
+        ${VST3SDK_DIR}/base/source/updatehandler.cpp
+        ${VST3SDK_DIR}/base/thread/source/fcondition.cpp
+        ${VST3SDK_DIR}/base/thread/source/flock.cpp
+        ${VST3SDK_DIR}/public.sdk/source/common/commoniids.cpp
+        ${VST3SDK_DIR}/public.sdk/source/vst/vstinitiids.cpp
+        ${VST3SDK_DIR}/public.sdk/source/common/commonstringconvert.cpp
+        ${VST3SDK_DIR}/public.sdk/source/common/memorystream.cpp
+        ${VST3SDK_DIR}/public.sdk/source/common/threadchecker_linux.cpp
+        ${VST3SDK_DIR}/public.sdk/source/vst/hosting/connectionproxy.cpp
+        ${VST3SDK_DIR}/public.sdk/source/vst/hosting/eventlist.cpp
+        ${VST3SDK_DIR}/public.sdk/source/vst/hosting/hostclasses.cpp
+        ${VST3SDK_DIR}/public.sdk/source/vst/hosting/module.cpp
+        ${VST3SDK_DIR}/public.sdk/source/vst/hosting/module_linux.cpp
+        ${VST3SDK_DIR}/public.sdk/source/vst/hosting/parameterchanges.cpp
+        ${VST3SDK_DIR}/public.sdk/source/vst/hosting/pluginterfacesupport.cpp
+        ${VST3SDK_DIR}/public.sdk/source/vst/hosting/plugprovider.cpp
+        ${VST3SDK_DIR}/public.sdk/source/vst/hosting/processdata.cpp
+        ${VST3SDK_DIR}/public.sdk/source/vst/utility/stringconvert.cpp)
+    target_include_directories(dusk-vst3-hosting SYSTEM PUBLIC ${VST3SDK_DIR})
+    target_compile_definitions(dusk-vst3-hosting PUBLIC
+        $<$<CONFIG:Debug>:DEVELOPMENT=1>
+        $<$<NOT:$<CONFIG:Debug>>:RELEASE=1>)
+    target_compile_options(dusk-vst3-hosting PRIVATE -w)
+    target_link_libraries(dusk-vst3-hosting PUBLIC ${CMAKE_DL_LIBS})
+    target_sources(DuskStudio PRIVATE
+        src/engine/vst3/NativeVst3Slot.cpp
+        src/engine/vst3/Vst3Bundle.cpp
+        src/engine/vst3/Vst3Editor.cpp
+        src/engine/vst3/Vst3HostContext.cpp
+        src/engine/vst3/Vst3Instance.cpp
+        src/engine/vst3/Vst3Scanner.cpp
+        src/ui/Vst3PluginEditorComponent.cpp)
+    target_link_libraries(DuskStudio PRIVATE dusk-vst3-hosting)
+    target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_NATIVE_VST3=1)
 endif()
 
 # Optional MP3 bounce via libmp3lame (LAME). Detected at configure time on every

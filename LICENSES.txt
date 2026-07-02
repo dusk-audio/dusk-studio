@@ -23,8 +23,7 @@ JUCE (audio framework)
 
 Dusk Audio plugins (donor DSP cores)
   License  : GPL-3.0-or-later (matches Dusk Studio)
-  Path     : ../plugins-main/plugins/  (Linux worktree)
-             ../plugins/plugins/        (macOS/Windows sibling)
+  Path     : ../plugins/plugins/  (sibling checkout, all platforms)
   Components used:
     - multi-q      (BritishEQProcessor)
     - multi-comp   (UniversalCompressor)
@@ -53,6 +52,20 @@ sfizz (SFZ / SoundFont sampler engine — powers the multisample instrument)
                - hiir          WTFPL        external/sfizz/src/external/hiir/   (Laurent de Soras)
                - simde         MIT / CC0    external/sfizz/external/simde/
 
+Steinberg VST3 SDK (native VST3 host — Linux builds only)
+  Version  : 3.8.0 (upstream tag v3.8.0_build_66)
+  License  : Dual-licensed — GPL-3.0 (used here) OR Steinberg VST3 proprietary
+  Path     : external/vst3sdk/ (git submodule of the Dusk-owned mirror
+             dusk-audio/vst3sdk, tag dusk-vst3sdk-v1 — hosting subset only:
+             base/, pluginterfaces/, public.sdk/; no vstgui, docs, or plugin
+             samples)
+  Upstream : https://github.com/steinbergmedia/vst3sdk
+  Notes    : Used strictly under the GPL-3.0 arm, which Dusk Studio's own
+             GPL-3.0-or-later license satisfies. HARD INVARIANT: no
+             distribution of Dusk Studio may bundle any third-party plugin —
+             shipping even a demo proprietary VST3 would void GPL compliance
+             for the whole binary.
+
 Catch2 (test framework — TEST BUILDS ONLY, not bundled in Dusk Studio)
   Version  : v3.5.4
   License  : Boost Software License 1.0
@@ -62,6 +75,15 @@ Catch2 (test framework — TEST BUILDS ONLY, not bundled in Dusk Studio)
 
 PLATFORM-SPECIFIC OPTIONAL DEPENDENCIES
 ---------------------------------------
+
+lilv / suil / lv2 (native LV2 host — Linux builds only)
+  License  : ISC (lilv, suil), ISC (lv2 headers)
+  Path     : not vendored — system shared libraries found at configure time via
+             pkg-config (lilv-0, suil-0, lv2); the native LV2 host is compiled
+             only when all three are present (DUSKSTUDIO_NATIVE_LV2).
+  Notes    : Linked against the distro shared objects, never statically. ISC is
+             GPL-compatible; no additional obligations beyond the license text.
+  Upstream : https://gitlab.com/lv2 (lilv, suil), https://lv2plug.in (lv2)
 
 LAME / libmp3lame (MP3 bounce export — optional)
   License  : LGPL-2.1-or-later

@@ -13,6 +13,9 @@
 #if DUSKSTUDIO_HAS_NATIVE_LV2
   #include "lv2/Lv2Scanner.h"     // Linux-only native LV2 discovery
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+  #include "vst3/Vst3Scanner.h"   // Linux-only native VST3 discovery
+#endif
 
 #include <map>
 
@@ -158,6 +161,9 @@ PluginManager::PluginManager()
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_LV2
     loadLv2Cache();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+    loadVst3NativeCache();
 #endif
 }
 
@@ -359,8 +365,9 @@ int PluginManager::scanInstalledPlugins (
 
     if (! aborting)
     {
-        scanClapPlugins();   // CLAP isn't a juce format — scan it alongside the JUCE pass
-        scanLv2Plugins();    // native-LV2 rows are separate from JUCE's LV2 format
+        scanClapPlugins();        // CLAP isn't a juce format — scan it alongside the JUCE pass
+        scanLv2Plugins();         // native-LV2 rows are separate from JUCE's LV2 format
+        scanVst3NativePlugins();  // native-VST3 rows are separate from JUCE's VST3 format
     }
     return added;
 }
@@ -521,6 +528,83 @@ juce::Array<juce::PluginDescription> PluginManager::getLv2EffectDescriptions() c
 {
     const juce::ScopedLock sl (nativeDescriptionsLock);
     return lv2Descriptions;   // scan already filtered to audio effects
+}
+
+void PluginManager::scanVst3NativePlugins()
+{
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+    const auto scanned = vst3::Vst3Scanner::scan();   // dlopens every module — outside the lock
+    {
+        const juce::ScopedLock sl (nativeDescriptionsLock);
+        vst3NativeDescriptions.clearQuick();
+        for (const auto& s : scanned)
+        {
+            // Only audio effects for now — the native VST3 host is an insert host;
+            // instruments stay with the JUCE VST3 format.
+            if (s.desc.isInstrument)
+                continue;
+            juce::PluginDescription d;
+            d.name             = juce::String (juce::CharPointer_UTF8 (s.desc.name.c_str()));
+            d.manufacturerName = juce::String (juce::CharPointer_UTF8 (s.desc.vendor.c_str()));
+            d.version          = juce::String (juce::CharPointer_UTF8 (s.desc.version.c_str()));
+            d.pluginFormatName = "VST3-Native";
+            d.fileOrIdentifier = s.bundlePath;
+            d.isInstrument     = false;
+            vst3NativeDescriptions.add (d);
+        }
+    }
+    saveVst3NativeCache();   // persist so the picker has VST3 at next launch without a re-scan
+#endif
+}
+
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+juce::File PluginManager::getVst3NativeCacheFile() const
+{
+    const auto base = getCacheFile();
+    return base == juce::File() ? juce::File() : base.getSiblingFile ("vst3-native-cache.xml");
+}
+
+void PluginManager::loadVst3NativeCache()
+{
+    const auto file = getVst3NativeCacheFile();
+    if (file == juce::File() || ! file.existsAsFile())
+        return;
+
+    if (auto xml = juce::parseXML (file))
+    {
+        vst3NativeDescriptions.clearQuick();
+        for (auto* child : xml->getChildIterator())
+        {
+            juce::PluginDescription d;
+            // Drop entries whose bundle is gone since the cache was written.
+            if (d.loadFromXml (*child) && juce::File (d.fileOrIdentifier).exists())
+                vst3NativeDescriptions.add (d);
+        }
+    }
+}
+
+void PluginManager::saveVst3NativeCache() const
+{
+    const auto file = getVst3NativeCacheFile();
+    if (file == juce::File())
+        return;
+
+    juce::Array<juce::PluginDescription> snapshot;
+    {
+        const juce::ScopedLock sl (nativeDescriptionsLock);
+        snapshot = vst3NativeDescriptions;
+    }
+    juce::XmlElement root ("VST3_NATIVE_PLUGINS");
+    for (const auto& d : snapshot)
+        root.addChildElement (d.createXml().release());
+    root.writeTo (file);
+}
+#endif
+
+juce::Array<juce::PluginDescription> PluginManager::getVst3NativeEffectDescriptions() const
+{
+    const juce::ScopedLock sl (nativeDescriptionsLock);
+    return vst3NativeDescriptions;   // scan already filtered to audio effects
 }
 
 juce::Array<juce::PluginDescription> PluginManager::getInstrumentDescriptions() const

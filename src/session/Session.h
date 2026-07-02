@@ -802,15 +802,17 @@ struct Track
     juce::String pluginDescriptionXml;
     juce::String pluginStateBase64;
 
-    // Native insert alternatives to the JUCE plugin above. An insert hosts at most
-    // ONE of {JUCE plugin, native CLAP, native LV2}: when nativeClapPath is non-empty
-    // the insert is a .clap via NativeClapSlot, when nativeLv2Path is non-empty a
-    // .lv2 via NativeLv2Slot (CLAP wins if both are somehow set). Always present so
-    // non-Linux builds round-trip the fields untouched.
+    // Native insert alternatives to the JUCE plugin above. An insert hosts at
+    // most ONE of {JUCE plugin, native CLAP, native LV2, native VST3}: the
+    // non-empty native*Path names the host (precedence CLAP > LV2 > VST3 if
+    // several are somehow set). Always present so non-Linux builds round-trip
+    // the fields untouched.
     juce::String nativeClapPath;
     juce::String nativeClapStateBase64;
     juce::String nativeLv2Path;
     juce::String nativeLv2StateBase64;
+    juce::String nativeVst3Path;
+    juce::String nativeVst3StateBase64;
 
     // Track freeze (MIDI tracks): the instrument + pre-fader strip is rendered
     // to a WAV, the plugin is bypassed to free CPU, and playback reads the WAV
@@ -964,13 +966,16 @@ struct AuxLane
     std::array<juce::String, AuxLaneParams::kMaxLanePlugins> pluginStateBase64;
 
     // Native host alternatives to the JUCE plugin above. A slot is JUCE /
-    // native-CLAP / native-LV2 / hardware / empty — at most one host per slot
-    // (CLAP wins if both native paths are somehow set). Always present so
-    // non-Linux builds round-trip the fields untouched.
+    // native-CLAP / native-LV2 / native-VST3 / hardware / empty — at most one
+    // host per slot (precedence CLAP > LV2 > VST3 if several native paths are
+    // somehow set). Always present so non-Linux builds round-trip the fields
+    // untouched.
     std::array<juce::String, AuxLaneParams::kMaxLanePlugins> nativeClapPath;
     std::array<juce::String, AuxLaneParams::kMaxLanePlugins> nativeClapStateBase64;
     std::array<juce::String, AuxLaneParams::kMaxLanePlugins> nativeLv2Path;
     std::array<juce::String, AuxLaneParams::kMaxLanePlugins> nativeLv2StateBase64;
+    std::array<juce::String, AuxLaneParams::kMaxLanePlugins> nativeVst3Path;
+    std::array<juce::String, AuxLaneParams::kMaxLanePlugins> nativeVst3StateBase64;
 
     std::array<HardwareInsertParams, AuxLaneParams::kMaxLanePlugins> hardwareInserts;
 };

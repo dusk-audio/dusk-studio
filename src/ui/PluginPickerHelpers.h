@@ -56,6 +56,8 @@ enum class PluginKind { Effects, Instruments };
 // paths) and routes their selection here. When set, JUCE-format "LV2" effect rows
 // are hidden so each plugin appears once, hosted natively; unset → JUCE LV2 rows
 // stay as the fallback host.
+// `onPickNativeVst3` is the VST3 twin: merges "VST3-Native" rows (.vst3 bundle
+// paths), hides the JUCE-format "VST3" effect rows, and routes selection here.
 void openPickerMenu (PluginSlot& slot,
                       juce::Component& target,
                       std::unique_ptr<juce::FileChooser>& chooserOwner,
@@ -65,7 +67,8 @@ void openPickerMenu (PluginSlot& slot,
                       std::function<void()> onPickHardwareInsert = {},
                       bool suppressSecondaryButtons = false,
                       std::function<void (const juce::File&)> onPickNativeClap = {},
-                      std::function<void (const juce::File&)> onPickNativeLv2 = {});
+                      std::function<void (const juce::File&)> onPickNativeLv2 = {},
+                      std::function<void (const juce::File&)> onPickNativeVst3 = {});
 
 // Two-step insert flow. Step 1 shows a small modal with three big
 // buttons — Hardware Insert / Soundfont / Plugin — letting the user
@@ -85,7 +88,8 @@ void openInsertChooser (PluginSlot& slot,
                          PluginKind kind,
                          std::function<void()> onPickHardwareInsert = {},
                          std::function<void (const juce::File&)> onPickNativeClap = {},
-                         std::function<void (const juce::File&)> onPickNativeLv2 = {});
+                         std::function<void (const juce::File&)> onPickNativeLv2 = {},
+                         std::function<void (const juce::File&)> onPickNativeVst3 = {});
 
 // Synchronous scan. Blocks the message thread during scanInstalledPlugins().
 // Shows a Dusk in-window completion alert in `parent` (top-level Component)
