@@ -43,7 +43,8 @@ private:
     unsigned long peerX11() const;
 
     lv2::Lv2Editor editor;
-    bool loaded   = false;
-    bool embedded = false;
+    bool loaded    = false;
+    bool embedded  = false;
+    bool embedding = false;   // guards re-entry: instantiate fires ui:resize → setSize → resized()
 };
 } // namespace duskstudio

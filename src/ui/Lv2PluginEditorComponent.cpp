@@ -50,14 +50,21 @@ void Lv2PluginEditorComponent::tryEmbed()
     // Embed ONLY when actually on-screen: the UI instantiates directly into our
     // host window, and toolkit wrappers can abort realising into a non-viewable
     // parent (same rule as the CLAP editor).
-    if (! loaded || embedded || ! isShowing()) return;
+    // `embedding` breaks the re-entry cycle: suil instantiation runs the UI's
+    // ui:resize synchronously → onResize → setSize → resized() → tryEmbed again,
+    // which would build a SECOND UI instance and orphan the first (the black-
+    // rectangle bug).
+    if (! loaded || embedded || embedding || ! isShowing()) return;
     const auto parent = peerX11();
     if (parent == 0) return;
 
     const auto area = getTopLevelComponent()->getLocalArea (this, getLocalBounds());
     std::string err;
-    if (editor.embed (parent, area.getX(), area.getY(),
-                      juce::jmax (1, area.getWidth()), juce::jmax (1, area.getHeight()), err))
+    embedding = true;
+    const bool ok = editor.embed (parent, area.getX(), area.getY(),
+                                  juce::jmax (1, area.getWidth()), juce::jmax (1, area.getHeight()), err);
+    embedding = false;
+    if (ok)
     {
         embedded = true;
         // Adopt the UI's own size once known so the modal/lane can fit to it.

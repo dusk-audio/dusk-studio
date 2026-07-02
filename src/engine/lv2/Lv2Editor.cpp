@@ -206,8 +206,10 @@ bool Lv2Editor::embed (unsigned long parentX11, int x, int y, int w, int h, std:
     if (impl->prefW <= 0 && XGetWindowAttributes (dpy, (Window) impl->uiWindow, &attrs) != 0)
     { impl->prefW = attrs.width; impl->prefH = attrs.height; }
 
-    XResizeWindow (dpy, (Window) impl->uiWindow, (unsigned) std::max (1, ww),
-                   (unsigned) std::max (1, hh));
+    // Belt-and-braces: most UIs parent themselves under ui:parent, but the spec
+    // doesn't force it — reparent explicitly (a no-op when already a child).
+    XReparentWindow (dpy, (Window) impl->uiWindow, (Window) impl->hostWindow, 0, 0);
+
     XMapWindow (dpy, (Window) impl->uiWindow);
     XSync (dpy, False);
 
