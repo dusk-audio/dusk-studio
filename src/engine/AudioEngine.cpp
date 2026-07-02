@@ -34,6 +34,19 @@ static juce::File audioDeviceStateFile()
     return dir.getChildFile ("audio-device.xml");
 }
 
+// Session-carried native plugin state blob (base64) → bytes. Empty on any
+// decode failure — callers treat "no state" and "bad state" the same.
+static std::vector<uint8_t> decodeBase64Blob (const juce::String& s)
+{
+    std::vector<uint8_t> blob;
+    if (s.isEmpty()) return blob;
+    juce::MemoryBlock mb;
+    if (mb.fromBase64Encoding (s) && mb.getSize() > 0)
+        blob.assign (static_cast<const uint8_t*> (mb.getData()),
+                     static_cast<const uint8_t*> (mb.getData()) + mb.getSize());
+    return blob;
+}
+
 class AudioEngine::PerfReporter final : public juce::Timer
 {
 public:
@@ -1537,14 +1550,7 @@ void AudioEngine::consumePluginStateAfterLoad()
             slot.unload();
             strip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
 
-            std::vector<uint8_t> blob;
-            if (const auto& st = track.nativeClapStateBase64; st.isNotEmpty())
-            {
-                juce::MemoryBlock mb;
-                if (mb.fromBase64Encoding (st) && mb.getSize() > 0)
-                    blob.assign (static_cast<const uint8_t*> (mb.getData()),
-                                 static_cast<const uint8_t*> (mb.getData()) + mb.getSize());
-            }
+            auto blob = decodeBase64Blob (track.nativeClapStateBase64);
 
             const juce::File clapFile (track.nativeClapPath);
             if (strip.isPrepared())
@@ -1582,14 +1588,7 @@ void AudioEngine::consumePluginStateAfterLoad()
             slot.unload();
             strip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
 
-            std::vector<uint8_t> blob;
-            if (const auto& st = track.nativeLv2StateBase64; st.isNotEmpty())
-            {
-                juce::MemoryBlock mb;
-                if (mb.fromBase64Encoding (st) && mb.getSize() > 0)
-                    blob.assign (static_cast<const uint8_t*> (mb.getData()),
-                                 static_cast<const uint8_t*> (mb.getData()) + mb.getSize());
-            }
+            auto blob = decodeBase64Blob (track.nativeLv2StateBase64);
 
             const juce::File lv2File (track.nativeLv2Path);
             if (strip.isPrepared())
@@ -1623,14 +1622,7 @@ void AudioEngine::consumePluginStateAfterLoad()
             slot.unload();
             strip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
 
-            std::vector<uint8_t> blob;
-            if (const auto& st = track.nativeVst3StateBase64; st.isNotEmpty())
-            {
-                juce::MemoryBlock mb;
-                if (mb.fromBase64Encoding (st) && mb.getSize() > 0)
-                    blob.assign (static_cast<const uint8_t*> (mb.getData()),
-                                 static_cast<const uint8_t*> (mb.getData()) + mb.getSize());
-            }
+            auto blob = decodeBase64Blob (track.nativeVst3StateBase64);
 
             const juce::File vst3File (track.nativeVst3Path);
             if (strip.isPrepared())
@@ -1722,14 +1714,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                 slot.unload();   // ensure no JUCE plugin lingers in this slot
                 strip.insertMode[(size_t) s].store (AuxLaneStrip::kInsertPlugin, std::memory_order_release);
 
-                std::vector<uint8_t> blob;
-                if (const auto& st = lane.nativeClapStateBase64[(size_t) s]; st.isNotEmpty())
-                {
-                    juce::MemoryBlock mb;
-                    if (mb.fromBase64Encoding (st) && mb.getSize() > 0)
-                        blob.assign (static_cast<const uint8_t*> (mb.getData()),
-                                     static_cast<const uint8_t*> (mb.getData()) + mb.getSize());
-                }
+                auto blob = decodeBase64Blob (lane.nativeClapStateBase64[(size_t) s]);
 
                 const juce::File clapFile (lane.nativeClapPath[(size_t) s]);
                 if (strip.isPrepared())
@@ -1764,14 +1749,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                 slot.unload();
                 strip.insertMode[(size_t) s].store (AuxLaneStrip::kInsertPlugin, std::memory_order_release);
 
-                std::vector<uint8_t> blob;
-                if (const auto& st = lane.nativeLv2StateBase64[(size_t) s]; st.isNotEmpty())
-                {
-                    juce::MemoryBlock mb;
-                    if (mb.fromBase64Encoding (st) && mb.getSize() > 0)
-                        blob.assign (static_cast<const uint8_t*> (mb.getData()),
-                                     static_cast<const uint8_t*> (mb.getData()) + mb.getSize());
-                }
+                auto blob = decodeBase64Blob (lane.nativeLv2StateBase64[(size_t) s]);
 
                 const juce::File lv2File (lane.nativeLv2Path[(size_t) s]);
                 if (strip.isPrepared())
@@ -1805,14 +1783,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                 slot.unload();
                 strip.insertMode[(size_t) s].store (AuxLaneStrip::kInsertPlugin, std::memory_order_release);
 
-                std::vector<uint8_t> blob;
-                if (const auto& st = lane.nativeVst3StateBase64[(size_t) s]; st.isNotEmpty())
-                {
-                    juce::MemoryBlock mb;
-                    if (mb.fromBase64Encoding (st) && mb.getSize() > 0)
-                        blob.assign (static_cast<const uint8_t*> (mb.getData()),
-                                     static_cast<const uint8_t*> (mb.getData()) + mb.getSize());
-                }
+                auto blob = decodeBase64Blob (lane.nativeVst3StateBase64[(size_t) s]);
 
                 const juce::File vst3File (lane.nativeVst3Path[(size_t) s]);
                 if (strip.isPrepared())

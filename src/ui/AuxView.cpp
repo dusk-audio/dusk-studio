@@ -238,11 +238,11 @@ void AuxView::setActiveLane (int index)
     resized();
 }
 
-void AuxView::dropAllClapEditors()
+void AuxView::dropAllNativeEditors()
 {
     for (auto& lane : lanes)
         if (lane != nullptr)
-            lane->dropAllClapEditors();
+            lane->dropAllNativeEditors();
 }
 
 void AuxView::visibilityChanged()

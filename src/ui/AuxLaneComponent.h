@@ -34,7 +34,7 @@ public:
     // Shutdown: tear down this lane's native CLAP editor(s) now, while the main peer
     // + message loop are alive (the editor's own X11 Display close hangs if deferred
     // to the destructor cascade). See MainComponent::beginSafeShutdown phase 4.
-    void dropAllClapEditors();
+    void dropAllNativeEditors();
 
     void childBoundsChanged (juce::Component* child) override;
     void mouseDown (const juce::MouseEvent&) override;

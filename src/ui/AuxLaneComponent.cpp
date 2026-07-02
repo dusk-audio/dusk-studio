@@ -1156,9 +1156,8 @@ void AuxLaneComponent::detachVst3EditorForSlot (int slotIdx)
 #endif
 }
 
-void AuxLaneComponent::dropAllClapEditors()
+void AuxLaneComponent::dropAllNativeEditors()
 {
-    // Covers both native editor kinds (the LV2 loop rides along; the name predates it).
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
     for (int i = 0; i < AuxLaneParams::kMaxLanePlugins; ++i)
     {

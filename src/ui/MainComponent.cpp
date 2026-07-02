@@ -748,7 +748,7 @@ MainComponent::~MainComponent()
     // that skips it (SIGTERM / WM kill) must still leak-release them here rather than
     // leave them for the late ~AuxView cascade.
     if (auxView != nullptr)
-        auxView->dropAllClapEditors();
+        auxView->dropAllNativeEditors();
 
     // Force-delete any modal body we launched, synchronously. close()
     // would defer body destruction to the next message-loop tick — but
@@ -2425,7 +2425,7 @@ void MainComponent::beginSafeShutdown()
     // hangs if it runs in the late cascade after the main peer is gone. Tear them down
     // here — main peer + message loop alive, audio callback already detached (phase 3).
     if (auxView != nullptr)
-        auxView->dropAllClapEditors();
+        auxView->dropAllNativeEditors();
 
     markPhase ("phase 5: flush window operations");
     duskstudio::platform::flushWindowOperations();
