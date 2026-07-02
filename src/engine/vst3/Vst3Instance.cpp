@@ -84,6 +84,7 @@ bool Vst3Instance::isActive() const noexcept { return impl->active; }
 int  Vst3Instance::getLatencySamples() const noexcept { return impl->latencySamples; }
 Vst3HostContext&       Vst3Instance::getHost()       noexcept { return impl->host; }
 const Vst3HostContext& Vst3Instance::getHost() const noexcept { return impl->host; }
+void* Vst3Instance::editController() const noexcept { return impl->controller.get(); }
 
 bool Vst3Instance::create (const Vst3Bundle& bundle, const std::string& classId, std::string& errorOut)
 {

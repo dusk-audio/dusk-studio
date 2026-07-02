@@ -30,5 +30,10 @@ private:
     struct Lv2EditorTest;
     std::unique_ptr<Lv2EditorTest> lv2EditorTest;
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+    // DUSKSTUDIO_VST3_EDITOR_TEST twins — bundle + instance outlive the window.
+    struct Vst3EditorTest;
+    std::unique_ptr<Vst3EditorTest> vst3EditorTest;
+#endif
 };
 } // namespace duskstudio

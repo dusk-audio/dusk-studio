@@ -42,7 +42,6 @@ public:
 
     void processBlock (const hosting::PortBuffers& io) noexcept override;
 
-    // Dual-stream state (component + controller) lands in the next increment.
     bool saveState (std::vector<uint8_t>& out) const override;
     bool loadState (const std::vector<uint8_t>& in) override;
 
@@ -52,6 +51,10 @@ public:
     // run loop, plug frame) — the editor layer pumps and extends it.
     Vst3HostContext&       getHost()       noexcept;
     const Vst3HostContext& getHost() const noexcept;
+
+    // Steinberg::Vst::IEditController* (opaque — the editor layer casts back).
+    // Null until create() succeeds; rare plugins expose no controller at all.
+    void* editController() const noexcept;
 
 private:
     struct Impl;
