@@ -100,7 +100,7 @@ void AudioEngine::printPerfTable()
     std::fflush (stderr);
 }
 
-#if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_VST3
+#if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_LV2 || DUSKSTUDIO_HAS_NATIVE_VST3
 // Message-thread drain for the native slots' MIDI-binding rings (the audio
 // thread's binding apply can't touch the instances' single-producer param
 // rings directly). 30 Hz matches PluginSlot's own drain cadence; a tick over
@@ -117,6 +117,9 @@ public:
             auto& strip = engine.getChannelStrip (t);
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
             strip.getNativeClapSlot().drainQueuedParamBindings();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+            strip.getNativeLv2Slot().drainQueuedParamBindings();
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_VST3
             strip.getNativeVst3Slot().drainQueuedParamBindings();
@@ -137,7 +140,7 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
         perfReporter = std::make_unique<PerfReporter> (*this);
     }
 
-#if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_VST3
+#if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_LV2 || DUSKSTUDIO_HAS_NATIVE_VST3
     nativeParamDrain = std::make_unique<NativeParamDrain> (*this);
 #endif
 
@@ -3261,6 +3264,14 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                                 if (strip.isNativeClapLoaded())
                                 {
                                     strip.getNativeClapSlot()
+                                        .queueParamBinding ((uint32_t) b.paramIndex, frac);
+                                    break;
+                                }
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+                                if (strip.isNativeLv2Loaded())
+                                {
+                                    strip.getNativeLv2Slot()
                                         .queueParamBinding ((uint32_t) b.paramIndex, frac);
                                     break;
                                 }

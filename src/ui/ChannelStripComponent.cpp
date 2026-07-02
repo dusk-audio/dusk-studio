@@ -2059,15 +2059,19 @@ void ChannelStripComponent::showPluginSlotMenu()
         }
         // MIDI Learn for the last parameter the user touched via the plugin's
         // own UI. Disabled when no parameter has been touched since the slot
-        // loaded (no last-touched stamp to bind to). Native CLAP/VST3 slots
-        // track touches from their editors; native LV2 has no parameter
-        // surface yet, so its lastParam stays -1 (item shows disabled).
+        // loaded (no last-touched stamp to bind to). Native slots track
+        // touches from their editors.
         {
             auto& chStrip = engine.getChannelStrip (trackIndex);
             int lastParam = -1;
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
             if (chStrip.isNativeClapLoaded())
                 lastParam = chStrip.getNativeClapSlot().lastTouchedParamIndex();
+            else
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+            if (chStrip.isNativeLv2Loaded())
+                lastParam = chStrip.getNativeLv2Slot().lastTouchedParamIndex();
             else
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_VST3

@@ -838,6 +838,11 @@ void TransportBar::timerCallback()
                     b.paramIndex = strip.getNativeClapSlot().lastTouchedParamIndex();
                 else
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+                if (strip.isNativeLv2Loaded())
+                    b.paramIndex = strip.getNativeLv2Slot().lastTouchedParamIndex();
+                else
+#endif
 #if DUSKSTUDIO_HAS_NATIVE_VST3
                 if (strip.isNativeVst3Loaded())
                     b.paramIndex = strip.getNativeVst3Slot().lastTouchedParamIndex();

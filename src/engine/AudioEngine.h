@@ -666,7 +666,7 @@ private:
     class PerfReporter;
     std::unique_ptr<PerfReporter> perfReporter;
 
-#if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_VST3
+#if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_LV2 || DUSKSTUDIO_HAS_NATIVE_VST3
     // Applies MIDI-binding writes queued by the audio thread to the native
     // slots' parameter surfaces on the message thread (30 Hz).
     class NativeParamDrain;

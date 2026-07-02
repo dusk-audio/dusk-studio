@@ -22,6 +22,16 @@ class Lv2Bundle;
 class Lv2Instance : public hosting::INativeInstance
 {
 public:
+    // One plugin parameter = one input control port (snapshot at create()).
+    // Values are in the port's own units (min..max), like CLAP.
+    struct ParamInfo
+    {
+        uint32_t    id = 0;   // port index
+        std::string name;
+        float       minValue = 0.0f, maxValue = 1.0f, defaultValue = 0.0f;
+        bool        stepped = false;   // lv2:toggled / lv2:integer / lv2:enumeration
+    };
+
     Lv2Instance();
     ~Lv2Instance() override;
     Lv2Instance (const Lv2Instance&)            = delete;
@@ -60,8 +70,21 @@ public:
     // ring; the audio thread applies it at the top of its next processBlock so
     // nothing writes portValues while run() reads it.
     void setControlPortValue (uint32_t portIndex, float value) noexcept;
+    // Same, from the plugin's OWN editor — also stamps the MIDI Learn
+    // last-touched tracker (host-initiated writes must not self-stamp).
+    void setControlPortValueFromUi (uint32_t portIndex, float value) noexcept;
     // Port index for the suil port-index-by-symbol callback; -1 when unknown.
     int portIndexForSymbol (const char* symbol) const noexcept;
+
+    // Parameters (message thread). Enumerated once at create(); id = port index.
+    int              paramCount() const noexcept;
+    const ParamInfo* paramInfo (int index) const noexcept;
+    bool getParamValue (uint32_t portIndex, double& out) const;
+    // Clamps to the port's range and stages through setControlPortValue.
+    void setParamValue (uint32_t portIndex, double value) noexcept;
+    // Index (into paramInfo order) of the port the user last moved in the
+    // plugin's own UI; -1 when nothing has been touched.
+    int lastTouchedParamIndex() const noexcept;
 
 private:
     struct Impl;
