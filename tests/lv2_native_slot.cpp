@@ -94,6 +94,22 @@ TEST_CASE ("NativeLv2Slot loads, processes, and unloads cleanly", "[lv2][slot]")
         REQUIRE (driveTone (slot, L, R, kBlock, 16) > 1.0e-4f);
     }
 
+
+    SECTION ("explicit plugin id: round-trips, bogus id refuses to load")
+    {
+        const juce::String pickedId = slot.getPluginId();
+        REQUIRE (pickedId.isNotEmpty());
+
+        slot.unload();
+        REQUIRE (slot.load (juce::File (juce::String (path)), 48000.0, kBlock, err, pickedId));
+        REQUIRE (slot.getPluginId() == pickedId);
+
+        slot.unload();
+        REQUIRE_FALSE (slot.load (juce::File (juce::String (path)), 48000.0, kBlock, err,
+                                  "urn:duskstudio:no-such-plugin"));
+        REQUIRE_FALSE (slot.isLoaded());
+    }
+
     SECTION ("MIDI-binding writes reach the parameter surface")
     {
         // queueParamBinding is the audio-thread half of a binding apply;
