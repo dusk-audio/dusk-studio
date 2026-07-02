@@ -20,7 +20,11 @@ namespace duskstudio::hosting
 //
 //   using Bundle / Instance;                  // Instance implements INativeInstance
 //   static constexpr const char* bundleNoun;  // load-error prefix ("bundle"/"module")
-//   static bool pickPlugin (const Bundle&, std::string& idOut, std::string& errorOut);
+//   static bool pickPlugin (const Bundle&, const std::string& requestedId,
+//                           std::string& idOut, std::string& errorOut);
+//     — empty requestedId: the format's default (first effect); non-empty: honour
+//       it when the bundle advertises it, else fail (a renamed/removed class must
+//       not silently load a different plugin).
 //
 // load / unload / state are message-thread; processStereo is the audio path and
 // reads a lock-free `ready` flag so it no-ops cleanly when empty.
@@ -37,9 +41,11 @@ public:
 
     NativeInsertSlot() = default;
 
-    // Message thread: load the bundle at `path` and instantiate the plugin the
-    // Traits pick, replacing any prior load. False (+ errorOut) on failure.
-    bool load (const juce::File& path, double sampleRate, int maxBlock, std::string& errorOut)
+    // Message thread: load the bundle at `path` and instantiate `pluginId` (empty =
+    // the format's default pick — the first effect), replacing any prior load.
+    // False (+ errorOut) on failure.
+    bool load (const juce::File& path, double sampleRate, int maxBlock, std::string& errorOut,
+               const juce::String& pluginId = {})
     {
         unload();
         bindingRing.clear();   // writes queued against the previous occupant
@@ -49,12 +55,12 @@ public:
         if (! b->load (path.getFullPathName().toStdString(), err))
         { errorOut = std::string (Traits::bundleNoun) + ": " + err; return false; }
 
-        std::string pluginId;
-        if (! Traits::pickPlugin (*b, pluginId, errorOut))
+        std::string pickedId;
+        if (! Traits::pickPlugin (*b, pluginId.toStdString(), pickedId, errorOut))
             return false;
 
         auto inst = std::make_unique<Instance>();
-        if (! inst->create (*b, pluginId, err))
+        if (! inst->create (*b, pickedId, err))
         { errorOut = "create: " + err; return false; }
         if (! inst->activate (sampleRate, maxBlock, err))
         { errorOut = "activate: " + err; return false; }
@@ -64,7 +70,8 @@ public:
         bundle     = std::move (b);
         instance   = std::move (inst);
         adapter.prepare (instance->portLayout(), maxBlock);   // size the fold scratch
-        loadedPath = path.getFullPathName();
+        loadedPath     = path.getFullPathName();
+        loadedPluginId = juce::String (pickedId);
         ready.store (true, std::memory_order_release);
         return true;
     }
@@ -75,6 +82,7 @@ public:
         instance.reset();   // destroy the plugin first — its vtables live in the bundle
         bundle.reset();     // then unload the .so / world backing them
         loadedPath.clear();
+        loadedPluginId.clear();
     }
 
     // Re-activate the loaded instance at a new sample-rate / block-size WITHOUT a
@@ -100,10 +108,14 @@ public:
         (void) instance.release();
         (void) bundle.release();
         loadedPath.clear();
+        loadedPluginId.clear();
     }
 
     bool isLoaded() const noexcept { return ready.load (std::memory_order_acquire); }
     const juce::String& getPath() const noexcept { return loadedPath; }
+    // The instantiated plugin's id within its bundle (class UID / URI / CLAP id) —
+    // resolved even when load() defaulted, so sessions persist the actual pick.
+    const juce::String& getPluginId() const noexcept { return loadedPluginId; }
 
     // Bypass: processStereo passes audio through untouched (the plugin stays loaded).
     void setBypassed (bool b) noexcept { bypassed.store (b, std::memory_order_relaxed); }
@@ -210,6 +222,7 @@ protected:
     std::atomic<bool> ready    { false };
     std::atomic<bool> bypassed { false };
     juce::String      loadedPath;
+    juce::String      loadedPluginId;
 
 private:
     struct ParamBinding { uint32_t paramIndex; float frac; };

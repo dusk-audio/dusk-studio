@@ -12,10 +12,18 @@ struct Lv2SlotTraits
     using Instance = Lv2Instance;
     static constexpr const char* bundleNoun = "bundle";
 
-    static bool pickPlugin (const Lv2Bundle& b, std::string& idOut, std::string& errorOut)
+    static bool pickPlugin (const Lv2Bundle& b, const std::string& requestedId,
+                            std::string& idOut, std::string& errorOut)
     {
         if (b.plugins().empty())
         { errorOut = "no plugins in bundle"; return false; }
+        if (! requestedId.empty())
+        {
+            for (const auto& d : b.plugins())
+                if (d.uri == requestedId) { idOut = requestedId; return true; }
+            errorOut = "bundle no longer advertises plugin '" + requestedId + "'";
+            return false;
+        }
         // First audio effect (audio in + out); fall back to the first advertised plugin.
         idOut = b.plugins().front().uri;
         for (const auto& d : b.plugins())
