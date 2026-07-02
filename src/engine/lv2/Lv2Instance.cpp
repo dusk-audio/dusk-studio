@@ -11,6 +11,7 @@
 #include <lv2/port-props/port-props.h>
 #include <lv2/atom/forge.h>
 #include <lv2/atom/util.h>
+#include <lv2/midi/midi.h>
 #include <lv2/patch/patch.h>
 #include <lv2/state/state.h>
 #include <lv2/urid/urid.h>
@@ -77,10 +78,11 @@ struct Lv2Instance::Impl
         uridPatchProperty = mapUri (this, LV2_PATCH__property);
         uridPatchValue    = mapUri (this, LV2_PATCH__value);
         uridEventTransfer = mapUri (this, LV2_ATOM__eventTransfer);
+        uridMidiEvent     = mapUri (this, LV2_MIDI__MidiEvent);
     }
     LV2_URID uridFloat = 0, uridDouble = 0, uridInt = 0, uridLong = 0;
     LV2_URID uridObject = 0, uridPatchSet = 0, uridPatchProperty = 0,
-             uridPatchValue = 0, uridEventTransfer = 0;
+             uridPatchValue = 0, uridEventTransfer = 0, uridMidiEvent = 0;
 
     // Assemble the full feature list for instantiate: urid map/unmap + the block-size
     // and sample-rate options + boundedBlockLength. JUCE/DPF-wrapped plugins REQUIRE
@@ -633,26 +635,41 @@ void Lv2Instance::processBlock (const hosting::PortBuffers& io) noexcept
             impl->portValues[(size_t) pw.idx] = pw.value;
     });
 
-    // Rebuild the control atom input's sequence from the staged patch/UI atoms
-    // (all at frame 0). Input sequences are host-owned, so the reset is cheap
+    // Rebuild the control atom input's sequence: staged patch/UI atoms first
+    // (frame 0), then the block's MIDI at its sample offsets — the sequence
+    // stays time-sorted. Input sequences are host-owned, so the reset is cheap
     // and the other atom inputs keep their empty headers from activate().
     if (! impl->atomInPorts.empty())
     {
         auto& buf = impl->atomBuffers[(size_t) impl->controlAtomInPos];
         auto* seq = reinterpret_cast<LV2_Atom_Sequence*> (buf.data());
         seq->atom.size = sizeof (LV2_Atom_Sequence_Body);
-        impl->atomRing.drain ([&] (const Impl::AtomBlob& blob)
+        auto appendEvent = [&] (int64_t frames, uint32_t type,
+                                const uint8_t* data, uint32_t size)
         {
-            const uint32_t evSize = (uint32_t) sizeof (LV2_Atom_Event) - (uint32_t) sizeof (LV2_Atom)
-                                    + blob.size;
+            const uint32_t evSize = (uint32_t) sizeof (LV2_Atom_Event) + size;
             const uint32_t padded = lv2_atom_pad_size (evSize);
             const uint32_t used   = (uint32_t) sizeof (LV2_Atom) + seq->atom.size;
             if (used + padded > buf.size()) return;   // sequence full — drop
             auto* ev = reinterpret_cast<LV2_Atom_Event*> (buf.data() + used);
-            ev->time.frames = 0;
-            std::memcpy (&ev->body, blob.data, blob.size);
+            ev->time.frames = frames;
+            ev->body.size   = size;
+            ev->body.type   = type;
+            std::memcpy (ev + 1, data, size);
             seq->atom.size += padded;
+        };
+        impl->atomRing.drain ([&] (const Impl::AtomBlob& blob)
+        {
+            // blob is a full atom (header + body); re-emit as header + payload.
+            const auto* atom = reinterpret_cast<const LV2_Atom*> (blob.data);
+            appendEvent (0, atom->type,
+                         blob.data + sizeof (LV2_Atom), atom->size);
         });
+        if (io.midiIn != nullptr)
+            for (const auto meta : *io.midiIn)
+                if (meta.numBytes > 0 && meta.numBytes <= 3)
+                    appendEvent ((int64_t) meta.samplePosition, impl->uridMidiEvent,
+                                 meta.data, (uint32_t) meta.numBytes);
     }
 
     // Re-advertise output-atom capacity before every run(): the plugin overwrites

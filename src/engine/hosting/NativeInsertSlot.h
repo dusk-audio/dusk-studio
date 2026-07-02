@@ -128,11 +128,18 @@ public:
     bool loadState (const std::vector<uint8_t>& in)
     { return instance != nullptr && instance->loadState (in); }
 
+    // Whether the loaded plugin is an instrument (no main audio input — the
+    // block's MIDI drives it and its output IS the signal).
+    bool isLoadedInstrument() const noexcept
+    { return isLoaded() && instance != nullptr && instance->portLayout().isInstrument; }
+
     // Audio thread: process stereo through the plugin, via the InsertAdapter →
     // INativeInstance::processBlock. Clears the outputs + returns when no plugin
-    // is loaded; passes audio through when bypassed.
+    // is loaded; passes audio through when bypassed. midiIn feeds instruments
+    // and MIDI-driven effects (null ok).
     void processStereo (const float* inL, const float* inR,
-                        float* outL, float* outR, int numFrames) noexcept
+                        float* outL, float* outR, int numFrames,
+                        const juce::MidiBuffer* midiIn = nullptr) noexcept
     {
         auto clearOutputs = [&]
         {
@@ -177,7 +184,8 @@ public:
         const float* r = (inR != nullptr) ? inR : inL;
         if (outR != r)  std::memcpy (outR, r, n);
 
-        adapter.process (*instance, outL, outR, numFrames);
+        adapter.process (*instance, outL, outR, numFrames,
+                         nullptr, nullptr, midiIn);
     }
 
     // UI: the live instance for editor attach (nullptr when not loaded).

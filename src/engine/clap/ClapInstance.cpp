@@ -85,13 +85,33 @@ bool ClapInstance::create (const ClapBundle& bundle, const std::string& pluginId
         if (ap->count (plugin, false) > 0 && ap->get (plugin, 0, false, &info)) outCh = (int) info.channel_count;
     }
 
-    // Reject anything but stereo-in / stereo-out for now. The generalized
-    // processBlock + InsertAdapter path handles other layouts, but the DSP call
-    // sites still assume stereo, so gate non-stereo plugins out here until they migrate.
-    if (inCh != 2 || outCh != 2)
+    // Note input (instruments / MIDI-driven effects) via CLAP_EXT_NOTE_PORTS.
+    // Prefer the plugin's CLAP note dialect for note on/off; raw MIDI covers
+    // everything else when the port accepts it.
+    noteInPort      = false;
+    noteDialectClap = false;
+    noteDialectMidi = false;
+    if (const auto* np = static_cast<const clap_plugin_note_ports_t*> (
+            plugin->get_extension (plugin, CLAP_EXT_NOTE_PORTS));
+        np != nullptr && np->count != nullptr && np->get != nullptr
+        && np->count (plugin, true) > 0)
     {
-        errorOut = "plugin is not stereo-in/stereo-out (got "
-                 + std::to_string (inCh) + " in / " + std::to_string (outCh) + " out)";
+        clap_note_port_info_t info {};
+        if (np->get (plugin, 0, true, &info))
+        {
+            noteInPort      = true;
+            noteDialectClap = (info.supported_dialects & CLAP_NOTE_DIALECT_CLAP) != 0;
+            noteDialectMidi = (info.supported_dialects & CLAP_NOTE_DIALECT_MIDI) != 0;
+        }
+    }
+
+    // The InsertAdapter folds any layout onto the stereo insert; the only hard
+    // requirements are an audio output and, for input-less plugins, a note port
+    // to drive them (a plugin with neither is unhostable in a mixer slot).
+    if (outCh < 1 || (inCh == 0 && ! noteInPort))
+    {
+        errorOut = inCh == 0 ? "plugin has no audio input and no note input"
+                             : "plugin has no audio output";
         plugin->destroy (plugin);
         plugin = nullptr;
         owningBundle = nullptr;
@@ -102,17 +122,29 @@ bool ClapInstance::create (const ClapBundle& bundle, const std::string& pluginId
     // reads it to fold the stereo insert onto the plugin's real channel counts).
     layout = {};
     {
-        hosting::BusInfo in;
-        in.kind = hosting::BusInfo::Kind::Audio; in.dir = hosting::BusInfo::Direction::Input;
-        in.role = hosting::BusInfo::Role::Main;  in.channelCount = inCh;  in.active = true; in.name = "Input";
-        layout.inputs.push_back (in);
-        layout.mainInIndex = 0;
+        if (inCh > 0)
+        {
+            hosting::BusInfo in;
+            in.kind = hosting::BusInfo::Kind::Audio; in.dir = hosting::BusInfo::Direction::Input;
+            in.role = hosting::BusInfo::Role::Main;  in.channelCount = inCh;  in.active = true; in.name = "Input";
+            layout.inputs.push_back (in);
+            layout.mainInIndex = 0;
+        }
+        if (noteInPort)
+        {
+            hosting::BusInfo ev;
+            ev.kind = hosting::BusInfo::Kind::Event; ev.dir = hosting::BusInfo::Direction::Input;
+            ev.role = hosting::BusInfo::Role::Main;  ev.carriesMidi = true; ev.active = true; ev.name = "Notes";
+            layout.eventInIndex = (int) layout.inputs.size();
+            layout.inputs.push_back (ev);
+        }
 
         hosting::BusInfo out;
         out.kind = hosting::BusInfo::Kind::Audio; out.dir = hosting::BusInfo::Direction::Output;
         out.role = hosting::BusInfo::Role::Main;  out.channelCount = outCh; out.active = true; out.name = "Output";
         layout.outputs.push_back (out);
         layout.mainOutIndex = 0;
+        layout.isInstrument = (inCh == 0);
     }
 
     // Snapshot the parameter list for automation / display. [main-thread]
@@ -152,7 +184,8 @@ bool ClapInstance::activate (double sampleRate, int maxBlock, std::string& error
     inScratchR .assign ((size_t) maxFrames, 0.0f);
     outScratchL.assign ((size_t) maxFrames, 0.0f);
     outScratchR.assign ((size_t) maxFrames, 0.0f);
-    eventScratch.assign ((size_t) kParamRingCap, clap_event_param_value_t {});
+    // Params (ring capacity) + a block's worth of notes/MIDI.
+    eventScratch.assign ((size_t) kParamRingCap + 512, AnyEvent {});
 
     if (plugin->activate == nullptr
         || ! plugin->activate (plugin, sampleRate, 1, (uint32_t) maxFrames))
@@ -284,7 +317,7 @@ void ClapInstance::drainParamRing() noexcept
     eventCount = 0;
     paramRing.drain ([this] (const ParamChange& pc)
     {
-        auto& ev = eventScratch[(size_t) eventCount++];
+        auto& ev = eventScratch[(size_t) eventCount++].param;
         ev.header.size     = sizeof (clap_event_param_value_t);
         ev.header.time     = 0;
         ev.header.space_id = CLAP_CORE_EVENT_SPACE_ID;
@@ -298,6 +331,52 @@ void ClapInstance::drainParamRing() noexcept
         ev.key             = -1;
         ev.value           = pc.value;
     }, (uint32_t) eventScratch.size());
+}
+
+void ClapInstance::appendMidiEvents (const juce::MidiBuffer& midi) noexcept
+{
+    if (! noteInPort) return;
+    const uint32_t cap = (uint32_t) eventScratch.size();
+    for (const auto meta : midi)
+    {
+        if (eventCount >= cap) break;   // scratch full — drop the tail
+        const auto* d = meta.data;
+        if (meta.numBytes < 1) continue;
+        const auto status  = (uint8_t) (d[0] & 0xF0u);
+        const auto channel = (int16_t) (d[0] & 0x0Fu);
+        const bool noteOn  = status == 0x90 && meta.numBytes >= 3 && d[2] > 0;
+        const bool noteOff = meta.numBytes >= 3
+                             && (status == 0x80 || (status == 0x90 && d[2] == 0));
+
+        auto& slot = eventScratch[(size_t) eventCount];
+        if (noteDialectClap && (noteOn || noteOff))
+        {
+            auto& ev = slot.note;
+            ev.header = { (uint32_t) sizeof (clap_event_note_t),
+                          (uint32_t) meta.samplePosition, CLAP_CORE_EVENT_SPACE_ID,
+                          (uint16_t) (noteOn ? CLAP_EVENT_NOTE_ON : CLAP_EVENT_NOTE_OFF), 0 };
+            ev.note_id    = -1;
+            ev.port_index = 0;
+            ev.channel    = channel;
+            ev.key        = (int16_t) d[1];
+            ev.velocity   = (double) d[2] / 127.0;
+            ++eventCount;
+        }
+        else if (noteDialectMidi && meta.numBytes <= 3 && status >= 0x80 && status <= 0xE0)
+        {
+            // Everything else (CC, pitch bend, aftertouch — and the notes
+            // themselves when the plugin only takes raw MIDI).
+            auto& ev = slot.midi;
+            ev.header = { (uint32_t) sizeof (clap_event_midi_t),
+                          (uint32_t) meta.samplePosition, CLAP_CORE_EVENT_SPACE_ID,
+                          CLAP_EVENT_MIDI, 0 };
+            ev.port_index = 0;
+            ev.data[0] = d[0];
+            ev.data[1] = (uint8_t) (meta.numBytes > 1 ? d[1] : 0);
+            ev.data[2] = (uint8_t) (meta.numBytes > 2 ? d[2] : 0);
+            ++eventCount;
+        }
+    }
 }
 
 void ClapInstance::processStereo (const float* inL, const float* inR,
@@ -415,6 +494,8 @@ void ClapInstance::processBlock (const hosting::PortBuffers& io) noexcept
     }
 
     drainParamRing();
+    if (io.midiIn != nullptr)
+        appendMidiEvents (*io.midiIn);
 
     // Point the CLAP audio buffers straight at the caller's pre-sized scratch — the
     // plugin writes its output there, no instance-owned copy. Clamp to the channel

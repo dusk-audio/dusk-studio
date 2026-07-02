@@ -510,6 +510,38 @@ void Vst3Instance::processBlock (const hosting::PortBuffers& io) noexcept
     impl->inParams.clearQueue();
     impl->outParams.clearQueue();
 
+    // Notes → the event bus (instruments and MIDI-driven effects). CCs need the
+    // IMidiMapping→parameter bridge, a later increment.
+    if (io.midiIn != nullptr && impl->hasEventIn)
+    {
+        for (const auto meta : *io.midiIn)
+        {
+            const auto* d = meta.data;
+            if (meta.numBytes < 3) continue;
+            const auto status  = (uint8_t) (d[0] & 0xF0u);
+            const auto channel = (int16_t) (d[0] & 0x0Fu);
+            Vst::Event ev {};
+            ev.busIndex     = 0;
+            ev.sampleOffset = meta.samplePosition;
+            ev.flags        = Vst::Event::kIsLive;
+            if (status == 0x90 && d[2] > 0)
+            {
+                ev.type   = Vst::Event::kNoteOnEvent;
+                ev.noteOn = { channel, (int16_t) d[1], 0.0f,
+                              (float) d[2] / 127.0f, 0, -1 };
+            }
+            else if (status == 0x80 || (status == 0x90 && d[2] == 0))
+            {
+                ev.type    = Vst::Event::kNoteOffEvent;
+                ev.noteOff = { channel, (int16_t) d[1],
+                               (float) d[2] / 127.0f, -1, 0.0f };
+            }
+            else
+                continue;
+            impl->inEvents.addEvent (ev);
+        }
+    }
+
     // Queued UI/editor parameter changes → this block's IParameterChanges.
     // All at offset 0 — sample-accurate automation is a later step.
     impl->paramRing.drain ([&] (const Impl::ParamChange& pc)

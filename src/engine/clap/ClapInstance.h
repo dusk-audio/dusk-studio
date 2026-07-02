@@ -158,7 +158,25 @@ private:
     struct ParamChange { clap_id id; double value; void* cookie; };
     static constexpr uint32_t kParamRingCap = 512;
     hosting::SpscRing<ParamChange, kParamRingCap> paramRing;
-    std::vector<clap_event_param_value_t> eventScratch;   // sized in activate(), never RT-grown
+
+    // One slot per staged input event: params from the ring, then the block's
+    // notes / raw MIDI. The union keeps inEvents.get's header-pointer contract
+    // for every kind. Sized in activate(), never RT-grown.
+    union AnyEvent
+    {
+        clap_event_header_t      header;
+        clap_event_param_value_t param;
+        clap_event_note_t        note;
+        clap_event_midi_t        midi;
+    };
+    std::vector<AnyEvent> eventScratch;
+
+    // Note-input negotiation (CLAP_EXT_NOTE_PORTS), recorded at create().
+    bool noteInPort = false, noteDialectClap = false, noteDialectMidi = false;
+
+    // Audio thread. Convert the block's MidiBuffer into note / raw-MIDI events
+    // appended after the drained param changes.
+    void appendMidiEvents (const juce::MidiBuffer& midi) noexcept;
     uint32_t             eventCount = 0;
     clap_input_events_t  inEvents {};
 
