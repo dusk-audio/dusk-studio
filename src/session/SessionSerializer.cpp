@@ -342,6 +342,11 @@ juce::DynamicObject::Ptr trackToObject (const Track& t, const juce::File& sessio
         obj->setProperty ("native_lv2_path",  t.nativeLv2Path);
         obj->setProperty ("native_lv2_state", t.nativeLv2StateBase64);
     }
+    if (t.nativeVst3Path.isNotEmpty())
+    {
+        obj->setProperty ("native_vst3_path",  t.nativeVst3Path);
+        obj->setProperty ("native_vst3_state", t.nativeVst3StateBase64);
+    }
 
     obj->setProperty ("fader_db",       t.strip.faderDb.load());
     obj->setProperty ("pan",            t.strip.pan.load());
@@ -737,6 +742,8 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm,
     t.nativeClapStateBase64 = v["native_clap_state"].toString();
     t.nativeLv2Path         = v["native_lv2_path"]  .toString();
     t.nativeLv2StateBase64  = v["native_lv2_state"] .toString();
+    t.nativeVst3Path        = v["native_vst3_path"] .toString();
+    t.nativeVst3StateBase64 = v["native_vst3_state"].toString();
 
     auto setFloat = [&v] (std::atomic<float>& a, const char* key)
     {
@@ -1263,6 +1270,11 @@ juce::String SessionSerializer::serialize (const Session& s)
                 slot->setProperty ("native_lv2_path",  lane.nativeLv2Path[(size_t) p]);
                 slot->setProperty ("native_lv2_state", lane.nativeLv2StateBase64[(size_t) p]);
             }
+            if (lane.nativeVst3Path[(size_t) p].isNotEmpty())
+            {
+                slot->setProperty ("native_vst3_path",  lane.nativeVst3Path[(size_t) p]);
+                slot->setProperty ("native_vst3_state", lane.nativeVst3StateBase64[(size_t) p]);
+            }
 
             // Hardware-insert side of this slot. Same shape as the
             // Track::hardwareInsert block above.
@@ -1655,6 +1667,8 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                     lane.nativeClapStateBase64[(size_t) p] = sv["native_clap_state"].toString();
                     lane.nativeLv2Path[(size_t) p]         = sv["native_lv2_path"]  .toString();
                     lane.nativeLv2StateBase64[(size_t) p]  = sv["native_lv2_state"] .toString();
+                    lane.nativeVst3Path[(size_t) p]        = sv["native_vst3_path"] .toString();
+                    lane.nativeVst3StateBase64[(size_t) p] = sv["native_vst3_state"].toString();
 
                     // Same default-off rationale as the track hardware_insert.
                     {

@@ -49,6 +49,12 @@ public:
     juce::Array<juce::PluginDescription> getLv2EffectDescriptions() const;
     void scanLv2Plugins();
 
+    // Native-VST3 plugins, scanned separately from JUCE's VST3 format (which stays
+    // as the fallback host). pluginFormatName "VST3-Native", fileOrIdentifier = the
+    // .vst3 bundle path. Audio effects only; each module is dlopen'd (like CLAP).
+    juce::Array<juce::PluginDescription> getVst3NativeEffectDescriptions() const;
+    void scanVst3NativePlugins();
+
     // Synchronous instantiation. May take 100s of ms. Returns nullptr on
     // failure and sets errorMessage. Caller runs prepareToPlay before
     // processing audio. Success adds the description to knownPluginList.
@@ -103,8 +109,9 @@ private:
     // thread (PluginScanModal) and repopulates these while the message thread
     // may be reading them for the picker — every access goes through this lock.
     mutable juce::CriticalSection nativeDescriptionsLock;
-    juce::Array<juce::PluginDescription> clapDescriptions;   // native CLAP (scanned separately)
-    juce::Array<juce::PluginDescription> lv2Descriptions;    // native LV2 (scanned separately)
+    juce::Array<juce::PluginDescription> clapDescriptions;       // native CLAP (scanned separately)
+    juce::Array<juce::PluginDescription> lv2Descriptions;        // native LV2 (scanned separately)
+    juce::Array<juce::PluginDescription> vst3NativeDescriptions; // native VST3 (scanned separately)
     bool                           oopEnabled { false };
 
     void loadCache();
@@ -121,6 +128,11 @@ private:
     juce::File getLv2CacheFile() const;
     void loadLv2Cache();
     void saveLv2Cache() const;
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+    juce::File getVst3NativeCacheFile() const;
+    void loadVst3NativeCache();
+    void saveVst3NativeCache() const;
 #endif
 };
 
