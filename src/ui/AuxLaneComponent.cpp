@@ -842,10 +842,13 @@ void AuxLaneComponent::openPickerForSlot (int slotIdx)
                                                 self->strip.unloadNativeVst3 (slotIdx);
                                                 self->engine.resumeProcessing();
                                                 self->lane.nativeClapPath[(size_t) slotIdx].clear();
+                                                self->lane.nativeClapPluginId[(size_t) slotIdx].clear();
                                                 self->lane.nativeClapStateBase64[(size_t) slotIdx].clear();
                                                 self->lane.nativeLv2Path[(size_t) slotIdx].clear();
+                                                self->lane.nativeLv2PluginId[(size_t) slotIdx].clear();
                                                 self->lane.nativeLv2StateBase64[(size_t) slotIdx].clear();
                                                 self->lane.nativeVst3Path[(size_t) slotIdx].clear();
+                                                self->lane.nativeVst3PluginId[(size_t) slotIdx].clear();
                                                 self->lane.nativeVst3StateBase64[(size_t) slotIdx].clear();
                                             }
 
@@ -917,10 +920,13 @@ void AuxLaneComponent::unloadSlot (int slotIdx)
             self->strip.unloadNativeVst3 (slotIdx);
             self->engine.resumeProcessing();
             self->lane.nativeClapPath[(size_t) slotIdx].clear();
+            self->lane.nativeClapPluginId[(size_t) slotIdx].clear();
             self->lane.nativeClapStateBase64[(size_t) slotIdx].clear();
             self->lane.nativeLv2Path[(size_t) slotIdx].clear();
+            self->lane.nativeLv2PluginId[(size_t) slotIdx].clear();
             self->lane.nativeLv2StateBase64[(size_t) slotIdx].clear();
             self->lane.nativeVst3Path[(size_t) slotIdx].clear();
+            self->lane.nativeVst3PluginId[(size_t) slotIdx].clear();
             self->lane.nativeVst3StateBase64[(size_t) slotIdx].clear();
         }
         // Clear the model's enabled flag so any consumer that polls
@@ -1016,17 +1022,21 @@ void AuxLaneComponent::loadNativeClapForSlot (int slotIdx, const juce::File& cla
         // Slot is empty now — drop any persisted refs (incl. a previous plugin's state
         // blob) so a save doesn't carry a stale path/state for a slot the user sees empty.
         lane.nativeClapPath[(size_t) slotIdx].clear();
+        lane.nativeClapPluginId[(size_t) slotIdx].clear();
         lane.nativeClapStateBase64[(size_t) slotIdx].clear();
         return;
     }
-    lane.nativeClapPath[(size_t) slotIdx] = clapFile.getFullPathName();
+    lane.nativeClapPath[(size_t) slotIdx]     = clapFile.getFullPathName();
+    lane.nativeClapPluginId[(size_t) slotIdx] = strip.getNativeClapSlot (slotIdx).getPluginId();
     // Fresh plugin: don't inherit the previous slot occupant's state blob. The next
     // save re-captures this plugin's real state.
     lane.nativeClapStateBase64[(size_t) slotIdx].clear();
     // The load evicted the other native hosts in this slot — drop their refs too.
     lane.nativeLv2Path[(size_t) slotIdx].clear();
+    lane.nativeLv2PluginId[(size_t) slotIdx].clear();
     lane.nativeLv2StateBase64[(size_t) slotIdx].clear();
     lane.nativeVst3Path[(size_t) slotIdx].clear();
+    lane.nativeVst3PluginId[(size_t) slotIdx].clear();
     lane.nativeVst3StateBase64[(size_t) slotIdx].clear();
     refreshSlotControls (slotIdx);
     rebuildSlots();
@@ -1064,14 +1074,18 @@ void AuxLaneComponent::loadNativeLv2ForSlot (int slotIdx, const juce::File& bund
         showDuskAlert (*this, "Couldn't load LV2 plugin",
                        bundleDir.getFileNameWithoutExtension() + ":\n" + juce::String (err));
         lane.nativeLv2Path[(size_t) slotIdx].clear();
+        lane.nativeLv2PluginId[(size_t) slotIdx].clear();
         lane.nativeLv2StateBase64[(size_t) slotIdx].clear();
         return;
     }
-    lane.nativeLv2Path[(size_t) slotIdx] = bundleDir.getFullPathName();
+    lane.nativeLv2Path[(size_t) slotIdx]     = bundleDir.getFullPathName();
+    lane.nativeLv2PluginId[(size_t) slotIdx] = strip.getNativeLv2Slot (slotIdx).getPluginId();
     lane.nativeLv2StateBase64[(size_t) slotIdx].clear();
     lane.nativeClapPath[(size_t) slotIdx].clear();
+    lane.nativeClapPluginId[(size_t) slotIdx].clear();
     lane.nativeClapStateBase64[(size_t) slotIdx].clear();
     lane.nativeVst3Path[(size_t) slotIdx].clear();
+    lane.nativeVst3PluginId[(size_t) slotIdx].clear();
     lane.nativeVst3StateBase64[(size_t) slotIdx].clear();
     refreshSlotControls (slotIdx);
     rebuildSlots();
@@ -1109,14 +1123,18 @@ void AuxLaneComponent::loadNativeVst3ForSlot (int slotIdx, const juce::File& vst
         showDuskAlert (*this, "Couldn't load VST3 plugin",
                        vst3File.getFileNameWithoutExtension() + ":\n" + juce::String (err));
         lane.nativeVst3Path[(size_t) slotIdx].clear();
+        lane.nativeVst3PluginId[(size_t) slotIdx].clear();
         lane.nativeVst3StateBase64[(size_t) slotIdx].clear();
         return;
     }
-    lane.nativeVst3Path[(size_t) slotIdx] = vst3File.getFullPathName();
+    lane.nativeVst3Path[(size_t) slotIdx]     = vst3File.getFullPathName();
+    lane.nativeVst3PluginId[(size_t) slotIdx] = strip.getNativeVst3Slot (slotIdx).getPluginId();
     lane.nativeVst3StateBase64[(size_t) slotIdx].clear();
     lane.nativeClapPath[(size_t) slotIdx].clear();
+    lane.nativeClapPluginId[(size_t) slotIdx].clear();
     lane.nativeClapStateBase64[(size_t) slotIdx].clear();
     lane.nativeLv2Path[(size_t) slotIdx].clear();
+    lane.nativeLv2PluginId[(size_t) slotIdx].clear();
     lane.nativeLv2StateBase64[(size_t) slotIdx].clear();
     refreshSlotControls (slotIdx);
     rebuildSlots();

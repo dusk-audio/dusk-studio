@@ -33,11 +33,13 @@ void AuxLaneStrip::prepare (double sampleRate, int blockSize)
             // set to kInsertPlugin by the engine before it stashed this.
             const juce::File p (pendingClapPath[(size_t) s]);
             std::string err;
-            const bool ok = ncs.load (p, preparedSampleRate, preparedBlockSize, err);
+            const bool ok = ncs.load (p, preparedSampleRate, preparedBlockSize, err,
+                                      pendingClapPluginId[(size_t) s]);
             if (ok && ! pendingClapState[(size_t) s].empty())
                 ncs.loadState (pendingClapState[(size_t) s]);
             nativeReloadFailed[(size_t) s].store (! ok, std::memory_order_relaxed);
             pendingClapPath[(size_t) s].clear();
+            pendingClapPluginId[(size_t) s].clear();
             pendingClapState[(size_t) s].clear();
         }
     }
@@ -58,7 +60,8 @@ void AuxLaneStrip::prepare (double sampleRate, int blockSize)
             {
                 const juce::File p (pendingLv2Path[(size_t) s]);
                 std::string err;
-                const bool ok = nls.load (p, preparedSampleRate, preparedBlockSize, err);
+                const bool ok = nls.load (p, preparedSampleRate, preparedBlockSize, err,
+                                          pendingLv2PluginId[(size_t) s]);
                 if (ok && ! pendingLv2State[(size_t) s].empty())
                     nls.loadState (pendingLv2State[(size_t) s]);
                 lv2ReloadFailed[(size_t) s].store (! ok, std::memory_order_relaxed);
@@ -66,6 +69,7 @@ void AuxLaneStrip::prepare (double sampleRate, int blockSize)
             // Consumed either way — a CLAP-suppressed pending must not replay on a
             // later prepare() once the CLAP is unloaded.
             pendingLv2Path[(size_t) s].clear();
+            pendingLv2PluginId[(size_t) s].clear();
             pendingLv2State[(size_t) s].clear();
         }
     }
@@ -86,12 +90,14 @@ void AuxLaneStrip::prepare (double sampleRate, int blockSize)
             {
                 const juce::File p (pendingVst3Path[(size_t) s]);
                 std::string err;
-                const bool ok = nvs.load (p, preparedSampleRate, preparedBlockSize, err);
+                const bool ok = nvs.load (p, preparedSampleRate, preparedBlockSize, err,
+                                          pendingVst3PluginId[(size_t) s]);
                 if (ok && ! pendingVst3State[(size_t) s].empty())
                     nvs.loadState (pendingVst3State[(size_t) s]);
                 vst3ReloadFailed[(size_t) s].store (! ok, std::memory_order_relaxed);
             }
             pendingVst3Path[(size_t) s].clear();
+            pendingVst3PluginId[(size_t) s].clear();
             pendingVst3State[(size_t) s].clear();
         }
     }
@@ -156,15 +162,18 @@ void AuxLaneStrip::unloadNativeClap (int slotIdx) noexcept
     nativeClapSlots[(size_t) slotIdx].unload();
     nativeReloadFailed[(size_t) slotIdx].store (false, std::memory_order_relaxed);   // slot reset — clear stale failure
     pendingClapPath[(size_t) slotIdx].clear();
+    pendingClapPluginId[(size_t) slotIdx].clear();
     pendingClapState[(size_t) slotIdx].clear();
 }
 
 void AuxLaneStrip::setPendingNativeClap (int slotIdx, const juce::File& path,
-                                          std::vector<uint8_t> state) noexcept
+                                          std::vector<uint8_t> state,
+                                          const juce::String& pluginId) noexcept
 {
     jassert (slotIdx >= 0 && slotIdx < kMaxPlugins);
-    pendingClapPath[(size_t) slotIdx]  = path.getFullPathName();
-    pendingClapState[(size_t) slotIdx] = std::move (state);
+    pendingClapPath[(size_t) slotIdx]     = path.getFullPathName();
+    pendingClapPluginId[(size_t) slotIdx] = pluginId;
+    pendingClapState[(size_t) slotIdx]    = std::move (state);
 }
 #endif
 
@@ -190,15 +199,18 @@ void AuxLaneStrip::unloadNativeLv2 (int slotIdx) noexcept
     nativeLv2Slots[(size_t) slotIdx].unload();
     lv2ReloadFailed[(size_t) slotIdx].store (false, std::memory_order_relaxed);
     pendingLv2Path[(size_t) slotIdx].clear();
+    pendingLv2PluginId[(size_t) slotIdx].clear();
     pendingLv2State[(size_t) slotIdx].clear();
 }
 
 void AuxLaneStrip::setPendingNativeLv2 (int slotIdx, const juce::File& path,
-                                         std::vector<uint8_t> state) noexcept
+                                         std::vector<uint8_t> state,
+                                         const juce::String& pluginId) noexcept
 {
     jassert (slotIdx >= 0 && slotIdx < kMaxPlugins);
-    pendingLv2Path[(size_t) slotIdx]  = path.getFullPathName();
-    pendingLv2State[(size_t) slotIdx] = std::move (state);
+    pendingLv2Path[(size_t) slotIdx]     = path.getFullPathName();
+    pendingLv2PluginId[(size_t) slotIdx] = pluginId;
+    pendingLv2State[(size_t) slotIdx]    = std::move (state);
 }
 #endif
 
@@ -224,15 +236,18 @@ void AuxLaneStrip::unloadNativeVst3 (int slotIdx) noexcept
     nativeVst3Slots[(size_t) slotIdx].unload();
     vst3ReloadFailed[(size_t) slotIdx].store (false, std::memory_order_relaxed);
     pendingVst3Path[(size_t) slotIdx].clear();
+    pendingVst3PluginId[(size_t) slotIdx].clear();
     pendingVst3State[(size_t) slotIdx].clear();
 }
 
 void AuxLaneStrip::setPendingNativeVst3 (int slotIdx, const juce::File& path,
-                                          std::vector<uint8_t> state) noexcept
+                                          std::vector<uint8_t> state,
+                                          const juce::String& pluginId) noexcept
 {
     jassert (slotIdx >= 0 && slotIdx < kMaxPlugins);
-    pendingVst3Path[(size_t) slotIdx]  = path.getFullPathName();
-    pendingVst3State[(size_t) slotIdx] = std::move (state);
+    pendingVst3Path[(size_t) slotIdx]     = path.getFullPathName();
+    pendingVst3PluginId[(size_t) slotIdx] = pluginId;
+    pendingVst3State[(size_t) slotIdx]    = std::move (state);
 }
 #endif
 

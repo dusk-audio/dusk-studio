@@ -103,11 +103,13 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     {
         const juce::File p (pendingClapPath);
         std::string err;
-        const bool ok = nativeClapSlot.load (p, preparedSampleRate, preparedBlockSize, err);
+        const bool ok = nativeClapSlot.load (p, preparedSampleRate, preparedBlockSize, err,
+                                             pendingClapPluginId);
         if (ok && ! pendingClapState.empty())
             nativeClapSlot.loadState (pendingClapState);
         nativeReloadFailed.store (! ok, std::memory_order_relaxed);
         pendingClapPath.clear();
+        pendingClapPluginId.clear();
         pendingClapState.clear();
     }
 #endif
@@ -124,7 +126,8 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
         {
             const juce::File p (pendingLv2Path);
             std::string err;
-            const bool ok = nativeLv2Slot.load (p, preparedSampleRate, preparedBlockSize, err);
+            const bool ok = nativeLv2Slot.load (p, preparedSampleRate, preparedBlockSize, err,
+                                                pendingLv2PluginId);
             if (ok && ! pendingLv2State.empty())
                 nativeLv2Slot.loadState (pendingLv2State);
             lv2ReloadFailed.store (! ok, std::memory_order_relaxed);
@@ -132,6 +135,7 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
         // Consumed either way — a CLAP-suppressed pending must not replay on a
         // later prepare() once the CLAP is unloaded.
         pendingLv2Path.clear();
+        pendingLv2PluginId.clear();
         pendingLv2State.clear();
     }
 #endif
@@ -148,12 +152,14 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
         {
             const juce::File p (pendingVst3Path);
             std::string err;
-            const bool ok = nativeVst3Slot.load (p, preparedSampleRate, preparedBlockSize, err);
+            const bool ok = nativeVst3Slot.load (p, preparedSampleRate, preparedBlockSize, err,
+                                                 pendingVst3PluginId);
             if (ok && ! pendingVst3State.empty())
                 nativeVst3Slot.loadState (pendingVst3State);
             vst3ReloadFailed.store (! ok, std::memory_order_relaxed);
         }
         pendingVst3Path.clear();
+        pendingVst3PluginId.clear();
         pendingVst3State.clear();
     }
 #endif
@@ -505,13 +511,16 @@ void ChannelStrip::unloadNativeClap() noexcept
     nativeClapSlot.unload();
     nativeReloadFailed.store (false, std::memory_order_relaxed);   // slot reset — clear stale failure
     pendingClapPath.clear();
+    pendingClapPluginId.clear();
     pendingClapState.clear();
 }
 
-void ChannelStrip::setPendingNativeClap (const juce::File& path, std::vector<uint8_t> state) noexcept
+void ChannelStrip::setPendingNativeClap (const juce::File& path, std::vector<uint8_t> state,
+                                         const juce::String& pluginId) noexcept
 {
-    pendingClapPath  = path.getFullPathName();
-    pendingClapState = std::move (state);
+    pendingClapPath     = path.getFullPathName();
+    pendingClapPluginId = pluginId;
+    pendingClapState    = std::move (state);
 }
 #endif
 
@@ -536,13 +545,16 @@ void ChannelStrip::unloadNativeLv2() noexcept
     nativeLv2Slot.unload();
     lv2ReloadFailed.store (false, std::memory_order_relaxed);
     pendingLv2Path.clear();
+    pendingLv2PluginId.clear();
     pendingLv2State.clear();
 }
 
-void ChannelStrip::setPendingNativeLv2 (const juce::File& path, std::vector<uint8_t> state) noexcept
+void ChannelStrip::setPendingNativeLv2 (const juce::File& path, std::vector<uint8_t> state,
+                                        const juce::String& pluginId) noexcept
 {
-    pendingLv2Path  = path.getFullPathName();
-    pendingLv2State = std::move (state);
+    pendingLv2Path     = path.getFullPathName();
+    pendingLv2PluginId = pluginId;
+    pendingLv2State    = std::move (state);
 }
 #endif
 
@@ -567,13 +579,16 @@ void ChannelStrip::unloadNativeVst3() noexcept
     nativeVst3Slot.unload();
     vst3ReloadFailed.store (false, std::memory_order_relaxed);
     pendingVst3Path.clear();
+    pendingVst3PluginId.clear();
     pendingVst3State.clear();
 }
 
-void ChannelStrip::setPendingNativeVst3 (const juce::File& path, std::vector<uint8_t> state) noexcept
+void ChannelStrip::setPendingNativeVst3 (const juce::File& path, std::vector<uint8_t> state,
+                                         const juce::String& pluginId) noexcept
 {
-    pendingVst3Path  = path.getFullPathName();
-    pendingVst3State = std::move (state);
+    pendingVst3Path     = path.getFullPathName();
+    pendingVst3PluginId = pluginId;
+    pendingVst3State    = std::move (state);
 }
 #endif
 

@@ -73,7 +73,8 @@ public:
     clap::NativeClapSlot&       getNativeClapSlot()       noexcept { return nativeClapSlot; }
     const clap::NativeClapSlot& getNativeClapSlot() const noexcept { return nativeClapSlot; }
     // Session restore before the engine is prepared: stash {path,state}; prepare() loads it.
-    void setPendingNativeClap (const juce::File& path, std::vector<uint8_t> state) noexcept;
+    void setPendingNativeClap (const juce::File& path, std::vector<uint8_t> state,
+                               const juce::String& pluginId = {}) noexcept;
     // True when the last prepare()-time reactivate / pending-restore load failed. Lets
     // the save path tell "failed restore" (keep the persisted path) from "user removed".
     bool nativeClapReloadFailed() const noexcept { return nativeReloadFailed.load (std::memory_order_relaxed); }
@@ -94,7 +95,8 @@ public:
     bool isNativeLv2Loaded() const noexcept { return nativeLv2Slot.isLoaded(); }
     lv2::NativeLv2Slot&       getNativeLv2Slot()       noexcept { return nativeLv2Slot; }
     const lv2::NativeLv2Slot& getNativeLv2Slot() const noexcept { return nativeLv2Slot; }
-    void setPendingNativeLv2 (const juce::File& path, std::vector<uint8_t> state) noexcept;
+    void setPendingNativeLv2 (const juce::File& path, std::vector<uint8_t> state,
+                              const juce::String& pluginId = {}) noexcept;
     bool nativeLv2ReloadFailed() const noexcept { return lv2ReloadFailed.load (std::memory_order_relaxed); }
     void markNativeLv2RestoreFailed() noexcept { lv2ReloadFailed.store (true, std::memory_order_relaxed); }
 #else
@@ -111,7 +113,8 @@ public:
     bool isNativeVst3Loaded() const noexcept { return nativeVst3Slot.isLoaded(); }
     vst3::NativeVst3Slot&       getNativeVst3Slot()       noexcept { return nativeVst3Slot; }
     const vst3::NativeVst3Slot& getNativeVst3Slot() const noexcept { return nativeVst3Slot; }
-    void setPendingNativeVst3 (const juce::File& path, std::vector<uint8_t> state) noexcept;
+    void setPendingNativeVst3 (const juce::File& path, std::vector<uint8_t> state,
+                               const juce::String& pluginId = {}) noexcept;
     bool nativeVst3ReloadFailed() const noexcept { return vst3ReloadFailed.load (std::memory_order_relaxed); }
     void markNativeVst3RestoreFailed() noexcept { vst3ReloadFailed.store (true, std::memory_order_relaxed); }
 #else
@@ -238,14 +241,17 @@ private:
     int    preparedBlockSize  = 0;
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
     juce::String         pendingClapPath;    // session-restore load consummated by prepare()
+    juce::String         pendingClapPluginId;
     std::vector<uint8_t> pendingClapState;
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_LV2
     juce::String         pendingLv2Path;
+    juce::String         pendingLv2PluginId;
     std::vector<uint8_t> pendingLv2State;
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_VST3
     juce::String         pendingVst3Path;
+    juce::String         pendingVst3PluginId;
     std::vector<uint8_t> pendingVst3State;
 #endif
 

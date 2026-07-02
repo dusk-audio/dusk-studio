@@ -1796,10 +1796,13 @@ void ChannelStripComponent::openPluginPicker (bool useChooser)
                                             chStrip.unloadNativeVst3();
                                             self->engine.resumeProcessing();
                                             self->track.nativeClapPath = {};
+                                            self->track.nativeClapPluginId = {};
                                             self->track.nativeClapStateBase64 = {};
                                             self->track.nativeLv2Path = {};
+                                            self->track.nativeLv2PluginId = {};
                                             self->track.nativeLv2StateBase64 = {};
                                             self->track.nativeVst3Path = {};
+                                            self->track.nativeVst3PluginId = {};
                                             self->track.nativeVst3StateBase64 = {};
                                         }
 
@@ -1989,6 +1992,7 @@ void ChannelStripComponent::unloadPluginSlot()
         strip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
         engine.resumeProcessing();
         track.nativeClapPath = {};
+        track.nativeClapPluginId = {};
         track.nativeClapStateBase64 = {};
         refreshPluginSlotButton();
         return;
@@ -2005,6 +2009,7 @@ void ChannelStripComponent::unloadPluginSlot()
             lv2Strip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
             engine.resumeProcessing();
             track.nativeLv2Path = {};
+            track.nativeLv2PluginId = {};
             track.nativeLv2StateBase64 = {};
             refreshPluginSlotButton();
             return;
@@ -2022,6 +2027,7 @@ void ChannelStripComponent::unloadPluginSlot()
             vst3Strip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
             engine.resumeProcessing();
             track.nativeVst3Path = {};
+            track.nativeVst3PluginId = {};
             track.nativeVst3StateBase64 = {};
             refreshPluginSlotButton();
             return;
@@ -2657,18 +2663,22 @@ void ChannelStripComponent::loadNativeClapForChannel (const juce::File& clapFile
         // The runtime slot is now empty — clear the persisted native-CLAP refs so a
         // save doesn't carry a stale path/state for a slot the user sees as empty.
         track.nativeClapPath = {};
+        track.nativeClapPluginId = {};
         track.nativeClapStateBase64 = {};
         return;
     }
 
-    track.nativeClapPath = clapFile.getFullPathName();
+    track.nativeClapPath     = clapFile.getFullPathName();
+    track.nativeClapPluginId = strip.getNativeClapSlot().getPluginId();
     // Fresh bundle: don't reuse the previous plugin's state blob. The next save
     // re-captures this plugin's real state.
     track.nativeClapStateBase64 = {};
     // The load evicted the other native hosts in this insert — drop their refs too.
     track.nativeLv2Path = {};
+    track.nativeLv2PluginId = {};
     track.nativeLv2StateBase64 = {};
     track.nativeVst3Path = {};
+    track.nativeVst3PluginId = {};
     track.nativeVst3StateBase64 = {};
     refreshPluginSlotButton();
     openPluginEditor();
@@ -2716,15 +2726,19 @@ void ChannelStripComponent::loadNativeLv2ForChannel (const juce::File& bundleDir
         showDuskAlert (*this, "Couldn't load LV2 plugin",
                        bundleDir.getFileNameWithoutExtension() + ":\n" + juce::String (err));
         track.nativeLv2Path = {};
+        track.nativeLv2PluginId = {};
         track.nativeLv2StateBase64 = {};
         return;
     }
 
-    track.nativeLv2Path = bundleDir.getFullPathName();
+    track.nativeLv2Path     = bundleDir.getFullPathName();
+    track.nativeLv2PluginId = strip.getNativeLv2Slot().getPluginId();
     track.nativeLv2StateBase64 = {};
     track.nativeClapPath = {};
+    track.nativeClapPluginId = {};
     track.nativeClapStateBase64 = {};
     track.nativeVst3Path = {};
+    track.nativeVst3PluginId = {};
     track.nativeVst3StateBase64 = {};
     refreshPluginSlotButton();
     openPluginEditor();
@@ -2772,15 +2786,19 @@ void ChannelStripComponent::loadNativeVst3ForChannel (const juce::File& vst3File
         showDuskAlert (*this, "Couldn't load VST3 plugin",
                        vst3File.getFileNameWithoutExtension() + ":\n" + juce::String (err));
         track.nativeVst3Path = {};
+        track.nativeVst3PluginId = {};
         track.nativeVst3StateBase64 = {};
         return;
     }
 
-    track.nativeVst3Path = vst3File.getFullPathName();
+    track.nativeVst3Path     = vst3File.getFullPathName();
+    track.nativeVst3PluginId = strip.getNativeVst3Slot().getPluginId();
     track.nativeVst3StateBase64 = {};
     track.nativeClapPath = {};
+    track.nativeClapPluginId = {};
     track.nativeClapStateBase64 = {};
     track.nativeLv2Path = {};
+    track.nativeLv2PluginId = {};
     track.nativeLv2StateBase64 = {};
     refreshPluginSlotButton();
     openPluginEditor();
