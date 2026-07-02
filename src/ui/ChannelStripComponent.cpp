@@ -2068,25 +2068,8 @@ void ChannelStripComponent::showPluginSlotMenu()
         // loaded (no last-touched stamp to bind to). Native slots track
         // touches from their editors.
         {
-            auto& chStrip = engine.getChannelStrip (trackIndex);
-            int lastParam = -1;
-#if DUSKSTUDIO_HAS_NATIVE_CLAP
-            if (chStrip.isNativeClapLoaded())
-                lastParam = chStrip.getNativeClapSlot().lastTouchedParamIndex();
-            else
-#endif
-#if DUSKSTUDIO_HAS_NATIVE_LV2
-            if (chStrip.isNativeLv2Loaded())
-                lastParam = chStrip.getNativeLv2Slot().lastTouchedParamIndex();
-            else
-#endif
-#if DUSKSTUDIO_HAS_NATIVE_VST3
-            if (chStrip.isNativeVst3Loaded())
-                lastParam = chStrip.getNativeVst3Slot().lastTouchedParamIndex();
-            else
-#endif
-            if (! nativeLoaded)
-                lastParam = pluginSlot.getLastTouchedParamIndex();
+            const int lastParam = engine.getChannelStrip (trackIndex)
+                                        .insertLastTouchedParamIndex();
             menu.addSeparator();
             menu.addItem (2005,
                            "MIDI Learn last-touched parameter",

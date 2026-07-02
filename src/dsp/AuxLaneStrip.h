@@ -128,6 +128,26 @@ public:
     bool nativeVst3ReloadFailed (int) const noexcept { return false; }
 #endif
 
+    // MIDI Learn: last-touched parameter of whichever host owns the slot
+    // (same precedence as the audio chain); -1 when empty or untouched.
+    int insertLastTouchedParamIndex (int slotIdx) const noexcept
+    {
+        jassert (slotIdx >= 0 && slotIdx < kMaxPlugins);
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+        if (isNativeClapLoaded (slotIdx))
+            return nativeClapSlots[(size_t) slotIdx].lastTouchedParamIndex();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+        if (isNativeLv2Loaded (slotIdx))
+            return nativeLv2Slots[(size_t) slotIdx].lastTouchedParamIndex();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+        if (isNativeVst3Loaded (slotIdx))
+            return nativeVst3Slots[(size_t) slotIdx].lastTouchedParamIndex();
+#endif
+        return slots[(size_t) slotIdx].getLastTouchedParamIndex();
+    }
+
     enum InsertMode : int { kInsertEmpty = 0, kInsertPlugin = 1, kInsertHardware = 2 };
 
     std::array<std::atomic<int>, kMaxPlugins> insertMode {};

@@ -71,6 +71,10 @@ struct Vst3Instance::Impl : public Vst3HostContext::Callbacks
     // kLatencyChanged arrived; the engine's drain timer consumes it and cycles
     // the instance (VST3 latency only re-reads across a setActive cycle).
     std::atomic<bool> latencyChanged { false };
+    // kParamTitlesChanged arrived; the drain timer re-snapshots on the message
+    // thread (misbehaving plugins fire restartComponent off-thread, and the
+    // snapshot allocates).
+    std::atomic<bool> paramInfoChanged { false };
 
     void snapshotParams()
     {
@@ -108,14 +112,14 @@ struct Vst3Instance::Impl : public Vst3HostContext::Callbacks
     }
     void onRestartComponent (int32_t flags) override
     {
-        // Message thread. Values need no action (nothing caches them); a
-        // param-info change re-snapshots the surface in place (read from the
-        // message thread only). Latency defers to the engine's drain timer —
-        // picking it up needs a fenced setActive cycle this callback can't do.
+        // Flag-only: values need no action (nothing caches them), param-info and
+        // latency changes are consumed by the engine's message-thread drain
+        // timer (the snapshot allocates and the latency pickup needs a fenced
+        // setActive cycle — and misbehaving plugins call this off-thread).
         // kIoChanged (a live bus re-layout) stays unhandled: the PortLayout is
         // fixed at create() and no hosted effect exercises it yet.
         if ((flags & Vst::RestartFlags::kParamTitlesChanged) != 0)
-            snapshotParams();
+            paramInfoChanged.store (true, std::memory_order_relaxed);
         if ((flags & Vst::RestartFlags::kLatencyChanged) != 0)
             latencyChanged.store (true, std::memory_order_relaxed);
     }
@@ -204,6 +208,12 @@ void Vst3Instance::setResizeViewHandler (std::function<bool (int, int)> fn)
 bool Vst3Instance::consumeLatencyChanged() noexcept
 {
     return impl->latencyChanged.exchange (false, std::memory_order_relaxed);
+}
+
+void Vst3Instance::refreshParamInfoIfChanged()
+{
+    if (impl->paramInfoChanged.exchange (false, std::memory_order_relaxed))
+        impl->snapshotParams();
 }
 
 int Vst3Instance::lastTouchedParamIndex() const noexcept

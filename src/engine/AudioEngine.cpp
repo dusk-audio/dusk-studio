@@ -155,6 +155,8 @@ public:
         {
             auto cycle = [&] (auto& slot)
             {
+                if (auto* inst = slot.getInstance())
+                    inst->refreshParamInfoIfChanged();
                 if (! slot.consumeLatencyChanged() || ! slot.isLoaded()) return;
                 if (! anyLatencyChanged) engine.suspendProcessing();
                 anyLatencyChanged = true;

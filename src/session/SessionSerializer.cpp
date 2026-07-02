@@ -2075,6 +2075,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                     case (int) MidiBindingTarget::BusSolo:
                     case (int) MidiBindingTarget::AuxLaneFader:
                     case (int) MidiBindingTarget::AuxLaneMute:
+                    case (int) MidiBindingTarget::AuxPluginParam:
                     case (int) MidiBindingTarget::MasterFader:
                     // Were silently coerced to None on load, dropping the
                     // binding from a saved session.
