@@ -1430,7 +1430,9 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         "open the routing editor."));
     pluginSlotButton.onClick = [this]
     {
-        if (pluginSlot.isLoaded() || engine.getChannelStrip (trackIndex).isNativeClapLoaded())
+        if (pluginSlot.isLoaded()
+            || engine.getChannelStrip (trackIndex).isNativeClapLoaded()
+            || engine.getChannelStrip (trackIndex).isNativeLv2Loaded())
         {
             togglePluginEditor();
             return;
@@ -1868,6 +1870,16 @@ void ChannelStripComponent::openPluginPicker (bool useChooser)
                 self->loadNativeClapForChannel (f);
         };
 #endif
+    // Native LV2 route — same shape; LV2-Native rows replace the JUCE LV2 rows.
+    std::function<void (const juce::File&)> onLv2;
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+    if (kind == pluginpicker::PluginKind::Effects)
+        onLv2 = [safe] (const juce::File& f)
+        {
+            if (auto* self = safe.getComponent())
+                self->loadNativeLv2ForChannel (f);
+        };
+#endif
 
     if (useChooser)
     {
@@ -1877,7 +1889,8 @@ void ChannelStripComponent::openPluginPicker (bool useChooser)
                                           std::move (onChange),
                                           kind,
                                           std::move (openHwEditor),
-                                          std::move (onClap));
+                                          std::move (onClap),
+                                          std::move (onLv2));
     }
     else
     {
@@ -1892,7 +1905,8 @@ void ChannelStripComponent::openPluginPicker (bool useChooser)
                                        { -1, -1 },
                                        /*onPickHardwareInsert*/ {},
                                        /*suppressSecondaryButtons*/ true,
-                                       std::move (onClap));
+                                       std::move (onClap),
+                                       std::move (onLv2));
     }
 }
 
@@ -1949,6 +1963,22 @@ void ChannelStripComponent::unloadPluginSlot()
         return;
     }
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+    {
+        auto& lv2Strip = engine.getChannelStrip (trackIndex);
+        if (lv2Strip.isNativeLv2Loaded())
+        {
+            engine.suspendProcessing();
+            lv2Strip.unloadNativeLv2();
+            lv2Strip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
+            engine.resumeProcessing();
+            track.nativeLv2Path = {};
+            track.nativeLv2StateBase64 = {};
+            refreshPluginSlotButton();
+            return;
+        }
+    }
+#endif
 
     pluginSlot.unload();
     refreshPluginSlotButton();
@@ -1957,7 +1987,8 @@ void ChannelStripComponent::unloadPluginSlot()
 void ChannelStripComponent::showPluginSlotMenu()
 {
     juce::PopupMenu menu;
-    const bool nativeLoaded = engine.getChannelStrip (trackIndex).isNativeClapLoaded();
+    const bool nativeLoaded = engine.getChannelStrip (trackIndex).isNativeClapLoaded()
+                           || engine.getChannelStrip (trackIndex).isNativeLv2Loaded();
     if (pluginSlot.isLoaded() || nativeLoaded)
     {
         // Editor toggle headline so right-click ALSO becomes a way to open
@@ -2037,6 +2068,20 @@ void ChannelStripComponent::refreshPluginSlotButton()
     {
         const auto nm = juce::File (engine.getChannelStrip (trackIndex)
                                       .getNativeClapSlot().getPath())
+                          .getFileNameWithoutExtension();
+        const auto label = juce::String (juce::CharPointer_UTF8 ("\xe2\x96\xbe ")) + nm;
+        if (label == lastSlotName) return;
+        lastSlotName = label;
+        pluginSlotButton.setButtonText (label);
+        return;
+    }
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+    if (engine.getChannelStrip (trackIndex).isNativeLv2Loaded())
+    {
+        // Bundle directory name minus the ".lv2" suffix.
+        const auto nm = juce::File (engine.getChannelStrip (trackIndex)
+                                      .getNativeLv2Slot().getPath())
                           .getFileNameWithoutExtension();
         const auto label = juce::String (juce::CharPointer_UTF8 ("\xe2\x96\xbe ")) + nm;
         if (label == lastSlotName) return;
@@ -2479,10 +2524,61 @@ void ChannelStripComponent::loadNativeClapForChannel (const juce::File& clapFile
     // Fresh bundle: don't reuse the previous plugin's state blob. The next save
     // re-captures this plugin's real state.
     track.nativeClapStateBase64 = {};
+    // The load evicted any native LV2 in this insert — drop its persisted refs too.
+    track.nativeLv2Path = {};
+    track.nativeLv2StateBase64 = {};
     refreshPluginSlotButton();
     openPluginEditor();
 }
 #endif // DUSKSTUDIO_HAS_NATIVE_CLAP
+
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+void ChannelStripComponent::loadNativeLv2ForChannel (const juce::File& bundleDir)
+{
+    auto& strip = engine.getChannelStrip (trackIndex);
+
+    // One insert per strip — tear down whatever editor is open first (the CLAP
+    // editor references an instance the load below evicts). Mirrors
+    // loadNativeClapForChannel.
+    closePluginEditor();
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+    clapEditor.reset();
+#endif
+    pluginEditor.reset();
+    pluginEditorOwner = nullptr;
+   #if JUCE_LINUX && DUSKSTUDIO_HAS_OOP_PLUGINS
+    remoteEditorEmbed.reset();
+   #endif
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS && ! JUCE_LINUX
+    remoteForeignEmbed.reset();
+   #endif
+
+    // NativeLv2Slot::load is NOT RT-safe; fence the audio thread around the swap.
+    // loadNativeLv2 itself evicts the CLAP + JUCE occupants.
+    std::string err;
+    engine.suspendProcessing();
+    const bool ok = strip.loadNativeLv2 (bundleDir, err);
+    if (ok)
+        strip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
+    engine.resumeProcessing();
+
+    if (! ok)
+    {
+        std::fprintf (stderr, "[chan lv2] load failed: %s\n", err.c_str());
+        showDuskAlert (*this, "Couldn't load LV2 plugin",
+                       bundleDir.getFileNameWithoutExtension() + ":\n" + juce::String (err));
+        track.nativeLv2Path = {};
+        track.nativeLv2StateBase64 = {};
+        return;
+    }
+
+    track.nativeLv2Path = bundleDir.getFullPathName();
+    track.nativeLv2StateBase64 = {};
+    track.nativeClapPath = {};
+    track.nativeClapStateBase64 = {};
+    refreshPluginSlotButton();
+}
+#endif // DUSKSTUDIO_HAS_NATIVE_LV2
 
 namespace
 {
@@ -3877,7 +3973,9 @@ void ChannelStripComponent::showColourMenu()
     // Plugin slot menu items, only meaningful when a plugin is loaded.
     // Replace/Remove live here (rather than on the slot button itself) so
     // the slot button's primary click stays as a toggle for the editor.
-    if (pluginSlot.isLoaded() || engine.getChannelStrip (trackIndex).isNativeClapLoaded())
+    if (pluginSlot.isLoaded()
+        || engine.getChannelStrip (trackIndex).isNativeClapLoaded()
+        || engine.getChannelStrip (trackIndex).isNativeLv2Loaded())
     {
         menu.addSeparator();
         menu.addItem (1010, "Replace plugin...");
@@ -4005,10 +4103,11 @@ void ChannelStripComponent::onTrackModeChanged()
         if (willBeMidi != isInstrument)
             unloadPluginSlot();
     }
-    else if (engine.getChannelStrip (trackIndex).isNativeClapLoaded()
+    else if ((engine.getChannelStrip (trackIndex).isNativeClapLoaded()
+              || engine.getChannelStrip (trackIndex).isNativeLv2Loaded())
              && mode == (int) Track::Mode::Midi)
     {
-        // Native CLAP inserts are effects-only; a MIDI strip can't host one.
+        // Native inserts are effects-only; a MIDI strip can't host one.
         unloadPluginSlot();
     }
 

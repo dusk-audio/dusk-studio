@@ -334,6 +334,10 @@ private:
     std::unique_ptr<class ClapPluginEditorComponent> clapEditor;
     void loadNativeClapForChannel (const juce::File& clapFile);
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+    // Native LV2 insert load (no suil editor yet — the slot hosts audio only).
+    void loadNativeLv2ForChannel (const juce::File& bundleDir);
+#endif
 
    #if JUCE_LINUX && DUSKSTUDIO_HAS_OOP_PLUGINS
     // OOP: child plugin's X11 Window wrapped in XEmbedComponent fed
