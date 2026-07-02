@@ -49,6 +49,10 @@ public:
     int lastTouchedParamIndex() const noexcept
         { return instance != nullptr ? instance->lastTouchedParamIndex() : -1; }
 
+    // True once after the plugin signalled a latency change (see Vst3Instance).
+    bool consumeLatencyChanged() noexcept
+        { return instance != nullptr && instance->consumeLatencyChanged(); }
+
 protected:
     // MIDI binding: VST3 parameters are normalized — the fraction maps directly.
     void applyParamBinding (uint32_t paramIndex, float frac) override

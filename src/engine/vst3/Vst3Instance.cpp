@@ -68,6 +68,32 @@ struct Vst3Instance::Impl : public Vst3HostContext::Callbacks
     // Last param id the plugin's editor touched (performEdit), for MIDI Learn.
     std::atomic<int64_t> lastTouchedParamId { -1 };
 
+    // kLatencyChanged arrived; the engine's drain timer consumes it and cycles
+    // the instance (VST3 latency only re-reads across a setActive cycle).
+    std::atomic<bool> latencyChanged { false };
+
+    void snapshotParams()
+    {
+        params.clear();
+        if (! controller) return;
+        const int32 numParams = controller->getParameterCount();
+        params.reserve ((size_t) std::max<int32> (0, numParams));
+        for (int32 i = 0; i < numParams; ++i)
+        {
+            Vst::ParameterInfo pi {};
+            if (controller->getParameterInfo (i, pi) != kResultOk)
+                continue;
+            ParamInfo p;
+            p.id           = (uint32_t) pi.id;
+            p.name         = VST3::StringConvert::convert (pi.title);
+            p.defaultValue = pi.defaultNormalizedValue;
+            p.stepCount    = (int) pi.stepCount;
+            p.canAutomate  = (pi.flags & Vst::ParameterInfo::kCanAutomate) != 0;
+            p.isReadOnly   = (pi.flags & Vst::ParameterInfo::kIsReadOnly)  != 0;
+            params.push_back (std::move (p));
+        }
+    }
+
     // ── Vst3HostContext::Callbacks (message thread) ──
     void onPerformEdit (uint32_t paramId, double normalised) override
     {
@@ -79,6 +105,19 @@ struct Vst3Instance::Impl : public Vst3HostContext::Callbacks
     bool onResizeView (int w, int h) override
     {
         return resizeViewFn != nullptr && resizeViewFn (w, h);
+    }
+    void onRestartComponent (int32_t flags) override
+    {
+        // Message thread. Values need no action (nothing caches them); a
+        // param-info change re-snapshots the surface in place (read from the
+        // message thread only). Latency defers to the engine's drain timer —
+        // picking it up needs a fenced setActive cycle this callback can't do.
+        // kIoChanged (a live bus re-layout) stays unhandled: the PortLayout is
+        // fixed at create() and no hosted effect exercises it yet.
+        if ((flags & Vst::RestartFlags::kParamTitlesChanged) != 0)
+            snapshotParams();
+        if ((flags & Vst::RestartFlags::kLatencyChanged) != 0)
+            latencyChanged.store (true, std::memory_order_relaxed);
     }
 
     void destroy()
@@ -162,6 +201,11 @@ void Vst3Instance::setResizeViewHandler (std::function<bool (int, int)> fn)
     impl->resizeViewFn = std::move (fn);
 }
 
+bool Vst3Instance::consumeLatencyChanged() noexcept
+{
+    return impl->latencyChanged.exchange (false, std::memory_order_relaxed);
+}
+
 int Vst3Instance::lastTouchedParamIndex() const noexcept
 {
     const auto id = impl->lastTouchedParamId.load (std::memory_order_relaxed);
@@ -232,22 +276,7 @@ bool Vst3Instance::create (const Vst3Bundle& bundle, const std::string& classId,
             impl->controller->setComponentState (&stream);
         }
 
-        const int32 numParams = impl->controller->getParameterCount();
-        impl->params.reserve ((size_t) std::max<int32> (0, numParams));
-        for (int32 i = 0; i < numParams; ++i)
-        {
-            Vst::ParameterInfo pi {};
-            if (impl->controller->getParameterInfo (i, pi) != kResultOk)
-                continue;
-            ParamInfo p;
-            p.id           = (uint32_t) pi.id;
-            p.name         = VST3::StringConvert::convert (pi.title);
-            p.defaultValue = pi.defaultNormalizedValue;
-            p.stepCount    = (int) pi.stepCount;
-            p.canAutomate  = (pi.flags & Vst::ParameterInfo::kCanAutomate) != 0;
-            p.isReadOnly   = (pi.flags & Vst::ParameterInfo::kIsReadOnly)  != 0;
-            impl->params.push_back (std::move (p));
-        }
+        impl->snapshotParams();
     }
     impl->host.setCallbacks (impl.get());
 
