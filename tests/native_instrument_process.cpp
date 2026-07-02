@@ -34,14 +34,18 @@ float driveNote (Slot& slot, int blocks)
     for (int b = 0; b < blocks; ++b)
     {
         juce::MidiBuffer midi;
-        // Several keys so drum-mapped instruments (kick/snare/hat) trigger too.
+        // Several keys so drum-mapped instruments (kick/snare/hat) trigger too,
+        // re-struck periodically — sample-library instruments can still be
+        // streaming their kit when the first note lands.
         const int keys[] = { 36, 38, 42, 60 };
-        if (b == 0)
+        if (b % 16 == 0)
             for (const int k : keys)
-                midi.addEvent (juce::MidiMessage::noteOn (1, k, (juce::uint8) 100), 0);
-        if (b == blocks / 2)
+                for (const int ch : { 1, 10 })   // 10: GM drum-channel convention
+                    midi.addEvent (juce::MidiMessage::noteOn (ch, k, (juce::uint8) 100), 0);
+        if (b % 16 == 12)
             for (const int k : keys)
-                midi.addEvent (juce::MidiMessage::noteOff (1, k), 0);
+                for (const int ch : { 1, 10 })
+                    midi.addEvent (juce::MidiMessage::noteOff (ch, k), 0);
         std::fill (L.begin(), L.end(), 0.0f);
         std::fill (R.begin(), R.end(), 0.0f);
         slot.processStereo (L.data(), R.data(), L.data(), R.data(), kBlock, &midi);
@@ -84,8 +88,9 @@ TEST_CASE ("Native CLAP instrument produces audio from notes", "[clap][instrumen
     REQUIRE (slot.load (juce::File (juce::String (path)), 48000.0, kBlock, err));
     REQUIRE (slot.isLoadedInstrument());
 
+    driveSilence (slot, 188);   // ~2 s warmup: sample libraries stream their kits
     REQUIRE (driveSilence (slot, 8) < 1.0e-2f);
-    REQUIRE (driveNote (slot, 32) > 1.0e-3f);
+    REQUIRE (driveNote (slot, 64) > 1.0e-3f);
 }
 #endif
 
@@ -111,8 +116,9 @@ TEST_CASE ("Native VST3 instrument produces audio from notes", "[vst3][instrumen
     // No isLoadedInstrument assert: instrument-flagged hybrids with an audio
     // input bus exist (drum-replacement tools). Notes making sound is the test.
 
+    driveSilence (slot, 188);   // ~2 s warmup: sample libraries stream their kits
     REQUIRE (driveSilence (slot, 8) < 1.0e-2f);
-    REQUIRE (driveNote (slot, 32) > 1.0e-3f);
+    REQUIRE (driveNote (slot, 64) > 1.0e-3f);
 }
 #endif
 
@@ -130,7 +136,8 @@ TEST_CASE ("Native LV2 instrument produces audio from notes", "[lv2][instrument]
     // input bus, so the layout legitimately isn't input-less. The strip's MIDI
     // branch only needs isLoaded — what matters is that notes make sound.
 
+    driveSilence (slot, 188);   // ~2 s warmup: sample libraries stream their kits
     REQUIRE (driveSilence (slot, 8) < 1.0e-2f);
-    REQUIRE (driveNote (slot, 32) > 1.0e-3f);
+    REQUIRE (driveNote (slot, 64) > 1.0e-3f);
 }
 #endif
