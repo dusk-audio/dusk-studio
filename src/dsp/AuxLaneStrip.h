@@ -79,6 +79,8 @@ public:
     // True when a sample-rate re-prepare reload of a loaded native CLAP failed (the
     // slot is now empty). The UI reads this to report which lane lost its plugin.
     bool nativeClapReloadFailed (int slotIdx) const noexcept { jassert (slotIdx >= 0 && slotIdx < kMaxPlugins); return nativeReloadFailed[(size_t) slotIdx].load (std::memory_order_relaxed); }
+    // See ChannelStrip::markNativeClapRestoreFailed — re-marks a failed engine restore.
+    void markNativeClapRestoreFailed (int slotIdx) noexcept { jassert (slotIdx >= 0 && slotIdx < kMaxPlugins); nativeReloadFailed[(size_t) slotIdx].store (true, std::memory_order_relaxed); }
 #else
     bool isNativeClapLoaded (int) const noexcept { return false; }
     void unloadNativeClap (int) noexcept {}
@@ -94,6 +96,7 @@ public:
     const lv2::NativeLv2Slot& getNativeLv2Slot (int idx) const noexcept { jassert (idx >= 0 && idx < kMaxPlugins); return nativeLv2Slots[(size_t) idx]; }
     void setPendingNativeLv2 (int slotIdx, const juce::File& path, std::vector<uint8_t> state) noexcept;
     bool nativeLv2ReloadFailed (int slotIdx) const noexcept { jassert (slotIdx >= 0 && slotIdx < kMaxPlugins); return lv2ReloadFailed[(size_t) slotIdx].load (std::memory_order_relaxed); }
+    void markNativeLv2RestoreFailed (int slotIdx) noexcept { jassert (slotIdx >= 0 && slotIdx < kMaxPlugins); lv2ReloadFailed[(size_t) slotIdx].store (true, std::memory_order_relaxed); }
 #else
     bool isNativeLv2Loaded (int) const noexcept { return false; }
     void unloadNativeLv2 (int) noexcept {}

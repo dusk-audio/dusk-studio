@@ -17,7 +17,8 @@ class Lv2Bundle;
 //
 // LV2 fixes the sample rate at instantiate (unlike CLAP's activate), so reactivate
 // re-instantiates the plugin, carrying control-port values across; state-extension
-// blobs are not yet wired. Audio processing only — no state persistence, no editor yet.
+// blobs are not yet wired (saveState/loadState return false). The suil editor
+// attaches through the opaque accessors below (Lv2Editor).
 class Lv2Instance : public hosting::INativeInstance
 {
 public:
@@ -55,9 +56,9 @@ public:
     void*       uridMapFeature()   const noexcept;
     void*       uridUnmapFeature() const noexcept;
 
-    // UI → plugin control-port write (ui:floatProtocol). Bounds-checked; the
-    // audio thread reads the same float on its next run() — an aligned 32-bit
-    // store, the standard LV2-host practice for control ports.
+    // UI → plugin control-port write (ui:floatProtocol). Staged into a lock-free
+    // ring; the audio thread applies it at the top of its next processBlock so
+    // nothing writes portValues while run() reads it.
     void setControlPortValue (uint32_t portIndex, float value) noexcept;
     // Port index for the suil port-index-by-symbol callback; -1 when unknown.
     int portIndexForSymbol (const char* symbol) const noexcept;

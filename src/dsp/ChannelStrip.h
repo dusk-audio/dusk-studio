@@ -73,6 +73,9 @@ public:
     // True when the last prepare()-time reactivate / pending-restore load failed. Lets
     // the save path tell "failed restore" (keep the persisted path) from "user removed".
     bool nativeClapReloadFailed() const noexcept { return nativeReloadFailed.load (std::memory_order_relaxed); }
+    // Engine session-restore failure: loadNativeClap clears the flag (it treats every
+    // call as user-initiated), so a failed RESTORE must re-mark it to keep the refs.
+    void markNativeClapRestoreFailed() noexcept { nativeReloadFailed.store (true, std::memory_order_relaxed); }
 #else
     bool isNativeClapLoaded() const noexcept { return false; }
     void unloadNativeClap() noexcept {}
@@ -88,6 +91,7 @@ public:
     const lv2::NativeLv2Slot& getNativeLv2Slot() const noexcept { return nativeLv2Slot; }
     void setPendingNativeLv2 (const juce::File& path, std::vector<uint8_t> state) noexcept;
     bool nativeLv2ReloadFailed() const noexcept { return lv2ReloadFailed.load (std::memory_order_relaxed); }
+    void markNativeLv2RestoreFailed() noexcept { lv2ReloadFailed.store (true, std::memory_order_relaxed); }
 #else
     bool isNativeLv2Loaded() const noexcept { return false; }
     void unloadNativeLv2() noexcept {}

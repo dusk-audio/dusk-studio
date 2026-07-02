@@ -1788,6 +1788,8 @@ void ChannelStripComponent::openPluginPicker (bool useChooser)
                                             self->engine.resumeProcessing();
                                             self->track.nativeClapPath = {};
                                             self->track.nativeClapStateBase64 = {};
+                                            self->track.nativeLv2Path = {};
+                                            self->track.nativeLv2StateBase64 = {};
                                         }
 
                                         // Loading an instrument (soundfont or VST/LV2 synth) on a

@@ -25,9 +25,17 @@ bool Lv2PluginEditorComponent::attach (lv2::Lv2Instance& shared, juce::String& e
     {
         if (w > 0 && h > 0) setSize (w, h);
     };
-    // The UI reported closed (idle() non-zero): stop treating it as live so the
-    // timer / re-layout can't keep poking a torn-down UI.
-    editor.onClosed = [this] { embedded = false; loaded = false; stopTimer(); };
+    // The UI reported closed (idle() non-zero): stop treating it as live AND tear
+    // the native UI down — leaving it open would keep a dead-by-its-own-request
+    // window mapped. close() is safe from inside pump()'s onClosed dispatch (pump
+    // returns immediately after) and idempotent for the destructor's later call.
+    editor.onClosed = [this]
+    {
+        embedded = false;
+        loaded = false;
+        stopTimer();
+        editor.close();
+    };
 
     // Real size arrives at embed (LV2 UIs size themselves at instantiate); start
     // with a sane placeholder so layout has something to centre.

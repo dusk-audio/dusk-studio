@@ -435,7 +435,21 @@ void AudioEngine::recomputePdc() noexcept
         {
             const int mode = strip.insertMode.load (std::memory_order_relaxed);
             if (mode == ChannelStrip::kInsertPlugin)
+            {
                 lat = strip.getPluginSlot().getLatencySamples();
+                // A native insert replaces the JUCE slot (which then reports 0),
+                // so its latency must feed PDC instead.
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+                if (strip.isNativeClapLoaded())
+                    if (auto* inst = strip.getNativeClapSlot().getInstance())
+                        lat = inst->getLatencySamples();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+                if (strip.isNativeLv2Loaded())
+                    if (auto* inst = strip.getNativeLv2Slot().getInstance())
+                        lat = inst->getLatencySamples();
+#endif
+            }
             else if (mode == ChannelStrip::kInsertHardware)
                 lat = strip.getHardwareInsertSlot().getLatencySamples();
         }
@@ -1313,11 +1327,10 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
             track.nativeLv2Path = strip.getNativeLv2Slot().getPath();
             std::vector<uint8_t> blob;
             // Lv2Instance state persistence isn't wired yet (saveState returns
-            // false) — the path alone restores the plugin at its defaults.
+            // false) — keep whatever blob the session already carries rather than
+            // wiping it on every save round-trip.
             if (strip.getNativeLv2Slot().saveState (blob) && ! blob.empty())
                 track.nativeLv2StateBase64 = juce::Base64::toBase64 (blob.data(), blob.size());
-            else
-                track.nativeLv2StateBase64.clear();
         }
         else if (! strip.nativeLv2ReloadFailed())
         {
@@ -1362,10 +1375,10 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
             {
                 lane.nativeLv2Path[(size_t) s] = strip.getNativeLv2Slot (s).getPath();
                 std::vector<uint8_t> blob;
+                // See the track block above: preserve the carried blob until LV2
+                // state serialization is wired.
                 if (strip.getNativeLv2Slot (s).saveState (blob) && ! blob.empty())
                     lane.nativeLv2StateBase64[(size_t) s] = juce::Base64::toBase64 (blob.data(), blob.size());
-                else
-                    lane.nativeLv2StateBase64[(size_t) s].clear();
             }
             else if (! strip.nativeLv2ReloadFailed (s))
             {
@@ -1503,9 +1516,14 @@ void AudioEngine::consumePluginStateAfterLoad()
                     strip.getNativeClapSlot().loadState (blob);
                 resumeProcessing();
                 if (! ok)
+                {
+                    // A failed RESTORE is not a user removal — mark it so the save
+                    // path keeps the persisted refs (loadNativeClap cleared the flag).
+                    strip.markNativeClapRestoreFailed();
                     lastPluginLoadFailures.push_back ({
                         "Track " + juce::String (t + 1),
                         clapFile.getFileNameWithoutExtension() });
+                }
             }
             else
             {
@@ -1542,9 +1560,12 @@ void AudioEngine::consumePluginStateAfterLoad()
                     strip.getNativeLv2Slot().loadState (blob);
                 resumeProcessing();
                 if (! ok)
+                {
+                    strip.markNativeLv2RestoreFailed();   // keep refs — see the CLAP twin
                     lastPluginLoadFailures.push_back ({
                         "Track " + juce::String (t + 1),
                         lv2File.getFileNameWithoutExtension() });
+                }
             }
             else
             {
@@ -1635,9 +1656,12 @@ void AudioEngine::consumePluginStateAfterLoad()
                         strip.getNativeClapSlot (s).loadState (blob);
                     resumeProcessing();
                     if (! ok)
+                    {
+                        strip.markNativeClapRestoreFailed (s);   // keep refs — restore, not removal
                         lastPluginLoadFailures.push_back ({
                             "Aux " + juce::String (a + 1) + " slot " + juce::String (s + 1),
                             clapFile.getFileNameWithoutExtension() });
+                    }
                 }
                 else
                 {
@@ -1673,9 +1697,12 @@ void AudioEngine::consumePluginStateAfterLoad()
                         strip.getNativeLv2Slot (s).loadState (blob);
                     resumeProcessing();
                     if (! ok)
+                    {
+                        strip.markNativeLv2RestoreFailed (s);   // keep refs — restore, not removal
                         lastPluginLoadFailures.push_back ({
                             "Aux " + juce::String (a + 1) + " slot " + juce::String (s + 1),
                             lv2File.getFileNameWithoutExtension() });
+                    }
                 }
                 else
                 {

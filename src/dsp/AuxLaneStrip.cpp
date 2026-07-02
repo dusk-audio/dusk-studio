@@ -52,15 +52,19 @@ void AuxLaneStrip::prepare (double sampleRate, int blockSize)
             const bool ok = nls.reactivate (preparedSampleRate, preparedBlockSize, err);
             lv2ReloadFailed[(size_t) s].store (! ok, std::memory_order_relaxed);
         }
-        else if (pendingLv2Path[(size_t) s].isNotEmpty()
-                 && ! isNativeClapLoaded (s))   // both pendings set (corrupt session): CLAP wins
+        else if (pendingLv2Path[(size_t) s].isNotEmpty())
         {
-            const juce::File p (pendingLv2Path[(size_t) s]);
-            std::string err;
-            const bool ok = nls.load (p, preparedSampleRate, preparedBlockSize, err);
-            if (ok && ! pendingLv2State[(size_t) s].empty())
-                nls.loadState (pendingLv2State[(size_t) s]);
-            lv2ReloadFailed[(size_t) s].store (! ok, std::memory_order_relaxed);
+            if (! isNativeClapLoaded (s))   // both pendings set (corrupt session): CLAP wins
+            {
+                const juce::File p (pendingLv2Path[(size_t) s]);
+                std::string err;
+                const bool ok = nls.load (p, preparedSampleRate, preparedBlockSize, err);
+                if (ok && ! pendingLv2State[(size_t) s].empty())
+                    nls.loadState (pendingLv2State[(size_t) s]);
+                lv2ReloadFailed[(size_t) s].store (! ok, std::memory_order_relaxed);
+            }
+            // Consumed either way — a CLAP-suppressed pending must not replay on a
+            // later prepare() once the CLAP is unloaded.
             pendingLv2Path[(size_t) s].clear();
             pendingLv2State[(size_t) s].clear();
         }

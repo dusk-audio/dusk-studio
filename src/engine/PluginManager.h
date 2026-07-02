@@ -99,6 +99,10 @@ public:
 private:
     juce::AudioPluginFormatManager formatManager;
     juce::KnownPluginList          knownPluginList;
+    // Native-format descriptions. scanInstalledPlugins runs on a background
+    // thread (PluginScanModal) and repopulates these while the message thread
+    // may be reading them for the picker — every access goes through this lock.
+    mutable juce::CriticalSection nativeDescriptionsLock;
     juce::Array<juce::PluginDescription> clapDescriptions;   // native CLAP (scanned separately)
     juce::Array<juce::PluginDescription> lv2Descriptions;    // native LV2 (scanned separately)
     bool                           oopEnabled { false };

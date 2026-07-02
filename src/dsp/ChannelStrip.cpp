@@ -118,15 +118,19 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
         const bool ok = nativeLv2Slot.reactivate (preparedSampleRate, preparedBlockSize, err);
         lv2ReloadFailed.store (! ok, std::memory_order_relaxed);
     }
-    else if (pendingLv2Path.isNotEmpty()
-             && ! isNativeClapLoaded())   // both pendings set (corrupt session): CLAP wins
+    else if (pendingLv2Path.isNotEmpty())
     {
-        const juce::File p (pendingLv2Path);
-        std::string err;
-        const bool ok = nativeLv2Slot.load (p, preparedSampleRate, preparedBlockSize, err);
-        if (ok && ! pendingLv2State.empty())
-            nativeLv2Slot.loadState (pendingLv2State);
-        lv2ReloadFailed.store (! ok, std::memory_order_relaxed);
+        if (! isNativeClapLoaded())   // both pendings set (corrupt session): CLAP wins
+        {
+            const juce::File p (pendingLv2Path);
+            std::string err;
+            const bool ok = nativeLv2Slot.load (p, preparedSampleRate, preparedBlockSize, err);
+            if (ok && ! pendingLv2State.empty())
+                nativeLv2Slot.loadState (pendingLv2State);
+            lv2ReloadFailed.store (! ok, std::memory_order_relaxed);
+        }
+        // Consumed either way — a CLAP-suppressed pending must not replay on a
+        // later prepare() once the CLAP is unloaded.
         pendingLv2Path.clear();
         pendingLv2State.clear();
     }

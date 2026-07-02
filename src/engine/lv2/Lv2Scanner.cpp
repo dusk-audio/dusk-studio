@@ -16,9 +16,11 @@ std::vector<ScannedLv2> Lv2Scanner::scan()
     {
         const LilvPlugin* p = lilv_plugins_get (all, it);
 
-        // The bundle directory is what NativeLv2Slot::load takes.
-        char* bundleDir = lilv_file_uri_parse (
-            lilv_node_as_uri (lilv_plugin_get_bundle_uri (p)), nullptr);
+        // The bundle directory is what NativeLv2Slot::load takes. A malformed
+        // manifest can yield a plugin with no bundle URI — skip, don't crash.
+        const LilvNode* bundleUri = lilv_plugin_get_bundle_uri (p);
+        if (bundleUri == nullptr) continue;
+        char* bundleDir = lilv_file_uri_parse (lilv_node_as_uri (bundleUri), nullptr);
         if (bundleDir == nullptr) continue;
 
         found.push_back ({ juce::String (juce::CharPointer_UTF8 (bundleDir)),

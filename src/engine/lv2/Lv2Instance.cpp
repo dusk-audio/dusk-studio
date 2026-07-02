@@ -10,6 +10,7 @@
 #include <lv2/urid/urid.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
@@ -107,6 +108,20 @@ struct Lv2Instance::Impl
     // Per-port scratch backing otherPorts: maxFrames floats each, so an audio-rate
     // CV port can safely read silence or sink its output.
     std::vector<std::vector<float>> otherScratch;
+
+    // Baseline audio-port buffers: every audio port is wired to these at activate()
+    // so the LV2 every-port-connected invariant holds even if a caller supplies
+    // fewer channels than the layout advertises; processBlock re-points the main
+    // channels each block. Inputs share the silence, outputs share the sink.
+    std::vector<float> audioSilence, audioSink;
+
+    // UI → audio-thread control-port writes. The UI must not store into portValues
+    // directly (run() reads it concurrently); writes stage here and processBlock
+    // drains them before run(). Same SPSC shape as the CLAP host's param ring.
+    struct PortWrite { uint32_t idx; float value; };
+    static constexpr uint32_t kWriteRingCap = 256;
+    std::array<PortWrite, kWriteRingCap> writeRing {};
+    std::atomic<uint32_t> writeRingW { 0 }, writeRingR { 0 };
 
     // Persistent per-port float storage; control ports are connected to these once
     // and hold their (default) value across blocks. Sized to the port count.
@@ -278,6 +293,15 @@ bool Lv2Instance::activate (double sampleRate, int maxBlockFrames, std::string& 
         lilv_instance_connect_port (impl->instance, idx, impl->otherScratch.back().data());
     }
 
+    // Baseline audio-port wiring (see Impl::audioSilence) — processBlock overrides
+    // the main channels every block.
+    impl->audioSilence.assign ((size_t) impl->maxFrames, 0.0f);
+    impl->audioSink.assign ((size_t) impl->maxFrames, 0.0f);
+    for (uint32_t idx : impl->audioInPorts)
+        lilv_instance_connect_port (impl->instance, idx, impl->audioSilence.data());
+    for (uint32_t idx : impl->audioOutPorts)
+        lilv_instance_connect_port (impl->instance, idx, impl->audioSink.data());
+
     // Seed latency with the port default so getLatencySamples() is sane before the
     // first run() refreshes it.
     impl->latencySamples.store (impl->latencyPortIndex >= 0
@@ -336,6 +360,20 @@ void Lv2Instance::processBlock (const hosting::PortBuffers& io) noexcept
     for (int c = 0; c < nout; ++c)
         lilv_instance_connect_port (impl->instance, impl->audioOutPorts[(size_t) c], io.mainOut[c]);
 
+    // Drain the UI's staged control-port writes (single consumer — this thread).
+    {
+        uint32_t r = impl->writeRingR.load (std::memory_order_relaxed);
+        const uint32_t w = impl->writeRingW.load (std::memory_order_acquire);
+        while (r != w)
+        {
+            const auto& pw = impl->writeRing[(size_t) r];
+            if ((size_t) pw.idx < impl->portValues.size())
+                impl->portValues[(size_t) pw.idx] = pw.value;
+            r = (r + 1u) % Impl::kWriteRingCap;
+        }
+        impl->writeRingR.store (r, std::memory_order_release);
+    }
+
     // Re-advertise output-atom capacity before every run(): the plugin overwrites
     // atom->size with the bytes it wrote last block, so without this the buffer
     // reads as monotonically shrinking (never-recovering) capacity. Output atom
@@ -365,8 +403,14 @@ void*       Lv2Instance::uridUnmapFeature() const noexcept { return &impl->unmap
 
 void Lv2Instance::setControlPortValue (uint32_t portIndex, float value) noexcept
 {
-    if ((size_t) portIndex < impl->portValues.size())
-        impl->portValues[(size_t) portIndex] = value;
+    // Stage into the SPSC ring — the audio thread owns portValues (run() reads
+    // it concurrently) and applies these at the top of its next processBlock.
+    const uint32_t w    = impl->writeRingW.load (std::memory_order_relaxed);
+    const uint32_t next = (w + 1u) % Impl::kWriteRingCap;
+    if (next == impl->writeRingR.load (std::memory_order_acquire))
+        return;   // ring full — drop (only under a pathological flood)
+    impl->writeRing[(size_t) w] = { portIndex, value };
+    impl->writeRingW.store (next, std::memory_order_release);
 }
 
 int Lv2Instance::portIndexForSymbol (const char* symbol) const noexcept

@@ -367,9 +367,12 @@ int PluginManager::scanInstalledPlugins (
 
 void PluginManager::scanClapPlugins()
 {
-    clapDescriptions.clearQuick();
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
-    for (const auto& s : clap::ClapScanner::scan())
+    // Discover OUTSIDE the lock (dlopens every bundle — slow), swap in under it.
+    const auto scanned = clap::ClapScanner::scan();
+    const juce::ScopedLock sl (nativeDescriptionsLock);
+    clapDescriptions.clearQuick();
+    for (const auto& s : scanned)
     {
         juce::PluginDescription d;
         d.name             = juce::String (juce::CharPointer_UTF8 (s.desc.name.c_str()));
@@ -381,6 +384,9 @@ void PluginManager::scanClapPlugins()
         clapDescriptions.add (d);
     }
     saveClapCache();   // persist so the picker has CLAP at next launch without a re-scan
+#else
+    const juce::ScopedLock sl (nativeDescriptionsLock);
+    clapDescriptions.clearQuick();
 #endif
 }
 
@@ -426,6 +432,7 @@ void PluginManager::saveClapCache() const
 
 juce::Array<juce::PluginDescription> PluginManager::getClapEffectDescriptions() const
 {
+    const juce::ScopedLock sl (nativeDescriptionsLock);
     juce::Array<juce::PluginDescription> effects;
     for (const auto& d : clapDescriptions)
         if (! d.isInstrument)
@@ -435,9 +442,11 @@ juce::Array<juce::PluginDescription> PluginManager::getClapEffectDescriptions() 
 
 void PluginManager::scanLv2Plugins()
 {
-    lv2Descriptions.clearQuick();
 #if DUSKSTUDIO_HAS_NATIVE_LV2
-    for (const auto& s : lv2::Lv2Scanner::scan())
+    const auto scanned = lv2::Lv2Scanner::scan();   // manifest parse outside the lock
+    const juce::ScopedLock sl (nativeDescriptionsLock);
+    lv2Descriptions.clearQuick();
+    for (const auto& s : scanned)
     {
         // Only audio effects for now — the native LV2 host is an insert host;
         // instruments and MIDI utilities stay with the JUCE LV2 format.
@@ -451,6 +460,9 @@ void PluginManager::scanLv2Plugins()
         lv2Descriptions.add (d);
     }
     saveLv2Cache();   // persist so the picker has LV2 at next launch without a re-scan
+#else
+    const juce::ScopedLock sl (nativeDescriptionsLock);
+    lv2Descriptions.clearQuick();
 #endif
 }
 
@@ -495,6 +507,7 @@ void PluginManager::saveLv2Cache() const
 
 juce::Array<juce::PluginDescription> PluginManager::getLv2EffectDescriptions() const
 {
+    const juce::ScopedLock sl (nativeDescriptionsLock);
     return lv2Descriptions;   // scan already filtered to audio effects
 }
 
