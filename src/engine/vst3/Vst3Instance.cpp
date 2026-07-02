@@ -7,7 +7,10 @@
 #include <public.sdk/source/vst/hosting/module.h>
 #include <public.sdk/source/vst/hosting/parameterchanges.h>
 #include <public.sdk/source/vst/hosting/processdata.h>
+#include <public.sdk/source/vst/utility/stringconvert.h>
 #include <public.sdk/source/common/memorystream.h>
+
+#include "../hosting/SpscRing.h"
 #include <pluginterfaces/vst/ivstaudioprocessor.h>
 #include <pluginterfaces/vst/ivstcomponent.h>
 #include <pluginterfaces/vst/ivsteditcontroller.h>
@@ -21,7 +24,10 @@ namespace duskstudio::vst3
 {
 using namespace Steinberg;
 
-struct Vst3Instance::Impl
+// Impl is the host-context Callbacks owner: editor param edits (performEdit) land
+// here and join host-initiated setParamValue in one UI→RT ring; resize requests
+// forward to whatever Vst3Editor is attached.
+struct Vst3Instance::Impl : public Vst3HostContext::Callbacks
 {
     Vst3HostContext host;
 
@@ -52,6 +58,25 @@ struct Vst3Instance::Impl
     std::vector<float>       sink;                    // shared output sink scratch
     std::vector<float*>      scratchPtrs;             // per-channel pointer scratch
 
+    // Parameters: snapshot at create(); UI→RT ring drained into inParams each block.
+    std::vector<ParamInfo> params;
+    struct ParamChange { uint32_t id; double value; };
+    hosting::SpscRing<ParamChange, 512> paramRing;
+
+    std::function<bool (int, int)> resizeViewFn;
+
+    // ── Vst3HostContext::Callbacks (message thread) ──
+    void onPerformEdit (uint32_t paramId, double normalised) override
+    {
+        // The controller already holds the new value (the edit came from its own
+        // editor); the processor hears it through the ring → IParameterChanges.
+        paramRing.push ({ paramId, normalised });
+    }
+    bool onResizeView (int w, int h) override
+    {
+        return resizeViewFn != nullptr && resizeViewFn (w, h);
+    }
+
     void destroy()
     {
         if (processor && processing) processor->setProcessing (false);
@@ -64,6 +89,9 @@ struct Vst3Instance::Impl
         componentCP  = nullptr;
         controllerCP = nullptr;
 
+        host.setCallbacks (nullptr);
+        params.clear();
+        resizeViewFn = nullptr;
         if (controller && ! controllerIsComponent)
             controller->terminate();
         controller = nullptr;
@@ -85,6 +113,50 @@ int  Vst3Instance::getLatencySamples() const noexcept { return impl->latencySamp
 Vst3HostContext&       Vst3Instance::getHost()       noexcept { return impl->host; }
 const Vst3HostContext& Vst3Instance::getHost() const noexcept { return impl->host; }
 void* Vst3Instance::editController() const noexcept { return impl->controller.get(); }
+
+int Vst3Instance::paramCount() const noexcept { return (int) impl->params.size(); }
+
+const Vst3Instance::ParamInfo* Vst3Instance::paramInfo (int index) const noexcept
+{
+    return (index >= 0 && index < (int) impl->params.size())
+             ? &impl->params[(size_t) index] : nullptr;
+}
+
+bool Vst3Instance::getParamValue (uint32_t id, double& out) const
+{
+    if (! impl->controller) return false;
+    for (const auto& p : impl->params)
+        if (p.id == id)
+        {
+            out = impl->controller->getParamNormalized ((Vst::ParamID) id);
+            return true;
+        }
+    return false;
+}
+
+bool Vst3Instance::paramValueToText (uint32_t id, double value, std::string& out) const
+{
+    if (! impl->controller) return false;
+    Vst::String128 text {};
+    if (impl->controller->getParamStringByValue ((Vst::ParamID) id, value, text) != kResultOk)
+        return false;
+    out = VST3::StringConvert::convert (text);
+    return true;
+}
+
+void Vst3Instance::setParamValue (uint32_t id, double value) noexcept
+{
+    // Controller first so an open editor tracks the move; processor hears it
+    // through the ring → IParameterChanges on the next block.
+    if (impl->controller)
+        impl->controller->setParamNormalized ((Vst::ParamID) id, value);
+    impl->paramRing.push ({ id, value });   // full ⇒ drop (pathological flood only)
+}
+
+void Vst3Instance::setResizeViewHandler (std::function<bool (int, int)> fn)
+{
+    impl->resizeViewFn = std::move (fn);
+}
 
 bool Vst3Instance::create (const Vst3Bundle& bundle, const std::string& classId, std::string& errorOut)
 {
@@ -146,7 +218,25 @@ bool Vst3Instance::create (const Vst3Bundle& bundle, const std::string& classId,
             stream.seek (0, IBStream::kIBSeekSet, nullptr);
             impl->controller->setComponentState (&stream);
         }
+
+        const int32 numParams = impl->controller->getParameterCount();
+        impl->params.reserve ((size_t) std::max<int32> (0, numParams));
+        for (int32 i = 0; i < numParams; ++i)
+        {
+            Vst::ParameterInfo pi {};
+            if (impl->controller->getParameterInfo (i, pi) != kResultOk)
+                continue;
+            ParamInfo p;
+            p.id           = (uint32_t) pi.id;
+            p.name         = VST3::StringConvert::convert (pi.title);
+            p.defaultValue = pi.defaultNormalizedValue;
+            p.stepCount    = (int) pi.stepCount;
+            p.canAutomate  = (pi.flags & Vst::ParameterInfo::kCanAutomate) != 0;
+            p.isReadOnly   = (pi.flags & Vst::ParameterInfo::kIsReadOnly)  != 0;
+            impl->params.push_back (std::move (p));
+        }
     }
+    impl->host.setCallbacks (impl.get());
 
     // ── Bus discovery → PortLayout. The InsertAdapter folds whatever the plugin
     // really has onto the stereo insert, so we take the default arrangements
@@ -264,6 +354,9 @@ bool Vst3Instance::activate (double sampleRate, int maxBlockFrames, std::string&
     { errorOut = "process-data prepare failed"; return false; }
     impl->processData.inputParameterChanges  = &impl->inParams;
     impl->processData.outputParameterChanges = &impl->outParams;
+    // Pre-warm the queue pool; per-queue point storage keeps its capacity across
+    // clearQueue, so the drain below is allocation-free at steady state.
+    impl->inParams.setMaxParameters ((int32) impl->params.size());
     impl->processData.inputEvents  = &impl->inEvents;
     impl->processData.outputEvents = &impl->outEvents;
     impl->processData.processContext = &impl->processContext;
@@ -362,7 +455,20 @@ void Vst3Instance::processBlock (const hosting::PortBuffers& io) noexcept
     impl->processData.numSamples = numFrames;
     impl->inEvents.clear();
     impl->outEvents.clear();
+    impl->inParams.clearQueue();
     impl->outParams.clearQueue();
+
+    // Queued UI/editor parameter changes → this block's IParameterChanges.
+    // All at offset 0 — sample-accurate automation is a later step.
+    impl->paramRing.drain ([&] (const Impl::ParamChange& pc)
+    {
+        int32 queueIndex = 0;
+        if (auto* queue = impl->inParams.addParameterData ((Vst::ParamID) pc.id, queueIndex))
+        {
+            int32 pointIndex = 0;
+            queue->addPoint (0, pc.value, pointIndex);
+        }
+    });
 
     if (impl->processor->process (impl->processData) != kResultOk)
         clearOutputs();

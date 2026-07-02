@@ -22,5 +22,19 @@ struct Vst3SlotTraits
     }
 };
 
-class NativeVst3Slot final : public hosting::NativeInsertSlot<Vst3SlotTraits> {};
+// VST3 insert slot — the shared NativeInsertSlot plus parameter forwarding
+// (normalized values; mirrors NativeClapSlot's surface).
+class NativeVst3Slot final : public hosting::NativeInsertSlot<Vst3SlotTraits>
+{
+public:
+    // Parameters (message thread for read/enumerate; setParamValue is the control
+    // entry — queued and applied on the next audio block). No-op / empty when unloaded.
+    int paramCount() const noexcept { return instance != nullptr ? instance->paramCount() : 0; }
+    const Vst3Instance::ParamInfo* paramInfo (int index) const noexcept
+        { return instance != nullptr ? instance->paramInfo (index) : nullptr; }
+    bool getParamValue (uint32_t id, double& out) const
+        { return instance != nullptr && instance->getParamValue (id, out); }
+    void setParamValue (uint32_t id, double value)
+        { if (instance != nullptr) instance->setParamValue (id, value); }
+};
 } // namespace duskstudio::vst3
