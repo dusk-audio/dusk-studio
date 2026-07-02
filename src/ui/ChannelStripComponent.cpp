@@ -11,6 +11,9 @@
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
   #include "ClapPluginEditorComponent.h"   // Linux-only native CLAP editor
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+  #include "Lv2PluginEditorComponent.h"    // Linux-only native LV2 editor (suil)
+#endif
 #include "DuskAlerts.h"
 #include "FreezeDialog.h"
 #include "../engine/AudioEngine.h"
@@ -1776,6 +1779,9 @@ void ChannelStripComponent::openPluginPicker (bool useChooser)
    #if DUSKSTUDIO_HAS_NATIVE_CLAP
                                             self->clapEditor.reset();   // references the dying instance
    #endif
+   #if DUSKSTUDIO_HAS_NATIVE_LV2
+                                            self->lv2Editor.reset();
+   #endif
                                             self->engine.suspendProcessing();
                                             chStrip.unloadNativeClap();
                                             chStrip.unloadNativeLv2();
@@ -1968,6 +1974,7 @@ void ChannelStripComponent::unloadPluginSlot()
         auto& lv2Strip = engine.getChannelStrip (trackIndex);
         if (lv2Strip.isNativeLv2Loaded())
         {
+            lv2Editor.reset();   // references the dying instance
             engine.suspendProcessing();
             lv2Strip.unloadNativeLv2();
             lv2Strip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
@@ -2212,6 +2219,26 @@ void ChannelStripComponent::openPluginEditor()
         return;
     }
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+    if (engine.getChannelStrip (trackIndex).isNativeLv2Loaded())
+    {
+        auto* inst = engine.getChannelStrip (trackIndex).getNativeLv2Slot().getInstance();
+        if (inst == nullptr) return;
+        if (lv2Editor == nullptr)
+        {
+            lv2Editor = std::make_unique<Lv2PluginEditorComponent>();
+            juce::String err;
+            if (! lv2Editor->attach (*inst, err))
+            {
+                std::fprintf (stderr, "[chan lv2] %s\n", err.toRawUTF8());
+                lv2Editor.reset();
+                return;
+            }
+        }
+        pluginEditorModal.showBorrowed (*parent, *lv2Editor, onClose);
+        return;
+    }
+#endif
 
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
     if (pluginSlot.isRemote())
@@ -2441,6 +2468,13 @@ void ChannelStripComponent::dropPluginEditor()
         clapEditor.reset();
     }
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+    if (lv2Editor != nullptr)
+    {
+        lv2Editor->leakForShutdown();
+        lv2Editor.reset();
+    }
+#endif
     // ~AudioProcessorEditor tears down the plugin's internal X11
     // children synchronously (colour pickers, preset browsers,
     // transient popups). On a Wayland session, any of those could
@@ -2486,6 +2520,9 @@ void ChannelStripComponent::loadNativeClapForChannel (const juce::File& clapFile
     // cleanly; only shutdown needs the leak path.
     closePluginEditor();
     clapEditor.reset();
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+    lv2Editor.reset();   // an evicted LV2's UI must not outlive its instance
+#endif
     pluginEditor.reset();
     pluginEditorOwner = nullptr;
     // Release any OOP-side embed too — replacing a remote (OOP) plugin with a native
@@ -2544,6 +2581,7 @@ void ChannelStripComponent::loadNativeLv2ForChannel (const juce::File& bundleDir
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
     clapEditor.reset();
 #endif
+    lv2Editor.reset();
     pluginEditor.reset();
     pluginEditorOwner = nullptr;
    #if JUCE_LINUX && DUSKSTUDIO_HAS_OOP_PLUGINS
@@ -2577,6 +2615,7 @@ void ChannelStripComponent::loadNativeLv2ForChannel (const juce::File& bundleDir
     track.nativeClapPath = {};
     track.nativeClapStateBase64 = {};
     refreshPluginSlotButton();
+    openPluginEditor();
 }
 #endif // DUSKSTUDIO_HAS_NATIVE_LV2
 

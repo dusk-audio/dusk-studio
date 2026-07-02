@@ -335,7 +335,9 @@ private:
     void loadNativeClapForChannel (const juce::File& clapFile);
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_LV2
-    // Native LV2 insert load (no suil editor yet — the slot hosts audio only).
+    // Native LV2 insert editor (suil) — same kept-alive/showBorrowed lifecycle as
+    // clapEditor above.
+    std::unique_ptr<class Lv2PluginEditorComponent> lv2Editor;
     void loadNativeLv2ForChannel (const juce::File& bundleDir);
 #endif
 

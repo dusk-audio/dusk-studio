@@ -2,6 +2,9 @@
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
   #include "ClapPluginEditorComponent.h"   // Linux-only native CLAP editor
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+  #include "Lv2PluginEditorComponent.h"    // Linux-only native LV2 editor (suil)
+#endif
 #include "DuskAlerts.h"
 #include "DuskContextMenu.h"
 #include "HardwareInsertEditor.h"
@@ -792,6 +795,7 @@ void AuxLaneComponent::openPickerForSlot (int slotIdx)
                                                     || self->strip.isNativeLv2Loaded (slotIdx)))
                                             {
                                                 self->detachClapEditorForSlot (slotIdx);
+                                                self->detachLv2EditorForSlot (slotIdx);
                                                 self->engine.suspendProcessing();
                                                 self->strip.unloadNativeClap (slotIdx);
                                                 self->strip.unloadNativeLv2 (slotIdx);
@@ -855,10 +859,10 @@ void AuxLaneComponent::unloadSlot (int slotIdx)
         const bool hadNative = self->strip.isNativeClapLoaded (slotIdx)
                             || self->strip.isNativeLv2Loaded (slotIdx);
         if (hadNative) self->engine.suspendProcessing();
-        // Tear the shared CLAP editor down INSIDE the suspended window: its destructor
-        // runs gui->destroy, and doing that while the audio thread is quiesced keeps it
-        // off the same ClapInstance the audio path is reading.
+        // Tear the shared native editors down INSIDE the suspended window: their
+        // destructors reach into the instance the audio path is reading.
         self->detachClapEditorForSlot (slotIdx);
+        self->detachLv2EditorForSlot (slotIdx);
         self->strip.getPluginSlot (slotIdx).unload();
         if (hadNative)
         {
@@ -939,6 +943,7 @@ void AuxLaneComponent::loadNativeClapForSlot (int slotIdx, const juce::File& cla
     detachEditorForSlot (slotIdx);
     detachHardwareInsertForSlot (slotIdx);
     detachClapEditorForSlot (slotIdx);
+    detachLv2EditorForSlot (slotIdx);
 
     // NativeClapSlot::load is NOT RT-safe (it tears down + rebuilds the instance),
     // so fence the audio thread with the engine process gate around the swap.
@@ -985,6 +990,7 @@ void AuxLaneComponent::loadNativeLv2ForSlot (int slotIdx, const juce::File& bund
     detachEditorForSlot (slotIdx);
     detachHardwareInsertForSlot (slotIdx);
     detachClapEditorForSlot (slotIdx);
+    detachLv2EditorForSlot (slotIdx);
 
     // NativeLv2Slot::load is NOT RT-safe; fence the audio thread around the swap.
     // loadNativeLv2 itself evicts the CLAP + JUCE occupants.
@@ -1027,14 +1033,35 @@ void AuxLaneComponent::detachClapEditorForSlot (int slotIdx)
 #endif
 }
 
+void AuxLaneComponent::detachLv2EditorForSlot (int slotIdx)
+{
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+    auto& ui = slots[(size_t) slotIdx];
+    if (ui.lv2Editor == nullptr) return;
+    removeChildComponent (ui.lv2Editor.get());
+    ui.lv2Editor.reset();
+#else
+    juce::ignoreUnused (slotIdx);
+#endif
+}
+
 void AuxLaneComponent::dropAllClapEditors()
 {
+    // Covers both native editor kinds (the LV2 loop rides along; the name predates it).
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
     for (int i = 0; i < AuxLaneParams::kMaxLanePlugins; ++i)
     {
         if (slots[(size_t) i].clapEditor != nullptr)
             slots[(size_t) i].clapEditor->leakForShutdown();   // u-he hangs in gui->destroy
         detachClapEditorForSlot (i);
+    }
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+    for (int i = 0; i < AuxLaneParams::kMaxLanePlugins; ++i)
+    {
+        if (slots[(size_t) i].lv2Editor != nullptr)
+            slots[(size_t) i].lv2Editor->leakForShutdown();
+        detachLv2EditorForSlot (i);
     }
 #endif
 }
@@ -1097,6 +1124,10 @@ void AuxLaneComponent::layoutEditorForSlot (int slotIdx)
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
     else if (ui.clapEditor != nullptr && ui.clapEditor->getParentComponent() == this)
         body = ui.clapEditor.get();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+    else if (ui.lv2Editor != nullptr && ui.lv2Editor->getParentComponent() == this)
+        body = ui.lv2Editor.get();
 #endif
     else if (ui.hwInsertEditor != nullptr && ui.hwInsertEditor->getParentComponent() == this)
         body = ui.hwInsertEditor.get();
@@ -1202,6 +1233,32 @@ void AuxLaneComponent::rebuildSlots()
                 continue;
             }
             detachClapEditorForSlot (i);   // native unloaded (no-op stub off Linux)
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+            if (strip.isNativeLv2Loaded (i))
+            {
+                if (ui.editor != nullptr) detachEditorForSlot (i);   // can't coexist
+                auto* lv2Inst = strip.getNativeLv2Slot (i).getInstance();
+                if (ui.lv2Editor == nullptr && lv2Inst != nullptr)
+                {
+                    auto ed = std::make_unique<Lv2PluginEditorComponent>();
+                    juce::String err;
+                    if (ed->attach (*lv2Inst, err))
+                    {
+                        ui.lv2Editor = std::move (ed);
+                        addAndMakeVisible (*ui.lv2Editor);
+                        layoutEditorForSlot (i);
+                    }
+                    else
+                        std::fprintf (stderr, "[aux lv2] editor attach failed: %s\n", err.toRawUTF8());
+                }
+                else if (ui.lv2Editor != nullptr)
+                {
+                    layoutEditorForSlot (i);
+                }
+                continue;
+            }
+            detachLv2EditorForSlot (i);
 #endif
 
             auto* instance = strip.getPluginSlot (i).getInstance();
