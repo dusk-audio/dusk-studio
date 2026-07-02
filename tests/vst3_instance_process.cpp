@@ -97,6 +97,33 @@ TEST_CASE ("Vst3Instance instantiates + processes a VST3 effect via InsertAdapte
         REQUIRE (peak > 1.0e-4f);   // audio makes it through the plugin
     }
 
+    SECTION ("state round-trips into a fresh instance")
+    {
+        std::vector<uint8_t> blob;
+        REQUIRE (inst.saveState (blob));
+        REQUIRE (blob.size() >= 12);   // magic + two length prefixes
+
+        vst3::Vst3Instance inst2;
+        REQUIRE (inst2.create (bundle, classId, err));
+        REQUIRE (inst2.loadState (blob));
+
+        // Truncated and foreign blobs must be rejected, not crash.
+        std::vector<uint8_t> truncated (blob.begin(), blob.begin() + 6);
+        REQUIRE_FALSE (inst2.loadState (truncated));
+        std::vector<uint8_t> foreign = { 'n', 'o', 'p', 'e', 0, 0, 0, 0 };
+        REQUIRE_FALSE (inst2.loadState (foreign));
+
+        // The restored instance still activates and processes.
+        REQUIRE (inst2.activate (48000.0, kBlock, err));
+        hosting::InsertAdapter adapter2;
+        adapter2.prepare (inst2.portLayout(), kBlock);
+        std::fill (L.begin(), L.end(), 0.1f);
+        std::fill (R.begin(), R.end(), 0.1f);
+        adapter2.process (inst2, L.data(), R.data(), kBlock);
+        for (int i = 0; i < kBlock; ++i)
+            REQUIRE (std::isfinite (L[(size_t) i]));
+    }
+
     SECTION ("reactivate at a new rate keeps processing")
     {
         REQUIRE (inst.reactivate (44100.0, kBlock, err));

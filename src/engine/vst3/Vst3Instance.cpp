@@ -367,6 +367,92 @@ void Vst3Instance::processBlock (const hosting::PortBuffers& io) noexcept
         clearOutputs();
 }
 
-bool Vst3Instance::saveState (std::vector<uint8_t>&) const { return false; }   // dual-stream state: next increment
-bool Vst3Instance::loadState (const std::vector<uint8_t>&) { return false; }   // dual-stream state: next increment
+// State blob: "DV31" magic, then u32-LE-length-prefixed component and
+// controller streams. VST3 state is dual-stream — persisting only the
+// component stream loses controller-private data (UI prefs, custom curves).
+namespace
+{
+constexpr uint8_t kStateMagic[4] = { 'D', 'V', '3', '1' };
+
+void appendU32 (std::vector<uint8_t>& v, uint32_t x)
+{
+    v.push_back ((uint8_t) (x & 0xffu));
+    v.push_back ((uint8_t) ((x >> 8) & 0xffu));
+    v.push_back ((uint8_t) ((x >> 16) & 0xffu));
+    v.push_back ((uint8_t) ((x >> 24) & 0xffu));
+}
+
+bool readU32 (const std::vector<uint8_t>& v, size_t& pos, uint32_t& out)
+{
+    if (v.size() - pos < 4) return false;
+    out = (uint32_t) v[pos]
+        | ((uint32_t) v[pos + 1] << 8)
+        | ((uint32_t) v[pos + 2] << 16)
+        | ((uint32_t) v[pos + 3] << 24);
+    pos += 4;
+    return true;
+}
+
+void appendStream (std::vector<uint8_t>& v, MemoryStream& stream)
+{
+    const auto size = (uint32_t) std::max<Steinberg::TSize> (0, stream.getSize());
+    appendU32 (v, size);
+    if (size > 0)
+    {
+        const auto* data = reinterpret_cast<const uint8_t*> (stream.getData());
+        v.insert (v.end(), data, data + size);
+    }
+}
+} // namespace
+
+bool Vst3Instance::saveState (std::vector<uint8_t>& out) const
+{
+    if (! impl->created) return false;
+
+    MemoryStream compStream;
+    if (impl->component->getState (&compStream) != kResultOk)
+        return false;
+
+    MemoryStream ctrlStream;
+    if (! (impl->controller && impl->controller->getState (&ctrlStream) == kResultOk))
+        ctrlStream.setSize (0);
+
+    out.clear();
+    out.insert (out.end(), std::begin (kStateMagic), std::end (kStateMagic));
+    appendStream (out, compStream);
+    appendStream (out, ctrlStream);
+    return true;
+}
+
+bool Vst3Instance::loadState (const std::vector<uint8_t>& in)
+{
+    if (! impl->created) return false;
+    if (in.size() < 12 || std::memcmp (in.data(), kStateMagic, sizeof (kStateMagic)) != 0)
+        return false;
+
+    size_t pos = sizeof (kStateMagic);
+    uint32_t compSize = 0, ctrlSize = 0;
+    if (! readU32 (in, pos, compSize) || in.size() - pos < compSize) return false;
+    const size_t compPos = pos;
+    pos += compSize;
+    if (! readU32 (in, pos, ctrlSize) || in.size() - pos < ctrlSize) return false;
+    const size_t ctrlPos = pos;
+
+    MemoryStream compStream (const_cast<uint8_t*> (in.data() + compPos), (TSize) compSize);
+    const bool componentOk = impl->component->setState (&compStream) == kResultOk;
+
+    if (impl->controller)
+    {
+        // Same order a preset load uses: mirror the component state into the
+        // controller first, then apply the controller's own stream on top.
+        compStream.seek (0, IBStream::kIBSeekSet, nullptr);
+        impl->controller->setComponentState (&compStream);
+        if (ctrlSize > 0)
+        {
+            MemoryStream ctrlStream (const_cast<uint8_t*> (in.data() + ctrlPos), (TSize) ctrlSize);
+            impl->controller->setState (&ctrlStream);
+        }
+    }
+    return componentOk;
+}
 } // namespace duskstudio::vst3
