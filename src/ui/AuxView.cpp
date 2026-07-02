@@ -245,6 +245,17 @@ void AuxView::dropAllClapEditors()
             lane->dropAllClapEditors();
 }
 
+void AuxView::visibilityChanged()
+{
+    // Stage switches flip THIS component's visible flag; the lanes' own flags
+    // don't change, so their visibilityChanged never fires and a lane whose
+    // editors were torn down while hidden (the first parent-attach peer sweep
+    // after a session restore) would come up empty. Forward the change.
+    for (auto& lane : lanes)
+        if (lane != nullptr)
+            lane->refreshEditorsForShowState();
+}
+
 void AuxView::paint (juce::Graphics& g)
 {
     g.fillAll (juce::Colour (0xff121214));

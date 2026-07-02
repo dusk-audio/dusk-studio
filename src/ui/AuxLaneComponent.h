@@ -41,6 +41,12 @@ public:
     void visibilityChanged() override;
     void parentHierarchyChanged() override;
 
+    // Stage switches flip AuxView's OWN visible flag; the lanes' flags don't
+    // change, so their visibilityChanged never fires. AuxView forwards its
+    // change here so the active lane (re)builds its inline editors on first
+    // show and hides them when the stage goes away.
+    void refreshEditorsForShowState();
+
     static constexpr int kStripWidth      = 150;
     static constexpr int kSendPanelWidth  = 280;
     static constexpr int kColumnGap       = 8;

@@ -1469,6 +1469,11 @@ void AuxLaneComponent::visibilityChanged()
     // costs an X11 remap instead of a full createEditor + reparent + size
     // negotiation, which on GNOME/Wayland (XWayland) was the visible lag when
     // clicking back to a loaded AUX lane.
+    refreshEditorsForShowState();
+}
+
+void AuxLaneComponent::refreshEditorsForShowState()
+{
     if (isShowing())
         rebuildSlots();
     else
@@ -1505,10 +1510,7 @@ void AuxLaneComponent::parentHierarchyChanged()
         lastSeenPeer = peer;
     }
 
-    if (isShowing())
-        rebuildSlots();
-    else
-        hideEditorsKeepingAlive();
+    refreshEditorsForShowState();
 }
 
 void AuxLaneComponent::paint (juce::Graphics& g)

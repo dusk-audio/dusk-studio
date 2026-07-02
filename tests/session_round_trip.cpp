@@ -181,3 +181,34 @@ TEST_CASE ("SessionSerializer round-trips native-LV2 slots", "[session][serializ
 
     dir.deleteRecursively();
 }
+
+// Same guard for the native-VST3 pair, on both a track and an aux slot.
+TEST_CASE ("SessionSerializer round-trips native-VST3 slots", "[session][serializer][vst3]")
+{
+    using duskstudio::Session;
+    using duskstudio::SessionSerializer;
+
+    const auto dir = makeTempSessionDir();
+    const auto target = dir.getChildFile ("session.json");
+
+    Session a;
+    a.track (2).nativeVst3Path        = "/home/user/.vst3/SilkVerb.vst3";
+    a.track (2).nativeVst3StateBase64 = "VlNUM1NUQVRFYmxvYg==";
+    auto& lane = a.auxLane (1);
+    lane.nativeVst3Path[0]        = "/usr/lib/vst3/DuskVerb.vst3";
+    lane.nativeVst3StateBase64[0] = "VlNUM1NUQVRFYmxvYg==";
+    REQUIRE (SessionSerializer::save (a, target));
+
+    Session b;
+    REQUIRE (SessionSerializer::load (b, target));
+    REQUIRE (b.track (2).nativeVst3Path        == "/home/user/.vst3/SilkVerb.vst3");
+    REQUIRE (b.track (2).nativeVst3StateBase64 == "VlNUM1NUQVRFYmxvYg==");
+    REQUIRE (b.auxLane (1).nativeVst3Path[0]        == "/usr/lib/vst3/DuskVerb.vst3");
+    REQUIRE (b.auxLane (1).nativeVst3StateBase64[0] == "VlNUM1NUQVRFYmxvYg==");
+
+    // Untouched slots stay empty (keys omitted on write).
+    REQUIRE (b.track (0).nativeVst3Path.isEmpty());
+    REQUIRE (b.auxLane (0).nativeVst3Path[0].isEmpty());
+
+    dir.deleteRecursively();
+}

@@ -130,10 +130,18 @@ void Lv2PluginEditorComponent::timerCallback()
 {
     // Ancestor visibility changes (tab switches) don't fire visibilityChanged —
     // poll like the CLAP editor so the native window can't float over another view.
+    // The un-embedded poll covers the mirror case: a component created while its
+    // lane was hidden (session restore lands before the AUX tab is first shown)
+    // gets no callback when an ANCESTOR becomes visible, so the first embed must
+    // also be polled. tryEmbed no-ops until showing.
     if (embedded)
     {
         if (isShowing()) editor.reveal();
         else             editor.hide();
+    }
+    else
+    {
+        tryEmbed();
     }
     editor.pump();
 }
