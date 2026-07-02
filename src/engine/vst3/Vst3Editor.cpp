@@ -14,10 +14,11 @@ namespace duskstudio::vst3
 {
 using namespace Steinberg;
 
-struct Vst3Editor::Impl : public Vst3HostContext::Callbacks
+struct Vst3Editor::Impl
 {
-    Vst3Editor*      owner = nullptr;
-    Vst3HostContext* host  = nullptr;
+    Vst3Editor*      owner    = nullptr;
+    Vst3Instance*    instance = nullptr;
+    Vst3HostContext* host     = nullptr;
 
     IPtr<IPlugView> view;
 
@@ -29,8 +30,8 @@ struct Vst3Editor::Impl : public Vst3HostContext::Callbacks
     float contentScale = 0.0f;
     bool  embedded = false, mapped = false;
 
-    // ── IPlugFrame::resizeView, routed through the host context ──
-    bool onResizeView (int w, int h) override
+    // ── IPlugFrame::resizeView, routed through the instance's resize handler ──
+    bool onResizeView (int w, int h)
     {
         if (w <= 0 || h <= 0 || ! view) return false;
         prefW = w; prefH = h;
@@ -84,8 +85,10 @@ bool Vst3Editor::open (Vst3Instance& inst, std::string& errorOut)
     if (impl->view->isPlatformTypeSupported (kPlatformTypeX11EmbedWindowID) != kResultTrue)
     { errorOut = "editor does not support X11 embedding"; impl->view = nullptr; return false; }
 
+    impl->instance = &inst;
     impl->host = &inst.getHost();
-    impl->host->setCallbacks (impl.get());
+    inst.setResizeViewHandler ([self = impl.get()] (int w, int h)
+                               { return self->onResizeView (w, h); });
     impl->view->setFrame (static_cast<IPlugFrame*> (impl->host->plugFrame()));
 
     ViewRect size {};
@@ -181,11 +184,12 @@ void Vst3Editor::close()
         impl->view->setFrame (nullptr);
         impl->view = nullptr;
     }
-    if (impl->host != nullptr)
+    if (impl->instance != nullptr)
     {
-        impl->host->setCallbacks (nullptr);
-        impl->host = nullptr;
+        impl->instance->setResizeViewHandler (nullptr);
+        impl->instance = nullptr;
     }
+    impl->host = nullptr;
 
     if (impl->display != nullptr)
     {

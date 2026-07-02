@@ -93,4 +93,39 @@ TEST_CASE ("NativeLv2Slot loads, processes, and unloads cleanly", "[lv2][slot]")
         REQUIRE (slot.isLoaded());
         REQUIRE (driveTone (slot, L, R, kBlock, 16) > 1.0e-4f);
     }
+
+    SECTION ("MIDI-binding writes reach the parameter surface")
+    {
+        // queueParamBinding is the audio-thread half of a binding apply;
+        // drainQueuedParamBindings is the engine timer's message-thread half.
+        // The value lands port-side on the next process block (UI→RT ring).
+        int targetIdx = -1;
+        for (int i = 0; i < slot.paramCount(); ++i)
+        {
+            const auto* p = slot.paramInfo (i);
+            REQUIRE (p != nullptr);
+            REQUIRE_FALSE (p->name.empty());
+            if (! p->stepped && p->maxValue > p->minValue)
+            { targetIdx = i; break; }
+        }
+        if (targetIdx < 0)
+        {
+            // JUCE-wrapped LV2s carry their real parameters as atom patch
+            // messages, not control ports — nothing to bind through this surface.
+            SUCCEED ("plugin exposes no continuous control-port parameters — skipping");
+            return;
+        }
+        const auto* target = slot.paramInfo (targetIdx);
+
+        slot.queueParamBinding ((uint32_t) targetIdx, 1.0f);   // frac 1 → port max
+        slot.drainQueuedParamBindings();
+        std::fill (L.begin(), L.end(), 0.0f);
+        std::fill (R.begin(), R.end(), 0.0f);
+        slot.processStereo (L.data(), R.data(), L.data(), R.data(), kBlock);
+
+        double v = 0.0;
+        REQUIRE (slot.getParamValue (target->id, v));
+        const double range = (double) target->maxValue - (double) target->minValue;
+        REQUIRE_THAT (v, WithinAbs ((double) target->maxValue, 1.0e-4 * range + 1.0e-9));
+    }
 }

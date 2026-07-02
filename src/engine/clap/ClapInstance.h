@@ -2,6 +2,7 @@
 
 #include "ClapHost.h"
 #include "../hosting/INativeInstance.h"
+#include "../hosting/SpscRing.h"
 
 #include <clap/events.h>
 
@@ -102,6 +103,18 @@ public:
     // if the ring overflows (pathological flood).
     void setParamValue (clap_id id, double value) noexcept;
 
+    // MIDI Learn: index (into paramInfo order) of the parameter the user last moved
+    // in the plugin's own GUI, stamped from the plugin's outgoing param events.
+    // -1 when nothing has been touched. Message thread (scans the param snapshot).
+    int lastTouchedParamIndex() const noexcept
+    {
+        const auto id = lastTouchedParamId.load (std::memory_order_relaxed);
+        if (id < 0) return -1;
+        for (size_t i = 0; i < params.size(); ++i)
+            if ((int64_t) params[i].id == id) return (int) i;
+        return -1;
+    }
+
     bool isCreated()      const noexcept { return plugin != nullptr; }
     int  inputChannels()  const noexcept { return layout.mainInChannels(); }
     int  outputChannels() const noexcept { return layout.mainOutChannels(); }
@@ -138,15 +151,13 @@ private:
     // thread-safe-static-init guard. Wired in the constructor.
     clap_output_events_t emptyOut {};
 
-    // Parameter automation. Single-producer (message thread, setParamValue) /
-    // single-consumer (audio thread, processStereo) ring of pending changes, drained
-    // into a per-block CLAP event list. inEvents reports eventCount (0 ⇒ no changes),
-    // so it doubles as the "empty" list when nothing is queued.
+    // Parameter automation. UI→RT ring of pending changes (message-thread
+    // setParamValue → audio-thread drain), turned into a per-block CLAP event
+    // list. inEvents reports eventCount (0 ⇒ no changes), so it doubles as the
+    // "empty" list when nothing is queued.
     struct ParamChange { clap_id id; double value; void* cookie; };
-    static constexpr int kParamRingCap = 512;
-    std::array<ParamChange, (size_t) kParamRingCap> paramRing {};
-    std::atomic<uint32_t> ringWrite { 0 };
-    std::atomic<uint32_t> ringRead  { 0 };
+    static constexpr uint32_t kParamRingCap = 512;
+    hosting::SpscRing<ParamChange, kParamRingCap> paramRing;
     std::vector<clap_event_param_value_t> eventScratch;   // sized in activate(), never RT-grown
     uint32_t             eventCount = 0;
     clap_input_events_t  inEvents {};
@@ -157,5 +168,9 @@ private:
 
     const clap_plugin_params_t* paramsExt = nullptr;
     std::vector<ParamInfo>      params;
+
+    // Last param id the plugin's GUI touched (audio-thread store from the output
+    // event sink, message-thread read). -1 = none since create().
+    std::atomic<int64_t> lastTouchedParamId { -1 };
 };
 } // namespace duskstudio::clap

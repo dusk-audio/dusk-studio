@@ -156,14 +156,15 @@ PluginManager::PluginManager()
    #endif
 
     loadCache();
+    // Restore native-format descriptions so the picker has them at launch.
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
-    loadClapCache();   // restore native CLAP descriptions so the picker has them at launch
+    loadNativeCache (clapDescriptions, "clap-cache.xml", false);
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_LV2
-    loadLv2Cache();
+    loadNativeCache (lv2Descriptions, "lv2-native-cache.xml", true);
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_VST3
-    loadVst3NativeCache();
+    loadNativeCache (vst3NativeDescriptions, "vst3-native-cache.xml", false);
 #endif
 }
 
@@ -394,40 +395,48 @@ void PluginManager::scanClapPlugins()
             clapDescriptions.add (d);
         }
     }
-    saveClapCache();   // persist so the picker has CLAP at next launch without a re-scan
+    saveNativeCache (clapDescriptions, "clap-cache.xml", "CLAP_PLUGINS");
 #endif
 }
 
-#if DUSKSTUDIO_HAS_NATIVE_CLAP
-juce::File PluginManager::getClapCacheFile() const
+juce::File PluginManager::nativeCacheFile (const char* fileName) const
 {
     const auto base = getCacheFile();
-    return base == juce::File() ? juce::File() : base.getSiblingFile ("clap-cache.xml");
+    return base == juce::File() ? juce::File() : base.getSiblingFile (fileName);
 }
 
-void PluginManager::loadClapCache()
+void PluginManager::loadNativeCache (juce::Array<juce::PluginDescription>& into,
+                                     const char* fileName, bool bundleIsDirectory)
 {
-    const auto file = getClapCacheFile();
+    const auto file = nativeCacheFile (fileName);
     if (file == juce::File() || ! file.existsAsFile())
         return;
 
     if (auto xml = juce::parseXML (file))
     {
-        clapDescriptions.clearQuick();
+        // Parse into a local first; only the swap-in holds nativeDescriptionsLock
+        // (the contract every access to the description arrays follows).
+        juce::Array<juce::PluginDescription> fresh;
         for (auto* child : xml->getChildIterator())
         {
             juce::PluginDescription d;
-            // Drop entries whose .clap bundle is gone since the cache was written, so
-            // the picker never offers a removed plugin until the next rescan rebuilds it.
-            if (d.loadFromXml (*child) && juce::File (d.fileOrIdentifier).exists())
-                clapDescriptions.add (d);
+            if (! d.loadFromXml (*child))
+                continue;
+            // Drop entries whose bundle is gone since the cache was written, so
+            // the picker never offers a removed plugin until a rescan rebuilds it.
+            const juce::File bundle (d.fileOrIdentifier);
+            if (bundleIsDirectory ? bundle.isDirectory() : bundle.exists())
+                fresh.add (d);
         }
+        const juce::ScopedLock sl (nativeDescriptionsLock);
+        into.swapWith (fresh);
     }
 }
 
-void PluginManager::saveClapCache() const
+void PluginManager::saveNativeCache (const juce::Array<juce::PluginDescription>& from,
+                                     const char* fileName, const char* rootTag) const
 {
-    const auto file = getClapCacheFile();
+    const auto file = nativeCacheFile (fileName);
     if (file == juce::File())
         return;
 
@@ -436,14 +445,13 @@ void PluginManager::saveClapCache() const
     juce::Array<juce::PluginDescription> snapshot;
     {
         const juce::ScopedLock sl (nativeDescriptionsLock);
-        snapshot = clapDescriptions;
+        snapshot = from;
     }
-    juce::XmlElement root ("CLAP_PLUGINS");
+    juce::XmlElement root (rootTag);
     for (const auto& d : snapshot)
         root.addChildElement (d.createXml().release());
     root.writeTo (file);
 }
-#endif
 
 juce::Array<juce::PluginDescription> PluginManager::getClapEffectDescriptions() const
 {
@@ -476,53 +484,9 @@ void PluginManager::scanLv2Plugins()
             lv2Descriptions.add (d);
         }
     }
-    saveLv2Cache();   // persist so the picker has LV2 at next launch without a re-scan
+    saveNativeCache (lv2Descriptions, "lv2-native-cache.xml", "LV2_NATIVE_PLUGINS");
 #endif
 }
-
-#if DUSKSTUDIO_HAS_NATIVE_LV2
-juce::File PluginManager::getLv2CacheFile() const
-{
-    const auto base = getCacheFile();
-    return base == juce::File() ? juce::File() : base.getSiblingFile ("lv2-native-cache.xml");
-}
-
-void PluginManager::loadLv2Cache()
-{
-    const auto file = getLv2CacheFile();
-    if (file == juce::File() || ! file.existsAsFile())
-        return;
-
-    if (auto xml = juce::parseXML (file))
-    {
-        lv2Descriptions.clearQuick();
-        for (auto* child : xml->getChildIterator())
-        {
-            juce::PluginDescription d;
-            // Drop entries whose bundle directory is gone since the cache was written.
-            if (d.loadFromXml (*child) && juce::File (d.fileOrIdentifier).isDirectory())
-                lv2Descriptions.add (d);
-        }
-    }
-}
-
-void PluginManager::saveLv2Cache() const
-{
-    const auto file = getLv2CacheFile();
-    if (file == juce::File())
-        return;
-
-    juce::Array<juce::PluginDescription> snapshot;
-    {
-        const juce::ScopedLock sl (nativeDescriptionsLock);
-        snapshot = lv2Descriptions;
-    }
-    juce::XmlElement root ("LV2_NATIVE_PLUGINS");
-    for (const auto& d : snapshot)
-        root.addChildElement (d.createXml().release());
-    root.writeTo (file);
-}
-#endif
 
 juce::Array<juce::PluginDescription> PluginManager::getLv2EffectDescriptions() const
 {
@@ -553,53 +517,9 @@ void PluginManager::scanVst3NativePlugins()
             vst3NativeDescriptions.add (d);
         }
     }
-    saveVst3NativeCache();   // persist so the picker has VST3 at next launch without a re-scan
+    saveNativeCache (vst3NativeDescriptions, "vst3-native-cache.xml", "VST3_NATIVE_PLUGINS");
 #endif
 }
-
-#if DUSKSTUDIO_HAS_NATIVE_VST3
-juce::File PluginManager::getVst3NativeCacheFile() const
-{
-    const auto base = getCacheFile();
-    return base == juce::File() ? juce::File() : base.getSiblingFile ("vst3-native-cache.xml");
-}
-
-void PluginManager::loadVst3NativeCache()
-{
-    const auto file = getVst3NativeCacheFile();
-    if (file == juce::File() || ! file.existsAsFile())
-        return;
-
-    if (auto xml = juce::parseXML (file))
-    {
-        vst3NativeDescriptions.clearQuick();
-        for (auto* child : xml->getChildIterator())
-        {
-            juce::PluginDescription d;
-            // Drop entries whose bundle is gone since the cache was written.
-            if (d.loadFromXml (*child) && juce::File (d.fileOrIdentifier).exists())
-                vst3NativeDescriptions.add (d);
-        }
-    }
-}
-
-void PluginManager::saveVst3NativeCache() const
-{
-    const auto file = getVst3NativeCacheFile();
-    if (file == juce::File())
-        return;
-
-    juce::Array<juce::PluginDescription> snapshot;
-    {
-        const juce::ScopedLock sl (nativeDescriptionsLock);
-        snapshot = vst3NativeDescriptions;
-    }
-    juce::XmlElement root ("VST3_NATIVE_PLUGINS");
-    for (const auto& d : snapshot)
-        root.addChildElement (d.createXml().release());
-    root.writeTo (file);
-}
-#endif
 
 juce::Array<juce::PluginDescription> PluginManager::getVst3NativeEffectDescriptions() const
 {

@@ -3,6 +3,7 @@
 // so CI without a CLAP plugin stays green. See docs/native-clap-host-plan.md.
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "engine/clap/NativeClapSlot.h"
 
@@ -30,6 +31,34 @@ TEST_CASE ("NativeClapSlot loads, processes, and unloads cleanly", "[clap][slot]
 
     std::vector<float> inL ((size_t) kBlock), inR ((size_t) kBlock),
                        outL ((size_t) kBlock), outR ((size_t) kBlock);
+
+    SECTION ("MIDI-binding writes reach the parameter surface")
+    {
+        // queueParamBinding is the audio-thread half of a binding apply;
+        // drainQueuedParamBindings is the engine timer's message-thread half.
+        // The value lands plugin-side on the next process block (UI→RT ring).
+        int targetIdx = -1;
+        for (int i = 0; i < slot.paramCount(); ++i)
+        {
+            const auto* p = slot.paramInfo (i);
+            REQUIRE (p != nullptr);
+            if ((p->flags & CLAP_PARAM_IS_STEPPED) == 0 && p->maxValue > p->minValue)
+            { targetIdx = i; break; }
+        }
+        REQUIRE (targetIdx >= 0);
+        const auto* target = slot.paramInfo (targetIdx);
+
+        slot.queueParamBinding ((uint32_t) targetIdx, 1.0f);   // frac 1 → param max
+        slot.drainQueuedParamBindings();
+        std::fill (inL.begin(), inL.end(), 0.0f);
+        std::fill (inR.begin(), inR.end(), 0.0f);
+        slot.processStereo (inL.data(), inR.data(), outL.data(), outR.data(), kBlock);
+
+        double v = 0.0;
+        REQUIRE (slot.getParamValue (target->id, v));
+        const double range = target->maxValue - target->minValue;
+        REQUIRE_THAT (v, Catch::Matchers::WithinAbs (target->maxValue, 1.0e-4 * range + 1.0e-9));
+    }
 
     SECTION ("loaded: signal passes through, output finite + non-silent")
     {

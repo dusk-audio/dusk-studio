@@ -666,6 +666,13 @@ private:
     class PerfReporter;
     std::unique_ptr<PerfReporter> perfReporter;
 
+#if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_LV2 || DUSKSTUDIO_HAS_NATIVE_VST3
+    // Applies MIDI-binding writes queued by the audio thread to the native
+    // slots' parameter surfaces on the message thread (30 Hz).
+    class NativeParamDrain;
+    std::unique_ptr<NativeParamDrain> nativeParamDrain;
+#endif
+
     // Process gate state (see suspendProcessing). The callback increments
     // callbacksInFlight around its body; suspend raises the flag and waits for
     // the counter to hit zero, after which it owns every buffer the callback

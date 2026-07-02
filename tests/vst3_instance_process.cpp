@@ -4,6 +4,7 @@
 // DUSKSTUDIO_TEST_VST3=/path/to.vst3.
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "engine/hosting/InsertAdapter.h"
 #include "engine/vst3/Vst3Bundle.h"
@@ -122,6 +123,41 @@ TEST_CASE ("Vst3Instance instantiates + processes a VST3 effect via InsertAdapte
         adapter2.process (inst2, L.data(), R.data(), kBlock);
         for (int i = 0; i < kBlock; ++i)
             REQUIRE (std::isfinite (L[(size_t) i]));
+    }
+
+    SECTION ("parameters enumerate and round-trip through the controller")
+    {
+        REQUIRE (inst.paramCount() > 0);
+
+        // First continuous, automatable, writable parameter (stepped params
+        // quantize the normalized value, breaking an exact round-trip check).
+        const vst3::Vst3Instance::ParamInfo* target = nullptr;
+        for (int i = 0; i < inst.paramCount(); ++i)
+        {
+            const auto* p = inst.paramInfo (i);
+            REQUIRE (p != nullptr);
+            REQUIRE_FALSE (p->name.empty());
+            if (target == nullptr && p->stepCount == 0 && p->canAutomate && ! p->isReadOnly)
+                target = p;
+        }
+        REQUIRE (target != nullptr);
+
+        // Host set → controller read-back.
+        inst.setParamValue (target->id, 0.25);
+        double v = -1.0;
+        REQUIRE (inst.getParamValue (target->id, v));
+        REQUIRE_THAT (v, Catch::Matchers::WithinAbs (0.25, 1.0e-6));
+
+        // The queued change reaches the processor without disturbing the audio path.
+        std::fill (L.begin(), L.end(), 0.1f);
+        std::fill (R.begin(), R.end(), 0.1f);
+        adapter.process (inst, L.data(), R.data(), kBlock);
+        for (int i = 0; i < kBlock; ++i)
+            REQUIRE (std::isfinite (L[(size_t) i]));
+
+        std::string text;
+        if (inst.paramValueToText (target->id, 0.25, text))
+            REQUIRE_FALSE (text.empty());
     }
 
     SECTION ("reactivate at a new rate keeps processing")

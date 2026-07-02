@@ -34,6 +34,19 @@ static juce::File audioDeviceStateFile()
     return dir.getChildFile ("audio-device.xml");
 }
 
+// Session-carried native plugin state blob (base64) → bytes. Empty on any
+// decode failure — callers treat "no state" and "bad state" the same.
+static std::vector<uint8_t> decodeBase64Blob (const juce::String& s)
+{
+    std::vector<uint8_t> blob;
+    if (s.isEmpty()) return blob;
+    juce::MemoryBlock mb;
+    if (mb.fromBase64Encoding (s) && mb.getSize() > 0)
+        blob.assign (static_cast<const uint8_t*> (mb.getData()),
+                     static_cast<const uint8_t*> (mb.getData()) + mb.getSize());
+    return blob;
+}
+
 class AudioEngine::PerfReporter final : public juce::Timer
 {
 public:
@@ -87,6 +100,37 @@ void AudioEngine::printPerfTable()
     std::fflush (stderr);
 }
 
+#if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_LV2 || DUSKSTUDIO_HAS_NATIVE_VST3
+// Message-thread drain for the native slots' MIDI-binding rings (the audio
+// thread's binding apply can't touch the instances' single-producer param
+// rings directly). 30 Hz matches PluginSlot's own drain cadence; a tick over
+// empty rings is one atomic load per slot.
+class AudioEngine::NativeParamDrain final : public juce::Timer
+{
+public:
+    explicit NativeParamDrain (AudioEngine& e) : engine (e) { startTimerHz (30); }
+    ~NativeParamDrain() override { stopTimer(); }
+    void timerCallback() override
+    {
+        for (int t = 0; t < Session::kNumTracks; ++t)
+        {
+            auto& strip = engine.getChannelStrip (t);
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+            strip.getNativeClapSlot().drainQueuedParamBindings();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+            strip.getNativeLv2Slot().drainQueuedParamBindings();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+            strip.getNativeVst3Slot().drainQueuedParamBindings();
+#endif
+        }
+    }
+private:
+    AudioEngine& engine;
+};
+#endif
+
 AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
     : session (sessionToBindTo), desiredWorkers (juce::jmax (0, initialWorkers))
 {
@@ -95,6 +139,10 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
         perf.enabled.store (true, std::memory_order_relaxed);
         perfReporter = std::make_unique<PerfReporter> (*this);
     }
+
+#if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_LV2 || DUSKSTUDIO_HAS_NATIVE_VST3
+    nativeParamDrain = std::make_unique<NativeParamDrain> (*this);
+#endif
 
     // Held by unique_ptr so AudioEngine.h stays free of McuReceiver /
     // McuController definitions.
@@ -1537,14 +1585,7 @@ void AudioEngine::consumePluginStateAfterLoad()
             slot.unload();
             strip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
 
-            std::vector<uint8_t> blob;
-            if (const auto& st = track.nativeClapStateBase64; st.isNotEmpty())
-            {
-                juce::MemoryBlock mb;
-                if (mb.fromBase64Encoding (st) && mb.getSize() > 0)
-                    blob.assign (static_cast<const uint8_t*> (mb.getData()),
-                                 static_cast<const uint8_t*> (mb.getData()) + mb.getSize());
-            }
+            auto blob = decodeBase64Blob (track.nativeClapStateBase64);
 
             const juce::File clapFile (track.nativeClapPath);
             if (strip.isPrepared())
@@ -1582,14 +1623,7 @@ void AudioEngine::consumePluginStateAfterLoad()
             slot.unload();
             strip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
 
-            std::vector<uint8_t> blob;
-            if (const auto& st = track.nativeLv2StateBase64; st.isNotEmpty())
-            {
-                juce::MemoryBlock mb;
-                if (mb.fromBase64Encoding (st) && mb.getSize() > 0)
-                    blob.assign (static_cast<const uint8_t*> (mb.getData()),
-                                 static_cast<const uint8_t*> (mb.getData()) + mb.getSize());
-            }
+            auto blob = decodeBase64Blob (track.nativeLv2StateBase64);
 
             const juce::File lv2File (track.nativeLv2Path);
             if (strip.isPrepared())
@@ -1623,14 +1657,7 @@ void AudioEngine::consumePluginStateAfterLoad()
             slot.unload();
             strip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
 
-            std::vector<uint8_t> blob;
-            if (const auto& st = track.nativeVst3StateBase64; st.isNotEmpty())
-            {
-                juce::MemoryBlock mb;
-                if (mb.fromBase64Encoding (st) && mb.getSize() > 0)
-                    blob.assign (static_cast<const uint8_t*> (mb.getData()),
-                                 static_cast<const uint8_t*> (mb.getData()) + mb.getSize());
-            }
+            auto blob = decodeBase64Blob (track.nativeVst3StateBase64);
 
             const juce::File vst3File (track.nativeVst3Path);
             if (strip.isPrepared())
@@ -1722,14 +1749,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                 slot.unload();   // ensure no JUCE plugin lingers in this slot
                 strip.insertMode[(size_t) s].store (AuxLaneStrip::kInsertPlugin, std::memory_order_release);
 
-                std::vector<uint8_t> blob;
-                if (const auto& st = lane.nativeClapStateBase64[(size_t) s]; st.isNotEmpty())
-                {
-                    juce::MemoryBlock mb;
-                    if (mb.fromBase64Encoding (st) && mb.getSize() > 0)
-                        blob.assign (static_cast<const uint8_t*> (mb.getData()),
-                                     static_cast<const uint8_t*> (mb.getData()) + mb.getSize());
-                }
+                auto blob = decodeBase64Blob (lane.nativeClapStateBase64[(size_t) s]);
 
                 const juce::File clapFile (lane.nativeClapPath[(size_t) s]);
                 if (strip.isPrepared())
@@ -1764,14 +1784,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                 slot.unload();
                 strip.insertMode[(size_t) s].store (AuxLaneStrip::kInsertPlugin, std::memory_order_release);
 
-                std::vector<uint8_t> blob;
-                if (const auto& st = lane.nativeLv2StateBase64[(size_t) s]; st.isNotEmpty())
-                {
-                    juce::MemoryBlock mb;
-                    if (mb.fromBase64Encoding (st) && mb.getSize() > 0)
-                        blob.assign (static_cast<const uint8_t*> (mb.getData()),
-                                     static_cast<const uint8_t*> (mb.getData()) + mb.getSize());
-                }
+                auto blob = decodeBase64Blob (lane.nativeLv2StateBase64[(size_t) s]);
 
                 const juce::File lv2File (lane.nativeLv2Path[(size_t) s]);
                 if (strip.isPrepared())
@@ -1805,14 +1818,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                 slot.unload();
                 strip.insertMode[(size_t) s].store (AuxLaneStrip::kInsertPlugin, std::memory_order_release);
 
-                std::vector<uint8_t> blob;
-                if (const auto& st = lane.nativeVst3StateBase64[(size_t) s]; st.isNotEmpty())
-                {
-                    juce::MemoryBlock mb;
-                    if (mb.fromBase64Encoding (st) && mb.getSize() > 0)
-                        blob.assign (static_cast<const uint8_t*> (mb.getData()),
-                                     static_cast<const uint8_t*> (mb.getData()) + mb.getSize());
-                }
+                auto blob = decodeBase64Blob (lane.nativeVst3StateBase64[(size_t) s]);
 
                 const juce::File vst3File (lane.nativeVst3Path[(size_t) s]);
                 if (strip.isPrepared())
@@ -3245,14 +3251,40 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                             // last-touched tracker). paramIndex >= 0 is
                             // enforced here so the apply site matches the
                             // inline-validation pattern other targets use;
-                            // setParamNormalised also no-ops on out-of-range
-                            // as a second line of defence.
+                            // the setters also no-op on out-of-range as a
+                            // second line of defence. A native host owns the
+                            // insert when loaded — same precedence as the
+                            // audio chain (CLAP → LV2 → VST3 → JUCE).
                             if (b.targetIndex >= 0
                                 && b.targetIndex < Session::kNumTracks
                                 && b.paramIndex >= 0)
                             {
-                                getChannelStrip (b.targetIndex)
-                                    .getPluginSlot()
+                                auto& strip = getChannelStrip (b.targetIndex);
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+                                if (strip.isNativeClapLoaded())
+                                {
+                                    strip.getNativeClapSlot()
+                                        .queueParamBinding ((uint32_t) b.paramIndex, frac);
+                                    break;
+                                }
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+                                if (strip.isNativeLv2Loaded())
+                                {
+                                    strip.getNativeLv2Slot()
+                                        .queueParamBinding ((uint32_t) b.paramIndex, frac);
+                                    break;
+                                }
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+                                if (strip.isNativeVst3Loaded())
+                                {
+                                    strip.getNativeVst3Slot()
+                                        .queueParamBinding ((uint32_t) b.paramIndex, frac);
+                                    break;
+                                }
+#endif
+                                strip.getPluginSlot()
                                     .setParamNormalised (b.paramIndex, frac);
                             }
                             break;

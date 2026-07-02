@@ -50,10 +50,10 @@ struct Lv2Editor::Impl
     {
         auto* self = static_cast<Impl*> (c);
         // ui:floatProtocol only — atom/event writes need a plugin-input atom
-        // routing that isn't wired yet.
+        // routing that isn't wired yet. FromUi stamps MIDI Learn's last-touched.
         if (protocol == 0 && bufferSize == sizeof (float) && self->instance != nullptr)
-            self->instance->setControlPortValue (portIndex,
-                                                 *static_cast<const float*> (buffer));
+            self->instance->setControlPortValueFromUi (portIndex,
+                                                       *static_cast<const float*> (buffer));
     }
 
     static uint32_t portIndex (SuilController c, const char* symbol)

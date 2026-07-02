@@ -117,23 +117,15 @@ private:
     void loadCache();
     void saveCache() const;
 
-    // Native CLAP descriptions persist in their own sidecar cache (knownPluginList is
-    // JUCE-formats only). Loaded at construction, rewritten after each scanClapPlugins.
-#if DUSKSTUDIO_HAS_NATIVE_CLAP
-    juce::File getClapCacheFile() const;
-    void loadClapCache();
-    void saveClapCache() const;
-#endif
-#if DUSKSTUDIO_HAS_NATIVE_LV2
-    juce::File getLv2CacheFile() const;
-    void loadLv2Cache();
-    void saveLv2Cache() const;
-#endif
-#if DUSKSTUDIO_HAS_NATIVE_VST3
-    juce::File getVst3NativeCacheFile() const;
-    void loadVst3NativeCache();
-    void saveVst3NativeCache() const;
-#endif
+    // Native-format descriptions persist in their own sidecar caches next to the
+    // JUCE cache (knownPluginList is JUCE-formats only). Loaded at construction,
+    // rewritten after each scan. `bundleIsDirectory` selects the staleness check
+    // (LV2 bundles are directories; CLAP/VST3 accept files or bundle dirs).
+    juce::File nativeCacheFile (const char* fileName) const;
+    void loadNativeCache (juce::Array<juce::PluginDescription>& into,
+                          const char* fileName, bool bundleIsDirectory);
+    void saveNativeCache (const juce::Array<juce::PluginDescription>& from,
+                          const char* fileName, const char* rootTag) const;
 };
 
 inline juce::String PluginManager::getHostExecutablePath() const

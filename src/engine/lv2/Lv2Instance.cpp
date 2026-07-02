@@ -1,5 +1,6 @@
 #include "Lv2Instance.h"
 #include "Lv2Bundle.h"
+#include "../hosting/SpscRing.h"
 
 #include <lilv/lilv.h>
 #include <lv2/core/lv2.h>
@@ -7,6 +8,7 @@
 #include <lv2/buf-size/buf-size.h>
 #include <lv2/options/options.h>
 #include <lv2/parameters/parameters.h>
+#include <lv2/port-props/port-props.h>
 #include <lv2/state/state.h>
 #include <lv2/urid/urid.h>
 
@@ -123,11 +125,13 @@ struct Lv2Instance::Impl
 
     // UI → audio-thread control-port writes. The UI must not store into portValues
     // directly (run() reads it concurrently); writes stage here and processBlock
-    // drains them before run(). Same SPSC shape as the CLAP host's param ring.
+    // drains them before run().
     struct PortWrite { uint32_t idx; float value; };
-    static constexpr uint32_t kWriteRingCap = 256;
-    std::array<PortWrite, kWriteRingCap> writeRing {};
-    std::atomic<uint32_t> writeRingW { 0 }, writeRingR { 0 };
+    hosting::SpscRing<PortWrite, 256> writeRing;
+
+    // Input control ports as a parameter surface (MIDI bindings / MIDI Learn).
+    std::vector<ParamInfo> params;
+    std::atomic<int64_t>   lastTouchedPort { -1 };
 
     // Message-thread shadow of the UI writes. A bypassed slot never runs
     // processBlock, so the ring may never drain — state saves and reactivate read
@@ -256,6 +260,60 @@ bool Lv2Instance::create (const Lv2Bundle& bundle, const std::string& uri, std::
             (isInput ? impl->atomInPorts : impl->atomOutPorts).push_back (i);
         else
             impl->otherPorts.push_back (i);   // CV / unknown → scratch in activate()
+    }
+
+    // Input control ports double as the parameter surface (MIDI bindings /
+    // MIDI Learn). Snapshot name + range + steppedness now so later reads
+    // never touch lilv.
+    impl->params.clear();
+    impl->lastTouchedPort.store (-1, std::memory_order_relaxed);
+    {
+        LilvNode* toggledProp  = lilv_new_uri (world, LV2_CORE__toggled);
+        LilvNode* integerProp  = lilv_new_uri (world, LV2_CORE__integer);
+        LilvNode* enumProp     = lilv_new_uri (world, LV2_CORE__enumeration);
+        LilvNode* designation  = lilv_new_uri (world, LV2_CORE_PREFIX "designation");
+        LilvNode* notOnGuiProp = lilv_new_uri (world, LV2_PORT_PROPS_PREFIX "notOnGUI");
+        for (uint32_t i : impl->controlPorts)
+        {
+            const LilvPort* port = lilv_plugin_get_port_by_index (impl->plugin, i);
+            if (! lilv_port_is_a (impl->plugin, port, inputClass))
+                continue;   // output control ports (meters, lv2:latency) aren't parameters
+            // Designated ports (lv2:enabled, lv2:freeWheeling, time/transport
+            // feeds) are host-managed, not user parameters; notOnGUI ports are
+            // hidden by the plugin's own request. JUCE-wrapped LV2s expose ONLY
+            // such ports — their real parameters ride atom patch messages, which
+            // this surface doesn't cover (yet).
+            if (LilvNodes* desig = lilv_port_get_value (impl->plugin, port, designation))
+            {
+                const bool designated = lilv_nodes_size (desig) > 0;
+                lilv_nodes_free (desig);
+                if (designated) continue;
+            }
+            if (lilv_port_has_property (impl->plugin, port, notOnGuiProp))
+                continue;
+            ParamInfo p;
+            p.id = i;
+            if (LilvNode* nm = lilv_port_get_name (impl->plugin, port))
+            {
+                p.name = lilv_node_as_string (nm);
+                lilv_node_free (nm);
+            }
+            LilvNode* def = nullptr; LilvNode* mn = nullptr; LilvNode* mx = nullptr;
+            lilv_port_get_range (impl->plugin, port, &def, &mn, &mx);
+            if (mn  != nullptr) { p.minValue     = lilv_node_as_float (mn);  lilv_node_free (mn); }
+            if (mx  != nullptr) { p.maxValue     = lilv_node_as_float (mx);  lilv_node_free (mx); }
+            if (def != nullptr) { p.defaultValue = lilv_node_as_float (def); lilv_node_free (def); }
+            if (! (p.minValue < p.maxValue)) { p.minValue = 0.0f; p.maxValue = 1.0f; }
+            p.stepped = lilv_port_has_property (impl->plugin, port, toggledProp)
+                     || lilv_port_has_property (impl->plugin, port, integerProp)
+                     || lilv_port_has_property (impl->plugin, port, enumProp);
+            impl->params.push_back (std::move (p));
+        }
+        lilv_node_free (toggledProp);
+        lilv_node_free (integerProp);
+        lilv_node_free (enumProp);
+        lilv_node_free (designation);
+        lilv_node_free (notOnGuiProp);
     }
 
     // The port designated lv2:latency (an output control port) reports plugin
@@ -453,18 +511,11 @@ void Lv2Instance::processBlock (const hosting::PortBuffers& io) noexcept
         lilv_instance_connect_port (impl->instance, impl->audioOutPorts[(size_t) c], io.mainOut[c]);
 
     // Drain the UI's staged control-port writes (single consumer — this thread).
+    impl->writeRing.drain ([this] (const Impl::PortWrite& pw)
     {
-        uint32_t r = impl->writeRingR.load (std::memory_order_relaxed);
-        const uint32_t w = impl->writeRingW.load (std::memory_order_acquire);
-        while (r != w)
-        {
-            const auto& pw = impl->writeRing[(size_t) r];
-            if ((size_t) pw.idx < impl->portValues.size())
-                impl->portValues[(size_t) pw.idx] = pw.value;
-            r = (r + 1u) % Impl::kWriteRingCap;
-        }
-        impl->writeRingR.store (r, std::memory_order_release);
-    }
+        if ((size_t) pw.idx < impl->portValues.size())
+            impl->portValues[(size_t) pw.idx] = pw.value;
+    });
 
     // Re-advertise output-atom capacity before every run(): the plugin overwrites
     // atom->size with the bytes it wrote last block, so without this the buffer
@@ -546,12 +597,60 @@ void Lv2Instance::setControlPortValue (uint32_t portIndex, float value) noexcept
 
     // Stage into the SPSC ring — the audio thread owns portValues (run() reads
     // it concurrently) and applies these at the top of its next processBlock.
-    const uint32_t w    = impl->writeRingW.load (std::memory_order_relaxed);
-    const uint32_t next = (w + 1u) % Impl::kWriteRingCap;
-    if (next == impl->writeRingR.load (std::memory_order_acquire))
-        return;   // ring full — drop (only under a pathological flood)
-    impl->writeRing[(size_t) w] = { portIndex, value };
-    impl->writeRingW.store (next, std::memory_order_release);
+    impl->writeRing.push ({ portIndex, value });   // full ⇒ drop (pathological flood only)
+}
+
+void Lv2Instance::setControlPortValueFromUi (uint32_t portIndex, float value) noexcept
+{
+    impl->lastTouchedPort.store ((int64_t) portIndex, std::memory_order_relaxed);
+    setControlPortValue (portIndex, value);
+}
+
+int Lv2Instance::paramCount() const noexcept { return (int) impl->params.size(); }
+
+const Lv2Instance::ParamInfo* Lv2Instance::paramInfo (int index) const noexcept
+{
+    return (index >= 0 && index < (int) impl->params.size())
+             ? &impl->params[(size_t) index] : nullptr;
+}
+
+bool Lv2Instance::getParamValue (uint32_t portIndex, double& out) const
+{
+    for (const auto& p : impl->params)
+        if (p.id == portIndex)
+        {
+            // A staged UI/host write the audio thread hasn't drained yet (bypassed
+            // slot) lives in the shadow; portValues still holds the older value.
+            if ((size_t) portIndex < impl->uiDirty.size()
+                && impl->uiDirty[(size_t) portIndex] != 0)
+                out = (double) impl->uiShadow[(size_t) portIndex];
+            else if ((size_t) portIndex < impl->portValues.size())
+                out = (double) impl->portValues[(size_t) portIndex];
+            else
+                return false;
+            return true;
+        }
+    return false;
+}
+
+void Lv2Instance::setParamValue (uint32_t portIndex, double value) noexcept
+{
+    for (const auto& p : impl->params)
+        if (p.id == portIndex)
+        {
+            const float v = (float) std::clamp (value, (double) p.minValue, (double) p.maxValue);
+            setControlPortValue (portIndex, v);
+            return;
+        }
+}
+
+int Lv2Instance::lastTouchedParamIndex() const noexcept
+{
+    const auto port = impl->lastTouchedPort.load (std::memory_order_relaxed);
+    if (port < 0) return -1;
+    for (size_t i = 0; i < impl->params.size(); ++i)
+        if ((int64_t) impl->params[i].id == port) return (int) i;
+    return -1;
 }
 
 int Lv2Instance::portIndexForSymbol (const char* symbol) const noexcept

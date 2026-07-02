@@ -2,6 +2,8 @@
 
 #include "../hosting/INativeInstance.h"
 
+#include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -23,6 +25,18 @@ class Vst3HostContext;
 class Vst3Instance : public hosting::INativeInstance
 {
 public:
+    // One plugin parameter (snapshot of Vst::ParameterInfo at create()).
+    // Values are VST3-normalized (0..1).
+    struct ParamInfo
+    {
+        uint32_t    id = 0;   // Vst::ParamID
+        std::string name;
+        double      defaultValue = 0.0;
+        int         stepCount    = 0;      // 0 = continuous
+        bool        canAutomate  = true;
+        bool        isReadOnly   = false;
+    };
+
     Vst3Instance();
     ~Vst3Instance() override;
     Vst3Instance (const Vst3Instance&)            = delete;
@@ -44,6 +58,28 @@ public:
 
     bool saveState (std::vector<uint8_t>& out) const override;
     bool loadState (const std::vector<uint8_t>& in) override;
+
+    // Parameters (message thread). Enumerated once at create().
+    int              paramCount() const noexcept;
+    const ParamInfo* paramInfo (int index) const noexcept;
+    bool getParamValue (uint32_t id, double& out) const;
+    bool paramValueToText (uint32_t id, double value, std::string& out) const;
+
+    // Queue a normalized parameter change. SINGLE PRODUCER: message thread only.
+    // Reaches the processor via IParameterChanges on the next audio block, and the
+    // controller immediately so an open editor tracks the move. Editor-originated
+    // edits (IComponentHandler::performEdit) feed the same ring — without that a
+    // spec-compliant plugin's knob moves never reach its processor.
+    void setParamValue (uint32_t id, double value) noexcept;
+
+    // The editor asked to resize through IPlugFrame (message thread). The active
+    // Vst3Editor installs a handler returning whether the host honoured it.
+    void setResizeViewHandler (std::function<bool (int, int)> fn);
+
+    // MIDI Learn: index (into paramInfo order) of the parameter the user last
+    // moved in the plugin's editor (performEdit). -1 when nothing has been
+    // touched. Message thread.
+    int lastTouchedParamIndex() const noexcept;
 
     int getLatencySamples() const noexcept override;
 

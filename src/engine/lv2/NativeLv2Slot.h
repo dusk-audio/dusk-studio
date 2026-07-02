@@ -2,75 +2,55 @@
 
 #include "Lv2Bundle.h"
 #include "Lv2Instance.h"
-#include "../hosting/InsertAdapter.h"
-
-#include <juce_core/juce_core.h>
-
-#include <atomic>
-#include <memory>
-#include <string>
-#include <vector>
+#include "../hosting/NativeInsertSlot.h"
 
 namespace duskstudio::lv2
 {
-// One insert slot backed by the native LV2 host: owns the bundle + the instance,
-// loads / prepares / processes / unloads an LV2 plugin, and exposes the live
-// instance so the UI can attach an editor. load / unload are message-thread;
-// processStereo is the audio path and reads a lock-free `ready` flag so it no-ops
-// cleanly when empty. Direct mirror of NativeClapSlot — same public contract, so
-// the DSP call sites and session code treat CLAP and LV2 alike.
-//
-// Concurrency: a load / unload while the audio thread might be mid-process must be
-// fenced by the engine's process gate (suspend → silent buffers → swap → resume);
-// the slot itself only guards the steady state via the acquire/release `ready` flag.
-class NativeLv2Slot
+struct Lv2SlotTraits
+{
+    using Bundle   = Lv2Bundle;
+    using Instance = Lv2Instance;
+    static constexpr const char* bundleNoun = "bundle";
+
+    static bool pickPlugin (const Lv2Bundle& b, std::string& idOut, std::string& errorOut)
+    {
+        if (b.plugins().empty())
+        { errorOut = "no plugins in bundle"; return false; }
+        // First audio effect (audio in + out); fall back to the first advertised plugin.
+        idOut = b.plugins().front().uri;
+        for (const auto& d : b.plugins())
+            if (d.audioInputs > 0 && d.audioOutputs > 0) { idOut = d.uri; break; }
+        return true;
+    }
+};
+
+// LV2 insert slot — the shared NativeInsertSlot plus parameter forwarding
+// (input control ports, values in the port's own units; mirrors NativeClapSlot).
+class NativeLv2Slot final : public hosting::NativeInsertSlot<Lv2SlotTraits>
 {
 public:
-    NativeLv2Slot() = default;
+    // Parameters (message thread for read/enumerate; setParamValue is the control
+    // entry — staged and applied on the next audio block). No-op / empty when unloaded.
+    int paramCount() const noexcept { return instance != nullptr ? instance->paramCount() : 0; }
+    const Lv2Instance::ParamInfo* paramInfo (int index) const noexcept
+        { return instance != nullptr ? instance->paramInfo (index) : nullptr; }
+    bool getParamValue (uint32_t portIndex, double& out) const
+        { return instance != nullptr && instance->getParamValue (portIndex, out); }
+    void setParamValue (uint32_t portIndex, double value)
+        { if (instance != nullptr) instance->setParamValue (portIndex, value); }
 
-    // Message thread: load + create + activate the first audio effect in the .lv2
-    // bundle at `path`, replacing any prior load. False (+ errorOut) on failure.
-    bool load (const juce::File& path, double sampleRate, int maxBlock, std::string& errorOut);
-    void unload();
+    // MIDI Learn: the plugin-GUI knob the user moved last (-1 = none).
+    int lastTouchedParamIndex() const noexcept
+        { return instance != nullptr ? instance->lastTouchedParamIndex() : -1; }
 
-    // Re-activate the already-loaded instance at a new sample-rate / block-size.
-    // LV2 fixes the rate at instantiate, so this re-instantiates the plugin; its
-    // state (control ports + state:interface blob) carries across.
-    // No-op (false) when nothing is loaded. Caller fences the audio thread.
-    bool reactivate (double sampleRate, int maxBlock, std::string& errorOut);
-
-    // App shutdown: release the instance + bundle WITHOUT destroying, matching the
-    // CLAP path — teardown order across lilv + the plugin .so is skipped entirely
-    // on the way out (the OS reclaims the memory as the process exits).
-    void leakForShutdown() noexcept;
-
-    bool isLoaded() const noexcept { return ready.load (std::memory_order_acquire); }
-    const juce::String& getPath() const noexcept { return loadedPath; }
-
-    void setBypassed (bool b) noexcept { bypassed.store (b, std::memory_order_relaxed); }
-    bool isBypassed()   const noexcept { return bypassed.load (std::memory_order_relaxed); }
-
-    bool saveState (std::vector<uint8_t>& out) const;
-    bool loadState (const std::vector<uint8_t>& in);
-
-    // Audio thread: process stereo through the plugin, via the InsertAdapter →
-    // INativeInstance::processBlock. Clears the outputs + returns when no plugin is
-    // loaded; passes audio through when bypassed.
-    void processStereo (const float* inL, const float* inR,
-                        float* outL, float* outR, int numFrames) noexcept;
-
-    // UI: the live instance for editor attach (nullptr when not loaded).
-    Lv2Instance* getInstance() noexcept
-        { return ready.load (std::memory_order_acquire) ? instance.get() : nullptr; }
-
-private:
-    // bundle declared first so it is destroyed LAST — the instance (whose LilvPlugin
-    // points into the bundle's world) must tear down before the world is freed.
-    std::unique_ptr<Lv2Bundle>   bundle;
-    std::unique_ptr<Lv2Instance> instance;
-    hosting::InsertAdapter       adapter;
-    std::atomic<bool> ready    { false };
-    std::atomic<bool> bypassed { false };
-    juce::String      loadedPath;
+protected:
+    // MIDI binding: 0..1 fraction → the port's own min..max range.
+    void applyParamBinding (uint32_t paramIndex, float frac) override
+    {
+        const auto* p = paramInfo ((int) paramIndex);
+        if (p == nullptr) return;
+        setParamValue (p->id, (double) p->minValue
+                                + (double) frac * ((double) p->maxValue - (double) p->minValue));
+    }
 };
 } // namespace duskstudio::lv2

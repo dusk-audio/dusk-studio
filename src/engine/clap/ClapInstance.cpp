@@ -25,8 +25,23 @@ ClapInstance::ClapInstance()
         return idx < self->eventCount ? &self->eventScratch[(size_t) idx].header : nullptr;
     };
 
-    emptyOut.ctx      = nullptr;
-    emptyOut.try_push = [] (const clap_output_events*, const clap_event_header_t*) -> bool { return true; };
+    // Output sink: events are accepted and dropped, EXCEPT that parameter
+    // value/gesture events stamp the last-touched id (audio thread, relaxed) so
+    // MIDI Learn can bind "the knob the user just moved in the plugin's GUI".
+    emptyOut.ctx      = this;
+    emptyOut.try_push = [] (const clap_output_events* list, const clap_event_header_t* ev) -> bool
+    {
+        if (ev != nullptr && ev->space_id == CLAP_CORE_EVENT_SPACE_ID
+            && (ev->type == CLAP_EVENT_PARAM_VALUE || ev->type == CLAP_EVENT_PARAM_GESTURE_BEGIN))
+        {
+            auto* self = static_cast<ClapInstance*> (const_cast<void*> (list->ctx));
+            const auto id = ev->type == CLAP_EVENT_PARAM_VALUE
+                              ? reinterpret_cast<const clap_event_param_value_t*> (ev)->param_id
+                              : reinterpret_cast<const clap_event_param_gesture_t*> (ev)->param_id;
+            self->lastTouchedParamId.store ((int64_t) id, std::memory_order_relaxed);
+        }
+        return true;
+    };
 }
 
 ClapInstance::~ClapInstance()
@@ -259,13 +274,7 @@ void ClapInstance::setParamValue (clap_id id, double value) noexcept
 {
     void* cookie = nullptr;
     for (const auto& p : params) if (p.id == id) { cookie = p.cookie; break; }
-
-    const uint32_t w    = ringWrite.load (std::memory_order_relaxed);
-    const uint32_t next = (w + 1u) % (uint32_t) kParamRingCap;
-    if (next == ringRead.load (std::memory_order_acquire))
-        return;   // ring full — drop (only under a pathological flood)
-    paramRing[(size_t) w] = { id, value, cookie };
-    ringWrite.store (next, std::memory_order_release);
+    paramRing.push ({ id, value, cookie });   // full ⇒ drop (pathological flood only)
 }
 
 void ClapInstance::drainParamRing() noexcept
@@ -273,12 +282,8 @@ void ClapInstance::drainParamRing() noexcept
     // Drain queued parameter changes into this block's CLAP event list (audio thread
     // = single consumer). All at time 0 — sample-accurate automation is a later step.
     eventCount = 0;
-    uint32_t r = ringRead.load (std::memory_order_relaxed);
-    const uint32_t w   = ringWrite.load (std::memory_order_acquire);
-    const uint32_t cap = (uint32_t) eventScratch.size();
-    while (r != w && eventCount < cap)
+    paramRing.drain ([this] (const ParamChange& pc)
     {
-        const ParamChange pc = paramRing[(size_t) r];
         auto& ev = eventScratch[(size_t) eventCount++];
         ev.header.size     = sizeof (clap_event_param_value_t);
         ev.header.time     = 0;
@@ -292,9 +297,7 @@ void ClapInstance::drainParamRing() noexcept
         ev.channel         = -1;
         ev.key             = -1;
         ev.value           = pc.value;
-        r = (r + 1u) % (uint32_t) kParamRingCap;
-    }
-    ringRead.store (r, std::memory_order_release);
+    }, (uint32_t) eventScratch.size());
 }
 
 void ClapInstance::processStereo (const float* inL, const float* inR,
