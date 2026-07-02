@@ -2700,8 +2700,8 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
             for (const auto& f : failures)
                 body += "    " + f.location + "  -  " + f.pluginName + "\n";
             body += "\nCheck that the plugins are still installed for the "
-                    "right format (VST3 / LV2 / AU) and that this binary can "
-                    "find them, then reload the session.";
+                    "right format (VST3 / LV2 / AU / CLAP) and that this binary "
+                    "can find them, then reload the session.";
             juce::Component::SafePointer<MainComponent> safeThis (this);
             juce::MessageManager::callAsync (
                 [body = std::move (body), safeThis]
