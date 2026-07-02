@@ -119,6 +119,11 @@ TEST_CASE ("Native VST3 instrument produces audio from notes", "[vst3][instrumen
     driveSilence (slot, 188);   // ~2 s warmup: sample libraries stream their kits
     REQUIRE (driveSilence (slot, 8) < 1.0e-2f);
     REQUIRE (driveNote (slot, 64) > 1.0e-3f);
+
+    // The CC bridge cached the plugin's IMidiMapping. Zero is legitimate (drum
+    // instruments map no controllers), so only synth-style plugins that map
+    // anything prove the bridge — Diva maps the usual suspects.
+    INFO ("IMidiMapping assignments: " << slot.getInstance()->midiCcMappingCount());
 }
 #endif
 
