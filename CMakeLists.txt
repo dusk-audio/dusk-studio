@@ -603,6 +603,8 @@ if(DUSKSTUDIO_NATIVE_VST3)
         $<$<NOT:$<CONFIG:Debug>>:RELEASE=1>)
     target_compile_options(dusk-vst3-hosting PRIVATE -w)
     target_link_libraries(dusk-vst3-hosting PUBLIC ${CMAKE_DL_LIBS})
+    target_sources(DuskStudio PRIVATE
+        src/engine/vst3/Vst3Bundle.cpp)
     target_link_libraries(DuskStudio PRIVATE dusk-vst3-hosting)
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_NATIVE_VST3=1)
 endif()

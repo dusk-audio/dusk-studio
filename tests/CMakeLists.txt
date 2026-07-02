@@ -159,6 +159,16 @@ if(DUSKSTUDIO_NATIVE_LV2)
     target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_NATIVE_LV2=1)
 endif()
 
+# Native VST3 host — SDK hosting subset (see the dusk-vst3-hosting target in the
+# top-level CMakeLists), ON when the external/vst3sdk submodule is initialized.
+if(DUSKSTUDIO_NATIVE_VST3)
+    target_sources(dusk-studio-tests PRIVATE
+        vst3_bundle_load.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/vst3/Vst3Bundle.cpp)
+    target_link_libraries(dusk-studio-tests PRIVATE dusk-vst3-hosting)
+    target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_NATIVE_VST3=1)
+endif()
+
 target_link_libraries(dusk-studio-tests PRIVATE
     Catch2::Catch2WithMain
     ${CMAKE_DL_LIBS}   # dl: ClapBundle dlopen
