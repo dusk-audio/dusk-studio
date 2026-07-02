@@ -24,5 +24,11 @@ private:
     std::unique_ptr<MainWindow> mainWindow;
     // DUSKSTUDIO_CLAP_EDITOR_TEST standalone window (native CLAP editor embed).
     std::unique_ptr<juce::DocumentWindow> clapEditorTestWindow;
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+    // DUSKSTUDIO_LV2_EDITOR_TEST twins — the slot owns the instance the editor
+    // attaches to, so it must outlive the window.
+    struct Lv2EditorTest;
+    std::unique_ptr<Lv2EditorTest> lv2EditorTest;
+#endif
 };
 } // namespace duskstudio

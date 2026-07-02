@@ -1,0 +1,120 @@
+#include "Lv2PluginEditorComponent.h"
+
+#include "../engine/lv2/Lv2Instance.h"
+
+namespace duskstudio
+{
+Lv2PluginEditorComponent::Lv2PluginEditorComponent()
+{
+    setOpaque (false);
+}
+
+Lv2PluginEditorComponent::~Lv2PluginEditorComponent()
+{
+    stopTimer();
+    editor.close();
+}
+
+bool Lv2PluginEditorComponent::attach (lv2::Lv2Instance& shared, juce::String& errorOut)
+{
+    std::string err;
+    if (! editor.open (shared, err))
+    { errorOut = "editor: " + juce::String (err); return false; }
+
+    editor.onResize = [this] (int w, int h)
+    {
+        if (w > 0 && h > 0) setSize (w, h);
+    };
+    // The UI reported closed (idle() non-zero): stop treating it as live so the
+    // timer / re-layout can't keep poking a torn-down UI.
+    editor.onClosed = [this] { embedded = false; loaded = false; stopTimer(); };
+
+    // Real size arrives at embed (LV2 UIs size themselves at instantiate); start
+    // with a sane placeholder so layout has something to centre.
+    setSize (480, 320);
+
+    loaded = true;
+    startTimerHz (60);   // ui:idleInterface + X event drain
+    return true;
+}
+
+unsigned long Lv2PluginEditorComponent::peerX11() const
+{
+    if (auto* peer = getPeer())
+        return (unsigned long) (juce::pointer_sized_uint) peer->getNativeHandle();
+    return 0;
+}
+
+void Lv2PluginEditorComponent::tryEmbed()
+{
+    // Embed ONLY when actually on-screen: the UI instantiates directly into our
+    // host window, and toolkit wrappers can abort realising into a non-viewable
+    // parent (same rule as the CLAP editor).
+    if (! loaded || embedded || ! isShowing()) return;
+    const auto parent = peerX11();
+    if (parent == 0) return;
+
+    const auto area = getTopLevelComponent()->getLocalArea (this, getLocalBounds());
+    std::string err;
+    if (editor.embed (parent, area.getX(), area.getY(),
+                      juce::jmax (1, area.getWidth()), juce::jmax (1, area.getHeight()), err))
+    {
+        embedded = true;
+        // Adopt the UI's own size once known so the modal/lane can fit to it.
+        if (editor.preferredWidth() > 0 && editor.preferredHeight() > 0)
+            setSize (editor.preferredWidth(), editor.preferredHeight());
+        editor.reveal();
+    }
+    else
+    {
+        std::fprintf (stderr, "[lv2 editor] embed failed: %s\n", err.c_str());
+        // A failed embed tears the Lv2Editor down; stop retrying every frame.
+        loaded = false;
+        stopTimer();
+    }
+}
+
+void Lv2PluginEditorComponent::pushBounds()
+{
+    if (! embedded) return;
+    const auto area = getTopLevelComponent()->getLocalArea (this, getLocalBounds());
+    editor.setBounds (area.getX(), area.getY(),
+                      juce::jmax (1, area.getWidth()), juce::jmax (1, area.getHeight()));
+}
+
+void Lv2PluginEditorComponent::resized()                { if (embedded) pushBounds(); else tryEmbed(); }
+void Lv2PluginEditorComponent::moved()                  { pushBounds(); }
+void Lv2PluginEditorComponent::parentHierarchyChanged() { tryEmbed(); }
+
+void Lv2PluginEditorComponent::visibilityChanged()
+{
+    if (! loaded) return;
+    if (isShowing())
+    {
+        if (! embedded) tryEmbed();
+        else            editor.reveal();
+    }
+    else if (embedded)
+    {
+        editor.hide();
+    }
+}
+
+void Lv2PluginEditorComponent::leakForShutdown()
+{
+    stopTimer();
+    editor.setLeakOnClose (true);
+}
+
+void Lv2PluginEditorComponent::timerCallback()
+{
+    // Ancestor visibility changes (tab switches) don't fire visibilityChanged —
+    // poll like the CLAP editor so the native window can't float over another view.
+    if (embedded)
+    {
+        if (isShowing()) editor.reveal();
+        else             editor.hide();
+    }
+    editor.pump();
+}
+} // namespace duskstudio

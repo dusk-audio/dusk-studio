@@ -3,6 +3,10 @@
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
   #include "ui/ClapPluginEditorComponent.h"   // Linux-only native CLAP editor test
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+  #include "engine/lv2/NativeLv2Slot.h"       // Linux-only native LV2 editor test
+  #include "ui/Lv2PluginEditorComponent.h"
+#endif
 #include "ui/ConsoleView.h"
 #include "ui/MainComponent.h"
 #include "ui/WindowState.h"
@@ -919,6 +923,14 @@ static juce::File sessionPathFromCommandLine (const juce::String& commandLine)
     return firstExisting;
 }
 
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+struct DuskStudioApp::Lv2EditorTest
+{
+    duskstudio::lv2::NativeLv2Slot slot;
+    std::unique_ptr<juce::DocumentWindow> window;   // declared last → destroyed first
+};
+#endif
+
 void DuskStudioApp::initialise (const juce::String& commandLine)
 {
     // --version: print app + JUCE versions + platform string and exit
@@ -1013,6 +1025,49 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
         return;   // standalone — skip the normal engine + main-window startup
     }
 #endif // DUSKSTUDIO_HAS_NATIVE_CLAP
+
+    // DUSKSTUDIO_LV2_EDITOR_TEST=/path/to.lv2 — same standalone live-verification
+    // for the native LV2 (suil) editor embed. Close the window to quit.
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+    if (const char* path = std::getenv ("DUSKSTUDIO_LV2_EDITOR_TEST"); path != nullptr && *path)
+    {
+        duskstudio::platform::preferX11ForNextNativeWindow();   // editor host needs an X11 peer
+        lv2EditorTest = std::make_unique<Lv2EditorTest>();
+        std::string err;
+        if (! lv2EditorTest->slot.load (juce::File (juce::String (path)), 48000.0, 1024, err))
+        {
+            std::fprintf (stderr, "[lv2 editor test] load failed: %s\n", err.c_str());
+            quit();
+            return;
+        }
+        auto comp = std::make_unique<duskstudio::Lv2PluginEditorComponent>();
+        juce::String jerr;
+        auto* inst = lv2EditorTest->slot.getInstance();
+        if (inst == nullptr || ! comp->attach (*inst, jerr))
+        {
+            std::fprintf (stderr, "[lv2 editor test] attach failed: %s\n", jerr.toRawUTF8());
+            quit();
+            return;
+        }
+        const int w = juce::jmax (200, comp->getWidth());
+        const int h = juce::jmax (200, comp->getHeight());
+        struct TestWindow final : juce::DocumentWindow
+        {
+            using juce::DocumentWindow::DocumentWindow;
+            void closeButtonPressed() override
+            { juce::JUCEApplication::getInstance()->systemRequestedQuit(); }
+        };
+        lv2EditorTest->window = std::make_unique<TestWindow> (
+            "Dusk — LV2 editor test", juce::Colours::black, juce::DocumentWindow::allButtons);
+        lv2EditorTest->window->setUsingNativeTitleBar (true);
+        lv2EditorTest->window->setContentOwned (comp.release(), true);
+        lv2EditorTest->window->centreWithSize (w, h);
+        lv2EditorTest->window->setVisible (true);   // creates the peer → consumes the X11 latch
+        duskstudio::platform::clearPreferX11ForNativeWindow();
+        duskstudio::platform::installNonFatalXErrorHandler();
+        return;
+    }
+#endif // DUSKSTUDIO_HAS_NATIVE_LV2
 
     // DUSKSTUDIO_REPLACE_TEST=A.vst3:B.vst3 — exercises the Replace plugin...
     // swap pattern under live processing. Loads A, runs audio, swaps to
@@ -1289,6 +1344,9 @@ void DuskStudioApp::shutdown()
 
     mainWindow.reset();
     clapEditorTestWindow.reset();   // dev CLAP-editor test path: release its component deterministically
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+    lv2EditorTest.reset();          // dev LV2-editor test path: window first, then its slot
+#endif
 
     // Tear down the FileLogger installed by crash_handler::install so
     // JUCE's leak detector doesn't complain at exit. The crash callback
