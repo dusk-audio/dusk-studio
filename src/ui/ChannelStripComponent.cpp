@@ -2048,19 +2048,36 @@ void ChannelStripComponent::showPluginSlotMenu()
         menu.addSeparator();
         menu.addItem (2002, "Replace plugin...");
         menu.addItem (2003, "Remove plugin");
-        // Crash/auto-bypass recovery + last-touched MIDI Learn are JUCE-slot
-        // concepts; the native CLAP host doesn't expose them yet.
+        // Crash/auto-bypass recovery is a JUCE-slot concept (native hosts run
+        // in-process without the watchdog).
         if (! nativeLoaded)
         {
             if (pluginSlot.wasCrashed())
                 menu.addItem (2004, "Re-enable plugin (crashed)");
             else if (pluginSlot.wasAutoBypassed())
                 menu.addItem (2004, "Re-enable plugin (auto-bypassed)");
-            // MIDI Learn for the last parameter the user touched via the
-            // plugin's own UI. Disabled when no parameter has been touched
-            // since the slot loaded (no last-touched stamp to bind to).
+        }
+        // MIDI Learn for the last parameter the user touched via the plugin's
+        // own UI. Disabled when no parameter has been touched since the slot
+        // loaded (no last-touched stamp to bind to). Native CLAP/VST3 slots
+        // track touches from their editors; native LV2 has no parameter
+        // surface yet, so its lastParam stays -1 (item shows disabled).
+        {
+            auto& chStrip = engine.getChannelStrip (trackIndex);
+            int lastParam = -1;
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+            if (chStrip.isNativeClapLoaded())
+                lastParam = chStrip.getNativeClapSlot().lastTouchedParamIndex();
+            else
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+            if (chStrip.isNativeVst3Loaded())
+                lastParam = chStrip.getNativeVst3Slot().lastTouchedParamIndex();
+            else
+#endif
+            if (! nativeLoaded)
+                lastParam = pluginSlot.getLastTouchedParamIndex();
             menu.addSeparator();
-            const int lastParam = pluginSlot.getLastTouchedParamIndex();
             menu.addItem (2005,
                            "MIDI Learn last-touched parameter",
                            lastParam >= 0);

@@ -65,12 +65,16 @@ struct Vst3Instance::Impl : public Vst3HostContext::Callbacks
 
     std::function<bool (int, int)> resizeViewFn;
 
+    // Last param id the plugin's editor touched (performEdit), for MIDI Learn.
+    std::atomic<int64_t> lastTouchedParamId { -1 };
+
     // ── Vst3HostContext::Callbacks (message thread) ──
     void onPerformEdit (uint32_t paramId, double normalised) override
     {
         // The controller already holds the new value (the edit came from its own
         // editor); the processor hears it through the ring → IParameterChanges.
         paramRing.push ({ paramId, normalised });
+        lastTouchedParamId.store ((int64_t) paramId, std::memory_order_relaxed);
     }
     bool onResizeView (int w, int h) override
     {
@@ -156,6 +160,15 @@ void Vst3Instance::setParamValue (uint32_t id, double value) noexcept
 void Vst3Instance::setResizeViewHandler (std::function<bool (int, int)> fn)
 {
     impl->resizeViewFn = std::move (fn);
+}
+
+int Vst3Instance::lastTouchedParamIndex() const noexcept
+{
+    const auto id = impl->lastTouchedParamId.load (std::memory_order_relaxed);
+    if (id < 0) return -1;
+    for (size_t i = 0; i < impl->params.size(); ++i)
+        if ((int64_t) impl->params[i].id == id) return (int) i;
+    return -1;
 }
 
 bool Vst3Instance::create (const Vst3Bundle& bundle, const std::string& classId, std::string& errorOut)

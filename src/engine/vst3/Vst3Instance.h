@@ -76,6 +76,11 @@ public:
     // Vst3Editor installs a handler returning whether the host honoured it.
     void setResizeViewHandler (std::function<bool (int, int)> fn);
 
+    // MIDI Learn: index (into paramInfo order) of the parameter the user last
+    // moved in the plugin's editor (performEdit). -1 when nothing has been
+    // touched. Message thread.
+    int lastTouchedParamIndex() const noexcept;
+
     int getLatencySamples() const noexcept override;
 
     // The host context this instance hands to the plugin (component handler,

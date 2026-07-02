@@ -35,5 +35,18 @@ public:
         { return instance != nullptr && instance->getParamValue (id, out); }
     void setParamValue (clap_id id, double value)
         { if (instance != nullptr) instance->setParamValue (id, value); }
+
+    // MIDI Learn: the plugin-GUI knob the user moved last (-1 = none).
+    int lastTouchedParamIndex() const noexcept
+        { return instance != nullptr ? instance->lastTouchedParamIndex() : -1; }
+
+protected:
+    // MIDI binding: 0..1 fraction → the parameter's own min..max range.
+    void applyParamBinding (uint32_t paramIndex, float frac) override
+    {
+        const auto* p = paramInfo ((int) paramIndex);
+        if (p == nullptr) return;
+        setParamValue (p->id, p->minValue + (double) frac * (p->maxValue - p->minValue));
+    }
 };
 } // namespace duskstudio::clap

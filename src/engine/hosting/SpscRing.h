@@ -46,6 +46,15 @@ public:
         return n;
     }
 
+    // Consumer side: discard everything queued so far (e.g. entries aimed at a
+    // plugin that was just replaced). Items the producer pushes concurrently
+    // may survive — callers reset again once the swap is fully published.
+    void clear() noexcept
+    {
+        readIdx.store (writeIdx.load (std::memory_order_acquire),
+                       std::memory_order_release);
+    }
+
 private:
     std::array<T, (size_t) Capacity> slots {};
     std::atomic<uint32_t> writeIdx { 0 };

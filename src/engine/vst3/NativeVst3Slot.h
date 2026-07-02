@@ -36,5 +36,18 @@ public:
         { return instance != nullptr && instance->getParamValue (id, out); }
     void setParamValue (uint32_t id, double value)
         { if (instance != nullptr) instance->setParamValue (id, value); }
+
+    // MIDI Learn: the editor knob the user moved last (-1 = none).
+    int lastTouchedParamIndex() const noexcept
+        { return instance != nullptr ? instance->lastTouchedParamIndex() : -1; }
+
+protected:
+    // MIDI binding: VST3 parameters are normalized — the fraction maps directly.
+    void applyParamBinding (uint32_t paramIndex, float frac) override
+    {
+        const auto* p = paramInfo ((int) paramIndex);
+        if (p == nullptr) return;
+        setParamValue (p->id, (double) frac);
+    }
 };
 } // namespace duskstudio::vst3

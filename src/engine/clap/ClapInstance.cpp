@@ -25,8 +25,23 @@ ClapInstance::ClapInstance()
         return idx < self->eventCount ? &self->eventScratch[(size_t) idx].header : nullptr;
     };
 
-    emptyOut.ctx      = nullptr;
-    emptyOut.try_push = [] (const clap_output_events*, const clap_event_header_t*) -> bool { return true; };
+    // Output sink: events are accepted and dropped, EXCEPT that parameter
+    // value/gesture events stamp the last-touched id (audio thread, relaxed) so
+    // MIDI Learn can bind "the knob the user just moved in the plugin's GUI".
+    emptyOut.ctx      = this;
+    emptyOut.try_push = [] (const clap_output_events* list, const clap_event_header_t* ev) -> bool
+    {
+        if (ev != nullptr && ev->space_id == CLAP_CORE_EVENT_SPACE_ID
+            && (ev->type == CLAP_EVENT_PARAM_VALUE || ev->type == CLAP_EVENT_PARAM_GESTURE_BEGIN))
+        {
+            auto* self = static_cast<ClapInstance*> (const_cast<void*> (list->ctx));
+            const auto id = ev->type == CLAP_EVENT_PARAM_VALUE
+                              ? reinterpret_cast<const clap_event_param_value_t*> (ev)->param_id
+                              : reinterpret_cast<const clap_event_param_gesture_t*> (ev)->param_id;
+            self->lastTouchedParamId.store ((int64_t) id, std::memory_order_relaxed);
+        }
+        return true;
+    };
 }
 
 ClapInstance::~ClapInstance()

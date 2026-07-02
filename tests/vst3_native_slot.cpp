@@ -115,4 +115,27 @@ TEST_CASE ("NativeVst3Slot loads, processes, and unloads cleanly", "[vst3][slot]
         REQUIRE (slot.isLoaded());
         REQUIRE (driveTone (slot, L, R, kBlock, 16) > 1.0e-4f);
     }
+
+    SECTION ("MIDI-binding writes reach the parameter surface")
+    {
+        // queueParamBinding is the audio-thread half of a binding apply;
+        // drainQueuedParamBindings is the engine timer's message-thread half.
+        int targetIdx = -1;
+        for (int i = 0; i < slot.paramCount(); ++i)
+        {
+            const auto* p = slot.paramInfo (i);
+            REQUIRE (p != nullptr);
+            if (p->stepCount == 0 && p->canAutomate && ! p->isReadOnly)
+            { targetIdx = i; break; }
+        }
+        REQUIRE (targetIdx >= 0);
+        const auto id = slot.paramInfo (targetIdx)->id;
+
+        slot.queueParamBinding ((uint32_t) targetIdx, 0.75f);
+        slot.drainQueuedParamBindings();
+
+        double v = -1.0;
+        REQUIRE (slot.getParamValue (id, v));
+        REQUIRE_THAT (v, WithinAbs (0.75, 1.0e-6));
+    }
 }

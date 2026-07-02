@@ -100,6 +100,34 @@ void AudioEngine::printPerfTable()
     std::fflush (stderr);
 }
 
+#if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_VST3
+// Message-thread drain for the native slots' MIDI-binding rings (the audio
+// thread's binding apply can't touch the instances' single-producer param
+// rings directly). 30 Hz matches PluginSlot's own drain cadence; a tick over
+// empty rings is one atomic load per slot.
+class AudioEngine::NativeParamDrain final : public juce::Timer
+{
+public:
+    explicit NativeParamDrain (AudioEngine& e) : engine (e) { startTimerHz (30); }
+    ~NativeParamDrain() override { stopTimer(); }
+    void timerCallback() override
+    {
+        for (int t = 0; t < Session::kNumTracks; ++t)
+        {
+            auto& strip = engine.getChannelStrip (t);
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+            strip.getNativeClapSlot().drainQueuedParamBindings();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+            strip.getNativeVst3Slot().drainQueuedParamBindings();
+#endif
+        }
+    }
+private:
+    AudioEngine& engine;
+};
+#endif
+
 AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
     : session (sessionToBindTo), desiredWorkers (juce::jmax (0, initialWorkers))
 {
@@ -108,6 +136,10 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
         perf.enabled.store (true, std::memory_order_relaxed);
         perfReporter = std::make_unique<PerfReporter> (*this);
     }
+
+#if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_VST3
+    nativeParamDrain = std::make_unique<NativeParamDrain> (*this);
+#endif
 
     // Held by unique_ptr so AudioEngine.h stays free of McuReceiver /
     // McuController definitions.
@@ -3216,14 +3248,32 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                             // last-touched tracker). paramIndex >= 0 is
                             // enforced here so the apply site matches the
                             // inline-validation pattern other targets use;
-                            // setParamNormalised also no-ops on out-of-range
-                            // as a second line of defence.
+                            // the setters also no-op on out-of-range as a
+                            // second line of defence. A native host owns the
+                            // insert when loaded — same precedence as the
+                            // audio chain (CLAP → LV2 → VST3 → JUCE).
                             if (b.targetIndex >= 0
                                 && b.targetIndex < Session::kNumTracks
                                 && b.paramIndex >= 0)
                             {
-                                getChannelStrip (b.targetIndex)
-                                    .getPluginSlot()
+                                auto& strip = getChannelStrip (b.targetIndex);
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+                                if (strip.isNativeClapLoaded())
+                                {
+                                    strip.getNativeClapSlot()
+                                        .queueParamBinding ((uint32_t) b.paramIndex, frac);
+                                    break;
+                                }
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+                                if (strip.isNativeVst3Loaded())
+                                {
+                                    strip.getNativeVst3Slot()
+                                        .queueParamBinding ((uint32_t) b.paramIndex, frac);
+                                    break;
+                                }
+#endif
+                                strip.getPluginSlot()
                                     .setParamNormalised (b.paramIndex, frac);
                             }
                             break;

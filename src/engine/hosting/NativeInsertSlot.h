@@ -1,6 +1,7 @@
 #pragma once
 
 #include "InsertAdapter.h"
+#include "SpscRing.h"
 
 #include <juce_core/juce_core.h>
 
@@ -41,6 +42,7 @@ public:
     bool load (const juce::File& path, double sampleRate, int maxBlock, std::string& errorOut)
     {
         unload();
+        bindingRing.clear();   // writes queued against the previous occupant
 
         auto b = std::make_unique<Bundle>();
         std::string err;
@@ -170,7 +172,34 @@ public:
     Instance* getInstance() noexcept
         { return ready.load (std::memory_order_acquire) ? instance.get() : nullptr; }
 
+    // ── MIDI-binding parameter writes ──────────────────────────────────────
+    // The MIDI apply loop runs on the AUDIO thread, but the instances' param
+    // rings are single-producer (message thread: host sets + editor edits), so
+    // a binding can't push there directly. Same inversion as PluginSlot: the
+    // audio thread queues {paramIndex, 0..1 fraction} here, and the engine's
+    // message-thread drain timer applies it through the format's param surface
+    // (which then queues back UI→RT — one drain tick of extra latency, same as
+    // the JUCE slot's bindings).
+
+    // Audio thread. Full ⇒ drop (only under a pathological controller flood).
+    void queueParamBinding (uint32_t paramIndex, float frac) noexcept
+    { bindingRing.push ({ paramIndex, frac }); }
+
+    // Message thread (engine drain timer). No-op when unloaded or the format
+    // has no parameter surface.
+    void drainQueuedParamBindings()
+    {
+        if (! isLoaded()) { bindingRing.clear(); return; }
+        bindingRing.drain ([this] (const ParamBinding& b)
+                           { applyParamBinding (b.paramIndex, b.frac); });
+    }
+
+    virtual ~NativeInsertSlot() = default;
+
 protected:
+    // Format hook: map paramIndex + 0..1 fraction onto the instance's parameter
+    // surface (message thread). Default: format has no parameters — drop.
+    virtual void applyParamBinding (uint32_t /*paramIndex*/, float /*frac*/) {}
     // bundle declared first so it is destroyed LAST — the instance's vtables live
     // in the bundle's .so / world.
     std::unique_ptr<Bundle>   bundle;
@@ -181,5 +210,9 @@ protected:
     std::atomic<bool> ready    { false };
     std::atomic<bool> bypassed { false };
     juce::String      loadedPath;
+
+private:
+    struct ParamBinding { uint32_t paramIndex; float frac; };
+    SpscRing<ParamBinding, 256> bindingRing;
 };
 } // namespace duskstudio::hosting
