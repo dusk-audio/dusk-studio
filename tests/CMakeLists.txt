@@ -9,6 +9,11 @@ FetchContent_MakeAvailable(Catch2)
 
 add_executable(dusk-studio-tests
     smoke_brickwall_limiter.cpp
+    # Shared native-host foundation (PortLayout / PortBuffers / INativeInstance)
+    # is header-only + platform-neutral, so it links in the base target.
+    hosting_port_layout.cpp
+    hosting_insert_adapter.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/hosting/InsertAdapter.cpp
     # Native CLAP tests + sources are Linux-only (dlopen/poll) — added conditionally below.
     plugin_scan_protocol.cpp
     plugin_backing_check.cpp
@@ -128,6 +133,7 @@ if(DUSKSTUDIO_NATIVE_CLAP)
     target_sources(dusk-studio-tests PRIVATE
         clap_bundle_load.cpp
         clap_instance_process.cpp
+        clap_ab_nulltest.cpp
         clap_native_slot.cpp
         clap_scanner.cpp
         clap_params.cpp
@@ -137,6 +143,20 @@ if(DUSKSTUDIO_NATIVE_CLAP)
         ${CMAKE_SOURCE_DIR}/src/engine/clap/NativeClapSlot.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/clap/ClapScanner.cpp)
     target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_NATIVE_CLAP=1)
+endif()
+
+# Native LV2 host — lilv/suil (ISC), ON when the dev libs are present (detected in
+# the top-level CMakeLists; PkgConfig::LILV etc. are GLOBAL imported targets).
+if(DUSKSTUDIO_NATIVE_LV2)
+    target_sources(dusk-studio-tests PRIVATE
+        lv2_bundle_load.cpp
+        lv2_instance_process.cpp
+        lv2_native_slot.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/lv2/Lv2Bundle.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/lv2/Lv2Instance.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/lv2/NativeLv2Slot.cpp)
+    target_link_libraries(dusk-studio-tests PRIVATE PkgConfig::LILV PkgConfig::SUIL PkgConfig::LV2)
+    target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_NATIVE_LV2=1)
 endif()
 
 target_link_libraries(dusk-studio-tests PRIVATE

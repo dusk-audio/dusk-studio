@@ -10,6 +10,9 @@
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
   #include "clap/ClapScanner.h"   // Linux-only native CLAP discovery
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+  #include "lv2/Lv2Scanner.h"     // Linux-only native LV2 discovery
+#endif
 
 #include <map>
 
@@ -152,6 +155,9 @@ PluginManager::PluginManager()
     loadCache();
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
     loadClapCache();   // restore native CLAP descriptions so the picker has them at launch
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+    loadLv2Cache();
 #endif
 }
 
@@ -352,24 +358,34 @@ int PluginManager::scanInstalledPlugins (
     if (added > 0 || pruned > 0 || blacklistGrew) saveCache();
 
     if (! aborting)
+    {
         scanClapPlugins();   // CLAP isn't a juce format — scan it alongside the JUCE pass
+        scanLv2Plugins();    // native-LV2 rows are separate from JUCE's LV2 format
+    }
     return added;
 }
 
 void PluginManager::scanClapPlugins()
 {
-    clapDescriptions.clearQuick();
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
-    for (const auto& s : clap::ClapScanner::scan())
+    // Discover OUTSIDE the lock (dlopens every bundle — slow), swap in under it.
+    // The cache write also stays outside so a picker open on the message thread
+    // can't stall behind this thread's file I/O.
+    const auto scanned = clap::ClapScanner::scan();
     {
-        juce::PluginDescription d;
-        d.name             = juce::String (juce::CharPointer_UTF8 (s.desc.name.c_str()));
-        d.manufacturerName = juce::String (juce::CharPointer_UTF8 (s.desc.vendor.c_str()));
-        d.version          = juce::String (juce::CharPointer_UTF8 (s.desc.version.c_str()));
-        d.pluginFormatName = "CLAP";
-        d.fileOrIdentifier = s.bundlePath;
-        d.isInstrument     = s.desc.isInstrument();
-        clapDescriptions.add (d);
+        const juce::ScopedLock sl (nativeDescriptionsLock);
+        clapDescriptions.clearQuick();
+        for (const auto& s : scanned)
+        {
+            juce::PluginDescription d;
+            d.name             = juce::String (juce::CharPointer_UTF8 (s.desc.name.c_str()));
+            d.manufacturerName = juce::String (juce::CharPointer_UTF8 (s.desc.vendor.c_str()));
+            d.version          = juce::String (juce::CharPointer_UTF8 (s.desc.version.c_str()));
+            d.pluginFormatName = "CLAP";
+            d.fileOrIdentifier = s.bundlePath;
+            d.isInstrument     = s.desc.isInstrument();
+            clapDescriptions.add (d);
+        }
     }
     saveClapCache();   // persist so the picker has CLAP at next launch without a re-scan
 #endif
@@ -408,8 +424,15 @@ void PluginManager::saveClapCache() const
     if (file == juce::File())
         return;
 
+    // Snapshot under the lock; serialize + write with it released so the picker
+    // can't stall behind the file I/O.
+    juce::Array<juce::PluginDescription> snapshot;
+    {
+        const juce::ScopedLock sl (nativeDescriptionsLock);
+        snapshot = clapDescriptions;
+    }
     juce::XmlElement root ("CLAP_PLUGINS");
-    for (const auto& d : clapDescriptions)
+    for (const auto& d : snapshot)
         root.addChildElement (d.createXml().release());
     root.writeTo (file);
 }
@@ -417,11 +440,87 @@ void PluginManager::saveClapCache() const
 
 juce::Array<juce::PluginDescription> PluginManager::getClapEffectDescriptions() const
 {
+    const juce::ScopedLock sl (nativeDescriptionsLock);
     juce::Array<juce::PluginDescription> effects;
     for (const auto& d : clapDescriptions)
         if (! d.isInstrument)
             effects.add (d);
     return effects;
+}
+
+void PluginManager::scanLv2Plugins()
+{
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+    const auto scanned = lv2::Lv2Scanner::scan();   // manifest parse outside the lock
+    {
+        const juce::ScopedLock sl (nativeDescriptionsLock);
+        lv2Descriptions.clearQuick();
+        for (const auto& s : scanned)
+        {
+            // Only audio effects for now — the native LV2 host is an insert host;
+            // instruments and MIDI utilities stay with the JUCE LV2 format.
+            if (s.desc.audioInputs <= 0 || s.desc.audioOutputs <= 0)
+                continue;
+            juce::PluginDescription d;
+            d.name             = juce::String (juce::CharPointer_UTF8 (s.desc.name.c_str()));
+            d.pluginFormatName = "LV2-Native";
+            d.fileOrIdentifier = s.bundlePath;
+            d.isInstrument     = false;
+            lv2Descriptions.add (d);
+        }
+    }
+    saveLv2Cache();   // persist so the picker has LV2 at next launch without a re-scan
+#endif
+}
+
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+juce::File PluginManager::getLv2CacheFile() const
+{
+    const auto base = getCacheFile();
+    return base == juce::File() ? juce::File() : base.getSiblingFile ("lv2-native-cache.xml");
+}
+
+void PluginManager::loadLv2Cache()
+{
+    const auto file = getLv2CacheFile();
+    if (file == juce::File() || ! file.existsAsFile())
+        return;
+
+    if (auto xml = juce::parseXML (file))
+    {
+        lv2Descriptions.clearQuick();
+        for (auto* child : xml->getChildIterator())
+        {
+            juce::PluginDescription d;
+            // Drop entries whose bundle directory is gone since the cache was written.
+            if (d.loadFromXml (*child) && juce::File (d.fileOrIdentifier).isDirectory())
+                lv2Descriptions.add (d);
+        }
+    }
+}
+
+void PluginManager::saveLv2Cache() const
+{
+    const auto file = getLv2CacheFile();
+    if (file == juce::File())
+        return;
+
+    juce::Array<juce::PluginDescription> snapshot;
+    {
+        const juce::ScopedLock sl (nativeDescriptionsLock);
+        snapshot = lv2Descriptions;
+    }
+    juce::XmlElement root ("LV2_NATIVE_PLUGINS");
+    for (const auto& d : snapshot)
+        root.addChildElement (d.createXml().release());
+    root.writeTo (file);
+}
+#endif
+
+juce::Array<juce::PluginDescription> PluginManager::getLv2EffectDescriptions() const
+{
+    const juce::ScopedLock sl (nativeDescriptionsLock);
+    return lv2Descriptions;   // scan already filtered to audio effects
 }
 
 juce::Array<juce::PluginDescription> PluginManager::getInstrumentDescriptions() const

@@ -21,8 +21,10 @@ juce::String makeImportedFilename (int trackIndex, const juce::String& extension
     const auto stamp = juce::String::formatted ("%04d%02d%02d-%02d%02d%02d",
                                                   now.getYear(), now.getMonth() + 1, now.getDayOfMonth(),
                                                   now.getHours(), now.getMinutes(), now.getSeconds());
-    return juce::String::formatted ("import_track%02d_%s", trackIndex + 1, stamp.toRawUTF8())
-             + extension;
+    // No %s through String::formatted: MSVC's wide printf reads a char* as
+    // wchar_t* and garbles the name into invalid filename characters.
+    return "import_track" + juce::String (trackIndex + 1).paddedLeft ('0', 2)
+             + "_" + stamp + extension;
 }
 
 // Channel-conform `src` into `dst` (dst is pre-sized to (targetChannels,

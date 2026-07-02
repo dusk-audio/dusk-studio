@@ -63,8 +63,12 @@ private:
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
     void loadNativeClapForSlot (int slotIdx, const juce::File& clapFile);   // Linux-only
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+    void loadNativeLv2ForSlot (int slotIdx, const juce::File& bundleDir);   // Linux-only, no editor yet
+#endif
     // Stubbed (no-op body) off Linux so the many callers don't each need a guard.
     void detachClapEditorForSlot (int slotIdx);
+    void detachLv2EditorForSlot (int slotIdx);
     void hideEditorsKeepingAlive();
     void layoutEditorForSlot (int slotIdx);
     void scheduleEditorRefits (int slotIdx);
@@ -136,6 +140,10 @@ private:
         // NativeClapSlot instance. Mutually exclusive with `editor` above. Linux-only.
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
         std::unique_ptr<ClapPluginEditorComponent>  clapEditor;
+#endif
+        // Native LV2 (suil) editor — same contract as clapEditor.
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+        std::unique_ptr<class Lv2PluginEditorComponent> lv2Editor;
 #endif
         juce::String displayedName;
     };

@@ -1,23 +1,28 @@
-#include "NativeClapSlot.h"
+#include "NativeLv2Slot.h"
 
 #include <cstring>
 
-namespace duskstudio::clap
+namespace duskstudio::lv2
 {
-bool NativeClapSlot::load (const juce::File& path, double sampleRate, int maxBlock,
-                           std::string& errorOut)
+bool NativeLv2Slot::load (const juce::File& path, double sampleRate, int maxBlock,
+                          std::string& errorOut)
 {
     unload();
 
-    auto b = std::make_unique<ClapBundle>();
+    auto b = std::make_unique<Lv2Bundle>();
     std::string err;
     if (! b->load (path.getFullPathName().toStdString(), err))
     { errorOut = "bundle: " + err; return false; }
     if (b->plugins().empty())
     { errorOut = "no plugins in bundle"; return false; }
 
-    auto inst = std::make_unique<ClapInstance>();
-    if (! inst->create (*b, b->plugins().front().id, err))
+    // First audio effect (audio in + out); fall back to the first advertised plugin.
+    std::string uri = b->plugins().front().uri;
+    for (const auto& d : b->plugins())
+        if (d.audioInputs > 0 && d.audioOutputs > 0) { uri = d.uri; break; }
+
+    auto inst = std::make_unique<Lv2Instance>();
+    if (! inst->create (*b, uri, err))
     { errorOut = "create: " + err; return false; }
     if (! inst->activate (sampleRate, maxBlock, err))
     { errorOut = "activate: " + err; return false; }
@@ -32,44 +37,42 @@ bool NativeClapSlot::load (const juce::File& path, double sampleRate, int maxBlo
     return true;
 }
 
-bool NativeClapSlot::reactivate (double sampleRate, int maxBlock, std::string& errorOut)
+bool NativeLv2Slot::reactivate (double sampleRate, int maxBlock, std::string& errorOut)
 {
     if (instance == nullptr) { errorOut = "no instance"; return false; }
-    // `ready`/`instance` are unchanged across the call; the audio thread (fenced by the
-    // engine gate) sees active==false mid-swap and no-ops, then resumes after activate.
     if (! instance->reactivate (sampleRate, maxBlock, errorOut)) return false;
-    adapter.prepare (instance->portLayout(), maxBlock);   // block size may have changed
+    adapter.prepare (instance->portLayout(), maxBlock);
     return true;
 }
 
-void NativeClapSlot::unload()
+void NativeLv2Slot::unload()
 {
     ready.store (false, std::memory_order_release);
-    instance.reset();   // destroys the plugin first (deactivate → destroy)
-    bundle.reset();     // then unloads the .so
+    instance.reset();   // free the LilvInstance first
+    bundle.reset();     // then the world backing its plugin
     loadedPath.clear();
 }
 
-void NativeClapSlot::leakForShutdown() noexcept
+void NativeLv2Slot::leakForShutdown() noexcept
 {
     ready.store (false, std::memory_order_release);
-    (void) instance.release();   // leak: skip deactivate/plugin->destroy
-    (void) bundle.release();     //       and dlclose — u-he hangs there
+    (void) instance.release();
+    (void) bundle.release();
     loadedPath.clear();
 }
 
-bool NativeClapSlot::saveState (std::vector<uint8_t>& out) const
+bool NativeLv2Slot::saveState (std::vector<uint8_t>& out) const
 {
     return instance != nullptr && instance->saveState (out);
 }
 
-bool NativeClapSlot::loadState (const std::vector<uint8_t>& in)
+bool NativeLv2Slot::loadState (const std::vector<uint8_t>& in)
 {
     return instance != nullptr && instance->loadState (in);
 }
 
-void NativeClapSlot::processStereo (const float* inL, const float* inR,
-                                    float* outL, float* outR, int numFrames) noexcept
+void NativeLv2Slot::processStereo (const float* inL, const float* inR,
+                                   float* outL, float* outR, int numFrames) noexcept
 {
     auto clearOutputs = [&]
     {
@@ -116,4 +119,4 @@ void NativeClapSlot::processStereo (const float* inL, const float* inR,
 
     adapter.process (*instance, outL, outR, numFrames);
 }
-} // namespace duskstudio::clap
+} // namespace duskstudio::lv2

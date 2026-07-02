@@ -8,6 +8,9 @@
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
   #include "../engine/clap/NativeClapSlot.h"   // Linux-only native CLAP host
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+  #include "../engine/lv2/NativeLv2Slot.h"     // Linux-only native LV2 host
+#endif
 #include "HardwareInsertSlot.h"
 
 namespace duskstudio
@@ -76,10 +79,28 @@ public:
     // True when a sample-rate re-prepare reload of a loaded native CLAP failed (the
     // slot is now empty). The UI reads this to report which lane lost its plugin.
     bool nativeClapReloadFailed (int slotIdx) const noexcept { jassert (slotIdx >= 0 && slotIdx < kMaxPlugins); return nativeReloadFailed[(size_t) slotIdx].load (std::memory_order_relaxed); }
+    // See ChannelStrip::markNativeClapRestoreFailed — re-marks a failed engine restore.
+    void markNativeClapRestoreFailed (int slotIdx) noexcept { jassert (slotIdx >= 0 && slotIdx < kMaxPlugins); nativeReloadFailed[(size_t) slotIdx].store (true, std::memory_order_relaxed); }
 #else
     bool isNativeClapLoaded (int) const noexcept { return false; }
     void unloadNativeClap (int) noexcept {}
     bool nativeClapReloadFailed (int) const noexcept { return false; }
+#endif
+
+    // Native LV2 host path — same contract as the CLAP block above.
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+    bool loadNativeLv2   (int slotIdx, const juce::File& path, std::string& errorOut);
+    void unloadNativeLv2 (int slotIdx) noexcept;
+    bool isNativeLv2Loaded (int slotIdx) const noexcept { jassert (slotIdx >= 0 && slotIdx < kMaxPlugins); return nativeLv2Slots[(size_t) slotIdx].isLoaded(); }
+    lv2::NativeLv2Slot&       getNativeLv2Slot (int idx)       noexcept { jassert (idx >= 0 && idx < kMaxPlugins); return nativeLv2Slots[(size_t) idx]; }
+    const lv2::NativeLv2Slot& getNativeLv2Slot (int idx) const noexcept { jassert (idx >= 0 && idx < kMaxPlugins); return nativeLv2Slots[(size_t) idx]; }
+    void setPendingNativeLv2 (int slotIdx, const juce::File& path, std::vector<uint8_t> state) noexcept;
+    bool nativeLv2ReloadFailed (int slotIdx) const noexcept { jassert (slotIdx >= 0 && slotIdx < kMaxPlugins); return lv2ReloadFailed[(size_t) slotIdx].load (std::memory_order_relaxed); }
+    void markNativeLv2RestoreFailed (int slotIdx) noexcept { jassert (slotIdx >= 0 && slotIdx < kMaxPlugins); lv2ReloadFailed[(size_t) slotIdx].store (true, std::memory_order_relaxed); }
+#else
+    bool isNativeLv2Loaded (int) const noexcept { return false; }
+    void unloadNativeLv2 (int) noexcept {}
+    bool nativeLv2ReloadFailed (int) const noexcept { return false; }
 #endif
 
     enum InsertMode : int { kInsertEmpty = 0, kInsertPlugin = 1, kInsertHardware = 2 };
@@ -108,6 +129,12 @@ private:
     // Pending session-restore load, consummated by prepare() (see setPendingNativeClap).
     std::array<juce::String,           kMaxPlugins> pendingClapPath;
     std::array<std::vector<uint8_t>,   kMaxPlugins> pendingClapState;
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+    std::array<lv2::NativeLv2Slot,   kMaxPlugins> nativeLv2Slots;
+    std::array<std::atomic<bool>,    kMaxPlugins> lv2ReloadFailed {};
+    std::array<juce::String,         kMaxPlugins> pendingLv2Path;
+    std::array<std::vector<uint8_t>, kMaxPlugins> pendingLv2State;
 #endif
 
     // Stashed in prepare so loadNativeClap (and re-prepare across a sample-rate

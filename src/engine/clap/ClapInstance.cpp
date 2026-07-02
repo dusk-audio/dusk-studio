@@ -60,7 +60,7 @@ bool ClapInstance::create (const ClapBundle& bundle, const std::string& pluginId
 
     // Channel counts of the first audio port in / out (the aux path is stereo;
     // a full port-config negotiation comes with the multi-port increment).
-    inCh = outCh = 0;
+    int inCh = 0, outCh = 0;
     if (const auto* ap = static_cast<const clap_plugin_audio_ports_t*> (
             plugin->get_extension (plugin, CLAP_EXT_AUDIO_PORTS));
         ap != nullptr && ap->count != nullptr && ap->get != nullptr)
@@ -70,8 +70,9 @@ bool ClapInstance::create (const ClapBundle& bundle, const std::string& pluginId
         if (ap->count (plugin, false) > 0 && ap->get (plugin, 0, false, &info)) outCh = (int) info.channel_count;
     }
 
-    // processStereo drives a single stereo in + stereo out port. Reject anything
-    // else for now (the aux path is stereo); multi-port support is a later step.
+    // Reject anything but stereo-in / stereo-out for now. The generalized
+    // processBlock + InsertAdapter path handles other layouts, but the DSP call
+    // sites still assume stereo, so gate non-stereo plugins out here until they migrate.
     if (inCh != 2 || outCh != 2)
     {
         errorOut = "plugin is not stereo-in/stereo-out (got "
@@ -80,6 +81,23 @@ bool ClapInstance::create (const ClapBundle& bundle, const std::string& pluginId
         plugin = nullptr;
         owningBundle = nullptr;
         return false;
+    }
+
+    // Record the negotiated shape for INativeInstance consumers (the InsertAdapter
+    // reads it to fold the stereo insert onto the plugin's real channel counts).
+    layout = {};
+    {
+        hosting::BusInfo in;
+        in.kind = hosting::BusInfo::Kind::Audio; in.dir = hosting::BusInfo::Direction::Input;
+        in.role = hosting::BusInfo::Role::Main;  in.channelCount = inCh;  in.active = true; in.name = "Input";
+        layout.inputs.push_back (in);
+        layout.mainInIndex = 0;
+
+        hosting::BusInfo out;
+        out.kind = hosting::BusInfo::Kind::Audio; out.dir = hosting::BusInfo::Direction::Output;
+        out.role = hosting::BusInfo::Role::Main;  out.channelCount = outCh; out.active = true; out.name = "Output";
+        layout.outputs.push_back (out);
+        layout.mainOutIndex = 0;
     }
 
     // Snapshot the parameter list for automation / display. [main-thread]
@@ -124,6 +142,18 @@ bool ClapInstance::activate (double sampleRate, int maxBlock, std::string& error
     if (plugin->activate == nullptr
         || ! plugin->activate (plugin, sampleRate, 1, (uint32_t) maxFrames))
     { errorOut = "activate() failed"; return false; }
+
+    // Plugin latency is valid post-activate; cache it for PDC. Size the CLAP
+    // buffer pointer arrays to the negotiated channel counts so processBlock
+    // just points them at the caller's scratch each block (no RT alloc).
+    latencySamples = 0;
+    if (const auto* lat = static_cast<const clap_plugin_latency_t*> (
+            plugin->get_extension (plugin, CLAP_EXT_LATENCY));
+        lat != nullptr && lat->get != nullptr)
+        latencySamples = (int) lat->get (plugin);
+
+    clapInData .assign ((size_t) layout.mainInChannels(),  nullptr);
+    clapOutData.assign ((size_t) layout.mainOutChannels(), nullptr);
 
     startFailed = false;   // a fresh activation may try start_processing again
     active = true;
@@ -238,6 +268,35 @@ void ClapInstance::setParamValue (clap_id id, double value) noexcept
     ringWrite.store (next, std::memory_order_release);
 }
 
+void ClapInstance::drainParamRing() noexcept
+{
+    // Drain queued parameter changes into this block's CLAP event list (audio thread
+    // = single consumer). All at time 0 — sample-accurate automation is a later step.
+    eventCount = 0;
+    uint32_t r = ringRead.load (std::memory_order_relaxed);
+    const uint32_t w   = ringWrite.load (std::memory_order_acquire);
+    const uint32_t cap = (uint32_t) eventScratch.size();
+    while (r != w && eventCount < cap)
+    {
+        const ParamChange pc = paramRing[(size_t) r];
+        auto& ev = eventScratch[(size_t) eventCount++];
+        ev.header.size     = sizeof (clap_event_param_value_t);
+        ev.header.time     = 0;
+        ev.header.space_id = CLAP_CORE_EVENT_SPACE_ID;
+        ev.header.type     = CLAP_EVENT_PARAM_VALUE;
+        ev.header.flags    = 0;
+        ev.param_id        = pc.id;
+        ev.cookie          = pc.cookie;
+        ev.note_id         = -1;
+        ev.port_index      = -1;
+        ev.channel         = -1;
+        ev.key             = -1;
+        ev.value           = pc.value;
+        r = (r + 1u) % (uint32_t) kParamRingCap;
+    }
+    ringRead.store (r, std::memory_order_release);
+}
+
 void ClapInstance::processStereo (const float* inL, const float* inR,
                                   float* outL, float* outR, int numFrames) noexcept
 {
@@ -275,33 +334,7 @@ void ClapInstance::processStereo (const float* inL, const float* inR,
         processing = true;
     }
 
-    // Drain queued parameter changes into this block's CLAP event list (audio thread
-    // = single consumer). All at time 0 — sample-accurate automation is a later step.
-    eventCount = 0;
-    {
-        uint32_t r = ringRead.load (std::memory_order_relaxed);
-        const uint32_t w   = ringWrite.load (std::memory_order_acquire);
-        const uint32_t cap = (uint32_t) eventScratch.size();
-        while (r != w && eventCount < cap)
-        {
-            const ParamChange pc = paramRing[(size_t) r];
-            auto& ev = eventScratch[(size_t) eventCount++];
-            ev.header.size     = sizeof (clap_event_param_value_t);
-            ev.header.time     = 0;
-            ev.header.space_id = CLAP_CORE_EVENT_SPACE_ID;
-            ev.header.type     = CLAP_EVENT_PARAM_VALUE;
-            ev.header.flags    = 0;
-            ev.param_id        = pc.id;
-            ev.cookie          = pc.cookie;
-            ev.note_id         = -1;
-            ev.port_index      = -1;
-            ev.channel         = -1;
-            ev.key             = -1;
-            ev.value           = pc.value;
-            r = (r + 1u) % (uint32_t) kParamRingCap;
-        }
-        ringRead.store (r, std::memory_order_release);
-    }
+    drainParamRing();
 
     const auto n = (size_t) numFrames;
     std::memcpy (inScratchL.data(), inL, sizeof (float) * n);
@@ -338,5 +371,77 @@ void ClapInstance::processStereo (const float* inL, const float* inR,
 
     std::memcpy (outL, outScratchL.data(), sizeof (float) * n);
     std::memcpy (outR, outScratchR.data(), sizeof (float) * n);
+}
+
+void ClapInstance::processBlock (const hosting::PortBuffers& io) noexcept
+{
+    const int numFrames = io.numFrames;
+
+    auto clearOutputs = [&]
+    {
+        if (io.mainOut == nullptr || numFrames <= 0) return;
+        for (int c = 0; c < io.mainOutChannels; ++c)
+            if (io.mainOut[c] != nullptr)
+                std::memset (io.mainOut[c], 0, sizeof (float) * (size_t) numFrames);
+    };
+
+    if (! active || plugin == nullptr || plugin->process == nullptr
+        || numFrames <= 0 || numFrames > maxFrames
+        || io.mainOut == nullptr || io.mainOutChannels <= 0)
+    {
+        clearOutputs();
+        return;
+    }
+
+    if (startFailed)   // plugin already refused to start — stay silent
+    {
+        clearOutputs();
+        return;
+    }
+
+    if (! processing)
+    {
+        hostObj.setAudioThread (std::this_thread::get_id());
+        if (plugin->start_processing != nullptr && ! plugin->start_processing (plugin))
+        {
+            startFailed = true;
+            clearOutputs();
+            return;
+        }
+        processing = true;
+    }
+
+    drainParamRing();
+
+    // Point the CLAP audio buffers straight at the caller's pre-sized scratch — the
+    // plugin writes its output there, no instance-owned copy. Clamp to the channel
+    // counts negotiated at activate() so a mismatched block can't over-index; a null
+    // mainIn (instrument-style caller) processes as zero input ports.
+    const int nin  = io.mainIn != nullptr ? std::min (io.mainInChannels, (int) clapInData.size()) : 0;
+    const int nout = std::min (io.mainOutChannels, (int) clapOutData.size());
+    for (int c = 0; c < nin;  ++c) clapInData [(size_t) c] = io.mainIn[c];
+    for (int c = 0; c < nout; ++c) clapOutData[(size_t) c] = io.mainOut[c];
+
+    clap_audio_buffer_t inBuf {};
+    inBuf.data32        = clapInData.data();
+    inBuf.channel_count = (uint32_t) nin;
+
+    clap_audio_buffer_t outBuf {};
+    outBuf.data32        = clapOutData.data();
+    outBuf.channel_count = (uint32_t) nout;
+
+    clap_process_t p {};
+    p.steady_time         = -1;          // free-running
+    p.frames_count        = (uint32_t) numFrames;
+    p.transport           = nullptr;
+    p.audio_inputs        = nin > 0 ? &inBuf : nullptr;
+    p.audio_inputs_count  = nin > 0 ? 1u : 0u;
+    p.audio_outputs       = &outBuf;
+    p.audio_outputs_count = 1u;
+    p.in_events           = &inEvents;
+    p.out_events          = &emptyOut;
+
+    if (plugin->process (plugin, &p) == CLAP_PROCESS_ERROR)
+        clearOutputs();
 }
 } // namespace duskstudio::clap

@@ -2,6 +2,7 @@
 
 #include "ClapBundle.h"
 #include "ClapInstance.h"
+#include "../hosting/InsertAdapter.h"
 
 #include <juce_core/juce_core.h>
 
@@ -65,8 +66,9 @@ public:
     void setParamValue (clap_id id, double value)
         { if (instance != nullptr) instance->setParamValue (id, value); }
 
-    // Audio thread: process stereo through the plugin; clears the outputs + returns
-    // when no plugin is loaded.
+    // Audio thread: process stereo through the plugin, via the InsertAdapter →
+    // INativeInstance::processBlock (the generalized host path). Clears the outputs
+    // + returns when no plugin is loaded; passes audio through when bypassed.
     void processStereo (const float* inL, const float* inR,
                         float* outL, float* outR, int numFrames) noexcept;
 
@@ -79,6 +81,9 @@ private:
     // vtable, which lives in the bundle's .so) must tear down before the .so unloads.
     std::unique_ptr<ClapBundle>   bundle;
     std::unique_ptr<ClapInstance> instance;
+    // Folds the mixer's stereo insert onto the plugin's negotiated layout. Prepared
+    // on load / reactivate; owns its own scratch (no plugin refs, teardown order-free).
+    hosting::InsertAdapter        adapter;
     std::atomic<bool> ready    { false };
     std::atomic<bool> bypassed { false };
     juce::String      loadedPath;

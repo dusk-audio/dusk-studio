@@ -30,7 +30,7 @@ Dusk Studio includes:
 - Four mix buses, each with a 3-band EQ and console-style bus compressor.
 - A master bus with tape saturation, a tube program EQ, bus compressor, and mono-sum check.
 - A dedicated mastering stage with 5-band digital EQ, multiband compressor, brick-wall limiter, and BS.1770 loudness metering.
-- VST3, LV2, and AU plugin hosting, with optional out-of-process sandboxing for crash isolation.
+- VST3, LV2, AU, and CLAP plugin hosting, with optional out-of-process sandboxing for crash isolation. On Linux, CLAP and LV2 effects run through Dusk Studio's own native hosts.
 - External hardware insert per channel and per aux, with automatic latency measurement.
 - A multi-sampler that plays `.sfz` files and `.sf2` SoundFonts on MIDI tracks, both through the built-in sfizz engine (SF2 files are converted to SFZ on load — no external synth required).
 - MIDI Clock and MIDI Time Code chase and emit.
@@ -1375,11 +1375,12 @@ A few rules:
 Dusk Studio scans and hosts:
 
 - **VST3** on Linux, macOS, and Windows.
-- **LV2** on Linux.
+- **LV2** on Linux. Effects load through Dusk Studio's own native LV2 host (rows tagged **LV2-Native**); LV2 instruments load through the standard host.
+- **CLAP** on Linux, through the native host. Effects only.
 - **AU** on macOS only.
 - **Native multi-sampler** (`.sfz` and `.sf2` files, both via the built-in sfizz engine — SF2 is converted to SFZ on load) on all platforms.
 
-There is no VST2 support.
+There is no VST2 support. See *Native plugin hosting (Linux)* below for what the native hosts change.
 
 ## Scanning
 
@@ -1391,6 +1392,8 @@ Plugin scan results are cached in:
 - macOS: `~/Library/Application Support/Dusk Studio/plugin-cache.xml`
 - Windows: `%APPDATA%\Dusk Studio\plugin-cache.xml`
 
+On Linux the native hosts keep their own sidecar caches next to it (`clap-cache.xml`, `lv2-native-cache.xml`), rebuilt by the same **Scan plugins** button. The native LV2 scan reads only the bundles' manifests — it never loads the plugin binary, so a broken bundle cannot crash the scan; it is simply skipped (or reported when you try to load it).
+
 To re-scan on every launch, enable **Settings → General → Scan plugins on startup**. The startup scan runs in the background behind a progress window (it shows the plugin currently being scanned and a progress bar), so the app stays responsive instead of appearing to hang while a large collection is scanned.
 
 ## Loading a plugin
@@ -1399,8 +1402,10 @@ In the **plugin picker** modal:
 
 - Use the filter field at the top to narrow by name.
 - The list is grouped by manufacturer. Click a manufacturer to expand or collapse.
-- Each row shows the plugin name and its format (VST3 / LV2 / AU).
+- Each row shows the plugin name and its format (VST3 / LV2 / AU / CLAP / LV2-Native).
 - Click a row to load and dismiss.
+
+On Linux, effect slots list LV2 plugins as **LV2-Native** rows — the same plugins, hosted by Dusk Studio's native LV2 host instead of the standard one. Each plugin appears once; there is no duplicate plain-LV2 row.
 
 The picker filters by intent: only effect plugins appear when you're loading onto a channel insert or aux lane; only instruments appear when you're loading onto a MIDI track.
 
@@ -1416,6 +1421,20 @@ At the bottom of the picker are alternative buttons:
 Click the loaded plugin's slot to open its editor. The editor appears as a centred modal with a dimmed backdrop; press **Esc** or click outside to dismiss. There is no user option to detach it into a floating window.
 
 This holds on all platforms, including the macOS out-of-process sandbox. Rather than reparenting the sandbox child's native window into the main window (cross-process NSView embedding, which Dusk Studio deliberately does not use), macOS hosts the editor **in-process** against a lightweight "shell" instance of the plugin while the plugin's DSP keeps running in the sandbox child; knob moves are mirrored between the shell editor and the running child in both directions. If the plugin cannot be instantiated in-process for editing (its file has moved, or it refuses a second instance), the editor falls back to a floating window owned by the sandbox child — that fallback window is not dimmed by other modals and is closed from its own controls.
+
+## Native plugin hosting (Linux)
+
+On Linux, CLAP plugins and LV2 effects are hosted by Dusk Studio's own plugin hosts rather than the standard hosting layer. This exists for one reason: plugin editor windows embedded through the standard layer are the biggest source of UI breakage on Wayland desktops. The native hosts own the editor embedding directly and sidestep that class of problem.
+
+In practice the differences are small:
+
+- Rows tagged **CLAP** or **LV2-Native** in the picker load through the native hosts; everything else about picking, replacing, and removing is identical.
+- Editors open the same way (centred modal on channel slots, inline on aux lanes) and their settings persist in the session like any other plugin.
+- Native-hosted plugins always run in-process; the OOP sandbox does not apply to them. Scanning is still crash-safe — CLAP discovery is isolated and native LV2 discovery never executes plugin code.
+- Insert latency reported by a native-hosted plugin feeds plugin delay compensation like any other insert.
+- A slot holds one plugin regardless of host: loading a CLAP, an LV2-Native, or a standard-host plugin into the same slot replaces whatever was there.
+
+One caveat: a plugin's saved state does not transfer between hosting layers. If a session carried a plugin under the standard LV2 host and you load the same plugin as LV2-Native (or vice versa), it starts from its defaults — set it up once and save.
 
 ## Out-of-process sandboxing
 
@@ -2072,7 +2091,7 @@ Two variants:
 ### Missing plugins
 
 - **When**: Session load found plugin references that can't be instantiated on this machine.
-- **Text**: "These plugins from the saved session could not be loaded and were left empty: [per-plugin: location — plugin name]. Check that the plugins are still installed for the right format (VST3 / LV2 / AU) and that this binary can find them, then reload the session."
+- **Text**: "These plugins from the saved session could not be loaded and were left empty: [per-plugin: location — plugin name]. Check that the plugins are still installed for the right format (VST3 / LV2 / AU / CLAP) and that this binary can find them, then reload the session."
 - **Buttons**: OK.
 - **Action**: Install the missing plugins (or the right plugin format) and reload the session. Saved state for offline plugins is preserved on disk; it round-trips through the next save.
 

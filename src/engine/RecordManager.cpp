@@ -116,8 +116,11 @@ bool RecordManager::startRecording (double sampleRate, juce::int64 startSample)
             continue;
         }
 
-        auto trackName = juce::String::formatted ("track%02d_%s.wav", t + 1,
-                                                   stamp.toRawUTF8());
+        // No %s through String::formatted: MSVC's wide printf reads a char* as
+        // wchar_t* and garbles the name into invalid filename characters — the
+        // writer then fails to open and the take is silently dropped.
+        auto trackName = "track" + juce::String (t + 1).paddedLeft ('0', 2)
+                           + "_" + stamp + ".wav";
         // The stamp has one-second resolution: a stop + re-arm within the
         // same second would collide with the just-committed take, and
         // deleting here would destroy the WAV its region references.

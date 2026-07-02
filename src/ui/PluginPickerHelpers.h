@@ -52,6 +52,10 @@ enum class PluginKind { Effects, Instruments };
 // bundle path) instead of the JUCE loader. Used by every surface with a native CLAP
 // host — aux lanes AND channel-strip effect slots — which expose CLAP rows alongside
 // their JUCE-hosted VST3/LV2/AU. Unset → no CLAP rows (surfaces without a native host).
+// `onPickNativeLv2` is the LV2 twin: merges "LV2-Native" rows (bundle-directory
+// paths) and routes their selection here. When set, JUCE-format "LV2" effect rows
+// are hidden so each plugin appears once, hosted natively; unset → JUCE LV2 rows
+// stay as the fallback host.
 void openPickerMenu (PluginSlot& slot,
                       juce::Component& target,
                       std::unique_ptr<juce::FileChooser>& chooserOwner,
@@ -60,7 +64,8 @@ void openPickerMenu (PluginSlot& slot,
                       juce::Point<int> screenPosition = { -1, -1 },
                       std::function<void()> onPickHardwareInsert = {},
                       bool suppressSecondaryButtons = false,
-                      std::function<void (const juce::File&)> onPickNativeClap = {});
+                      std::function<void (const juce::File&)> onPickNativeClap = {},
+                      std::function<void (const juce::File&)> onPickNativeLv2 = {});
 
 // Two-step insert flow. Step 1 shows a small modal with three big
 // buttons — Hardware Insert / Soundfont / Plugin — letting the user
@@ -79,7 +84,8 @@ void openInsertChooser (PluginSlot& slot,
                          std::function<void()> onChange,
                          PluginKind kind,
                          std::function<void()> onPickHardwareInsert = {},
-                         std::function<void (const juce::File&)> onPickNativeClap = {});
+                         std::function<void (const juce::File&)> onPickNativeClap = {},
+                         std::function<void (const juce::File&)> onPickNativeLv2 = {});
 
 // Synchronous scan. Blocks the message thread during scanInstalledPlugins().
 // Shows a Dusk in-window completion alert in `parent` (top-level Component)

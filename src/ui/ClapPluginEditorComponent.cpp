@@ -1,10 +1,14 @@
 #include "ClapPluginEditorComponent.h"
+#include "EmbeddedModal.h"   // kPluginEditorTag
 
 namespace duskstudio
 {
 ClapPluginEditorComponent::ClapPluginEditorComponent()
 {
     setOpaque (false);
+    // EmbeddedModal hides tagged editors while a modal is up — see the same tag
+    // in Lv2PluginEditorComponent.
+    getProperties().set (kPluginEditorTag, true);
 }
 
 ClapPluginEditorComponent::~ClapPluginEditorComponent()

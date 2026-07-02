@@ -11,6 +11,9 @@
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
   #include "ClapPluginEditorComponent.h"   // Linux-only native CLAP editor
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+  #include "Lv2PluginEditorComponent.h"    // Linux-only native LV2 editor (suil)
+#endif
 #include "DuskAlerts.h"
 #include "FreezeDialog.h"
 #include "../engine/AudioEngine.h"
@@ -1430,7 +1433,9 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         "open the routing editor."));
     pluginSlotButton.onClick = [this]
     {
-        if (pluginSlot.isLoaded() || engine.getChannelStrip (trackIndex).isNativeClapLoaded())
+        if (pluginSlot.isLoaded()
+            || engine.getChannelStrip (trackIndex).isNativeClapLoaded()
+            || engine.getChannelStrip (trackIndex).isNativeLv2Loaded())
         {
             togglePluginEditor();
             return;
@@ -1505,17 +1510,18 @@ ChannelStripComponent::~ChannelStripComponent()
     stopTimer();   // before derived members destruct (base Timer::~Timer is too late)
     engine.removeChangeListener (this);
 
-    // If a popup editor is still on screen when the strip dies (e.g. the
-    // window is closing), force-delete it so its content (which references
-    // `track`) doesn't outlive us. Same SafePointer pattern as the audio
-    // settings dialog in MainComponent.
-    eqEditorModal.close();
-    compEditorModal.close();
-    auxEditorModal.close();
-    // I/O popup re-parents this strip's modeSelector / inputSelector children,
-    // so it must close LAST — before those combo members destruct — so its
-    // deferred body teardown doesn't outlive the controls it borrowed.
-    ioConfigModal.close();
+    // If a popup editor is still open when the strip dies, destroy its body
+    // NOW (synchronously) rather than via close()'s deferred callAsync: on the
+    // app-quit path the message loop has already exited, so a deferred body
+    // teardown never runs (leak) or fires during MessageManager shutdown after
+    // members are gone. The I/O popup additionally re-parents this strip's live
+    // modeSelector / midiActivityLed children, so its body must be gone while
+    // those members are still alive — closeAndDeleteBodyNow() runs here, before
+    // any member destructs. Same variant MainComponent uses for shutdown.
+    eqEditorModal.closeAndDeleteBodyNow();
+    compEditorModal.closeAndDeleteBodyNow();
+    auxEditorModal.closeAndDeleteBodyNow();
+    ioConfigModal.closeAndDeleteBodyNow();
     // Drop the cached editor BEFORE the strip's PluginSlot destructs,
     // since the editor's destructor calls editorBeingDeleted on its
     // owning AudioProcessor. dropPluginEditor() also closes the modal.
@@ -1760,9 +1766,31 @@ void ChannelStripComponent::openPluginPicker (bool useChooser)
                                         if (self == nullptr) return;
                                         // Picking a plugin flips the strip back to Plugin mode
                                         // (overriding any prior Hardware selection on this slot).
-                                        self->engine.getChannelStrip (self->trackIndex)
-                                                  .insertMode.store (ChannelStrip::kInsertPlugin,
-                                                                       std::memory_order_release);
+                                        auto& chStrip = self->engine.getChannelStrip (self->trackIndex);
+                                        chStrip.insertMode.store (ChannelStrip::kInsertPlugin,
+                                                                  std::memory_order_release);
+
+                                        // One host per insert: a successful JUCE load evicts any
+                                        // native slot — the audio chain checks natives first, so a
+                                        // lingering native would silently shadow the picked plugin.
+                                        if (self->pluginSlot.isLoaded()
+                                            && (chStrip.isNativeClapLoaded() || chStrip.isNativeLv2Loaded()))
+                                        {
+   #if DUSKSTUDIO_HAS_NATIVE_CLAP
+                                            self->clapEditor.reset();   // references the dying instance
+   #endif
+   #if DUSKSTUDIO_HAS_NATIVE_LV2
+                                            self->lv2Editor.reset();
+   #endif
+                                            self->engine.suspendProcessing();
+                                            chStrip.unloadNativeClap();
+                                            chStrip.unloadNativeLv2();
+                                            self->engine.resumeProcessing();
+                                            self->track.nativeClapPath = {};
+                                            self->track.nativeClapStateBase64 = {};
+                                            self->track.nativeLv2Path = {};
+                                            self->track.nativeLv2StateBase64 = {};
+                                        }
 
                                         // Loading an instrument (soundfont or VST/LV2 synth) on a
                                         // non-MIDI track leaves the strip silent — instrument
@@ -1850,6 +1878,16 @@ void ChannelStripComponent::openPluginPicker (bool useChooser)
                 self->loadNativeClapForChannel (f);
         };
 #endif
+    // Native LV2 route — same shape; LV2-Native rows replace the JUCE LV2 rows.
+    std::function<void (const juce::File&)> onLv2;
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+    if (kind == pluginpicker::PluginKind::Effects)
+        onLv2 = [safe] (const juce::File& f)
+        {
+            if (auto* self = safe.getComponent())
+                self->loadNativeLv2ForChannel (f);
+        };
+#endif
 
     if (useChooser)
     {
@@ -1859,7 +1897,8 @@ void ChannelStripComponent::openPluginPicker (bool useChooser)
                                           std::move (onChange),
                                           kind,
                                           std::move (openHwEditor),
-                                          std::move (onClap));
+                                          std::move (onClap),
+                                          std::move (onLv2));
     }
     else
     {
@@ -1874,7 +1913,8 @@ void ChannelStripComponent::openPluginPicker (bool useChooser)
                                        { -1, -1 },
                                        /*onPickHardwareInsert*/ {},
                                        /*suppressSecondaryButtons*/ true,
-                                       std::move (onClap));
+                                       std::move (onClap),
+                                       std::move (onLv2));
     }
 }
 
@@ -1931,6 +1971,23 @@ void ChannelStripComponent::unloadPluginSlot()
         return;
     }
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+    {
+        auto& lv2Strip = engine.getChannelStrip (trackIndex);
+        if (lv2Strip.isNativeLv2Loaded())
+        {
+            lv2Editor.reset();   // references the dying instance
+            engine.suspendProcessing();
+            lv2Strip.unloadNativeLv2();
+            lv2Strip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
+            engine.resumeProcessing();
+            track.nativeLv2Path = {};
+            track.nativeLv2StateBase64 = {};
+            refreshPluginSlotButton();
+            return;
+        }
+    }
+#endif
 
     pluginSlot.unload();
     refreshPluginSlotButton();
@@ -1939,7 +1996,8 @@ void ChannelStripComponent::unloadPluginSlot()
 void ChannelStripComponent::showPluginSlotMenu()
 {
     juce::PopupMenu menu;
-    const bool nativeLoaded = engine.getChannelStrip (trackIndex).isNativeClapLoaded();
+    const bool nativeLoaded = engine.getChannelStrip (trackIndex).isNativeClapLoaded()
+                           || engine.getChannelStrip (trackIndex).isNativeLv2Loaded();
     if (pluginSlot.isLoaded() || nativeLoaded)
     {
         // Editor toggle headline so right-click ALSO becomes a way to open
@@ -2019,6 +2077,20 @@ void ChannelStripComponent::refreshPluginSlotButton()
     {
         const auto nm = juce::File (engine.getChannelStrip (trackIndex)
                                       .getNativeClapSlot().getPath())
+                          .getFileNameWithoutExtension();
+        const auto label = juce::String (juce::CharPointer_UTF8 ("\xe2\x96\xbe ")) + nm;
+        if (label == lastSlotName) return;
+        lastSlotName = label;
+        pluginSlotButton.setButtonText (label);
+        return;
+    }
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+    if (engine.getChannelStrip (trackIndex).isNativeLv2Loaded())
+    {
+        // Bundle directory name minus the ".lv2" suffix.
+        const auto nm = juce::File (engine.getChannelStrip (trackIndex)
+                                      .getNativeLv2Slot().getPath())
                           .getFileNameWithoutExtension();
         const auto label = juce::String (juce::CharPointer_UTF8 ("\xe2\x96\xbe ")) + nm;
         if (label == lastSlotName) return;
@@ -2149,6 +2221,26 @@ void ChannelStripComponent::openPluginEditor()
         return;
     }
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+    if (engine.getChannelStrip (trackIndex).isNativeLv2Loaded())
+    {
+        auto* inst = engine.getChannelStrip (trackIndex).getNativeLv2Slot().getInstance();
+        if (inst == nullptr) return;
+        if (lv2Editor == nullptr)
+        {
+            lv2Editor = std::make_unique<Lv2PluginEditorComponent>();
+            juce::String err;
+            if (! lv2Editor->attach (*inst, err))
+            {
+                std::fprintf (stderr, "[chan lv2] %s\n", err.toRawUTF8());
+                lv2Editor.reset();
+                return;
+            }
+        }
+        pluginEditorModal.showBorrowed (*parent, *lv2Editor, onClose);
+        return;
+    }
+#endif
 
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
     if (pluginSlot.isRemote())
@@ -2179,7 +2271,7 @@ void ChannelStripComponent::openPluginEditor()
             // lifetime of any subsequent settings / quit modal — native
             // X11 z-order otherwise paints the plugin window above the
             // JUCE-rendered modal.
-            remoteEditorEmbed->getProperties().set ("dusk_pluginEditor", true);
+            remoteEditorEmbed->getProperties().set (kPluginEditorTag, true);
         }
         pluginEditorModal.showBorrowed (*parent, *remoteEditorEmbed, onClose);
        #elif JUCE_MAC
@@ -2253,7 +2345,7 @@ void ChannelStripComponent::openPluginEditor()
             // wrapper too (same reason as the Linux XEmbed + in-process
             // paths). Defensive today — createInProcessEditorHost is a Mac
             // stub returning nullptr — but correct once the shell host lands.
-            embed->getProperties().set ("dusk_pluginEditor", true);
+            embed->getProperties().set (kPluginEditorTag, true);
             pluginEditorModal.showBorrowed (*parent, *embed, onClose);
             remoteForeignEmbed = std::move (embed);
         }
@@ -2280,7 +2372,7 @@ void ChannelStripComponent::openPluginEditor()
             // Tag so a later settings / quit modal hides the reparented HWND
             // wrapper too — native window z-order otherwise paints the plugin
             // above the JUCE-rendered modal.
-            embed->getProperties().set ("dusk_pluginEditor", true);
+            embed->getProperties().set (kPluginEditorTag, true);
             pluginEditorModal.showBorrowed (*parent, *embed, onClose);
             remoteForeignEmbed = std::move (embed);
         }
@@ -2330,7 +2422,7 @@ void ChannelStripComponent::openPluginEditor()
     // Tag so EmbeddedModal hides the editor when a settings / quit /
     // alert modal opens. In-process plugin editors with GL contexts or
     // foreign-window embeds can paint above the modal otherwise.
-    pluginEditor->getProperties().set ("dusk_pluginEditor", true);
+    pluginEditor->getProperties().set (kPluginEditorTag, true);
 
     pluginEditorModal.showBorrowed (*parent, *pluginEditor, onClose);
 }
@@ -2378,6 +2470,13 @@ void ChannelStripComponent::dropPluginEditor()
         clapEditor.reset();
     }
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+    if (lv2Editor != nullptr)
+    {
+        lv2Editor->leakForShutdown();
+        lv2Editor.reset();
+    }
+#endif
     // ~AudioProcessorEditor tears down the plugin's internal X11
     // children synchronously (colour pickers, preset browsers,
     // transient popups). On a Wayland session, any of those could
@@ -2423,6 +2522,9 @@ void ChannelStripComponent::loadNativeClapForChannel (const juce::File& clapFile
     // cleanly; only shutdown needs the leak path.
     closePluginEditor();
     clapEditor.reset();
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+    lv2Editor.reset();   // an evicted LV2's UI must not outlive its instance
+#endif
     pluginEditor.reset();
     pluginEditorOwner = nullptr;
     // Release any OOP-side embed too — replacing a remote (OOP) plugin with a native
@@ -2461,10 +2563,63 @@ void ChannelStripComponent::loadNativeClapForChannel (const juce::File& clapFile
     // Fresh bundle: don't reuse the previous plugin's state blob. The next save
     // re-captures this plugin's real state.
     track.nativeClapStateBase64 = {};
+    // The load evicted any native LV2 in this insert — drop its persisted refs too.
+    track.nativeLv2Path = {};
+    track.nativeLv2StateBase64 = {};
     refreshPluginSlotButton();
     openPluginEditor();
 }
 #endif // DUSKSTUDIO_HAS_NATIVE_CLAP
+
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+void ChannelStripComponent::loadNativeLv2ForChannel (const juce::File& bundleDir)
+{
+    auto& strip = engine.getChannelStrip (trackIndex);
+
+    // One insert per strip — tear down whatever editor is open first (the CLAP
+    // editor references an instance the load below evicts). Mirrors
+    // loadNativeClapForChannel.
+    closePluginEditor();
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+    clapEditor.reset();
+#endif
+    lv2Editor.reset();
+    pluginEditor.reset();
+    pluginEditorOwner = nullptr;
+   #if JUCE_LINUX && DUSKSTUDIO_HAS_OOP_PLUGINS
+    remoteEditorEmbed.reset();
+   #endif
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS && ! JUCE_LINUX
+    remoteForeignEmbed.reset();
+   #endif
+
+    // NativeLv2Slot::load is NOT RT-safe; fence the audio thread around the swap.
+    // loadNativeLv2 itself evicts the CLAP + JUCE occupants.
+    std::string err;
+    engine.suspendProcessing();
+    const bool ok = strip.loadNativeLv2 (bundleDir, err);
+    if (ok)
+        strip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
+    engine.resumeProcessing();
+
+    if (! ok)
+    {
+        std::fprintf (stderr, "[chan lv2] load failed: %s\n", err.c_str());
+        showDuskAlert (*this, "Couldn't load LV2 plugin",
+                       bundleDir.getFileNameWithoutExtension() + ":\n" + juce::String (err));
+        track.nativeLv2Path = {};
+        track.nativeLv2StateBase64 = {};
+        return;
+    }
+
+    track.nativeLv2Path = bundleDir.getFullPathName();
+    track.nativeLv2StateBase64 = {};
+    track.nativeClapPath = {};
+    track.nativeClapStateBase64 = {};
+    refreshPluginSlotButton();
+    openPluginEditor();
+}
+#endif // DUSKSTUDIO_HAS_NATIVE_LV2
 
 namespace
 {
@@ -2559,10 +2714,13 @@ void ChannelStripComponent::openIoConfigPopup()
     auto* topLevel = getTopLevelComponent();
     if (topLevel == nullptr) topLevel = this;
 
-    // The panel borrows this strip's live combo children; owning show() adds
-    // them as its children and close() releases them back (re-parented on the
-    // next open). The DuskComboBox dropdowns render as nested in-window modals,
-    // so no CallOutBox-style "sticky while a native popup is up" guard is needed.
+    // The panel borrows this strip's live combo children; owning show() re-parents
+    // them into the panel. On close the panel is destroyed and the combos are left
+    // parentless (still owned as strip members, so they survive) — invisible until
+    // the next open re-parents them, which is what we want: compact mode shows the
+    // ioConfigButton, never the bare combos. The DuskComboBox dropdowns render as
+    // nested in-window modals, so no CallOutBox-style "sticky while a native popup
+    // is up" guard is needed.
     ioConfigModal.show (*topLevel, std::move (panel),
                         /*onDismiss*/ {}, /*dismissOnClickOutside*/ true,
                         /*dismissOnEscape*/ true, kEditorDimAlpha);
@@ -3856,7 +4014,9 @@ void ChannelStripComponent::showColourMenu()
     // Plugin slot menu items, only meaningful when a plugin is loaded.
     // Replace/Remove live here (rather than on the slot button itself) so
     // the slot button's primary click stays as a toggle for the editor.
-    if (pluginSlot.isLoaded() || engine.getChannelStrip (trackIndex).isNativeClapLoaded())
+    if (pluginSlot.isLoaded()
+        || engine.getChannelStrip (trackIndex).isNativeClapLoaded()
+        || engine.getChannelStrip (trackIndex).isNativeLv2Loaded())
     {
         menu.addSeparator();
         menu.addItem (1010, "Replace plugin...");
@@ -3984,10 +4144,11 @@ void ChannelStripComponent::onTrackModeChanged()
         if (willBeMidi != isInstrument)
             unloadPluginSlot();
     }
-    else if (engine.getChannelStrip (trackIndex).isNativeClapLoaded()
+    else if ((engine.getChannelStrip (trackIndex).isNativeClapLoaded()
+              || engine.getChannelStrip (trackIndex).isNativeLv2Loaded())
              && mode == (int) Track::Mode::Midi)
     {
-        // Native CLAP inserts are effects-only; a MIDI strip can't host one.
+        // Native inserts are effects-only; a MIDI strip can't host one.
         unloadPluginSlot();
     }
 
