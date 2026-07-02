@@ -605,10 +605,12 @@ if(DUSKSTUDIO_NATIVE_VST3)
     target_compile_options(dusk-vst3-hosting PRIVATE -w)
     target_link_libraries(dusk-vst3-hosting PUBLIC ${CMAKE_DL_LIBS})
     target_sources(DuskStudio PRIVATE
+        src/engine/vst3/NativeVst3Slot.cpp
         src/engine/vst3/Vst3Bundle.cpp
         src/engine/vst3/Vst3Editor.cpp
         src/engine/vst3/Vst3HostContext.cpp
         src/engine/vst3/Vst3Instance.cpp
+        src/engine/vst3/Vst3Scanner.cpp
         src/ui/Vst3PluginEditorComponent.cpp)
     target_link_libraries(DuskStudio PRIVATE dusk-vst3-hosting)
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_NATIVE_VST3=1)
