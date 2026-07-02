@@ -49,11 +49,15 @@ struct Lv2Editor::Impl
                            uint32_t protocol, const void* buffer)
     {
         auto* self = static_cast<Impl*> (c);
-        // ui:floatProtocol only — atom/event writes need a plugin-input atom
-        // routing that isn't wired yet. FromUi stamps MIDI Learn's last-touched.
-        if (protocol == 0 && bufferSize == sizeof (float) && self->instance != nullptr)
+        if (self->instance == nullptr) return;
+        // ui:floatProtocol writes a control port; ui:eventTransfer carries an
+        // atom (JUCE-built UIs send ALL their parameters as patch:Set events).
+        // FromUi/forward both stamp MIDI Learn's last-touched.
+        if (protocol == 0 && bufferSize == sizeof (float))
             self->instance->setControlPortValueFromUi (portIndex,
                                                        *static_cast<const float*> (buffer));
+        else if (protocol == self->instance->uiEventTransferUrid())
+            self->instance->forwardUiAtomEvent (buffer, bufferSize);
     }
 
     static uint32_t portIndex (SuilController c, const char* symbol)

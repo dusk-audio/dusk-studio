@@ -67,7 +67,8 @@ public:
     // Linux-only native CLAP host (DUSKSTUDIO_HAS_NATIVE_CLAP); stubbed elsewhere so the
     // bool/void API still compiles. getNativeClapSlot returns a clap type → Linux-only.
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
-    bool loadNativeClap   (int slotIdx, const juce::File& path, std::string& errorOut);
+    bool loadNativeClap   (int slotIdx, const juce::File& path, std::string& errorOut,
+                           const juce::String& pluginId = {});
     void unloadNativeClap (int slotIdx) noexcept;
     bool isNativeClapLoaded (int slotIdx) const noexcept { jassert (slotIdx >= 0 && slotIdx < kMaxPlugins); return nativeClapSlots[(size_t) slotIdx].isLoaded(); }
     clap::NativeClapSlot&       getNativeClapSlot (int idx)       noexcept { jassert (idx >= 0 && idx < kMaxPlugins); return nativeClapSlots[(size_t) idx]; }
@@ -77,7 +78,8 @@ public:
     // can run before the engine is prepared. Stash the saved {path, state}; prepare()
     // loads it once the SR is known. (When already prepared, the engine loads directly
     // and never calls this.)
-    void setPendingNativeClap (int slotIdx, const juce::File& path, std::vector<uint8_t> state) noexcept;
+    void setPendingNativeClap (int slotIdx, const juce::File& path, std::vector<uint8_t> state,
+                               const juce::String& pluginId = {}) noexcept;
 
     // True when a sample-rate re-prepare reload of a loaded native CLAP failed (the
     // slot is now empty). The UI reads this to report which lane lost its plugin.
@@ -92,12 +94,14 @@ public:
 
     // Native LV2 host path — same contract as the CLAP block above.
 #if DUSKSTUDIO_HAS_NATIVE_LV2
-    bool loadNativeLv2   (int slotIdx, const juce::File& path, std::string& errorOut);
+    bool loadNativeLv2   (int slotIdx, const juce::File& path, std::string& errorOut,
+                          const juce::String& pluginId = {});
     void unloadNativeLv2 (int slotIdx) noexcept;
     bool isNativeLv2Loaded (int slotIdx) const noexcept { jassert (slotIdx >= 0 && slotIdx < kMaxPlugins); return nativeLv2Slots[(size_t) slotIdx].isLoaded(); }
     lv2::NativeLv2Slot&       getNativeLv2Slot (int idx)       noexcept { jassert (idx >= 0 && idx < kMaxPlugins); return nativeLv2Slots[(size_t) idx]; }
     const lv2::NativeLv2Slot& getNativeLv2Slot (int idx) const noexcept { jassert (idx >= 0 && idx < kMaxPlugins); return nativeLv2Slots[(size_t) idx]; }
-    void setPendingNativeLv2 (int slotIdx, const juce::File& path, std::vector<uint8_t> state) noexcept;
+    void setPendingNativeLv2 (int slotIdx, const juce::File& path, std::vector<uint8_t> state,
+                              const juce::String& pluginId = {}) noexcept;
     bool nativeLv2ReloadFailed (int slotIdx) const noexcept { jassert (slotIdx >= 0 && slotIdx < kMaxPlugins); return lv2ReloadFailed[(size_t) slotIdx].load (std::memory_order_relaxed); }
     void markNativeLv2RestoreFailed (int slotIdx) noexcept { jassert (slotIdx >= 0 && slotIdx < kMaxPlugins); lv2ReloadFailed[(size_t) slotIdx].store (true, std::memory_order_relaxed); }
 #else
@@ -108,12 +112,14 @@ public:
 
     // Native VST3 host path — same contract as the CLAP block above.
 #if DUSKSTUDIO_HAS_NATIVE_VST3
-    bool loadNativeVst3   (int slotIdx, const juce::File& path, std::string& errorOut);
+    bool loadNativeVst3   (int slotIdx, const juce::File& path, std::string& errorOut,
+                           const juce::String& pluginId = {});
     void unloadNativeVst3 (int slotIdx) noexcept;
     bool isNativeVst3Loaded (int slotIdx) const noexcept { jassert (slotIdx >= 0 && slotIdx < kMaxPlugins); return nativeVst3Slots[(size_t) slotIdx].isLoaded(); }
     vst3::NativeVst3Slot&       getNativeVst3Slot (int idx)       noexcept { jassert (idx >= 0 && idx < kMaxPlugins); return nativeVst3Slots[(size_t) idx]; }
     const vst3::NativeVst3Slot& getNativeVst3Slot (int idx) const noexcept { jassert (idx >= 0 && idx < kMaxPlugins); return nativeVst3Slots[(size_t) idx]; }
-    void setPendingNativeVst3 (int slotIdx, const juce::File& path, std::vector<uint8_t> state) noexcept;
+    void setPendingNativeVst3 (int slotIdx, const juce::File& path, std::vector<uint8_t> state,
+                               const juce::String& pluginId = {}) noexcept;
     bool nativeVst3ReloadFailed (int slotIdx) const noexcept { jassert (slotIdx >= 0 && slotIdx < kMaxPlugins); return vst3ReloadFailed[(size_t) slotIdx].load (std::memory_order_relaxed); }
     void markNativeVst3RestoreFailed (int slotIdx) noexcept { jassert (slotIdx >= 0 && slotIdx < kMaxPlugins); vst3ReloadFailed[(size_t) slotIdx].store (true, std::memory_order_relaxed); }
 #else
@@ -121,6 +127,26 @@ public:
     void unloadNativeVst3 (int) noexcept {}
     bool nativeVst3ReloadFailed (int) const noexcept { return false; }
 #endif
+
+    // MIDI Learn: last-touched parameter of whichever host owns the slot
+    // (same precedence as the audio chain); -1 when empty or untouched.
+    int insertLastTouchedParamIndex (int slotIdx) const noexcept
+    {
+        jassert (slotIdx >= 0 && slotIdx < kMaxPlugins);
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+        if (isNativeClapLoaded (slotIdx))
+            return nativeClapSlots[(size_t) slotIdx].lastTouchedParamIndex();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+        if (isNativeLv2Loaded (slotIdx))
+            return nativeLv2Slots[(size_t) slotIdx].lastTouchedParamIndex();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+        if (isNativeVst3Loaded (slotIdx))
+            return nativeVst3Slots[(size_t) slotIdx].lastTouchedParamIndex();
+#endif
+        return slots[(size_t) slotIdx].getLastTouchedParamIndex();
+    }
 
     enum InsertMode : int { kInsertEmpty = 0, kInsertPlugin = 1, kInsertHardware = 2 };
 
@@ -147,18 +173,21 @@ private:
 
     // Pending session-restore load, consummated by prepare() (see setPendingNativeClap).
     std::array<juce::String,           kMaxPlugins> pendingClapPath;
+    std::array<juce::String,           kMaxPlugins> pendingClapPluginId;
     std::array<std::vector<uint8_t>,   kMaxPlugins> pendingClapState;
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_LV2
     std::array<lv2::NativeLv2Slot,   kMaxPlugins> nativeLv2Slots;
     std::array<std::atomic<bool>,    kMaxPlugins> lv2ReloadFailed {};
     std::array<juce::String,         kMaxPlugins> pendingLv2Path;
+    std::array<juce::String,         kMaxPlugins> pendingLv2PluginId;
     std::array<std::vector<uint8_t>, kMaxPlugins> pendingLv2State;
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_VST3
     std::array<vst3::NativeVst3Slot, kMaxPlugins> nativeVst3Slots;
     std::array<std::atomic<bool>,    kMaxPlugins> vst3ReloadFailed {};
     std::array<juce::String,         kMaxPlugins> pendingVst3Path;
+    std::array<juce::String,         kMaxPlugins> pendingVst3PluginId;
     std::array<std::vector<uint8_t>, kMaxPlugins> pendingVst3State;
 #endif
 

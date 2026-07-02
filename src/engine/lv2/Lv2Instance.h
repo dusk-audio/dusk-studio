@@ -22,14 +22,18 @@ class Lv2Bundle;
 class Lv2Instance : public hosting::INativeInstance
 {
 public:
-    // One plugin parameter = one input control port (snapshot at create()).
-    // Values are in the port's own units (min..max), like CLAP.
+    // One plugin parameter: an input control port, or a patch:writable float
+    // property (JUCE-built LV2s expose ONLY the latter). Values are in the
+    // parameter's own units (min..max), like CLAP. `id` is opaque — port index
+    // for control ports, a marked property token for patch properties; round-trip
+    // it through get/setParamValue, don't interpret it.
     struct ParamInfo
     {
-        uint32_t    id = 0;   // port index
+        uint32_t    id = 0;
         std::string name;
         float       minValue = 0.0f, maxValue = 1.0f, defaultValue = 0.0f;
-        bool        stepped = false;   // lv2:toggled / lv2:integer / lv2:enumeration
+        bool        stepped = false;           // toggled / integer / enumeration
+        bool        isPatchProperty = false;   // written as a patch:Set atom, not a port
     };
 
     Lv2Instance();
@@ -76,12 +80,23 @@ public:
     // Port index for the suil port-index-by-symbol callback; -1 when unknown.
     int portIndexForSymbol (const char* symbol) const noexcept;
 
-    // Parameters (message thread). Enumerated once at create(); id = port index.
+    // ui:eventTransfer writes from the plugin's own editor (message thread):
+    // forwarded onto the control atom input port so the DSP hears them without
+    // relying on the instance-access shortcut, and patch:Set events stamp the
+    // MIDI Learn last-touched tracker + the patch read-back shadow.
+    uint32_t uiEventTransferUrid() const noexcept;
+    void forwardUiAtomEvent (const void* atomData, uint32_t sizeBytes) noexcept;
+
+    // Parameters (message thread). Enumerated once at create().
     int              paramCount() const noexcept;
     const ParamInfo* paramInfo (int index) const noexcept;
-    bool getParamValue (uint32_t portIndex, double& out) const;
-    // Clamps to the port's range and stages through setControlPortValue.
-    void setParamValue (uint32_t portIndex, double value) noexcept;
+    // Patch properties read back the last host/UI-written value (the plugin's
+    // own patch:Put responses aren't parsed yet).
+    bool getParamValue (uint32_t paramId, double& out) const;
+    // Clamps to the parameter's range; control ports stage through
+    // setControlPortValue, patch properties as a patch:Set atom on the control
+    // atom port (applied at the top of the next process block).
+    void setParamValue (uint32_t paramId, double value) noexcept;
     // Index (into paramInfo order) of the port the user last moved in the
     // plugin's own UI; -1 when nothing has been touched.
     int lastTouchedParamIndex() const noexcept;

@@ -7,6 +7,10 @@
 
 #include "ipc/PluginScanProtocol.h"
 #include "PluginBackingCheck.h"
+#include "hosting/NativePluginId.h"
+#if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_VST3
+ #include "NativeScanRows.h"
+#endif
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
   #include "clap/ClapScanner.h"   // Linux-only native CLAP discovery
 #endif
@@ -373,27 +377,78 @@ int PluginManager::scanInstalledPlugins (
     return added;
 }
 
+#if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_VST3
+// One native bundle → picker rows through the sandbox child (loading a bundle
+// executes its code; a broken .so must kill the child, not the app). False =
+// couldn't spawn (caller falls back in-process); a spawned child that crashes
+// or times out yields no payload and the bundle is skipped — re-probed next
+// scan, but never fatal.
+bool PluginManager::scanNativeBundleSandboxed (const char* format, const juce::File& bundle,
+                                               juce::Array<juce::PluginDescription>& into) const
+{
+    const juce::File hostExe (getHostExecutablePath());
+    if (hostExe == juce::File() || ! hostExe.existsAsFile())
+        return false;
+
+    juce::ChildProcess proc;
+    const juce::StringArray args { hostExe.getFullPathName(), "--scan-native",
+                                   format, bundle.getFullPathName() };
+    if (! proc.start (args, juce::ChildProcess::wantStdOut))
+        return false;
+
+    juce::MemoryOutputStream captured;
+    char buf[8192];
+    const juce::uint32 startMs = juce::Time::getMillisecondCounter();
+    for (;;)
+    {
+        const int n = proc.readProcessOutput (buf, (int) sizeof buf);
+        if (n > 0) { captured.write (buf, (size_t) n); continue; }
+        if (! proc.isRunning())
+        {
+            int extra;
+            while ((extra = proc.readProcessOutput (buf, (int) sizeof buf)) > 0)
+                captured.write (buf, (size_t) extra);
+            break;
+        }
+        if (juce::Time::getMillisecondCounter() - startMs >= (juce::uint32) kScanTimeoutMs)
+        {
+            proc.kill();
+            proc.waitForProcessToFinish (200);   // reap the SIGKILLed child, no zombie
+            break;
+        }
+        juce::Thread::sleep (5);
+    }
+
+    const juce::String payload = scanproto::extractPayload (captured.toString());
+    if (payload.isEmpty())
+    {
+        // Crash / hang / no sentinels — treat as handled (skip the bundle) so the
+        // caller doesn't re-execute the crashing code in-process.
+        std::fprintf (stderr, "[Dusk Studio/scan] native %s bundle skipped (child failed): %s\n",
+                      format, bundle.getFullPathName().toRawUTF8());
+        return true;
+    }
+    juce::OwnedArray<juce::PluginDescription> found;
+    scanproto::parsePayload (payload, found);
+    for (const auto* d : found)
+        into.add (*d);
+    return true;
+}
+#endif
+
 void PluginManager::scanClapPlugins()
 {
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
-    // Discover OUTSIDE the lock (dlopens every bundle — slow), swap in under it.
-    // The cache write also stays outside so a picker open on the message thread
-    // can't stall behind this thread's file I/O.
-    const auto scanned = clap::ClapScanner::scan();
+    // Discover OUTSIDE the lock (executes every bundle's factory — slow), swap
+    // in under it. The cache write also stays outside so a picker open on the
+    // message thread can't stall behind this thread's file I/O.
+    juce::Array<juce::PluginDescription> fresh;
+    for (const auto& file : clap::ClapScanner::findClapFiles (clap::ClapScanner::defaultSearchPaths()))
+        if (! scanNativeBundleSandboxed ("clap", file, fresh))
+            nativescan::appendClapRows (file, fresh);   // no sandbox available — in-process
     {
         const juce::ScopedLock sl (nativeDescriptionsLock);
-        clapDescriptions.clearQuick();
-        for (const auto& s : scanned)
-        {
-            juce::PluginDescription d;
-            d.name             = juce::String (juce::CharPointer_UTF8 (s.desc.name.c_str()));
-            d.manufacturerName = juce::String (juce::CharPointer_UTF8 (s.desc.vendor.c_str()));
-            d.version          = juce::String (juce::CharPointer_UTF8 (s.desc.version.c_str()));
-            d.pluginFormatName = "CLAP";
-            d.fileOrIdentifier = s.bundlePath;
-            d.isInstrument     = s.desc.isInstrument();
-            clapDescriptions.add (d);
-        }
+        clapDescriptions.swapWith (fresh);
     }
     saveNativeCache (clapDescriptions, "clap-cache.xml", "CLAP_PLUGINS");
 #endif
@@ -424,7 +479,9 @@ void PluginManager::loadNativeCache (juce::Array<juce::PluginDescription>& into,
                 continue;
             // Drop entries whose bundle is gone since the cache was written, so
             // the picker never offers a removed plugin until a rescan rebuilds it.
-            const juce::File bundle (d.fileOrIdentifier);
+            // fileOrIdentifier carries "bundle\npluginId" — check the bundle half.
+            const juce::File bundle (
+                hosting::splitNativeIdentifier (d.fileOrIdentifier).bundlePath);
             if (bundleIsDirectory ? bundle.isDirectory() : bundle.exists())
                 fresh.add (d);
         }
@@ -479,7 +536,8 @@ void PluginManager::scanLv2Plugins()
             juce::PluginDescription d;
             d.name             = juce::String (juce::CharPointer_UTF8 (s.desc.name.c_str()));
             d.pluginFormatName = "LV2-Native";
-            d.fileOrIdentifier = s.bundlePath;
+            d.fileOrIdentifier = hosting::joinNativeIdentifier (
+                s.bundlePath, juce::String (juce::CharPointer_UTF8 (s.desc.uri.c_str())));
             d.isInstrument     = false;
             lv2Descriptions.add (d);
         }
@@ -497,25 +555,16 @@ juce::Array<juce::PluginDescription> PluginManager::getLv2EffectDescriptions() c
 void PluginManager::scanVst3NativePlugins()
 {
 #if DUSKSTUDIO_HAS_NATIVE_VST3
-    const auto scanned = vst3::Vst3Scanner::scan();   // dlopens every module — outside the lock
+    juce::Array<juce::PluginDescription> fresh;
+    for (const auto& file : vst3::Vst3Scanner::findVst3Bundles (vst3::Vst3Scanner::defaultSearchPaths()))
+        if (! scanNativeBundleSandboxed ("vst3", file, fresh))
+            nativescan::appendVst3Rows (file, fresh);   // no sandbox available — in-process
+    // Only audio effects for now — the native VST3 host is an insert host;
+    // instruments stay with the JUCE VST3 format.
+    fresh.removeIf ([] (const juce::PluginDescription& d) { return d.isInstrument; });
     {
         const juce::ScopedLock sl (nativeDescriptionsLock);
-        vst3NativeDescriptions.clearQuick();
-        for (const auto& s : scanned)
-        {
-            // Only audio effects for now — the native VST3 host is an insert host;
-            // instruments stay with the JUCE VST3 format.
-            if (s.desc.isInstrument)
-                continue;
-            juce::PluginDescription d;
-            d.name             = juce::String (juce::CharPointer_UTF8 (s.desc.name.c_str()));
-            d.manufacturerName = juce::String (juce::CharPointer_UTF8 (s.desc.vendor.c_str()));
-            d.version          = juce::String (juce::CharPointer_UTF8 (s.desc.version.c_str()));
-            d.pluginFormatName = "VST3-Native";
-            d.fileOrIdentifier = s.bundlePath;
-            d.isInstrument     = false;
-            vst3NativeDescriptions.add (d);
-        }
+        vst3NativeDescriptions.swapWith (fresh);
     }
     saveNativeCache (vst3NativeDescriptions, "vst3-native-cache.xml", "VST3_NATIVE_PLUGINS");
 #endif

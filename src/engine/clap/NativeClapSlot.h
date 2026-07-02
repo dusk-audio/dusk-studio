@@ -12,12 +12,17 @@ struct ClapSlotTraits
     using Instance = ClapInstance;
     static constexpr const char* bundleNoun = "bundle";
 
-    static bool pickPlugin (const ClapBundle& b, std::string& idOut, std::string& errorOut)
+    static bool pickPlugin (const ClapBundle& b, const std::string& requestedId,
+                            std::string& idOut, std::string& errorOut)
     {
         if (b.plugins().empty())
         { errorOut = "no plugins in bundle"; return false; }
-        idOut = b.plugins().front().id;
-        return true;
+        if (requestedId.empty())
+        { idOut = b.plugins().front().id; return true; }
+        for (const auto& d : b.plugins())
+            if (d.id == requestedId) { idOut = requestedId; return true; }
+        errorOut = "bundle no longer advertises plugin '" + requestedId + "'";
+        return false;
     }
 };
 

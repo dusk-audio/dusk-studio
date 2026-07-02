@@ -122,6 +122,13 @@ private:
     // rewritten after each scan. `bundleIsDirectory` selects the staleness check
     // (LV2 bundles are directories; CLAP/VST3 accept files or bundle dirs).
     juce::File nativeCacheFile (const char* fileName) const;
+#if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_VST3
+    // Enumerate one native bundle via the sandbox child (--scan-native). False =
+    // child couldn't spawn (caller falls back in-process); crash/timeout inside
+    // the child skips the bundle and still returns true.
+    bool scanNativeBundleSandboxed (const char* format, const juce::File& bundle,
+                                    juce::Array<juce::PluginDescription>& into) const;
+#endif
     void loadNativeCache (juce::Array<juce::PluginDescription>& into,
                           const char* fileName, bool bundleIsDirectory);
     void saveNativeCache (const juce::Array<juce::PluginDescription>& from,

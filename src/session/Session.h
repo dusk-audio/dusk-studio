@@ -808,10 +808,13 @@ struct Track
     // several are somehow set). Always present so non-Linux builds round-trip
     // the fields untouched.
     juce::String nativeClapPath;
+    juce::String nativeClapPluginId;   // which plugin inside the bundle; empty = first effect
     juce::String nativeClapStateBase64;
     juce::String nativeLv2Path;
+    juce::String nativeLv2PluginId;
     juce::String nativeLv2StateBase64;
     juce::String nativeVst3Path;
+    juce::String nativeVst3PluginId;
     juce::String nativeVst3StateBase64;
 
     // Track freeze (MIDI tracks): the instrument + pre-fader strip is rendered
@@ -971,10 +974,13 @@ struct AuxLane
     // somehow set). Always present so non-Linux builds round-trip the fields
     // untouched.
     std::array<juce::String, AuxLaneParams::kMaxLanePlugins> nativeClapPath;
+    std::array<juce::String, AuxLaneParams::kMaxLanePlugins> nativeClapPluginId;
     std::array<juce::String, AuxLaneParams::kMaxLanePlugins> nativeClapStateBase64;
     std::array<juce::String, AuxLaneParams::kMaxLanePlugins> nativeLv2Path;
+    std::array<juce::String, AuxLaneParams::kMaxLanePlugins> nativeLv2PluginId;
     std::array<juce::String, AuxLaneParams::kMaxLanePlugins> nativeLv2StateBase64;
     std::array<juce::String, AuxLaneParams::kMaxLanePlugins> nativeVst3Path;
+    std::array<juce::String, AuxLaneParams::kMaxLanePlugins> nativeVst3PluginId;
     std::array<juce::String, AuxLaneParams::kMaxLanePlugins> nativeVst3StateBase64;
 
     std::array<HardwareInsertParams, AuxLaneParams::kMaxLanePlugins> hardwareInserts;

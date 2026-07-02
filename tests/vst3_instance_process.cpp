@@ -8,7 +8,10 @@
 
 #include "engine/hosting/InsertAdapter.h"
 #include "engine/vst3/Vst3Bundle.h"
+#include "engine/vst3/Vst3HostContext.h"
 #include "engine/vst3/Vst3Instance.h"
+
+#include <pluginterfaces/vst/ivsteditcontroller.h>
 
 #include <algorithm>
 #include <cmath>
@@ -158,6 +161,27 @@ TEST_CASE ("Vst3Instance instantiates + processes a VST3 effect via InsertAdapte
         std::string text;
         if (inst.paramValueToText (target->id, 0.25, text))
             REQUIRE_FALSE (text.empty());
+    }
+
+    SECTION ("restartComponent: latency flag consumes once, param-info refreshes")
+    {
+        // Drive the handler exactly as a plugin would.
+        auto* handler = static_cast<Steinberg::Vst::IComponentHandler*> (
+            inst.getHost().componentHandler());
+        REQUIRE (handler != nullptr);
+
+        REQUIRE_FALSE (inst.consumeLatencyChanged());
+        handler->restartComponent (Steinberg::Vst::RestartFlags::kLatencyChanged);
+        REQUIRE (inst.consumeLatencyChanged());
+        REQUIRE_FALSE (inst.consumeLatencyChanged());
+
+        const int before = inst.paramCount();
+        REQUIRE (before > 0);
+        handler->restartComponent (Steinberg::Vst::RestartFlags::kParamTitlesChanged);
+        inst.refreshParamInfoIfChanged();
+        REQUIRE (inst.paramCount() == before);   // rebuilt from the same controller
+        REQUIRE (inst.paramInfo (0) != nullptr);
+        REQUIRE_FALSE (inst.paramInfo (0)->name.empty());
     }
 
     SECTION ("reactivate at a new rate keeps processing")

@@ -136,12 +136,14 @@ TEST_CASE ("SessionSerializer round-trips an aux native-CLAP slot", "[session][s
     Session a;
     auto& lane = a.auxLane (1);
     lane.nativeClapPath[0]        = "/home/user/.clap/DuskVerb.clap";
+    lane.nativeClapPluginId[0]    = "com.dusk.duskverb";
     lane.nativeClapStateBase64[0] = "Q0xBUFNUQVRFYmxvYg==";
     REQUIRE (SessionSerializer::save (a, target));
 
     Session b;
     REQUIRE (SessionSerializer::load (b, target));
     REQUIRE (b.auxLane (1).nativeClapPath[0]        == "/home/user/.clap/DuskVerb.clap");
+    REQUIRE (b.auxLane (1).nativeClapPluginId[0]    == "com.dusk.duskverb");
     REQUIRE (b.auxLane (1).nativeClapStateBase64[0] == "Q0xBUFNUQVRFYmxvYg==");
 
     // A lane with no native CLAP stays empty (keys omitted on write).
@@ -162,6 +164,7 @@ TEST_CASE ("SessionSerializer round-trips native-LV2 slots", "[session][serializ
 
     Session a;
     a.track (2).nativeLv2Path         = "/home/user/.lv2/SilkVerb.lv2";
+    a.track (2).nativeLv2PluginId     = "https://dusk.audio/silkverb";
     a.track (2).nativeLv2StateBase64  = "TFYyU1RBVEVibG9i";
     auto& lane = a.auxLane (1);
     lane.nativeLv2Path[0]        = "/usr/lib64/lv2/a-comp.lv2";
@@ -171,6 +174,7 @@ TEST_CASE ("SessionSerializer round-trips native-LV2 slots", "[session][serializ
     Session b;
     REQUIRE (SessionSerializer::load (b, target));
     REQUIRE (b.track (2).nativeLv2Path        == "/home/user/.lv2/SilkVerb.lv2");
+    REQUIRE (b.track (2).nativeLv2PluginId    == "https://dusk.audio/silkverb");
     REQUIRE (b.track (2).nativeLv2StateBase64 == "TFYyU1RBVEVibG9i");
     REQUIRE (b.auxLane (1).nativeLv2Path[0]        == "/usr/lib64/lv2/a-comp.lv2");
     REQUIRE (b.auxLane (1).nativeLv2StateBase64[0] == "TFYyU1RBVEVibG9i");
@@ -193,6 +197,7 @@ TEST_CASE ("SessionSerializer round-trips native-VST3 slots", "[session][seriali
 
     Session a;
     a.track (2).nativeVst3Path        = "/home/user/.vst3/SilkVerb.vst3";
+    a.track (2).nativeVst3PluginId    = "ABCDEF0123456789ABCDEF0123456789";
     a.track (2).nativeVst3StateBase64 = "VlNUM1NUQVRFYmxvYg==";
     auto& lane = a.auxLane (1);
     lane.nativeVst3Path[0]        = "/usr/lib/vst3/DuskVerb.vst3";
@@ -202,6 +207,7 @@ TEST_CASE ("SessionSerializer round-trips native-VST3 slots", "[session][seriali
     Session b;
     REQUIRE (SessionSerializer::load (b, target));
     REQUIRE (b.track (2).nativeVst3Path        == "/home/user/.vst3/SilkVerb.vst3");
+    REQUIRE (b.track (2).nativeVst3PluginId    == "ABCDEF0123456789ABCDEF0123456789");
     REQUIRE (b.track (2).nativeVst3StateBase64 == "VlNUM1NUQVRFYmxvYg==");
     REQUIRE (b.auxLane (1).nativeVst3Path[0]        == "/usr/lib/vst3/DuskVerb.vst3");
     REQUIRE (b.auxLane (1).nativeVst3StateBase64[0] == "VlNUM1NUQVRFYmxvYg==");

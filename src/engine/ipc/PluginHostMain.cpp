@@ -33,6 +33,9 @@
 
 #include "PluginIpc.h"
 #include "PluginScanProtocol.h"
+#if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_VST3
+ #include "../NativeScanRows.h"
+#endif
 #include "../JuceCompat.h"
 #include "platform/IpcChannel.h"
 #include "platform/IpcShm.h"
@@ -898,6 +901,43 @@ int runIpcHost (int argc, const char* const* argv) noexcept
 // code, which runs BEFORE we print kScanPayloadBegin, so the parent's
 // extract-between-sentinels parse skips it.
 //
+#if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_VST3
+// Sandboxed native-format discovery: load ONE bundle through the native host's
+// own loader and print the resulting picker rows between the scan sentinels.
+// Same crash-isolation contract as --scan: a broken .so kills this process,
+// the parent times out / sees no payload and skips the bundle.
+int runScanNative (int argc, const char* const* argv) noexcept
+{
+    int idx = -1;
+    for (int i = 1; i < argc; ++i)
+        if (std::strcmp (argv[i], "--scan-native") == 0) { idx = i; break; }
+    if (idx < 0 || idx + 2 >= argc)
+    {
+        std::fprintf (stderr, "[dusk-studio-plugin-host] --scan-native needs <clap|vst3> <bundle>\n");
+        return 64;
+    }
+    const juce::String format { juce::CharPointer_UTF8 (argv[idx + 1]) };
+    const juce::File   bundle { juce::String (juce::CharPointer_UTF8 (argv[idx + 2])) };
+
+    juce::ScopedJuceInitialiser_GUI juceInit;
+
+    juce::Array<juce::PluginDescription> rows;
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+    if (format == "clap") duskstudio::nativescan::appendClapRows (bundle, rows);
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+    if (format == "vst3") duskstudio::nativescan::appendVst3Rows (bundle, rows);
+#endif
+
+    juce::OwnedArray<juce::PluginDescription> found;
+    for (const auto& r : rows)
+        found.add (new juce::PluginDescription (r));
+    std::fputs (duskstudio::scanproto::makePayload (found).toRawUTF8(), stdout);
+    std::fflush (stdout);
+    return 0;
+}
+#endif // native formats
+
 int runScan (int argc, const char* const* argv) noexcept
 {
     int scanIdx = -1;
@@ -961,6 +1001,9 @@ int main (int argc, char** argv)
         if (std::strcmp (argv[i], "--ipc-stub") == 0) ipcStub = true;
         if (std::strcmp (argv[i], "--ipc-host") == 0) ipcHost = true;
         if (std::strcmp (argv[i], "--scan")     == 0) scan    = true;
+#if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_VST3
+        if (std::strcmp (argv[i], "--scan-native") == 0) return runScanNative (argc, argv);
+#endif
     }
 
     if (scan)    return runScan (argc, argv);

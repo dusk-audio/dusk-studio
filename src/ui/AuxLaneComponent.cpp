@@ -324,6 +324,7 @@ AuxLaneComponent::AuxLaneComponent (AuxLane& l, AuxLaneStrip& s, int idx,
         s.openOrAddButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff5a4880));
         s.openOrAddButton.setColour (juce::TextButton::textColourOffId, juce::Colour (0xff9080c0));
         s.openOrAddButton.setColour (juce::TextButton::textColourOnId,  juce::Colours::white);
+        s.openOrAddButton.addMouseListener (this, false);   // right-click → MIDI Learn
         s.openOrAddButton.onClick = [this, i]
         {
             auto& slotRef = strip.getPluginSlot (i);
@@ -790,28 +791,28 @@ void AuxLaneComponent::openPickerForSlot (int slotIdx)
     const auto cursor = juce::Desktop::getMousePosition();
     juce::Component::SafePointer<AuxLaneComponent> safe (this);
     // Native CLAP route — Linux-only; empty elsewhere so the picker shows no CLAP rows.
-    std::function<void (const juce::File&)> onClap;
+    std::function<void (const juce::File&, const juce::String&)> onClap;
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
-    onClap = [safe, slotIdx] (const juce::File& clapFile)
+    onClap = [safe, slotIdx] (const juce::File& clapFile, const juce::String& id)
     {
         if (auto* self = safe.getComponent())
-            self->loadNativeClapForSlot (slotIdx, clapFile);
+            self->loadNativeClapForSlot (slotIdx, clapFile, id);
     };
 #endif
-    std::function<void (const juce::File&)> onLv2;
+    std::function<void (const juce::File&, const juce::String&)> onLv2;
 #if DUSKSTUDIO_HAS_NATIVE_LV2
-    onLv2 = [safe, slotIdx] (const juce::File& bundleDir)
+    onLv2 = [safe, slotIdx] (const juce::File& bundleDir, const juce::String& id)
     {
         if (auto* self = safe.getComponent())
-            self->loadNativeLv2ForSlot (slotIdx, bundleDir);
+            self->loadNativeLv2ForSlot (slotIdx, bundleDir, id);
     };
 #endif
-    std::function<void (const juce::File&)> onVst3;
+    std::function<void (const juce::File&, const juce::String&)> onVst3;
 #if DUSKSTUDIO_HAS_NATIVE_VST3
-    onVst3 = [safe, slotIdx] (const juce::File& vst3File)
+    onVst3 = [safe, slotIdx] (const juce::File& vst3File, const juce::String& id)
     {
         if (auto* self = safe.getComponent())
-            self->loadNativeVst3ForSlot (slotIdx, vst3File);
+            self->loadNativeVst3ForSlot (slotIdx, vst3File, id);
     };
 #endif
     pluginpicker::openPickerMenu (strip.getPluginSlot (slotIdx),
@@ -842,10 +843,13 @@ void AuxLaneComponent::openPickerForSlot (int slotIdx)
                                                 self->strip.unloadNativeVst3 (slotIdx);
                                                 self->engine.resumeProcessing();
                                                 self->lane.nativeClapPath[(size_t) slotIdx].clear();
+                                                self->lane.nativeClapPluginId[(size_t) slotIdx].clear();
                                                 self->lane.nativeClapStateBase64[(size_t) slotIdx].clear();
                                                 self->lane.nativeLv2Path[(size_t) slotIdx].clear();
+                                                self->lane.nativeLv2PluginId[(size_t) slotIdx].clear();
                                                 self->lane.nativeLv2StateBase64[(size_t) slotIdx].clear();
                                                 self->lane.nativeVst3Path[(size_t) slotIdx].clear();
+                                                self->lane.nativeVst3PluginId[(size_t) slotIdx].clear();
                                                 self->lane.nativeVst3StateBase64[(size_t) slotIdx].clear();
                                             }
 
@@ -917,10 +921,13 @@ void AuxLaneComponent::unloadSlot (int slotIdx)
             self->strip.unloadNativeVst3 (slotIdx);
             self->engine.resumeProcessing();
             self->lane.nativeClapPath[(size_t) slotIdx].clear();
+            self->lane.nativeClapPluginId[(size_t) slotIdx].clear();
             self->lane.nativeClapStateBase64[(size_t) slotIdx].clear();
             self->lane.nativeLv2Path[(size_t) slotIdx].clear();
+            self->lane.nativeLv2PluginId[(size_t) slotIdx].clear();
             self->lane.nativeLv2StateBase64[(size_t) slotIdx].clear();
             self->lane.nativeVst3Path[(size_t) slotIdx].clear();
+            self->lane.nativeVst3PluginId[(size_t) slotIdx].clear();
             self->lane.nativeVst3StateBase64[(size_t) slotIdx].clear();
         }
         // Clear the model's enabled flag so any consumer that polls
@@ -980,7 +987,8 @@ void AuxLaneComponent::detachEditorForSlot (int slotIdx)
 }
 
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
-void AuxLaneComponent::loadNativeClapForSlot (int slotIdx, const juce::File& clapFile)
+void AuxLaneComponent::loadNativeClapForSlot (int slotIdx, const juce::File& clapFile,
+                                              const juce::String& pluginId)
 {
     if (slotIdx < 0 || slotIdx >= AuxLaneParams::kMaxLanePlugins) return;
 
@@ -1001,7 +1009,7 @@ void AuxLaneComponent::loadNativeClapForSlot (int slotIdx, const juce::File& cla
     bool ok = false;
     engine.suspendProcessing();
     strip.getPluginSlot (slotIdx).unload();   // ensure no JUCE plugin lingers
-    ok = strip.loadNativeClap (slotIdx, clapFile, err);
+    ok = strip.loadNativeClap (slotIdx, clapFile, err, pluginId);
     if (ok)
         strip.insertMode[(size_t) slotIdx].store (AuxLaneStrip::kInsertPlugin,
                                                    std::memory_order_release);
@@ -1015,17 +1023,21 @@ void AuxLaneComponent::loadNativeClapForSlot (int slotIdx, const juce::File& cla
         // Slot is empty now — drop any persisted refs (incl. a previous plugin's state
         // blob) so a save doesn't carry a stale path/state for a slot the user sees empty.
         lane.nativeClapPath[(size_t) slotIdx].clear();
+        lane.nativeClapPluginId[(size_t) slotIdx].clear();
         lane.nativeClapStateBase64[(size_t) slotIdx].clear();
         return;
     }
-    lane.nativeClapPath[(size_t) slotIdx] = clapFile.getFullPathName();
+    lane.nativeClapPath[(size_t) slotIdx]     = clapFile.getFullPathName();
+    lane.nativeClapPluginId[(size_t) slotIdx] = strip.getNativeClapSlot (slotIdx).getPluginId();
     // Fresh plugin: don't inherit the previous slot occupant's state blob. The next
     // save re-captures this plugin's real state.
     lane.nativeClapStateBase64[(size_t) slotIdx].clear();
     // The load evicted the other native hosts in this slot — drop their refs too.
     lane.nativeLv2Path[(size_t) slotIdx].clear();
+    lane.nativeLv2PluginId[(size_t) slotIdx].clear();
     lane.nativeLv2StateBase64[(size_t) slotIdx].clear();
     lane.nativeVst3Path[(size_t) slotIdx].clear();
+    lane.nativeVst3PluginId[(size_t) slotIdx].clear();
     lane.nativeVst3StateBase64[(size_t) slotIdx].clear();
     refreshSlotControls (slotIdx);
     rebuildSlots();
@@ -1033,7 +1045,8 @@ void AuxLaneComponent::loadNativeClapForSlot (int slotIdx, const juce::File& cla
 #endif // DUSKSTUDIO_HAS_NATIVE_CLAP
 
 #if DUSKSTUDIO_HAS_NATIVE_LV2
-void AuxLaneComponent::loadNativeLv2ForSlot (int slotIdx, const juce::File& bundleDir)
+void AuxLaneComponent::loadNativeLv2ForSlot (int slotIdx, const juce::File& bundleDir,
+                                             const juce::String& pluginId)
 {
     if (slotIdx < 0 || slotIdx >= AuxLaneParams::kMaxLanePlugins) return;
 
@@ -1050,7 +1063,7 @@ void AuxLaneComponent::loadNativeLv2ForSlot (int slotIdx, const juce::File& bund
     std::string err;
     bool ok = false;
     engine.suspendProcessing();
-    ok = strip.loadNativeLv2 (slotIdx, bundleDir, err);
+    ok = strip.loadNativeLv2 (slotIdx, bundleDir, err, pluginId);
     if (ok)
         strip.insertMode[(size_t) slotIdx].store (AuxLaneStrip::kInsertPlugin,
                                                    std::memory_order_release);
@@ -1062,14 +1075,18 @@ void AuxLaneComponent::loadNativeLv2ForSlot (int slotIdx, const juce::File& bund
         showDuskAlert (*this, "Couldn't load LV2 plugin",
                        bundleDir.getFileNameWithoutExtension() + ":\n" + juce::String (err));
         lane.nativeLv2Path[(size_t) slotIdx].clear();
+        lane.nativeLv2PluginId[(size_t) slotIdx].clear();
         lane.nativeLv2StateBase64[(size_t) slotIdx].clear();
         return;
     }
-    lane.nativeLv2Path[(size_t) slotIdx] = bundleDir.getFullPathName();
+    lane.nativeLv2Path[(size_t) slotIdx]     = bundleDir.getFullPathName();
+    lane.nativeLv2PluginId[(size_t) slotIdx] = strip.getNativeLv2Slot (slotIdx).getPluginId();
     lane.nativeLv2StateBase64[(size_t) slotIdx].clear();
     lane.nativeClapPath[(size_t) slotIdx].clear();
+    lane.nativeClapPluginId[(size_t) slotIdx].clear();
     lane.nativeClapStateBase64[(size_t) slotIdx].clear();
     lane.nativeVst3Path[(size_t) slotIdx].clear();
+    lane.nativeVst3PluginId[(size_t) slotIdx].clear();
     lane.nativeVst3StateBase64[(size_t) slotIdx].clear();
     refreshSlotControls (slotIdx);
     rebuildSlots();
@@ -1077,7 +1094,8 @@ void AuxLaneComponent::loadNativeLv2ForSlot (int slotIdx, const juce::File& bund
 #endif // DUSKSTUDIO_HAS_NATIVE_LV2
 
 #if DUSKSTUDIO_HAS_NATIVE_VST3
-void AuxLaneComponent::loadNativeVst3ForSlot (int slotIdx, const juce::File& vst3File)
+void AuxLaneComponent::loadNativeVst3ForSlot (int slotIdx, const juce::File& vst3File,
+                                              const juce::String& pluginId)
 {
     if (slotIdx < 0 || slotIdx >= AuxLaneParams::kMaxLanePlugins) return;
 
@@ -1094,7 +1112,7 @@ void AuxLaneComponent::loadNativeVst3ForSlot (int slotIdx, const juce::File& vst
     std::string err;
     bool ok = false;
     engine.suspendProcessing();
-    ok = strip.loadNativeVst3 (slotIdx, vst3File, err);
+    ok = strip.loadNativeVst3 (slotIdx, vst3File, err, pluginId);
     if (ok)
         strip.insertMode[(size_t) slotIdx].store (AuxLaneStrip::kInsertPlugin,
                                                    std::memory_order_release);
@@ -1106,14 +1124,18 @@ void AuxLaneComponent::loadNativeVst3ForSlot (int slotIdx, const juce::File& vst
         showDuskAlert (*this, "Couldn't load VST3 plugin",
                        vst3File.getFileNameWithoutExtension() + ":\n" + juce::String (err));
         lane.nativeVst3Path[(size_t) slotIdx].clear();
+        lane.nativeVst3PluginId[(size_t) slotIdx].clear();
         lane.nativeVst3StateBase64[(size_t) slotIdx].clear();
         return;
     }
-    lane.nativeVst3Path[(size_t) slotIdx] = vst3File.getFullPathName();
+    lane.nativeVst3Path[(size_t) slotIdx]     = vst3File.getFullPathName();
+    lane.nativeVst3PluginId[(size_t) slotIdx] = strip.getNativeVst3Slot (slotIdx).getPluginId();
     lane.nativeVst3StateBase64[(size_t) slotIdx].clear();
     lane.nativeClapPath[(size_t) slotIdx].clear();
+    lane.nativeClapPluginId[(size_t) slotIdx].clear();
     lane.nativeClapStateBase64[(size_t) slotIdx].clear();
     lane.nativeLv2Path[(size_t) slotIdx].clear();
+    lane.nativeLv2PluginId[(size_t) slotIdx].clear();
     lane.nativeLv2StateBase64[(size_t) slotIdx].clear();
     refreshSlotControls (slotIdx);
     rebuildSlots();
@@ -1670,6 +1692,23 @@ void AuxLaneComponent::mouseDown (const juce::MouseEvent& e)
     {
         midilearn::showLearnMenu (muteButton, session,
                                     MidiBindingTarget::AuxLaneMute, laneIndex);
+        return;
+    }
+    // Slot name button → learn the plugin parameter the user last moved in the
+    // slot's editor. Only offered while some host has a plugin loaded (the
+    // resolve site reads that host's last-touched tracker when the MIDI source
+    // arrives, so an untouched plugin just cancels the learn).
+    for (int i = 0; i < AuxLaneParams::kMaxLanePlugins; ++i)
+    {
+        auto& ui = slots[(size_t) i];
+        if (e.eventComponent != &ui.openOrAddButton) continue;
+        const bool loaded = strip.getPluginSlot (i).isLoaded()
+                         || strip.isNativeClapLoaded (i)
+                         || strip.isNativeLv2Loaded (i)
+                         || strip.isNativeVst3Loaded (i);
+        if (loaded)
+            midilearn::showLearnMenu (ui.openOrAddButton, session,
+                                        MidiBindingTarget::AuxPluginParam, laneIndex);
         return;
     }
 }

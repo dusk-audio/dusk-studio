@@ -125,6 +125,56 @@ public:
             strip.getNativeVst3Slot().drainQueuedParamBindings();
 #endif
         }
+        for (int a = 0; a < Session::kNumAuxLanes; ++a)
+        {
+            auto& lane = engine.getAuxLaneStrip (a);
+            for (int s = 0; s < AuxLaneParams::kMaxLanePlugins; ++s)
+            {
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+                lane.getNativeClapSlot (s).drainQueuedParamBindings();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+                lane.getNativeLv2Slot (s).drainQueuedParamBindings();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+                lane.getNativeVst3Slot (s).drainQueuedParamBindings();
+#endif
+            }
+        }
+
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+        // A plugin that signalled kLatencyChanged only reports the new value
+        // across a setActive cycle: reactivate the flagged slots under one
+        // engine fence, then let PDC re-align the mixer. Aux slots join the
+        // sweep for their instances' sake even though aux latency doesn't
+        // feed PDC.
+        bool anyLatencyChanged = false;
+        const double sr    = engine.getCurrentSampleRate();
+        const int    block = engine.getCurrentBlockSize();
+        if (sr > 0.0 && block > 0)
+        {
+            auto cycle = [&] (auto& slot)
+            {
+                if (auto* inst = slot.getInstance())
+                    inst->refreshParamInfoIfChanged();
+                if (! slot.consumeLatencyChanged() || ! slot.isLoaded()) return;
+                if (! anyLatencyChanged) engine.suspendProcessing();
+                anyLatencyChanged = true;
+                std::string err;
+                slot.reactivate (sr, block, err);
+            };
+            for (int t = 0; t < Session::kNumTracks; ++t)
+                cycle (engine.getChannelStrip (t).getNativeVst3Slot());
+            for (int a = 0; a < Session::kNumAuxLanes; ++a)
+                for (int s = 0; s < AuxLaneParams::kMaxLanePlugins; ++s)
+                    cycle (engine.getAuxLaneStrip (a).getNativeVst3Slot (s));
+            if (anyLatencyChanged)
+            {
+                engine.resumeProcessing();
+                engine.recomputePdc();
+            }
+        }
+#endif
     }
 private:
     AudioEngine& engine;
@@ -1356,7 +1406,8 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
         if (strip.isNativeClapLoaded())
         {
-            track.nativeClapPath = strip.getNativeClapSlot().getPath();
+            track.nativeClapPath     = strip.getNativeClapSlot().getPath();
+            track.nativeClapPluginId = strip.getNativeClapSlot().getPluginId();
             std::vector<uint8_t> blob;
             if (strip.getNativeClapSlot().saveState (blob) && ! blob.empty())
                 track.nativeClapStateBase64 = juce::Base64::toBase64 (blob.data(), blob.size());
@@ -1371,13 +1422,15 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
             // reference survives to reconnect on a future launch — mirrors how an
             // offline JUCE plugin preserves its descXml.
             track.nativeClapPath.clear();
+            track.nativeClapPluginId.clear();
             track.nativeClapStateBase64.clear();
         }
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_LV2
         if (strip.isNativeLv2Loaded())
         {
-            track.nativeLv2Path = strip.getNativeLv2Slot().getPath();
+            track.nativeLv2Path     = strip.getNativeLv2Slot().getPath();
+            track.nativeLv2PluginId = strip.getNativeLv2Slot().getPluginId();
             std::vector<uint8_t> blob;
             // Preserve the carried blob when a plugin can't serialize (no state
             // extension / save failure) — don't wipe it on a save round-trip.
@@ -1387,13 +1440,15 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
         else if (! strip.nativeLv2ReloadFailed())
         {
             track.nativeLv2Path.clear();
+            track.nativeLv2PluginId.clear();
             track.nativeLv2StateBase64.clear();
         }
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_VST3
         if (strip.isNativeVst3Loaded())
         {
-            track.nativeVst3Path = strip.getNativeVst3Slot().getPath();
+            track.nativeVst3Path     = strip.getNativeVst3Slot().getPath();
+            track.nativeVst3PluginId = strip.getNativeVst3Slot().getPluginId();
             std::vector<uint8_t> blob;
             // See the LV2 block above: preserve the carried blob when the plugin
             // can't serialize.
@@ -1403,6 +1458,7 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
         else if (! strip.nativeVst3ReloadFailed())
         {
             track.nativeVst3Path.clear();
+            track.nativeVst3PluginId.clear();
             track.nativeVst3StateBase64.clear();
         }
 #endif
@@ -1422,7 +1478,8 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
             if (strip.isNativeClapLoaded (s))
             {
-                lane.nativeClapPath[(size_t) s] = strip.getNativeClapSlot (s).getPath();
+                lane.nativeClapPath[(size_t) s]     = strip.getNativeClapSlot (s).getPath();
+                lane.nativeClapPluginId[(size_t) s] = strip.getNativeClapSlot (s).getPluginId();
                 std::vector<uint8_t> blob;
                 if (strip.getNativeClapSlot (s).saveState (blob) && ! blob.empty())
                     lane.nativeClapStateBase64[(size_t) s] = juce::Base64::toBase64 (blob.data(), blob.size());
@@ -1435,13 +1492,15 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
                 // failed (path preserved to reconnect later); clear only a genuinely
                 // empty / user-removed slot.
                 lane.nativeClapPath[(size_t) s].clear();
+                lane.nativeClapPluginId[(size_t) s].clear();
                 lane.nativeClapStateBase64[(size_t) s].clear();
             }
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_LV2
             if (strip.isNativeLv2Loaded (s))
             {
-                lane.nativeLv2Path[(size_t) s] = strip.getNativeLv2Slot (s).getPath();
+                lane.nativeLv2Path[(size_t) s]     = strip.getNativeLv2Slot (s).getPath();
+                lane.nativeLv2PluginId[(size_t) s] = strip.getNativeLv2Slot (s).getPluginId();
                 std::vector<uint8_t> blob;
                 // See the track block above: preserve the carried blob when the
                 // plugin can't serialize.
@@ -1451,13 +1510,15 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
             else if (! strip.nativeLv2ReloadFailed (s))
             {
                 lane.nativeLv2Path[(size_t) s].clear();
+                lane.nativeLv2PluginId[(size_t) s].clear();
                 lane.nativeLv2StateBase64[(size_t) s].clear();
             }
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_VST3
             if (strip.isNativeVst3Loaded (s))
             {
-                lane.nativeVst3Path[(size_t) s] = strip.getNativeVst3Slot (s).getPath();
+                lane.nativeVst3Path[(size_t) s]     = strip.getNativeVst3Slot (s).getPath();
+                lane.nativeVst3PluginId[(size_t) s] = strip.getNativeVst3Slot (s).getPluginId();
                 std::vector<uint8_t> blob;
                 if (strip.getNativeVst3Slot (s).saveState (blob) && ! blob.empty())
                     lane.nativeVst3StateBase64[(size_t) s] = juce::Base64::toBase64 (blob.data(), blob.size());
@@ -1465,6 +1526,7 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
             else if (! strip.nativeVst3ReloadFailed (s))
             {
                 lane.nativeVst3Path[(size_t) s].clear();
+                lane.nativeVst3PluginId[(size_t) s].clear();
                 lane.nativeVst3StateBase64[(size_t) s].clear();
             }
 #endif
@@ -1592,7 +1654,7 @@ void AudioEngine::consumePluginStateAfterLoad()
             {
                 suspendProcessing();
                 std::string err;
-                const bool ok = strip.loadNativeClap (clapFile, err);
+                const bool ok = strip.loadNativeClap (clapFile, err, track.nativeClapPluginId);
                 if (ok && ! blob.empty())
                     strip.getNativeClapSlot().loadState (blob);
                 resumeProcessing();
@@ -1612,7 +1674,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                 // hosts unfenced (the prepared path's loadNativeClap evicts them).
                 strip.unloadNativeLv2();
                 strip.unloadNativeVst3();
-                strip.setPendingNativeClap (clapFile, std::move (blob));
+                strip.setPendingNativeClap (clapFile, std::move (blob), track.nativeClapPluginId);
             }
             continue;
         }
@@ -1630,7 +1692,7 @@ void AudioEngine::consumePluginStateAfterLoad()
             {
                 suspendProcessing();
                 std::string err;
-                const bool ok = strip.loadNativeLv2 (lv2File, err);
+                const bool ok = strip.loadNativeLv2 (lv2File, err, track.nativeLv2PluginId);
                 if (ok && ! blob.empty())
                     strip.getNativeLv2Slot().loadState (blob);
                 resumeProcessing();
@@ -1646,7 +1708,7 @@ void AudioEngine::consumePluginStateAfterLoad()
             {
                 strip.unloadNativeClap();   // see the CLAP pending branch above
                 strip.unloadNativeVst3();
-                strip.setPendingNativeLv2 (lv2File, std::move (blob));
+                strip.setPendingNativeLv2 (lv2File, std::move (blob), track.nativeLv2PluginId);
             }
             continue;
         }
@@ -1664,7 +1726,7 @@ void AudioEngine::consumePluginStateAfterLoad()
             {
                 suspendProcessing();
                 std::string err;
-                const bool ok = strip.loadNativeVst3 (vst3File, err);
+                const bool ok = strip.loadNativeVst3 (vst3File, err, track.nativeVst3PluginId);
                 if (ok && ! blob.empty())
                     strip.getNativeVst3Slot().loadState (blob);
                 resumeProcessing();
@@ -1680,7 +1742,7 @@ void AudioEngine::consumePluginStateAfterLoad()
             {
                 strip.unloadNativeClap();   // see the CLAP pending branch above
                 strip.unloadNativeLv2();
-                strip.setPendingNativeVst3 (vst3File, std::move (blob));
+                strip.setPendingNativeVst3 (vst3File, std::move (blob), track.nativeVst3PluginId);
             }
             continue;
         }
@@ -1756,7 +1818,8 @@ void AudioEngine::consumePluginStateAfterLoad()
                 {
                     suspendProcessing();   // load is not RT-safe; fence the audio thread
                     std::string err;
-                    const bool ok = strip.loadNativeClap (s, clapFile, err);
+                    const bool ok = strip.loadNativeClap (s, clapFile, err,
+                                                          lane.nativeClapPluginId[(size_t) s]);
                     if (ok && ! blob.empty())
                         strip.getNativeClapSlot (s).loadState (blob);
                     resumeProcessing();
@@ -1773,7 +1836,8 @@ void AudioEngine::consumePluginStateAfterLoad()
                     // Not prepared → no live audio; clear carried-over native hosts unfenced.
                     strip.unloadNativeLv2 (s);
                     strip.unloadNativeVst3 (s);
-                    strip.setPendingNativeClap (s, clapFile, std::move (blob));
+                    strip.setPendingNativeClap (s, clapFile, std::move (blob),
+                                                lane.nativeClapPluginId[(size_t) s]);
                 }
                 continue;   // native handled — skip the JUCE restore for this slot
             }
@@ -1791,7 +1855,8 @@ void AudioEngine::consumePluginStateAfterLoad()
                 {
                     suspendProcessing();   // load is not RT-safe; fence the audio thread
                     std::string err;
-                    const bool ok = strip.loadNativeLv2 (s, lv2File, err);
+                    const bool ok = strip.loadNativeLv2 (s, lv2File, err,
+                                                         lane.nativeLv2PluginId[(size_t) s]);
                     if (ok && ! blob.empty())
                         strip.getNativeLv2Slot (s).loadState (blob);
                     resumeProcessing();
@@ -1807,7 +1872,8 @@ void AudioEngine::consumePluginStateAfterLoad()
                 {
                     strip.unloadNativeClap (s);   // see the CLAP pending branch above
                     strip.unloadNativeVst3 (s);
-                    strip.setPendingNativeLv2 (s, lv2File, std::move (blob));
+                    strip.setPendingNativeLv2 (s, lv2File, std::move (blob),
+                                               lane.nativeLv2PluginId[(size_t) s]);
                 }
                 continue;   // native handled — skip the JUCE restore for this slot
             }
@@ -1825,7 +1891,8 @@ void AudioEngine::consumePluginStateAfterLoad()
                 {
                     suspendProcessing();   // load is not RT-safe; fence the audio thread
                     std::string err;
-                    const bool ok = strip.loadNativeVst3 (s, vst3File, err);
+                    const bool ok = strip.loadNativeVst3 (s, vst3File, err,
+                                                          lane.nativeVst3PluginId[(size_t) s]);
                     if (ok && ! blob.empty())
                         strip.getNativeVst3Slot (s).loadState (blob);
                     resumeProcessing();
@@ -1841,7 +1908,8 @@ void AudioEngine::consumePluginStateAfterLoad()
                 {
                     strip.unloadNativeClap (s);   // see the CLAP pending branch above
                     strip.unloadNativeLv2 (s);
-                    strip.setPendingNativeVst3 (s, vst3File, std::move (blob));
+                    strip.setPendingNativeVst3 (s, vst3File, std::move (blob),
+                                                lane.nativeVst3PluginId[(size_t) s]);
                 }
                 continue;   // native handled — skip the JUCE restore for this slot
             }
@@ -3285,6 +3353,44 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                                 }
 #endif
                                 strip.getPluginSlot()
+                                    .setParamNormalised (b.paramIndex, frac);
+                            }
+                            break;
+                        }
+                        case MidiBindingTarget::AuxPluginParam:
+                        {
+                            // Same shape as TrackPluginParam: the loaded host
+                            // owns the slot (CLAP → LV2 → VST3 → JUCE).
+                            if (b.targetIndex >= 0
+                                && b.targetIndex < Session::kNumAuxLanes
+                                && b.paramIndex >= 0)
+                            {
+                                auto& lane = auxLaneStrips[(size_t) b.targetIndex];
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+                                if (lane.isNativeClapLoaded (0))
+                                {
+                                    lane.getNativeClapSlot (0)
+                                        .queueParamBinding ((uint32_t) b.paramIndex, frac);
+                                    break;
+                                }
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+                                if (lane.isNativeLv2Loaded (0))
+                                {
+                                    lane.getNativeLv2Slot (0)
+                                        .queueParamBinding ((uint32_t) b.paramIndex, frac);
+                                    break;
+                                }
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+                                if (lane.isNativeVst3Loaded (0))
+                                {
+                                    lane.getNativeVst3Slot (0)
+                                        .queueParamBinding ((uint32_t) b.paramIndex, frac);
+                                    break;
+                                }
+#endif
+                                lane.getPluginSlot (0)
                                     .setParamNormalised (b.paramIndex, frac);
                             }
                             break;

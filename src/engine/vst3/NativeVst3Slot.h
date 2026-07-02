@@ -12,8 +12,16 @@ struct Vst3SlotTraits
     using Instance = Vst3Instance;
     static constexpr const char* bundleNoun = "module";
 
-    static bool pickPlugin (const Vst3Bundle& b, std::string& idOut, std::string& errorOut)
+    static bool pickPlugin (const Vst3Bundle& b, const std::string& requestedId,
+                            std::string& idOut, std::string& errorOut)
     {
+        if (! requestedId.empty())
+        {
+            for (const auto& d : b.plugins())
+                if (d.id == requestedId) { idOut = requestedId; return true; }
+            errorOut = "module no longer advertises class '" + requestedId + "'";
+            return false;
+        }
         // First audio effect class; instruments need a source, not an insert.
         for (const auto& d : b.plugins())
             if (! d.isInstrument) { idOut = d.id; return true; }
@@ -40,6 +48,10 @@ public:
     // MIDI Learn: the editor knob the user moved last (-1 = none).
     int lastTouchedParamIndex() const noexcept
         { return instance != nullptr ? instance->lastTouchedParamIndex() : -1; }
+
+    // True once after the plugin signalled a latency change (see Vst3Instance).
+    bool consumeLatencyChanged() noexcept
+        { return instance != nullptr && instance->consumeLatencyChanged(); }
 
 protected:
     // MIDI binding: VST3 parameters are normalized — the fraction maps directly.

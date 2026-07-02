@@ -66,9 +66,9 @@ void openPickerMenu (PluginSlot& slot,
                       juce::Point<int> screenPosition = { -1, -1 },
                       std::function<void()> onPickHardwareInsert = {},
                       bool suppressSecondaryButtons = false,
-                      std::function<void (const juce::File&)> onPickNativeClap = {},
-                      std::function<void (const juce::File&)> onPickNativeLv2 = {},
-                      std::function<void (const juce::File&)> onPickNativeVst3 = {});
+                      std::function<void (const juce::File&, const juce::String&)> onPickNativeClap = {},
+                      std::function<void (const juce::File&, const juce::String&)> onPickNativeLv2 = {},
+                      std::function<void (const juce::File&, const juce::String&)> onPickNativeVst3 = {});
 
 // Two-step insert flow. Step 1 shows a small modal with three big
 // buttons — Hardware Insert / Soundfont / Plugin — letting the user
@@ -87,9 +87,9 @@ void openInsertChooser (PluginSlot& slot,
                          std::function<void()> onChange,
                          PluginKind kind,
                          std::function<void()> onPickHardwareInsert = {},
-                         std::function<void (const juce::File&)> onPickNativeClap = {},
-                         std::function<void (const juce::File&)> onPickNativeLv2 = {},
-                         std::function<void (const juce::File&)> onPickNativeVst3 = {});
+                         std::function<void (const juce::File&, const juce::String&)> onPickNativeClap = {},
+                         std::function<void (const juce::File&, const juce::String&)> onPickNativeLv2 = {},
+                         std::function<void (const juce::File&, const juce::String&)> onPickNativeVst3 = {});
 
 // Synchronous scan. Blocks the message thread during scanInstalledPlugins().
 // Shows a Dusk in-window completion alert in `parent` (top-level Component)

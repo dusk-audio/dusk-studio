@@ -9,6 +9,9 @@
 #include <lv2/options/options.h>
 #include <lv2/parameters/parameters.h>
 #include <lv2/port-props/port-props.h>
+#include <lv2/atom/forge.h>
+#include <lv2/atom/util.h>
+#include <lv2/patch/patch.h>
 #include <lv2/state/state.h>
 #include <lv2/urid/urid.h>
 
@@ -69,8 +72,15 @@ struct Lv2Instance::Impl
         uridDouble = mapUri (this, LV2_ATOM__Double);
         uridInt    = mapUri (this, LV2_ATOM__Int);
         uridLong   = mapUri (this, LV2_ATOM__Long);
+        uridObject        = mapUri (this, LV2_ATOM__Object);
+        uridPatchSet      = mapUri (this, LV2_PATCH__Set);
+        uridPatchProperty = mapUri (this, LV2_PATCH__property);
+        uridPatchValue    = mapUri (this, LV2_PATCH__value);
+        uridEventTransfer = mapUri (this, LV2_ATOM__eventTransfer);
     }
     LV2_URID uridFloat = 0, uridDouble = 0, uridInt = 0, uridLong = 0;
+    LV2_URID uridObject = 0, uridPatchSet = 0, uridPatchProperty = 0,
+             uridPatchValue = 0, uridEventTransfer = 0;
 
     // Assemble the full feature list for instantiate: urid map/unmap + the block-size
     // and sample-rate options + boundedBlockLength. JUCE/DPF-wrapped plugins REQUIRE
@@ -129,9 +139,34 @@ struct Lv2Instance::Impl
     struct PortWrite { uint32_t idx; float value; };
     hosting::SpscRing<PortWrite, 256> writeRing;
 
-    // Input control ports as a parameter surface (MIDI bindings / MIDI Learn).
+    // Input control ports + patch:writable float properties as a parameter
+    // surface (MIDI bindings / MIDI Learn). Patch-property ids carry the high
+    // bit so they can't collide with port indices.
+    static constexpr uint32_t kPatchIdFlag = 0x80000000u;
     std::vector<ParamInfo> params;
-    std::atomic<int64_t>   lastTouchedPort { -1 };
+    std::atomic<int64_t>   lastTouchedParam { -1 };   // index into params
+
+    int paramIndexForId (uint32_t id) const noexcept
+    {
+        for (size_t i = 0; i < params.size(); ++i)
+            if (params[i].id == id) return (int) i;
+        return -1;
+    }
+
+    // patch:Set atoms staged UI/host-side, injected into the control atom input
+    // at the top of the next process block. 128 bytes covers a patch:Set with a
+    // float payload several times over; larger UI atoms are dropped (only the
+    // instance-access shortcut loses nothing — see forwardUiAtomEvent).
+    struct AtomBlob { uint32_t size = 0; uint8_t data[128]; };
+    hosting::SpscRing<AtomBlob, 64> atomRing;
+
+    // Which atomInPorts entry takes injected events: the lv2:control-designated
+    // port, else the first atom input.
+    int controlAtomInPos = 0;
+
+    // Last host/UI-written value per patch property (message thread) — the
+    // read-back source until patch:Put parsing exists.
+    std::unordered_map<LV2_URID, float> patchShadow;
 
     // Message-thread shadow of the UI writes. A bypassed slot never runs
     // processBlock, so the ring may never drain — state saves and reactivate read
@@ -266,7 +301,7 @@ bool Lv2Instance::create (const Lv2Bundle& bundle, const std::string& uri, std::
     // MIDI Learn). Snapshot name + range + steppedness now so later reads
     // never touch lilv.
     impl->params.clear();
-    impl->lastTouchedPort.store (-1, std::memory_order_relaxed);
+    impl->lastTouchedParam.store (-1, std::memory_order_relaxed);
     {
         LilvNode* toggledProp  = lilv_new_uri (world, LV2_CORE__toggled);
         LilvNode* integerProp  = lilv_new_uri (world, LV2_CORE__integer);
@@ -309,11 +344,92 @@ bool Lv2Instance::create (const Lv2Bundle& bundle, const std::string& uri, std::
                      || lilv_port_has_property (impl->plugin, port, enumProp);
             impl->params.push_back (std::move (p));
         }
+        lilv_node_free (notOnGuiProp);
+
+        // patch:writable float properties join the surface — JUCE-built LV2s
+        // expose ALL their parameters this way (their control ports are only
+        // the designated host-managed ones). Non-float ranges (paths, strings)
+        // aren't parameters and are skipped.
+        LilvNode* patchWritable = lilv_new_uri (world, LV2_PATCH__writable);
+        LilvNode* rdfsLabel     = lilv_new_uri (world, "http://www.w3.org/2000/01/rdf-schema#label");
+        LilvNode* rdfsRange     = lilv_new_uri (world, "http://www.w3.org/2000/01/rdf-schema#range");
+        LilvNode* atomFloat     = lilv_new_uri (world, LV2_ATOM__Float);
+        LilvNode* lv2Min        = lilv_new_uri (world, LV2_CORE__minimum);
+        LilvNode* lv2Max        = lilv_new_uri (world, LV2_CORE__maximum);
+        LilvNode* lv2Default    = lilv_new_uri (world, LV2_CORE__default);
+        LilvNode* portPropPred  = lilv_new_uri (world, LV2_CORE_PREFIX "portProperty");
+        if (LilvNodes* props = lilv_world_find_nodes (world,
+                                   lilv_plugin_get_uri (impl->plugin), patchWritable, nullptr))
+        {
+            LILV_FOREACH (nodes, it, props)
+            {
+                const LilvNode* prop = lilv_nodes_get (props, it);
+                if (! lilv_node_is_uri (prop)) continue;
+                LilvNode* range = lilv_world_get (world, prop, rdfsRange, nullptr);
+                const bool isFloat = range != nullptr && lilv_node_equals (range, atomFloat);
+                lilv_node_free (range);
+                if (! isFloat) continue;
+
+                ParamInfo p;
+                p.id = Impl::kPatchIdFlag
+                     | Impl::mapUri (impl.get(), lilv_node_as_uri (prop));
+                p.isPatchProperty = true;
+                if (LilvNode* nm = lilv_world_get (world, prop, rdfsLabel, nullptr))
+                { p.name = lilv_node_as_string (nm); lilv_node_free (nm); }
+                if (p.name.empty())
+                    p.name = lilv_node_as_uri (prop);
+                auto numberOf = [&] (const LilvNode* pred, float fallback)
+                {
+                    float v = fallback;
+                    if (LilvNode* n = lilv_world_get (world, prop, pred, nullptr))
+                    { v = lilv_node_as_float (n); lilv_node_free (n); }
+                    return v;
+                };
+                p.minValue     = numberOf (lv2Min, 0.0f);
+                p.maxValue     = numberOf (lv2Max, 1.0f);
+                p.defaultValue = numberOf (lv2Default, p.minValue);
+                if (! (p.minValue < p.maxValue)) { p.minValue = 0.0f; p.maxValue = 1.0f; }
+                if (LilvNodes* pps = lilv_world_find_nodes (world, prop, portPropPred, nullptr))
+                {
+                    LILV_FOREACH (nodes, pit, pps)
+                    {
+                        const LilvNode* pp = lilv_nodes_get (pps, pit);
+                        if (lilv_node_equals (pp, toggledProp)
+                            || lilv_node_equals (pp, integerProp)
+                            || lilv_node_equals (pp, enumProp))
+                            p.stepped = true;
+                    }
+                    lilv_nodes_free (pps);
+                }
+                impl->patchShadow[p.id & ~Impl::kPatchIdFlag] = p.defaultValue;
+                impl->params.push_back (std::move (p));
+            }
+            lilv_nodes_free (props);
+        }
+        lilv_node_free (patchWritable); lilv_node_free (rdfsLabel);
+        lilv_node_free (rdfsRange);     lilv_node_free (atomFloat);
+        lilv_node_free (lv2Min);        lilv_node_free (lv2Max);
+        lilv_node_free (lv2Default);    lilv_node_free (portPropPred);
         lilv_node_free (toggledProp);
         lilv_node_free (integerProp);
         lilv_node_free (enumProp);
         lilv_node_free (designation);
-        lilv_node_free (notOnGuiProp);
+    }
+
+    // Which atom input takes injected patch events: the lv2:control-designated
+    // one, else the first.
+    impl->controlAtomInPos = 0;
+    {
+        LilvNode* ctrlDesig  = lilv_new_uri (world, LV2_CORE_PREFIX "control");
+        LilvNode* inputClass2 = lilv_new_uri (world, LV2_CORE__InputPort);
+        if (const LilvPort* cp = lilv_plugin_get_port_by_designation (impl->plugin, inputClass2, ctrlDesig))
+        {
+            const uint32_t idx = lilv_port_get_index (impl->plugin, cp);
+            for (size_t i = 0; i < impl->atomInPorts.size(); ++i)
+                if (impl->atomInPorts[i] == idx) { impl->controlAtomInPos = (int) i; break; }
+        }
+        lilv_node_free (ctrlDesig);
+        lilv_node_free (inputClass2);
     }
 
     // The port designated lv2:latency (an output control port) reports plugin
@@ -517,6 +633,28 @@ void Lv2Instance::processBlock (const hosting::PortBuffers& io) noexcept
             impl->portValues[(size_t) pw.idx] = pw.value;
     });
 
+    // Rebuild the control atom input's sequence from the staged patch/UI atoms
+    // (all at frame 0). Input sequences are host-owned, so the reset is cheap
+    // and the other atom inputs keep their empty headers from activate().
+    if (! impl->atomInPorts.empty())
+    {
+        auto& buf = impl->atomBuffers[(size_t) impl->controlAtomInPos];
+        auto* seq = reinterpret_cast<LV2_Atom_Sequence*> (buf.data());
+        seq->atom.size = sizeof (LV2_Atom_Sequence_Body);
+        impl->atomRing.drain ([&] (const Impl::AtomBlob& blob)
+        {
+            const uint32_t evSize = (uint32_t) sizeof (LV2_Atom_Event) - (uint32_t) sizeof (LV2_Atom)
+                                    + blob.size;
+            const uint32_t padded = lv2_atom_pad_size (evSize);
+            const uint32_t used   = (uint32_t) sizeof (LV2_Atom) + seq->atom.size;
+            if (used + padded > buf.size()) return;   // sequence full — drop
+            auto* ev = reinterpret_cast<LV2_Atom_Event*> (buf.data() + used);
+            ev->time.frames = 0;
+            std::memcpy (&ev->body, blob.data, blob.size);
+            seq->atom.size += padded;
+        });
+    }
+
     // Re-advertise output-atom capacity before every run(): the plugin overwrites
     // atom->size with the bytes it wrote last block, so without this the buffer
     // reads as monotonically shrinking (never-recovering) capacity. Output atom
@@ -602,7 +740,9 @@ void Lv2Instance::setControlPortValue (uint32_t portIndex, float value) noexcept
 
 void Lv2Instance::setControlPortValueFromUi (uint32_t portIndex, float value) noexcept
 {
-    impl->lastTouchedPort.store ((int64_t) portIndex, std::memory_order_relaxed);
+    const int idx = impl->paramIndexForId (portIndex);
+    if (idx >= 0)
+        impl->lastTouchedParam.store ((int64_t) idx, std::memory_order_relaxed);
     setControlPortValue (portIndex, value);
 }
 
@@ -614,43 +754,113 @@ const Lv2Instance::ParamInfo* Lv2Instance::paramInfo (int index) const noexcept
              ? &impl->params[(size_t) index] : nullptr;
 }
 
-bool Lv2Instance::getParamValue (uint32_t portIndex, double& out) const
+bool Lv2Instance::getParamValue (uint32_t paramId, double& out) const
 {
-    for (const auto& p : impl->params)
-        if (p.id == portIndex)
-        {
-            // A staged UI/host write the audio thread hasn't drained yet (bypassed
-            // slot) lives in the shadow; portValues still holds the older value.
-            if ((size_t) portIndex < impl->uiDirty.size()
-                && impl->uiDirty[(size_t) portIndex] != 0)
-                out = (double) impl->uiShadow[(size_t) portIndex];
-            else if ((size_t) portIndex < impl->portValues.size())
-                out = (double) impl->portValues[(size_t) portIndex];
-            else
-                return false;
-            return true;
-        }
-    return false;
+    const int idx = impl->paramIndexForId (paramId);
+    if (idx < 0) return false;
+    if (impl->params[(size_t) idx].isPatchProperty)
+    {
+        const auto it = impl->patchShadow.find (paramId & ~Impl::kPatchIdFlag);
+        if (it == impl->patchShadow.end()) return false;
+        out = (double) it->second;
+        return true;
+    }
+    const uint32_t portIndex = paramId;
+    // A staged UI/host write the audio thread hasn't drained yet (bypassed
+    // slot) lives in the shadow; portValues still holds the older value.
+    if ((size_t) portIndex < impl->uiDirty.size()
+        && impl->uiDirty[(size_t) portIndex] != 0)
+        out = (double) impl->uiShadow[(size_t) portIndex];
+    else if ((size_t) portIndex < impl->portValues.size())
+        out = (double) impl->portValues[(size_t) portIndex];
+    else
+        return false;
+    return true;
 }
 
-void Lv2Instance::setParamValue (uint32_t portIndex, double value) noexcept
+void Lv2Instance::setParamValue (uint32_t paramId, double value) noexcept
 {
-    for (const auto& p : impl->params)
-        if (p.id == portIndex)
-        {
-            const float v = (float) std::clamp (value, (double) p.minValue, (double) p.maxValue);
-            setControlPortValue (portIndex, v);
-            return;
-        }
+    const int idx = impl->paramIndexForId (paramId);
+    if (idx < 0) return;
+    const auto& p = impl->params[(size_t) idx];
+    const float v = (float) std::clamp (value, (double) p.minValue, (double) p.maxValue);
+    if (! p.isPatchProperty)
+    {
+        setControlPortValue (paramId, v);
+        return;
+    }
+
+    // patch:Set { property = <prop>, value = Float } forged into a blob the
+    // audio thread injects into the control atom port next block.
+    const LV2_URID propUrid = paramId & ~Impl::kPatchIdFlag;
+    Impl::AtomBlob blob;
+    LV2_Atom_Forge forge;
+    lv2_atom_forge_init (&forge, &impl->mapFeature);
+    lv2_atom_forge_set_buffer (&forge, blob.data, sizeof (blob.data));
+    LV2_Atom_Forge_Frame frame;
+    lv2_atom_forge_object (&forge, &frame, 0, impl->uridPatchSet);
+    lv2_atom_forge_key (&forge, impl->uridPatchProperty);
+    lv2_atom_forge_urid (&forge, propUrid);
+    lv2_atom_forge_key (&forge, impl->uridPatchValue);
+    lv2_atom_forge_float (&forge, v);
+    lv2_atom_forge_pop (&forge, &frame);
+    const auto* atom = reinterpret_cast<const LV2_Atom*> (blob.data);
+    blob.size = (uint32_t) sizeof (LV2_Atom) + atom->size;
+
+    impl->patchShadow[propUrid] = v;
+    impl->atomRing.push (blob);   // full ⇒ drop (pathological flood only)
 }
 
 int Lv2Instance::lastTouchedParamIndex() const noexcept
 {
-    const auto port = impl->lastTouchedPort.load (std::memory_order_relaxed);
-    if (port < 0) return -1;
-    for (size_t i = 0; i < impl->params.size(); ++i)
-        if ((int64_t) impl->params[i].id == port) return (int) i;
-    return -1;
+    const auto idx = impl->lastTouchedParam.load (std::memory_order_relaxed);
+    return (idx >= 0 && idx < (int64_t) impl->params.size()) ? (int) idx : -1;
+}
+
+uint32_t Lv2Instance::uiEventTransferUrid() const noexcept
+{
+    return impl->uridEventTransfer;
+}
+
+void Lv2Instance::forwardUiAtomEvent (const void* atomData, uint32_t sizeBytes) noexcept
+{
+    if (atomData == nullptr || sizeBytes < sizeof (LV2_Atom)) return;
+    const auto* atom = static_cast<const LV2_Atom*> (atomData);
+    if (sizeof (LV2_Atom) + atom->size != sizeBytes) return;
+
+    // patch:Set → stamp MIDI Learn's last-touched + the read-back shadow.
+    if (atom->type == impl->uridObject)
+    {
+        const auto* obj = reinterpret_cast<const LV2_Atom_Object*> (atom);
+        if (obj->body.otype == impl->uridPatchSet)
+        {
+            const LV2_Atom* propAtom = nullptr;
+            const LV2_Atom* valAtom  = nullptr;
+            lv2_atom_object_get (obj, impl->uridPatchProperty, &propAtom,
+                                      impl->uridPatchValue,    &valAtom, 0);
+            if (propAtom != nullptr && propAtom->type == Impl::mapUri (impl.get(), LV2_ATOM__URID))
+            {
+                const LV2_URID prop = reinterpret_cast<const LV2_Atom_URID*> (propAtom)->body;
+                const int idx = impl->paramIndexForId (Impl::kPatchIdFlag | prop);
+                if (idx >= 0)
+                    impl->lastTouchedParam.store ((int64_t) idx, std::memory_order_relaxed);
+                if (valAtom != nullptr && valAtom->type == impl->uridFloat)
+                    impl->patchShadow[prop] =
+                        reinterpret_cast<const LV2_Atom_Float*> (valAtom)->body;
+            }
+        }
+    }
+
+    // Forward onto the control atom port so the DSP hears the event without
+    // relying on the instance-access shortcut. Oversized atoms are dropped —
+    // for JUCE-built UIs instance access already carried the change.
+    if (sizeBytes <= sizeof (Impl::AtomBlob::data))
+    {
+        Impl::AtomBlob blob;
+        std::memcpy (blob.data, atomData, sizeBytes);
+        blob.size = sizeBytes;
+        impl->atomRing.push (blob);
+    }
 }
 
 int Lv2Instance::portIndexForSymbol (const char* symbol) const noexcept

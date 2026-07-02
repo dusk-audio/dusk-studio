@@ -81,6 +81,15 @@ public:
     // touched. Message thread.
     int lastTouchedParamIndex() const noexcept;
 
+    // True once after the plugin signalled kLatencyChanged (restartComponent).
+    // The caller reactivates the instance under the engine gate and recomputes
+    // PDC — VST3 only re-reads latency across a setActive cycle.
+    bool consumeLatencyChanged() noexcept;
+
+    // Message thread: re-snapshot the parameter surface if the plugin signalled
+    // kParamTitlesChanged. Called from the engine's drain timer.
+    void refreshParamInfoIfChanged();
+
     int getLatencySamples() const noexcept override;
 
     // The host context this instance hands to the plugin (component handler,

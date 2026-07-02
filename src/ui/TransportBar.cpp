@@ -830,31 +830,29 @@ void TransportBar::timerCallback()
                 && b.targetIndex >= 0
                 && b.targetIndex < Session::kNumTracks)
             {
-                // A native host owns the insert when loaded — read ITS
-                // last-touched tracker (same precedence as the audio chain).
-                auto& strip = engine.getChannelStrip (b.targetIndex);
-#if DUSKSTUDIO_HAS_NATIVE_CLAP
-                if (strip.isNativeClapLoaded())
-                    b.paramIndex = strip.getNativeClapSlot().lastTouchedParamIndex();
-                else
-#endif
-#if DUSKSTUDIO_HAS_NATIVE_LV2
-                if (strip.isNativeLv2Loaded())
-                    b.paramIndex = strip.getNativeLv2Slot().lastTouchedParamIndex();
-                else
-#endif
-#if DUSKSTUDIO_HAS_NATIVE_VST3
-                if (strip.isNativeVst3Loaded())
-                    b.paramIndex = strip.getNativeVst3Slot().lastTouchedParamIndex();
-                else
-#endif
-                    b.paramIndex = strip.getPluginSlot().getLastTouchedParamIndex();
+                // Whichever host owns the insert resolves the last touch
+                // (precedence lives on the strip, next to the audio chain's).
+                b.paramIndex = engine.getChannelStrip (b.targetIndex)
+                                     .insertLastTouchedParamIndex();
                 if (b.paramIndex < 0)
                 {
                     // No parameter touched since the slot loaded -
                     // bail without writing a bogus binding. The
                     // learn-pending state clears so the user can
                     // retry after moving a knob.
+                    s.midiLearnCapture.store (0, std::memory_order_relaxed);
+                    s.midiLearnPending.store (-1, std::memory_order_relaxed);
+                    return;
+                }
+            }
+            if (b.target == MidiBindingTarget::AuxPluginParam
+                && b.targetIndex >= 0
+                && b.targetIndex < Session::kNumAuxLanes)
+            {
+                b.paramIndex = engine.getAuxLaneStrip (b.targetIndex)
+                                     .insertLastTouchedParamIndex (0);
+                if (b.paramIndex < 0)
+                {
                     s.midiLearnCapture.store (0, std::memory_order_relaxed);
                     s.midiLearnPending.store (-1, std::memory_order_relaxed);
                     return;
