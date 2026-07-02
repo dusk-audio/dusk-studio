@@ -110,6 +110,39 @@ TEST_CASE ("NativeLv2Slot loads, processes, and unloads cleanly", "[lv2][slot]")
         REQUIRE_FALSE (slot.isLoaded());
     }
 
+    SECTION ("patch-property writes reach the plugin, not just the shadow")
+    {
+        // The shadow read-back in getParamValue can't prove the patch:Set atom
+        // was injected into the control atom port — the plugin's own saved
+        // state can: it changes only if the DSP side heard the event.
+        auto* inst = slot.getInstance();
+        int patchIdx = -1;
+        for (int i = 0; i < inst->paramCount(); ++i)
+        {
+            const auto* p = inst->paramInfo (i);
+            if (p->isPatchProperty && ! p->stepped && p->maxValue > p->minValue)
+            { patchIdx = i; break; }
+        }
+        if (patchIdx < 0)
+        {
+            SUCCEED ("plugin exposes no continuous patch properties — skipping");
+            return;
+        }
+        const auto* target = inst->paramInfo (patchIdx);
+
+        std::vector<uint8_t> before, after;
+        REQUIRE (slot.saveState (before));
+
+        inst->setParamValue (target->id, (double) target->maxValue);
+        std::fill (L.begin(), L.end(), 0.0f);
+        std::fill (R.begin(), R.end(), 0.0f);
+        for (int b = 0; b < 4; ++b)
+            slot.processStereo (L.data(), R.data(), L.data(), R.data(), kBlock);
+
+        REQUIRE (slot.saveState (after));
+        REQUIRE (before != after);
+    }
+
     SECTION ("MIDI-binding writes reach the parameter surface")
     {
         // queueParamBinding is the audio-thread half of a binding apply;
@@ -126,9 +159,7 @@ TEST_CASE ("NativeLv2Slot loads, processes, and unloads cleanly", "[lv2][slot]")
         }
         if (targetIdx < 0)
         {
-            // JUCE-wrapped LV2s carry their real parameters as atom patch
-            // messages, not control ports — nothing to bind through this surface.
-            SUCCEED ("plugin exposes no continuous control-port parameters — skipping");
+            SUCCEED ("plugin exposes no continuous parameters — skipping");
             return;
         }
         const auto* target = slot.paramInfo (targetIdx);

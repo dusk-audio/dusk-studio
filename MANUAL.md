@@ -1595,7 +1595,7 @@ In addition to MCU support, any control in Dusk Studio can be bound to a MIDI CC
 
 The binding is captured and immediately active. The next time that CC arrives, the control responds.
 
-**Plugin parameters**: right-click a loaded insert slot and choose **MIDI Learn last-touched parameter**. Move the target knob in the plugin's own editor first, then trigger your controller — the binding targets whichever parameter you touched last. This works for standard-host plugins and for the native hosts on Linux (CLAP, LV2-Native, VST3-Native). One LV2 caveat: plugins whose parameters are atom "patch" properties rather than control ports (JUCE-built LV2s, notably) expose nothing to bind — load the same plugin as VST3-Native or CLAP instead.
+**Plugin parameters**: right-click a loaded insert slot and choose **MIDI Learn last-touched parameter**. Move the target knob in the plugin's own editor first, then trigger your controller — the binding targets whichever parameter you touched last. This works for standard-host plugins and for every native host on Linux (CLAP, LV2-Native, VST3-Native), including LV2 plugins whose parameters are atom "patch" properties (JUCE-built LV2s, notably).
 
 ## Trigger types
 
