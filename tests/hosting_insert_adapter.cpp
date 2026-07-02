@@ -81,7 +81,7 @@ constexpr int kN = 8;
 std::vector<float> filled (float v) { return std::vector<float> ((size_t) kN, v); }
 } // namespace
 
-TEST_CASE ("InsertAdapter: stereo→stereo passes L/R straight through", "[hosting][adapter]")
+TEST_CASE ("InsertAdapter: stereo-to-stereo passes L/R straight through", "[hosting][adapter]")
 {
     FoldStub stub (effectLayout (2, 2), /*gain*/ 0.5f);
     std::string e; stub.activate (48000.0, kN, e);
