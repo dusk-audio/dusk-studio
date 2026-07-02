@@ -392,7 +392,8 @@ void openPickerMenu (PluginSlot& slot,
                       std::function<void()> onPickHardwareInsert,
                       bool suppressSecondaryButtons,
                       std::function<void (const juce::File&)> onPickNativeClap,
-                      std::function<void (const juce::File&)> onPickNativeLv2)
+                      std::function<void (const juce::File&)> onPickNativeLv2,
+                      std::function<void (const juce::File&)> onPickNativeVst3)
 {
     auto& manager = slot.getManagerForUi();
 
@@ -411,6 +412,14 @@ void openPickerMenu (PluginSlot& slot,
         descriptions.removeIf ([] (const juce::PluginDescription& d)
                                { return d.pluginFormatName == "LV2"; });
         descriptions.addArray (manager.getLv2EffectDescriptions());
+    }
+
+    // Native-VST3 rows replace the JUCE-hosted VST3 effect rows, same as LV2.
+    if (onPickNativeVst3 && kind == PluginKind::Effects)
+    {
+        descriptions.removeIf ([] (const juce::PluginDescription& d)
+                               { return d.pluginFormatName == "VST3"; });
+        descriptions.addArray (manager.getVst3NativeEffectDescriptions());
     }
 
     auto* parent = target.getTopLevelComponent();
@@ -433,7 +442,8 @@ void openPickerMenu (PluginSlot& slot,
     cb.onCancel = closeModal;
 
     cb.onScan = [closeModal, slotPtr, safeTarget, safeParent, chooserOwnerPtr,
-                  onChange, kind, onPickHardwareInsert, onPickNativeClap, onPickNativeLv2]() mutable
+                  onChange, kind, onPickHardwareInsert, onPickNativeClap, onPickNativeLv2,
+                  onPickNativeVst3]() mutable
     {
         closeModal();
 
@@ -444,14 +454,15 @@ void openPickerMenu (PluginSlot& slot,
         // on top), making the result message invisible.
         auto reopenPicker = [slotPtr, safeTarget, chooserOwnerPtr,
                               onChange, kind, onPickHardwareInsert, onPickNativeClap,
-                              onPickNativeLv2]() mutable
+                              onPickNativeLv2, onPickNativeVst3]() mutable
         {
             if (auto* t = safeTarget.getComponent())
                 openPickerMenu (*slotPtr, *t, *chooserOwnerPtr,
                                   std::move (onChange), kind, { -1, -1 },
                                   std::move (onPickHardwareInsert), false,
                                   std::move (onPickNativeClap),
-                                  std::move (onPickNativeLv2));
+                                  std::move (onPickNativeLv2),
+                                  std::move (onPickNativeVst3));
         };
         runScanModal (slotPtr->getManagerForUi(), safeParent.getComponent(),
                        std::move (reopenPicker));
@@ -495,7 +506,7 @@ void openPickerMenu (PluginSlot& slot,
    #endif
 
     cb.onPickPlugin = [closeModal, slotPtr, safeTarget, safeParent, onChange, kind,
-                       onPickNativeClap, onPickNativeLv2]
+                       onPickNativeClap, onPickNativeLv2, onPickNativeVst3]
                         (const juce::PluginDescription& desc) mutable
     {
         closeModal();
@@ -514,6 +525,11 @@ void openPickerMenu (PluginSlot& slot,
         if (desc.pluginFormatName == "LV2-Native")
         {
             if (onPickNativeLv2) onPickNativeLv2 (juce::File (desc.fileOrIdentifier));
+            return;
+        }
+        if (desc.pluginFormatName == "VST3-Native")
+        {
+            if (onPickNativeVst3) onPickNativeVst3 (juce::File (desc.fileOrIdentifier));
             return;
         }
 
@@ -700,7 +716,8 @@ void openInsertChooser (PluginSlot& slot,
                          PluginKind kind,
                          std::function<void()> onPickHardwareInsert,
                          std::function<void (const juce::File&)> onPickNativeClap,
-                         std::function<void (const juce::File&)> onPickNativeLv2)
+                         std::function<void (const juce::File&)> onPickNativeLv2,
+                         std::function<void (const juce::File&)> onPickNativeVst3)
 {
     auto* parent = target.getTopLevelComponent();
     if (parent == nullptr) parent = &target;
@@ -746,7 +763,8 @@ void openInsertChooser (PluginSlot& slot,
     };
 
     auto onPlugin = [closeChooser, slotPtr, safeTarget, chooserOwnerPtr,
-                       onChange, kind, onPickNativeClap, onPickNativeLv2]() mutable
+                       onChange, kind, onPickNativeClap, onPickNativeLv2,
+                       onPickNativeVst3]() mutable
     {
         closeChooser();
         if (auto* t = safeTarget.getComponent())
@@ -755,7 +773,8 @@ void openInsertChooser (PluginSlot& slot,
                               /*onPickHardwareInsert*/ {},
                               /*suppressSecondaryButtons*/ true,
                               std::move (onPickNativeClap),
-                              std::move (onPickNativeLv2));
+                              std::move (onPickNativeLv2),
+                              std::move (onPickNativeVst3));
     };
 
     auto onCancel = closeChooser;

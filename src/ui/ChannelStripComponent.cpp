@@ -14,6 +14,9 @@
 #if DUSKSTUDIO_HAS_NATIVE_LV2
   #include "Lv2PluginEditorComponent.h"    // Linux-only native LV2 editor (suil)
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+  #include "Vst3PluginEditorComponent.h"   // Linux-only native VST3 editor (IPlugView)
+#endif
 #include "DuskAlerts.h"
 #include "FreezeDialog.h"
 #include "../engine/AudioEngine.h"
@@ -1435,7 +1438,8 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     {
         if (pluginSlot.isLoaded()
             || engine.getChannelStrip (trackIndex).isNativeClapLoaded()
-            || engine.getChannelStrip (trackIndex).isNativeLv2Loaded())
+            || engine.getChannelStrip (trackIndex).isNativeLv2Loaded()
+            || engine.getChannelStrip (trackIndex).isNativeVst3Loaded())
         {
             togglePluginEditor();
             return;
@@ -1774,7 +1778,8 @@ void ChannelStripComponent::openPluginPicker (bool useChooser)
                                         // native slot — the audio chain checks natives first, so a
                                         // lingering native would silently shadow the picked plugin.
                                         if (self->pluginSlot.isLoaded()
-                                            && (chStrip.isNativeClapLoaded() || chStrip.isNativeLv2Loaded()))
+                                            && (chStrip.isNativeClapLoaded() || chStrip.isNativeLv2Loaded()
+                                                || chStrip.isNativeVst3Loaded()))
                                         {
    #if DUSKSTUDIO_HAS_NATIVE_CLAP
                                             self->clapEditor.reset();   // references the dying instance
@@ -1782,14 +1787,20 @@ void ChannelStripComponent::openPluginPicker (bool useChooser)
    #if DUSKSTUDIO_HAS_NATIVE_LV2
                                             self->lv2Editor.reset();
    #endif
+   #if DUSKSTUDIO_HAS_NATIVE_VST3
+                                            self->vst3Editor.reset();
+   #endif
                                             self->engine.suspendProcessing();
                                             chStrip.unloadNativeClap();
                                             chStrip.unloadNativeLv2();
+                                            chStrip.unloadNativeVst3();
                                             self->engine.resumeProcessing();
                                             self->track.nativeClapPath = {};
                                             self->track.nativeClapStateBase64 = {};
                                             self->track.nativeLv2Path = {};
                                             self->track.nativeLv2StateBase64 = {};
+                                            self->track.nativeVst3Path = {};
+                                            self->track.nativeVst3StateBase64 = {};
                                         }
 
                                         // Loading an instrument (soundfont or VST/LV2 synth) on a
@@ -1888,6 +1899,16 @@ void ChannelStripComponent::openPluginPicker (bool useChooser)
                 self->loadNativeLv2ForChannel (f);
         };
 #endif
+    // Native VST3 route — same shape; VST3-Native rows replace the JUCE VST3 rows.
+    std::function<void (const juce::File&)> onVst3;
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+    if (kind == pluginpicker::PluginKind::Effects)
+        onVst3 = [safe] (const juce::File& f)
+        {
+            if (auto* self = safe.getComponent())
+                self->loadNativeVst3ForChannel (f);
+        };
+#endif
 
     if (useChooser)
     {
@@ -1898,7 +1919,8 @@ void ChannelStripComponent::openPluginPicker (bool useChooser)
                                           kind,
                                           std::move (openHwEditor),
                                           std::move (onClap),
-                                          std::move (onLv2));
+                                          std::move (onLv2),
+                                          std::move (onVst3));
     }
     else
     {
@@ -1914,7 +1936,8 @@ void ChannelStripComponent::openPluginPicker (bool useChooser)
                                        /*onPickHardwareInsert*/ {},
                                        /*suppressSecondaryButtons*/ true,
                                        std::move (onClap),
-                                       std::move (onLv2));
+                                       std::move (onLv2),
+                                       std::move (onVst3));
     }
 }
 
@@ -1988,6 +2011,23 @@ void ChannelStripComponent::unloadPluginSlot()
         }
     }
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+    {
+        auto& vst3Strip = engine.getChannelStrip (trackIndex);
+        if (vst3Strip.isNativeVst3Loaded())
+        {
+            vst3Editor.reset();   // references the dying instance
+            engine.suspendProcessing();
+            vst3Strip.unloadNativeVst3();
+            vst3Strip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
+            engine.resumeProcessing();
+            track.nativeVst3Path = {};
+            track.nativeVst3StateBase64 = {};
+            refreshPluginSlotButton();
+            return;
+        }
+    }
+#endif
 
     pluginSlot.unload();
     refreshPluginSlotButton();
@@ -1997,7 +2037,8 @@ void ChannelStripComponent::showPluginSlotMenu()
 {
     juce::PopupMenu menu;
     const bool nativeLoaded = engine.getChannelStrip (trackIndex).isNativeClapLoaded()
-                           || engine.getChannelStrip (trackIndex).isNativeLv2Loaded();
+                           || engine.getChannelStrip (trackIndex).isNativeLv2Loaded()
+                           || engine.getChannelStrip (trackIndex).isNativeVst3Loaded();
     if (pluginSlot.isLoaded() || nativeLoaded)
     {
         // Editor toggle headline so right-click ALSO becomes a way to open
@@ -2091,6 +2132,19 @@ void ChannelStripComponent::refreshPluginSlotButton()
         // Bundle directory name minus the ".lv2" suffix.
         const auto nm = juce::File (engine.getChannelStrip (trackIndex)
                                       .getNativeLv2Slot().getPath())
+                          .getFileNameWithoutExtension();
+        const auto label = juce::String (juce::CharPointer_UTF8 ("\xe2\x96\xbe ")) + nm;
+        if (label == lastSlotName) return;
+        lastSlotName = label;
+        pluginSlotButton.setButtonText (label);
+        return;
+    }
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+    if (engine.getChannelStrip (trackIndex).isNativeVst3Loaded())
+    {
+        const auto nm = juce::File (engine.getChannelStrip (trackIndex)
+                                      .getNativeVst3Slot().getPath())
                           .getFileNameWithoutExtension();
         const auto label = juce::String (juce::CharPointer_UTF8 ("\xe2\x96\xbe ")) + nm;
         if (label == lastSlotName) return;
@@ -2238,6 +2292,26 @@ void ChannelStripComponent::openPluginEditor()
             }
         }
         pluginEditorModal.showBorrowed (*parent, *lv2Editor, onClose);
+        return;
+    }
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+    if (engine.getChannelStrip (trackIndex).isNativeVst3Loaded())
+    {
+        auto* inst = engine.getChannelStrip (trackIndex).getNativeVst3Slot().getInstance();
+        if (inst == nullptr) return;
+        if (vst3Editor == nullptr)
+        {
+            vst3Editor = std::make_unique<Vst3PluginEditorComponent>();
+            juce::String err;
+            if (! vst3Editor->attach (*inst, err))
+            {
+                std::fprintf (stderr, "[chan vst3] %s\n", err.toRawUTF8());
+                vst3Editor.reset();
+                return;
+            }
+        }
+        pluginEditorModal.showBorrowed (*parent, *vst3Editor, onClose);
         return;
     }
 #endif
@@ -2477,6 +2551,9 @@ void ChannelStripComponent::dropPluginEditor()
         lv2Editor.reset();
     }
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+    vst3Editor.reset();   // in-process C++ teardown — no leak path needed
+#endif
     // ~AudioProcessorEditor tears down the plugin's internal X11
     // children synchronously (colour pickers, preset browsers,
     // transient popups). On a Wayland session, any of those could
@@ -2525,6 +2602,9 @@ void ChannelStripComponent::loadNativeClapForChannel (const juce::File& clapFile
 #if DUSKSTUDIO_HAS_NATIVE_LV2
     lv2Editor.reset();   // an evicted LV2's UI must not outlive its instance
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+    vst3Editor.reset();
+#endif
     pluginEditor.reset();
     pluginEditorOwner = nullptr;
     // Release any OOP-side embed too — replacing a remote (OOP) plugin with a native
@@ -2563,9 +2643,11 @@ void ChannelStripComponent::loadNativeClapForChannel (const juce::File& clapFile
     // Fresh bundle: don't reuse the previous plugin's state blob. The next save
     // re-captures this plugin's real state.
     track.nativeClapStateBase64 = {};
-    // The load evicted any native LV2 in this insert — drop its persisted refs too.
+    // The load evicted the other native hosts in this insert — drop their refs too.
     track.nativeLv2Path = {};
     track.nativeLv2StateBase64 = {};
+    track.nativeVst3Path = {};
+    track.nativeVst3StateBase64 = {};
     refreshPluginSlotButton();
     openPluginEditor();
 }
@@ -2582,6 +2664,9 @@ void ChannelStripComponent::loadNativeLv2ForChannel (const juce::File& bundleDir
     closePluginEditor();
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
     clapEditor.reset();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+    vst3Editor.reset();
 #endif
     lv2Editor.reset();
     pluginEditor.reset();
@@ -2616,10 +2701,67 @@ void ChannelStripComponent::loadNativeLv2ForChannel (const juce::File& bundleDir
     track.nativeLv2StateBase64 = {};
     track.nativeClapPath = {};
     track.nativeClapStateBase64 = {};
+    track.nativeVst3Path = {};
+    track.nativeVst3StateBase64 = {};
     refreshPluginSlotButton();
     openPluginEditor();
 }
 #endif // DUSKSTUDIO_HAS_NATIVE_LV2
+
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+void ChannelStripComponent::loadNativeVst3ForChannel (const juce::File& vst3File)
+{
+    auto& strip = engine.getChannelStrip (trackIndex);
+
+    // One insert per strip — tear down whatever editor is open first (any open
+    // editor references an instance the load below evicts). Mirrors
+    // loadNativeClapForChannel.
+    closePluginEditor();
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+    clapEditor.reset();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+    lv2Editor.reset();
+#endif
+    vst3Editor.reset();
+    pluginEditor.reset();
+    pluginEditorOwner = nullptr;
+   #if JUCE_LINUX && DUSKSTUDIO_HAS_OOP_PLUGINS
+    remoteEditorEmbed.reset();
+   #endif
+   #if DUSKSTUDIO_HAS_OOP_PLUGINS && ! JUCE_LINUX
+    remoteForeignEmbed.reset();
+   #endif
+
+    // NativeVst3Slot::load is NOT RT-safe; fence the audio thread around the swap.
+    // loadNativeVst3 itself evicts the CLAP + LV2 + JUCE occupants.
+    std::string err;
+    engine.suspendProcessing();
+    const bool ok = strip.loadNativeVst3 (vst3File, err);
+    if (ok)
+        strip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
+    engine.resumeProcessing();
+
+    if (! ok)
+    {
+        std::fprintf (stderr, "[chan vst3] load failed: %s\n", err.c_str());
+        showDuskAlert (*this, "Couldn't load VST3 plugin",
+                       vst3File.getFileNameWithoutExtension() + ":\n" + juce::String (err));
+        track.nativeVst3Path = {};
+        track.nativeVst3StateBase64 = {};
+        return;
+    }
+
+    track.nativeVst3Path = vst3File.getFullPathName();
+    track.nativeVst3StateBase64 = {};
+    track.nativeClapPath = {};
+    track.nativeClapStateBase64 = {};
+    track.nativeLv2Path = {};
+    track.nativeLv2StateBase64 = {};
+    refreshPluginSlotButton();
+    openPluginEditor();
+}
+#endif // DUSKSTUDIO_HAS_NATIVE_VST3
 
 namespace
 {
@@ -4016,7 +4158,8 @@ void ChannelStripComponent::showColourMenu()
     // the slot button's primary click stays as a toggle for the editor.
     if (pluginSlot.isLoaded()
         || engine.getChannelStrip (trackIndex).isNativeClapLoaded()
-        || engine.getChannelStrip (trackIndex).isNativeLv2Loaded())
+        || engine.getChannelStrip (trackIndex).isNativeLv2Loaded()
+        || engine.getChannelStrip (trackIndex).isNativeVst3Loaded())
     {
         menu.addSeparator();
         menu.addItem (1010, "Replace plugin...");
@@ -4145,7 +4288,8 @@ void ChannelStripComponent::onTrackModeChanged()
             unloadPluginSlot();
     }
     else if ((engine.getChannelStrip (trackIndex).isNativeClapLoaded()
-              || engine.getChannelStrip (trackIndex).isNativeLv2Loaded())
+              || engine.getChannelStrip (trackIndex).isNativeLv2Loaded()
+              || engine.getChannelStrip (trackIndex).isNativeVst3Loaded())
              && mode == (int) Track::Mode::Midi)
     {
         // Native inserts are effects-only; a MIDI strip can't host one.
