@@ -135,6 +135,28 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
         pendingLv2State.clear();
     }
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+    if (nativeVst3Slot.isLoaded())
+    {
+        std::string err;
+        const bool ok = nativeVst3Slot.reactivate (preparedSampleRate, preparedBlockSize, err);
+        vst3ReloadFailed.store (! ok, std::memory_order_relaxed);
+    }
+    else if (pendingVst3Path.isNotEmpty())
+    {
+        if (! isNativeClapLoaded() && ! isNativeLv2Loaded())   // several pendings set (corrupt session): CLAP > LV2 > VST3
+        {
+            const juce::File p (pendingVst3Path);
+            std::string err;
+            const bool ok = nativeVst3Slot.load (p, preparedSampleRate, preparedBlockSize, err);
+            if (ok && ! pendingVst3State.empty())
+                nativeVst3Slot.loadState (pendingVst3State);
+            vst3ReloadFailed.store (! ok, std::memory_order_relaxed);
+        }
+        pendingVst3Path.clear();
+        pendingVst3State.clear();
+    }
+#endif
 
     // Oversampling: build a Dusk Studio-side wrapper around (EQ + Comp) when the
     // user picks 2× / 4× in Audio Settings. The donor's BritishEQ console
@@ -463,10 +485,11 @@ bool ChannelStrip::loadNativeClap (const juce::File& path, std::string& errorOut
 {
     if (preparedSampleRate <= 0.0 || preparedBlockSize <= 0)
     { errorOut = "channel strip not prepared"; return false; }
-    // One host per insert: evict the other native format and any JUCE plugin so
-    // the audio-thread chain (CLAP → LV2 → JUCE) can never see two loaded at once.
-    // Callers fence the audio thread around this call.
+    // One host per insert: evict the other native formats and any JUCE plugin so
+    // the audio-thread chain (CLAP → LV2 → VST3 → JUCE) can never see two loaded
+    // at once. Callers fence the audio thread around this call.
     unloadNativeLv2();
+    unloadNativeVst3();
     pluginSlot.unload();
     const bool ok = nativeClapSlot.load (path, preparedSampleRate, preparedBlockSize, errorOut);
     // A user-initiated load is not a restore, so it always ends any "failed restore"
@@ -498,6 +521,7 @@ bool ChannelStrip::loadNativeLv2 (const juce::File& path, std::string& errorOut)
     { errorOut = "channel strip not prepared"; return false; }
     // One host per insert — see loadNativeClap.
     unloadNativeClap();
+    unloadNativeVst3();
     pluginSlot.unload();
     const bool ok = nativeLv2Slot.load (path, preparedSampleRate, preparedBlockSize, errorOut);
     // A user-initiated load always ends any "failed restore" state (see loadNativeClap).
@@ -517,6 +541,36 @@ void ChannelStrip::setPendingNativeLv2 (const juce::File& path, std::vector<uint
 {
     pendingLv2Path  = path.getFullPathName();
     pendingLv2State = std::move (state);
+}
+#endif
+
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+bool ChannelStrip::loadNativeVst3 (const juce::File& path, std::string& errorOut)
+{
+    if (preparedSampleRate <= 0.0 || preparedBlockSize <= 0)
+    { errorOut = "channel strip not prepared"; return false; }
+    // One host per insert — see loadNativeClap.
+    unloadNativeClap();
+    unloadNativeLv2();
+    pluginSlot.unload();
+    const bool ok = nativeVst3Slot.load (path, preparedSampleRate, preparedBlockSize, errorOut);
+    // A user-initiated load always ends any "failed restore" state (see loadNativeClap).
+    vst3ReloadFailed.store (false, std::memory_order_relaxed);
+    return ok;
+}
+
+void ChannelStrip::unloadNativeVst3() noexcept
+{
+    nativeVst3Slot.unload();
+    vst3ReloadFailed.store (false, std::memory_order_relaxed);
+    pendingVst3Path.clear();
+    pendingVst3State.clear();
+}
+
+void ChannelStrip::setPendingNativeVst3 (const juce::File& path, std::vector<uint8_t> state) noexcept
+{
+    pendingVst3Path  = path.getFullPathName();
+    pendingVst3State = std::move (state);
 }
 #endif
 
@@ -798,6 +852,19 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             }
             else
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+            if (nativeVst3Slot.isLoaded())
+            {
+                // Same stereo-only mono fold as the CLAP branch above.
+                std::memcpy (insertScratchR.data(), tempMono.data(), sizeof (float) * (size_t) numSamples);
+                nativeVst3Slot.processStereo (tempMono.data(), insertScratchR.data(),
+                                              tempMono.data(), insertScratchR.data(), numSamples);
+                for (int i = 0; i < numSamples; ++i)
+                    tempMono[(size_t) i] = 0.5f
+                        * (tempMono[(size_t) i] + insertScratchR[(size_t) i]);
+            }
+            else
+#endif
             {
                 pluginMidiScratch.clear();
                 pluginSlot.processMonoBlock (tempMono.data(), numSamples, pluginMidiScratch);
@@ -980,6 +1047,11 @@ void ChannelStrip::processAndAccumulate (const float* inL,
 #if DUSKSTUDIO_HAS_NATIVE_LV2
                 if (nativeLv2Slot.isLoaded())
                     nativeLv2Slot.processStereo (L, R, L, R, numSamples);
+                else
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+                if (nativeVst3Slot.isLoaded())
+                    nativeVst3Slot.processStereo (L, R, L, R, numSamples);
                 else
 #endif
                 {

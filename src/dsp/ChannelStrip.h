@@ -13,6 +13,9 @@
 #if DUSKSTUDIO_HAS_NATIVE_LV2
   #include "../engine/lv2/NativeLv2Slot.h"     // Linux-only native LV2 host
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+  #include "../engine/vst3/NativeVst3Slot.h"   // Linux-only native VST3 host
+#endif
 #include "HardwareInsertSlot.h"
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
@@ -96,6 +99,22 @@ public:
     bool isNativeLv2Loaded() const noexcept { return false; }
     void unloadNativeLv2() noexcept {}
     bool nativeLv2ReloadFailed() const noexcept { return false; }
+#endif
+
+    // Native VST3 host path — same contract as the CLAP block above.
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+    bool loadNativeVst3   (const juce::File& path, std::string& errorOut);
+    void unloadNativeVst3() noexcept;
+    bool isNativeVst3Loaded() const noexcept { return nativeVst3Slot.isLoaded(); }
+    vst3::NativeVst3Slot&       getNativeVst3Slot()       noexcept { return nativeVst3Slot; }
+    const vst3::NativeVst3Slot& getNativeVst3Slot() const noexcept { return nativeVst3Slot; }
+    void setPendingNativeVst3 (const juce::File& path, std::vector<uint8_t> state) noexcept;
+    bool nativeVst3ReloadFailed() const noexcept { return vst3ReloadFailed.load (std::memory_order_relaxed); }
+    void markNativeVst3RestoreFailed() noexcept { vst3ReloadFailed.store (true, std::memory_order_relaxed); }
+#else
+    bool isNativeVst3Loaded() const noexcept { return false; }
+    void unloadNativeVst3() noexcept {}
+    bool nativeVst3ReloadFailed() const noexcept { return false; }
 #endif
 
     // Hardware vs plugin insert: one runs per block, chosen by
@@ -205,6 +224,10 @@ private:
     lv2::NativeLv2Slot nativeLv2Slot;      // native LV2 alternative to pluginSlot
     std::atomic<bool>  lv2ReloadFailed { false };
 #endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+    vst3::NativeVst3Slot nativeVst3Slot;   // native VST3 alternative to pluginSlot
+    std::atomic<bool>    vst3ReloadFailed { false };
+#endif
     HardwareInsertSlot hardwareSlot;
 
     // Stashed in prepare() so loadNativeClap / pending-restore can (re)activate at spec.
@@ -217,6 +240,10 @@ private:
 #if DUSKSTUDIO_HAS_NATIVE_LV2
     juce::String         pendingLv2Path;
     std::vector<uint8_t> pendingLv2State;
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+    juce::String         pendingVst3Path;
+    std::vector<uint8_t> pendingVst3State;
 #endif
 
     // activeInsertMode = what we're currently running; insertMode = what
