@@ -31,9 +31,11 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
 
-    // Shutdown: tear down this lane's native CLAP editor(s) now, while the main peer
-    // + message loop are alive (the editor's own X11 Display close hangs if deferred
-    // to the destructor cascade). See MainComponent::beginSafeShutdown phase 4.
+    // Shutdown: tear down this lane's native editors (CLAP, LV2, VST3) now, while
+    // the main peer + message loop are alive. CLAP/LV2 leak their plugin UIs (a
+    // foreign toolkit's destructor can hang on the way out) and every kind closes
+    // its own X11 Display, which hangs if deferred to the destructor cascade. See
+    // MainComponent::beginSafeShutdown phase 4.
     void dropAllNativeEditors();
 
     void childBoundsChanged (juce::Component* child) override;

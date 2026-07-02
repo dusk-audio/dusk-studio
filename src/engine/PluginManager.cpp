@@ -414,7 +414,9 @@ void PluginManager::loadNativeCache (juce::Array<juce::PluginDescription>& into,
 
     if (auto xml = juce::parseXML (file))
     {
-        into.clearQuick();
+        // Parse into a local first; only the swap-in holds nativeDescriptionsLock
+        // (the contract every access to the description arrays follows).
+        juce::Array<juce::PluginDescription> fresh;
         for (auto* child : xml->getChildIterator())
         {
             juce::PluginDescription d;
@@ -424,8 +426,10 @@ void PluginManager::loadNativeCache (juce::Array<juce::PluginDescription>& into,
             // the picker never offers a removed plugin until a rescan rebuilds it.
             const juce::File bundle (d.fileOrIdentifier);
             if (bundleIsDirectory ? bundle.isDirectory() : bundle.exists())
-                into.add (d);
+                fresh.add (d);
         }
+        const juce::ScopedLock sl (nativeDescriptionsLock);
+        into.swapWith (fresh);
     }
 }
 

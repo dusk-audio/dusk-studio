@@ -1,9 +1,9 @@
 #pragma once
 
+#include <juce_core/juce_core.h>
+
 #include "InsertAdapter.h"
 #include "SpscRing.h"
-
-#include <juce_core/juce_core.h>
 
 #include <atomic>
 #include <cstring>

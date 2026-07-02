@@ -743,10 +743,10 @@ MainComponent::~MainComponent()
     if (consoleView != nullptr)
         consoleView->dropAllPluginEditors();
 
-    // Aux native-CLAP editors need the same early teardown while the main peer +
-    // message loop are still alive. beginSafeShutdown() does this, but a quit path
-    // that skips it (SIGTERM / WM kill) must still leak-release them here rather than
-    // leave them for the late ~AuxView cascade.
+    // Aux native editors (CLAP, LV2, VST3) need the same early teardown while the
+    // main peer + message loop are still alive. beginSafeShutdown() does this, but
+    // a quit path that skips it (SIGTERM / WM kill) must still tear them down here
+    // rather than leave them for the late ~AuxView cascade.
     if (auxView != nullptr)
         auxView->dropAllNativeEditors();
 
@@ -2420,10 +2420,11 @@ void MainComponent::beginSafeShutdown()
     if (consoleView != nullptr)
         consoleView->dropAllPluginEditors();
     // JUCE AUX plugin editors tear down fine with the normal ~MainWindow → ~AuxView
-    // cascade. NATIVE CLAP editors do NOT: each opens its own X11 Display + a host
-    // window parented into the main peer, and its close() (gui->destroy + XCloseDisplay)
-    // hangs if it runs in the late cascade after the main peer is gone. Tear them down
-    // here — main peer + message loop alive, audio callback already detached (phase 3).
+    // cascade. NATIVE editors (CLAP, LV2, VST3) do NOT: each opens its own X11
+    // Display + a host window parented into the main peer, and its close (plugin-UI
+    // destroy + XCloseDisplay) hangs if it runs in the late cascade after the main
+    // peer is gone — CLAP/LV2 additionally leak their plugin UIs there. Tear them
+    // down here — main peer + message loop alive, audio callback detached (phase 3).
     if (auxView != nullptr)
         auxView->dropAllNativeEditors();
 
