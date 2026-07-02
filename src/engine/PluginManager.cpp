@@ -7,6 +7,7 @@
 
 #include "ipc/PluginScanProtocol.h"
 #include "PluginBackingCheck.h"
+#include "hosting/NativePluginId.h"
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
   #include "clap/ClapScanner.h"   // Linux-only native CLAP discovery
 #endif
@@ -390,7 +391,8 @@ void PluginManager::scanClapPlugins()
             d.manufacturerName = juce::String (juce::CharPointer_UTF8 (s.desc.vendor.c_str()));
             d.version          = juce::String (juce::CharPointer_UTF8 (s.desc.version.c_str()));
             d.pluginFormatName = "CLAP";
-            d.fileOrIdentifier = s.bundlePath;
+            d.fileOrIdentifier = hosting::joinNativeIdentifier (
+                s.bundlePath, juce::String (juce::CharPointer_UTF8 (s.desc.id.c_str())));
             d.isInstrument     = s.desc.isInstrument();
             clapDescriptions.add (d);
         }
@@ -424,7 +426,9 @@ void PluginManager::loadNativeCache (juce::Array<juce::PluginDescription>& into,
                 continue;
             // Drop entries whose bundle is gone since the cache was written, so
             // the picker never offers a removed plugin until a rescan rebuilds it.
-            const juce::File bundle (d.fileOrIdentifier);
+            // fileOrIdentifier carries "bundle\npluginId" — check the bundle half.
+            const juce::File bundle (
+                hosting::splitNativeIdentifier (d.fileOrIdentifier).bundlePath);
             if (bundleIsDirectory ? bundle.isDirectory() : bundle.exists())
                 fresh.add (d);
         }
@@ -479,7 +483,8 @@ void PluginManager::scanLv2Plugins()
             juce::PluginDescription d;
             d.name             = juce::String (juce::CharPointer_UTF8 (s.desc.name.c_str()));
             d.pluginFormatName = "LV2-Native";
-            d.fileOrIdentifier = s.bundlePath;
+            d.fileOrIdentifier = hosting::joinNativeIdentifier (
+                s.bundlePath, juce::String (juce::CharPointer_UTF8 (s.desc.uri.c_str())));
             d.isInstrument     = false;
             lv2Descriptions.add (d);
         }
@@ -512,7 +517,8 @@ void PluginManager::scanVst3NativePlugins()
             d.manufacturerName = juce::String (juce::CharPointer_UTF8 (s.desc.vendor.c_str()));
             d.version          = juce::String (juce::CharPointer_UTF8 (s.desc.version.c_str()));
             d.pluginFormatName = "VST3-Native";
-            d.fileOrIdentifier = s.bundlePath;
+            d.fileOrIdentifier = hosting::joinNativeIdentifier (
+                s.bundlePath, juce::String (juce::CharPointer_UTF8 (s.desc.id.c_str())));
             d.isInstrument     = false;
             vst3NativeDescriptions.add (d);
         }

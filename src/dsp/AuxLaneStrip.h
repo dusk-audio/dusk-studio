@@ -67,7 +67,8 @@ public:
     // Linux-only native CLAP host (DUSKSTUDIO_HAS_NATIVE_CLAP); stubbed elsewhere so the
     // bool/void API still compiles. getNativeClapSlot returns a clap type → Linux-only.
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
-    bool loadNativeClap   (int slotIdx, const juce::File& path, std::string& errorOut);
+    bool loadNativeClap   (int slotIdx, const juce::File& path, std::string& errorOut,
+                           const juce::String& pluginId = {});
     void unloadNativeClap (int slotIdx) noexcept;
     bool isNativeClapLoaded (int slotIdx) const noexcept { jassert (slotIdx >= 0 && slotIdx < kMaxPlugins); return nativeClapSlots[(size_t) slotIdx].isLoaded(); }
     clap::NativeClapSlot&       getNativeClapSlot (int idx)       noexcept { jassert (idx >= 0 && idx < kMaxPlugins); return nativeClapSlots[(size_t) idx]; }
@@ -92,7 +93,8 @@ public:
 
     // Native LV2 host path — same contract as the CLAP block above.
 #if DUSKSTUDIO_HAS_NATIVE_LV2
-    bool loadNativeLv2   (int slotIdx, const juce::File& path, std::string& errorOut);
+    bool loadNativeLv2   (int slotIdx, const juce::File& path, std::string& errorOut,
+                          const juce::String& pluginId = {});
     void unloadNativeLv2 (int slotIdx) noexcept;
     bool isNativeLv2Loaded (int slotIdx) const noexcept { jassert (slotIdx >= 0 && slotIdx < kMaxPlugins); return nativeLv2Slots[(size_t) slotIdx].isLoaded(); }
     lv2::NativeLv2Slot&       getNativeLv2Slot (int idx)       noexcept { jassert (idx >= 0 && idx < kMaxPlugins); return nativeLv2Slots[(size_t) idx]; }
@@ -108,7 +110,8 @@ public:
 
     // Native VST3 host path — same contract as the CLAP block above.
 #if DUSKSTUDIO_HAS_NATIVE_VST3
-    bool loadNativeVst3   (int slotIdx, const juce::File& path, std::string& errorOut);
+    bool loadNativeVst3   (int slotIdx, const juce::File& path, std::string& errorOut,
+                           const juce::String& pluginId = {});
     void unloadNativeVst3 (int slotIdx) noexcept;
     bool isNativeVst3Loaded (int slotIdx) const noexcept { jassert (slotIdx >= 0 && slotIdx < kMaxPlugins); return nativeVst3Slots[(size_t) slotIdx].isLoaded(); }
     vst3::NativeVst3Slot&       getNativeVst3Slot (int idx)       noexcept { jassert (idx >= 0 && idx < kMaxPlugins); return nativeVst3Slots[(size_t) idx]; }

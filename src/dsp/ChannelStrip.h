@@ -66,7 +66,8 @@ public:
     // Linux-only (DUSKSTUDIO_HAS_NATIVE_CLAP); stubbed elsewhere so callers compile.
     bool isPrepared() const noexcept { return preparedSampleRate > 0.0 && preparedBlockSize > 0; }
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
-    bool loadNativeClap   (const juce::File& path, std::string& errorOut);
+    bool loadNativeClap   (const juce::File& path, std::string& errorOut,
+                           const juce::String& pluginId = {});
     void unloadNativeClap() noexcept;
     bool isNativeClapLoaded() const noexcept { return nativeClapSlot.isLoaded(); }
     clap::NativeClapSlot&       getNativeClapSlot()       noexcept { return nativeClapSlot; }
@@ -87,7 +88,8 @@ public:
 
     // Native LV2 host path — same contract as the CLAP block above.
 #if DUSKSTUDIO_HAS_NATIVE_LV2
-    bool loadNativeLv2   (const juce::File& path, std::string& errorOut);
+    bool loadNativeLv2   (const juce::File& path, std::string& errorOut,
+                          const juce::String& pluginId = {});
     void unloadNativeLv2() noexcept;
     bool isNativeLv2Loaded() const noexcept { return nativeLv2Slot.isLoaded(); }
     lv2::NativeLv2Slot&       getNativeLv2Slot()       noexcept { return nativeLv2Slot; }
@@ -103,7 +105,8 @@ public:
 
     // Native VST3 host path — same contract as the CLAP block above.
 #if DUSKSTUDIO_HAS_NATIVE_VST3
-    bool loadNativeVst3   (const juce::File& path, std::string& errorOut);
+    bool loadNativeVst3   (const juce::File& path, std::string& errorOut,
+                           const juce::String& pluginId = {});
     void unloadNativeVst3() noexcept;
     bool isNativeVst3Loaded() const noexcept { return nativeVst3Slot.isLoaded(); }
     vst3::NativeVst3Slot&       getNativeVst3Slot()       noexcept { return nativeVst3Slot; }

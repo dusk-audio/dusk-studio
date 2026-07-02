@@ -481,7 +481,8 @@ void ChannelStrip::bindHardwareInsert (const HardwareInsertParams& params) noexc
 }
 
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
-bool ChannelStrip::loadNativeClap (const juce::File& path, std::string& errorOut)
+bool ChannelStrip::loadNativeClap (const juce::File& path, std::string& errorOut,
+                                   const juce::String& pluginId)
 {
     if (preparedSampleRate <= 0.0 || preparedBlockSize <= 0)
     { errorOut = "channel strip not prepared"; return false; }
@@ -491,7 +492,7 @@ bool ChannelStrip::loadNativeClap (const juce::File& path, std::string& errorOut
     unloadNativeLv2();
     unloadNativeVst3();
     pluginSlot.unload();
-    const bool ok = nativeClapSlot.load (path, preparedSampleRate, preparedBlockSize, errorOut);
+    const bool ok = nativeClapSlot.load (path, preparedSampleRate, preparedBlockSize, errorOut, pluginId);
     // A user-initiated load is not a restore, so it always ends any "failed restore"
     // state — whether it succeeds (recovered) or fails (caller clears the persisted
     // refs). Clearing unconditionally keeps the flag's meaning independent of the caller.
@@ -515,7 +516,8 @@ void ChannelStrip::setPendingNativeClap (const juce::File& path, std::vector<uin
 #endif
 
 #if DUSKSTUDIO_HAS_NATIVE_LV2
-bool ChannelStrip::loadNativeLv2 (const juce::File& path, std::string& errorOut)
+bool ChannelStrip::loadNativeLv2 (const juce::File& path, std::string& errorOut,
+                                  const juce::String& pluginId)
 {
     if (preparedSampleRate <= 0.0 || preparedBlockSize <= 0)
     { errorOut = "channel strip not prepared"; return false; }
@@ -523,7 +525,7 @@ bool ChannelStrip::loadNativeLv2 (const juce::File& path, std::string& errorOut)
     unloadNativeClap();
     unloadNativeVst3();
     pluginSlot.unload();
-    const bool ok = nativeLv2Slot.load (path, preparedSampleRate, preparedBlockSize, errorOut);
+    const bool ok = nativeLv2Slot.load (path, preparedSampleRate, preparedBlockSize, errorOut, pluginId);
     // A user-initiated load always ends any "failed restore" state (see loadNativeClap).
     lv2ReloadFailed.store (false, std::memory_order_relaxed);
     return ok;
@@ -545,7 +547,8 @@ void ChannelStrip::setPendingNativeLv2 (const juce::File& path, std::vector<uint
 #endif
 
 #if DUSKSTUDIO_HAS_NATIVE_VST3
-bool ChannelStrip::loadNativeVst3 (const juce::File& path, std::string& errorOut)
+bool ChannelStrip::loadNativeVst3 (const juce::File& path, std::string& errorOut,
+                                   const juce::String& pluginId)
 {
     if (preparedSampleRate <= 0.0 || preparedBlockSize <= 0)
     { errorOut = "channel strip not prepared"; return false; }
@@ -553,7 +556,7 @@ bool ChannelStrip::loadNativeVst3 (const juce::File& path, std::string& errorOut
     unloadNativeClap();
     unloadNativeLv2();
     pluginSlot.unload();
-    const bool ok = nativeVst3Slot.load (path, preparedSampleRate, preparedBlockSize, errorOut);
+    const bool ok = nativeVst3Slot.load (path, preparedSampleRate, preparedBlockSize, errorOut, pluginId);
     // A user-initiated load always ends any "failed restore" state (see loadNativeClap).
     vst3ReloadFailed.store (false, std::memory_order_relaxed);
     return ok;

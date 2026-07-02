@@ -790,28 +790,28 @@ void AuxLaneComponent::openPickerForSlot (int slotIdx)
     const auto cursor = juce::Desktop::getMousePosition();
     juce::Component::SafePointer<AuxLaneComponent> safe (this);
     // Native CLAP route — Linux-only; empty elsewhere so the picker shows no CLAP rows.
-    std::function<void (const juce::File&)> onClap;
+    std::function<void (const juce::File&, const juce::String&)> onClap;
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
-    onClap = [safe, slotIdx] (const juce::File& clapFile)
+    onClap = [safe, slotIdx] (const juce::File& clapFile, const juce::String& id)
     {
         if (auto* self = safe.getComponent())
-            self->loadNativeClapForSlot (slotIdx, clapFile);
+            self->loadNativeClapForSlot (slotIdx, clapFile, id);
     };
 #endif
-    std::function<void (const juce::File&)> onLv2;
+    std::function<void (const juce::File&, const juce::String&)> onLv2;
 #if DUSKSTUDIO_HAS_NATIVE_LV2
-    onLv2 = [safe, slotIdx] (const juce::File& bundleDir)
+    onLv2 = [safe, slotIdx] (const juce::File& bundleDir, const juce::String& id)
     {
         if (auto* self = safe.getComponent())
-            self->loadNativeLv2ForSlot (slotIdx, bundleDir);
+            self->loadNativeLv2ForSlot (slotIdx, bundleDir, id);
     };
 #endif
-    std::function<void (const juce::File&)> onVst3;
+    std::function<void (const juce::File&, const juce::String&)> onVst3;
 #if DUSKSTUDIO_HAS_NATIVE_VST3
-    onVst3 = [safe, slotIdx] (const juce::File& vst3File)
+    onVst3 = [safe, slotIdx] (const juce::File& vst3File, const juce::String& id)
     {
         if (auto* self = safe.getComponent())
-            self->loadNativeVst3ForSlot (slotIdx, vst3File);
+            self->loadNativeVst3ForSlot (slotIdx, vst3File, id);
     };
 #endif
     pluginpicker::openPickerMenu (strip.getPluginSlot (slotIdx),
@@ -980,7 +980,8 @@ void AuxLaneComponent::detachEditorForSlot (int slotIdx)
 }
 
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
-void AuxLaneComponent::loadNativeClapForSlot (int slotIdx, const juce::File& clapFile)
+void AuxLaneComponent::loadNativeClapForSlot (int slotIdx, const juce::File& clapFile,
+                                              const juce::String& pluginId)
 {
     if (slotIdx < 0 || slotIdx >= AuxLaneParams::kMaxLanePlugins) return;
 
@@ -1001,7 +1002,7 @@ void AuxLaneComponent::loadNativeClapForSlot (int slotIdx, const juce::File& cla
     bool ok = false;
     engine.suspendProcessing();
     strip.getPluginSlot (slotIdx).unload();   // ensure no JUCE plugin lingers
-    ok = strip.loadNativeClap (slotIdx, clapFile, err);
+    ok = strip.loadNativeClap (slotIdx, clapFile, err, pluginId);
     if (ok)
         strip.insertMode[(size_t) slotIdx].store (AuxLaneStrip::kInsertPlugin,
                                                    std::memory_order_release);
@@ -1033,7 +1034,8 @@ void AuxLaneComponent::loadNativeClapForSlot (int slotIdx, const juce::File& cla
 #endif // DUSKSTUDIO_HAS_NATIVE_CLAP
 
 #if DUSKSTUDIO_HAS_NATIVE_LV2
-void AuxLaneComponent::loadNativeLv2ForSlot (int slotIdx, const juce::File& bundleDir)
+void AuxLaneComponent::loadNativeLv2ForSlot (int slotIdx, const juce::File& bundleDir,
+                                             const juce::String& pluginId)
 {
     if (slotIdx < 0 || slotIdx >= AuxLaneParams::kMaxLanePlugins) return;
 
@@ -1050,7 +1052,7 @@ void AuxLaneComponent::loadNativeLv2ForSlot (int slotIdx, const juce::File& bund
     std::string err;
     bool ok = false;
     engine.suspendProcessing();
-    ok = strip.loadNativeLv2 (slotIdx, bundleDir, err);
+    ok = strip.loadNativeLv2 (slotIdx, bundleDir, err, pluginId);
     if (ok)
         strip.insertMode[(size_t) slotIdx].store (AuxLaneStrip::kInsertPlugin,
                                                    std::memory_order_release);
@@ -1077,7 +1079,8 @@ void AuxLaneComponent::loadNativeLv2ForSlot (int slotIdx, const juce::File& bund
 #endif // DUSKSTUDIO_HAS_NATIVE_LV2
 
 #if DUSKSTUDIO_HAS_NATIVE_VST3
-void AuxLaneComponent::loadNativeVst3ForSlot (int slotIdx, const juce::File& vst3File)
+void AuxLaneComponent::loadNativeVst3ForSlot (int slotIdx, const juce::File& vst3File,
+                                              const juce::String& pluginId)
 {
     if (slotIdx < 0 || slotIdx >= AuxLaneParams::kMaxLanePlugins) return;
 
@@ -1094,7 +1097,7 @@ void AuxLaneComponent::loadNativeVst3ForSlot (int slotIdx, const juce::File& vst
     std::string err;
     bool ok = false;
     engine.suspendProcessing();
-    ok = strip.loadNativeVst3 (slotIdx, vst3File, err);
+    ok = strip.loadNativeVst3 (slotIdx, vst3File, err, pluginId);
     if (ok)
         strip.insertMode[(size_t) slotIdx].store (AuxLaneStrip::kInsertPlugin,
                                                    std::memory_order_release);

@@ -5,6 +5,7 @@
 #include "PluginPickerPanel.h"
 #include "../engine/PluginManager.h"
 #include "../engine/PluginSlot.h"
+#include "../engine/hosting/NativePluginId.h"
 #if DUSKSTUDIO_HAS_MULTISAMPLE
  #include "../engine/multisample/AriaBank.h"
 #endif
@@ -391,9 +392,9 @@ void openPickerMenu (PluginSlot& slot,
                       juce::Point<int> /*screenPosition*/,
                       std::function<void()> onPickHardwareInsert,
                       bool suppressSecondaryButtons,
-                      std::function<void (const juce::File&)> onPickNativeClap,
-                      std::function<void (const juce::File&)> onPickNativeLv2,
-                      std::function<void (const juce::File&)> onPickNativeVst3)
+                      std::function<void (const juce::File&, const juce::String&)> onPickNativeClap,
+                      std::function<void (const juce::File&, const juce::String&)> onPickNativeLv2,
+                      std::function<void (const juce::File&, const juce::String&)> onPickNativeVst3)
 {
     auto& manager = slot.getManagerForUi();
 
@@ -517,19 +518,19 @@ void openPickerMenu (PluginSlot& slot,
         // so DON'T also fire the generic onChange here — on a failed load it would
         // refresh state as if the slot loaded (the JUCE path only refreshes on a
         // successful async load).
-        if (desc.pluginFormatName == "CLAP")
+        if (desc.pluginFormatName == "CLAP"
+            || desc.pluginFormatName == "LV2-Native"
+            || desc.pluginFormatName == "VST3-Native")
         {
-            if (onPickNativeClap) onPickNativeClap (juce::File (desc.fileOrIdentifier));
-            return;
-        }
-        if (desc.pluginFormatName == "LV2-Native")
-        {
-            if (onPickNativeLv2) onPickNativeLv2 (juce::File (desc.fileOrIdentifier));
-            return;
-        }
-        if (desc.pluginFormatName == "VST3-Native")
-        {
-            if (onPickNativeVst3) onPickNativeVst3 (juce::File (desc.fileOrIdentifier));
+            // fileOrIdentifier carries "bundle\npluginId" so a row picks ITS
+            // plugin out of a multi-plugin bundle, not the bundle's first.
+            const auto ident = hosting::splitNativeIdentifier (desc.fileOrIdentifier);
+            if (desc.pluginFormatName == "CLAP")
+            { if (onPickNativeClap) onPickNativeClap (juce::File (ident.bundlePath), ident.pluginId); }
+            else if (desc.pluginFormatName == "LV2-Native")
+            { if (onPickNativeLv2)  onPickNativeLv2  (juce::File (ident.bundlePath), ident.pluginId); }
+            else
+            { if (onPickNativeVst3) onPickNativeVst3 (juce::File (ident.bundlePath), ident.pluginId); }
             return;
         }
 
@@ -715,9 +716,9 @@ void openInsertChooser (PluginSlot& slot,
                          std::function<void()> onChange,
                          PluginKind kind,
                          std::function<void()> onPickHardwareInsert,
-                         std::function<void (const juce::File&)> onPickNativeClap,
-                         std::function<void (const juce::File&)> onPickNativeLv2,
-                         std::function<void (const juce::File&)> onPickNativeVst3)
+                         std::function<void (const juce::File&, const juce::String&)> onPickNativeClap,
+                         std::function<void (const juce::File&, const juce::String&)> onPickNativeLv2,
+                         std::function<void (const juce::File&, const juce::String&)> onPickNativeVst3)
 {
     auto* parent = target.getTopLevelComponent();
     if (parent == nullptr) parent = &target;

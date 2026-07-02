@@ -69,13 +69,16 @@ private:
     void attachHardwareInsertForSlot (int slotIdx);
     void detachHardwareInsertForSlot (int slotIdx);
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
-    void loadNativeClapForSlot (int slotIdx, const juce::File& clapFile);   // Linux-only
+    void loadNativeClapForSlot (int slotIdx, const juce::File& clapFile,
+                                const juce::String& pluginId = {});   // Linux-only
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_LV2
-    void loadNativeLv2ForSlot (int slotIdx, const juce::File& bundleDir);   // Linux-only, no editor yet
+    void loadNativeLv2ForSlot (int slotIdx, const juce::File& bundleDir,
+                               const juce::String& pluginId = {});   // Linux-only
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_VST3
-    void loadNativeVst3ForSlot (int slotIdx, const juce::File& vst3File);   // Linux-only
+    void loadNativeVst3ForSlot (int slotIdx, const juce::File& vst3File,
+                                const juce::String& pluginId = {});   // Linux-only
 #endif
     // Stubbed (no-op body) off Linux so the many callers don't each need a guard.
     void detachClapEditorForSlot (int slotIdx);

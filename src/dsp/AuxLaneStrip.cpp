@@ -131,7 +131,8 @@ void AuxLaneStrip::bindHardwareInsert (int slotIdx, const HardwareInsertParams& 
 }
 
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
-bool AuxLaneStrip::loadNativeClap (int slotIdx, const juce::File& path, std::string& errorOut)
+bool AuxLaneStrip::loadNativeClap (int slotIdx, const juce::File& path, std::string& errorOut,
+                                   const juce::String& pluginId)
 {
     jassert (slotIdx >= 0 && slotIdx < kMaxPlugins);
     if (preparedSampleRate <= 0.0 || preparedBlockSize <= 0)
@@ -142,7 +143,7 @@ bool AuxLaneStrip::loadNativeClap (int slotIdx, const juce::File& path, std::str
     unloadNativeLv2 (slotIdx);
     unloadNativeVst3 (slotIdx);
     slots[(size_t) slotIdx].unload();
-    const bool ok = nativeClapSlots[(size_t) slotIdx].load (path, preparedSampleRate, preparedBlockSize, errorOut);
+    const bool ok = nativeClapSlots[(size_t) slotIdx].load (path, preparedSampleRate, preparedBlockSize, errorOut, pluginId);
     // User-initiated load always ends any "failed restore" state (see ChannelStrip::
     // loadNativeClap) — clear regardless of outcome so the flag stays caller-independent.
     nativeReloadFailed[(size_t) slotIdx].store (false, std::memory_order_relaxed);
@@ -168,7 +169,8 @@ void AuxLaneStrip::setPendingNativeClap (int slotIdx, const juce::File& path,
 #endif
 
 #if DUSKSTUDIO_HAS_NATIVE_LV2
-bool AuxLaneStrip::loadNativeLv2 (int slotIdx, const juce::File& path, std::string& errorOut)
+bool AuxLaneStrip::loadNativeLv2 (int slotIdx, const juce::File& path, std::string& errorOut,
+                                  const juce::String& pluginId)
 {
     jassert (slotIdx >= 0 && slotIdx < kMaxPlugins);
     if (preparedSampleRate <= 0.0 || preparedBlockSize <= 0)
@@ -177,7 +179,7 @@ bool AuxLaneStrip::loadNativeLv2 (int slotIdx, const juce::File& path, std::stri
     unloadNativeClap (slotIdx);
     unloadNativeVst3 (slotIdx);
     slots[(size_t) slotIdx].unload();
-    const bool ok = nativeLv2Slots[(size_t) slotIdx].load (path, preparedSampleRate, preparedBlockSize, errorOut);
+    const bool ok = nativeLv2Slots[(size_t) slotIdx].load (path, preparedSampleRate, preparedBlockSize, errorOut, pluginId);
     lv2ReloadFailed[(size_t) slotIdx].store (false, std::memory_order_relaxed);
     return ok;
 }
@@ -201,7 +203,8 @@ void AuxLaneStrip::setPendingNativeLv2 (int slotIdx, const juce::File& path,
 #endif
 
 #if DUSKSTUDIO_HAS_NATIVE_VST3
-bool AuxLaneStrip::loadNativeVst3 (int slotIdx, const juce::File& path, std::string& errorOut)
+bool AuxLaneStrip::loadNativeVst3 (int slotIdx, const juce::File& path, std::string& errorOut,
+                                   const juce::String& pluginId)
 {
     jassert (slotIdx >= 0 && slotIdx < kMaxPlugins);
     if (preparedSampleRate <= 0.0 || preparedBlockSize <= 0)
@@ -210,7 +213,7 @@ bool AuxLaneStrip::loadNativeVst3 (int slotIdx, const juce::File& path, std::str
     unloadNativeClap (slotIdx);
     unloadNativeLv2 (slotIdx);
     slots[(size_t) slotIdx].unload();
-    const bool ok = nativeVst3Slots[(size_t) slotIdx].load (path, preparedSampleRate, preparedBlockSize, errorOut);
+    const bool ok = nativeVst3Slots[(size_t) slotIdx].load (path, preparedSampleRate, preparedBlockSize, errorOut, pluginId);
     vst3ReloadFailed[(size_t) slotIdx].store (false, std::memory_order_relaxed);
     return ok;
 }

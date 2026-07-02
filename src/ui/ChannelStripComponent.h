@@ -332,18 +332,18 @@ private:
     // (u-he hangs in gui->destroy); leaked on shutdown via dropPluginEditor. Linux-only.
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
     std::unique_ptr<class ClapPluginEditorComponent> clapEditor;
-    void loadNativeClapForChannel (const juce::File& clapFile);
+    void loadNativeClapForChannel (const juce::File& clapFile, const juce::String& pluginId = {});
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_LV2
     // Native LV2 insert editor (suil) — same kept-alive/showBorrowed lifecycle as
     // clapEditor above.
     std::unique_ptr<class Lv2PluginEditorComponent> lv2Editor;
-    void loadNativeLv2ForChannel (const juce::File& bundleDir);
+    void loadNativeLv2ForChannel (const juce::File& bundleDir, const juce::String& pluginId = {});
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_VST3
     // Native VST3 insert editor (IPlugView) — same lifecycle as clapEditor above.
     std::unique_ptr<class Vst3PluginEditorComponent> vst3Editor;
-    void loadNativeVst3ForChannel (const juce::File& vst3File);
+    void loadNativeVst3ForChannel (const juce::File& vst3File, const juce::String& pluginId = {});
 #endif
 
    #if JUCE_LINUX && DUSKSTUDIO_HAS_OOP_PLUGINS
