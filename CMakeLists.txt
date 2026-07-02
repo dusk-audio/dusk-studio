@@ -727,6 +727,18 @@ if(_duskstudio_oop_enabled)
         target_link_libraries(dusk-studio-plugin-host PRIVATE synchronization)
     endif()
     target_include_directories(dusk-studio-plugin-host PRIVATE src)
+    # Native-format discovery runs sandboxed through this child (--scan-native):
+    # it needs each format's bundle loader, nothing else from the native hosts.
+    if(DUSKSTUDIO_NATIVE_CLAP)
+        target_sources(dusk-studio-plugin-host PRIVATE src/engine/clap/ClapBundle.cpp)
+        target_include_directories(dusk-studio-plugin-host PRIVATE external/clap/include)
+        target_compile_definitions(dusk-studio-plugin-host PRIVATE DUSKSTUDIO_HAS_NATIVE_CLAP=1)
+    endif()
+    if(DUSKSTUDIO_NATIVE_VST3)
+        target_sources(dusk-studio-plugin-host PRIVATE src/engine/vst3/Vst3Bundle.cpp)
+        target_link_libraries(dusk-studio-plugin-host PRIVATE dusk-vst3-hosting)
+        target_compile_definitions(dusk-studio-plugin-host PRIVATE DUSKSTUDIO_HAS_NATIVE_VST3=1)
+    endif()
     set_target_properties(dusk-studio-plugin-host PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "$<TARGET_FILE_DIR:DuskStudio>")
     add_dependencies(DuskStudio dusk-studio-plugin-host)
