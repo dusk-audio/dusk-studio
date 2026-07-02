@@ -541,7 +541,6 @@ if(DUSKSTUDIO_NATIVE_CLAP)
         src/engine/clap/ClapHost.cpp
         src/engine/clap/ClapInstance.cpp
         src/engine/clap/ClapEditor.cpp
-        src/engine/clap/NativeClapSlot.cpp
         src/engine/clap/ClapScanner.cpp
         src/ui/ClapPluginEditorComponent.cpp)
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_NATIVE_CLAP=1)
@@ -555,7 +554,6 @@ if(DUSKSTUDIO_NATIVE_LV2)
         src/engine/lv2/Lv2Editor.cpp
         src/engine/lv2/Lv2Instance.cpp
         src/engine/lv2/Lv2Scanner.cpp
-        src/engine/lv2/NativeLv2Slot.cpp
         src/ui/Lv2PluginEditorComponent.cpp)
     target_link_libraries(DuskStudio PRIVATE PkgConfig::LILV PkgConfig::SUIL PkgConfig::LV2)
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_NATIVE_LV2=1)
@@ -605,7 +603,6 @@ if(DUSKSTUDIO_NATIVE_VST3)
     target_compile_options(dusk-vst3-hosting PRIVATE -w)
     target_link_libraries(dusk-vst3-hosting PUBLIC ${CMAKE_DL_LIBS})
     target_sources(DuskStudio PRIVATE
-        src/engine/vst3/NativeVst3Slot.cpp
         src/engine/vst3/Vst3Bundle.cpp
         src/engine/vst3/Vst3Editor.cpp
         src/engine/vst3/Vst3HostContext.cpp

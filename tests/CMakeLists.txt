@@ -140,7 +140,6 @@ if(DUSKSTUDIO_NATIVE_CLAP)
         ${CMAKE_SOURCE_DIR}/src/engine/clap/ClapBundle.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/clap/ClapHost.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/clap/ClapInstance.cpp
-        ${CMAKE_SOURCE_DIR}/src/engine/clap/NativeClapSlot.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/clap/ClapScanner.cpp)
     target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_NATIVE_CLAP=1)
 endif()
@@ -153,8 +152,7 @@ if(DUSKSTUDIO_NATIVE_LV2)
         lv2_instance_process.cpp
         lv2_native_slot.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/lv2/Lv2Bundle.cpp
-        ${CMAKE_SOURCE_DIR}/src/engine/lv2/Lv2Instance.cpp
-        ${CMAKE_SOURCE_DIR}/src/engine/lv2/NativeLv2Slot.cpp)
+        ${CMAKE_SOURCE_DIR}/src/engine/lv2/Lv2Instance.cpp)
     target_link_libraries(dusk-studio-tests PRIVATE PkgConfig::LILV PkgConfig::SUIL PkgConfig::LV2)
     target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_NATIVE_LV2=1)
 endif()
@@ -168,7 +166,6 @@ if(DUSKSTUDIO_NATIVE_VST3)
         vst3_instance_process.cpp
         vst3_native_slot.cpp
         vst3_scanner.cpp
-        ${CMAKE_SOURCE_DIR}/src/engine/vst3/NativeVst3Slot.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/vst3/Vst3Bundle.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/vst3/Vst3HostContext.cpp
         ${CMAKE_SOURCE_DIR}/src/engine/vst3/Vst3Instance.cpp
