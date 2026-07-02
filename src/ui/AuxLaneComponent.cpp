@@ -1350,9 +1350,10 @@ void AuxLaneComponent::parentHierarchyChanged()
         for (int i = 0; i < AuxLaneParams::kMaxLanePlugins; ++i)
         {
             detachEditorForSlot (i);
-            // The native CLAP editor's embedded X11 window is also parented to the
-            // destroyed peer; tear it down so rebuildSlots re-embeds it on the new one.
+            // The native editors' embedded X11 windows are also parented to the
+            // destroyed peer; tear them down so rebuildSlots re-embeds on the new one.
             detachClapEditorForSlot (i);
+            detachLv2EditorForSlot (i);
         }
         lastSeenPeer = peer;
     }
