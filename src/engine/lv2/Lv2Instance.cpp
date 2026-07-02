@@ -79,10 +79,15 @@ struct Lv2Instance::Impl
         uridPatchValue    = mapUri (this, LV2_PATCH__value);
         uridEventTransfer = mapUri (this, LV2_ATOM__eventTransfer);
         uridMidiEvent     = mapUri (this, LV2_MIDI__MidiEvent);
+        uridPatchPut      = mapUri (this, LV2_PATCH__Put);
+        uridPatchBody     = mapUri (this, LV2_PATCH__body);
+        uridSequence      = mapUri (this, LV2_ATOM__Sequence);
+        uridFloatType     = mapUri (this, LV2_ATOM__Float);
     }
     LV2_URID uridFloat = 0, uridDouble = 0, uridInt = 0, uridLong = 0;
     LV2_URID uridObject = 0, uridPatchSet = 0, uridPatchProperty = 0,
-             uridPatchValue = 0, uridEventTransfer = 0, uridMidiEvent = 0;
+             uridPatchValue = 0, uridEventTransfer = 0, uridMidiEvent = 0,
+             uridPatchPut = 0, uridPatchBody = 0, uridSequence = 0, uridFloatType = 0;
 
     // Assemble the full feature list for instantiate: urid map/unmap + the block-size
     // and sample-rate options + boundedBlockLength. JUCE/DPF-wrapped plugins REQUIRE
@@ -165,6 +170,40 @@ struct Lv2Instance::Impl
     // Which atomInPorts entry takes injected events: the lv2:control-designated
     // port, else the first atom input.
     int controlAtomInPos = 0;
+    // Mirrors it for the plugin's outgoing patch responses (-1 = no atom output).
+    int controlAtomOutPos = -1;
+
+    // Plugin → host property feedback (audio-thread parse of the control atom
+    // output, drained into patchShadow on the message thread).
+    struct PatchFeedback { LV2_URID prop; float value; };
+    hosting::SpscRing<PatchFeedback, 128> patchOutRing;
+
+    // Audio thread. Queue one patch:Set / patch:Put object's float properties.
+    void queuePatchObject (const LV2_Atom_Object* obj) noexcept
+    {
+        if (obj->body.otype == uridPatchSet)
+        {
+            const LV2_Atom* propAtom = nullptr;
+            const LV2_Atom* valAtom  = nullptr;
+            lv2_atom_object_get (obj, uridPatchProperty, &propAtom,
+                                      uridPatchValue,    &valAtom, 0);
+            if (propAtom != nullptr && valAtom != nullptr
+                && valAtom->type == uridFloatType)
+                patchOutRing.push ({ reinterpret_cast<const LV2_Atom_URID*> (propAtom)->body,
+                                     reinterpret_cast<const LV2_Atom_Float*> (valAtom)->body });
+        }
+        else if (obj->body.otype == uridPatchPut)
+        {
+            const LV2_Atom* bodyAtom = nullptr;
+            lv2_atom_object_get (obj, uridPatchBody, &bodyAtom, 0);
+            if (bodyAtom == nullptr || bodyAtom->type != uridObject) return;
+            const auto* body = reinterpret_cast<const LV2_Atom_Object*> (bodyAtom);
+            LV2_ATOM_OBJECT_FOREACH (body, p)
+                if (p->value.type == uridFloatType)
+                    patchOutRing.push ({ p->key,
+                        reinterpret_cast<const LV2_Atom_Float*> (&p->value)->body });
+        }
+    }
 
     // Last host/UI-written value per patch property (message thread) — the
     // read-back source until patch:Put parsing exists.
@@ -430,6 +469,15 @@ bool Lv2Instance::create (const Lv2Bundle& bundle, const std::string& uri, std::
             for (size_t i = 0; i < impl->atomInPorts.size(); ++i)
                 if (impl->atomInPorts[i] == idx) { impl->controlAtomInPos = (int) i; break; }
         }
+        impl->controlAtomOutPos = impl->atomOutPorts.empty() ? -1 : 0;
+        LilvNode* outputClass2 = lilv_new_uri (world, LV2_CORE__OutputPort);
+        if (const LilvPort* cp = lilv_plugin_get_port_by_designation (impl->plugin, outputClass2, ctrlDesig))
+        {
+            const uint32_t idx = lilv_port_get_index (impl->plugin, cp);
+            for (size_t i = 0; i < impl->atomOutPorts.size(); ++i)
+                if (impl->atomOutPorts[i] == idx) { impl->controlAtomOutPos = (int) i; break; }
+        }
+        lilv_node_free (outputClass2);
         lilv_node_free (ctrlDesig);
         lilv_node_free (inputClass2);
     }
@@ -685,6 +733,25 @@ void Lv2Instance::processBlock (const hosting::PortBuffers& io) noexcept
 
     lilv_instance_run (impl->instance, (uint32_t) numFrames);
 
+    // The plugin's outgoing patch responses (its own UI / preset loads) keep
+    // the read-back shadow honest — parse the control atom output and stage
+    // the float properties for the message-thread drain.
+    if (impl->controlAtomOutPos >= 0)
+    {
+        const auto& buf = impl->atomBuffers[impl->atomInPorts.size()
+                                            + (size_t) impl->controlAtomOutPos];
+        const auto* seq = reinterpret_cast<const LV2_Atom_Sequence*> (buf.data());
+        if (seq->atom.type == impl->uridSequence)
+        {
+            LV2_ATOM_SEQUENCE_FOREACH (seq, ev)
+            {
+                if (ev->body.type == impl->uridObject)
+                    impl->queuePatchObject (
+                        reinterpret_cast<const LV2_Atom_Object*> (&ev->body));
+            }
+        }
+    }
+
     if (impl->latencyPortIndex >= 0)
         impl->latencySamples.store ((int) impl->portValues[(size_t) impl->latencyPortIndex],
                                     std::memory_order_relaxed);
@@ -826,6 +893,14 @@ void Lv2Instance::setParamValue (uint32_t paramId, double value) noexcept
 
     impl->patchShadow[propUrid] = v;
     impl->atomRing.push (blob);   // full ⇒ drop (pathological flood only)
+}
+
+void Lv2Instance::drainPatchFeedback()
+{
+    impl->patchOutRing.drain ([this] (const Impl::PatchFeedback& f)
+    {
+        impl->patchShadow[f.prop] = f.value;
+    });
 }
 
 int Lv2Instance::lastTouchedParamIndex() const noexcept

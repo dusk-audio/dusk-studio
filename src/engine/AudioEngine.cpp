@@ -120,6 +120,8 @@ public:
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_LV2
             strip.getNativeLv2Slot().drainQueuedParamBindings();
+            if (auto* inst = strip.getNativeLv2Slot().getInstance())
+                inst->drainPatchFeedback();
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_VST3
             strip.getNativeVst3Slot().drainQueuedParamBindings();
@@ -135,6 +137,8 @@ public:
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_LV2
                 lane.getNativeLv2Slot (s).drainQueuedParamBindings();
+                if (auto* inst = lane.getNativeLv2Slot (s).getInstance())
+                    inst->drainPatchFeedback();
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_VST3
                 lane.getNativeVst3Slot (s).drainQueuedParamBindings();
