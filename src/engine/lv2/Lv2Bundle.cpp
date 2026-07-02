@@ -28,44 +28,10 @@ bool Lv2Bundle::load (const std::string& path, std::string& errorOut)
     lilv_world_load_bundle (world, bundleUri);
     lilv_node_free (bundleUri);
 
-    LilvNode* audioClass  = lilv_new_uri (world, LILV_URI_AUDIO_PORT);
-    LilvNode* inputClass  = lilv_new_uri (world, LILV_URI_INPUT_PORT);
-    LilvNode* atomClass   = lilv_new_uri (world, LILV_URI_ATOM_PORT);
-
     descriptors.clear();
     const LilvPlugins* allPlugins = lilv_world_get_all_plugins (world);
     LILV_FOREACH (plugins, it, allPlugins)
-    {
-        const LilvPlugin* p = lilv_plugins_get (allPlugins, it);
-
-        PluginDesc d;
-        d.uri = lilv_node_as_uri (lilv_plugin_get_uri (p));
-        if (LilvNode* nameNode = lilv_plugin_get_name (p))
-        {
-            d.name = lilv_node_as_string (nameNode);
-            lilv_node_free (nameNode);
-        }
-
-        int atomInputs = 0;
-        const uint32_t numPorts = lilv_plugin_get_num_ports (p);
-        for (uint32_t i = 0; i < numPorts; ++i)
-        {
-            const LilvPort* port = lilv_plugin_get_port_by_index (p, i);
-            const bool isInput = lilv_port_is_a (p, port, inputClass);
-            if (lilv_port_is_a (p, port, audioClass))
-                (isInput ? d.audioInputs : d.audioOutputs) += 1;
-            else if (isInput && lilv_port_is_a (p, port, atomClass))
-                ++atomInputs;
-        }
-        // Instrument: takes MIDI/atom in, produces audio, but has no audio input.
-        d.isInstrument = (d.audioInputs == 0 && atomInputs > 0 && d.audioOutputs > 0);
-
-        descriptors.push_back (std::move (d));
-    }
-
-    lilv_node_free (audioClass);
-    lilv_node_free (inputClass);
-    lilv_node_free (atomClass);
+        descriptors.push_back (describePlugin (world, lilv_plugins_get (allPlugins, it)));
 
     if (descriptors.empty())
     { errorOut = "no plugins advertised by bundle: " + path; lilv_world_free (world); return false; }
@@ -84,6 +50,43 @@ void Lv2Bundle::unload()
     }
     descriptors.clear();
     bundlePath.clear();
+}
+
+PluginDesc Lv2Bundle::describePlugin (void* worldHandle, const void* pluginHandle)
+{
+    auto* world = static_cast<LilvWorld*> (worldHandle);
+    const auto* p = static_cast<const LilvPlugin*> (pluginHandle);
+
+    LilvNode* audioClass = lilv_new_uri (world, LILV_URI_AUDIO_PORT);
+    LilvNode* inputClass = lilv_new_uri (world, LILV_URI_INPUT_PORT);
+    LilvNode* atomClass  = lilv_new_uri (world, LILV_URI_ATOM_PORT);
+
+    PluginDesc d;
+    d.uri = lilv_node_as_uri (lilv_plugin_get_uri (p));
+    if (LilvNode* nameNode = lilv_plugin_get_name (p))
+    {
+        d.name = lilv_node_as_string (nameNode);
+        lilv_node_free (nameNode);
+    }
+
+    int atomInputs = 0;
+    const uint32_t numPorts = lilv_plugin_get_num_ports (p);
+    for (uint32_t i = 0; i < numPorts; ++i)
+    {
+        const LilvPort* port = lilv_plugin_get_port_by_index (p, i);
+        const bool isInput = lilv_port_is_a (p, port, inputClass);
+        if (lilv_port_is_a (p, port, audioClass))
+            (isInput ? d.audioInputs : d.audioOutputs) += 1;
+        else if (isInput && lilv_port_is_a (p, port, atomClass))
+            ++atomInputs;
+    }
+    // Instrument: takes MIDI/atom in, produces audio, but has no audio input.
+    d.isInstrument = (d.audioInputs == 0 && atomInputs > 0 && d.audioOutputs > 0);
+
+    lilv_node_free (audioClass);
+    lilv_node_free (inputClass);
+    lilv_node_free (atomClass);
+    return d;
 }
 
 const void* Lv2Bundle::pluginByUri (const std::string& uri) const

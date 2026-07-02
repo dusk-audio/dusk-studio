@@ -45,6 +45,12 @@ public:
     void*       world() const noexcept { return worldHandle; }
     const void* pluginByUri (const std::string& uri) const;
 
+    // Build a PluginDesc from a lilv plugin (walks its ports once). Shared by the
+    // bundle enumeration and the Lv2Scanner so the audio-effect / instrument
+    // classification lives in one place. `world` is a LilvWorld*, `plugin` a
+    // const LilvPlugin*.
+    static PluginDesc describePlugin (void* world, const void* plugin);
+
 private:
     void* worldHandle = nullptr;   // LilvWorld*
     std::vector<PluginDesc> descriptors;
