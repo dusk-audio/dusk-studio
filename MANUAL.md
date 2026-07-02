@@ -1374,9 +1374,9 @@ A few rules:
 
 Dusk Studio scans and hosts:
 
-- **VST3** on Linux, macOS, and Windows. On Linux, effects load through Dusk Studio's own native VST3 host (rows tagged **VST3-Native**); instruments — and VST3 everywhere else — load through the standard host.
+- **VST3** on Linux, macOS, and Windows. On Linux, effects AND instruments load through Dusk Studio's own native VST3 host (rows tagged **VST3-Native**); everywhere else VST3 loads through the standard host.
 - **LV2** on Linux. Effects load through Dusk Studio's own native LV2 host (rows tagged **LV2-Native**); LV2 instruments load through the standard host.
-- **CLAP** on Linux, through the native host. Effects only.
+- **CLAP** on Linux, through the native host — effects and instruments.
 - **AU** on macOS only.
 - **Native multi-sampler** (`.sfz` and `.sf2` files, both via the built-in sfizz engine — SF2 is converted to SFZ on load) on all platforms.
 

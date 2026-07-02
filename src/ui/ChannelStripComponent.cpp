@@ -1814,29 +1814,7 @@ void ChannelStripComponent::openPluginPicker (bool useChooser)
                                         // handler which publishes the new mode atomically and
                                         // refreshes I/O / slot button visibility consistently.
                                         if (self->pluginSlot.isLoadedPluginInstrument())
-                                        {
-                                            if (self->track.mode.load (std::memory_order_relaxed)
-                                                  != (int) Track::Mode::Midi)
-                                                self->modeSelector.setSelectedId (
-                                                    (int) Track::Mode::Midi + 1,
-                                                    juce::sendNotificationSync);
-
-                                            // No MIDI input bound yet? Route the Virtual
-                                            // Keyboard so the user can immediately audition
-                                            // the freshly loaded instrument without hunting
-                                            // through the input dropdown. ID convention
-                                            // (see rebuildMidiInputDropdown): 1 = (none),
-                                            // 2 + deviceIndex = real input N.
-                                            if (self->track.midiInputIndex.load (
-                                                    std::memory_order_relaxed) < 0)
-                                            {
-                                                const int vkbIdx =
-                                                    self->engine.getVirtualKeyboardInputIndex();
-                                                if (vkbIdx >= 0)
-                                                    self->midiInputSelector.setSelectedId (
-                                                        2 + vkbIdx, juce::sendNotificationSync);
-                                            }
-                                        }
+                                            self->adoptInstrumentTrackDefaults();
 
                                         // Close the modal synchronously so the cached editor
                                         // (still bound to the just-replaced processor) gets
@@ -1885,12 +1863,11 @@ void ChannelStripComponent::openPluginPicker (bool useChooser)
     // Linux-only; elsewhere the callback stays empty so the picker shows no CLAP rows.
     std::function<void (const juce::File&, const juce::String&)> onClap;
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
-    if (kind == pluginpicker::PluginKind::Effects)
-        onClap = [safe] (const juce::File& f, const juce::String& id)
-        {
-            if (auto* self = safe.getComponent())
-                self->loadNativeClapForChannel (f, id);
-        };
+    onClap = [safe] (const juce::File& f, const juce::String& id)
+    {
+        if (auto* self = safe.getComponent())
+            self->loadNativeClapForChannel (f, id);
+    };
 #endif
     // Native LV2 route — same shape; LV2-Native rows replace the JUCE LV2 rows.
     std::function<void (const juce::File&, const juce::String&)> onLv2;
@@ -1905,12 +1882,11 @@ void ChannelStripComponent::openPluginPicker (bool useChooser)
     // Native VST3 route — same shape; VST3-Native rows replace the JUCE VST3 rows.
     std::function<void (const juce::File&, const juce::String&)> onVst3;
 #if DUSKSTUDIO_HAS_NATIVE_VST3
-    if (kind == pluginpicker::PluginKind::Effects)
-        onVst3 = [safe] (const juce::File& f, const juce::String& id)
-        {
-            if (auto* self = safe.getComponent())
-                self->loadNativeVst3ForChannel (f, id);
-        };
+    onVst3 = [safe] (const juce::File& f, const juce::String& id)
+    {
+        if (auto* self = safe.getComponent())
+            self->loadNativeVst3ForChannel (f, id);
+    };
 #endif
 
     if (useChooser)
@@ -2599,6 +2575,24 @@ void ChannelStripComponent::dropPluginEditor()
    #endif
 }
 
+void ChannelStripComponent::adoptInstrumentTrackDefaults()
+{
+    if (track.mode.load (std::memory_order_relaxed) != (int) Track::Mode::Midi)
+        modeSelector.setSelectedId ((int) Track::Mode::Midi + 1,
+                                    juce::sendNotificationSync);
+
+    // No MIDI input bound yet? Route the Virtual Keyboard so the user can
+    // immediately audition the freshly loaded instrument without hunting
+    // through the input dropdown. ID convention (see rebuildMidiInputDropdown):
+    // 1 = (none), 2 + deviceIndex = real input N.
+    if (track.midiInputIndex.load (std::memory_order_relaxed) < 0)
+    {
+        const int vkbIdx = engine.getVirtualKeyboardInputIndex();
+        if (vkbIdx >= 0)
+            midiInputSelector.setSelectedId (2 + vkbIdx, juce::sendNotificationSync);
+    }
+}
+
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
 void ChannelStripComponent::loadNativeClapForChannel (const juce::File& clapFile,
                                                        const juce::String& pluginId)
@@ -2651,6 +2645,8 @@ void ChannelStripComponent::loadNativeClapForChannel (const juce::File& clapFile
         return;
     }
 
+    if (strip.getNativeClapSlot().isLoadedInstrument())
+        adoptInstrumentTrackDefaults();
     track.nativeClapPath     = clapFile.getFullPathName();
     track.nativeClapPluginId = strip.getNativeClapSlot().getPluginId();
     // Fresh bundle: don't reuse the previous plugin's state blob. The next save
@@ -2774,6 +2770,8 @@ void ChannelStripComponent::loadNativeVst3ForChannel (const juce::File& vst3File
         return;
     }
 
+    if (strip.getNativeVst3Slot().isLoadedInstrument())
+        adoptInstrumentTrackDefaults();
     track.nativeVst3Path     = vst3File.getFullPathName();
     track.nativeVst3PluginId = strip.getNativeVst3Slot().getPluginId();
     track.nativeVst3StateBase64 = {};
@@ -4312,13 +4310,16 @@ void ChannelStripComponent::onTrackModeChanged()
         if (willBeMidi != isInstrument)
             unloadPluginSlot();
     }
-    else if ((engine.getChannelStrip (trackIndex).isNativeClapLoaded()
+    else if (engine.getChannelStrip (trackIndex).isNativeClapLoaded()
               || engine.getChannelStrip (trackIndex).isNativeLv2Loaded()
               || engine.getChannelStrip (trackIndex).isNativeVst3Loaded())
-             && mode == (int) Track::Mode::Midi)
     {
-        // Native inserts are effects-only; a MIDI strip can't host one.
-        unloadPluginSlot();
+        // Same mode/kind matching as the JUCE slot above: a native EFFECT can't
+        // ride a MIDI strip, a native INSTRUMENT can't ride an audio strip.
+        const bool willBeMidi   = (mode == (int) Track::Mode::Midi);
+        const bool isInstrument = engine.getChannelStrip (trackIndex).insertIsNativeInstrument();
+        if (willBeMidi != isInstrument)
+            unloadPluginSlot();
     }
 
     track.mode.store (mode, std::memory_order_relaxed);

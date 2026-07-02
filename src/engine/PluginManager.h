@@ -39,6 +39,7 @@ public:
     // .clap bundle path. The unified picker merges these in for surfaces that have a
     // native CLAP host (aux lanes); routing keys on pluginFormatName == "CLAP".
     juce::Array<juce::PluginDescription> getClapEffectDescriptions() const;
+    juce::Array<juce::PluginDescription> getClapInstrumentDescriptions() const;
     // Rescan CLAP search paths (slow — loads each bundle). Folded into the Scan button
     // via scanInstalledPlugins; result cached in memory for the session.
     void scanClapPlugins();
@@ -53,6 +54,7 @@ public:
     // as the fallback host). pluginFormatName "VST3-Native", fileOrIdentifier = the
     // .vst3 bundle path. Audio effects only; each module is dlopen'd (like CLAP).
     juce::Array<juce::PluginDescription> getVst3NativeEffectDescriptions() const;
+    juce::Array<juce::PluginDescription> getVst3NativeInstrumentDescriptions() const;
     void scanVst3NativePlugins();
 
     // Synchronous instantiation. May take 100s of ms. Returns nullptr on

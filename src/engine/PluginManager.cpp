@@ -520,6 +520,16 @@ juce::Array<juce::PluginDescription> PluginManager::getClapEffectDescriptions() 
     return effects;
 }
 
+juce::Array<juce::PluginDescription> PluginManager::getClapInstrumentDescriptions() const
+{
+    const juce::ScopedLock sl (nativeDescriptionsLock);
+    juce::Array<juce::PluginDescription> instruments;
+    for (const auto& d : clapDescriptions)
+        if (d.isInstrument)
+            instruments.add (d);
+    return instruments;
+}
+
 void PluginManager::scanLv2Plugins()
 {
 #if DUSKSTUDIO_HAS_NATIVE_LV2
@@ -559,9 +569,6 @@ void PluginManager::scanVst3NativePlugins()
     for (const auto& file : vst3::Vst3Scanner::findVst3Bundles (vst3::Vst3Scanner::defaultSearchPaths()))
         if (! scanNativeBundleSandboxed ("vst3", file, fresh))
             nativescan::appendVst3Rows (file, fresh);   // no sandbox available — in-process
-    // Only audio effects for now — the native VST3 host is an insert host;
-    // instruments stay with the JUCE VST3 format.
-    fresh.removeIf ([] (const juce::PluginDescription& d) { return d.isInstrument; });
     {
         const juce::ScopedLock sl (nativeDescriptionsLock);
         vst3NativeDescriptions.swapWith (fresh);
@@ -573,7 +580,21 @@ void PluginManager::scanVst3NativePlugins()
 juce::Array<juce::PluginDescription> PluginManager::getVst3NativeEffectDescriptions() const
 {
     const juce::ScopedLock sl (nativeDescriptionsLock);
-    return vst3NativeDescriptions;   // scan already filtered to audio effects
+    juce::Array<juce::PluginDescription> effects;
+    for (const auto& d : vst3NativeDescriptions)
+        if (! d.isInstrument)
+            effects.add (d);
+    return effects;
+}
+
+juce::Array<juce::PluginDescription> PluginManager::getVst3NativeInstrumentDescriptions() const
+{
+    const juce::ScopedLock sl (nativeDescriptionsLock);
+    juce::Array<juce::PluginDescription> instruments;
+    for (const auto& d : vst3NativeDescriptions)
+        if (d.isInstrument)
+            instruments.add (d);
+    return instruments;
 }
 
 juce::Array<juce::PluginDescription> PluginManager::getInstrumentDescriptions() const
