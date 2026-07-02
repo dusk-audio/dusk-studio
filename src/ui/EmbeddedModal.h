@@ -40,6 +40,12 @@ inline bool isModalForwardableShortcut (const juce::KeyPress& k) noexcept
         || k == juce::KeyPress::F11Key;
 }
 
+// Component-properties tag marking a plugin-editor component (JUCE editor, OOP
+// embed, native CLAP/LV2 editor). EmbeddedModal hides tagged components while a
+// modal is up — native editor windows otherwise paint above the modal regardless
+// of JUCE z-order, burying dialogs. Every editor wrapper must carry this tag.
+inline constexpr const char* kPluginEditorTag = "dusk_pluginEditor";
+
 // Wraps the "DimOverlay + centred panel" pattern used by piano roll,
 // tuner, audio settings, mixdown, bounce, plugin editor.
 //
@@ -418,7 +424,7 @@ private:
                 continue;
             const bool isPluginEditor =
                 (bool) child->getProperties()
-                            .getWithDefault ("dusk_pluginEditor", false);
+                            .getWithDefault (kPluginEditorTag, false);
             if (isPluginEditor)
             {
                 // Per-editor hide token (dusk_modalHideCount). Each stacked

@@ -1,5 +1,6 @@
 #include "Lv2PluginEditorComponent.h"
 
+#include "EmbeddedModal.h"   // kPluginEditorTag
 #include "../engine/lv2/Lv2Instance.h"
 
 namespace duskstudio
@@ -10,7 +11,7 @@ Lv2PluginEditorComponent::Lv2PluginEditorComponent()
     // EmbeddedModal hides tagged editors while a modal is up — the native X11
     // window otherwise paints ABOVE the modal regardless of JUCE z-order,
     // burying dialogs under the plugin UI.
-    getProperties().set ("dusk_pluginEditor", true);
+    getProperties().set (kPluginEditorTag, true);
 }
 
 Lv2PluginEditorComponent::~Lv2PluginEditorComponent()

@@ -7,6 +7,7 @@
 #endif
 #include "DuskAlerts.h"
 #include "DuskContextMenu.h"
+#include "EmbeddedModal.h"   // kPluginEditorTag
 #include "HardwareInsertEditor.h"
 #include "PlatformWindowing.h"
 #include "PluginPickerHelpers.h"
@@ -907,7 +908,7 @@ void AuxLaneComponent::attachEditorForSlot (int slotIdx)
     // for the lifetime of any modal. Plugin editors (OOP / XEmbed / GL)
     // sometimes render above JUCE's modal layer and steal click input;
     // setVisible(false) for the modal's duration forces them under.
-    ui.editor->getProperties().set ("dusk_pluginEditor", true);
+    ui.editor->getProperties().set (kPluginEditorTag, true);
 
     addAndMakeVisible (*ui.editor);
     layoutEditorForSlot (slotIdx);

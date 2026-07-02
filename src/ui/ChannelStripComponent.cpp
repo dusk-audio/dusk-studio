@@ -2271,7 +2271,7 @@ void ChannelStripComponent::openPluginEditor()
             // lifetime of any subsequent settings / quit modal — native
             // X11 z-order otherwise paints the plugin window above the
             // JUCE-rendered modal.
-            remoteEditorEmbed->getProperties().set ("dusk_pluginEditor", true);
+            remoteEditorEmbed->getProperties().set (kPluginEditorTag, true);
         }
         pluginEditorModal.showBorrowed (*parent, *remoteEditorEmbed, onClose);
        #elif JUCE_MAC
@@ -2345,7 +2345,7 @@ void ChannelStripComponent::openPluginEditor()
             // wrapper too (same reason as the Linux XEmbed + in-process
             // paths). Defensive today — createInProcessEditorHost is a Mac
             // stub returning nullptr — but correct once the shell host lands.
-            embed->getProperties().set ("dusk_pluginEditor", true);
+            embed->getProperties().set (kPluginEditorTag, true);
             pluginEditorModal.showBorrowed (*parent, *embed, onClose);
             remoteForeignEmbed = std::move (embed);
         }
@@ -2372,7 +2372,7 @@ void ChannelStripComponent::openPluginEditor()
             // Tag so a later settings / quit modal hides the reparented HWND
             // wrapper too — native window z-order otherwise paints the plugin
             // above the JUCE-rendered modal.
-            embed->getProperties().set ("dusk_pluginEditor", true);
+            embed->getProperties().set (kPluginEditorTag, true);
             pluginEditorModal.showBorrowed (*parent, *embed, onClose);
             remoteForeignEmbed = std::move (embed);
         }
@@ -2422,7 +2422,7 @@ void ChannelStripComponent::openPluginEditor()
     // Tag so EmbeddedModal hides the editor when a settings / quit /
     // alert modal opens. In-process plugin editors with GL contexts or
     // foreign-window embeds can paint above the modal otherwise.
-    pluginEditor->getProperties().set ("dusk_pluginEditor", true);
+    pluginEditor->getProperties().set (kPluginEditorTag, true);
 
     pluginEditorModal.showBorrowed (*parent, *pluginEditor, onClose);
 }

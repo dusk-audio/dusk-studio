@@ -369,24 +369,25 @@ void PluginManager::scanClapPlugins()
 {
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
     // Discover OUTSIDE the lock (dlopens every bundle — slow), swap in under it.
+    // The cache write also stays outside so a picker open on the message thread
+    // can't stall behind this thread's file I/O.
     const auto scanned = clap::ClapScanner::scan();
-    const juce::ScopedLock sl (nativeDescriptionsLock);
-    clapDescriptions.clearQuick();
-    for (const auto& s : scanned)
     {
-        juce::PluginDescription d;
-        d.name             = juce::String (juce::CharPointer_UTF8 (s.desc.name.c_str()));
-        d.manufacturerName = juce::String (juce::CharPointer_UTF8 (s.desc.vendor.c_str()));
-        d.version          = juce::String (juce::CharPointer_UTF8 (s.desc.version.c_str()));
-        d.pluginFormatName = "CLAP";
-        d.fileOrIdentifier = s.bundlePath;
-        d.isInstrument     = s.desc.isInstrument();
-        clapDescriptions.add (d);
+        const juce::ScopedLock sl (nativeDescriptionsLock);
+        clapDescriptions.clearQuick();
+        for (const auto& s : scanned)
+        {
+            juce::PluginDescription d;
+            d.name             = juce::String (juce::CharPointer_UTF8 (s.desc.name.c_str()));
+            d.manufacturerName = juce::String (juce::CharPointer_UTF8 (s.desc.vendor.c_str()));
+            d.version          = juce::String (juce::CharPointer_UTF8 (s.desc.version.c_str()));
+            d.pluginFormatName = "CLAP";
+            d.fileOrIdentifier = s.bundlePath;
+            d.isInstrument     = s.desc.isInstrument();
+            clapDescriptions.add (d);
+        }
     }
     saveClapCache();   // persist so the picker has CLAP at next launch without a re-scan
-#else
-    const juce::ScopedLock sl (nativeDescriptionsLock);
-    clapDescriptions.clearQuick();
 #endif
 }
 
@@ -423,8 +424,15 @@ void PluginManager::saveClapCache() const
     if (file == juce::File())
         return;
 
+    // Snapshot under the lock; serialize + write with it released so the picker
+    // can't stall behind the file I/O.
+    juce::Array<juce::PluginDescription> snapshot;
+    {
+        const juce::ScopedLock sl (nativeDescriptionsLock);
+        snapshot = clapDescriptions;
+    }
     juce::XmlElement root ("CLAP_PLUGINS");
-    for (const auto& d : clapDescriptions)
+    for (const auto& d : snapshot)
         root.addChildElement (d.createXml().release());
     root.writeTo (file);
 }
@@ -444,25 +452,24 @@ void PluginManager::scanLv2Plugins()
 {
 #if DUSKSTUDIO_HAS_NATIVE_LV2
     const auto scanned = lv2::Lv2Scanner::scan();   // manifest parse outside the lock
-    const juce::ScopedLock sl (nativeDescriptionsLock);
-    lv2Descriptions.clearQuick();
-    for (const auto& s : scanned)
     {
-        // Only audio effects for now — the native LV2 host is an insert host;
-        // instruments and MIDI utilities stay with the JUCE LV2 format.
-        if (s.desc.audioInputs <= 0 || s.desc.audioOutputs <= 0)
-            continue;
-        juce::PluginDescription d;
-        d.name             = juce::String (juce::CharPointer_UTF8 (s.desc.name.c_str()));
-        d.pluginFormatName = "LV2-Native";
-        d.fileOrIdentifier = s.bundlePath;
-        d.isInstrument     = false;
-        lv2Descriptions.add (d);
+        const juce::ScopedLock sl (nativeDescriptionsLock);
+        lv2Descriptions.clearQuick();
+        for (const auto& s : scanned)
+        {
+            // Only audio effects for now — the native LV2 host is an insert host;
+            // instruments and MIDI utilities stay with the JUCE LV2 format.
+            if (s.desc.audioInputs <= 0 || s.desc.audioOutputs <= 0)
+                continue;
+            juce::PluginDescription d;
+            d.name             = juce::String (juce::CharPointer_UTF8 (s.desc.name.c_str()));
+            d.pluginFormatName = "LV2-Native";
+            d.fileOrIdentifier = s.bundlePath;
+            d.isInstrument     = false;
+            lv2Descriptions.add (d);
+        }
     }
     saveLv2Cache();   // persist so the picker has LV2 at next launch without a re-scan
-#else
-    const juce::ScopedLock sl (nativeDescriptionsLock);
-    lv2Descriptions.clearQuick();
 #endif
 }
 
@@ -498,8 +505,13 @@ void PluginManager::saveLv2Cache() const
     if (file == juce::File())
         return;
 
+    juce::Array<juce::PluginDescription> snapshot;
+    {
+        const juce::ScopedLock sl (nativeDescriptionsLock);
+        snapshot = lv2Descriptions;
+    }
     juce::XmlElement root ("LV2_NATIVE_PLUGINS");
-    for (const auto& d : lv2Descriptions)
+    for (const auto& d : snapshot)
         root.addChildElement (d.createXml().release());
     root.writeTo (file);
 }

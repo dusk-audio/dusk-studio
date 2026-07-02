@@ -63,7 +63,12 @@ struct Lv2Instance::Impl
         unmapFeature.handle = this;  unmapFeature.unmap = &Impl::unmapUri;
         mapFeatureStruct   = { LV2_URID__map,   &mapFeature };
         unmapFeatureStruct = { LV2_URID__unmap, &unmapFeature };
+        uridFloat  = mapUri (this, LV2_ATOM__Float);
+        uridDouble = mapUri (this, LV2_ATOM__Double);
+        uridInt    = mapUri (this, LV2_ATOM__Int);
+        uridLong   = mapUri (this, LV2_ATOM__Long);
     }
+    LV2_URID uridFloat = 0, uridDouble = 0, uridInt = 0, uridLong = 0;
 
     // Assemble the full feature list for instantiate: urid map/unmap + the block-size
     // and sample-rate options + boundedBlockLength. JUCE/DPF-wrapped plugins REQUIRE
@@ -124,6 +129,13 @@ struct Lv2Instance::Impl
     std::array<PortWrite, kWriteRingCap> writeRing {};
     std::atomic<uint32_t> writeRingW { 0 }, writeRingR { 0 };
 
+    // Message-thread shadow of the UI writes. A bypassed slot never runs
+    // processBlock, so the ring may never drain — state saves and reactivate read
+    // UI-touched ports from here instead of waiting on a drain that may not come.
+    // Audio thread never touches these.
+    std::vector<float>   uiShadow;
+    std::vector<uint8_t> uiDirty;
+
     // Persistent per-port float storage; control ports are connected to these once
     // and hold their (default) value across blocks. Sized to the port count.
     std::vector<float> portValues;
@@ -144,18 +156,15 @@ struct Lv2Instance::Impl
         active = false;
     }
 
+    // Filled at create(); lilv's state save/restore resolves every port by symbol,
+    // so this lookup runs once per port per save — keep it O(1).
+    std::unordered_map<std::string, uint32_t> portIndexBySymbol;
+
     int portIndexForSymbol (const char* symbol) const
     {
-        if (plugin == nullptr || symbol == nullptr) return -1;
-        const uint32_t numPorts = lilv_plugin_get_num_ports (plugin);
-        for (uint32_t i = 0; i < numPorts; ++i)
-        {
-            const LilvPort* port = lilv_plugin_get_port_by_index (plugin, i);
-            const LilvNode* sym  = lilv_port_get_symbol (plugin, port);
-            if (sym != nullptr && std::strcmp (lilv_node_as_string (sym), symbol) == 0)
-                return (int) i;
-        }
-        return -1;
+        if (symbol == nullptr) return -1;
+        const auto it = portIndexBySymbol.find (symbol);
+        return it != portIndexBySymbol.end() ? (int) it->second : -1;
     }
 
     // lilv state callbacks (message thread; save/restore are fenced by the caller
@@ -168,7 +177,11 @@ struct Lv2Instance::Impl
         if (idx < 0 || (size_t) idx >= self->portValues.size())
         { *size = 0; *type = 0; return nullptr; }
         *size = sizeof (float);
-        *type = mapUri (self, LV2_ATOM__Float);
+        *type = self->uridFloat;
+        // UI writes staged while the slot never ran (bypassed) live in the shadow;
+        // portValues would still hold the pre-tweak value.
+        if ((size_t) idx < self->uiDirty.size() && self->uiDirty[(size_t) idx] != 0)
+            return &self->uiShadow[(size_t) idx];
         return &self->portValues[(size_t) idx];
     }
 
@@ -182,17 +195,19 @@ struct Lv2Instance::Impl
 
         // States written by other hosts may carry any numeric atom type.
         float v = 0.0f;
-        const LV2_URID tFloat  = mapUri (self, LV2_ATOM__Float);
-        const LV2_URID tDouble = mapUri (self, LV2_ATOM__Double);
-        const LV2_URID tInt    = mapUri (self, LV2_ATOM__Int);
-        const LV2_URID tLong   = mapUri (self, LV2_ATOM__Long);
-        if      (type == tFloat  && size >= sizeof (float))   v = *static_cast<const float*> (value);
-        else if (type == tDouble && size >= sizeof (double))  v = (float) *static_cast<const double*> (value);
-        else if (type == tInt    && size >= sizeof (int32_t)) v = (float) *static_cast<const int32_t*> (value);
-        else if (type == tLong   && size >= sizeof (int64_t)) v = (float) *static_cast<const int64_t*> (value);
+        if      (type == self->uridFloat  && size >= sizeof (float))   v = *static_cast<const float*> (value);
+        else if (type == self->uridDouble && size >= sizeof (double))  v = (float) *static_cast<const double*> (value);
+        else if (type == self->uridInt    && size >= sizeof (int32_t)) v = (float) *static_cast<const int32_t*> (value);
+        else if (type == self->uridLong   && size >= sizeof (int64_t)) v = (float) *static_cast<const int64_t*> (value);
         else return;
         if (! std::isfinite (v)) return;
         self->portValues[(size_t) idx] = v;
+        // A restore supersedes any staged UI value for this port.
+        if ((size_t) idx < self->uiDirty.size())
+        {
+            self->uiShadow[(size_t) idx] = v;
+            self->uiDirty [(size_t) idx] = 0;
+        }
     }
 };
 
@@ -220,6 +235,9 @@ bool Lv2Instance::create (const Lv2Bundle& bundle, const std::string& uri, std::
     impl->audioInPorts.clear();  impl->audioOutPorts.clear();
     impl->controlPorts.clear();  impl->atomInPorts.clear(); impl->atomOutPorts.clear();
     impl->otherPorts.clear();
+    impl->portIndexBySymbol.clear();
+    impl->uiShadow.clear();
+    impl->uiDirty.clear();
     impl->latencyPortIndex = -1;
 
     const uint32_t numPorts = lilv_plugin_get_num_ports (impl->plugin);
@@ -227,6 +245,8 @@ bool Lv2Instance::create (const Lv2Bundle& bundle, const std::string& uri, std::
     {
         const LilvPort* port = lilv_plugin_get_port_by_index (impl->plugin, i);
         const bool isInput = lilv_port_is_a (impl->plugin, port, inputClass);
+        if (const LilvNode* sym = lilv_port_get_symbol (impl->plugin, port))
+            impl->portIndexBySymbol.emplace (lilv_node_as_string (sym), i);
 
         if (lilv_port_is_a (impl->plugin, port, audioClass))
             (isInput ? impl->audioInPorts : impl->audioOutPorts).push_back (i);
@@ -298,6 +318,13 @@ bool Lv2Instance::activate (double sampleRate, int maxBlockFrames, std::string& 
     const uint32_t numPorts = lilv_plugin_get_num_ports (impl->plugin);
 
     // Control ports: connect each to a persistent float initialised to its default.
+    // The UI shadow survives a reactivate of the same plugin (same port count) so
+    // staged-but-undrained writes aren't lost across a rate change.
+    if (impl->uiShadow.size() != (size_t) numPorts)
+    {
+        impl->uiShadow.assign ((size_t) numPorts, 0.0f);
+        impl->uiDirty .assign ((size_t) numPorts, 0);
+    }
     impl->portValues.assign ((size_t) numPorts, 0.0f);
     lilv_plugin_get_port_ranges_float (impl->plugin, nullptr, nullptr, impl->portValues.data());
     for (uint32_t idx : impl->controlPorts)
@@ -370,19 +397,27 @@ void Lv2Instance::deactivate() { impl->freeInstance(); }
 bool Lv2Instance::reactivate (double sampleRate, int maxBlockFrames, std::string& errorOut)
 {
     // LV2 fixes the sample rate at instantiate, so a rate/block change means a
-    // fresh instance. Carry the full state across (control ports + the plugin's
-    // state:interface blob); the raw port values back it up for plugins whose
-    // state extension is absent or fails.
+    // fresh instance. Carry the state blob across when the plugin can serialize
+    // (control ports + state:interface); fall back to the raw port values when it
+    // can't. The blob already reflects staged UI writes via getPortValue's shadow.
     std::vector<uint8_t> blob;
     saveState (blob);
     const std::vector<float> saved = impl->portValues;
     impl->freeInstance();
     if (! activate (sampleRate, maxBlockFrames, errorOut)) return false;
-    if (saved.size() == impl->portValues.size())
+    if (! blob.empty())
+    {
+        loadState (blob);
+    }
+    else if (saved.size() == impl->portValues.size())
+    {
         for (uint32_t idx : impl->controlPorts)
             impl->portValues[(size_t) idx] = saved[(size_t) idx];
-    if (! blob.empty())
-        loadState (blob);
+        // Staged-but-undrained UI writes supersede the raw carry.
+        for (uint32_t idx : impl->controlPorts)
+            if ((size_t) idx < impl->uiDirty.size() && impl->uiDirty[(size_t) idx] != 0)
+                impl->portValues[(size_t) idx] = impl->uiShadow[(size_t) idx];
+    }
     return true;
 }
 
@@ -502,6 +537,13 @@ void*       Lv2Instance::uridUnmapFeature() const noexcept { return &impl->unmap
 
 void Lv2Instance::setControlPortValue (uint32_t portIndex, float value) noexcept
 {
+    if ((size_t) portIndex >= impl->uiShadow.size()) return;
+    // Shadow first: saves/reactivate read the latest UI value from here even when
+    // the audio thread never drains the ring (bypassed slot), and a ring overflow
+    // can only delay the RT application, never lose the value for persistence.
+    impl->uiShadow[(size_t) portIndex] = value;
+    impl->uiDirty [(size_t) portIndex] = 1;
+
     // Stage into the SPSC ring — the audio thread owns portValues (run() reads
     // it concurrently) and applies these at the top of its next processBlock.
     const uint32_t w    = impl->writeRingW.load (std::memory_order_relaxed);

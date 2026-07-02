@@ -118,9 +118,12 @@ TEST_CASE ("Lv2Instance instantiates + processes an LV2 effect via InsertAdapter
 
     SECTION ("reactivate keeps state (fresh save matches post-reactivate save)")
     {
+        // Same rate, different block size: a rate change may legitimately alter a
+        // plugin's state:interface blob (cached coefficients, sample-domain values),
+        // so byte-equality is only a fair assertion across a block-size change.
         std::vector<uint8_t> before;
         REQUIRE (inst.saveState (before));
-        REQUIRE (inst.reactivate (44100.0, kBlock, err));
+        REQUIRE (inst.reactivate (48000.0, kBlock * 2, err));
         REQUIRE (inst.isActive());
         std::vector<uint8_t> after;
         REQUIRE (inst.saveState (after));

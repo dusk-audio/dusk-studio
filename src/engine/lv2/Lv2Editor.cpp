@@ -210,6 +210,12 @@ bool Lv2Editor::embed (unsigned long parentX11, int x, int y, int w, int h, std:
     // doesn't force it — reparent explicitly (a no-op when already a child).
     XReparentWindow (dpy, (Window) impl->uiWindow, (Window) impl->hostWindow, 0, 0);
 
+    // A UI that reports no size and never fires ui:resize would otherwise keep an
+    // arbitrary widget size forever (the component only adopts prefW when > 0).
+    if (impl->prefW <= 0)
+        XResizeWindow (dpy, (Window) impl->uiWindow,
+                       (unsigned) std::max (1, ww), (unsigned) std::max (1, hh));
+
     XMapWindow (dpy, (Window) impl->uiWindow);
     XSync (dpy, False);
 
