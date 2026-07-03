@@ -593,6 +593,7 @@ Each channel has one insert slot, which can hold either a plugin or a hardware i
 - Click **+ Plugin** to open the plugin picker.
 - Right-click the slot for **Add / Replace / Remove / Edit / Configure as hardware insert**.
 - When a plugin is loaded, the slot shows its name. Click to open the editor.
+- The LED on the slot's left edge bypasses the insert — green when engaged, dark when bypassed or empty, click to toggle (same grammar as the EQ and COMP LEDs). The insert keeps processing while bypassed, so re-engaging is click-free.
 
 The insert sits **before** the HPF, so any plugin you load drives the rest of the channel's tone shaping.
 

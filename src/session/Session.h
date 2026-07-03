@@ -175,6 +175,10 @@ struct ChannelStripParams
     std::atomic<bool>  mute    { false };
     std::atomic<bool>  solo    { false };
     std::atomic<bool>  phaseInvert { false };
+    // Insert (plugin or hardware) bypass — drives the insert crossfade
+    // gate to dry. The plugin keeps processing so tails stay warm and
+    // un-bypass is click-free.
+    std::atomic<bool>  insertBypassed { false };
 
     // 0 = ungrouped; 1..N = group members. Drag deltas apply across
     // group; anchor values captured at drag-start preserve relative

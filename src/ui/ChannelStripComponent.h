@@ -103,6 +103,10 @@ private:
     };
     PluginSlotButton pluginSlotButton { "+ Plugin" };
     juce::String     lastSlotName;
+    // Bypass LED overlaid on the insert button's left edge — same
+    // grammar as the EQ / COMP header LEDs. Green = insert engaged.
+    std::unique_ptr<class CompBypassLed> insertBypassLed;
+    bool insertSlotOccupied() const;
 
     juce::Rectangle<int> eqArea, compArea;
 

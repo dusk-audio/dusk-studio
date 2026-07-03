@@ -1461,6 +1461,21 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     };
     addAndMakeVisible (pluginSlotButton);
 
+    // Added after the slot button so it z-orders above and gets the click.
+    insertBypassLed = std::make_unique<CompBypassLed> (
+        [this]
+        {
+            return insertSlotOccupied()
+                && ! track.strip.insertBypassed.load (std::memory_order_relaxed);
+        },
+        [this]
+        {
+            const bool now = ! track.strip.insertBypassed.load (std::memory_order_relaxed);
+            track.strip.insertBypassed.store (now, std::memory_order_release);
+        });
+    insertBypassLed->setTooltip ("Insert bypass - green when engaged, click to toggle");
+    addAndMakeVisible (insertBypassLed.get());
+
     // Compact-mode placeholder buttons. Hidden by default; setCompactMode(true)
     // makes them visible and hides the full inline EQ + COMP + AUX controls.
     styleCompactSectionButton (eqCompactButton,   juce::Colour (fourKColors::kLfGreen));
@@ -2090,6 +2105,16 @@ void ChannelStripComponent::refreshInsertButtonForCapture()
 {
     refreshPluginSlotButton();
     repaint();
+}
+
+bool ChannelStripComponent::insertSlotOccupied() const
+{
+    auto& st = engine.getChannelStrip (trackIndex);
+    if (st.isNativeClapLoaded() || st.isNativeLv2Loaded() || st.isNativeVst3Loaded())
+        return true;
+    if (pluginSlot.isLoaded())
+        return true;
+    return st.insertMode.load (std::memory_order_acquire) == ChannelStrip::kInsertHardware;
 }
 
 void ChannelStripComponent::refreshPluginSlotButton()
@@ -3429,6 +3454,8 @@ void ChannelStripComponent::timerCallback()
         // tracks atom changes from external mutation paths.
         eqHeaderBtn->repaint();
     }
+    if (insertBypassLed != nullptr)
+        insertBypassLed->repaint();   // tracks bypass atom + slot load/unload
     // Sync the dedicated E/G chip's label + toggle state from the atom
     // so external writes (popup editor type picker) reflect inline.
     {
@@ -4915,11 +4942,18 @@ void ChannelStripComponent::resized()
 
     // Plugin-slot button right below the IN/ARM/PRINT row. Always visible -
     // available in both compact and full modes since it's independent of the
-    // EQ/COMP collapse.
-    // reduced(4,0) matches the EQ / COMP / AUX compact buttons below so all
-    // four section buttons share one width - otherwise the wider Insert border
-    // sticks out past them and reads as a double / stacked outline.
-    pluginSlotButton.setBounds (area.removeFromTop (18).reduced (4, 0));
+    // EQ/COMP collapse. Full mode matches the EQ/COMP headers' inset (3) so
+    // the insert row reads as the same width as the track; compact keeps the
+    // pills' inset (4) so the stacked section buttons share one width.
+    {
+        const auto insertRow = area.removeFromTop (18);
+        pluginSlotButton.setBounds (insertRow.reduced (compactMode ? 4 : 3, 0));
+        // Hit area = the row's full height x 16 px; the painted dot centres
+        // itself (CompBypassLed caps the visual at 10 px).
+        if (insertBypassLed != nullptr)
+            insertBypassLed->setBounds (pluginSlotButton.getX(), insertRow.getY(),
+                                        16, insertRow.getHeight());
+    }
     area.removeFromTop (2);
 
     // In compact mode the EQ + COMP sections collapse to two narrow buttons
