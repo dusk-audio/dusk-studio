@@ -1794,6 +1794,12 @@ Shortcuts use **Cmd** on macOS and **Ctrl** on Linux and Windows unless noted.
 | **Shift+[** | Set punch in at playhead      |
 | **Shift+]** | Set punch out at playhead     |
 | **K**       | Toggle virtual MIDI keyboard  |
+| **Shift+←/→** | Previous / next marker (Rewind / Forward tap) |
+| **B**       | Tap tempo                     |
+| **Shift+C** | Toggle count-in               |
+| **F**       | Toggle time / bars display    |
+| **Shift+M** | Time signature menu           |
+| **U**       | Tuner (selected track)        |
 
 ## Tracks
 

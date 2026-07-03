@@ -52,6 +52,12 @@ public:
     // Hidden when MainComponent overlays stage + bank buttons on top.
     void setHintVisible (bool visible);
 
+    // Keyboard-shortcut entry points (MainComponent::keyPressed) — same
+    // code paths as the corresponding buttons.
+    void tapTempo();
+    void openTimeSigMenu();
+    void toggleTimeFormat();
+
     // Hard-coding tuner X from outside is fragile — the right-anchored
     // cluster (BPM / tap / time-sig / mode toggles) shifts the tuner
     // left by ~376 px in expanded mode and ~280 px in compact mode.

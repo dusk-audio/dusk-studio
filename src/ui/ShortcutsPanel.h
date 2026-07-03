@@ -35,7 +35,10 @@ public:
                 { "1", "Bank 1" }, { "2", "Bank 2" }, { "3", "Bank 3" }, { "4", "Bank 4" } } },
             { "Transport", {
                 { "Space", "Play / Stop" }, { "R", "Record" },
-                { "Home", "Playhead to start" }, { ".", "Stop + rewind to start" } } },
+                { "Home", "Playhead to start" }, { ".", "Stop + rewind to start" },
+                { juce::CharPointer_UTF8 ("Shift+\xe2\x86\x90/\xe2\x86\x92"), "Prev / next marker" },
+                { "B", "Tap tempo" }, { "Shift+C", "Count-in on / off" },
+                { "F", "Time / bars display" } } },
             { "Markers & loop", {
                 { "M", "Drop marker" }, { "[", "Set loop / punch in" },
                 { "]", "Set loop / punch out" }, { "L", "Toggle loop" },
@@ -46,6 +49,7 @@ public:
             { "Tools & view", {
                 { "G", "Grab / move edit mode" }, { "C", "Metronome on / off" },
                 { "K", "Virtual MIDI keyboard" }, { "T", "Show / hide timeline" },
+                { "U", "Tuner" }, { "Shift+M", "Time signature" },
                 { mod ('E'), "Split region at playhead / cursor" },
                 { "F11", "Fullscreen" }, { alt + "T", "Cycle take (Shift = back)" },
                 { "?", "This shortcut list" } } },
@@ -56,7 +60,7 @@ public:
                 { mod ('S', juce::ModifierKeys::shiftModifier), "Save as" },
                 { mod ('I'), "Import Audio or MIDI" }, { mod ('B'), "Bounce" }, { mod ('Q'), "Quit" } } },
         };
-        setSize (560, 660);
+        setSize (560, 720);
     }
 
     void paint (juce::Graphics& g) override
