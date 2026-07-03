@@ -90,6 +90,11 @@ void ClapPluginEditorComponent::tryEmbed()
                       juce::jmax (1, area.getWidth()), juce::jmax (1, area.getHeight()), err))
     {
         embedded = true;
+        // Re-sync unconditionally: a synchronous gui resize during embed can
+        // move this component (modal recentre) while `embedded` was still
+        // false, so the moved()/resized() pushes were skipped and the native
+        // window would keep the pre-move coords passed to embed().
+        pushBounds();
         editor.reveal();
     }
     else
