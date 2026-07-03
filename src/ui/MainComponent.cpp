@@ -3915,7 +3915,9 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelMenuIndex,
                 // looks broken without explanation. The click handler
                 // shows the alert if loadSessionFromJson fails.
                 recents.addItem (kMenuFileRecentBase + i,
-                                  dir.getFileName() + "  \xe2\x80\x94  " + parent);
+                                  dir.getFileName()
+                                    + juce::String (juce::CharPointer_UTF8 ("  \xe2\x80\x94  "))
+                                    + parent);
                 juce::ignoreUnused (json);
             }
             recents.addSeparator();

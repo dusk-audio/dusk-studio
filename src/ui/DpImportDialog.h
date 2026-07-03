@@ -29,16 +29,21 @@ public:
         title.setColour (juce::Label::textColourId, juce::Colours::white);
         addAndMakeVisible (title);
 
+        // Em-dash and middle dots are UTF-8 multibyte — route through
+        // CharPointer_UTF8 (operator<< on a char* reads bytes as single
+        // characters and renders mojibake, GH issue #27).
+        const juce::String dot (juce::CharPointer_UTF8 ("  \xc2\xb7  "));
         juce::String s;
         s << shown << (shown == 1 ? " track" : " tracks");
         if ((int) scan.tracks.size() > maxTracks)
-            s << " (of " << (int) scan.tracks.size() << " found \xe2\x80\x94 "
+            s << " (of " << (int) scan.tracks.size()
+              << juce::String (juce::CharPointer_UTF8 (" found \xe2\x80\x94 "))
               << maxTracks << "-track limit)";
         if (scan.stereoPairs > 0)
-            s << "  \xc2\xb7  " << scan.stereoPairs
+            s << dot << scan.stereoPairs
               << (scan.stereoPairs == 1 ? " stereo pair" : " stereo pairs");
         if (scan.sampleRate > 0.0)
-            s << "  \xc2\xb7  " << juce::String (scan.sampleRate / 1000.0, 1)
+            s << dot << juce::String (scan.sampleRate / 1000.0, 1)
               << " kHz / " << scan.bitDepth << "-bit";
         summary.setText (s, juce::dontSendNotification);
         summary.setColour (juce::Label::textColourId, juce::Colour (0xffb0b0b8));
