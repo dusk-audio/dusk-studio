@@ -83,11 +83,13 @@ struct Lv2Instance::Impl
         uridPatchBody     = mapUri (this, LV2_PATCH__body);
         uridSequence      = mapUri (this, LV2_ATOM__Sequence);
         uridFloatType     = mapUri (this, LV2_ATOM__Float);
+        uridUridType      = mapUri (this, LV2_ATOM__URID);
     }
     LV2_URID uridFloat = 0, uridDouble = 0, uridInt = 0, uridLong = 0;
     LV2_URID uridObject = 0, uridPatchSet = 0, uridPatchProperty = 0,
              uridPatchValue = 0, uridEventTransfer = 0, uridMidiEvent = 0,
-             uridPatchPut = 0, uridPatchBody = 0, uridSequence = 0, uridFloatType = 0;
+             uridPatchPut = 0, uridPatchBody = 0, uridSequence = 0, uridFloatType = 0,
+             uridUridType = 0;
 
     // Assemble the full feature list for instantiate: urid map/unmap + the block-size
     // and sample-rate options + boundedBlockLength. JUCE/DPF-wrapped plugins REQUIRE
@@ -187,8 +189,8 @@ struct Lv2Instance::Impl
             const LV2_Atom* valAtom  = nullptr;
             lv2_atom_object_get (obj, uridPatchProperty, &propAtom,
                                       uridPatchValue,    &valAtom, 0);
-            if (propAtom != nullptr && valAtom != nullptr
-                && valAtom->type == uridFloatType)
+            if (propAtom != nullptr && propAtom->type == uridUridType
+                && valAtom != nullptr && valAtom->type == uridFloatType)
                 patchOutRing.push ({ reinterpret_cast<const LV2_Atom_URID*> (propAtom)->body,
                                      reinterpret_cast<const LV2_Atom_Float*> (valAtom)->body });
         }
@@ -930,7 +932,7 @@ void Lv2Instance::forwardUiAtomEvent (const void* atomData, uint32_t sizeBytes) 
             const LV2_Atom* valAtom  = nullptr;
             lv2_atom_object_get (obj, impl->uridPatchProperty, &propAtom,
                                       impl->uridPatchValue,    &valAtom, 0);
-            if (propAtom != nullptr && propAtom->type == Impl::mapUri (impl.get(), LV2_ATOM__URID))
+            if (propAtom != nullptr && propAtom->type == impl->uridUridType)
             {
                 const LV2_URID prop = reinterpret_cast<const LV2_Atom_URID*> (propAtom)->body;
                 const int idx = impl->paramIndexForId (Impl::kPatchIdFlag | prop);

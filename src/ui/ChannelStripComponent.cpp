@@ -1858,8 +1858,8 @@ void ChannelStripComponent::openPluginPicker (bool useChooser)
                                         });
                                     };
 
-    // Native CLAP route — effects (audio) slots only; CLAP instruments aren't hosted
-    // natively yet. Selecting a CLAP row loads it through the channel's native host.
+    // Native CLAP route — effects and instruments both load through the channel's
+    // native host (the picker merges whichever kind fits the slot).
     // Linux-only; elsewhere the callback stays empty so the picker shows no CLAP rows.
     std::function<void (const juce::File&, const juce::String&)> onClap;
 #if DUSKSTUDIO_HAS_NATIVE_CLAP

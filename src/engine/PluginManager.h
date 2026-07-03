@@ -52,7 +52,7 @@ public:
 
     // Native-VST3 plugins, scanned separately from JUCE's VST3 format (which stays
     // as the fallback host). pluginFormatName "VST3-Native", fileOrIdentifier = the
-    // .vst3 bundle path. Audio effects only; each module is dlopen'd (like CLAP).
+    // .vst3 bundle path. Effects and instruments; each module is dlopen'd (like CLAP).
     juce::Array<juce::PluginDescription> getVst3NativeEffectDescriptions() const;
     juce::Array<juce::PluginDescription> getVst3NativeInstrumentDescriptions() const;
     void scanVst3NativePlugins();
