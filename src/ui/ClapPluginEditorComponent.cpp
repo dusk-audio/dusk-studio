@@ -1,5 +1,6 @@
 #include "ClapPluginEditorComponent.h"
 #include "EmbeddedModal.h"   // kPluginEditorTag
+#include "NativeEditorEmbedScale.h"
 
 namespace duskstudio
 {
@@ -51,14 +52,18 @@ bool ClapPluginEditorComponent::openEditorOn (clap::ClapInstance& inst, juce::St
     // window). The GUI closed → tear the editor down.
     editor.onResize = [this] (int w, int h)
     {
-        if (w > 0 && h > 0) setSize (w, h);
+        if (w > 0 && h > 0)
+            setSize (embedscale::fromPhysical (*this, w),
+                     embedscale::fromPhysical (*this, h));
     };
     // GUI was_destroyed: tear down our state fully. Leaving `loaded` set would let
     // tryEmbed()/the timer keep poking an already-destroyed editor.
     editor.onClosed = [this] { embedded = false; loaded = false; stopTimer(); };
 
-    const int w = editor.preferredWidth()  > 0 ? editor.preferredWidth()  : 480;
-    const int h = editor.preferredHeight() > 0 ? editor.preferredHeight() : 320;
+    const int w = editor.preferredWidth()  > 0
+                    ? embedscale::fromPhysical (*this, editor.preferredWidth())  : 480;
+    const int h = editor.preferredHeight() > 0
+                    ? embedscale::fromPhysical (*this, editor.preferredHeight()) : 320;
     setSize (w, h);
 
     loaded = true;
@@ -84,7 +89,8 @@ void ClapPluginEditorComponent::tryEmbed()
     const auto parent = peerX11();
     if (parent == 0) return;
 
-    const auto area = getTopLevelComponent()->getLocalArea (this, getLocalBounds());
+    const auto area = embedscale::toPhysical (
+        *this, getTopLevelComponent()->getLocalArea (this, getLocalBounds()));
     std::string err;
     if (editor.embed (parent, area.getX(), area.getY(),
                       juce::jmax (1, area.getWidth()), juce::jmax (1, area.getHeight()), err))
@@ -112,7 +118,8 @@ void ClapPluginEditorComponent::tryEmbed()
 void ClapPluginEditorComponent::pushBounds()
 {
     if (! embedded) return;
-    const auto area = getTopLevelComponent()->getLocalArea (this, getLocalBounds());
+    const auto area = embedscale::toPhysical (
+        *this, getTopLevelComponent()->getLocalArea (this, getLocalBounds()));
     editor.setBounds (area.getX(), area.getY(),
                       juce::jmax (1, area.getWidth()), juce::jmax (1, area.getHeight()));
 }

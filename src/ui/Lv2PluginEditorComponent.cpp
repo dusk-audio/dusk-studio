@@ -1,6 +1,7 @@
 #include "Lv2PluginEditorComponent.h"
 
 #include "EmbeddedModal.h"   // kPluginEditorTag
+#include "NativeEditorEmbedScale.h"
 #include "../engine/lv2/Lv2Instance.h"
 
 namespace duskstudio
@@ -28,7 +29,9 @@ bool Lv2PluginEditorComponent::attach (lv2::Lv2Instance& shared, juce::String& e
 
     editor.onResize = [this] (int w, int h)
     {
-        if (w > 0 && h > 0) setSize (w, h);
+        if (w > 0 && h > 0)
+            setSize (embedscale::fromPhysical (*this, w),
+                     embedscale::fromPhysical (*this, h));
     };
     // The UI reported closed (idle() non-zero): stop treating it as live AND tear
     // the native UI down — leaving it open would keep a dead-by-its-own-request
@@ -71,7 +74,8 @@ void Lv2PluginEditorComponent::tryEmbed()
     const auto parent = peerX11();
     if (parent == 0) return;
 
-    const auto area = getTopLevelComponent()->getLocalArea (this, getLocalBounds());
+    const auto area = embedscale::toPhysical (
+        *this, getTopLevelComponent()->getLocalArea (this, getLocalBounds()));
     std::string err;
     embedding = true;
     const bool ok = editor.embed (parent, area.getX(), area.getY(),
@@ -82,7 +86,8 @@ void Lv2PluginEditorComponent::tryEmbed()
         embedded = true;
         // Adopt the UI's own size once known so the modal/lane can fit to it.
         if (editor.preferredWidth() > 0 && editor.preferredHeight() > 0)
-            setSize (editor.preferredWidth(), editor.preferredHeight());
+            setSize (embedscale::fromPhysical (*this, editor.preferredWidth()),
+                     embedscale::fromPhysical (*this, editor.preferredHeight()));
         // Re-sync unconditionally: a synchronous ui:resize during embed can
         // move this component (modal recentre) while `embedded` was still
         // false, so the moved()/resized() pushes were skipped and the native
@@ -102,7 +107,8 @@ void Lv2PluginEditorComponent::tryEmbed()
 void Lv2PluginEditorComponent::pushBounds()
 {
     if (! embedded) return;
-    const auto area = getTopLevelComponent()->getLocalArea (this, getLocalBounds());
+    const auto area = embedscale::toPhysical (
+        *this, getTopLevelComponent()->getLocalArea (this, getLocalBounds()));
     editor.setBounds (area.getX(), area.getY(),
                       juce::jmax (1, area.getWidth()), juce::jmax (1, area.getHeight()));
 }
