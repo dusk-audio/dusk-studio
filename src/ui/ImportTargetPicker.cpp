@@ -62,10 +62,14 @@ juce::String modeBadgeText (Track::Mode m)
 
 juce::String summaryLine (const ImportTargetPicker::FileSummary& s)
 {
+    // Middle dots are UTF-8 multibyte — they must go through CharPointer_UTF8.
+    // juce::String (const char*) reads bytes as single characters, so a plain
+    // literal renders the classic mojibake ("Â·", GH issue #27).
     if (s.isMidi)
     {
-        return juce::String ("MIDI \xc2\xb7 ") + juce::String (s.numMidiNotes)
-             + juce::String (" notes \xc2\xb7 ")
+        return juce::String (juce::CharPointer_UTF8 ("MIDI \xc2\xb7 "))
+             + juce::String (s.numMidiNotes)
+             + juce::String (juce::CharPointer_UTF8 (" notes \xc2\xb7 "))
              + juce::String ((int) std::llround ((double) s.lengthTicks
                                                   / (double) kMidiTicksPerQuarter))
              + juce::String (" beats");
@@ -75,8 +79,9 @@ juce::String summaryLine (const ImportTargetPicker::FileSummary& s)
                               : 0.0;
     const auto khz = juce::String ((int) std::llround (s.sampleRate / 1000.0));
     const auto chs = s.numChannels == 2 ? juce::String ("stereo") : juce::String ("mono");
-    return khz + juce::String (" k\xc2\xb7") + chs
-         + juce::String (" \xc2\xb7 ") + juce::String (seconds, 1) + juce::String (" s");
+    return khz + juce::String (juce::CharPointer_UTF8 (" kHz \xc2\xb7 ")) + chs
+         + juce::String (juce::CharPointer_UTF8 (" \xc2\xb7 "))
+         + juce::String (seconds, 1) + juce::String (" s");
 }
 } // namespace
 
