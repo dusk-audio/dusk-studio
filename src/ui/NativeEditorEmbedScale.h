@@ -23,11 +23,14 @@ inline double factor (const juce::Component& c)
 inline juce::Rectangle<int> toPhysical (const juce::Component& c,
                                         juce::Rectangle<int> logical)
 {
+    // Round the corners, not the dimensions — independently rounded x and
+    // width can land the right/bottom edge 1px off the painted edge.
     const double s = factor (c);
-    return { juce::roundToInt (logical.getX()      * s),
-             juce::roundToInt (logical.getY()      * s),
-             juce::roundToInt (logical.getWidth()  * s),
-             juce::roundToInt (logical.getHeight() * s) };
+    const int x0 = juce::roundToInt (logical.getX()      * s);
+    const int y0 = juce::roundToInt (logical.getY()      * s);
+    const int x1 = juce::roundToInt (logical.getRight()  * s);
+    const int y1 = juce::roundToInt (logical.getBottom() * s);
+    return { x0, y0, x1 - x0, y1 - y0 };
 }
 
 inline int fromPhysical (const juce::Component& c, int physical)

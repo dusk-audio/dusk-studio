@@ -1470,6 +1470,9 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         },
         [this]
         {
+            // Empty slot: nothing to bypass — don't flip (and persist) state
+            // the user can't see.
+            if (! insertSlotOccupied()) return;
             const bool now = ! track.strip.insertBypassed.load (std::memory_order_relaxed);
             track.strip.insertBypassed.store (now, std::memory_order_release);
         });
