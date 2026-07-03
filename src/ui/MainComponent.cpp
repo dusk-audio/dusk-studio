@@ -2685,6 +2685,17 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     // referenced AudioRegion. Belt-and-suspenders: also resets redo.
     engine.getUndoManager().clearUndoHistory();
 
+    // Native plugin editors (CLAP/LV2/VST3) reference the instances the
+    // reload below evicts — a suil/plugin UI whose pump timer ticks after
+    // the instance is gone crashes inside the plugin's own event loop.
+    // Tear every editor down NOW, while the instances are still alive
+    // (same order the strip loaders use). The console is rebuilt after
+    // the load anyway; aux lanes lazily re-embed on next show.
+    if (consoleView != nullptr)
+        consoleView->dropAllPluginEditors();
+    if (auxView != nullptr)
+        auxView->dropAllNativeEditors();
+
     engine.consumePluginStateAfterLoad();
     // Surface any plugin restore failures as a single summary dialog so
     // the user doesn't think a saved-with-Diva mix is intact when Diva
