@@ -142,6 +142,41 @@ void Lv2PluginEditorComponent::leakForShutdown()
     editor.setLeakOnClose (true);
 }
 
+void Lv2PluginEditorComponent::verifyGeometry()
+{
+    // The message flow can miss a move (compositor interference, an event
+    // arriving while unparented) — poll the REAL geometry ~3 Hz, snap back on
+    // drift, and log the numbers so field reports say what actually happened.
+    if (! isShowing() || getParentComponent() == nullptr || getPeer() == nullptr) return;
+    if (++geometryCheckTick < 20) return;
+    geometryCheckTick = 0;
+
+    const auto area = embedscale::toPhysical (
+        *this, getTopLevelComponent()->getLocalArea (this, getLocalBounds()));
+    int ax = 0, ay = 0, aw = 0, ah = 0;
+    if (! editor.getActualGeometry (ax, ay, aw, ah))
+    {
+        if (! geometryLostLogged)
+        {
+            geometryLostLogged = true;
+            std::fprintf (stderr, "[lv2 editor] host window lost (XGetGeometry failed)\n");
+        }
+        return;
+    }
+    if (ax != area.getX() || ay != area.getY()
+        || aw != juce::jmax (1, area.getWidth()) || ah != juce::jmax (1, area.getHeight()))
+    {
+        if (driftLogsLeft > 0)
+        {
+            --driftLogsLeft;
+            std::fprintf (stderr,
+                "[lv2 editor] geometry drift: intended (%d,%d %dx%d) actual (%d,%d %dx%d) - re-syncing\n",
+                area.getX(), area.getY(), area.getWidth(), area.getHeight(), ax, ay, aw, ah);
+        }
+        pushBounds();
+    }
+}
+
 void Lv2PluginEditorComponent::timerCallback()
 {
     // Ancestor visibility changes (tab switches) don't fire visibilityChanged —
@@ -154,6 +189,7 @@ void Lv2PluginEditorComponent::timerCallback()
     {
         if (isShowing()) editor.reveal();
         else             editor.hide();
+        verifyGeometry();
     }
     else
     {

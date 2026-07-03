@@ -41,6 +41,11 @@ public:
     void hide();     // XUnmapWindow (idempotent)
     void close();
 
+    // The host window's REAL geometry (position relative to its X11 parent +
+    // size), so the owner can detect and correct drift the message flow
+    // missed. False when not embedded or the window is gone.
+    bool getActualGeometry (int& x, int& y, int& w, int& h) const;
+
     // App shutdown: skip suil_instance_free — a foreign-toolkit UI's destructor
     // can hang on the way out (same rationale as the CLAP editor leak path).
     void setLeakOnClose (bool b) noexcept;

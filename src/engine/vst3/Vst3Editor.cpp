@@ -159,6 +159,19 @@ void Vst3Editor::setContentScale (float scale)
     impl->applyContentScale();
 }
 
+bool Vst3Editor::getActualGeometry (int& x, int& y, int& w, int& h) const
+{
+    if (! impl->embedded || impl->display == nullptr || impl->hostWindow == 0)
+        return false;
+    ::Window root {};
+    unsigned int uw = 0, uh = 0, border = 0, depth = 0;
+    if (XGetGeometry ((Display*) impl->display, (Window) impl->hostWindow,
+                      &root, &x, &y, &uw, &uh, &border, &depth) == 0)
+        return false;
+    w = (int) uw; h = (int) uh;
+    return true;
+}
+
 void Vst3Editor::reveal()
 {
     if (impl->display == nullptr || impl->hostWindow == 0 || impl->mapped) return;

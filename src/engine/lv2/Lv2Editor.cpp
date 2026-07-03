@@ -240,6 +240,19 @@ void Lv2Editor::setBounds (int x, int y, int w, int h)
     XFlush (dpy);
 }
 
+bool Lv2Editor::getActualGeometry (int& x, int& y, int& w, int& h) const
+{
+    if (! impl->embedded || impl->display == nullptr || impl->hostWindow == 0)
+        return false;
+    ::Window root {};
+    unsigned int uw = 0, uh = 0, border = 0, depth = 0;
+    if (XGetGeometry ((Display*) impl->display, (Window) impl->hostWindow,
+                      &root, &x, &y, &uw, &uh, &border, &depth) == 0)
+        return false;
+    w = (int) uw; h = (int) uh;
+    return true;
+}
+
 void Lv2Editor::reveal()
 {
     if (impl->display == nullptr || impl->hostWindow == 0 || impl->mapped) return;

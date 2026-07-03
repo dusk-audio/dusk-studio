@@ -36,6 +36,7 @@ private:
     void timerCallback() override;
     void tryEmbed();
     void pushBounds();
+    void verifyGeometry();
     unsigned long peerX11() const;
 
     vst3::Vst3Editor editor;
@@ -43,5 +44,8 @@ private:
     bool loaded    = false;
     bool embedded  = false;
     bool embedding = false;   // guards re-entry: attached() can fire resizeView → setSize → resized()
+    int  geometryCheckTick = 0;
+    int  driftLogsLeft     = 10;
+    bool geometryLostLogged = false;
 };
 } // namespace duskstudio

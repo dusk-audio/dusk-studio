@@ -92,6 +92,19 @@ void ClapEditor::setBounds (int x, int y, int w, int h)
     XFlush (dpy);
 }
 
+bool ClapEditor::getActualGeometry (int& x, int& y, int& w, int& h) const
+{
+    if (! embedded || display == nullptr || hostWindow == 0)
+        return false;
+    ::Window root {};
+    unsigned int uw = 0, uh = 0, border = 0, depth = 0;
+    if (XGetGeometry ((Display*) display, (Window) hostWindow,
+                      &root, &x, &y, &uw, &uh, &border, &depth) == 0)
+        return false;
+    w = (int) uw; h = (int) uh;
+    return true;
+}
+
 void ClapEditor::reveal()
 {
     if (display == nullptr || hostWindow == 0 || mapped) return;

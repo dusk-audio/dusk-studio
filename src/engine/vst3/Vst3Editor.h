@@ -41,6 +41,11 @@ public:
     void hide();     // XUnmapWindow (idempotent)
     void close();
 
+    // The host window's REAL geometry (position relative to its X11 parent +
+    // size), so the owner can detect and correct drift the message flow
+    // missed. False when not embedded or the window is gone.
+    bool getActualGeometry (int& x, int& y, int& w, int& h) const;
+
     // Message thread, ~60 Hz: pump the instance's IRunLoop (fds + timers) and
     // drain our X connection.
     void pump (double elapsedMs);
