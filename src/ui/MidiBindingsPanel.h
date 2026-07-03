@@ -64,13 +64,6 @@ private:
     juce::TextButton importButton   { "Import..." };
     juce::TextButton clearAllButton { "Clear all" };
     juce::TextButton doneButton     { "Done" };
-    // Async file choosers kept alive across the OS dialog's lifetime.
-    // Two slots because the user CAN trigger both flows back-to-back
-    // (open Export, then click Import before the Export dialog closes);
-    // a single slot would let the second click reassign the unique_ptr
-    // and destroy the first FileChooser mid-callback, which JUCE forbids.
-    std::unique_ptr<juce::FileChooser> exportChooser;
-    std::unique_ptr<juce::FileChooser> importChooser;
 
     void exportPreset();
     void importPreset();

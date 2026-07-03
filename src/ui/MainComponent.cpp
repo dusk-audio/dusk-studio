@@ -3002,15 +3002,14 @@ void MainComponent::openBounceStemsDialog()
                        + conflicts.joinIntoString ("\n")
                        + "\n\nContinue?";
         juce::Component::SafePointer<MainComponent> safe (this);
-        juce::AlertWindow::showOkCancelBox (
-            juce::MessageBoxIconType::WarningIcon,
-            "Overwrite stems?", msg, "Overwrite", "Cancel", this,
-            juce::ModalCallbackFunction::create (
-                [safe, launch] (int result) mutable
-                {
-                    if (result == 1 && safe.getComponent() != nullptr)
-                        launch();
-                }));
+        showDuskConfirm (*this, "Overwrite stems?", msg,
+                         "Overwrite",
+                         [safe, launch]() mutable
+                         {
+                             if (safe.getComponent() != nullptr)
+                                 launch();
+                         },
+                         "Cancel", {}, /*destructive*/ true);
     });
 }
 

@@ -316,7 +316,6 @@ private:
     void togglePluginEditor();
     void openPluginEditor();
     void closePluginEditor();
-    std::unique_ptr<juce::FileChooser> activePluginChooser;
     // Editor hosted inline as an EmbeddedModal (centred, dim backdrop,
     // click-out / Esc dismiss). showBorrowed doesn't own the body so
     // GL / Cairo / native resources survive close/reopen cycles. Both

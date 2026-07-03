@@ -1893,7 +1893,6 @@ void ChannelStripComponent::openPluginPicker (bool useChooser)
     {
         pluginpicker::openInsertChooser (pluginSlot,
                                           pluginSlotButton,
-                                          activePluginChooser,
                                           std::move (onChange),
                                           kind,
                                           std::move (openHwEditor),
@@ -1908,7 +1907,6 @@ void ChannelStripComponent::openPluginPicker (bool useChooser)
         // already committed to "this is a plugin".
         pluginpicker::openPickerMenu (pluginSlot,
                                        pluginSlotButton,
-                                       activePluginChooser,
                                        std::move (onChange),
                                        kind,
                                        { -1, -1 },
