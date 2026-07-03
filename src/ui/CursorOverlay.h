@@ -61,6 +61,8 @@ public:
 
 private:
     void setNativeCursorVisible (bool visible);
+    juce::Rectangle<int> glyphDirtyRect (juce::Point<int> local,
+                                          juce::Range<int> cutLineY) const;
 
     juce::Point<int> lastLocal   { -1000, -1000 };
     bool             lastPainting = false;
