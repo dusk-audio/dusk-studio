@@ -482,11 +482,10 @@ private:
 // Global KeyListener that forwards transport / navigation hotkeys (Space, R,
 // Home, '.', F11 — see isModalForwardableShortcut) to the registered
 // MainComponent regardless of where focus currently sits.
-// Attach to popup top-levels that bypass EmbeddedModal (juce::CallOutBox,
-// e.g., the COMP / EQ / AUX-send compact-mode editors) so the user can
-// play / stop / record / return-to-zero while those modals are open.
-// EmbeddedModal-based popups already forward in their own keyPressed;
-// CallOutBox doesn't.
+// Attach to modal surfaces that bypass EmbeddedModal (e.g. the TapeMachine
+// gear modal's raw DimOverlay host) so the user can play / stop / record /
+// return-to-zero while those modals are open. EmbeddedModal-based popups
+// already forward in their own keyPressed.
 class TransportKeyForwarder final : public juce::KeyListener
 {
 public:

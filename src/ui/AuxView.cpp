@@ -48,6 +48,7 @@ public:
         editor.setText (currentName, juce::dontSendNotification);
         editor.setJustification (juce::Justification::centredLeft);
         editor.setFont (juce::Font (juce::FontOptions (14.0f)));
+        editor.setPopupMenuEnabled (false);   // XWayland popup flash (see DuskComboBox)
         editor.setColour (juce::TextEditor::backgroundColourId, juce::Colour (0xff181820));
         editor.setColour (juce::TextEditor::outlineColourId,    juce::Colour (0xff3a3a42));
         editor.setColour (juce::TextEditor::focusedOutlineColourId, juce::Colour (0xff6a6a78));

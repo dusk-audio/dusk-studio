@@ -275,6 +275,7 @@ PluginPickerPanel::PluginPickerPanel (juce::Array<juce::PluginDescription> descr
     titleLabel.setFont (juce::Font (juce::FontOptions (15.0f, juce::Font::bold)));
     addAndMakeVisible (titleLabel);
 
+    filterEditor.setPopupMenuEnabled (false);   // XWayland popup flash (see DuskComboBox)
     filterEditor.setTextToShowWhenEmpty ("Filter...", juce::Colour (0xff707078));
     filterEditor.setColour (juce::TextEditor::backgroundColourId, juce::Colour (0xff14141a));
     filterEditor.setColour (juce::TextEditor::textColourId,        juce::Colour (0xffe0e0e4));

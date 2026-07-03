@@ -629,7 +629,7 @@ public:
             sfBtn.onClick = [this] { if (onSfFn) onSfFn(); };
             addAndMakeVisible (sfBtn);
         }
-        pluginBtn.setButtonText ("Plugin (VST3 / LV2)");
+        pluginBtn.setButtonText ("Plugin (VST3 / CLAP / LV2)");
         style (pluginBtn, juce::Colour (0xff385a38));
         pluginBtn.onClick = [this] { if (onPluginFn) onPluginFn(); };
         addAndMakeVisible (pluginBtn);
