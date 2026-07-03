@@ -5,16 +5,19 @@
 namespace duskstudio::embedscale
 {
 // JUCE component coordinates are logical; raw X11 windows live in physical
-// pixels (physical = logical × peer scale, see LinuxComponentPeer::setBounds).
-// The native editor components must convert on both sides of the boundary or
-// the embedded plugin window drifts from its JUCE body by the scale factor.
-// Plugin-reported sizes (resizeView / ui:resize / clap gui) are physical.
+// pixels. The full logical→physical factor is the peer's platform scale TIMES
+// the Desktop global scale — the app-set UI zoom (appconfig ui_scale →
+// Desktop::setGlobalScaleFactor) is NOT part of getPlatformScaleFactor(), and
+// missing it drifts every native editor window down-right by zoom% of its
+// position. Plugin-reported sizes (resizeView / ui:resize / clap gui) are
+// physical.
 
 inline double factor (const juce::Component& c)
 {
+    const double global = juce::Desktop::getInstance().getGlobalScaleFactor();
     if (auto* peer = c.getPeer())
-        return peer->getPlatformScaleFactor();
-    return 1.0;
+        return global * peer->getPlatformScaleFactor();
+    return global;
 }
 
 inline juce::Rectangle<int> toPhysical (const juce::Component& c,
