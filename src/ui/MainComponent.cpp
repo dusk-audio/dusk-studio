@@ -270,6 +270,13 @@ MainComponent::MainComponent()
     setTitle ("Dusk Studio mixer");
     setDescription ("16-channel portastudio-style mixer");
 
+    // JUCE's TooltipWindow never disables click interception, and ours is
+    // parented in-window and anchored into the menu row — every visible tip
+    // was an always-on-top click shield over the stage tabs / bank buttons /
+    // transport ("I have to click twice"). Tips are display-only; let every
+    // click pass through to what's underneath.
+    tooltipWindow.setInterceptsMouseClicks (false, false);
+
     juce::LookAndFeel::setDefaultLookAndFeel (&lookAndFeel);
 
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
