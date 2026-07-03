@@ -47,5 +47,6 @@ private:
     int  geometryCheckTick = 0;
     int  driftLogsLeft     = 10;
     bool geometryLostLogged = false;
+    bool embedCheckLogged   = false;
 };
 } // namespace duskstudio

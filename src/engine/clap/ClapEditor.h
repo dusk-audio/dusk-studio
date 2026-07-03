@@ -40,6 +40,8 @@ public:
     // The host window's REAL geometry (position relative to its X11 parent +
     // size), so the owner can detect and correct drift the message flow
     // missed. False when not embedded or the window is gone.
+    bool getRootRelativePosition (unsigned long referenceWindow,
+                                  int& relX, int& relY) const;
     bool getActualGeometry (int& x, int& y, int& w, int& h) const;
 
     // App shutdown: leak the plugin GUI instead of destroying it. u-he (Satin/Diva)

@@ -157,10 +157,15 @@ bool Lv2Editor::embed (unsigned long parentX11, int x, int y, int w, int h, std:
     swa.background_pixel = BlackPixel (dpy, DefaultScreen (dpy));
     swa.border_pixel     = 0;
     swa.event_mask       = StructureNotifyMask;
+    // Keep the WM's hands off this window in every transient state (JUCE's
+    // XEmbed host sets the same flag on its host window): under mutter's
+    // x11-frames a managed adoption detaches the compositor-side surface
+    // from the X-space parent-child position.
+    swa.override_redirect = True;
     impl->hostWindow = XCreateWindow (dpy, (Window) parentX11, x, y,
                                       (unsigned) ww, (unsigned) hh, 0,
                                       CopyFromParent, InputOutput, CopyFromParent,
-                                      CWBackPixel | CWBorderPixel | CWEventMask, &swa);
+                                      CWBackPixel | CWBorderPixel | CWEventMask | CWOverrideRedirect, &swa);
     // Viewable BEFORE the UI instantiates into it — toolkit wrappers (and JUCE-
     // wrapped UIs) can abort realising into an unmapped parent.
     XMapWindow (dpy, impl->hostWindow);
@@ -238,6 +243,23 @@ void Lv2Editor::setBounds (int x, int y, int w, int h)
         XResizeWindow (dpy, (Window) impl->uiWindow,
                        (unsigned) std::max (1, w), (unsigned) std::max (1, h));
     XFlush (dpy);
+}
+
+bool Lv2Editor::getRootRelativePosition (unsigned long referenceWindow,
+                                          int& relX, int& relY) const
+{
+    if (! impl->embedded || impl->display == nullptr || impl->hostWindow == 0)
+        return false;
+    auto* dpy = (Display*) impl->display;
+    ::Window dummy {};
+    int hx = 0, hy = 0, rx = 0, ry = 0;
+    if (! XTranslateCoordinates (dpy, (Window) impl->hostWindow,
+                                 DefaultRootWindow (dpy), 0, 0, &hx, &hy, &dummy)
+        || ! XTranslateCoordinates (dpy, (Window) referenceWindow,
+                                    DefaultRootWindow (dpy), 0, 0, &rx, &ry, &dummy))
+        return false;
+    relX = hx - rx; relY = hy - ry;
+    return true;
 }
 
 bool Lv2Editor::getActualGeometry (int& x, int& y, int& w, int& h) const

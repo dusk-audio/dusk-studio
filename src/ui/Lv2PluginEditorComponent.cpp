@@ -154,6 +154,15 @@ void Lv2PluginEditorComponent::verifyGeometry()
     const auto area = embedscale::toPhysical (
         *this, getTopLevelComponent()->getLocalArea (this, getLocalBounds()));
     int ax = 0, ay = 0, aw = 0, ah = 0;
+    if (! embedCheckLogged)
+    {
+        embedCheckLogged = true;
+        int relX = 0, relY = 0;
+        if (editor.getRootRelativePosition (peerX11(), relX, relY))
+            std::fprintf (stderr,
+                "[%s editor] embed check: host rel to peer (%d,%d), intended (%d,%d)\n",
+                "lv2", relX, relY, area.getX(), area.getY());
+    }
     if (! editor.getActualGeometry (ax, ay, aw, ah))
     {
         if (! geometryLostLogged)
