@@ -15,6 +15,7 @@
 #include <pluginterfaces/vst/ivstcomponent.h>
 #include <pluginterfaces/vst/ivsteditcontroller.h>
 #include <pluginterfaces/vst/ivsthostapplication.h>
+#include <pluginterfaces/vst/ivstmidicontrollers.h>
 #include <pluginterfaces/vst/vstspeaker.h>
 
 #include <algorithm>
@@ -75,6 +76,30 @@ struct Vst3Instance::Impl : public Vst3HostContext::Callbacks
     // thread (misbehaving plugins fire restartComponent off-thread, and the
     // snapshot allocates).
     std::atomic<bool> paramInfoChanged { false };
+    std::atomic<bool> ccMapChanged     { false };
+
+    // MIDI CC → parameter bridge (VST3 has no CC events: IMidiMapping assigns a
+    // parameter per (channel, controller) and the host feeds value changes).
+    // Cached on the message thread — getMidiControllerAssignment is a controller
+    // call — and read lock-free by the audio thread per incoming CC.
+    static constexpr uint32_t kNoCcParam = 0xFFFFFFFFu;
+    std::array<std::atomic<uint32_t>, 16 * Vst::kCountCtrlNumber> ccParamId {};
+
+    void rebuildMidiCcMap()
+    {
+        FUnknownPtr<Vst::IMidiMapping> mapping (controller);
+        for (int16 ch = 0; ch < 16; ++ch)
+            for (int16 ctrl = 0; ctrl < Vst::kCountCtrlNumber; ++ctrl)
+            {
+                Vst::ParamID id = 0;
+                const bool mapped = mapping
+                    && mapping->getMidiControllerAssignment (0, ch,
+                           (Vst::CtrlNumber) ctrl, id) == kResultTrue;
+                ccParamId[(size_t) (ch * Vst::kCountCtrlNumber + ctrl)]
+                    .store (mapped ? (uint32_t) id : kNoCcParam,
+                            std::memory_order_relaxed);
+            }
+    }
 
     void snapshotParams()
     {
@@ -120,6 +145,8 @@ struct Vst3Instance::Impl : public Vst3HostContext::Callbacks
         // fixed at create() and no hosted effect exercises it yet.
         if ((flags & Vst::RestartFlags::kParamTitlesChanged) != 0)
             paramInfoChanged.store (true, std::memory_order_relaxed);
+        if ((flags & Vst::RestartFlags::kMidiCCAssignmentChanged) != 0)
+            ccMapChanged.store (true, std::memory_order_relaxed);
         if ((flags & Vst::RestartFlags::kLatencyChanged) != 0)
             latencyChanged.store (true, std::memory_order_relaxed);
     }
@@ -214,6 +241,17 @@ void Vst3Instance::refreshParamInfoIfChanged()
 {
     if (impl->paramInfoChanged.exchange (false, std::memory_order_relaxed))
         impl->snapshotParams();
+    if (impl->ccMapChanged.exchange (false, std::memory_order_relaxed))
+        impl->rebuildMidiCcMap();
+}
+
+int Vst3Instance::midiCcMappingCount() const noexcept
+{
+    int n = 0;
+    for (const auto& id : impl->ccParamId)
+        if (id.load (std::memory_order_relaxed) != Impl::kNoCcParam)
+            ++n;
+    return n;
 }
 
 int Vst3Instance::lastTouchedParamIndex() const noexcept
@@ -287,6 +325,7 @@ bool Vst3Instance::create (const Vst3Bundle& bundle, const std::string& classId,
         }
 
         impl->snapshotParams();
+        impl->rebuildMidiCcMap();
     }
     impl->host.setCallbacks (impl.get());
 
@@ -521,6 +560,71 @@ void Vst3Instance::processBlock (const hosting::PortBuffers& io) noexcept
             queue->addPoint (0, pc.value, pointIndex);
         }
     });
+
+    // Notes → the event bus; CCs / pitch bend / channel pressure → the
+    // IMidiMapping-assigned parameters (VST3 has no CC events by design).
+    if (io.midiIn != nullptr)
+    {
+        auto queueCcParam = [&] (int16 channel, int16 ctrl, double normalized, int32 offset)
+        {
+            const uint32_t id = impl->ccParamId[(size_t) (channel * Vst::kCountCtrlNumber
+                                                          + ctrl)]
+                                    .load (std::memory_order_relaxed);
+            if (id == Impl::kNoCcParam) return;
+            int32 queueIndex = 0;
+            if (auto* queue = impl->inParams.addParameterData ((Vst::ParamID) id, queueIndex))
+            {
+                int32 pointIndex = 0;
+                queue->addPoint (offset, normalized, pointIndex);
+            }
+        };
+
+        for (const auto meta : *io.midiIn)
+        {
+            const auto* d = meta.data;
+            if (meta.numBytes < 2) continue;
+            const auto status  = (uint8_t) (d[0] & 0xF0u);
+            const auto channel = (int16_t) (d[0] & 0x0Fu);
+
+            if (impl->hasEventIn && meta.numBytes >= 3
+                && (status == 0x90 || status == 0x80))
+            {
+                Vst::Event ev {};
+                ev.busIndex     = 0;
+                ev.sampleOffset = meta.samplePosition;
+                ev.flags        = Vst::Event::kIsLive;
+                if (status == 0x90 && d[2] > 0)
+                {
+                    ev.type   = Vst::Event::kNoteOnEvent;
+                    ev.noteOn = { channel, (int16_t) d[1], 0.0f,
+                                  (float) d[2] / 127.0f, 0, -1 };
+                }
+                else
+                {
+                    ev.type    = Vst::Event::kNoteOffEvent;
+                    ev.noteOff = { channel, (int16_t) d[1],
+                                   (float) d[2] / 127.0f, -1, 0.0f };
+                }
+                impl->inEvents.addEvent (ev);
+            }
+            else if (status == 0xB0 && meta.numBytes >= 3 && d[1] < 128)
+            {
+                queueCcParam (channel, (int16_t) d[1],
+                              (double) d[2] / 127.0, meta.samplePosition);
+            }
+            else if (status == 0xE0 && meta.numBytes >= 3)
+            {
+                const int bend14 = (int) d[1] | ((int) d[2] << 7);
+                queueCcParam (channel, Vst::kPitchBend,
+                              (double) bend14 / 16383.0, meta.samplePosition);
+            }
+            else if (status == 0xD0)
+            {
+                queueCcParam (channel, Vst::kAfterTouch,
+                              (double) d[1] / 127.0, meta.samplePosition);
+            }
+        }
+    }
 
     if (impl->processor->process (impl->processData) != kResultOk)
         clearOutputs();

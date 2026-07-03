@@ -86,9 +86,14 @@ public:
     // PDC — VST3 only re-reads latency across a setActive cycle.
     bool consumeLatencyChanged() noexcept;
 
-    // Message thread: re-snapshot the parameter surface if the plugin signalled
-    // kParamTitlesChanged. Called from the engine's drain timer.
+    // Message thread: re-snapshot the parameter surface / MIDI-CC map if the
+    // plugin signalled kParamTitlesChanged / kMidiCCAssignmentChanged. Called
+    // from the engine's drain timer.
     void refreshParamInfoIfChanged();
+
+    // How many (channel, controller) pairs the plugin maps to parameters via
+    // IMidiMapping. 0 = no CC bridge (the plugin takes no MIDI controllers).
+    int midiCcMappingCount() const noexcept;
 
     int getLatencySamples() const noexcept override;
 

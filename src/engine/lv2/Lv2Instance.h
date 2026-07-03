@@ -80,6 +80,12 @@ public:
     // Port index for the suil port-index-by-symbol callback; -1 when unknown.
     int portIndexForSymbol (const char* symbol) const noexcept;
 
+    // Message thread (engine drain timer): fold the plugin's outgoing
+    // patch:Set / patch:Put responses into the read-back shadow, so
+    // plugin-side property changes (a preset loaded in its own UI) don't
+    // leave getParamValue stale.
+    void drainPatchFeedback();
+
     // ui:eventTransfer writes from the plugin's own editor (message thread):
     // forwarded onto the control atom input port so the DSP hears them without
     // relying on the instance-access shortcut, and patch:Set events stamp the

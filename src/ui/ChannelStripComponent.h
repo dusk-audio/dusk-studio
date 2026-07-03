@@ -346,6 +346,10 @@ private:
     void loadNativeVst3ForChannel (const juce::File& vst3File, const juce::String& pluginId = {});
 #endif
 
+    // A freshly loaded instrument flips the track to MIDI and routes the Virtual
+    // Keyboard when no MIDI input is bound (shared by the JUCE and native loads).
+    void adoptInstrumentTrackDefaults();
+
    #if JUCE_LINUX && DUSKSTUDIO_HAS_OOP_PLUGINS
     // OOP: child plugin's X11 Window wrapped in XEmbedComponent fed
     // to PluginEditorWindow as the body. Lifetime matches pluginEditor.

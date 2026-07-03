@@ -157,6 +157,10 @@ if(DUSKSTUDIO_NATIVE_LV2)
     target_compile_definitions(dusk-studio-tests PRIVATE DUSKSTUDIO_HAS_NATIVE_LV2=1)
 endif()
 
+if(DUSKSTUDIO_NATIVE_CLAP OR DUSKSTUDIO_NATIVE_LV2 OR DUSKSTUDIO_NATIVE_VST3)
+    target_sources(dusk-studio-tests PRIVATE native_instrument_process.cpp)
+endif()
+
 # Native VST3 host — SDK hosting subset (see the dusk-vst3-hosting target in the
 # top-level CMakeLists), ON when the external/vst3sdk submodule is initialized.
 if(DUSKSTUDIO_NATIVE_VST3)

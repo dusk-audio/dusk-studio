@@ -123,6 +123,22 @@ public:
     bool nativeVst3ReloadFailed() const noexcept { return false; }
 #endif
 
+    // Whether a native host owns the insert with an instrument loaded (no main
+    // audio input — MIDI drives it). Gates the track-mode/unload interplay.
+    bool insertIsNativeInstrument() const noexcept
+    {
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+        if (isNativeClapLoaded()) return nativeClapSlot.isLoadedInstrument();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+        if (isNativeLv2Loaded()) return nativeLv2Slot.isLoadedInstrument();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+        if (isNativeVst3Loaded()) return nativeVst3Slot.isLoadedInstrument();
+#endif
+        return false;
+    }
+
     // MIDI Learn: last-touched parameter of whichever host owns the insert
     // (same precedence as the audio chain); -1 when empty or untouched.
     int insertLastTouchedParamIndex() const noexcept

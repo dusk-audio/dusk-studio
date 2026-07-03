@@ -402,9 +402,11 @@ void openPickerMenu (PluginSlot& slot,
                           ? manager.getInstrumentDescriptions()
                           : manager.getEffectDescriptions();
 
-    // Merge native-CLAP effects into the unified list when the caller can host them.
-    if (onPickNativeClap && kind == PluginKind::Effects)
-        descriptions.addArray (manager.getClapEffectDescriptions());
+    // Merge native-CLAP plugins into the unified list when the caller can host them.
+    if (onPickNativeClap)
+        descriptions.addArray (kind == PluginKind::Effects
+                                 ? manager.getClapEffectDescriptions()
+                                 : manager.getClapInstrumentDescriptions());
 
     // Native-LV2 rows replace the JUCE-hosted LV2 effect rows (same plugins, better
     // host) so each plugin appears once. JUCE LV2 stays the fallback when unset.
@@ -415,12 +417,14 @@ void openPickerMenu (PluginSlot& slot,
         descriptions.addArray (manager.getLv2EffectDescriptions());
     }
 
-    // Native-VST3 rows replace the JUCE-hosted VST3 effect rows, same as LV2.
-    if (onPickNativeVst3 && kind == PluginKind::Effects)
+    // Native-VST3 rows replace the JUCE-hosted VST3 rows for both kinds.
+    if (onPickNativeVst3)
     {
         descriptions.removeIf ([] (const juce::PluginDescription& d)
                                { return d.pluginFormatName == "VST3"; });
-        descriptions.addArray (manager.getVst3NativeEffectDescriptions());
+        descriptions.addArray (kind == PluginKind::Effects
+                                 ? manager.getVst3NativeEffectDescriptions()
+                                 : manager.getVst3NativeInstrumentDescriptions());
     }
 
     auto* parent = target.getTopLevelComponent();

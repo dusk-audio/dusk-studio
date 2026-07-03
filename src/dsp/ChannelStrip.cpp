@@ -1030,7 +1030,23 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             // gate doesn't apply (no dry to blend with, no "empty" valid
             // for a MIDI track that has an instrument loaded). We still
             // tick the smoother to keep its state in sync in case the
-            // track later flips to audio mode.
+            // track later flips to audio mode. A native host owns the slot
+            // when loaded — same precedence as the effect-insert path.
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+            if (nativeClapSlot.isLoaded())
+                nativeClapSlot.processStereo (L, R, L, R, numSamples, &trackMidi);
+            else
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+            if (nativeLv2Slot.isLoaded())
+                nativeLv2Slot.processStereo (L, R, L, R, numSamples, &trackMidi);
+            else
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+            if (nativeVst3Slot.isLoaded())
+                nativeVst3Slot.processStereo (L, R, L, R, numSamples, &trackMidi);
+            else
+#endif
             pluginSlot.processStereoBlock (L, R, numSamples, trackMidi);
             for (int i = 0; i < numSamples; ++i)
                 activeInsertGain.getNextValue();
