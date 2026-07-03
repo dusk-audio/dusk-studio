@@ -184,6 +184,11 @@ public:
         // their own UI — track it, or the body grows down-right from
         // the stale centre and the backdrop stays at the old size.
         body.addComponentListener (this);
+        // Track the host too: resizing the main window with an editor
+        // open otherwise leaves the modal at the old centre, clipped at
+        // the new edges. Borrowed-only — owned bodies include anchored
+        // popups (DuskContextMenu / DuskComboBox) that must NOT recentre.
+        parent.addComponentListener (this);
 
         hidePluginEditorsUnder (parent);
     }
@@ -213,6 +218,7 @@ public:
         // doesn't fight with the message-loop teardown path below.
         restoreHiddenPluginEditors();
 
+        host->removeComponentListener (this);
         if (body_         != nullptr) host->removeChildComponent (body_.get());
         if (borrowedBody_ != nullptr)
         {
@@ -292,6 +298,7 @@ public:
 
         if (host != nullptr)
         {
+            host->removeComponentListener (this);
             if (body_         != nullptr) host->removeChildComponent (body_.get());
             if (borrowedBody_ != nullptr)
             {
@@ -381,13 +388,19 @@ private:
     }
 
     // Borrowed plugin-editor bodies resize themselves when the native
-    // window embeds or the plugin rescales its UI. Re-centre and re-fit
-    // the backdrop; moves are ignored (recenterBody itself moves the
-    // body, so reacting to them would recurse).
+    // window embeds or the plugin rescales its UI; the host resizes when
+    // the user resizes the main window with the editor open. Re-centre
+    // and re-fit the backdrop either way; moves are ignored (recenterBody
+    // itself moves the body, so reacting to them would recurse).
     void componentMovedOrResized (juce::Component& c, bool, bool wasResized) override
     {
-        if (wasResized && &c == borrowedBody_)
+        if (! wasResized || borrowedBody_ == nullptr) return;
+        if (&c == borrowedBody_ || &c == host.getComponent())
+        {
             recenterBody();
+            if (dim_ != nullptr && host != nullptr)
+                dim_->setBounds (host->getLocalBounds());
+        }
     }
 
     class Backdrop final : public juce::Component

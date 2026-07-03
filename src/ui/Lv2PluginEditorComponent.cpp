@@ -107,6 +107,11 @@ void Lv2PluginEditorComponent::tryEmbed()
 void Lv2PluginEditorComponent::pushBounds()
 {
     if (! embedded) return;
+    // Borrowed bodies get setBounds'd by EmbeddedModal BEFORE being re-added
+    // to a parent — getTopLevelComponent() is then `this` and the area
+    // degenerates to (0,0), slamming the native window to the origin. Skip
+    // while unparented; parentHierarchyChanged re-syncs once re-added.
+    if (getParentComponent() == nullptr || getPeer() == nullptr) return;
     const auto area = embedscale::toPhysical (
         *this, getTopLevelComponent()->getLocalArea (this, getLocalBounds()));
     editor.setBounds (area.getX(), area.getY(),
@@ -115,7 +120,7 @@ void Lv2PluginEditorComponent::pushBounds()
 
 void Lv2PluginEditorComponent::resized()                { if (embedded) pushBounds(); else tryEmbed(); }
 void Lv2PluginEditorComponent::moved()                  { pushBounds(); }
-void Lv2PluginEditorComponent::parentHierarchyChanged() { tryEmbed(); }
+void Lv2PluginEditorComponent::parentHierarchyChanged() { if (embedded) pushBounds(); else tryEmbed(); }
 
 void Lv2PluginEditorComponent::visibilityChanged()
 {
