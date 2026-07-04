@@ -453,6 +453,7 @@ A single button opens the **MIDI Bindings** panel, which lists every CC-to-contr
 - **UI scale**: a global zoom factor for the entire interface. Restart Dusk Studio after changing this for best results.
 - **Expand tape strip by default**: show the tape strip on every session open.
 - **Follow playhead by default**: start the timeline and the audio / MIDI editors with Chase engaged, so the view scrolls to keep the playhead in sight during playback. Per-machine; takes effect on next launch.
+- **Stop behavior**: where the playhead lands when playback stops — **Stay where it is** (pause), **Return to start**, or **Return to last clicked point**.
 - **Scan plugins on startup**: re-run the plugin scanner every time Dusk Studio launches. Off by default; large plugin collections take 10–30 seconds to scan.
 
 ### Advanced
@@ -1436,6 +1437,8 @@ In practice the differences are small:
 - A slot holds one plugin regardless of host: loading a CLAP, an LV2-Native, a VST3-Native, or a standard-host plugin into the same slot replaces whatever was there.
 
 One caveat: a plugin's saved state does not transfer between hosting layers. If a session carried a plugin under the standard LV2 or VST3 host and you load the same plugin as a native row (or vice versa), it starts from its defaults — set it up once and save.
+
+A second caveat, specific to **LV2-Native**: the session stores an LV2 plugin's control values and its in-memory state, but not state the plugin keeps in **files of its own** (a sampler's loaded sample bank, a convolution reverb's imported impulse response). Such a plugin reopens with its settings intact but the file-based content unloaded — reload it inside the plugin's editor. Effects with knob-only state are unaffected.
 
 ## Out-of-process sandboxing
 

@@ -514,9 +514,8 @@ MainComponent::MainComponent()
     // start with a fresh session and require the user to explicitly Load. The
     // previous best-effort auto-load of ~/Music/Dusk Studio/Untitled/session.json
     // was confusing - settings (master fader, mutes, etc.) silently persisted
-    // across launches. Use the Load button to restore a saved session.
-    // TODO: replace with a startup dialog (New / Open Recent / Browse...) when
-    // we add proper session management UX.
+    // across launches. The startup dialog (launchStartupDialog) offers
+    // New / Open Recent / Browse instead.
 
     consoleView = std::make_unique<ConsoleView> (session, engine);
     addAndMakeVisible (consoleView.get());
