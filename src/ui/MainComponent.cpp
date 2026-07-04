@@ -34,6 +34,7 @@
 #include "../session/RecentSessions.h"
 #include "../session/SessionSerializer.h"
 #include "../engine/FileImporter.h"
+#include "../engine/PlaybackEngine.h"
 #include "ImportTargetPicker.h"
 #include "DpImportDialog.h"
 #include "../engine/DpImporter.h"
@@ -2074,6 +2075,33 @@ bool MainComponent::saveSessionTo (const juce::File& dir)
 {
     if (dir == juce::File()) return false;
 
+    // Save As to a different folder must take the audio along: copy every
+    // session-owned file into the new dir and repoint the model BEFORE the
+    // directory swap, so serialize below emits relative paths. Plain Ctrl+S
+    // (same dir) is a no-op here. Copying precedes the audio-callback detach
+    // — it touches no plugin state, so a long copy adds no dropout.
+    const auto oldDir   = session.getSessionDirectory();
+    const bool isSaveAs = oldDir != juce::File() && dir != oldDir;
+    if (isSaveAs)
+    {
+        const auto consolidated = SessionSerializer::consolidateInto (session, dir);
+        if (! consolidated.ok)
+        {
+            setStatusForPath ("Save failed", dir);
+            showDuskAlert (*this, "Save failed",
+                              "Dusk Studio could not copy the session's audio "
+                              "into the new folder:\n\n    "
+                              + consolidated.errorMessage + "\n\n"
+                              "Common causes: disk full or missing write "
+                              "permission. The session is unchanged; it still "
+                              "lives at:\n\n    " + oldDir.getFullPathName());
+            return false;
+        }
+        if (! consolidated.missingSources.empty())
+            setStatusForPath (juce::String (consolidated.missingSources.size())
+                                + " missing audio file(s) were not copied to", dir);
+    }
+
     // setSessionDirectory creates the dir + audio subdir if missing - safe
     // to call even when the user picked an existing session folder.
     session.setSessionDirectory (dir);
@@ -2116,6 +2144,22 @@ bool MainComponent::saveSessionTo (const juce::File& dir)
 
     if (saveOk)
     {
+        if (isSaveAs)
+        {
+            // Undo actions snapshot whole AudioRegions including their files —
+            // undoing past the consolidation would resurrect old-dir paths.
+            // Same policy as Clean Out Unreferenced Files.
+            engine.getUndoManager().clearUndoHistory();
+            // Reopen playback readers on the copied files while stopped;
+            // rolling transport keeps streaming the (still present) originals
+            // until the next stop/play rebuild.
+            if (engine.getTransport().isStopped())
+                engine.getPlaybackEngine().preparePlayback();
+            // The old folder's autosave still holds pre-consolidation paths —
+            // without this, re-opening the old session pops a stale recovery
+            // prompt.
+            deleteAutosaveFor (oldDir);
+        }
         RecentSessions::add (dir);
         // A successful manual save makes the autosave stale - drop it so the
         // recovery prompt doesn't fire on the next clean load.

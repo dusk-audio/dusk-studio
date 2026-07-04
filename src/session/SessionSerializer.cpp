@@ -15,6 +15,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
+#include <set>
 
 namespace duskstudio
 {
@@ -2168,5 +2170,116 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
     // so the audio thread's any-X-soloed reads are correct on first callback.
     s.recomputeRtCounters();
     return true;
+}
+
+SessionSerializer::ConsolidationResult
+SessionSerializer::consolidateInto (Session& s, const juce::File& newSessionDir)
+{
+    ConsolidationResult res;
+    const auto oldDir = s.getSessionDirectory();
+    if (newSessionDir == juce::File() || newSessionDir == oldDir)
+        return res;
+
+    // Phase A — plan. Map each unique source to its destination without
+    // touching the model. Files under the old session dir keep their relative
+    // subpath (audio/, audio/freeze/, a root mixdown.wav); anything else is
+    // flattened into audio/ with a numeric suffix on basename collisions.
+    std::map<juce::String, juce::File> remap;
+    std::set<juce::String> usedTargets;
+
+    auto plan = [&] (const juce::File& f)
+    {
+        if (f == juce::File()) return;
+        const auto key = f.getFullPathName();
+        if (remap.count (key) != 0) return;
+        if (! f.existsAsFile())
+        {
+            if (std::find (res.missingSources.begin(), res.missingSources.end(), key)
+                    == res.missingSources.end())
+                res.missingSources.push_back (key);
+            return;
+        }
+
+        juce::File target;
+        if (oldDir != juce::File() && f.isAChildOf (oldDir))
+        {
+            target = newSessionDir.getChildFile (f.getRelativePathFrom (oldDir));
+        }
+        else
+        {
+            const auto audioDir = newSessionDir.getChildFile ("audio");
+            target = audioDir.getChildFile (f.getFileName());
+            for (int n = 2; usedTargets.count (target.getFullPathName()) != 0; ++n)
+                target = audioDir.getChildFile (f.getFileNameWithoutExtension()
+                                                 + "_" + juce::String (n)
+                                                 + f.getFileExtension());
+        }
+        usedTargets.insert (target.getFullPathName());
+        remap[key] = target;
+    };
+
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        auto& track = s.track (t);
+        for (auto& r : track.regions)
+        {
+            plan (r.file);
+            for (auto& take : r.previousTakes)
+                plan (take.file);
+        }
+        if (track.frozenAudioPath.isNotEmpty())
+            plan (juce::File (track.frozenAudioPath));
+    }
+    // Session-local mastering source moves with the session; a genuinely
+    // external one (a mix from elsewhere on disk) stays where the user put it.
+    if (auto& src = s.mastering().sourceFile;
+        src != juce::File() && oldDir != juce::File() && src.isAChildOf (oldDir))
+        plan (src);
+
+    // Phase B — copy. Any failure rolls back the files copied so far and
+    // returns with the model untouched.
+    std::vector<juce::File> copied;
+    for (const auto& [srcPath, target] : remap)
+    {
+        const juce::File src (srcPath);
+        if (! target.getParentDirectory().createDirectory().wasOk()
+            || ! src.copyFileTo (target))
+        {
+            for (auto& c : copied) c.deleteFile();
+            res.ok = false;
+            res.errorMessage = "Could not copy \"" + src.getFileName() + "\" to \""
+                             + target.getParentDirectory().getFullPathName() + "\"";
+            return res;
+        }
+        copied.push_back (target);
+    }
+    res.filesCopied = (int) copied.size();
+
+    // Phase C — repoint the model.
+    auto repoint = [&remap] (juce::File& f)
+    {
+        auto it = remap.find (f.getFullPathName());
+        if (it != remap.end()) f = it->second;
+    };
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        auto& track = s.track (t);
+        for (auto& r : track.regions)
+        {
+            repoint (r.file);
+            for (auto& take : r.previousTakes)
+                repoint (take.file);
+        }
+        if (track.frozenAudioPath.isNotEmpty())
+        {
+            juce::File fz (track.frozenAudioPath);
+            repoint (fz);
+            track.frozenAudioPath = fz.getFullPathName();
+            repoint (track.frozenRegion.file);
+        }
+    }
+    repoint (s.mastering().sourceFile);
+
+    return res;
 }
 } // namespace duskstudio

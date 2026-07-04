@@ -101,6 +101,7 @@ add_executable(dusk-studio-tests
     ${CMAKE_SOURCE_DIR}/src/engine/RecordManager.cpp
     record_midi_overdub_diff.cpp
     session_missing_sections.cpp
+    session_save_as_consolidation.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/MidiTimeCodeReceiver.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/MidiTimeCodeEmitter.cpp
     ${CMAKE_SOURCE_DIR}/src/session/Session.cpp
