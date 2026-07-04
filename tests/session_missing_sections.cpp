@@ -54,6 +54,10 @@ TEST_CASE ("loading a session without section keys resets those sections",
     {
         target.replaceWithText (R"({"version":3,"tracks":42,"buses":"x","aux_lanes":{}})");
     }
+    SECTION ("section arrays shorter than the model")
+    {
+        target.replaceWithText (R"({"version":3,"tracks":[],"buses":[],"aux_lanes":[]})");
+    }
 
     REQUIRE (SessionSerializer::load (s, target));
 

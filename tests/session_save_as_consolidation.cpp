@@ -123,24 +123,34 @@ TEST_CASE ("consolidateInto pulls external files into audio/ with collision suff
     Session s;
     s.setSessionDirectory (dirA);
 
-    const auto ext1 = makeFakeWav (ext1Dir.getChildFile ("loop.wav"));
-    const auto ext2 = makeFakeWav (ext2Dir.getChildFile ("loop.wav"));
+    const auto ext1  = makeFakeWav (ext1Dir.getChildFile ("loop.wav"));
+    const auto ext2  = makeFakeWav (ext2Dir.getChildFile ("loop.wav"));
+    // Session-local file with the same basename, planned AFTER the externals:
+    // the flattened externals claim audio/loop.wav first, so the relative-path
+    // branch must suffix too instead of double-mapping the name.
+    const auto local = makeFakeWav (dirA.getChildFile ("audio/loop.wav"));
     {
-        AudioRegion r1; r1.file = ext1; r1.lengthInSamples = 100;
-        AudioRegion r2; r2.file = ext2; r2.lengthInSamples = 100;
+        AudioRegion r1; r1.file = ext1;  r1.lengthInSamples = 100;
+        AudioRegion r2; r2.file = ext2;  r2.lengthInSamples = 100;
+        AudioRegion r3; r3.file = local; r3.lengthInSamples = 100;
         s.track (0).regions.push_back (r1);
         s.track (0).regions.push_back (r2);
+        s.track (0).regions.push_back (r3);
     }
 
     const auto res = SessionSerializer::consolidateInto (s, dirB);
     REQUIRE (res.ok);
-    REQUIRE (res.filesCopied == 2);
+    REQUIRE (res.filesCopied == 3);
 
     REQUIRE (dirB.getChildFile ("audio/loop.wav").existsAsFile());
     REQUIRE (dirB.getChildFile ("audio/loop_2.wav").existsAsFile());
-    REQUIRE (s.track (0).regions[0].file != s.track (0).regions[1].file);
-    REQUIRE (s.track (0).regions[0].file.isAChildOf (dirB));
-    REQUIRE (s.track (0).regions[1].file.isAChildOf (dirB));
+    REQUIRE (dirB.getChildFile ("audio/loop_3.wav").existsAsFile());
+    auto& regs = s.track (0).regions;
+    for (auto& r : regs)
+        REQUIRE (r.file.isAChildOf (dirB));
+    REQUIRE (regs[0].file != regs[1].file);
+    REQUIRE (regs[0].file != regs[2].file);
+    REQUIRE (regs[1].file != regs[2].file);
 }
 
 TEST_CASE ("consolidateInto edge cases", "[session][serializer][consolidate]")

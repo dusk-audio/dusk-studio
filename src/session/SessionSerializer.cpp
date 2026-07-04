@@ -1628,17 +1628,20 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         }
     }
 
-    // A truncated / hand-edited file may lack whole section keys. Those
-    // sections must still be driven through restore — skipping them leaves the
-    // PREVIOUS session's content (regions, plugins, mixer state) alive under
-    // the new session's name. restoreBus and the aux-lane path inherit any
-    // absent property, so an empty object is not enough to blank them:
-    // substitute the serialized sections of a default Session, which carry
-    // every key at its model default.
+    // A truncated / hand-edited file may lack whole section keys, or list
+    // fewer buses / aux lanes than this build has. Every slot must still be
+    // driven through restore — skipping any leaves the PREVIOUS session's
+    // content (regions, plugins, mixer state) alive under the new session's
+    // name. restoreBus and the aux-lane path inherit any absent property, so
+    // an empty object is not enough to blank them: substitute the serialized
+    // sections of a default Session, which carry every key at its model
+    // default.
     juce::var sectionDefaults;
     {
         auto tracksVar = root["tracks"], busesVar = root["buses"], auxVar = root["aux_lanes"];
-        if (! tracksVar.isArray() || ! busesVar.isArray() || ! auxVar.isArray())
+        if (! tracksVar.isArray() || ! busesVar.isArray() || ! auxVar.isArray()
+            || busesVar.size() < Session::kNumBuses
+            || auxVar.size() < Session::kNumAuxLanes)
             sectionDefaults = juce::JSON::parse (serialize (Session{}));
     }
 
@@ -1663,17 +1666,18 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
     {
         auto busesArr = root["buses"];
         if (! busesArr.isArray()) busesArr = sectionDefaults["buses"];
-        const int n = juce::jmin (Session::kNumBuses, busesArr.size());
-        for (int i = 0; i < n; ++i)
-            restoreBus (s.bus (i), busesArr[i], sessionLoadBpm);
+        for (int i = 0; i < Session::kNumBuses; ++i)
+            restoreBus (s.bus (i),
+                        i < busesArr.size() ? busesArr[i] : sectionDefaults["buses"][i],
+                        sessionLoadBpm);
     }
     {
         auto auxLanesArr = root["aux_lanes"];
         if (! auxLanesArr.isArray()) auxLanesArr = sectionDefaults["aux_lanes"];
-        const int n = juce::jmin (Session::kNumAuxLanes, auxLanesArr.size());
-        for (int i = 0; i < n; ++i)
+        for (int i = 0; i < Session::kNumAuxLanes; ++i)
         {
-            const auto v = auxLanesArr[i];
+            const auto v = i < auxLanesArr.size() ? auxLanesArr[i]
+                                                  : sectionDefaults["aux_lanes"][i];
             if (! v.isObject()) continue;
             auto& lane = s.auxLane (i);
             if (auto str = v["name"].toString();   str.isNotEmpty()) lane.name   = str;
@@ -2200,20 +2204,18 @@ SessionSerializer::consolidateInto (Session& s, const juce::File& newSessionDir)
             return;
         }
 
-        juce::File target;
-        if (oldDir != juce::File() && f.isAChildOf (oldDir))
-        {
-            target = newSessionDir.getChildFile (f.getRelativePathFrom (oldDir));
-        }
-        else
-        {
-            const auto audioDir = newSessionDir.getChildFile ("audio");
-            target = audioDir.getChildFile (f.getFileName());
-            for (int n = 2; usedTargets.count (target.getFullPathName()) != 0; ++n)
-                target = audioDir.getChildFile (f.getFileNameWithoutExtension()
-                                                 + "_" + juce::String (n)
-                                                 + f.getFileExtension());
-        }
+        // Both branches go through the same collision suffixing: a flattened
+        // external can claim a name a later session-local file also maps to
+        // (external loop.wav planned before audio/loop.wav), so the
+        // preserve-relative branch is not collision-free either.
+        juce::File target = (oldDir != juce::File() && f.isAChildOf (oldDir))
+            ? newSessionDir.getChildFile (f.getRelativePathFrom (oldDir))
+            : newSessionDir.getChildFile ("audio").getChildFile (f.getFileName());
+        const auto targetDir = target.getParentDirectory();
+        for (int n = 2; usedTargets.count (target.getFullPathName()) != 0; ++n)
+            target = targetDir.getChildFile (f.getFileNameWithoutExtension()
+                                              + "_" + juce::String (n)
+                                              + f.getFileExtension());
         usedTargets.insert (target.getFullPathName());
         remap[key] = target;
     };
