@@ -1,5 +1,6 @@
 #include "ClapPluginEditorComponent.h"
 #include "EmbeddedModal.h"   // kPluginEditorTag
+#include "NativeEditorEmbedScale.h"
 
 namespace duskstudio
 {
@@ -51,14 +52,18 @@ bool ClapPluginEditorComponent::openEditorOn (clap::ClapInstance& inst, juce::St
     // window). The GUI closed → tear the editor down.
     editor.onResize = [this] (int w, int h)
     {
-        if (w > 0 && h > 0) setSize (w, h);
+        if (w > 0 && h > 0)
+            setSize (embedscale::fromPhysical (*this, w),
+                     embedscale::fromPhysical (*this, h));
     };
     // GUI was_destroyed: tear down our state fully. Leaving `loaded` set would let
     // tryEmbed()/the timer keep poking an already-destroyed editor.
     editor.onClosed = [this] { embedded = false; loaded = false; stopTimer(); };
 
-    const int w = editor.preferredWidth()  > 0 ? editor.preferredWidth()  : 480;
-    const int h = editor.preferredHeight() > 0 ? editor.preferredHeight() : 320;
+    const int w = editor.preferredWidth()  > 0
+                    ? embedscale::fromPhysical (*this, editor.preferredWidth())  : 480;
+    const int h = editor.preferredHeight() > 0
+                    ? embedscale::fromPhysical (*this, editor.preferredHeight()) : 320;
     setSize (w, h);
 
     loaded = true;
@@ -84,12 +89,18 @@ void ClapPluginEditorComponent::tryEmbed()
     const auto parent = peerX11();
     if (parent == 0) return;
 
-    const auto area = getTopLevelComponent()->getLocalArea (this, getLocalBounds());
+    const auto area = embedscale::toPhysical (
+        *this, getTopLevelComponent()->getLocalArea (this, getLocalBounds()));
     std::string err;
     if (editor.embed (parent, area.getX(), area.getY(),
                       juce::jmax (1, area.getWidth()), juce::jmax (1, area.getHeight()), err))
     {
         embedded = true;
+        // Re-sync unconditionally: a synchronous gui resize during embed can
+        // move this component (modal recentre) while `embedded` was still
+        // false, so the moved()/resized() pushes were skipped and the native
+        // window would keep the pre-move coords passed to embed().
+        pushBounds();
         editor.reveal();
     }
     else
@@ -107,14 +118,20 @@ void ClapPluginEditorComponent::tryEmbed()
 void ClapPluginEditorComponent::pushBounds()
 {
     if (! embedded) return;
-    const auto area = getTopLevelComponent()->getLocalArea (this, getLocalBounds());
+    // Borrowed bodies get setBounds'd by EmbeddedModal BEFORE being re-added
+    // to a parent — getTopLevelComponent() is then `this` and the area
+    // degenerates to (0,0), slamming the native window to the origin. Skip
+    // while unparented; parentHierarchyChanged re-syncs once re-added.
+    if (getParentComponent() == nullptr || getPeer() == nullptr) return;
+    const auto area = embedscale::toPhysical (
+        *this, getTopLevelComponent()->getLocalArea (this, getLocalBounds()));
     editor.setBounds (area.getX(), area.getY(),
                       juce::jmax (1, area.getWidth()), juce::jmax (1, area.getHeight()));
 }
 
 void ClapPluginEditorComponent::resized()              { if (embedded) pushBounds(); else tryEmbed(); }
 void ClapPluginEditorComponent::moved()                { pushBounds(); }
-void ClapPluginEditorComponent::parentHierarchyChanged() { tryEmbed(); }
+void ClapPluginEditorComponent::parentHierarchyChanged() { if (embedded) pushBounds(); else tryEmbed(); }
 
 void ClapPluginEditorComponent::visibilityChanged()
 {
@@ -136,6 +153,50 @@ void ClapPluginEditorComponent::leakForShutdown()
     editor.setLeakOnClose (true);
 }
 
+void ClapPluginEditorComponent::verifyGeometry()
+{
+    // The message flow can miss a move (compositor interference, an event
+    // arriving while unparented) — poll the REAL geometry ~3 Hz, snap back on
+    // drift, and log the numbers so field reports say what actually happened.
+    if (! isShowing() || getParentComponent() == nullptr || getPeer() == nullptr) return;
+    if (++geometryCheckTick < 20) return;
+    geometryCheckTick = 0;
+
+    const auto area = embedscale::toPhysical (
+        *this, getTopLevelComponent()->getLocalArea (this, getLocalBounds()));
+    int ax = 0, ay = 0, aw = 0, ah = 0;
+    if (! embedCheckLogged)
+    {
+        embedCheckLogged = true;
+        int relX = 0, relY = 0;
+        if (editor.getRootRelativePosition (peerX11(), relX, relY))
+            std::fprintf (stderr,
+                "[%s editor] embed check: host rel to peer (%d,%d), intended (%d,%d)\n",
+                "clap", relX, relY, area.getX(), area.getY());
+    }
+    if (! editor.getActualGeometry (ax, ay, aw, ah))
+    {
+        if (! geometryLostLogged)
+        {
+            geometryLostLogged = true;
+            std::fprintf (stderr, "[clap editor] host window lost (XGetGeometry failed)\n");
+        }
+        return;
+    }
+    if (ax != area.getX() || ay != area.getY()
+        || aw != juce::jmax (1, area.getWidth()) || ah != juce::jmax (1, area.getHeight()))
+    {
+        if (driftLogsLeft > 0)
+        {
+            --driftLogsLeft;
+            std::fprintf (stderr,
+                "[clap editor] geometry drift: intended (%d,%d %dx%d) actual (%d,%d %dx%d) - re-syncing\n",
+                area.getX(), area.getY(), area.getWidth(), area.getHeight(), ax, ay, aw, ah);
+        }
+        pushBounds();
+    }
+}
+
 void ClapPluginEditorComponent::timerCallback()
 {
     // Keep the native X11 window's mapped state in sync with our real on-screen
@@ -146,6 +207,7 @@ void ClapPluginEditorComponent::timerCallback()
     {
         if (isShowing()) editor.reveal();
         else             editor.hide();
+        verifyGeometry();
     }
 
     const auto now = juce::Time::getMillisecondCounter();

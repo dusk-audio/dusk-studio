@@ -356,6 +356,8 @@ juce::DynamicObject::Ptr trackToObject (const Track& t, const juce::File& sessio
     obj->setProperty ("mute",           t.strip.mute.load());
     obj->setProperty ("solo",           t.strip.solo.load());
     obj->setProperty ("phase_invert",   t.strip.phaseInvert.load());
+    if (t.strip.insertBypassed.load())
+        obj->setProperty ("insert_bypassed", true);
     obj->setProperty ("fader_group",    t.strip.faderGroupId.load());
     obj->setProperty ("input_monitor",  t.inputMonitor.load());
     obj->setProperty ("print_effects",  t.printEffects.load());
@@ -769,6 +771,8 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm,
     setBool  (t.strip.mute,         "mute");
     setBool  (t.strip.solo,         "solo");
     setBool  (t.strip.phaseInvert,  "phase_invert");
+    t.strip.insertBypassed.store (v.hasProperty ("insert_bypassed")
+                                    && (bool) v["insert_bypassed"]);
     setInt   (t.strip.faderGroupId, "fader_group");
     setBool  (t.inputMonitor,       "input_monitor");
     setBool  (t.printEffects,       "print_effects");

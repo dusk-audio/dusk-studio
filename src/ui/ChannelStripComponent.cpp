@@ -1430,7 +1430,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     pluginSlotButton.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xff9080c0));
     pluginSlotButton.setColour (juce::TextButton::textColourOnId,   juce::Colour (0xffd0c0e0));
     pluginSlotButton.setTooltip (juce::CharPointer_UTF8 (
-        "Empty: click to pick a plugin (VST3 / LV2) or an External "
+        "Empty: click to pick a plugin (VST3 / CLAP / LV2) or an External "
         "Hardware Insert. Loaded plugin: click to toggle the editor; "
         "right-click for Replace / Remove. Hardware insert: click to "
         "open the routing editor."));
@@ -1460,6 +1460,24 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         showPluginSlotMenu();
     };
     addAndMakeVisible (pluginSlotButton);
+
+    // Added after the slot button so it z-orders above and gets the click.
+    insertBypassLed = std::make_unique<CompBypassLed> (
+        [this]
+        {
+            return insertSlotOccupied()
+                && ! track.strip.insertBypassed.load (std::memory_order_relaxed);
+        },
+        [this]
+        {
+            // Empty slot: nothing to bypass — don't flip (and persist) state
+            // the user can't see.
+            if (! insertSlotOccupied()) return;
+            const bool now = ! track.strip.insertBypassed.load (std::memory_order_relaxed);
+            track.strip.insertBypassed.store (now, std::memory_order_release);
+        });
+    insertBypassLed->setTooltip ("Insert bypass - green when engaged, click to toggle");
+    addAndMakeVisible (insertBypassLed.get());
 
     // Compact-mode placeholder buttons. Hidden by default; setCompactMode(true)
     // makes them visible and hides the full inline EQ + COMP + AUX controls.
@@ -1893,7 +1911,6 @@ void ChannelStripComponent::openPluginPicker (bool useChooser)
     {
         pluginpicker::openInsertChooser (pluginSlot,
                                           pluginSlotButton,
-                                          activePluginChooser,
                                           std::move (onChange),
                                           kind,
                                           std::move (openHwEditor),
@@ -1908,7 +1925,6 @@ void ChannelStripComponent::openPluginPicker (bool useChooser)
         // already committed to "this is a plugin".
         pluginpicker::openPickerMenu (pluginSlot,
                                        pluginSlotButton,
-                                       activePluginChooser,
                                        std::move (onChange),
                                        kind,
                                        { -1, -1 },
@@ -2092,6 +2108,16 @@ void ChannelStripComponent::refreshInsertButtonForCapture()
 {
     refreshPluginSlotButton();
     repaint();
+}
+
+bool ChannelStripComponent::insertSlotOccupied() const
+{
+    auto& st = engine.getChannelStrip (trackIndex);
+    if (st.isNativeClapLoaded() || st.isNativeLv2Loaded() || st.isNativeVst3Loaded())
+        return true;
+    if (pluginSlot.isLoaded())
+        return true;
+    return st.insertMode.load (std::memory_order_acquire) == ChannelStrip::kInsertHardware;
 }
 
 void ChannelStripComponent::refreshPluginSlotButton()
@@ -3431,6 +3457,8 @@ void ChannelStripComponent::timerCallback()
         // tracks atom changes from external mutation paths.
         eqHeaderBtn->repaint();
     }
+    if (insertBypassLed != nullptr)
+        insertBypassLed->repaint();   // tracks bypass atom + slot load/unload
     // Sync the dedicated E/G chip's label + toggle state from the atom
     // so external writes (popup editor type picker) reflect inline.
     {
@@ -4917,11 +4945,18 @@ void ChannelStripComponent::resized()
 
     // Plugin-slot button right below the IN/ARM/PRINT row. Always visible -
     // available in both compact and full modes since it's independent of the
-    // EQ/COMP collapse.
-    // reduced(4,0) matches the EQ / COMP / AUX compact buttons below so all
-    // four section buttons share one width - otherwise the wider Insert border
-    // sticks out past them and reads as a double / stacked outline.
-    pluginSlotButton.setBounds (area.removeFromTop (18).reduced (4, 0));
+    // EQ/COMP collapse. Full mode matches the EQ/COMP headers' inset (3) so
+    // the insert row reads as the same width as the track; compact keeps the
+    // pills' inset (4) so the stacked section buttons share one width.
+    {
+        const auto insertRow = area.removeFromTop (18);
+        pluginSlotButton.setBounds (insertRow.reduced (compactMode ? 4 : 3, 0));
+        // Hit area = the row's full height x 16 px; the painted dot centres
+        // itself (CompBypassLed caps the visual at 10 px).
+        if (insertBypassLed != nullptr)
+            insertBypassLed->setBounds (pluginSlotButton.getX(), insertRow.getY(),
+                                        16, insertRow.getHeight());
+    }
     area.removeFromTop (2);
 
     // In compact mode the EQ + COMP sections collapse to two narrow buttons

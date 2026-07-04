@@ -46,6 +46,7 @@ private:
     void timerCallback() override;
     void tryEmbed();
     void pushBounds();
+    void verifyGeometry();
     unsigned long peerX11() const;
 
     bool openEditorOn (clap::ClapInstance& inst, juce::String& errorOut);
@@ -59,5 +60,9 @@ private:
     bool loaded   = false;
     bool embedded = false;
     juce::uint32 lastPumpMs = 0;
+    int  geometryCheckTick = 0;
+    int  driftLogsLeft     = 10;
+    bool geometryLostLogged = false;
+    bool embedCheckLogged   = false;
 };
 } // namespace duskstudio

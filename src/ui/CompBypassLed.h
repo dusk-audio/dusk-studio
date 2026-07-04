@@ -34,7 +34,13 @@ public:
         // (1 px outer + 2 px inner) shrank the visible green to ~50 %
         // of the bounds and made the EQ bypass LED read much smaller
         // than the COMP header button's LED at the same widget size.
-        const auto r = getLocalBounds().toFloat();
+        //
+        // The visual caps at 10 px and centres in the bounds, so callers
+        // can give the widget a larger hit area than the dot — an 8 px
+        // click target is unusable.
+        auto r = getLocalBounds().toFloat();
+        const float d = juce::jmin (r.getWidth(), r.getHeight(), 10.0f);
+        r = r.withSizeKeepingCentre (d, d);
         const bool on = isEnabledFn ? isEnabledFn() : false;
 
         g.setColour (juce::Colour (0xff0a0a0c));

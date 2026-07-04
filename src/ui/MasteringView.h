@@ -88,7 +88,6 @@ private:
 
     juce::TextButton exportButton { "Export master..." };
 
-    std::unique_ptr<juce::FileChooser> fileChooser;
     std::unique_ptr<WaveformDisplay>   waveform;
 
     // EQ = custom curve + band controls. Comp embeds ONLY the donor's

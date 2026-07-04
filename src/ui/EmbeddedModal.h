@@ -56,7 +56,8 @@ inline constexpr const char* kPluginEditorTag = "dusk_pluginEditor";
 //
 // Paints its own opaque rounded backdrop behind the body so panels
 // without solid background don't bleed channel strips through.
-class EmbeddedModal final : private juce::KeyListener
+class EmbeddedModal final : private juce::KeyListener,
+                            private juce::ComponentListener
 {
 public:
     // Singleton focus-restore target. MainComponent registers itself here
@@ -178,6 +179,16 @@ public:
         body.setWantsKeyboardFocus (true);
         body.grabKeyboardFocus();
         body.addKeyListener (this);
+        // Plugin editors announce their real size only once the native
+        // window embeds (after this show) and can rescale live from
+        // their own UI — track it, or the body grows down-right from
+        // the stale centre and the backdrop stays at the old size.
+        body.addComponentListener (this);
+        // Track the host too: resizing the main window with an editor
+        // open otherwise leaves the modal at the old centre, clipped at
+        // the new edges. Borrowed-only — owned bodies include anchored
+        // popups (DuskContextMenu / DuskComboBox) that must NOT recentre.
+        parent.addComponentListener (this);
 
         hidePluginEditorsUnder (parent);
     }
@@ -207,10 +218,12 @@ public:
         // doesn't fight with the message-loop teardown path below.
         restoreHiddenPluginEditors();
 
+        host->removeComponentListener (this);
         if (body_         != nullptr) host->removeChildComponent (body_.get());
         if (borrowedBody_ != nullptr)
         {
             borrowedBody_->removeKeyListener (this);
+            borrowedBody_->removeComponentListener (this);
             host->removeChildComponent (borrowedBody_);
         }
         if (backdrop_ != nullptr) host->removeChildComponent (backdrop_.get());
@@ -285,10 +298,12 @@ public:
 
         if (host != nullptr)
         {
+            host->removeComponentListener (this);
             if (body_         != nullptr) host->removeChildComponent (body_.get());
             if (borrowedBody_ != nullptr)
             {
                 borrowedBody_->removeKeyListener (this);
+                borrowedBody_->removeComponentListener (this);
                 host->removeChildComponent (borrowedBody_);
             }
             if (backdrop_ != nullptr) host->removeChildComponent (backdrop_.get());
@@ -336,7 +351,12 @@ public:
         const auto bodyBounds = bounds.withSizeKeepingCentre (
             juce::jmin (juce::jmax (1, body->getWidth()),  bounds.getWidth()  - 16),
             juce::jmin (juce::jmax (1, body->getHeight()), bounds.getHeight() - 16));
-        repositionBody (bodyBounds.getTopLeft());
+        body->setTopLeftPosition (bodyBounds.getTopLeft());
+        // Re-fit the backdrop to the body's REAL bounds (not the clamped
+        // rect) — a body that outgrew its open-time size otherwise keeps
+        // the old, smaller frame behind it.
+        if (backdrop_ != nullptr)
+            backdrop_->setBounds (body->getBounds().expanded (kBackdropMargin));
     }
 
 private:
@@ -365,6 +385,22 @@ private:
                 return mc->keyPressed (k);
         }
         return false;
+    }
+
+    // Borrowed plugin-editor bodies resize themselves when the native
+    // window embeds or the plugin rescales its UI; the host resizes when
+    // the user resizes the main window with the editor open. Re-centre
+    // and re-fit the backdrop either way; moves are ignored (recenterBody
+    // itself moves the body, so reacting to them would recurse).
+    void componentMovedOrResized (juce::Component& c, bool, bool wasResized) override
+    {
+        if (! wasResized || borrowedBody_ == nullptr) return;
+        if (&c == borrowedBody_ || &c == host.getComponent())
+        {
+            recenterBody();
+            if (dim_ != nullptr && host != nullptr)
+                dim_->setBounds (host->getLocalBounds());
+        }
     }
 
     class Backdrop final : public juce::Component
@@ -482,11 +518,10 @@ private:
 // Global KeyListener that forwards transport / navigation hotkeys (Space, R,
 // Home, '.', F11 — see isModalForwardableShortcut) to the registered
 // MainComponent regardless of where focus currently sits.
-// Attach to popup top-levels that bypass EmbeddedModal (juce::CallOutBox,
-// e.g., the COMP / EQ / AUX-send compact-mode editors) so the user can
-// play / stop / record / return-to-zero while those modals are open.
-// EmbeddedModal-based popups already forward in their own keyPressed;
-// CallOutBox doesn't.
+// Attach to modal surfaces that bypass EmbeddedModal (e.g. the TapeMachine
+// gear modal's raw DimOverlay host) so the user can play / stop / record /
+// return-to-zero while those modals are open. EmbeddedModal-based popups
+// already forward in their own keyPressed.
 class TransportKeyForwarder final : public juce::KeyListener
 {
 public:

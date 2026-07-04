@@ -16,6 +16,7 @@ SelfTestPanel::SelfTestPanel (AudioEngine& e,
     logView.setCaretVisible (false);
     logView.setReturnKeyStartsNewLine (false);
     logView.setFont (juce::Font (juce::Font::getDefaultMonospacedFontName(), 12.0f, 0));
+    logView.setPopupMenuEnabled (false);   // XWayland popup flash (see DuskComboBox)
     logView.setColour (juce::TextEditor::backgroundColourId, juce::Colour (0xff101012));
     logView.setColour (juce::TextEditor::textColourId, juce::Colour (0xffd0d0d0));
     logView.setText ("Press [Run] to execute the audio pipeline self-test. "

@@ -270,6 +270,13 @@ MainComponent::MainComponent()
     setTitle ("Dusk Studio mixer");
     setDescription ("16-channel portastudio-style mixer");
 
+    // JUCE's TooltipWindow never disables click interception, and ours is
+    // parented in-window and anchored into the menu row — every visible tip
+    // was an always-on-top click shield over the stage tabs / bank buttons /
+    // transport ("I have to click twice"). Tips are display-only; let every
+    // click pass through to what's underneath.
+    tooltipWindow.setInterceptsMouseClicks (false, false);
+
     juce::LookAndFeel::setDefaultLookAndFeel (&lookAndFeel);
 
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
@@ -840,6 +847,24 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         }
     }
 
+    // ── Shift+Left / Shift+Right mirror the transport Rewind / Forward taps:
+    // previous / next marker, with the buttons' stopped-and-empty fallbacks
+    // (start of session / last record point). Cmd+arrows are region nudge,
+    // plain arrows are strip focus — this claims the remaining pair.
+    if (shift && ! cmd && ! mods.isAltDown()
+        && (key == juce::KeyPress::leftKey || key == juce::KeyPress::rightKey))
+    {
+        const bool back = key == juce::KeyPress::leftKey;
+        if (engine.getTransport().isStopped() && session.getMarkers().empty())
+        {
+            if (back) engine.jumpToZero();
+            else      engine.jumpToLastRecordPoint();
+        }
+        else if (back) engine.jumpToPrevMarker();
+        else           engine.jumpToNextMarker();
+        return true;
+    }
+
     // ── Plain Left/Right move the channel-strip focus ring across the 24
     // strips (Recording / Mixing stages), auto-flipping the visible bank at a
     // boundary. The focused strip becomes the A / S / X target. Cmd+arrows are
@@ -1146,6 +1171,31 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         auto& enabled = session.metronomeEnabled;
         enabled.store (! enabled.load (std::memory_order_relaxed),
                         std::memory_order_relaxed);
+        return true;
+    }
+
+    // ── Count-in toggle: Shift+C (pairs with plain C's metronome). The
+    // transport bar's C/I button re-syncs from the atom on its timer.
+    if (code == 'C' && shift && ! cmd && ! mods.isAltDown())
+    {
+        auto& ci = session.countInEnabled;
+        ci.store (! ci.load (std::memory_order_relaxed), std::memory_order_relaxed);
+        return true;
+    }
+
+    // ── Remaining transport-bar controls, one key each so every transport
+    // control is reachable without the mouse: B = tap tempo ("BPM"),
+    // Shift+M = time-signature menu (plain M drops a marker), U = tuner,
+    // F = time/bars display format.
+    if (transportBar != nullptr)
+    {
+        if (code == 'B' && noMods)                            { transportBar->tapTempo();         return true; }
+        if (code == 'M' && shift && ! cmd && ! mods.isAltDown()) { transportBar->openTimeSigMenu();  return true; }
+        if (code == 'F' && noMods)                            { transportBar->toggleTimeFormat(); return true; }
+    }
+    if (code == 'U' && noMods)
+    {
+        toggleTuner();
         return true;
     }
 
@@ -2685,6 +2735,17 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     // referenced AudioRegion. Belt-and-suspenders: also resets redo.
     engine.getUndoManager().clearUndoHistory();
 
+    // Native plugin editors (CLAP/LV2/VST3) reference the instances the
+    // reload below evicts — a suil/plugin UI whose pump timer ticks after
+    // the instance is gone crashes inside the plugin's own event loop.
+    // Tear every editor down NOW, while the instances are still alive
+    // (same order the strip loaders use). The console is rebuilt after
+    // the load anyway; aux lanes lazily re-embed on next show.
+    if (consoleView != nullptr)
+        consoleView->dropAllPluginEditors();
+    if (auxView != nullptr)
+        auxView->dropAllNativeEditors();
+
     engine.consumePluginStateAfterLoad();
     // Surface any plugin restore failures as a single summary dialog so
     // the user doesn't think a saved-with-Diva mix is intact when Diva
@@ -3002,15 +3063,14 @@ void MainComponent::openBounceStemsDialog()
                        + conflicts.joinIntoString ("\n")
                        + "\n\nContinue?";
         juce::Component::SafePointer<MainComponent> safe (this);
-        juce::AlertWindow::showOkCancelBox (
-            juce::MessageBoxIconType::WarningIcon,
-            "Overwrite stems?", msg, "Overwrite", "Cancel", this,
-            juce::ModalCallbackFunction::create (
-                [safe, launch] (int result) mutable
-                {
-                    if (result == 1 && safe.getComponent() != nullptr)
-                        launch();
-                }));
+        showDuskConfirm (*this, "Overwrite stems?", msg,
+                         "Overwrite",
+                         [safe, launch]() mutable
+                         {
+                             if (safe.getComponent() != nullptr)
+                                 launch();
+                         },
+                         "Cancel", {}, /*destructive*/ true);
     });
 }
 

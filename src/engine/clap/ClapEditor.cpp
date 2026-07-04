@@ -55,10 +55,15 @@ bool ClapEditor::embed (unsigned long parentX11, int x, int y, int w, int h, std
     swa.background_pixel = BlackPixel (dpy, DefaultScreen (dpy));
     swa.border_pixel     = 0;
     swa.event_mask       = StructureNotifyMask;
+    // Keep the WM's hands off this window in every transient state (JUCE's
+    // XEmbed host sets the same flag on its host window): under mutter's
+    // x11-frames a managed adoption detaches the compositor-side surface
+    // from the X-space parent-child position.
+    swa.override_redirect = True;
     hostWindow = XCreateWindow (dpy, (Window) parentX11, x, y,
                                 (unsigned) ww, (unsigned) hh, 0,
                                 CopyFromParent, InputOutput, CopyFromParent,
-                                CWBackPixel | CWBorderPixel | CWEventMask, &swa);
+                                CWBackPixel | CWBorderPixel | CWEventMask | CWOverrideRedirect, &swa);
     // Map the host window BEFORE set_parent: some plugins (u-he Satin) abort() when
     // reparented into a non-viewable window. tryEmbed only runs when this component is
     // on-screen, so showing the host now is correct — it sits at the lane's coords with
@@ -90,6 +95,36 @@ void ClapEditor::setBounds (int x, int y, int w, int h)
     if (resizable && gui != nullptr && gui->set_size != nullptr && w > 0 && h > 0)
         gui->set_size (plugin, (uint32_t) w, (uint32_t) h);
     XFlush (dpy);
+}
+
+bool ClapEditor::getRootRelativePosition (unsigned long referenceWindow,
+                                           int& relX, int& relY) const
+{
+    if (! embedded || display == nullptr || hostWindow == 0)
+        return false;
+    auto* dpy = (Display*) display;
+    ::Window dummy {};
+    int hx = 0, hy = 0, rx = 0, ry = 0;
+    if (! XTranslateCoordinates (dpy, (Window) hostWindow,
+                                 DefaultRootWindow (dpy), 0, 0, &hx, &hy, &dummy)
+        || ! XTranslateCoordinates (dpy, (Window) referenceWindow,
+                                    DefaultRootWindow (dpy), 0, 0, &rx, &ry, &dummy))
+        return false;
+    relX = hx - rx; relY = hy - ry;
+    return true;
+}
+
+bool ClapEditor::getActualGeometry (int& x, int& y, int& w, int& h) const
+{
+    if (! embedded || display == nullptr || hostWindow == 0)
+        return false;
+    ::Window root {};
+    unsigned int uw = 0, uh = 0, border = 0, depth = 0;
+    if (XGetGeometry ((Display*) display, (Window) hostWindow,
+                      &root, &x, &y, &uw, &uh, &border, &depth) == 0)
+        return false;
+    w = (int) uw; h = (int) uh;
+    return true;
 }
 
 void ClapEditor::reveal()

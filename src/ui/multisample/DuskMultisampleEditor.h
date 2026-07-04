@@ -63,7 +63,6 @@ private:
     DuskComboBox             ariaProgramSelector;
     std::vector<juce::File>  ariaProgramFiles;   // parallel to selector items
 
-    std::unique_ptr<juce::FileChooser> fileChooser;
 
     // Skin = the per-soundfont custom UI (when the loaded .sfz ships
     // an ARIA bank.xml + GUI XML). nullptr = fall back to the

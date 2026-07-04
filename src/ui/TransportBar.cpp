@@ -318,9 +318,9 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
     //     REW = jump to prev marker, FFWD = jump to next marker.
     //     Stopped with no markers falls back to goto zero / goto last record point.
     //   Held: 10x scrub via the timer (drives the playhead while button down).
-    rewButton.setTooltip  ("Rewind. Hold to scrub back at 10x. Tap for previous marker "
+    rewButton.setTooltip  ("Rewind (Shift+Left). Hold to scrub back at 10x. Tap for previous marker "
                             "(jumps to zero when stopped with no markers).");
-    ffwdButton.setTooltip ("Forward. Hold to scrub forward at 10x. Tap for next marker "
+    ffwdButton.setTooltip ("Forward (Shift+Right). Hold to scrub forward at 10x. Tap for next marker "
                             "(jumps to last record point when stopped with no markers).");
 
     rewButton.onStateChange = [this]
@@ -442,7 +442,7 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
     };
     addAndMakeVisible (clockLabel);
 
-    timeFormatToggle.setTooltip ("Flip display between Bars/Beats and mm:ss.ms. "
+    timeFormatToggle.setTooltip ("Flip display between Bars/Beats and mm:ss.ms (F). "
                                    "Affects the clock, tape ruler, and editor rulers. "
                                    "Right-click the clock to flip when this button is hidden.");
     auto flipTimeMode = [this]
@@ -518,7 +518,7 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
 
     // Metronome toggle + BPM editable display.
     clickToggle.setClickingTogglesState (true);
-    clickToggle.setTooltip ("Left-click: toggle metronome on/off. Right-click: choose when the click fires (recording / count-in / playing / polyphonic).");
+    clickToggle.setTooltip ("Left-click: toggle metronome on/off (C). Right-click: choose when the click fires (recording / count-in / playing / polyphonic).");
     clickToggle.setToggleState (engine.getSession().metronomeEnabled.load(),
                                   juce::dontSendNotification);
     clickToggle.onClick = [this]
@@ -532,7 +532,7 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
     clickToggle.addMouseListener (this, false);
     addAndMakeVisible (clickToggle);
 
-    countInToggle.setTooltip ("Count-in: when on, hitting Record rolls the playhead "
+    countInToggle.setTooltip ("Count-in (Shift+C): when on, hitting Record rolls the playhead "
                                "back one bar so the metronome ticks a full bar before "
                                "the take begins. The pre-roll audio is NOT recorded.");
     countInToggle.setToggleState (engine.getSession().countInEnabled.load(),
@@ -570,7 +570,7 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
 
     tapButton.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff202024));
     tapButton.setColour (juce::TextButton::textColourOffId,  juce::Colour (0xffe0c050));
-    tapButton.setTooltip ("Tap to set tempo. Click in time with the music; "
+    tapButton.setTooltip ("Tap to set tempo (B). Click in time with the music; "
                           "BPM updates after the second tap and averages "
                           "across the most recent few. Two-second silence "
                           "resets the pulse.");
@@ -579,7 +579,7 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
 
     timeSigButton.setColour (juce::TextButton::buttonColourId,  juce::Colour (0xff202024));
     timeSigButton.setColour (juce::TextButton::textColourOffId, juce::Colour (0xffd0d0d0));
-    timeSigButton.setTooltip ("Time signature. Click to pick a common time "
+    timeSigButton.setTooltip ("Time signature (Shift+M). Click to pick a common time "
                               "(3/4, 4/4, 5/4, 6/8, 7/8, 12/8) or open Custom...");
     timeSigButton.onClick = [this] { showTimeSigMenu(); };
     addAndMakeVisible (timeSigButton);
@@ -589,7 +589,7 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
     // Selection of which track to tune lives on MainComponent (it knows
     // the focused track from the TapeStrip selection); this button just
     // toggles the overlay.
-    tuneButton.setTooltip ("Tuner - shows the pitch of the selected track's input. "
+    tuneButton.setTooltip ("Tuner (U) - shows the pitch of the selected track's input. "
                             "Click a track first, then press TUNE.");
     tuneButton.onClick = [this] { if (onTunerToggle) onTunerToggle(); };
     addAndMakeVisible (tuneButton);
@@ -1270,6 +1270,10 @@ void TransportBar::promptEditTempoAtPlayhead()
                                       juce::dontSendNotification);
         });
 }
+
+void TransportBar::tapTempo()         { onTap(); }
+void TransportBar::openTimeSigMenu()  { showTimeSigMenu(); }
+void TransportBar::toggleTimeFormat() { if (flipTimeModeOnClock) flipTimeModeOnClock(); }
 
 void TransportBar::onTap()
 {

@@ -57,6 +57,7 @@ void CursorOverlay::setMousePosition (juce::Component& source,
         return;
 
     const bool wasPainting = lastPainting;
+    const auto oldDirty    = glyphDirtyRect (lastLocal, lastCutLineY);
     lastLocal    = myLocal;
     lastMode     = mode;
     lastCutLineY = myCutLine;
@@ -65,13 +66,14 @@ void CursorOverlay::setMousePosition (juce::Component& source,
     if (paints && ! wasPainting)       setNativeCursorVisible (false);
     else if (! paints && wasPainting)  setNativeCursorVisible (true);
 
-    // Full repaint each move so the old glyph position is properly cleared by
-    // JUCE's parent-repaint-under pass — partial-rect repaint was leaving
-    // trails. Skip entirely when neither the old nor the new mode paints a
-    // glyph (Range/Grid moving): paint() is a no-op there, so a repaint would
-    // just invalidate the full surface for nothing.
-    if (paints || wasPainting)
-        repaint();
+    // Invalidate only the glyph-sized rects at the OLD and NEW positions.
+    // The overlay spans the whole window and isn't opaque, so a bare
+    // repaint() forces everything underneath to redraw per mouse pixel —
+    // visibly stuttery on large windows. Repainting the old rect too is
+    // what clears the previous glyph (dirtying only the new one leaves
+    // trails).
+    if (wasPainting) repaint (oldDirty);
+    if (paints)      repaint (glyphDirtyRect (lastLocal, lastCutLineY));
 }
 
 void CursorOverlay::clearMousePosition()
@@ -79,7 +81,20 @@ void CursorOverlay::clearMousePosition()
     if (! lastPainting) return;
     lastPainting = false;
     setNativeCursorVisible (true);
-    repaint();
+    repaint (glyphDirtyRect (lastLocal, lastCutLineY));
+}
+
+juce::Rectangle<int> CursorOverlay::glyphDirtyRect (juce::Point<int> local,
+                                                     juce::Range<int> cutLineY) const
+{
+    // Generous bound around the hotspot: the largest glyph (pencil, 36 px
+    // canvas) plus halo stays within 40 px of the hotspot in every
+    // direction at the 0.85 paint scale.
+    auto r = juce::Rectangle<int> (local.x - 40, local.y - 40, 80, 80);
+    if (! cutLineY.isEmpty())
+        r = r.getUnion ({ local.x - 4, cutLineY.getStart() - 2,
+                          8, cutLineY.getLength() + 4 });
+    return r;
 }
 
 void CursorOverlay::setNativeCursorVisible (bool visible)

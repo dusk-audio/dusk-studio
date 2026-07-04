@@ -48,6 +48,7 @@ public:
         warnings.setReadOnly (true);
         warnings.setCaretVisible (false);
         warnings.setScrollbarsShown (true);
+        warnings.setPopupMenuEnabled (false);   // XWayland popup flash (see DuskComboBox)
         warnings.setColour (juce::TextEditor::backgroundColourId, juce::Colour (0xff14141a));
         warnings.setColour (juce::TextEditor::textColourId, juce::Colour (0xffd0a060));
         warnings.setColour (juce::TextEditor::outlineColourId, juce::Colour (0xff35404a));

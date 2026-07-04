@@ -29,8 +29,7 @@ enum class PluginKind { Effects, Instruments };
 // Open a popup menu of installed plugins anchored on `target`. On selection:
 //   • 1..N → resolves to KnownPluginList types and loadFromDescription.
 //   • "Scan plugins" → runs the synchronous scan + reopens the picker.
-//   • "Browse for file..." → launches a juce::FileChooser owned by
-//     `chooserOwner` (kept alive across the async callback).
+//   • "Browse for file..." → opens the in-window DuskFileBrowser.
 // `onChange` runs on every successful change to the slot.
 //
 // `kind` filters the visible list: Effects hides instruments,
@@ -60,7 +59,6 @@ enum class PluginKind { Effects, Instruments };
 // paths), hides the JUCE-format "VST3" effect rows, and routes selection here.
 void openPickerMenu (PluginSlot& slot,
                       juce::Component& target,
-                      std::unique_ptr<juce::FileChooser>& chooserOwner,
                       std::function<void()> onChange,
                       PluginKind kind,
                       juce::Point<int> screenPosition = { -1, -1 },
@@ -83,7 +81,6 @@ void openPickerMenu (PluginSlot& slot,
 // an audio/effect slot) are hidden.
 void openInsertChooser (PluginSlot& slot,
                          juce::Component& target,
-                         std::unique_ptr<juce::FileChooser>& chooserOwner,
                          std::function<void()> onChange,
                          PluginKind kind,
                          std::function<void()> onPickHardwareInsert = {},
@@ -101,19 +98,16 @@ void openInsertChooser (PluginSlot& slot,
 void runScanModal (PluginManager& manager, juce::Component* parent = nullptr,
                     std::function<void()> onAlertDismiss = {});
 
-// Run a juce::FileChooser to pick a plugin file (.vst3 / .so / .lv2),
-// loading on selection. `chooserOwner` keeps the chooser alive across the
-// async callback. `onChange` runs on successful load. `expectedKind`
+// Open the in-window DuskFileBrowser to pick a plugin file (.vst3 / .so /
+// .lv2), loading on selection. `onChange` runs on successful load. `expectedKind`
 // gates the load: if the picked plugin's effect/instrument flag doesn't
 // match (e.g. user browses to a synth on an audio track expecting an
 // effect), the slot is unloaded and an alert is shown.
 //
-// `parentForLifetime` is a SafePointer to the UI component that owns
-// `chooserOwner`. The async callback captures it and bails if the
-// parent is destroyed while the dialog is still open (user switches
-// stages, quits, etc.) - prevents a UAF deref on the now-dead unique_ptr.
+// `parentForLifetime` is a SafePointer to the UI component hosting the
+// browser. The async callback captures it and bails if the parent is
+// destroyed while the dialog is still open (user switches stages, quits).
 void openFileChooser (PluginSlot& slot,
-                       std::unique_ptr<juce::FileChooser>& chooserOwner,
                        std::function<void()> onChange,
                        juce::Component::SafePointer<juce::Component> parentForLifetime,
                        PluginKind expectedKind = PluginKind::Effects);

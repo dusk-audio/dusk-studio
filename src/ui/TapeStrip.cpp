@@ -47,6 +47,7 @@ public:
         setOpaque (true);
         editor.setText (initial, false);
         editor.setSelectAllWhenFocused (true);
+        editor.setPopupMenuEnabled (false);   // XWayland popup flash (see DuskComboBox)
         editor.setColour (juce::TextEditor::backgroundColourId, juce::Colour (0xff15151c));
         editor.setColour (juce::TextEditor::outlineColourId,    juce::Colour (0xff3a3a42));
         editor.setColour (juce::TextEditor::textColourId,       juce::Colours::white);

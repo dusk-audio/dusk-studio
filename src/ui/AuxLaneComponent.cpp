@@ -817,7 +817,6 @@ void AuxLaneComponent::openPickerForSlot (int slotIdx)
 #endif
     pluginpicker::openPickerMenu (strip.getPluginSlot (slotIdx),
                                     slots[(size_t) slotIdx].openOrAddButton,
-                                    activePluginChooser,
                                     [safe, slotIdx]
                                     {
                                         if (auto* self = safe.getComponent())

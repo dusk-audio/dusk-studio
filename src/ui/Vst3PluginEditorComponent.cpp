@@ -1,6 +1,7 @@
 #include "Vst3PluginEditorComponent.h"
 
 #include "EmbeddedModal.h"   // kPluginEditorTag
+#include "NativeEditorEmbedScale.h"
 #include "../engine/vst3/Vst3Instance.h"
 
 namespace duskstudio
@@ -28,11 +29,14 @@ bool Vst3PluginEditorComponent::attach (vst3::Vst3Instance& shared, juce::String
 
     editor.onResize = [this] (int w, int h)
     {
-        if (w > 0 && h > 0) setSize (w, h);
+        if (w > 0 && h > 0)
+            setSize (embedscale::fromPhysical (*this, w),
+                     embedscale::fromPhysical (*this, h));
     };
 
     if (editor.preferredWidth() > 0 && editor.preferredHeight() > 0)
-        setSize (editor.preferredWidth(), editor.preferredHeight());
+        setSize (embedscale::fromPhysical (*this, editor.preferredWidth()),
+                 embedscale::fromPhysical (*this, editor.preferredHeight()));
     else
         setSize (480, 320);
 
@@ -62,7 +66,8 @@ void Vst3PluginEditorComponent::tryEmbed()
     if (auto* peer = getPeer())
         editor.setContentScale ((float) peer->getPlatformScaleFactor());
 
-    const auto area = getTopLevelComponent()->getLocalArea (this, getLocalBounds());
+    const auto area = embedscale::toPhysical (
+        *this, getTopLevelComponent()->getLocalArea (this, getLocalBounds()));
     std::string err;
     embedding = true;
     const bool ok = editor.embed (parent, area.getX(), area.getY(),
@@ -73,7 +78,13 @@ void Vst3PluginEditorComponent::tryEmbed()
         embedded = true;
         // Adopt the view's own size once known so the modal/lane can fit to it.
         if (editor.preferredWidth() > 0 && editor.preferredHeight() > 0)
-            setSize (editor.preferredWidth(), editor.preferredHeight());
+            setSize (embedscale::fromPhysical (*this, editor.preferredWidth()),
+                     embedscale::fromPhysical (*this, editor.preferredHeight()));
+        // Re-sync unconditionally: a synchronous resizeView during embed can
+        // move this component (modal recentre) while `embedded` was still
+        // false, so the moved()/resized() pushes were skipped and the native
+        // window would keep the pre-move coords passed to embed().
+        pushBounds();
         editor.reveal();
     }
     else
@@ -88,14 +99,20 @@ void Vst3PluginEditorComponent::tryEmbed()
 void Vst3PluginEditorComponent::pushBounds()
 {
     if (! embedded) return;
-    const auto area = getTopLevelComponent()->getLocalArea (this, getLocalBounds());
+    // Borrowed bodies get setBounds'd by EmbeddedModal BEFORE being re-added
+    // to a parent — getTopLevelComponent() is then `this` and the area
+    // degenerates to (0,0), slamming the native window to the origin. Skip
+    // while unparented; parentHierarchyChanged re-syncs once re-added.
+    if (getParentComponent() == nullptr || getPeer() == nullptr) return;
+    const auto area = embedscale::toPhysical (
+        *this, getTopLevelComponent()->getLocalArea (this, getLocalBounds()));
     editor.setBounds (area.getX(), area.getY(),
                       juce::jmax (1, area.getWidth()), juce::jmax (1, area.getHeight()));
 }
 
 void Vst3PluginEditorComponent::resized()                { if (embedded) pushBounds(); else tryEmbed(); }
 void Vst3PluginEditorComponent::moved()                  { pushBounds(); }
-void Vst3PluginEditorComponent::parentHierarchyChanged() { tryEmbed(); }
+void Vst3PluginEditorComponent::parentHierarchyChanged() { if (embedded) pushBounds(); else tryEmbed(); }
 
 void Vst3PluginEditorComponent::visibilityChanged()
 {
@@ -111,6 +128,50 @@ void Vst3PluginEditorComponent::visibilityChanged()
     }
 }
 
+void Vst3PluginEditorComponent::verifyGeometry()
+{
+    // The message flow can miss a move (compositor interference, an event
+    // arriving while unparented) — poll the REAL geometry ~3 Hz, snap back on
+    // drift, and log the numbers so field reports say what actually happened.
+    if (! isShowing() || getParentComponent() == nullptr || getPeer() == nullptr) return;
+    if (++geometryCheckTick < 20) return;
+    geometryCheckTick = 0;
+
+    const auto area = embedscale::toPhysical (
+        *this, getTopLevelComponent()->getLocalArea (this, getLocalBounds()));
+    int ax = 0, ay = 0, aw = 0, ah = 0;
+    if (! embedCheckLogged)
+    {
+        embedCheckLogged = true;
+        int relX = 0, relY = 0;
+        if (editor.getRootRelativePosition (peerX11(), relX, relY))
+            std::fprintf (stderr,
+                "[%s editor] embed check: host rel to peer (%d,%d), intended (%d,%d)\n",
+                "vst3", relX, relY, area.getX(), area.getY());
+    }
+    if (! editor.getActualGeometry (ax, ay, aw, ah))
+    {
+        if (! geometryLostLogged)
+        {
+            geometryLostLogged = true;
+            std::fprintf (stderr, "[vst3 editor] host window lost (XGetGeometry failed)\n");
+        }
+        return;
+    }
+    if (ax != area.getX() || ay != area.getY()
+        || aw != juce::jmax (1, area.getWidth()) || ah != juce::jmax (1, area.getHeight()))
+    {
+        if (driftLogsLeft > 0)
+        {
+            --driftLogsLeft;
+            std::fprintf (stderr,
+                "[vst3 editor] geometry drift: intended (%d,%d %dx%d) actual (%d,%d %dx%d) - re-syncing\n",
+                area.getX(), area.getY(), area.getWidth(), area.getHeight(), ax, ay, aw, ah);
+        }
+        pushBounds();
+    }
+}
+
 void Vst3PluginEditorComponent::timerCallback()
 {
     // Ancestor visibility changes (tab switches) don't fire visibilityChanged —
@@ -123,6 +184,7 @@ void Vst3PluginEditorComponent::timerCallback()
     {
         if (isShowing()) editor.reveal();
         else             editor.hide();
+        verifyGeometry();
     }
     else
     {

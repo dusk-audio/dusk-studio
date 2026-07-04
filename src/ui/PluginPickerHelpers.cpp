@@ -255,8 +255,7 @@ void rejectMismatchedKind (PluginSlot& slot, PluginKind kind)
 } // namespace
 
 void openFileChooser (PluginSlot& slot,
-                       std::unique_ptr<juce::FileChooser>& chooserOwner,
-                       std::function<void()> onChange,
+                        std::function<void()> onChange,
                        juce::Component::SafePointer<juce::Component> parentForLifetime,
                        PluginKind expectedKind)
 {
@@ -273,12 +272,6 @@ void openFileChooser (PluginSlot& slot,
 #endif
     auto* host = parentForLifetime.getComponent();
     if (host == nullptr) return;
-
-    // DuskFileBrowser owns its own lifetime (in-window EmbeddedModal).
-    // The legacy chooserOwner unique_ptr is unused on this path; left
-    // in the signature for source-compat with callers that still hold
-    // it (removed in a follow-up pass).
-    juce::ignoreUnused (chooserOwner);
 
     filebrowser::open (*host, {
         /*title*/                  "Select a plugin",
@@ -322,12 +315,10 @@ void openFileChooser (PluginSlot& slot,
 // browse / session save / bounce dialogs. No standalone window, no
 // XWayland / Mutter positioning workarounds.
 static void openSoundfontFileChooser (PluginSlot& slot,
-                                       std::unique_ptr<juce::FileChooser>& chooserOwner,
-                                       std::function<void()> onChange,
+                                                        std::function<void()> onChange,
                                        juce::Component::SafePointer<juce::Component> parentForLifetime)
 {
-    juce::ignoreUnused (chooserOwner);
-    auto* host = parentForLifetime.getComponent();
+        auto* host = parentForLifetime.getComponent();
     if (host == nullptr) return;
     const auto defaultDir = juce::File::getSpecialLocation (juce::File::userHomeDirectory);
     filebrowser::open (*host, {
@@ -386,7 +377,6 @@ static void openSoundfontFileChooser (PluginSlot& slot,
 
 void openPickerMenu (PluginSlot& slot,
                       juce::Component& target,
-                      std::unique_ptr<juce::FileChooser>& chooserOwner,
                       std::function<void()> onChange,
                       PluginKind kind,
                       juce::Point<int> /*screenPosition*/,
@@ -433,7 +423,6 @@ void openPickerMenu (PluginSlot& slot,
     juce::Component::SafePointer<juce::Component> safeTarget (&target);
     juce::Component::SafePointer<juce::Component> safeParent  (parent);
     auto* slotPtr = &slot;
-    auto* chooserOwnerPtr = &chooserOwner;
 
     // Shared closure helpers - all callbacks close the modal first so
     // the picker disappears immediately, then run the action.
@@ -446,8 +435,7 @@ void openPickerMenu (PluginSlot& slot,
 
     cb.onCancel = closeModal;
 
-    cb.onScan = [closeModal, slotPtr, safeTarget, safeParent, chooserOwnerPtr,
-                  onChange, kind, onPickHardwareInsert, onPickNativeClap, onPickNativeLv2,
+    cb.onScan = [closeModal, slotPtr, safeTarget, safeParent,                   onChange, kind, onPickHardwareInsert, onPickNativeClap, onPickNativeLv2,
                   onPickNativeVst3]() mutable
     {
         closeModal();
@@ -457,13 +445,11 @@ void openPickerMenu (PluginSlot& slot,
         // alert — otherwise the picker stacks back over the alert (alert
         // was added before the picker, so JUCE z-order puts the picker
         // on top), making the result message invisible.
-        auto reopenPicker = [slotPtr, safeTarget, chooserOwnerPtr,
-                              onChange, kind, onPickHardwareInsert, onPickNativeClap,
+        auto reopenPicker = [slotPtr, safeTarget,                               onChange, kind, onPickHardwareInsert, onPickNativeClap,
                               onPickNativeLv2, onPickNativeVst3]() mutable
         {
             if (auto* t = safeTarget.getComponent())
-                openPickerMenu (*slotPtr, *t, *chooserOwnerPtr,
-                                  std::move (onChange), kind, { -1, -1 },
+                openPickerMenu (*slotPtr, *t, std::move (onChange), kind, { -1, -1 },
                                   std::move (onPickHardwareInsert), false,
                                   std::move (onPickNativeClap),
                                   std::move (onPickNativeLv2),
@@ -473,13 +459,11 @@ void openPickerMenu (PluginSlot& slot,
                        std::move (reopenPicker));
     };
 
-    cb.onBrowseFile = [closeModal, slotPtr, safeTarget, chooserOwnerPtr,
-                        onChange, kind]() mutable
+    cb.onBrowseFile = [closeModal, slotPtr, safeTarget,                         onChange, kind]() mutable
     {
         closeModal();
         if (safeTarget.getComponent() == nullptr) return;
-        openFileChooser (*slotPtr, *chooserOwnerPtr,
-                           std::move (onChange), safeTarget, kind);
+        openFileChooser (*slotPtr, std::move (onChange), safeTarget, kind);
     };
 
     // Hardware-insert + soundfont bottom-row buttons are SUPPRESSED when
@@ -499,13 +483,11 @@ void openPickerMenu (PluginSlot& slot,
    #if DUSKSTUDIO_HAS_MULTISAMPLE
     if (kind == PluginKind::Instruments && ! suppressSecondaryButtons)
     {
-        cb.onLoadSoundfont = [closeModal, slotPtr, safeTarget, chooserOwnerPtr,
-                                onChange]() mutable
+        cb.onLoadSoundfont = [closeModal, slotPtr, safeTarget,                                 onChange]() mutable
         {
             closeModal();
             if (safeTarget.getComponent() == nullptr) return;
-            openSoundfontFileChooser (*slotPtr, *chooserOwnerPtr,
-                                         std::move (onChange), safeTarget);
+            openSoundfontFileChooser (*slotPtr, std::move (onChange), safeTarget);
         };
     }
    #endif
@@ -647,7 +629,7 @@ public:
             sfBtn.onClick = [this] { if (onSfFn) onSfFn(); };
             addAndMakeVisible (sfBtn);
         }
-        pluginBtn.setButtonText ("Plugin (VST3 / LV2)");
+        pluginBtn.setButtonText ("Plugin (VST3 / CLAP / LV2)");
         style (pluginBtn, juce::Colour (0xff385a38));
         pluginBtn.onClick = [this] { if (onPluginFn) onPluginFn(); };
         addAndMakeVisible (pluginBtn);
@@ -716,8 +698,7 @@ private:
 
 void openInsertChooser (PluginSlot& slot,
                          juce::Component& target,
-                         std::unique_ptr<juce::FileChooser>& chooserOwner,
-                         std::function<void()> onChange,
+                            std::function<void()> onChange,
                          PluginKind kind,
                          std::function<void()> onPickHardwareInsert,
                          std::function<void (const juce::File&, const juce::String&)> onPickNativeClap,
@@ -729,7 +710,6 @@ void openInsertChooser (PluginSlot& slot,
 
     juce::Component::SafePointer<juce::Component> safeTarget (&target);
     auto* slotPtr = &slot;
-    auto* chooserOwnerPtr = &chooserOwner;
 
     auto closeChooser = [] { sharedChooserModal().close(); };
 
@@ -754,27 +734,23 @@ void openInsertChooser (PluginSlot& slot,
         if (hw) hw();
     };
 
-    auto onSf = [closeChooser, slotPtr, safeTarget, chooserOwnerPtr,
-                  onChange]() mutable
+    auto onSf = [closeChooser, slotPtr, safeTarget,                   onChange]() mutable
     {
         closeChooser();
         if (safeTarget.getComponent() == nullptr) return;
        #if DUSKSTUDIO_HAS_MULTISAMPLE
-        openSoundfontFileChooser (*slotPtr, *chooserOwnerPtr,
-                                     std::move (onChange), safeTarget);
+        openSoundfontFileChooser (*slotPtr, std::move (onChange), safeTarget);
        #else
-        juce::ignoreUnused (slotPtr, chooserOwnerPtr, onChange);
+        juce::ignoreUnused (slotPtr, onChange);
        #endif
     };
 
-    auto onPlugin = [closeChooser, slotPtr, safeTarget, chooserOwnerPtr,
-                       onChange, kind, onPickNativeClap, onPickNativeLv2,
+    auto onPlugin = [closeChooser, slotPtr, safeTarget,                        onChange, kind, onPickNativeClap, onPickNativeLv2,
                        onPickNativeVst3]() mutable
     {
         closeChooser();
         if (auto* t = safeTarget.getComponent())
-            openPickerMenu (*slotPtr, *t, *chooserOwnerPtr,
-                              std::move (onChange), kind, { -1, -1 },
+            openPickerMenu (*slotPtr, *t, std::move (onChange), kind, { -1, -1 },
                               /*onPickHardwareInsert*/ {},
                               /*suppressSecondaryButtons*/ true,
                               std::move (onPickNativeClap),

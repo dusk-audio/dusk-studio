@@ -40,11 +40,16 @@ private:
     void timerCallback() override;
     void tryEmbed();
     void pushBounds();
+    void verifyGeometry();
     unsigned long peerX11() const;
 
     lv2::Lv2Editor editor;
     bool loaded    = false;
     bool embedded  = false;
     bool embedding = false;   // guards re-entry: instantiate fires ui:resize → setSize → resized()
+    int  geometryCheckTick = 0;
+    int  driftLogsLeft     = 10;
+    bool geometryLostLogged = false;
+    bool embedCheckLogged   = false;
 };
 } // namespace duskstudio

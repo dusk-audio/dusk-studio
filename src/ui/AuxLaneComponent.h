@@ -167,6 +167,5 @@ private:
         juce::String displayedName;
     };
     std::array<SlotUI, AuxLaneParams::kMaxLanePlugins> slots;
-    std::unique_ptr<juce::FileChooser> activePluginChooser;
 };
 } // namespace duskstudio
