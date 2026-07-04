@@ -144,8 +144,11 @@ public:
     // Cached at load. AudioPluginInstance::getLatencySamples isn't
     // documented as RT-safe (plugins may take locks), so we cache on
     // the message thread and the audio thread reads the atom.
+    // A bypassed slot passes dry and adds no delay, so it reports 0 —
+    // otherwise recomputePdc() compensates for latency that isn't there.
     int getLatencySamples() const noexcept
     {
+        if (bypassed.load (std::memory_order_relaxed)) return 0;
         return cachedLatencySamples.load (std::memory_order_relaxed);
     }
 

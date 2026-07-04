@@ -488,12 +488,12 @@ void showLearnMenu (juce::Component& target,
     addExistingControls (existingBanked,   bankedKind, bankedIndex, " (banked)");
     (void) existing;   // kept for symmetry / future "any binding?" callers
 
-    // Prefer the UI-provided in-window renderer; fall back to the native
-    // popup only if the hook was never installed.
+    // The UI installs the in-window renderer at startup; a native popup must
+    // never ship (Wayland policy), so a missing hook is a programming error.
     if (auto& hook = learnMenuShowHook())
         hook (m, target);
     else
-        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&target));
+        jassertfalse;
 }
 
 void setLearnMenuShowHook (LearnMenuShowFn fn)

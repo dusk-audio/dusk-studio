@@ -806,6 +806,9 @@ void AudioEngine::rebuildMidiInputBank()
     virtualKeyboardCollectorIndex = (int) midiInputCollectors.size() - 1;
 
     perInputMidi.assign ((size_t) midiInputDevices.size(), juce::MidiBuffer{});
+    // Pre-reserve like perTrackMidiScratch: removeNextBlockOfMessages grows the
+    // destination on the audio thread if a burst exceeds prior capacity.
+    for (auto& m : perInputMidi) m.ensureSize (4096);
 
     // Re-resolve on every rebuild so a hot-plug doesn't strand the
     // index at a stale slot. Empty / no match = -1 (no sync).
@@ -1110,7 +1113,9 @@ void AudioEngine::setStage (Stage s) noexcept
         playbackEngine.stopPlayback();
     }
 
-    stage.store (s, std::memory_order_relaxed);
+    // Gates two different signal flows on the audio thread — release/acquire
+    // so the stop sequencing above is visible before the path switches.
+    stage.store (s, std::memory_order_release);
 }
 
 AudioEngine::~AudioEngine()
@@ -3553,7 +3558,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
     // MasteringChain → output. No track processing, no aux/master, no
     // recorder. We share `mixL/mixR` as scratch so we don't allocate on
     // the audio thread.
-    if (stage.load (std::memory_order_relaxed) == Stage::Mastering)
+    if (stage.load (std::memory_order_acquire) == Stage::Mastering)
     {
         masteringPlayer.process (mixL.data(), mixR.data(), numSamples);
         masteringChain.processInPlace (mixL.data(), mixR.data(), numSamples);
