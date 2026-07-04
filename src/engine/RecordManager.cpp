@@ -667,7 +667,18 @@ void RecordManager::stopRecording (juce::int64 endSample)
                                                                && a.timelineStart == b.timelineStart
                                                                && a.lengthInSamples == b.lengthInSamples
                                                                && a.sourceOffset == b.sourceOffset; }));
-        const bool midiChanged  = afterM.size() != beforeMidi[(size_t) t].size();  // cheap heuristic; a real take always adds notes
+        // Deep-compare like the audio path: an overdub that replaces exactly
+        // one region keeps the count equal, so size alone misses it and the
+        // take becomes un-undoable.
+        const bool midiChanged  = ! (afterM.size() == beforeMidi[(size_t) t].size()
+                                      && std::equal (afterM.begin(), afterM.end(),
+                                                      beforeMidi[(size_t) t].begin(),
+                                                      [] (const MidiRegion& a, const MidiRegion& b)
+                                                      { return a.timelineStart == b.timelineStart
+                                                               && a.lengthInTicks == b.lengthInTicks
+                                                               && a.notes.size() == b.notes.size()
+                                                               && a.ccs.size() == b.ccs.size()
+                                                               && a.previousTakes.size() == b.previousTakes.size(); }));
         if (! audioChanged && ! midiChanged) continue;
 
         TrackCommitDiff diff;

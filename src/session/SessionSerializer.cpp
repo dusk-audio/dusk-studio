@@ -1626,8 +1626,23 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         }
     }
 
-    if (auto tracks = root["tracks"]; tracks.isArray())
+    // A truncated / hand-edited file may lack whole section keys. Those
+    // sections must still be driven through restore — skipping them leaves the
+    // PREVIOUS session's content (regions, plugins, mixer state) alive under
+    // the new session's name. restoreBus and the aux-lane path inherit any
+    // absent property, so an empty object is not enough to blank them:
+    // substitute the serialized sections of a default Session, which carry
+    // every key at its model default.
+    juce::var sectionDefaults;
     {
+        auto tracksVar = root["tracks"], busesVar = root["buses"], auxVar = root["aux_lanes"];
+        if (! tracksVar.isArray() || ! busesVar.isArray() || ! auxVar.isArray())
+            sectionDefaults = juce::JSON::parse (serialize (Session{}));
+    }
+
+    {
+        auto tracks = root["tracks"];
+        if (! tracks.isArray()) tracks = sectionDefaults["tracks"];
         // Restore EVERY track slot, not just the ones the JSON lists. A session
         // with fewer tracks than this build (hand-edited, or written by a tool
         // like the DP importer) must blank the surplus slots — otherwise they
@@ -1643,14 +1658,16 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                           sessionLoadBpm, s.getSessionDirectory(),
                           s.missingAudioFilesAfterLoad);
     }
-    if (auto busesArr = root["buses"]; busesArr.isArray())
     {
+        auto busesArr = root["buses"];
+        if (! busesArr.isArray()) busesArr = sectionDefaults["buses"];
         const int n = juce::jmin (Session::kNumBuses, busesArr.size());
         for (int i = 0; i < n; ++i)
             restoreBus (s.bus (i), busesArr[i], sessionLoadBpm);
     }
-    if (auto auxLanesArr = root["aux_lanes"]; auxLanesArr.isArray())
     {
+        auto auxLanesArr = root["aux_lanes"];
+        if (! auxLanesArr.isArray()) auxLanesArr = sectionDefaults["aux_lanes"];
         const int n = juce::jmin (Session::kNumAuxLanes, auxLanesArr.size());
         for (int i = 0; i < n; ++i)
         {
