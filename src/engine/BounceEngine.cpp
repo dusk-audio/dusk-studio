@@ -28,7 +28,6 @@ BounceEngine::makeWriter (std::unique_ptr<juce::FileOutputStream> outStream,
                             juce::String& errOut) const
 {
     constexpr unsigned kNumChannels = 2;   // bounce is always stereo
-    constexpr int      kBitsPerSample = 24;
 
     if (renderFormat == Format::Mp3)
     {
@@ -51,7 +50,7 @@ BounceEngine::makeWriter (std::unique_ptr<juce::FileOutputStream> outStream,
     juce::StringPairArray metadata;
     std::unique_ptr<juce::AudioFormatWriter> writer (
         wavFormat.createWriterFor (outStream.get(), renderSampleRate,
-                                     kNumChannels, kBitsPerSample, metadata, 0));
+                                     kNumChannels, renderWavBitDepth, metadata, 0));
     if (writer == nullptr)
     {
         errOut = "Could not create WAV writer";
@@ -87,7 +86,8 @@ juce::int64 BounceEngine::computeBounceLength (double sampleRate, double tail) c
 }
 
 bool BounceEngine::start (const juce::File& outFile, double sr, int bs, double tail,
-                            Mode mode, Format format, int mp3BitrateKbps)
+                            Mode mode, Format format, int mp3BitrateKbps,
+                            int wavBitDepth)
 {
     if (rendering.load (std::memory_order_relaxed)) return false;
 
@@ -113,6 +113,8 @@ bool BounceEngine::start (const juce::File& outFile, double sr, int bs, double t
     // regardless of what the caller requested.
     renderFormat    = (mode == Mode::Stems) ? Format::Wav : format;
     renderBitrateKbps = mp3BitrateKbps;
+    // Stems keep 24-bit regardless: they exist for re-import, not delivery.
+    renderWavBitDepth = (mode != Mode::Stems && wavBitDepth == 16) ? 16 : 24;
 
     if (renderMode == Mode::MasterMix || renderMode == Mode::Stems)
     {
@@ -304,6 +306,8 @@ void BounceEngine::run()
     juce::int64 written = 0;   // samples committed to the file
     juce::int64 dropped = 0;   // lead-in samples discarded
     bool succeeded = true;
+    const bool dither16 = renderFormat == Format::Wav && renderWavBitDepth == 16;
+    juce::Random ditherRng;
     while (done < toRender && ! cancelRequested.load (std::memory_order_relaxed))
     {
         const int remaining = (int) juce::jmin ((juce::int64) renderBlockSize,
@@ -328,6 +332,20 @@ void BounceEngine::run()
         {
             std::array<float*, kNumChannels> offPtrs {};
             for (int c = 0; c < kNumChannels; ++c) offPtrs[(size_t) c] = outputPtrs[(size_t) c] + writeStart;
+
+            if (dither16)
+            {
+                // TPDF at ±1 LSB ahead of the 16-bit truncation: decorrelates
+                // the quantisation error so fades decay into noise instead of
+                // distortion.
+                constexpr float lsb = 1.0f / 32768.0f;
+                for (int c = 0; c < kNumChannels; ++c)
+                {
+                    auto* p = offPtrs[(size_t) c];
+                    for (int i = 0; i < writeCount; ++i)
+                        p[i] += (ditherRng.nextFloat() - ditherRng.nextFloat()) * lsb;
+                }
+            }
             if (! writer->writeFromFloatArrays (offPtrs.data(), kNumChannels, writeCount))
             {
                 const juce::ScopedLock lock (lastErrorLock);

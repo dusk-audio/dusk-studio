@@ -938,7 +938,7 @@ A streaming-platform preset picker (Spotify, Apple Music, YouTube, Netflix, etc.
 
 ## Exporting the master
 
-**Export master…** renders the mastering chain offline to `master.wav` in the session folder. A progress dialog shows the output path and a bar; the render runs as fast as the CPU allows and you can cancel mid-render. The output is **stereo 24-bit WAV at the session sample rate** by default; name the file `.mp3` to export a 320 kbps MP3 instead.
+**Export master…** renders the mastering chain offline. Pick a delivery preset first — **WAV 24-bit at the session rate** (archive/streaming), **WAV 16-bit 44.1 kHz with TPDF dither** (CD spec), or **MP3 320 kbps** — then a destination (defaults to `master.wav` / `master.mp3` in the session folder). A progress dialog shows the output path and a bar; the render runs as fast as the CPU allows and you can cancel mid-render.
 
 \newpage
 
