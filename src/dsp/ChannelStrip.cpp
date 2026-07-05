@@ -129,7 +129,10 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
             const bool ok = nativeLv2Slot.load (p, preparedSampleRate, preparedBlockSize, err,
                                                 pendingLv2PluginId);
             if (ok && ! pendingLv2State.empty())
+            {
+                nativeLv2Slot.setStateDirectory (pendingLv2StateDir);
                 nativeLv2Slot.loadState (pendingLv2State);
+            }
             lv2ReloadFailed.store (! ok, std::memory_order_relaxed);
         }
         // Consumed either way — a CLAP-suppressed pending must not replay on a
@@ -137,6 +140,7 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
         pendingLv2Path.clear();
         pendingLv2PluginId.clear();
         pendingLv2State.clear();
+        pendingLv2StateDir = juce::File();
     }
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_VST3
@@ -550,11 +554,13 @@ void ChannelStrip::unloadNativeLv2() noexcept
 }
 
 void ChannelStrip::setPendingNativeLv2 (const juce::File& path, std::vector<uint8_t> state,
-                                        const juce::String& pluginId) noexcept
+                                        const juce::String& pluginId,
+                                        const juce::File& stateDir) noexcept
 {
     pendingLv2Path     = path.getFullPathName();
     pendingLv2PluginId = pluginId;
     pendingLv2State    = std::move (state);
+    pendingLv2StateDir = stateDir;
 }
 #endif
 

@@ -2,6 +2,7 @@
 
 #include "../hosting/INativeInstance.h"
 
+#include <juce_core/juce_core.h>
 #include <memory>
 #include <string>
 #include <vector>
@@ -57,6 +58,14 @@ public:
 
     bool saveState (std::vector<uint8_t>& out) const override;
     bool loadState (const std::vector<uint8_t>& in) override;
+
+    // Session-scoped directory for FILE-BACKED plugin state (a sampler's
+    // loaded bank, a convolution IR). Empty = blob-only save (control ports
+    // + in-memory state:interface — the pre-file-state behaviour). Set by
+    // the engine before saveState/loadState. saveState rotates
+    // <dir>/prev <- <dir>/cur and snapshots referenced files into cur/;
+    // loadState resolves the blob's abstract paths against cur/.
+    void setStateDirectory (const juce::File& dir);
 
     int getLatencySamples() const noexcept override;
 

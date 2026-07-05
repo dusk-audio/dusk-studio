@@ -182,6 +182,19 @@ static juce::File audioDeviceStateFile()
     return dir.getChildFile ("audio-device.xml");
 }
 
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+// Per-slot directory for LV2 FILE-BACKED state, under the session: track
+// slots at state/lv2/trackNN, aux slots at state/lv2/auxA_slotS. Empty when
+// the session has no directory yet — saves fall back to blob-only. Save As
+// consolidation copies the whole state/ tree (SessionSerializer).
+static juce::File lv2StateDirFor (Session& session, const juce::String& slotTag)
+{
+    const auto dir = session.getSessionDirectory();
+    if (dir == juce::File()) return {};
+    return dir.getChildFile ("state").getChildFile ("lv2").getChildFile (slotTag);
+}
+#endif
+
 // Session-carried native plugin state blob (base64) → bytes. Empty on any
 // decode failure — callers treat "no state" and "bad state" the same.
 static std::vector<uint8_t> decodeBase64Blob (const juce::String& s)
@@ -1636,6 +1649,8 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
             track.nativeLv2Path     = strip.getNativeLv2Slot().getPath();
             track.nativeLv2PluginId = strip.getNativeLv2Slot().getPluginId();
             std::vector<uint8_t> blob;
+            strip.getNativeLv2Slot().setStateDirectory (
+                lv2StateDirFor (session, "track" + juce::String (t + 1).paddedLeft ('0', 2)));
             // Preserve the carried blob when a plugin can't serialize (no state
             // extension / save failure) — don't wipe it on a save round-trip.
             if (strip.getNativeLv2Slot().saveState (blob) && ! blob.empty())
@@ -1706,6 +1721,9 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
                 lane.nativeLv2Path[(size_t) s]     = strip.getNativeLv2Slot (s).getPath();
                 lane.nativeLv2PluginId[(size_t) s] = strip.getNativeLv2Slot (s).getPluginId();
                 std::vector<uint8_t> blob;
+                strip.getNativeLv2Slot (s).setStateDirectory (
+                    lv2StateDirFor (session, "aux" + juce::String (a + 1)
+                                                 + "_slot" + juce::String (s + 1)));
                 // See the track block above: preserve the carried blob when the
                 // plugin can't serialize.
                 if (strip.getNativeLv2Slot (s).saveState (blob) && ! blob.empty())
@@ -1898,7 +1916,11 @@ void AudioEngine::consumePluginStateAfterLoad()
                 std::string err;
                 const bool ok = strip.loadNativeLv2 (lv2File, err, track.nativeLv2PluginId);
                 if (ok && ! blob.empty())
+                {
+                    strip.getNativeLv2Slot().setStateDirectory (
+                        lv2StateDirFor (session, "track" + juce::String (t + 1).paddedLeft ('0', 2)));
                     strip.getNativeLv2Slot().loadState (blob);
+                }
                 resumeProcessing();
                 if (! ok)
                 {
@@ -1912,7 +1934,9 @@ void AudioEngine::consumePluginStateAfterLoad()
             {
                 strip.unloadNativeClap();   // see the CLAP pending branch above
                 strip.unloadNativeVst3();
-                strip.setPendingNativeLv2 (lv2File, std::move (blob), track.nativeLv2PluginId);
+                strip.setPendingNativeLv2 (lv2File, std::move (blob), track.nativeLv2PluginId,
+                                           lv2StateDirFor (session,
+                                               "track" + juce::String (t + 1).paddedLeft ('0', 2)));
             }
             continue;
         }
@@ -2062,7 +2086,12 @@ void AudioEngine::consumePluginStateAfterLoad()
                     const bool ok = strip.loadNativeLv2 (s, lv2File, err,
                                                          lane.nativeLv2PluginId[(size_t) s]);
                     if (ok && ! blob.empty())
+                    {
+                        strip.getNativeLv2Slot (s).setStateDirectory (
+                            lv2StateDirFor (session, "aux" + juce::String (a + 1)
+                                                         + "_slot" + juce::String (s + 1)));
                         strip.getNativeLv2Slot (s).loadState (blob);
+                    }
                     resumeProcessing();
                     if (! ok)
                     {
@@ -2077,7 +2106,10 @@ void AudioEngine::consumePluginStateAfterLoad()
                     strip.unloadNativeClap (s);   // see the CLAP pending branch above
                     strip.unloadNativeVst3 (s);
                     strip.setPendingNativeLv2 (s, lv2File, std::move (blob),
-                                               lane.nativeLv2PluginId[(size_t) s]);
+                                               lane.nativeLv2PluginId[(size_t) s],
+                                               lv2StateDirFor (session,
+                                                   "aux" + juce::String (a + 1)
+                                                       + "_slot" + juce::String (s + 1)));
                 }
                 continue;   // native handled — skip the JUCE restore for this slot
             }

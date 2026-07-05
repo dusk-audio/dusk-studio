@@ -2249,6 +2249,25 @@ SessionSerializer::consolidateInto (Session& s, const juce::File& newSessionDir)
         src != juce::File() && oldDir != juce::File() && src.isAChildOf (oldDir))
         plan (src);
 
+    // Native plugin file-backed state (state/lv2/<slot>/...) travels with the
+    // session as a whole tree: the serialized blobs reference it by
+    // cur/-relative abstract paths, so no model repoint is needed — the copy
+    // just has to exist under the new root before the post-swap re-save
+    // refreshes it.
+    const auto oldStateDir = oldDir.getChildFile ("state");
+    if (oldStateDir.isDirectory())
+    {
+        const auto newStateDir = newSessionDir.getChildFile ("state");
+        if (! oldStateDir.copyDirectoryTo (newStateDir))
+        {
+            newStateDir.deleteRecursively();
+            res.ok = false;
+            res.errorMessage = "Could not copy the plugin state folder to \""
+                             + newStateDir.getFullPathName() + "\"";
+            return res;
+        }
+    }
+
     // Phase B — copy. Any failure rolls back the files copied so far and
     // returns with the model untouched.
     std::vector<juce::File> copied;

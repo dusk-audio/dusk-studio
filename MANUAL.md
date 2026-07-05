@@ -1439,7 +1439,7 @@ In practice the differences are small:
 
 One caveat: a plugin's saved state does not transfer between hosting layers. If a session carried a plugin under the standard LV2 or VST3 host and you load the same plugin as a native row (or vice versa), it starts from its defaults — set it up once and save.
 
-A second caveat, specific to **LV2-Native**: the session stores an LV2 plugin's control values and its in-memory state, but not state the plugin keeps in **files of its own** (a sampler's loaded sample bank, a convolution reverb's imported impulse response). Such a plugin reopens with its settings intact but the file-based content unloaded — reload it inside the plugin's editor. Effects with knob-only state are unaffected.
+**LV2-Native** file-backed state (a sampler's loaded bank, a convolution reverb's impulse response) is snapshotted into the session's `state/lv2/` folder on save and travels with the session — including through **Save As**. The folder keeps the previous save as a fallback generation; treat it as part of the session like `audio/`.
 
 ## Out-of-process sandboxing
 
