@@ -41,3 +41,27 @@ TEST_CASE ("Lv2Bundle loads + enumerates a real LV2 bundle", "[lv2][bundle]")
     REQUIRE (bundle.pluginByUri (first.uri) != nullptr);
     REQUIRE (bundle.pluginByUri ("http://example.org/does-not-exist") == nullptr);
 }
+
+// Instrument classification drives the native-instrument picker rows: an
+// atom/MIDI-in + audio-out + no-audio-in plugin must describe as an
+// instrument. Gated like the live bundle test so CI without a synth stays
+// green (point it at e.g. /usr/lib64/lv2/sfizz.lv2 locally).
+TEST_CASE ("Lv2Bundle classifies an instrument bundle", "[lv2][bundle]")
+{
+    const char* path = std::getenv ("DUSKSTUDIO_TEST_LV2_INSTRUMENT");
+    if (path == nullptr || *path == '\0')
+    {
+        SUCCEED ("DUSKSTUDIO_TEST_LV2_INSTRUMENT not set — skipping");
+        return;
+    }
+
+    duskstudio::lv2::Lv2Bundle bundle;
+    std::string err;
+    REQUIRE (bundle.load (path, err));
+    REQUIRE_FALSE (bundle.plugins().empty());
+
+    bool anyInstrument = false;
+    for (const auto& p : bundle.plugins())
+        anyInstrument = anyInstrument || p.isInstrument;
+    REQUIRE (anyInstrument);
+}
