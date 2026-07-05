@@ -46,8 +46,9 @@ public:
 
     // Native-LV2 plugins, scanned separately from JUCE's LV2 format (which stays as
     // the fallback host). pluginFormatName "LV2-Native", fileOrIdentifier = the .lv2
-    // bundle directory. Audio effects only; discovery is manifest-only via lilv.
+    // bundle directory. Effects and instruments; discovery is manifest-only via lilv.
     juce::Array<juce::PluginDescription> getLv2EffectDescriptions() const;
+    juce::Array<juce::PluginDescription> getLv2InstrumentDescriptions() const;
     void scanLv2Plugins();
 
     // Native-VST3 plugins, scanned separately from JUCE's VST3 format (which stays
