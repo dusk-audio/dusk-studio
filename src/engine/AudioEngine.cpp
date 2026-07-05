@@ -778,6 +778,26 @@ void AudioEngine::recomputePdc() noexcept
                                                std::memory_order_relaxed);
 }
 
+void AudioEngine::applyMasterPdcTargetsNow() noexcept
+{
+    recomputePdc();
+
+    masterDryPdcApplied = masterDryPdcTarget.load (std::memory_order_relaxed);
+    masterDryPdcL.reset();
+    masterDryPdcR.reset();
+    masterDryPdcL.setDelay ((float) masterDryPdcApplied);
+    masterDryPdcR.setDelay ((float) masterDryPdcApplied);
+    for (int a = 0; a < Session::kNumAuxLanes; ++a)
+    {
+        const int t = auxReturnPdcTarget[(size_t) a].load (std::memory_order_relaxed);
+        auxReturnPdcApplied[(size_t) a] = t;
+        auxReturnPdcL[(size_t) a].reset();
+        auxReturnPdcR[(size_t) a].reset();
+        auxReturnPdcL[(size_t) a].setDelay ((float) t);
+        auxReturnPdcR[(size_t) a].setDelay ((float) t);
+    }
+}
+
 bool AudioEngine::freezePrepare (int trackIndex, juce::File& outFile, juce::int64& lenSamples)
 {
     lastFreezeError.clear();
