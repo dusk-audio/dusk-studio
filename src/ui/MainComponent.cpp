@@ -305,6 +305,7 @@ MainComponent::MainComponent()
     // when the user changes the dropdown.
     session.stopBehavior.store ((int) appconfig::getStopBehavior(),
                                   std::memory_order_relaxed);
+    engine.setMidiSoftTakeover (appconfig::getMidiSoftTakeover());
 
     // Plugin scan-on-startup is deferred (see resized() ->
     // maybeStartStartupPluginScan): it runs on a background thread behind a
@@ -1689,11 +1690,11 @@ void MainComponent::openAudioSettings()
     // fixed 360 px slot — see AudioSettingsPanel::resized.
     constexpr int kPanelW = 820;
     // Content height with the bumped 360 px audio block + every
-    // section ends just past 1020 px — anything less clips the
+    // section ends just past 1060 px — anything less clips the
     // Advanced rows (ALSA periods / oversampling / self-test / rescan,
     // plus the Multicore DSP row) off the bottom even with a scroll
     // wrapper, because the viewport never sees the missing pixels.
-    constexpr int kPanelH = 1100;
+    constexpr int kPanelH = 1140;
     panel->setSize (kPanelW, kPanelH);
 
     // Wrap the panel in a Viewport so the full content is reachable on

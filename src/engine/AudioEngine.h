@@ -181,6 +181,17 @@ public:
 
     juce::UndoManager& getUndoManager() noexcept { return undoManager; }
 
+    // MIDI soft takeover (pickup) for continuous absolute bindings — see the
+    // member block below. Pushed from the UI at startup and on toggle.
+    void setMidiSoftTakeover (bool on) noexcept
+    {
+        midiSoftTakeover.store (on, std::memory_order_relaxed);
+    }
+    bool getMidiSoftTakeover() const noexcept
+    {
+        return midiSoftTakeover.load (std::memory_order_relaxed);
+    }
+
     struct RegionClipboard
     {
         bool        hasContent = false;
@@ -472,6 +483,16 @@ private:
     // Deepest per-track insert latency in the session (samples). Set by
     // recomputePdc; read by BounceEngine to trim the render's lead-in.
     std::atomic<int> aggregatePdcLatencySamples { 0 };
+
+    // MIDI soft takeover (pickup). Per-machine preference pushed from the UI
+    // via setMidiSoftTakeover. Latch + last-incoming state lives on the audio
+    // thread only, keyed by the binding's index in the live snapshot; a
+    // snapshot republish (any bindings edit) re-arms every pickup.
+    std::atomic<bool> midiSoftTakeover { false };
+    static constexpr int kMaxPickupBindings = 512;
+    const void* pickupSnapshotKey = nullptr;
+    std::array<juce::uint8, kMaxPickupBindings> pickupLatched {};
+    std::array<float,       kMaxPickupBindings> pickupPrevIn {};
 
     // Master-stage PDC for aux-lane plugin latency. A latent send effect
     // (linear-phase EQ, lookahead comp on a return) delays only the WET

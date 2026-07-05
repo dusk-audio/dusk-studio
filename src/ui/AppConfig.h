@@ -93,6 +93,14 @@ int maxMulticoreWorkers();
 // Concrete worker count for this host given the stored mode. 0 = serial.
 int resolveWorkerCount();
 
+// MIDI soft takeover (pickup): a continuous absolute binding stays dormant
+// until the controller crosses the parameter's current position, instead of
+// snapping the parameter on first touch. Default false (absolute controllers
+// track 1:1 like a classic console surface). Per-machine — it describes the
+// hardware on this desk, not the session.
+bool getMidiSoftTakeover();
+void setMidiSoftTakeover (bool on);
+
 // Virtual-keyboard centre note (MIDI 0..120). Default 36 (C2) — sits
 // near the lower half of the bass register so the visible 2-octave
 // window (centre-12..centre+12) covers C1..C3 by default, matching

@@ -393,6 +393,21 @@ AudioSettingsPanel::AudioSettingsPanel (juce::AudioDeviceManager& dm,
     };
     addAndMakeVisible (followPlayheadToggle);
 
+    softTakeoverToggle.setToggleState (appconfig::getMidiSoftTakeover(),
+                                        juce::dontSendNotification);
+    softTakeoverToggle.setTooltip (
+        "When on, a knob or fader bound by MIDI Learn stays dormant until it "
+        "crosses the parameter's current position, instead of snapping the "
+        "parameter to the controller on first touch. Applies to continuous "
+        "mixer targets; saved per-machine, takes effect immediately.");
+    softTakeoverToggle.onClick = [this]
+    {
+        const bool on = softTakeoverToggle.getToggleState();
+        appconfig::setMidiSoftTakeover (on);
+        engine.setMidiSoftTakeover (on);
+    };
+    addAndMakeVisible (softTakeoverToggle);
+
     stopBehaviorLabel.setJustificationType (juce::Justification::centredRight);
     addAndMakeVisible (stopBehaviorLabel);
     stopBehaviorCombo.addItem ("Stay where it is (pause)",      1);
@@ -539,6 +554,11 @@ void AudioSettingsPanel::resized()
         auto row = takeStdRow();
         row.removeFromLeft (kLabelW);
         followPlayheadToggle.setBounds (row.reduced (4, 2));
+    }
+    {
+        auto row = takeStdRow();
+        row.removeFromLeft (kLabelW);
+        softTakeoverToggle.setBounds (row.reduced (4, 2));
     }
     {
         auto row = takeStdRow();

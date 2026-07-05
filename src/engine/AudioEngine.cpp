@@ -23,6 +23,154 @@ namespace duskstudio
 static const float kHpfLogRange = std::log (ChannelStripParams::kHpfMaxHz
                                              / ChannelStripParams::kHpfMinHz);
 
+// Soft-takeover read-back: the parameter's CURRENT position as the same 0..1
+// fraction the apply switch below maps FROM. Each case is the exact inverse
+// of its apply-side mapping — change one, change the other. Returns < 0 for
+// targets pickup doesn't cover (discrete toggles, transport, plugin params —
+// plugin values have no RT-safe read-back). Audio thread; relaxed loads only.
+static float currentFracForTarget (Session& session, const MidiBinding& b) noexcept
+{
+    const auto inv = [] (float v, float lo, float hi)
+    {
+        return juce::jlimit (0.0f, 1.0f, (v - lo) / (hi - lo));
+    };
+    switch (b.target)
+    {
+        case MidiBindingTarget::TrackFader:
+            if (b.targetIndex < 0 || b.targetIndex >= Session::kNumTracks) return -1.0f;
+            return inv (session.track (b.targetIndex).strip.faderDb.load (std::memory_order_relaxed),
+                        -90.0f, 12.0f);
+        case MidiBindingTarget::TrackPan:
+            if (b.targetIndex < 0 || b.targetIndex >= Session::kNumTracks) return -1.0f;
+            return inv (session.track (b.targetIndex).strip.pan.load (std::memory_order_relaxed),
+                        -1.0f, 1.0f);
+        case MidiBindingTarget::TrackAuxSend:
+        {
+            const int trk = unpackTrackAuxTrack (b.targetIndex);
+            const int aux = unpackTrackAuxLane  (b.targetIndex);
+            if (trk < 0 || trk >= Session::kNumTracks
+                || aux < 0 || aux >= ChannelStripParams::kNumAuxSends) return -1.0f;
+            const float db = session.track (trk).strip.auxSendDb[(size_t) aux]
+                                 .load (std::memory_order_relaxed);
+            if (db <= ChannelStripParams::kAuxSendOffDb + 0.01f) return 0.0f;
+            return inv (db, ChannelStripParams::kAuxSendMinDb,
+                            ChannelStripParams::kAuxSendMaxDb);
+        }
+        case MidiBindingTarget::TrackHpfFreq:
+        {
+            if (b.targetIndex < 0 || b.targetIndex >= Session::kNumTracks) return -1.0f;
+            const auto& strip = session.track (b.targetIndex).strip;
+            if (! strip.hpfEnabled.load (std::memory_order_relaxed)) return 0.0f;
+            const float f = strip.hpfFreq.load (std::memory_order_relaxed);
+            if (f <= ChannelStripParams::kHpfMinHz) return 0.0f;
+            return juce::jlimit (0.0f, 1.0f,
+                std::log (f / ChannelStripParams::kHpfMinHz) / kHpfLogRange);
+        }
+        case MidiBindingTarget::TrackEqGain:
+        {
+            const int trk  = unpackTrackEqTrack (b.targetIndex);
+            const int band = unpackTrackEqBand  (b.targetIndex);
+            if (trk < 0 || trk >= Session::kNumTracks
+                || band < 0 || band >= kPackedEqBands) return -1.0f;
+            const auto& s = session.track (trk).strip;
+            const float db = band == 0 ? s.lfGainDb.load (std::memory_order_relaxed)
+                           : band == 1 ? s.lmGainDb.load (std::memory_order_relaxed)
+                           : band == 2 ? s.hmGainDb.load (std::memory_order_relaxed)
+                                       : s.hfGainDb.load (std::memory_order_relaxed);
+            return inv (db, -15.0f, 15.0f);
+        }
+        case MidiBindingTarget::TrackEqFreq:
+        {
+            const int trk  = unpackTrackEqTrack (b.targetIndex);
+            const int band = unpackTrackEqBand  (b.targetIndex);
+            if (trk < 0 || trk >= Session::kNumTracks
+                || band < 0 || band >= kPackedEqBands) return -1.0f;
+            const auto& s = session.track (trk).strip;
+            const auto logInv = [] (float f, float lo, float hi)
+            {
+                if (f <= lo) return 0.0f;
+                return juce::jlimit (0.0f, 1.0f, std::log (f / lo) / std::log (hi / lo));
+            };
+            switch (band)
+            {
+                case 0: return logInv (s.lfFreq.load (std::memory_order_relaxed), ChannelStripParams::kLfFreqMin, ChannelStripParams::kLfFreqMax);
+                case 1: return logInv (s.lmFreq.load (std::memory_order_relaxed), ChannelStripParams::kLmFreqMin, ChannelStripParams::kLmFreqMax);
+                case 2: return logInv (s.hmFreq.load (std::memory_order_relaxed), ChannelStripParams::kHmFreqMin, ChannelStripParams::kHmFreqMax);
+                default: return logInv (s.hfFreq.load (std::memory_order_relaxed), ChannelStripParams::kHfFreqMin, ChannelStripParams::kHfFreqMax);
+            }
+        }
+        case MidiBindingTarget::TrackEqQ:
+        {
+            const int trk  = unpackTrackEqTrack (b.targetIndex);
+            const int band = unpackTrackEqBand  (b.targetIndex);
+            if (trk < 0 || trk >= Session::kNumTracks) return -1.0f;
+            const auto& s = session.track (trk).strip;
+            if (band == 1) return inv (s.lmQ.load (std::memory_order_relaxed),
+                                       ChannelStripParams::kBandQMin, ChannelStripParams::kBandQMax);
+            if (band == 2) return inv (s.hmQ.load (std::memory_order_relaxed),
+                                       ChannelStripParams::kBandQMin, ChannelStripParams::kBandQMax);
+            return -1.0f;
+        }
+        case MidiBindingTarget::TrackCompThresh:
+        case MidiBindingTarget::TrackCompMakeup:
+        {
+            if (b.targetIndex < 0 || b.targetIndex >= Session::kNumTracks) return -1.0f;
+            const auto& s = session.track (b.targetIndex).strip;
+            const int mode = juce::jlimit (0, 2, s.compMode.load (std::memory_order_relaxed));
+            if (b.target == MidiBindingTarget::TrackCompMakeup)
+                switch (mode)
+                {
+                    case 0:  return inv (s.compOptoGain .load (std::memory_order_relaxed),   0.0f, 100.0f);
+                    case 1:  return inv (s.compFetOutput.load (std::memory_order_relaxed), -20.0f,  20.0f);
+                    default: return inv (s.compVcaOutput.load (std::memory_order_relaxed), -20.0f,  20.0f);
+                }
+            switch (mode)
+            {
+                case 0:  return inv (s.compOptoPeakRed.load (std::memory_order_relaxed),   0.0f, 100.0f);
+                case 1:  return inv (s.compFetInput   .load (std::memory_order_relaxed), -20.0f,  40.0f);
+                default: return inv (s.compVcaThreshDb.load (std::memory_order_relaxed), -38.0f,  12.0f);
+            }
+        }
+        case MidiBindingTarget::BusFader:
+            if (b.targetIndex < 0 || b.targetIndex >= Session::kNumBuses) return -1.0f;
+            return inv (session.bus (b.targetIndex).strip.faderDb.load (std::memory_order_relaxed),
+                        -90.0f, 12.0f);
+        case MidiBindingTarget::BusPan:
+            if (b.targetIndex < 0 || b.targetIndex >= Session::kNumBuses) return -1.0f;
+            return inv (session.bus (b.targetIndex).strip.pan.load (std::memory_order_relaxed),
+                        -1.0f, 1.0f);
+        case MidiBindingTarget::BusEqGain:
+        {
+            const int bus  = unpackBusEqBus  (b.targetIndex);
+            const int band = unpackBusEqBand (b.targetIndex);
+            if (bus < 0 || bus >= Session::kNumBuses) return -1.0f;
+            const auto& s = session.bus (bus).strip;
+            const float db = band == 0 ? s.eqLfGainDb .load (std::memory_order_relaxed)
+                           : band == 1 ? s.eqMidGainDb.load (std::memory_order_relaxed)
+                                       : s.eqHfGainDb .load (std::memory_order_relaxed);
+            return inv (db, -9.0f, 9.0f);
+        }
+        case MidiBindingTarget::AuxLaneFader:
+            if (b.targetIndex < 0 || b.targetIndex >= Session::kNumAuxLanes) return -1.0f;
+            return inv (session.auxLane (b.targetIndex).params.returnLevelDb
+                            .load (std::memory_order_relaxed), -90.0f, 12.0f);
+        case MidiBindingTarget::MasterFader:
+            return inv (session.master().faderDb.load (std::memory_order_relaxed), -90.0f, 12.0f);
+        case MidiBindingTarget::MasterEqLfBoost:
+            return inv (session.master().eqLfBoost.load (std::memory_order_relaxed), 0.0f, 10.0f);
+        case MidiBindingTarget::MasterEqHfBoost:
+            return inv (session.master().eqHfBoost.load (std::memory_order_relaxed), 0.0f, 10.0f);
+        case MidiBindingTarget::MasterCompThresh:
+            return inv (session.master().compThreshDb.load (std::memory_order_relaxed), -38.0f, 12.0f);
+        case MidiBindingTarget::MasterCompMakeup:
+            return inv (session.master().compMakeupDb.load (std::memory_order_relaxed), -20.0f, 20.0f);
+        case MidiBindingTarget::MasterCompRatio:
+            return inv (session.master().compRatio.load (std::memory_order_relaxed), 1.0f, 20.0f);
+        default:
+            return -1.0f;
+    }
+}
+
 // Per-machine audio device setup, alongside app-config.properties /
 // window-state.txt (one concern per file). Restored at construction,
 // persisted on every device change broadcast.
@@ -3134,6 +3282,46 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                         pressed = (b.buttonMode == MidiButtonMode::Toggle)
                                       ? true              // fire every received CC / Note
                                       : (val >= 64);      // rising-edge / level threshold
+                    }
+
+                    // Soft takeover (pickup): an absolute controller snaps the
+                    // target to its own position on first touch. When enabled,
+                    // a continuous binding stays dormant until the controller
+                    // lands near — or sweeps across — the parameter's current
+                    // position, then latches and tracks 1:1. Latch state is
+                    // keyed by snapshot index and reset whenever the bindings
+                    // snapshot is republished (edits re-arm the pickup).
+                    if (midiSoftTakeover.load (std::memory_order_relaxed)
+                        && b.trigger != MidiBindingTrigger::MmcCommand)
+                    {
+                        if ((const void*) bindings != pickupSnapshotKey)
+                        {
+                            pickupSnapshotKey = bindings;
+                            pickupLatched.fill (0);
+                            pickupPrevIn.fill (-1.0f);
+                        }
+                        const auto idx = (size_t) (&sourceBinding - bindings->data());
+                        if (idx < pickupLatched.size() && ! pickupLatched[idx])
+                        {
+                            const float cur = currentFracForTarget (session, b);
+                            if (cur >= 0.0f)   // continuous, readable target
+                            {
+                                constexpr float kPickupEps = 2.0f / 127.0f;
+                                const float prev = pickupPrevIn[idx];
+                                const bool near    = std::abs (frac - cur) <= kPickupEps;
+                                const bool crossed = prev >= 0.0f
+                                                      && (prev - cur) * (frac - cur) <= 0.0f;
+                                if (near || crossed)
+                                {
+                                    pickupLatched[idx] = 1;
+                                }
+                                else
+                                {
+                                    pickupPrevIn[idx] = frac;
+                                    continue;   // dormant until pickup
+                                }
+                            }
+                        }
                     }
 
                     switch (b.target)
