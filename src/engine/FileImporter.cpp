@@ -2,7 +2,9 @@
 
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstring>
 #include <map>
 #include <utility>
 #include <vector>
@@ -27,17 +29,18 @@ juce::String makeImportedFilename (int trackIndex, const juce::String& extension
              + "_" + stamp + extension;
 }
 
-// Channel-conform `src` into `dst` (dst is pre-sized to (targetChannels,
-// src.getNumSamples())). Handles 1->2 duplicate, 2->1 sum-and-halve, and
+// Channel-conform the first `numSamples` of `src` into `dst` (both pre-sized
+// to at least numSamples). Handles 1->2 duplicate, 2->1 sum-and-halve, and
 // pass-through. No allocation; caller owns both buffers.
-void conformChannels (const juce::AudioBuffer<float>& src,
-                       juce::AudioBuffer<float>& dst,
-                       int targetChannels)
+void conformChunk (const juce::AudioBuffer<float>& src,
+                    juce::AudioBuffer<float>& dst,
+                    int targetChannels,
+                    int numSamples)
 {
     const int srcCh = src.getNumChannels();
-    const int n     = src.getNumSamples();
+    const int n     = numSamples;
     jassert (dst.getNumChannels() == targetChannels);
-    jassert (dst.getNumSamples()  == n);
+    jassert (dst.getNumSamples()  >= n && src.getNumSamples() >= n);
 
     if (srcCh == 1 && targetChannels == 2)
     {
@@ -59,24 +62,6 @@ void conformChannels (const juce::AudioBuffer<float>& src,
     const int common = juce::jmin (srcCh, targetChannels);
     for (int c = 0; c < common; ++c)
         dst.copyFrom (c, 0, src, c, 0, n);
-}
-
-// Resample one channel via CatmullRomInterpolator. Returns the number of
-// output samples written. Speed ratio = inSR / outSR (JUCE convention:
-// values > 1 mean "consume input faster than output", i.e. down-sample
-// the time axis -> lower output rate -> shorter output buffer).
-int resampleChannel (const float* in,
-                      int   inNumSamples,
-                      double inSampleRate,
-                      float* out,
-                      int   outNumSamples,
-                      double outSampleRate) noexcept
-{
-    juce::CatmullRomInterpolator interp;
-    interp.reset();
-    const double ratio = inSampleRate / outSampleRate;
-    return interp.process (ratio, in, out, outNumSamples,
-                             inNumSamples, /*wrapAt*/ 0);
 }
 } // namespace
 
@@ -194,35 +179,12 @@ AudioImportResult importAudio (const AudioImportRequest& req)
         return result;
     }
 
-    // Decode entire source. juce::AudioBuffer::setSize calls allocate;
-    // we're on the message thread so that's fine.
-    juce::AudioBuffer<float> srcBuf (srcChannels, (int) srcLength);
-    srcBuf.clear();
-    const bool readOk = reader->read (&srcBuf, 0, (int) srcLength, 0, true, srcChannels > 1);
-    if (! readOk)
-    {
-        result.errorMessage = "Failed to decode audio file";
-        return result;
-    }
-
-    // Channel conform.
-    juce::AudioBuffer<float> conformed (req.targetChannels, (int) srcLength);
-    conformed.clear();
-    conformChannels (srcBuf, conformed, req.targetChannels);
-
-    // Resample if necessary.
     const bool needsResample = std::abs (srcSampleRate - sessionSr) > 0.001;
     juce::int64 outLength = srcLength;
-    juce::AudioBuffer<float> outBuf;
-
-    if (! needsResample)
+    if (needsResample)
     {
-        outBuf.makeCopyOf (conformed);
-    }
-    else
-    {
-        const double ratioOut = sessionSr / srcSampleRate;
-        outLength = (juce::int64) std::llround ((double) srcLength * ratioOut);
+        outLength = (juce::int64) std::llround ((double) srcLength
+                                                 * sessionSr / srcSampleRate);
         if (outLength <= 0)
         {
             result.errorMessage = "Resample produced empty output";
@@ -232,24 +194,6 @@ AudioImportResult importAudio (const AudioImportRequest& req)
         {
             result.errorMessage = "Resampled output too long for import";
             return result;
-        }
-
-        outBuf.setSize (req.targetChannels, (int) outLength, false, true, false);
-        outBuf.clear();
-        for (int c = 0; c < req.targetChannels; ++c)
-        {
-            // CatmullRomInterpolator fully fills all `outLength` output samples
-            // (outLength was derived as srcLength/ratio, so the input is exactly
-            // enough). Its return value is the number of INPUT samples CONSUMED
-            // (~= srcLength), NOT the output count — for any upsample that's
-            // always < outLength, so the old "pad the tail" path overwrote the
-            // last ~8% of correctly-resampled audio with a held sample (imports
-            // went silent at ~92% of their length). Discard the return; any
-            // <=2-sample tail boundary stays as the pre-cleared zeros.
-            resampleChannel (conformed.getReadPointer (c),
-                             (int) srcLength, srcSampleRate,
-                             outBuf.getWritePointer (c),
-                             (int) outLength, sessionSr);
         }
     }
 
@@ -295,12 +239,106 @@ AudioImportResult importAudio (const AudioImportRequest& req)
     // createWriterFor takes ownership of the stream on success.
     stream.release();
 
-    const bool wrote = writer->writeFromAudioSampleBuffer (outBuf, 0, (int) outLength);
+    // Stream decode → conform → (sinc-)resample → write in bounded chunks.
+    // The old whole-file path allocated three full-length buffers (a 30-min
+    // 96 kHz stereo stem needed ~1.4 GB before the writer even opened) and
+    // froze the message thread on the allocation; this loop peaks at a few
+    // hundred KB regardless of source length.
+    constexpr int kGrain = 65536;
+    juce::AudioBuffer<float> srcChunk  (srcChannels,      kGrain);
+    juce::AudioBuffer<float> outChunk  (req.targetChannels, kGrain);
+    bool wrote = true;
+
+    if (! needsResample)
+    {
+        juce::AudioBuffer<float> confChunk (req.targetChannels, kGrain);
+        juce::int64 pos = 0;
+        while (pos < srcLength && wrote)
+        {
+            const int n = (int) juce::jmin ((juce::int64) kGrain, srcLength - pos);
+            srcChunk.clear();
+            if (! reader->read (&srcChunk, 0, n, pos, true, srcChannels > 1))
+            {
+                wrote = false;
+                break;
+            }
+            conformChunk (srcChunk, confChunk, req.targetChannels, n);
+            wrote = writer->writeFromAudioSampleBuffer (confChunk, 0, n);
+            pos += n;
+        }
+    }
+    else
+    {
+        // Streaming windowed-sinc resample. `carry` holds conformed source
+        // samples not yet consumed by the interpolators; each pass tops it up
+        // to the worst-case input need for one output grain, pads with
+        // silence past EOF so the sinc tail flushes, then drops what the
+        // interpolators consumed.
+        const double ratio = srcSampleRate / sessionSr;
+        const int needIn   = (int) std::ceil ((double) kGrain * ratio)
+                               + (int) juce::WindowedSincInterpolator::getBaseLatency() + 8;
+        juce::AudioBuffer<float> confChunk (req.targetChannels, kGrain);
+        juce::AudioBuffer<float> carry     (req.targetChannels, needIn + kGrain);
+        std::array<juce::WindowedSincInterpolator, 2> interp;
+        for (auto& i : interp) i.reset();
+
+        int         carryLen = 0;
+        juce::int64 srcPos   = 0;
+        juce::int64 produced = 0;
+        while (produced < outLength && wrote)
+        {
+            // Top up the carry from the source.
+            while (carryLen < needIn && srcPos < srcLength)
+            {
+                const int n = (int) juce::jmin ((juce::int64) kGrain, srcLength - srcPos);
+                srcChunk.clear();
+                if (! reader->read (&srcChunk, 0, n, srcPos, true, srcChannels > 1))
+                {
+                    wrote = false;
+                    break;
+                }
+                conformChunk (srcChunk, confChunk, req.targetChannels, n);
+                const int room = juce::jmin (n, carry.getNumSamples() - carryLen);
+                for (int c = 0; c < req.targetChannels; ++c)
+                    carry.copyFrom (c, carryLen, confChunk, c, 0, room);
+                carryLen += room;
+                srcPos   += room;
+            }
+            if (! wrote) break;
+            if (carryLen < needIn)   // EOF: silence-pad so the tail flushes
+            {
+                for (int c = 0; c < req.targetChannels; ++c)
+                    juce::FloatVectorOperations::clear (
+                        carry.getWritePointer (c) + carryLen, needIn - carryLen);
+                carryLen = needIn;
+            }
+
+            const int nOut = (int) juce::jmin ((juce::int64) kGrain, outLength - produced);
+            int consumed = 0;
+            for (int c = 0; c < req.targetChannels; ++c)
+                consumed = interp[(size_t) c].process (ratio,
+                                                        carry.getReadPointer (c),
+                                                        outChunk.getWritePointer (c),
+                                                        nOut);
+            wrote = writer->writeFromAudioSampleBuffer (outChunk, 0, nOut);
+            produced += nOut;
+
+            consumed = juce::jlimit (0, carryLen, consumed);
+            for (int c = 0; c < req.targetChannels; ++c)
+            {
+                auto* p = carry.getWritePointer (c);
+                std::memmove (p, p + consumed,
+                               sizeof (float) * (size_t) (carryLen - consumed));
+            }
+            carryLen -= consumed;
+        }
+    }
+
     writer.reset();   // flush + close before we read the file back
     if (! wrote)
     {
         outFile.deleteFile();
-        result.errorMessage = "Audio write failed";
+        result.errorMessage = "Audio decode or write failed";
         return result;
     }
 
