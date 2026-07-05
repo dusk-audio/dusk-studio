@@ -280,6 +280,11 @@ private:
     // detach idempotent and signals publishPluginStateForSave that the
     // atomic-park sleeps can be skipped.
     bool engineDetached = false;
+
+    // One-shot latch so the session-vs-device sample-rate warning fires once
+    // per mismatch, not on every autosave tick. Reset on load and when the
+    // rates come back into agreement.
+    bool warnedSampleRateMismatch = false;
     juce::Label statusLabel;
 
     // Helper for the top-bar status. Short label (session-dir name +

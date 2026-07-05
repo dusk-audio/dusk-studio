@@ -1240,6 +1240,8 @@ juce::String SessionSerializer::serialize (const Session& s)
 {
     auto* root = new juce::DynamicObject();
     root->setProperty ("version", kFormatVersion);
+    if (s.sessionSampleRate > 0.0)
+        root->setProperty ("session_sample_rate", s.sessionSampleRate);
 
     juce::Array<juce::var> tracks;
     for (int i = 0; i < Session::kNumTracks; ++i)
@@ -1610,6 +1612,15 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
     }
     if (fileVersion < kFormatVersion && ! migrateSession (root, fileVersion))
         return false;
+
+    // Unconditional (reset-when-absent): a pre-SR-aware file must not inherit
+    // the previous session's rate — 0 tells the load UI to adopt the device's.
+    {
+        const double sr = root.hasProperty ("session_sample_rate")
+                              ? (double) root["session_sample_rate"] : 0.0;
+        s.sessionSampleRate = (std::isfinite (sr) && sr >= 8000.0 && sr <= 384000.0)
+                                  ? sr : 0.0;
+    }
 
     // Peek at transport.tempo_bpm BEFORE the track loop so legacy sessions
     // (no recorded_at_bpm field on MidiRegion) get anchored to their own

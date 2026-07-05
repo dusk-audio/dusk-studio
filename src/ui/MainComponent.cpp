@@ -1,4 +1,5 @@
 #include "MainComponent.h"
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>  // std::getenv (DUSKSTUDIO_USE_OOP_PLUGINS)
 #include "AppConfig.h"
@@ -2128,6 +2129,8 @@ bool MainComponent::saveSessionTo (const juce::File& dir)
     engine.publishTransportStateForSave();
 
     const auto target = dir.getChildFile ("session.json");
+    if (session.sessionSampleRate <= 0.0)
+        session.sessionSampleRate = engine.getCurrentSampleRate();
     const juce::String json = SessionSerializer::serialize (session);
     const bool saveOk = SessionSerializer::writeAtomic (target, json);
 
@@ -2319,6 +2322,31 @@ void MainComponent::timerCallback()
     // SessionSerializer::save on a 16-track session should land well under
     // 30 ms.
     writeAutosave();
+
+    // A device rate changed in Settings after the session was opened silently
+    // detunes every recorded WAV (playback is 1:1, no SRC). Nag once per
+    // mismatch; the latch re-arms when the rates agree again.
+    const double deviceSr = engine.getCurrentSampleRate();
+    if (session.sessionSampleRate > 0.0 && deviceSr > 0.0)
+    {
+        const bool mismatch = std::abs (session.sessionSampleRate - deviceSr) > 0.5;
+        if (! mismatch)
+        {
+            warnedSampleRateMismatch = false;
+        }
+        else if (! warnedSampleRateMismatch)
+        {
+            warnedSampleRateMismatch = true;
+            showDuskAlert (*this, "Sample-rate mismatch",
+                "The audio device now runs at " + juce::String ((int) deviceSr)
+                + " Hz but this session's audio was made at "
+                + juce::String ((int) session.sessionSampleRate) + " Hz.\n\n"
+                "Recorded tracks will play at the wrong speed and pitch, and "
+                "new recordings will not match the old ones. Switch the device "
+                "back to " + juce::String ((int) session.sessionSampleRate)
+                + " Hz in Settings unless this is deliberate.");
+        }
+    }
 }
 
 bool MainComponent::currentSessionDirty()
@@ -2762,6 +2790,55 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     // success.
     if (! loadedFromAutosave)
         deleteAutosaveFor (dir);
+
+    // Sample-rate policy: region WAVs play 1:1 (no SRC in the playback path),
+    // so the device must run at the session's canonical rate for correct
+    // speed and pitch. Legacy sessions (no stored rate) adopt the device's.
+    // On a mismatch, try to switch the device; when that fails, warn loudly —
+    // the session still opens, but audio runs fast/slow until the rates
+    // match.
+    warnedSampleRateMismatch = false;
+    {
+        const double deviceSr = engine.getCurrentSampleRate();
+        if (session.sessionSampleRate <= 0.0)
+        {
+            session.sessionSampleRate = deviceSr;
+        }
+        else if (deviceSr > 0.0
+                 && std::abs (session.sessionSampleRate - deviceSr) > 0.5)
+        {
+            auto setup = engine.getDeviceManager().getAudioDeviceSetup();
+            setup.sampleRate = session.sessionSampleRate;
+            const auto err = engine.getDeviceManager().setAudioDeviceSetup (setup, true);
+            const double after = engine.getDeviceManager().getAudioDeviceSetup().sampleRate;
+            if (err.isNotEmpty() || std::abs (after - session.sessionSampleRate) > 0.5)
+            {
+                warnedSampleRateMismatch = true;
+                const auto body =
+                    "This session's audio was made at "
+                    + juce::String ((int) session.sessionSampleRate) + " Hz, but the "
+                    "audio device is running at " + juce::String ((int) after) + " Hz "
+                    "and could not be switched"
+                    + (err.isNotEmpty() ? (":\n\n    " + err) : juce::String (".")) +
+                    "\n\nEvery recorded track will play at the wrong speed and pitch "
+                    "until the device runs at the session's rate. Pick a device or "
+                    "rate of " + juce::String ((int) session.sessionSampleRate)
+                    + " Hz in Settings, or expect to re-record.";
+                juce::Component::SafePointer<MainComponent> safeThis (this);
+                juce::MessageManager::callAsync ([body, safeThis]
+                {
+                    if (auto* self = safeThis.getComponent())
+                        showDuskAlert (*self, "Sample-rate mismatch", body);
+                });
+            }
+            else
+            {
+                setStatusForPath ("Audio device switched to "
+                                    + juce::String ((int) session.sessionSampleRate)
+                                    + " Hz to match", sourceJson);
+            }
+        }
+    }
 
     // Note: lastSavedSessionJson is seeded later in this function, after
     // consumePluginStateAfterLoad has filled in plugin/transport state.
