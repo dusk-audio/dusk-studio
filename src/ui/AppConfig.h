@@ -93,6 +93,12 @@ int maxMulticoreWorkers();
 // Concrete worker count for this host given the stored mode. 0 = serial.
 int resolveWorkerCount();
 
+// Autosave cadence in seconds. Default 30; clamped to [10, 600] on write.
+// Applied at launch and when the Settings panel closes.
+constexpr int kAutosaveIntervalDefaultSec = 30;
+int  getAutosaveIntervalSeconds();
+void setAutosaveIntervalSeconds (int seconds);
+
 // MIDI soft takeover (pickup): a continuous absolute binding stays dormant
 // until the controller crosses the parameter's current position, instead of
 // snapping the parameter on first touch. Default false (absolute controllers

@@ -179,7 +179,6 @@ private:
     juce::File getAutosaveFileFor (const juce::File& sessionDir) const;
     bool autosaveIsNewerThan (const juce::File& sessionJson) const;
     void deleteAutosaveFor   (const juce::File& sessionDir) const;
-    static constexpr int kAutosaveIntervalMs = 30000;
 
     // Full JSON kept for quit-prompt diff + recovery; the heavy compare
     // path uses the hash fields below.

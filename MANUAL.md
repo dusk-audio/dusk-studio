@@ -455,6 +455,7 @@ A single button opens the **MIDI Bindings** panel, which lists every CC-to-contr
 - **Follow playhead by default**: start the timeline and the audio / MIDI editors with Chase engaged, so the view scrolls to keep the playhead in sight during playback. Per-machine; takes effect on next launch.
 - **Stop behavior**: where the playhead lands when playback stops — **Stay where it is** (pause), **Return to start**, or **Return to last clicked point**.
 - **MIDI soft takeover (pickup)**: when on, a knob or fader bound with MIDI Learn stays dormant until the physical control crosses the parameter's current position, instead of snapping the parameter on first touch. Applies to continuous mixer targets (faders, pans, sends, EQ, comp, master); plugin-parameter bindings always track directly. Per-machine; takes effect immediately.
+- **Autosave every**: the crash-recovery autosave cadence, 15 seconds to 5 minutes (default 30 seconds). Per-machine; applies when the Settings panel closes.
 - **Scan plugins on startup**: re-run the plugin scanner every time Dusk Studio launches. Off by default; large plugin collections take 10–30 seconds to scan.
 
 ### Advanced

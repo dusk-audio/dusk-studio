@@ -932,10 +932,10 @@ MainComponent::MainComponent()
     }
 
     // Autosave heartbeat. Writes session.json.autosave next to the canonical
-    // session.json every kAutosaveIntervalMs (30 s) so a crash loses at most
+    // session.json on the configured cadence (default 30 s) so a crash loses at most
     // ~30 s of work. The write is atomic (temp + rename), so even a kill
     // during the timer fire never leaves a half-written autosave.
-    startTimer (kAutosaveIntervalMs);
+    startTimer (appconfig::getAutosaveIntervalSeconds() * 1000);
 
     // Seed the dirty-compare baseline for the bootstrap "Untitled" session so
     // edits to a brand-new, never-saved session are caught at quit instead of
@@ -1903,7 +1903,7 @@ void MainComponent::openAudioSettings()
     // Advanced rows (ALSA periods / oversampling / self-test / rescan,
     // plus the Multicore DSP row) off the bottom even with a scroll
     // wrapper, because the viewport never sees the missing pixels.
-    constexpr int kPanelH = 1140;
+    constexpr int kPanelH = 1180;
     panel->setSize (kPanelW, kPanelH);
 
     // Wrap the panel in a Viewport so the full content is reachable on
@@ -1938,7 +1938,14 @@ void MainComponent::openAudioSettings()
     auto host = std::make_unique<ScrollingHost> (std::move (panel),
                                                    kPanelW, kPanelH);
     host->setSize (kPanelW + sbW + 4, hostH);
-    audioSettingsModal.show (*this, std::move (host));
+    // Re-apply per-machine prefs the panel may have changed that live on
+    // MainComponent's side (currently the autosave cadence).
+    juce::Component::SafePointer<MainComponent> safeThis (this);
+    audioSettingsModal.show (*this, std::move (host), [safeThis]
+    {
+        if (auto* self = safeThis.getComponent())
+            self->startTimer (appconfig::getAutosaveIntervalSeconds() * 1000);
+    });
 }
 
 void MainComponent::openShortcuts()
