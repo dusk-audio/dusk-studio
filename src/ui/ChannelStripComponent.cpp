@@ -3516,14 +3516,13 @@ void ChannelStripComponent::timerCallback()
     // popup. Bullet character + brighter background when on.
     if (compactMode)
     {
-        // Channel-strip EQ illuminates when the user has explicitly
-        // enabled the 4-band EQ (auto-armed on first knob touch, also
-        // user-toggleable via the LED in the EQ header) OR when HPF is
-        // engaged (HPF has its own atomic gate independent of eqEnabled).
-        // Comp has a real on/off atom.
+        // Channel-strip EQ illuminates on eqEnabled alone — the same state the
+        // pill's left-click toggles and the expanded EQ header reflects. HPF is
+        // deliberately excluded: it has its own independent gate, and folding it
+        // in here left the pill stuck lit while HPF was engaged, so a click
+        // toggled eqEnabled with no visible change. Comp has a real on/off atom.
         const auto& sp = track.strip;
-        const bool eqOn   = sp.eqEnabled.load (std::memory_order_relaxed)
-                          || sp.hpfEnabled.load (std::memory_order_relaxed);
+        const bool eqOn   = sp.eqEnabled.load (std::memory_order_relaxed);
         const bool compOn = sp.compEnabled.load (std::memory_order_relaxed);
 
         const auto eqAccent   = juce::Colour (fourKColors::kLfGreen);
