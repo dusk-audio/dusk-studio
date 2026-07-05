@@ -199,8 +199,9 @@ private:
     struct Impl;
     std::unique_ptr<Impl> impl;
 
-    // Declared AFTER impl so it is destroyed FIRST: the pool's destructor
-    // waits for a running load, which still dereferences impl->synth.
+    // The destructor joins loadPool before freeing impl->synth (a running load
+    // still dereferences it). Declared after impl so member teardown can't
+    // invert that order either.
     std::atomic<bool> loadPending { false };
     juce::ThreadPool  loadPool { 1 };
 };

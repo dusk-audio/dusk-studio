@@ -2254,22 +2254,27 @@ SessionSerializer::consolidateInto (Session& s, const juce::File& newSessionDir)
     // cur/-relative abstract paths, so no model repoint is needed — the copy
     // just has to exist under the new root before the post-swap re-save
     // refreshes it.
-    const auto oldStateDir = oldDir.getChildFile ("state");
-    if (oldStateDir.isDirectory())
+    juce::File copiedStateDir;
+    if (oldDir != juce::File())
     {
-        const auto newStateDir = newSessionDir.getChildFile ("state");
-        if (! oldStateDir.copyDirectoryTo (newStateDir))
+        const auto oldStateDir = oldDir.getChildFile ("state");
+        if (oldStateDir.isDirectory())
         {
-            newStateDir.deleteRecursively();
-            res.ok = false;
-            res.errorMessage = "Could not copy the plugin state folder to \""
-                             + newStateDir.getFullPathName() + "\"";
-            return res;
+            const auto newStateDir = newSessionDir.getChildFile ("state");
+            if (! oldStateDir.copyDirectoryTo (newStateDir))
+            {
+                newStateDir.deleteRecursively();
+                res.ok = false;
+                res.errorMessage = "Could not copy the plugin state folder to \""
+                                 + newStateDir.getFullPathName() + "\"";
+                return res;
+            }
+            copiedStateDir = newStateDir;
         }
     }
 
-    // Phase B — copy. Any failure rolls back the files copied so far and
-    // returns with the model untouched.
+    // Phase B — copy. Any failure rolls back the files copied so far (including
+    // the state tree above) and returns with the model untouched.
     std::vector<juce::File> copied;
     for (const auto& [srcPath, target] : remap)
     {
@@ -2278,6 +2283,7 @@ SessionSerializer::consolidateInto (Session& s, const juce::File& newSessionDir)
             || ! src.copyFileTo (target))
         {
             for (auto& c : copied) c.deleteFile();
+            if (copiedStateDir != juce::File()) copiedStateDir.deleteRecursively();
             res.ok = false;
             res.errorMessage = "Could not copy \"" + src.getFileName() + "\" to \""
                              + target.getParentDirectory().getFullPathName() + "\"";

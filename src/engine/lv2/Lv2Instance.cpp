@@ -816,10 +816,17 @@ bool Lv2Instance::saveState (std::vector<uint8_t>& out) const
         // survive one more save cycle in prev/.
         const auto cur  = impl->stateDir.getChildFile ("cur");
         const auto prev = impl->stateDir.getChildFile ("prev");
-        prev.deleteRecursively();
-        if (cur.isDirectory()) cur.moveFileTo (prev);
-        cur.createDirectory();
-        curPath = cur.getFullPathName();
+        bool rotated = prev.deleteRecursively();
+        if (rotated && cur.isDirectory())
+            rotated = cur.moveFileTo (prev);
+        if (rotated)
+        {
+            cur.createDirectory();
+            curPath = cur.getFullPathName();
+        }
+        // Rotation failed: leave curPath empty so lilv gets no directory and
+        // falls back to a blob-only (in-memory) save rather than writing a new
+        // generation on top of the stale cur/ files.
     }
     const auto curUtf8 = curPath.toStdString();
     const char* dirC   = curUtf8.empty() ? nullptr : curUtf8.c_str();

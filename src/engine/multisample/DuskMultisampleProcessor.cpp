@@ -63,7 +63,8 @@ float DuskMultisampleProcessor::getHDCC (int cc) const noexcept
 
 juce::File DuskMultisampleProcessor::getControlImagePath() const
 {
-    if (impl == nullptr || impl->synth == nullptr || loadedFilePath.isEmpty())
+    if (impl == nullptr || impl->synth == nullptr || loadedFilePath.isEmpty()
+        || isLoadPending())
         return {};
 
     // Round-trip the '/image' OSC query through a transient sfizz client.
@@ -90,7 +91,7 @@ juce::File DuskMultisampleProcessor::getControlImagePath() const
 std::vector<std::pair<int, juce::String>> DuskMultisampleProcessor::getControlCcLabels() const
 {
     std::vector<std::pair<int, juce::String>> out;
-    if (impl == nullptr || impl->synth == nullptr) return out;
+    if (impl == nullptr || impl->synth == nullptr || isLoadPending()) return out;
     const unsigned n = sfizz_get_num_cc_labels (impl->synth);
     out.reserve (n);
     for (unsigned i = 0; i < n; ++i)
@@ -105,6 +106,9 @@ std::vector<std::pair<int, juce::String>> DuskMultisampleProcessor::getControlCc
 
 DuskMultisampleProcessor::~DuskMultisampleProcessor()
 {
+    // Wait for any in-flight background load before freeing the synth it uses;
+    // the load jobs dereference impl->synth.
+    loadPool.removeAllJobs (false, -1);
     if (impl != nullptr && impl->synth != nullptr)
         sfizz_free (impl->synth);
     if (impl != nullptr && impl->sf2TempDir != juce::File())
@@ -131,7 +135,8 @@ void DuskMultisampleProcessor::releaseResources()
 
 int DuskMultisampleProcessor::getNumRegions() const noexcept
 {
-    if (impl == nullptr || impl->synth == nullptr) return 0;
+    // A background load is mutating the synth off-thread — don't read it.
+    if (impl == nullptr || impl->synth == nullptr || isLoadPending()) return 0;
     return sfizz_get_num_regions (impl->synth);
 }
 
@@ -220,10 +225,11 @@ void DuskMultisampleProcessor::loadFileAsync (
         const bool ok = file.getFileExtension().toLowerCase() == ".sf2"
                             ? loadSf2File (file, err)
                             : loadSfzFile (file, err);
-        loadPending.store (false, std::memory_order_release);
-        juce::MessageManager::callAsync ([onDone, ok, err]
+        juce::MessageManager::callAsync ([this, onDone, ok, err]
         {
             if (onDone) onDone (ok, err);
+            // Stay authoritative until the UI completion has run.
+            loadPending.store (false, std::memory_order_release);
         });
     });
 }
@@ -240,10 +246,11 @@ void DuskMultisampleProcessor::loadSf2PresetAsync (
     {
         juce::String err;
         const bool ok = loadSf2Preset (presetIndex, err);
-        loadPending.store (false, std::memory_order_release);
-        juce::MessageManager::callAsync ([onDone, ok, err]
+        juce::MessageManager::callAsync ([this, onDone, ok, err]
         {
             if (onDone) onDone (ok, err);
+            // Stay authoritative until the UI completion has run.
+            loadPending.store (false, std::memory_order_release);
         });
     });
 }
