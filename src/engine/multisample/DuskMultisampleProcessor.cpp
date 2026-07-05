@@ -153,6 +153,7 @@ void DuskMultisampleProcessor::clearLoadedFile()
     if (impl == nullptr) return;
     if (impl->synth != nullptr)
     {
+        const juce::SpinLock::ScopedLockType lock (sfizzLock);
         // sfizz_load_string with empty body unloads the current file.
         sfizz_load_string (impl->synth, "", "");
     }
@@ -205,6 +206,48 @@ bool DuskMultisampleProcessor::loadSf2Preset (int presetIndex,
     return applySf2Preset (juce::File (loadedFilePath), presetIndex, errorMessage);
 }
 
+void DuskMultisampleProcessor::loadFileAsync (
+    const juce::File& file, std::function<void (bool, juce::String)> onDone)
+{
+    if (loadPending.exchange (true, std::memory_order_acq_rel))
+    {
+        if (onDone) onDone (false, "A load is already in progress");
+        return;
+    }
+    loadPool.addJob ([this, file, onDone = std::move (onDone)]
+    {
+        juce::String err;
+        const bool ok = file.getFileExtension().toLowerCase() == ".sf2"
+                            ? loadSf2File (file, err)
+                            : loadSfzFile (file, err);
+        loadPending.store (false, std::memory_order_release);
+        juce::MessageManager::callAsync ([onDone, ok, err]
+        {
+            if (onDone) onDone (ok, err);
+        });
+    });
+}
+
+void DuskMultisampleProcessor::loadSf2PresetAsync (
+    int presetIndex, std::function<void (bool, juce::String)> onDone)
+{
+    if (loadPending.exchange (true, std::memory_order_acq_rel))
+    {
+        if (onDone) onDone (false, "A load is already in progress");
+        return;
+    }
+    loadPool.addJob ([this, presetIndex, onDone = std::move (onDone)]
+    {
+        juce::String err;
+        const bool ok = loadSf2Preset (presetIndex, err);
+        loadPending.store (false, std::memory_order_release);
+        juce::MessageManager::callAsync ([onDone, ok, err]
+        {
+            if (onDone) onDone (ok, err);
+        });
+    });
+}
+
 bool DuskMultisampleProcessor::applySf2Preset (const juce::File& sf2,
                                                  int presetIndex,
                                                  juce::String& errorMessage)
@@ -230,6 +273,10 @@ bool DuskMultisampleProcessor::applySf2Preset (const juce::File& sf2,
     const auto virtualSfz = newDir.getChildFile ("preset.sfz");
     const auto body       = conv.sfzText.toStdString();
     const auto pathStr    = virtualSfz.getFullPathName().toStdString();
+    // Only the sfizz call itself is serialised against processBlock — the
+    // expensive conversion above runs unlocked so the audio thread keeps
+    // rendering during it.
+    const juce::SpinLock::ScopedLockType lock (sfizzLock);
     if (! sfizz_load_string (impl->synth, pathStr.c_str(), body.c_str()))
     {
         errorMessage = "sfizz rejected the converted SF2 preset";
@@ -252,17 +299,15 @@ bool DuskMultisampleProcessor::applySf2Preset (const juce::File& sf2,
 
 void DuskMultisampleProcessor::setPolyphony (int newPolyphony)
 {
-    // Message-thread entry point. sfizz_set_num_voices is marked OFF
-    // in sfizz.h (cannot be called while RT functions run). JUCE's
-    // AudioProcessorEditor + state-load both run on the message
-    // thread, so we're already off the audio thread here. The
-    // processor's audio thread may be mid-block when this fires;
-    // sfizz handles its own internal synchronisation - we don't add
-    // a lock from this side.
+    // Message/loader-thread entry point — never the audio thread.
     const int clamped = juce::jlimit (1, 256, newPolyphony);
     overrides.polyphony.store (clamped, std::memory_order_relaxed);
     if (impl != nullptr && impl->synth != nullptr)
     {
+        // sfizz_set_num_voices is marked OFF (not callable while RT
+        // functions run) — hold the render lock so processBlock dry-passes
+        // for the duration instead of racing it.
+        const juce::SpinLock::ScopedLockType lock (sfizzLock);
         sfizz_set_num_voices (impl->synth, clamped);
         lastAppliedPolyphony = clamped;
     }
@@ -282,7 +327,11 @@ bool DuskMultisampleProcessor::loadSfzFile (const juce::File& sfz,
         return false;
     }
     const auto path = sfz.getFullPathName().toStdString();
-    const bool ok = sfizz_load_file (impl->synth, path.c_str());
+    bool ok = false;
+    {
+        const juce::SpinLock::ScopedLockType lock (sfizzLock);
+        ok = sfizz_load_file (impl->synth, path.c_str());
+    }
     if (! ok)
     {
         errorMessage = "sfizz_load_file failed for " + sfz.getFileName();
@@ -319,6 +368,16 @@ void DuskMultisampleProcessor::processBlock (juce::AudioBuffer<float>& buf,
     }
 
     if (impl->synth == nullptr)
+    {
+        buf.clear();
+        return;
+    }
+
+    // Loads mutate the sfizz synth from the loader thread; TRY-lock and pass
+    // one silent block instead of racing them (PluginSlot's prepare↔process
+    // pattern). The message-thread mutators take this lock blocking.
+    const juce::SpinLock::ScopedTryLockType renderLock (sfizzLock);
+    if (! renderLock.isLocked())
     {
         buf.clear();
         return;
