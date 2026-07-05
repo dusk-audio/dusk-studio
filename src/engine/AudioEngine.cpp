@@ -570,6 +570,51 @@ void AudioEngine::recomputePdc() noexcept
     for (int t = 0; t < Session::kNumTracks; ++t)
         strips[(size_t) t].setPdcCompensationSamples (comp[t]);
     aggregatePdcLatencySamples.store (deepest, std::memory_order_relaxed);
+
+    // Aux-lane (send-effect) latency delays only the wet return. Master-stage
+    // targets: dry mix waits for the deepest lane, each return for
+    // (deepest - own). Buses host no plugins, so delaying the mix after the
+    // bus pass covers them too. Slots on a lane run in series — their
+    // latencies sum.
+    int auxLat[Session::kNumAuxLanes];
+    int deepestAux = 0;
+    for (int a = 0; a < Session::kNumAuxLanes; ++a)
+    {
+        auto& lane = auxLaneStrips[(size_t) a];
+        int laneLat = 0;
+        for (int p = 0; p < AuxLaneStrip::kMaxPlugins; ++p)
+        {
+            const int mode = lane.insertMode[(size_t) p].load (std::memory_order_relaxed);
+            if (mode == AuxLaneStrip::kInsertPlugin)
+            {
+                int slotLat = lane.getPluginSlot (p).getLatencySamples();
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+                if (lane.isNativeClapLoaded (p))
+                    if (auto* inst = lane.getNativeClapSlot (p).getInstance())
+                        slotLat = inst->getLatencySamples();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+                if (lane.isNativeLv2Loaded (p))
+                    if (auto* inst = lane.getNativeLv2Slot (p).getInstance())
+                        slotLat = inst->getLatencySamples();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+                if (lane.isNativeVst3Loaded (p))
+                    if (auto* inst = lane.getNativeVst3Slot (p).getInstance())
+                        slotLat = inst->getLatencySamples();
+#endif
+                laneLat += juce::jmax (0, slotLat);
+            }
+            else if (mode == AuxLaneStrip::kInsertHardware)
+                laneLat += juce::jmax (0, lane.getHardwareInsertSlot (p).getLatencySamples());
+        }
+        auxLat[a]  = juce::jlimit (0, ChannelStrip::kMaxPdcSamples, laneLat);
+        deepestAux = juce::jmax (deepestAux, auxLat[a]);
+    }
+    masterDryPdcTarget.store (deepestAux, std::memory_order_relaxed);
+    for (int a = 0; a < Session::kNumAuxLanes; ++a)
+        auxReturnPdcTarget[(size_t) a].store (deepestAux - auxLat[a],
+                                               std::memory_order_relaxed);
 }
 
 bool AudioEngine::freezePrepare (int trackIndex, juce::File& outFile, juce::int64& lenSamples)
@@ -2173,6 +2218,32 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
             a.getPluginSlot (p).setHostPlayHead (playHead.get());
     masteringChain.prepare (sr, bs, oxFactor);
     masteringPlayer.prepare (bs, sr);
+
+    {
+        const juce::dsp::ProcessSpec monoSpec { sr, (juce::uint32) bs, 1 };
+        auto prepPdc = [&monoSpec] (MasterPdcDelay& d)
+        {
+            d.prepare (monoSpec);
+            d.setMaximumDelayInSamples (ChannelStrip::kMaxPdcSamples);
+            d.reset();
+        };
+        prepPdc (masterDryPdcL);
+        prepPdc (masterDryPdcR);
+        for (int a = 0; a < Session::kNumAuxLanes; ++a)
+        {
+            prepPdc (auxReturnPdcL[(size_t) a]);
+            prepPdc (auxReturnPdcR[(size_t) a]);
+        }
+        masterDryPdcApplied = 0;
+        auxReturnPdcApplied.fill (0);
+        masterDryPdcL.setDelay (0.0f);
+        masterDryPdcR.setDelay (0.0f);
+        for (int a = 0; a < Session::kNumAuxLanes; ++a)
+        {
+            auxReturnPdcL[(size_t) a].setDelay (0.0f);
+            auxReturnPdcR[(size_t) a].setDelay (0.0f);
+        }
+    }
     metronome.prepare (sr);
     playbackEngine.prepare (bs);  // size the playback read scratch - audio thread mustn't allocate
     pitchDetector.prepare (sr);   // ~46 ms history at the device rate
@@ -4438,6 +4509,49 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
 
     perfLap (PerfSections::kBuses);
 
+    // Master-stage PDC (see recomputePdc): the dry mix — tracks + buses, all
+    // summed by here — waits for the deepest aux-lane latency so the wet
+    // returns added below land aligned. Retarget only while stopped; a
+    // mid-roll delay-length change on the full mix would click.
+    {
+        const int dryTarget = masterDryPdcTarget.load (std::memory_order_relaxed);
+        if (! (isPlaying || isRecording))
+        {
+            if (dryTarget != masterDryPdcApplied)
+            {
+                masterDryPdcApplied = dryTarget;
+                masterDryPdcL.reset();
+                masterDryPdcR.reset();
+                masterDryPdcL.setDelay ((float) dryTarget);
+                masterDryPdcR.setDelay ((float) dryTarget);
+            }
+            for (int a = 0; a < Session::kNumAuxLanes; ++a)
+            {
+                const int t = auxReturnPdcTarget[(size_t) a].load (std::memory_order_relaxed);
+                if (t != auxReturnPdcApplied[(size_t) a])
+                {
+                    auxReturnPdcApplied[(size_t) a] = t;
+                    auxReturnPdcL[(size_t) a].reset();
+                    auxReturnPdcR[(size_t) a].reset();
+                    auxReturnPdcL[(size_t) a].setDelay ((float) t);
+                    auxReturnPdcR[(size_t) a].setDelay ((float) t);
+                }
+            }
+        }
+        if (masterDryPdcApplied > 0)
+        {
+            auto* mL = mixL.data();
+            auto* mR = mixR.data();
+            for (int i = 0; i < numSamples; ++i)
+            {
+                masterDryPdcL.pushSample (0, mL[i]);
+                masterDryPdcR.pushSample (0, mR[i]);
+                mL[i] = masterDryPdcL.popSample (0);
+                mR[i] = masterDryPdcR.popSample (0);
+            }
+        }
+    }
+
     // AUX automation routing. Mirror of the per-track per-block block
     // up at the top: for each aux lane, drive liveReturnLevelDb /
     // liveMute from the lane in Read or (Touch && !touched) mode,
@@ -4559,6 +4673,22 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                                                         numCurrentDeviceInputs,
                                                         currentDeviceOutputs,
                                                         numCurrentDeviceOutputs);
+        // Master-stage PDC: shorter-latency returns wait for the deepest lane
+        // so every wet path lands on the (equally delayed) dry mix.
+        if (auxReturnPdcApplied[(size_t) a] > 0)
+        {
+            auto* wL = auxLaneL[(size_t) a].data();
+            auto* wR = auxLaneR[(size_t) a].data();
+            auto& dL = auxReturnPdcL[(size_t) a];
+            auto& dR = auxReturnPdcR[(size_t) a];
+            for (int i = 0; i < numSamples; ++i)
+            {
+                dL.pushSample (0, wL[i]);
+                dR.pushSample (0, wR[i]);
+                wL[i] = dL.popSample (0);
+                wR[i] = dR.popSample (0);
+            }
+        }
         juce::FloatVectorOperations::add (mixL.data(),
                                             auxLaneL[(size_t) a].data(),
                                             numSamples);

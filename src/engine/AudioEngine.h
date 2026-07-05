@@ -473,6 +473,25 @@ private:
     // recomputePdc; read by BounceEngine to trim the render's lead-in.
     std::atomic<int> aggregatePdcLatencySamples { 0 };
 
+    // Master-stage PDC for aux-lane plugin latency. A latent send effect
+    // (linear-phase EQ, lookahead comp on a return) delays only the WET
+    // path, flamming it against the dry mix. Compensation: once tracks and
+    // buses have summed into the mix, the dry mix waits for the deepest
+    // lane (masterDryPdc*) and each lane return waits for (deepest - own)
+    // (auxReturnPdc*), so wet and dry land together. Targets are written by
+    // recomputePdc; the audio thread relatches ONLY while the transport is
+    // stopped — the master path is rarely silent, and a mid-roll retarget
+    // would click. Zero targets skip the delay processing entirely.
+    using MasterPdcDelay = juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::None>;
+    MasterPdcDelay masterDryPdcL { ChannelStrip::kMaxPdcSamples };
+    MasterPdcDelay masterDryPdcR { ChannelStrip::kMaxPdcSamples };
+    std::array<MasterPdcDelay, Session::kNumAuxLanes> auxReturnPdcL;
+    std::array<MasterPdcDelay, Session::kNumAuxLanes> auxReturnPdcR;
+    std::atomic<int> masterDryPdcTarget { 0 };
+    std::array<std::atomic<int>, Session::kNumAuxLanes> auxReturnPdcTarget {};
+    int masterDryPdcApplied = 0;                                   // audio thread only
+    std::array<int, Session::kNumAuxLanes> auxReturnPdcApplied {}; // audio thread only
+
     // Render-time oversampling override (0 = use session factor). See
     // setRenderOversamplingOverride.
     std::atomic<int> renderOversamplingOverride { 0 };
