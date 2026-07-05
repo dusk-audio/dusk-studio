@@ -1890,12 +1890,11 @@ void ChannelStripComponent::openPluginPicker (bool useChooser)
     // Native LV2 route — same shape; LV2-Native rows replace the JUCE LV2 rows.
     std::function<void (const juce::File&, const juce::String&)> onLv2;
 #if DUSKSTUDIO_HAS_NATIVE_LV2
-    if (kind == pluginpicker::PluginKind::Effects)
-        onLv2 = [safe] (const juce::File& f, const juce::String& id)
-        {
-            if (auto* self = safe.getComponent())
-                self->loadNativeLv2ForChannel (f, id);
-        };
+    onLv2 = [safe] (const juce::File& f, const juce::String& id)
+    {
+        if (auto* self = safe.getComponent())
+            self->loadNativeLv2ForChannel (f, id);
+    };
 #endif
     // Native VST3 route — same shape; VST3-Native rows replace the JUCE VST3 rows.
     std::function<void (const juce::File&, const juce::String&)> onVst3;
@@ -2736,6 +2735,8 @@ void ChannelStripComponent::loadNativeLv2ForChannel (const juce::File& bundleDir
         return;
     }
 
+    if (strip.getNativeLv2Slot().isLoadedInstrument())
+        adoptInstrumentTrackDefaults();
     track.nativeLv2Path     = bundleDir.getFullPathName();
     track.nativeLv2PluginId = strip.getNativeLv2Slot().getPluginId();
     track.nativeLv2StateBase64 = {};

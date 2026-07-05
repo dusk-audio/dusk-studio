@@ -539,16 +539,18 @@ void PluginManager::scanLv2Plugins()
         lv2Descriptions.clearQuick();
         for (const auto& s : scanned)
         {
-            // Only audio effects for now — the native LV2 host is an insert host;
-            // instruments and MIDI utilities stay with the JUCE LV2 format.
-            if (s.desc.audioInputs <= 0 || s.desc.audioOutputs <= 0)
+            // Audio effects (audio in + out) and instruments (atom/MIDI in,
+            // audio out, no audio in — classified by Lv2Bundle::describePlugin).
+            // MIDI-only utilities stay with the JUCE LV2 format.
+            const bool effect = s.desc.audioInputs > 0 && s.desc.audioOutputs > 0;
+            if (! effect && ! s.desc.isInstrument)
                 continue;
             juce::PluginDescription d;
             d.name             = juce::String (juce::CharPointer_UTF8 (s.desc.name.c_str()));
             d.pluginFormatName = "LV2-Native";
             d.fileOrIdentifier = hosting::joinNativeIdentifier (
                 s.bundlePath, juce::String (juce::CharPointer_UTF8 (s.desc.uri.c_str())));
-            d.isInstrument     = false;
+            d.isInstrument     = s.desc.isInstrument;
             lv2Descriptions.add (d);
         }
     }
@@ -559,7 +561,21 @@ void PluginManager::scanLv2Plugins()
 juce::Array<juce::PluginDescription> PluginManager::getLv2EffectDescriptions() const
 {
     const juce::ScopedLock sl (nativeDescriptionsLock);
-    return lv2Descriptions;   // scan already filtered to audio effects
+    juce::Array<juce::PluginDescription> effects;
+    for (const auto& d : lv2Descriptions)
+        if (! d.isInstrument)
+            effects.add (d);
+    return effects;
+}
+
+juce::Array<juce::PluginDescription> PluginManager::getLv2InstrumentDescriptions() const
+{
+    const juce::ScopedLock sl (nativeDescriptionsLock);
+    juce::Array<juce::PluginDescription> instruments;
+    for (const auto& d : lv2Descriptions)
+        if (d.isInstrument)
+            instruments.add (d);
+    return instruments;
 }
 
 void PluginManager::scanVst3NativePlugins()

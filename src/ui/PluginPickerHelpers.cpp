@@ -398,13 +398,16 @@ void openPickerMenu (PluginSlot& slot,
                                  ? manager.getClapEffectDescriptions()
                                  : manager.getClapInstrumentDescriptions());
 
-    // Native-LV2 rows replace the JUCE-hosted LV2 effect rows (same plugins, better
-    // host) so each plugin appears once. JUCE LV2 stays the fallback when unset.
-    if (onPickNativeLv2 && kind == PluginKind::Effects)
+    // Native-LV2 rows replace the JUCE-hosted LV2 rows for both kinds (same
+    // plugins, better host) so each plugin appears once. JUCE LV2 stays the
+    // fallback when unset.
+    if (onPickNativeLv2)
     {
         descriptions.removeIf ([] (const juce::PluginDescription& d)
                                { return d.pluginFormatName == "LV2"; });
-        descriptions.addArray (manager.getLv2EffectDescriptions());
+        descriptions.addArray (kind == PluginKind::Effects
+                                 ? manager.getLv2EffectDescriptions()
+                                 : manager.getLv2InstrumentDescriptions());
     }
 
     // Native-VST3 rows replace the JUCE-hosted VST3 rows for both kinds.
