@@ -64,15 +64,22 @@ juce::int64 BounceEngine::computeBounceLength (double sampleRate, double tail) c
 {
     // Longest region end across all tracks defines the natural bounce end;
     // tail extends that so reverb/comp/EQ ringouts decay before we cut.
+    // MIDI regions and freeze WAVs count too — a virtual-instrument song has
+    // no audio regions at all, and MIDI playing past the last audio region
+    // must not be truncated.
     juce::int64 maxRegionEnd = 0;
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
-        const auto& regions = session.track (t).regions;
-        for (const auto& r : regions)
-        {
-            const juce::int64 end = r.timelineStart + r.lengthInSamples;
-            if (end > maxRegionEnd) maxRegionEnd = end;
-        }
+        const auto& track = session.track (t);
+        for (const auto& r : track.regions)
+            maxRegionEnd = juce::jmax (maxRegionEnd, r.timelineStart + r.lengthInSamples);
+        for (const auto& mr : track.midiRegions.current())
+            maxRegionEnd = juce::jmax (maxRegionEnd, mr.timelineStart + mr.lengthInSamples);
+        if (track.frozen.load (std::memory_order_relaxed)
+            && track.frozenRegion.lengthInSamples > 0)
+            maxRegionEnd = juce::jmax (maxRegionEnd,
+                                        track.frozenRegion.timelineStart
+                                            + track.frozenRegion.lengthInSamples);
     }
     if (maxRegionEnd <= 0) maxRegionEnd = (juce::int64) (sampleRate * 1.0);  // 1 s of silence
     return maxRegionEnd + (juce::int64) (sampleRate * tail);
@@ -337,7 +344,21 @@ void BounceEngine::run()
         lastError = kCancelledError;
     }
 
+    // MP3: the final frames only hit the stream at flush. Flush explicitly so
+    // a disk-full there fails the bounce instead of reporting success.
+    if (auto* mp3 = dynamic_cast<LameMp3Writer*> (writer.get());
+        mp3 != nullptr && ! mp3->finalize() && succeeded)
+    {
+        succeeded = false;
+        const juce::ScopedLock lock (lastErrorLock);
+        lastError = "MP3 encoder flush failed (disk full?)";
+    }
+
     writer.reset();  // flush + close
+    // A cancelled or failed render must not leave a truncated file where the
+    // user's previous good bounce was — stems and freeze already do this.
+    if (! succeeded)
+        outputFile.deleteFile();
 
     // Restore engine state. Each mode reverses what it set up above;
     // anything outside the mode's purview stays untouched.
@@ -691,11 +712,19 @@ bool BounceEngine::renderFreezeTrack (int trackIndex, const juce::File& outFile,
 
     engine.getChannelStrip (trackIndex).setFreezeCapture (capL.data(), capR.data());
 
-    // Same PDC lead-in trim as the stems: the strip path delays the signal by
-    // the deepest track latency. Drop those leading samples so the WAV starts
-    // at timeline 0; the live PDC re-applies on frozen playback.
-    const juce::int64 leadIn   = 0;
-    const juce::int64 toRender = lenSamples;
+    // The capture tap is post-insert, so an audio track's latent insert
+    // (lookahead comp, linear-phase EQ) delays the captured signal by its own
+    // latency — and frozen playback reports 0 to PDC, so that delay would be
+    // baked in and replayed late. Render that many extra samples and drop them
+    // from the head. MIDI instruments are excluded: the scheduler pre-shifts
+    // their events by the plugin latency, so their capture is already aligned.
+    const bool isMidiTrack =
+        session.track (trackIndex).mode.load (std::memory_order_relaxed)
+            == (int) Track::Mode::Midi;
+    const juce::int64 leadIn = isMidiTrack ? 0
+        : (juce::int64) engine.getChannelStrip (trackIndex)
+                              .getPluginSlot().getLatencySamples();
+    const juce::int64 toRender = lenSamples + leadIn;
 
     juce::int64 done = 0, written = 0, dropped = 0;
     bool ok = true;

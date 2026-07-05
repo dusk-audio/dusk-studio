@@ -46,21 +46,30 @@ LameMp3Writer::~LameMp3Writer()
 #if DUSKSTUDIO_HAS_LAME
     if (encoder != nullptr)
     {
-        auto* g = static_cast<lame_global_flags*> (encoder);
-        if (! flushed)
-        {
-            if (mp3buf.size() < 7200) mp3buf.resize (7200);
-            const int bytes = lame_encode_flush (g, mp3buf.data(), (int) mp3buf.size());
-            if (bytes > 0 && output != nullptr)
-                output->write (mp3buf.data(), (size_t) bytes);
-            flushed = true;
-        }
-        lame_close (g);
+        finalize();   // best-effort; failure is unreportable from a destructor
+        lame_close (static_cast<lame_global_flags*> (encoder));
         encoder = nullptr;
     }
 #endif
     // base ~AudioFormatWriter deletes `output` (the FileOutputStream flushes
     // its remaining bytes and closes the file).
+}
+
+bool LameMp3Writer::finalize()
+{
+#if DUSKSTUDIO_HAS_LAME
+    if (encoder == nullptr) return false;
+    if (flushed) return true;
+    flushed = true;
+    if (mp3buf.size() < 7200) mp3buf.resize (7200);
+    const int bytes = lame_encode_flush (static_cast<lame_global_flags*> (encoder),
+                                          mp3buf.data(), (int) mp3buf.size());
+    if (bytes < 0)  return false;
+    if (bytes == 0) return true;
+    return output != nullptr && output->write (mp3buf.data(), (size_t) bytes);
+#else
+    return false;
+#endif
 }
 
 bool LameMp3Writer::encode (const float* left, const float* right, int numSamples)

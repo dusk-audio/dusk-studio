@@ -21,11 +21,14 @@ public:
     //               region end + tail.
     // Stems       : one WAV per track with content or armed. Each
     //               renders through the full chain with every other
-    //               track soloed-off so plugin / bus-comp / mastering
-    //               processing matches the master mix exactly. Files
-    //               written as `<base>_<NN>_<sanitized-name>.wav`
-    //               next to base. Original solo state restored on
-    //               finish / cancel / error.
+    //               track soloed-off, so a stem carries the same
+    //               per-track processing as the mix. Nonlinear master
+    //               stages (bus comp, tape) react to the soloed track
+    //               alone, so stems are NOT guaranteed to null-sum
+    //               against the master mix. Files written as
+    //               `<base>_<NN>_<sanitized-name>.wav` next to base.
+    //               Original solo state restored on finish / cancel /
+    //               error.
     // MasteringChain : MasteringPlayer -> MasteringChain. Length =
     //               player's source file + tail. Engine stage forced
     //               to Mastering for the render.
