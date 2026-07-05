@@ -387,8 +387,9 @@ void showLearnMenu (juce::Component& target,
 // The learn menu is built as a juce::PopupMenu but SHOWN through this hook,
 // so the UI layer can render it in-window (DuskContextMenu) rather than a
 // native popup — native popups flash / mis-dismiss / mis-stack on X11 and
-// Wayland. The UI sets this once at startup; if it's left unset, showLearnMenu
-// falls back to juce::PopupMenu::showMenuAsync.
+// Wayland. The UI sets this once at startup; if it's left unset,
+// showLearnMenu logs, asserts and drops the menu (a native popup must
+// never ship).
 using LearnMenuShowFn = std::function<void (const juce::PopupMenu&, juce::Component&)>;
 void setLearnMenuShowHook (LearnMenuShowFn fn);
 } // namespace midilearn

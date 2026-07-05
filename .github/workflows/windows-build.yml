@@ -43,7 +43,7 @@ jobs:
 
     steps:
       - name: Checkout Dusk Studio
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # external/sfizz is a submodule; without recursive checkout
           # the CMake configure step fails ("external/sfizz/src/sfizz.h

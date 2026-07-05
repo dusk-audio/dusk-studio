@@ -20,7 +20,7 @@ jobs:
 
     steps:
       - name: Checkout Dusk Studio
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # external/sfizz is a submodule; DuskMultisampleProcessor.cpp pulls
           # <sfizz.h>, so it must be present or configure/build fails.

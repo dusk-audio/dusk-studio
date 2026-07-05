@@ -1,6 +1,7 @@
 #include "ChannelStripComponent.h"
 #include "CompBypassLed.h"
 #include "DuskContextMenu.h"
+#include "DuskLabelEditor.h"
 #include "DuskStudioLookAndFeel.h"
 #include "ChannelEqEditor.h"
 #include "ChannelCompEditor.h"
@@ -268,6 +269,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     nameLabel.setColour (juce::Label::textColourId, juce::Colours::white);
     nameLabel.setFont (juce::Font (juce::FontOptions (13.0f, juce::Font::bold)));
     nameLabel.setEditable (false, true, false);  // single-click no, double-click YES, no submit-on-empty
+    disableLabelEditorPopup (nameLabel);
     nameLabel.setTooltip ("Double-click to rename, right-click for colour");
     nameLabel.onTextChange = [this]
     {
@@ -1304,6 +1306,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         lbl.setTooltip ("Double-click to rename this AUX send (e.g. \"Reverb\", \"Delay\"). "
                           "Renames the aux lane globally so all channel strips show the same name.");
         lbl.setEditable (false, true, false);
+        disableLabelEditorPopup (lbl);
         lbl.setColour (juce::Label::backgroundWhenEditingColourId, juce::Colour (0xff202024));
         lbl.setColour (juce::Label::textWhenEditingColourId,       juce::Colours::white);
         lbl.onTextChange = [this, i]
@@ -3220,6 +3223,7 @@ public:
             il.setMinimumHorizontalScale (0.5f);
             il.setTooltip ("Double-click to rename this AUX send.");
             il.setEditable (false, true, false);
+            disableLabelEditorPopup (il);
             il.setColour (juce::Label::backgroundWhenEditingColourId, juce::Colour (0xff202024));
             il.setColour (juce::Label::textWhenEditingColourId,       juce::Colours::white);
             il.onTextChange = [this, i]
@@ -3513,14 +3517,13 @@ void ChannelStripComponent::timerCallback()
     // popup. Bullet character + brighter background when on.
     if (compactMode)
     {
-        // Channel-strip EQ illuminates when the user has explicitly
-        // enabled the 4-band EQ (auto-armed on first knob touch, also
-        // user-toggleable via the LED in the EQ header) OR when HPF is
-        // engaged (HPF has its own atomic gate independent of eqEnabled).
-        // Comp has a real on/off atom.
+        // Channel-strip EQ illuminates on eqEnabled alone — the same state the
+        // pill's left-click toggles and the expanded EQ header reflects. HPF is
+        // deliberately excluded: it has its own independent gate, and folding it
+        // in here left the pill stuck lit while HPF was engaged, so a click
+        // toggled eqEnabled with no visible change. Comp has a real on/off atom.
         const auto& sp = track.strip;
-        const bool eqOn   = sp.eqEnabled.load (std::memory_order_relaxed)
-                          || sp.hpfEnabled.load (std::memory_order_relaxed);
+        const bool eqOn   = sp.eqEnabled.load (std::memory_order_relaxed);
         const bool compOn = sp.compEnabled.load (std::memory_order_relaxed);
 
         const auto eqAccent   = juce::Colour (fourKColors::kLfGreen);

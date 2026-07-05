@@ -1,6 +1,7 @@
 #include "AudioRegionEditor.h"
 #include "AppConfig.h"
 #include "DuskAlerts.h"
+#include "DuskLabelEditor.h"
 #include "DuskContextMenu.h"
 #include "EditCursors.h"
 #include "EditModeToolbar.h"
@@ -117,6 +118,7 @@ AudioRegionEditor::AudioRegionEditor (Session& s, AudioEngine& e, int t, int r)
     // " dB" / " ms" / " / N ms" so the user can retype the displayed
     // string verbatim. Bad input reverts on the next status refresh.
     gainLabel.setEditable (false, true, false);
+    disableLabelEditorPopup (gainLabel);
     gainLabel.setColour (juce::Label::backgroundWhenEditingColourId, juce::Colour (0xff202028));
     gainLabel.setColour (juce::Label::textWhenEditingColourId,        juce::Colours::white);
     gainLabel.setTooltip ("Double-click to type a dB value (range -24 to +12).");
@@ -139,6 +141,7 @@ AudioRegionEditor::AudioRegionEditor (Session& s, AudioEngine& e, int t, int r)
     };
 
     fadeLabel.setEditable (false, true, false);
+    disableLabelEditorPopup (fadeLabel);
     fadeLabel.setColour (juce::Label::backgroundWhenEditingColourId, juce::Colour (0xff202028));
     fadeLabel.setColour (juce::Label::textWhenEditingColourId,        juce::Colours::white);
     fadeLabel.setTooltip ("Double-click to type \"IN / OUT\" fade lengths in ms "
@@ -180,6 +183,7 @@ AudioRegionEditor::AudioRegionEditor (Session& s, AudioEngine& e, int t, int r)
     titleLabel.setColour (juce::Label::backgroundColourId, juce::Colour (0xff181820));
     titleLabel.setFont (juce::Font (juce::FontOptions (12.5f, juce::Font::bold)));
     titleLabel.setEditable (false, true, false);
+    disableLabelEditorPopup (titleLabel);
     titleLabel.setColour (juce::Label::backgroundWhenEditingColourId, juce::Colour (0xff202028));
     titleLabel.setColour (juce::Label::textWhenEditingColourId,        juce::Colours::white);
     titleLabel.setTooltip ("Double-click to rename the region. Empty = use filename.");
