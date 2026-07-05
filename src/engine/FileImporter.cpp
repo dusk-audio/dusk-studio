@@ -282,6 +282,14 @@ AudioImportResult importAudio (const AudioImportRequest& req)
         std::array<juce::WindowedSincInterpolator, 2> interp;
         for (auto& i : interp) i.reset();
 
+        // The sinc kernel delays its output by getBaseLatency() INPUT samples;
+        // without discarding that from the head, every resampled import lands
+        // ~2 ms late on the timeline (and the tail gets truncated by the same
+        // amount). Discard the equivalent output-domain prefix; EOF zero-pad
+        // above supplies the extra input the tail needs.
+        juce::int64 discard = (juce::int64) std::llround (
+            (double) juce::WindowedSincInterpolator::getBaseLatency() / ratio);
+
         int         carryLen = 0;
         juce::int64 srcPos   = 0;
         juce::int64 produced = 0;
@@ -313,15 +321,20 @@ AudioImportResult importAudio (const AudioImportRequest& req)
                 carryLen = needIn;
             }
 
-            const int nOut = (int) juce::jmin ((juce::int64) kGrain, outLength - produced);
+            const int nOut = (int) juce::jmin ((juce::int64) kGrain,
+                                                (outLength - produced) + discard);
             int consumed = 0;
             for (int c = 0; c < req.targetChannels; ++c)
                 consumed = interp[(size_t) c].process (ratio,
                                                         carry.getReadPointer (c),
                                                         outChunk.getWritePointer (c),
                                                         nOut);
-            wrote = writer->writeFromAudioSampleBuffer (outChunk, 0, nOut);
-            produced += nOut;
+            const int skip       = (int) juce::jmin ((juce::int64) nOut, discard);
+            const int writeCount = nOut - skip;
+            if (writeCount > 0)
+                wrote = writer->writeFromAudioSampleBuffer (outChunk, skip, writeCount);
+            discard  -= skip;
+            produced += writeCount;
 
             consumed = juce::jlimit (0, carryLen, consumed);
             for (int c = 0; c < req.targetChannels; ++c)

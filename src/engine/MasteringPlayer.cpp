@@ -1,6 +1,9 @@
 #include "MasteringPlayer.h"
+#include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
+#include <thread>
 
 namespace duskstudio
 {
@@ -20,15 +23,46 @@ MasteringPlayer::~MasteringPlayer()
     bufferingThread.stopThread (2000);
 }
 
+bool MasteringPlayer::parkAndWaitForAudio()
+{
+    currentReader.store (nullptr, std::memory_order_release);
+    // process() bumps audioInFlight BEFORE loading currentReader, so once
+    // the counter reaches zero no callback can be touching the scratch or
+    // interpolators (new entries see null and bail). Happy path is sub-ms;
+    // the deadline only fires on a stuck/detached audio thread — stale
+    // resample state then beats a data race.
+    constexpr auto kDrainTimeout = std::chrono::milliseconds (200);
+    const auto deadline = std::chrono::steady_clock::now() + kDrainTimeout;
+    while (audioInFlight.load (std::memory_order_acquire) > 0)
+    {
+        if (std::chrono::steady_clock::now() > deadline)
+        {
+            std::fprintf (stderr,
+                          "[Dusk Studio/MasteringPlayer] parkAndWaitForAudio: audioInFlight=%d "
+                          "after %lld ms; leaving resample state untouched.\n",
+                          audioInFlight.load (std::memory_order_relaxed),
+                          (long long) kDrainTimeout.count());
+            return false;
+        }
+        std::this_thread::yield();
+    }
+    return true;
+}
+
 void MasteringPlayer::prepare (int maxBlockSize, double deviceSampleRate)
 {
-    readScratch.setSize (2, juce::jmax (1, maxBlockSize),
-                          /*keepExistingContent*/ false,
-                          /*clearExtraSpace*/      false,
-                          /*avoidReallocating*/    false);
+    const bool drained = parkAndWaitForAudio();
+    if (drained)
+        readScratch.setSize (2, juce::jmax (1, maxBlockSize),
+                              /*keepExistingContent*/ false,
+                              /*clearExtraSpace*/      false,
+                              /*avoidReallocating*/    false);
     preparedBlockSize  = juce::jmax (1, maxBlockSize);
     preparedDeviceRate = deviceSampleRate;
-    updateResampleState();
+    if (drained)
+        updateResampleState();
+    // Re-publish the reader the park cleared (no-op when none is loaded).
+    currentReader.store (ownedReader.get(), std::memory_order_release);
 }
 
 void MasteringPlayer::updateResampleState()
@@ -71,15 +105,18 @@ bool MasteringPlayer::loadFile (const juce::File& file)
     // or new reader + not playing).
     playing.store (false, std::memory_order_relaxed);
 
-    // Park audio thread on null so any in-flight callback bails before we
-    // move the previous owner out from under it.
-    currentReader.store (nullptr, std::memory_order_release);
+    // Park the audio thread on null AND drain any in-flight callback: the
+    // scratch resize + interpolator resets below race a block that latched
+    // the old reader before the park. On a drain timeout refuse the load —
+    // stale state beats a data race.
+    if (! parkAndWaitForAudio())
+    {
+        currentReader.store (ownedReader.get(), std::memory_order_release);
+        return false;
+    }
 
     // Move the (now-untouched-by-audio) prior owner into previousReader so
     // its destructor doesn't run until the NEXT loadFile/unloadFile/dtor.
-    // That delay covers the audio thread's worst case: it observed the
-    // null-store and dropped the old pointer for this block; by the next
-    // mutation, at least one block has elapsed.
     previousReader = std::move (ownedReader);
     ownedReader    = std::move (r);
     loadedFile     = file;
@@ -117,6 +154,11 @@ void MasteringPlayer::process (float* L, float* R, int numSamples) noexcept
     std::memset (R, 0, sizeof (float) * (size_t) numSamples);
 
     if (! playing.load (std::memory_order_relaxed)) return;
+
+    // Bump BEFORE loading currentReader: parkAndWaitForAudio clears the
+    // pointer then drains this counter, so a block that got past the null
+    // check is waited on before the scratch/interpolators are mutated.
+    AudioInFlightScope guard (audioInFlight);
 
     // Acquire-load the reader pointer once and use it for the whole block.
     // Pairs with the release-stores in loadFile/unloadFile.
