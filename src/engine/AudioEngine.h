@@ -295,6 +295,22 @@ public:
         return aggregatePdcLatencySamples.load (std::memory_order_relaxed);
     }
 
+    // Deepest aux-lane latency the master-stage PDC delays the mix by. Bounce
+    // adds it to the lead-in trim: the rendered mix starts this many samples
+    // late once the master-stage delays are engaged.
+    int getMasterDryPdcTargetSamples() const noexcept
+    {
+        return masterDryPdcTarget.load (std::memory_order_relaxed);
+    }
+
+    // Offline-render only — call with the audio callback DETACHED. The
+    // in-callback relatch of the master-stage PDC is gated on a stopped
+    // transport, which an offline drive never satisfies (it forces Playing
+    // before the first driven block), so without this a bounce rendered with
+    // wet returns misaligned against the dry mix whenever an aux lane
+    // reported latency. Recomputes targets, then latches them directly.
+    void applyMasterPdcTargetsNow() noexcept;
+
     // Test-only. Next callback merges `events` into perInputMidi[inputIdx]
     // AFTER collector drain. Cleared after one block.
     void stageTestMidiInjection (int inputIdx, juce::MidiBuffer events);
