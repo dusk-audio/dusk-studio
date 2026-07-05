@@ -2560,6 +2560,11 @@ void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
         return;
     }
 
+    // Right-click is the context-menu gesture everywhere else; in Draw mode
+    // it fell through to here and planted a note on the empty grid.
+    if (e.mods.isPopupMenu())
+        return;
+
     MidiNote n;
     n.channel = 1;
     n.noteNumber = snapPitchToScale (noteNumberForY (e.y));

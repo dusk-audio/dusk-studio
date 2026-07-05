@@ -2989,6 +2989,26 @@ void TapeStrip::showMidiRegionContextMenu (int trackIdx, int regionIdx,
     }
     m.addSubMenu ("Color", colourSub);
 
+    m.addSeparator();
+    // Parity with the audio-region menu — the strip is otherwise the only
+    // place a MIDI region can't be deleted from.
+    m.addItem ("Delete region",
+                [safeThis = juce::Component::SafePointer<TapeStrip> (this),
+                 trackIdx, regionIdx]
+                {
+                    if (safeThis == nullptr) return;
+                    auto& self = *safeThis;
+                    const auto regs = self.session.track (trackIdx).midiRegions.current();
+                    if (regionIdx < 0 || regionIdx >= (int) regs.size()) return;
+                    if (regs[(size_t) regionIdx].locked) return;
+                    auto& um = self.engine.getUndoManager();
+                    um.beginNewTransaction ("Delete MIDI region");
+                    um.perform (new DeleteMidiRegionAction (self.session, self.engine,
+                                                              trackIdx, regionIdx));
+                    self.clearAllSelections();
+                    self.repaint();
+                });
+
     showContextMenu (m, *this, screenPos,
         [safeThis = juce::Component::SafePointer<TapeStrip> (this),
          trackIdx, regionIdx]
@@ -4215,7 +4235,22 @@ bool TapeStrip::pasteAtPlayhead()
 bool TapeStrip::deleteSelectedRegion()
 {
     auto selection = allSelectedRegions();
-    if (selection.empty()) return false;
+    if (selection.empty())
+    {
+        // No audio selection: fall back to the selected MIDI region so the
+        // Delete key works on MIDI takes too (audio-only before — the key
+        // was a silent no-op with a MIDI region highlighted).
+        const int t = selectedMidiTrack, r = selectedMidiRegion;
+        if (t < 0 || t >= Session::kNumTracks || r < 0) return false;
+        const auto regs = session.track (t).midiRegions.current();
+        if (r >= (int) regs.size() || regs[(size_t) r].locked) return false;
+        auto& um = engine.getUndoManager();
+        um.beginNewTransaction ("Delete MIDI region");
+        um.perform (new DeleteMidiRegionAction (session, engine, t, r));
+        clearAllSelections();
+        repaint();
+        return true;
+    }
 
     // Drop locked regions from the target list. Locked = reject
     // destructive operations. If every selected region is locked

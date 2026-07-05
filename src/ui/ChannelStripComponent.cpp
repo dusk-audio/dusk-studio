@@ -3022,6 +3022,17 @@ void ChannelStripComponent::refreshPrintButtonForMode()
 
 void ChannelStripComponent::handleFreezeClick()
 {
+    // Freeze/unfreeze rebuild playback and the freeze render detaches the
+    // audio callback — mid-take that kills the recording, mid-playback it
+    // glitches. Same isStopped gate as the other offline operations.
+    if (! engine.getTransport().isStopped())
+    {
+        showDuskAlert (*this, "Transport is rolling",
+                       "Stop playback or recording before freezing or "
+                       "unfreezing a track.");
+        return;
+    }
+
     // Unfreeze is cheap (no render) — do it inline and refresh the button.
     if (track.frozen.load (std::memory_order_relaxed))
     {
