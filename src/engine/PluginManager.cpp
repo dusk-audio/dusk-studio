@@ -510,24 +510,25 @@ void PluginManager::saveNativeCache (const juce::Array<juce::PluginDescription>&
     root.writeTo (file);
 }
 
-juce::Array<juce::PluginDescription> PluginManager::getClapEffectDescriptions() const
+juce::Array<juce::PluginDescription> PluginManager::filterByInstrumentFlag (
+    const juce::Array<juce::PluginDescription>& source, bool wantInstrument) const
 {
     const juce::ScopedLock sl (nativeDescriptionsLock);
-    juce::Array<juce::PluginDescription> effects;
-    for (const auto& d : clapDescriptions)
-        if (! d.isInstrument)
-            effects.add (d);
-    return effects;
+    juce::Array<juce::PluginDescription> out;
+    for (const auto& d : source)
+        if (d.isInstrument == wantInstrument)
+            out.add (d);
+    return out;
+}
+
+juce::Array<juce::PluginDescription> PluginManager::getClapEffectDescriptions() const
+{
+    return filterByInstrumentFlag (clapDescriptions, false);
 }
 
 juce::Array<juce::PluginDescription> PluginManager::getClapInstrumentDescriptions() const
 {
-    const juce::ScopedLock sl (nativeDescriptionsLock);
-    juce::Array<juce::PluginDescription> instruments;
-    for (const auto& d : clapDescriptions)
-        if (d.isInstrument)
-            instruments.add (d);
-    return instruments;
+    return filterByInstrumentFlag (clapDescriptions, true);
 }
 
 void PluginManager::scanLv2Plugins()
@@ -560,22 +561,12 @@ void PluginManager::scanLv2Plugins()
 
 juce::Array<juce::PluginDescription> PluginManager::getLv2EffectDescriptions() const
 {
-    const juce::ScopedLock sl (nativeDescriptionsLock);
-    juce::Array<juce::PluginDescription> effects;
-    for (const auto& d : lv2Descriptions)
-        if (! d.isInstrument)
-            effects.add (d);
-    return effects;
+    return filterByInstrumentFlag (lv2Descriptions, false);
 }
 
 juce::Array<juce::PluginDescription> PluginManager::getLv2InstrumentDescriptions() const
 {
-    const juce::ScopedLock sl (nativeDescriptionsLock);
-    juce::Array<juce::PluginDescription> instruments;
-    for (const auto& d : lv2Descriptions)
-        if (d.isInstrument)
-            instruments.add (d);
-    return instruments;
+    return filterByInstrumentFlag (lv2Descriptions, true);
 }
 
 void PluginManager::scanVst3NativePlugins()
@@ -595,22 +586,12 @@ void PluginManager::scanVst3NativePlugins()
 
 juce::Array<juce::PluginDescription> PluginManager::getVst3NativeEffectDescriptions() const
 {
-    const juce::ScopedLock sl (nativeDescriptionsLock);
-    juce::Array<juce::PluginDescription> effects;
-    for (const auto& d : vst3NativeDescriptions)
-        if (! d.isInstrument)
-            effects.add (d);
-    return effects;
+    return filterByInstrumentFlag (vst3NativeDescriptions, false);
 }
 
 juce::Array<juce::PluginDescription> PluginManager::getVst3NativeInstrumentDescriptions() const
 {
-    const juce::ScopedLock sl (nativeDescriptionsLock);
-    juce::Array<juce::PluginDescription> instruments;
-    for (const auto& d : vst3NativeDescriptions)
-        if (d.isInstrument)
-            instruments.add (d);
-    return instruments;
+    return filterByInstrumentFlag (vst3NativeDescriptions, true);
 }
 
 juce::Array<juce::PluginDescription> PluginManager::getInstrumentDescriptions() const

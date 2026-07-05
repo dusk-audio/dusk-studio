@@ -117,6 +117,9 @@ private:
     juce::Array<juce::PluginDescription> vst3NativeDescriptions; // native VST3 (scanned separately)
     bool                           oopEnabled { false };
 
+    juce::Array<juce::PluginDescription> filterByInstrumentFlag (
+        const juce::Array<juce::PluginDescription>& source, bool wantInstrument) const;
+
     void loadCache();
     void saveCache() const;
 
