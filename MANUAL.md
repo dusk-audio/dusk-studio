@@ -423,7 +423,7 @@ Open **Settings → Audio…** to choose your audio device. The panel is divided
 ### Audio
 
 - **Device**: lists every backend driver Dusk Studio detected. On Linux, PipeWire and JACK appear as "JACK"; ALSA devices appear separately. On Windows, ASIO is preferred and selected by default when an ASIO driver is present; if none is installed, Dusk Studio falls back to "Windows Audio (Exclusive Mode)" for low latency, then shared "Windows Audio", then "DirectSound". Install your interface's ASIO driver (or ASIO4ALL) for best latency. Changes apply immediately — there is no Save button — and the device you pick is remembered across restarts (per machine, not per session).
-- **Sample rate**: any rate the device supports. 44.1 kHz, 48 kHz, 88.2 kHz, 96 kHz are common.
+- **Sample rate**: any rate the device supports. 44.1 kHz, 48 kHz, 88.2 kHz, 96 kHz are common. A session remembers the rate its audio was made at: opening it tries to switch the device to that rate automatically, and Dusk Studio warns if it can't (or if you change the rate mid-session) — recorded tracks play at the wrong speed and pitch until the device runs at the session's rate.
 - **Block size**: smaller blocks give lower latency but cost more CPU per sample. 256 or 512 samples is a good starting point.
 - **Periods (Linux/ALSA only)**: how many buffers the ALSA driver keeps in flight. Two is the lowest-latency safe value; three or more is more robust on a busy machine.
 - **Active output channels**: the master mix uses outputs 1-2. If your interface has more outputs, tick the extra pairs here to open them — each pair then becomes selectable as an aux lane's **Output** (a headphone / cue feed). Off by default; the master stays stereo until you enable more.
@@ -453,6 +453,9 @@ A single button opens the **MIDI Bindings** panel, which lists every CC-to-contr
 - **UI scale**: a global zoom factor for the entire interface. Restart Dusk Studio after changing this for best results.
 - **Expand tape strip by default**: show the tape strip on every session open.
 - **Follow playhead by default**: start the timeline and the audio / MIDI editors with Chase engaged, so the view scrolls to keep the playhead in sight during playback. Per-machine; takes effect on next launch.
+- **Stop behavior**: where the playhead lands when playback stops — **Stay where it is** (pause), **Return to start**, or **Return to last clicked point**.
+- **MIDI soft takeover (pickup)**: when on, a knob or fader bound with MIDI Learn stays dormant until the physical control crosses the parameter's current position, instead of snapping the parameter on first touch. Applies to continuous mixer targets (faders, pans, sends, EQ, comp, master); plugin-parameter bindings always track directly. Per-machine; takes effect immediately.
+- **Autosave every**: the crash-recovery autosave cadence, 15 seconds to 5 minutes (default 30 seconds). Per-machine; applies when the Settings panel closes.
 - **Scan plugins on startup**: re-run the plugin scanner every time Dusk Studio launches. Off by default; large plugin collections take 10–30 seconds to scan.
 
 ### Advanced
@@ -937,7 +940,7 @@ A streaming-platform preset picker (Spotify, Apple Music, YouTube, Netflix, etc.
 
 ## Exporting the master
 
-**Export master…** renders the mastering chain offline to `master.wav` in the session folder. A progress dialog shows the output path and a bar; the render runs as fast as the CPU allows and you can cancel mid-render. The output is **stereo 24-bit WAV at the session sample rate** by default; name the file `.mp3` to export a 320 kbps MP3 instead.
+**Export master…** renders the mastering chain offline. Pick a delivery preset first — **WAV 24-bit at the session rate** (archive/streaming), **WAV 16-bit 44.1 kHz with TPDF dither** (CD spec), or **MP3 320 kbps** — then a destination (defaults to `master.wav` / `master.mp3` in the session folder). A progress dialog shows the output path and a bar; the render runs as fast as the CPU allows and you can cancel mid-render.
 
 \newpage
 
@@ -1436,6 +1439,8 @@ In practice the differences are small:
 - A slot holds one plugin regardless of host: loading a CLAP, an LV2-Native, a VST3-Native, or a standard-host plugin into the same slot replaces whatever was there.
 
 One caveat: a plugin's saved state does not transfer between hosting layers. If a session carried a plugin under the standard LV2 or VST3 host and you load the same plugin as a native row (or vice versa), it starts from its defaults — set it up once and save.
+
+**LV2-Native** file-backed state (a sampler's loaded bank, a convolution reverb's impulse response) is snapshotted into the session's `state/lv2/` folder on save and travels with the session — including through **Save As**. The folder keeps the previous save as a fallback generation; treat it as part of the session like `audio/`.
 
 ## Out-of-process sandboxing
 

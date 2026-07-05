@@ -21,11 +21,14 @@ public:
     //               region end + tail.
     // Stems       : one WAV per track with content or armed. Each
     //               renders through the full chain with every other
-    //               track soloed-off so plugin / bus-comp / mastering
-    //               processing matches the master mix exactly. Files
-    //               written as `<base>_<NN>_<sanitized-name>.wav`
-    //               next to base. Original solo state restored on
-    //               finish / cancel / error.
+    //               track soloed-off, so a stem carries the same
+    //               per-track processing as the mix. Nonlinear master
+    //               stages (bus comp, tape) react to the soloed track
+    //               alone, so stems are NOT guaranteed to null-sum
+    //               against the master mix. Files written as
+    //               `<base>_<NN>_<sanitized-name>.wav` next to base.
+    //               Original solo state restored on finish / cancel /
+    //               error.
     // MasteringChain : MasteringPlayer -> MasteringChain. Length =
     //               player's source file + tail. Engine stage forced
     //               to Mastering for the render.
@@ -75,13 +78,16 @@ public:
     // False if a render is already in flight. sampleRate <= 0 uses
     // engine's current rate. blockSize 1024 amortises overhead vs
     // realtime. tail = silence appended so reverb/comp tails decay.
+    // wavBitDepth: 24 (default) or 16 — 16 gets TPDF dither at ±1 LSB
+    // before the truncation (CD / distribution target).
     bool start (const juce::File& outputFile,
                 double sampleRate = 0.0,
                 int blockSize = 1024,
                 double tailSeconds = 5.0,
                 Mode mode = Mode::MasterMix,
                 Format format = Format::Wav,
-                int mp3BitrateKbps = 320);
+                int mp3BitrateKbps = 320,
+                int wavBitDepth = 24);
 
     void cancel() noexcept { cancelRequested.store (true, std::memory_order_relaxed); }
 
@@ -140,6 +146,7 @@ private:
     Mode         renderMode       = Mode::MasterMix;
     Format       renderFormat     = Format::Wav;
     int          renderBitrateKbps = 320;
+    int          renderWavBitDepth = 24;
     int          freezeTrackIndex = -1;   // Mode::FreezeTrack target
     juce::int64  freezeLenSamples = 0;
 

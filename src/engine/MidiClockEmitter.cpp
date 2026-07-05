@@ -25,8 +25,8 @@ void MidiClockEmitter::generateBlock (juce::int64 blockStartSample,
             // Snap the next clock to the start sample so the first F8
             // after Start lands on the downbeat. Without this, the
             // first tick could drift up to a full samplesPerClock
-            // depending on where nextClockSample sat from prior runs.
-            nextClockSample = blockStartSample;
+            // depending on where the phase sat from prior runs.
+            clockPhase = (double) blockStartSample;
         }
     }
 
@@ -35,21 +35,21 @@ void MidiClockEmitter::generateBlock (juce::int64 blockStartSample,
     if (samplesPerClock <= 0.0) return;
 
     const juce::int64 blockEnd = blockStartSample + (juce::int64) numSamples;
-    // First emission: if the emitter has no phase yet (nextClockSample
+    // First emission: if the emitter has no phase yet (clockPhase
     // <= blockStart - 2 * samplesPerClock for a "stale" gap), realign
     // to blockStart so we don't burst many catch-up clocks.
-    if (nextClockSample + (juce::int64) (samplesPerClock * 2.0) < blockStartSample)
-        nextClockSample = blockStartSample;
+    if (clockPhase + samplesPerClock * 2.0 < (double) blockStartSample)
+        clockPhase = (double) blockStartSample;
 
-    while (nextClockSample < blockEnd)
+    // Round only at emission; the phase itself advances by the exact
+    // fractional interval so the average tick rate matches the tempo.
+    while ((juce::int64) std::llround (clockPhase) < blockEnd)
     {
-        const int offset = (int) (nextClockSample - blockStartSample);
+        const int offset = (int) ((juce::int64) std::llround (clockPhase)
+                                   - blockStartSample);
         if (offset >= 0 && offset < numSamples)
             out.addEvent (juce::MidiMessage ((juce::uint8) 0xF8), offset);
-        // Fractional advance to keep long-term tempo accurate; the
-        // accumulated rounding error stays bounded by 1 sample over
-        // hundreds of ticks.
-        nextClockSample += (juce::int64) std::llround (samplesPerClock);
+        clockPhase += samplesPerClock;
     }
 }
 } // namespace duskstudio

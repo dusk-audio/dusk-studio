@@ -432,9 +432,10 @@ juce::MidiBuffer McuController::buildEmitBuffer (bool forceAll)
             playhead = transport->getPlayhead();
     const float bpm   = session.tempoBpm.load (std::memory_order_relaxed);
     const int bpb     = juce::jmax (1, session.beatsPerBar.load (std::memory_order_relaxed));
-    const double srGuess = 48000.0;   // placeholder; engine will wire a real SR later
+    double sr = sampleRateProvider ? sampleRateProvider() : 0.0;
+    if (sr <= 0.0) sr = 48000.0;
     const double samplesPerBeat = (bpm > 0.0f)
-                                    ? srGuess * 60.0 / (double) bpm : srGuess;
+                                    ? sr * 60.0 / (double) bpm : sr;
     const double samplesPerBar  = samplesPerBeat * (double) bpb;
     const int bar  = (int) ((double) playhead / juce::jmax (1.0, samplesPerBar));
     const int beat = (int) (((double) playhead - bar * samplesPerBar) / juce::jmax (1.0, samplesPerBeat));

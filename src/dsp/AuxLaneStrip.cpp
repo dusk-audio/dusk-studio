@@ -63,7 +63,10 @@ void AuxLaneStrip::prepare (double sampleRate, int blockSize)
                 const bool ok = nls.load (p, preparedSampleRate, preparedBlockSize, err,
                                           pendingLv2PluginId[(size_t) s]);
                 if (ok && ! pendingLv2State[(size_t) s].empty())
+                {
+                    nls.setStateDirectory (pendingLv2StateDir[(size_t) s]);
                     nls.loadState (pendingLv2State[(size_t) s]);
+                }
                 lv2ReloadFailed[(size_t) s].store (! ok, std::memory_order_relaxed);
             }
             // Consumed either way — a CLAP-suppressed pending must not replay on a
@@ -71,6 +74,7 @@ void AuxLaneStrip::prepare (double sampleRate, int blockSize)
             pendingLv2Path[(size_t) s].clear();
             pendingLv2PluginId[(size_t) s].clear();
             pendingLv2State[(size_t) s].clear();
+            pendingLv2StateDir[(size_t) s] = juce::File();
         }
     }
 #endif
@@ -205,12 +209,14 @@ void AuxLaneStrip::unloadNativeLv2 (int slotIdx) noexcept
 
 void AuxLaneStrip::setPendingNativeLv2 (int slotIdx, const juce::File& path,
                                          std::vector<uint8_t> state,
-                                         const juce::String& pluginId) noexcept
+                                         const juce::String& pluginId,
+                                         const juce::File& stateDir) noexcept
 {
     jassert (slotIdx >= 0 && slotIdx < kMaxPlugins);
     pendingLv2Path[(size_t) slotIdx]     = path.getFullPathName();
     pendingLv2PluginId[(size_t) slotIdx] = pluginId;
     pendingLv2State[(size_t) slotIdx]    = std::move (state);
+    pendingLv2StateDir[(size_t) slotIdx] = stateDir;
 }
 #endif
 

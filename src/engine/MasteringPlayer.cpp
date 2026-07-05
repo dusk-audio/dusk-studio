@@ -1,5 +1,9 @@
 #include "MasteringPlayer.h"
+#include <chrono>
+#include <cmath>
+#include <cstdio>
 #include <cstring>
+#include <thread>
 
 namespace duskstudio
 {
@@ -19,12 +23,61 @@ MasteringPlayer::~MasteringPlayer()
     bufferingThread.stopThread (2000);
 }
 
-void MasteringPlayer::prepare (int maxBlockSize)
+bool MasteringPlayer::parkAndWaitForAudio()
 {
-    readScratch.setSize (2, juce::jmax (1, maxBlockSize),
-                          /*keepExistingContent*/ false,
-                          /*clearExtraSpace*/      false,
-                          /*avoidReallocating*/    false);
+    currentReader.store (nullptr, std::memory_order_release);
+    // process() bumps audioInFlight BEFORE loading currentReader, so once
+    // the counter reaches zero no callback can be touching the scratch or
+    // interpolators (new entries see null and bail). Happy path is sub-ms;
+    // the deadline only fires on a stuck/detached audio thread — stale
+    // resample state then beats a data race.
+    constexpr auto kDrainTimeout = std::chrono::milliseconds (200);
+    const auto deadline = std::chrono::steady_clock::now() + kDrainTimeout;
+    while (audioInFlight.load (std::memory_order_acquire) > 0)
+    {
+        if (std::chrono::steady_clock::now() > deadline)
+        {
+            std::fprintf (stderr,
+                          "[Dusk Studio/MasteringPlayer] parkAndWaitForAudio: audioInFlight=%d "
+                          "after %lld ms; leaving resample state untouched.\n",
+                          audioInFlight.load (std::memory_order_relaxed),
+                          (long long) kDrainTimeout.count());
+            return false;
+        }
+        std::this_thread::yield();
+    }
+    return true;
+}
+
+void MasteringPlayer::prepare (int maxBlockSize, double deviceSampleRate)
+{
+    const bool drained = parkAndWaitForAudio();
+    if (drained)
+        readScratch.setSize (2, juce::jmax (1, maxBlockSize),
+                              /*keepExistingContent*/ false,
+                              /*clearExtraSpace*/      false,
+                              /*avoidReallocating*/    false);
+    preparedBlockSize  = juce::jmax (1, maxBlockSize);
+    preparedDeviceRate = deviceSampleRate;
+    if (drained)
+        updateResampleState();
+    // Re-publish the reader the park cleared (no-op when none is loaded).
+    currentReader.store (ownedReader.get(), std::memory_order_release);
+}
+
+void MasteringPlayer::updateResampleState()
+{
+    const double srcRate = ownedReader != nullptr ? ownedReader->sampleRate : 0.0;
+    const double ratio   = (srcRate > 0.0 && preparedDeviceRate > 0.0)
+                               ? srcRate / preparedDeviceRate : 1.0;
+    // Worst-case source samples one output block can consume, plus the
+    // interpolator's history margin.
+    const int inNeeded = (int) std::ceil ((double) preparedBlockSize
+                                           * juce::jmax (1.0, ratio)) + 8;
+    inScratch.setSize (2, juce::jmax (1, inNeeded), false, false, false);
+    interpL.reset();
+    interpR.reset();
+    speedRatio.store (ratio, std::memory_order_release);
 }
 
 bool MasteringPlayer::loadFile (const juce::File& file)
@@ -52,19 +105,25 @@ bool MasteringPlayer::loadFile (const juce::File& file)
     // or new reader + not playing).
     playing.store (false, std::memory_order_relaxed);
 
-    // Park audio thread on null so any in-flight callback bails before we
-    // move the previous owner out from under it.
-    currentReader.store (nullptr, std::memory_order_release);
+    // Park the audio thread on null AND drain any in-flight callback: the
+    // scratch resize + interpolator resets below race a block that latched
+    // the old reader before the park. On a drain timeout refuse the load —
+    // stale state beats a data race.
+    if (! parkAndWaitForAudio())
+    {
+        currentReader.store (ownedReader.get(), std::memory_order_release);
+        return false;
+    }
 
     // Move the (now-untouched-by-audio) prior owner into previousReader so
     // its destructor doesn't run until the NEXT loadFile/unloadFile/dtor.
-    // That delay covers the audio thread's worst case: it observed the
-    // null-store and dropped the old pointer for this block; by the next
-    // mutation, at least one block has elapsed.
     previousReader = std::move (ownedReader);
     ownedReader    = std::move (r);
     loadedFile     = file;
     playhead.store (0, std::memory_order_relaxed);
+    // Size the resample scratch for this source's rate BEFORE the reader is
+    // published — the audio thread is parked on null until the store below.
+    updateResampleState();
     currentReader.store (ownedReader.get(), std::memory_order_release);
     return true;
 }
@@ -96,6 +155,11 @@ void MasteringPlayer::process (float* L, float* R, int numSamples) noexcept
 
     if (! playing.load (std::memory_order_relaxed)) return;
 
+    // Bump BEFORE loading currentReader: parkAndWaitForAudio clears the
+    // pointer then drains this counter, so a block that got past the null
+    // check is waited on before the scratch/interpolators are mutated.
+    AudioInFlightScope guard (audioInFlight);
+
     // Acquire-load the reader pointer once and use it for the whole block.
     // Pairs with the release-stores in loadFile/unloadFile.
     auto* r = currentReader.load (std::memory_order_acquire);
@@ -110,24 +174,62 @@ void MasteringPlayer::process (float* L, float* R, int numSamples) noexcept
         return;
     }
 
-    const int  available = (int) juce::jmin ((juce::int64) numSamples,
+    const double ratio = speedRatio.load (std::memory_order_acquire);
+    if (std::abs (ratio - 1.0) < 1.0e-9)
+    {
+        const int  available = (int) juce::jmin ((juce::int64) numSamples,
+                                                  r->lengthInSamples - start);
+        if (available > readScratch.getNumSamples()) return;  // shouldn't happen
+
+        // Read into our 2-ch scratch. AudioFormatReader::read with two non-null
+        // destination pointers fills both; for mono sources it duplicates the
+        // single channel into both, which is exactly what we want.
+        r->read (&readScratch, 0, available, start,
+                  /*useLeftChan*/  true,
+                  /*useRightChan*/ true);
+
+        std::memcpy (L, readScratch.getReadPointer (0), sizeof (float) * (size_t) available);
+        std::memcpy (R, readScratch.getReadPointer (1), sizeof (float) * (size_t) available);
+
+        playhead.fetch_add (available, std::memory_order_relaxed);
+
+        // If we just hit EOF mid-block, auto-stop.
+        if (start + available >= r->lengthInSamples)
+            playing.store (false, std::memory_order_relaxed);
+        return;
+    }
+
+    // Source rate ≠ device rate: Lagrange-resample so the file plays at the
+    // right speed and pitch. The playhead advances by SOURCE samples
+    // consumed, keeping every UI position/seek in the source domain.
+    const int inNeeded = (int) std::ceil ((double) numSamples * ratio) + 8;
+    if (inNeeded > inScratch.getNumSamples()) return;  // prepare/load sizes this
+
+    // A seek (or first block after load) breaks read continuity — drop the
+    // interpolators' history so the jump doesn't smear.
+    if (start != resampleReadPos)
+    {
+        interpL.reset();
+        interpR.reset();
+    }
+
+    // Read past-EOF input as silence so the interpolator can flush the tail.
+    const int inAvailable = (int) juce::jmin ((juce::int64) inNeeded,
+                                               r->lengthInSamples - start);
+    inScratch.clear();
+    if (inAvailable > 0)
+        r->read (&inScratch, 0, inAvailable, start, true, true);
+
+    const int usedL = interpL.process (ratio, inScratch.getReadPointer (0), L, numSamples);
+    const int usedR = interpR.process (ratio, inScratch.getReadPointer (1), R, numSamples);
+    juce::ignoreUnused (usedR);   // both consume identically for equal ratios
+
+    const juce::int64 consumed = juce::jmin ((juce::int64) usedL,
                                               r->lengthInSamples - start);
-    if (available > readScratch.getNumSamples()) return;  // shouldn't happen
+    playhead.fetch_add (consumed, std::memory_order_relaxed);
+    resampleReadPos = start + consumed;
 
-    // Read into our 2-ch scratch. AudioFormatReader::read with two non-null
-    // destination pointers fills both; for mono sources it duplicates the
-    // single channel into both, which is exactly what we want.
-    r->read (&readScratch, 0, available, start,
-              /*useLeftChan*/  true,
-              /*useRightChan*/ true);
-
-    std::memcpy (L, readScratch.getReadPointer (0), sizeof (float) * (size_t) available);
-    std::memcpy (R, readScratch.getReadPointer (1), sizeof (float) * (size_t) available);
-
-    playhead.fetch_add (available, std::memory_order_relaxed);
-
-    // If we just hit EOF mid-block, auto-stop.
-    if (start + available >= r->lengthInSamples)
+    if (start + consumed >= r->lengthInSamples)
         playing.store (false, std::memory_order_relaxed);
 }
 } // namespace duskstudio

@@ -1,11 +1,28 @@
 #include "PlaybackEngine.h"
+#include "Transport.h"
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <thread>
 
 namespace duskstudio
 {
+namespace
+{
+// Samples pre-cached at the loop start per region (~0.68 s at 48 kHz) —
+// comfortably longer than the prefetch thread needs to re-warm a reader
+// after the backward seek at a loop wrap.
+constexpr int kLoopCacheSamples = 32768;
+
+// Declick ramp applied on both sides of an in-block loop seam. 64 samples
+// matches the punch-in click-mask fade (DuskStudio.md §5b).
+constexpr int kLoopSeamFade = 64;
+
+// Loops shorter than this fall back to a plain linear read: the split loop
+// would degenerate into per-sample spans.
+constexpr juce::int64 kMinLoopLenForSplit = 2 * (juce::int64) kLoopSeamFade;
+} // namespace
 PlaybackEngine::PlaybackEngine (Session& s) : session (s)
 {
     formatManager.registerBasicFormats();
@@ -182,7 +199,59 @@ void PlaybackEngine::preparePlayback()
             streams[(size_t) t] = std::move (stream);
     }
 
+    // Pre-cache the loop-start window while the audio thread is guaranteed
+    // out (streamsActive still false). Loop points changed while rolling are
+    // picked up on the next preparePlayback; until then readSpanForTrack's
+    // stale-guard falls back to the plain reader path.
+    if (transport != nullptr && transport->isLoopEnabled())
+        primeLoopCaches (transport->getLoopStart(), transport->getLoopEnd());
+
     streamsActive.store (true, std::memory_order_release);
+}
+
+void PlaybackEngine::primeLoopCaches (juce::int64 loopStart, juce::int64 loopEnd)
+{
+    if (loopEnd <= loopStart || loopStart < 0) return;
+
+    for (auto& slot : streams)
+    {
+        if (slot == nullptr) continue;
+        for (auto& rs : slot->regions)
+        {
+            rs.loopCacheTimelineStart = -1;
+            rs.loopCacheLen           = 0;
+
+            const juce::int64 regionEnd  = rs.timelineStart + rs.lengthInSamples;
+            const juce::int64 cacheStart = juce::jmax (loopStart, rs.timelineStart);
+            const juce::int64 cacheEnd   = juce::jmin (loopStart + (juce::int64) kLoopCacheSamples,
+                                                        regionEnd);
+            if (cacheEnd <= cacheStart) continue;
+
+            // A fresh plain reader for the fill: the region's own
+            // BufferingAudioReader would return silence on a cold window
+            // (timeout 0), and bumping its window here would fight the
+            // audio thread's forward prefetch.
+            std::unique_ptr<juce::AudioFormatReader> fillReader (
+                formatManager.createReaderFor (rs.sourceFile));
+            if (fillReader == nullptr) continue;
+
+            const int len = (int) (cacheEnd - cacheStart);
+            const bool stereo = (rs.numChannels == 2);
+            juce::AudioBuffer<float> tmp (2, len);
+            tmp.clear();
+            fillReader->read (&tmp, 0, len,
+                               rs.sourceOffset + (cacheStart - rs.timelineStart),
+                               true, stereo);
+
+            rs.loopCacheL.assign (tmp.getReadPointer (0), tmp.getReadPointer (0) + len);
+            if (stereo)
+                rs.loopCacheR.assign (tmp.getReadPointer (1), tmp.getReadPointer (1) + len);
+            else
+                rs.loopCacheR.clear();
+            rs.loopCacheTimelineStart = cacheStart;
+            rs.loopCacheLen           = len;
+        }
+    }
 }
 
 void PlaybackEngine::stopPlayback()
@@ -222,7 +291,9 @@ void PlaybackEngine::readForTrack (int trackIndex,
                                    juce::int64 playheadSamples,
                                    float* outL,
                                    float* outR,
-                                   int numSamples) noexcept
+                                   int numSamples,
+                                   juce::int64 loopStart,
+                                   juce::int64 loopEnd) noexcept
 {
     if (outL == nullptr) return;
     std::memset (outL, 0, sizeof (float) * (size_t) numSamples);
@@ -239,9 +310,76 @@ void PlaybackEngine::readForTrack (int trackIndex,
     auto& slot = streams[(size_t) trackIndex];
     if (slot == nullptr) return;
 
+    const juce::int64 loopLen = loopEnd - loopStart;
+    const bool splitAtLoop = loopStart >= 0 && loopLen >= kMinLoopLenForSplit
+                              && playheadSamples < loopEnd;
+    if (! splitAtLoop)
+    {
+        readSpanForTrack (*slot, playheadSamples, outL, outR, 0, numSamples);
+        return;
+    }
+
+    // Loop-aware read: fill the block piecewise, wrapping the read position
+    // exactly like the transport's post-block wrap (loopStart + overshoot),
+    // so audio at the seam neither bleeds past loopEnd nor skips the loop
+    // downbeat. Seams inside this block get a short declick ramp.
+    int seamOffsets[8];
+    int numSeams = 0;
+    int done = 0;
+    juce::int64 pos = playheadSamples;
+    while (done < numSamples)
+    {
+        if (pos >= loopEnd)
+        {
+            pos = loopStart + (pos - loopEnd) % loopLen;
+            if (numSeams < 8) seamOffsets[numSeams++] = done;
+        }
+        const int span = (int) juce::jmin ((juce::int64) (numSamples - done),
+                                            loopEnd - pos);
+        readSpanForTrack (*slot, pos, outL, outR, done, span);
+        done += span;
+        pos  += span;
+    }
+
+    for (int s = 0; s < numSeams; ++s)
+    {
+        const int seam = seamOffsets[s];
+        // Fade out into the seam, fade in out of it — raised-cosine, zero
+        // slope at both ends, same shape as the punch click-mask.
+        for (int i = 1; i <= kLoopSeamFade; ++i)
+        {
+            const int idx = seam - i;
+            if (idx < 0) break;
+            const float g = 0.5f - 0.5f * std::cos (juce::MathConstants<float>::pi
+                                                     * (float) i / (float) kLoopSeamFade);
+            outL[idx] *= 1.0f - g;
+            if (outR != nullptr) outR[idx] *= 1.0f - g;
+        }
+        for (int i = 0; i < kLoopSeamFade; ++i)
+        {
+            const int idx = seam + i;
+            if (idx >= numSamples) break;
+            const float g = 0.5f - 0.5f * std::cos (juce::MathConstants<float>::pi
+                                                     * (float) i / (float) kLoopSeamFade);
+            outL[idx] *= g;
+            if (outR != nullptr) outR[idx] *= g;
+        }
+    }
+}
+
+void PlaybackEngine::readSpanForTrack (PerTrackStream& slotRef,
+                                       juce::int64 playheadSamples,
+                                       float* outL,
+                                       float* outR,
+                                       int outBase,
+                                       int numSamples) noexcept
+{
+    outL += outBase;
+    if (outR != nullptr) outR += outBase;
+
     const juce::int64 blockEnd = playheadSamples + numSamples;
 
-    for (auto& r : slot->regions)
+    for (auto& r : slotRef.regions)
     {
         if (r.reader == nullptr) continue;
         if (r.muted) continue;
@@ -273,6 +411,28 @@ void PlaybackEngine::readForTrack (int trackIndex,
         r.reader->read (&readScratch, 0, withinSamples, readStart,
                          /*useLeftChan*/ true,
                          /*useRightChan*/ readStereo);
+
+        // Serve the loop-start window from the pre-cache: the forward-only
+        // reader misses (returns silence) right after a wrap's backward
+        // seek. The cache holds absolute-timeline source samples, so any
+        // overlap is valid data whether or not the reader was warm.
+        if (r.loopCacheLen > 0
+            && firstWithin < r.loopCacheTimelineStart + r.loopCacheLen
+            && lastWithin  > r.loopCacheTimelineStart)
+        {
+            const juce::int64 ovStart = juce::jmax (firstWithin, r.loopCacheTimelineStart);
+            const juce::int64 ovEnd   = juce::jmin (lastWithin,
+                                                     r.loopCacheTimelineStart
+                                                         + (juce::int64) r.loopCacheLen);
+            const int dstOff = (int) (ovStart - firstWithin);
+            const int srcOff = (int) (ovStart - r.loopCacheTimelineStart);
+            const int n      = (int) (ovEnd - ovStart);
+            std::memcpy (readScratch.getWritePointer (0) + dstOff,
+                          r.loopCacheL.data() + srcOff, sizeof (float) * (size_t) n);
+            if (readStereo && ! r.loopCacheR.empty())
+                std::memcpy (readScratch.getWritePointer (1) + dstOff,
+                              r.loopCacheR.data() + srcOff, sizeof (float) * (size_t) n);
+        }
 
         // Apply fade-in / fade-out envelope in scratch, then SUM (instead
         // of REPLACE) into the output buffer(s). Summing lets two regions

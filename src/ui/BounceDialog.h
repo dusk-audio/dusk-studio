@@ -25,13 +25,17 @@ class BounceDialog final : public juce::Component,
                             private juce::Timer
 {
 public:
+    // renderSampleRate 0 = the engine's current rate; wavBitDepth 16 dithers
+    // (see BounceEngine::start). The mastering export presets drive both.
     BounceDialog (AudioEngine& engine,
                    Session& session,
                    juce::AudioDeviceManager& deviceManager,
                    const juce::File& outputFile,
                    BounceEngine::Mode mode = BounceEngine::Mode::MasterMix,
                    BounceEngine::Format format = BounceEngine::Format::Wav,
-                   int mp3BitrateKbps = 320);
+                   int mp3BitrateKbps = 320,
+                   double renderSampleRate = 0.0,
+                   int wavBitDepth = 24);
     ~BounceDialog() override;
 
     void resized() override;
@@ -61,6 +65,8 @@ private:
     BounceEngine::Mode renderMode;
     BounceEngine::Format renderFormat;
     int mp3Bitrate;
+    double renderSampleRate;
+    int wavBitDepth;
 
     std::unique_ptr<BounceEngine> bounceEngine;
 

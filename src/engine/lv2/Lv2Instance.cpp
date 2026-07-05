@@ -21,6 +21,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <unordered_map>
 #include <vector>
@@ -90,6 +91,37 @@ struct Lv2Instance::Impl
              uridPatchValue = 0, uridEventTransfer = 0, uridMidiEvent = 0,
              uridPatchPut = 0, uridPatchBody = 0, uridSequence = 0, uridFloatType = 0,
              uridUridType = 0;
+
+    // ── state:mapPath / state:freePath for file-backed state ──
+    // Save side: lilv builds its own map/make-path from the directories we
+    // hand lilv_state_new_from_instance. Restore side: the blob carries
+    // ABSTRACT (cur/-relative) paths, so we supply the mapping back to
+    // absolute ourselves. Returned strings are malloc'd — the plugin frees
+    // them through freePathCb (or plain free()), per the state spec.
+    juce::File stateDir;
+
+    static char* absolutePathCb (LV2_State_Map_Path_Handle handle, const char* abstractPath)
+    {
+        if (abstractPath == nullptr) return nullptr;
+        auto* self = static_cast<Impl*> (handle);
+        const auto abs = juce::String::fromUTF8 (abstractPath);
+        if (self->stateDir == juce::File() || juce::File::isAbsolutePath (abs))
+            return ::strdup (abstractPath);
+        return ::strdup (self->stateDir.getChildFile ("cur").getChildFile (abs)
+                             .getFullPathName().toRawUTF8());
+    }
+    static char* abstractPathCb (LV2_State_Map_Path_Handle handle, const char* absolutePath)
+    {
+        if (absolutePath == nullptr) return nullptr;
+        auto* self = static_cast<Impl*> (handle);
+        const juce::File f { juce::String::fromUTF8 (absolutePath) };
+        const auto cur = self->stateDir.getChildFile ("cur");
+        if (self->stateDir != juce::File() && f.isAChildOf (cur))
+            return ::strdup (f.getRelativePathFrom (cur)
+                                 .replaceCharacter ('\\', '/').toRawUTF8());
+        return ::strdup (absolutePath);
+    }
+    static void freePathCb (LV2_State_Free_Path_Handle, char* path) { ::free (path); }
 
     // Assemble the full feature list for instantiate: urid map/unmap + the block-size
     // and sample-rate options + boundedBlockLength. JUCE/DPF-wrapped plugins REQUIRE
@@ -759,6 +791,11 @@ void Lv2Instance::processBlock (const hosting::PortBuffers& io) noexcept
                                     std::memory_order_relaxed);
 }
 
+void Lv2Instance::setStateDirectory (const juce::File& dir)
+{
+    impl->stateDir = dir;
+}
+
 bool Lv2Instance::saveState (std::vector<uint8_t>& out) const
 {
     out.clear();
@@ -767,11 +804,36 @@ bool Lv2Instance::saveState (std::vector<uint8_t>& out) const
 
     // Snapshot control-port values + the plugin's state:interface blob (JUCE-
     // wrapped plugins keep everything there) into a lilv state, serialized as
-    // Turtle. No file directories are passed, so file-writing plugins keep
-    // their state abstract/in-memory — fine for effects.
+    // Turtle. With a state directory set, lilv also snapshots FILE-BACKED
+    // state (sample banks, IRs) into <dir>/cur/ and emits abstract paths in
+    // the Turtle; without one, file-writing plugins keep only their in-memory
+    // state (the pre-file-state behaviour, fine for effects).
+    juce::String curPath;
+    if (impl->stateDir != juce::File())
+    {
+        // Rotate generations instead of wiping: a disk-streaming sampler may
+        // still be reading the files the PREVIOUS save snapshotted — those
+        // survive one more save cycle in prev/.
+        const auto cur  = impl->stateDir.getChildFile ("cur");
+        const auto prev = impl->stateDir.getChildFile ("prev");
+        bool rotated = prev.deleteRecursively();
+        if (rotated && cur.isDirectory())
+            rotated = cur.moveFileTo (prev);
+        if (rotated)
+        {
+            cur.createDirectory();
+            curPath = cur.getFullPathName();
+        }
+        // Rotation failed: leave curPath empty so lilv gets no directory and
+        // falls back to a blob-only (in-memory) save rather than writing a new
+        // generation on top of the stale cur/ files.
+    }
+    const auto curUtf8 = curPath.toStdString();
+    const char* dirC   = curUtf8.empty() ? nullptr : curUtf8.c_str();
+
     LilvState* state = lilv_state_new_from_instance (
         impl->plugin, impl->instance, &impl->mapFeature,
-        nullptr, nullptr, nullptr, nullptr,
+        dirC, dirC, dirC, dirC,
         &Impl::getPortValue, impl.get(),
         LV2_STATE_IS_POD | LV2_STATE_IS_PORTABLE, impl->features.data());
     if (state == nullptr) return false;
@@ -798,8 +860,21 @@ bool Lv2Instance::loadState (const std::vector<uint8_t>& in)
     // Restores control ports through setPortValue (the plugin reads portValues on
     // its next run()) and hands the state:interface blob to the plugin. Callers
     // fence the audio thread when the instance is live — same as activate().
+    // mapPath/freePath resolve the blob's abstract file paths against the
+    // slot's state directory (no-ops when none is set / the blob has none).
+    LV2_State_Map_Path  mapPath  { impl.get(), &Impl::abstractPathCb, &Impl::absolutePathCb };
+    LV2_State_Free_Path freePath { nullptr, &Impl::freePathCb };
+    LV2_Feature mapPathFeat  { LV2_STATE__mapPath,  &mapPath };
+    LV2_Feature freePathFeat { LV2_STATE__freePath, &freePath };
+    std::vector<const LV2_Feature*> feats;
+    for (const auto* f : impl->features)
+        if (f != nullptr) feats.push_back (f);
+    feats.push_back (&mapPathFeat);
+    feats.push_back (&freePathFeat);
+    feats.push_back (nullptr);
+
     lilv_state_restore (state, impl->instance, &Impl::setPortValue, impl.get(),
-                        0, impl->features.data());
+                        0, feats.data());
     lilv_state_free (state);
     return true;
 }

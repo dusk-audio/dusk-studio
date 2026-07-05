@@ -23,5 +23,27 @@ public:
     // Atomic write helper: tmp file + fsync + rename. Reused by save() and
     // the autosave path. Returns true on success.
     static bool writeAtomic (const juce::File& target, const juce::String& json);
+
+    // Save As support: copy every session-owned audio file (regions, take
+    // history, freeze WAVs, a session-local mastering source) into
+    // newSessionDir and repoint the in-memory model, so the subsequent
+    // serialize emits paths relative to the new directory. Without this a
+    // Save As writes absolute paths into the old folder — deleting it loses
+    // all audio. External mastering sources stay absolute (leave-external-
+    // media); already-external region/take files are pulled in, which also
+    // heals sessions whose refs point into another session's folder.
+    //
+    // Copies happen before any model mutation: on failure the model is
+    // untouched, already-copied files are removed and ok=false. Missing
+    // source files are skipped (ref kept as-is) and reported.
+    struct ConsolidationResult
+    {
+        bool ok = true;
+        juce::String errorMessage;
+        int filesCopied = 0;
+        std::vector<juce::String> missingSources;
+    };
+    static ConsolidationResult consolidateInto (Session& session,
+                                                const juce::File& newSessionDir);
 };
 } // namespace duskstudio

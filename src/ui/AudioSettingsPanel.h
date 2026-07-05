@@ -123,8 +123,11 @@ private:
     juce::Label advancedSectionLabel      { {}, "Advanced" };
     juce::ToggleButton tapeStripExpandedToggle { "Expand tape strip by default" };
     juce::ToggleButton followPlayheadToggle    { "Follow playhead by default" };
+    juce::ToggleButton softTakeoverToggle      { "MIDI soft takeover (pickup)" };
     juce::Label        stopBehaviorLabel       { {}, "Playhead on Stop:" };
     DuskComboBox       stopBehaviorCombo;
+    juce::Label        autosaveLabel           { {}, "Autosave every:" };
+    DuskComboBox       autosaveCombo;
 
     // Captured during resized() + drawn by paint() as thin horizontal
     // rules between section groups.

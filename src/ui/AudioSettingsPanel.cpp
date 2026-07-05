@@ -1,5 +1,6 @@
 #include "AudioSettingsPanel.h"
 #include "AppConfig.h"
+#include <limits>
 #include "MidiBindingsPanel.h"
 #include "SelfTestPanel.h"
 #include "../engine/AudioEngine.h"
@@ -393,6 +394,21 @@ AudioSettingsPanel::AudioSettingsPanel (juce::AudioDeviceManager& dm,
     };
     addAndMakeVisible (followPlayheadToggle);
 
+    softTakeoverToggle.setToggleState (appconfig::getMidiSoftTakeover(),
+                                        juce::dontSendNotification);
+    softTakeoverToggle.setTooltip (
+        "When on, a knob or fader bound by MIDI Learn stays dormant until it "
+        "crosses the parameter's current position, instead of snapping the "
+        "parameter to the controller on first touch. Applies to continuous "
+        "mixer targets; saved per-machine, takes effect immediately.");
+    softTakeoverToggle.onClick = [this]
+    {
+        const bool on = softTakeoverToggle.getToggleState();
+        appconfig::setMidiSoftTakeover (on);
+        engine.setMidiSoftTakeover (on);
+    };
+    addAndMakeVisible (softTakeoverToggle);
+
     stopBehaviorLabel.setJustificationType (juce::Justification::centredRight);
     addAndMakeVisible (stopBehaviorLabel);
     stopBehaviorCombo.addItem ("Stay where it is (pause)",      1);
@@ -419,6 +435,39 @@ AudioSettingsPanel::AudioSettingsPanel (juce::AudioDeviceManager& dm,
         engine.getSession().stopBehavior.store ((int) v, std::memory_order_relaxed);
     };
     addAndMakeVisible (stopBehaviorCombo);
+
+    autosaveLabel.setJustificationType (juce::Justification::centredRight);
+    addAndMakeVisible (autosaveLabel);
+    autosaveCombo.addItem ("15 seconds", 15);
+    autosaveCombo.addItem ("30 seconds", 30);
+    autosaveCombo.addItem ("1 minute",   60);
+    autosaveCombo.addItem ("2 minutes",  120);
+    autosaveCombo.addItem ("5 minutes",  300);
+    autosaveCombo.setTooltip (
+        "How often the session autosaves for crash recovery. Saved "
+        "per-machine; applies when this panel closes.");
+    {
+        // Snap a hand-edited config value to the nearest offered cadence so
+        // the combo never renders blank.
+        const int stored = appconfig::getAutosaveIntervalSeconds();
+        int bestId = 30, bestDist = std::numeric_limits<int>::max();
+        for (int i = 0; i < autosaveCombo.getNumItems(); ++i)
+        {
+            const int id = autosaveCombo.getItemId (i);
+            if (std::abs (id - stored) < bestDist)
+            {
+                bestDist = std::abs (id - stored);
+                bestId = id;
+            }
+        }
+        autosaveCombo.setSelectedId (bestId, juce::dontSendNotification);
+    }
+    autosaveCombo.onChange = [this]
+    {
+        if (const int id = autosaveCombo.getSelectedId(); id > 0)
+            appconfig::setAutosaveIntervalSeconds (id);
+    };
+    addAndMakeVisible (autosaveCombo);
 }
 
 void AudioSettingsPanel::paint (juce::Graphics& g)
@@ -542,8 +591,18 @@ void AudioSettingsPanel::resized()
     }
     {
         auto row = takeStdRow();
+        row.removeFromLeft (kLabelW);
+        softTakeoverToggle.setBounds (row.reduced (4, 2));
+    }
+    {
+        auto row = takeStdRow();
         stopBehaviorLabel.setBounds (row.removeFromLeft (kLabelW).reduced (4, 2));
         stopBehaviorCombo.setBounds (row.reduced (4, 2));
+    }
+    {
+        auto row = takeStdRow();
+        autosaveLabel.setBounds (row.removeFromLeft (kLabelW).reduced (4, 2));
+        autosaveCombo.setBounds (row.removeFromLeft (200).reduced (4, 2));
     }
     {
         auto row = takeStdRow();

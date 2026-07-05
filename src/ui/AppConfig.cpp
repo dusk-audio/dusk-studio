@@ -13,6 +13,8 @@ constexpr const char* kKeyStopBehavior       = "stop_behavior";
 constexpr const char* kKeyVkbCentreNote      = "vkb_centre_note";
 constexpr const char* kKeyMulticoreMode      = "multicore_dsp_mode";
 constexpr const char* kKeyMulticoreManual    = "multicore_dsp_workers";
+constexpr const char* kKeyMidiSoftTakeover   = "midi_soft_takeover";
+constexpr const char* kKeyAutosaveInterval   = "autosave_interval_sec";
 
 juce::File getStorePath()
 {
@@ -124,6 +126,32 @@ bool getFollowPlayheadDefault()
 void setFollowPlayheadDefault (bool follow)
 {
     writeKey (kKeyFollowPlayhead, follow ? "1" : "0");
+}
+
+int getAutosaveIntervalSeconds()
+{
+    const auto raw = readKey (kKeyAutosaveInterval);
+    if (raw.isEmpty()) return kAutosaveIntervalDefaultSec;
+    const int v = raw.getIntValue();
+    return (v >= 10 && v <= 600) ? v : kAutosaveIntervalDefaultSec;
+}
+
+void setAutosaveIntervalSeconds (int seconds)
+{
+    writeKey (kKeyAutosaveInterval, juce::String (juce::jlimit (10, 600, seconds)));
+}
+
+bool getMidiSoftTakeover()
+{
+    const auto raw = readKey (kKeyMidiSoftTakeover);
+    if (raw.isEmpty()) return false;   // default off — controllers track 1:1
+    return raw == "1" || raw.equalsIgnoreCase ("true")
+        || raw.equalsIgnoreCase ("yes");
+}
+
+void setMidiSoftTakeover (bool on)
+{
+    writeKey (kKeyMidiSoftTakeover, on ? "1" : "0");
 }
 
 StopBehavior getStopBehavior()

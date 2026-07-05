@@ -86,6 +86,21 @@ public:
     // file is loaded. Returns true on success.
     bool reloadCurrentFile (juce::String& errorMessage);
 
+    // Background variants: the load (SF2 sample extraction + sfizz parse can
+    // take seconds on a GM bank) runs on the processor's own worker thread
+    // and onDone(ok, error) fires on the message thread. The worker joins in
+    // the destructor, so a slot unload blocks until an in-flight load
+    // finishes instead of destroying the synth under it. One load at a time —
+    // callers gate UI on isLoadPending().
+    void loadFileAsync (const juce::File& file,
+                        std::function<void (bool, juce::String)> onDone);
+    void loadSf2PresetAsync (int presetIndex,
+                             std::function<void (bool, juce::String)> onDone);
+    bool isLoadPending() const noexcept
+    {
+        return loadPending.load (std::memory_order_relaxed);
+    }
+
     // Drop the loaded soundfont. After this call the processor
     // renders silence; subsequent loadSfzFile / setStateInformation
     // can replace it.
@@ -173,10 +188,21 @@ private:
     float lastAppliedTuneCents { 0.0f };
     int   lastAppliedPolyphony { 64 };
 
+    // Serialises sfizz mutations (load/unload/voice-count) against
+    // processBlock: the audio thread TRY-locks and passes one silent block
+    // when a mutator holds it (PluginSlot's prepare↔process pattern).
+    juce::SpinLock sfizzLock;
+
     // sfizz handle owned via pimpl so the public header doesn't drag
     // in sfizz.h (keeps compile time + ABI surface clean). The .cpp
     // owns the sfizz_synth_t*.
     struct Impl;
     std::unique_ptr<Impl> impl;
+
+    // The destructor joins loadPool before freeing impl->synth (a running load
+    // still dereferences it). Declared after impl so member teardown can't
+    // invert that order either.
+    std::atomic<bool> loadPending { false };
+    juce::ThreadPool  loadPool { 1 };
 };
 } // namespace duskstudio

@@ -121,10 +121,17 @@ private:
     void importPrompt();
 
     // DP song-folder import: folder picker -> DpImporter::scanSongFolder ->
-    // DpImportDialog confirmation -> runDpImport drives FileImporter over the
-    // fragments, assigning each to a track at song start.
+    // DpImportDialog confirmation -> runDpImport spins the background job
+    // (alignment + every fragment decode) behind a progress modal;
+    // finishDpImport applies the outcomes to the session on the message
+    // thread. The job is held type-erased (the concrete DpImportJob lives in
+    // MainComponent.cpp's anonymous namespace).
     void importDpSongPrompt();
     void runDpImport (const dp::SongScan& scan, bool importMixer, bool importTimeline);
+    void finishDpImport();
+    std::unique_ptr<juce::Thread> dpImportJob;
+    bool dpImportWantMixer = false;
+    EmbeddedModal dpImportProgressModal;
 
     // Shared between File-menu prompts and TapeStrip drag-drop.
     // trackHint >= 0 biases the recommendation when the file matches.
@@ -172,7 +179,6 @@ private:
     juce::File getAutosaveFileFor (const juce::File& sessionDir) const;
     bool autosaveIsNewerThan (const juce::File& sessionJson) const;
     void deleteAutosaveFor   (const juce::File& sessionDir) const;
-    static constexpr int kAutosaveIntervalMs = 30000;
 
     // Full JSON kept for quit-prompt diff + recovery; the heavy compare
     // path uses the hash fields below.
@@ -280,6 +286,11 @@ private:
     // detach idempotent and signals publishPluginStateForSave that the
     // atomic-park sleeps can be skipped.
     bool engineDetached = false;
+
+    // One-shot latch so the session-vs-device sample-rate warning fires once
+    // per mismatch, not on every autosave tick. Reset on load and when the
+    // rates come back into agreement.
+    bool warnedSampleRateMismatch = false;
     juce::Label statusLabel;
 
     // Helper for the top-bar status. Short label (session-dir name +

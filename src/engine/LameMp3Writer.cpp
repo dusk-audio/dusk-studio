@@ -32,7 +32,10 @@ LameMp3Writer::LameMp3Writer (juce::OutputStream* destStream, double sampleRate,
     lame_set_mode           (g, numChannels >= 2 ? JOINT_STEREO : MONO);
     lame_set_brate          (g, bitrate);
     lame_set_quality        (g, 2);   // 0 = best/slowest .. 9 = worst; 2 is high
-    lame_set_bWriteVbrTag   (g, 0);   // CBR: skip the Xing/Info header frame
+    // Emit the Info (CBR Xing) placeholder frame; finalize() rewrites it with
+    // the real frame/byte counts so players report duration and seek
+    // correctly. Headerless CBR made some players guess the length.
+    lame_set_bWriteVbrTag   (g, 1);
     if (lame_init_params (g) < 0) { lame_close (g); return; }
     encoder = g;
     mp3buf.resize ((size_t) mp3BufferCapacity (1 << 16));
@@ -46,21 +49,49 @@ LameMp3Writer::~LameMp3Writer()
 #if DUSKSTUDIO_HAS_LAME
     if (encoder != nullptr)
     {
-        auto* g = static_cast<lame_global_flags*> (encoder);
-        if (! flushed)
-        {
-            if (mp3buf.size() < 7200) mp3buf.resize (7200);
-            const int bytes = lame_encode_flush (g, mp3buf.data(), (int) mp3buf.size());
-            if (bytes > 0 && output != nullptr)
-                output->write (mp3buf.data(), (size_t) bytes);
-            flushed = true;
-        }
-        lame_close (g);
+        finalize();   // best-effort; failure is unreportable from a destructor
+        lame_close (static_cast<lame_global_flags*> (encoder));
         encoder = nullptr;
     }
 #endif
     // base ~AudioFormatWriter deletes `output` (the FileOutputStream flushes
     // its remaining bytes and closes the file).
+}
+
+bool LameMp3Writer::finalize()
+{
+#if DUSKSTUDIO_HAS_LAME
+    if (encoder == nullptr) return false;
+    if (flushed) return true;
+    flushed = true;
+    auto* g = static_cast<lame_global_flags*> (encoder);
+    if (mp3buf.size() < 7200) mp3buf.resize (7200);
+    const int bytes = lame_encode_flush (g, mp3buf.data(), (int) mp3buf.size());
+    if (bytes < 0)  return false;
+    if (bytes > 0 && (output == nullptr || ! output->write (mp3buf.data(), (size_t) bytes)))
+        return false;
+
+    // Rewrite the Info placeholder (first frame) with the real frame/byte
+    // counts. Best-effort: a stream that can't seek keeps the placeholder,
+    // which decodes as silence and merely costs the duration metadata.
+    if (output != nullptr)
+    {
+        unsigned char tag[2880];
+        const size_t tagSize = lame_get_lametag_frame (g, tag, sizeof (tag));
+        if (tagSize > 0 && tagSize <= sizeof (tag))
+        {
+            const juce::int64 endPos = output->getPosition();
+            if (output->setPosition (0))
+            {
+                output->write (tag, tagSize);
+                output->setPosition (endPos);
+            }
+        }
+    }
+    return true;
+#else
+    return false;
+#endif
 }
 
 bool LameMp3Writer::encode (const float* left, const float* right, int numSamples)

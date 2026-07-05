@@ -667,7 +667,37 @@ void RecordManager::stopRecording (juce::int64 endSample)
                                                                && a.timelineStart == b.timelineStart
                                                                && a.lengthInSamples == b.lengthInSamples
                                                                && a.sourceOffset == b.sourceOffset; }));
-        const bool midiChanged  = afterM.size() != beforeMidi[(size_t) t].size();  // cheap heuristic; a real take always adds notes
+        // Deep-compare like the audio path: an overdub that replaces exactly
+        // one region keeps the count equal, so size alone misses it and the
+        // take becomes un-undoable. Event contents matter too — with
+        // previousTakes at its cap, a same-length redo with the same note
+        // count would otherwise compare equal.
+        const bool midiChanged  = ! (afterM.size() == beforeMidi[(size_t) t].size()
+                                      && std::equal (afterM.begin(), afterM.end(),
+                                                      beforeMidi[(size_t) t].begin(),
+                                                      [] (const MidiRegion& a, const MidiRegion& b)
+                                                      {
+                                                          auto sameNote = [] (const MidiNote& x, const MidiNote& y)
+                                                          { return x.channel == y.channel
+                                                                   && x.noteNumber == y.noteNumber
+                                                                   && x.velocity == y.velocity
+                                                                   && x.startTick == y.startTick
+                                                                   && x.lengthInTicks == y.lengthInTicks; };
+                                                          auto sameCc = [] (const MidiCc& x, const MidiCc& y)
+                                                          { return x.channel == y.channel
+                                                                   && x.controller == y.controller
+                                                                   && x.value == y.value
+                                                                   && x.atTick == y.atTick; };
+                                                          return a.timelineStart == b.timelineStart
+                                                               && a.lengthInTicks == b.lengthInTicks
+                                                               && a.previousTakes.size() == b.previousTakes.size()
+                                                               && a.notes.size() == b.notes.size()
+                                                               && a.ccs.size() == b.ccs.size()
+                                                               && std::equal (a.notes.begin(), a.notes.end(),
+                                                                               b.notes.begin(), sameNote)
+                                                               && std::equal (a.ccs.begin(), a.ccs.end(),
+                                                                               b.ccs.begin(), sameCc);
+                                                      }));
         if (! audioChanged && ! midiChanged) continue;
 
         TrackCommitDiff diff;

@@ -221,3 +221,36 @@ TEST_CASE ("SessionSerializer round-trips native-VST3 slots", "[session][seriali
 
     dir.deleteRecursively();
 }
+
+// The canonical session sample rate must survive save/load, reset to 0 when
+// absent (legacy file), and reject garbage — the load UI keys the device-
+// switch / mismatch warning off it.
+TEST_CASE ("SessionSerializer round-trips the session sample rate", "[session][serializer]")
+{
+    using duskstudio::Session;
+    using duskstudio::SessionSerializer;
+
+    const auto dir = makeTempSessionDir();
+    const auto target = dir.getChildFile ("session.json");
+
+    Session a;
+    a.sessionSampleRate = 44100.0;
+    REQUIRE (SessionSerializer::save (a, target));
+
+    Session b;
+    b.sessionSampleRate = 96000.0;   // must be overwritten, not inherited
+    REQUIRE (SessionSerializer::load (b, target));
+    REQUIRE (b.sessionSampleRate == 44100.0);
+
+    // Legacy file without the key resets to 0 (adopt-device-rate signal).
+    target.replaceWithText (R"({"version":3,"tracks":[],"buses":[],"aux_lanes":[]})");
+    REQUIRE (SessionSerializer::load (b, target));
+    REQUIRE (b.sessionSampleRate == 0.0);
+
+    // Out-of-range / non-finite values are rejected.
+    target.replaceWithText (R"({"version":3,"session_sample_rate":1e40,"tracks":[],"buses":[],"aux_lanes":[]})");
+    REQUIRE (SessionSerializer::load (b, target));
+    REQUIRE (b.sessionSampleRate == 0.0);
+
+    dir.deleteRecursively();
+}

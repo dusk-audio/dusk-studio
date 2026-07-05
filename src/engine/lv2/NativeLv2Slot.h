@@ -37,6 +37,11 @@ struct Lv2SlotTraits
 class NativeLv2Slot final : public hosting::NativeInsertSlot<Lv2SlotTraits>
 {
 public:
+    // Session-scoped file-state directory — set by the engine ahead of
+    // saveState/loadState (see Lv2Instance::setStateDirectory).
+    void setStateDirectory (const juce::File& dir)
+        { if (instance != nullptr) instance->setStateDirectory (dir); }
+
     // Parameters (message thread for read/enumerate; setParamValue is the control
     // entry — staged and applied on the next audio block). No-op / empty when unloaded.
     int paramCount() const noexcept { return instance != nullptr ? instance->paramCount() : 0; }

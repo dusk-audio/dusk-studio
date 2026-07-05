@@ -101,7 +101,8 @@ public:
     lv2::NativeLv2Slot&       getNativeLv2Slot (int idx)       noexcept { jassert (idx >= 0 && idx < kMaxPlugins); return nativeLv2Slots[(size_t) idx]; }
     const lv2::NativeLv2Slot& getNativeLv2Slot (int idx) const noexcept { jassert (idx >= 0 && idx < kMaxPlugins); return nativeLv2Slots[(size_t) idx]; }
     void setPendingNativeLv2 (int slotIdx, const juce::File& path, std::vector<uint8_t> state,
-                              const juce::String& pluginId = {}) noexcept;
+                              const juce::String& pluginId = {},
+                              const juce::File& stateDir = {}) noexcept;
     bool nativeLv2ReloadFailed (int slotIdx) const noexcept { jassert (slotIdx >= 0 && slotIdx < kMaxPlugins); return lv2ReloadFailed[(size_t) slotIdx].load (std::memory_order_relaxed); }
     void markNativeLv2RestoreFailed (int slotIdx) noexcept { jassert (slotIdx >= 0 && slotIdx < kMaxPlugins); lv2ReloadFailed[(size_t) slotIdx].store (true, std::memory_order_relaxed); }
 #else
@@ -182,6 +183,7 @@ private:
     std::array<juce::String,         kMaxPlugins> pendingLv2Path;
     std::array<juce::String,         kMaxPlugins> pendingLv2PluginId;
     std::array<std::vector<uint8_t>, kMaxPlugins> pendingLv2State;
+    std::array<juce::File, kMaxPlugins>           pendingLv2StateDir;
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_VST3
     std::array<vst3::NativeVst3Slot, kMaxPlugins> nativeVst3Slots;

@@ -1,4 +1,5 @@
 #include "BounceEngine.h"
+#include <cmath>
 #include "AudioEngine.h"
 #include "LameMp3Writer.h"
 #include "MasteringPlayer.h"
@@ -27,7 +28,6 @@ BounceEngine::makeWriter (std::unique_ptr<juce::FileOutputStream> outStream,
                             juce::String& errOut) const
 {
     constexpr unsigned kNumChannels = 2;   // bounce is always stereo
-    constexpr int      kBitsPerSample = 24;
 
     if (renderFormat == Format::Mp3)
     {
@@ -50,7 +50,7 @@ BounceEngine::makeWriter (std::unique_ptr<juce::FileOutputStream> outStream,
     juce::StringPairArray metadata;
     std::unique_ptr<juce::AudioFormatWriter> writer (
         wavFormat.createWriterFor (outStream.get(), renderSampleRate,
-                                     kNumChannels, kBitsPerSample, metadata, 0));
+                                     kNumChannels, renderWavBitDepth, metadata, 0));
     if (writer == nullptr)
     {
         errOut = "Could not create WAV writer";
@@ -64,22 +64,30 @@ juce::int64 BounceEngine::computeBounceLength (double sampleRate, double tail) c
 {
     // Longest region end across all tracks defines the natural bounce end;
     // tail extends that so reverb/comp/EQ ringouts decay before we cut.
+    // MIDI regions and freeze WAVs count too — a virtual-instrument song has
+    // no audio regions at all, and MIDI playing past the last audio region
+    // must not be truncated.
     juce::int64 maxRegionEnd = 0;
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
-        const auto& regions = session.track (t).regions;
-        for (const auto& r : regions)
-        {
-            const juce::int64 end = r.timelineStart + r.lengthInSamples;
-            if (end > maxRegionEnd) maxRegionEnd = end;
-        }
+        const auto& track = session.track (t);
+        for (const auto& r : track.regions)
+            maxRegionEnd = juce::jmax (maxRegionEnd, r.timelineStart + r.lengthInSamples);
+        for (const auto& mr : track.midiRegions.current())
+            maxRegionEnd = juce::jmax (maxRegionEnd, mr.timelineStart + mr.lengthInSamples);
+        if (track.frozen.load (std::memory_order_relaxed)
+            && track.frozenRegion.lengthInSamples > 0)
+            maxRegionEnd = juce::jmax (maxRegionEnd,
+                                        track.frozenRegion.timelineStart
+                                            + track.frozenRegion.lengthInSamples);
     }
     if (maxRegionEnd <= 0) maxRegionEnd = (juce::int64) (sampleRate * 1.0);  // 1 s of silence
     return maxRegionEnd + (juce::int64) (sampleRate * tail);
 }
 
 bool BounceEngine::start (const juce::File& outFile, double sr, int bs, double tail,
-                            Mode mode, Format format, int mp3BitrateKbps)
+                            Mode mode, Format format, int mp3BitrateKbps,
+                            int wavBitDepth)
 {
     if (rendering.load (std::memory_order_relaxed)) return false;
 
@@ -105,6 +113,8 @@ bool BounceEngine::start (const juce::File& outFile, double sr, int bs, double t
     // regardless of what the caller requested.
     renderFormat    = (mode == Mode::Stems) ? Format::Wav : format;
     renderBitrateKbps = mp3BitrateKbps;
+    // Stems keep 24-bit regardless: they exist for re-import, not delivery.
+    renderWavBitDepth = (mode != Mode::Stems && wavBitDepth == 16) ? 16 : 24;
 
     if (renderMode == Mode::MasterMix || renderMode == Mode::Stems)
     {
@@ -113,8 +123,15 @@ bool BounceEngine::start (const juce::File& outFile, double sr, int bs, double t
     else
     {
         // Mastering: render length = player's loaded file length + tail.
+        // The player's length is in SOURCE samples; the render loop counts
+        // DEVICE-rate samples, so scale when the rates differ (the player
+        // resamples in process()).
         const auto playerLen = engine.getMasteringPlayer().getLengthSamples();
-        totalSamples = playerLen + (juce::int64) (renderSampleRate * tailSeconds);
+        const auto sourceSr  = engine.getMasteringPlayer().getSourceSampleRate();
+        const auto playerLenAtRender = sourceSr > 0.0
+            ? (juce::int64) std::llround ((double) playerLen * renderSampleRate / sourceSr)
+            : playerLen;
+        totalSamples = playerLenAtRender + (juce::int64) (renderSampleRate * tailSeconds);
         if (totalSamples <= 0) return false;  // no file loaded
     }
 
@@ -289,6 +306,8 @@ void BounceEngine::run()
     juce::int64 written = 0;   // samples committed to the file
     juce::int64 dropped = 0;   // lead-in samples discarded
     bool succeeded = true;
+    const bool dither16 = renderFormat == Format::Wav && renderWavBitDepth == 16;
+    juce::Random ditherRng;
     while (done < toRender && ! cancelRequested.load (std::memory_order_relaxed))
     {
         const int remaining = (int) juce::jmin ((juce::int64) renderBlockSize,
@@ -313,6 +332,20 @@ void BounceEngine::run()
         {
             std::array<float*, kNumChannels> offPtrs {};
             for (int c = 0; c < kNumChannels; ++c) offPtrs[(size_t) c] = outputPtrs[(size_t) c] + writeStart;
+
+            if (dither16)
+            {
+                // TPDF at ±1 LSB ahead of the 16-bit truncation: decorrelates
+                // the quantisation error so fades decay into noise instead of
+                // distortion.
+                constexpr float lsb = 1.0f / 32768.0f;
+                for (int c = 0; c < kNumChannels; ++c)
+                {
+                    auto* p = offPtrs[(size_t) c];
+                    for (int i = 0; i < writeCount; ++i)
+                        p[i] += (ditherRng.nextFloat() - ditherRng.nextFloat()) * lsb;
+                }
+            }
             if (! writer->writeFromFloatArrays (offPtrs.data(), kNumChannels, writeCount))
             {
                 const juce::ScopedLock lock (lastErrorLock);
@@ -337,7 +370,21 @@ void BounceEngine::run()
         lastError = kCancelledError;
     }
 
+    // MP3: the final frames only hit the stream at flush. Flush explicitly so
+    // a disk-full there fails the bounce instead of reporting success.
+    if (auto* mp3 = dynamic_cast<LameMp3Writer*> (writer.get());
+        mp3 != nullptr && ! mp3->finalize() && succeeded)
+    {
+        succeeded = false;
+        const juce::ScopedLock lock (lastErrorLock);
+        lastError = "MP3 encoder flush failed (disk full?)";
+    }
+
     writer.reset();  // flush + close
+    // A cancelled or failed render must not leave a truncated file where the
+    // user's previous good bounce was — stems and freeze already do this.
+    if (! succeeded)
+        outputFile.deleteFile();
 
     // Restore engine state. Each mode reverses what it set up above;
     // anything outside the mode's purview stays untouched.
@@ -691,11 +738,19 @@ bool BounceEngine::renderFreezeTrack (int trackIndex, const juce::File& outFile,
 
     engine.getChannelStrip (trackIndex).setFreezeCapture (capL.data(), capR.data());
 
-    // Same PDC lead-in trim as the stems: the strip path delays the signal by
-    // the deepest track latency. Drop those leading samples so the WAV starts
-    // at timeline 0; the live PDC re-applies on frozen playback.
-    const juce::int64 leadIn   = 0;
-    const juce::int64 toRender = lenSamples;
+    // The capture tap is post-insert, so an audio track's latent insert
+    // (lookahead comp, linear-phase EQ) delays the captured signal by its own
+    // latency — and frozen playback reports 0 to PDC, so that delay would be
+    // baked in and replayed late. Render that many extra samples and drop them
+    // from the head. MIDI instruments are excluded: the scheduler pre-shifts
+    // their events by the plugin latency, so their capture is already aligned.
+    const bool isMidiTrack =
+        session.track (trackIndex).mode.load (std::memory_order_relaxed)
+            == (int) Track::Mode::Midi;
+    const juce::int64 leadIn = isMidiTrack ? 0
+        : (juce::int64) engine.getChannelStrip (trackIndex)
+                              .getPluginSlot().getLatencySamples();
+    const juce::int64 toRender = lenSamples + leadIn;
 
     juce::int64 done = 0, written = 0, dropped = 0;
     bool ok = true;

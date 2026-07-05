@@ -181,6 +181,17 @@ public:
 
     juce::UndoManager& getUndoManager() noexcept { return undoManager; }
 
+    // MIDI soft takeover (pickup) for continuous absolute bindings — see the
+    // member block below. Pushed from the UI at startup and on toggle.
+    void setMidiSoftTakeover (bool on) noexcept
+    {
+        midiSoftTakeover.store (on, std::memory_order_relaxed);
+    }
+    bool getMidiSoftTakeover() const noexcept
+    {
+        return midiSoftTakeover.load (std::memory_order_relaxed);
+    }
+
     struct RegionClipboard
     {
         bool        hasContent = false;
@@ -472,6 +483,35 @@ private:
     // Deepest per-track insert latency in the session (samples). Set by
     // recomputePdc; read by BounceEngine to trim the render's lead-in.
     std::atomic<int> aggregatePdcLatencySamples { 0 };
+
+    // MIDI soft takeover (pickup). Per-machine preference pushed from the UI
+    // via setMidiSoftTakeover. Latch + last-incoming state lives on the audio
+    // thread only, keyed by the binding's index in the live snapshot; a
+    // snapshot republish (any bindings edit) re-arms every pickup.
+    std::atomic<bool> midiSoftTakeover { false };
+    static constexpr int kMaxPickupBindings = 512;
+    const void* pickupSnapshotKey = nullptr;
+    std::array<juce::uint8, kMaxPickupBindings> pickupLatched {};
+    std::array<float,       kMaxPickupBindings> pickupPrevIn {};
+
+    // Master-stage PDC for aux-lane plugin latency. A latent send effect
+    // (linear-phase EQ, lookahead comp on a return) delays only the WET
+    // path, flamming it against the dry mix. Compensation: once tracks and
+    // buses have summed into the mix, the dry mix waits for the deepest
+    // lane (masterDryPdc*) and each lane return waits for (deepest - own)
+    // (auxReturnPdc*), so wet and dry land together. Targets are written by
+    // recomputePdc; the audio thread relatches ONLY while the transport is
+    // stopped — the master path is rarely silent, and a mid-roll retarget
+    // would click. Zero targets skip the delay processing entirely.
+    using MasterPdcDelay = juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::None>;
+    MasterPdcDelay masterDryPdcL { ChannelStrip::kMaxPdcSamples };
+    MasterPdcDelay masterDryPdcR { ChannelStrip::kMaxPdcSamples };
+    std::array<MasterPdcDelay, Session::kNumAuxLanes> auxReturnPdcL;
+    std::array<MasterPdcDelay, Session::kNumAuxLanes> auxReturnPdcR;
+    std::atomic<int> masterDryPdcTarget { 0 };
+    std::array<std::atomic<int>, Session::kNumAuxLanes> auxReturnPdcTarget {};
+    int masterDryPdcApplied = 0;                                   // audio thread only
+    std::array<int, Session::kNumAuxLanes> auxReturnPdcApplied {}; // audio thread only
 
     // Render-time oversampling override (0 = use session factor). See
     // setRenderOversamplingOverride.

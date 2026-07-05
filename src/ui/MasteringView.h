@@ -56,6 +56,7 @@ private:
     void doLoadPrompt();
     void doLoadLatestMixdown();
     void doExport();
+    void openExportBrowser (int preset);
 
     // Apply a DP-24-style 3-band preset to the mastering multiband compressor
     // (no-op without donor DSP). See dsp/MultibandCompPresets.h.

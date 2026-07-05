@@ -34,6 +34,13 @@ private:
     void openFileChooser();
     void clearLoadedFile();
 
+    // Kick a background soundfont load (loadFileAsync / loadSf2PresetAsync):
+    // shows "(loading ...)", disables the load controls, re-enables and
+    // refreshes when the worker finishes. presetIndex >= 0 switches the
+    // loaded SF2's preset instead of loading `file`.
+    void startAsyncLoad (const juce::File& file, int presetIndex = -1);
+    void setLoadControlsEnabled (bool enabled);
+
     DuskMultisampleProcessor& processor;
 
     juce::Label    titleLabel       { {}, "Soundfont" };

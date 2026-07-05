@@ -23,6 +23,154 @@ namespace duskstudio
 static const float kHpfLogRange = std::log (ChannelStripParams::kHpfMaxHz
                                              / ChannelStripParams::kHpfMinHz);
 
+// Soft-takeover read-back: the parameter's CURRENT position as the same 0..1
+// fraction the apply switch below maps FROM. Each case is the exact inverse
+// of its apply-side mapping — change one, change the other. Returns < 0 for
+// targets pickup doesn't cover (discrete toggles, transport, plugin params —
+// plugin values have no RT-safe read-back). Audio thread; relaxed loads only.
+static float currentFracForTarget (Session& session, const MidiBinding& b) noexcept
+{
+    const auto inv = [] (float v, float lo, float hi)
+    {
+        return juce::jlimit (0.0f, 1.0f, (v - lo) / (hi - lo));
+    };
+    switch (b.target)
+    {
+        case MidiBindingTarget::TrackFader:
+            if (b.targetIndex < 0 || b.targetIndex >= Session::kNumTracks) return -1.0f;
+            return inv (session.track (b.targetIndex).strip.faderDb.load (std::memory_order_relaxed),
+                        -90.0f, 12.0f);
+        case MidiBindingTarget::TrackPan:
+            if (b.targetIndex < 0 || b.targetIndex >= Session::kNumTracks) return -1.0f;
+            return inv (session.track (b.targetIndex).strip.pan.load (std::memory_order_relaxed),
+                        -1.0f, 1.0f);
+        case MidiBindingTarget::TrackAuxSend:
+        {
+            const int trk = unpackTrackAuxTrack (b.targetIndex);
+            const int aux = unpackTrackAuxLane  (b.targetIndex);
+            if (trk < 0 || trk >= Session::kNumTracks
+                || aux < 0 || aux >= ChannelStripParams::kNumAuxSends) return -1.0f;
+            const float db = session.track (trk).strip.auxSendDb[(size_t) aux]
+                                 .load (std::memory_order_relaxed);
+            if (db <= ChannelStripParams::kAuxSendOffDb + 0.01f) return 0.0f;
+            return inv (db, ChannelStripParams::kAuxSendMinDb,
+                            ChannelStripParams::kAuxSendMaxDb);
+        }
+        case MidiBindingTarget::TrackHpfFreq:
+        {
+            if (b.targetIndex < 0 || b.targetIndex >= Session::kNumTracks) return -1.0f;
+            const auto& strip = session.track (b.targetIndex).strip;
+            if (! strip.hpfEnabled.load (std::memory_order_relaxed)) return 0.0f;
+            const float f = strip.hpfFreq.load (std::memory_order_relaxed);
+            if (f <= ChannelStripParams::kHpfMinHz) return 0.0f;
+            return juce::jlimit (0.0f, 1.0f,
+                std::log (f / ChannelStripParams::kHpfMinHz) / kHpfLogRange);
+        }
+        case MidiBindingTarget::TrackEqGain:
+        {
+            const int trk  = unpackTrackEqTrack (b.targetIndex);
+            const int band = unpackTrackEqBand  (b.targetIndex);
+            if (trk < 0 || trk >= Session::kNumTracks
+                || band < 0 || band >= kPackedEqBands) return -1.0f;
+            const auto& s = session.track (trk).strip;
+            const float db = band == 0 ? s.lfGainDb.load (std::memory_order_relaxed)
+                           : band == 1 ? s.lmGainDb.load (std::memory_order_relaxed)
+                           : band == 2 ? s.hmGainDb.load (std::memory_order_relaxed)
+                                       : s.hfGainDb.load (std::memory_order_relaxed);
+            return inv (db, -15.0f, 15.0f);
+        }
+        case MidiBindingTarget::TrackEqFreq:
+        {
+            const int trk  = unpackTrackEqTrack (b.targetIndex);
+            const int band = unpackTrackEqBand  (b.targetIndex);
+            if (trk < 0 || trk >= Session::kNumTracks
+                || band < 0 || band >= kPackedEqBands) return -1.0f;
+            const auto& s = session.track (trk).strip;
+            const auto logInv = [] (float f, float lo, float hi)
+            {
+                if (f <= lo) return 0.0f;
+                return juce::jlimit (0.0f, 1.0f, std::log (f / lo) / std::log (hi / lo));
+            };
+            switch (band)
+            {
+                case 0: return logInv (s.lfFreq.load (std::memory_order_relaxed), ChannelStripParams::kLfFreqMin, ChannelStripParams::kLfFreqMax);
+                case 1: return logInv (s.lmFreq.load (std::memory_order_relaxed), ChannelStripParams::kLmFreqMin, ChannelStripParams::kLmFreqMax);
+                case 2: return logInv (s.hmFreq.load (std::memory_order_relaxed), ChannelStripParams::kHmFreqMin, ChannelStripParams::kHmFreqMax);
+                default: return logInv (s.hfFreq.load (std::memory_order_relaxed), ChannelStripParams::kHfFreqMin, ChannelStripParams::kHfFreqMax);
+            }
+        }
+        case MidiBindingTarget::TrackEqQ:
+        {
+            const int trk  = unpackTrackEqTrack (b.targetIndex);
+            const int band = unpackTrackEqBand  (b.targetIndex);
+            if (trk < 0 || trk >= Session::kNumTracks) return -1.0f;
+            const auto& s = session.track (trk).strip;
+            if (band == 1) return inv (s.lmQ.load (std::memory_order_relaxed),
+                                       ChannelStripParams::kBandQMin, ChannelStripParams::kBandQMax);
+            if (band == 2) return inv (s.hmQ.load (std::memory_order_relaxed),
+                                       ChannelStripParams::kBandQMin, ChannelStripParams::kBandQMax);
+            return -1.0f;
+        }
+        case MidiBindingTarget::TrackCompThresh:
+        case MidiBindingTarget::TrackCompMakeup:
+        {
+            if (b.targetIndex < 0 || b.targetIndex >= Session::kNumTracks) return -1.0f;
+            const auto& s = session.track (b.targetIndex).strip;
+            const int mode = juce::jlimit (0, 2, s.compMode.load (std::memory_order_relaxed));
+            if (b.target == MidiBindingTarget::TrackCompMakeup)
+                switch (mode)
+                {
+                    case 0:  return inv (s.compOptoGain .load (std::memory_order_relaxed),   0.0f, 100.0f);
+                    case 1:  return inv (s.compFetOutput.load (std::memory_order_relaxed), -20.0f,  20.0f);
+                    default: return inv (s.compVcaOutput.load (std::memory_order_relaxed), -20.0f,  20.0f);
+                }
+            switch (mode)
+            {
+                case 0:  return inv (s.compOptoPeakRed.load (std::memory_order_relaxed),   0.0f, 100.0f);
+                case 1:  return inv (s.compFetInput   .load (std::memory_order_relaxed), -20.0f,  40.0f);
+                default: return inv (s.compVcaThreshDb.load (std::memory_order_relaxed), -38.0f,  12.0f);
+            }
+        }
+        case MidiBindingTarget::BusFader:
+            if (b.targetIndex < 0 || b.targetIndex >= Session::kNumBuses) return -1.0f;
+            return inv (session.bus (b.targetIndex).strip.faderDb.load (std::memory_order_relaxed),
+                        -90.0f, 12.0f);
+        case MidiBindingTarget::BusPan:
+            if (b.targetIndex < 0 || b.targetIndex >= Session::kNumBuses) return -1.0f;
+            return inv (session.bus (b.targetIndex).strip.pan.load (std::memory_order_relaxed),
+                        -1.0f, 1.0f);
+        case MidiBindingTarget::BusEqGain:
+        {
+            const int bus  = unpackBusEqBus  (b.targetIndex);
+            const int band = unpackBusEqBand (b.targetIndex);
+            if (bus < 0 || bus >= Session::kNumBuses) return -1.0f;
+            const auto& s = session.bus (bus).strip;
+            const float db = band == 0 ? s.eqLfGainDb .load (std::memory_order_relaxed)
+                           : band == 1 ? s.eqMidGainDb.load (std::memory_order_relaxed)
+                                       : s.eqHfGainDb .load (std::memory_order_relaxed);
+            return inv (db, -9.0f, 9.0f);
+        }
+        case MidiBindingTarget::AuxLaneFader:
+            if (b.targetIndex < 0 || b.targetIndex >= Session::kNumAuxLanes) return -1.0f;
+            return inv (session.auxLane (b.targetIndex).params.returnLevelDb
+                            .load (std::memory_order_relaxed), -90.0f, 12.0f);
+        case MidiBindingTarget::MasterFader:
+            return inv (session.master().faderDb.load (std::memory_order_relaxed), -90.0f, 12.0f);
+        case MidiBindingTarget::MasterEqLfBoost:
+            return inv (session.master().eqLfBoost.load (std::memory_order_relaxed), 0.0f, 10.0f);
+        case MidiBindingTarget::MasterEqHfBoost:
+            return inv (session.master().eqHfBoost.load (std::memory_order_relaxed), 0.0f, 10.0f);
+        case MidiBindingTarget::MasterCompThresh:
+            return inv (session.master().compThreshDb.load (std::memory_order_relaxed), -38.0f, 12.0f);
+        case MidiBindingTarget::MasterCompMakeup:
+            return inv (session.master().compMakeupDb.load (std::memory_order_relaxed), -20.0f, 20.0f);
+        case MidiBindingTarget::MasterCompRatio:
+            return inv (session.master().compRatio.load (std::memory_order_relaxed), 1.0f, 20.0f);
+        default:
+            return -1.0f;
+    }
+}
+
 // Per-machine audio device setup, alongside app-config.properties /
 // window-state.txt (one concern per file). Restored at construction,
 // persisted on every device change broadcast.
@@ -33,6 +181,19 @@ static juce::File audioDeviceStateFile()
     if (! dir.exists()) dir.createDirectory();
     return dir.getChildFile ("audio-device.xml");
 }
+
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+// Per-slot directory for LV2 FILE-BACKED state, under the session: track
+// slots at state/lv2/trackNN, aux slots at state/lv2/auxA_slotS. Empty when
+// the session has no directory yet — saves fall back to blob-only. Save As
+// consolidation copies the whole state/ tree (SessionSerializer).
+static juce::File lv2StateDirFor (Session& session, const juce::String& slotTag)
+{
+    const auto dir = session.getSessionDirectory();
+    if (dir == juce::File()) return {};
+    return dir.getChildFile ("state").getChildFile ("lv2").getChildFile (slotTag);
+}
+#endif
 
 // Session-carried native plugin state blob (base64) → bytes. Empty on any
 // decode failure — callers treat "no state" and "bad state" the same.
@@ -208,6 +369,8 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
         if (outIdx >= 0) sendMidiToOutput (outIdx, buf);
     });
     mcuController->setTransportProvider ([this] { return &transport; });
+    mcuController->setSampleRateProvider ([this] { return getCurrentSampleRate(); });
+    playbackEngine.bindTransport (transport);
     // 500 units covers thousands of edits while bounding memory under
     // multi-hour sessions; without this the stack grows unbounded.
     // 50 minimum kept even when total exceeds the cap.
@@ -568,6 +731,51 @@ void AudioEngine::recomputePdc() noexcept
     for (int t = 0; t < Session::kNumTracks; ++t)
         strips[(size_t) t].setPdcCompensationSamples (comp[t]);
     aggregatePdcLatencySamples.store (deepest, std::memory_order_relaxed);
+
+    // Aux-lane (send-effect) latency delays only the wet return. Master-stage
+    // targets: dry mix waits for the deepest lane, each return for
+    // (deepest - own). Buses host no plugins, so delaying the mix after the
+    // bus pass covers them too. Slots on a lane run in series — their
+    // latencies sum.
+    int auxLat[Session::kNumAuxLanes];
+    int deepestAux = 0;
+    for (int a = 0; a < Session::kNumAuxLanes; ++a)
+    {
+        auto& lane = auxLaneStrips[(size_t) a];
+        int laneLat = 0;
+        for (int p = 0; p < AuxLaneStrip::kMaxPlugins; ++p)
+        {
+            const int mode = lane.insertMode[(size_t) p].load (std::memory_order_relaxed);
+            if (mode == AuxLaneStrip::kInsertPlugin)
+            {
+                int slotLat = lane.getPluginSlot (p).getLatencySamples();
+#if DUSKSTUDIO_HAS_NATIVE_CLAP
+                if (lane.isNativeClapLoaded (p))
+                    if (auto* inst = lane.getNativeClapSlot (p).getInstance())
+                        slotLat = inst->getLatencySamples();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_LV2
+                if (lane.isNativeLv2Loaded (p))
+                    if (auto* inst = lane.getNativeLv2Slot (p).getInstance())
+                        slotLat = inst->getLatencySamples();
+#endif
+#if DUSKSTUDIO_HAS_NATIVE_VST3
+                if (lane.isNativeVst3Loaded (p))
+                    if (auto* inst = lane.getNativeVst3Slot (p).getInstance())
+                        slotLat = inst->getLatencySamples();
+#endif
+                laneLat += juce::jmax (0, slotLat);
+            }
+            else if (mode == AuxLaneStrip::kInsertHardware)
+                laneLat += juce::jmax (0, lane.getHardwareInsertSlot (p).getLatencySamples());
+        }
+        auxLat[a]  = juce::jlimit (0, ChannelStrip::kMaxPdcSamples, laneLat);
+        deepestAux = juce::jmax (deepestAux, auxLat[a]);
+    }
+    masterDryPdcTarget.store (deepestAux, std::memory_order_relaxed);
+    for (int a = 0; a < Session::kNumAuxLanes; ++a)
+        auxReturnPdcTarget[(size_t) a].store (deepestAux - auxLat[a],
+                                               std::memory_order_relaxed);
 }
 
 bool AudioEngine::freezePrepare (int trackIndex, juce::File& outFile, juce::int64& lenSamples)
@@ -806,6 +1014,9 @@ void AudioEngine::rebuildMidiInputBank()
     virtualKeyboardCollectorIndex = (int) midiInputCollectors.size() - 1;
 
     perInputMidi.assign ((size_t) midiInputDevices.size(), juce::MidiBuffer{});
+    // Pre-reserve like perTrackMidiScratch: removeNextBlockOfMessages grows the
+    // destination on the audio thread if a burst exceeds prior capacity.
+    for (auto& m : perInputMidi) m.ensureSize (4096);
 
     // Re-resolve on every rebuild so a hot-plug doesn't strand the
     // index at a stale slot. Empty / no match = -1 (no sync).
@@ -1110,7 +1321,9 @@ void AudioEngine::setStage (Stage s) noexcept
         playbackEngine.stopPlayback();
     }
 
-    stage.store (s, std::memory_order_relaxed);
+    // Gates two different signal flows on the audio thread — release/acquire
+    // so the stop sequencing above is visible before the path switches.
+    stage.store (s, std::memory_order_release);
 }
 
 AudioEngine::~AudioEngine()
@@ -1436,6 +1649,8 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
             track.nativeLv2Path     = strip.getNativeLv2Slot().getPath();
             track.nativeLv2PluginId = strip.getNativeLv2Slot().getPluginId();
             std::vector<uint8_t> blob;
+            strip.getNativeLv2Slot().setStateDirectory (
+                lv2StateDirFor (session, "track" + juce::String (t + 1).paddedLeft ('0', 2)));
             // Preserve the carried blob when a plugin can't serialize (no state
             // extension / save failure) — don't wipe it on a save round-trip.
             if (strip.getNativeLv2Slot().saveState (blob) && ! blob.empty())
@@ -1506,6 +1721,9 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
                 lane.nativeLv2Path[(size_t) s]     = strip.getNativeLv2Slot (s).getPath();
                 lane.nativeLv2PluginId[(size_t) s] = strip.getNativeLv2Slot (s).getPluginId();
                 std::vector<uint8_t> blob;
+                strip.getNativeLv2Slot (s).setStateDirectory (
+                    lv2StateDirFor (session, "aux" + juce::String (a + 1)
+                                                 + "_slot" + juce::String (s + 1)));
                 // See the track block above: preserve the carried blob when the
                 // plugin can't serialize.
                 if (strip.getNativeLv2Slot (s).saveState (blob) && ! blob.empty())
@@ -1698,7 +1916,11 @@ void AudioEngine::consumePluginStateAfterLoad()
                 std::string err;
                 const bool ok = strip.loadNativeLv2 (lv2File, err, track.nativeLv2PluginId);
                 if (ok && ! blob.empty())
+                {
+                    strip.getNativeLv2Slot().setStateDirectory (
+                        lv2StateDirFor (session, "track" + juce::String (t + 1).paddedLeft ('0', 2)));
                     strip.getNativeLv2Slot().loadState (blob);
+                }
                 resumeProcessing();
                 if (! ok)
                 {
@@ -1712,7 +1934,9 @@ void AudioEngine::consumePluginStateAfterLoad()
             {
                 strip.unloadNativeClap();   // see the CLAP pending branch above
                 strip.unloadNativeVst3();
-                strip.setPendingNativeLv2 (lv2File, std::move (blob), track.nativeLv2PluginId);
+                strip.setPendingNativeLv2 (lv2File, std::move (blob), track.nativeLv2PluginId,
+                                           lv2StateDirFor (session,
+                                               "track" + juce::String (t + 1).paddedLeft ('0', 2)));
             }
             continue;
         }
@@ -1862,7 +2086,12 @@ void AudioEngine::consumePluginStateAfterLoad()
                     const bool ok = strip.loadNativeLv2 (s, lv2File, err,
                                                          lane.nativeLv2PluginId[(size_t) s]);
                     if (ok && ! blob.empty())
+                    {
+                        strip.getNativeLv2Slot (s).setStateDirectory (
+                            lv2StateDirFor (session, "aux" + juce::String (a + 1)
+                                                         + "_slot" + juce::String (s + 1)));
                         strip.getNativeLv2Slot (s).loadState (blob);
+                    }
                     resumeProcessing();
                     if (! ok)
                     {
@@ -1877,7 +2106,10 @@ void AudioEngine::consumePluginStateAfterLoad()
                     strip.unloadNativeClap (s);   // see the CLAP pending branch above
                     strip.unloadNativeVst3 (s);
                     strip.setPendingNativeLv2 (s, lv2File, std::move (blob),
-                                               lane.nativeLv2PluginId[(size_t) s]);
+                                               lane.nativeLv2PluginId[(size_t) s],
+                                               lv2StateDirFor (session,
+                                                   "aux" + juce::String (a + 1)
+                                                       + "_slot" + juce::String (s + 1)));
                 }
                 continue;   // native handled — skip the JUCE restore for this slot
             }
@@ -2165,7 +2397,33 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
         for (int p = 0; p < AuxLaneParams::kMaxLanePlugins; ++p)
             a.getPluginSlot (p).setHostPlayHead (playHead.get());
     masteringChain.prepare (sr, bs, oxFactor);
-    masteringPlayer.prepare (bs);
+    masteringPlayer.prepare (bs, sr);
+
+    {
+        const juce::dsp::ProcessSpec monoSpec { sr, (juce::uint32) bs, 1 };
+        auto prepPdc = [&monoSpec] (MasterPdcDelay& d)
+        {
+            d.prepare (monoSpec);
+            d.setMaximumDelayInSamples (ChannelStrip::kMaxPdcSamples);
+            d.reset();
+        };
+        prepPdc (masterDryPdcL);
+        prepPdc (masterDryPdcR);
+        for (int a = 0; a < Session::kNumAuxLanes; ++a)
+        {
+            prepPdc (auxReturnPdcL[(size_t) a]);
+            prepPdc (auxReturnPdcR[(size_t) a]);
+        }
+        masterDryPdcApplied = 0;
+        auxReturnPdcApplied.fill (0);
+        masterDryPdcL.setDelay (0.0f);
+        masterDryPdcR.setDelay (0.0f);
+        for (int a = 0; a < Session::kNumAuxLanes; ++a)
+        {
+            auxReturnPdcL[(size_t) a].setDelay (0.0f);
+            auxReturnPdcR[(size_t) a].setDelay (0.0f);
+        }
+    }
     metronome.prepare (sr);
     playbackEngine.prepare (bs);  // size the playback read scratch - audio thread mustn't allocate
     pitchDetector.prepare (sr);   // ~46 ms history at the device rate
@@ -3058,6 +3316,46 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                                       : (val >= 64);      // rising-edge / level threshold
                     }
 
+                    // Soft takeover (pickup): an absolute controller snaps the
+                    // target to its own position on first touch. When enabled,
+                    // a continuous binding stays dormant until the controller
+                    // lands near — or sweeps across — the parameter's current
+                    // position, then latches and tracks 1:1. Latch state is
+                    // keyed by snapshot index and reset whenever the bindings
+                    // snapshot is republished (edits re-arm the pickup).
+                    if (midiSoftTakeover.load (std::memory_order_relaxed)
+                        && b.trigger != MidiBindingTrigger::MmcCommand)
+                    {
+                        if ((const void*) bindings != pickupSnapshotKey)
+                        {
+                            pickupSnapshotKey = bindings;
+                            pickupLatched.fill (0);
+                            pickupPrevIn.fill (-1.0f);
+                        }
+                        const auto idx = (size_t) (&sourceBinding - bindings->data());
+                        if (idx < pickupLatched.size() && ! pickupLatched[idx])
+                        {
+                            const float cur = currentFracForTarget (session, b);
+                            if (cur >= 0.0f)   // continuous, readable target
+                            {
+                                constexpr float kPickupEps = 2.0f / 127.0f;
+                                const float prev = pickupPrevIn[idx];
+                                const bool near    = std::abs (frac - cur) <= kPickupEps;
+                                const bool crossed = prev >= 0.0f
+                                                      && (prev - cur) * (frac - cur) <= 0.0f;
+                                if (near || crossed)
+                                {
+                                    pickupLatched[idx] = 1;
+                                }
+                                else
+                                {
+                                    pickupPrevIn[idx] = frac;
+                                    continue;   // dormant until pickup
+                                }
+                            }
+                        }
+                    }
+
                     switch (b.target)
                     {
                         case MidiBindingTarget::TransportPlay:
@@ -3553,7 +3851,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
     // MasteringChain → output. No track processing, no aux/master, no
     // recorder. We share `mixL/mixR` as scratch so we don't allocate on
     // the audio thread.
-    if (stage.load (std::memory_order_relaxed) == Stage::Mastering)
+    if (stage.load (std::memory_order_acquire) == Stage::Mastering)
     {
         masteringPlayer.process (mixL.data(), mixR.data(), numSamples);
         masteringChain.processInPlace (mixL.data(), mixR.data(), numSamples);
@@ -3630,6 +3928,13 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
     const bool isPlaying   = (state == Transport::State::Playing);
     const bool isRecording = (state == Transport::State::Recording);
     const juce::int64 blockStartSamples = transport.getPlayhead();
+
+    // Loop-aware disk reads: mirrors the wrap gate at the bottom of the
+    // callback (plain playback only — recording keeps the playhead linear).
+    const bool loopReadActive = isPlaying && ! isRecording && transport.isLoopEnabled()
+                                 && transport.getLoopEnd() > transport.getLoopStart();
+    const juce::int64 loopReadStart = loopReadActive ? transport.getLoopStart() : -1;
+    const juce::int64 loopReadEnd   = loopReadActive ? transport.getLoopEnd()   : -1;
 
     // Hanging-note protection. Detect two events that warrant a per-MIDI-
     // track "All Notes Off" flush this block:
@@ -3824,7 +4129,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
             float* outR = (stereoTrackInput || isFrozen) ? playbackScratchR[(size_t) t].data() : nullptr;
             playbackEngine.readForTrack (t, blockStartSamples,
                                           playbackScratch[(size_t) t].data(), outR,
-                                          numSamples);
+                                          numSamples, loopReadStart, loopReadEnd);
             monoIn = playbackScratch[(size_t) t].data();
         }
         else if (deviceInput != nullptr && (armed || monitorEnabled) && ! isFrozen)
@@ -4424,6 +4729,49 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
 
     perfLap (PerfSections::kBuses);
 
+    // Master-stage PDC (see recomputePdc): the dry mix — tracks + buses, all
+    // summed by here — waits for the deepest aux-lane latency so the wet
+    // returns added below land aligned. Retarget only while stopped; a
+    // mid-roll delay-length change on the full mix would click.
+    {
+        const int dryTarget = masterDryPdcTarget.load (std::memory_order_relaxed);
+        if (! (isPlaying || isRecording))
+        {
+            if (dryTarget != masterDryPdcApplied)
+            {
+                masterDryPdcApplied = dryTarget;
+                masterDryPdcL.reset();
+                masterDryPdcR.reset();
+                masterDryPdcL.setDelay ((float) dryTarget);
+                masterDryPdcR.setDelay ((float) dryTarget);
+            }
+            for (int a = 0; a < Session::kNumAuxLanes; ++a)
+            {
+                const int t = auxReturnPdcTarget[(size_t) a].load (std::memory_order_relaxed);
+                if (t != auxReturnPdcApplied[(size_t) a])
+                {
+                    auxReturnPdcApplied[(size_t) a] = t;
+                    auxReturnPdcL[(size_t) a].reset();
+                    auxReturnPdcR[(size_t) a].reset();
+                    auxReturnPdcL[(size_t) a].setDelay ((float) t);
+                    auxReturnPdcR[(size_t) a].setDelay ((float) t);
+                }
+            }
+        }
+        if (masterDryPdcApplied > 0)
+        {
+            auto* mL = mixL.data();
+            auto* mR = mixR.data();
+            for (int i = 0; i < numSamples; ++i)
+            {
+                masterDryPdcL.pushSample (0, mL[i]);
+                masterDryPdcR.pushSample (0, mR[i]);
+                mL[i] = masterDryPdcL.popSample (0);
+                mR[i] = masterDryPdcR.popSample (0);
+            }
+        }
+    }
+
     // AUX automation routing. Mirror of the per-track per-block block
     // up at the top: for each aux lane, drive liveReturnLevelDb /
     // liveMute from the lane in Read or (Touch && !touched) mode,
@@ -4545,6 +4893,22 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                                                         numCurrentDeviceInputs,
                                                         currentDeviceOutputs,
                                                         numCurrentDeviceOutputs);
+        // Master-stage PDC: shorter-latency returns wait for the deepest lane
+        // so every wet path lands on the (equally delayed) dry mix.
+        if (auxReturnPdcApplied[(size_t) a] > 0)
+        {
+            auto* wL = auxLaneL[(size_t) a].data();
+            auto* wR = auxLaneR[(size_t) a].data();
+            auto& dL = auxReturnPdcL[(size_t) a];
+            auto& dR = auxReturnPdcR[(size_t) a];
+            for (int i = 0; i < numSamples; ++i)
+            {
+                dL.pushSample (0, wL[i]);
+                dR.pushSample (0, wR[i]);
+                wL[i] = dL.popSample (0);
+                wR[i] = dR.popSample (0);
+            }
+        }
         juce::FloatVectorOperations::add (mixL.data(),
                                             auxLaneL[(size_t) a].data(),
                                             numSamples);
@@ -4619,7 +4983,11 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         else if (isPlaying)
             clickRolling = wantWhilePlay;
 
-        metronome.process (blockStartSamples, clickRolling,
+        // The click mixes post-master, AFTER the master-stage aux PDC delayed
+        // the program by masterDryPdcApplied — reference the click to the
+        // delayed position or it leads everything it's supposed to mark.
+        metronome.process (blockStartSamples - (juce::int64) masterDryPdcApplied,
+                            clickRolling,
                             mixL.data(), mixR.data(), numSamples,
                             /*forceEnable*/ inCountIn);
     }

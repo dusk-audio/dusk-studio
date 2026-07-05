@@ -20,6 +20,12 @@ public:
 
     bool isOk() const noexcept { return encoder != nullptr; }
 
+    // Flush the encoder's buffered frames to the stream and report whether the
+    // write succeeded. The destructor also flushes, but it can't report a
+    // failure — call this first when the caller needs to distinguish a
+    // truncated file (disk full at flush) from a good one. Idempotent.
+    bool finalize();
+
     // Only write(int**) is virtual in juce::AudioFormatWriter; the float-array
     // path (writeFromFloatArrays) is non-virtual and routes here after JUCE's
     // float->32-bit-int conversion, which we convert back to float for LAME.

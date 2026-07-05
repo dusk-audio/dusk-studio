@@ -15,6 +15,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
+#include <set>
 
 namespace duskstudio
 {
@@ -1238,6 +1240,8 @@ juce::String SessionSerializer::serialize (const Session& s)
 {
     auto* root = new juce::DynamicObject();
     root->setProperty ("version", kFormatVersion);
+    if (s.sessionSampleRate > 0.0)
+        root->setProperty ("session_sample_rate", s.sessionSampleRate);
 
     juce::Array<juce::var> tracks;
     for (int i = 0; i < Session::kNumTracks; ++i)
@@ -1609,6 +1613,15 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
     if (fileVersion < kFormatVersion && ! migrateSession (root, fileVersion))
         return false;
 
+    // Unconditional (reset-when-absent): a pre-SR-aware file must not inherit
+    // the previous session's rate — 0 tells the load UI to adopt the device's.
+    {
+        const double sr = root.hasProperty ("session_sample_rate")
+                              ? (double) root["session_sample_rate"] : 0.0;
+        s.sessionSampleRate = (std::isfinite (sr) && sr >= 8000.0 && sr <= 384000.0)
+                                  ? sr : 0.0;
+    }
+
     // Peek at transport.tempo_bpm BEFORE the track loop so legacy sessions
     // (no recorded_at_bpm field on MidiRegion) get anchored to their own
     // saved tempo rather than the struct default of 120. The transport
@@ -1626,8 +1639,26 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         }
     }
 
-    if (auto tracks = root["tracks"]; tracks.isArray())
+    // A truncated / hand-edited file may lack whole section keys, or list
+    // fewer buses / aux lanes than this build has. Every slot must still be
+    // driven through restore — skipping any leaves the PREVIOUS session's
+    // content (regions, plugins, mixer state) alive under the new session's
+    // name. restoreBus and the aux-lane path inherit any absent property, so
+    // an empty object is not enough to blank them: substitute the serialized
+    // sections of a default Session, which carry every key at its model
+    // default.
+    juce::var sectionDefaults;
     {
+        auto tracksVar = root["tracks"], busesVar = root["buses"], auxVar = root["aux_lanes"];
+        if (! tracksVar.isArray() || ! busesVar.isArray() || ! auxVar.isArray()
+            || busesVar.size() < Session::kNumBuses
+            || auxVar.size() < Session::kNumAuxLanes)
+            sectionDefaults = juce::JSON::parse (serialize (Session{}));
+    }
+
+    {
+        auto tracks = root["tracks"];
+        if (! tracks.isArray()) tracks = sectionDefaults["tracks"];
         // Restore EVERY track slot, not just the ones the JSON lists. A session
         // with fewer tracks than this build (hand-edited, or written by a tool
         // like the DP importer) must blank the surplus slots — otherwise they
@@ -1643,18 +1674,21 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                           sessionLoadBpm, s.getSessionDirectory(),
                           s.missingAudioFilesAfterLoad);
     }
-    if (auto busesArr = root["buses"]; busesArr.isArray())
     {
-        const int n = juce::jmin (Session::kNumBuses, busesArr.size());
-        for (int i = 0; i < n; ++i)
-            restoreBus (s.bus (i), busesArr[i], sessionLoadBpm);
+        auto busesArr = root["buses"];
+        if (! busesArr.isArray()) busesArr = sectionDefaults["buses"];
+        for (int i = 0; i < Session::kNumBuses; ++i)
+            restoreBus (s.bus (i),
+                        i < busesArr.size() ? busesArr[i] : sectionDefaults["buses"][i],
+                        sessionLoadBpm);
     }
-    if (auto auxLanesArr = root["aux_lanes"]; auxLanesArr.isArray())
     {
-        const int n = juce::jmin (Session::kNumAuxLanes, auxLanesArr.size());
-        for (int i = 0; i < n; ++i)
+        auto auxLanesArr = root["aux_lanes"];
+        if (! auxLanesArr.isArray()) auxLanesArr = sectionDefaults["aux_lanes"];
+        for (int i = 0; i < Session::kNumAuxLanes; ++i)
         {
-            const auto v = auxLanesArr[i];
+            const auto v = i < auxLanesArr.size() ? auxLanesArr[i]
+                                                  : sectionDefaults["aux_lanes"][i];
             if (! v.isObject()) continue;
             auto& lane = s.auxLane (i);
             if (auto str = v["name"].toString();   str.isNotEmpty()) lane.name   = str;
@@ -2151,5 +2185,139 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
     // so the audio thread's any-X-soloed reads are correct on first callback.
     s.recomputeRtCounters();
     return true;
+}
+
+SessionSerializer::ConsolidationResult
+SessionSerializer::consolidateInto (Session& s, const juce::File& newSessionDir)
+{
+    ConsolidationResult res;
+    const auto oldDir = s.getSessionDirectory();
+    if (newSessionDir == juce::File() || newSessionDir == oldDir)
+        return res;
+
+    // Phase A — plan. Map each unique source to its destination without
+    // touching the model. Files under the old session dir keep their relative
+    // subpath (audio/, audio/freeze/, a root mixdown.wav); anything else is
+    // flattened into audio/ with a numeric suffix on basename collisions.
+    std::map<juce::String, juce::File> remap;
+    std::set<juce::String> usedTargets;
+
+    auto plan = [&] (const juce::File& f)
+    {
+        if (f == juce::File()) return;
+        const auto key = f.getFullPathName();
+        if (remap.count (key) != 0) return;
+        if (! f.existsAsFile())
+        {
+            if (std::find (res.missingSources.begin(), res.missingSources.end(), key)
+                    == res.missingSources.end())
+                res.missingSources.push_back (key);
+            return;
+        }
+
+        // Both branches go through the same collision suffixing: a flattened
+        // external can claim a name a later session-local file also maps to
+        // (external loop.wav planned before audio/loop.wav), so the
+        // preserve-relative branch is not collision-free either.
+        juce::File target = (oldDir != juce::File() && f.isAChildOf (oldDir))
+            ? newSessionDir.getChildFile (f.getRelativePathFrom (oldDir))
+            : newSessionDir.getChildFile ("audio").getChildFile (f.getFileName());
+        const auto targetDir = target.getParentDirectory();
+        for (int n = 2; usedTargets.count (target.getFullPathName()) != 0; ++n)
+            target = targetDir.getChildFile (f.getFileNameWithoutExtension()
+                                              + "_" + juce::String (n)
+                                              + f.getFileExtension());
+        usedTargets.insert (target.getFullPathName());
+        remap[key] = target;
+    };
+
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        auto& track = s.track (t);
+        for (auto& r : track.regions)
+        {
+            plan (r.file);
+            for (auto& take : r.previousTakes)
+                plan (take.file);
+        }
+        if (track.frozenAudioPath.isNotEmpty())
+            plan (juce::File (track.frozenAudioPath));
+    }
+    // Session-local mastering source moves with the session; a genuinely
+    // external one (a mix from elsewhere on disk) stays where the user put it.
+    if (auto& src = s.mastering().sourceFile;
+        src != juce::File() && oldDir != juce::File() && src.isAChildOf (oldDir))
+        plan (src);
+
+    // Native plugin file-backed state (state/lv2/<slot>/...) travels with the
+    // session as a whole tree: the serialized blobs reference it by
+    // cur/-relative abstract paths, so no model repoint is needed — the copy
+    // just has to exist under the new root before the post-swap re-save
+    // refreshes it.
+    juce::File copiedStateDir;
+    if (oldDir != juce::File())
+    {
+        const auto oldStateDir = oldDir.getChildFile ("state");
+        if (oldStateDir.isDirectory())
+        {
+            const auto newStateDir = newSessionDir.getChildFile ("state");
+            if (! oldStateDir.copyDirectoryTo (newStateDir))
+            {
+                newStateDir.deleteRecursively();
+                res.ok = false;
+                res.errorMessage = "Could not copy the plugin state folder to \""
+                                 + newStateDir.getFullPathName() + "\"";
+                return res;
+            }
+            copiedStateDir = newStateDir;
+        }
+    }
+
+    // Phase B — copy. Any failure rolls back the files copied so far (including
+    // the state tree above) and returns with the model untouched.
+    std::vector<juce::File> copied;
+    for (const auto& [srcPath, target] : remap)
+    {
+        const juce::File src (srcPath);
+        if (! target.getParentDirectory().createDirectory().wasOk()
+            || ! src.copyFileTo (target))
+        {
+            for (auto& c : copied) c.deleteFile();
+            if (copiedStateDir != juce::File()) copiedStateDir.deleteRecursively();
+            res.ok = false;
+            res.errorMessage = "Could not copy \"" + src.getFileName() + "\" to \""
+                             + target.getParentDirectory().getFullPathName() + "\"";
+            return res;
+        }
+        copied.push_back (target);
+    }
+    res.filesCopied = (int) copied.size();
+
+    // Phase C — repoint the model.
+    auto repoint = [&remap] (juce::File& f)
+    {
+        auto it = remap.find (f.getFullPathName());
+        if (it != remap.end()) f = it->second;
+    };
+    for (int t = 0; t < Session::kNumTracks; ++t)
+    {
+        auto& track = s.track (t);
+        for (auto& r : track.regions)
+        {
+            repoint (r.file);
+            for (auto& take : r.previousTakes)
+                repoint (take.file);
+        }
+        if (track.frozenAudioPath.isNotEmpty())
+        {
+            juce::File fz (track.frozenAudioPath);
+            repoint (fz);
+            track.frozenAudioPath = fz.getFullPathName();
+            repoint (track.frozenRegion.file);
+        }
+    }
+    repoint (s.mastering().sourceFile);
+
+    return res;
 }
 } // namespace duskstudio

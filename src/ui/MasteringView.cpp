@@ -1,6 +1,7 @@
 #include "MasteringView.h"
 #include "BounceDialog.h"
 #include "CompHeaderButton.h"
+#include "DuskContextMenu.h"
 #include "DuskFileBrowser.h"
 #include "MasteringEqEditor.h"
 #include "MasteringLimiterEditor.h"
@@ -732,12 +733,38 @@ void MasteringView::doExport()
         return;
     }
 
-    const auto defaultFile = session.getSessionDirectory().getChildFile ("master.wav");
+    // Delivery presets. 1 = archive/session-rate WAV, 2 = dithered CD-spec
+    // WAV, 3 = MP3. The chosen preset drives the browser's default name and
+    // the render's rate/depth.
+    juce::PopupMenu m;
+    m.addSectionHeader ("Export master as");
+    m.addItem (1, "WAV 24-bit " + juce::String (juce::CharPointer_UTF8 ("\xe2\x80\x94"))
+                  + " session rate");
+    m.addItem (2, "WAV 16-bit 44.1 kHz " + juce::String (juce::CharPointer_UTF8 ("\xe2\x80\x94"))
+                  + " dithered (CD)");
    #if DUSKSTUDIO_HAS_LAME
-    const juce::String patterns = "*.wav;*.mp3";   // name it .mp3 to export MP3
-   #else
-    const juce::String patterns = "*.wav";
+    m.addItem (3, "MP3 320 kbps");
    #endif
+
+    juce::Component::SafePointer<MasteringView> safe (this);
+    showContextMenu (m, *this,
+        [safe] (int preset)
+        {
+            if (safe == nullptr || preset == 0) return;
+            safe->openExportBrowser (preset);
+        },
+        exportButton.getScreenBounds().getBottomLeft());
+}
+
+void MasteringView::openExportBrowser (int preset)
+{
+    const bool   mp3Preset = preset == 3;
+    const double rate      = preset == 2 ? 44100.0 : 0.0;
+    const int    depth     = preset == 2 ? 16 : 24;
+
+    const auto defaultFile = session.getSessionDirectory().getChildFile (
+        mp3Preset ? "master.mp3" : "master.wav");
+    const juce::String patterns = mp3Preset ? "*.mp3" : "*.wav";
 
     filebrowser::open (*this, {
         /*title*/                  "Export master",
@@ -747,22 +774,18 @@ void MasteringView::doExport()
         /*warnAboutOverwriting*/   true,
         /*selectDirectories*/      false,
     },
-    [this] (juce::File out)
+    [this, mp3Preset, rate, depth] (juce::File out)
     {
         if (out == juce::File()) return;
         auto target = out;
-       #if DUSKSTUDIO_HAS_LAME
-        const bool mp3 = target.hasFileExtension ("mp3");
-       #else
-        const bool mp3 = false;   // no encoder in this build - a typed .mp3 falls back to WAV
-       #endif
-        if (! mp3 && ! target.hasFileExtension ("wav"))
-            target = target.withFileExtension ("wav");
-        const auto fmt = mp3 ? BounceEngine::Format::Mp3 : BounceEngine::Format::Wav;
+        if (! target.hasFileExtension (mp3Preset ? "mp3" : "wav"))
+            target = target.withFileExtension (mp3Preset ? "mp3" : "wav");
+        const auto fmt = mp3Preset ? BounceEngine::Format::Mp3 : BounceEngine::Format::Wav;
 
         auto panel = std::make_unique<BounceDialog> (engine, session,
                                                        engine.getDeviceManager(), target,
-                                                       BounceEngine::Mode::MasteringChain, fmt);
+                                                       BounceEngine::Mode::MasteringChain, fmt,
+                                                       320, rate, depth);
         panel->setSize (520, 200);
         juce::Component::SafePointer<MasteringView> safeThis (this);
         panel->onRequestClose = [safeThis] { if (safeThis != nullptr) safeThis->exportModal.close(); };

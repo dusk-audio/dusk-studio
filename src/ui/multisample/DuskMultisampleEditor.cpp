@@ -98,9 +98,7 @@ DuskMultisampleEditor::DuskMultisampleEditor (DuskMultisampleProcessor& proc)
     {
         const int idx = sf2PresetSelector.getSelectedId() - 1;   // IDs are 1-based
         if (idx < 0 || idx >= processor.getSf2PresetNames().size()) return;
-        juce::String err;
-        if (! processor.loadSf2Preset (idx, err))
-            filePathLabel.setText ("(" + err + ")", juce::dontSendNotification);
+        startAsyncLoad ({}, idx);
     };
     addChildComponent (sf2PresetSelector);
 
@@ -113,11 +111,9 @@ DuskMultisampleEditor::DuskMultisampleEditor (DuskMultisampleProcessor& proc)
     {
         const int idx = ariaProgramSelector.getSelectedId() - 1;
         if (idx < 0 || idx >= (int) ariaProgramFiles.size()) return;
-        juce::String err;
-        if (! processor.loadSfzFile (ariaProgramFiles[(size_t) idx], err))
-            filePathLabel.setText ("(" + err + ")", juce::dontSendNotification);
         // loadedFilePath changes → timerCallback rebuilds the skin for
-        // the newly selected program on the next tick.
+        // the newly selected program on the next tick after the load lands.
+        startAsyncLoad (ariaProgramFiles[(size_t) idx]);
     };
     addChildComponent (ariaProgramSelector);
 
@@ -301,16 +297,6 @@ void DuskMultisampleEditor::openFileChooser()
 
         const auto fileName = file.getFileName().toLowerCase();
 
-        if (fileName.endsWith (".sf2"))
-        {
-            juce::String err;
-            if (! self->processor.loadSf2File (file, err))
-                self->filePathLabel.setText ("(" + err + ")", juce::dontSendNotification);
-            else
-                self->timerCallback();
-            return;
-        }
-
         // ARIA bank manifest - find the first program's .sfz inside the
         // bank and load that. Phase 4 adds the program switcher; for now
         // pick the first valid AriaProgram so the user can audition the
@@ -327,22 +313,55 @@ void DuskMultisampleEditor::openFileChooser()
                                               juce::dontSendNotification);
                 return;
             }
-            const auto& first = bankOpt->programs.front();
-            juce::String err;
-            if (! self->processor.loadSfzFile (first.sfzFile, err))
-                self->filePathLabel.setText ("(" + err + ")",
-                                              juce::dontSendNotification);
-            else
-                self->timerCallback();
+            self->startAsyncLoad (bankOpt->programs.front().sfzFile);
             return;
         }
 
-        juce::String err;
-        if (! self->processor.loadSfzFile (file, err))
-            self->filePathLabel.setText ("(" + err + ")", juce::dontSendNotification);
-        else
-            self->timerCallback();
+        // .sf2 and .sfz both go through the background load — an SF2 GM bank
+        // extracts every preset sample first (~seconds) and used to wedge the
+        // message thread for the duration.
+        self->startAsyncLoad (file);
     });
+}
+
+void DuskMultisampleEditor::setLoadControlsEnabled (bool enabled)
+{
+    browseButton       .setEnabled (enabled);
+    reloadButton       .setEnabled (enabled);
+    clearButton        .setEnabled (enabled);
+    sf2PresetSelector  .setEnabled (enabled);
+    ariaProgramSelector.setEnabled (enabled);
+}
+
+void DuskMultisampleEditor::startAsyncLoad (const juce::File& file, int presetIndex)
+{
+    if (processor.isLoadPending()) return;
+
+    setLoadControlsEnabled (false);
+    filePathLabel.setText ("(loading " + (presetIndex >= 0
+                               ? "preset " + juce::String (presetIndex + 1)
+                               : file.getFileName()) + " ...)",
+                            juce::dontSendNotification);
+
+    juce::Component::SafePointer<DuskMultisampleEditor> safe (this);
+    auto onDone = [safe] (bool ok, juce::String err)
+    {
+        // The processor outlives a closed editor (worker joins in ITS
+        // destructor) — only the UI refresh needs the guard.
+        if (auto* self = safe.getComponent())
+        {
+            self->setLoadControlsEnabled (true);
+            if (! ok)
+                self->filePathLabel.setText ("(" + err + ")", juce::dontSendNotification);
+            else
+                self->timerCallback();
+        }
+    };
+
+    if (presetIndex >= 0)
+        processor.loadSf2PresetAsync (presetIndex, std::move (onDone));
+    else
+        processor.loadFileAsync (file, std::move (onDone));
 }
 
 void DuskMultisampleEditor::clearLoadedFile()

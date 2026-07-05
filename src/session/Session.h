@@ -1223,6 +1223,13 @@ public:
     // thread reads but today only message-thread prepare reads it.
     std::atomic<int> oversamplingFactor { 1 };
 
+    // Canonical sample rate of the session's recorded/imported audio. WAVs
+    // play 1:1 (no SRC in the playback path), so the device must run at this
+    // rate for correct speed/pitch — the load path tries to switch the device
+    // and warns when it can't. 0 = unset (pre-SR-aware session); adopted from
+    // the device on load. Message thread only.
+    double sessionSampleRate = 0.0;
+
     // tempoBpm = 0 disables beat-grid (metronome silent, snap falls
     // back to seconds). Atomics so audio picks up changes lock-free.
     std::atomic<float> tempoBpm          { 120.0f };

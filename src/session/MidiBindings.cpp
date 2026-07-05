@@ -259,7 +259,7 @@ namespace midilearn
 namespace
 {
 // Set by the UI layer (setLearnMenuShowHook) to render the learn menu
-// in-window. Null until then → showLearnMenu uses the native popup.
+// in-window. Null until then → showLearnMenu logs, asserts and drops the menu.
 LearnMenuShowFn& learnMenuShowHook()
 {
     static LearnMenuShowFn hook;
@@ -488,12 +488,20 @@ void showLearnMenu (juce::Component& target,
     addExistingControls (existingBanked,   bankedKind, bankedIndex, " (banked)");
     (void) existing;   // kept for symmetry / future "any binding?" callers
 
-    // Prefer the UI-provided in-window renderer; fall back to the native
-    // popup only if the hook was never installed.
+    // The UI installs the in-window renderer at startup; a native popup must
+    // never ship (Wayland policy), so a missing hook is a programming error.
     if (auto& hook = learnMenuShowHook())
+    {
         hook (m, target);
+    }
     else
-        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&target));
+    {
+        // Log too — the assert compiles out in release, and the menu silently
+        // not opening must stay diagnosable in the field.
+        juce::Logger::writeToLog ("MidiBindings::showLearnMenu: no in-window "
+                                  "menu hook installed; learn menu dropped");
+        jassertfalse;
+    }
 }
 
 void setLearnMenuShowHook (LearnMenuShowFn fn)

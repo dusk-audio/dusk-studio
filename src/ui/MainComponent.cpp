@@ -1,4 +1,5 @@
 #include "MainComponent.h"
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>  // std::getenv (DUSKSTUDIO_USE_OOP_PLUGINS)
 #include "AppConfig.h"
@@ -34,6 +35,7 @@
 #include "../session/RecentSessions.h"
 #include "../session/SessionSerializer.h"
 #include "../engine/FileImporter.h"
+#include "../engine/PlaybackEngine.h"
 #include "ImportTargetPicker.h"
 #include "DpImportDialog.h"
 #include "../engine/DpImporter.h"
@@ -61,6 +63,215 @@ juce::AudioFormatManager& importAudioFormatManager()
     }
     return fm;
 }
+
+// Background worker for the DP-song bulk import: mixdown alignment plus every
+// fragment decode/convert runs here so a large song doesn't wedge the message
+// thread for minutes. NO session access — the outcomes are applied on the
+// message thread in MainComponent::finishDpImport once `done` flips. Cancel
+// deletes the WAVs already produced (nothing references them until apply).
+class DpImportJob final : public juce::Thread
+{
+public:
+    struct TrackOutcome
+    {
+        int index = -1;
+        bool imported = false;
+        juce::String skipReason;                       // set when !imported
+        duskstudio::fileimport::AudioImportResult res; // valid when imported
+    };
+
+    // stereoCombineFn = makeStereoTempWav, injected because that helper is
+    // defined at namespace scope below this anonymous namespace.
+    DpImportJob (dp::SongScan s, double sessionSr, juce::File audioDirIn,
+                 std::array<bool, Session::kNumTracks> frozenTracks,
+                 bool wantTimeline,
+                 std::function<juce::File (const juce::File&, const juce::File&)> stereoCombineFn)
+        : juce::Thread ("Dusk Studio DP import"),
+          scan (std::move (s)), sr (sessionSr), audioDir (std::move (audioDirIn)),
+          frozen (frozenTracks), importTimeline (wantTimeline),
+          stereoCombine (std::move (stereoCombineFn)) {}
+
+    // Never force-kill: importAudio streams a fragment in bounded chunks, so
+    // the wait is seconds at worst, and a killed thread would leak a
+    // half-written WAV with the writer still open.
+    ~DpImportJob() override
+    {
+        signalThreadShouldExit();
+        waitForThreadToExit (-1);
+    }
+
+    void run() override
+    {
+        const int n = juce::jmin ((int) scan.tracks.size(), Session::kNumTracks);
+        placeAt.assign ((size_t) n, 0);
+
+        // Timeline placement: song.sys clip offsets first, mixdown onset
+        // alignment for anything song.sys didn't place.
+        if (importTimeline)
+        {
+            const double songSr = scan.sampleRate > 0.0 ? scan.sampleRate : sr;
+            for (int i = 0; i < n; ++i)
+            {
+                const auto ss = scan.tracks[(size_t) i].timelineStart;
+                if (ss > 0)
+                {
+                    placeAt[(size_t) i] = (juce::int64) std::llround ((double) ss * sr / songSr);
+                    ++placedCount;
+                }
+            }
+            if (scan.hasMixdown && ! threadShouldExit())
+            {
+                std::vector<juce::File> sources;
+                sources.reserve ((size_t) n);
+                for (int i = 0; i < n; ++i)
+                    sources.push_back (scan.tracks[(size_t) i].fragment.mono1);
+                const auto al = dp::alignToMixdown (scan.mixdownFile, sources);
+                for (int i = 0; i < n && i < (int) al.size(); ++i)
+                    if (placeAt[(size_t) i] == 0 && al[(size_t) i].placed
+                        && ! al[(size_t) i].fullLength && al[(size_t) i].positionSeconds > 0.0)
+                    {
+                        placeAt[(size_t) i] = (juce::int64) std::llround (
+                            al[(size_t) i].positionSeconds * sr);
+                        ++placedCount;
+                    }
+            }
+        }
+
+        for (int i = 0; i < n && ! threadShouldExit(); ++i)
+        {
+            const auto& it   = scan.tracks[(size_t) i];
+            const auto& frag = it.fragment;
+            TrackOutcome out;
+            out.index = i;
+
+            if (frozen[(size_t) i])
+            {
+                out.skipReason = it.name + ": target track is frozen (unfreeze to import)";
+                outcomes.push_back (std::move (out));
+                continue;
+            }
+
+            juce::File src, tmp;
+            const int channels = frag.stereo ? 2 : 1;
+            if (frag.stereo)
+            {
+                tmp = stereoCombine (frag.mono1, frag.mono2);
+                if (tmp == juce::File())
+                {
+                    out.skipReason = it.name + ": could not combine stereo halves";
+                    outcomes.push_back (std::move (out));
+                    continue;
+                }
+                src = tmp;
+            }
+            else
+            {
+                src = frag.mono1;
+            }
+
+            duskstudio::fileimport::AudioImportRequest req;
+            req.source            = src;
+            req.audioDir          = audioDir;
+            req.trackIndex        = i;
+            req.sessionSampleRate = sr;
+            req.targetChannels    = channels;
+            req.timelineStart     = placeAt[(size_t) i];
+
+            out.res = duskstudio::fileimport::importAudio (req);
+            if (tmp != juce::File()) tmp.deleteFile();
+            if (out.res.ok) out.imported = true;
+            else            out.skipReason = it.name + ": " + out.res.errorMessage;
+            outcomes.push_back (std::move (out));
+
+            progress.store ((float) (i + 1) / (float) juce::jmax (1, n),
+                             std::memory_order_relaxed);
+        }
+
+        if (threadShouldExit())
+        {
+            for (auto& o : outcomes)
+                if (o.imported) o.res.region.file.deleteFile();
+            outcomes.clear();
+            cancelled.store (true, std::memory_order_release);
+        }
+        done.store (true, std::memory_order_release);
+    }
+
+    dp::SongScan scan;
+    double       sr;
+    juce::File   audioDir;
+    std::array<bool, Session::kNumTracks> frozen;
+    bool importTimeline;
+    std::function<juce::File (const juce::File&, const juce::File&)> stereoCombine;
+
+    // Written by run(), read on the message thread strictly after `done`.
+    std::vector<juce::int64> placeAt;
+    int placedCount = 0;
+    std::vector<TrackOutcome> outcomes;
+
+    std::atomic<float> progress  { 0.0f };
+    std::atomic<bool>  done      { false };
+    std::atomic<bool>  cancelled { false };
+};
+
+// Progress body for the DP-import modal: bar + cancel, 20 Hz poll of the
+// job's atomics. Fires onFinished exactly once on the message thread when
+// the worker flips `done`.
+class DpImportProgressPanel final : public juce::Component, private juce::Timer
+{
+public:
+    explicit DpImportProgressPanel (DpImportJob& j) : job (j), bar (value)
+    {
+        title.setText ("Importing DP song...", juce::dontSendNotification);
+        title.setFont (juce::Font (juce::FontOptions (14.0f, juce::Font::bold)));
+        title.setColour (juce::Label::textColourId, juce::Colour (0xffe8e8e8));
+        addAndMakeVisible (title);
+        bar.setColour (juce::ProgressBar::backgroundColourId, juce::Colour (0xff101012));
+        bar.setColour (juce::ProgressBar::foregroundColourId, juce::Colour (0xff5fa8ff));
+        addAndMakeVisible (bar);
+        cancelButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff202024));
+        cancelButton.setColour (juce::TextButton::textColourOffId, juce::Colour (0xffd0d0d0));
+        cancelButton.onClick = [this]
+        {
+            job.signalThreadShouldExit();
+            cancelButton.setEnabled (false);
+        };
+        addAndMakeVisible (cancelButton);
+        startTimerHz (20);
+    }
+
+    std::function<void()> onFinished;
+
+    void paint (juce::Graphics& g) override { g.fillAll (juce::Colour (0xff202024)); }
+    void resized() override
+    {
+        auto area = getLocalBounds().reduced (16);
+        title.setBounds (area.removeFromTop (24));
+        area.removeFromTop (10);
+        bar.setBounds (area.removeFromTop (22));
+        area.removeFromTop (12);
+        cancelButton.setBounds (area.removeFromTop (28).removeFromRight (110));
+    }
+
+private:
+    void timerCallback() override
+    {
+        value = (double) job.progress.load (std::memory_order_relaxed);
+        if (job.done.load (std::memory_order_acquire) && ! notified)
+        {
+            notified = true;
+            stopTimer();
+            if (onFinished) onFinished();
+        }
+    }
+
+    DpImportJob& job;
+    double value = 0.0;
+    juce::Label title;
+    juce::ProgressBar bar;
+    juce::TextButton cancelButton { "Cancel" };
+    bool notified = false;
+};
 
 // Route every import-error alert through the in-window Dusk alert
 // modal. The free function pulls the active top-level so existing
@@ -303,6 +514,7 @@ MainComponent::MainComponent()
     // when the user changes the dropdown.
     session.stopBehavior.store ((int) appconfig::getStopBehavior(),
                                   std::memory_order_relaxed);
+    engine.setMidiSoftTakeover (appconfig::getMidiSoftTakeover());
 
     // Plugin scan-on-startup is deferred (see resized() ->
     // maybeStartStartupPluginScan): it runs on a background thread behind a
@@ -513,9 +725,8 @@ MainComponent::MainComponent()
     // start with a fresh session and require the user to explicitly Load. The
     // previous best-effort auto-load of ~/Music/Dusk Studio/Untitled/session.json
     // was confusing - settings (master fader, mutes, etc.) silently persisted
-    // across launches. Use the Load button to restore a saved session.
-    // TODO: replace with a startup dialog (New / Open Recent / Browse...) when
-    // we add proper session management UX.
+    // across launches. The startup dialog (launchStartupDialog) offers
+    // New / Open Recent / Browse instead.
 
     consoleView = std::make_unique<ConsoleView> (session, engine);
     addAndMakeVisible (consoleView.get());
@@ -721,10 +932,10 @@ MainComponent::MainComponent()
     }
 
     // Autosave heartbeat. Writes session.json.autosave next to the canonical
-    // session.json every kAutosaveIntervalMs (30 s) so a crash loses at most
+    // session.json on the configured cadence (default 30 s) so a crash loses at most
     // ~30 s of work. The write is atomic (temp + rename), so even a kill
     // during the timer fire never leaves a half-written autosave.
-    startTimer (kAutosaveIntervalMs);
+    startTimer (appconfig::getAutosaveIntervalSeconds() * 1000);
 
     // Seed the dirty-compare baseline for the bootstrap "Untitled" session so
     // edits to a brand-new, never-saved session are caught at quit instead of
@@ -1688,11 +1899,11 @@ void MainComponent::openAudioSettings()
     // fixed 360 px slot — see AudioSettingsPanel::resized.
     constexpr int kPanelW = 820;
     // Content height with the bumped 360 px audio block + every
-    // section ends just past 1020 px — anything less clips the
+    // section ends just past 1060 px — anything less clips the
     // Advanced rows (ALSA periods / oversampling / self-test / rescan,
     // plus the Multicore DSP row) off the bottom even with a scroll
     // wrapper, because the viewport never sees the missing pixels.
-    constexpr int kPanelH = 1100;
+    constexpr int kPanelH = 1180;
     panel->setSize (kPanelW, kPanelH);
 
     // Wrap the panel in a Viewport so the full content is reachable on
@@ -1727,7 +1938,14 @@ void MainComponent::openAudioSettings()
     auto host = std::make_unique<ScrollingHost> (std::move (panel),
                                                    kPanelW, kPanelH);
     host->setSize (kPanelW + sbW + 4, hostH);
-    audioSettingsModal.show (*this, std::move (host));
+    // Re-apply per-machine prefs the panel may have changed that live on
+    // MainComponent's side (currently the autosave cadence).
+    juce::Component::SafePointer<MainComponent> safeThis (this);
+    audioSettingsModal.show (*this, std::move (host), [safeThis]
+    {
+        if (auto* self = safeThis.getComponent())
+            self->startTimer (appconfig::getAutosaveIntervalSeconds() * 1000);
+    });
 }
 
 void MainComponent::openShortcuts()
@@ -2074,6 +2292,33 @@ bool MainComponent::saveSessionTo (const juce::File& dir)
 {
     if (dir == juce::File()) return false;
 
+    // Save As to a different folder must take the audio along: copy every
+    // session-owned file into the new dir and repoint the model BEFORE the
+    // directory swap, so serialize below emits relative paths. Plain Ctrl+S
+    // (same dir) is a no-op here. Copying precedes the audio-callback detach
+    // — it touches no plugin state, so a long copy adds no dropout.
+    const auto oldDir   = session.getSessionDirectory();
+    const bool isSaveAs = oldDir != juce::File() && dir != oldDir;
+    if (isSaveAs)
+    {
+        const auto consolidated = SessionSerializer::consolidateInto (session, dir);
+        if (! consolidated.ok)
+        {
+            setStatusForPath ("Save failed", dir);
+            showDuskAlert (*this, "Save failed",
+                              "Dusk Studio could not copy the session's audio "
+                              "into the new folder:\n\n    "
+                              + consolidated.errorMessage + "\n\n"
+                              "Common causes: disk full or missing write "
+                              "permission. The session is unchanged; it still "
+                              "lives at:\n\n    " + oldDir.getFullPathName());
+            return false;
+        }
+        if (! consolidated.missingSources.empty())
+            setStatusForPath (juce::String (consolidated.missingSources.size())
+                                + " missing audio file(s) were not copied to", dir);
+    }
+
     // setSessionDirectory creates the dir + audio subdir if missing - safe
     // to call even when the user picked an existing session folder.
     session.setSessionDirectory (dir);
@@ -2101,6 +2346,8 @@ bool MainComponent::saveSessionTo (const juce::File& dir)
     engine.publishTransportStateForSave();
 
     const auto target = dir.getChildFile ("session.json");
+    if (session.sessionSampleRate <= 0.0)
+        session.sessionSampleRate = engine.getCurrentSampleRate();
     const juce::String json = SessionSerializer::serialize (session);
     const bool saveOk = SessionSerializer::writeAtomic (target, json);
 
@@ -2116,6 +2363,22 @@ bool MainComponent::saveSessionTo (const juce::File& dir)
 
     if (saveOk)
     {
+        if (isSaveAs)
+        {
+            // Undo actions snapshot whole AudioRegions including their files —
+            // undoing past the consolidation would resurrect old-dir paths.
+            // Same policy as Clean Out Unreferenced Files.
+            engine.getUndoManager().clearUndoHistory();
+            // Reopen playback readers on the copied files while stopped;
+            // rolling transport keeps streaming the (still present) originals
+            // until the next stop/play rebuild.
+            if (engine.getTransport().isStopped())
+                engine.getPlaybackEngine().preparePlayback();
+            // The old folder's autosave still holds pre-consolidation paths —
+            // without this, re-opening the old session pops a stale recovery
+            // prompt.
+            deleteAutosaveFor (oldDir);
+        }
         RecentSessions::add (dir);
         // A successful manual save makes the autosave stale - drop it so the
         // recovery prompt doesn't fire on the next clean load.
@@ -2276,6 +2539,31 @@ void MainComponent::timerCallback()
     // SessionSerializer::save on a 16-track session should land well under
     // 30 ms.
     writeAutosave();
+
+    // A device rate changed in Settings after the session was opened silently
+    // detunes every recorded WAV (playback is 1:1, no SRC). Nag once per
+    // mismatch; the latch re-arms when the rates agree again.
+    const double deviceSr = engine.getCurrentSampleRate();
+    if (session.sessionSampleRate > 0.0 && deviceSr > 0.0)
+    {
+        const bool mismatch = std::abs (session.sessionSampleRate - deviceSr) > 0.5;
+        if (! mismatch)
+        {
+            warnedSampleRateMismatch = false;
+        }
+        else if (! warnedSampleRateMismatch)
+        {
+            warnedSampleRateMismatch = true;
+            showDuskAlert (*this, "Sample-rate mismatch",
+                "The audio device now runs at " + juce::String ((int) deviceSr)
+                + " Hz but this session's audio was made at "
+                + juce::String ((int) session.sessionSampleRate) + " Hz.\n\n"
+                "Recorded tracks will play at the wrong speed and pitch, and "
+                "new recordings will not match the old ones. Switch the device "
+                "back to " + juce::String ((int) session.sessionSampleRate)
+                + " Hz in Settings unless this is deliberate.");
+        }
+    }
 }
 
 bool MainComponent::currentSessionDirty()
@@ -2719,6 +3007,55 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     // success.
     if (! loadedFromAutosave)
         deleteAutosaveFor (dir);
+
+    // Sample-rate policy: region WAVs play 1:1 (no SRC in the playback path),
+    // so the device must run at the session's canonical rate for correct
+    // speed and pitch. Legacy sessions (no stored rate) adopt the device's.
+    // On a mismatch, try to switch the device; when that fails, warn loudly —
+    // the session still opens, but audio runs fast/slow until the rates
+    // match.
+    warnedSampleRateMismatch = false;
+    {
+        const double deviceSr = engine.getCurrentSampleRate();
+        if (session.sessionSampleRate <= 0.0)
+        {
+            session.sessionSampleRate = deviceSr;
+        }
+        else if (deviceSr > 0.0
+                 && std::abs (session.sessionSampleRate - deviceSr) > 0.5)
+        {
+            auto setup = engine.getDeviceManager().getAudioDeviceSetup();
+            setup.sampleRate = session.sessionSampleRate;
+            const auto err = engine.getDeviceManager().setAudioDeviceSetup (setup, true);
+            const double after = engine.getDeviceManager().getAudioDeviceSetup().sampleRate;
+            if (err.isNotEmpty() || std::abs (after - session.sessionSampleRate) > 0.5)
+            {
+                warnedSampleRateMismatch = true;
+                const auto body =
+                    "This session's audio was made at "
+                    + juce::String ((int) session.sessionSampleRate) + " Hz, but the "
+                    "audio device is running at " + juce::String ((int) after) + " Hz "
+                    "and could not be switched"
+                    + (err.isNotEmpty() ? (":\n\n    " + err) : juce::String (".")) +
+                    "\n\nEvery recorded track will play at the wrong speed and pitch "
+                    "until the device runs at the session's rate. Pick a device or "
+                    "rate of " + juce::String ((int) session.sessionSampleRate)
+                    + " Hz in Settings, or expect to re-record.";
+                juce::Component::SafePointer<MainComponent> safeThis (this);
+                juce::MessageManager::callAsync ([body, safeThis]
+                {
+                    if (auto* self = safeThis.getComponent())
+                        showDuskAlert (*self, "Sample-rate mismatch", body);
+                });
+            }
+            else
+            {
+                setStatusForPath ("Audio device switched to "
+                                    + juce::String ((int) session.sessionSampleRate)
+                                    + " Hz to match", sourceJson);
+            }
+        }
+    }
 
     // Note: lastSavedSessionJson is seeded later in this function, after
     // consumePluginStateAfterLoad has filled in plugin/transport state.
@@ -3450,94 +3787,73 @@ void MainComponent::runDpImport (const dp::SongScan& scan,
         showImportError ("Import DP Song", "Stop playback before importing.");
         return;
     }
+    if (dpImportJob != nullptr) return;   // one import at a time
 
-    const int    n        = juce::jmin ((int) scan.tracks.size(), Session::kNumTracks);
-    double       sr       = engine.getCurrentSampleRate();
+    double sr = engine.getCurrentSampleRate();
     // Device not open yet → SR reads 0; FileImporter resamples content to 48k in
     // that case, so use the same fallback here or every clip/marker would be
     // placed at 0 (timeline offsets multiplied by sr).
     if (sr <= 0.0) sr = 48000.0;
-    const auto   audioDir = session.getAudioDirectory();
 
-    // Timeline placement (samples at the session SR). Primary source is the
-    // exact clip offsets stored in song.sys (decoded in scanSongFolder, in song
-    // SR samples). When a mixdown is present, onset-alignment fills any clips
-    // song.sys didn't place (e.g. comped fragments). Everything else -> 0.
-    std::vector<juce::int64> placeAt ((size_t) n, 0);
-    int placedCount = 0;
-    if (importTimeline)
+    std::array<bool, Session::kNumTracks> frozen {};
+    for (int i = 0; i < Session::kNumTracks; ++i)
+        frozen[(size_t) i] = session.track (i).frozen.load (std::memory_order_relaxed);
+
+    dpImportWantMixer = importMixer;
+    auto job = std::make_unique<DpImportJob> (scan, sr, session.getAudioDirectory(),
+                                               frozen, importTimeline,
+                                               &makeStereoTempWav);
+
+    auto panel = std::make_unique<DpImportProgressPanel> (*job);
+    panel->setSize (460, 130);
+    juce::Component::SafePointer<MainComponent> safeThis (this);
+    panel->onFinished = [safeThis]
     {
-        const double songSr = scan.sampleRate > 0.0 ? scan.sampleRate : sr;
-        for (int i = 0; i < n; ++i)
-        {
-            const auto ss = scan.tracks[(size_t) i].timelineStart;   // song-SR samples
-            if (ss > 0)
-            {
-                placeAt[(size_t) i] = (juce::int64) std::llround ((double) ss * sr / songSr);
-                ++placedCount;
-            }
-        }
-        if (scan.hasMixdown)
-        {
-            std::vector<juce::File> sources;
-            sources.reserve ((size_t) n);
-            for (int i = 0; i < n; ++i) sources.push_back (scan.tracks[(size_t) i].fragment.mono1);
-            const auto al = dp::alignToMixdown (scan.mixdownFile, sources);
-            for (int i = 0; i < n && i < (int) al.size(); ++i)
-                if (placeAt[(size_t) i] == 0 && al[(size_t) i].placed
-                    && ! al[(size_t) i].fullLength && al[(size_t) i].positionSeconds > 0.0)
-                {
-                    placeAt[(size_t) i] = (juce::int64) std::llround (al[(size_t) i].positionSeconds * sr);
-                    ++placedCount;
-                }
-        }
+        if (auto* self = safeThis.getComponent())
+            self->finishDpImport();
+    };
+
+    dpImportJob = std::move (job);
+    dpImportProgressModal.show (*this, std::move (panel), {}, false, false);
+    static_cast<DpImportJob*> (dpImportJob.get())->startThread();
+}
+
+void MainComponent::finishDpImport()
+{
+    auto* job = static_cast<DpImportJob*> (dpImportJob.get());
+    if (job == nullptr) return;
+
+    dpImportProgressModal.close();
+
+    if (job->cancelled.load (std::memory_order_acquire))
+    {
+        dpImportJob.reset();
+        setStatusForPath ("DP import cancelled", session.getSessionDirectory());
+        return;
     }
+
+    const auto& scan = job->scan;
+    const bool importMixer = dpImportWantMixer;
+    const double sr = job->sr;
 
     int imported = 0;
     juce::StringArray skipped;
 
-    for (int i = 0; i < n; ++i)
+    for (auto& out : job->outcomes)
     {
-        const auto& it   = scan.tracks[(size_t) i];
-        const auto& frag = it.fragment;
-        auto& track      = session.track (i);
-
-        // A frozen track's playback is its baked WAV — don't overwrite it with an
-        // imported fragment. Skip it (the bulk import continues with the rest).
-        if (track.frozen.load (std::memory_order_relaxed))
+        if (! out.imported)
         {
-            skipped.add (it.name + ": target track is frozen (unfreeze to import)");
+            skipped.add (out.skipReason);
             continue;
         }
+        const auto& it   = scan.tracks[(size_t) out.index];
+        const auto& frag = it.fragment;
+        auto& track      = session.track (out.index);
 
-        juce::File src, tmp;
-        const int channels = frag.stereo ? 2 : 1;
-        if (frag.stereo)
-        {
-            tmp = makeStereoTempWav (frag.mono1, frag.mono2);
-            if (tmp == juce::File()) { skipped.add (it.name + ": could not combine stereo halves"); continue; }
-            src = tmp;
-        }
-        else
-        {
-            src = frag.mono1;
-        }
-
-        duskstudio::fileimport::AudioImportRequest req;
-        req.source            = src;
-        req.audioDir          = audioDir;
-        req.trackIndex        = i;
-        req.sessionSampleRate = sr;
-        req.targetChannels    = channels;
-        req.timelineStart     = placeAt[(size_t) i];
-
-        auto res = duskstudio::fileimport::importAudio (req);
-        if (tmp != juce::File()) tmp.deleteFile();
-        if (! res.ok) { skipped.add (it.name + ": " + res.errorMessage); continue; }
-
-        // Transport is stopped, so PlaybackEngine isn't iterating regions on
-        // the audio thread - mutating in place is safe (mirrors runAudioImportFlow).
-        track.regions.push_back (std::move (res.region));
+        // Transport was stopped at kickoff and the modal blocked edits, so
+        // PlaybackEngine isn't iterating regions - mutating in place is safe
+        // (mirrors runAudioImportFlow).
+        track.regions.push_back (std::move (out.res.region));
         track.name = it.name;
         track.mode.store ((int) (frag.stereo ? Track::Mode::Stereo : Track::Mode::Mono),
                           std::memory_order_relaxed);
@@ -3616,8 +3932,8 @@ void MainComponent::runDpImport (const dp::SongScan& scan,
     msg << "Imported " << imported << (imported == 1 ? " track." : " tracks.");
     if (scan.discardedTakes > 0)
         msg << "\nSkipped " << scan.discardedTakes << " discarded take(s).";
-    if (importTimeline && placedCount > 0)
-        msg << "\nPlaced " << placedCount << " region(s) on the timeline; the rest at song start.";
+    if (job->importTimeline && job->placedCount > 0)
+        msg << "\nPlaced " << job->placedCount << " region(s) on the timeline; the rest at song start.";
     if (markersAdded > 0)
         msg << "\nImported " << markersAdded << " song marker(s).";
     if (scan.tempoBpm > 0)
@@ -3626,6 +3942,7 @@ void MainComponent::runDpImport (const dp::SongScan& scan,
         msg << "\nSet time signature to " << scan.timeSigNum << "/" << scan.timeSigDen << ".";
     if (! skipped.isEmpty())
         msg << "\n\nSkipped " << skipped.size() << ":\n" << skipped.joinIntoString ("\n");
+    dpImportJob.reset();
     showDuskAlert (*this, "Import DP Song", msg);
 }
 
