@@ -23,7 +23,9 @@ options for the master.
   session, multi-plugin bundles resolve to the right plugin, and discovery is
   crash-safe (sandboxed scans; native LV2 discovery never executes plugin
   code). Native instruments get full MIDI delivery, a CC bridge, and the
-  track-mode flow.
+  track-mode flow. LV2 instruments join in this release — if one doesn't
+  appear in the instrument picker after updating, run **Scan plugins** once
+  (older plugin caches predate LV2 instruments).
 - **Session sample rate.** A session remembers the rate its audio was made
   at: opening it switches the device to that rate automatically, and Dusk
   Studio warns loudly when it can't — or when the device rate changes
@@ -102,6 +104,10 @@ options for the master.
   clipping.
 - **MTC.** SMPTE hours wrap at the 24-hour boundary (the emitted hours field
   stays within the 0-23 spec range).
+- **No more popup flash while renaming.** Right-clicking inside a
+  double-click rename field (track / bus / aux names, region gain and fades,
+  the transport clock) no longer flashes a native menu window on
+  X11/Wayland; the in-window behaviour now covers every text field.
 
 ### Changed
 
