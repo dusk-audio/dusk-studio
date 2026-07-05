@@ -1,6 +1,7 @@
 #include "TransportBar.h"
 #include "DuskAlerts.h"
 #include "DuskContextMenu.h"
+#include "DuskLabelEditor.h"
 #include "../session/RegionEditActions.h"
 #include "../util/StringParsing.h"
 #include <algorithm>
@@ -382,6 +383,7 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
     // Bad input reverts the label to the running-time format on the next
     // timer tick, no error dialog (cheap + stays out of the way).
     clockLabel.setEditable (false, true, false);
+    disableLabelEditorPopup (clockLabel);
     clockLabel.setColour (juce::Label::backgroundWhenEditingColourId, juce::Colour (0xff202028));
     clockLabel.setColour (juce::Label::textWhenEditingColourId,        juce::Colours::white);
     clockLabel.setTooltip ("Playhead position. Double-click to type a time "

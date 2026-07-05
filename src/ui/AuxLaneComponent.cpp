@@ -1,4 +1,5 @@
 #include "AuxLaneComponent.h"
+#include "DuskLabelEditor.h"
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
   #include "ClapPluginEditorComponent.h"   // Linux-only native CLAP editor
 #endif
@@ -202,6 +203,7 @@ AuxLaneComponent::AuxLaneComponent (AuxLane& l, AuxLaneStrip& s, int idx,
     nameLabel.setColour (juce::Label::textColourId, juce::Colours::white);
     nameLabel.setFont (juce::Font (juce::FontOptions (14.0f, juce::Font::bold)));
     nameLabel.setEditable (false, true, false);
+    disableLabelEditorPopup (nameLabel);
     nameLabel.setColour (juce::Label::backgroundWhenEditingColourId, juce::Colour (0xff202024));
     nameLabel.setColour (juce::Label::textWhenEditingColourId,       juce::Colours::white);
     nameLabel.onTextChange = [this]

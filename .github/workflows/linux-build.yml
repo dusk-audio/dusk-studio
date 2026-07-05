@@ -16,7 +16,7 @@ jobs:
 
     steps:
       - name: Checkout Dusk Studio
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # external/sfizz is a submodule; the test binary compiles
           # DuskMultisampleProcessor.cpp (#include <sfizz.h>), so it must
@@ -144,7 +144,7 @@ jobs:
 
     steps:
       - name: Checkout Dusk Studio
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # external/sfizz is a submodule; the test binary compiles
           # DuskMultisampleProcessor.cpp (#include <sfizz.h>), so it must

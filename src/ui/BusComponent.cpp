@@ -1,6 +1,7 @@
 #include "BusComponent.h"
 #include "../engine/AudioEngine.h"
 #include "DuskContextMenu.h"
+#include "DuskLabelEditor.h"
 #include "SteppedKnob.h"
 #include "CompBypassLed.h"
 #include "DuskStudioLookAndFeel.h"  // fourKColors palette
@@ -489,6 +490,7 @@ BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
     nameLabel.setColour (juce::Label::textColourId, juce::Colours::white);
     nameLabel.setFont (juce::Font (juce::FontOptions (12.0f, juce::Font::bold)));
     nameLabel.setEditable (false, true, false);
+    disableLabelEditorPopup (nameLabel);
     nameLabel.setColour (juce::Label::backgroundWhenEditingColourId, juce::Colour (0xff202024));
     nameLabel.setColour (juce::Label::textWhenEditingColourId,       juce::Colours::white);
     nameLabel.setTooltip ("Double-click to rename this bus.");

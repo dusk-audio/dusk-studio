@@ -287,15 +287,14 @@ void showImportError (const juce::String& title, const juce::String& message)
                 return;
             }
     }
-    // Fallback only when no top-level exists (shouldn't happen in
-    // normal use; safety net for headless / shutdown paths).
-    juce::AlertWindow::showAsync (
-        juce::MessageBoxOptions()
-            .withIconType (juce::MessageBoxIconType::WarningIcon)
-            .withTitle (title)
-            .withMessage (message)
-            .withButton ("OK"),
-        nullptr);
+    // No top-level to host the in-window alert (headless / shutdown paths
+    // only). A native AlertWindow here would be the one separate-window
+    // dialog left in the app — and on a headless path it can't be seen
+    // anyway. Log instead; the assert makes a reachable-in-normal-use
+    // regression loud in debug builds.
+    std::fprintf (stderr, "[Dusk Studio] %s: %s\n",
+                  title.toRawUTF8(), message.toRawUTF8());
+    jassertfalse;
 }
 } // namespace
 
