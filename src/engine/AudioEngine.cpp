@@ -208,6 +208,7 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
         if (outIdx >= 0) sendMidiToOutput (outIdx, buf);
     });
     mcuController->setTransportProvider ([this] { return &transport; });
+    playbackEngine.bindTransport (transport);
     // 500 units covers thousands of edits while bounding memory under
     // multi-hour sessions; without this the stack grows unbounded.
     // 50 minimum kept even when total exceeds the cap.
@@ -3636,6 +3637,13 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
     const bool isRecording = (state == Transport::State::Recording);
     const juce::int64 blockStartSamples = transport.getPlayhead();
 
+    // Loop-aware disk reads: mirrors the wrap gate at the bottom of the
+    // callback (plain playback only — recording keeps the playhead linear).
+    const bool loopReadActive = isPlaying && ! isRecording && transport.isLoopEnabled()
+                                 && transport.getLoopEnd() > transport.getLoopStart();
+    const juce::int64 loopReadStart = loopReadActive ? transport.getLoopStart() : -1;
+    const juce::int64 loopReadEnd   = loopReadActive ? transport.getLoopEnd()   : -1;
+
     // Hanging-note protection. Detect two events that warrant a per-MIDI-
     // track "All Notes Off" flush this block:
     //   • Transport rolling -> stopped (held notes won't get their Note
@@ -3829,7 +3837,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
             float* outR = (stereoTrackInput || isFrozen) ? playbackScratchR[(size_t) t].data() : nullptr;
             playbackEngine.readForTrack (t, blockStartSamples,
                                           playbackScratch[(size_t) t].data(), outR,
-                                          numSamples);
+                                          numSamples, loopReadStart, loopReadEnd);
             monoIn = playbackScratch[(size_t) t].data();
         }
         else if (deviceInput != nullptr && (armed || monitorEnabled) && ! isFrozen)
