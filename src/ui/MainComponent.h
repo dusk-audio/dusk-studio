@@ -121,10 +121,17 @@ private:
     void importPrompt();
 
     // DP song-folder import: folder picker -> DpImporter::scanSongFolder ->
-    // DpImportDialog confirmation -> runDpImport drives FileImporter over the
-    // fragments, assigning each to a track at song start.
+    // DpImportDialog confirmation -> runDpImport spins the background job
+    // (alignment + every fragment decode) behind a progress modal;
+    // finishDpImport applies the outcomes to the session on the message
+    // thread. The job is held type-erased (the concrete DpImportJob lives in
+    // MainComponent.cpp's anonymous namespace).
     void importDpSongPrompt();
     void runDpImport (const dp::SongScan& scan, bool importMixer, bool importTimeline);
+    void finishDpImport();
+    std::unique_ptr<juce::Thread> dpImportJob;
+    bool dpImportWantMixer = false;
+    EmbeddedModal dpImportProgressModal;
 
     // Shared between File-menu prompts and TapeStrip drag-drop.
     // trackHint >= 0 biases the recommendation when the file matches.
