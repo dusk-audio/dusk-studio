@@ -33,3 +33,13 @@ tries to switch the device). The complete fix is an offline batch
 resample: rewrite every region/take/freeze WAV at the new rate and
 rescale every sample-domain position (regions, automation points,
 markers, loop/punch, tempo-map anchors) in one undoable pass.
+
+## Native LV2 instruments
+
+The picker's native-LV2 rows replace JUCE-hosted LV2 EFFECTS only
+(PluginPickerHelpers.cpp gates the swap on kind == Effects; PluginManager
+has no getLv2InstrumentDescriptions). LV2 instruments therefore still load
+through the standard JUCE host — the last reachable standard-host editor
+window on Linux, i.e. the last Wayland-fragile plugin-UI path. Extending
+the native LV2 host to instruments (MIDI delivery + CC bridge parity with
+the CLAP/VST3 native instrument work in #25) removes it.
