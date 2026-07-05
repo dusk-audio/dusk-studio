@@ -2171,7 +2171,7 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
         for (int p = 0; p < AuxLaneParams::kMaxLanePlugins; ++p)
             a.getPluginSlot (p).setHostPlayHead (playHead.get());
     masteringChain.prepare (sr, bs, oxFactor);
-    masteringPlayer.prepare (bs);
+    masteringPlayer.prepare (bs, sr);
     metronome.prepare (sr);
     playbackEngine.prepare (bs);  // size the playback read scratch - audio thread mustn't allocate
     pitchDetector.prepare (sr);   // ~46 ms history at the device rate

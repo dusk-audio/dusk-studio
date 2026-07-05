@@ -1,4 +1,5 @@
 #include "BounceEngine.h"
+#include <cmath>
 #include "AudioEngine.h"
 #include "LameMp3Writer.h"
 #include "MasteringPlayer.h"
@@ -120,8 +121,15 @@ bool BounceEngine::start (const juce::File& outFile, double sr, int bs, double t
     else
     {
         // Mastering: render length = player's loaded file length + tail.
+        // The player's length is in SOURCE samples; the render loop counts
+        // DEVICE-rate samples, so scale when the rates differ (the player
+        // resamples in process()).
         const auto playerLen = engine.getMasteringPlayer().getLengthSamples();
-        totalSamples = playerLen + (juce::int64) (renderSampleRate * tailSeconds);
+        const auto sourceSr  = engine.getMasteringPlayer().getSourceSampleRate();
+        const auto playerLenAtRender = sourceSr > 0.0
+            ? (juce::int64) std::llround ((double) playerLen * renderSampleRate / sourceSr)
+            : playerLen;
+        totalSamples = playerLenAtRender + (juce::int64) (renderSampleRate * tailSeconds);
         if (totalSamples <= 0) return false;  // no file loaded
     }
 

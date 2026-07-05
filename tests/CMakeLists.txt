@@ -102,6 +102,8 @@ add_executable(dusk-studio-tests
     record_midi_overdub_diff.cpp
     playback_loop_read.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/PlaybackEngine.cpp
+    mastering_player_resample.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/MasteringPlayer.cpp
     session_missing_sections.cpp
     session_save_as_consolidation.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/MidiTimeCodeReceiver.cpp
