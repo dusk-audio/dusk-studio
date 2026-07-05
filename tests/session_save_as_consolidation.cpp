@@ -163,7 +163,6 @@ TEST_CASE ("consolidateInto edge cases", "[session][serializer][consolidate]")
         juce::File a, b, x;
         ~Cleanup()
         {
-            b.setReadOnly (false);
             a.deleteRecursively(); b.deleteRecursively(); x.deleteRecursively();
         }
     } cleanup { dirA, dirB, extDir };
@@ -213,7 +212,10 @@ TEST_CASE ("consolidateInto edge cases", "[session][serializer][consolidate]")
 
     SECTION ("copy failure leaves the model untouched")
     {
-        REQUIRE (dirB.setReadOnly (true));
+        // A plain file where the copy must create the audio/ subdir makes
+        // createDirectory fail on every platform. A read-only flag on the dir
+        // can't gate this portably — Windows ignores it for content creation.
+        REQUIRE (dirB.getChildFile ("audio").create().wasOk());
 
         const auto res = SessionSerializer::consolidateInto (s, dirB);
         REQUIRE (! res.ok);
