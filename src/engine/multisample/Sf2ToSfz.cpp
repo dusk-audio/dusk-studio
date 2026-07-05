@@ -54,16 +54,24 @@ juce::String sanitize(const juce::String& s)
 // into a WAV at the sample's own rate. Returns false on any I/O issue.
 bool writeSampleWav(juce::FileInputStream& in,
                      juce::int64           smplOffset,
+                     juce::int64           smplSize,
                      const Sf2Sample&      s,
                      const juce::File&     outWav)
 {
+    // shdr start/end are file-declared and untrusted: validate against the
+    // smpl chunk's actual byte size before sizing any allocation (a crafted
+    // end of 0x7FFFFFFF would otherwise request a ~4 GB buffer, and
+    // frames*2 in int is signed-overflow UB).
     if (s.end <= s.start) return false;
-    const int numFrames = (int) (s.end - s.start);
+    const juce::int64 frames64 = (juce::int64) s.end - (juce::int64) s.start;
+    if (smplSize <= 0 || (juce::int64) s.end * 2 > smplSize) return false;
+    if (frames64 > 0x10000000) return false;   // 256 M frames ≈ 512 MB — no real instrument sample
+    const int numFrames = (int) frames64;
 
     in.setPosition(smplOffset + (juce::int64) s.start * 2);
     juce::HeapBlock<int16_t> pcm ((size_t) numFrames);
-    const int wanted = numFrames * 2;
-    if (in.read(pcm.getData(), wanted) != wanted)
+    const juce::int64 wanted = frames64 * 2;
+    if (in.read(pcm.getData(), (int) wanted) != (int) wanted)
         return false;
 
     juce::AudioBuffer<float> buf (1, numFrames);
@@ -283,7 +291,7 @@ Sf2Conversion convertSf2Preset(const juce::File& sf2,
                 const auto fname = "s" + juce::String(sampleIdx) + "_"
                                  + sanitize(smp.name) + ".wav";
                 const auto wav = outDir.getChildFile(fname);
-                if (! writeSampleWav(in, parsed.smplOffset, smp, wav))
+                if (! writeSampleWav(in, parsed.smplOffset, parsed.smplSize, smp, wav))
                     continue;
                 exIt = extracted.emplace(sampleIdx, fname).first;
             }
@@ -299,7 +307,8 @@ Sf2Conversion convertSf2Preset(const juce::File& sf2,
             if (fine   != 0) r << " tune=" << juce::jlimit(-100, 100, fine);
             if (std::abs(volumeDb) > 0.01) r << " volume=" << juce::String(volumeDb, 2);
             if (std::abs(pan) > 0.01)      r << " pan=" << juce::String(pan, 1);
-            if (loops && smp.endLoop > smp.startLoop && smp.startLoop >= smp.start)
+            if (loops && smp.endLoop > smp.startLoop && smp.startLoop >= smp.start
+                && smp.endLoop <= smp.end)
             {
                 r << " loop_mode=loop_continuous"
                   << " loop_start=" << (int) (smp.startLoop - smp.start)

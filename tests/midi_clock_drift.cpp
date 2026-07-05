@@ -62,10 +62,13 @@ TEST_CASE ("MidiClockEmitter: integer samples-per-clock has no drift", "[midiclo
     REQUIRE_THAT (meanInterval, WithinAbs (1000.0, 1e-9));
 }
 
-// 140 BPM @ 44.1k: samplesPerClock = 787.5, so llround(787.5)=788 per tick.
-// The per-tick error is bounded (<1 sample); over a long run the realised tempo
-// stays within 0.1% of ideal. This is the contract — not bit-exact, but tight.
-TEST_CASE ("MidiClockEmitter: fractional samples-per-clock stays bounded", "[midiclock][drift]")
+// 140 BPM @ 44.1k: samplesPerClock = 787.5 — the worst case for a per-tick
+// rounder, which adds +0.5 sample EVERY tick (a systematic 0.06% tempo error;
+// slaves drifted ~90 ms over 3 minutes). The phase accumulator rounds only at
+// emission, so the long-run mean interval matches the exact fraction and the
+// tick count is exact.
+TEST_CASE ("MidiClockEmitter: fractional samples-per-clock has no systematic drift",
+           "[midiclock][drift]")
 {
     const double sr = 44100.0;
     const float  bpm = 140.0f;
@@ -75,13 +78,15 @@ TEST_CASE ("MidiClockEmitter: fractional samples-per-clock stays bounded", "[mid
     const double idealSamplesPerClock = (sr * 60.0) / ((double) bpm * 24.0);  // 787.5
     const double idealTicks = (double) bpm / 60.0 * 24.0 * seconds;           // 16800
 
-    // Mean inter-tick interval within 1 sample of ideal.
+    // Mean inter-tick interval within a hundredth of a sample of ideal —
+    // per-tick jitter is ±0.5 sample from rounding, but it must not
+    // accumulate.
     const double meanInterval = (double) (r.lastSample - r.firstSample)
                               / (double) (r.count - 1);
-    REQUIRE (std::abs (meanInterval - idealSamplesPerClock) < 1.0);
+    REQUIRE (std::abs (meanInterval - idealSamplesPerClock) < 0.01);
 
-    // Realised tick count within 0.1% of ideal.
-    REQUIRE (std::abs ((double) r.count - idealTicks) / idealTicks < 0.001);
+    // Realised tick count exact within ±1 (block-edge quantisation).
+    REQUIRE (std::abs ((double) r.count - idealTicks) <= 1.0);
 }
 
 TEST_CASE ("MidiClockEmitter: transport edges emit Start / Stop", "[midiclock]")

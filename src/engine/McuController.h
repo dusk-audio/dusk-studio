@@ -44,6 +44,13 @@ public:
         transportProvider = std::move (fn);
     }
 
+    // Live device sample rate for the BBT timecode readout. Unset falls
+    // back to 48 kHz (readout only — nothing audible depends on it).
+    void setSampleRateProvider (std::function<double()> fn) noexcept
+    {
+        sampleRateProvider = std::move (fn);
+    }
+
     // Re-emit every cached field next tick. Used when the user picks a
     // new MCU output so the controller doesn't start dark.
     void forceResync() noexcept { resyncRequested.store (true, std::memory_order_release); }
@@ -65,6 +72,7 @@ private:
     Session&     session;
     SinkFn       sink;
     std::function<class Transport* ()> transportProvider;
+    std::function<double()>            sampleRateProvider;
 
     // -1 sentinel = never sent.
     std::array<int, kStripsPerBank> lastFader { -1, -1, -1, -1, -1, -1, -1, -1 };

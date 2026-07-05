@@ -161,8 +161,14 @@ AudioImportResult importAudio (const AudioImportRequest& req)
         reader.reset();   // release the read handle before copying the bytes
 
         const auto ext = req.source.getFileExtension();
-        const auto outFile = req.audioDir.getChildFile (
+        // The stamp has one-second resolution: two imports to the same track
+        // within a second would silently overwrite, leaving both regions
+        // pointing at one file. Suffix like RecordManager does.
+        auto outFile = req.audioDir.getChildFile (
             makeImportedFilename (req.trackIndex, ext));
+        if (outFile.exists())
+            outFile = req.audioDir.getNonexistentChildFile (
+                outFile.getFileNameWithoutExtension(), ext);
 
         bool copied = false;
         for (int attempt = 0; attempt < 5 && ! copied; ++attempt)
@@ -250,7 +256,11 @@ AudioImportResult importAudio (const AudioImportRequest& req)
     // Write the normalised WAV. Same transient-lock retry as the source open:
     // a freshly-created file in the audio dir can be briefly held by the
     // Windows indexer / AV before the stream opens.
-    const auto outFile = req.audioDir.getChildFile (makeImportedFilename (req.trackIndex));
+    // Same second-resolution collision guard as the verbatim-copy path.
+    auto outFile = req.audioDir.getChildFile (makeImportedFilename (req.trackIndex));
+    if (outFile.exists())
+        outFile = req.audioDir.getNonexistentChildFile (
+            outFile.getFileNameWithoutExtension(), ".wav");
     std::unique_ptr<juce::FileOutputStream> stream;
     for (int attempt = 0; attempt < 5; ++attempt)
     {

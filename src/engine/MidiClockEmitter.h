@@ -26,7 +26,7 @@ public:
     void prepare (double sampleRate) noexcept
     {
         sr = sampleRate > 0.0 ? sampleRate : 48000.0;
-        nextClockSample = 0;
+        clockPhase = 0.0;
         lastRolling = false;
     }
 
@@ -35,7 +35,7 @@ public:
     // cleanly.
     void reset() noexcept
     {
-        nextClockSample = 0;
+        clockPhase = 0.0;
         lastRolling = false;
     }
 
@@ -52,7 +52,12 @@ public:
 
 private:
     double sr = 48000.0;
-    juce::int64 nextClockSample = 0;
+    // Fractional tick clock. Advancing by the exact samplesPerClock keeps
+    // the long-term rate correct; rounding only at emission. An int64 that
+    // advanced by llround(samplesPerClock) per tick accumulated the same
+    // rounding error every tick (+0.5 sample at any x.5 interval ≈ 0.05 %
+    // tempo error — slaves drifted ~90 ms over a 3-minute song).
+    double clockPhase = 0.0;
     bool lastRolling = false;
 };
 } // namespace duskstudio

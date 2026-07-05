@@ -208,6 +208,7 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
         if (outIdx >= 0) sendMidiToOutput (outIdx, buf);
     });
     mcuController->setTransportProvider ([this] { return &transport; });
+    mcuController->setSampleRateProvider ([this] { return getCurrentSampleRate(); });
     playbackEngine.bindTransport (transport);
     // 500 units covers thousands of edits while bounding memory under
     // multi-hour sessions; without this the stack grows unbounded.

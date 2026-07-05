@@ -153,7 +153,12 @@ Sf2File readSf2(const juce::File& file)
                     if (idEquals(sid, "smpl"))
                     {
                         out.smplOffset = sBody;
-                        out.smplSize   = (juce::int64) sSize;
+                        // Clamp to the file's real remainder: smplSize is the
+                        // bound writeSampleWav validates shdr ranges against,
+                        // so it must never exceed what the file can deliver.
+                        out.smplSize   = juce::jlimit ((juce::int64) 0,
+                                                        in.getTotalLength() - sBody,
+                                                        (juce::int64) sSize);
                     }
                     else if (idEquals(sid, "sm24"))
                     {
@@ -167,8 +172,13 @@ Sf2File readSf2(const juce::File& file)
             else if (idEquals(listType, "pdta"))
             {
                 // Slurp the whole pdta body - it's metadata, small even
-                // for a 140 MB GM bank.
-                const int bodyLen = (int) ckSize - 4;   // minus the listType
+                // for a 140 MB GM bank. Clamp to the bytes actually left in
+                // the file: a crafted ckSize (~2 GB) must not size an
+                // allocation the read can never fill.
+                const int bodyLen = (int) juce::jlimit (
+                    (juce::int64) 0,
+                    in.getTotalLength() - in.getPosition(),
+                    (juce::int64) ckSize - 4);   // minus the listType
                 if (bodyLen > 0)
                 {
                     pdtaBytes.setSize((size_t) bodyLen);
