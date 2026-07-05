@@ -39,7 +39,7 @@ jobs:
 
     steps:
       - name: Checkout Dusk Studio
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # No submodules needed: the manual is pure docs (MANUAL.md +
           # docs/images/*), none of the C++/sfizz tree is touched.
@@ -108,7 +108,7 @@ jobs:
         # run still lets you eyeball the output. The manual isn't paid, so a
         # world-downloadable artifact here gives nothing away.
         if: ${{ github.ref_type != 'tag' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: MANUAL-pdf
           path: MANUAL.pdf
