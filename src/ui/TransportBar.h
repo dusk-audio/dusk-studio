@@ -95,6 +95,11 @@ private:
     // the user doesn't think a silently-dropped take was captured.
     void surfaceRecordSetupFailures();
 
+    // MCU REW/FFWD reuse the on-screen Rewind/Forward tap behaviour so the
+    // control surface and the on-screen buttons never diverge.
+    void rewindTap();
+    void forwardTap();
+
     AudioEngine& engine;
     TransportIconButton stopButton   { "Stop",     TransportIconButton::Icon::Stop,
                                         juce::Colour (0xffd0d0d0) };

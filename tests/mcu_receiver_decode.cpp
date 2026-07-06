@@ -215,13 +215,21 @@ TEST_CASE ("McuReceiver: PLAY / STOP / RECORD buttons enqueue pendingTransportAc
              == (int) PendingTransportAction::Record);
 }
 
-TEST_CASE ("McuReceiver: REWIND button locates playhead to 0 via pendingTransportPlayhead",
+TEST_CASE ("McuReceiver: REWIND / FAST-FORWARD enqueue prev/next-marker actions",
            "[mcu][receiver]")
 {
     Session s;
     McuReceiver r (s);
+
     r.process (makeNoteOn (mcu::btn::Rewind, 0x7F), 0);
-    REQUIRE (s.pendingTransportPlayhead.load (std::memory_order_relaxed) == 0);
+    REQUIRE (s.pendingTransportAction.load (std::memory_order_relaxed)
+             == (int) PendingTransportAction::PrevMarker);
+
+    s.pendingTransportAction.store ((int) PendingTransportAction::None,
+                                      std::memory_order_relaxed);
+    r.process (makeNoteOn (mcu::btn::FastForward, 0x7F), 0);
+    REQUIRE (s.pendingTransportAction.load (std::memory_order_relaxed)
+             == (int) PendingTransportAction::NextMarker);
 }
 
 TEST_CASE ("McuReceiver: fader touch sense flips faderTouched latch", "[mcu][receiver]")

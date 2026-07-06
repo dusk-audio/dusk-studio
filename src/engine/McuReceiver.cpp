@@ -364,16 +364,13 @@ void McuReceiver::handleNotePress (int noteNumber, bool pressed) noexcept
                     std::memory_order_relaxed);
                 return;
             case mcu::btn::Rewind:
-                session.pendingTransportPlayhead.store (
-                    (juce::int64) 0, std::memory_order_relaxed);
+                session.pendingTransportAction.store (
+                    (int) PendingTransportAction::PrevMarker,
+                    std::memory_order_relaxed);
                 return;
             case mcu::btn::FastForward:
-                // No "end of timeline" concept in Dusk Studio, so FFWD jumps
-                // the playhead to the end of the furthest content. The audio
-                // thread can't walk regions safely / call setPlayhead, so
-                // defer to TransportBar's message-thread drain.
                 session.pendingTransportAction.store (
-                    (int) PendingTransportAction::GoToEnd,
+                    (int) PendingTransportAction::NextMarker,
                     std::memory_order_relaxed);
                 return;
             case mcu::btn::Loop:

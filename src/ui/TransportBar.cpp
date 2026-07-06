@@ -336,10 +336,8 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
             rewPressedAtMs = 0;
             if (rewIsScrubbing)
                 rewIsScrubbing = false;   // was a hold-scrub, not a tap
-            else if (engine.getTransport().isStopped() && engine.getSession().getMarkers().empty())
-                engine.jumpToZero();
             else
-                engine.jumpToPrevMarker();
+                rewindTap();
         }
     };
 
@@ -355,10 +353,8 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
             ffwdPressedAtMs = 0;
             if (ffwdIsScrubbing)
                 ffwdIsScrubbing = false;   // was a hold-scrub, not a tap
-            else if (engine.getTransport().isStopped() && engine.getSession().getMarkers().empty())
-                engine.jumpToLastRecordPoint();
             else
-                engine.jumpToNextMarker();
+                forwardTap();
         }
     };
 
@@ -636,6 +632,22 @@ bool TransportBar::isTapeStripExpanded() const
 
 TransportBar::~TransportBar() { stopTimer(); }   // before derived members destruct
 
+void TransportBar::rewindTap()
+{
+    if (engine.getTransport().isStopped() && engine.getSession().getMarkers().empty())
+        engine.jumpToZero();
+    else
+        engine.jumpToPrevMarker();
+}
+
+void TransportBar::forwardTap()
+{
+    if (engine.getTransport().isStopped() && engine.getSession().getMarkers().empty())
+        engine.jumpToLastRecordPoint();
+    else
+        engine.jumpToNextMarker();
+}
+
 void TransportBar::timerCallback()
 {
     // 10x scrub. Once a REW / FFWD button has been held past
@@ -781,21 +793,8 @@ void TransportBar::timerCallback()
                 s.savedLoopEnabled = tr.isLoopEnabled();
                 break;
             }
-            case PendingTransportAction::GoToEnd:
-            {
-                // No fixed timeline end — jump to the end of the furthest
-                // content across all tracks (audio + MIDI regions).
-                juce::int64 end = 0;
-                for (int t = 0; t < Session::kNumTracks; ++t)
-                {
-                    for (const auto& r : s.track (t).regions)
-                        end = juce::jmax (end, r.timelineStart + r.lengthInSamples);
-                    for (const auto& r : s.track (t).midiRegions.current())
-                        end = juce::jmax (end, r.timelineStart + r.lengthInSamples);
-                }
-                engine.getTransport().setPlayhead (end);
-                break;
-            }
+            case PendingTransportAction::PrevMarker: rewindTap();  break;
+            case PendingTransportAction::NextMarker: forwardTap(); break;
             case PendingTransportAction::None:   break;
         }
 
