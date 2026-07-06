@@ -30,7 +30,7 @@ Dusk Studio includes:
 - Four mix buses, each with a 3-band EQ and console-style bus compressor.
 - A master bus with tape saturation, a tube program EQ, bus compressor, and mono-sum check.
 - A dedicated mastering stage with 5-band digital EQ, multiband compressor, brick-wall limiter, and BS.1770 loudness metering.
-- VST3, LV2, AU, and CLAP plugin hosting, with optional out-of-process sandboxing for crash isolation. On Linux, CLAP and LV2 effects run through Dusk Studio's own native hosts.
+- VST3, LV2, AU, and CLAP plugin hosting, with optional out-of-process sandboxing for crash isolation. On Linux, CLAP, LV2 and VST3 — effects and instruments — run through Dusk Studio's own native hosts.
 - External hardware insert per channel and per aux, with automatic latency measurement.
 - A multi-sampler that plays `.sfz` files and `.sf2` SoundFonts on MIDI tracks, both through the built-in sfizz engine (SF2 files are converted to SFZ on load — no external synth required).
 - MIDI Clock and MIDI Time Code chase and emit.
@@ -1379,7 +1379,7 @@ A few rules:
 Dusk Studio scans and hosts:
 
 - **VST3** on Linux, macOS, and Windows. On Linux, effects AND instruments load through Dusk Studio's own native VST3 host (rows tagged **VST3-Native**); everywhere else VST3 loads through the standard host.
-- **LV2** on Linux. Effects load through Dusk Studio's own native LV2 host (rows tagged **LV2-Native**); LV2 instruments load through the standard host.
+- **LV2** on Linux. Effects and instruments load through Dusk Studio's own native LV2 host (rows tagged **LV2-Native**). If a plugin update adds new instruments, run **Scan plugins** for them to appear.
 - **CLAP** on Linux, through the native host — effects and instruments.
 - **AU** on macOS only.
 - **Native multi-sampler** (`.sfz` and `.sf2` files, both via the built-in sfizz engine — SF2 is converted to SFZ on load) on all platforms.
@@ -1409,7 +1409,7 @@ In the **plugin picker** modal:
 - Each row shows the plugin name and its format (VST3 / LV2 / AU / CLAP / LV2-Native / VST3-Native).
 - Click a row to load and dismiss.
 
-On Linux, effect slots list LV2 and VST3 plugins as **LV2-Native** / **VST3-Native** rows — the same plugins, hosted by Dusk Studio's native hosts instead of the standard one. Each plugin appears once; there is no duplicate plain-LV2 or plain-VST3 row.
+On Linux, both the effect and instrument pickers list LV2 and VST3 plugins as **LV2-Native** / **VST3-Native** rows — the same plugins, hosted by Dusk Studio's native hosts instead of the standard one. Each plugin appears once; there is no duplicate plain-LV2 or plain-VST3 row.
 
 The picker filters by intent: only effect plugins appear when you're loading onto a channel insert or aux lane; only instruments appear when you're loading onto a MIDI track.
 
@@ -1428,7 +1428,7 @@ This holds on all platforms, including the macOS out-of-process sandbox. Rather 
 
 ## Native plugin hosting (Linux)
 
-On Linux, CLAP plugins and LV2/VST3 effects are hosted by Dusk Studio's own plugin hosts rather than the standard hosting layer. This exists for one reason: plugin editor windows embedded through the standard layer are the biggest source of UI breakage on Wayland desktops. The native hosts own the editor embedding directly and sidestep that class of problem.
+On Linux, CLAP, LV2, and VST3 plugins — effects and instruments — are hosted by Dusk Studio's own plugin hosts rather than the standard hosting layer. This exists for one reason: plugin editor windows embedded through the standard layer are the biggest source of UI breakage on Wayland desktops. The native hosts own the editor embedding directly and sidestep that class of problem.
 
 In practice the differences are small:
 

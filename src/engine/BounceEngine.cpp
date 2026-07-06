@@ -283,6 +283,11 @@ void BounceEngine::run()
         transport.setPlayhead (0);
         transport.setState (Transport::State::Playing);
         engine.getPlaybackEngine().preparePlayback();
+        // The in-callback relatch of the master-stage aux PDC only runs while
+        // stopped — and this offline drive is Playing from the first block.
+        // Latch the targets here (callback is detached) or the render plays
+        // wet returns misaligned against the dry mix.
+        engine.applyMasterPdcTargetsNow();
     }
     else
     {
@@ -293,13 +298,15 @@ void BounceEngine::run()
         engine.getMasteringPlayer().play();
     }
 
-    // PDC lead-in: with cross-track compensation the master mix is delayed by
-    // the deepest track latency. Render that many extra samples and discard
+    // PDC lead-in: cross-track compensation delays the master mix by the
+    // deepest track latency, and the master-stage aux PDC delays it again by
+    // the deepest aux-lane latency. Render that many extra samples and discard
     // them up front so the file isn't shifted. The MasteringChain path bypasses
-    // the channel strips, so it carries no per-track PDC lead-in.
+    // the channel strips and aux lanes, so it carries no lead-in.
     const juce::int64 leadIn = (renderMode == Mode::MasteringChain)
                                  ? 0
-                                 : (juce::int64) engine.getAggregatePdcLatencySamples();
+                                 : (juce::int64) engine.getAggregatePdcLatencySamples()
+                                     + (juce::int64) engine.getMasterDryPdcTargetSamples();
     const juce::int64 toRender = totalSamples + leadIn;
 
     juce::int64 done    = 0;   // samples processed through the engine
@@ -460,9 +467,11 @@ bool BounceEngine::renderOneStem (const juce::File& outFile,
     engine.getPlaybackEngine().preparePlayback();
 
     // Same PDC lead-in trim as the master render: each stem runs the full strip
-    // path, so it's delayed by the deepest track latency. Drop those leading
-    // samples so all stems stay mutually aligned and start at sample 0.
-    const juce::int64 leadIn  = (juce::int64) engine.getAggregatePdcLatencySamples();
+    // path, so it's delayed by the deepest track latency plus the
+    // master-stage aux PDC. Drop those leading samples so all stems stay
+    // mutually aligned and start at sample 0.
+    const juce::int64 leadIn  = (juce::int64) engine.getAggregatePdcLatencySamples()
+                                  + (juce::int64) engine.getMasterDryPdcTargetSamples();
     const juce::int64 toRender = lenSamples + leadIn;
 
     juce::int64 done    = 0;
@@ -564,6 +573,10 @@ bool BounceEngine::runStemsMode()
     const auto savedPlayhead       = transport.getPlayhead();
     const auto savedStage          = engine.getStage();
     engine.setStage (AudioEngine::Stage::Mixing);
+    // Same reason as the master-mix path: the stem drive runs Playing from
+    // block 0, so the in-callback (stopped-only) relatch never engages the
+    // master-stage aux PDC — latch it while the callback is detached.
+    engine.applyMasterPdcTargetsNow();
 
     bool succeeded = true;
     const int  numStems = (int) tracksToRender.size();
