@@ -6,6 +6,7 @@
 
 #include "engine/lv2/Lv2Bundle.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <string>
 
@@ -60,8 +61,7 @@ TEST_CASE ("Lv2Bundle classifies an instrument bundle", "[lv2][bundle]")
     REQUIRE (bundle.load (path, err));
     REQUIRE_FALSE (bundle.plugins().empty());
 
-    bool anyInstrument = false;
-    for (const auto& p : bundle.plugins())
-        anyInstrument = anyInstrument || p.isInstrument;
-    REQUIRE (anyInstrument);
+    const auto& plugins = bundle.plugins();
+    REQUIRE (std::any_of (plugins.begin(), plugins.end(),
+                          [] (const auto& p) { return p.isInstrument; }));
 }

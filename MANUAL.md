@@ -1379,7 +1379,7 @@ A few rules:
 Dusk Studio scans and hosts:
 
 - **VST3** on Linux, macOS, and Windows. On Linux, effects AND instruments load through Dusk Studio's own native VST3 host (rows tagged **VST3-Native**); everywhere else VST3 loads through the standard host.
-- **LV2** on Linux. Effects and instruments load through Dusk Studio's own native LV2 host (rows tagged **LV2-Native**). Instruments added by a plugin re-scan if they don't appear after updating.
+- **LV2** on Linux. Effects and instruments load through Dusk Studio's own native LV2 host (rows tagged **LV2-Native**). If a plugin update adds new instruments, run **Scan plugins** for them to appear.
 - **CLAP** on Linux, through the native host — effects and instruments.
 - **AU** on macOS only.
 - **Native multi-sampler** (`.sfz` and `.sf2` files, both via the built-in sfizz engine — SF2 is converted to SFZ on load) on all platforms.
@@ -1428,7 +1428,7 @@ This holds on all platforms, including the macOS out-of-process sandbox. Rather 
 
 ## Native plugin hosting (Linux)
 
-On Linux, CLAP plugins and LV2/VST3 effects are hosted by Dusk Studio's own plugin hosts rather than the standard hosting layer. This exists for one reason: plugin editor windows embedded through the standard layer are the biggest source of UI breakage on Wayland desktops. The native hosts own the editor embedding directly and sidestep that class of problem.
+On Linux, CLAP, LV2, and VST3 plugins — effects and instruments — are hosted by Dusk Studio's own plugin hosts rather than the standard hosting layer. This exists for one reason: plugin editor windows embedded through the standard layer are the biggest source of UI breakage on Wayland desktops. The native hosts own the editor embedding directly and sidestep that class of problem.
 
 In practice the differences are small:
 
