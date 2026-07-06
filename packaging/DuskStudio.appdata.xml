@@ -30,6 +30,11 @@
   <content_rating type="oars-1.1"/>
   <releases>
     <!-- scripts/bump-version.sh prepends new <release> entries here. -->
+    <release version="0.12.0" date="2026-07-05">
+      <description>
+        <p>Beta: native CLAP/LV2/VST3 hosting on Linux, session sample-rate safety, seamless looping, Save As consolidation, send-effect latency compensation, mastering delivery presets, MIDI soft takeover.</p>
+      </description>
+    </release>
     <release version="0.11.1" date="2026-06-24">
       <description>
         <p>Patch release on the 0.11 Beta line. Chase / follow playhead in the

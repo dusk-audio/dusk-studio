@@ -48,6 +48,16 @@ jobs:
           # GITHUB_TOKEN — don't leave it in git config.
           persist-credentials: false
 
+      - name: Verify tag matches VERSION
+        # Same gate as the three binary release workflows. Without it, a
+        # mistagged push publishes a PDF onto the release while every binary
+        # job fails the VERSION check — a half-populated release with only
+        # documentation in it.
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          [[ "v$(tr -d '[:space:]' < VERSION)" == "${GITHUB_REF_NAME}" ]] || {
+            echo "Tag ${GITHUB_REF_NAME} != VERSION v$(tr -d '[:space:]' < VERSION)"; exit 1; }
+
       - name: Install pandoc + xelatex
         # texlive-xetex provides xelatex; the -recommended sets cover the
         # pandoc default template (geometry, hyperref/xcolor for colorlinks,

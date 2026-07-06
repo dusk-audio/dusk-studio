@@ -85,7 +85,7 @@ Click **IN** to enable input monitoring. Play the source and watch the input met
 
 ![Channel strip 1 armed, input picked, monitor on.](docs/images/qg-03-arm-track.png)
 
-If you want to track _through_ the channel's EQ and compressor, also engage **PRINT**. The recorded file will contain the post-effects signal. With PRINT off (the default) you can tweak EQ and compression after the take without re-recording. PRINT shows on an **empty audio track**; once the track holds a take — and on every MIDI track — the button becomes **FREEZE** instead (render the track to audio and bypass its DSP to save CPU — see [ARM, IN, PRINT / FREEZE](#arm-in-print--freeze-recording-stage)).
+If you want to track _through_ the channel's EQ and compressor, also engage **PRINT**. The recorded file will contain the post-effects signal. With PRINT off (the default) you can tweak EQ and compression after the take without re-recording. PRINT shows on an **empty audio track**; once the track holds a take — and on every MIDI track — the button becomes **FREEZE** instead (render the track to audio and bypass its DSP to save CPU — see [ARM, IN, PRINT/FREEZE](#arm-in-printfreeze-recording-stage)).
 
 ## Record
 
@@ -580,7 +580,7 @@ This block is only visible in the RECORDING stage. In other stages it collapses 
 - **MIDI output** (MIDI mode): optional external MIDI output to drive a hardware synth as you play.
 - **Activity LED**: blinks green when MIDI arrives on the chosen channel.
 
-## ARM, IN, PRINT / FREEZE (RECORDING stage)
+## ARM, IN, PRINT/FREEZE (RECORDING stage)
 
 - **ARM**: light red when on. Marks the track for recording on the next Record press.
 - **IN**: input monitor. When on, you hear the live input through the channel strip. Useful for tracking with effects.

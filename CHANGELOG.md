@@ -5,34 +5,120 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
-## [Unreleased]
+## [0.12.0] - 2026-07-05
+
+Beta. The biggest release so far: Linux-native plugin hosting across CLAP,
+LV2 and VST3 (effects and instruments), a production-readiness pass over the
+whole engine — sample-rate safety, seamless looping, Save As that takes your
+audio with it, latency compensation across every path — and new delivery
+options for the master.
 
 ### Added
 
+- **Native plugin hosting on Linux (CLAP / LV2 / VST3).** Effects and
+  instruments load through Dusk Studio's own hosts (picker rows **CLAP**,
+  **LV2-Native**, **VST3-Native**) instead of the standard hosting layer.
+  Editors embed reliably on Wayland desktops, parameters are automatable and
+  MIDI-learnable (including "learn last-touched knob"), state persists in the
+  session, multi-plugin bundles resolve to the right plugin, and discovery is
+  crash-safe (sandboxed scans; native LV2 discovery never executes plugin
+  code). Native instruments get full MIDI delivery, a CC bridge, and the
+  track-mode flow. LV2 instruments join in this release — if one doesn't
+  appear in the instrument picker after updating, run **Scan plugins** once
+  (older plugin caches predate LV2 instruments).
+- **Session sample rate.** A session remembers the rate its audio was made
+  at: opening it switches the device to that rate automatically, and Dusk
+  Studio warns loudly when it can't — or when the device rate changes
+  mid-session. No more silently detuned projects.
+- **Mastering delivery presets.** Export master as 24-bit WAV at the session
+  rate, **16-bit 44.1 kHz WAV with TPDF dither** (CD spec), or MP3 320 kbps.
+  MP3s now carry a proper Info header so players report duration and seek
+  correctly.
+- **MIDI soft takeover (pickup).** Settings → General: a bound knob or fader
+  stays dormant until it crosses the parameter's current position instead of
+  snapping it on first touch. Covers all continuous mixer targets.
+- **Autosave cadence.** Settings → General: 15 seconds to 5 minutes.
+- **LV2 file-backed state.** A sampler's loaded bank or a convolution
+  reverb's impulse response is snapshotted into the session's `state/lv2/`
+  folder on save and travels with the session, including through Save As.
+- **Send-effect latency compensation.** A latent plugin on an aux return
+  (lookahead comp, linear-phase EQ) no longer flams the wet signal against
+  the dry mix — the master stage aligns every path, metronome included.
+- **Background imports.** DP-song import and SF2/SFZ soundfont loads run on
+  worker threads behind progress dialogs with Cancel; the interface stays
+  responsive through multi-minute imports and GM-bank loads.
 - **DP import decodes time signature.** A song's time signature (numerator /
   denominator) is read from `song.sys` and applied on import, alongside the
   existing tempo / marker / mixer recall.
+- **CLAP scan cache.** Scanned CLAP descriptions persist in a sidecar cache,
+  so the picker is populated at launch without a re-scan.
 
 ### Fixed
 
-- **DP import fader + pan recall.** Channel faders and pan are now read from the
-  device's actual mixer array (0xC4) with a calibrated byte-to-dB curve, instead
-  of the wrong record offset that recalled unity / centre for every track.
-
-- **Tuner pitch accuracy.** The pitch detector read consistently sharp (about a
-  semitone at low notes); it now locks on the true period and reads within a
-  few cents.
-- **Long help text.** Menu-bar tooltips that exceed one line now wrap instead of
-  clipping the text at both ends.
+- **Save As takes the audio along.** "Save As…" now copies every
+  session-owned file (takes, take history, freeze renders, a session-local
+  mastering source) into the new folder and rewrites the session to match.
+  Previously the new session silently referenced the old folder — deleting
+  it lost every region.
+- **Seamless looping.** Loop playback no longer drops out at the top of each
+  cycle, bleeds material from past the loop point, or skips the loop
+  downbeat; the seam gets a short declick ramp.
+- **Bounce correctness.** Mixdown length now accounts for MIDI regions and
+  frozen tracks (a virtual-instrument song no longer renders as six
+  seconds); a cancelled or failed bounce deletes its partial file instead of
+  overwriting your last good one; disk-full during the MP3 flush fails the
+  bounce instead of reporting success; freezing a track with a latent insert
+  no longer bakes that latency in as a delay.
+- **Mastering player pitch.** A mix whose sample rate differs from the
+  device's is resampled — it used to preview and export fast and sharp.
+- **MIDI clock stability.** The emitted clock no longer drifts at fractional
+  samples-per-tick tempos; hardware slaved to Dusk Studio stays locked over
+  a full song.
+- **Undo coverage.** A MIDI overdub that replaces exactly one region is
+  undoable; MIDI regions can be deleted from the arrangement (context menu
+  and Delete key, both undoable).
+- **Session load hardening.** A truncated or hand-edited `session.json` can
+  no longer leave the previous session's tracks, buses or aux lanes playing
+  under the new session's name; out-of-range automation times and
+  non-finite values are clamped on load.
+- **Import robustness.** Imports stream in bounded chunks (a long stem no
+  longer allocates gigabytes), resample through a windowed-sinc kernel,
+  land sample-aligned on the timeline, and no longer overwrite each other
+  when two hit the same track within a second. Malformed or crafted `.sf2`
+  files are rejected instead of exhausting memory.
+- **DP import fader + pan recall.** Channel faders and pan are now read from
+  the device's actual mixer array (0xC4) with a calibrated byte-to-dB curve,
+  instead of the wrong record offset that recalled unity / centre for every
+  track.
+- **Transport taps.** REW/FFWD taps jump to the previous/next marker in any
+  transport state (stopped taps used to rewind to zero).
+- **Tuner pitch accuracy.** The pitch detector read consistently sharp
+  (about a semitone at low notes); it now locks on the true period and reads
+  within a few cents.
+- **Freeze while rolling.** Freezing/unfreezing now requires the transport
+  to be stopped — the render used to interrupt a live take.
+- **Control surface readout.** The MCU bar/beat display is correct at
+  sample rates other than 48 kHz.
+- **Text fixes.** UTF-8 punctuation in the import windows no longer renders
+  as mojibake; menu-bar tooltips that exceed one line wrap instead of
+  clipping.
 - **MTC.** SMPTE hours wrap at the 24-hour boundary (the emitted hours field
   stays within the 0-23 spec range).
-- **Session load hardening.** Out-of-range automation times and non-finite
-  values in a hand-edited or corrupt `session.json` are clamped on load.
+- **No more popup flash while renaming.** Right-clicking inside a
+  double-click rename field (track / bus / aux names, region gain and fades,
+  the transport clock) no longer flashes a native menu window on
+  X11/Wayland; the in-window behaviour now covers every text field.
 
 ### Changed
 
+- **Dusk-native UI sweep.** The remaining stock-JUCE dialogs and pickers
+  (including the last native alert on the stem-overwrite prompt) now use
+  Dusk Studio's in-window equivalents — no more separate OS windows fighting
+  Wayland stacking.
 - **Update notice.** The "update available" badge moved from the startup
   dialog's sidebar to a banner above the Recent Sessions list.
+- **Bus compressor.** Stereo link shares the sidechain across L/R with a
+  continuous link amount, verified on both the native and oversampled paths.
 
 ## [0.11.1] - 2026-06-24
 
