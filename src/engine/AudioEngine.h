@@ -573,6 +573,8 @@ private:
         bool         armed       = false;
         bool         stereoInput = false;
         bool         frozen      = false;   // play pre-rendered WAV, skip plugin + EQ/comp
+        bool         hardwareInsert = false; // send writes a SHARED device output — excluded
+                                             // from parallel lanes, summed on the audio thread
     };
     std::array<TrackDspJob, Session::kNumTracks> trackJobs;
 

@@ -2749,8 +2749,12 @@ void AudioEngine::processStripLane (int lane) noexcept
 
     const int lo = (Session::kNumTracks * lane)       / lanes;
     const int hi = (Session::kNumTracks * (lane + 1)) / lanes;
+    // Hardware-insert strips write the SHARED device-output buffer; a worker
+    // lane can't do that concurrently, so they're skipped here and summed on
+    // the audio thread after the reduce.
     for (int t = lo; t < hi; ++t)
-        accumulateStrip (t, acc.mixL.data(), acc.mixR.data(), bL, bR, aL, aR, n);
+        if (! trackJobs[(size_t) t].hardwareInsert)
+            accumulateStrip (t, acc.mixL.data(), acc.mixR.data(), bL, bR, aL, aR, n);
 }
 
 void AudioEngine::reduceLaneAccum (int numSamples) noexcept
@@ -4507,7 +4511,9 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         // the strip. stereoInput true so the R channel is recognised.
         trackJobs[(size_t) t] = { monoIn, monoInR, deviceInput,
                                   midiTrack && ! isFrozen, stripPasses, armed,
-                                  stereoTrackInput || isFrozen, isFrozen };
+                                  stereoTrackInput || isFrozen, isFrozen,
+                                  strips[(size_t) t].insertMode.load (std::memory_order_relaxed)
+                                      == ChannelStrip::kInsertHardware };
     }
 
     // ── DSP pass ─────────────────────────────────────────────────────────
@@ -4527,6 +4533,13 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         currentBlockSamples = numSamples;
         workerPool.runBlock();
         reduceLaneAccum (numSamples);
+        // Hardware-insert strips were skipped in the lanes (processStripLane)
+        // because their send writes the shared device-output buffer; sum them
+        // here on the audio thread, where that write is single-threaded.
+        for (int t = 0; t < Session::kNumTracks; ++t)
+            if (trackJobs[(size_t) t].hardwareInsert)
+                accumulateStrip (t, mixL.data(), mixR.data(),
+                                 busLPtrs, busRPtrs, auxLanePtrsL, auxLanePtrsR, numSamples);
     }
     else
     {
