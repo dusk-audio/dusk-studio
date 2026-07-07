@@ -300,8 +300,6 @@ enum class PendingTransportAction : int
     Record     = 3,
     Toggle     = 4,
     LoopToggle = 5,   // flip loop on/off (MCU Loop button)
-    PrevMarker = 6,   // MCU REW: mirror the on-screen Rewind tap
-    NextMarker = 7,   // MCU FFWD: mirror the on-screen Forward tap
 };
 
 // Packed into atomic<int>: target enum high bits, track index low 8.

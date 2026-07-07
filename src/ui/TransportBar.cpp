@@ -660,12 +660,12 @@ void TransportBar::timerCallback()
     const double sr  = engine.getCurrentSampleRate();
     if (sr > 0.0)
     {
-        const auto handleScrub = [&] (TransportIconButton& btn,
+        const auto handleScrub = [&] (bool isHeld,
                                         juce::int64& pressedAt,
                                         bool& scrubbing,
                                         int direction)
         {
-            if (! btn.isHeldDown() || pressedAt == 0) return;
+            if (! isHeld || pressedAt == 0) return;
             const auto held = nowMs - pressedAt;
             if (held < kHoldThresholdMs) return;
             scrubbing = true;
@@ -681,9 +681,34 @@ void TransportBar::timerCallback()
             engine.getTransport().setPlayhead (juce::jmax ((juce::int64) 0,
                 cur + (juce::int64) direction * delta));
         };
-        handleScrub (rewButton,  rewPressedAtMs,  rewIsScrubbing,  -1);
-        handleScrub (ffwdButton, ffwdPressedAtMs, ffwdIsScrubbing, +1);
-        if (! rewIsScrubbing && ! ffwdIsScrubbing) lastScrubTickMs = 0;
+
+        // MCU REW/FFWD have no Component events; synthesise press/release
+        // edges from the receiver's held-flags so they share the buttons'
+        // tap-on-release + hold-scrub gesture.
+        auto& sess = engine.getSession();
+        const bool mcuRew  = sess.mcu.rewHeld.load  (std::memory_order_relaxed);
+        const bool mcuFfwd = sess.mcu.ffwdHeld.load (std::memory_order_relaxed);
+        const auto mcuEdge = [&] (bool isHeld, juce::int64& pressedAt, bool& scrubbing, auto tap)
+        {
+            if (isHeld && pressedAt == 0)
+                pressedAt = nowMs;
+            else if (! isHeld && pressedAt != 0)
+            {
+                const bool wasScrub = scrubbing;
+                pressedAt = 0;
+                scrubbing = false;
+                if (! wasScrub) tap();   // short press → marker jump
+            }
+        };
+        mcuEdge (mcuRew,  mcuRewPressedAtMs,  mcuRewIsScrubbing,  [this] { rewindTap();  });
+        mcuEdge (mcuFfwd, mcuFfwdPressedAtMs, mcuFfwdIsScrubbing, [this] { forwardTap(); });
+
+        handleScrub (rewButton.isHeldDown(),  rewPressedAtMs,  rewIsScrubbing,  -1);
+        handleScrub (ffwdButton.isHeldDown(), ffwdPressedAtMs, ffwdIsScrubbing, +1);
+        handleScrub (mcuRew,  mcuRewPressedAtMs,  mcuRewIsScrubbing,  -1);
+        handleScrub (mcuFfwd, mcuFfwdPressedAtMs, mcuFfwdIsScrubbing, +1);
+        if (! rewIsScrubbing && ! ffwdIsScrubbing
+            && ! mcuRewIsScrubbing && ! mcuFfwdIsScrubbing) lastScrubTickMs = 0;
     }
 
     const auto playhead = engine.getTransport().getPlayhead();
@@ -793,8 +818,6 @@ void TransportBar::timerCallback()
                 s.savedLoopEnabled = tr.isLoopEnabled();
                 break;
             }
-            case PendingTransportAction::PrevMarker: rewindTap();  break;
-            case PendingTransportAction::NextMarker: forwardTap(); break;
             case PendingTransportAction::None:   break;
         }
 

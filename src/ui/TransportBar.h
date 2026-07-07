@@ -128,6 +128,11 @@ private:
     juce::int64 ffwdPressedAtMs = 0;
     bool        rewIsScrubbing  = false;
     bool        ffwdIsScrubbing = false;
+    // MCU REW/FFWD mirror the above, edge-detected from session.mcu held-flags.
+    juce::int64 mcuRewPressedAtMs  = 0;
+    juce::int64 mcuFfwdPressedAtMs = 0;
+    bool        mcuRewIsScrubbing  = false;
+    bool        mcuFfwdIsScrubbing = false;
     juce::int64 lastScrubTickMs = 0;
     TransportIconButton clickToggle { "Metronome",
                                           TransportIconButton::Icon::Metronome,

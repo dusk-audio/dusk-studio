@@ -1401,6 +1401,13 @@ public:
 
         // 0..15 — drives EQ/COMP encoder target + plugin-editor focus.
         std::atomic<int> selectedChannel { 0 };
+
+        // REW / FFWD held-state (press = true, release = false). The
+        // TransportBar timer turns a short press into a marker jump and a
+        // hold into a 10x playhead scrub — same gesture as the on-screen
+        // Rewind / Forward buttons.
+        std::atomic<bool> rewHeld  { false };
+        std::atomic<bool> ffwdHeld { false };
     };
     McuSessionState mcu;
 

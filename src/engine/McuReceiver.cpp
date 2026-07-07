@@ -342,6 +342,20 @@ void McuReceiver::handleNotePress (int noteNumber, bool pressed) noexcept
         return;
     }
 
+    // REW / FFWD publish held-state on both edges. TransportBar's timer
+    // turns a short press into a marker jump and a hold into a 10x playhead
+    // scrub, mirroring the on-screen Rewind / Forward buttons.
+    if (noteNumber == mcu::btn::Rewind)
+    {
+        session.mcu.rewHeld.store (pressed, std::memory_order_relaxed);
+        return;
+    }
+    if (noteNumber == mcu::btn::FastForward)
+    {
+        session.mcu.ffwdHeld.store (pressed, std::memory_order_relaxed);
+        return;
+    }
+
     // Transport cluster - dispatch through pendingTransportAction so
     // engine.play() / stop() / record() run on the message thread.
     if (pressed)
@@ -361,16 +375,6 @@ void McuReceiver::handleNotePress (int noteNumber, bool pressed) noexcept
             case mcu::btn::Record:
                 session.pendingTransportAction.store (
                     (int) PendingTransportAction::Record,
-                    std::memory_order_relaxed);
-                return;
-            case mcu::btn::Rewind:
-                session.pendingTransportAction.store (
-                    (int) PendingTransportAction::PrevMarker,
-                    std::memory_order_relaxed);
-                return;
-            case mcu::btn::FastForward:
-                session.pendingTransportAction.store (
-                    (int) PendingTransportAction::NextMarker,
                     std::memory_order_relaxed);
                 return;
             case mcu::btn::Loop:

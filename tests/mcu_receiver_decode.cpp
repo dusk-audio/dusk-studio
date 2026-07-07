@@ -215,21 +215,21 @@ TEST_CASE ("McuReceiver: PLAY / STOP / RECORD buttons enqueue pendingTransportAc
              == (int) PendingTransportAction::Record);
 }
 
-TEST_CASE ("McuReceiver: REWIND / FAST-FORWARD enqueue prev/next-marker actions",
+TEST_CASE ("McuReceiver: REWIND / FAST-FORWARD publish held-state on press and release",
            "[mcu][receiver]")
 {
     Session s;
     McuReceiver r (s);
 
-    r.process (makeNoteOn (mcu::btn::Rewind, 0x7F), 0);
-    REQUIRE (s.pendingTransportAction.load (std::memory_order_relaxed)
-             == (int) PendingTransportAction::PrevMarker);
+    r.process (makeNoteOn (mcu::btn::Rewind, 0x7F), 0);   // press
+    REQUIRE (s.mcu.rewHeld.load (std::memory_order_relaxed));
+    r.process (makeNoteOn (mcu::btn::Rewind, 0x00), 0);   // release
+    REQUIRE (! s.mcu.rewHeld.load (std::memory_order_relaxed));
 
-    s.pendingTransportAction.store ((int) PendingTransportAction::None,
-                                      std::memory_order_relaxed);
     r.process (makeNoteOn (mcu::btn::FastForward, 0x7F), 0);
-    REQUIRE (s.pendingTransportAction.load (std::memory_order_relaxed)
-             == (int) PendingTransportAction::NextMarker);
+    REQUIRE (s.mcu.ffwdHeld.load (std::memory_order_relaxed));
+    r.process (makeNoteOn (mcu::btn::FastForward, 0x00), 0);
+    REQUIRE (! s.mcu.ffwdHeld.load (std::memory_order_relaxed));
 }
 
 TEST_CASE ("McuReceiver: fader touch sense flips faderTouched latch", "[mcu][receiver]")
