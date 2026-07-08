@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Mirror of the CI de-JUCE ratchet, so a growth in JUCE coupling is caught
+# before the push instead of on the runner. Opt in with:
+#   git config core.hooksPath .githooks
+exec tools/juce-gate.sh

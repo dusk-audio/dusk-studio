@@ -8,6 +8,16 @@ on:
   workflow_dispatch:
 
 jobs:
+  juce-gate:
+    name: De-JUCE ratchet
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Check JUCE coupling has not grown
+        run: tools/juce-gate.sh
+
   build:
     name: Build Dusk Studio (GCC Release, Ubuntu 22.04, amd64)
     # arm64 / Raspberry Pi build-check lives in raspberry-pi-build.yml so each
