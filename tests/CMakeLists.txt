@@ -116,6 +116,22 @@ target_include_directories(dusk-studio-tests PRIVATE
     ${CMAKE_SOURCE_DIR}/external/projucer-shim
     ${CMAKE_SOURCE_DIR}/external/clap/include)
 
+# Phase 1a de-JUCE: JUCE-free audio file I/O (libsndfile backend). Compiled in
+# the test target only for now; the app keeps its JUCE readers until 1b swaps
+# the first call site.
+find_library(SNDFILE_LIBRARY NAMES sndfile)
+find_path(SNDFILE_INCLUDE_DIR sndfile.h)
+if(NOT SNDFILE_LIBRARY OR NOT SNDFILE_INCLUDE_DIR)
+    message(FATAL_ERROR "libsndfile not found — install libsndfile-dev (Debian) / libsndfile-devel (openSUSE) / `brew install libsndfile`.")
+endif()
+target_sources(dusk-studio-tests PRIVATE
+    audiofile_roundtrip.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/audiofile/FileReader.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/audiofile/FileWriter.cpp
+    ${CMAKE_SOURCE_DIR}/src/engine/audiofile/ThreadedFileWriter.cpp)
+target_include_directories(dusk-studio-tests SYSTEM PRIVATE "${SNDFILE_INCLUDE_DIR}")
+target_link_libraries(dusk-studio-tests PRIVATE "${SNDFILE_LIBRARY}")
+
 # Console-saturation calibration test + the donor DSP headers it needs
 # (BritishEQProcessor.h + its header-only ConsoleSaturation/ADAA/SafeFloat deps).
 # Gated on the donor being available, so a no-donor build doesn't try to compile
