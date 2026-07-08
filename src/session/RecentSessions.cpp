@@ -39,16 +39,21 @@ std::vector<stdfs::path> RecentSessions::load()
     std::string line;
     while (std::getline (in, line))
     {
-        const auto trimmed = dusk::text::trim (line);
-        if (trimmed.empty()) continue;
+        if (! line.empty() && line.back() == '\r') line.pop_back();   // tolerate CRLF
+        if (line.empty()) continue;
 
-        const stdfs::path f (trimmed);
+        // Paths are stored as UTF-8; u8path round-trips them exactly (including
+        // non-ASCII and whitespace-bearing directory names) on every platform.
+        const stdfs::path f = stdfs::u8path (line);
         // Prune stale entries - a removed session directory is worse than
         // useless in the picker UI. Also dedupe (load can be called after a
         // partial write).
         if (stdfs::is_directory (f, ec)
             && std::find (result.begin(), result.end(), f) == result.end())
+        {
             result.push_back (f);
+            if ((int) result.size() >= kMaxEntries) break;   // documented cap
+        }
     }
     return result;
 }
@@ -72,7 +77,7 @@ void RecentSessions::add (const stdfs::path& sessionDirectory)
 
     std::vector<std::string> lines;
     lines.reserve (entries.size());
-    for (auto& f : entries) lines.push_back (f.string());
+    for (auto& f : entries) lines.push_back (f.u8string());
     dusk::fs::writeStringToFile (store, dusk::text::joinIntoString (lines, "\n"));
 }
 

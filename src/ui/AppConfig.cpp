@@ -54,13 +54,22 @@ bool isTruthy (const std::string& s)
     return s == "1" || low == "true" || low == "yes";
 }
 
+// getIntValue() coerces non-numeric strings to 0; require a well-formed
+// non-negative integer so a garbage value falls back to the default instead
+// of reading as a valid 0.
+bool looksNumeric (const std::string& s)
+{
+    return ! s.empty() && s.find_first_not_of ("0123456789") == std::string::npos;
+}
+
 stdfs::path getStorePath()
 {
     const auto cfg = dusk::fs::userConfigDir();
     if (cfg.empty()) return {};
     const auto cfgDir = cfg / "Dusk Studio";
     std::error_code ec;
-    if (! stdfs::exists (cfgDir, ec)) stdfs::create_directories (cfgDir, ec);
+    if (! stdfs::is_directory (cfgDir, ec) && ! stdfs::create_directories (cfgDir, ec))
+        return {};   // config dir unusable (missing + uncreatable, or a non-dir file)
     return cfgDir / "app-config.properties";
 }
 
@@ -182,7 +191,7 @@ void setFollowPlayheadDefault (bool follow)
 int getAutosaveIntervalSeconds()
 {
     const auto raw = readKey (kKeyAutosaveInterval);
-    if (raw.empty()) return kAutosaveIntervalDefaultSec;
+    if (! looksNumeric (raw)) return kAutosaveIntervalDefaultSec;
     const int v = dusk::text::getIntValue (raw);
     return (v >= 10 && v <= 600) ? v : kAutosaveIntervalDefaultSec;
 }
@@ -207,7 +216,7 @@ void setMidiSoftTakeover (bool on)
 StopBehavior getStopBehavior()
 {
     const auto raw = readKey (kKeyStopBehavior);
-    if (raw.empty()) return StopBehavior::PauseInPlace;
+    if (! looksNumeric (raw)) return StopBehavior::PauseInPlace;
     const int v = dusk::text::getIntValue (raw);
     if (v >= 0 && v <= 2) return (StopBehavior) v;
     return StopBehavior::PauseInPlace;
@@ -221,10 +230,7 @@ void setStopBehavior (StopBehavior b)
 MulticoreDspMode getMulticoreDspMode()
 {
     const auto raw = readKey (kKeyMulticoreMode);
-    // Reject empty or non-numeric: getIntValue() coerces "abc" to 0, which would
-    // silently pass the range check and flip behaviour instead of defaulting.
-    if (raw.empty() || raw.find_first_not_of ("0123456789") != std::string::npos)
-        return MulticoreDspMode::Auto;   // default: use spare cores
+    if (! looksNumeric (raw)) return MulticoreDspMode::Auto;   // default: use spare cores
     const int v = dusk::text::getIntValue (raw);
     if (v >= 0 && v <= 2) return (MulticoreDspMode) v;
     return MulticoreDspMode::Auto;
@@ -251,7 +257,7 @@ int getMulticoreManualWorkers()
     const int mx = maxMulticoreWorkers();
     const int lo = std::min (1, mx);   // 1 when workers are possible, else 0
     const auto raw = readKey (kKeyMulticoreManual);
-    if (raw.empty()) return mx;        // default to the full available count
+    if (! looksNumeric (raw)) return mx;   // default to the full available count
     return std::clamp (dusk::text::getIntValue (raw), lo, mx);
 }
 
@@ -279,7 +285,7 @@ int resolveWorkerCount()
 int getVkbCentreNote()
 {
     const auto raw = readKey (kKeyVkbCentreNote);
-    if (raw.empty()) return kVkbCentreDefault;
+    if (! looksNumeric (raw)) return kVkbCentreDefault;
     return std::clamp (dusk::text::getIntValue (raw), 0, 120);
 }
 

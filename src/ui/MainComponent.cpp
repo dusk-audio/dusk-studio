@@ -46,10 +46,22 @@ namespace duskstudio
 {
 namespace
 {
+// UTF-8-safe bridges across the RecentSessions (std::filesystem) boundary -
+// native narrow conversions lose non-ASCII paths on Windows.
+juce::File toFile (const std::filesystem::path& p)
+{
+    return juce::File (juce::String::fromUTF8 (p.u8string().c_str()));
+}
+
+std::filesystem::path toPath (const juce::File& f)
+{
+    return std::filesystem::u8path (f.getFullPathName().toStdString());
+}
+
 juce::Array<juce::File> toFileArray (const std::vector<std::filesystem::path>& paths)
 {
     juce::Array<juce::File> out;
-    for (auto& p : paths) out.add (juce::File (p.string()));
+    for (auto& p : paths) out.add (toFile (p));
     return out;
 }
 
@@ -2388,7 +2400,7 @@ bool MainComponent::saveSessionTo (const juce::File& dir)
             // prompt.
             deleteAutosaveFor (oldDir);
         }
-        RecentSessions::add (dir.getFullPathName().toStdString());
+        RecentSessions::add (toPath (dir));
         // A successful manual save makes the autosave stale - drop it so the
         // recovery prompt doesn't fire on the next clean load.
         deleteAutosaveFor (dir);
@@ -3203,7 +3215,7 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
         tapeStrip->refreshAfterSessionLoad();
     const auto tAfterConsole = juce::Time::getMillisecondCounterHiRes();
 
-    RecentSessions::add (dir.getFullPathName().toStdString());
+    RecentSessions::add (toPath (dir));
     setStatusForPath ("Loaded", sourceJson, /*isAutosave*/ loadedFromAutosave);
 
     // Seed the saved-state snapshot from the live in-memory session now
