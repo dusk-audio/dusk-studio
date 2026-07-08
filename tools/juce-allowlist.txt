@@ -176,7 +176,6 @@ src/ui/HardwareInsertEditor.cpp
 src/ui/HardwareInsertEditor.h
 src/ui/ImportTargetPicker.cpp
 src/ui/ImportTargetPicker.h
-src/ui/KeyboardStateLinux.h
 src/ui/Lv2PluginEditorComponent.cpp
 src/ui/Lv2PluginEditorComponent.h
 src/ui/MainComponent.cpp
