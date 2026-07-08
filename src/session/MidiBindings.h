@@ -300,7 +300,6 @@ enum class PendingTransportAction : int
     Record     = 3,
     Toggle     = 4,
     LoopToggle = 5,   // flip loop on/off (MCU Loop button)
-    GoToEnd    = 6,   // jump playhead to the end of the last content (MCU FFWD)
 };
 
 // Packed into atomic<int>: target enum high bits, track index low 8.
