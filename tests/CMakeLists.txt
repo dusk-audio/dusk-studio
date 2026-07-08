@@ -126,6 +126,7 @@ if(NOT SNDFILE_LIBRARY OR NOT SNDFILE_INCLUDE_DIR)
 endif()
 target_sources(dusk-studio-tests PRIVATE
     audiofile_roundtrip.cpp
+    audiofile_ab_null.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/audiofile/FileReader.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/audiofile/FileWriter.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/audiofile/ThreadedFileWriter.cpp)
