@@ -41,11 +41,14 @@ TEST_CASE ("dusk::json accessors coerce-or-default like juce::var", "[foundation
         REQUIRE (json::getString (j, "i", "d") == "d");    // number, want string
     }
 
-    SECTION ("finite guard rejects an out-of-float-range double")
+    SECTION ("range guard rejects an out-of-range double")
     {
-        const auto big = json::Json::parse (R"({"x": 1e300})");   // finite double > float max
+        const auto big = json::Json::parse (R"({"x": 1e300})");   // finite double, past float + int range
         REQUIRE_THAT (json::getFiniteFloat (big, "x", 7.0f), WithinAbs (7.0f, 1e-12));
         REQUIRE_THAT (json::getFiniteFloat (j, "f", 0.0f),   WithinAbs (0.25f, 1e-12));
+        // getInt / getInt64 must return the default rather than narrow (UB).
+        REQUIRE (json::getInt   (big, "x", 42) == 42);
+        REQUIRE (json::getInt64 (big, "x", 77) == 77);
     }
 
     SECTION ("child / array on missing or wrong type are empty, safe")

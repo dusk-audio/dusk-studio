@@ -78,10 +78,13 @@ inline AutomationPoint parseAutomationPoint (const nlohmann::json& pv, double fa
     // tempo would otherwise pass straight through as recordedAtBPM and break retime math.
     const float safeFallback = (std::isfinite (fallbackBpm) && fallbackBpm > 0.0) ? (float) fallbackBpm : 120.0f;
     AutomationPoint pt;
-    // Validate finiteness BEFORE narrowing to int64 — casting a +inf double (1e999 in a
-    // hand-edited file) to int64 is UB. Non-finite / negative time → 0.
+    // Validate finiteness AND int64 range BEFORE narrowing — casting a +inf or
+    // out-of-range double (a hand-edited 1e40) to int64 is UB. 2^63 is exactly
+    // representable as double; the strict upper bound rejects it. Non-finite /
+    // negative / oversized time → 0.
     const double rawT = json::getDouble (pv, "t", 0.0);
-    pt.timeSamples   = (std::isfinite (rawT) && rawT > 0.0) ? (juce::int64) rawT : (juce::int64) 0;
+    pt.timeSamples   = (std::isfinite (rawT) && rawT > 0.0 && rawT < 9223372036854775808.0)
+                           ? (juce::int64) rawT : (juce::int64) 0;
     // NaN slips through jlimit unchanged (NaN compares false both ways), so it
     // would otherwise poison the lane's binary search / a DSP param. Map it to a
     // safe default; ±inf is already clamped to the [0,1] range by jlimit.
@@ -1151,7 +1154,11 @@ void restoreTrack (Track& t, const nlohmann::json& v, double defaultRecordBpm,
             // anchored to their own saved BPM rather than 120 - the first
             // BPM change after load won't silently mis-retime.
             r.tempoLock       = ! json::has (rv, "tempo_lock") || json::getBool (rv, "tempo_lock", true);
-            r.recordedAtBPM   = json::getDouble (rv, "recorded_at_bpm", defaultRecordBpm);
+            // Reject a non-finite / non-positive bpm (would break tempo-retime
+            // division), mirroring parseAutomationPoint's guard.
+            const double rawBpm = json::getDouble (rv, "recorded_at_bpm", defaultRecordBpm);
+            const double safeBpm = (std::isfinite (defaultRecordBpm) && defaultRecordBpm > 0.0) ? defaultRecordBpm : 120.0;
+            r.recordedAtBPM   = (std::isfinite (rawBpm) && rawBpm > 0.0) ? rawBpm : safeBpm;
 
             parseNotes (json::array (rv, "notes"), r.notes);
             parseCcs   (json::array (rv, "ccs"),   r.ccs);

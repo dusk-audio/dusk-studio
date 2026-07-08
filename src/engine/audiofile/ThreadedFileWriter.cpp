@@ -28,6 +28,8 @@ bool ThreadedFileWriter::push (const float* const* src, int numCh, int64_t numFr
 {
     if (numFrames <= 0)
         return true;
+    if (! isValid())
+        return false;   // null writer or a failed disk write — never report success
 
     const int64_t w = writePos.load (std::memory_order_relaxed);
     const int64_t r = readPos.load (std::memory_order_acquire);
@@ -65,7 +67,13 @@ void ThreadedFileWriter::run()
 
         // Write the contiguous run up to the ring wrap; the next pass takes the rest.
         const int64_t chunk = std::min (avail, capacityFrames - r);
-        writer->writeInterleaved (&ring[(size_t) r * (size_t) channels], chunk);
+        if (! writer->writeInterleaved (&ring[(size_t) r * (size_t) channels], chunk))
+        {
+            // Disk write failed/short: leave readPos so nothing is treated as
+            // persisted, flag the failure so push() starts rejecting, and stop.
+            writeFailed.store (true, std::memory_order_release);
+            break;
+        }
         readPos.store ((r + chunk) % capacityFrames, std::memory_order_release);
     }
     writer->flush();

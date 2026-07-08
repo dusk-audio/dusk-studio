@@ -40,7 +40,7 @@ inline bool getBool (const Json& j, const char* key, bool def)
     if (! has (j, key)) return def;
     const auto& v = j[key];
     if (v.is_boolean()) return v.get<bool>();
-    if (v.is_number())  return v.get<double>() != 0.0;
+    if (v.is_number())  { const double d = v.get<double>(); return d < 0.0 || d > 0.0; }
     return def;
 }
 
@@ -60,7 +60,17 @@ inline int getInt (const Json& j, const char* key, int def)
 {
     if (! has (j, key)) return def;
     const auto& v = j[key];
-    return v.is_number() ? (int) v.get<double>() : def;
+    if (v.is_number_integer())  return (int) v.get<std::int64_t>();
+    if (v.is_number_unsigned()) return (int) v.get<std::uint64_t>();
+    if (v.is_number_float())
+    {
+        // Range-check before narrowing: casting an out-of-int double is UB.
+        const double d = v.get<double>();
+        if (std::isfinite (d) && d >= (double) std::numeric_limits<int>::min()
+                              && d <= (double) std::numeric_limits<int>::max())
+            return (int) d;
+    }
+    return def;
 }
 
 inline std::int64_t getInt64 (const Json& j, const char* key, std::int64_t def)
@@ -69,7 +79,15 @@ inline std::int64_t getInt64 (const Json& j, const char* key, std::int64_t def)
     const auto& v = j[key];
     if (v.is_number_integer())  return v.get<std::int64_t>();
     if (v.is_number_unsigned()) return (std::int64_t) v.get<std::uint64_t>();
-    if (v.is_number())          return (std::int64_t) v.get<double>();
+    if (v.is_number_float())
+    {
+        // Range-check before narrowing: casting a double past int64 range is UB.
+        // 2^63 (int64 max + 1) is exactly representable as double; use a strict
+        // upper bound so 9223372036854775808.0 is rejected.
+        const double d = v.get<double>();
+        if (std::isfinite (d) && d >= -9223372036854775808.0 && d < 9223372036854775808.0)
+            return (std::int64_t) d;
+    }
     return def;
 }
 
