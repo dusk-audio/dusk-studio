@@ -321,26 +321,26 @@ constexpr int unpackLearnTargetIndex (int packed) noexcept
 // Audio→message handoff. Packed int64: 8b trigger + 8b channel + 8b
 // dataNumber + 1b valid. Audio CAS-stores when learnPending; message
 // loads + clears.
-constexpr juce::int64 packLearnCapture (MidiBindingTrigger tg, int ch, int dn) noexcept
+constexpr std::int64_t packLearnCapture (MidiBindingTrigger tg, int ch, int dn) noexcept
 {
-    return ((juce::int64) 1 << 32)
-         | ((juce::int64) (int) tg << 16)
-         | ((juce::int64) (ch & 0xff) << 8)
-         | ((juce::int64) (dn & 0xff));
+    return ((std::int64_t) 1 << 32)
+         | ((std::int64_t) (int) tg << 16)
+         | ((std::int64_t) (ch & 0xff) << 8)
+         | ((std::int64_t) (dn & 0xff));
 }
-constexpr bool learnCaptureIsValid (juce::int64 packed) noexcept
+constexpr bool learnCaptureIsValid (std::int64_t packed) noexcept
 {
     return ((packed >> 32) & 1) != 0;
 }
-constexpr MidiBindingTrigger unpackLearnCaptureTrigger (juce::int64 packed) noexcept
+constexpr MidiBindingTrigger unpackLearnCaptureTrigger (std::int64_t packed) noexcept
 {
     return (MidiBindingTrigger) ((packed >> 16) & 0xff);
 }
-constexpr int unpackLearnCaptureChannel (juce::int64 packed) noexcept
+constexpr int unpackLearnCaptureChannel (std::int64_t packed) noexcept
 {
     return (int) ((packed >> 8) & 0xff);
 }
-constexpr int unpackLearnCaptureDataNumber (juce::int64 packed) noexcept
+constexpr int unpackLearnCaptureDataNumber (std::int64_t packed) noexcept
 {
     return (int) (packed & 0xff);
 }

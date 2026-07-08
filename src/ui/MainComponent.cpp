@@ -115,7 +115,7 @@ public:
                 const auto ss = scan.tracks[(size_t) i].timelineStart;
                 if (ss > 0)
                 {
-                    placeAt[(size_t) i] = (juce::int64) std::llround ((double) ss * sr / songSr);
+                    placeAt[(size_t) i] = (std::int64_t) std::llround ((double) ss * sr / songSr);
                     ++placedCount;
                 }
             }
@@ -130,7 +130,7 @@ public:
                     if (placeAt[(size_t) i] == 0 && al[(size_t) i].placed
                         && ! al[(size_t) i].fullLength && al[(size_t) i].positionSeconds > 0.0)
                     {
-                        placeAt[(size_t) i] = (juce::int64) std::llround (
+                        placeAt[(size_t) i] = (std::int64_t) std::llround (
                             al[(size_t) i].positionSeconds * sr);
                         ++placedCount;
                     }
@@ -205,7 +205,7 @@ public:
     std::function<juce::File (const juce::File&, const juce::File&)> stereoCombine;
 
     // Written by run(), read on the message thread strictly after `done`.
-    std::vector<juce::int64> placeAt;
+    std::vector<std::int64_t> placeAt;
     int placedCount = 0;
     std::vector<TrackOutcome> outcomes;
 
@@ -689,7 +689,7 @@ MainComponent::MainComponent()
     tapeStrip->onMidiRegionDoubleClicked  = [this] (int t, int r) { openPianoRoll   (t, r); };
     tapeStrip->onAudioRegionDoubleClicked = [this] (int t, int r) { openAudioEditor (t, r); };
     tapeStrip->onFilesDropped = [this] (juce::Array<juce::File> files,
-                                          juce::int64 timelineStart,
+                                          std::int64_t timelineStart,
                                           int trackHint)
     {
         if (! engine.getTransport().isStopped())
@@ -1209,8 +1209,8 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
                 const double beatSamples = sr * 60.0 / (double) bpm;
                 const double stepSamples = shift ? beatSamples * (double) beatsPerBar
                                                   : beatSamples;
-                const juce::int64 delta = (juce::int64) std::round (stepSamples);
-                const juce::int64 signedDelta = key == juce::KeyPress::leftKey ? -delta : delta;
+                const std::int64_t delta = (std::int64_t) std::round (stepSamples);
+                const std::int64_t signedDelta = key == juce::KeyPress::leftKey ? -delta : delta;
                 if (tapeStrip->nudgeSelectedRegion (signedDelta)) return true;
             }
         }
@@ -2504,7 +2504,7 @@ void MainComponent::writeAutosave()
     // hash used by HashMap; collision risk on a real session string is
     // statistically negligible. Worst-case missed-write recovers next tick.
     const auto stripped = stripVolatileStateForDirtyCompare (json);
-    const auto strippedHash = (std::uint32_t) (juce::uint32)
+    const auto strippedHash = (std::uint32_t) (std::uint32_t)
         juce::DefaultHashFunctions::generateHash (stripped, 0x7fffffff);
     if (strippedHash == lastSavedSessionStrippedHash)    return;
     if (strippedHash == lastWrittenAutosaveStrippedHash) return;
@@ -2522,7 +2522,7 @@ void MainComponent::setLastSavedSessionJson (const juce::String& json)
 {
     lastSavedSessionJson = json;
     const auto stripped  = stripVolatileStateForDirtyCompare (json);
-    lastSavedSessionStrippedHash = (std::uint32_t) (juce::uint32)
+    lastSavedSessionStrippedHash = (std::uint32_t) (std::uint32_t)
         juce::DefaultHashFunctions::generateHash (stripped, 0x7fffffff);
 }
 
@@ -2530,7 +2530,7 @@ void MainComponent::setLastWrittenAutosaveJson (const juce::String& json)
 {
     lastWrittenAutosaveJson = json;
     const auto stripped     = stripVolatileStateForDirtyCompare (json);
-    lastWrittenAutosaveStrippedHash = (std::uint32_t) (juce::uint32)
+    lastWrittenAutosaveStrippedHash = (std::uint32_t) (std::uint32_t)
         juce::DefaultHashFunctions::generateHash (stripped, 0x7fffffff);
 }
 
@@ -3429,7 +3429,7 @@ static void maybeRenameTrackFromFile (Track& t, int idx, const juce::File& f)
 }
 
 void MainComponent::runAudioImportFlow (const juce::File& source,
-                                            juce::int64 timelineStart,
+                                            std::int64_t timelineStart,
                                             int trackHint)
 {
     std::unique_ptr<juce::AudioFormatReader> reader (
@@ -3445,7 +3445,7 @@ void MainComponent::runAudioImportFlow (const juce::File& source,
     summary.file          = source;
     summary.sampleRate    = reader->sampleRate;
     summary.numChannels   = juce::jmin (2, (int) reader->numChannels);
-    summary.lengthSamples = (juce::int64) reader->lengthInSamples;
+    summary.lengthSamples = (std::int64_t) reader->lengthInSamples;
     summary.isMidi        = false;
     reader.reset();   // close before the picker calls FileImporter
 
@@ -3526,7 +3526,7 @@ void MainComponent::runAudioImportFlow (const juce::File& source,
 }
 
 void MainComponent::runMidiImportFlow (const juce::File& source,
-                                          juce::int64 timelineStart,
+                                          std::int64_t timelineStart,
                                           int trackHint)
 {
     juce::MidiFile peek;
@@ -3544,7 +3544,7 @@ void MainComponent::runMidiImportFlow (const juce::File& source,
     summary.numChannels = -1;
 
     int noteCount = 0;
-    juce::int64 maxTick = 0;
+    std::int64_t maxTick = 0;
     const int ppq = (int) peek.getTimeFormat();
     for (int t = 0; t < peek.getNumTracks(); ++t)
     {
@@ -3555,13 +3555,13 @@ void MainComponent::runMidiImportFlow (const juce::File& source,
                 const auto& m = trk->getEventPointer (i)->message;
                 if (m.isNoteOn() && m.getVelocity() > 0) ++noteCount;
                 maxTick = juce::jmax (maxTick,
-                                        (juce::int64) std::llround (m.getTimeStamp()));
+                                        (std::int64_t) std::llround (m.getTimeStamp()));
             }
         }
     }
     summary.numMidiNotes = noteCount;
     summary.lengthTicks  = (ppq > 0 && ppq != kMidiTicksPerQuarter)
-                              ? (juce::int64) std::llround ((double) maxTick
+                              ? (std::int64_t) std::llround ((double) maxTick
                                    * (double) kMidiTicksPerQuarter / (double) ppq)
                               : maxTick;
 
@@ -3685,7 +3685,7 @@ juce::File makeStereoTempWav (const juce::File& left, const juce::File& right)
     std::unique_ptr<juce::AudioFormatReader> rr (fm.createReaderFor (right));
     if (rl == nullptr || rr == nullptr) return {};
 
-    const juce::int64 len = juce::jmin (rl->lengthInSamples, rr->lengthInSamples);
+    const std::int64_t len = juce::jmin (rl->lengthInSamples, rr->lengthInSamples);
     if (len <= 0 || rl->sampleRate <= 0.0) return {};
 
     const auto tmp = juce::File::createTempFile (".wav");
@@ -3702,9 +3702,9 @@ juce::File makeStereoTempWav (const juce::File& left, const juce::File& right)
     // whole file up front.
     constexpr int kChunk = 1 << 16;   // 64k samples per pass
     juce::AudioBuffer<float> lbuf (1, kChunk), rbuf (1, kChunk), out (2, kChunk);
-    for (juce::int64 pos = 0; pos < len; pos += kChunk)
+    for (std::int64_t pos = 0; pos < len; pos += kChunk)
     {
-        const int n = (int) juce::jmin ((juce::int64) kChunk, len - pos);
+        const int n = (int) juce::jmin ((std::int64_t) kChunk, len - pos);
         if (! rl->read (&lbuf, 0, n, pos, true, false)
             || ! rr->read (&rbuf, 0, n, pos, true, false))
         {
@@ -3905,7 +3905,7 @@ void MainComponent::finishDpImport()
         const double songSr = scan.sampleRate > 0.0 ? scan.sampleRate : sr;
         for (const auto& mk : scan.markers)
         {
-            const auto at = (juce::int64) std::llround ((double) mk.positionSamples * sr / songSr);
+            const auto at = (std::int64_t) std::llround ((double) mk.positionSamples * sr / songSr);
             session.addMarker (at, "DP Mark " + juce::String (mk.index));
             ++markersAdded;
         }
@@ -3949,7 +3949,7 @@ void MainComponent::finishDpImport()
 }
 
 void MainComponent::enqueueImports (juce::Array<juce::File> files,
-                                       juce::int64 timelineStart,
+                                       std::int64_t timelineStart,
                                        int trackHint)
 {
     pendingImportQueue.clear();
@@ -3970,7 +3970,7 @@ void MainComponent::enqueueImports (juce::Array<juce::File> files,
 
 void MainComponent::enqueueImportsWithTargets (
     std::vector<MultiImportTargetPicker::Assignment> assignments,
-    juce::int64 timelineStart)
+    std::int64_t timelineStart)
 {
     pendingImportQueue.clear();
     pendingImportLastCommitted = -2;
@@ -4027,7 +4027,7 @@ void MainComponent::cancelImportChain()
 }
 
 void MainComponent::commitImportNoModal (
-    const MultiImportTargetPicker::Assignment& a, juce::int64 timelineStart)
+    const MultiImportTargetPicker::Assignment& a, std::int64_t timelineStart)
 {
     // Mirror the per-file picker's onCommit body but without re-opening
     // a modal. Mid-batch transport state changes abort the whole queue,
@@ -4100,7 +4100,7 @@ void MainComponent::commitImportNoModal (
 }
 
 void MainComponent::openMultiImportPicker (juce::Array<juce::File> files,
-                                              juce::int64 timelineStart)
+                                              std::int64_t timelineStart)
 {
     // Peek each file to build a FileSummary the picker can render. Audio
     // peek opens an AudioFormatReader; MIDI peek runs MidiFile::readFrom +
@@ -4122,7 +4122,7 @@ void MainComponent::openMultiImportPicker (juce::Array<juce::File> files,
             if (in.openedOk() && peek.readFrom (in))
             {
                 int noteCount = 0;
-                juce::int64 maxTick = 0;
+                std::int64_t maxTick = 0;
                 const int ppq = (int) peek.getTimeFormat();
                 for (int t = 0; t < peek.getNumTracks(); ++t)
                     if (const auto* trk = peek.getTrack (t))
@@ -4131,11 +4131,11 @@ void MainComponent::openMultiImportPicker (juce::Array<juce::File> files,
                             const auto& m = trk->getEventPointer (i)->message;
                             if (m.isNoteOn() && m.getVelocity() > 0) ++noteCount;
                             maxTick = juce::jmax (maxTick,
-                                (juce::int64) std::llround (m.getTimeStamp()));
+                                (std::int64_t) std::llround (m.getTimeStamp()));
                         }
                 s.numMidiNotes = noteCount;
                 s.lengthTicks  = (ppq > 0 && ppq != kMidiTicksPerQuarter)
-                                    ? (juce::int64) std::llround ((double) maxTick
+                                    ? (std::int64_t) std::llround ((double) maxTick
                                           * (double) kMidiTicksPerQuarter / (double) ppq)
                                     : maxTick;
             }
@@ -4149,7 +4149,7 @@ void MainComponent::openMultiImportPicker (juce::Array<juce::File> files,
                 continue;
             s.sampleRate    = reader->sampleRate;
             s.numChannels   = juce::jmin (2, (int) reader->numChannels);
-            s.lengthSamples = (juce::int64) reader->lengthInSamples;
+            s.lengthSamples = (std::int64_t) reader->lengthInSamples;
         }
         summaries.push_back (std::move (s));
     }
@@ -4425,9 +4425,9 @@ void MainComponent::menuItemSelected (int menuItemID, int /*topLevelMenuIndex*/)
 
             showDuskAlert (*this, "Optimize automation",
                               juce::String ("Thinned ")
-                                + juce::String ((juce::int64) before)
+                                + juce::String ((std::int64_t) before)
                                 + " automation points down to "
-                                + juce::String ((juce::int64) after) + ".");
+                                + juce::String ((std::int64_t) after) + ".");
             break;
         }
         case kMenuFileQuit:
@@ -4552,7 +4552,7 @@ void MainComponent::cleanOutUnreferencedFiles()
     // skipped so external WAVs the user dropped in by hand don't get
     // touched.
     juce::Array<juce::File> candidates;
-    juce::int64 totalBytes = 0;
+    std::int64_t totalBytes = 0;
     for (const auto& f : audioDir.findChildFiles (juce::File::findFiles, false, "*.wav"))
     {
         if (! referenced.contains (f.getFullPathName()))

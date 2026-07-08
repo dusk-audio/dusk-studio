@@ -165,7 +165,7 @@ const juce::Colour kTransportPlayhead { 0xffffe8c0 };
 
 // Same palette TapeStrip + AudioRegionEditor use - keep all three
 // surfaces in sync when colours change.
-struct PaletteEntry { const char* label; juce::uint32 argb; };
+struct PaletteEntry { const char* label; std::uint32_t argb; };
 constexpr PaletteEntry kPalette[] = {
     { "Reset to track colour", 0x00000000 },
     { "Red",     0xffd05f5f }, { "Orange",  0xffd09060 },
@@ -270,12 +270,12 @@ PianoRollComponent::PianoRollComponent (Session& s, AudioEngine& e, int t, int r
     {
         switch (gridCombo.getSelectedId())
         {
-            case 1: snapTicks = (juce::int64) kMidiTicksPerQuarter * 4; break;
-            case 2: snapTicks = (juce::int64) kMidiTicksPerQuarter * 2; break;
-            case 3: snapTicks = (juce::int64) kMidiTicksPerQuarter;     break;
-            case 4: snapTicks = (juce::int64) kMidiTicksPerQuarter / 2; break;
-            case 5: snapTicks = (juce::int64) kMidiTicksPerQuarter / 4; break;
-            case 6: snapTicks = (juce::int64) kMidiTicksPerQuarter / 8; break;
+            case 1: snapTicks = (std::int64_t) kMidiTicksPerQuarter * 4; break;
+            case 2: snapTicks = (std::int64_t) kMidiTicksPerQuarter * 2; break;
+            case 3: snapTicks = (std::int64_t) kMidiTicksPerQuarter;     break;
+            case 4: snapTicks = (std::int64_t) kMidiTicksPerQuarter / 2; break;
+            case 5: snapTicks = (std::int64_t) kMidiTicksPerQuarter / 4; break;
+            case 6: snapTicks = (std::int64_t) kMidiTicksPerQuarter / 8; break;
             case 7: snapTicks = 0; break;
             default: break;
         }
@@ -525,17 +525,17 @@ int PianoRollComponent::noteNumberForY (int y) const
     return juce::jlimit (0, kNumKeys - 1, kNumKeys - 1 - row);
 }
 
-int PianoRollComponent::xForTick (juce::int64 tick) const
+int PianoRollComponent::xForTick (std::int64_t tick) const
 {
     return kKeyboardWidth - scrollX
          + (int) std::round ((double) tick * pixelsPerTick);
 }
 
-juce::int64 PianoRollComponent::tickForX (int x) const
+std::int64_t PianoRollComponent::tickForX (int x) const
 {
-    const auto t = (juce::int64) std::round (
+    const auto t = (std::int64_t) std::round (
         (double) (x - kKeyboardWidth + scrollX) / pixelsPerTick);
-    return juce::jmax ((juce::int64) 0, t);
+    return juce::jmax ((std::int64_t) 0, t);
 }
 
 void PianoRollComponent::resized()
@@ -693,12 +693,12 @@ void PianoRollComponent::layoutStatusBar (juce::Rectangle<int> area)
     trackLabel.setBounds (inner.removeFromRight (juce::jmin (180, inner.getWidth())));
 }
 
-juce::String PianoRollComponent::formatBarBeat (juce::int64 tick) const
+juce::String PianoRollComponent::formatBarBeat (std::int64_t tick) const
 {
     const int beatsPerBar = juce::jmax (1, session.beatsPerBar.load (std::memory_order_relaxed));
-    const auto ticksPerBeat = (juce::int64) kMidiTicksPerQuarter;
+    const auto ticksPerBeat = (std::int64_t) kMidiTicksPerQuarter;
     const auto ticksPerBar  = ticksPerBeat * beatsPerBar;
-    const auto safeTick = juce::jmax ((juce::int64) 0, tick);
+    const auto safeTick = juce::jmax ((std::int64_t) 0, tick);
     const auto bar  = safeTick / ticksPerBar;
     const auto rem  = safeTick % ticksPerBar;
     const auto beat = rem / ticksPerBeat;
@@ -724,7 +724,7 @@ void PianoRollComponent::refreshStatusBarReadouts()
     const double sr  = juce::jmax (1.0, engine.getCurrentSampleRate());
     const float  bpm = session.tempoBpm.load (std::memory_order_relaxed);
     const int    bpb = session.beatsPerBar.load (std::memory_order_relaxed);
-    juce::int64 timelineSample = 0;
+    std::int64_t timelineSample = 0;
     if (auto* r = region())
     {
         const auto regStartTick = session.samplesToTicks (r->timelineStart, sr);
@@ -862,11 +862,11 @@ void PianoRollComponent::paintLoopPunchBrackets (juce::Graphics& g,
     auto& transport = engine.getTransport();
 
     const auto regStartTick = session.samplesToTicks (r->timelineStart, sr);
-    auto xForSample = [&] (juce::int64 s)
+    auto xForSample = [&] (std::int64_t s)
     {
         return xForTick (session.samplesToTicks (s, sr) - regStartTick);
     };
-    auto drawPair = [&] (juce::int64 a, juce::int64 b, juce::Colour col, bool enabled)
+    auto drawPair = [&] (std::int64_t a, std::int64_t b, juce::Colour col, bool enabled)
     {
         if (b < a) return;
         const int xa = xForSample (a);
@@ -979,8 +979,8 @@ void PianoRollComponent::paintNoteGrid (juce::Graphics& g, juce::Rectangle<int> 
     if (snapTicks > 0 && snapTicks < ticksPerBeat && pxPerBeat >= 28.0f)
     {
         g.setColour (kBeatLine.withAlpha (0.35f));
-        const int subTicksTotal = (int) ((juce::int64) totalBars * ticksPerBar);
-        for (juce::int64 t = 0; t <= subTicksTotal; t += snapTicks)
+        const std::int64_t subTicksTotal = (std::int64_t) totalBars * ticksPerBar;
+        for (std::int64_t t = 0; t <= subTicksTotal; t += snapTicks)
         {
             if (t % ticksPerBeat == 0) continue;   // beat / bar lines paint themselves
             const int sx = xForTick (t);
@@ -991,7 +991,7 @@ void PianoRollComponent::paintNoteGrid (juce::Graphics& g, juce::Rectangle<int> 
 
     for (int bar = 0; bar <= totalBars; ++bar)
     {
-        const auto barTick = (juce::int64) bar * ticksPerBar;
+        const auto barTick = (std::int64_t) bar * ticksPerBar;
         const int  bx = xForTick (barTick);
         if (bx >= area.getX() && bx <= area.getRight())
         {
@@ -1047,7 +1047,7 @@ void PianoRollComponent::paintBeatRuler (juce::Graphics& g, juce::Rectangle<int>
         const int  beatTop = area.getBottom() - (int) (area.getHeight() * 0.45f);
         for (int bar = 0; bar <= totalBars; ++bar)
         {
-            const juce::int64 barTick = (juce::int64) bar * ticksPerBar;
+            const std::int64_t barTick = (std::int64_t) bar * ticksPerBar;
             const int bx = xForTick (barTick);
             if (bx >= kKeyboardWidth && bx <= area.getRight())
             {
@@ -1063,7 +1063,7 @@ void PianoRollComponent::paintBeatRuler (juce::Graphics& g, juce::Rectangle<int>
                 g.setColour (kBeatLine.withAlpha (0.7f));
                 for (int beat = 1; beat < beatsPerBar; ++beat)
                 {
-                    const int bbx = xForTick (barTick + (juce::int64) beat * ticksPerBeat);
+                    const int bbx = xForTick (barTick + (std::int64_t) beat * ticksPerBeat);
                     if (bbx < kKeyboardWidth || bbx > area.getRight()) continue;
                     g.drawVerticalLine (bbx, (float) beatTop, (float) area.getBottom());
                 }
@@ -1073,7 +1073,7 @@ void PianoRollComponent::paintBeatRuler (juce::Graphics& g, juce::Rectangle<int>
             g.setColour (kHeaderText.withAlpha (0.65f));
             for (int beat = 1; beat < beatsPerBar; ++beat)
             {
-                const int bbx = xForTick (barTick + (juce::int64) beat * ticksPerBeat);
+                const int bbx = xForTick (barTick + (std::int64_t) beat * ticksPerBeat);
                 if (bbx < kKeyboardWidth || bbx > area.getRight()) continue;
                 g.drawText (juce::String (bar + 1) + "." + juce::String (beat + 1),
                              bbx + 3, area.getY(),
@@ -1099,7 +1099,7 @@ void PianoRollComponent::paintBeatRuler (juce::Graphics& g, juce::Rectangle<int>
         const double regionStartSec = (double) r->timelineStart / sr;
         for (double sec = 0.0; sec <= regionLenSec + 0.5; sec += tickEverySec)
         {
-            const auto t = (juce::int64) std::round (samplesToTicks ((juce::int64) (sec * sr),
+            const auto t = (std::int64_t) std::round (samplesToTicks ((std::int64_t) (sec * sr),
                                                                         sr, bpm));
             const int bx = xForTick (t);
             if (bx < kKeyboardWidth || bx > area.getRight()) continue;
@@ -1376,7 +1376,7 @@ void PianoRollComponent::beginGroupDrag (int anchorIdx)
     }
 }
 
-void PianoRollComponent::applyGroupMove (juce::int64 deltaTicks, int deltaPitch)
+void PianoRollComponent::applyGroupMove (std::int64_t deltaTicks, int deltaPitch)
 {
     auto* r = region();
     if (r == nullptr) return;
@@ -1385,8 +1385,8 @@ void PianoRollComponent::applyGroupMove (juce::int64 deltaTicks, int deltaPitch)
     // Clamp the group delta so no note ends up out of bounds. Without
     // this, individual per-note clamps would let some notes "stick" at
     // the boundary while others kept moving, breaking relative spacing.
-    juce::int64 minStart   = std::numeric_limits<juce::int64>::max();
-    juce::int64 maxEnd     = std::numeric_limits<juce::int64>::min();
+    std::int64_t minStart   = std::numeric_limits<std::int64_t>::max();
+    std::int64_t maxEnd     = std::numeric_limits<std::int64_t>::min();
     int         minPitch   = 127;
     int         maxPitch   = 0;
     for (const auto& s : dragSnapshots)
@@ -1396,7 +1396,7 @@ void PianoRollComponent::applyGroupMove (juce::int64 deltaTicks, int deltaPitch)
         minPitch  = juce::jmin (minPitch, s.noteNumber);
         maxPitch  = juce::jmax (maxPitch, s.noteNumber);
     }
-    const juce::int64 maxDeltaTickRight = r->lengthInTicks - maxEnd;
+    const std::int64_t maxDeltaTickRight = r->lengthInTicks - maxEnd;
     deltaTicks = juce::jlimit (-minStart, maxDeltaTickRight, deltaTicks);
     deltaPitch = juce::jlimit (-minPitch, 127 - maxPitch, deltaPitch);
 
@@ -1424,7 +1424,7 @@ void PianoRollComponent::transposeSelected (int semitones)
     pushNoteEdit (before, "Transpose notes");
 }
 
-void PianoRollComponent::quantizeSelected (juce::int64 gridTicks, float strength)
+void PianoRollComponent::quantizeSelected (std::int64_t gridTicks, float strength)
 {
     auto* r = region();
     if (r == nullptr || gridTicks <= 0) return;
@@ -1436,9 +1436,9 @@ void PianoRollComponent::quantizeSelected (juce::int64 gridTicks, float strength
     {
         const auto orig    = n.startTick;
         const auto snapped = ((orig + gridTicks / 2) / gridTicks) * gridTicks;
-        const auto blended = orig + (juce::int64) std::round (
+        const auto blended = orig + (std::int64_t) std::round (
             (double) (snapped - orig) * strength);
-        n.startTick = juce::jmax ((juce::int64) 0, blended);
+        n.startTick = juce::jmax ((std::int64_t) 0, blended);
     };
     if (selectedNotes.empty())
     {
@@ -1545,7 +1545,7 @@ void PianoRollComponent::setChannelForSelected (int channel)
     pushNoteEdit (before, "Set note channel");
 }
 
-void PianoRollComponent::setLengthTicksForSelected (juce::int64 ticks)
+void PianoRollComponent::setLengthTicksForSelected (std::int64_t ticks)
 {
     auto* r = region();
     if (r == nullptr) return;
@@ -1555,8 +1555,8 @@ void PianoRollComponent::setLengthTicksForSelected (juce::int64 ticks)
     {
         // Clamp so the note can't extend past the region. Hard floor
         // is 1 tick - any positive length is valid.
-        const auto maxLen = juce::jmax ((juce::int64) 1, r->lengthInTicks - n.startTick);
-        n.lengthInTicks = juce::jlimit ((juce::int64) 1, maxLen, ticks);
+        const auto maxLen = juce::jmax ((std::int64_t) 1, r->lengthInTicks - n.startTick);
+        n.lengthInTicks = juce::jlimit ((std::int64_t) 1, maxLen, ticks);
     };
     if (selectedNotes.empty()) for (auto& n : r->notes) applyToOne (n);
     else
@@ -1588,7 +1588,7 @@ void PianoRollComponent::showNotePropertiesPopup (int hitNoteIdx, juce::Point<in
 
     // Length submenu - common note values plus dotted variants.
     juce::PopupMenu lenSub;
-    struct LenChoice { const char* label; juce::int64 ticks; };
+    struct LenChoice { const char* label; std::int64_t ticks; };
     const LenChoice lengths[] = {
         { "Whole",        kMidiTicksPerQuarter * 4 },
         { "Half",         kMidiTicksPerQuarter * 2 },
@@ -1622,7 +1622,7 @@ void PianoRollComponent::showNotePropertiesPopup (int hitNoteIdx, juce::Point<in
             }
             else if (chosen >= 2000 && chosen < 2006)
             {
-                static const juce::int64 lens[] = {
+                static const std::int64_t lens[] = {
                     kMidiTicksPerQuarter * 4, kMidiTicksPerQuarter * 2,
                     kMidiTicksPerQuarter,     kMidiTicksPerQuarter / 2,
                     kMidiTicksPerQuarter / 4, kMidiTicksPerQuarter / 8,
@@ -1721,8 +1721,8 @@ void PianoRollComponent::duplicateSelectedNotes()
     // after the original. minStart/maxEnd over all selected notes;
     // span = maxEnd - minStart. Empty span (a single zero-length
     // note) falls back to one quarter-note shift.
-    juce::int64 minStart = std::numeric_limits<juce::int64>::max();
-    juce::int64 maxEnd   = std::numeric_limits<juce::int64>::min();
+    std::int64_t minStart = std::numeric_limits<std::int64_t>::max();
+    std::int64_t maxEnd   = std::numeric_limits<std::int64_t>::min();
     for (int idx : selectedNotes)
     {
         if (idx < 0 || idx >= (int) r->notes.size()) continue;
@@ -1730,7 +1730,7 @@ void PianoRollComponent::duplicateSelectedNotes()
         minStart = juce::jmin (minStart, n.startTick);
         maxEnd   = juce::jmax (maxEnd,   n.startTick + n.lengthInTicks);
     }
-    juce::int64 shift = maxEnd - minStart;
+    std::int64_t shift = maxEnd - minStart;
     if (shift <= 0) shift = kMidiTicksPerQuarter;
 
     // Append clones, recording the indices of the new notes so we
@@ -1763,7 +1763,7 @@ void PianoRollComponent::stepRecordNoteOn (int noteNumber, int velocity)
     // Step length: piano-roll snap when set, otherwise default to a
     // 1/16 note. snapTicks=0 means "no snap" for note-edit drags;
     // step record still needs SOME advance so we fall back to 1/16.
-    const juce::int64 stepTicks = snapTicks > 0
+    const std::int64_t stepTicks = snapTicks > 0
         ? snapTicks
         : (kMidiTicksPerQuarter / 4);
 
@@ -1774,7 +1774,7 @@ void PianoRollComponent::stepRecordNoteOn (int noteNumber, int velocity)
     {
         const auto playhead   = engine.getTransport().getPlayhead();
         const auto playheadTick = session.samplesToTicks (playhead, sr);
-        const juce::int64 advanceSamples =
+        const std::int64_t advanceSamples =
             session.ticksToSamples (playheadTick + stepTicks, sr) - playhead;
         engine.getTransport().setPlayhead (playhead + advanceSamples);
         stepRecordChordHad = false;
@@ -1783,7 +1783,7 @@ void PianoRollComponent::stepRecordNoteOn (int noteNumber, int velocity)
     const auto nowPlayhead = engine.getTransport().getPlayhead();
     if (nowPlayhead - r->timelineStart < 0) return;   // playhead is before the region; ignore
     const auto regStartTick = session.samplesToTicks (r->timelineStart, sr);
-    const juce::int64 startTick = session.samplesToTicks (nowPlayhead, sr) - regStartTick;
+    const std::int64_t startTick = session.samplesToTicks (nowPlayhead, sr) - regStartTick;
     const MidiRegion before = *r;
 
     // Extend the region if the new note would go past its current
@@ -1825,7 +1825,7 @@ void PianoRollComponent::resetStepRecordState() noexcept
     stepRecordChordHad = false;
 }
 
-void PianoRollComponent::nudgeSelectedTicks (juce::int64 deltaTicks)
+void PianoRollComponent::nudgeSelectedTicks (std::int64_t deltaTicks)
 {
     auto* r = region();
     if (r == nullptr || selectedNotes.empty()) return;
@@ -1833,8 +1833,8 @@ void PianoRollComponent::nudgeSelectedTicks (juce::int64 deltaTicks)
     // Group-clamp so relative spacing is preserved and no note ends
     // up out of bounds. Same pattern as applyGroupMove but without a
     // drag snapshot - we read live state and clamp once.
-    juce::int64 minStart = std::numeric_limits<juce::int64>::max();
-    juce::int64 maxEnd   = std::numeric_limits<juce::int64>::min();
+    std::int64_t minStart = std::numeric_limits<std::int64_t>::max();
+    std::int64_t maxEnd   = std::numeric_limits<std::int64_t>::min();
     for (int idx : selectedNotes)
     {
         if (idx < 0 || idx >= (int) r->notes.size()) continue;
@@ -1906,7 +1906,7 @@ void PianoRollComponent::showQuantizePopup()
     // Each item is "<grid> @ <strength>". 100% items first (full snap),
     // then humanise variants. Selected/all-notes is implicit in
     // quantizeSelected (empty selection = whole region).
-    struct Choice { const char* label; juce::int64 grid; float strength; };
+    struct Choice { const char* label; std::int64_t grid; float strength; };
     const Choice choices[] = {
         { "1/4 @ 100%",   kMidiTicksPerQuarter,        1.00f },
         { "1/8 @ 100%",   kMidiTicksPerQuarter / 2,    1.00f },
@@ -2213,15 +2213,15 @@ int PianoRollComponent::hitTestVelocityBar (int x, juce::Rectangle<int> stripAre
 // Snap a tick to the nearest grid step. Pure helper so create / move /
 // resize all use the same rounding rule. Negative ticks clamp to zero
 // (the region origin); 0 snapTicks is the "no snap" sentinel.
-static juce::int64 snapTick (juce::int64 t, juce::int64 step)
+static std::int64_t snapTick (std::int64_t t, std::int64_t step)
 {
-    if (step <= 0) return juce::jmax ((juce::int64) 0, t);
+    if (step <= 0) return juce::jmax ((std::int64_t) 0, t);
     if (t < 0) return 0;
     const auto half = step / 2;
     return ((t + half) / step) * step;
 }
 
-juce::int64 PianoRollComponent::effectiveSnapTicks() const noexcept
+std::int64_t PianoRollComponent::effectiveSnapTicks() const noexcept
 {
     // Grid resolution gated by the MIDI editor's own snap-enable. Off -> 0,
     // which snapTick() treats as "no snap".
@@ -2320,10 +2320,10 @@ void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
         const double sr  = juce::jmax (1.0, engine.getCurrentSampleRate());
         auto& transport  = engine.getTransport();
         const auto regStartTick = session.samplesToTicks (r->timelineStart, sr);
-        auto xForSample  = [&] (juce::int64 s)
+        auto xForSample  = [&] (std::int64_t s)
             { return xForTick (session.samplesToTicks (s, sr) - regStartTick); };
         const int tol = 6;
-        struct Edge { juce::int64 sample; DragMode mode; bool valid; };
+        struct Edge { std::int64_t sample; DragMode mode; bool valid; };
         const Edge edges[] = {
             { transport.getLoopStart(),  DragMode::LoopIn,   transport.getLoopEnd()  > transport.getLoopStart() },
             { transport.getLoopEnd(),    DragMode::LoopOut,  transport.getLoopEnd()  > transport.getLoopStart() },
@@ -2345,7 +2345,7 @@ void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
     {
         // Plain ruler click seeks the transport playhead (Reaper / Ardour
         // muscle memory), parity with AudioRegionEditor.
-        const auto tickHere = juce::jmax<juce::int64> (0, tickForX (e.x));
+        const auto tickHere = juce::jmax<std::int64_t> (0, tickForX (e.x));
         const double sr  = engine.getCurrentSampleRate();
         const auto regStartTick = session.samplesToTicks (r->timelineStart, sr);
         const auto sampleOffset = session.ticksToSamples (regStartTick + tickHere, sr)
@@ -2416,8 +2416,8 @@ void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
             c.controller = activeCcController;
             c.value      = value;
             const auto rawTick = tickForX (e.x);
-            c.atTick = juce::jlimit<juce::int64> (0,
-                juce::jmax ((juce::int64) 0, r->lengthInTicks - 1),
+            c.atTick = juce::jlimit<std::int64_t> (0,
+                juce::jmax ((std::int64_t) 0, r->lengthInTicks - 1),
                 snapTick (rawTick, effectiveSnapTicks()));
             r->ccs.push_back (c);
             hit = (int) r->ccs.size() - 1;
@@ -2505,8 +2505,8 @@ void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
     // which sub-path runs next (box-select, note-create, or just an
     // anchor click). Step-record + future click-to-place actions key
     // off this position.
-    editCursorTick = juce::jlimit<juce::int64> (0,
-        juce::jmax ((juce::int64) 0, r->lengthInTicks),
+    editCursorTick = juce::jlimit<std::int64_t> (0,
+        juce::jmax ((std::int64_t) 0, r->lengthInTicks),
         snapTick (tickForX (e.x), effectiveSnapTicks()));
 
     if (extendSelection)
@@ -2541,7 +2541,7 @@ void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
     if (session.editMode == EditMode::Range)
     {
         clearSelection();   // start a fresh time-range with no stale note selection (matches the ruler-start path)
-        rangeStartTick = juce::jmax<juce::int64> (0, tickForX (e.x));
+        rangeStartTick = juce::jmax<std::int64_t> (0, tickForX (e.x));
         rangeEndTick   = rangeStartTick;
         rangeActive    = false;
         dragMode       = DragMode::RangeSelect;
@@ -2569,14 +2569,14 @@ void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
     n.channel = 1;
     n.noteNumber = snapPitchToScale (noteNumberForY (e.y));
     n.velocity = 100;
-    const auto rawStart = juce::jlimit<juce::int64> (0,
-        juce::jmax ((juce::int64) 0, r->lengthInTicks - 1), tickForX (e.x));
+    const auto rawStart = juce::jlimit<std::int64_t> (0,
+        juce::jmax ((std::int64_t) 0, r->lengthInTicks - 1), tickForX (e.x));
     // noteEntryMode reshapes the snap step for note CREATION only (Free skips
     // snap, Triplet / Dotted bend the grid) so the pencil can place off-grid
     // rhythms; move / resize go through the plain effectiveSnapTicks() so a
     // dragged note lands on the same grid the ruler draws.
-    const juce::int64 baseSnap = effectiveSnapTicks();   // 0 when MIDI snap is off
-    juce::int64 createSnap = baseSnap;
+    const std::int64_t baseSnap = effectiveSnapTicks();   // 0 when MIDI snap is off
+    std::int64_t createSnap = baseSnap;
     switch (noteEntryMode)
     {
         case NoteEntryMode::Free:    createSnap = 0; break;
@@ -2584,10 +2584,10 @@ void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
         case NoteEntryMode::Dotted:  createSnap = (baseSnap * 3) / 2; break;
         case NoteEntryMode::Grid:    break;
     }
-    n.startTick = juce::jlimit<juce::int64> (0,
-        juce::jmax ((juce::int64) 0, r->lengthInTicks - 1),
+    n.startTick = juce::jlimit<std::int64_t> (0,
+        juce::jmax ((std::int64_t) 0, r->lengthInTicks - 1),
         snapTick (rawStart, createSnap));
-    n.lengthInTicks = juce::jmin ((juce::int64) kMidiTicksPerQuarter,
+    n.lengthInTicks = juce::jmin ((std::int64_t) kMidiTicksPerQuarter,
                                                   r->lengthInTicks - n.startTick);
     if (n.lengthInTicks <= 0) return;
     r->notes.push_back (n);
@@ -2632,7 +2632,7 @@ void PianoRollComponent::mouseDrag (const juce::MouseEvent& e)
     {
         const double sr  = juce::jmax (1.0, engine.getCurrentSampleRate());
         auto& transport  = engine.getTransport();
-        const auto tickHere = juce::jmax<juce::int64> (0, tickForX (e.x));
+        const auto tickHere = juce::jmax<std::int64_t> (0, tickForX (e.x));
         const auto tl = session.ticksToSamples (
             session.samplesToTicks (r->timelineStart, sr) + tickHere, sr);
         switch (dragMode)
@@ -2662,7 +2662,7 @@ void PianoRollComponent::mouseDrag (const juce::MouseEvent& e)
 
     if (dragMode == DragMode::RangeSelect)
     {
-        rangeEndTick = juce::jmax<juce::int64> (0, tickForX (e.x));
+        rangeEndTick = juce::jmax<std::int64_t> (0, tickForX (e.x));
         rangeActive  = (rangeEndTick != rangeStartTick);
         // Live note auto-selection - rebuild from scratch each tick so
         // the user sees the selection grow / shrink with the drag.
@@ -2765,7 +2765,7 @@ void PianoRollComponent::mouseDrag (const juce::MouseEvent& e)
         // most DAWs match this behaviour.
         const auto rawEnd  = tickForX (e.x);
         const auto snapped = snapTick (rawEnd, effectiveSnapTicks());
-        const auto endTick = juce::jlimit<juce::int64> (
+        const auto endTick = juce::jlimit<std::int64_t> (
             anchor.startTick + 1, r->lengthInTicks, snapped);
         anchor.lengthInTicks = endTick - anchor.startTick;
         repaint();
@@ -2861,9 +2861,9 @@ void PianoRollComponent::mouseMove (const juce::MouseEvent& e)
             const double sr  = juce::jmax (1.0, engine.getCurrentSampleRate());
             auto& transport  = engine.getTransport();
             const auto regStartTick = session.samplesToTicks (r->timelineStart, sr);
-            auto xForSample  = [&] (juce::int64 s)
+            auto xForSample  = [&] (std::int64_t s)
                 { return xForTick (session.samplesToTicks (s, sr) - regStartTick); };
-            const juce::int64 edges[] = { transport.getLoopStart(), transport.getLoopEnd(),
+            const std::int64_t edges[] = { transport.getLoopStart(), transport.getLoopEnd(),
                                           transport.getPunchIn(),   transport.getPunchOut() };
             const bool valid[] = { transport.getLoopEnd()  > transport.getLoopStart(),
                                    transport.getLoopEnd()  > transport.getLoopStart(),
@@ -3178,7 +3178,7 @@ bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
             auto* r = region();
             if (r == nullptr || selectedNotes.empty()) return true;
             sNoteClipboard.clear();
-            juce::int64 minTick = std::numeric_limits<juce::int64>::max();
+            std::int64_t minTick = std::numeric_limits<std::int64_t>::max();
             for (int idx : selectedNotes)
                 if (idx >= 0 && idx < (int) r->notes.size())
                     minTick = juce::jmin (minTick, r->notes[(size_t) idx].startTick);
@@ -3199,7 +3199,7 @@ bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
             // Delete-key handler below).
             const MidiRegion before = *r;
             sNoteClipboard.clear();
-            juce::int64 minTick = std::numeric_limits<juce::int64>::max();
+            std::int64_t minTick = std::numeric_limits<std::int64_t>::max();
             for (int idx : selectedNotes)
                 if (idx >= 0 && idx < (int) r->notes.size())
                     minTick = juce::jmin (minTick, r->notes[(size_t) idx].startTick);
@@ -3352,8 +3352,8 @@ bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
         && (k == juce::KeyPress::leftKey || k == juce::KeyPress::rightKey))
     {
         const bool coarse = k.getModifiers().isShiftDown();
-        const juce::int64 effSnap = effectiveSnapTicks();
-        const juce::int64 step =
+        const std::int64_t effSnap = effectiveSnapTicks();
+        const std::int64_t step =
             coarse           ? kMidiTicksPerQuarter :
             (effSnap > 0)    ? effSnap :
                                 30;
@@ -3840,7 +3840,7 @@ void PianoRollComponent::showRegionPropertiesPopup()
     m.addSeparator();
     {
         const int beats = juce::jmax (1, session.beatsPerBar.load (std::memory_order_relaxed));
-        const auto bars = r->lengthInTicks / ((juce::int64) kMidiTicksPerQuarter * beats);
+        const auto bars = r->lengthInTicks / ((std::int64_t) kMidiTicksPerQuarter * beats);
         const int channel = r->notes.empty() ? 1 : r->notes.front().channel;
         const auto info = juce::String ((int) r->notes.size()) + " notes  -  "
                             + juce::String ((int) bars) + " bars  -  "
@@ -3876,12 +3876,12 @@ int PianoRollComponent::nextRegionIndex (int delta) const
     const auto& regs = session.track (trackIdx).midiRegions.current();
     if (regionIdx < 0 || regionIdx >= (int) regs.size()) return -1;
 
-    using Key = std::pair<juce::int64, int>;
+    using Key = std::pair<std::int64_t, int>;
     const Key cur { regs[(size_t) regionIdx].timelineStart, regionIdx };
     int bestIdx = -1;
     Key best = (delta > 0)
-        ? Key { std::numeric_limits<juce::int64>::max(), std::numeric_limits<int>::max() }
-        : Key { std::numeric_limits<juce::int64>::min(), std::numeric_limits<int>::min() };
+        ? Key { std::numeric_limits<std::int64_t>::max(), std::numeric_limits<int>::max() }
+        : Key { std::numeric_limits<std::int64_t>::min(), std::numeric_limits<int>::min() };
     for (int i = 0; i < (int) regs.size(); ++i)
     {
         if (i == regionIdx) continue;

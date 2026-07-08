@@ -9,21 +9,21 @@ namespace
 struct TrackTemplate
 {
     const char* name;
-    juce::uint32 argb;            // packed ARGB so the table reads as a static blob
+    std::uint32_t argb;            // packed ARGB so the table reads as a static blob
     int          mode;            // Track::Mode value (0=Mono, 1=Stereo, 2=Midi)
 };
 
 // Drums = warm red, bass = orange, gtrs = green, keys = teal, vox = violet.
 // Same hue family across all templates so the user's eye learns the colour
 // language immediately - not literal but evocative.
-constexpr juce::uint32 kDrums    = 0xffd05050;
-constexpr juce::uint32 kBass     = 0xffd09050;
-constexpr juce::uint32 kGuitar   = 0xff70b070;
-constexpr juce::uint32 kKeys     = 0xff60b0c0;
-constexpr juce::uint32 kVocal    = 0xffb070c0;
-constexpr juce::uint32 kPerc     = 0xffe0a050;
-constexpr juce::uint32 kSynth    = 0xff7090d0;
-constexpr juce::uint32 kPad      = 0xff80c0a0;
+constexpr std::uint32_t kDrums    = 0xffd05050;
+constexpr std::uint32_t kBass     = 0xffd09050;
+constexpr std::uint32_t kGuitar   = 0xff70b070;
+constexpr std::uint32_t kKeys     = 0xff60b0c0;
+constexpr std::uint32_t kVocal    = 0xffb070c0;
+constexpr std::uint32_t kPerc     = 0xffe0a050;
+constexpr std::uint32_t kSynth    = 0xff7090d0;
+constexpr std::uint32_t kPad      = 0xff80c0a0;
 
 const TrackTemplate kBand[] =
 {

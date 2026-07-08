@@ -187,10 +187,10 @@ void Session::setSessionDirectory (const juce::File& dir)
         audioDir.createDirectory();
 }
 
-int Session::addMarker (juce::int64 timelineSamples, const juce::String& name)
+int Session::addMarker (std::int64_t timelineSamples, const juce::String& name)
 {
     Marker m;
-    m.timelineSamples = juce::jmax ((juce::int64) 0, timelineSamples);
+    m.timelineSamples = juce::jmax ((std::int64_t) 0, timelineSamples);
     m.name = name.isNotEmpty()
                 ? name
                 : juce::String ("Marker ") + juce::String ((int) markers.size() + 1);
@@ -200,7 +200,7 @@ int Session::addMarker (juce::int64 timelineSamples, const juce::String& name)
     m.colour = juce::Colour (0xffe0a050);
 
     auto it = std::lower_bound (markers.begin(), markers.end(), m.timelineSamples,
-        [] (const Marker& lhs, juce::int64 t) { return lhs.timelineSamples < t; });
+        [] (const Marker& lhs, std::int64_t t) { return lhs.timelineSamples < t; });
     const int insertedIdx = (int) (it - markers.begin());
     markers.insert (it, std::move (m));
     return insertedIdx;
@@ -218,11 +218,11 @@ void Session::renameMarker (int index, const juce::String& name)
     markers[(size_t) index].name = name;
 }
 
-int Session::findMarkerNear (juce::int64 timelineSamples,
-                              juce::int64 toleranceSamples) const noexcept
+int Session::findMarkerNear (std::int64_t timelineSamples,
+                              std::int64_t toleranceSamples) const noexcept
 {
     int closest = -1;
-    juce::int64 closestDist = toleranceSamples;
+    std::int64_t closestDist = toleranceSamples;
     for (int i = 0; i < (int) markers.size(); ++i)
     {
         const auto dist = std::abs (markers[(size_t) i].timelineSamples - timelineSamples);
@@ -311,7 +311,7 @@ namespace { float denormalizeAutomation (AutomationParam p, float v) noexcept
     return denormalizeAutomationValue (p, v);
 } } // namespace
 
-float evaluateLane (const std::vector<AutomationPoint>& pts, juce::int64 t,
+float evaluateLane (const std::vector<AutomationPoint>& pts, std::int64_t t,
                     AutomationParam param) noexcept
 {
     if (pts.empty()) return 0.0f;
@@ -327,7 +327,7 @@ float evaluateLane (const std::vector<AutomationPoint>& pts, juce::int64 t,
     // and by SessionSerializer::load); std::lower_bound gives the first
     // point with timeSamples >= t, then back up by one for the lower side.
     auto it = std::lower_bound (pts.begin(), pts.end(), t,
-        [] (const AutomationPoint& pt, juce::int64 q) { return pt.timeSamples < q; });
+        [] (const AutomationPoint& pt, std::int64_t q) { return pt.timeSamples < q; });
     if (it == pts.begin())
         return denormalizeAutomation (param, pts.front().value);
     const auto& hi = *it;
@@ -486,7 +486,7 @@ void applyTempoChange (Session& s, float newBpm, double sampleRate) noexcept
                 {
                     if (r.tempoLock)
                     {
-                        r.timelineStart = (juce::int64) std::llround (
+                        r.timelineStart = (std::int64_t) std::llround (
                             (double) r.timelineStart * factor);
                         r.lengthInSamples = ticksToSamples (r.lengthInTicks,
                                                               sampleRate, newBpm);

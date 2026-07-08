@@ -69,7 +69,7 @@ public:
         // misleading "free" headroom.
         if (fakeLoadUs > 0)
         {
-            const auto budgetTicks = (juce::int64) (((double) fakeLoadUs * 1.0e-6)
+            const auto budgetTicks = (std::int64_t) (((double) fakeLoadUs * 1.0e-6)
                                                        / juce::jmax (1.0e-12, secondsPerTick));
             const auto deadline = t0 + budgetTicks;
             while (juce::Time::getHighResolutionTicks() < deadline) { /* spin */ }

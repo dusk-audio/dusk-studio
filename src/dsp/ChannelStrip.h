@@ -308,7 +308,7 @@ private:
     PdcDelayLine pdcDelayR { kMaxPdcSamples };
     std::atomic<int> pdcTargetSamples { 0 };
     int          pdcAppliedSamples = 0;
-    juce::int64  pdcSilentRun = 0;
+    std::int64_t  pdcSilentRun = 0;
     void relatchPdcIfDrained (float blockPeakAbs, int numSamples) noexcept;
 
     // The per-strip oversampler's rounded internal latency (half-band filter

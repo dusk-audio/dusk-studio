@@ -52,6 +52,12 @@ sfizz (SFZ / SoundFont sampler engine — powers the multisample instrument)
                - hiir          WTFPL        external/sfizz/src/external/hiir/   (Laurent de Soras)
                - simde         MIT / CC0    external/sfizz/external/simde/
 
+nlohmann/json (JSON parser — session + preset serialisation)
+  Version  : 3.11.3
+  License  : MIT
+  Path     : external/json/nlohmann/json.hpp (vendored single header)
+  Upstream : https://github.com/nlohmann/json
+
 Steinberg VST3 SDK (native VST3 host — Linux builds only)
   Version  : 3.8.0 (upstream tag v3.8.0_build_66)
   License  : Dual-licensed — GPL-3.0 (used here) OR Steinberg VST3 proprietary
@@ -71,6 +77,16 @@ Catch2 (test framework — TEST BUILDS ONLY, not bundled in Dusk Studio)
   License  : Boost Software License 1.0
   Path     : build-tests/_deps/catch2-src/ (FetchContent at configure time)
   Upstream : https://github.com/catchorg/Catch2/
+
+libsndfile (JUCE-free audio file I/O — TEST BUILDS ONLY for now)
+  License  : LGPL-2.1-or-later
+  Path     : not vendored — system shared library found at configure time
+             (libsndfile-dev / libsndfile-devel / brew install libsndfile).
+             The dusk::audio FileReader/Writer unit + its tests compile only
+             when it is present; skipped otherwise. Linked dynamically.
+  Notes    : Will become an app dependency once the JUCE audio-format readers
+             are migrated; currently test-only.
+  Upstream : https://github.com/libsndfile/libsndfile
 
 
 PLATFORM-SPECIFIC OPTIONAL DEPENDENCIES

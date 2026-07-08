@@ -2,6 +2,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "dsp/ChordAnalyzer.h"
+#include "foundation/Text.h"
 
 #include <vector>
 
@@ -89,7 +90,7 @@ TEST_CASE ("ChordAnalyzer: degenerate inputs don't crash", "[chord]")
     {
         const auto c = a.analyze ({ 60 });
         REQUIRE (c.rootNote == 0);
-        REQUIRE (c.name.startsWith ("C"));   // "C4" (note name carries octave)
+        REQUIRE (dusk::text::startsWith (c.name, "C"));   // "C4" (note name carries octave)
     }
 }
 

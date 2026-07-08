@@ -95,8 +95,8 @@ public:
     //     EQ/comp skipped.
     // unfreezeTrack reverts (live instrument, WAV deleted) — it's cheap, no
     // render, so it stays synchronous.
-    bool freezePrepare (int trackIndex, juce::File& outFile, juce::int64& lenSamples);
-    void commitFreeze  (int trackIndex, const juce::File& outFile, juce::int64 lenSamples);
+    bool freezePrepare (int trackIndex, juce::File& outFile, std::int64_t& lenSamples);
+    void commitFreeze  (int trackIndex, const juce::File& outFile, std::int64_t lenSamples);
     void unfreezeTrack (int trackIndex);
     juce::String getLastFreezeError() const { return lastFreezeError; }
 
@@ -476,7 +476,7 @@ private:
     // against. Reset when syncSourceInputIdx changes so old interval
     // history doesn't poison the new source's BPM. Can't use
     // transport.getPlayhead — it jumps on loop wrap and scrub.
-    juce::int64 midiSyncSampleClock = 0;
+    std::int64_t midiSyncSampleClock = 0;
     int         lastSyncSourceIdx   = -1;
     // Rolling-edge detector — act on the transition, not the steady
     // state, so a long Start signal doesn't restart every block.
@@ -491,7 +491,7 @@ private:
     bool        lastMtcRolling      = false;
     bool        lastChaseEnabled    = false;
     int         mtcDriftWindowFrames = 0;
-    juce::int64 lastSeenMtcFrames    = -1;
+    std::int64_t lastSeenMtcFrames    = -1;
     // Recording is the workflow start state. Saved sessions overwrite
     // via session.uiStage on load.
     std::atomic<Stage> stage { Stage::Recording };
@@ -507,7 +507,7 @@ private:
     std::atomic<bool> midiSoftTakeover { false };
     static constexpr int kMaxPickupBindings = 512;
     const void* pickupSnapshotKey = nullptr;
-    std::array<juce::uint8, kMaxPickupBindings> pickupLatched {};
+    std::array<std::uint8_t, kMaxPickupBindings> pickupLatched {};
     std::array<float,       kMaxPickupBindings> pickupPrevIn {};
 
     // Master-stage PDC for aux-lane plugin latency. A latent send effect
@@ -546,7 +546,7 @@ private:
     // output has been silent. Past kAuxTailSilenceSeconds the lane
     // sleeps until its input returns. Audio thread only.
     static constexpr double kAuxTailSilenceSeconds = 2.0;
-    std::array<juce::int64, Session::kNumAuxLanes> auxSilentRunSamples {};
+    std::array<std::int64_t, Session::kNumAuxLanes> auxSilentRunSamples {};
     // Per-track disk-playback buffers. One per track (not a single shared
     // scratch) so the per-block work can run as two passes — a serial PREP
     // pass that resolves each track's source + MIDI, then a DSP pass that
@@ -715,9 +715,9 @@ private:
     {
         enum Section { kPre = 0, kStrips, kMeterRecordTail,
                        kBuses, kAuxes, kMasterOut, kNumSections };
-        std::array<std::atomic<juce::int64>, kNumSections> ticks {};
-        std::atomic<juce::int64> totalTicks { 0 };
-        std::atomic<juce::int64> blocks     { 0 };
+        std::array<std::atomic<std::int64_t>, kNumSections> ticks {};
+        std::atomic<std::int64_t> totalTicks { 0 };
+        std::atomic<std::int64_t> blocks     { 0 };
         std::atomic<bool> enabled { false };
     };
     PerfSections perf;
@@ -741,11 +741,11 @@ private:
     // (RT-safe); diagTimer drains them on the message thread and emits the
     // stderr line — stdio locks must never touch the audio thread. A silent-
     // output stall is otherwise opaque without a debugger.
-    std::atomic<juce::int64> earlyOutBlocks  { 0 };   // GATED (processingSuspended) callbacks
-    std::atomic<juce::int64> silentBlocks    { 0 };   // undersized-buffer SILENT callbacks
+    std::atomic<std::int64_t> earlyOutBlocks  { 0 };   // GATED (processingSuspended) callbacks
+    std::atomic<std::int64_t> silentBlocks    { 0 };   // undersized-buffer SILENT callbacks
     // size<<32 | delivered, packed into ONE atomic so the timer reads a
     // consistent pair instead of a torn mix of two different SILENT events.
-    std::atomic<juce::uint64> silentDims      { 0 };
+    std::atomic<std::uint64_t> silentDims      { 0 };
 
     // Drains the silent-output diagnostics off the audio thread. A nested Timer
     // member keeps AudioEngine's (final) base list unchanged; it ticks at 1 Hz
@@ -758,8 +758,8 @@ private:
         AudioEngine& owner;
     };
     CallbackDiagnosticTimer diagTimer { *this };
-    juce::int64 lastReportedGated  = 0;   // diagTimer (message thread) only
-    juce::int64 lastReportedSilent = 0;
+    std::int64_t lastReportedGated  = 0;   // diagTimer (message thread) only
+    std::int64_t lastReportedSilent = 0;
 
     std::atomic<int>    xrunCount         { 0 };
     // Device xrun count at the last resetXRunCounts(); subtracted in
@@ -799,7 +799,7 @@ private:
     // First sample committed to disk. Under count-in the playhead is
     // rolled back before this; writes are skipped until it catches up.
     // INT64_MIN = no record active.
-    std::atomic<juce::int64> activeRecordStart { std::numeric_limits<juce::int64>::min() };
+    std::atomic<std::int64_t> activeRecordStart { std::numeric_limits<std::int64_t>::min() };
 
     // Audio-thread-only. Together these let us detect two events that
     // require a per-block "All Notes Off" flush:
@@ -808,6 +808,6 @@ private:
     //   • playhead discontinuity (loop wrap, scrub): notes whose Note
     //     Off is past the jump never fire — synth stuck.
     bool         wasRolling          = false;
-    juce::int64  lastBlockEndSample  = 0;
+    std::int64_t  lastBlockEndSample  = 0;
 };
 } // namespace duskstudio

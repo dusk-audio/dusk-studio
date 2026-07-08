@@ -27,7 +27,7 @@ constexpr int framesPerSecondGrid (MidiTimeCodeEmitter::FrameRate r) noexcept
 // frames (absolute count from 00:00:00:00 in drop-aware semantics) →
 // (hh, mm, ss, ff) tuple suitable for MTC encoding. Symmetric to
 // MidiTimeCodeReceiver::smpteToFrames.
-void framesToSmpte (juce::int64 frames,
+void framesToSmpte (std::int64_t frames,
                      MidiTimeCodeEmitter::FrameRate rate,
                      int& hh, int& mm, int& ss, int& ff) noexcept
 {
@@ -42,13 +42,13 @@ void framesToSmpte (juce::int64 frames,
         //   1 minute  = 30*60 - 2 = 1798 frames (drop)
         //   1 minute  = 30*60     = 1800 frames (every 10th)
         //   10 minutes = 9*1798 + 1800 = 17982 frames
-        constexpr juce::int64 perTenMin = 17982;
-        constexpr juce::int64 perOneMin = 1798;
-        const juce::int64 D = frames / perTenMin;
-        const juce::int64 M = frames % perTenMin;
+        constexpr std::int64_t perTenMin = 17982;
+        constexpr std::int64_t perOneMin = 1798;
+        const std::int64_t D = frames / perTenMin;
+        const std::int64_t M = frames % perTenMin;
         // Within a 10-minute block: minute 0 carries 1800 frames; minutes
         // 1..9 carry 1798 each. Distribute M accordingly.
-        juce::int64 minute, frameInMinute;
+        std::int64_t minute, frameInMinute;
         if (M < 1800)
         {
             minute        = 0;
@@ -56,7 +56,7 @@ void framesToSmpte (juce::int64 frames,
         }
         else
         {
-            const juce::int64 X = M - 1800;
+            const std::int64_t X = M - 1800;
             minute        = 1 + X / perOneMin;
             frameInMinute = X % perOneMin;
         }
@@ -65,7 +65,7 @@ void framesToSmpte (juce::int64 frames,
         if (minute > 0)
             frameInMinute += 2;
 
-        const juce::int64 totalMinutes = D * 10 + minute;
+        const std::int64_t totalMinutes = D * 10 + minute;
         hh = (int) (totalMinutes / 60);
         mm = (int) (totalMinutes % 60);
         ss = (int) (frameInMinute / 30);
@@ -74,10 +74,10 @@ void framesToSmpte (juce::int64 frames,
     else
     {
         const int fps = framesPerSecondGrid (rate);
-        const juce::int64 totalSeconds = frames / fps;
+        const std::int64_t totalSeconds = frames / fps;
         ff = (int) (frames % fps);
         ss = (int) (totalSeconds % 60);
-        const juce::int64 totalMinutes = totalSeconds / 60;
+        const std::int64_t totalMinutes = totalSeconds / 60;
         mm = (int) (totalMinutes % 60);
         hh = (int) (totalMinutes / 60);
     }
@@ -88,9 +88,9 @@ void framesToSmpte (juce::int64 frames,
 }
 } // namespace
 
-void MidiTimeCodeEmitter::emitQuarterFrame (juce::int64 atSample,
+void MidiTimeCodeEmitter::emitQuarterFrame (std::int64_t atSample,
                                               int nibble,
-                                              juce::int64 frames,
+                                              std::int64_t frames,
                                               FrameRate rate,
                                               juce::MidiBuffer& out) noexcept
 {
@@ -119,13 +119,13 @@ void MidiTimeCodeEmitter::emitQuarterFrame (juce::int64 atSample,
         case 7: data = (((int) rate) << 1) | ((hh >> 4) & 0x01); break;
         default: return;
     }
-    const juce::uint8 byte1 = (juce::uint8) (((nibble & 0x07) << 4) | (data & 0x0F));
+    const std::uint8_t byte1 = (std::uint8_t) (((nibble & 0x07) << 4) | (data & 0x0F));
     out.addEvent (juce::MidiMessage (0xF1, byte1),
                    (int) (atSample - lastBlockStart));
 }
 
-void MidiTimeCodeEmitter::emitFullFrameSysex (juce::int64 atSample,
-                                                juce::int64 frames,
+void MidiTimeCodeEmitter::emitFullFrameSysex (std::int64_t atSample,
+                                                std::int64_t frames,
                                                 FrameRate rate,
                                                 juce::MidiBuffer& out) noexcept
 {
@@ -133,22 +133,22 @@ void MidiTimeCodeEmitter::emitFullFrameSysex (juce::int64 atSample,
     framesToSmpte (frames, rate, hh, mm, ss, ff);
 
     // F0 7F 7F 01 01 hr mn sc fr F7 — 10 bytes. hr packs rate in bits 5..6.
-    const juce::uint8 hrByte = (juce::uint8) ((((int) rate) << 5) | (hh & 0x1F));
-    const juce::uint8 bytes[10] = {
+    const std::uint8_t hrByte = (std::uint8_t) ((((int) rate) << 5) | (hh & 0x1F));
+    const std::uint8_t bytes[10] = {
         0xF0, 0x7F, 0x7F, 0x01, 0x01,
         hrByte,
-        (juce::uint8) (mm & 0x3F),
-        (juce::uint8) (ss & 0x3F),
-        (juce::uint8) (ff & 0x1F),
+        (std::uint8_t) (mm & 0x3F),
+        (std::uint8_t) (ss & 0x3F),
+        (std::uint8_t) (ff & 0x1F),
         0xF7
     };
     out.addEvent (juce::MidiMessage (bytes, 10),
                    (int) (atSample - lastBlockStart));
 }
 
-void MidiTimeCodeEmitter::generateBlock (juce::int64 blockStartSample,
+void MidiTimeCodeEmitter::generateBlock (std::int64_t blockStartSample,
                                            int numSamples,
-                                           juce::int64 playheadSamples,
+                                           std::int64_t playheadSamples,
                                            bool isRolling,
                                            FrameRate rate,
                                            juce::MidiBuffer& out) noexcept
@@ -156,7 +156,7 @@ void MidiTimeCodeEmitter::generateBlock (juce::int64 blockStartSample,
     if (numSamples <= 0 || sr <= 0.0) return;
     lastBlockStart = blockStartSample;
 
-    const juce::int64 blockEnd = blockStartSample + (juce::int64) numSamples;
+    const std::int64_t blockEnd = blockStartSample + (std::int64_t) numSamples;
     const double      sPerFrame = samplesPerFrame (sr, rate);
     if (sPerFrame <= 0.0) return;
     const double sPerQF = sPerFrame * 0.25;   // 4 QFs per frame
@@ -190,7 +190,7 @@ void MidiTimeCodeEmitter::generateBlock (juce::int64 blockStartSample,
     // sequence encodes (currentFrames - 2) — see header comment on
     // the 2-frame compensation. Sequence value is frozen at nibble 0
     // and held across all 8 nibbles.
-    const auto liveFrames = (juce::int64) (playheadSamples / sPerFrame);
+    const auto liveFrames = (std::int64_t) (playheadSamples / sPerFrame);
 
     // Detect a transport jump: if our running sequence value differs
     // from the live value by more than kJumpDetectFrames, the user
@@ -215,7 +215,7 @@ void MidiTimeCodeEmitter::generateBlock (juce::int64 blockStartSample,
     // Realign on long idle (large gap since last QF — emitter was
     // disabled or sr changed mid-stream). Mirrors the Clock emitter
     // anti-burst guard.
-    if (nextQuarterFrameSample + (juce::int64) (sPerQF * 4.0) < blockStartSample)
+    if (nextQuarterFrameSample + (std::int64_t) (sPerQF * 4.0) < blockStartSample)
     {
         nextQuarterFrameSample = blockStartSample;
         nibbleIdx              = 0;
@@ -240,7 +240,7 @@ void MidiTimeCodeEmitter::generateBlock (juce::int64 blockStartSample,
         {
             const auto offsetInBlock = nextQuarterFrameSample - blockStartSample;
             const auto qfPlayhead    = playheadSamples + offsetInBlock;
-            sequenceFrames = (juce::int64) ((double) qfPlayhead / sPerFrame) - 2;
+            sequenceFrames = (std::int64_t) ((double) qfPlayhead / sPerFrame) - 2;
             if (sequenceFrames < 0) sequenceFrames = 0;
         }
 
@@ -253,7 +253,7 @@ void MidiTimeCodeEmitter::generateBlock (juce::int64 blockStartSample,
         }
 
         nibbleIdx = (nibbleIdx + 1) & 0x07;   // 0..7 cycling
-        nextQuarterFrameSample += (juce::int64) std::llround (sPerQF);
+        nextQuarterFrameSample += (std::int64_t) std::llround (sPerQF);
     }
 }
 } // namespace duskstudio

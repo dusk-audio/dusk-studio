@@ -122,7 +122,7 @@ void WaveformDisplay::mouseDown (const juce::MouseEvent& e)
     if (bounds.getWidth() <= 0) return;
     const float frac = juce::jlimit (0.0f, 1.0f,
                                        (float) (e.x - bounds.getX()) / (float) bounds.getWidth());
-    const auto target = (juce::int64) (frac * total * sr);
+    const auto target = (std::int64_t) (frac * total * sr);
     player.setPlayhead (target);
     repaint();
 }

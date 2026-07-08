@@ -51,10 +51,10 @@ public:
     // seam never plays material past the loop point or skips the loop
     // downbeat. A short raised-cosine declick ramp is applied around
     // each in-block seam. Pass -1/-1 for a plain linear read.
-    void readForTrack (int trackIndex, juce::int64 playheadSamples,
+    void readForTrack (int trackIndex, std::int64_t playheadSamples,
                        float* outL, float* outR, int numSamples,
-                       juce::int64 loopStart = -1,
-                       juce::int64 loopEnd   = -1) noexcept;
+                       std::int64_t loopStart = -1,
+                       std::int64_t loopEnd   = -1) noexcept;
 
 private:
     Session& session;
@@ -69,11 +69,11 @@ private:
     {
         std::unique_ptr<juce::BufferingAudioReader> reader;
         juce::File  sourceFile;
-        juce::int64 timelineStart   = 0;
-        juce::int64 lengthInSamples = 0;
-        juce::int64 sourceOffset    = 0;
-        juce::int64 fadeInSamples   = 0;
-        juce::int64 fadeOutSamples  = 0;
+        std::int64_t timelineStart   = 0;
+        std::int64_t lengthInSamples = 0;
+        std::int64_t sourceOffset    = 0;
+        std::int64_t fadeInSamples   = 0;
+        std::int64_t fadeOutSamples  = 0;
         FadeShape   fadeInShape     = FadeShape::Linear;
         FadeShape   fadeOutShape    = FadeShape::Linear;
         // Implicit-crossfade overlap windows in TIMELINE samples. Set
@@ -81,8 +81,8 @@ private:
         // out over overlapNextLen, both EqualPower so summed power
         // stays ~unity. Explicit per-region fades take precedence in
         // their window.
-        juce::int64 overlapPrevLen  = 0;
-        juce::int64 overlapNextLen  = 0;
+        std::int64_t overlapPrevLen  = 0;
+        std::int64_t overlapNextLen  = 0;
         int         numChannels     = 1;
         // gainLinear + muted are plain non-atomic so RegionStream stays
         // movable. refreshLiveRegionParams overwrites them while the
@@ -104,7 +104,7 @@ private:
         // only uses the cache when the window matches the loop start it
         // was primed for.
         std::vector<float> loopCacheL, loopCacheR;
-        juce::int64        loopCacheTimelineStart = -1;
+        std::int64_t        loopCacheTimelineStart = -1;
         int                loopCacheLen           = 0;
     };
 
@@ -118,13 +118,13 @@ private:
     // One linear (non-wrapping) read span summed into the output at
     // outOffset. The public readForTrack handles clearing, the in-flight
     // guard and loop splitting, then delegates here per span.
-    void readSpanForTrack (PerTrackStream& slot, juce::int64 spanStart,
+    void readSpanForTrack (PerTrackStream& slot, std::int64_t spanStart,
                            float* outL, float* outR, int outOffset,
                            int numSamples) noexcept;
 
     // Fill every stream's loop-start cache for the given loop range.
     // Message thread, only while streamsActive is false.
-    void primeLoopCaches (juce::int64 loopStart, juce::int64 loopEnd);
+    void primeLoopCaches (std::int64_t loopStart, std::int64_t loopEnd);
 
     // Audio thread bumps audioInFlight BEFORE inspecting streamsActive /
     // streams[] and decrements on exit. stopPlayback clears streamsActive

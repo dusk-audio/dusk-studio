@@ -849,7 +849,7 @@ void AlsaAudioIODevice::start (juce::AudioIODeviceCallback* newCallback)
     const juce::String rtLimitStr =
         (! rtInfo.haveRtLimit)   ? juce::String ("unknown")
         : (rtInfo.rtLimit < 0)   ? juce::String ("infinity")
-        :                          juce::String ((juce::int64) rtInfo.rtLimit);
+        :                          juce::String ((std::int64_t) rtInfo.rtLimit);
     std::fprintf (stderr, "[Dusk Studio/ALSA] thread started: %s (juce-prio=%d, kernel-prio=%d, RLIMIT_RTPRIO=%s)\n",
                   gotRT ? policyStr.toRawUTF8() : "Priority::high",
                   juceRtPrio, kernelPrio, rtLimitStr.toRawUTF8());

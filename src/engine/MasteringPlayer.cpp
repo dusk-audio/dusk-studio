@@ -137,7 +137,7 @@ void MasteringPlayer::unloadFile()
     playhead.store (0, std::memory_order_relaxed);
 }
 
-juce::int64 MasteringPlayer::getLengthSamples() const noexcept
+std::int64_t MasteringPlayer::getLengthSamples() const noexcept
 {
     return ownedReader ? ownedReader->lengthInSamples : 0;
 }
@@ -165,7 +165,7 @@ void MasteringPlayer::process (float* L, float* R, int numSamples) noexcept
     auto* r = currentReader.load (std::memory_order_acquire);
     if (r == nullptr) return;
 
-    const juce::int64 start = playhead.load (std::memory_order_relaxed);
+    const std::int64_t start = playhead.load (std::memory_order_relaxed);
     if (start < 0) return;
     if (start >= r->lengthInSamples)
     {
@@ -177,8 +177,8 @@ void MasteringPlayer::process (float* L, float* R, int numSamples) noexcept
     const double ratio = speedRatio.load (std::memory_order_acquire);
     if (std::abs (ratio - 1.0) < 1.0e-9)
     {
-        const int  available = (int) juce::jmin ((juce::int64) numSamples,
-                                                  r->lengthInSamples - start);
+        const int  available = (int) juce::jmin ((std::int64_t) numSamples,
+                                                  (std::int64_t) (r->lengthInSamples - start));
         if (available > readScratch.getNumSamples()) return;  // shouldn't happen
 
         // Read into our 2-ch scratch. AudioFormatReader::read with two non-null
@@ -214,8 +214,8 @@ void MasteringPlayer::process (float* L, float* R, int numSamples) noexcept
     }
 
     // Read past-EOF input as silence so the interpolator can flush the tail.
-    const int inAvailable = (int) juce::jmin ((juce::int64) inNeeded,
-                                               r->lengthInSamples - start);
+    const int inAvailable = (int) juce::jmin ((std::int64_t) inNeeded,
+                                               (std::int64_t) (r->lengthInSamples - start));
     inScratch.clear();
     if (inAvailable > 0)
         r->read (&inScratch, 0, inAvailable, start, true, true);
@@ -224,8 +224,8 @@ void MasteringPlayer::process (float* L, float* R, int numSamples) noexcept
     const int usedR = interpR.process (ratio, inScratch.getReadPointer (1), R, numSamples);
     juce::ignoreUnused (usedR);   // both consume identically for equal ratios
 
-    const juce::int64 consumed = juce::jmin ((juce::int64) usedL,
-                                              r->lengthInSamples - start);
+    const std::int64_t consumed = juce::jmin ((std::int64_t) usedL,
+                                              (std::int64_t) (r->lengthInSamples - start));
     playhead.fetch_add (consumed, std::memory_order_relaxed);
     resampleReadPos = start + consumed;
 

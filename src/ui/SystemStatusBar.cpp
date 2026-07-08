@@ -88,8 +88,8 @@ void SystemStatusBar::timerCallback()
         if (heldNotes.size() >= 2 && chordAnalyzer != nullptr)
         {
             const auto info = chordAnalyzer->analyze (heldNotes);
-            chordInfo = info.name.isNotEmpty()
-                ? juce::String (juce::CharPointer_UTF8 ("\xe2\x99\xaa  ")) + info.name
+            chordInfo = ! info.name.empty()
+                ? juce::String (juce::CharPointer_UTF8 ("\xe2\x99\xaa  ")) + juce::String (info.name)
                 : juce::String();
         }
         else

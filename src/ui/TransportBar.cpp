@@ -414,7 +414,7 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
                                        + (beat - 1) * secondsPerBeat
                                        + (sub  - 1) * secondsPerSub;
                     engine.getTransport().setPlayhead (
-                        (juce::int64) std::round (total * sr));
+                        (std::int64_t) std::round (total * sr));
                     return;
                 }
             }
@@ -428,15 +428,15 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
             const auto secStr = text.substring (colon + 1);
             const double mins = minStr.isEmpty() ? 0.0 : (double) minStr.getDoubleValue();
             const double secs = (double) secStr.getDoubleValue();
-            const auto target = (juce::int64) std::round ((mins * 60.0 + secs) * sr);
-            engine.getTransport().setPlayhead (juce::jmax ((juce::int64) 0, target));
+            const auto target = (std::int64_t) std::round ((mins * 60.0 + secs) * sr);
+            engine.getTransport().setPlayhead (juce::jmax ((std::int64_t) 0, target));
             return;
         }
 
         // Bare number = seconds.
         const double secs = (double) text.getDoubleValue();
-        const auto target = (juce::int64) std::round (secs * sr);
-        engine.getTransport().setPlayhead (juce::jmax ((juce::int64) 0, target));
+        const auto target = (std::int64_t) std::round (secs * sr);
+        engine.getTransport().setPlayhead (juce::jmax ((std::int64_t) 0, target));
     };
     addAndMakeVisible (clockLabel);
 
@@ -661,7 +661,7 @@ void TransportBar::timerCallback()
     if (sr > 0.0)
     {
         const auto handleScrub = [&] (bool isHeld,
-                                        juce::int64& pressedAt,
+                                        std::int64_t& pressedAt,
                                         bool& scrubbing,
                                         int direction)
         {
@@ -676,10 +676,10 @@ void TransportBar::timerCallback()
                 lastScrubTickMs = nowMs;
             const auto dtMs = nowMs - lastScrubTickMs;
             lastScrubTickMs = nowMs;
-            const auto delta = (juce::int64) ((double) dtMs * 0.001 * sr * kScrubMultiplier);
+            const auto delta = (std::int64_t) ((double) dtMs * 0.001 * sr * kScrubMultiplier);
             const auto cur = engine.getTransport().getPlayhead();
-            engine.getTransport().setPlayhead (juce::jmax ((juce::int64) 0,
-                cur + (juce::int64) direction * delta));
+            engine.getTransport().setPlayhead (juce::jmax ((std::int64_t) 0,
+                cur + (std::int64_t) direction * delta));
         };
 
         // MCU REW/FFWD have no Component events; synthesise press/release
@@ -688,8 +688,8 @@ void TransportBar::timerCallback()
         auto& sess = engine.getSession();
         const bool mcuRew  = sess.mcu.rewHeld.load  (std::memory_order_relaxed);
         const bool mcuFfwd = sess.mcu.ffwdHeld.load (std::memory_order_relaxed);
-        const auto mcuEdge = [&] (bool isHeld, juce::uint32 pressCount, juce::uint32& lastCount,
-                                  juce::int64& pressedAt, bool& scrubbing, auto tap)
+        const auto mcuEdge = [&] (bool isHeld, std::uint32_t pressCount, std::uint32_t& lastCount,
+                                  std::int64_t& pressedAt, bool& scrubbing, auto tap)
         {
             const bool newPress = pressCount != lastCount;
             lastCount = pressCount;
@@ -776,7 +776,7 @@ void TransportBar::timerCallback()
                                      : 0.0f;
             if (pOut > pIn && postRoll > 0.0f && sr > 0.0)
             {
-                const auto stopAt = pOut + (juce::int64) ((double) postRoll * sr);
+                const auto stopAt = pOut + (std::int64_t) ((double) postRoll * sr);
                 if (engine.getTransport().getPlayhead() >= stopAt)
                 {
                     engine.stop();
@@ -798,7 +798,7 @@ void TransportBar::timerCallback()
         // "locate + play" rising-edge from MTC chase lands the playhead
         // first and then engine.play() picks it up.
         if (const auto target = s.pendingTransportPlayhead.exchange (
-                (juce::int64) -1, std::memory_order_relaxed); target >= 0)
+                (std::int64_t) -1, std::memory_order_relaxed); target >= 0)
         {
             engine.getTransport().setPlayhead (target);
         }
@@ -1271,7 +1271,7 @@ void TransportBar::promptEditTempoAtPlayhead()
             // getDoubleValue() turns junk into 0, which the >0 check
             // rejects rather than letting jlimit clamp it to 30 BPM.
             float parsed = 0.0f;
-            if (! parseFullFloat (text, parsed) || parsed <= 0.0f) return;
+            if (! parseFullFloat (text.toStdString(), parsed) || parsed <= 0.0f) return;
             const float b = juce::jlimit (30.0f, 300.0f, parsed);
 
             auto& s2 = safe->engine.getSession();
@@ -1338,7 +1338,7 @@ void TransportBar::onTap()
     // Average inter-tap interval over the active window. The session BPM
     // is clamped to the same 30..300 range as the manual editor.
     const int intervals = tapStampCount - 1;
-    juce::int64 sumMs = 0;
+    std::int64_t sumMs = 0;
     for (int i = 1; i < tapStampCount; ++i)
         sumMs += tapStamps[(size_t) i] - tapStamps[(size_t) (i - 1)];
     const double avgMs = (double) sumMs / (double) intervals;

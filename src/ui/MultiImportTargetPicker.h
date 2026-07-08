@@ -32,7 +32,7 @@ public:
 
     MultiImportTargetPicker (Session& session,
                               std::vector<ImportTargetPicker::FileSummary> summaries,
-                              juce::int64 timelineStartSamples,
+                              std::int64_t timelineStartSamples,
                               std::function<void (std::vector<Assignment>)> onCommit,
                               std::function<void()> onCancel);
     ~MultiImportTargetPicker() override;
@@ -62,7 +62,7 @@ private:
 
     Session& session;
     std::vector<ImportTargetPicker::FileSummary> summaries;
-    juce::int64 timelineStart;
+    std::int64_t timelineStart;
 
     std::function<void (std::vector<Assignment>)> onCommit;
     std::function<void()>                          onCancel;

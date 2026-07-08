@@ -118,7 +118,7 @@ AudioImportResult importAudio (const AudioImportRequest& req)
     }
 
     const auto srcSampleRate = reader->sampleRate;
-    const auto srcLength     = (juce::int64) reader->lengthInSamples;
+    const auto srcLength     = (std::int64_t) reader->lengthInSamples;
     const auto srcChannels   = (int) reader->numChannels;
 
     if (srcSampleRate <= 0.0 || srcLength <= 0 || srcChannels <= 0)
@@ -180,10 +180,10 @@ AudioImportResult importAudio (const AudioImportRequest& req)
     }
 
     const bool needsResample = std::abs (srcSampleRate - sessionSr) > 0.001;
-    juce::int64 outLength = srcLength;
+    std::int64_t outLength = srcLength;
     if (needsResample)
     {
-        outLength = (juce::int64) std::llround ((double) srcLength
+        outLength = (std::int64_t) std::llround ((double) srcLength
                                                  * sessionSr / srcSampleRate);
         if (outLength <= 0)
         {
@@ -252,10 +252,10 @@ AudioImportResult importAudio (const AudioImportRequest& req)
     if (! needsResample)
     {
         juce::AudioBuffer<float> confChunk (req.targetChannels, kGrain);
-        juce::int64 pos = 0;
+        std::int64_t pos = 0;
         while (pos < srcLength && wrote)
         {
-            const int n = (int) juce::jmin ((juce::int64) kGrain, srcLength - pos);
+            const int n = (int) juce::jmin ((std::int64_t) kGrain, srcLength - pos);
             srcChunk.clear();
             if (! reader->read (&srcChunk, 0, n, pos, true, srcChannels > 1))
             {
@@ -287,18 +287,18 @@ AudioImportResult importAudio (const AudioImportRequest& req)
         // ~2 ms late on the timeline (and the tail gets truncated by the same
         // amount). Discard the equivalent output-domain prefix; EOF zero-pad
         // above supplies the extra input the tail needs.
-        juce::int64 discard = (juce::int64) std::llround (
+        std::int64_t discard = (std::int64_t) std::llround (
             (double) juce::WindowedSincInterpolator::getBaseLatency() / ratio);
 
         int         carryLen = 0;
-        juce::int64 srcPos   = 0;
-        juce::int64 produced = 0;
+        std::int64_t srcPos   = 0;
+        std::int64_t produced = 0;
         while (produced < outLength && wrote)
         {
             // Top up the carry from the source.
             while (carryLen < needIn && srcPos < srcLength)
             {
-                const int n = (int) juce::jmin ((juce::int64) kGrain, srcLength - srcPos);
+                const int n = (int) juce::jmin ((std::int64_t) kGrain, srcLength - srcPos);
                 srcChunk.clear();
                 if (! reader->read (&srcChunk, 0, n, srcPos, true, srcChannels > 1))
                 {
@@ -321,7 +321,7 @@ AudioImportResult importAudio (const AudioImportRequest& req)
                 carryLen = needIn;
             }
 
-            const int nOut = (int) juce::jmin ((juce::int64) kGrain,
+            const int nOut = (int) juce::jmin ((std::int64_t) kGrain,
                                                 (outLength - produced) + discard);
             int consumed = 0;
             for (int c = 0; c < req.targetChannels; ++c)
@@ -329,7 +329,7 @@ AudioImportResult importAudio (const AudioImportRequest& req)
                                                         carry.getReadPointer (c),
                                                         outChunk.getWritePointer (c),
                                                         nOut);
-            const int skip       = (int) juce::jmin ((juce::int64) nOut, discard);
+            const int skip       = (int) juce::jmin ((std::int64_t) nOut, discard);
             const int writeCount = nOut - skip;
             if (writeCount > 0)
                 wrote = writer->writeFromAudioSampleBuffer (outChunk, skip, writeCount);
@@ -369,11 +369,11 @@ namespace
 // Rescale a tick value from one PPQ resolution to Dusk Studio's canonical
 // kMidiTicksPerQuarter. Rounds rather than truncates so the cumulative
 // drift across a long region stays bounded.
-juce::int64 rescaleTicks (juce::int64 srcTicks, int srcPPQ) noexcept
+std::int64_t rescaleTicks (std::int64_t srcTicks, int srcPPQ) noexcept
 {
     if (srcPPQ <= 0) return srcTicks;
     if (srcPPQ == kMidiTicksPerQuarter) return srcTicks;
-    return (juce::int64) std::llround ((double) srcTicks
+    return (std::int64_t) std::llround ((double) srcTicks
                                           * (double) kMidiTicksPerQuarter
                                           / (double) srcPPQ);
 }
@@ -430,18 +430,18 @@ MidiImportResult importMidi (const MidiImportRequest& req)
     if (isSmpte)
         mf.convertTimestampTicksToSeconds();
 
-    auto timestampToProjectTicks = [&] (double rawTime) -> juce::int64
+    auto timestampToProjectTicks = [&] (double rawTime) -> std::int64_t
     {
         if (isSmpte)
         {
             // rawTime is in seconds.
             const double samples = rawTime * sessionSr;
-            return duskstudio::samplesToTicks ((juce::int64) std::llround (samples),
+            return duskstudio::samplesToTicks ((std::int64_t) std::llround (samples),
                                             sessionSr,
                                             req.sessionBpm);
         }
         // rawTime is in source-PPQ ticks.
-        return rescaleTicks ((juce::int64) std::llround (rawTime),
+        return rescaleTicks ((std::int64_t) std::llround (rawTime),
                               (int) timeFormat);
     };
 
@@ -449,7 +449,7 @@ MidiImportResult importMidi (const MidiImportRequest& req)
     // don't import tempo / time-sig maps in v1.
     struct ActiveNote
     {
-        juce::int64 startTick;
+        std::int64_t startTick;
         int velocity;
     };
     // (channel, note) -> stack of open note-ons. MIDI spec allows multiple
@@ -458,7 +458,7 @@ MidiImportResult importMidi (const MidiImportRequest& req)
 
     std::vector<MidiNote> notes;
     std::vector<MidiCc>   ccs;
-    juce::int64 maxTick = 0;
+    std::int64_t maxTick = 0;
 
     const int numTracks = mf.getNumTracks();
     for (int t = 0; t < numTracks; ++t)
@@ -495,7 +495,7 @@ MidiImportResult importMidi (const MidiImportRequest& req)
                     n.noteNumber    = note;
                     n.velocity      = juce::jmax (1, open_.velocity);
                     n.startTick     = open_.startTick;
-                    n.lengthInTicks = juce::jmax<juce::int64> (1, tick - open_.startTick);
+                    n.lengthInTicks = juce::jmax<std::int64_t> (1, tick - open_.startTick);
                     notes.push_back (n);
                 }
             }
@@ -525,7 +525,7 @@ MidiImportResult importMidi (const MidiImportRequest& req)
             n.noteNumber    = note;
             n.velocity      = juce::jmax (1, a.velocity);
             n.startTick     = a.startTick;
-            n.lengthInTicks = juce::jmax<juce::int64> (1, maxTick - a.startTick);
+            n.lengthInTicks = juce::jmax<std::int64_t> (1, maxTick - a.startTick);
             notes.push_back (n);
         }
     }
@@ -538,7 +538,7 @@ MidiImportResult importMidi (const MidiImportRequest& req)
 
     result.ok = true;
     result.region.timelineStart   = req.timelineStart;
-    result.region.lengthInTicks   = juce::jmax<juce::int64> (1, maxTick);
+    result.region.lengthInTicks   = juce::jmax<std::int64_t> (1, maxTick);
     result.region.lengthInSamples = duskstudio::ticksToSamples (result.region.lengthInTicks,
                                                               sessionSr,
                                                               req.sessionBpm);

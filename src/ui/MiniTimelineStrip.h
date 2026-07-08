@@ -38,16 +38,16 @@ private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
 
     // Song extent: 0 .. max(rightmost region end, playhead, 60 s floor).
-    juce::int64 songEndSamples() const noexcept;
-    int         xForSample (juce::int64 s, juce::int64 end) const noexcept;
-    juce::int64 sampleForX (int x, juce::int64 end) const noexcept;
-    int         markerIndexAtX (int x, juce::int64 end) const noexcept;
+    std::int64_t songEndSamples() const noexcept;
+    int         xForSample (std::int64_t s, std::int64_t end) const noexcept;
+    std::int64_t sampleForX (int x, std::int64_t end) const noexcept;
+    int         markerIndexAtX (int x, std::int64_t end) const noexcept;
     // Marker hit: tick proximity OR a name-flag rect recorded by the last paint.
     int         markerAtX (int x) const noexcept;
 
     Session&     session;
     AudioEngine& engine;
-    juce::int64  lastPlayhead = -1;
+    std::int64_t  lastPlayhead = -1;
     size_t       lastContentSig = 0;   // region/marker counts + extent, for refresh polling
 
     // Per-marker name-flag rects from the last paint, for mouse hit-testing

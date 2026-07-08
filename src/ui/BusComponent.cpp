@@ -891,7 +891,7 @@ void BusComponent::captureWritePoint (AutomationParam param, float denormValue)
     if (isContinuousParam (param) && ! lane.empty())
     {
         constexpr float kDeltaEps = 0.001f;
-        constexpr juce::int64 kMaxSpanSamples = 22050;   // ~500 ms @ 44.1 k
+        constexpr std::int64_t kMaxSpanSamples = 22050;   // ~500 ms @ 44.1 k
         const auto& last = lane.back();
         if (std::abs (pt.value - last.value) < kDeltaEps
             && pt.timeSamples >= last.timeSamples
@@ -908,7 +908,7 @@ void BusComponent::captureWritePoint (AutomationParam param, float denormValue)
         {
             auto cutoff = std::lower_bound (lane.begin(), lane.end(),
                 pt.timeSamples,
-                [] (const AutomationPoint& a, juce::int64 t) { return a.timeSamples < t; });
+                [] (const AutomationPoint& a, std::int64_t t) { return a.timeSamples < t; });
             lane.erase (cutoff, lane.end());
         }
         if (! lane.empty() && lane.back().timeSamples == pt.timeSamples)
@@ -1183,7 +1183,7 @@ void BusComponent::applyBusColour (juce::Colour c)
 
 void BusComponent::showColourMenu()
 {
-    const std::pair<const char*, juce::uint32> presets[] = {
+    const std::pair<const char*, std::uint32_t> presets[] = {
         { "Red",        fourKColors::kHfRed     },
         { "Orange",     fourKColors::kHmOrange  },
         { "Amber",      fourKColors::kLmAmber   },
@@ -1204,7 +1204,7 @@ void BusComponent::showColourMenu()
         menu.addItem (item);
     }
     juce::Component::SafePointer<BusComponent> safe (this);
-    std::vector<std::pair<juce::String, juce::uint32>> presetCopy;
+    std::vector<std::pair<juce::String, std::uint32_t>> presetCopy;
     presetCopy.reserve (std::size (presets));
     for (auto& p : presets) presetCopy.emplace_back (juce::String (p.first), p.second);
     showContextMenu (menu, *this,

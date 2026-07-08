@@ -131,8 +131,8 @@ Sf2File readSf2(const juce::File& file)
     {
         char ck[4];
         if (in.read(ck, 4) != 4) break;
-        const juce::uint32 ckSize = (juce::uint32) in.readInt();
-        const juce::int64  ckBody = in.getPosition();
+        const std::uint32_t ckSize = (std::uint32_t) in.readInt();
+        const std::int64_t  ckBody = in.getPosition();
 
         if (idEquals(ck, "LIST"))
         {
@@ -143,29 +143,29 @@ Sf2File readSf2(const juce::File& file)
             {
                 // Walk sub-chunks for 'smpl' (+ optional 'sm24'); record
                 // their file ranges, skip the (large) PCM bytes.
-                const juce::int64 sdtaEnd = ckBody + (juce::int64) ckSize;
+                const std::int64_t sdtaEnd = ckBody + (std::int64_t) ckSize;
                 while (in.getPosition() + 8 <= sdtaEnd)
                 {
                     char sid[4];
                     if (in.read(sid, 4) != 4) break;
-                    const juce::uint32 sSize = (juce::uint32) in.readInt();
-                    const juce::int64  sBody = in.getPosition();
+                    const std::uint32_t sSize = (std::uint32_t) in.readInt();
+                    const std::int64_t  sBody = in.getPosition();
                     if (idEquals(sid, "smpl"))
                     {
                         out.smplOffset = sBody;
                         // Clamp to the file's real remainder: smplSize is the
                         // bound writeSampleWav validates shdr ranges against,
                         // so it must never exceed what the file can deliver.
-                        out.smplSize   = juce::jlimit ((juce::int64) 0,
-                                                        in.getTotalLength() - sBody,
-                                                        (juce::int64) sSize);
+                        out.smplSize   = juce::jlimit ((std::int64_t) 0,
+                                                        (std::int64_t) (in.getTotalLength() - sBody),
+                                                        (std::int64_t) sSize);
                     }
                     else if (idEquals(sid, "sm24"))
                     {
                         out.sm24Offset = sBody;
-                        out.sm24Size   = (juce::int64) sSize;
+                        out.sm24Size   = (std::int64_t) sSize;
                     }
-                    in.setPosition(sBody + (juce::int64) sSize
+                    in.setPosition(sBody + (std::int64_t) sSize
                                    + ((sSize & 1) ? 1 : 0));   // pad to even
                 }
             }
@@ -176,9 +176,9 @@ Sf2File readSf2(const juce::File& file)
                 // the file: a crafted ckSize (~2 GB) must not size an
                 // allocation the read can never fill.
                 const int bodyLen = (int) juce::jlimit (
-                    (juce::int64) 0,
-                    in.getTotalLength() - in.getPosition(),
-                    (juce::int64) ckSize - 4);   // minus the listType
+                    (std::int64_t) 0,
+                    (std::int64_t) (in.getTotalLength() - in.getPosition()),
+                    (std::int64_t) ckSize - 4);   // minus the listType
                 if (bodyLen > 0)
                 {
                     pdtaBytes.setSize((size_t) bodyLen);
@@ -193,7 +193,7 @@ Sf2File readSf2(const juce::File& file)
         }
 
         // Advance to the next chunk (chunks pad to even length).
-        in.setPosition(ckBody + (juce::int64) ckSize + ((ckSize & 1) ? 1 : 0));
+        in.setPosition(ckBody + (std::int64_t) ckSize + ((ckSize & 1) ? 1 : 0));
     }
 
     if (pdtaBytes.getSize() == 0)

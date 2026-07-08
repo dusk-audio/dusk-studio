@@ -64,7 +64,7 @@ public:
     // it + each event's sample offset to timestamp ticks against a
     // monotonically increasing sample clock.
     void process (const juce::MidiBuffer& events,
-                  juce::int64 blockStartSample) noexcept;
+                  std::int64_t blockStartSample) noexcept;
 
     // Smoothed BPM derived from the recent clock interval. 0 until the
     // averaging window fills. Message-thread safe (relaxed atomic
@@ -77,8 +77,8 @@ public:
 
 private:
     double sr = 48000.0;
-    juce::int64 lastClockSample = -1;
-    juce::int64 intervals[kAvgWindow] {};
+    std::int64_t lastClockSample = -1;
+    std::int64_t intervals[kAvgWindow] {};
     int writeIdx = 0;
     int filled   = 0;
     std::atomic<float> bpm     { 0.0f };

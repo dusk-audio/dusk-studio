@@ -252,7 +252,7 @@ void AnalogVuMeter::timerCallback()
 
     const float maxRaw = juce::jmax (rawL, rawR);
     if (maxRaw >= kPeakTriggerVuDb)
-        peakHoldUntilMs = juce::Time::getMillisecondCounter() + (juce::uint32) kPeakHoldMs;
+        peakHoldUntilMs = juce::Time::getMillisecondCounter() + (std::uint32_t) kPeakHoldMs;
 
     // Re-bake the cache if the window moved to a different-DPI monitor so the
     // face stays crisp (resize already rebuilds for size changes).
@@ -649,7 +649,7 @@ void AnalogVuMeter::paint (juce::Graphics& g)
     if (peakHoldUntilMs != 0 && ! peakLedRect.isEmpty())
     {
         const auto now = juce::Time::getMillisecondCounter();
-        if ((juce::int32) (peakHoldUntilMs - now) > 0)
+        if ((std::int32_t) (peakHoldUntilMs - now) > 0)
         {
             g.setColour (kPeakLedOn);
             g.fillEllipse (peakLedRect);

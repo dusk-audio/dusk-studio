@@ -22,13 +22,14 @@
 #include "session/SessionSerializer.h"
 
 #include <juce_core/juce_core.h>
+#include <nlohmann/json.hpp>
 
 namespace duskstudio
 {
 // Forward-declare the in-cpp non-static migrator. The cpp drops `static`
 // from this symbol specifically so tests can reach it without a header
 // change (SessionSerializer.h stays untouched for source-compat).
-bool migrateSession (juce::var& root, int from);
+bool migrateSession (nlohmann::json& root, int from);
 } // namespace duskstudio
 
 namespace
@@ -55,27 +56,22 @@ TEST_CASE ("migrateSession safety branch: refuses unknown lower version",
 {
     // Mock pre-versioning (v0) — no migrator case registered. The loop's
     // default branch must return false rather than spin forever.
-    juce::DynamicObject::Ptr obj (new juce::DynamicObject());
-    obj->setProperty ("tempo", 120.0);
-    juce::var root (obj.get());
+    nlohmann::json root = { { "tempo", 120.0 } };
 
     const bool ok = duskstudio::migrateSession (root, 0);
     REQUIRE_FALSE (ok);
 
     // Root must be untouched on the safety-branch path — caller relies
     // on this to know the document is unsalvageable.
-    REQUIRE (root.isObject());
-    REQUIRE_FALSE (root.hasProperty ("version"));
+    REQUIRE (root.is_object());
+    REQUIRE_FALSE (root.contains ("version"));
 }
 
 TEST_CASE ("migrateSession advances a mock v1 root to the current schema",
            "[session][serializer][migration]")
 {
     // Mock v1 root with a stable field the migrator must preserve.
-    juce::DynamicObject::Ptr obj (new juce::DynamicObject());
-    obj->setProperty ("version", 1);
-    obj->setProperty ("tempo", 98.5);
-    juce::var root (obj.get());
+    nlohmann::json root = { { "version", 1 }, { "tempo", 98.5 } };
 
     const bool ok = duskstudio::migrateSession (root, 1);
     REQUIRE (ok);
@@ -84,11 +80,11 @@ TEST_CASE ("migrateSession advances a mock v1 root to the current schema",
     // We don't reach kFormatVersion symbolically from the test (it's
     // in an anonymous namespace inside the .cpp), so we check the
     // post-migrate value is at least 2 + the original payload survived.
-    REQUIRE (root.isObject());
-    REQUIRE (root.hasProperty ("version"));
-    REQUIRE ((int) root["version"] >= 2);
-    REQUIRE (root.hasProperty ("tempo"));
-    REQUIRE ((double) root["tempo"] == 98.5);
+    REQUIRE (root.is_object());
+    REQUIRE (root.contains ("version"));
+    REQUIRE (root["version"].get<int>() >= 2);
+    REQUIRE (root.contains ("tempo"));
+    REQUIRE (root["tempo"].get<double>() == 98.5);
 }
 
 TEST_CASE ("SessionSerializer loads a v1-tagged session file end-to-end",
@@ -113,10 +109,10 @@ TEST_CASE ("SessionSerializer loads a v1-tagged session file end-to-end",
     // kFormatVersion constant directly, we settle for ">= 2" (the
     // version this migrator case targets).
     REQUIRE (SessionSerializer::save (s, target));
-    auto root = juce::JSON::parse (target);
-    REQUIRE (root.isObject());
-    REQUIRE (root.hasProperty ("version"));
-    REQUIRE ((int) root["version"] >= 2);
+    auto root = nlohmann::json::parse (target.loadFileAsString().toStdString(), nullptr, false);
+    REQUIRE (root.is_object());
+    REQUIRE (root.contains ("version"));
+    REQUIRE (root["version"].get<int>() >= 2);
 
     dir.deleteRecursively();
 }

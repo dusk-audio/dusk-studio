@@ -8,6 +8,16 @@ on:
   workflow_dispatch:
 
 jobs:
+  juce-gate:
+    name: De-JUCE ratchet
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Check JUCE coupling has not grown
+        run: tools/juce-gate.sh
+
   build:
     name: Build Dusk Studio (GCC Release, Ubuntu 22.04, amd64)
     # arm64 / Raspberry Pi build-check lives in raspberry-pi-build.yml so each
@@ -157,7 +167,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential cmake ninja-build pkg-config \
-            libasound2-dev libjack-jackd2-dev libmp3lame-dev \
+            libasound2-dev libjack-jackd2-dev libmp3lame-dev libsndfile1-dev \
             libcurl4-openssl-dev libfreetype-dev libfontconfig1-dev \
             libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
             libxinerama-dev libxrandr-dev libxrender-dev libxss-dev \

@@ -44,7 +44,7 @@ public:
     // loop / scrub and would discontinue clock); bpm is the engine's
     // active tempo. Writes F8 (Clock) bytes at the right sample offsets
     // into `out`, plus FA (Start) / FC (Stop) on rolling-flag edges.
-    void generateBlock (juce::int64 blockStartSample,
+    void generateBlock (std::int64_t blockStartSample,
                         int numSamples,
                         float bpm,
                         bool isRolling,

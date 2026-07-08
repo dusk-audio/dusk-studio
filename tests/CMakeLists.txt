@@ -115,6 +115,32 @@ target_include_directories(dusk-studio-tests PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/external/projucer-shim
     ${CMAKE_SOURCE_DIR}/external/clap/include)
+target_include_directories(dusk-studio-tests SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/external/json)
+
+# JUCE-free foundation helpers (dusk::text / dusk::fs / dusk::json) — no external deps.
+target_sources(dusk-studio-tests PRIVATE
+    foundation_text.cpp
+    foundation_fs.cpp
+    foundation_json.cpp)
+
+# Phase 1a de-JUCE: JUCE-free audio file I/O (libsndfile backend), test-only for
+# now. Optional — where libsndfile isn't installed (some CI platforms) the unit
+# and its tests are skipped rather than failing configure; it's Linux-first.
+find_library(SNDFILE_LIBRARY NAMES sndfile)
+find_path(SNDFILE_INCLUDE_DIR sndfile.h)
+if(SNDFILE_LIBRARY AND SNDFILE_INCLUDE_DIR)
+    target_sources(dusk-studio-tests PRIVATE
+        audiofile_roundtrip.cpp
+        audiofile_ab_null.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/audiofile/FileReader.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/audiofile/FileWriter.cpp
+        ${CMAKE_SOURCE_DIR}/src/engine/audiofile/ThreadedFileWriter.cpp)
+    target_include_directories(dusk-studio-tests SYSTEM PRIVATE "${SNDFILE_INCLUDE_DIR}")
+    target_link_libraries(dusk-studio-tests PRIVATE "${SNDFILE_LIBRARY}")
+    message(STATUS "libsndfile found — audiofile tests enabled")
+else()
+    message(STATUS "libsndfile not found — audiofile tests skipped (Linux-first, test-only unit)")
+endif()
 
 # Console-saturation calibration test + the donor DSP headers it needs
 # (BritishEQProcessor.h + its header-only ConsoleSaturation/ADAA/SafeFloat deps).

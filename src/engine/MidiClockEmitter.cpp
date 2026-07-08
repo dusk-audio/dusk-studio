@@ -2,7 +2,7 @@
 
 namespace duskstudio
 {
-void MidiClockEmitter::generateBlock (juce::int64 blockStartSample,
+void MidiClockEmitter::generateBlock (std::int64_t blockStartSample,
                                        int numSamples,
                                        float bpm,
                                        bool isRolling,
@@ -16,8 +16,8 @@ void MidiClockEmitter::generateBlock (juce::int64 blockStartSample,
     // here because slaves react with their own latency anyway.
     if (isRolling != lastRolling)
     {
-        const juce::uint8 statusByte = isRolling ? (juce::uint8) 0xFA   // Start
-                                                  : (juce::uint8) 0xFC; // Stop
+        const std::uint8_t statusByte = isRolling ? (std::uint8_t) 0xFA   // Start
+                                                  : (std::uint8_t) 0xFC; // Stop
         out.addEvent (juce::MidiMessage (statusByte), 0);
         lastRolling = isRolling;
         if (isRolling)
@@ -34,7 +34,7 @@ void MidiClockEmitter::generateBlock (juce::int64 blockStartSample,
     const double samplesPerClock = (sr * 60.0) / ((double) bpm * 24.0);
     if (samplesPerClock <= 0.0) return;
 
-    const juce::int64 blockEnd = blockStartSample + (juce::int64) numSamples;
+    const std::int64_t blockEnd = blockStartSample + (std::int64_t) numSamples;
     // First emission: if the emitter has no phase yet (clockPhase
     // <= blockStart - 2 * samplesPerClock for a "stale" gap), realign
     // to blockStart so we don't burst many catch-up clocks.
@@ -43,12 +43,12 @@ void MidiClockEmitter::generateBlock (juce::int64 blockStartSample,
 
     // Round only at emission; the phase itself advances by the exact
     // fractional interval so the average tick rate matches the tempo.
-    while ((juce::int64) std::llround (clockPhase) < blockEnd)
+    while ((std::int64_t) std::llround (clockPhase) < blockEnd)
     {
-        const int offset = (int) ((juce::int64) std::llround (clockPhase)
+        const int offset = (int) ((std::int64_t) std::llround (clockPhase)
                                    - blockStartSample);
         if (offset >= 0 && offset < numSamples)
-            out.addEvent (juce::MidiMessage ((juce::uint8) 0xF8), offset);
+            out.addEvent (juce::MidiMessage ((std::uint8_t) 0xF8), offset);
         clockPhase += samplesPerClock;
     }
 }

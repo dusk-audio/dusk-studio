@@ -59,7 +59,7 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     // and clear history. pdcSilentRun starts maxed so a pending change can apply
     // on the very first block.
     const juce::dsp::ProcessSpec pdcSpec
-        { sampleRate, (juce::uint32) juce::jmax (1, blockSize), 1 };
+        { sampleRate, (std::uint32_t) juce::jmax (1, blockSize), 1 };
     pdcDelayL.prepare (pdcSpec);
     pdcDelayR.prepare (pdcSpec);
     pdcDelayL.setMaximumDelayInSamples (kMaxPdcSamples);
@@ -68,7 +68,7 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     pdcDelayR.setDelay ((float) pdcAppliedSamples);
     pdcDelayL.reset();
     pdcDelayR.reset();
-    pdcSilentRun = (juce::int64) kMaxPdcSamples;
+    pdcSilentRun = (std::int64_t) kMaxPdcSamples;
 
     // Pre-size the MIDI scratch buffers so the audio thread's addEvent /
     // processBlock calls never grow them. 4 KB covers ~400-800 typical
@@ -611,7 +611,7 @@ void ChannelStrip::relatchPdcIfDrained (float blockPeakAbs, int numSamples) noex
     else                            pdcSilentRun = 0;
 
     const int target = pdcTargetSamples.load (std::memory_order_relaxed);
-    if (target != pdcAppliedSamples && pdcSilentRun >= (juce::int64) pdcAppliedSamples)
+    if (target != pdcAppliedSamples && pdcSilentRun >= (std::int64_t) pdcAppliedSamples)
     {
         pdcDelayL.setDelay ((float) target);
         pdcDelayR.setDelay ((float) target);
@@ -778,10 +778,10 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         // half-band filter-state tail, so when both are active the trailing tail
         // is the SUM (pdc + os); draining only to max(pdc, os) would truncate the
         // shorter one. When only one is active it's that one's length.
-        const juce::int64 requiredDrain =
+        const std::int64_t requiredDrain =
             (pdcAppliedSamples > 0 && osLatencySamples > 0)
-                ? (juce::int64) pdcAppliedSamples + (juce::int64) osLatencySamples
-                : (juce::int64) juce::jmax (pdcAppliedSamples, osLatencySamples);
+                ? (std::int64_t) pdcAppliedSamples + (std::int64_t) osLatencySamples
+                : (std::int64_t) juce::jmax (pdcAppliedSamples, osLatencySamples);
         if (peakL <= 1e-6f && peakR <= 1e-6f && pdcSilentRun >= requiredDrain)
         {
            #if DUSKSTUDIO_HAS_DUSK_DSP

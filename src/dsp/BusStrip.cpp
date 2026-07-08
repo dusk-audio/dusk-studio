@@ -48,7 +48,7 @@ void BusStrip::prepare (double sampleRate, int blockSize, int oversamplingFactor
         osLatencySamples = 0;
     }
 
-    const juce::dsp::ProcessSpec osSpec { sampleRate, (juce::uint32) bsClamped, 1 };
+    const juce::dsp::ProcessSpec osSpec { sampleRate, (std::uint32_t) bsClamped, 1 };
     osSkipDelayL.prepare (osSpec);
     osSkipDelayR.prepare (osSpec);
     osSkipDelayL.setMaximumDelayInSamples (kMaxOsLatency);

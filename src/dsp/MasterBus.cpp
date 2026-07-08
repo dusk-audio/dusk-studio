@@ -70,7 +70,7 @@ void MasterBus::prepare (double sampleRate, int blockSize, int oversamplingFacto
     {
         const int maxDelay = juce::jmax (1, tapeLatencySamples);
         const juce::dsp::ProcessSpec drySpec {
-            sampleRate, (juce::uint32) juce::jmax (1, blockSize), 1 };
+            sampleRate, (std::uint32_t) juce::jmax (1, blockSize), 1 };
         tapeDryDelayL.prepare (drySpec);
         tapeDryDelayR.prepare (drySpec);
         tapeDryDelayL.setMaximumDelayInSamples (maxDelay);
@@ -106,7 +106,7 @@ void MasterBus::prepare (double sampleRate, int blockSize, int oversamplingFacto
         osLatencySamples = 0;
     }
 
-    const juce::dsp::ProcessSpec osSpec { sampleRate, (juce::uint32) bsClamped, 1 };
+    const juce::dsp::ProcessSpec osSpec { sampleRate, (std::uint32_t) bsClamped, 1 };
     osSkipDelayL.prepare (osSpec);
     osSkipDelayR.prepare (osSpec);
     osSkipDelayL.setMaximumDelayInSamples (kMaxOsLatency);

@@ -100,7 +100,7 @@ private:
     // Set by timerCallback when the unclamped VU dB on either channel
     // crosses kPeakTriggerVuDb; paint() lights the LED until now() passes
     // this stamp. Single timestamp covers both channels - one PEAK LED.
-    juce::uint32 peakHoldUntilMs = 0;
+    std::uint32_t peakHoldUntilMs = 0;
 
     // Cached LED geometry computed in rebuildCachedFace so paint() can
     // overlay the lit state without recomputing layout each frame.

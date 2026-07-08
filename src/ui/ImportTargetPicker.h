@@ -26,9 +26,9 @@ public:
         juce::File   file;
         double       sampleRate    = 0.0;   // source SR (audio only)
         int          numChannels   = 1;     // 1 or 2 for audio
-        juce::int64  lengthSamples = 0;     // audio only
+        std::int64_t  lengthSamples = 0;     // audio only
         int          numMidiNotes  = 0;     // MIDI only
-        juce::int64  lengthTicks   = 0;     // MIDI only
+        std::int64_t  lengthTicks   = 0;     // MIDI only
         bool         isMidi        = false;
     };
 
@@ -37,7 +37,7 @@ public:
     // Cancel / Esc / click-outside. Both close the host modal.
     ImportTargetPicker (Session& session,
                          FileSummary summary,
-                         juce::int64 timelineStartSamples,
+                         std::int64_t timelineStartSamples,
                          double      sessionSampleRate,
                          float       sessionBpm,
                          int         beatsPerBar,
@@ -57,7 +57,7 @@ private:
 
     Session& session;
     FileSummary summary;
-    juce::int64 timelineStart;
+    std::int64_t timelineStart;
     double  sessionSampleRate;
     float   sessionBpm;
     int     beatsPerBar;

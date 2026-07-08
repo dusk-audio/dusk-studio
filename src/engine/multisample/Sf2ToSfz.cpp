@@ -53,8 +53,8 @@ juce::String sanitize(const juce::String& s)
 // Extract one mono sample [start,end) of 16-bit PCM from the smpl chunk
 // into a WAV at the sample's own rate. Returns false on any I/O issue.
 bool writeSampleWav(juce::FileInputStream& in,
-                     juce::int64           smplOffset,
-                     juce::int64           smplSize,
+                     std::int64_t           smplOffset,
+                     std::int64_t           smplSize,
                      const Sf2Sample&      s,
                      const juce::File&     outWav)
 {
@@ -63,14 +63,14 @@ bool writeSampleWav(juce::FileInputStream& in,
     // end of 0x7FFFFFFF would otherwise request a ~4 GB buffer, and
     // frames*2 in int is signed-overflow UB).
     if (s.end <= s.start) return false;
-    const juce::int64 frames64 = (juce::int64) s.end - (juce::int64) s.start;
-    if (smplSize <= 0 || (juce::int64) s.end * 2 > smplSize) return false;
+    const std::int64_t frames64 = (std::int64_t) s.end - (std::int64_t) s.start;
+    if (smplSize <= 0 || (std::int64_t) s.end * 2 > smplSize) return false;
     if (frames64 > 0x10000000) return false;   // 256 M frames ≈ 512 MB — no real instrument sample
     const int numFrames = (int) frames64;
 
-    in.setPosition(smplOffset + (juce::int64) s.start * 2);
+    in.setPosition(smplOffset + (std::int64_t) s.start * 2);
     juce::HeapBlock<int16_t> pcm ((size_t) numFrames);
-    const juce::int64 wanted = frames64 * 2;
+    const std::int64_t wanted = frames64 * 2;
     if (in.read(pcm.getData(), (int) wanted) != (int) wanted)
         return false;
 
@@ -80,7 +80,7 @@ bool writeSampleWav(juce::FileInputStream& in,
     {
         // SF2 PCM is little-endian signed 16-bit; FileInputStream::read
         // gave us native-order int16 on LE hosts. Normalize to float.
-        const int16_t v = (int16_t) juce::ByteOrder::swapIfBigEndian((juce::uint16) pcm[i]);
+        const int16_t v = (int16_t) juce::ByteOrder::swapIfBigEndian((std::uint16_t) pcm[i]);
         w[i] = (float) v / 32768.0f;
     }
 

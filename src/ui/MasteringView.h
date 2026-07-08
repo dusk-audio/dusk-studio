@@ -31,7 +31,7 @@ private:
     juce::AudioFormatManager    formatManager;
     juce::AudioThumbnailCache   thumbnailCache { 4 };
     juce::AudioThumbnail        thumbnail;
-    juce::int64                 lastPlayhead = -1;
+    std::int64_t                 lastPlayhead = -1;
 };
 
 // Mastering-stage workspace. Loads stereo WAV (typically the freshest

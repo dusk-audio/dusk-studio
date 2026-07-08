@@ -33,7 +33,7 @@ const juce::Colour kTransportPlayhead { 0xffffe8c0 };
 // [src/ui/TapeStrip.cpp] so all three surfaces (tape strip menu,
 // audio editor properties, piano roll properties) share the same
 // 8 swatches + reset.
-struct PaletteEntry { const char* label; juce::uint32 argb; };
+struct PaletteEntry { const char* label; std::uint32_t argb; };
 constexpr PaletteEntry kPalette[] = {
     { "Reset to track colour", 0x00000000 },
     { "Red",     0xffd05f5f }, { "Orange",  0xffd09060 },
@@ -163,11 +163,11 @@ AudioRegionEditor::AudioRegionEditor (Session& s, AudioEngine& e, int t, int r)
         const double outMs = juce::jmax (0.0, outStr.trim().getDoubleValue());
         const AudioRegion before = *r;
         AudioRegion after = before;
-        const auto maxLen = juce::jmax<juce::int64> (0, r->lengthInSamples);
-        after.fadeInSamples  = juce::jlimit<juce::int64> (0, maxLen,
-                                                              (juce::int64) std::round (inMs * sr / 1000.0));
-        after.fadeOutSamples = juce::jlimit<juce::int64> (0, juce::jmax<juce::int64> (0, maxLen - after.fadeInSamples),
-                                                              (juce::int64) std::round (outMs * sr / 1000.0));
+        const auto maxLen = juce::jmax<std::int64_t> (0, r->lengthInSamples);
+        after.fadeInSamples  = juce::jlimit<std::int64_t> (0, maxLen,
+                                                              (std::int64_t) std::round (inMs * sr / 1000.0));
+        after.fadeOutSamples = juce::jlimit<std::int64_t> (0, juce::jmax<std::int64_t> (0, maxLen - after.fadeInSamples),
+                                                              (std::int64_t) std::round (outMs * sr / 1000.0));
         auto& um = engine.getUndoManager();
         um.beginNewTransaction ("Set region fades");
         um.perform (new RegionEditAction (session, engine, trackIdx, regionIdx, before, after));
@@ -395,13 +395,13 @@ void AudioRegionEditor::syncScrollBarRange()
 void AudioRegionEditor::scrollBarMoved (juce::ScrollBar* bar, double newRangeStart)
 {
     if (bar != &horizontalScrollBar) return;
-    const juce::int64 viewSamples = (pixelsPerSample > 0.0f)
-        ? (juce::int64) std::round ((double) getWidth() / pixelsPerSample)
+    const std::int64_t viewSamples = (pixelsPerSample > 0.0f)
+        ? (std::int64_t) std::round ((double) getWidth() / pixelsPerSample)
         : anchorTimelineLength;
-    const juce::int64 maxStart = juce::jmax<juce::int64> (0,
+    const std::int64_t maxStart = juce::jmax<std::int64_t> (0,
                                     anchorTimelineLength - viewSamples);
-    scrollSamples = juce::jlimit<juce::int64> (0, maxStart,
-                                                  (juce::int64) newRangeStart);
+    scrollSamples = juce::jlimit<std::int64_t> (0, maxStart,
+                                                  (std::int64_t) newRangeStart);
     repaint();
 }
 
@@ -415,8 +415,8 @@ void AudioRegionEditor::zoomFitToArea (juce::Rectangle<int> area)
     // just the focused one. Splitting never changes the track's overall extent,
     // so the anchor stays put and the waveform doesn't shift when a cut adds a
     // boundary line.
-    juce::int64 lo = r->timelineStart;
-    juce::int64 hi = r->timelineStart + r->lengthInSamples;
+    std::int64_t lo = r->timelineStart;
+    std::int64_t hi = r->timelineStart + r->lengthInSamples;
     if (trackIdx >= 0 && trackIdx < Session::kNumTracks)
         for (const auto& reg : session.track (trackIdx).regions)
         {
@@ -425,36 +425,36 @@ void AudioRegionEditor::zoomFitToArea (juce::Rectangle<int> area)
             hi = juce::jmax (hi, reg.timelineStart + reg.lengthInSamples);
         }
     anchorTimelineStart  = lo;
-    anchorTimelineLength = juce::jmax<juce::int64> (1, hi - lo);
+    anchorTimelineLength = juce::jmax<std::int64_t> (1, hi - lo);
 
     // Initial view zooms to fit the FOCUSED region (what was double-clicked);
     // the user zooms out to see the rest of the track.
     const float w = (float) juce::jmax (1, area.getWidth() - 8);
-    pixelsPerSample = w / (float) juce::jmax<juce::int64> (1, r->lengthInSamples);
+    pixelsPerSample = w / (float) juce::jmax<std::int64_t> (1, r->lengthInSamples);
 
     // Scroll so the focused region sits at the left edge, clamped to content.
-    const juce::int64 viewSamples = (juce::int64) std::round ((double) w / pixelsPerSample);
-    const juce::int64 maxStart    = juce::jmax<juce::int64> (0, anchorTimelineLength - viewSamples);
-    scrollSamples    = juce::jlimit<juce::int64> (0, maxStart, r->timelineStart - anchorTimelineStart);
+    const std::int64_t viewSamples = (std::int64_t) std::round ((double) w / pixelsPerSample);
+    const std::int64_t maxStart    = juce::jmax<std::int64_t> (0, anchorTimelineLength - viewSamples);
+    scrollSamples    = juce::jlimit<std::int64_t> (0, maxStart, r->timelineStart - anchorTimelineStart);
     editCursorSample = r->sourceOffset;
 }
 
-int AudioRegionEditor::xForTimelineSample (juce::int64 timelineSample,
+int AudioRegionEditor::xForTimelineSample (std::int64_t timelineSample,
                                               juce::Rectangle<int> area) const
 {
     const auto rel = timelineSample - anchorTimelineStart - scrollSamples;
     return area.getX() + 4 + (int) std::round ((double) rel * pixelsPerSample);
 }
 
-juce::int64 AudioRegionEditor::timelineSampleForX (int x, juce::Rectangle<int> area) const
+std::int64_t AudioRegionEditor::timelineSampleForX (int x, juce::Rectangle<int> area) const
 {
     if (pixelsPerSample <= 0.0f) return anchorTimelineStart;
-    const auto rel = (juce::int64) std::round (
+    const auto rel = (std::int64_t) std::round (
         (double) (x - area.getX() - 4) / pixelsPerSample);
     return anchorTimelineStart + scrollSamples + rel;
 }
 
-int AudioRegionEditor::xForSample (juce::int64 absSample,
+int AudioRegionEditor::xForSample (std::int64_t absSample,
                                       juce::Rectangle<int> area) const
 {
     // File-sample form: convert through the focused region's
@@ -467,7 +467,7 @@ int AudioRegionEditor::xForSample (juce::int64 absSample,
     return xForTimelineSample (t, area);
 }
 
-juce::int64 AudioRegionEditor::snapFileSampleToGrid (juce::int64 fileSample,
+std::int64_t AudioRegionEditor::snapFileSampleToGrid (std::int64_t fileSample,
                                                        bool bypass) const noexcept
 {
     if (bypass || ! session.audioEditorSnap) return fileSample;
@@ -482,7 +482,7 @@ juce::int64 AudioRegionEditor::snapFileSampleToGrid (juce::int64 fileSample,
     return snapped - fileToTimeline;
 }
 
-juce::int64 AudioRegionEditor::snapTimelineSampleToGrid (juce::int64 timelineSample,
+std::int64_t AudioRegionEditor::snapTimelineSampleToGrid (std::int64_t timelineSample,
                                                           bool bypass) const noexcept
 {
     if (bypass || ! session.audioEditorSnap) return timelineSample;
@@ -492,13 +492,13 @@ juce::int64 AudioRegionEditor::snapTimelineSampleToGrid (juce::int64 timelineSam
     return snap::snapAbsoluteToGridUnchecked (timelineSample, session, sr);
 }
 
-juce::int64 AudioRegionEditor::sampleForX (int x, juce::Rectangle<int> area) const
+std::int64_t AudioRegionEditor::sampleForX (int x, juce::Rectangle<int> area) const
 {
     const auto* r = region();
     if (r == nullptr) return 0;
     const auto t = timelineSampleForX (x, area);
     const auto fileSample = r->sourceOffset + (t - r->timelineStart);
-    return juce::jlimit<juce::int64> (
+    return juce::jlimit<std::int64_t> (
         r->sourceOffset,
         r->sourceOffset + r->lengthInSamples,
         fileSample);
@@ -656,7 +656,7 @@ void AudioRegionEditor::paintLoopPunchBrackets (juce::Graphics& g,
                                                 juce::Rectangle<int> wave)
 {
     auto& transport = engine.getTransport();
-    auto drawPair = [&] (juce::int64 a, juce::int64 b, juce::Colour col, bool enabled)
+    auto drawPair = [&] (std::int64_t a, std::int64_t b, juce::Colour col, bool enabled)
     {
         if (b < a) return;
         const int xa = xForTimelineSample (a, wave);
@@ -722,17 +722,17 @@ void AudioRegionEditor::paintRuler (juce::Graphics& g, juce::Rectangle<int> area
     if (mode == TimeDisplayMode::Bars)
     {
         const int beatsPerBar = juce::jmax (1, session.beatsPerBar.load (std::memory_order_relaxed));
-        const juce::int64 ticksPerBar = (juce::int64) beatsPerBar * kMidiTicksPerQuarter;
+        const std::int64_t ticksPerBar = (std::int64_t) beatsPerBar * kMidiTicksPerQuarter;
         // Bar boundaries are musical-time positions resolved through the session
         // tempo map (constant tempoBpm when empty). Use the SAME file-domain
         // sample rate (`sr`) the waveform + Time-mode grid use, not the engine
         // rate — otherwise a region whose file SR differs from the device SR
         // draws its bar lines drifted against the waveform underneath.
-        const juce::int64 anchorEndTimeline = anchorTimelineStart + anchorTimelineLength;
+        const std::int64_t anchorEndTimeline = anchorTimelineStart + anchorTimelineLength;
 
         if (sr > 0.0)
         {
-            const juce::int64 ticksPerBeat = kMidiTicksPerQuarter;
+            const std::int64_t ticksPerBeat = kMidiTicksPerQuarter;
             // Limit bar/beat generation to the clipped (visible) span: during
             // playback the repaint clip is just the playhead column, so walking
             // every bar in a long zoomed-in track is wasted work. Pad the window
@@ -758,7 +758,7 @@ void AudioRegionEditor::paintRuler (juce::Graphics& g, juce::Rectangle<int> area
             const int  beatTop   = area.getBottom() - (int) (area.getHeight() * 0.45);
             const int  subTop    = area.getBottom() - (int) (area.getHeight() * 0.28);
 
-            const auto drawTick = [&] (juce::int64 tick, int top, juce::Colour c)
+            const auto drawTick = [&] (std::int64_t tick, int top, juce::Colour c)
             {
                 const auto timeline = session.ticksToSamples (tick, sr);
                 if (timeline < anchorTimelineStart || timeline > anchorEndTimeline) return;
@@ -770,7 +770,7 @@ void AudioRegionEditor::paintRuler (juce::Graphics& g, juce::Rectangle<int> area
 
             for (int bar = firstBar; bar <= lastBar; ++bar)
             {
-                const juce::int64 barTick = (juce::int64) bar * ticksPerBar;
+                const std::int64_t barTick = (std::int64_t) bar * ticksPerBar;
                 const auto barTimeline = session.ticksToSamples (barTick, sr);
                 if (barTimeline >= anchorTimelineStart && barTimeline <= anchorEndTimeline)
                 {
@@ -789,11 +789,11 @@ void AudioRegionEditor::paintRuler (juce::Graphics& g, juce::Rectangle<int> area
                 for (int beat = 0; beat < beatsPerBar; ++beat)
                 {
                     if (beat > 0)
-                        drawTick (barTick + (juce::int64) beat * ticksPerBeat,
+                        drawTick (barTick + (std::int64_t) beat * ticksPerBeat,
                                    beatTop, kBarLine.withAlpha (0.55f));
                     for (int s = 1; s < subdiv; ++s)
-                        drawTick (barTick + (juce::int64) beat * ticksPerBeat
-                                      + (juce::int64) s * ticksPerBeat / subdiv,
+                        drawTick (barTick + (std::int64_t) beat * ticksPerBeat
+                                      + (std::int64_t) s * ticksPerBeat / subdiv,
                                    subTop, kBarLine.withAlpha (0.30f));
                 }
             }
@@ -815,7 +815,7 @@ void AudioRegionEditor::paintRuler (juce::Graphics& g, juce::Rectangle<int> area
 
         for (double sec = firstSec; sec <= anchorEndSec; sec += tickEverySec)
         {
-            const auto secTimeline = (juce::int64) std::round (sec * sr);
+            const auto secTimeline = (std::int64_t) std::round (sec * sr);
             if (secTimeline < anchorTimelineStart
                 || secTimeline > anchorTimelineStart + anchorTimelineLength) continue;
             const int x = xForTimelineSample (secTimeline, area);
@@ -850,9 +850,9 @@ void AudioRegionEditor::paintBarGrid (juce::Graphics& g, juce::Rectangle<int> ar
     if (pxPerBeat < 6.0) return;   // too dense to be anything but noise
 
     const int beatsPerBar = juce::jmax (1, session.beatsPerBar.load (std::memory_order_relaxed));
-    const juce::int64 ticksPerBeat = kMidiTicksPerQuarter;
-    const juce::int64 ticksPerBar  = (juce::int64) beatsPerBar * ticksPerBeat;
-    const juce::int64 anchorEndTimeline = anchorTimelineStart + anchorTimelineLength;
+    const std::int64_t ticksPerBeat = kMidiTicksPerQuarter;
+    const std::int64_t ticksPerBar  = (std::int64_t) beatsPerBar * ticksPerBeat;
+    const std::int64_t anchorEndTimeline = anchorTimelineStart + anchorTimelineLength;
     const auto startTick = session.samplesToTicks (anchorTimelineStart, sr);
     const auto endTick   = session.samplesToTicks (anchorEndTimeline,   sr);
     const int firstBar = (int) (startTick / ticksPerBar);
@@ -862,10 +862,10 @@ void AudioRegionEditor::paintBarGrid (juce::Graphics& g, juce::Rectangle<int> ar
     g.reduceClipRegion (area);
     for (int bar = firstBar; bar <= lastBar; ++bar)
     {
-        const juce::int64 barTick = (juce::int64) bar * ticksPerBar;
+        const std::int64_t barTick = (std::int64_t) bar * ticksPerBar;
         for (int beat = 0; beat < beatsPerBar; ++beat)
         {
-            const auto timeline = session.ticksToSamples (barTick + (juce::int64) beat * ticksPerBeat, sr);
+            const auto timeline = session.ticksToSamples (barTick + (std::int64_t) beat * ticksPerBeat, sr);
             if (timeline < anchorTimelineStart || timeline > anchorEndTimeline) continue;
             const int x = xForTimelineSample (timeline, area);
             if (x < area.getX() || x > area.getRight()) continue;
@@ -1011,8 +1011,8 @@ void AudioRegionEditor::paintWaveform (juce::Graphics& g, juce::Rectangle<int> a
     }
 }
 
-void AudioRegionEditor::overlapNeighbours (juce::int64& overlapPrev,
-                                             juce::int64& overlapNext,
+void AudioRegionEditor::overlapNeighbours (std::int64_t& overlapPrev,
+                                             std::int64_t& overlapNext,
                                              FadeShape& prevOutShape,
                                              FadeShape& nextInShape) const
 {
@@ -1031,7 +1031,7 @@ void AudioRegionEditor::overlapNeighbours (juce::int64& overlapPrev,
         return regs[(size_t) a].timelineStart < regs[(size_t) b].timelineStart;
     });
 
-    auto overlapLen = [&] (const AudioRegion& a, const AudioRegion& b) -> juce::int64
+    auto overlapLen = [&] (const AudioRegion& a, const AudioRegion& b) -> std::int64_t
     {
         const auto aEnd = a.timelineStart + a.lengthInSamples;
         if (aEnd <= b.timelineStart) return 0;
@@ -1080,7 +1080,7 @@ void AudioRegionEditor::paintFadeEnvelopes (juce::Graphics& g,
                        juce::PathStrokeType (1.4f));
     };
 
-    juce::int64 overlapPrev = 0, overlapNext = 0;
+    std::int64_t overlapPrev = 0, overlapNext = 0;
     FadeShape prevOutShape = FadeShape::EqualPower, nextInShape = FadeShape::EqualPower;
     overlapNeighbours (overlapPrev, overlapNext, prevOutShape, nextInShape);
 
@@ -1210,7 +1210,7 @@ juce::MouseCursor AudioRegionEditor::cursorForPoint (int x, int y) const
         {
             auto& transport = engine.getTransport();
             const int tol = 6;
-            auto nearX = [&] (juce::int64 s)
+            auto nearX = [&] (std::int64_t s)
                 { return std::abs (x - xForTimelineSample (s, waveArea)) <= tol; };
             if ((transport.getLoopEnd() > transport.getLoopStart()
                     && (nearX (transport.getLoopStart()) || nearX (transport.getLoopEnd())))
@@ -1405,7 +1405,7 @@ void AudioRegionEditor::mouseDown (const juce::MouseEvent& e)
         {
             auto& transport = engine.getTransport();
             const int tol = 6;
-            auto nearX = [&] (juce::int64 s)
+            auto nearX = [&] (std::int64_t s)
                 { return std::abs (e.x - xForTimelineSample (s, waveArea)) <= tol; };
             DragMode hit = DragMode::None;
             if (transport.getLoopEnd() > transport.getLoopStart())
@@ -1493,7 +1493,7 @@ void AudioRegionEditor::mouseDown (const juce::MouseEvent& e)
             const auto snappedFile = snapFileSampleToGrid (fileSample,
                                                               e.mods.isCommandDown());
             const auto fileToTimeline = r->timelineStart - r->sourceOffset;
-            const juce::int64 t = snappedFile + fileToTimeline;
+            const std::int64_t t = snappedFile + fileToTimeline;
             float v01 = automationValueForY (e.y, waveArea);
             // Discrete lanes (Mute / Solo) store 0/1 only — intermediate
             // values would render correctly via the connected-dot view
@@ -1504,7 +1504,7 @@ void AudioRegionEditor::mouseDown (const juce::MouseEvent& e)
                 v01 = (v01 >= 0.5f) ? 1.0f : 0.0f;
 
             AutomationPoint pt;
-            pt.timeSamples = juce::jmax<juce::int64> (0, t);
+            pt.timeSamples = juce::jmax<std::int64_t> (0, t);
             pt.value       = v01;
             pt.recordedAtBPM = session.tempoBpm.load (std::memory_order_relaxed);
 
@@ -1795,7 +1795,7 @@ void AudioRegionEditor::mouseDown (const juce::MouseEvent& e)
                 regionAtDragStart = *nr;
                 dragOriginGainDb = nr->gainDb;
                 editCursorSample = nr->sourceOffset
-                    + juce::jlimit<juce::int64> (0, nr->lengthInSamples,
+                    + juce::jlimit<std::int64_t> (0, nr->lengthInSamples,
                         timelineSampleForX (e.x, waveArea) - nr->timelineStart);
                 dragOriginTimelineSample = nr->timelineStart;
             }
@@ -1837,7 +1837,7 @@ void AudioRegionEditor::mouseDrag (const juce::MouseEvent& e)
         || dragMode == DragMode::PunchIn || dragMode == DragMode::PunchOut)
     {
         auto& transport = engine.getTransport();
-        const auto t = juce::jmax<juce::int64> (0,
+        const auto t = juce::jmax<std::int64_t> (0,
             snapTimelineSampleToGrid (timelineSampleForX (e.x, waveArea),
                                        e.mods.isCommandDown()));
         switch (dragMode)
@@ -1860,10 +1860,10 @@ void AudioRegionEditor::mouseDrag (const juce::MouseEvent& e)
     if (dragMode == DragMode::Pan)
     {
         const int dxPixels = e.x - panStartMouseX;
-        const auto dxSamples = (juce::int64) std::round (
+        const auto dxSamples = (std::int64_t) std::round (
             - (double) dxPixels / juce::jmax (1.0e-5f, pixelsPerSample));
-        scrollSamples = juce::jlimit<juce::int64> (0,
-            juce::jmax<juce::int64> (0, anchorTimelineLength - 1),
+        scrollSamples = juce::jlimit<std::int64_t> (0,
+            juce::jmax<std::int64_t> (0, anchorTimelineLength - 1),
             panStartScroll + dxSamples);
         repaint();
         return;
@@ -1907,7 +1907,7 @@ void AudioRegionEditor::mouseDrag (const juce::MouseEvent& e)
         const auto snappedFile = snapFileSampleToGrid (fileSample,
                                                           e.mods.isCommandDown());
         const auto fileToTimeline = rr->timelineStart - rr->sourceOffset;
-        const juce::int64 t = juce::jmax<juce::int64> (0, snappedFile + fileToTimeline);
+        const std::int64_t t = juce::jmax<std::int64_t> (0, snappedFile + fileToTimeline);
         float v01 = automationValueForY (e.y, waveArea);
         // Discrete lanes (Mute / Solo): same quantization rationale as
         // the click-add path above — store 0/1 so the painted dot and
@@ -1966,7 +1966,7 @@ void AudioRegionEditor::mouseDrag (const juce::MouseEvent& e)
     const bool bypassSnap = e.mods.isCommandDown();
     const double sampleRate = engine.getCurrentSampleRate();
 
-    auto snapFileSampleToTimelineGrid = [&] (juce::int64 fileSample) -> juce::int64
+    auto snapFileSampleToTimelineGrid = [&] (std::int64_t fileSample) -> std::int64_t
     {
         snapGuideTimelineSample = -1;
         if (bypassSnap || ! session.audioEditorSnap) return fileSample;
@@ -1980,7 +1980,7 @@ void AudioRegionEditor::mouseDrag (const juce::MouseEvent& e)
         return snapped - fileToTimeline;
     };
 
-    auto snapDeltaSamples = [&] (juce::int64 delta) -> juce::int64
+    auto snapDeltaSamples = [&] (std::int64_t delta) -> std::int64_t
     {
         if (bypassSnap || ! session.audioEditorSnap) { snapGuideTimelineSample = -1; return delta; }
         return snap::snapDeltaToGridUnchecked (delta, session, sampleRate);
@@ -2018,7 +2018,7 @@ void AudioRegionEditor::mouseDrag (const juce::MouseEvent& e)
         const auto dragStartTimeline = timelineSampleForX (e.getMouseDownX(), waveArea);
         const auto rawDelta = cursorTimeline - dragStartTimeline;
         const auto delta = snapDeltaSamples (rawDelta);
-        const auto newStart = juce::jmax<juce::int64> (0, dragOriginTimelineSample + delta);
+        const auto newStart = juce::jmax<std::int64_t> (0, dragOriginTimelineSample + delta);
         r->timelineStart = newStart;
         if (! bypassSnap && session.audioEditorSnap && delta != rawDelta)
             snapGuideTimelineSample = newStart;
@@ -2034,7 +2034,7 @@ void AudioRegionEditor::mouseDrag (const juce::MouseEvent& e)
             if (idx < 0 || idx >= (int) regs.size()) continue;
             auto& other = regs[(size_t) idx];
             if (other.locked) continue;
-            other.timelineStart = juce::jmax<juce::int64> (0,
+            other.timelineStart = juce::jmax<std::int64_t> (0,
                 dragMultiOriginStarts[i] + delta);
         }
         repaint();
@@ -2055,9 +2055,9 @@ void AudioRegionEditor::mouseDrag (const juce::MouseEvent& e)
         case DragMode::FadeIn:
         {
             const auto sample = snapFileSampleToTimelineGrid (sampleForX (e.x, waveArea));
-            const auto fadeIn = juce::jlimit<juce::int64> (
+            const auto fadeIn = juce::jlimit<std::int64_t> (
                 0,
-                juce::jmax<juce::int64> (0, r->lengthInSamples - r->fadeOutSamples),
+                juce::jmax<std::int64_t> (0, r->lengthInSamples - r->fadeOutSamples),
                 sample - r->sourceOffset);
             r->fadeInSamples = fadeIn;
             snapGuideTimelineSample = r->timelineStart + r->fadeInSamples;
@@ -2067,9 +2067,9 @@ void AudioRegionEditor::mouseDrag (const juce::MouseEvent& e)
         {
             const auto sample = snapFileSampleToTimelineGrid (sampleForX (e.x, waveArea));
             const auto endAbs = r->sourceOffset + r->lengthInSamples;
-            const auto fadeOut = juce::jlimit<juce::int64> (
+            const auto fadeOut = juce::jlimit<std::int64_t> (
                 0,
-                juce::jmax<juce::int64> (0, r->lengthInSamples - r->fadeInSamples),
+                juce::jmax<std::int64_t> (0, r->lengthInSamples - r->fadeInSamples),
                 endAbs - sample);
             r->fadeOutSamples = fadeOut;
             snapGuideTimelineSample = r->timelineStart
@@ -2092,7 +2092,7 @@ void AudioRegionEditor::mouseDrag (const juce::MouseEvent& e)
             // file. sourceOffset shifts by the delta so the audio stays
             // continuous (mirrors TapeStrip's TrimStart op). lengthInSamples
             // shrinks/grows by the same amount.
-            const auto newSourceOffset = juce::jlimit<juce::int64> (
+            const auto newSourceOffset = juce::jlimit<std::int64_t> (
                 0,
                 regionAtDragStart.sourceOffset
                     + regionAtDragStart.lengthInSamples - 1,
@@ -2102,20 +2102,20 @@ void AudioRegionEditor::mouseDrag (const juce::MouseEvent& e)
             r->lengthInSamples = regionAtDragStart.lengthInSamples - delta;
             r->timelineStart   = regionAtDragStart.timelineStart   + delta;
             // Clamp fades against the new length.
-            r->fadeInSamples  = juce::jlimit<juce::int64> (0, r->lengthInSamples, r->fadeInSamples);
-            r->fadeOutSamples = juce::jlimit<juce::int64> (0, r->lengthInSamples - r->fadeInSamples, r->fadeOutSamples);
+            r->fadeInSamples  = juce::jlimit<std::int64_t> (0, r->lengthInSamples, r->fadeInSamples);
+            r->fadeOutSamples = juce::jlimit<std::int64_t> (0, r->lengthInSamples - r->fadeInSamples, r->fadeOutSamples);
             break;
         }
         case DragMode::TrimEnd:
         {
             const auto endAbs = snapFileSampleToTimelineGrid (sampleForX (e.x, waveArea));
-            const auto newLength = juce::jlimit<juce::int64> (
+            const auto newLength = juce::jlimit<std::int64_t> (
                 1,
-                std::numeric_limits<juce::int64>::max(),
+                std::numeric_limits<std::int64_t>::max(),
                 endAbs - regionAtDragStart.sourceOffset);
             r->lengthInSamples = newLength;
-            r->fadeInSamples  = juce::jlimit<juce::int64> (0, newLength, r->fadeInSamples);
-            r->fadeOutSamples = juce::jlimit<juce::int64> (0, newLength - r->fadeInSamples, r->fadeOutSamples);
+            r->fadeInSamples  = juce::jlimit<std::int64_t> (0, newLength, r->fadeInSamples);
+            r->fadeOutSamples = juce::jlimit<std::int64_t> (0, newLength - r->fadeInSamples, r->fadeOutSamples);
             break;
         }
         default: break;
@@ -2530,8 +2530,8 @@ void AudioRegionEditor::mouseWheelMove (const juce::MouseEvent& e,
         // the cursor's x-position.
         const auto cursorSampleAfterRaw = sampleForX (e.x, waveArea);
         scrollSamples += (cursorSampleBefore - cursorSampleAfterRaw);
-        scrollSamples = juce::jlimit<juce::int64> (0,
-            juce::jmax<juce::int64> (0, anchorTimelineLength - 1), scrollSamples);
+        scrollSamples = juce::jlimit<std::int64_t> (0,
+            juce::jmax<std::int64_t> (0, anchorTimelineLength - 1), scrollSamples);
         repaint();
         return;
     }
@@ -2542,10 +2542,10 @@ void AudioRegionEditor::mouseWheelMove (const juce::MouseEvent& e,
     // (matches the legacy behaviour and the PianoRoll convention).
     const float deltaForPan = std::abs (w.deltaX) > 0.001f ? w.deltaX
                                                               : w.deltaY;
-    const auto step = (juce::int64) std::round (
+    const auto step = (std::int64_t) std::round (
         - (double) deltaForPan * 64.0 / juce::jmax (1.0e-5f, pixelsPerSample));
-    scrollSamples = juce::jlimit<juce::int64> (0,
-        juce::jmax<juce::int64> (0, anchorTimelineLength - 1),
+    scrollSamples = juce::jlimit<std::int64_t> (0,
+        juce::jmax<std::int64_t> (0, anchorTimelineLength - 1),
         scrollSamples + step);
     repaint();
 }
@@ -2582,13 +2582,13 @@ bool AudioRegionEditor::keyPressed (const juce::KeyPress& k)
     // a trackpad - keeps zoomed-in editing workable on a plain mouse.
     if (cmdOrCtrl && (k == juce::KeyPress::leftKey || k == juce::KeyPress::rightKey))
     {
-        const juce::int64 widthSamples = (juce::int64) std::round (
+        const std::int64_t widthSamples = (std::int64_t) std::round (
             (double) (getWidth() - 0) / juce::jmax (1.0e-9f, pixelsPerSample));
-        const juce::int64 step = juce::jmax<juce::int64> (1, widthSamples / 4);
-        const juce::int64 delta = (k == juce::KeyPress::leftKey ? -step : step);
-        const juce::int64 maxStart = juce::jmax<juce::int64> (0,
+        const std::int64_t step = juce::jmax<std::int64_t> (1, widthSamples / 4);
+        const std::int64_t delta = (k == juce::KeyPress::leftKey ? -step : step);
+        const std::int64_t maxStart = juce::jmax<std::int64_t> (0,
                                         anchorTimelineLength - widthSamples);
-        scrollSamples = juce::jlimit<juce::int64> (0, maxStart, scrollSamples + delta);
+        scrollSamples = juce::jlimit<std::int64_t> (0, maxStart, scrollSamples + delta);
         repaint();
         return true;
     }
@@ -2600,9 +2600,9 @@ bool AudioRegionEditor::keyPressed (const juce::KeyPress& k)
     }
     if (k == juce::KeyPress::endKey)
     {
-        const juce::int64 widthSamples = (juce::int64) std::round (
+        const std::int64_t widthSamples = (std::int64_t) std::round (
             (double) getWidth() / juce::jmax (1.0e-9f, pixelsPerSample));
-        scrollSamples = juce::jmax<juce::int64> (0, anchorTimelineLength - widthSamples);
+        scrollSamples = juce::jmax<std::int64_t> (0, anchorTimelineLength - widthSamples);
         repaint();
         return true;
     }
@@ -2752,17 +2752,17 @@ bool AudioRegionEditor::keyPressed (const juce::KeyPress& k)
     {
         auto* r = region();
         if (r == nullptr) return true;
-        const auto fadeLen = juce::jmax<juce::int64> (
+        const auto fadeLen = juce::jmax<std::int64_t> (
             0, juce::jmax (rangeStartSample, rangeEndSample)
                  - juce::jmin (rangeStartSample, rangeEndSample));
         const AudioRegion before = *r;
         AudioRegion after = before;
         if (k.getModifiers().isShiftDown())
             after.fadeOutSamples = juce::jmin (fadeLen,
-                                                  juce::jmax<juce::int64> (0, r->lengthInSamples - r->fadeInSamples));
+                                                  juce::jmax<std::int64_t> (0, r->lengthInSamples - r->fadeInSamples));
         else
             after.fadeInSamples = juce::jmin (fadeLen,
-                                                 juce::jmax<juce::int64> (0, r->lengthInSamples - r->fadeOutSamples));
+                                                 juce::jmax<std::int64_t> (0, r->lengthInSamples - r->fadeOutSamples));
         auto& um = engine.getUndoManager();
         um.beginNewTransaction (k.getModifiers().isShiftDown() ? "Fade-out to selection"
                                                                   : "Fade-in to selection");
@@ -2936,7 +2936,7 @@ bool AudioRegionEditor::keyPressed (const juce::KeyPress& k)
         const double sr = juce::jmax (1.0, engine.getCurrentSampleRate());
         const double bpm = juce::jmax (1.0, (double) session.tempoBpm.load (std::memory_order_relaxed));
         const int    bpb = juce::jmax (1, session.beatsPerBar.load (std::memory_order_relaxed));
-        const auto samplesPerBeat = (juce::int64) std::round (sr * 60.0 / bpm);
+        const auto samplesPerBeat = (std::int64_t) std::round (sr * 60.0 / bpm);
         const auto step = (k.getModifiers().isShiftDown() ? samplesPerBeat * bpb
                                                               : samplesPerBeat);
         const auto delta = (k == juce::KeyPress::leftKey ? -step : step);
@@ -2949,7 +2949,7 @@ bool AudioRegionEditor::keyPressed (const juce::KeyPress& k)
             if (reg.locked) return;
             const AudioRegion before = reg;
             AudioRegion after = before;
-            after.timelineStart = juce::jmax<juce::int64> (0, before.timelineStart + delta);
+            after.timelineStart = juce::jmax<std::int64_t> (0, before.timelineStart + delta);
             if (after.timelineStart == before.timelineStart) return;
             um.perform (new RegionEditAction (session, engine, trackIdx, idx, before, after));
         };
@@ -2983,8 +2983,8 @@ void AudioRegionEditor::zoomByFactor (float factor)
     pixelsPerSample = juce::jlimit (1.0e-5f, 1.0f, pixelsPerSample * factor);
     const auto anchorSampleAfterRaw = sampleForX (anchorXBefore, waveArea);
     scrollSamples += (editCursorSample - anchorSampleAfterRaw);
-    scrollSamples = juce::jlimit<juce::int64> (0,
-        juce::jmax<juce::int64> (0, anchorTimelineLength - 1), scrollSamples);
+    scrollSamples = juce::jlimit<std::int64_t> (0,
+        juce::jmax<std::int64_t> (0, anchorTimelineLength - 1), scrollSamples);
     repaint();
 }
 
@@ -3247,7 +3247,7 @@ void AudioRegionEditor::syncAutoCrossfades()
                          < regs[(size_t) b].timelineStart;
                 });
 
-    auto overlapWith = [&] (const AudioRegion& a, const AudioRegion& b) -> juce::int64
+    auto overlapWith = [&] (const AudioRegion& a, const AudioRegion& b) -> std::int64_t
     {
         const auto aEnd = a.timelineStart + a.lengthInSamples;
         if (aEnd <= b.timelineStart) return 0;
@@ -3263,7 +3263,7 @@ void AudioRegionEditor::syncAutoCrossfades()
         auto& self = regs[(size_t) idx];
         if (self.locked) continue;
 
-        juce::int64 overlapPrev = 0, overlapNext = 0;
+        std::int64_t overlapPrev = 0, overlapNext = 0;
         if (pos > 0)
             overlapPrev = overlapWith (regs[(size_t) order[pos - 1]], self);
         if (pos + 1 < order.size())
@@ -3311,9 +3311,9 @@ void AudioRegionEditor::syncAutoCrossfades()
         }
 
         // Re-clamp so fadeIn + fadeOut stays within the region length.
-        after.fadeInSamples  = juce::jlimit<juce::int64> (
+        after.fadeInSamples  = juce::jlimit<std::int64_t> (
             0, after.lengthInSamples, after.fadeInSamples);
-        after.fadeOutSamples = juce::jlimit<juce::int64> (
+        after.fadeOutSamples = juce::jlimit<std::int64_t> (
             0, after.lengthInSamples - after.fadeInSamples,
             after.fadeOutSamples);
 
@@ -3349,7 +3349,7 @@ void AudioRegionEditor::layoutStatusBar (juce::Rectangle<int> area)
     infoLabel .setBounds (inner);
 }
 
-juce::String formatBarBeatTickAt (juce::int64 sliceFileSample,
+juce::String formatBarBeatTickAt (std::int64_t sliceFileSample,
                                      const AudioRegion& r,
                                      double sampleRate, double bpm, int beatsPerBar)
 {
@@ -3484,10 +3484,10 @@ void AudioRegionEditor::normalizeRegion()
     juce::AudioBuffer<float> buf (channels, kChunkSamples);
 
     float peak = 0.0f;
-    juce::int64 done = 0;
+    std::int64_t done = 0;
     while (done < r->lengthInSamples)
     {
-        const int thisChunk = (int) juce::jmin<juce::int64> (kChunkSamples,
+        const int thisChunk = (int) juce::jmin<std::int64_t> (kChunkSamples,
                                                                   r->lengthInSamples - done);
         reader->read (&buf, 0, thisChunk, r->sourceOffset + done, true, true);
         for (int c = 0; c < channels; ++c)
@@ -3688,12 +3688,12 @@ int AudioRegionEditor::nextRegionIndex (int delta) const
     // Sort by (timelineStart, storageIndex) so ties are deterministic.
     // delta=+1 → smallest key strictly greater than current's key;
     // delta=-1 → largest key strictly less than current's key.
-    using Key = std::pair<juce::int64, int>;
+    using Key = std::pair<std::int64_t, int>;
     const Key cur { regs[(size_t) regionIdx].timelineStart, regionIdx };
     int bestIdx = -1;
     Key best = (delta > 0)
-        ? Key { std::numeric_limits<juce::int64>::max(), std::numeric_limits<int>::max() }
-        : Key { std::numeric_limits<juce::int64>::min(), std::numeric_limits<int>::min() };
+        ? Key { std::numeric_limits<std::int64_t>::max(), std::numeric_limits<int>::max() }
+        : Key { std::numeric_limits<std::int64_t>::min(), std::numeric_limits<int>::min() };
     for (int i = 0; i < (int) regs.size(); ++i)
     {
         if (i == regionIdx) continue;
@@ -3808,14 +3808,14 @@ void AudioRegionEditor::timerCallback()
         && pixelsPerSample > 0.0f && anchorTimelineLength > 0)
     {
         const auto playhead   = engine.getTransport().getPlayhead();
-        const juce::int64 rel = playhead - anchorTimelineStart;
+        const std::int64_t rel = playhead - anchorTimelineStart;
         if (rel >= 0 && rel < anchorTimelineLength && x < 0)
         {
-            const juce::int64 viewSamples = (juce::int64) std::round (
+            const std::int64_t viewSamples = (std::int64_t) std::round (
                 (double) getWidth() / pixelsPerSample);
-            const juce::int64 maxStart = juce::jmax<juce::int64> (0,
+            const std::int64_t maxStart = juce::jmax<std::int64_t> (0,
                                             anchorTimelineLength - viewSamples);
-            scrollSamples = juce::jlimit<juce::int64> (0, maxStart,
+            scrollSamples = juce::jlimit<std::int64_t> (0, maxStart,
                                 rel - viewSamples / 4);
             repaint (waveArea);
             x = transportPlayheadX (waveArea);   // playhead is in view now
@@ -3950,7 +3950,7 @@ void AudioRegionEditor::paintAutomationStep (int x, int y, juce::Rectangle<int> 
     const auto fileSample  = sampleForX (x, waveArea);
     const auto snappedFile = snapFileSampleToGrid (fileSample, bypassSnap);
     const auto fileToTimeline = rr->timelineStart - rr->sourceOffset;
-    const juce::int64 t = juce::jmax<juce::int64> (0, snappedFile + fileToTimeline);
+    const std::int64_t t = juce::jmax<std::int64_t> (0, snappedFile + fileToTimeline);
     float v01 = automationValueForY (y, waveArea);
     // Discrete lanes (Mute / Solo) store 0/1 only — same quantization as the
     // click-add path so the painted dot matches its audible behaviour.

@@ -46,7 +46,7 @@ constexpr bool isContinuousParam (AutomationParam p) noexcept
 
 struct AutomationPoint
 {
-    juce::int64 timeSamples   = 0;
+    std::int64_t timeSamples   = 0;
     float       value         = 0.0f;     // 0..1
     float       recordedAtBPM = 120.0f;
 
@@ -97,7 +97,7 @@ struct AutomationLane
 // Linear interp between bracketing points for continuous; step (hold
 // previous) for discrete. Out-of-range holds the first / last value.
 // Returns 0 on empty input — callers gate on points.empty() first.
-float evaluateLane (const std::vector<AutomationPoint>& points, juce::int64 t,
+float evaluateLane (const std::vector<AutomationPoint>& points, std::int64_t t,
                     AutomationParam param) noexcept;
 
 float denormalizeAutomationValue (AutomationParam p, float v01) noexcept;
@@ -329,8 +329,8 @@ struct ChannelStripParams
 struct TakeRef
 {
     juce::File file;
-    juce::int64 sourceOffset    = 0;
-    juce::int64 lengthInSamples = 0;
+    std::int64_t sourceOffset    = 0;
+    std::int64_t lengthInSamples = 0;
 };
 
 // 480 PPQN matches every modern DAW + .mid convention; high enough
@@ -338,7 +338,7 @@ struct TakeRef
 // rebuild the sample mapping; tick positions on events stay stable.
 constexpr int kMidiTicksPerQuarter = 480;
 
-inline double samplesToTicksFractional (juce::int64 samples,
+inline double samplesToTicksFractional (std::int64_t samples,
                                         double sampleRate,
                                         float bpm) noexcept
 {
@@ -347,19 +347,19 @@ inline double samplesToTicksFractional (juce::int64 samples,
              / (sampleRate * 60.0);
 }
 
-inline juce::int64 samplesToTicks (juce::int64 samples,
+inline std::int64_t samplesToTicks (std::int64_t samples,
                                    double sampleRate,
                                    float bpm) noexcept
 {
-    return (juce::int64) std::llround (samplesToTicksFractional (samples, sampleRate, bpm));
+    return (std::int64_t) std::llround (samplesToTicksFractional (samples, sampleRate, bpm));
 }
 
-inline juce::int64 ticksToSamples (juce::int64 ticks,
+inline std::int64_t ticksToSamples (std::int64_t ticks,
                                    double sampleRate,
                                    float bpm) noexcept
 {
     if (sampleRate <= 0.0 || bpm <= 0.0f) return 0;
-    return (juce::int64) std::llround (
+    return (std::int64_t) std::llround (
         (double) ticks * sampleRate * 60.0
             / ((double) bpm * (double) kMidiTicksPerQuarter));
 }
@@ -368,7 +368,7 @@ inline juce::int64 ticksToSamples (juce::int64 ticks,
 // next point (piecewise-constant tempo).
 struct TempoPoint
 {
-    juce::int64 timelineSamples = 0;
+    std::int64_t timelineSamples = 0;
     float       bpm             = 120.0f;
 };
 
@@ -411,7 +411,7 @@ public:
         for (auto& p : pts)
         {
             p.bpm = clampBpm (p.bpm);
-            p.timelineSamples = juce::jmax ((juce::int64) 0, p.timelineSamples);
+            p.timelineSamples = juce::jmax ((std::int64_t) 0, p.timelineSamples);
             if (! points_.empty() && points_.back().timelineSamples == p.timelineSamples)
                 points_.back() = p;                 // collision: last wins
             else
@@ -424,7 +424,7 @@ public:
     const std::vector<TempoPoint>& points() const noexcept { return points_; }
 
     // Valid only when !empty() (returns 120 as a harmless default otherwise).
-    float bpmAt (juce::int64 sample) const noexcept
+    float bpmAt (std::int64_t sample) const noexcept
     {
         if (points_.empty()) return 120.0f;
         float bpm = points_.front().bpm;
@@ -437,7 +437,7 @@ public:
     }
 
     // Valid only when !empty(); returns 0 otherwise (use the constant path).
-    double samplesToTicksFractional (juce::int64 sample, double sr) const noexcept
+    double samplesToTicksFractional (std::int64_t sample, double sr) const noexcept
     {
         if (sr <= 0.0 || sample <= 0 || points_.empty()) return 0.0;
 
@@ -445,23 +445,23 @@ public:
         double ticks = 0.0;
         for (size_t i = 0; i < points_.size(); ++i)
         {
-            const juce::int64 segStart = (i == 0) ? (juce::int64) 0 : points_[i].timelineSamples;
+            const std::int64_t segStart = (i == 0) ? (std::int64_t) 0 : points_[i].timelineSamples;
             if (sample <= segStart) break;
-            const juce::int64 segEnd = (i + 1 < points_.size())
+            const std::int64_t segEnd = (i + 1 < points_.size())
                                          ? points_[i + 1].timelineSamples
-                                         : std::numeric_limits<juce::int64>::max();
-            const juce::int64 upTo = juce::jmin (sample, segEnd);
+                                         : std::numeric_limits<std::int64_t>::max();
+            const std::int64_t upTo = juce::jmin (sample, segEnd);
             ticks += (double) (upTo - segStart) * (double) points_[i].bpm * k;
         }
         return ticks;
     }
 
-    juce::int64 samplesToTicks (juce::int64 sample, double sr) const noexcept
+    std::int64_t samplesToTicks (std::int64_t sample, double sr) const noexcept
     {
-        return (juce::int64) std::llround (samplesToTicksFractional (sample, sr));
+        return (std::int64_t) std::llround (samplesToTicksFractional (sample, sr));
     }
 
-    juce::int64 ticksToSamples (juce::int64 ticks, double sr) const noexcept
+    std::int64_t ticksToSamples (std::int64_t ticks, double sr) const noexcept
     {
         if (sr <= 0.0 || ticks <= 0 || points_.empty()) return 0;
 
@@ -469,20 +469,20 @@ public:
         double remTicks = (double) ticks;
         for (size_t i = 0; i < points_.size(); ++i)
         {
-            const juce::int64 segStart = (i == 0) ? (juce::int64) 0 : points_[i].timelineSamples;
+            const std::int64_t segStart = (i == 0) ? (std::int64_t) 0 : points_[i].timelineSamples;
             const bool last = (i + 1 >= points_.size());
             if (! last)
             {
-                const juce::int64 segLen = points_[i + 1].timelineSamples - segStart;
+                const std::int64_t segLen = points_[i + 1].timelineSamples - segStart;
                 const double segTicks = (double) segLen * (double) points_[i].bpm
                                             / invK;   // ticks the segment holds
                 if (remTicks <= segTicks)
-                    return segStart + (juce::int64) std::llround (remTicks * invK / (double) points_[i].bpm);
+                    return segStart + (std::int64_t) std::llround (remTicks * invK / (double) points_[i].bpm);
                 remTicks -= segTicks;
             }
             else
             {
-                return segStart + (juce::int64) std::llround (remTicks * invK / (double) points_[i].bpm);
+                return segStart + (std::int64_t) std::llround (remTicks * invK / (double) points_[i].bpm);
             }
         }
         return 0;
@@ -535,7 +535,7 @@ enum class SnapResolution : int
 
 // Every surface displaying a position routes through this so flipping
 // Session::timeDisplayMode swaps the whole app atomically.
-inline juce::String formatSamplePosition (juce::int64 samples,
+inline juce::String formatSamplePosition (std::int64_t samples,
                                             double sampleRate,
                                             float bpm,
                                             int beatsPerBar,
@@ -571,7 +571,7 @@ inline juce::String formatSamplePosition (juce::int64 samples,
 // regresses); with a populated map it integrates ticks across the tempo
 // segments so bar/beat stay correct after a tempo change. Time mode is tempo-
 // independent and routes through the scalar path either way.
-inline juce::String formatSamplePosition (juce::int64 samples,
+inline juce::String formatSamplePosition (std::int64_t samples,
                                             double sampleRate,
                                             const TempoMap& tempoMap,
                                             float fallbackBpm,
@@ -585,9 +585,9 @@ inline juce::String formatSamplePosition (juce::int64 samples,
     if (sampleRate <= 0.0 || beatsPerBar <= 0)
         return juce::String ("1.1.000");
 
-    const juce::int64 ticks        = tempoMap.samplesToTicks (samples, sampleRate);
-    const juce::int64 ticksPerBeat = kMidiTicksPerQuarter;
-    const juce::int64 ticksPerBar  = ticksPerBeat * (juce::int64) beatsPerBar;
+    const std::int64_t ticks        = tempoMap.samplesToTicks (samples, sampleRate);
+    const std::int64_t ticksPerBeat = kMidiTicksPerQuarter;
+    const std::int64_t ticksPerBar  = ticksPerBeat * (std::int64_t) beatsPerBar;
     const int bar  = (int) (ticks / ticksPerBar);
     const int beat = (int) ((ticks % ticksPerBar) / ticksPerBeat);
     const int tick = (int) (ticks % ticksPerBeat);
@@ -603,8 +603,8 @@ struct MidiNote
     int  channel       = 1;     // 1..16
     int  noteNumber    = 60;    // 0..127
     int  velocity      = 100;   // 1..127 (recorded notes always >= 1)
-    juce::int64 startTick     = 0;
-    juce::int64 lengthInTicks = 0;
+    std::int64_t startTick     = 0;
+    std::int64_t lengthInTicks = 0;
 
     bool operator== (const MidiNote& o) const noexcept
     {
@@ -622,7 +622,7 @@ struct MidiCc
     int  channel    = 1;
     int  controller = 64;       // sustain pedal
     int  value      = 0;
-    juce::int64 atTick = 0;
+    std::int64_t atTick = 0;
 
     bool operator== (const MidiCc& o) const noexcept
     {
@@ -634,16 +634,16 @@ struct MidiCc
 
 struct MidiTakeRef
 {
-    juce::int64           lengthInTicks = 0;
+    std::int64_t           lengthInTicks = 0;
     std::vector<MidiNote> notes;
     std::vector<MidiCc>   ccs;
 };
 
 struct MidiRegion
 {
-    juce::int64 timelineStart    = 0;
-    juce::int64 lengthInSamples  = 0;   // cached at session tempo
-    juce::int64 lengthInTicks    = 0;   // source of truth for musical length
+    std::int64_t timelineStart    = 0;
+    std::int64_t lengthInSamples  = 0;   // cached at session tempo
+    std::int64_t lengthInTicks    = 0;   // source of truth for musical length
 
     std::vector<MidiNote> notes;
     std::vector<MidiCc>   ccs;
@@ -701,9 +701,9 @@ inline float applyFadeShape (float t, FadeShape s) noexcept
 struct AudioRegion
 {
     juce::File file;
-    juce::int64 timelineStart = 0;
-    juce::int64 lengthInSamples = 0;
-    juce::int64 sourceOffset = 0;
+    std::int64_t timelineStart = 0;
+    std::int64_t lengthInSamples = 0;
+    std::int64_t sourceOffset = 0;
     int          numChannels    = 1;  // 1 = mono WAV, 2 = stereo WAV
 
     // Invariants enforced by RecordManager + defensive re-clamp in
@@ -712,8 +712,8 @@ struct AudioRegion
     //   fadeInSamples + fadeOutSamples <= lengthInSamples
     // Second invariant prevents the ramps overlapping mid-region and
     // multiplying to a notch instead of a flat 1.0 hold.
-    juce::int64 fadeInSamples  = 0;
-    juce::int64 fadeOutSamples = 0;
+    std::int64_t fadeInSamples  = 0;
+    std::int64_t fadeOutSamples = 0;
 
     FadeShape fadeInShape  = FadeShape::Linear;
     FadeShape fadeOutShape = FadeShape::Linear;
@@ -957,7 +957,7 @@ struct AuxLaneParams
 struct Marker
 {
     juce::String name;
-    juce::int64  timelineSamples = 0;
+    std::int64_t  timelineSamples = 0;
     juce::Colour colour;
 };
 
@@ -1152,10 +1152,10 @@ public:
     // -1 outside tolerance. Message-thread only.
     std::vector<Marker>&       getMarkers()       noexcept { return markers; }
     const std::vector<Marker>& getMarkers() const noexcept { return markers; }
-    int  addMarker     (juce::int64 timelineSamples, const juce::String& name = {});
+    int  addMarker     (std::int64_t timelineSamples, const juce::String& name = {});
     void removeMarker  (int index);
     void renameMarker  (int index, const juce::String& name);
-    int  findMarkerNear (juce::int64 timelineSamples, juce::int64 toleranceSamples) const noexcept;
+    int  findMarkerNear (std::int64_t timelineSamples, std::int64_t toleranceSamples) const noexcept;
 
     MasterBusParams& master() noexcept             { return masterParams; }
     const MasterBusParams& master() const noexcept { return masterParams; }
@@ -1188,11 +1188,11 @@ public:
 
     // Mirrored to/from Transport by publish/consume bookends. Plain
     // non-atomic — touched only on the message thread between bookends.
-    juce::int64 savedLoopStart    = 0;
-    juce::int64 savedLoopEnd      = 0;
+    std::int64_t savedLoopStart    = 0;
+    std::int64_t savedLoopEnd      = 0;
     bool        savedLoopEnabled  = false;
-    juce::int64 savedPunchIn      = 0;
-    juce::int64 savedPunchOut     = 0;
+    std::int64_t savedPunchIn      = 0;
+    std::int64_t savedPunchOut     = 0;
     bool        savedPunchEnabled = false;
 
     // Two orthogonal fields: snapToGrid (master enable, SnapHelpers
@@ -1243,7 +1243,7 @@ public:
     // otherwise the constant tempoBpm. Single entry point so consumers don't
     // each branch on tempoMap.empty(). Message-thread only until the RT-safe
     // published snapshot lands (the audio thread still uses tempoBpm directly).
-    juce::int64 samplesToTicks (juce::int64 samples, double sr) const noexcept
+    std::int64_t samplesToTicks (std::int64_t samples, double sr) const noexcept
     {
         return tempoMap.empty()
                  ? ::duskstudio::samplesToTicks (samples, sr, tempoBpm.load (std::memory_order_relaxed))
@@ -1252,19 +1252,19 @@ public:
     // Fractional ticks (no rounding) for sub-tick-smooth UI like the piano-roll
     // playhead — the integer path jumps in whole-tick steps (several pixels when
     // zoomed in), which reads as a glitchy line.
-    double samplesToTicksFractional (juce::int64 samples, double sr) const noexcept
+    double samplesToTicksFractional (std::int64_t samples, double sr) const noexcept
     {
         return tempoMap.empty()
                  ? ::duskstudio::samplesToTicksFractional (samples, sr, tempoBpm.load (std::memory_order_relaxed))
                  : tempoMap.samplesToTicksFractional (samples, sr);
     }
-    juce::int64 ticksToSamples (juce::int64 ticks, double sr) const noexcept
+    std::int64_t ticksToSamples (std::int64_t ticks, double sr) const noexcept
     {
         return tempoMap.empty()
                  ? ::duskstudio::ticksToSamples (ticks, sr, tempoBpm.load (std::memory_order_relaxed))
                  : tempoMap.ticksToSamples (ticks, sr);
     }
-    float bpmAt (juce::int64 sample) const noexcept
+    float bpmAt (std::int64_t sample) const noexcept
     {
         return tempoMap.empty()
                  ? tempoBpm.load (std::memory_order_relaxed)
@@ -1299,7 +1299,7 @@ public:
     // Last position the user clicked on the tape-strip ruler (samples).
     // -1 = never clicked / unknown — engine treats as PauseInPlace fall-
     // back when ReturnToLastClicked is selected.
-    std::atomic<juce::int64> lastClickedTimelineSample { -1 };
+    std::atomic<std::int64_t> lastClickedTimelineSample { -1 };
 
     // Shifts playhead back one bar so metronome ticks pre-roll before
     // capture. WAV's first sample still maps to playhead-at-Record-press.
@@ -1308,7 +1308,7 @@ public:
     // Timeline position the most recent record pass STARTED at; FFWD-
     // while-stopped jumps here. 0 = haven't recorded yet (first tap is
     // a no-op).
-    std::atomic<juce::int64> lastRecordPointSamples { 0 };
+    std::atomic<std::int64_t> lastRecordPointSamples { 0 };
 
     // Auto-punch pre/post-roll. preRoll: existing material plays during
     // pre-roll; the audio callback's punch-window gate prevents
@@ -1344,7 +1344,7 @@ public:
     // UI writes; audio reads to resolve bank-relative MIDI bindings
     // (TrackFaderBank etc.) -> absoluteTrack = activeBank*kBankSize + pos.
     std::atomic<int>         activeBank { 0 };
-    std::atomic<juce::int64> midiLearnCapture       { 0 };
+    std::atomic<std::int64_t> midiLearnCapture       { 0 };
 
     // Persisted as device identifier in JSON; engine resolves to index
     // on load + on every hot-plug rebuild. externalBpm: smoothed BPM
@@ -1367,7 +1367,7 @@ public:
     // Clock (QF + F8 multiplex). externalTimeCodeFrames has the
     // 2-frame QF transmission-delay compensation applied — matches
     // what the master's display reads RIGHT NOW.
-    mutable std::atomic<juce::int64> externalTimeCodeFrames    { 0 };
+    mutable std::atomic<std::int64_t> externalTimeCodeFrames    { 0 };
     mutable std::atomic<bool>        externalTimeCodeRolling   { false };
     mutable std::atomic<bool>        externalTimeCodeReversed  { false };
     mutable std::atomic<int>         externalTimeCodeFrameRate { 3 };  // 0=24, 1=25, 2=29.97DF, 3=30
@@ -1376,7 +1376,7 @@ public:
 
     // -1 = nothing pending. Audio writes target sample; message-thread
     // timer drains, calls Transport::setPlayhead, stores -1.
-    std::atomic<juce::int64> pendingTransportPlayhead { -1 };
+    std::atomic<std::int64_t> pendingTransportPlayhead { -1 };
 
     // MTC master-emit. Reuses syncOutputIdx port (Clock + MTC mux).
     std::atomic<bool> syncOutputEmitTimeCode     { false };
@@ -1413,8 +1413,8 @@ public:
         // press+release both land between two 20 Hz timer polls leaves
         // rewHeld/ffwdHeld false at both polls, so the timer would miss the
         // edge; it watches this counter to still fire the tap.
-        std::atomic<juce::uint32> rewPressCount  { 0 };
-        std::atomic<juce::uint32> ffwdPressCount { 0 };
+        std::atomic<std::uint32_t> rewPressCount  { 0 };
+        std::atomic<std::uint32_t> ffwdPressCount { 0 };
     };
     McuSessionState mcu;
 

@@ -58,7 +58,7 @@ public:
     // absolute playhead at the start of the block (used to time
     // jog-wheel scrub steps against a monotonic sample clock).
     void process (const juce::MidiBuffer& events,
-                  juce::int64 blockStartSample) noexcept;
+                  std::int64_t blockStartSample) noexcept;
 
 private:
     Session& session;

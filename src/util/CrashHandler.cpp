@@ -67,11 +67,11 @@ void crashCallback (void* /*platformSpecific*/)
     // smaller bounded read is the most likely to succeed.
     if (cachedLogFile.existsAsFile())
     {
-        constexpr juce::int64 kTailBytes = 64 * 1024;
+        constexpr std::int64_t kTailBytes = 64 * 1024;
         juce::FileInputStream in (cachedLogFile);
         if (in.openedOk())
         {
-            const auto total = in.getTotalLength();
+            const std::int64_t total = in.getTotalLength();
             const auto bytes = juce::jmin (total, kTailBytes);
             in.setPosition (total - bytes);
             juce::MemoryBlock buf;

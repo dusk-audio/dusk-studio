@@ -112,8 +112,8 @@ private:
     // RESOLUTION (grid combo); the MIDI editor's own snap-enable
     // (session.midiEditorSnap) decides whether it actually applies — see
     // effectiveSnapTicks(), which returns 0 (no snap) when the enable is off.
-    juce::int64 snapTicks = 120;
-    juce::int64 effectiveSnapTicks() const noexcept;
+    std::int64_t snapTicks = 120;
+    std::int64_t effectiveSnapTicks() const noexcept;
 
     int scrollY = (kNumKeys - 24) * kNoteHeight / 2;  // centre near middle C
     int scrollX = 0;
@@ -132,9 +132,9 @@ private:
     // region boundary.
     struct DragSnapshot
     {
-        juce::int64 startTick     = 0;
+        std::int64_t startTick     = 0;
         int         noteNumber    = 0;
-        juce::int64 lengthInTicks = 0;
+        std::int64_t lengthInTicks = 0;
         int         velocity      = 100;
     };
     std::vector<DragSnapshot> dragSnapshots;
@@ -159,8 +159,8 @@ private:
 
     // Time-range drag in the bar/beat ruler. Notes whose start is in
     // [start, end) get auto-added to selectedNotes.
-    juce::int64 rangeStartTick = 0;
-    juce::int64 rangeEndTick   = 0;
+    std::int64_t rangeStartTick = 0;
+    std::int64_t rangeEndTick   = 0;
     bool        rangeActive    = false;
 
     // In-component state only — reopening resets to defaults (editor
@@ -197,14 +197,14 @@ private:
     // false = honour click's exact row without extra snap (the row IS
     // the noteNumber, so we still snap visually — just no constraint pass).
     bool keySnap = true;
-    juce::int64 dragOriginTick    = 0;
+    std::int64_t dragOriginTick    = 0;
     int         dragOriginNoteNum = 0;
-    juce::int64 dragNoteStartTick = 0;
-    juce::int64 dragNoteLenTicks  = 0;
+    std::int64_t dragNoteStartTick = 0;
+    std::int64_t dragNoteLenTicks  = 0;
 
     // Reaper-style gold cursor — "I am here" signal independent of
     // the transport.
-    juce::int64 editCursorTick = 0;
+    std::int64_t editCursorTick = 0;
 
     // Defensible when regionIdx out of range so paint never branches.
     MidiRegion*       region();
@@ -222,8 +222,8 @@ private:
 
     int  yForNoteNumber (int noteNumber) const;
     int  noteNumberForY (int y) const;
-    int  xForTick (juce::int64 tick) const;
-    juce::int64 tickForX (int x) const;
+    int  xForTick (std::int64_t tick) const;
+    std::int64_t tickForX (int x) const;
 
     // onRightEdge = click in the note's last few px (resize vs move
     // intent). Returns -1 on empty grid.
@@ -255,12 +255,12 @@ private:
     void beginGroupDrag (int anchorIdx);
     // Clamps delta against group bounding box so no note ends up out
     // of [0, lengthInTicks] or [0, 127].
-    void applyGroupMove (juce::int64 deltaTicks, int deltaPitch);
+    void applyGroupMove (std::int64_t deltaTicks, int deltaPitch);
     void transposeSelected (int semitones);
 
     // strength 1.0 = fully snap; 0.5 = move halfway from original to
     // snapped (humanise without losing original feel).
-    void quantizeSelected (juce::int64 gridTicks, float strength);
+    void quantizeSelected (std::int64_t gridTicks, float strength);
 
     // Empty selection = whole region (mirrors quantize). humanize
     // adds [-range..+range]% of 127 per note; setVelocity sets a
@@ -270,7 +270,7 @@ private:
     void showVelocityPopup();
 
     void setChannelForSelected (int channel);
-    void setLengthTicksForSelected (juce::int64 ticks);
+    void setLengthTicksForSelected (std::int64_t ticks);
     // Right-click promotes clicked note to selected if it wasn't.
     void showNotePropertiesPopup (int hitNoteIdx, juce::Point<int> screenPos);
 
@@ -285,7 +285,7 @@ private:
     // transpose acts on the copy.
     void duplicateSelectedNotes();
 
-    void nudgeSelectedTicks (juce::int64 deltaTicks);
+    void nudgeSelectedTicks (std::int64_t deltaTicks);
     bool isInScale (int noteNumber) const noexcept;
     // Coerce a pitch to the nearest in-scale note when "Key snap" is armed.
     int  snapPitchToScale (int noteNumber) const noexcept;
@@ -370,7 +370,7 @@ private:
 
     void layoutStatusBar (juce::Rectangle<int> area);
 
-    juce::String formatBarBeat (juce::int64 tick) const;
+    juce::String formatBarBeat (std::int64_t tick) const;
 
     // -1 if nothing selected.
     int activeVelocity() const noexcept;

@@ -26,7 +26,7 @@ constexpr FrameRateInfo kRates[4] =
 // For 29.97 DF we COUNT the drop-frame skips: every minute except every
 // 10th drops 2 frame indices (00 and 01) — the wall-clock frame count
 // stays continuous because the master also drops them.
-juce::int64 smpteToFrames (int hh, int mm, int ss, int ff,
+std::int64_t smpteToFrames (int hh, int mm, int ss, int ff,
                             MidiTimeCodeReceiver::FrameRate rate) noexcept
 {
     if (rate == MidiTimeCodeReceiver::Fps29_97DF)
@@ -34,23 +34,23 @@ juce::int64 smpteToFrames (int hh, int mm, int ss, int ff,
         // Standard 29.97 DF formula. nominalFps = 30 for arithmetic
         // (the master encodes minutes/seconds using the 30-fps grid
         // and drops 2 frames per minute except every 10th).
-        const juce::int64 totalMinutes = (juce::int64) hh * 60 + mm;
-        const juce::int64 dropped = 2 * (totalMinutes - totalMinutes / 10);
-        const juce::int64 grid30  = ((juce::int64) hh * 3600
-                                     + (juce::int64) mm * 60
+        const std::int64_t totalMinutes = (std::int64_t) hh * 60 + mm;
+        const std::int64_t dropped = 2 * (totalMinutes - totalMinutes / 10);
+        const std::int64_t grid30  = ((std::int64_t) hh * 3600
+                                     + (std::int64_t) mm * 60
                                      + ss) * 30 + ff;
         return grid30 - dropped;
     }
 
     const int fps = (int) kRates[(int) rate].fps;
-    return ((juce::int64) hh * 3600
-          + (juce::int64) mm * 60
+    return ((std::int64_t) hh * 3600
+          + (std::int64_t) mm * 60
           + ss) * fps + ff;
 }
 } // namespace
 
-void MidiTimeCodeReceiver::onQuarterFrame (juce::uint8 data1,
-                                             juce::int64 atSample) noexcept
+void MidiTimeCodeReceiver::onQuarterFrame (std::uint8_t data1,
+                                             std::int64_t atSample) noexcept
 {
     // F1 data byte: high nibble = message type (0..7), low nibble = data.
     const int nibbleIdx = (data1 >> 4) & 0x07;
@@ -84,7 +84,7 @@ void MidiTimeCodeReceiver::onQuarterFrame (juce::uint8 data1,
     {
         // Fresh forward sequence — clear accumulator + exit reverse-park.
         reversed.store (false, std::memory_order_relaxed);
-        nibbleAccumulator[0] = (juce::uint8) dataBits;
+        nibbleAccumulator[0] = (std::uint8_t) dataBits;
         nibbleAccumulator[1] = nibbleAccumulator[2] = nibbleAccumulator[3] = 0;
     }
     else
@@ -95,10 +95,10 @@ void MidiTimeCodeReceiver::onQuarterFrame (juce::uint8 data1,
         const int byteIdx = nibbleIdx / 2;
         if ((nibbleIdx & 1) == 0)
             nibbleAccumulator[byteIdx] =
-                (juce::uint8) ((nibbleAccumulator[byteIdx] & 0xF0) | dataBits);
+                (std::uint8_t) ((nibbleAccumulator[byteIdx] & 0xF0) | dataBits);
         else
             nibbleAccumulator[byteIdx] =
-                (juce::uint8) ((nibbleAccumulator[byteIdx] & 0x0F)
+                (std::uint8_t) ((nibbleAccumulator[byteIdx] & 0x0F)
                                  | (dataBits << 4));
     }
 
@@ -115,7 +115,7 @@ void MidiTimeCodeReceiver::onQuarterFrame (juce::uint8 data1,
     }
 }
 
-void MidiTimeCodeReceiver::commitAssembledFrame (juce::int64 atSample,
+void MidiTimeCodeReceiver::commitAssembledFrame (std::int64_t atSample,
                                                    bool applyTwoFrameOffset) noexcept
 {
     // Layout: [0] = ff (0..29 or 0..30 depending on rate)
@@ -131,7 +131,7 @@ void MidiTimeCodeReceiver::commitAssembledFrame (juce::int64 atSample,
     const FrameRate rate = (FrameRate) rateBits;
     detectedRate.store ((int) rate, std::memory_order_relaxed);
 
-    juce::int64 frames = smpteToFrames (hh, mm, ss, ff, rate);
+    std::int64_t frames = smpteToFrames (hh, mm, ss, ff, rate);
     if (applyTwoFrameOffset)
         frames += 2;  // 2-frame QF transmission-delay compensation
 
@@ -140,8 +140,8 @@ void MidiTimeCodeReceiver::commitAssembledFrame (juce::int64 atSample,
     lastEventSample = atSample;
 }
 
-void MidiTimeCodeReceiver::onFullFrameSysex (const juce::uint8* msg, int sz,
-                                               juce::int64 atSample) noexcept
+void MidiTimeCodeReceiver::onFullFrameSysex (const std::uint8_t* msg, int sz,
+                                               std::int64_t atSample) noexcept
 {
     // F0 7F 7F 01 01 hr mn sc fr F7 — 10 bytes. Indices into msg:
     //   0: F0
@@ -158,10 +158,10 @@ void MidiTimeCodeReceiver::onFullFrameSysex (const juce::uint8* msg, int sz,
         || msg[4] != 0x01)
         return;
 
-    nibbleAccumulator[0] = (juce::uint8) (msg[8] & 0x1F);  // ff
-    nibbleAccumulator[1] = (juce::uint8) (msg[7] & 0x3F);  // ss
-    nibbleAccumulator[2] = (juce::uint8) (msg[6] & 0x3F);  // mm
-    nibbleAccumulator[3] = (juce::uint8) (msg[5] & 0x7F);  // hh + rate
+    nibbleAccumulator[0] = (std::uint8_t) (msg[8] & 0x1F);  // ff
+    nibbleAccumulator[1] = (std::uint8_t) (msg[7] & 0x3F);  // ss
+    nibbleAccumulator[2] = (std::uint8_t) (msg[6] & 0x3F);  // mm
+    nibbleAccumulator[3] = (std::uint8_t) (msg[5] & 0x7F);  // hh + rate
     // No +2 offset — full-frame sysex carries the master's INSTANT
     // playhead. Also exits reverse-park (re-locate is a forward op).
     reversed.store (false, std::memory_order_relaxed);
@@ -169,7 +169,7 @@ void MidiTimeCodeReceiver::onFullFrameSysex (const juce::uint8* msg, int sz,
 }
 
 void MidiTimeCodeReceiver::process (const juce::MidiBuffer& events,
-                                      juce::int64 blockStartSample,
+                                      std::int64_t blockStartSample,
                                       int numSamples) noexcept
 {
     for (const auto meta : events)
@@ -179,12 +179,12 @@ void MidiTimeCodeReceiver::process (const juce::MidiBuffer& events,
         const int   sz     = msg.getRawDataSize();
         if (raw == nullptr || sz < 1) continue;
 
-        const auto status = (juce::uint8) raw[0];
-        const juce::int64 atSample = blockStartSample + meta.samplePosition;
+        const auto status = (std::uint8_t) raw[0];
+        const std::int64_t atSample = blockStartSample + meta.samplePosition;
 
         if (status == 0xF1 && sz >= 2)
         {
-            onQuarterFrame ((juce::uint8) raw[1], atSample);
+            onQuarterFrame ((std::uint8_t) raw[1], atSample);
         }
         else if (status == 0xF0)
         {
@@ -195,7 +195,7 @@ void MidiTimeCodeReceiver::process (const juce::MidiBuffer& events,
     // Watchdog: drop rolling if QFs stopped arriving. lastEventSample
     // tracks the most recent QF or full-frame; if blockEnd hasn't seen
     // anything in kRollingTimeoutSamples we declare master stopped.
-    const juce::int64 blockEnd = blockStartSample + numSamples;
+    const std::int64_t blockEnd = blockStartSample + numSamples;
     if (rolling.load (std::memory_order_relaxed)
         && lastEventSample >= 0
         && blockEnd - lastEventSample > rollingTimeoutSamples)

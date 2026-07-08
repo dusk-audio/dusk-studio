@@ -13,7 +13,7 @@ void sortMarkers (Session& s)
         { return a.timelineSamples < b.timelineSamples; });
 }
 
-int findMarkerByNameAt (Session& s, const juce::String& name, juce::int64 atSamples)
+int findMarkerByNameAt (Session& s, const juce::String& name, std::int64_t atSamples)
 {
     const auto& m = s.getMarkers();
     for (int i = 0; i < (int) m.size(); ++i)
@@ -26,7 +26,7 @@ int findMarkerByNameAt (Session& s, const juce::String& name, juce::int64 atSamp
 
 // ── AddMarkerAction ───────────────────────────────────────────────────────
 
-AddMarkerAction::AddMarkerAction (Session& s, juce::int64 t, juce::String n)
+AddMarkerAction::AddMarkerAction (Session& s, std::int64_t t, juce::String n)
     : session (s), timelineSamples (t), name (std::move (n))
 {}
 
@@ -82,7 +82,7 @@ bool RemoveMarkerAction::undo()
 // ── MoveMarkerAction ──────────────────────────────────────────────────────
 
 MoveMarkerAction::MoveMarkerAction (Session& s, juce::String n,
-                                      juce::int64 from, juce::int64 to)
+                                      std::int64_t from, std::int64_t to)
     : session (s), name (std::move (n)), fromSamples (from), toSamples (to)
 {}
 

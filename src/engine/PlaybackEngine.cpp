@@ -21,7 +21,7 @@ constexpr int kLoopSeamFade = 64;
 
 // Loops shorter than this fall back to a plain linear read: the split loop
 // would degenerate into per-sample spans.
-constexpr juce::int64 kMinLoopLenForSplit = 2 * (juce::int64) kLoopSeamFade;
+constexpr std::int64_t kMinLoopLenForSplit = 2 * (std::int64_t) kLoopSeamFade;
 } // namespace
 PlaybackEngine::PlaybackEngine (Session& s) : session (s)
 {
@@ -135,8 +135,8 @@ void PlaybackEngine::preparePlayback()
             rs.timelineStart   = region.timelineStart;
             rs.lengthInSamples = region.lengthInSamples;
             rs.sourceOffset    = region.sourceOffset;
-            rs.fadeInSamples   = juce::jmax ((juce::int64) 0, region.fadeInSamples);
-            rs.fadeOutSamples  = juce::jmax ((juce::int64) 0, region.fadeOutSamples);
+            rs.fadeInSamples   = juce::jmax ((std::int64_t) 0, region.fadeInSamples);
+            rs.fadeOutSamples  = juce::jmax ((std::int64_t) 0, region.fadeOutSamples);
             rs.fadeInShape     = region.fadeInShape;
             rs.fadeOutShape    = region.fadeOutShape;
             rs.numChannels     = juce::jlimit (1, 2, region.numChannels);
@@ -184,10 +184,10 @@ void PlaybackEngine::preparePlayback()
         {
             auto& a = stream->regions[i - 1];
             auto& b = stream->regions[i];
-            const juce::int64 aEnd = a.timelineStart + a.lengthInSamples;
+            const std::int64_t aEnd = a.timelineStart + a.lengthInSamples;
             if (aEnd > b.timelineStart)
             {
-                const juce::int64 overlap = juce::jmin (
+                const std::int64_t overlap = juce::jmin (
                     aEnd - b.timelineStart,
                     juce::jmin (a.lengthInSamples, b.lengthInSamples));
                 a.overlapNextLen = overlap;
@@ -209,7 +209,7 @@ void PlaybackEngine::preparePlayback()
     streamsActive.store (true, std::memory_order_release);
 }
 
-void PlaybackEngine::primeLoopCaches (juce::int64 loopStart, juce::int64 loopEnd)
+void PlaybackEngine::primeLoopCaches (std::int64_t loopStart, std::int64_t loopEnd)
 {
     if (loopEnd <= loopStart || loopStart < 0) return;
 
@@ -221,9 +221,9 @@ void PlaybackEngine::primeLoopCaches (juce::int64 loopStart, juce::int64 loopEnd
             rs.loopCacheTimelineStart = -1;
             rs.loopCacheLen           = 0;
 
-            const juce::int64 regionEnd  = rs.timelineStart + rs.lengthInSamples;
-            const juce::int64 cacheStart = juce::jmax (loopStart, rs.timelineStart);
-            const juce::int64 cacheEnd   = juce::jmin (loopStart + (juce::int64) kLoopCacheSamples,
+            const std::int64_t regionEnd  = rs.timelineStart + rs.lengthInSamples;
+            const std::int64_t cacheStart = juce::jmax (loopStart, rs.timelineStart);
+            const std::int64_t cacheEnd   = juce::jmin (loopStart + (std::int64_t) kLoopCacheSamples,
                                                         regionEnd);
             if (cacheEnd <= cacheStart) continue;
 
@@ -288,12 +288,12 @@ void PlaybackEngine::stopPlayback()
 }
 
 void PlaybackEngine::readForTrack (int trackIndex,
-                                   juce::int64 playheadSamples,
+                                   std::int64_t playheadSamples,
                                    float* outL,
                                    float* outR,
                                    int numSamples,
-                                   juce::int64 loopStart,
-                                   juce::int64 loopEnd) noexcept
+                                   std::int64_t loopStart,
+                                   std::int64_t loopEnd) noexcept
 {
     if (outL == nullptr) return;
     std::memset (outL, 0, sizeof (float) * (size_t) numSamples);
@@ -310,7 +310,7 @@ void PlaybackEngine::readForTrack (int trackIndex,
     auto& slot = streams[(size_t) trackIndex];
     if (slot == nullptr) return;
 
-    const juce::int64 loopLen = loopEnd - loopStart;
+    const std::int64_t loopLen = loopEnd - loopStart;
     const bool splitAtLoop = loopStart >= 0 && loopLen >= kMinLoopLenForSplit
                               && playheadSamples < loopEnd;
     if (! splitAtLoop)
@@ -326,7 +326,7 @@ void PlaybackEngine::readForTrack (int trackIndex,
     int seamOffsets[8];
     int numSeams = 0;
     int done = 0;
-    juce::int64 pos = playheadSamples;
+    std::int64_t pos = playheadSamples;
     while (done < numSamples)
     {
         if (pos >= loopEnd)
@@ -334,7 +334,7 @@ void PlaybackEngine::readForTrack (int trackIndex,
             pos = loopStart + (pos - loopEnd) % loopLen;
             if (numSeams < 8) seamOffsets[numSeams++] = done;
         }
-        const int span = (int) juce::jmin ((juce::int64) (numSamples - done),
+        const int span = (int) juce::jmin ((std::int64_t) (numSamples - done),
                                             loopEnd - pos);
         readSpanForTrack (*slot, pos, outL, outR, done, span);
         done += span;
@@ -368,7 +368,7 @@ void PlaybackEngine::readForTrack (int trackIndex,
 }
 
 void PlaybackEngine::readSpanForTrack (PerTrackStream& slotRef,
-                                       juce::int64 playheadSamples,
+                                       std::int64_t playheadSamples,
                                        float* outL,
                                        float* outR,
                                        int outBase,
@@ -377,7 +377,7 @@ void PlaybackEngine::readSpanForTrack (PerTrackStream& slotRef,
     outL += outBase;
     if (outR != nullptr) outR += outBase;
 
-    const juce::int64 blockEnd = playheadSamples + numSamples;
+    const std::int64_t blockEnd = playheadSamples + numSamples;
 
     for (auto& r : slotRef.regions)
     {
@@ -388,11 +388,11 @@ void PlaybackEngine::readSpanForTrack (PerTrackStream& slotRef,
         // past the block, no later region can overlap us either.
         if (r.timelineStart >= blockEnd) break;
 
-        const juce::int64 regionEnd = r.timelineStart + r.lengthInSamples;
+        const std::int64_t regionEnd = r.timelineStart + r.lengthInSamples;
         if (regionEnd <= playheadSamples) continue;  // already past
 
-        const juce::int64 firstWithin = juce::jmax (playheadSamples, r.timelineStart);
-        const juce::int64 lastWithin  = juce::jmin (blockEnd, regionEnd);
+        const std::int64_t firstWithin = juce::jmax (playheadSamples, r.timelineStart);
+        const std::int64_t lastWithin  = juce::jmin (blockEnd, regionEnd);
         const int outOffset    = (int) (firstWithin - playheadSamples);
         const int withinSamples = (int) (lastWithin - firstWithin);
         if (withinSamples <= 0) continue;
@@ -402,7 +402,7 @@ void PlaybackEngine::readSpanForTrack (PerTrackStream& slotRef,
         jassert (withinSamples <= readScratch.getNumSamples());
         if (withinSamples > readScratch.getNumSamples()) continue;
 
-        const juce::int64 readStart = r.sourceOffset + (firstWithin - r.timelineStart);
+        const std::int64_t readStart = r.sourceOffset + (firstWithin - r.timelineStart);
         // For mono regions, read L only. For stereo, read both. The
         // BufferingAudioReader's read(useLeft, useRight) flags do the
         // right thing on either side; we always have a 2-channel
@@ -420,10 +420,10 @@ void PlaybackEngine::readSpanForTrack (PerTrackStream& slotRef,
             && firstWithin < r.loopCacheTimelineStart + r.loopCacheLen
             && lastWithin  > r.loopCacheTimelineStart)
         {
-            const juce::int64 ovStart = juce::jmax (firstWithin, r.loopCacheTimelineStart);
-            const juce::int64 ovEnd   = juce::jmin (lastWithin,
+            const std::int64_t ovStart = juce::jmax (firstWithin, r.loopCacheTimelineStart);
+            const std::int64_t ovEnd   = juce::jmin (lastWithin,
                                                      r.loopCacheTimelineStart
-                                                         + (juce::int64) r.loopCacheLen);
+                                                         + (std::int64_t) r.loopCacheLen);
             const int dstOff = (int) (ovStart - firstWithin);
             const int srcOff = (int) (ovStart - r.loopCacheTimelineStart);
             const int n      = (int) (ovEnd - ovStart);
@@ -443,17 +443,17 @@ void PlaybackEngine::readSpanForTrack (PerTrackStream& slotRef,
         // Effective fade = max(explicit, implicit overlap). Shape uses the
         // user's pick when the explicit length wins, EqualPower otherwise
         // so two adjacent regions sum to constant power across the overlap.
-        const juce::int64 explicitIn  = r.fadeInSamples;
-        const juce::int64 explicitOut = r.fadeOutSamples;
-        const juce::int64 implicitIn  = r.overlapPrevLen;
-        const juce::int64 implicitOut = r.overlapNextLen;
-        const juce::int64 fadeIn   = juce::jmax (explicitIn,  implicitIn);
-        const juce::int64 fadeOut  = juce::jmax (explicitOut, implicitOut);
+        const std::int64_t explicitIn  = r.fadeInSamples;
+        const std::int64_t explicitOut = r.fadeOutSamples;
+        const std::int64_t implicitIn  = r.overlapPrevLen;
+        const std::int64_t implicitOut = r.overlapNextLen;
+        const std::int64_t fadeIn   = juce::jmax (explicitIn,  implicitIn);
+        const std::int64_t fadeOut  = juce::jmax (explicitOut, implicitOut);
         const FadeShape fadeInShape  = (explicitIn  >= implicitIn)
                                          ? r.fadeInShape  : FadeShape::EqualPower;
         const FadeShape fadeOutShape = (explicitOut >= implicitOut)
                                          ? r.fadeOutShape : FadeShape::EqualPower;
-        const juce::int64 regionStart = r.timelineStart;
+        const std::int64_t regionStart = r.timelineStart;
         const float fadeInDenom  = (fadeIn  > 0) ? (float) fadeIn  : 1.0f;
         const float fadeOutDenom = (fadeOut > 0) ? (float) fadeOut : 1.0f;
         const auto* srcL = readScratch.getReadPointer (0);
@@ -461,17 +461,17 @@ void PlaybackEngine::readSpanForTrack (PerTrackStream& slotRef,
         const float regionGain = r.gainLinear;
         for (int i = 0; i < withinSamples; ++i)
         {
-            const juce::int64 timelineSample = firstWithin + i;
+            const std::int64_t timelineSample = firstWithin + i;
             float gain = regionGain;
             if (fadeIn > 0)
             {
-                const juce::int64 inPos = timelineSample - regionStart;
+                const std::int64_t inPos = timelineSample - regionStart;
                 if (inPos < fadeIn)
                     gain *= applyFadeShape ((float) inPos / fadeInDenom, fadeInShape);
             }
             if (fadeOut > 0)
             {
-                const juce::int64 outPos = regionEnd - timelineSample;
+                const std::int64_t outPos = regionEnd - timelineSample;
                 if (outPos < fadeOut)
                     gain *= applyFadeShape ((float) outPos / fadeOutDenom, fadeOutShape);
             }

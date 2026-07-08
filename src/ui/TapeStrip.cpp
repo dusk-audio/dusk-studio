@@ -420,12 +420,12 @@ juce::Rectangle<int> TapeStrip::rowBounds (int trackIdx) const noexcept
     return juce::Rectangle<int> (col.getX(), y, col.getWidth(), rowHeight);
 }
 
-juce::int64 TapeStrip::rightmostContentSample() const noexcept
+std::int64_t TapeStrip::rightmostContentSample() const noexcept
 {
     // The rightmost sample any content occupies — audio AND MIDI regions, plus
     // the playhead. Including MIDI keeps a MIDI-only session in view; an audio-
     // only scan left its regions off-screen.
-    juce::int64 maxSample = engine.getTransport().getPlayhead();
+    std::int64_t maxSample = engine.getTransport().getPlayhead();
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         for (const auto& r : session.track (t).regions)
@@ -464,7 +464,7 @@ void TapeStrip::zoomByFactor (float factor, int anchorX)
 {
     // Capture the sample currently under anchorX BEFORE changing zoom
     // so we can adjust scroll afterwards to keep that sample pinned.
-    const juce::int64 anchorSampleBefore = (anchorX >= 0) ? sampleAtX (anchorX) : 0;
+    const std::int64_t anchorSampleBefore = (anchorX >= 0) ? sampleAtX (anchorX) : 0;
     userZoomFactor = juce::jlimit (0.1f, 32.0f, userZoomFactor * factor);
     if (anchorX >= 0)
     {
@@ -477,8 +477,8 @@ void TapeStrip::zoomByFactor (float factor, int anchorX)
             // Rearranged: scrollSamples = anchorSampleBefore - (anchorX - col.x) * sr / px
             const double pixelsFromLeft = (double) (anchorX - col.getX());
             const auto desiredScroll = anchorSampleBefore
-                                          - (juce::int64) (pixelsFromLeft / px * sr);
-            scrollSamples = juce::jmax<juce::int64> (0, desiredScroll);
+                                          - (std::int64_t) (pixelsFromLeft / px * sr);
+            scrollSamples = juce::jmax<std::int64_t> (0, desiredScroll);
         }
     }
     // Reset scroll to 0 once we drop back to fit-all (zoom <= 1).
@@ -504,7 +504,7 @@ void TapeStrip::zoomFit() noexcept
         return;
     }
 
-    const double contentSec    = (double) juce::jmax<juce::int64> (1, rightmostContentSample()) / sr;
+    const double contentSec    = (double) juce::jmax<std::int64_t> (1, rightmostContentSample()) / sr;
     const double autoFitBudget = juce::jmax (60.0, contentSec * 1.20);
     // pxPerSec at zoom 1 = col.width / autoFitBudget. We want the
     // visible window to equal contentSec exactly, so
@@ -534,17 +534,17 @@ void TapeStrip::refreshAfterSessionLoad()
                   // reopen case that left the strip showing stale content.
 }
 
-juce::int64 TapeStrip::sampleAtX (int x) const noexcept
+std::int64_t TapeStrip::sampleAtX (int x) const noexcept
 {
     const double sr = engine.getCurrentSampleRate();
     const double px = pixelsPerSecond();
     if (sr <= 0.0 || px <= 0.0) return 0;
     auto col = tracksColumnBounds();
     const double seconds = (double) (x - col.getX()) / px;
-    return scrollSamples + (juce::int64) juce::jmax (0.0, seconds * sr);
+    return scrollSamples + (std::int64_t) juce::jmax (0.0, seconds * sr);
 }
 
-int TapeStrip::xForSample (juce::int64 s) const noexcept
+int TapeStrip::xForSample (std::int64_t s) const noexcept
 {
     const double sr = engine.getCurrentSampleRate();
     const double px = pixelsPerSecond();
@@ -617,10 +617,10 @@ TapeStrip::RegionHit TapeStrip::hitTestRegion (int x, int y) const noexcept
             if (inFadeBand)
             {
                 const auto& reg = regions[(size_t) i];
-                const auto fadeInSamples  = juce::jmax ((juce::int64) 0, reg.fadeInSamples);
-                const auto fadeOutSamples = juce::jmax ((juce::int64) 0, reg.fadeOutSamples);
+                const auto fadeInSamples  = juce::jmax ((std::int64_t) 0, reg.fadeInSamples);
+                const auto fadeOutSamples = juce::jmax ((std::int64_t) 0, reg.fadeOutSamples);
                 const double pxPerSample = (double) (x1 - x0)
-                    / (double) juce::jmax ((juce::int64) 1, reg.lengthInSamples);
+                    / (double) juce::jmax ((std::int64_t) 1, reg.lengthInSamples);
                 const int fadeInEndX  = x0 + (int) std::round ((double) fadeInSamples  * pxPerSample);
                 const int fadeOutBegX = x1 - (int) std::round ((double) fadeOutSamples * pxPerSample);
                 if (std::abs (x - fadeInEndX)  <= kFadeHitPx) { hit.op = RegionOp::FadeIn;  return hit; }
@@ -801,11 +801,11 @@ void TapeStrip::timerCallback()
 
     auto& transport = engine.getTransport();
     const bool        loopOn = transport.isLoopEnabled();
-    const juce::int64 loopS  = transport.getLoopStart();
-    const juce::int64 loopE  = transport.getLoopEnd();
+    const std::int64_t loopS  = transport.getLoopStart();
+    const std::int64_t loopE  = transport.getLoopEnd();
     const bool        pOn    = transport.isPunchEnabled();
-    const juce::int64 pIn    = transport.getPunchIn();
-    const juce::int64 pOut   = transport.getPunchOut();
+    const std::int64_t pIn    = transport.getPunchIn();
+    const std::int64_t pOut   = transport.getPunchOut();
     if (loopOn != lastLoopEnabled || loopS != lastLoopStart || loopE != lastLoopEnd
         || pOn != lastPunchEnabled || pIn != lastPunchIn || pOut != lastPunchOut)
     {
@@ -876,8 +876,8 @@ void TapeStrip::updatePlayheadBand()
             const int phX = xForSample (now);
             if (phX < col.getX() || phX > col.getRight())
             {
-                const juce::int64 viewSamples = (juce::int64) std::llround ((double) col.getWidth() / px * sr);
-                scrollSamples = juce::jmax<juce::int64> (0, now - viewSamples / 4);
+                const std::int64_t viewSamples = (std::int64_t) std::llround ((double) col.getWidth() / px * sr);
+                scrollSamples = juce::jmax<std::int64_t> (0, now - viewSamples / 4);
                 lastPlayhead  = now;
                 repaint();
                 return;
@@ -1484,10 +1484,10 @@ void TapeStrip::mouseDrag (const juce::MouseEvent& e)
         auto& v = session.track (midiDrag.track).midiRegions.currentMutable();
         if (midiDrag.regionIdx < 0 || midiDrag.regionIdx >= (int) v.size()) return;
 
-        juce::int64 deltaSamples = sampleAtX (e.x) - midiDrag.mouseDownSample;
+        std::int64_t deltaSamples = sampleAtX (e.x) - midiDrag.mouseDownSample;
         // Snap-to-beat - same model as the audio drag below.
         deltaSamples = snap::snapDeltaToGrid (deltaSamples, session, engine.getCurrentSampleRate());
-        const auto newStart = juce::jmax<juce::int64> (
+        const auto newStart = juce::jmax<std::int64_t> (
             0, midiDrag.origTimelineStart + deltaSamples);
         v[(size_t) midiDrag.regionIdx].timelineStart = newStart;
         repaint();
@@ -1514,7 +1514,7 @@ void TapeStrip::mouseDrag (const juce::MouseEvent& e)
     if (markerDrag.active)
     {
         const auto cur = sampleAtX (e.x);
-        constexpr juce::int64 kDragThresholdSamples = 256;   // ~5 ms @ 48k
+        constexpr std::int64_t kDragThresholdSamples = 256;   // ~5 ms @ 48k
         if (! markerDrag.moved
             && std::abs (cur - markerDrag.mouseDownSample) > kDragThresholdSamples)
         {
@@ -1530,7 +1530,7 @@ void TapeStrip::mouseDrag (const juce::MouseEvent& e)
             // an off-grid marker stuck at off-grid positions forever.
             // Absolute snap means the marker lands ON the bar / beat the
             // user is dragging it toward.
-            juce::int64 newPos = juce::jmax ((juce::int64) 0, cur);
+            std::int64_t newPos = juce::jmax ((std::int64_t) 0, cur);
             newPos = snap::snapAbsoluteToGrid (newPos, session,
                                                 engine.getCurrentSampleRate());
             session.getMarkers()[(size_t) markerDrag.index].timelineSamples = newPos;
@@ -1547,7 +1547,7 @@ void TapeStrip::mouseDrag (const juce::MouseEvent& e)
     if (tempoDrag.active)
     {
         const auto cur = sampleAtX (e.x);
-        constexpr juce::int64 kDragThresholdSamples = 256;   // ~5 ms @ 48k
+        constexpr std::int64_t kDragThresholdSamples = 256;   // ~5 ms @ 48k
         if (! tempoDrag.moved
             && std::abs (cur - tempoDrag.mouseDownSample) > kDragThresholdSamples)
             tempoDrag.moved = true;
@@ -1556,10 +1556,10 @@ void TapeStrip::mouseDrag (const juce::MouseEvent& e)
             && tempoDrag.index >= 0
             && tempoDrag.index < (int) tempoDrag.orig.size())
         {
-            juce::int64 newPos = juce::jmax ((juce::int64) 1, cur);
+            std::int64_t newPos = juce::jmax ((std::int64_t) 1, cur);
             newPos = snap::snapAbsoluteToGrid (newPos, session,
                                                 engine.getCurrentSampleRate());
-            newPos = juce::jmax ((juce::int64) 1, newPos);
+            newPos = juce::jmax ((std::int64_t) 1, newPos);
 
             auto working = tempoDrag.orig;
             working[(size_t) tempoDrag.index].timelineSamples = newPos;
@@ -1576,15 +1576,15 @@ void TapeStrip::mouseDrag (const juce::MouseEvent& e)
     // dragging one end through the other.
     if (bracketDrag.active)
     {
-        constexpr juce::int64 kMinUsefulRangeSamples = 1024;
-        const auto cur = juce::jmax ((juce::int64) 0, sampleAtX (e.x));
+        constexpr std::int64_t kMinUsefulRangeSamples = 1024;
+        const auto cur = juce::jmax ((std::int64_t) 0, sampleAtX (e.x));
         const auto delta = cur - bracketDrag.mouseDownSample;
         auto& transport = engine.getTransport();
         switch (bracketDrag.type)
         {
             case BracketHit::LoopIn:
             {
-                const auto newStart = juce::jlimit ((juce::int64) 0,
+                const auto newStart = juce::jlimit ((std::int64_t) 0,
                                                        bracketDrag.origEnd - kMinUsefulRangeSamples,
                                                        cur);
                 transport.setLoopRange (newStart, bracketDrag.origEnd);
@@ -1598,7 +1598,7 @@ void TapeStrip::mouseDrag (const juce::MouseEvent& e)
             }
             case BracketHit::LoopBar:
             {
-                const auto newStart = juce::jmax ((juce::int64) 0,
+                const auto newStart = juce::jmax ((std::int64_t) 0,
                                                     bracketDrag.origStart + delta);
                 const auto length   = bracketDrag.origEnd - bracketDrag.origStart;
                 transport.setLoopRange (newStart, newStart + length);
@@ -1606,7 +1606,7 @@ void TapeStrip::mouseDrag (const juce::MouseEvent& e)
             }
             case BracketHit::PunchIn:
             {
-                const auto newStart = juce::jlimit ((juce::int64) 0,
+                const auto newStart = juce::jlimit ((std::int64_t) 0,
                                                        bracketDrag.origEnd - kMinUsefulRangeSamples,
                                                        cur);
                 transport.setPunchRange (newStart, bracketDrag.origEnd);
@@ -1620,7 +1620,7 @@ void TapeStrip::mouseDrag (const juce::MouseEvent& e)
             }
             case BracketHit::PunchBar:
             {
-                const auto newStart = juce::jmax ((juce::int64) 0,
+                const auto newStart = juce::jmax ((std::int64_t) 0,
                                                     bracketDrag.origStart + delta);
                 const auto length   = bracketDrag.origEnd - bracketDrag.origStart;
                 transport.setPunchRange (newStart, newStart + length);
@@ -1636,7 +1636,7 @@ void TapeStrip::mouseDrag (const juce::MouseEvent& e)
     // start/end via min/max so dragging either direction works.
     if (rulerSelection.active)
     {
-        rulerSelection.currentSample = juce::jmax ((juce::int64) 0, sampleAtX (e.x));
+        rulerSelection.currentSample = juce::jmax ((std::int64_t) 0, sampleAtX (e.x));
         repaint();
         return;
     }
@@ -1647,7 +1647,7 @@ void TapeStrip::mouseDrag (const juce::MouseEvent& e)
     if (drag.regionIdx < 0 || drag.regionIdx >= (int) regions.size()) return;
 
     const auto current = sampleAtX (e.x);
-    juce::int64 deltaSamples = current - drag.mouseDownSample;
+    std::int64_t deltaSamples = current - drag.mouseDownSample;
 
     // Snap-to-grid: round the *delta* to a whole-step value so the drag
     // motion still feels continuous but the destination lands on a tick.
@@ -1658,7 +1658,7 @@ void TapeStrip::mouseDrag (const juce::MouseEvent& e)
     // drags re-align it to the grid.
     deltaSamples = snap::snapDeltaToGrid (deltaSamples, session, engine.getCurrentSampleRate());
 
-    constexpr juce::int64 kMinLengthSamples = 1024;  // ~21 ms @ 48k
+    constexpr std::int64_t kMinLengthSamples = 1024;  // ~21 ms @ 48k
     auto& r = regions[(size_t) drag.regionIdx];
 
     switch (drag.op)
@@ -1668,10 +1668,10 @@ void TapeStrip::mouseDrag (const juce::MouseEvent& e)
             // Group-clamp: the smallest origTimelineStart across the
             // anchor + every additional sets the floor on -delta so
             // no region in the group falls off the timeline.
-            juce::int64 minOrig = drag.origTimelineStart;
+            std::int64_t minOrig = drag.origTimelineStart;
             for (const auto& a : drag.additional)
                 minOrig = juce::jmin (minOrig, a.origTimelineStart);
-            const juce::int64 clampedDelta = juce::jmax (deltaSamples, -minOrig);
+            const std::int64_t clampedDelta = juce::jmax (deltaSamples, -minOrig);
             r.timelineStart = drag.origTimelineStart + clampedDelta;
             for (const auto& a : drag.additional)
             {
@@ -1690,7 +1690,7 @@ void TapeStrip::mouseDrag (const juce::MouseEvent& e)
             //   delta >= -origSourceOffset            (don't expose negative source)
             //   delta <=  origLength - kMinLength     (don't shrink below the floor)
             //   timelineStart + delta >= 0            (don't fall off the timeline)
-            juce::int64 d = deltaSamples;
+            std::int64_t d = deltaSamples;
             d = juce::jmax (d, -drag.origSourceOffset);
             d = juce::jmax (d, -drag.origTimelineStart);
             d = juce::jmin (d, drag.origLength - kMinLengthSamples);
@@ -1701,7 +1701,7 @@ void TapeStrip::mouseDrag (const juce::MouseEvent& e)
         }
         case RegionOp::TrimEnd:
         {
-            const juce::int64 newLen = juce::jmax (kMinLengthSamples,
+            const std::int64_t newLen = juce::jmax (kMinLengthSamples,
                                                     drag.origLength + deltaSamples);
             r.lengthInSamples = newLen;
             break;
@@ -1712,9 +1712,9 @@ void TapeStrip::mouseDrag (const juce::MouseEvent& e)
             // never exceeds the region's length (the renderer assumes
             // the two ramps don't overlap; an overlapping pair would
             // attenuate the middle to a value below 1.0 unintentionally).
-            const auto maxFadeIn = juce::jmax ((juce::int64) 0,
+            const auto maxFadeIn = juce::jmax ((std::int64_t) 0,
                                                   r.lengthInSamples - drag.origFadeOut);
-            r.fadeInSamples = juce::jlimit ((juce::int64) 0,
+            r.fadeInSamples = juce::jlimit ((std::int64_t) 0,
                                               maxFadeIn,
                                               drag.origFadeIn + deltaSamples);
             fadeGuideX = xForSample (r.timelineStart + r.fadeInSamples);
@@ -1724,9 +1724,9 @@ void TapeStrip::mouseDrag (const juce::MouseEvent& e)
         {
             // Mirror of FadeIn. Drag LEFT (negative delta) grows the
             // fade-out, so subtract delta from the original length.
-            const auto maxFadeOut = juce::jmax ((juce::int64) 0,
+            const auto maxFadeOut = juce::jmax ((std::int64_t) 0,
                                                    r.lengthInSamples - drag.origFadeIn);
-            r.fadeOutSamples = juce::jlimit ((juce::int64) 0,
+            r.fadeOutSamples = juce::jlimit ((std::int64_t) 0,
                                                maxFadeOut,
                                                drag.origFadeOut - deltaSamples);
             fadeGuideX = xForSample (r.timelineStart
@@ -1780,11 +1780,11 @@ void TapeStrip::mouseUp (const juce::MouseEvent& e)
         const auto b = juce::jmax (rulerSelection.originSample,
                                      rulerSelection.currentSample);
 
-        constexpr juce::int64 kMinUsefulRangeSamples = 1024;
+        constexpr std::int64_t kMinUsefulRangeSamples = 1024;
         if (b - a <= kMinUsefulRangeSamples)
         {
             const auto sample = snap::snapAbsoluteToGrid (
-                juce::jmax ((juce::int64) 0, a), session, engine.getCurrentSampleRate());
+                juce::jmax ((std::int64_t) 0, a), session, engine.getCurrentSampleRate());
             engine.getTransport().setPlayhead (sample);
             // Remember this click so a future Stop in "Return to last
             // clicked" mode lands here.
@@ -2201,7 +2201,7 @@ void TapeStrip::mouseDoubleClick (const juce::MouseEvent& e)
     const int beatsBar = juce::jmax (1, session.beatsPerBar.load (std::memory_order_relaxed));
     if (sr <= 0.0 || bpm <= 0.0f) return;
 
-    juce::int64 startSample = juce::jmax ((juce::int64) 0, sampleAtX (e.x));
+    std::int64_t startSample = juce::jmax ((std::int64_t) 0, sampleAtX (e.x));
 
     // Snap start to the nearest beat when snap-to-grid is on. Mirrors
     // the drag-snap pattern at line ~641 but operates on an absolute
@@ -2210,9 +2210,9 @@ void TapeStrip::mouseDoubleClick (const juce::MouseEvent& e)
     // snap off before the double-click.
     startSample = snap::snapAbsoluteToGrid (startSample, session, sr);
 
-    const juce::int64 fourBarsSamples =
-        (juce::int64) (sr * 60.0 / (double) bpm * (double) beatsBar * 4.0);
-    const juce::int64 fourBarsTicks = samplesToTicks (fourBarsSamples, sr, bpm);
+    const std::int64_t fourBarsSamples =
+        (std::int64_t) (sr * 60.0 / (double) bpm * (double) beatsBar * 4.0);
+    const std::int64_t fourBarsTicks = samplesToTicks (fourBarsSamples, sr, bpm);
 
     auto action = std::make_unique<CreateMidiRegionAction> (
         session, trackIdx, startSample, fourBarsSamples, fourBarsTicks);
@@ -2463,11 +2463,11 @@ void TapeStrip::mouseWheelMove (const juce::MouseEvent& e,
         {
             // ~half a second per wheel-notch. Sign: positive deltaY (away
             // from user) = scroll left = decrease scrollSamples.
-            const auto step = (juce::int64) (sr * 0.5);
+            const auto step = (std::int64_t) (sr * 0.5);
             const double dx = std::abs (w.deltaX) > 0.001f ? w.deltaX
                                                             : w.deltaY;
-            const auto delta = (juce::int64) (dx * (double) step);
-            scrollSamples = juce::jmax<juce::int64> (0, scrollSamples - delta);
+            const auto delta = (std::int64_t) (dx * (double) step);
+            scrollSamples = juce::jmax<std::int64_t> (0, scrollSamples - delta);
             repaint();
         }
     }
@@ -2741,7 +2741,7 @@ void TapeStrip::showRegionContextMenu (const RegionHit& hit, juce::Point<int> sc
     // multi-selection) when the right-clicked region is part of one;
     // single-region otherwise. Same logic as note-properties popup.
     juce::PopupMenu colourSub;
-    struct PaletteEntry { const char* label; juce::uint32 argb; };
+    struct PaletteEntry { const char* label; std::uint32_t argb; };
     static const PaletteEntry kPalette[] = {
         { "Reset to track colour", 0x00000000 },   // 0 alpha = transparent = unset
         { "Red",          0xffd05f5f },
@@ -2788,7 +2788,7 @@ void TapeStrip::showRegionContextMenu (const RegionHit& hit, juce::Point<int> sc
             // on the colour-submenu IDs here.
             if (chosen < 5000 || chosen >= 5000 + (int) (sizeof (kPalette) / sizeof (kPalette[0])))
                 return;
-            const juce::uint32 newArgb = kPalette[chosen - 5000].argb;
+            const std::uint32_t newArgb = kPalette[chosen - 5000].argb;
             const juce::Colour newColour (newArgb);
 
             // Pick the target list - the multi-selection if the
@@ -2951,7 +2951,7 @@ void TapeStrip::showMidiRegionContextMenu (int trackIdx, int regionIdx,
                     {
                         const double samplesPerTick =
                             (sr * 60.0) / ((double) bpm * (double) kMidiTicksPerQuarter);
-                        after.lengthInSamples = (juce::int64) std::llround (
+                        after.lengthInSamples = (std::int64_t) std::llround (
                             (double) after.lengthInTicks * samplesPerTick);
                     }
 
@@ -2970,7 +2970,7 @@ void TapeStrip::showMidiRegionContextMenu (int trackIdx, int regionIdx,
 
     // Same 8-colour palette + Reset as the audio menu.
     juce::PopupMenu colourSub;
-    struct PaletteEntry { const char* label; juce::uint32 argb; };
+    struct PaletteEntry { const char* label; std::uint32_t argb; };
     static const PaletteEntry kPalette[] = {
         { "Reset to track colour", 0x00000000 },
         { "Red",     0xffd05f5f }, { "Orange",  0xffd09060 },
@@ -3054,7 +3054,7 @@ void TapeStrip::paint (juce::Graphics& g)
             // empty), so the grid follows tempo changes instead of assuming one
             // uniform bar width.
             const int     bpb = juce::jmax (1, session.beatsPerBar.load (std::memory_order_relaxed));
-            const juce::int64 ticksPerBar = (juce::int64) bpb * kMidiTicksPerQuarter;
+            const std::int64_t ticksPerBar = (std::int64_t) bpb * kMidiTicksPerQuarter;
 
             // Step + sub-tick density are sized from the tempo at the left edge.
             const float  bpmEst = juce::jmax (1.0f, session.bpmAt (scrollSamples));
@@ -3065,14 +3065,14 @@ void TapeStrip::paint (juce::Graphics& g)
             else if (pxPerBar < 32.0) barStep = 4;
             else if (pxPerBar < 64.0) barStep = 2;
 
-            const juce::int64 startTick = session.samplesToTicks (scrollSamples, sr);
+            const std::int64_t startTick = session.samplesToTicks (scrollSamples, sr);
             int firstBar = (int) (startTick / ticksPerBar);
             firstBar -= (firstBar % barStep);
             firstBar = juce::jmax (0, firstBar);
 
             auto barX = [&] (int bar)
             {
-                return xForSample (session.ticksToSamples ((juce::int64) bar * ticksPerBar, sr));
+                return xForSample (session.ticksToSamples ((std::int64_t) bar * ticksPerBar, sr));
             };
 
             // Beat sub-ticks: only when each beat renders at least ~6 px apart,
@@ -3088,8 +3088,8 @@ void TapeStrip::paint (juce::Graphics& g)
                 {
                     for (int beat = 1; beat < bpb; ++beat)
                     {
-                        const auto tick = (juce::int64) bar * ticksPerBar
-                                            + (juce::int64) beat * kMidiTicksPerQuarter;
+                        const auto tick = (std::int64_t) bar * ticksPerBar
+                                            + (std::int64_t) beat * kMidiTicksPerQuarter;
                         const int x = xForSample (session.ticksToSamples (tick, sr));
                         if (x < col.getX() || x > col.getRight()) continue;
                         g.drawVerticalLine (x, beatY0, beatY1);
@@ -3337,8 +3337,8 @@ void TapeStrip::paint (juce::Graphics& g)
             // actively editing fades.
             if (region.lengthInSamples > 0)
             {
-                const auto fadeInSamples  = juce::jmax ((juce::int64) 0, region.fadeInSamples);
-                const auto fadeOutSamples = juce::jmax ((juce::int64) 0, region.fadeOutSamples);
+                const auto fadeInSamples  = juce::jmax ((std::int64_t) 0, region.fadeInSamples);
+                const auto fadeOutSamples = juce::jmax ((std::int64_t) 0, region.fadeOutSamples);
                 const double pxPerSample = (double) regionRect.getWidth()
                     / (double) region.lengthInSamples;
                 const auto fadeCol = juce::Colours::yellow.withAlpha (0.85f);
@@ -3689,7 +3689,7 @@ void TapeStrip::paint (juce::Graphics& g)
     // the region is unambiguous even when the underlying tracks are dense.
     // Optional `pillLabel` draws a small filled label at both endpoints,
     // matching the in/out marker style of pro DAWs.
-    auto drawRange = [&] (juce::int64 start, juce::int64 end,
+    auto drawRange = [&] (std::int64_t start, std::int64_t end,
                            juce::Colour colour, bool enabled,
                            const juce::String& pillLabel)
     {
@@ -3910,7 +3910,7 @@ TapeStrip::BracketHit TapeStrip::hitTestBracket (int x, int y) const noexcept
 
     auto& transport = engine.getTransport();
 
-    auto pillBounds = [this] (juce::int64 sample, const juce::String& label)
+    auto pillBounds = [this] (std::int64_t sample, const juce::String& label)
     {
         // Same width math the painter uses; exposes a forgiving 6px hit
         // gutter on each side of the pill so users don't have to land
@@ -4020,7 +4020,7 @@ int TapeStrip::hitTestTempoPoint (int x, int y) const noexcept
     // Hit zone spans the triangle (a few px left) plus the BPM label drawn to
     // its right, so right-clicking the number — not just the tiny glyph —
     // still lands on the marker.
-    const auto onHandle = [this, x] (juce::int64 sample)
+    const auto onHandle = [this, x] (std::int64_t sample)
     {
         const int px = xForSample (sample);
         return x >= px - 6 && x <= px + 28;
@@ -4060,7 +4060,7 @@ void TapeStrip::commitTempoPoints (std::vector<duskstudio::TempoPoint> after,
     repaint();
 }
 
-void TapeStrip::promptAddTempoPoint (juce::int64 sample)
+void TapeStrip::promptAddTempoPoint (std::int64_t sample)
 {
     // Prompt for the BPM first and add the point only on Accept, so Cancel
     // leaves no stray marker on the grid.
@@ -4075,7 +4075,7 @@ void TapeStrip::promptAddTempoPoint (juce::int64 sample)
             // jlimit would then silently turn that into a 30 BPM entry.
             const auto t = s.trim();
             float parsed = 0.0f;
-            if (! parseFullFloat (t, parsed)) return;
+            if (! parseFullFloat (t.toStdString(), parsed)) return;
             const float b = juce::jlimit (30.0f, 300.0f, parsed);
             auto vec = safeThis->session.tempoMap.points();
             // First point ever: seed a base anchor at the origin so the span
@@ -4090,7 +4090,7 @@ void TapeStrip::promptAddTempoPoint (juce::int64 sample)
         });
 }
 
-void TapeStrip::editTempoPointBpm (juce::int64 atSample)
+void TapeStrip::editTempoPointBpm (std::int64_t atSample)
 {
     const auto& pts = session.tempoMap.points();
     float currentBpm = session.bpmAt (atSample);
@@ -4107,7 +4107,7 @@ void TapeStrip::editTempoPointBpm (juce::int64 atSample)
             if (safeThis == nullptr) return;
             const auto t = s.trim();
             float parsed = 0.0f;
-            if (! parseFullFloat (t, parsed)) return;
+            if (! parseFullFloat (t.toStdString(), parsed)) return;
             const float b = juce::jlimit (30.0f, 300.0f, parsed);
             auto vec = safeThis->session.tempoMap.points();
             for (auto& p : vec)
@@ -4130,13 +4130,13 @@ void TapeStrip::editBaseTempo()
             if (safeThis == nullptr) return;
             const auto t = s.trim();
             float parsed = 0.0f;
-            if (! parseFullFloat (t, parsed)) return;
+            if (! parseFullFloat (t.toStdString(), parsed)) return;
             const float b = juce::jlimit (30.0f, 300.0f, parsed);
             safeThis->commitTempoPoints ({ { 0, b } }, "Set starting tempo");
         });
 }
 
-void TapeStrip::deleteTempoPoint (juce::int64 atSample)
+void TapeStrip::deleteTempoPoint (std::int64_t atSample)
 {
     auto vec = session.tempoMap.points();
     // The base anchor at sample 0 is the song's starting tempo. Keep it while
@@ -4158,7 +4158,7 @@ void TapeStrip::paintTempoPoints (juce::Graphics& g)
     const auto amber = juce::Colour (0xffd0a050);
     g.setFont (juce::Font (juce::FontOptions (9.0f, juce::Font::bold)));
 
-    const auto drawHandle = [&] (juce::int64 sample, float bpm, bool dim)
+    const auto drawHandle = [&] (std::int64_t sample, float bpm, bool dim)
     {
         const int x = xForSample (sample);
         if (x < col.getX() - 8 || x > col.getRight()) return;
@@ -4314,7 +4314,7 @@ bool TapeStrip::duplicateSelectedRegion()
     return true;
 }
 
-bool TapeStrip::nudgeSelectedRegion (juce::int64 deltaSamples)
+bool TapeStrip::nudgeSelectedRegion (std::int64_t deltaSamples)
 {
     auto selection = allSelectedRegions();
     if (selection.empty()) return false;
@@ -4331,7 +4331,7 @@ bool TapeStrip::nudgeSelectedRegion (juce::int64 deltaSamples)
 
     // Group-clamp: don't let any selected region's timelineStart go
     // negative. So minSelectedStart sets the floor on -delta.
-    juce::int64 minStart = std::numeric_limits<juce::int64>::max();
+    std::int64_t minStart = std::numeric_limits<std::int64_t>::max();
     for (const auto& id : selection)
     {
         const auto& regs = session.track (id.track).regions;
@@ -4424,7 +4424,7 @@ bool TapeStrip::cycleSelectedTakeForward()
                 {
                     const double samplesPerTick =
                         (sr * 60.0) / ((double) bpm * (double) kMidiTicksPerQuarter);
-                    after.lengthInSamples = (juce::int64) std::llround (
+                    after.lengthInSamples = (std::int64_t) std::llround (
                         (double) after.lengthInTicks * samplesPerTick);
                 }
 
@@ -4502,7 +4502,7 @@ bool TapeStrip::cycleSelectedTakeBackward()
                 {
                     const double samplesPerTick =
                         (sr * 60.0) / ((double) bpm * (double) kMidiTicksPerQuarter);
-                    after.lengthInSamples = (juce::int64) std::llround (
+                    after.lengthInSamples = (std::int64_t) std::llround (
                         (double) after.lengthInTicks * samplesPerTick);
                 }
 

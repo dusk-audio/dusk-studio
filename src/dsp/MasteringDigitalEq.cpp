@@ -38,7 +38,7 @@ void MasteringDigitalEq::prepare (double sampleRate, int blockSize)
     // so the reported value is exact — no rounding needed for PDC.
     latencySamples = (int) oversampler->getLatencyInSamples();
 
-    juce::dsp::ProcessSpec spec { sr, (juce::uint32) (bs * kOversample), 1 };
+    juce::dsp::ProcessSpec spec { sr, (std::uint32_t) (bs * kOversample), 1 };
     for (auto& f : filtersL) { f.prepare (spec); initCoeffs (f); }
     for (auto& f : filtersR) { f.prepare (spec); initCoeffs (f); }
 

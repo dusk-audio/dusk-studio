@@ -74,7 +74,7 @@ private:
     Session& session;
     class PluginSlot& pluginSlot;
     AudioEngine& engine;
-    std::array<juce::uint32, ChannelStripParams::kNumBuses> lastBusColours {};
+    std::array<std::uint32_t, ChannelStripParams::kNumBuses> lastBusColours {};
     float displayedGrDb = 0.0f;
     float displayedInputDb = -100.0f;
     float inputPeakHoldDb = -100.0f;

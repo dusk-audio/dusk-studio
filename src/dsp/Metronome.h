@@ -1,8 +1,9 @@
 #pragma once
 
-#include <juce_audio_basics/juce_audio_basics.h>
+#include <cstdint>
 #include <array>
 #include <atomic>
+#include <limits>
 
 namespace duskstudio
 {
@@ -34,7 +35,7 @@ public:
     //   forceEnable      - bypasses the user's CLICK toggle. The audio
     //     engine sets this during count-in pre-roll so the click plays
     //     even if the user hasn't manually engaged the metronome.
-    void process (juce::int64 playheadStartSample,
+    void process (std::int64_t playheadStartSample,
                    bool transportRolling,
                    float* L, float* R, int numSamples,
                    bool forceEnable = false) noexcept;
@@ -85,7 +86,7 @@ private:
     float clickFreq = 1000.0f;
 
     // Cached for beat-edge detection.
-    juce::int64 lastBeatIdx = std::numeric_limits<juce::int64>::min();
+    std::int64_t lastBeatIdx = std::numeric_limits<std::int64_t>::min();
     bool        lastBeatSeeded = false;
 };
 } // namespace duskstudio

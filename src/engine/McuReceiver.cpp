@@ -411,7 +411,7 @@ void McuReceiver::handleNotePress (int noteNumber, bool pressed) noexcept
 }
 
 void McuReceiver::process (const juce::MidiBuffer& events,
-                            juce::int64 blockStartSample) noexcept
+                            std::int64_t blockStartSample) noexcept
 {
     juce::ignoreUnused (blockStartSample);
     for (const auto meta : events)
@@ -420,7 +420,7 @@ void McuReceiver::process (const juce::MidiBuffer& events,
         const auto* raw = m.getRawData();
         const int sz = m.getRawDataSize();
         if (raw == nullptr || sz < 1) continue;
-        const auto status = (juce::uint8) raw[0];
+        const auto status = (std::uint8_t) raw[0];
         const int statusType = status & 0xF0;
         const int channel    = status & 0x0F;
 
@@ -487,12 +487,12 @@ void McuReceiver::process (const juce::MidiBuffer& events,
                 const int magnitude = val & 0x3F;
                 const int delta     = (val & 0x40) ? -magnitude : +magnitude;
                 if (delta == 0) continue;
-                constexpr juce::int64 kSamplesPerDetent = 2400;
-                const auto stepSamples = (juce::int64) delta * kSamplesPerDetent;
+                constexpr std::int64_t kSamplesPerDetent = 2400;
+                const auto stepSamples = (std::int64_t) delta * kSamplesPerDetent;
                 const auto pending = session.pendingTransportPlayhead.load (
                     std::memory_order_relaxed);
-                const juce::int64 base = (pending >= 0) ? pending : blockStartSample;
-                const juce::int64 target = juce::jmax ((juce::int64) 0,
+                const std::int64_t base = (pending >= 0) ? pending : blockStartSample;
+                const std::int64_t target = juce::jmax ((std::int64_t) 0,
                                                          base + stepSamples);
                 session.pendingTransportPlayhead.store (target,
                                                           std::memory_order_relaxed);

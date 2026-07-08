@@ -605,7 +605,7 @@ void AuxLaneComponent::captureWritePoint (AutomationParam param, float denormVal
     if (isContinuousParam (param) && ! laneRef.empty())
     {
         constexpr float kDeltaEps = 0.001f;
-        constexpr juce::int64 kMaxSpanSamples = 22050;   // ~500 ms @ 44.1 k
+        constexpr std::int64_t kMaxSpanSamples = 22050;   // ~500 ms @ 44.1 k
         const auto& last = laneRef.back();
         if (std::abs (pt.value - last.value) < kDeltaEps
             && pt.timeSamples >= last.timeSamples
@@ -619,7 +619,7 @@ void AuxLaneComponent::captureWritePoint (AutomationParam param, float denormVal
         {
             auto cutoff = std::lower_bound (laneRef.begin(), laneRef.end(),
                 pt.timeSamples,
-                [] (const AutomationPoint& a, juce::int64 t) { return a.timeSamples < t; });
+                [] (const AutomationPoint& a, std::int64_t t) { return a.timeSamples < t; });
             laneRef.erase (cutoff, laneRef.end());
         }
         if (! laneRef.empty() && laneRef.back().timeSamples == pt.timeSamples)

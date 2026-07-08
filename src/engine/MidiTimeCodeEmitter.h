@@ -47,9 +47,9 @@ public:
     // blockStartSample = engine's monotonic sync clock (shared with
     // MidiClockEmitter + MidiSyncReceiver). `out` is the shared
     // MidiBuffer (Clock + MTC mux on the same buffer).
-    void generateBlock (juce::int64 blockStartSample,
+    void generateBlock (std::int64_t blockStartSample,
                         int numSamples,
-                        juce::int64 playheadSamples,
+                        std::int64_t playheadSamples,
                         bool isRolling,
                         FrameRate rate,
                         juce::MidiBuffer& out) noexcept;
@@ -58,15 +58,15 @@ private:
     // > 2 + rounding margin. sequenceFrames is stale by up to 2 frames
     // across one 8-QF sequence (refreshed only at nibble 0) so live -
     // sequence - 2 climbs to ~2 during normal play; 4 = jump.
-    static constexpr juce::int64 kJumpDetectFrames = 4;
+    static constexpr std::int64_t kJumpDetectFrames = 4;
 
-    void emitQuarterFrame (juce::int64 atSample,
+    void emitQuarterFrame (std::int64_t atSample,
                             int nibble,
-                            juce::int64 frames,
+                            std::int64_t frames,
                             FrameRate rate,
                             juce::MidiBuffer& out) noexcept;
-    void emitFullFrameSysex (juce::int64 atSample,
-                              juce::int64 frames,
+    void emitFullFrameSysex (std::int64_t atSample,
+                              std::int64_t frames,
                               FrameRate rate,
                               juce::MidiBuffer& out) noexcept;
 
@@ -75,8 +75,8 @@ private:
     // sequenceFrames is frozen at sequence start (2-frame TDC), refreshed
     // on nibble 0 of each new sequence.
     int         nibbleIdx              = 0;
-    juce::int64 sequenceFrames         = 0;
-    juce::int64 nextQuarterFrameSample = 0;
+    std::int64_t sequenceFrames         = 0;
+    std::int64_t nextQuarterFrameSample = 0;
 
     bool lastRolling          = false;
     int  lastEmittedRate      = (int) MidiTimeCodeReceiver::kDefaultRate;
@@ -84,6 +84,6 @@ private:
 
     // Cached so emit helpers can do (sample - blockStart) for the
     // MidiBuffer offset.
-    juce::int64 lastBlockStart = 0;
+    std::int64_t lastBlockStart = 0;
 };
 } // namespace duskstudio

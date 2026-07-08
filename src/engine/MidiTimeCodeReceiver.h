@@ -30,13 +30,13 @@ public:
     enum FrameRate : int { Fps24 = 0, Fps25 = 1, Fps29_97DF = 2, Fps30 = 3 };
 
     static constexpr FrameRate kDefaultRate = Fps30;
-    static constexpr juce::int64 kRollingTimeoutSamplesAt48k = 24000;  // ~500 ms
+    static constexpr std::int64_t kRollingTimeoutSamplesAt48k = 24000;  // ~500 ms
 
     void prepare (double sampleRate) noexcept
     {
         sr = sampleRate > 0.0 ? sampleRate : 48000.0;
         rollingTimeoutSamples =
-            (juce::int64) ((kRollingTimeoutSamplesAt48k * sr) / 48000.0);
+            (std::int64_t) ((kRollingTimeoutSamplesAt48k * sr) / 48000.0);
         reset();
     }
 
@@ -55,11 +55,11 @@ public:
     // blockStartSample is the engine's monotonic sample clock (same as
     // MidiClockEmitter / MidiSyncReceiver).
     void process (const juce::MidiBuffer& events,
-                  juce::int64 blockStartSample,
+                  std::int64_t blockStartSample,
                   int numSamples) noexcept;
 
     // Wall-clock-aligned (+2-frame offset already applied).
-    juce::int64 getFrames() const noexcept
+    std::int64_t getFrames() const noexcept
     {
         return currentFrames.load (std::memory_order_relaxed);
     }
@@ -81,17 +81,17 @@ public:
     }
 
 private:
-    void onQuarterFrame (juce::uint8 data1, juce::int64 atSample) noexcept;
-    void onFullFrameSysex (const juce::uint8* msg, int sz, juce::int64 atSample) noexcept;
-    void commitAssembledFrame (juce::int64 atSample,
+    void onQuarterFrame (std::uint8_t data1, std::int64_t atSample) noexcept;
+    void onFullFrameSysex (const std::uint8_t* msg, int sz, std::int64_t atSample) noexcept;
+    void commitAssembledFrame (std::int64_t atSample,
                                 bool applyTwoFrameOffset) noexcept;
 
     double sr = 48000.0;
-    juce::int64 rollingTimeoutSamples = 12000;
+    std::int64_t rollingTimeoutSamples = 12000;
 
     // QF assembly: 8 nibbles → 32 bits split (frames lo+hi, secs lo+hi,
     // mins lo+hi, hours+rate lo+hi). Outer index picks the SMPTE field.
-    juce::uint8 nibbleAccumulator[4] {};
+    std::uint8_t nibbleAccumulator[4] {};
 
     // Commit only after observing 0..7 in exact order without gaps.
     // Without this, a reverse-scrub stream (7,6,5,4,3,2,1,0,7,...) would
@@ -99,9 +99,9 @@ private:
     // emit garbage with mm=ss=0.
     int expectedNibble = 0;
 
-    juce::int64 lastEventSample = -1;
+    std::int64_t lastEventSample = -1;
 
-    std::atomic<juce::int64> currentFrames { 0 };
+    std::atomic<std::int64_t> currentFrames { 0 };
     std::atomic<bool>        rolling       { false };
     std::atomic<bool>        reversed      { false };
     std::atomic<int>         detectedRate  { (int) kDefaultRate };
