@@ -31,11 +31,11 @@ juce::File writeSession (const juce::String& json)
 
 // A hand-edited or truncated session.json can carry values the in-app UI never
 // produces: negative sample times, out-of-range normalized values, and — via a
-// number literal that overflows to infinity on parse (1e999) — non-finite
-// floats. The loader must sanitize these so they can't break the automation
-// lane's binary search or push NaN/inf into a DSP parameter. This pins that
-// contract; the matching loader logic lives in SessionSerializer's
-// parseAutomationPoint + storeFiniteFloat helpers.
+// finite double that exceeds float range (1e40) — values that overflow to inf
+// when narrowed to float. The loader must sanitize these so they can't break
+// the automation lane's binary search or push NaN/inf into a DSP parameter.
+// This pins that contract; the matching loader logic lives in
+// SessionSerializer's parseAutomationPoint + storeFiniteFloat helpers.
 TEST_CASE ("SessionSerializer::load clamps corrupt automation + EQ values",
            "[session][serializer][corruption]")
 {
@@ -47,11 +47,11 @@ TEST_CASE ("SessionSerializer::load clamps corrupt automation + EQ values",
           "automation": {
             "fader_db": [
               { "t": 96000,  "v": 0.25, "bpm": 120.0 },
-              { "t": -48000, "v": 5.0,  "bpm": 1e999 }
+              { "t": -48000, "v": 5.0,  "bpm": 1e40 }
             ]
           },
           "eq": {
-            "lm": { "gain": 1e999, "freq": 1000.0, "q": 1.0 }
+            "lm": { "gain": 1e40, "freq": 1000.0, "q": 1.0 }
           }
         }
       ]
@@ -103,7 +103,7 @@ TEST_CASE ("SessionSerializer::load sorts master automation + survives non-finit
     const auto target = writeSession (R"JSON(
     {
       "version": 3,
-      "transport": { "tempo_bpm": 1e999 },
+      "transport": { "tempo_bpm": 1e40 },
       "master": {
         "automation": {
           "fader_db": [

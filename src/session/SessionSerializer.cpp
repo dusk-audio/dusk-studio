@@ -1,4 +1,5 @@
 #include "SessionSerializer.h"
+#include "../foundation/Json.h"
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <nlohmann/json.hpp>
 #include <cmath>
@@ -21,10 +22,12 @@
 
 namespace duskstudio
 {
+namespace json = ::dusk::json;
+
 namespace
 {
-// Save path builds ordered_json so key order follows insertion (matching the
-// former juce::DynamicObject output), keeping session.json diffs stable.
+// Save path builds ordered_json so key order follows insertion order, keeping
+// session.json diffs stable across saves.
 using JObj = nlohmann::ordered_json;
 
 inline std::string toStd (const juce::String& s) { return s.toStdString(); }
@@ -41,22 +44,26 @@ constexpr int kFormatVersion = 3;
 // Store a float from JSON only when it's finite, so a corrupt or hand-edited
 // session.json can't push NaN / inf into a DSP parameter — the in-memory
 // default is kept instead. Mirrors the master Pultec EQ's loadMasterFloat.
-inline void storeFiniteFloat (std::atomic<float>& dst, const juce::var& src) noexcept
+inline void storeFiniteFloat (std::atomic<float>& dst, const nlohmann::json& src) noexcept
 {
     // Range-check the ORIGINAL double before narrowing: casting an out-of-float-range
     // double to float is UB, so reject non-finite / oversized values up front rather
     // than relying on the post-cast isfinite catching an inf the narrowing produced.
-    const double d = (double) src;
+    if (! src.is_number()) return;
+    const double d = src.get<double>();
     if (std::isfinite (d) && std::abs (d) <= (double) std::numeric_limits<float>::max())
         dst.store ((float) d);
 }
 
 // Scalar sibling for plain-float fields (region gain, etc.) that aren't atomics.
-inline float finiteFloatOr (const juce::var& src, float fallback) noexcept
+inline float finiteFloatOr (const nlohmann::json& src, float fallback) noexcept
 {
-    const double d = (double) src;
-    if (std::isfinite (d) && std::abs (d) <= (double) std::numeric_limits<float>::max())
-        return (float) d;
+    if (src.is_number())
+    {
+        const double d = src.get<double>();
+        if (std::isfinite (d) && std::abs (d) <= (double) std::numeric_limits<float>::max())
+            return (float) d;
+    }
     return fallback;
 }
 
@@ -65,7 +72,7 @@ inline float finiteFloatOr (const juce::var& src, float fallback) noexcept
 // The lane evaluator's binary search assumes non-negative, sorted times, and
 // no downstream retime math should ever see a non-finite anchor tempo. value
 // is range-limited to [0, 1].
-inline AutomationPoint parseAutomationPoint (const juce::var& pv, double fallbackBpm) noexcept
+inline AutomationPoint parseAutomationPoint (const nlohmann::json& pv, double fallbackBpm) noexcept
 {
     // The fallback itself must be strictly positive + finite — a 0/negative session
     // tempo would otherwise pass straight through as recordedAtBPM and break retime math.
@@ -73,16 +80,15 @@ inline AutomationPoint parseAutomationPoint (const juce::var& pv, double fallbac
     AutomationPoint pt;
     // Validate finiteness BEFORE narrowing to int64 — casting a +inf double (1e999 in a
     // hand-edited file) to int64 is UB. Non-finite / negative time → 0.
-    const double rawT = (double) pv["t"];
+    const double rawT = json::getDouble (pv, "t", 0.0);
     pt.timeSamples   = (std::isfinite (rawT) && rawT > 0.0) ? (juce::int64) rawT : (juce::int64) 0;
     // NaN slips through jlimit unchanged (NaN compares false both ways), so it
     // would otherwise poison the lane's binary search / a DSP param. Map it to a
     // safe default; ±inf is already clamped to the [0,1] range by jlimit.
-    float rawV = (float) (double) pv["v"];
+    float rawV = json::getFloat (pv, "v", 0.0f);
     if (std::isnan (rawV)) rawV = 0.0f;
     pt.value         = juce::jlimit (0.0f, 1.0f, rawV);
-    const float bpm  = pv.hasProperty ("bpm") ? (float) (double) pv["bpm"]
-                                              : safeFallback;
+    const float bpm  = json::getFloat (pv, "bpm", safeFallback);
     // A zero / negative bpm would break tempo-retime math (division by it),
     // so accept only a finite, strictly-positive value; else fall back.
     pt.recordedAtBPM = (std::isfinite (bpm) && bpm > 0.0f) ? bpm : safeFallback;
@@ -102,7 +108,7 @@ inline AutomationPoint parseAutomationPoint (const juce::var& pv, double fallbac
 // Non-static + lives in namespace duskstudio so the Catch2 suite can
 // forward-declare + exercise the migration loop directly (see
 // tests/session_schema_migration.cpp). H1 schema-test hook.
-bool migrateSession (juce::var& root, int from)
+bool migrateSession (nlohmann::json& root, int from)
 {
     int v = from;
     while (v < kFormatVersion)
@@ -119,8 +125,8 @@ bool migrateSession (juce::var& root, int from)
                 // version field is the only mutation; the rest of the
                 // tree is identical. Future schema changes get their
                 // case here.
-                if (root.isObject())
-                    root.getDynamicObject()->setProperty ("version", 2);
+                if (root.is_object())
+                    root["version"] = 2;
                 ++v;
                 break;
 
@@ -132,8 +138,8 @@ bool migrateSession (juce::var& root, int from)
                 // The bump exists so v2 readers (0.10.x) REFUSE v3 files
                 // loudly instead of silently failing to resolve relative
                 // paths they predate.
-                if (root.isObject())
-                    root.getDynamicObject()->setProperty ("version", 3);
+                if (root.is_object())
+                    root["version"] = 3;
                 ++v;
                 break;
 
@@ -743,40 +749,40 @@ JObj busToObject (const Bus& a)
     return obj;
 }
 
-void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm,
+void restoreTrack (Track& t, const nlohmann::json& v, double defaultRecordBpm,
                    const juce::File& sessionDir,
                    std::vector<juce::String>& missingFiles)
 {
-    if (! v.isObject()) return;
-    if (auto s = v["name"].toString();           s.isNotEmpty()) t.name = s;
-    if (auto s = v["colour"].toString();         s.isNotEmpty()) t.colour = hexToColour (s, t.colour);
+    if (! v.is_object()) return;
+    if (auto s = json::getString (v, "name");   ! s.empty()) t.name = s;
+    if (auto s = json::getString (v, "colour"); ! s.empty()) t.colour = hexToColour (s, t.colour);
 
     // Plugin slot - strings remain empty when the property is absent (older
     // sessions or unused slots). AudioEngine::consumePluginStateAfterLoad
     // reads these back and asks each PluginSlot to reinstantiate.
-    t.pluginDescriptionXml = v["plugin_desc_xml"].toString();
-    t.pluginStateBase64    = v["plugin_state"]   .toString();
-    t.nativeClapPath        = v["native_clap_path"]  .toString();
-    t.nativeClapPluginId    = v["native_clap_plugin"].toString();
-    t.nativeClapStateBase64 = v["native_clap_state"] .toString();
-    t.nativeLv2Path         = v["native_lv2_path"]   .toString();
-    t.nativeLv2PluginId     = v["native_lv2_plugin"] .toString();
-    t.nativeLv2StateBase64  = v["native_lv2_state"]  .toString();
-    t.nativeVst3Path        = v["native_vst3_path"]  .toString();
-    t.nativeVst3PluginId    = v["native_vst3_plugin"].toString();
-    t.nativeVst3StateBase64 = v["native_vst3_state"] .toString();
+    t.pluginDescriptionXml = json::getString (v, "plugin_desc_xml");
+    t.pluginStateBase64    = json::getString (v, "plugin_state");
+    t.nativeClapPath        = json::getString (v, "native_clap_path");
+    t.nativeClapPluginId    = json::getString (v, "native_clap_plugin");
+    t.nativeClapStateBase64 = json::getString (v, "native_clap_state");
+    t.nativeLv2Path         = json::getString (v, "native_lv2_path");
+    t.nativeLv2PluginId     = json::getString (v, "native_lv2_plugin");
+    t.nativeLv2StateBase64  = json::getString (v, "native_lv2_state");
+    t.nativeVst3Path        = json::getString (v, "native_vst3_path");
+    t.nativeVst3PluginId    = json::getString (v, "native_vst3_plugin");
+    t.nativeVst3StateBase64 = json::getString (v, "native_vst3_state");
 
     auto setFloat = [&v] (std::atomic<float>& a, const char* key)
     {
-        if (v.hasProperty (key)) a.store ((float) (double) v[key], std::memory_order_relaxed);
+        if (json::has (v, key)) a.store (json::getFloat (v, key, 0.0f), std::memory_order_relaxed);
     };
     auto setBool = [&v] (std::atomic<bool>& a, const char* key)
     {
-        if (v.hasProperty (key)) a.store ((bool) v[key], std::memory_order_relaxed);
+        if (json::has (v, key)) a.store (json::getBool (v, key, false), std::memory_order_relaxed);
     };
     auto setInt = [&v] (std::atomic<int>& a, const char* key)
     {
-        if (v.hasProperty (key)) a.store ((int) v[key], std::memory_order_relaxed);
+        if (json::has (v, key)) a.store (json::getInt (v, key, 0), std::memory_order_relaxed);
     };
 
     setFloat (t.strip.faderDb,      "fader_db");
@@ -784,8 +790,7 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm,
     setBool  (t.strip.mute,         "mute");
     setBool  (t.strip.solo,         "solo");
     setBool  (t.strip.phaseInvert,  "phase_invert");
-    t.strip.insertBypassed.store (v.hasProperty ("insert_bypassed")
-                                    && (bool) v["insert_bypassed"]);
+    t.strip.insertBypassed.store (json::getBool (v, "insert_bypassed", false));
     setInt   (t.strip.faderGroupId, "fader_group");
     setBool  (t.inputMonitor,       "input_monitor");
     setBool  (t.printEffects,       "print_effects");
@@ -797,9 +802,9 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm,
     // identifier doesn't match any currently-available device (USB MIDI
     // gear unplugged, different machine, etc.) so the user can re-pick
     // without the index pointing at a wrong device.
-    if (v.hasProperty ("midi_input_id"))
+    if (json::has (v, "midi_input_id"))
     {
-        t.midiInputIdentifier = v["midi_input_id"].toString();
+        t.midiInputIdentifier = json::getString (v, "midi_input_id");
         const int resolved = resolveMidiInputIndexByIdentifier (t.midiInputIdentifier);
         if (resolved >= 0)
             t.midiInputIndex.store (resolved, std::memory_order_relaxed);
@@ -812,9 +817,9 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm,
         t.midiInputIdentifier = juce::String();
     }
     // Same shape on the external-MIDI-output side.
-    if (v.hasProperty ("midi_output_id"))
+    if (json::has (v, "midi_output_id"))
     {
-        t.midiOutputIdentifier = v["midi_output_id"].toString();
+        t.midiOutputIdentifier = json::getString (v, "midi_output_id");
         const int resolved = resolveMidiOutputIndexByIdentifier (t.midiOutputIdentifier);
         t.midiOutputIndex.store (resolved >= 0 ? resolved : -1,
                                   std::memory_order_relaxed);
@@ -827,7 +832,7 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm,
     setInt   (t.midiChannel,        "midi_channel");
     setInt   (t.mode,               "track_mode");
     setBool  (t.frozen,             "frozen");
-    if (auto fp = v["frozen_audio_path"].toString(); fp.isNotEmpty())
+    if (auto fp = json::getString (v, "frozen_audio_path"); ! fp.empty())
     {
         // Engine-owned freeze WAV: a missing/zero-length one is dropped + recovered
         // transparently below, so it must NOT surface as a user-facing missing file.
@@ -841,11 +846,11 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm,
         fr = AudioRegion {};
         fr.file            = wav;
         fr.timelineStart   = 0;
-        fr.lengthInSamples = (juce::int64) v.getProperty ("frozen_len", 0);
+        fr.lengthInSamples = json::getInt64 (v, "frozen_len", 0);
         fr.sourceOffset    = 0;
-        fr.numChannels     = juce::jlimit (1, 2, (int) v.getProperty ("frozen_channels", 2));
+        fr.numChannels     = juce::jlimit (1, 2, json::getInt (v, "frozen_channels", 2));
         fr.gainDb          = 0.0f;
-        t.frozenPluginBypass.store ((bool) v.getProperty ("frozen_plugin_bypass", false));
+        t.frozenPluginBypass.store (json::getBool (v, "frozen_plugin_bypass", false));
         // A frozen flag with no usable WAV (missing file, zero length) is
         // meaningless — drop the whole freeze (flag + path + region) so it can't
         // be re-saved as phantom state, and the track falls back to live.
@@ -868,54 +873,56 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm,
         t.frozenPluginBypass.store (false);
     }
 
-    if (auto buses = v["bus_assign"]; buses.isArray())
     {
-        const int n = juce::jmin (ChannelStripParams::kNumBuses, buses.size());
+        const auto& buses = json::array (v, "bus_assign");
+        const int n = juce::jmin (ChannelStripParams::kNumBuses, (int) buses.size());
         for (int i = 0; i < n; ++i)
-            t.strip.busAssign[(size_t) i].store ((bool) buses[i], std::memory_order_relaxed);
+            t.strip.busAssign[(size_t) i].store (buses[(size_t) i].is_boolean() && buses[(size_t) i].get<bool>(),
+                                                 std::memory_order_relaxed);
     }
 
-    if (auto auxLevels = v["aux_send_db"]; auxLevels.isArray())
     {
-        const int n = juce::jmin (ChannelStripParams::kNumAuxSends, auxLevels.size());
+        const auto& auxLevels = json::array (v, "aux_send_db");
+        const int n = juce::jmin (ChannelStripParams::kNumAuxSends, (int) auxLevels.size());
         for (int i = 0; i < n; ++i)
-            t.strip.auxSendDb[(size_t) i].store ((float) (double) auxLevels[i],
-                                                   std::memory_order_relaxed);
+            t.strip.auxSendDb[(size_t) i].store (auxLevels[(size_t) i].is_number()
+                                                     ? (float) auxLevels[(size_t) i].get<double>() : 0.0f,
+                                                 std::memory_order_relaxed);
     }
-    if (auto auxPrePost = v["aux_send_pre_fader"]; auxPrePost.isArray())
     {
-        const int n = juce::jmin (ChannelStripParams::kNumAuxSends, auxPrePost.size());
+        const auto& auxPrePost = json::array (v, "aux_send_pre_fader");
+        const int n = juce::jmin (ChannelStripParams::kNumAuxSends, (int) auxPrePost.size());
         for (int i = 0; i < n; ++i)
-            t.strip.auxSendPreFader[(size_t) i].store ((bool) auxPrePost[i],
-                                                          std::memory_order_relaxed);
+            t.strip.auxSendPreFader[(size_t) i].store (auxPrePost[(size_t) i].is_boolean()
+                                                           && auxPrePost[(size_t) i].get<bool>(),
+                                                       std::memory_order_relaxed);
     }
 
-    if (auto hpf = v["hpf"]; hpf.isObject())
     {
-        if (hpf.hasProperty ("enabled")) t.strip.hpfEnabled.store ((bool) hpf["enabled"]);
-        if (hpf.hasProperty ("freq"))    t.strip.hpfFreq.store ((float) (double) hpf["freq"]);
+        const auto& hpf = json::child (v, "hpf");
+        if (json::has (hpf, "enabled")) t.strip.hpfEnabled.store (json::getBool (hpf, "enabled", false));
+        if (json::has (hpf, "freq"))    t.strip.hpfFreq.store (json::getFloat (hpf, "freq", 0.0f));
     }
 
-    if (auto lpf = v["lpf"]; lpf.isObject())
     {
-        if (lpf.hasProperty ("enabled")) t.strip.lpfEnabled.store ((bool) lpf["enabled"]);
-        if (lpf.hasProperty ("freq"))    t.strip.lpfFreq.store ((float) (double) lpf["freq"]);
+        const auto& lpf = json::child (v, "lpf");
+        if (json::has (lpf, "enabled")) t.strip.lpfEnabled.store (json::getBool (lpf, "enabled", false));
+        if (json::has (lpf, "freq"))    t.strip.lpfFreq.store (json::getFloat (lpf, "freq", 0.0f));
     }
 
-    if (auto eq = v["eq"]; eq.isObject())
     {
-        if (eq.hasProperty ("enabled")) t.strip.eqEnabled.store ((bool) eq["enabled"]);
-        if (auto type = eq["type"].toString(); type.isNotEmpty())
+        const auto& eq = json::child (v, "eq");
+        if (json::has (eq, "enabled")) t.strip.eqEnabled.store (json::getBool (eq, "enabled", false));
+        if (auto type = json::getString (eq, "type"); ! type.empty())
             t.strip.eqBlackMode.store (type == "black");
 
         auto restoreBand = [&eq] (const char* key, std::atomic<float>* gain,
                                    std::atomic<float>* freq, std::atomic<float>* q)
         {
-            auto b = eq[key];
-            if (! b.isObject()) return;
-            if (gain && b.hasProperty ("gain")) storeFiniteFloat (*gain, b["gain"]);
-            if (freq && b.hasProperty ("freq")) storeFiniteFloat (*freq, b["freq"]);
-            if (q    && b.hasProperty ("q"))    storeFiniteFloat (*q,    b["q"]);
+            const auto& b = json::child (eq, key);
+            if (gain && json::has (b, "gain")) storeFiniteFloat (*gain, b["gain"]);
+            if (freq && json::has (b, "freq")) storeFiniteFloat (*freq, b["freq"]);
+            if (q    && json::has (b, "q"))    storeFiniteFloat (*q,    b["q"]);
         };
         restoreBand ("lf", &t.strip.lfGainDb, &t.strip.lfFreq, nullptr);
         restoreBand ("lm", &t.strip.lmGainDb, &t.strip.lmFreq, &t.strip.lmQ);
@@ -923,19 +930,19 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm,
         restoreBand ("hf", &t.strip.hfGainDb, &t.strip.hfFreq, nullptr);
     }
 
-    if (auto comp = v["comp"]; comp.isObject())
     {
+        const auto& comp = json::child (v, "comp");
         auto loadF = [&] (const char* key, std::atomic<float>& dst)
         {
-            if (comp.hasProperty (key)) dst.store ((float) (double) comp[key]);
+            if (json::has (comp, key)) dst.store (json::getFloat (comp, key, 0.0f));
         };
         auto loadI = [&] (const char* key, std::atomic<int>& dst)
         {
-            if (comp.hasProperty (key)) dst.store ((int) comp[key]);
+            if (json::has (comp, key)) dst.store (json::getInt (comp, key, 0));
         };
         auto loadB = [&] (const char* key, std::atomic<bool>& dst)
         {
-            if (comp.hasProperty (key)) dst.store ((bool) comp[key]);
+            if (json::has (comp, key)) dst.store (json::getBool (comp, key, false));
         };
         loadB ("enabled",     t.strip.compEnabled);
         loadB ("mode_picked", t.strip.compModePicked);
@@ -963,30 +970,25 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm,
     // so a key absent from the file (pre-HW-insert session) must reset
     // the flag — inheriting the prior session's enabled insert would
     // route audio out to hardware this session never asked for.
+    t.hardwareInsert.enabled.store (json::getBool (json::child (v, "hardware_insert"), "enabled", false));
+    if (json::has (v, "hardware_insert"))
     {
-        auto hwi = v["hardware_insert"];
-        t.hardwareInsert.enabled.store (hwi.isObject() && (bool) hwi["enabled"]);
-    }
-    if (auto hwi = v["hardware_insert"]; hwi.isObject())
-    {
+        const auto& hwi = json::child (v, "hardware_insert");
         auto fresh = std::make_unique<HardwareInsertRouting>();
         // current() returns the existing snapshot - seeds any field that
         // the JSON doesn't carry (forward-compat with older sessions).
         *fresh = t.hardwareInsert.routing.current();
-        if (hwi.hasProperty ("output_ch_l"))     fresh->outputChL      = (int) hwi["output_ch_l"];
-        if (hwi.hasProperty ("output_ch_r"))     fresh->outputChR      = (int) hwi["output_ch_r"];
-        if (hwi.hasProperty ("input_ch_l"))      fresh->inputChL       = (int) hwi["input_ch_l"];
-        if (hwi.hasProperty ("input_ch_r"))      fresh->inputChR       = (int) hwi["input_ch_r"];
-        if (hwi.hasProperty ("latency_samples")) fresh->latencySamples = (int) hwi["latency_samples"];
-        if (hwi.hasProperty ("format"))          fresh->format         = (int) hwi["format"];
+        if (json::has (hwi, "output_ch_l"))     fresh->outputChL      = json::getInt (hwi, "output_ch_l", 0);
+        if (json::has (hwi, "output_ch_r"))     fresh->outputChR      = json::getInt (hwi, "output_ch_r", 0);
+        if (json::has (hwi, "input_ch_l"))      fresh->inputChL       = json::getInt (hwi, "input_ch_l", 0);
+        if (json::has (hwi, "input_ch_r"))      fresh->inputChR       = json::getInt (hwi, "input_ch_r", 0);
+        if (json::has (hwi, "latency_samples")) fresh->latencySamples = json::getInt (hwi, "latency_samples", 0);
+        if (json::has (hwi, "format"))          fresh->format         = json::getInt (hwi, "format", 0);
         t.hardwareInsert.routing.publish (std::move (fresh));
 
-        if (hwi.hasProperty ("output_gain_db"))
-            t.hardwareInsert.outputGainDb.store ((float) (double) hwi["output_gain_db"]);
-        if (hwi.hasProperty ("input_gain_db"))
-            t.hardwareInsert.inputGainDb .store ((float) (double) hwi["input_gain_db"]);
-        if (hwi.hasProperty ("dry_wet"))
-            t.hardwareInsert.dryWet      .store ((float) (double) hwi["dry_wet"]);
+        if (json::has (hwi, "output_gain_db")) t.hardwareInsert.outputGainDb.store (json::getFloat (hwi, "output_gain_db", 0.0f));
+        if (json::has (hwi, "input_gain_db"))  t.hardwareInsert.inputGainDb .store (json::getFloat (hwi, "input_gain_db", 0.0f));
+        if (json::has (hwi, "dry_wet"))        t.hardwareInsert.dryWet      .store (json::getFloat (hwi, "dry_wet", 0.0f));
     }
 
     // Automation - per-strip mode + per-param point arrays. Lanes not in
@@ -1001,19 +1003,18 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm,
     // gating lane reads.
     for (auto& lane : t.automationLanes)
         lane.publishPoints ({});
-    if (auto autoVar = v["automation"]; autoVar.isObject())
     {
+        const auto& autoVar = json::child (v, "automation");
         for (int p = 0; p < kNumAutomationParams; ++p)
         {
             const char* key = automationParamKey ((AutomationParam) p);
-            auto pts = autoVar[key];
-            if (! pts.isArray()) continue;
+            const auto& pts = json::array (autoVar, key);
+            if (pts.empty()) continue;
             std::vector<AutomationPoint> tmp;
-            tmp.reserve ((size_t) pts.size());
-            for (int k = 0; k < pts.size(); ++k)
+            tmp.reserve (pts.size());
+            for (const auto& pv : pts)
             {
-                auto pv = pts[k];
-                if (! pv.isObject()) continue;
+                if (! pv.is_object()) continue;
                 // Legacy / hand-edited points with no bpm anchor to the
                 // session's load-time tempo (not a hard-coded 120) so a later
                 // tempo change retimes them against the right reference.
@@ -1031,62 +1032,54 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm,
     // Unconditional store (default Off when absent) — same hazard as
     // restoreBus's automation_mode: a track left in Write by the prior
     // session must not keep writing over the loaded session's lanes.
-    t.automationMode.store (v.hasProperty ("automation_mode")
-                                ? (int) v["automation_mode"] : 0,
-                            std::memory_order_release);
+    t.automationMode.store (json::getInt (v, "automation_mode", 0), std::memory_order_release);
 
     t.regions.clear();
-    if (auto regions = v["regions"]; regions.isArray())
     {
-        for (int i = 0; i < regions.size(); ++i)
+        const auto& regions = json::array (v, "regions");
+        for (const auto& rv : regions)
         {
-            auto rv = regions[i];
-            if (! rv.isObject()) continue;
+            if (! rv.is_object()) continue;
             AudioRegion r;
-            r.file            = resolvePortablePath (rv["file"].toString(),
+            r.file            = resolvePortablePath (json::getString (rv, "file"),
                                                       sessionDir, missingFiles);
             // Clamp every sample-domain field to >= 0 (mirrors the MIDI-note
             // loader below) so a hand-edited or truncated session.json can't
             // seed negative values that underflow PlaybackEngine's read-pointer
             // math (readStart = sourceOffset + (firstWithin - timelineStart)).
-            r.timelineStart   = juce::jmax ((juce::int64) 0, (juce::int64) rv["timeline_start"]);
-            r.lengthInSamples = juce::jmax ((juce::int64) 0, (juce::int64) rv["length"]);
-            r.sourceOffset    = juce::jmax ((juce::int64) 0, (juce::int64) rv["source_offset"]);
-            r.fadeInSamples   = rv.hasProperty ("fade_in")  ? juce::jmax ((juce::int64) 0, (juce::int64) rv["fade_in"])  : 0;
-            r.fadeOutSamples  = rv.hasProperty ("fade_out") ? juce::jmax ((juce::int64) 0, (juce::int64) rv["fade_out"]) : 0;
-            auto loadShape = [] (const juce::var& v) -> FadeShape
+            r.timelineStart   = juce::jmax ((juce::int64) 0, (juce::int64) json::getInt64 (rv, "timeline_start", 0));
+            r.lengthInSamples = juce::jmax ((juce::int64) 0, (juce::int64) json::getInt64 (rv, "length", 0));
+            r.sourceOffset    = juce::jmax ((juce::int64) 0, (juce::int64) json::getInt64 (rv, "source_offset", 0));
+            r.fadeInSamples   = juce::jmax ((juce::int64) 0, (juce::int64) json::getInt64 (rv, "fade_in", 0));
+            r.fadeOutSamples  = juce::jmax ((juce::int64) 0, (juce::int64) json::getInt64 (rv, "fade_out", 0));
+            auto loadShape = [] (int i) -> FadeShape
             {
-                const int i = (int) v;
                 if (i >= 0 && i <= (int) FadeShape::RaisedCosine) return (FadeShape) i;
                 return FadeShape::Linear;
             };
-            r.fadeInShape     = rv.hasProperty ("fade_in_shape")
-                                 ? loadShape (rv["fade_in_shape"])  : FadeShape::Linear;
-            r.fadeOutShape    = rv.hasProperty ("fade_out_shape")
-                                 ? loadShape (rv["fade_out_shape"]) : FadeShape::Linear;
-            r.fadeInAuto      = rv.hasProperty ("fade_in_auto")  && (bool) rv["fade_in_auto"];
-            r.fadeOutAuto     = rv.hasProperty ("fade_out_auto") && (bool) rv["fade_out_auto"];
-            r.numChannels     = juce::jlimit (1, 2, rv.hasProperty ("num_channels") ? (int) rv["num_channels"] : 1);
-            r.gainDb          = rv.hasProperty ("gain_db")  ? finiteFloatOr (rv["gain_db"], 0.0f) : 0.0f;
-            r.customColour    = rv.hasProperty ("custom_colour")
-                                 ? juce::Colour::fromString (rv["custom_colour"].toString())
+            r.fadeInShape     = loadShape (json::getInt (rv, "fade_in_shape", 0));
+            r.fadeOutShape    = loadShape (json::getInt (rv, "fade_out_shape", 0));
+            r.fadeInAuto      = json::getBool (rv, "fade_in_auto", false);
+            r.fadeOutAuto     = json::getBool (rv, "fade_out_auto", false);
+            r.numChannels     = juce::jlimit (1, 2, json::getInt (rv, "num_channels", 1));
+            r.gainDb          = json::has (rv, "gain_db") ? finiteFloatOr (rv["gain_db"], 0.0f) : 0.0f;
+            r.customColour    = json::has (rv, "custom_colour")
+                                 ? juce::Colour::fromString (juce::String (json::getString (rv, "custom_colour")))
                                  : juce::Colour();
-            r.label           = rv.hasProperty ("label") ? rv["label"].toString()
-                                                          : juce::String();
-            r.muted           = rv.hasProperty ("muted")  && (bool) rv["muted"];
-            r.locked          = rv.hasProperty ("locked") && (bool) rv["locked"];
+            r.label           = json::getString (rv, "label");
+            r.muted           = json::getBool (rv, "muted", false);
+            r.locked          = json::getBool (rv, "locked", false);
 
-            if (auto prior = rv["previous_takes"]; prior.isArray())
             {
-                for (int k = 0; k < prior.size(); ++k)
+                const auto& prior = json::array (rv, "previous_takes");
+                for (const auto& tv : prior)
                 {
-                    auto tv = prior[k];
-                    if (! tv.isObject()) continue;
+                    if (! tv.is_object()) continue;
                     TakeRef take;
-                    take.file            = resolvePortablePath (tv["file"].toString(),
+                    take.file            = resolvePortablePath (json::getString (tv, "file"),
                                                                  sessionDir, missingFiles);
-                    take.sourceOffset    = juce::jmax ((juce::int64) 0, (juce::int64) tv["source_offset"]);
-                    take.lengthInSamples = juce::jmax ((juce::int64) 0, (juce::int64) tv["length"]);
+                    take.sourceOffset    = juce::jmax ((juce::int64) 0, (juce::int64) json::getInt64 (tv, "source_offset", 0));
+                    take.lengthInSamples = juce::jmax ((juce::int64) 0, (juce::int64) json::getInt64 (tv, "length", 0));
                     r.previousTakes.push_back (std::move (take));
                 }
             }
@@ -1096,40 +1089,38 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm,
     }
 
     // MIDI regions. Symmetric with the writer above; absent for audio
-    // tracks. Helpers parse note + cc arrays out of a juce::var so the
+    // tracks. Helpers parse note + cc arrays out of a JSON value so the
     // top-level region and each take share the same code path.
     // Clamp every parsed field to its MIDI-spec range so a hand-edited or
     // truncated session.json can't seed out-of-range values into the model.
-    auto parseNotes = [] (const juce::var& notesVar, std::vector<MidiNote>& dst)
+    auto parseNotes = [] (const nlohmann::json& notesVar, std::vector<MidiNote>& dst)
     {
-        if (! notesVar.isArray()) return;
-        dst.reserve ((size_t) notesVar.size());
-        for (int k = 0; k < notesVar.size(); ++k)
+        if (! notesVar.is_array()) return;
+        dst.reserve (notesVar.size());
+        for (const auto& nv : notesVar)
         {
-            auto nv = notesVar[k];
-            if (! nv.isObject()) continue;
+            if (! nv.is_object()) continue;
             MidiNote n;
-            n.channel       = juce::jlimit (1, 16,  nv.hasProperty ("ch")    ? (int) nv["ch"]    : 1);
-            n.noteNumber    = juce::jlimit (0, 127, nv.hasProperty ("note")  ? (int) nv["note"]  : 60);
-            n.velocity      = juce::jlimit (1, 127, nv.hasProperty ("vel")   ? (int) nv["vel"]   : 100);
-            n.startTick     = juce::jmax ((juce::int64) 0, nv.hasProperty ("start") ? (juce::int64) nv["start"] : 0);
-            n.lengthInTicks = juce::jmax ((juce::int64) 0, nv.hasProperty ("len")   ? (juce::int64) nv["len"]   : 0);
+            n.channel       = juce::jlimit (1, 16,  json::getInt (nv, "ch", 1));
+            n.noteNumber    = juce::jlimit (0, 127, json::getInt (nv, "note", 60));
+            n.velocity      = juce::jlimit (1, 127, json::getInt (nv, "vel", 100));
+            n.startTick     = juce::jmax ((juce::int64) 0, (juce::int64) json::getInt64 (nv, "start", 0));
+            n.lengthInTicks = juce::jmax ((juce::int64) 0, (juce::int64) json::getInt64 (nv, "len", 0));
             dst.push_back (n);
         }
     };
-    auto parseCcs = [] (const juce::var& ccsVar, std::vector<MidiCc>& dst)
+    auto parseCcs = [] (const nlohmann::json& ccsVar, std::vector<MidiCc>& dst)
     {
-        if (! ccsVar.isArray()) return;
-        dst.reserve ((size_t) ccsVar.size());
-        for (int k = 0; k < ccsVar.size(); ++k)
+        if (! ccsVar.is_array()) return;
+        dst.reserve (ccsVar.size());
+        for (const auto& cv : ccsVar)
         {
-            auto cv = ccsVar[k];
-            if (! cv.isObject()) continue;
+            if (! cv.is_object()) continue;
             MidiCc c;
-            c.channel    = juce::jlimit (1, 16,  cv.hasProperty ("ch")   ? (int) cv["ch"]   : 1);
-            c.controller = juce::jlimit (0, 127, cv.hasProperty ("ctrl") ? (int) cv["ctrl"] : 0);
-            c.value      = juce::jlimit (0, 127, cv.hasProperty ("val")  ? (int) cv["val"]  : 0);
-            c.atTick     = juce::jmax ((juce::int64) 0, cv.hasProperty ("at")   ? (juce::int64) cv["at"] : 0);
+            c.channel    = juce::jlimit (1, 16,  json::getInt (cv, "ch", 1));
+            c.controller = juce::jlimit (0, 127, json::getInt (cv, "ctrl", 0));
+            c.value      = juce::jlimit (0, 127, json::getInt (cv, "val", 0));
+            c.atTick     = juce::jmax ((juce::int64) 0, (juce::int64) json::getInt64 (cv, "at", 0));
             dst.push_back (c);
         }
     };
@@ -1138,48 +1129,42 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm,
     // audio thread either sees the prior set or the new one - never a
     // half-loaded state.
     auto freshMidi = std::make_unique<std::vector<MidiRegion>>();
-    if (auto midiRegions = v["midi_regions"]; midiRegions.isArray())
     {
-        for (int i = 0; i < midiRegions.size(); ++i)
+        const auto& midiRegions = json::array (v, "midi_regions");
+        for (const auto& rv : midiRegions)
         {
-            auto rv = midiRegions[i];
-            if (! rv.isObject()) continue;
+            if (! rv.is_object()) continue;
             MidiRegion r;
-            r.timelineStart   = juce::jmax ((juce::int64) 0, (juce::int64) rv["timeline_start"]);
-            r.lengthInSamples = juce::jmax ((juce::int64) 0, (juce::int64) rv["length_samples"]);
-            r.lengthInTicks   = juce::jmax ((juce::int64) 0, (juce::int64) rv["length_ticks"]);
-            r.customColour    = rv.hasProperty ("custom_colour")
-                                 ? juce::Colour::fromString (rv["custom_colour"].toString())
+            r.timelineStart   = juce::jmax ((juce::int64) 0, (juce::int64) json::getInt64 (rv, "timeline_start", 0));
+            r.lengthInSamples = juce::jmax ((juce::int64) 0, (juce::int64) json::getInt64 (rv, "length_samples", 0));
+            r.lengthInTicks   = juce::jmax ((juce::int64) 0, (juce::int64) json::getInt64 (rv, "length_ticks", 0));
+            r.customColour    = json::has (rv, "custom_colour")
+                                 ? juce::Colour::fromString (juce::String (json::getString (rv, "custom_colour")))
                                  : juce::Colour();
-            r.label           = rv.hasProperty ("label") ? rv["label"].toString()
-                                                          : juce::String();
-            r.muted           = rv.hasProperty ("muted")  && (bool) rv["muted"];
-            r.locked          = rv.hasProperty ("locked") && (bool) rv["locked"];
+            r.label           = json::getString (rv, "label");
+            r.muted           = json::getBool (rv, "muted", false);
+            r.locked          = json::getBool (rv, "locked", false);
 
             // tempo_lock defaults true (spec §5b: locked is the default).
             // recorded_at_bpm defaults to the session's tempo at load time,
             // so legacy sessions that didn't record this field are
             // anchored to their own saved BPM rather than 120 - the first
             // BPM change after load won't silently mis-retime.
-            r.tempoLock       = ! rv.hasProperty ("tempo_lock")
-                                  || (bool) rv["tempo_lock"];
-            r.recordedAtBPM   = rv.hasProperty ("recorded_at_bpm")
-                                  ? (double) rv["recorded_at_bpm"]
-                                  : defaultRecordBpm;
+            r.tempoLock       = ! json::has (rv, "tempo_lock") || json::getBool (rv, "tempo_lock", true);
+            r.recordedAtBPM   = json::getDouble (rv, "recorded_at_bpm", defaultRecordBpm);
 
-            parseNotes (rv["notes"], r.notes);
-            parseCcs   (rv["ccs"],   r.ccs);
+            parseNotes (json::array (rv, "notes"), r.notes);
+            parseCcs   (json::array (rv, "ccs"),   r.ccs);
 
-            if (auto prior = rv["previous_takes"]; prior.isArray())
             {
-                for (int k = 0; k < prior.size(); ++k)
+                const auto& prior = json::array (rv, "previous_takes");
+                for (const auto& tv : prior)
                 {
-                    auto tv = prior[k];
-                    if (! tv.isObject()) continue;
+                    if (! tv.is_object()) continue;
                     MidiTakeRef take;
-                    take.lengthInTicks = juce::jmax ((juce::int64) 0, (juce::int64) tv["length_ticks"]);
-                    parseNotes (tv["notes"], take.notes);
-                    parseCcs   (tv["ccs"],   take.ccs);
+                    take.lengthInTicks = juce::jmax ((juce::int64) 0, (juce::int64) json::getInt64 (tv, "length_ticks", 0));
+                    parseNotes (json::array (tv, "notes"), take.notes);
+                    parseCcs   (json::array (tv, "ccs"),   take.ccs);
                     r.previousTakes.push_back (std::move (take));
                 }
             }
@@ -1190,47 +1175,46 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm,
     t.midiRegions.publish (std::move (freshMidi));
 }
 
-void restoreBus (Bus& a, const juce::var& v, double defaultRecordBpm)
+void restoreBus (Bus& a, const nlohmann::json& v, double defaultRecordBpm)
 {
-    if (! v.isObject()) return;
-    if (auto s = v["name"].toString();   s.isNotEmpty()) a.name = s;
-    if (auto s = v["colour"].toString(); s.isNotEmpty()) a.colour = hexToColour (s, a.colour);
-    if (v.hasProperty ("fader_db"))                       a.strip.faderDb.store ((float) (double) v["fader_db"]);
-    if (v.hasProperty ("pan"))                            a.strip.pan.store     ((float) (double) v["pan"]);
-    if (v.hasProperty ("mute"))                           a.strip.mute.store ((bool) v["mute"]);
-    if (v.hasProperty ("solo"))                           a.strip.solo.store ((bool) v["solo"]);
+    if (! v.is_object()) return;
+    if (auto s = json::getString (v, "name");   ! s.empty()) a.name = s;
+    if (auto s = json::getString (v, "colour"); ! s.empty()) a.colour = hexToColour (s, a.colour);
+    if (json::has (v, "fader_db")) a.strip.faderDb.store (json::getFloat (v, "fader_db", 0.0f));
+    if (json::has (v, "pan"))      a.strip.pan.store     (json::getFloat (v, "pan", 0.0f));
+    if (json::has (v, "mute"))     a.strip.mute.store (json::getBool (v, "mute", false));
+    if (json::has (v, "solo"))     a.strip.solo.store (json::getBool (v, "solo", false));
 
-    if (v.hasProperty ("eq_enabled"))   a.strip.eqEnabled  .store ((bool)  v["eq_enabled"]);
-    if (v.hasProperty ("eq_lf_db"))     storeFiniteFloat (a.strip.eqLfGainDb,  v["eq_lf_db"]);
-    if (v.hasProperty ("eq_mid_db"))    storeFiniteFloat (a.strip.eqMidGainDb, v["eq_mid_db"]);
-    if (v.hasProperty ("eq_hf_db"))     storeFiniteFloat (a.strip.eqHfGainDb,  v["eq_hf_db"]);
+    if (json::has (v, "eq_enabled")) a.strip.eqEnabled.store (json::getBool (v, "eq_enabled", false));
+    if (json::has (v, "eq_lf_db"))   storeFiniteFloat (a.strip.eqLfGainDb,  v["eq_lf_db"]);
+    if (json::has (v, "eq_mid_db"))  storeFiniteFloat (a.strip.eqMidGainDb, v["eq_mid_db"]);
+    if (json::has (v, "eq_hf_db"))   storeFiniteFloat (a.strip.eqHfGainDb,  v["eq_hf_db"]);
 
-    if (v.hasProperty ("comp_enabled"))    a.strip.compEnabled  .store ((bool)  v["comp_enabled"]);
-    if (v.hasProperty ("comp_thresh_db"))  a.strip.compThreshDb .store ((float) (double) v["comp_thresh_db"]);
-    if (v.hasProperty ("comp_ratio"))      a.strip.compRatio    .store ((float) (double) v["comp_ratio"]);
-    if (v.hasProperty ("comp_attack_ms"))  a.strip.compAttackMs .store ((float) (double) v["comp_attack_ms"]);
-    if (v.hasProperty ("comp_release_ms")) a.strip.compReleaseMs.store ((float) (double) v["comp_release_ms"]);
-    if (v.hasProperty ("comp_release_auto")) a.strip.compReleaseAuto.store ((bool) v["comp_release_auto"]);
-    if (v.hasProperty ("comp_makeup_db"))  a.strip.compMakeupDb .store ((float) (double) v["comp_makeup_db"]);
+    if (json::has (v, "comp_enabled"))     a.strip.compEnabled  .store (json::getBool (v, "comp_enabled", false));
+    if (json::has (v, "comp_thresh_db"))   a.strip.compThreshDb .store (json::getFloat (v, "comp_thresh_db", 0.0f));
+    if (json::has (v, "comp_ratio"))       a.strip.compRatio    .store (json::getFloat (v, "comp_ratio", 0.0f));
+    if (json::has (v, "comp_attack_ms"))   a.strip.compAttackMs .store (json::getFloat (v, "comp_attack_ms", 0.0f));
+    if (json::has (v, "comp_release_ms"))  a.strip.compReleaseMs.store (json::getFloat (v, "comp_release_ms", 0.0f));
+    if (json::has (v, "comp_release_auto")) a.strip.compReleaseAuto.store (json::getBool (v, "comp_release_auto", false));
+    if (json::has (v, "comp_makeup_db"))   a.strip.compMakeupDb .store (json::getFloat (v, "comp_makeup_db", 0.0f));
 
     // Automation — mirror restoreTrack: clear lanes, rebuild from JSON, then
     // release-store the mode so the audio thread never reads a half-rebuilt
     // lane vector. Only FaderDb / Pan / Mute lanes are ever populated.
     for (auto& lane : a.strip.automationLanes)
         lane.publishPoints ({});
-    if (auto autoVar = v["automation"]; autoVar.isObject())
     {
+        const auto& autoVar = json::child (v, "automation");
         for (int p = 0; p < kNumAutomationParams; ++p)
         {
             const char* key = automationParamKey ((AutomationParam) p);
-            auto pts = autoVar[key];
-            if (! pts.isArray()) continue;
+            const auto& pts = json::array (autoVar, key);
+            if (pts.empty()) continue;
             std::vector<AutomationPoint> tmp;
-            tmp.reserve ((size_t) pts.size());
-            for (int k = 0; k < pts.size(); ++k)
+            tmp.reserve (pts.size());
+            for (const auto& pv : pts)
             {
-                auto pv = pts[k];
-                if (! pv.isObject()) continue;
+                if (! pv.is_object()) continue;
                 tmp.push_back (parseAutomationPoint (pv, defaultRecordBpm));
             }
             std::sort (tmp.begin(), tmp.end(),
@@ -1241,9 +1225,7 @@ void restoreBus (Bus& a, const juce::var& v, double defaultRecordBpm)
     }
     // Always write the mode so a re-load into a reused strip can't inherit a
     // stale value: an absent key means the saved session predates automation → Off.
-    a.strip.automationMode.store (
-        v.hasProperty ("automation_mode") ? (int) v["automation_mode"] : 0,
-        std::memory_order_release);
+    a.strip.automationMode.store (json::getInt (v, "automation_mode", 0), std::memory_order_release);
 }
 } // namespace
 
@@ -1591,8 +1573,8 @@ bool SessionSerializer::save (const Session& s, const juce::File& target)
 bool SessionSerializer::load (Session& s, const juce::File& source)
 {
     if (! source.existsAsFile()) return false;
-    juce::var root = juce::JSON::parse (source);
-    if (! root.isObject()) return false;
+    nlohmann::json root = nlohmann::json::parse (source.loadFileAsString().toStdString(), nullptr, false);
+    if (! root.is_object()) return false;
 
     s.missingAudioFilesAfterLoad.clear();
 
@@ -1602,9 +1584,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
     // front rather than partial-loaded; downgrading Dusk Studio to read a
     // session saved by a newer build silently dropping new state is
     // the worst-case bug class.
-    const int fileVersion = root.hasProperty ("version")
-        ? (int) root["version"]
-        : 1;
+    const int fileVersion = json::getInt (root, "version", 1);
     if (fileVersion > kFormatVersion)
     {
         std::fprintf (stderr,
@@ -1620,8 +1600,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
     // Unconditional (reset-when-absent): a pre-SR-aware file must not inherit
     // the previous session's rate — 0 tells the load UI to adopt the device's.
     {
-        const double sr = root.hasProperty ("session_sample_rate")
-                              ? (double) root["session_sample_rate"] : 0.0;
+        const double sr = json::getDouble (root, "session_sample_rate", 0.0);
         s.sessionSampleRate = (std::isfinite (sr) && sr >= 8000.0 && sr <= 384000.0)
                                   ? sr : 0.0;
     }
@@ -1631,15 +1610,17 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
     // saved tempo rather than the struct default of 120. The transport
     // block is parsed in full further down; this is a read-only peek.
     double sessionLoadBpm = (double) s.tempoBpm.load (std::memory_order_relaxed);
-    if (auto tportPeek = root["transport"]; tportPeek.isObject())
     {
-        if (tportPeek.hasProperty ("tempo_bpm"))
+        const auto& tportPeek = json::child (root, "transport");
+        if (json::has (tportPeek, "tempo_bpm"))
         {
-            const double peeked = (double) tportPeek["tempo_bpm"];
+            const double peeked = json::getDouble (tportPeek, "tempo_bpm", 0.0);
             // Clamp to the same 30-300 range the final tempoBpm store uses, so
             // the automation / MIDI fallback tempo stays aligned with the loaded
-            // session tempo instead of using a raw out-of-range value.
-            if (std::isfinite (peeked)) sessionLoadBpm = juce::jlimit (30.0, 300.0, peeked);
+            // session tempo instead of using a raw out-of-range value. Reject a
+            // value past float range before it narrows (UB) — keep the seeded tempo.
+            if (std::isfinite (peeked) && std::abs (peeked) <= (double) std::numeric_limits<float>::max())
+                sessionLoadBpm = juce::jlimit (30.0, 300.0, peeked);
         }
     }
 
@@ -1651,18 +1632,15 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
     // an empty object is not enough to blank them: substitute the serialized
     // sections of a default Session, which carry every key at its model
     // default.
-    juce::var sectionDefaults;
-    {
-        auto tracksVar = root["tracks"], busesVar = root["buses"], auxVar = root["aux_lanes"];
-        if (! tracksVar.isArray() || ! busesVar.isArray() || ! auxVar.isArray()
-            || busesVar.size() < Session::kNumBuses
-            || auxVar.size() < Session::kNumAuxLanes)
-            sectionDefaults = juce::JSON::parse (serialize (Session{}));
-    }
+    nlohmann::json sectionDefaults;
+    if (json::array (root, "tracks").empty()
+        || (int) json::array (root, "buses").size() < Session::kNumBuses
+        || (int) json::array (root, "aux_lanes").size() < Session::kNumAuxLanes)
+        sectionDefaults = nlohmann::json::parse (serialize (Session{}).toStdString(), nullptr, false);
 
     {
-        auto tracks = root["tracks"];
-        if (! tracks.isArray()) tracks = sectionDefaults["tracks"];
+        const auto& tracks = ! json::array (root, "tracks").empty()
+                                 ? json::array (root, "tracks") : json::array (sectionDefaults, "tracks");
         // Restore EVERY track slot, not just the ones the JSON lists. A session
         // with fewer tracks than this build (hand-edited, or written by a tool
         // like the DP importer) must blank the surplus slots — otherwise they
@@ -1671,84 +1649,80 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         // restoreTrack with an empty object runs the same unconditional clears
         // the present-track path uses (regions, midiRegions, automation lanes,
         // automation mode, plugin state).
-        const juce::var emptyTrack (new juce::DynamicObject());
+        const nlohmann::json emptyTrack = nlohmann::json::object();
         for (int i = 0; i < Session::kNumTracks; ++i)
             restoreTrack (s.track (i),
-                          i < tracks.size() ? tracks[i] : emptyTrack,
+                          i < (int) tracks.size() ? tracks[(size_t) i] : emptyTrack,
                           sessionLoadBpm, s.getSessionDirectory(),
                           s.missingAudioFilesAfterLoad);
     }
     {
-        auto busesArr = root["buses"];
-        if (! busesArr.isArray()) busesArr = sectionDefaults["buses"];
+        const auto& busesArr    = ! json::array (root, "buses").empty()
+                                     ? json::array (root, "buses") : json::array (sectionDefaults, "buses");
+        const auto& busDefaults = json::array (sectionDefaults, "buses");
         for (int i = 0; i < Session::kNumBuses; ++i)
             restoreBus (s.bus (i),
-                        i < busesArr.size() ? busesArr[i] : sectionDefaults["buses"][i],
+                        i < (int) busesArr.size() ? busesArr[(size_t) i] : busDefaults[(size_t) i],
                         sessionLoadBpm);
     }
     {
-        auto auxLanesArr = root["aux_lanes"];
-        if (! auxLanesArr.isArray()) auxLanesArr = sectionDefaults["aux_lanes"];
+        const auto& auxLanesArr  = ! json::array (root, "aux_lanes").empty()
+                                      ? json::array (root, "aux_lanes") : json::array (sectionDefaults, "aux_lanes");
+        const auto& auxDefaults  = json::array (sectionDefaults, "aux_lanes");
         for (int i = 0; i < Session::kNumAuxLanes; ++i)
         {
-            const auto v = i < auxLanesArr.size() ? auxLanesArr[i]
-                                                  : sectionDefaults["aux_lanes"][i];
-            if (! v.isObject()) continue;
+            const auto& v = i < (int) auxLanesArr.size() ? auxLanesArr[(size_t) i] : auxDefaults[(size_t) i];
+            if (! v.is_object()) continue;
             auto& lane = s.auxLane (i);
-            if (auto str = v["name"].toString();   str.isNotEmpty()) lane.name   = str;
-            if (auto str = v["colour"].toString(); str.isNotEmpty()) lane.colour = hexToColour (str, lane.colour);
-            if (v.hasProperty ("return_level_db"))
-                lane.params.returnLevelDb.store (juce::jlimit (-100.0f, 12.0f, (float) (double) v["return_level_db"]));
-            if (v.hasProperty ("mute"))
-                lane.params.mute.store ((bool) v["mute"]);
-            if (v.hasProperty ("output_pair"))
-                lane.params.outputPair.store ((int) v["output_pair"]);
+            if (auto str = json::getString (v, "name");   ! str.empty()) lane.name   = str;
+            if (auto str = json::getString (v, "colour"); ! str.empty()) lane.colour = hexToColour (str, lane.colour);
+            if (json::has (v, "return_level_db"))
+                lane.params.returnLevelDb.store (juce::jlimit (-100.0f, 12.0f, json::getFloat (v, "return_level_db", 0.0f)));
+            if (json::has (v, "mute"))
+                lane.params.mute.store (json::getBool (v, "mute", false));
+            if (json::has (v, "output_pair"))
+                lane.params.outputPair.store (json::getInt (v, "output_pair", -1));
             else
                 lane.params.outputPair.store (-1);   // model default: Master only
-            if (auto slots = v["plugin_slots"]; slots.isArray())
             {
-                const int sn = juce::jmin (AuxLaneParams::kMaxLanePlugins, slots.size());
+                const auto& slots = json::array (v, "plugin_slots");
+                const int sn = juce::jmin (AuxLaneParams::kMaxLanePlugins, (int) slots.size());
                 for (int p = 0; p < sn; ++p)
                 {
-                    auto sv = slots[p];
-                    if (! sv.isObject()) continue;
-                    lane.pluginDescriptionXml[(size_t) p] = sv["plugin_desc_xml"].toString();
-                    lane.pluginStateBase64[(size_t) p]    = sv["plugin_state"]   .toString();
-                    lane.nativeClapPath[(size_t) p]        = sv["native_clap_path"]  .toString();
-                    lane.nativeClapPluginId[(size_t) p]    = sv["native_clap_plugin"].toString();
-                    lane.nativeClapStateBase64[(size_t) p] = sv["native_clap_state"] .toString();
-                    lane.nativeLv2Path[(size_t) p]         = sv["native_lv2_path"]   .toString();
-                    lane.nativeLv2PluginId[(size_t) p]     = sv["native_lv2_plugin"] .toString();
-                    lane.nativeLv2StateBase64[(size_t) p]  = sv["native_lv2_state"]  .toString();
-                    lane.nativeVst3Path[(size_t) p]        = sv["native_vst3_path"]  .toString();
-                    lane.nativeVst3PluginId[(size_t) p]    = sv["native_vst3_plugin"].toString();
-                    lane.nativeVst3StateBase64[(size_t) p] = sv["native_vst3_state"] .toString();
+                    const auto& sv = slots[(size_t) p];
+                    if (! sv.is_object()) continue;
+                    lane.pluginDescriptionXml[(size_t) p] = json::getString (sv, "plugin_desc_xml");
+                    lane.pluginStateBase64[(size_t) p]    = json::getString (sv, "plugin_state");
+                    lane.nativeClapPath[(size_t) p]        = json::getString (sv, "native_clap_path");
+                    lane.nativeClapPluginId[(size_t) p]    = json::getString (sv, "native_clap_plugin");
+                    lane.nativeClapStateBase64[(size_t) p] = json::getString (sv, "native_clap_state");
+                    lane.nativeLv2Path[(size_t) p]         = json::getString (sv, "native_lv2_path");
+                    lane.nativeLv2PluginId[(size_t) p]     = json::getString (sv, "native_lv2_plugin");
+                    lane.nativeLv2StateBase64[(size_t) p]  = json::getString (sv, "native_lv2_state");
+                    lane.nativeVst3Path[(size_t) p]        = json::getString (sv, "native_vst3_path");
+                    lane.nativeVst3PluginId[(size_t) p]    = json::getString (sv, "native_vst3_plugin");
+                    lane.nativeVst3StateBase64[(size_t) p] = json::getString (sv, "native_vst3_state");
 
                     // Same default-off rationale as the track hardware_insert.
+                    lane.hardwareInserts[(size_t) p].enabled.store (
+                        json::getBool (json::child (sv, "hardware_insert"), "enabled", false));
+                    if (json::has (sv, "hardware_insert"))
                     {
-                        auto hwi = sv["hardware_insert"];
-                        lane.hardwareInserts[(size_t) p].enabled.store (
-                            hwi.isObject() && (bool) hwi["enabled"]);
-                    }
-                    if (auto hwi = sv["hardware_insert"]; hwi.isObject())
-                    {
+                        const auto& hwi = json::child (sv, "hardware_insert");
                         auto& hw = lane.hardwareInserts[(size_t) p];
                         auto fresh = std::make_unique<HardwareInsertRouting>();
                         *fresh = hw.routing.current();
-                        if (hwi.hasProperty ("output_ch_l"))     fresh->outputChL      = (int) hwi["output_ch_l"];
-                        if (hwi.hasProperty ("output_ch_r"))     fresh->outputChR      = (int) hwi["output_ch_r"];
-                        if (hwi.hasProperty ("input_ch_l"))      fresh->inputChL       = (int) hwi["input_ch_l"];
-                        if (hwi.hasProperty ("input_ch_r"))      fresh->inputChR       = (int) hwi["input_ch_r"];
-                        if (hwi.hasProperty ("latency_samples")) fresh->latencySamples = (int) hwi["latency_samples"];
-                        if (hwi.hasProperty ("format"))          fresh->format         = (int) hwi["format"];
+                        if (json::has (hwi, "output_ch_l"))     fresh->outputChL      = json::getInt (hwi, "output_ch_l", 0);
+                        if (json::has (hwi, "output_ch_r"))     fresh->outputChR      = json::getInt (hwi, "output_ch_r", 0);
+                        if (json::has (hwi, "input_ch_l"))      fresh->inputChL       = json::getInt (hwi, "input_ch_l", 0);
+                        if (json::has (hwi, "input_ch_r"))      fresh->inputChR       = json::getInt (hwi, "input_ch_r", 0);
+                        if (json::has (hwi, "latency_samples")) fresh->latencySamples = json::getInt (hwi, "latency_samples", 0);
+                        if (json::has (hwi, "format"))          fresh->format         = json::getInt (hwi, "format", 0);
                         hw.routing.publish (std::move (fresh));
 
-                        if (hwi.hasProperty ("output_gain_db"))
-                            hw.outputGainDb.store ((float) (double) hwi["output_gain_db"]);
-                        if (hwi.hasProperty ("input_gain_db"))
-                            hw.inputGainDb .store ((float) (double) hwi["input_gain_db"]);
-                        if (hwi.hasProperty ("dry_wet"))
-                            hw.dryWet      .store ((float) (double) hwi["dry_wet"]);
+                        if (json::has (hwi, "output_gain_db")) hw.outputGainDb.store (json::getFloat (hwi, "output_gain_db", 0.0f));
+                        if (json::has (hwi, "input_gain_db"))  hw.inputGainDb .store (json::getFloat (hwi, "input_gain_db", 0.0f));
+                        if (json::has (hwi, "dry_wet"))        hw.dryWet      .store (json::getFloat (hwi, "dry_wet", 0.0f));
                     }
                 }
             }
@@ -1758,20 +1732,18 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
             // audio thread reading half-rebuilt lane vectors.
             for (auto& al : lane.params.automationLanes)
                 al.publishPoints ({});
-            if (auto autoObj = v["automation"]; autoObj.isObject())
             {
+                const auto& autoObj = json::child (v, "automation");
                 for (int p = 0; p < kNumAutomationParams; ++p)
                 {
                     const char* key = automationParamKey ((AutomationParam) p);
-                    if (! autoObj.hasProperty (key)) continue;
-                    auto pts = autoObj[key];
-                    if (! pts.isArray()) continue;
+                    const auto& pts = json::array (autoObj, key);
+                    if (pts.empty()) continue;
                     std::vector<AutomationPoint> tmp;
-                    tmp.reserve ((size_t) pts.size());
-                    for (int k = 0; k < pts.size(); ++k)
+                    tmp.reserve (pts.size());
+                    for (const auto& pv : pts)
                     {
-                        auto pv = pts[k];
-                        if (! pv.isObject()) continue;
+                        if (! pv.is_object()) continue;
                         tmp.push_back (parseAutomationPoint (pv, sessionLoadBpm));
                     }
                     // Sort by time so the lane evaluator's binary search holds,
@@ -1783,58 +1755,56 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                     lane.params.automationLanes[(size_t) p].publishPoints (std::move (tmp));
                 }
             }
-            lane.params.automationMode.store (v.hasProperty ("automation_mode")
-                                                  ? (int) v["automation_mode"] : 0,
-                                               std::memory_order_release);
+            lane.params.automationMode.store (json::getInt (v, "automation_mode", 0), std::memory_order_release);
         }
     }
     // Clear unconditionally — a session without the key must not keep the
     // prior session's markers.
     s.getMarkers().clear();
-    if (auto markersArr = root["markers"]; markersArr.isArray())
     {
-        for (int i = 0; i < markersArr.size(); ++i)
+        const auto& markersArr = json::array (root, "markers");
+        for (const auto& v : markersArr)
         {
-            auto v = markersArr[i];
-            if (! v.isObject()) continue;
+            if (! v.is_object()) continue;
             // Use the public addMarker so the inserted-sorted invariant
             // holds even if the JSON happened to be out of order.
-            const auto idx = s.addMarker ((juce::int64) v["time"], v["name"].toString().substring (0, 256));
-            if (auto col = v["colour"].toString(); col.isNotEmpty())
+            const auto idx = s.addMarker (json::getInt64 (v, "time", 0),
+                                          juce::String (json::getString (v, "name")).substring (0, 256));
+            if (auto col = json::getString (v, "colour"); ! col.empty())
                 s.getMarkers()[(size_t) idx].colour = hexToColour (col, juce::Colour (0xffe0a050));
         }
     }
-    if (auto master = root["master"]; master.isObject())
+    if (json::has (root, "master"))
     {
+        const auto& master = json::child (root, "master");
         // Reset to struct defaults when a key is absent — load() reuses the live
         // session (no pre-load reset), so a conditional store would inherit the
         // previously-loaded session's value. (Audible master state: level /
         // routing / mute.)
-        s.master().faderDb.store    (master.hasProperty ("fader_db")    ? juce::jlimit (-100.0f, 12.0f, (float) (double) master["fader_db"]) : 0.0f);
-        s.master().outputPair.store (master.hasProperty ("output_pair") ? (int) master["output_pair"]         : -1);
-        s.master().mute.store       (master.hasProperty ("mute")        ? (bool) master["mute"]               : false);
+        s.master().faderDb.store    (master.contains ("fader_db")    ? juce::jlimit (-100.0f, 12.0f, json::getFloat (master, "fader_db", 0.0f)) : 0.0f);
+        s.master().outputPair.store (json::getInt  (master, "output_pair", -1));
+        s.master().mute.store       (json::getBool (master, "mute", false));
         // Reset-when-absent too (same rationale as the level/routing/mute lines
         // above): a conditional store would inherit the previously-loaded
         // session's tape / mono-sum state.
-        s.master().monoSum.store     (master.hasProperty ("mono_sum")     ? (bool) master["mono_sum"]     : false);
-        s.master().tapeEnabled.store (master.hasProperty ("tape_enabled") ? (bool) master["tape_enabled"] : false);
-        s.master().tapeHQ.store      (master.hasProperty ("tape_hq")      ? (bool) master["tape_hq"]      : false);
-        s.master().tapeStateBase64 = master.hasProperty ("tape_state") ? master["tape_state"].toString()
-                                                                       : juce::String();
+        s.master().monoSum.store     (json::getBool (master, "mono_sum", false));
+        s.master().tapeEnabled.store (json::getBool (master, "tape_enabled", false));
+        s.master().tapeHQ.store      (json::getBool (master, "tape_hq", false));
+        s.master().tapeStateBase64 = json::getString (master, "tape_state");
 
         // Pultec EQ. Missing keys keep the in-memory default (matches
         // the per-track / per-bus pattern).
         auto loadMasterFloat = [&master] (std::atomic<float>& dst, const char* key)
         {
-            if (master.hasProperty (key))
+            if (json::has (master, key))
             {
-                const float v = (float) (double) master[key];
+                const float v = json::getFloat (master, key, 0.0f);
                 if (std::isfinite (v)) dst.store (v);   // reject NaN/inf from a corrupt file — keep the default
             }
         };
         auto loadMasterBool = [&master] (std::atomic<bool>& dst, const char* key)
         {
-            if (master.hasProperty (key)) dst.store ((bool) master[key]);
+            if (json::has (master, key)) dst.store (json::getBool (master, key, false));
         };
         loadMasterBool  (s.master().eqEnabled,           "eq_enabled");
         loadMasterFloat (s.master().eqLfBoost,           "eq_lf_boost");
@@ -1859,20 +1829,18 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         // ordering rationale as the track-load + aux-load blocks.
         for (auto& al : s.master().automationLanes)
             al.publishPoints ({});
-        if (auto autoObj = master["automation"]; autoObj.isObject())
         {
+            const auto& autoObj = json::child (master, "automation");
             for (int p = 0; p < kNumAutomationParams; ++p)
             {
                 const char* key = automationParamKey ((AutomationParam) p);
-                if (! autoObj.hasProperty (key)) continue;
-                auto pts = autoObj[key];
-                if (! pts.isArray()) continue;
+                const auto& pts = json::array (autoObj, key);
+                if (pts.empty()) continue;
                 std::vector<AutomationPoint> tmp;
-                tmp.reserve ((size_t) pts.size());
-                for (int k = 0; k < pts.size(); ++k)
+                tmp.reserve (pts.size());
+                for (const auto& pv : pts)
                 {
-                    auto pv = pts[k];
-                    if (! pv.isObject()) continue;
+                    if (! pv.is_object()) continue;
                     tmp.push_back (parseAutomationPoint (pv, sessionLoadBpm));
                 }
                 // Sort by time so the lane evaluator's binary search holds,
@@ -1883,35 +1851,32 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                 s.master().automationLanes[(size_t) p].publishPoints (std::move (tmp));
             }
         }
-        if (master.hasProperty ("automation_mode"))
-            s.master().automationMode.store ((int) master["automation_mode"],
+        if (json::has (master, "automation_mode"))
+            s.master().automationMode.store (json::getInt (master, "automation_mode", 0),
                                               std::memory_order_release);
     }
     // Always reset: a session without a saved mastering source must not
     // inherit the previously loaded session's file.
     s.mastering().sourceFile = juce::File();
-    if (auto mast = root["mastering"]; mast.isObject())
+    if (json::has (root, "mastering"))
     {
+        const auto& mast = json::child (root, "mastering");
         auto& m = s.mastering();
-        if (mast.hasProperty ("source_file"))
-        {
-            const juce::String p = mast["source_file"].toString();
-            m.sourceFile = resolvePortablePath (p, s.getSessionDirectory(),
+        if (json::has (mast, "source_file"))
+            m.sourceFile = resolvePortablePath (json::getString (mast, "source_file"),
+                                                s.getSessionDirectory(),
                                                 s.missingAudioFilesAfterLoad);
-        }
         auto loadF = [&] (const char* k, std::atomic<float>& dst)
-            { if (mast.hasProperty (k)) dst.store ((float) (double) mast[k]); };
+            { if (json::has (mast, k)) dst.store (json::getFloat (mast, k, 0.0f)); };
         auto loadB = [&] (const char* k, std::atomic<bool>& dst)
-            { if (mast.hasProperty (k)) dst.store ((bool) mast[k]); };
-        auto loadI = [&] (const char* k, std::atomic<int>& dst)
-            { if (mast.hasProperty (k)) dst.store ((int) mast[k]); };
+            { if (json::has (mast, k)) dst.store (json::getBool (mast, k, false)); };
         loadB ("eq_enabled",        m.eqEnabled);
         for (int b = 0; b < MasteringParams::kNumEqBands; ++b)
         {
-            const auto idx = juce::String (b);
-            loadF (("eq_band_" + idx + "_freq").toRawUTF8(),    m.eqBandFreq[b]);
-            loadF (("eq_band_" + idx + "_gain_db").toRawUTF8(), m.eqBandGainDb[b]);
-            loadF (("eq_band_" + idx + "_q").toRawUTF8(),       m.eqBandQ[b]);
+            const auto idx = std::string ("eq_band_") + std::to_string (b);
+            loadF ((idx + "_freq").c_str(),    m.eqBandFreq[b]);
+            loadF ((idx + "_gain_db").c_str(), m.eqBandGainDb[b]);
+            loadF ((idx + "_q").c_str(),       m.eqBandQ[b]);
         }
         loadF ("eq_lf_boost",       m.eqLfBoost);
         loadF ("eq_hf_boost",       m.eqHfBoost);
@@ -1927,147 +1892,143 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         loadF ("comp_makeup_db",    m.compMakeupDb);
         // Limiter fields are newly persisted, so old sessions lack them — reset
         // to the struct defaults when absent instead of inheriting the prior
-        // session's limiter state (loadB/loadF/loadI conditional-store, no reset).
-        m.limiterEnabled.store    (mast.hasProperty ("limiter_enabled")     ? (bool) mast["limiter_enabled"]              : true);
-        m.limiterDriveDb.store    (mast.hasProperty ("limiter_drive_db")    ? (float) (double) mast["limiter_drive_db"]   : 0.0f);
-        m.limiterCeilingDb.store  (mast.hasProperty ("limiter_ceiling_db")  ? (float) (double) mast["limiter_ceiling_db"] : -0.3f);
-        m.limiterReleaseMs.store  (mast.hasProperty ("limiter_release_ms")  ? (float) (double) mast["limiter_release_ms"] : 100.0f);
+        // session's limiter state (loadB/loadF conditional-store, no reset).
+        m.limiterEnabled.store    (json::getBool  (mast, "limiter_enabled", true));
+        m.limiterDriveDb.store    (json::getFloat (mast, "limiter_drive_db", 0.0f));
+        m.limiterCeilingDb.store  (json::getFloat (mast, "limiter_ceiling_db", -0.3f));
+        m.limiterReleaseMs.store  (json::getFloat (mast, "limiter_release_ms", 100.0f));
         {
             // Validate before storing: a NaN/±inf here would otherwise sit in the
             // limiter param (and the UI knob) until the next set; fall back to the
             // default so a corrupt session can't strand non-finite lookahead.
-            const float la = mast.hasProperty ("limiter_lookahead_ms")
-                                ? (float) (double) mast["limiter_lookahead_ms"] : 2.0f;
+            const float la = json::getFloat (mast, "limiter_lookahead_ms", 2.0f);
             m.limiterLookaheadMs.store (std::isfinite (la) ? la : 2.0f);
         }
-        m.limiterMode.store       (mast.hasProperty ("limiter_mode")        ? (int) mast["limiter_mode"]                  : 0);
-        m.limiterStereoLink.store (mast.hasProperty ("limiter_stereo_link") ? (bool) mast["limiter_stereo_link"]          : true);
-        if (mast.hasProperty ("target_preset"))
-            m.targetPresetIndex.store ((int) mast["target_preset"]);
+        m.limiterMode.store       (json::getInt  (mast, "limiter_mode", 0));
+        m.limiterStereoLink.store (json::getBool (mast, "limiter_stereo_link", true));
+        if (json::has (mast, "target_preset"))
+            m.targetPresetIndex.store (json::getInt (mast, "target_preset", 0));
     }
-    if (auto tport = root["transport"]; tport.isObject())
+    if (json::has (root, "transport"))
     {
-        if (tport.hasProperty ("loop_enabled"))  s.savedLoopEnabled  = (bool) tport["loop_enabled"];
-        if (tport.hasProperty ("loop_start"))    s.savedLoopStart    = (juce::int64) tport["loop_start"];
-        if (tport.hasProperty ("loop_end"))      s.savedLoopEnd      = (juce::int64) tport["loop_end"];
-        if (tport.hasProperty ("punch_enabled")) s.savedPunchEnabled = (bool) tport["punch_enabled"];
-        if (tport.hasProperty ("punch_in"))      s.savedPunchIn      = (juce::int64) tport["punch_in"];
-        if (tport.hasProperty ("punch_out"))     s.savedPunchOut     = (juce::int64) tport["punch_out"];
+        const auto& tport = json::child (root, "transport");
+        if (json::has (tport, "loop_enabled"))  s.savedLoopEnabled  = json::getBool  (tport, "loop_enabled", false);
+        if (json::has (tport, "loop_start"))    s.savedLoopStart    = json::getInt64 (tport, "loop_start", 0);
+        if (json::has (tport, "loop_end"))      s.savedLoopEnd      = json::getInt64 (tport, "loop_end", 0);
+        if (json::has (tport, "punch_enabled")) s.savedPunchEnabled = json::getBool  (tport, "punch_enabled", false);
+        if (json::has (tport, "punch_in"))      s.savedPunchIn      = json::getInt64 (tport, "punch_in", 0);
+        if (json::has (tport, "punch_out"))     s.savedPunchOut     = json::getInt64 (tport, "punch_out", 0);
         // Assign unconditionally (default false when absent) so a session
         // missing the key doesn't inherit a stale snapToGrid from a prior load —
         // the per-editor fallback below reads this value.
-        s.snapToGrid = tport.hasProperty ("snap_to_grid") && (bool) tport["snap_to_grid"];
+        s.snapToGrid = json::getBool (tport, "snap_to_grid", false);
         // Per-editor snap is newer than snap_to_grid. Always assign (don't leave
         // a stale value from a prior session when loading an older one): a
         // pre-feature session followed one global snap, so migrate the audio
         // editor to snap_to_grid; the piano roll historically always snapped, so
         // default the MIDI editor on.
-        s.audioEditorSnap = tport.hasProperty ("audio_editor_snap")
-                              ? (bool) tport["audio_editor_snap"] : s.snapToGrid;
-        s.midiEditorSnap  = tport.hasProperty ("midi_editor_snap")
-                              ? (bool) tport["midi_editor_snap"]  : true;
-        if (tport.hasProperty ("piano_roll_key_snap"))
-            s.pianoRollKeySnap = (bool) tport["piano_roll_key_snap"];
-        if (tport.hasProperty ("snap_resolution"))
+        s.audioEditorSnap = json::has (tport, "audio_editor_snap")
+                              ? json::getBool (tport, "audio_editor_snap", false) : s.snapToGrid;
+        s.midiEditorSnap  = json::has (tport, "midi_editor_snap")
+                              ? json::getBool (tport, "midi_editor_snap", true)   : true;
+        if (json::has (tport, "piano_roll_key_snap"))
+            s.pianoRollKeySnap = json::getBool (tport, "piano_roll_key_snap", false);
+        if (json::has (tport, "snap_resolution"))
         {
-            const int i = (int) tport["snap_resolution"];
+            const int i = json::getInt (tport, "snap_resolution", 0);
             if (i >= 0 && i <= (int) SnapResolution::CDFrames) s.snapResolution = (SnapResolution) i;
         }
         // edit_mode intentionally not restored - the edit tool is transient UI
         // state, not session content. A persisted Cut/Range would reload as the
         // tapestrip's tool with no on-screen selector to change it back. Always
         // start in the Session.h default (Grab).
-        if (tport.hasProperty ("tempo_bpm"))
+        if (json::has (tport, "tempo_bpm"))
         {
-            // Guard finiteness before jlimit: a non-finite value (e.g. 1e999 ->
-            // +inf in a corrupt file) would clamp to 300, silently overwriting
-            // the session's real tempo. Keep the existing tempo instead.
-            const double bpm = (double) tport["tempo_bpm"];
-            if (std::isfinite (bpm)) s.tempoBpm.store (juce::jlimit (30.0f, 300.0f, (float) bpm));
+            // Guard the value before narrowing to float: a value past float range
+            // (e.g. a hand-edited 1e40) would be UB to cast and would otherwise
+            // clamp to 300, silently overwriting the session's real tempo. Reject
+            // it and keep the existing tempo instead.
+            const double bpm = json::getDouble (tport, "tempo_bpm", 0.0);
+            if (std::isfinite (bpm) && std::abs (bpm) <= (double) std::numeric_limits<float>::max())
+                s.tempoBpm.store (juce::jlimit (30.0f, 300.0f, (float) bpm));
         }
-        if (tport.hasProperty ("tempo_points"))
+        if (json::has (tport, "tempo_points"))
         {
             std::vector<TempoPoint> pts;
-            if (auto* arr = tport["tempo_points"].getArray())
-                for (const auto& v : *arr)
-                    if (auto* o = v.getDynamicObject())
-                        if (o->hasProperty ("sample") && o->hasProperty ("bpm"))
-                        {
-                            // Guard finiteness before jlimit (NaN/inf slip through it);
-                            // skip a corrupt point rather than poison the tempo map.
-                            const double bpm = (double) o->getProperty ("bpm");
-                            if (! std::isfinite (bpm)) continue;
-                            pts.push_back ({ (juce::int64) o->getProperty ("sample"),
-                                             juce::jlimit (30.0f, 300.0f, (float) bpm) });
-                        }
+            for (const auto& o : json::array (tport, "tempo_points"))
+                if (o.is_object() && json::has (o, "sample") && json::has (o, "bpm"))
+                {
+                    // Guard finiteness before jlimit (NaN/inf slip through it);
+                    // skip a corrupt point rather than poison the tempo map.
+                    const double bpm = json::getDouble (o, "bpm", 0.0);
+                    if (! std::isfinite (bpm)) continue;
+                    pts.push_back ({ json::getInt64 (o, "sample", 0),
+                                     juce::jlimit (30.0f, 300.0f, (float) bpm) });
+                }
             s.tempoMap.setPoints (std::move (pts));
         }
         else
             s.tempoMap.setPoints ({});   // no map in the file → clear any stale map from a prior load
-        if (tport.hasProperty ("ui_stage"))          s.uiStage.store          (juce::jlimit (0, 3, (int) tport["ui_stage"]));
-        if (tport.hasProperty ("sync_source_input"))
-            s.syncSourceInputIdentifier = tport["sync_source_input"].toString();
-        if (tport.hasProperty ("sync_follow_tempo"))
-            s.externalSyncFollowsTempo.store ((bool) tport["sync_follow_tempo"]);
-        if (tport.hasProperty ("sync_chase_transport"))
-            s.externalSyncChasesTransport.store ((bool) tport["sync_chase_transport"]);
-        if (tport.hasProperty ("sync_output"))
-            s.syncOutputIdentifier = tport["sync_output"].toString();
-        if (tport.hasProperty ("sync_emit_clock"))
-            s.syncOutputEmitClock.store ((bool) tport["sync_emit_clock"]);
-        if (tport.hasProperty ("mcu_input_id"))
-            s.mcu.inputIdentifier = tport["mcu_input_id"].toString();
-        if (tport.hasProperty ("mcu_output_id"))
-            s.mcu.outputIdentifier = tport["mcu_output_id"].toString();
-        if (tport.hasProperty ("mcu_assign_mode"))
+        if (json::has (tport, "ui_stage"))          s.uiStage.store          (juce::jlimit (0, 3, json::getInt (tport, "ui_stage", 0)));
+        if (json::has (tport, "sync_source_input"))
+            s.syncSourceInputIdentifier = json::getString (tport, "sync_source_input");
+        if (json::has (tport, "sync_follow_tempo"))
+            s.externalSyncFollowsTempo.store (json::getBool (tport, "sync_follow_tempo", false));
+        if (json::has (tport, "sync_chase_transport"))
+            s.externalSyncChasesTransport.store (json::getBool (tport, "sync_chase_transport", false));
+        if (json::has (tport, "sync_output"))
+            s.syncOutputIdentifier = json::getString (tport, "sync_output");
+        if (json::has (tport, "sync_emit_clock"))
+            s.syncOutputEmitClock.store (json::getBool (tport, "sync_emit_clock", false));
+        if (json::has (tport, "mcu_input_id"))
+            s.mcu.inputIdentifier = json::getString (tport, "mcu_input_id");
+        if (json::has (tport, "mcu_output_id"))
+            s.mcu.outputIdentifier = json::getString (tport, "mcu_output_id");
+        if (json::has (tport, "mcu_assign_mode"))
         {
-            const int m = juce::jlimit (0, 6, (int) tport["mcu_assign_mode"]);
+            const int m = juce::jlimit (0, 6, json::getInt (tport, "mcu_assign_mode", 0));
             s.mcu.assignMode.store (m, std::memory_order_relaxed);
         }
-        if (tport.hasProperty ("beats_per_bar"))     s.beatsPerBar.store      (juce::jlimit (1, 32, (int) tport["beats_per_bar"]));
-        if (tport.hasProperty ("beat_unit"))         s.beatUnit.store         (juce::jlimit (1, 32, (int) tport["beat_unit"]));
-        if (tport.hasProperty ("metronome_enabled")) s.metronomeEnabled.store ((bool)   tport["metronome_enabled"]);
-        if (tport.hasProperty ("metronome_vol_db"))  s.metronomeVolDb.store   (juce::jlimit (-60.0f, 12.0f, (float) (double) tport["metronome_vol_db"]));
-        if (tport.hasProperty ("metronome_click_recording"))
-            s.metronomeClickWhileRecording.store ((bool) tport["metronome_click_recording"]);
-        if (tport.hasProperty ("metronome_click_playing"))
-            s.metronomeClickWhilePlaying  .store ((bool) tport["metronome_click_playing"]);
-        if (tport.hasProperty ("metronome_only_countin"))
-            s.metronomeOnlyDuringCountIn  .store ((bool) tport["metronome_only_countin"]);
-        if (tport.hasProperty ("metronome_polyphonic"))
-            s.metronomePolyphonic         .store ((bool) tport["metronome_polyphonic"]);
-        if (tport.hasProperty ("count_in_enabled"))  s.countInEnabled.store   ((bool)   tport["count_in_enabled"]);
-        if (tport.hasProperty ("time_display_mode")) s.timeDisplayMode.store  (juce::jlimit (0, 1, (int) tport["time_display_mode"]));
+        if (json::has (tport, "beats_per_bar"))     s.beatsPerBar.store      (juce::jlimit (1, 32, json::getInt (tport, "beats_per_bar", 4)));
+        if (json::has (tport, "beat_unit"))         s.beatUnit.store         (juce::jlimit (1, 32, json::getInt (tport, "beat_unit", 4)));
+        if (json::has (tport, "metronome_enabled")) s.metronomeEnabled.store (json::getBool (tport, "metronome_enabled", false));
+        if (json::has (tport, "metronome_vol_db"))  s.metronomeVolDb.store   (juce::jlimit (-60.0f, 12.0f, json::getFloat (tport, "metronome_vol_db", 0.0f)));
+        if (json::has (tport, "metronome_click_recording"))
+            s.metronomeClickWhileRecording.store (json::getBool (tport, "metronome_click_recording", false));
+        if (json::has (tport, "metronome_click_playing"))
+            s.metronomeClickWhilePlaying  .store (json::getBool (tport, "metronome_click_playing", false));
+        if (json::has (tport, "metronome_only_countin"))
+            s.metronomeOnlyDuringCountIn  .store (json::getBool (tport, "metronome_only_countin", false));
+        if (json::has (tport, "metronome_polyphonic"))
+            s.metronomePolyphonic         .store (json::getBool (tport, "metronome_polyphonic", false));
+        if (json::has (tport, "count_in_enabled"))  s.countInEnabled.store   (json::getBool (tport, "count_in_enabled", false));
+        if (json::has (tport, "time_display_mode")) s.timeDisplayMode.store  (juce::jlimit (0, 1, json::getInt (tport, "time_display_mode", 0)));
         // jumpback_seconds was a previous-version Session field powering
         // the standalone "« 5s" jumpback button; the button has been
         // removed in favor of the DP-24SD-style multi-action REW. We
         // silently ignore the legacy field on load so older session.json
         // files still parse cleanly.
-        if (tport.hasProperty ("last_record_point")) s.lastRecordPointSamples.store ((juce::int64) tport["last_record_point"]);
-        if (tport.hasProperty ("pre_roll_seconds"))  s.preRollSeconds.store   (juce::jlimit (0.0f, 300.0f, (float) (double) tport["pre_roll_seconds"]));
-        if (tport.hasProperty ("post_roll_seconds")) s.postRollSeconds.store  (juce::jlimit (0.0f, 300.0f, (float) (double) tport["post_roll_seconds"]));
+        if (json::has (tport, "last_record_point")) s.lastRecordPointSamples.store (json::getInt64 (tport, "last_record_point", 0));
+        if (json::has (tport, "pre_roll_seconds"))  s.preRollSeconds.store   (juce::jlimit (0.0f, 300.0f, json::getFloat (tport, "pre_roll_seconds", 0.0f)));
+        if (json::has (tport, "post_roll_seconds")) s.postRollSeconds.store  (juce::jlimit (0.0f, 300.0f, json::getFloat (tport, "post_roll_seconds", 0.0f)));
         // Default true when absent (Session.h) so an older file lacking the key
         // doesn't inherit a disabled flag from a previously-loaded session.
-        s.preRollEnabled.store  (tport.hasProperty ("pre_roll_enabled")  ? (bool) tport["pre_roll_enabled"]  : true);
-        s.postRollEnabled.store (tport.hasProperty ("post_roll_enabled") ? (bool) tport["post_roll_enabled"] : true);
+        s.preRollEnabled.store  (json::getBool (tport, "pre_roll_enabled", true));
+        s.postRollEnabled.store (json::getBool (tport, "post_roll_enabled", true));
 
         // Build the bindings list off-snapshot, then publish atomically so
         // the audio thread either sees the prior set or the new one - never
         // a half-loaded state.
         auto fresh = std::make_unique<std::vector<MidiBinding>>();
-        if (auto arr = tport["midi_bindings"]; arr.isArray())
         {
-            for (int i = 0; i < arr.size(); ++i)
+            const auto& arr = json::array (tport, "midi_bindings");
+            for (const auto& v : arr)
             {
-                auto v = arr[i];
-                if (! v.isObject()) continue;
+                if (! v.is_object()) continue;
                 MidiBinding b;
-                b.channel     = juce::jlimit (0, 16,
-                    v.hasProperty ("channel") ? (int) v["channel"] : 0);
-                b.dataNumber  = juce::jlimit (0, 127,
-                    v.hasProperty ("data") ? (int) v["data"] : 0);
-                const int rawTrig = v.hasProperty ("trigger") ? (int) v["trigger"]
-                                                              : (int) MidiBindingTrigger::CC;
+                b.channel     = juce::jlimit (0, 16,  json::getInt (v, "channel", 0));
+                b.dataNumber  = juce::jlimit (0, 127, json::getInt (v, "data", 0));
+                const int rawTrig = json::getInt (v, "trigger", (int) MidiBindingTrigger::CC);
                 switch (rawTrig)
                 {
                     case (int) MidiBindingTrigger::Note:       b.trigger = MidiBindingTrigger::Note;       break;
@@ -2075,8 +2036,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                     case (int) MidiBindingTrigger::MmcCommand: b.trigger = MidiBindingTrigger::MmcCommand; break;
                     default:                                   b.trigger = MidiBindingTrigger::CC;         break;
                 }
-                const int rawTgt = v.hasProperty ("target") ? (int) v["target"]
-                                                            : (int) MidiBindingTarget::None;
+                const int rawTgt = json::getInt (v, "target", (int) MidiBindingTarget::None);
                 // Map every legal enumerator; everything else falls back to
                 // None so isValid() drops the binding.
                 switch (rawTgt)
@@ -2141,7 +2101,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                 // packed pos*N+sub range for the AuxSend/EqGain bank
                 // variants); everything else uses 0..kNumTracks-1 (global
                 // targets ignore the field).
-                const int rawIdx = v.hasProperty ("target_idx") ? (int) v["target_idx"] : 0;
+                const int rawIdx = json::getInt (v, "target_idx", 0);
                 const bool bankRelative = isBankRelativeTarget (b.target);
                 const int maxIdx = needsBusIndex (b.target)
                     ? Session::kNumBuses - 1
@@ -2167,21 +2127,18 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                 // round-trip unconditionally for forward-compat. Clamp
                 // wide so future plugins with hundreds of params
                 // round-trip cleanly.
-                if (v.hasProperty ("param_idx"))
-                    b.paramIndex = juce::jlimit (0, 65535, (int) v["param_idx"]);
-                if (v.hasProperty ("button_mode"))
-                {
-                    const int bm = juce::jlimit (0, 1, (int) v["button_mode"]);
-                    b.buttonMode = (MidiButtonMode) bm;
-                }
+                if (json::has (v, "param_idx"))
+                    b.paramIndex = juce::jlimit (0, 65535, json::getInt (v, "param_idx", 0));
+                if (json::has (v, "button_mode"))
+                    b.buttonMode = (MidiButtonMode) juce::jlimit (0, 1, json::getInt (v, "button_mode", 0));
                 if (b.isValid())
                     fresh->push_back (b);
             }
         }
         s.midiBindings.publish (std::move (fresh));
-        if (tport.hasProperty ("oversampling_factor"))
+        if (json::has (tport, "oversampling_factor"))
         {
-            const int f = (int) tport["oversampling_factor"];
+            const int f = json::getInt (tport, "oversampling_factor", 1);
             s.oversamplingFactor.store ((f == 2 || f == 4) ? f : 1, std::memory_order_relaxed);
         }
     }
