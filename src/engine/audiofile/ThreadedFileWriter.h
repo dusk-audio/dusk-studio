@@ -17,7 +17,7 @@ namespace dusk::audio
 class ThreadedFileWriter
 {
 public:
-    ThreadedFileWriter (std::unique_ptr<FileWriter> writer, int numChannels, int fifoFrames);
+    ThreadedFileWriter (std::unique_ptr<FileWriter> writer, int fifoFrames);
     ~ThreadedFileWriter();
 
     ThreadedFileWriter (const ThreadedFileWriter&)            = delete;

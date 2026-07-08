@@ -5,9 +5,9 @@
 
 namespace dusk::audio
 {
-ThreadedFileWriter::ThreadedFileWriter (std::unique_ptr<FileWriter> w, int numChannels, int fifoFrames)
+ThreadedFileWriter::ThreadedFileWriter (std::unique_ptr<FileWriter> w, int fifoFrames)
     : writer (std::move (w)),
-      channels (numChannels),
+      channels (writer->numChannels()),
       capacityFrames ((int64_t) std::max (2, fifoFrames) + 1)
 {
     ring.resize ((size_t) capacityFrames * (size_t) channels, 0.0f);

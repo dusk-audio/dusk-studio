@@ -22,9 +22,9 @@ int subFormat (int bits) noexcept
     switch (bits)
     {
         case 16: return SF_FORMAT_PCM_16;
+        case 24: return SF_FORMAT_PCM_24;
         case 32: return SF_FORMAT_FLOAT;
-        case 24:
-        default: return SF_FORMAT_PCM_24;
+        default: return 0;   // unsupported depth: no subtype, so sf_format_check rejects it
     }
 }
 } // namespace

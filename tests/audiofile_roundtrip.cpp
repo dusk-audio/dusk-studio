@@ -166,7 +166,7 @@ TEST_CASE ("ThreadedFileWriter drains all pushed frames to disk", "[audiofile]")
     {
         auto fw = FileWriter::create (path, spec);
         REQUIRE (fw != nullptr);
-        ThreadedFileWriter tw (std::move (fw), kChannels, 8192);
+        ThreadedFileWriter tw (std::move (fw), 8192);
 
         const int64_t block = 256;
         for (int64_t off = 0; off < kFrames; off += block)
@@ -200,7 +200,7 @@ TEST_CASE ("ThreadedFileWriter drops a block when the ring is full", "[audiofile
 
     // Tiny ring, no consumer progress guaranteed: at least one oversized push
     // must be refused rather than corrupting the buffer.
-    ThreadedFileWriter tw (std::move (fw), kChannels, 64);
+    ThreadedFileWriter tw (std::move (fw), 64);
     std::vector<float> a (256, 0.5f), b (256, -0.5f);
     const float* p[kChannels] = { a.data(), b.data() };
     REQUIRE_FALSE (tw.push (p, kChannels, 256));

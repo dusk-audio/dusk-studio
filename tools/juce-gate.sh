@@ -13,7 +13,7 @@ export LC_ALL=C   # sort and comm must agree on collation
 cd "$(dirname "$0")/.."
 ALLOW=tools/juce-allowlist.txt
 
-current="$(grep -rlE 'juce::|<juce_' src | sort)"
+current="$(grep -rlE 'juce::|<juce_' src | sort || true)"
 
 if [[ "${1:-}" == "--update" ]]; then
     printf '%s\n' "$current" > "$ALLOW"

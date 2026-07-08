@@ -29,6 +29,8 @@ public:
     FileWriter (const FileWriter&)            = delete;
     FileWriter& operator= (const FileWriter&) = delete;
 
+    int numChannels() const noexcept { return channels; }
+
     // Deinterleaved. src carries numCh channel pointers of >= numFrames.
     bool write (const float* const* src, int numCh, int64_t numFrames);
 
