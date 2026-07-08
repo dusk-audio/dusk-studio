@@ -95,6 +95,11 @@ private:
     // the user doesn't think a silently-dropped take was captured.
     void surfaceRecordSetupFailures();
 
+    // MCU REW/FFWD reuse the on-screen Rewind/Forward tap behaviour so the
+    // control surface and the on-screen buttons never diverge.
+    void rewindTap();
+    void forwardTap();
+
     AudioEngine& engine;
     TransportIconButton stopButton   { "Stop",     TransportIconButton::Icon::Stop,
                                         juce::Colour (0xffd0d0d0) };
@@ -123,6 +128,15 @@ private:
     juce::int64 ffwdPressedAtMs = 0;
     bool        rewIsScrubbing  = false;
     bool        ffwdIsScrubbing = false;
+    // MCU REW/FFWD mirror the above, edge-detected from session.mcu held-flags.
+    juce::int64 mcuRewPressedAtMs  = 0;
+    juce::int64 mcuFfwdPressedAtMs = 0;
+    bool        mcuRewIsScrubbing  = false;
+    bool        mcuFfwdIsScrubbing = false;
+    // Last press-counter value seen by the timer, to catch taps that fall
+    // entirely between two polls (see Session::McuSessionState).
+    juce::uint32 mcuRewLastPressCount  = 0;
+    juce::uint32 mcuFfwdLastPressCount = 0;
     juce::int64 lastScrubTickMs = 0;
     TransportIconButton clickToggle { "Metronome",
                                           TransportIconButton::Icon::Metronome,

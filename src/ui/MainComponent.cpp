@@ -1943,7 +1943,10 @@ void MainComponent::openAudioSettings()
     audioSettingsModal.show (*this, std::move (host), [safeThis]
     {
         if (auto* self = safeThis.getComponent())
+        {
+            self->audioSettingsModal.close();
             self->startTimer (appconfig::getAutosaveIntervalSeconds() * 1000);
+        }
     });
 }
 
