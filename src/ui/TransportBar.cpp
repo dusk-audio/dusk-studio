@@ -1271,7 +1271,7 @@ void TransportBar::promptEditTempoAtPlayhead()
             // getDoubleValue() turns junk into 0, which the >0 check
             // rejects rather than letting jlimit clamp it to 30 BPM.
             float parsed = 0.0f;
-            if (! parseFullFloat (text, parsed) || parsed <= 0.0f) return;
+            if (! parseFullFloat (text.toStdString(), parsed) || parsed <= 0.0f) return;
             const float b = juce::jlimit (30.0f, 300.0f, parsed);
 
             auto& s2 = safe->engine.getSession();

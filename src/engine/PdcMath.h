@@ -1,6 +1,6 @@
 #pragma once
 
-#include <juce_core/juce_core.h>
+#include <algorithm>
 
 namespace duskstudio::pdc
 {
@@ -15,7 +15,7 @@ inline int computeCompensations (const int* latency, int* comp, int n) noexcept
 {
     int deepest = 0;
     for (int i = 0; i < n; ++i)
-        deepest = juce::jmax (deepest, latency[i]);
+        deepest = std::max (deepest, latency[i]);
     for (int i = 0; i < n; ++i)
         comp[i] = deepest - latency[i];
     return deepest;

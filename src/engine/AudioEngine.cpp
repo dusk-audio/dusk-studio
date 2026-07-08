@@ -554,7 +554,7 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
         auto* dev = deviceManager.getCurrentAudioDevice();
         const bool opened = working();
         startupDeviceMessage_ = duskstudio::startupDeviceMessage (
-            opened, savedName, opened ? dev->getName() : juce::String());
+            opened, savedName.toStdString(), opened ? dev->getName().toStdString() : std::string());
     }
    #endif
 

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <juce_core/juce_core.h>
+#include <string>
 
 namespace duskstudio
 {
@@ -12,15 +12,15 @@ namespace duskstudio
 //   opened     : a device is open at a non-zero sample rate after the fallback.
 //   savedName  : the device name the persisted setup asked for ("" if none).
 //   actualName : the device actually open now ("" when opened == false).
-inline juce::String startupDeviceMessage (bool opened,
-                                          const juce::String& savedName,
-                                          const juce::String& actualName)
+inline std::string startupDeviceMessage (bool opened,
+                                         const std::string& savedName,
+                                         const std::string& actualName)
 {
     if (opened)
     {
         // The saved device opened (or there was nothing specific to compare) —
         // nothing to report.
-        if (savedName.isEmpty() || actualName == savedName)
+        if (savedName.empty() || actualName == savedName)
             return {};
 
         // Fell back to a different device that works.
@@ -33,14 +33,14 @@ inline juce::String startupDeviceMessage (bool opened,
     }
 
     // Nothing opened at all — the session is silent until a device frees up.
-    juce::String msg = "No audio device could be opened.\n\n";
-    if (savedName.isNotEmpty())
-        msg << "Your saved device \"" << savedName << "\" appears to be in use by another "
+    std::string msg = "No audio device could be opened.\n\n";
+    if (! savedName.empty())
+        msg += "Your saved device \"" + savedName + "\" appears to be in use by another "
                "application (PipeWire, JACK, browser audio, or another DAW), and no other "
                "backend opened.";
     else
-        msg << "No backend reported an available device.";
-    msg << "\n\nThe playhead and meters will not move and recording is disabled until a "
+        msg += "No backend reported an available device.";
+    msg += "\n\nThe playhead and meters will not move and recording is disabled until a "
            "device is available. Free the device in the other app, then open Audio "
            "Settings and select one.";
     return msg;

@@ -31,7 +31,6 @@ src/engine/AudioWorkerPool.cpp
 src/engine/AudioWorkerPool.h
 src/engine/BounceEngine.cpp
 src/engine/BounceEngine.h
-src/engine/DeviceFallbackMessage.h
 src/engine/DpAligner.cpp
 src/engine/DpAligner.h
 src/engine/DpImporter.cpp
@@ -57,7 +56,6 @@ src/engine/MidiTimeCodeEmitter.h
 src/engine/MidiTimeCodeReceiver.cpp
 src/engine/MidiTimeCodeReceiver.h
 src/engine/NativeScanRows.h
-src/engine/PdcMath.h
 src/engine/PlaybackEngine.cpp
 src/engine/PlaybackEngine.h
 src/engine/PluginBackingCheck.h
@@ -247,4 +245,3 @@ src/ui/multisample/DuskMultisampleEditor.cpp
 src/ui/multisample/DuskMultisampleEditor.h
 src/util/CrashHandler.cpp
 src/util/CrashHandler.h
-src/util/StringParsing.h

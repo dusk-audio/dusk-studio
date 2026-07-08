@@ -4075,7 +4075,7 @@ void TapeStrip::promptAddTempoPoint (juce::int64 sample)
             // jlimit would then silently turn that into a 30 BPM entry.
             const auto t = s.trim();
             float parsed = 0.0f;
-            if (! parseFullFloat (t, parsed)) return;
+            if (! parseFullFloat (t.toStdString(), parsed)) return;
             const float b = juce::jlimit (30.0f, 300.0f, parsed);
             auto vec = safeThis->session.tempoMap.points();
             // First point ever: seed a base anchor at the origin so the span
@@ -4107,7 +4107,7 @@ void TapeStrip::editTempoPointBpm (juce::int64 atSample)
             if (safeThis == nullptr) return;
             const auto t = s.trim();
             float parsed = 0.0f;
-            if (! parseFullFloat (t, parsed)) return;
+            if (! parseFullFloat (t.toStdString(), parsed)) return;
             const float b = juce::jlimit (30.0f, 300.0f, parsed);
             auto vec = safeThis->session.tempoMap.points();
             for (auto& p : vec)
@@ -4130,7 +4130,7 @@ void TapeStrip::editBaseTempo()
             if (safeThis == nullptr) return;
             const auto t = s.trim();
             float parsed = 0.0f;
-            if (! parseFullFloat (t, parsed)) return;
+            if (! parseFullFloat (t.toStdString(), parsed)) return;
             const float b = juce::jlimit (30.0f, 300.0f, parsed);
             safeThis->commitTempoPoints ({ { 0, b } }, "Set starting tempo");
         });
