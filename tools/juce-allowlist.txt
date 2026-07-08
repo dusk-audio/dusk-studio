@@ -119,7 +119,6 @@ src/session/Session.h
 src/session/SessionSerializer.cpp
 src/session/SessionSerializer.h
 src/session/SessionTemplates.cpp
-src/session/SnapHelpers.h
 src/ui/AnalogVuMeter.cpp
 src/ui/AnalogVuMeter.h
 src/ui/AppConfig.cpp

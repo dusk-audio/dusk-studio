@@ -1,6 +1,8 @@
 #pragma once
 
-#include <juce_core/juce_core.h>
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
 #include "Session.h"
 
 namespace duskstudio::snap
@@ -9,29 +11,29 @@ namespace duskstudio::snap
     // when callers want to *skip* snapping entirely if there's no tempo
     // (e.g. snap-to-bar/beat for a brand-new region that has no prior
     // origin to drift from).
-    inline juce::int64 beatSamples (double sampleRate, float bpm) noexcept
+    inline std::int64_t beatSamples (double sampleRate, float bpm) noexcept
     {
         if (sampleRate <= 0.0 || bpm <= 0.0f) return 0;
-        return (juce::int64) (sampleRate * 60.0 / (double) bpm);
+        return (std::int64_t) (sampleRate * 60.0 / (double) bpm);
     }
 
     // Beat step in samples when bpm > 0, otherwise 1 second. Returns 0
     // only when the sample rate itself is invalid. Use this for delta
     // drags where the user expects *some* snapping even without a
     // tempo (the existing TapeStrip drag/marker pattern).
-    inline juce::int64 beatOrSecondSamples (double sampleRate, float bpm) noexcept
+    inline std::int64_t beatOrSecondSamples (double sampleRate, float bpm) noexcept
     {
         if (sampleRate <= 0.0) return 0;
         return (bpm > 0.0f)
-            ? (juce::int64) (sampleRate * 60.0 / (double) bpm)
-            : (juce::int64) sampleRate;
+            ? (std::int64_t) (sampleRate * 60.0 / (double) bpm)
+            : (std::int64_t) sampleRate;
     }
 
     // Round a signed delta to the nearest multiple of `step`. Returns the
     // input unchanged when step <= 0. The half-step bias is sign-aware so
     // the delta is rounded toward zero by less than half a step in either
     // direction.
-    inline juce::int64 snapDelta (juce::int64 delta, juce::int64 step) noexcept
+    inline std::int64_t snapDelta (std::int64_t delta, std::int64_t step) noexcept
     {
         if (step <= 0) return delta;
         return ((delta + (delta >= 0 ? step / 2 : -step / 2)) / step) * step;
@@ -39,7 +41,7 @@ namespace duskstudio::snap
 
     // Round a non-negative absolute sample position to the nearest multiple
     // of `step`. Negative input or step <= 0 returns the input unchanged.
-    inline juce::int64 snapAbsolute (juce::int64 sample, juce::int64 step) noexcept
+    inline std::int64_t snapAbsolute (std::int64_t sample, std::int64_t step) noexcept
     {
         if (step <= 0 || sample < 0) return sample;
         return ((sample + step / 2) / step) * step;
@@ -54,19 +56,19 @@ namespace duskstudio::snap
     // when a tempo-dependent step is requested with bpm <= 0 (caller
     // sees this as "snap disabled" since snapDelta/snapAbsolute no-op
     // on step <= 0).
-    inline juce::int64 stepForResolution (SnapResolution r, double sampleRate,
+    inline std::int64_t stepForResolution (SnapResolution r, double sampleRate,
                                            float bpm, int beatsPerBar) noexcept
     {
         if (sampleRate <= 0.0) return 0;
-        const auto musical = [&] (float quartersPerStep) -> juce::int64
+        const auto musical = [&] (float quartersPerStep) -> std::int64_t
         {
             if (bpm <= 0.0f) return 0;
             const double quarterSamples = sampleRate * 60.0 / (double) bpm;
-            return (juce::int64) (quarterSamples * (double) quartersPerStep);
+            return (std::int64_t) (quarterSamples * (double) quartersPerStep);
         };
         switch (r)
         {
-            case SnapResolution::Bar:             return musical ((float) juce::jmax (1, beatsPerBar));
+            case SnapResolution::Bar:             return musical ((float) std::max (1, beatsPerBar));
             case SnapResolution::Half:            return musical (2.0f);
             case SnapResolution::Quarter:         return musical (1.0f);
             case SnapResolution::Eighth:          return musical (0.5f);
@@ -83,9 +85,9 @@ namespace duskstudio::snap
             case SnapResolution::QuarterDotted:   return musical (1.5f);
             case SnapResolution::EighthDotted:    return musical (0.75f);
             case SnapResolution::SixteenthDotted: return musical (0.375f);
-            case SnapResolution::Timecode:        return (juce::int64) (sampleRate / 25.0);
-            case SnapResolution::MinSec:          return (juce::int64) sampleRate;
-            case SnapResolution::CDFrames:        return (juce::int64) (sampleRate / 75.0);
+            case SnapResolution::Timecode:        return (std::int64_t) (sampleRate / 25.0);
+            case SnapResolution::MinSec:          return (std::int64_t) sampleRate;
+            case SnapResolution::CDFrames:        return (std::int64_t) (sampleRate / 75.0);
         }
         return 0;
     }
@@ -97,17 +99,17 @@ namespace duskstudio::snap
     // Delta-snap math WITHOUT any enable gate — for callers that gate on their
     // OWN snap flag (e.g. the audio editor's session.audioEditorSnap) and must
     // not also require the global session.snapToGrid.
-    inline juce::int64 snapDeltaToGridUnchecked (juce::int64 delta, const Session& s,
+    inline std::int64_t snapDeltaToGridUnchecked (std::int64_t delta, const Session& s,
                                                  double sampleRate) noexcept
     {
         const auto bpm = s.tempoBpm.load (std::memory_order_relaxed);
         const auto bpb = s.beatsPerBar.load (std::memory_order_relaxed);
         auto step = stepForResolution (s.snapResolution, sampleRate, bpm, bpb);
-        if (step <= 0 && sampleRate > 0.0) step = (juce::int64) sampleRate;  // 1-second fallback
+        if (step <= 0 && sampleRate > 0.0) step = (std::int64_t) sampleRate;  // 1-second fallback
         return snapDelta (delta, step);
     }
 
-    inline juce::int64 snapDeltaToGrid (juce::int64 delta, const Session& s,
+    inline std::int64_t snapDeltaToGrid (std::int64_t delta, const Session& s,
                                         double sampleRate) noexcept
     {
         if (! s.snapToGrid) return delta;
@@ -118,14 +120,14 @@ namespace duskstudio::snap
     // quarter is always kMidiTicksPerQuarter ticks). Returns 0 for the
     // sample-based resolutions (Timecode / MinSec / CDFrames), which are snapped
     // directly in samples instead.
-    inline juce::int64 musicalTickStep (SnapResolution r, int beatsPerBar) noexcept
+    inline std::int64_t musicalTickStep (SnapResolution r, int beatsPerBar) noexcept
     {
         const double q = (double) kMidiTicksPerQuarter;
-        const auto m = [&] (double quarters) -> juce::int64
-            { return (juce::int64) std::llround (q * quarters); };
+        const auto m = [&] (double quarters) -> std::int64_t
+            { return (std::int64_t) std::llround (q * quarters); };
         switch (r)
         {
-            case SnapResolution::Bar:              return m ((double) juce::jmax (1, beatsPerBar));
+            case SnapResolution::Bar:              return m ((double) std::max (1, beatsPerBar));
             case SnapResolution::Half:             return m (2.0);
             case SnapResolution::Quarter:          return m (1.0);
             case SnapResolution::Eighth:           return m (0.5);
@@ -155,7 +157,7 @@ namespace duskstudio::snap
     // resolutions snap in tick space through the session tempo map, so the grid
     // follows tempo changes; the constant-tempo case is unchanged.
     // Absolute-snap math WITHOUT any enable gate — see snapDeltaToGridUnchecked.
-    inline juce::int64 snapAbsoluteToGridUnchecked (juce::int64 sample, const Session& s,
+    inline std::int64_t snapAbsoluteToGridUnchecked (std::int64_t sample, const Session& s,
                                                     double sampleRate) noexcept
     {
         if (sampleRate <= 0.0) return sample;
@@ -172,7 +174,7 @@ namespace duskstudio::snap
                               stepForResolution (s.snapResolution, sampleRate, bpm, bpb));
     }
 
-    inline juce::int64 snapAbsoluteToGrid (juce::int64 sample, const Session& s,
+    inline std::int64_t snapAbsoluteToGrid (std::int64_t sample, const Session& s,
                                            double sampleRate) noexcept
     {
         if (! s.snapToGrid) return sample;
