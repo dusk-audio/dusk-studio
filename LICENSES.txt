@@ -78,6 +78,16 @@ Catch2 (test framework — TEST BUILDS ONLY, not bundled in Dusk Studio)
   Path     : build-tests/_deps/catch2-src/ (FetchContent at configure time)
   Upstream : https://github.com/catchorg/Catch2/
 
+libsndfile (JUCE-free audio file I/O — TEST BUILDS ONLY for now)
+  License  : LGPL-2.1-or-later
+  Path     : not vendored — system shared library found at configure time
+             (libsndfile-dev / libsndfile-devel / brew install libsndfile).
+             The dusk::audio FileReader/Writer unit + its tests compile only
+             when it is present; skipped otherwise. Linked dynamically.
+  Notes    : Will become an app dependency once the JUCE audio-format readers
+             are migrated; currently test-only.
+  Upstream : https://github.com/libsndfile/libsndfile
+
 
 PLATFORM-SPECIFIC OPTIONAL DEPENDENCIES
 ---------------------------------------
