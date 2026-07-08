@@ -116,8 +116,6 @@ src/session/SessionSerializer.h
 src/session/SessionTemplates.cpp
 src/ui/AnalogVuMeter.cpp
 src/ui/AnalogVuMeter.h
-src/ui/AppConfig.cpp
-src/ui/AppConfig.h
 src/ui/AudioRegionEditor.cpp
 src/ui/AudioRegionEditor.h
 src/ui/AudioSettingsPanel.cpp
