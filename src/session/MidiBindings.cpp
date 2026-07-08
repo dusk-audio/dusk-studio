@@ -2,6 +2,7 @@
 #include "Session.h"
 #include "../engine/AudioEngine.h"
 #include "../engine/PluginSlot.h"
+#include <nlohmann/json.hpp>
 #include <algorithm>
 
 namespace duskstudio
@@ -517,23 +518,23 @@ juce::String serializeBindingsPreset (const std::vector<MidiBinding>& binds)
     // the per-entry shape identical to the session serializer's
     // embedded array so future code can share the same parser without
     // duplicating field names.
-    auto* root = new juce::DynamicObject();
-    root->setProperty ("format_version", 1);
-    juce::Array<juce::var> arr;
+    nlohmann::json root;
+    root["format_version"] = 1;
+    auto arr = nlohmann::json::array();
     for (const auto& b : binds)
     {
-        auto* o = new juce::DynamicObject();
-        o->setProperty ("channel",     b.channel);
-        o->setProperty ("data",        b.dataNumber);
-        o->setProperty ("trigger",     (int) b.trigger);
-        o->setProperty ("target",      (int) b.target);
-        o->setProperty ("target_idx",  b.targetIndex);
-        o->setProperty ("param_idx",   b.paramIndex);
-        o->setProperty ("button_mode", (int) b.buttonMode);
-        arr.add (juce::var (o));
+        nlohmann::json o;
+        o["channel"]     = b.channel;
+        o["data"]        = b.dataNumber;
+        o["trigger"]     = (int) b.trigger;
+        o["target"]      = (int) b.target;
+        o["target_idx"]  = b.targetIndex;
+        o["param_idx"]   = b.paramIndex;
+        o["button_mode"] = (int) b.buttonMode;
+        arr.push_back (std::move (o));
     }
-    root->setProperty ("bindings", arr);
-    return juce::JSON::toString (juce::var (root), false /*allOnOneLine*/);
+    root["bindings"] = std::move (arr);
+    return juce::String (root.dump (2));
 }
 
 std::optional<std::vector<MidiBinding>> deserializeBindingsPreset (const juce::String& json)
@@ -544,23 +545,20 @@ std::optional<std::vector<MidiBinding>> deserializeBindingsPreset (const juce::S
     // "clear all bindings" preset). Per-entry isValid() filter drops
     // garbage entries without rejecting the whole preset.
     std::vector<MidiBinding> out;
-    auto parsed = juce::JSON::parse (json);
-    if (! parsed.isObject()) return std::nullopt;
-    auto* root = parsed.getDynamicObject();
-    if (root == nullptr) return std::nullopt;
-    const auto arr = root->getProperty ("bindings");
-    if (! arr.isArray()) return std::nullopt;
-    for (int i = 0; i < arr.size(); ++i)
+    const auto parsed = nlohmann::json::parse (json.toStdString(), nullptr, false);
+    if (! parsed.is_object()) return std::nullopt;
+    if (! parsed.contains ("bindings") || ! parsed["bindings"].is_array()) return std::nullopt;
+
+    auto vint = [] (const nlohmann::json& o, const char* key, int def)
+    { return o.contains (key) && o[key].is_number() ? o[key].get<int>() : def; };
+
+    for (const auto& v : parsed["bindings"])
     {
-        auto v = arr[i];
-        if (! v.isObject()) continue;
+        if (! v.is_object()) continue;
         MidiBinding b;
-        b.channel    = juce::jlimit (0, 16,
-            v.hasProperty ("channel") ? (int) v["channel"] : 0);
-        b.dataNumber = juce::jlimit (0, 127,
-            v.hasProperty ("data") ? (int) v["data"] : 0);
-        const int rawTrig = v.hasProperty ("trigger") ? (int) v["trigger"]
-                                                      : (int) MidiBindingTrigger::CC;
+        b.channel    = juce::jlimit (0, 16,  vint (v, "channel", 0));
+        b.dataNumber = juce::jlimit (0, 127, vint (v, "data", 0));
+        const int rawTrig = vint (v, "trigger", (int) MidiBindingTrigger::CC);
         switch (rawTrig)
         {
             case (int) MidiBindingTrigger::Note:       b.trigger = MidiBindingTrigger::Note;       break;
@@ -568,8 +566,7 @@ std::optional<std::vector<MidiBinding>> deserializeBindingsPreset (const juce::S
             case (int) MidiBindingTrigger::MmcCommand: b.trigger = MidiBindingTrigger::MmcCommand; break;
             default:                                   b.trigger = MidiBindingTrigger::CC;         break;
         }
-        const int rawTgt = v.hasProperty ("target") ? (int) v["target"]
-                                                    : (int) MidiBindingTarget::None;
+        const int rawTgt = vint (v, "target", (int) MidiBindingTarget::None);
         // Reject unknown target ints up front so a malformed / forward-
         // version preset never injects an out-of-range enum into the
         // bindings vector (apply / describe switches have fallbacks but
@@ -633,13 +630,10 @@ std::optional<std::vector<MidiBinding>> deserializeBindingsPreset (const juce::S
             default:
                 continue; // skip this entry, unknown target
         }
-        b.targetIndex = v.hasProperty ("target_idx") ? (int) v["target_idx"] : 0;
-        b.paramIndex  = v.hasProperty ("param_idx")  ? (int) v["param_idx"]  : 0;
-        if (v.hasProperty ("button_mode"))
-        {
-            const int bm = juce::jlimit (0, 1, (int) v["button_mode"]);
-            b.buttonMode = (MidiButtonMode) bm;
-        }
+        b.targetIndex = vint (v, "target_idx", 0);
+        b.paramIndex  = vint (v, "param_idx", 0);
+        if (v.contains ("button_mode"))
+            b.buttonMode = (MidiButtonMode) juce::jlimit (0, 1, vint (v, "button_mode", 0));
         if (b.isValid()) out.push_back (b);
     }
     return out;

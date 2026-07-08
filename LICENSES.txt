@@ -52,6 +52,12 @@ sfizz (SFZ / SoundFont sampler engine — powers the multisample instrument)
                - hiir          WTFPL        external/sfizz/src/external/hiir/   (Laurent de Soras)
                - simde         MIT / CC0    external/sfizz/external/simde/
 
+nlohmann/json (JSON parser — session + preset serialisation)
+  Version  : 3.11.3
+  License  : MIT
+  Path     : external/json/nlohmann/json.hpp (vendored single header)
+  Upstream : https://github.com/nlohmann/json
+
 Steinberg VST3 SDK (native VST3 host — Linux builds only)
   Version  : 3.8.0 (upstream tag v3.8.0_build_66)
   License  : Dual-licensed — GPL-3.0 (used here) OR Steinberg VST3 proprietary

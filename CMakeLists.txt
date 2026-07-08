@@ -759,6 +759,9 @@ target_include_directories(DuskStudio PRIVATE
     external/projucer-shim   # JuceHeader.h shim used by vendored plugin DSP headers
     external/clap/include)    # CLAP C API (native plugin host)
 
+# nlohmann/json single header (MIT) — de-JUCE JSON replacement for juce::var.
+target_include_directories(DuskStudio SYSTEM PRIVATE external/json)
+
 if(DEFINED DUSK_PLUGINS_PATH)
     # Per-plugin DSP headers from the Dusk plugins repo's main branch. Each
     # plugin owns its DSP; Dusk Studio vendors:

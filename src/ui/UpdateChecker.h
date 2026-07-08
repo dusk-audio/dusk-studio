@@ -2,6 +2,7 @@
 
 #include <juce_core/juce_core.h>
 #include <juce_events/juce_events.h>
+#include <nlohmann/json.hpp>
 #include <functional>
 
 namespace duskstudio
@@ -115,16 +116,16 @@ inline juce::String fetchTagsJson()
 // 0.11.0 but ranks below a stable 0.12.0.
 inline juce::String highestTag (const juce::String& json)
 {
-    const auto parsed = juce::JSON::parse (json);
-    const auto* arr = parsed.getArray();
-    if (arr == nullptr) return {};
+    const auto parsed = nlohmann::json::parse (json.toStdString(), nullptr, false);
+    if (! parsed.is_array()) return {};
 
     juce::String bestName;
     ParsedVersion best;
     best.nums[0] = best.nums[1] = best.nums[2] = -1;
-    for (const auto& entry : *arr)
+    for (const auto& entry : parsed)
     {
-        const auto name = entry.getProperty ("name", {}).toString();
+        if (! entry.contains ("name") || ! entry["name"].is_string()) continue;
+        const juce::String name { entry["name"].get<std::string>() };
         ParsedVersion v;
         if (parseVersion (name, v) && isNewer (v, best))
         {

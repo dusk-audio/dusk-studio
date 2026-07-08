@@ -115,6 +115,7 @@ target_include_directories(dusk-studio-tests PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/external/projucer-shim
     ${CMAKE_SOURCE_DIR}/external/clap/include)
+target_include_directories(dusk-studio-tests SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/external/json)
 
 # Phase 1a de-JUCE: JUCE-free audio file I/O (libsndfile backend). Compiled in
 # the test target only for now; the app keeps its JUCE readers until 1b swaps
