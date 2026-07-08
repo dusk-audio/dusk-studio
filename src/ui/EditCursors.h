@@ -32,5 +32,10 @@ void paintPencilGlyph   (juce::Graphics& g, float cx, float cy);
 // to ParentCursor so the parent's stored cursor is what actually
 // renders. Children that explicitly chose a cursor (resize handles,
 // fader caps, learn buttons, etc.) are left alone.
+//
+// No-op until root.isShowing(): setMouseCursor on a visible child forces a
+// global cursor refresh that has no peer before the window is mapped, which
+// crashes on Wayland (issue #42). Callers re-run it from resized(), which
+// fires post-map, so the inheritance still lands.
 void inheritCursorOnDescendants (juce::Component& root);
 } // namespace duskstudio

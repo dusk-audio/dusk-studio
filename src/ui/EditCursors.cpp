@@ -193,6 +193,14 @@ juce::MouseCursor makeHandCursor()
 
 void inheritCursorOnDescendants (juce::Component& root)
 {
+    // setMouseCursor on a visible child forces a global cursor refresh
+    // (Component::updateMouseCursor). Before the window is mapped there is no
+    // peer, and on Wayland that refresh crashes in the unguarded
+    // WaylandWindowSystem::updateCursor() (issue #42). Defer until the
+    // component is on a live peer; the post-map resized() call re-applies it.
+    if (! root.isShowing())
+        return;
+
     for (auto* child : root.getChildren())
     {
         if (child == nullptr) continue;

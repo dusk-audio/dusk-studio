@@ -3745,8 +3745,20 @@ void AudioRegionEditor::paintTransportPlayhead (juce::Graphics& g,
                             && lastPlayheadX >= 0;
     const int x = useCache ? lastPlayheadX : transportPlayheadX (waveArea);
     if (x < 0) return;
-    g.setColour (kTransportPlayhead.withAlpha (0.85f));
-    g.drawVerticalLine (x, (float) waveArea.getY(), (float) waveArea.getBottom());
+
+    juce::Graphics::ScopedSaveState saved (g);
+    g.reduceClipRegion (waveArea);
+    const float top = (float) waveArea.getY();
+    const float bot = (float) waveArea.getBottom();
+    // Dark flanks + an opaque core keep the line crisp over the waveform.
+    // The grid-backed MIDI editor reads fine with a single translucent line,
+    // but here the bright waveform shows through a semi-transparent line and
+    // breaks it up, so flank it to hold contrast against any content behind.
+    g.setColour (juce::Colours::black.withAlpha (0.5f));
+    g.drawVerticalLine (x - 1, top, bot);
+    g.drawVerticalLine (x + 1, top, bot);
+    g.setColour (kTransportPlayhead);
+    g.drawVerticalLine (x, top, bot);
 }
 
 void AudioRegionEditor::timerCallback()
