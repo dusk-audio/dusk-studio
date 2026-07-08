@@ -20,7 +20,8 @@ ThreadedFileWriter::~ThreadedFileWriter()
     stop.store (true, std::memory_order_release);
     if (worker.joinable())
         worker.join();
-    if (writer != nullptr)
+    // Don't flush a failed writer — nothing after the failure is treated as persisted.
+    if (writer != nullptr && ! writeFailed.load (std::memory_order_acquire))
         writer->flush();
 }
 
@@ -76,6 +77,7 @@ void ThreadedFileWriter::run()
         }
         readPos.store ((r + chunk) % capacityFrames, std::memory_order_release);
     }
-    writer->flush();
+    if (! writeFailed.load (std::memory_order_acquire))
+        writer->flush();
 }
 } // namespace dusk::audio
