@@ -20,9 +20,8 @@ ThreadedFileWriter::~ThreadedFileWriter()
     stop.store (true, std::memory_order_release);
     if (worker.joinable())
         worker.join();
-    // Don't flush a failed writer — nothing after the failure is treated as persisted.
-    if (writer != nullptr && ! writeFailed.load (std::memory_order_acquire))
-        writer->flush();
+    // run() flushes once on normal drain-to-empty (and skips flush on failure);
+    // join() guarantees it has finished, so no flush is needed here.
 }
 
 bool ThreadedFileWriter::push (const float* const* src, int numCh, int64_t numFrames) noexcept

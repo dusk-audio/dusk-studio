@@ -2,6 +2,7 @@
 #include "Session.h"
 #include "../engine/AudioEngine.h"
 #include "../engine/PluginSlot.h"
+#include "../foundation/Json.h"
 #include <nlohmann/json.hpp>
 #include <algorithm>
 
@@ -549,16 +550,13 @@ std::optional<std::vector<MidiBinding>> deserializeBindingsPreset (const juce::S
     if (! parsed.is_object()) return std::nullopt;
     if (! parsed.contains ("bindings") || ! parsed["bindings"].is_array()) return std::nullopt;
 
-    auto vint = [] (const nlohmann::json& o, const char* key, int def)
-    { return o.contains (key) && o[key].is_number() ? o[key].get<int>() : def; };
-
     for (const auto& v : parsed["bindings"])
     {
         if (! v.is_object()) continue;
         MidiBinding b;
-        b.channel    = juce::jlimit (0, 16,  vint (v, "channel", 0));
-        b.dataNumber = juce::jlimit (0, 127, vint (v, "data", 0));
-        const int rawTrig = vint (v, "trigger", (int) MidiBindingTrigger::CC);
+        b.channel    = juce::jlimit (0, 16,  dusk::json::getInt (v, "channel", 0));
+        b.dataNumber = juce::jlimit (0, 127, dusk::json::getInt (v, "data", 0));
+        const int rawTrig = dusk::json::getInt (v, "trigger", (int) MidiBindingTrigger::CC);
         switch (rawTrig)
         {
             case (int) MidiBindingTrigger::Note:       b.trigger = MidiBindingTrigger::Note;       break;
@@ -566,7 +564,7 @@ std::optional<std::vector<MidiBinding>> deserializeBindingsPreset (const juce::S
             case (int) MidiBindingTrigger::MmcCommand: b.trigger = MidiBindingTrigger::MmcCommand; break;
             default:                                   b.trigger = MidiBindingTrigger::CC;         break;
         }
-        const int rawTgt = vint (v, "target", (int) MidiBindingTarget::None);
+        const int rawTgt = dusk::json::getInt (v, "target", (int) MidiBindingTarget::None);
         // Reject unknown target ints up front so a malformed / forward-
         // version preset never injects an out-of-range enum into the
         // bindings vector (apply / describe switches have fallbacks but
@@ -630,10 +628,10 @@ std::optional<std::vector<MidiBinding>> deserializeBindingsPreset (const juce::S
             default:
                 continue; // skip this entry, unknown target
         }
-        b.targetIndex = vint (v, "target_idx", 0);
-        b.paramIndex  = vint (v, "param_idx", 0);
+        b.targetIndex = dusk::json::getInt (v, "target_idx", 0);
+        b.paramIndex  = dusk::json::getInt (v, "param_idx", 0);
         if (v.contains ("button_mode"))
-            b.buttonMode = (MidiButtonMode) juce::jlimit (0, 1, vint (v, "button_mode", 0));
+            b.buttonMode = (MidiButtonMode) juce::jlimit (0, 1, dusk::json::getInt (v, "button_mode", 0));
         if (b.isValid()) out.push_back (b);
     }
     return out;

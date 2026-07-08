@@ -49,6 +49,9 @@ TEST_CASE ("dusk::json accessors coerce-or-default like juce::var", "[foundation
         // getInt / getInt64 must return the default rather than narrow (UB).
         REQUIRE (json::getInt   (big, "x", 42) == 42);
         REQUIRE (json::getInt64 (big, "x", 77) == 77);
+        // Signed value that fits int64 but exceeds int must fall back, not truncate.
+        REQUIRE (json::getInt   (j, "big", -1) == -1);
+        REQUIRE (json::getInt64 (j, "big", 0)  == 5000000000LL);   // fits int64: real value
         // Unsigned past signed range must fall back, not wrap negative.
         const auto huge = json::Json::parse (R"({"u": 18446744073709551615})");   // UINT64_MAX
         REQUIRE (json::getInt   (huge, "u", 42) == 42);

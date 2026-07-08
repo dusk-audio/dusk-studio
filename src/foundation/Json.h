@@ -67,7 +67,13 @@ inline int getInt (const Json& j, const char* key, int def)
         const auto u = v.get<std::uint64_t>();
         return u <= (std::uint64_t) std::numeric_limits<int>::max() ? (int) u : def;
     }
-    if (v.is_number_integer())  return (int) v.get<std::int64_t>();
+    if (v.is_number_integer())
+    {
+        // Range-check: a signed value past int range would truncate/wrap.
+        const auto i = v.get<std::int64_t>();
+        return (i >= (std::int64_t) std::numeric_limits<int>::min()
+             && i <= (std::int64_t) std::numeric_limits<int>::max()) ? (int) i : def;
+    }
     if (v.is_number_float())
     {
         // Range-check before narrowing: casting an out-of-int double is UB.

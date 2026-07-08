@@ -979,7 +979,7 @@ void PianoRollComponent::paintNoteGrid (juce::Graphics& g, juce::Rectangle<int> 
     if (snapTicks > 0 && snapTicks < ticksPerBeat && pxPerBeat >= 28.0f)
     {
         g.setColour (kBeatLine.withAlpha (0.35f));
-        const int subTicksTotal = (int) ((std::int64_t) totalBars * ticksPerBar);
+        const std::int64_t subTicksTotal = (std::int64_t) totalBars * ticksPerBar;
         for (std::int64_t t = 0; t <= subTicksTotal; t += snapTicks)
         {
             if (t % ticksPerBeat == 0) continue;   // beat / bar lines paint themselves
