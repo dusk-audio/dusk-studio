@@ -45,20 +45,31 @@ std::vector<stdfs::path> Vst3Scanner::findVst3Bundles (const std::vector<stdfs::
         files.push_back (f);
     };
 
+    // ec-aware increment (like dusk::fs::findChildFiles): a directory mutated
+    // mid-scan stops the walk cleanly instead of throwing from operator++.
     for (const auto& dir : dirs)
     {
+        std::error_code walkEc, entryEc;
         if (! stdfs::is_directory (dir, ec)) continue;
         // Bundle entries (file or directory) with a .vst3 extension, not descending
         // into them (their inner .so is not a module path the SDK loader takes).
-        for (const auto& e : stdfs::directory_iterator (dir, ec))
-            if (dusk::fs::hasExtension (e.path(), "vst3"))
-                add (e.path());
+        for (auto it = stdfs::directory_iterator (dir, walkEc);
+             ! walkEc && it != stdfs::directory_iterator(); it.increment (walkEc))
+            if (dusk::fs::hasExtension (it->path(), "vst3"))
+                add (it->path());
         // Plain subdirectories (vendor folders) one level down.
-        for (const auto& e : stdfs::directory_iterator (dir, ec))
-            if (e.is_directory (ec) && ! dusk::fs::hasExtension (e.path(), "vst3"))
-                for (const auto& f : stdfs::directory_iterator (e.path(), ec))
-                    if (dusk::fs::hasExtension (f.path(), "vst3"))
-                        add (f.path());
+        walkEc.clear();
+        for (auto it = stdfs::directory_iterator (dir, walkEc);
+             ! walkEc && it != stdfs::directory_iterator(); it.increment (walkEc))
+        {
+            if (! it->is_directory (entryEc) || dusk::fs::hasExtension (it->path(), "vst3"))
+                continue;
+            std::error_code subEc;
+            for (auto sub = stdfs::directory_iterator (it->path(), subEc);
+                 ! subEc && sub != stdfs::directory_iterator(); sub.increment (subEc))
+                if (dusk::fs::hasExtension (sub->path(), "vst3"))
+                    add (sub->path());
+        }
     }
     return files;
 }

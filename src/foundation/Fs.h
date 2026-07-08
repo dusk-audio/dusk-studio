@@ -183,7 +183,10 @@ inline std::filesystem::path userHomeDir()
 inline std::filesystem::path resolveXdgFolder (const std::string& key,
                                                const std::filesystem::path& fallback)
 {
-    std::ifstream in (userHomeDir() / ".config" / "user-dirs.dirs");
+    const auto home = userHomeDir();
+    if (home.empty()) return fallback;   // never open/build a CWD-relative path
+
+    std::ifstream in (home / ".config" / "user-dirs.dirs");
     std::string line;
     while (std::getline (in, line))
     {
@@ -193,8 +196,7 @@ inline std::filesystem::path resolveXdgFolder (const std::string& key,
         const auto eq = trimmed.find ('=');
         if (eq == std::string::npos) continue;
 
-        std::string value = detail::replaceAll (trimmed.substr (eq + 1), "$HOME",
-                                                userHomeDir().string());
+        std::string value = detail::replaceAll (trimmed.substr (eq + 1), "$HOME", home.string());
         value = detail::unquote (detail::trimBoth (value));
 
         std::error_code ec;
