@@ -131,7 +131,7 @@ Sf2File readSf2(const juce::File& file)
     {
         char ck[4];
         if (in.read(ck, 4) != 4) break;
-        const juce::uint32 ckSize = (juce::uint32) in.readInt();
+        const std::uint32_t ckSize = (std::uint32_t) in.readInt();
         const std::int64_t  ckBody = in.getPosition();
 
         if (idEquals(ck, "LIST"))
@@ -148,7 +148,7 @@ Sf2File readSf2(const juce::File& file)
                 {
                     char sid[4];
                     if (in.read(sid, 4) != 4) break;
-                    const juce::uint32 sSize = (juce::uint32) in.readInt();
+                    const std::uint32_t sSize = (std::uint32_t) in.readInt();
                     const std::int64_t  sBody = in.getPosition();
                     if (idEquals(sid, "smpl"))
                     {

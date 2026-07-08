@@ -731,7 +731,7 @@ bool JoinRegionsAction::perform()
     std::unique_ptr<juce::FileOutputStream> out (outFile.createOutputStream());
     if (out == nullptr) return false;
     std::unique_ptr<juce::AudioFormatWriter> writer (
-        wav.createWriterFor (out.get(), sr, (juce::uint32) chs, bits, {}, 0));
+        wav.createWriterFor (out.get(), sr, (std::uint32_t) chs, bits, {}, 0));
     if (writer == nullptr) { out.reset(); outFile.deleteFile(); return false; }
     out.release();   // ownership transferred to writer
     if (! writer->writeFromAudioSampleBuffer (mixBuf, 0, totalSamples))
@@ -881,7 +881,7 @@ bool ReverseRegionAction::perform()
         std::unique_ptr<juce::FileOutputStream> out (outFile.createOutputStream());
         if (out == nullptr) return false;
         std::unique_ptr<juce::AudioFormatWriter> writer (
-            wav.createWriterFor (out.get(), sr, (juce::uint32) chs, bits, {}, 0));
+            wav.createWriterFor (out.get(), sr, (std::uint32_t) chs, bits, {}, 0));
         if (writer == nullptr) { out.reset(); outFile.deleteFile(); return false; }
         out.release();   // ownership → writer
 

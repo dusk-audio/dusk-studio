@@ -15,7 +15,7 @@ void HardwareInsertSlot::prepare (double sampleRate, int blockSize)
 
     juce::dsp::ProcessSpec spec;
     spec.sampleRate       = sampleRate;
-    spec.maximumBlockSize = (juce::uint32) blockSize;
+    spec.maximumBlockSize = (std::uint32_t) blockSize;
     spec.numChannels      = 1;
 
     dryDelayL.prepare (spec);

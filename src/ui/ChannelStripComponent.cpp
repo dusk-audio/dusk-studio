@@ -4195,7 +4195,7 @@ void ChannelStripComponent::showColourMenu()
 {
     // Eight 4K-palette presets for fast picking, plus a "Custom…" entry that
     // pops a JUCE ColourSelector for fine-grained choice.
-    const std::pair<const char*, juce::uint32> presets[] = {
+    const std::pair<const char*, std::uint32_t> presets[] = {
         { "Red",        fourKColors::kHfRed     },
         { "Orange",     fourKColors::kHmOrange  },
         { "Amber",      fourKColors::kLmAmber   },
@@ -4266,7 +4266,7 @@ void ChannelStripComponent::showColourMenu()
     juce::Component::SafePointer<ChannelStripComponent> safe (this);
     // Copy the presets into a std::vector so the async callback owns its own
     // copy (the local C-array on the stack is gone by the time the menu fires).
-    std::vector<std::pair<juce::String, juce::uint32>> presetCopy;
+    std::vector<std::pair<juce::String, std::uint32_t>> presetCopy;
     presetCopy.reserve (std::size (presets));
     for (auto& p : presets) presetCopy.emplace_back (juce::String (p.first), p.second);
 

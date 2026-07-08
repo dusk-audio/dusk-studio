@@ -66,8 +66,8 @@ private:
     // scan doesn't just flash and vanish — otherwise an enabled scan-on-startup
     // looks like nothing happened.
     bool          completeShown { false };
-    juce::uint32  completeAtMs  { 0 };
-    juce::uint32  startedAtMs   { 0 };
+    std::uint32_t  completeAtMs  { 0 };
+    std::uint32_t  startedAtMs   { 0 };
     static constexpr int kMinVisibleMs = 900;
 
     std::unique_ptr<Worker> worker;

@@ -80,7 +80,7 @@ bool writeSampleWav(juce::FileInputStream& in,
     {
         // SF2 PCM is little-endian signed 16-bit; FileInputStream::read
         // gave us native-order int16 on LE hosts. Normalize to float.
-        const int16_t v = (int16_t) juce::ByteOrder::swapIfBigEndian((juce::uint16) pcm[i]);
+        const int16_t v = (int16_t) juce::ByteOrder::swapIfBigEndian((std::uint16_t) pcm[i]);
         w[i] = (float) v / 32768.0f;
     }
 

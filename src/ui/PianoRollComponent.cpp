@@ -165,7 +165,7 @@ const juce::Colour kTransportPlayhead { 0xffffe8c0 };
 
 // Same palette TapeStrip + AudioRegionEditor use - keep all three
 // surfaces in sync when colours change.
-struct PaletteEntry { const char* label; juce::uint32 argb; };
+struct PaletteEntry { const char* label; std::uint32_t argb; };
 constexpr PaletteEntry kPalette[] = {
     { "Reset to track colour", 0x00000000 },
     { "Red",     0xffd05f5f }, { "Orange",  0xffd09060 },

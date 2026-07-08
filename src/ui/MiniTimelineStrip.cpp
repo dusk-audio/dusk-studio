@@ -231,7 +231,7 @@ void MiniTimelineStrip::timerCallback()
     for (const auto& mk : session.getMarkers())
     {
         sig = sig * 131 + (size_t) mk.timelineSamples;
-        sig = sig * 131 + (size_t) (juce::uint32) mk.name.hashCode();
+        sig = sig * 131 + (size_t) (std::uint32_t) mk.name.hashCode();
         sig = sig * 131 + (size_t) mk.colour.getARGB();
     }
     for (int t = 0; t < Session::kNumTracks; ++t)

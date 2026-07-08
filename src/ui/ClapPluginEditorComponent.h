@@ -59,7 +59,7 @@ private:
     bool ownsInstance = false;
     bool loaded   = false;
     bool embedded = false;
-    juce::uint32 lastPumpMs = 0;
+    std::uint32_t lastPumpMs = 0;
     int  geometryCheckTick = 0;
     int  driftLogsLeft     = 10;
     bool geometryLostLogged = false;

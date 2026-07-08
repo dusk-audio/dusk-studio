@@ -452,15 +452,15 @@ private:
 // 4K band/section palette. Names also drive the track colour-picker labels.
 namespace fourKColors
 {
-    inline constexpr juce::uint32 kHpfBlue   = 0xff4a7c9e;
-    inline constexpr juce::uint32 kLfGreen   = 0xff5c9a5c;
-    inline constexpr juce::uint32 kLmAmber   = 0xffd9a35a;
-    inline constexpr juce::uint32 kHmOrange  = 0xffc47a44;
-    inline constexpr juce::uint32 kHfRed     = 0xffc44444;
-    inline constexpr juce::uint32 kCompGold  = 0xffd09060;
-    inline constexpr juce::uint32 kSendPurple= 0xff9080c0;
-    inline constexpr juce::uint32 kPanCyan   = 0xff70b8c0;
-    inline constexpr juce::uint32 kMasterTan = 0xffd0a060;
+    inline constexpr std::uint32_t kHpfBlue   = 0xff4a7c9e;
+    inline constexpr std::uint32_t kLfGreen   = 0xff5c9a5c;
+    inline constexpr std::uint32_t kLmAmber   = 0xffd9a35a;
+    inline constexpr std::uint32_t kHmOrange  = 0xffc47a44;
+    inline constexpr std::uint32_t kHfRed     = 0xffc44444;
+    inline constexpr std::uint32_t kCompGold  = 0xffd09060;
+    inline constexpr std::uint32_t kSendPurple= 0xff9080c0;
+    inline constexpr std::uint32_t kPanCyan   = 0xff70b8c0;
+    inline constexpr std::uint32_t kMasterTan = 0xffd0a060;
 }
 
 // SSL 9000J palette — EQ knob bodies only. Separate namespace so the
@@ -468,13 +468,13 @@ namespace fourKColors
 // Orange / Amber / Green).
 namespace sslEqColors
 {
-    inline constexpr juce::uint32 kHfRed   = 0xffc44444;
-    inline constexpr juce::uint32 kHmGreen = 0xff5fa55f;
-    inline constexpr juce::uint32 kLmBlue  = 0xff5878b0;
-    inline constexpr juce::uint32 kLfBlack = 0xff5a5a62;  // graphite, not true black — legible on the dark EQ panel while staying the darkest band
-    inline constexpr juce::uint32 kHpfBlue = 0xff4a7c9e;
+    inline constexpr std::uint32_t kHfRed   = 0xffc44444;
+    inline constexpr std::uint32_t kHmGreen = 0xff5fa55f;
+    inline constexpr std::uint32_t kLmBlue  = 0xff5878b0;
+    inline constexpr std::uint32_t kLfBlack = 0xff5a5a62;  // graphite, not true black — legible on the dark EQ panel while staying the darkest band
+    inline constexpr std::uint32_t kHpfBlue = 0xff4a7c9e;
     // 9000J top-section filter knobs are white-faced — HPF + LPF
     // share this so they read as a pair.
-    inline constexpr juce::uint32 kFilterWhite = 0xffe0e0e4;
+    inline constexpr std::uint32_t kFilterWhite = 0xffe0e0e4;
 }
 } // namespace duskstudio

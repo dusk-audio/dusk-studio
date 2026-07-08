@@ -219,7 +219,7 @@ void VirtualKeyboardComponent::timerCallback()
 void VirtualKeyboardComponent::sendNoteOn (int note, int vel, int chan)
 {
     if (auto* col = engine.getVirtualKeyboardCollector())
-        col->addMessageToQueue (juce::MidiMessage::noteOn (chan, note, (juce::uint8) vel));
+        col->addMessageToQueue (juce::MidiMessage::noteOn (chan, note, (std::uint8_t) vel));
     if (onNoteOn) onNoteOn (note, vel, chan);
 }
 

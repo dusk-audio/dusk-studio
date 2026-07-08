@@ -40,14 +40,14 @@ void emitLcdRow (juce::MidiBuffer& buf,
     // Build the byte sequence into a small stack buffer (5 prefix + 1
     // cmd + 1 offset + 56 chars + 1 end = 64 bytes max) and feed it
     // to MidiMessage::createSysExMessage which copies internally.
-    std::array<juce::uint8, 64> bytes;
+    std::array<std::uint8_t, 64> bytes;
     size_t n = 0;
     for (size_t i = 0; i < mcu::sysex::kPrefixLen; ++i)
         bytes[n++] = mcu::sysex::kPrefix[i];
     bytes[n++] = mcu::sysex::kCmdLcd;
-    bytes[n++] = (juce::uint8) (rowAddr & 0x7F);
+    bytes[n++] = (std::uint8_t) (rowAddr & 0x7F);
     for (size_t i = 0; i < row.size(); ++i)
-        bytes[n++] = (juce::uint8) row[i];
+        bytes[n++] = (std::uint8_t) row[i];
     bytes[n++] = mcu::sysex::kEnd;
     // createSysExMessage expects the body WITHOUT F0/F7; we feed the
     // body slice and let it wrap. Saves one allocation vs constructing
@@ -59,13 +59,13 @@ void emitTimecode (juce::MidiBuffer& buf,
                    const std::array<char, mcu::sysex::kTimecodeDigits>& digits)
 {
     // F0 00 00 66 14 10 <10 digits> F7
-    std::array<juce::uint8, 32> bytes;
+    std::array<std::uint8_t, 32> bytes;
     size_t n = 0;
     for (size_t i = 0; i < mcu::sysex::kPrefixLen; ++i)
         bytes[n++] = mcu::sysex::kPrefix[i];
     bytes[n++] = mcu::sysex::kCmdTimecode;
     for (size_t i = 0; i < digits.size(); ++i)
-        bytes[n++] = (juce::uint8) digits[i];
+        bytes[n++] = (std::uint8_t) digits[i];
     bytes[n++] = mcu::sysex::kEnd;
     buf.addEvent (juce::MidiMessage (bytes.data(), (int) n), 0);
 }
@@ -140,7 +140,7 @@ juce::MidiBuffer McuController::buildEmitBuffer (bool forceAll)
         {
             buf.addEvent (juce::MidiMessage::noteOn (1,
                 mcu::btn::MuteBase + strip,
-                (juce::uint8) (muteOn ? 0x7F : 0x00)), 0);
+                (std::uint8_t) (muteOn ? 0x7F : 0x00)), 0);
             lastMute[(size_t) strip] = muteOn;
         }
 
@@ -149,7 +149,7 @@ juce::MidiBuffer McuController::buildEmitBuffer (bool forceAll)
         {
             buf.addEvent (juce::MidiMessage::noteOn (1,
                 mcu::btn::SoloBase + strip,
-                (juce::uint8) (soloOn ? 0x7F : 0x00)), 0);
+                (std::uint8_t) (soloOn ? 0x7F : 0x00)), 0);
             lastSolo[(size_t) strip] = soloOn;
         }
 
@@ -158,7 +158,7 @@ juce::MidiBuffer McuController::buildEmitBuffer (bool forceAll)
         {
             buf.addEvent (juce::MidiMessage::noteOn (1,
                 mcu::btn::RecArmBase + strip,
-                (juce::uint8) (armOn ? 0x7F : 0x00)), 0);
+                (std::uint8_t) (armOn ? 0x7F : 0x00)), 0);
             lastArm[(size_t) strip] = armOn;
         }
     }
@@ -178,9 +178,9 @@ juce::MidiBuffer McuController::buildEmitBuffer (bool forceAll)
         const bool leftAvailable  = bank > 0;
         const bool rightAvailable = bank < Session::kNumBanks - 1;
         buf.addEvent (juce::MidiMessage::noteOn (1, mcu::btn::BankLeft,
-            (juce::uint8) (leftAvailable ? 0x7F : 0x00)), 0);
+            (std::uint8_t) (leftAvailable ? 0x7F : 0x00)), 0);
         buf.addEvent (juce::MidiMessage::noteOn (1, mcu::btn::BankRight,
-            (juce::uint8) (rightAvailable ? 0x7F : 0x00)), 0);
+            (std::uint8_t) (rightAvailable ? 0x7F : 0x00)), 0);
         lastBank = bank;
     }
 
@@ -204,7 +204,7 @@ juce::MidiBuffer McuController::buildEmitBuffer (bool forceAll)
                         mcu::btn::AssignEq,    mcu::btn::AssignInst })
         {
             buf.addEvent (juce::MidiMessage::noteOn (1, n,
-                (juce::uint8) (n == lit ? 0x7F : 0x00)), 0);
+                (std::uint8_t) (n == lit ? 0x7F : 0x00)), 0);
         }
         lastAssignMode = assign;
     }
@@ -223,7 +223,7 @@ juce::MidiBuffer McuController::buildEmitBuffer (bool forceAll)
             const bool lit = (absTrack == selected);
             buf.addEvent (juce::MidiMessage::noteOn (1,
                 mcu::btn::SelectBase + strip,
-                (juce::uint8) (lit ? 0x7F : 0x00)), 0);
+                (std::uint8_t) (lit ? 0x7F : 0x00)), 0);
         }
         lastSelectedChannel = selected;
     }
@@ -243,18 +243,18 @@ juce::MidiBuffer McuController::buildEmitBuffer (bool forceAll)
                 const bool stopped   = (state == (int) Transport::State::Stopped);
                 const bool recording = (state == (int) Transport::State::Recording);
                 buf.addEvent (juce::MidiMessage::noteOn (1, mcu::btn::Play,
-                    (juce::uint8) ((playing || recording) ? 0x7F : 0x00)), 0);
+                    (std::uint8_t) ((playing || recording) ? 0x7F : 0x00)), 0);
                 buf.addEvent (juce::MidiMessage::noteOn (1, mcu::btn::Stop,
-                    (juce::uint8) (stopped ? 0x7F : 0x00)), 0);
+                    (std::uint8_t) (stopped ? 0x7F : 0x00)), 0);
                 buf.addEvent (juce::MidiMessage::noteOn (1, mcu::btn::Record,
-                    (juce::uint8) (recording ? 0x7F : 0x00)), 0);
+                    (std::uint8_t) (recording ? 0x7F : 0x00)), 0);
                 lastTransportState = state;
             }
             const bool loopOn = transport->isLoopEnabled();
             if (forceAll || loopOn != lastLoopOn)
             {
                 buf.addEvent (juce::MidiMessage::noteOn (1, mcu::btn::Loop,
-                    (juce::uint8) (loopOn ? 0x7F : 0x00)), 0);
+                    (std::uint8_t) (loopOn ? 0x7F : 0x00)), 0);
                 lastLoopOn = loopOn;
             }
         }
@@ -265,10 +265,10 @@ juce::MidiBuffer McuController::buildEmitBuffer (bool forceAll)
         // default (Stop lit, Play / Record / Loop dark). Matches the
         // controller's idle state on first connect before AudioEngine
         // hooks the provider up.
-        buf.addEvent (juce::MidiMessage::noteOn (1, mcu::btn::Stop,   (juce::uint8) 0x7F), 0);
-        buf.addEvent (juce::MidiMessage::noteOn (1, mcu::btn::Play,   (juce::uint8) 0x00), 0);
-        buf.addEvent (juce::MidiMessage::noteOn (1, mcu::btn::Record, (juce::uint8) 0x00), 0);
-        buf.addEvent (juce::MidiMessage::noteOn (1, mcu::btn::Loop,   (juce::uint8) 0x00), 0);
+        buf.addEvent (juce::MidiMessage::noteOn (1, mcu::btn::Stop,   (std::uint8_t) 0x7F), 0);
+        buf.addEvent (juce::MidiMessage::noteOn (1, mcu::btn::Play,   (std::uint8_t) 0x00), 0);
+        buf.addEvent (juce::MidiMessage::noteOn (1, mcu::btn::Record, (std::uint8_t) 0x00), 0);
+        buf.addEvent (juce::MidiMessage::noteOn (1, mcu::btn::Loop,   (std::uint8_t) 0x00), 0);
     }
 
     // ── LCD row 0: track names (7 chars per strip) ──
@@ -335,7 +335,7 @@ juce::MidiBuffer McuController::buildEmitBuffer (bool forceAll)
             {
                 // 0xD0 status (channel pressure, ch 1): hi-nibble of
                 // data byte = strip 0..7, lo-nibble = level 0..15.
-                const juce::uint8 dataByte = (juce::uint8) ((strip << 4) | (level & 0x0F));
+                const std::uint8_t dataByte = (std::uint8_t) ((strip << 4) | (level & 0x0F));
                 buf.addEvent (juce::MidiMessage (mcu::meter::kStatus, dataByte), 0);
                 lastMeter[(size_t) strip] = level;
             }
@@ -404,7 +404,7 @@ juce::MidiBuffer McuController::buildEmitBuffer (bool forceAll)
         {
             buf.addEvent (juce::MidiMessage::controllerEvent (1,
                 mcu::cc::VPotRingBase + strip,
-                (juce::uint8) (ringValue & 0x7F)), 0);
+                (std::uint8_t) (ringValue & 0x7F)), 0);
             lastVpotRing[(size_t) strip] = ringValue;
         }
     }

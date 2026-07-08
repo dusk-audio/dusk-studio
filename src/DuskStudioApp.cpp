@@ -362,7 +362,7 @@ static void runHeadlessInstrumentTest (const juce::String& pluginPath)
         juce::MidiBuffer midi;
         if (b == 0)
             for (int n : kChordNotes)
-                midi.addEvent (juce::MidiMessage::noteOn (1, n, (juce::uint8) 100), 0);
+                midi.addEvent (juce::MidiMessage::noteOn (1, n, (std::uint8_t) 100), 0);
         if (b == chordHoldBlocks)
             for (int n : kChordNotes)
                 midi.addEvent (juce::MidiMessage::noteOff (1, n), 0);
@@ -622,7 +622,7 @@ static void runHeadlessPipelineTest (const juce::String& pluginPath)
             juce::MidiBuffer midi;
             if (b == 0)
                 for (int n : kChordNotes)
-                    midi.addEvent (juce::MidiMessage::noteOn (1, n, (juce::uint8) 100), 0);
+                    midi.addEvent (juce::MidiMessage::noteOn (1, n, (std::uint8_t) 100), 0);
             if (b == chordHoldBlocks)
                 for (int n : kChordNotes)
                     midi.addEvent (juce::MidiMessage::noteOff (1, n), 0);
@@ -722,7 +722,7 @@ static void runHeadlessPipelineTest (const juce::String& pluginPath)
                 {
                     juce::MidiBuffer midi;
                     for (int n : kChordNotes)
-                        midi.addEvent (juce::MidiMessage::noteOn (1, n, (juce::uint8) 100), 0);
+                        midi.addEvent (juce::MidiMessage::noteOn (1, n, (std::uint8_t) 100), 0);
                     engine->stageTestMidiInjection (midiInputIdx, std::move (midi));
                 }
                 for (auto& o : outs) std::fill (o.begin(), o.end(), 0.0f);

@@ -119,7 +119,7 @@ void MidiTimeCodeEmitter::emitQuarterFrame (std::int64_t atSample,
         case 7: data = (((int) rate) << 1) | ((hh >> 4) & 0x01); break;
         default: return;
     }
-    const juce::uint8 byte1 = (juce::uint8) (((nibble & 0x07) << 4) | (data & 0x0F));
+    const std::uint8_t byte1 = (std::uint8_t) (((nibble & 0x07) << 4) | (data & 0x0F));
     out.addEvent (juce::MidiMessage (0xF1, byte1),
                    (int) (atSample - lastBlockStart));
 }
@@ -133,13 +133,13 @@ void MidiTimeCodeEmitter::emitFullFrameSysex (std::int64_t atSample,
     framesToSmpte (frames, rate, hh, mm, ss, ff);
 
     // F0 7F 7F 01 01 hr mn sc fr F7 — 10 bytes. hr packs rate in bits 5..6.
-    const juce::uint8 hrByte = (juce::uint8) ((((int) rate) << 5) | (hh & 0x1F));
-    const juce::uint8 bytes[10] = {
+    const std::uint8_t hrByte = (std::uint8_t) ((((int) rate) << 5) | (hh & 0x1F));
+    const std::uint8_t bytes[10] = {
         0xF0, 0x7F, 0x7F, 0x01, 0x01,
         hrByte,
-        (juce::uint8) (mm & 0x3F),
-        (juce::uint8) (ss & 0x3F),
-        (juce::uint8) (ff & 0x1F),
+        (std::uint8_t) (mm & 0x3F),
+        (std::uint8_t) (ss & 0x3F),
+        (std::uint8_t) (ff & 0x1F),
         0xF7
     };
     out.addEvent (juce::MidiMessage (bytes, 10),

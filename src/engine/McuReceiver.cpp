@@ -420,7 +420,7 @@ void McuReceiver::process (const juce::MidiBuffer& events,
         const auto* raw = m.getRawData();
         const int sz = m.getRawDataSize();
         if (raw == nullptr || sz < 1) continue;
-        const auto status = (juce::uint8) raw[0];
+        const auto status = (std::uint8_t) raw[0];
         const int statusType = status & 0xF0;
         const int channel    = status & 0x0F;
 

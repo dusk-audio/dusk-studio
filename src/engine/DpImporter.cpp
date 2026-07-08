@@ -64,7 +64,7 @@ constexpr int    kStripBase       = 0x14;
 constexpr int    kStripStride     = 20;
 constexpr int    kNumStrips       = 24;
 constexpr int    kSentinelByte    = 19;
-constexpr juce::uint8 kSentinel   = 0x2A;
+constexpr std::uint8_t kSentinel   = 0x2A;
 constexpr int kMuteArrayBase = 0x268;       // 1 byte per channel, 1 = muted (SONG_0005 ch6)
 
 // Channel faders live in their OWN array, NOT in the 0x14 strip records: a byte
@@ -107,9 +107,9 @@ constexpr float kFreqTable[64] = {
     14000,15000,16000,17000,18000 };
 constexpr float kQTable[7] = { 0.25f, 0.5f, 1.0f, 2.0f, 4.0f, 8.0f, 16.0f };
 
-float eqGainDb (juce::uint8 v) noexcept { return (float) juce::jlimit (0, 24, (int) v) - 12.0f; }
+float eqGainDb (std::uint8_t v) noexcept { return (float) juce::jlimit (0, 24, (int) v) - 12.0f; }
 float freqAt   (int idx) noexcept { return kFreqTable[(size_t) juce::jlimit (0, 63, idx)]; }
-float qAt      (juce::uint8 v) noexcept { return kQTable[(size_t) juce::jlimit (0, 6, (int) v)]; }
+float qAt      (std::uint8_t v) noexcept { return kQTable[(size_t) juce::jlimit (0, 6, (int) v)]; }
 
 // Fader byte -> dB, calibrated from SONG_0002 (24 faders set to known values,
 // read off the device display). Monotonic anchor table; linear-interpolate
@@ -124,7 +124,7 @@ constexpr FaderCal kFaderCal[] = {
     { 120,   4.2f }, { 127,   6.0f },
 };
 
-float faderByteToDb (juce::uint8 v) noexcept
+float faderByteToDb (std::uint8_t v) noexcept
 {
     constexpr int n = (int) (sizeof (kFaderCal) / sizeof (kFaderCal[0]));
     if (v <= kFaderCal[0].byte)     return kFaderCal[0].db;
@@ -139,7 +139,7 @@ float faderByteToDb (juce::uint8 v) noexcept
     return kFaderCal[n - 1].db;
 }
 
-float panByteToNorm (juce::uint8 v) noexcept
+float panByteToNorm (std::uint8_t v) noexcept
 {
     return juce::jlimit (-1.0f, 1.0f, ((float) v - 64.0f) / 63.0f);   // 0x40 centre
 }
@@ -172,7 +172,7 @@ std::vector<MixerStrip> decodeMixerScene (const juce::File& songSys, int deviceT
     if (! songSys.existsAsFile() || ! songSys.loadFileAsData (mb)) return strips;
     if ((int) mb.getSize() != kSongSysSize) return strips;
 
-    const auto* d = (const juce::uint8*) mb.getData();
+    const auto* d = (const std::uint8_t*) mb.getData();
     if (std::memcmp (d, "DP-24", 5) != 0 && std::memcmp (d, "DP-32", 5) != 0)
         return strips;
 
@@ -242,7 +242,7 @@ std::vector<std::int64_t> decodeClipStarts (const juce::File& songSys,
     juce::MemoryBlock mb;
     if (! songSys.existsAsFile() || ! songSys.loadFileAsData (mb)) return starts;
     if ((int) mb.getSize() != kSongSysSize) return starts;
-    const auto* d = (const juce::uint8*) mb.getData();
+    const auto* d = (const std::uint8_t*) mb.getData();
 
     const std::int64_t songLen = (std::int64_t) juce::ByteOrder::littleEndianInt (d + kSongLengthOffset);
 
@@ -299,7 +299,7 @@ int readTempoBpm (const juce::File& songSys)
     juce::MemoryBlock mb;
     if (! songSys.existsAsFile() || ! songSys.loadFileAsData (mb)) return 0;
     if ((int) mb.getSize() != kSongSysSize) return 0;
-    const int bpm = ((const juce::uint8*) mb.getData())[kTempoOffset];
+    const int bpm = ((const std::uint8_t*) mb.getData())[kTempoOffset];
     return (bpm >= 20 && bpm <= 250) ? bpm : 0;
 }
 
@@ -318,7 +318,7 @@ bool readTimeSignature (const juce::File& songSys, int& num, int& den)
     juce::MemoryBlock mb;
     if (! songSys.existsAsFile() || ! songSys.loadFileAsData (mb)) return false;
     if ((int) mb.getSize() != kSongSysSize) return false;
-    const auto* d = (const juce::uint8*) mb.getData();
+    const auto* d = (const std::uint8_t*) mb.getData();
     // Reject non-DP / corrupt files (same magic gate as decodeMixerScene);
     // otherwise byte 0 decodes to a bogus 1/1 for any 2996-byte blob.
     if (std::memcmp (d, "DP-24", 5) != 0 && std::memcmp (d, "DP-32", 5) != 0)
@@ -343,14 +343,14 @@ std::vector<DpMarker> decodeMarkers (const juce::File& songSys)
     juce::MemoryBlock mb;
     if (! songSys.existsAsFile() || ! songSys.loadFileAsData (mb)) return out;
     if ((int) mb.getSize() != kSongSysSize) return out;
-    const auto* d = (const juce::uint8*) mb.getData();
+    const auto* d = (const std::uint8_t*) mb.getData();
     const std::int64_t songLen = (std::int64_t) juce::ByteOrder::littleEndianInt (d + kSongLengthOffset);
     if (songLen <= 0) return out;
 
     for (int o = kMarkerRegionBegin; o + 8 <= kMarkerRegionEnd; o += 8)
     {
         const std::int64_t pos  = (std::int64_t) juce::ByteOrder::littleEndianInt (d + o);
-        const juce::uint32 iw  = (juce::uint32) juce::ByteOrder::littleEndianInt (d + o + 4);
+        const std::uint32_t iw  = (std::uint32_t) juce::ByteOrder::littleEndianInt (d + o + 4);
         const int idx = (int) (iw >> 24);
         if (pos > 0 && pos <= songLen && (iw & 0x00FFFFFFu) == 0 && idx >= 1 && idx <= 64)
             out.push_back ({ pos, idx });

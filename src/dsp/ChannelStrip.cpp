@@ -59,7 +59,7 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     // and clear history. pdcSilentRun starts maxed so a pending change can apply
     // on the very first block.
     const juce::dsp::ProcessSpec pdcSpec
-        { sampleRate, (juce::uint32) juce::jmax (1, blockSize), 1 };
+        { sampleRate, (std::uint32_t) juce::jmax (1, blockSize), 1 };
     pdcDelayL.prepare (pdcSpec);
     pdcDelayR.prepare (pdcSpec);
     pdcDelayL.setMaximumDelayInSamples (kMaxPdcSamples);

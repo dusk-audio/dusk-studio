@@ -733,7 +733,7 @@ void RecordManager::writeMidiBlock (int trackIndex,
         // / CC / pitch bend / channel pressure / poly pressure / program.
         // System messages (sysex, clock, transport) are intentionally
         // dropped - they're not part of the per-track musical content.
-        const auto status = (juce::uint8) raw[0];
+        const auto status = (std::uint8_t) raw[0];
         if (status < 0x80 || status >= 0xF0) continue;
 
         // Drop events whose absolute take-relative position is negative
@@ -766,8 +766,8 @@ void RecordManager::writeMidiBlock (int trackIndex,
         auto& slot = cap->events[(size_t) s1];
         slot.samplePos = samplePos;
         slot.status = status;
-        slot.data1  = sz >= 2 ? (juce::uint8) raw[1] : 0;
-        slot.data2  = sz >= 3 ? (juce::uint8) raw[2] : 0;
+        slot.data1  = sz >= 2 ? (std::uint8_t) raw[1] : 0;
+        slot.data2  = sz >= 3 ? (std::uint8_t) raw[2] : 0;
         cap->fifo.finishedWrite (needed);
     }
 }

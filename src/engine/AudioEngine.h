@@ -507,7 +507,7 @@ private:
     std::atomic<bool> midiSoftTakeover { false };
     static constexpr int kMaxPickupBindings = 512;
     const void* pickupSnapshotKey = nullptr;
-    std::array<juce::uint8, kMaxPickupBindings> pickupLatched {};
+    std::array<std::uint8_t, kMaxPickupBindings> pickupLatched {};
     std::array<float,       kMaxPickupBindings> pickupPrevIn {};
 
     // Master-stage PDC for aux-lane plugin latency. A latent send effect

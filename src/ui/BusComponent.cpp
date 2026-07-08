@@ -1183,7 +1183,7 @@ void BusComponent::applyBusColour (juce::Colour c)
 
 void BusComponent::showColourMenu()
 {
-    const std::pair<const char*, juce::uint32> presets[] = {
+    const std::pair<const char*, std::uint32_t> presets[] = {
         { "Red",        fourKColors::kHfRed     },
         { "Orange",     fourKColors::kHmOrange  },
         { "Amber",      fourKColors::kLmAmber   },
@@ -1204,7 +1204,7 @@ void BusComponent::showColourMenu()
         menu.addItem (item);
     }
     juce::Component::SafePointer<BusComponent> safe (this);
-    std::vector<std::pair<juce::String, juce::uint32>> presetCopy;
+    std::vector<std::pair<juce::String, std::uint32_t>> presetCopy;
     presetCopy.reserve (std::size (presets));
     for (auto& p : presets) presetCopy.emplace_back (juce::String (p.first), p.second);
     showContextMenu (menu, *this,

@@ -16,8 +16,8 @@ void MidiClockEmitter::generateBlock (std::int64_t blockStartSample,
     // here because slaves react with their own latency anyway.
     if (isRolling != lastRolling)
     {
-        const juce::uint8 statusByte = isRolling ? (juce::uint8) 0xFA   // Start
-                                                  : (juce::uint8) 0xFC; // Stop
+        const std::uint8_t statusByte = isRolling ? (std::uint8_t) 0xFA   // Start
+                                                  : (std::uint8_t) 0xFC; // Stop
         out.addEvent (juce::MidiMessage (statusByte), 0);
         lastRolling = isRolling;
         if (isRolling)
@@ -48,7 +48,7 @@ void MidiClockEmitter::generateBlock (std::int64_t blockStartSample,
         const int offset = (int) ((std::int64_t) std::llround (clockPhase)
                                    - blockStartSample);
         if (offset >= 0 && offset < numSamples)
-            out.addEvent (juce::MidiMessage ((juce::uint8) 0xF8), offset);
+            out.addEvent (juce::MidiMessage ((std::uint8_t) 0xF8), offset);
         clockPhase += samplesPerClock;
     }
 }

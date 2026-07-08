@@ -2741,7 +2741,7 @@ void TapeStrip::showRegionContextMenu (const RegionHit& hit, juce::Point<int> sc
     // multi-selection) when the right-clicked region is part of one;
     // single-region otherwise. Same logic as note-properties popup.
     juce::PopupMenu colourSub;
-    struct PaletteEntry { const char* label; juce::uint32 argb; };
+    struct PaletteEntry { const char* label; std::uint32_t argb; };
     static const PaletteEntry kPalette[] = {
         { "Reset to track colour", 0x00000000 },   // 0 alpha = transparent = unset
         { "Red",          0xffd05f5f },
@@ -2788,7 +2788,7 @@ void TapeStrip::showRegionContextMenu (const RegionHit& hit, juce::Point<int> sc
             // on the colour-submenu IDs here.
             if (chosen < 5000 || chosen >= 5000 + (int) (sizeof (kPalette) / sizeof (kPalette[0])))
                 return;
-            const juce::uint32 newArgb = kPalette[chosen - 5000].argb;
+            const std::uint32_t newArgb = kPalette[chosen - 5000].argb;
             const juce::Colour newColour (newArgb);
 
             // Pick the target list - the multi-selection if the
@@ -2970,7 +2970,7 @@ void TapeStrip::showMidiRegionContextMenu (int trackIdx, int regionIdx,
 
     // Same 8-colour palette + Reset as the audio menu.
     juce::PopupMenu colourSub;
-    struct PaletteEntry { const char* label; juce::uint32 argb; };
+    struct PaletteEntry { const char* label; std::uint32_t argb; };
     static const PaletteEntry kPalette[] = {
         { "Reset to track colour", 0x00000000 },
         { "Red",     0xffd05f5f }, { "Orange",  0xffd09060 },

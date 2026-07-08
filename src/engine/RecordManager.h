@@ -103,9 +103,9 @@ private:
         struct RawEvent
         {
             std::int64_t samplePos = 0;
-            juce::uint8 status = 0;
-            juce::uint8 data1 = 0;
-            juce::uint8 data2 = 0;
+            std::uint8_t status = 0;
+            std::uint8_t data1 = 0;
+            std::uint8_t data2 = 0;
         };
         static constexpr int kCapacity = 65536;
         std::vector<RawEvent>  events;

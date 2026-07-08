@@ -2504,7 +2504,7 @@ void MainComponent::writeAutosave()
     // hash used by HashMap; collision risk on a real session string is
     // statistically negligible. Worst-case missed-write recovers next tick.
     const auto stripped = stripVolatileStateForDirtyCompare (json);
-    const auto strippedHash = (std::uint32_t) (juce::uint32)
+    const auto strippedHash = (std::uint32_t) (std::uint32_t)
         juce::DefaultHashFunctions::generateHash (stripped, 0x7fffffff);
     if (strippedHash == lastSavedSessionStrippedHash)    return;
     if (strippedHash == lastWrittenAutosaveStrippedHash) return;
@@ -2522,7 +2522,7 @@ void MainComponent::setLastSavedSessionJson (const juce::String& json)
 {
     lastSavedSessionJson = json;
     const auto stripped  = stripVolatileStateForDirtyCompare (json);
-    lastSavedSessionStrippedHash = (std::uint32_t) (juce::uint32)
+    lastSavedSessionStrippedHash = (std::uint32_t) (std::uint32_t)
         juce::DefaultHashFunctions::generateHash (stripped, 0x7fffffff);
 }
 
@@ -2530,7 +2530,7 @@ void MainComponent::setLastWrittenAutosaveJson (const juce::String& json)
 {
     lastWrittenAutosaveJson = json;
     const auto stripped     = stripVolatileStateForDirtyCompare (json);
-    lastWrittenAutosaveStrippedHash = (std::uint32_t) (juce::uint32)
+    lastWrittenAutosaveStrippedHash = (std::uint32_t) (std::uint32_t)
         juce::DefaultHashFunctions::generateHash (stripped, 0x7fffffff);
 }
 

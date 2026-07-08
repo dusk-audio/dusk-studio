@@ -1413,8 +1413,8 @@ public:
         // press+release both land between two 20 Hz timer polls leaves
         // rewHeld/ffwdHeld false at both polls, so the timer would miss the
         // edge; it watches this counter to still fire the tap.
-        std::atomic<juce::uint32> rewPressCount  { 0 };
-        std::atomic<juce::uint32> ffwdPressCount { 0 };
+        std::atomic<std::uint32_t> rewPressCount  { 0 };
+        std::atomic<std::uint32_t> ffwdPressCount { 0 };
     };
     McuSessionState mcu;
 

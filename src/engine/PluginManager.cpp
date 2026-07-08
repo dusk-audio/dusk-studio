@@ -73,7 +73,7 @@ public:
         // Wrap-safe elapsed check: unsigned subtraction is correct across a
         // single getMillisecondCounter() wrap (every ~49 days of uptime), so
         // compare the interval rather than an absolute deadline.
-        const juce::uint32 startMs = juce::Time::getMillisecondCounter();
+        const std::uint32_t startMs = juce::Time::getMillisecondCounter();
         bool aborted = false;
 
         for (;;)
@@ -99,7 +99,7 @@ public:
                 break;
             }
 
-            if (juce::Time::getMillisecondCounter() - startMs >= (juce::uint32) kScanTimeoutMs)
+            if (juce::Time::getMillisecondCounter() - startMs >= (std::uint32_t) kScanTimeoutMs)
             {
                 proc.kill();
                 proc.waitForProcessToFinish (200);  // reap the SIGKILLed child, no zombie
@@ -398,7 +398,7 @@ bool PluginManager::scanNativeBundleSandboxed (const char* format, const juce::F
 
     juce::MemoryOutputStream captured;
     char buf[8192];
-    const juce::uint32 startMs = juce::Time::getMillisecondCounter();
+    const std::uint32_t startMs = juce::Time::getMillisecondCounter();
     for (;;)
     {
         const int n = proc.readProcessOutput (buf, (int) sizeof buf);
@@ -410,7 +410,7 @@ bool PluginManager::scanNativeBundleSandboxed (const char* format, const juce::F
                 captured.write (buf, (size_t) extra);
             break;
         }
-        if (juce::Time::getMillisecondCounter() - startMs >= (juce::uint32) kScanTimeoutMs)
+        if (juce::Time::getMillisecondCounter() - startMs >= (std::uint32_t) kScanTimeoutMs)
         {
             proc.kill();
             proc.waitForProcessToFinish (200);   // reap the SIGKILLed child, no zombie

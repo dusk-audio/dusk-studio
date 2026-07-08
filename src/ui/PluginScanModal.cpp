@@ -115,7 +115,7 @@ void PluginScanModal::timerCallback()
     // Hold the completion state briefly so a warm-cache scan doesn't just
     // flash, then close.
     if (completeShown && ! finishedFired
-        && juce::Time::getMillisecondCounter() - completeAtMs >= (juce::uint32) kMinVisibleMs)
+        && juce::Time::getMillisecondCounter() - completeAtMs >= (std::uint32_t) kMinVisibleMs)
     {
         finishedFired = true;
         stopTimer();

@@ -244,7 +244,7 @@ juce::String colourToHex (juce::Colour c)
 juce::Colour hexToColour (const juce::String& s, juce::Colour fallback)
 {
     if (s.isEmpty()) return fallback;
-    auto v = (juce::uint32) s.getHexValue64();
+    auto v = (std::uint32_t) s.getHexValue64();
     return juce::Colour (v);
 }
 

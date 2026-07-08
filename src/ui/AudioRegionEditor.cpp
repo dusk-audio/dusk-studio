@@ -33,7 +33,7 @@ const juce::Colour kTransportPlayhead { 0xffffe8c0 };
 // [src/ui/TapeStrip.cpp] so all three surfaces (tape strip menu,
 // audio editor properties, piano roll properties) share the same
 // 8 swatches + reset.
-struct PaletteEntry { const char* label; juce::uint32 argb; };
+struct PaletteEntry { const char* label; std::uint32_t argb; };
 constexpr PaletteEntry kPalette[] = {
     { "Reset to track colour", 0x00000000 },
     { "Red",     0xffd05f5f }, { "Orange",  0xffd09060 },

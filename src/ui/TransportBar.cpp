@@ -688,7 +688,7 @@ void TransportBar::timerCallback()
         auto& sess = engine.getSession();
         const bool mcuRew  = sess.mcu.rewHeld.load  (std::memory_order_relaxed);
         const bool mcuFfwd = sess.mcu.ffwdHeld.load (std::memory_order_relaxed);
-        const auto mcuEdge = [&] (bool isHeld, juce::uint32 pressCount, juce::uint32& lastCount,
+        const auto mcuEdge = [&] (bool isHeld, std::uint32_t pressCount, std::uint32_t& lastCount,
                                   std::int64_t& pressedAt, bool& scrubbing, auto tap)
         {
             const bool newPress = pressCount != lastCount;

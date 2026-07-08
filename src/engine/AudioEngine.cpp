@@ -2422,7 +2422,7 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
     masteringPlayer.prepare (bs, sr);
 
     {
-        const juce::dsp::ProcessSpec monoSpec { sr, (juce::uint32) bs, 1 };
+        const juce::dsp::ProcessSpec monoSpec { sr, (std::uint32_t) bs, 1 };
         auto prepPdc = [&monoSpec] (MasterPdcDelay& d)
         {
             d.prepare (monoSpec);
@@ -3863,8 +3863,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
 
     if ((int) mixL.size() < numSamples)
     {
-        silentDims.store (((std::uint64_t) (juce::uint32) mixL.size() << 32)
-                          | (juce::uint32) numSamples, std::memory_order_relaxed);
+        silentDims.store (((std::uint64_t) (std::uint32_t) mixL.size() << 32)
+                          | (std::uint32_t) numSamples, std::memory_order_relaxed);
         silentBlocks.fetch_add (1, std::memory_order_relaxed);   // drained by diagTimer
         if (outputChannelData != nullptr)
             for (int ch = 0; ch < numOutputChannels; ++ch)
@@ -4335,7 +4335,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                         {
                             perTrackMidiScratch[(size_t) t].addEvent (
                                 juce::MidiMessage::noteOn (n.channel, n.noteNumber,
-                                                            (juce::uint8) n.velocity),
+                                                            (std::uint8_t) n.velocity),
                                 1);
                         }
                     }
@@ -4372,7 +4372,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                     {
                         perTrackMidiScratch[(size_t) t].addEvent (
                             juce::MidiMessage::noteOn (n.channel, n.noteNumber,
-                                                        (juce::uint8) n.velocity),
+                                                        (std::uint8_t) n.velocity),
                             (int) (onAbs - schedStart));
                     }
                     if (offAbs >= schedStart && offAbs < blockEnd)

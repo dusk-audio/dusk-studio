@@ -10,7 +10,7 @@ void MidiSyncReceiver::process (const juce::MidiBuffer& events,
         const auto& msg = meta.getMessage();
         const auto* data = msg.getRawData();
         if (msg.getRawDataSize() < 1) continue;
-        const juce::uint8 status = data[0];
+        const std::uint8_t status = data[0];
 
         // F8 / FA / FB / FC are system-realtime bytes. They're not
         // matched by juce::MidiMessage::isMidiClock() etc. on every

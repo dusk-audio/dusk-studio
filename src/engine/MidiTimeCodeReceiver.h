@@ -81,8 +81,8 @@ public:
     }
 
 private:
-    void onQuarterFrame (juce::uint8 data1, std::int64_t atSample) noexcept;
-    void onFullFrameSysex (const juce::uint8* msg, int sz, std::int64_t atSample) noexcept;
+    void onQuarterFrame (std::uint8_t data1, std::int64_t atSample) noexcept;
+    void onFullFrameSysex (const std::uint8_t* msg, int sz, std::int64_t atSample) noexcept;
     void commitAssembledFrame (std::int64_t atSample,
                                 bool applyTwoFrameOffset) noexcept;
 
@@ -91,7 +91,7 @@ private:
 
     // QF assembly: 8 nibbles → 32 bits split (frames lo+hi, secs lo+hi,
     // mins lo+hi, hours+rate lo+hi). Outer index picks the SMPTE field.
-    juce::uint8 nibbleAccumulator[4] {};
+    std::uint8_t nibbleAccumulator[4] {};
 
     // Commit only after observing 0..7 in exact order without gaps.
     // Without this, a reverse-scrub stream (7,6,5,4,3,2,1,0,7,...) would

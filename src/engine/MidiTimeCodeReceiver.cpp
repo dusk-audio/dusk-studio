@@ -49,7 +49,7 @@ std::int64_t smpteToFrames (int hh, int mm, int ss, int ff,
 }
 } // namespace
 
-void MidiTimeCodeReceiver::onQuarterFrame (juce::uint8 data1,
+void MidiTimeCodeReceiver::onQuarterFrame (std::uint8_t data1,
                                              std::int64_t atSample) noexcept
 {
     // F1 data byte: high nibble = message type (0..7), low nibble = data.
@@ -84,7 +84,7 @@ void MidiTimeCodeReceiver::onQuarterFrame (juce::uint8 data1,
     {
         // Fresh forward sequence — clear accumulator + exit reverse-park.
         reversed.store (false, std::memory_order_relaxed);
-        nibbleAccumulator[0] = (juce::uint8) dataBits;
+        nibbleAccumulator[0] = (std::uint8_t) dataBits;
         nibbleAccumulator[1] = nibbleAccumulator[2] = nibbleAccumulator[3] = 0;
     }
     else
@@ -95,10 +95,10 @@ void MidiTimeCodeReceiver::onQuarterFrame (juce::uint8 data1,
         const int byteIdx = nibbleIdx / 2;
         if ((nibbleIdx & 1) == 0)
             nibbleAccumulator[byteIdx] =
-                (juce::uint8) ((nibbleAccumulator[byteIdx] & 0xF0) | dataBits);
+                (std::uint8_t) ((nibbleAccumulator[byteIdx] & 0xF0) | dataBits);
         else
             nibbleAccumulator[byteIdx] =
-                (juce::uint8) ((nibbleAccumulator[byteIdx] & 0x0F)
+                (std::uint8_t) ((nibbleAccumulator[byteIdx] & 0x0F)
                                  | (dataBits << 4));
     }
 
@@ -140,7 +140,7 @@ void MidiTimeCodeReceiver::commitAssembledFrame (std::int64_t atSample,
     lastEventSample = atSample;
 }
 
-void MidiTimeCodeReceiver::onFullFrameSysex (const juce::uint8* msg, int sz,
+void MidiTimeCodeReceiver::onFullFrameSysex (const std::uint8_t* msg, int sz,
                                                std::int64_t atSample) noexcept
 {
     // F0 7F 7F 01 01 hr mn sc fr F7 — 10 bytes. Indices into msg:
@@ -158,10 +158,10 @@ void MidiTimeCodeReceiver::onFullFrameSysex (const juce::uint8* msg, int sz,
         || msg[4] != 0x01)
         return;
 
-    nibbleAccumulator[0] = (juce::uint8) (msg[8] & 0x1F);  // ff
-    nibbleAccumulator[1] = (juce::uint8) (msg[7] & 0x3F);  // ss
-    nibbleAccumulator[2] = (juce::uint8) (msg[6] & 0x3F);  // mm
-    nibbleAccumulator[3] = (juce::uint8) (msg[5] & 0x7F);  // hh + rate
+    nibbleAccumulator[0] = (std::uint8_t) (msg[8] & 0x1F);  // ff
+    nibbleAccumulator[1] = (std::uint8_t) (msg[7] & 0x3F);  // ss
+    nibbleAccumulator[2] = (std::uint8_t) (msg[6] & 0x3F);  // mm
+    nibbleAccumulator[3] = (std::uint8_t) (msg[5] & 0x7F);  // hh + rate
     // No +2 offset — full-frame sysex carries the master's INSTANT
     // playhead. Also exits reverse-park (re-locate is a forward op).
     reversed.store (false, std::memory_order_relaxed);
@@ -179,12 +179,12 @@ void MidiTimeCodeReceiver::process (const juce::MidiBuffer& events,
         const int   sz     = msg.getRawDataSize();
         if (raw == nullptr || sz < 1) continue;
 
-        const auto status = (juce::uint8) raw[0];
+        const auto status = (std::uint8_t) raw[0];
         const std::int64_t atSample = blockStartSample + meta.samplePosition;
 
         if (status == 0xF1 && sz >= 2)
         {
-            onQuarterFrame ((juce::uint8) raw[1], atSample);
+            onQuarterFrame ((std::uint8_t) raw[1], atSample);
         }
         else if (status == 0xF0)
         {
