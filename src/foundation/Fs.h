@@ -212,10 +212,14 @@ inline std::filesystem::path userConfigDir()
     if (const char* appdata = std::getenv ("APPDATA"))
         return std::filesystem::path (appdata);   // %APPDATA%, matches CSIDL_APPDATA
     return {};
-#elif defined(__APPLE__)
-    return userHomeDir() / "Library";
 #else
-    return resolveXdgFolder ("XDG_CONFIG_HOME", userHomeDir() / ".config");
+    const auto home = userHomeDir();
+    if (home.empty()) return {};   // never build a CWD-relative config path
+ #if defined(__APPLE__)
+    return home / "Library";
+ #else
+    return resolveXdgFolder ("XDG_CONFIG_HOME", home / ".config");
+ #endif
 #endif
 }
 
@@ -226,10 +230,14 @@ inline std::filesystem::path userMusicDir()
     if (const char* profile = std::getenv ("USERPROFILE"))
         return std::filesystem::path (profile) / "Music";
     return {};
-#elif defined(__APPLE__)
-    return userHomeDir() / "Music";
 #else
-    return resolveXdgFolder ("XDG_MUSIC_DIR", userHomeDir() / "Music");
+    const auto home = userHomeDir();
+    if (home.empty()) return {};   // never build a CWD-relative music path
+ #if defined(__APPLE__)
+    return home / "Music";
+ #else
+    return resolveXdgFolder ("XDG_MUSIC_DIR", home / "Music");
+ #endif
 #endif
 }
 
