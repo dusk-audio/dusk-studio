@@ -2,8 +2,8 @@
 
 #include "ClapBundle.h"
 
-#include <juce_core/juce_core.h>
-
+#include <filesystem>
+#include <string>
 #include <vector>
 
 namespace duskstudio::clap
@@ -11,8 +11,8 @@ namespace duskstudio::clap
 // One discoverable CLAP plugin: the bundle file it lives in plus its descriptor.
 struct ScannedClap
 {
-    juce::String bundlePath;   // absolute path to the .clap file
-    PluginDesc   desc;         // id / name / vendor / version / description
+    std::string bundlePath;   // absolute path to the .clap file
+    PluginDesc  desc;         // id / name / vendor / version / description
 };
 
 // Discovers installed CLAP plugins. Message thread only (each bundle is dlopen'd
@@ -24,14 +24,14 @@ class ClapScanner
 {
 public:
     // Existing default search directories for this platform (skips missing ones).
-    static std::vector<juce::File> defaultSearchPaths();
+    static std::vector<std::filesystem::path> defaultSearchPaths();
 
     // Recursively collect *.clap files under each directory.
-    static std::vector<juce::File> findClapFiles (const std::vector<juce::File>& dirs);
+    static std::vector<std::filesystem::path> findClapFiles (const std::vector<std::filesystem::path>& dirs);
 
     // Load every discovered bundle and gather its advertised plugins. Bundles that
     // fail to load are skipped silently — a broken .clap must not abort the scan.
-    static std::vector<ScannedClap> scan (const std::vector<juce::File>& dirs);
+    static std::vector<ScannedClap> scan (const std::vector<std::filesystem::path>& dirs);
     static std::vector<ScannedClap> scan() { return scan (defaultSearchPaths()); }
 };
 } // namespace duskstudio::clap

@@ -70,8 +70,6 @@ src/engine/alsa/AlsaPerformanceTest.cpp
 src/engine/alsa/AlsaPerformanceTest.h
 src/engine/clap/ClapInstance.cpp
 src/engine/clap/ClapInstance.h
-src/engine/clap/ClapScanner.cpp
-src/engine/clap/ClapScanner.h
 src/engine/hosting/InsertAdapter.cpp
 src/engine/hosting/InsertAdapter.h
 src/engine/hosting/NativeInsertSlot.h
@@ -100,8 +98,6 @@ src/engine/multisample/Sf2Reader.cpp
 src/engine/multisample/Sf2Reader.h
 src/engine/multisample/Sf2ToSfz.cpp
 src/engine/multisample/Sf2ToSfz.h
-src/engine/vst3/Vst3Scanner.cpp
-src/engine/vst3/Vst3Scanner.h
 src/session/MarkerEditActions.cpp
 src/session/MarkerEditActions.h
 src/session/MidiBindings.cpp

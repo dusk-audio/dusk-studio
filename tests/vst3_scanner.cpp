@@ -7,14 +7,25 @@
 
 #include "engine/vst3/Vst3Scanner.h"
 
+#include <juce_core/juce_core.h>
+
 #include <cstdlib>
+#include <filesystem>
 
 using duskstudio::vst3::Vst3Scanner;
+
+namespace
+{
+std::filesystem::path toPath (const juce::File& f)
+{
+    return std::filesystem::u8path (f.getFullPathName().toStdString());
+}
+} // namespace
 
 TEST_CASE ("Vst3Scanner default search paths are existing directories", "[vst3][scan]")
 {
     for (const auto& d : Vst3Scanner::defaultSearchPaths())
-        REQUIRE (d.isDirectory());
+        REQUIRE (std::filesystem::is_directory (d));
 }
 
 TEST_CASE ("Vst3Scanner finds nothing in an empty directory", "[vst3][scan]")
@@ -25,8 +36,8 @@ TEST_CASE ("Vst3Scanner finds nothing in an empty directory", "[vst3][scan]")
     tmp.deleteRecursively();
     REQUIRE (tmp.createDirectory());
 
-    REQUIRE (Vst3Scanner::findVst3Bundles ({ tmp }).empty());
-    REQUIRE (Vst3Scanner::scan ({ tmp }).empty());
+    REQUIRE (Vst3Scanner::findVst3Bundles ({ toPath (tmp) }).empty());
+    REQUIRE (Vst3Scanner::scan ({ toPath (tmp) }).empty());
 
     tmp.deleteRecursively();
 }
@@ -48,13 +59,13 @@ TEST_CASE ("Vst3Scanner matches bundles without descending into them", "[vst3][s
     REQUIRE (nested.getParentDirectory().createDirectory());
     REQUIRE (nested.create());
 
-    const auto found = Vst3Scanner::findVst3Bundles ({ tmp });
+    const auto found = Vst3Scanner::findVst3Bundles ({ toPath (tmp) });
     REQUIRE (found.size() == 2);
     bool sawBundle = false, sawNested = false;
     for (const auto& f : found)
     {
-        if (f == bundle) sawBundle = true;
-        if (f == nested) sawNested = true;
+        if (f == toPath (bundle)) sawBundle = true;
+        if (f == toPath (nested)) sawNested = true;
     }
     REQUIRE (sawBundle);
     REQUIRE (sawNested);
@@ -74,13 +85,13 @@ TEST_CASE ("Vst3Scanner discovers and describes a real VST3 module", "[vst3][sca
     const juce::File bundle (juce::String (path).trim());
     REQUIRE (bundle.exists());
 
-    const auto found = Vst3Scanner::scan ({ bundle.getParentDirectory() });
+    const auto found = Vst3Scanner::scan ({ toPath (bundle.getParentDirectory()) });
     REQUIRE_FALSE (found.empty());
 
     bool sawBundle = false;
     for (const auto& s : found)
     {
-        if (s.bundlePath == bundle.getFullPathName())
+        if (s.bundlePath == bundle.getFullPathName().toStdString())
         {
             sawBundle = true;
             REQUIRE_FALSE (s.desc.id.empty());     // a usable class id to instantiate
