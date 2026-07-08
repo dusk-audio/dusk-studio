@@ -1,5 +1,6 @@
 #include "SessionSerializer.h"
 #include <juce_audio_devices/juce_audio_devices.h>
+#include <nlohmann/json.hpp>
 #include <cmath>
 #include <limits>
 
@@ -22,6 +23,12 @@ namespace duskstudio
 {
 namespace
 {
+// Save path builds ordered_json so key order follows insertion (matching the
+// former juce::DynamicObject output), keeping session.json diffs stable.
+using JObj = nlohmann::ordered_json;
+
+inline std::string toStd (const juce::String& s) { return s.toStdString(); }
+
 // Bump whenever the JSON shape gains a NEW required field or changes
 // the meaning of an existing one. Adding optional fields that default
 // sensibly when absent does NOT require a bump — the load path
@@ -330,147 +337,146 @@ juce::File resolvePortablePath (const juce::String& stored,
     return f;
 }
 
-juce::DynamicObject::Ptr trackToObject (const Track& t, const juce::File& sessionDir)
+JObj trackToObject (const Track& t, const juce::File& sessionDir)
 {
-    auto* obj = new juce::DynamicObject();
-    obj->setProperty ("name",   t.name);
-    obj->setProperty ("colour", colourToHex (t.colour));
+    JObj obj;
+    obj["name"]   = toStd (t.name);
+    obj["colour"] = toStd (colourToHex (t.colour));
 
     // Plugin-slot persistence. Empty strings (no plugin loaded) are written
     // verbatim - round-trip restoreFromSavedState treats empty as "no
     // plugin", which is the correct steady state for unused slots.
     if (t.pluginDescriptionXml.isNotEmpty())
-        obj->setProperty ("plugin_desc_xml", t.pluginDescriptionXml);
+        obj["plugin_desc_xml"] = toStd (t.pluginDescriptionXml);
     if (t.pluginStateBase64.isNotEmpty())
-        obj->setProperty ("plugin_state",    t.pluginStateBase64);
+        obj["plugin_state"] = toStd (t.pluginStateBase64);
     if (t.nativeClapPath.isNotEmpty())
     {
-        obj->setProperty ("native_clap_path",   t.nativeClapPath);
-        obj->setProperty ("native_clap_plugin", t.nativeClapPluginId);
-        obj->setProperty ("native_clap_state",  t.nativeClapStateBase64);
+        obj["native_clap_path"]   = toStd (t.nativeClapPath);
+        obj["native_clap_plugin"] = toStd (t.nativeClapPluginId);
+        obj["native_clap_state"]  = toStd (t.nativeClapStateBase64);
     }
     if (t.nativeLv2Path.isNotEmpty())
     {
-        obj->setProperty ("native_lv2_path",   t.nativeLv2Path);
-        obj->setProperty ("native_lv2_plugin", t.nativeLv2PluginId);
-        obj->setProperty ("native_lv2_state",  t.nativeLv2StateBase64);
+        obj["native_lv2_path"]   = toStd (t.nativeLv2Path);
+        obj["native_lv2_plugin"] = toStd (t.nativeLv2PluginId);
+        obj["native_lv2_state"]  = toStd (t.nativeLv2StateBase64);
     }
     if (t.nativeVst3Path.isNotEmpty())
     {
-        obj->setProperty ("native_vst3_path",   t.nativeVst3Path);
-        obj->setProperty ("native_vst3_plugin", t.nativeVst3PluginId);
-        obj->setProperty ("native_vst3_state",  t.nativeVst3StateBase64);
+        obj["native_vst3_path"]   = toStd (t.nativeVst3Path);
+        obj["native_vst3_plugin"] = toStd (t.nativeVst3PluginId);
+        obj["native_vst3_state"]  = toStd (t.nativeVst3StateBase64);
     }
 
-    obj->setProperty ("fader_db",       t.strip.faderDb.load());
-    obj->setProperty ("pan",            t.strip.pan.load());
-    obj->setProperty ("mute",           t.strip.mute.load());
-    obj->setProperty ("solo",           t.strip.solo.load());
-    obj->setProperty ("phase_invert",   t.strip.phaseInvert.load());
+    obj["fader_db"]     = t.strip.faderDb.load();
+    obj["pan"]          = t.strip.pan.load();
+    obj["mute"]         = t.strip.mute.load();
+    obj["solo"]         = t.strip.solo.load();
+    obj["phase_invert"] = t.strip.phaseInvert.load();
     if (t.strip.insertBypassed.load())
-        obj->setProperty ("insert_bypassed", true);
-    obj->setProperty ("fader_group",    t.strip.faderGroupId.load());
-    obj->setProperty ("input_monitor",  t.inputMonitor.load());
-    obj->setProperty ("print_effects",  t.printEffects.load());
-    obj->setProperty ("input_source",   t.inputSource.load());
-    obj->setProperty ("input_source_r", t.inputSourceR.load());
+        obj["insert_bypassed"] = true;
+    obj["fader_group"]    = t.strip.faderGroupId.load();
+    obj["input_monitor"]  = t.inputMonitor.load();
+    obj["print_effects"]  = t.printEffects.load();
+    obj["input_source"]   = t.inputSource.load();
+    obj["input_source_r"] = t.inputSourceR.load();
     // midi_input_idx is the legacy raw-int form (kept for back-compat
     // reading); midi_input_id is the stable identifier we resolve back to
     // an index on load. Older sessions without the id field fall through
     // to the int.
-    obj->setProperty ("midi_input_idx",  t.midiInputIndex.load());
-    obj->setProperty ("midi_input_id",   t.midiInputIdentifier);
+    obj["midi_input_idx"]  = t.midiInputIndex.load();
+    obj["midi_input_id"]   = toStd (t.midiInputIdentifier);
     // External-MIDI-output side. Same shape as the input fields above.
-    obj->setProperty ("midi_output_idx", t.midiOutputIndex.load());
-    obj->setProperty ("midi_output_id",  t.midiOutputIdentifier);
-    obj->setProperty ("midi_channel",    t.midiChannel.load());
-    obj->setProperty ("track_mode",     t.mode.load());
+    obj["midi_output_idx"] = t.midiOutputIndex.load();
+    obj["midi_output_id"]  = toStd (t.midiOutputIdentifier);
+    obj["midi_channel"]    = t.midiChannel.load();
+    obj["track_mode"]      = t.mode.load();
     // Never write frozen=true without a restorable capture — a frozen flag with no
     // path would load as a locked track with no audio. Gate the flag on both, same
     // as the freeze fields below.
     const bool emitFrozen = t.frozen.load() && ! t.frozenAudioPath.isEmpty();
-    obj->setProperty ("frozen",         emitFrozen);
+    obj["frozen"] = emitFrozen;
     // Only emit freeze fields when the track is actually frozen AND has a path —
     // a stale path left on a since-unfrozen (or reused) Session must not write
     // phantom freeze state that load() would then resurrect.
     if (emitFrozen)
     {
-        obj->setProperty ("frozen_audio_path",
-                          portablePath (juce::File (t.frozenAudioPath), sessionDir));
+        obj["frozen_audio_path"] = toStd (portablePath (juce::File (t.frozenAudioPath), sessionDir));
         // Length + channels so load rebuilds frozenRegion without opening the
         // WAV (PlaybackEngine needs frozenRegion populated to play it back).
-        obj->setProperty ("frozen_len",      (juce::int64) t.frozenRegion.lengthInSamples);
-        obj->setProperty ("frozen_channels", t.frozenRegion.numChannels);
+        obj["frozen_len"]      = (juce::int64) t.frozenRegion.lengthInSamples;
+        obj["frozen_channels"] = t.frozenRegion.numChannels;
         // Pre-freeze bypass so unfreeze-after-reload restores the user's setting.
-        obj->setProperty ("frozen_plugin_bypass", t.frozenPluginBypass.load());
+        obj["frozen_plugin_bypass"] = t.frozenPluginBypass.load();
     }
 
-    juce::Array<juce::var> buses;
+    JObj buses = JObj::array();
     for (int i = 0; i < ChannelStripParams::kNumBuses; ++i)
-        buses.add (t.strip.busAssign[(size_t) i].load());
-    obj->setProperty ("bus_assign", buses);
+        buses.push_back (t.strip.busAssign[(size_t) i].load());
+    obj["bus_assign"] = std::move (buses);
 
     // Aux sends (continuous send level + pre/post-fader tap) - distinct
     // from busAssign which is the post-fader on/off routing toggle.
-    juce::Array<juce::var> auxLevels, auxPrePost;
+    JObj auxLevels = JObj::array(), auxPrePost = JObj::array();
     for (int i = 0; i < ChannelStripParams::kNumAuxSends; ++i)
     {
-        auxLevels .add ((double) t.strip.auxSendDb[(size_t) i].load());
-        auxPrePost.add (         t.strip.auxSendPreFader[(size_t) i].load());
+        auxLevels .push_back ((double) t.strip.auxSendDb[(size_t) i].load());
+        auxPrePost.push_back (         t.strip.auxSendPreFader[(size_t) i].load());
     }
-    obj->setProperty ("aux_send_db",        auxLevels);
-    obj->setProperty ("aux_send_pre_fader", auxPrePost);
+    obj["aux_send_db"]        = std::move (auxLevels);
+    obj["aux_send_pre_fader"] = std::move (auxPrePost);
 
-    auto* hpf = new juce::DynamicObject();
-    hpf->setProperty ("enabled", t.strip.hpfEnabled.load());
-    hpf->setProperty ("freq",    t.strip.hpfFreq.load());
-    obj->setProperty ("hpf", juce::var (hpf));
+    JObj hpf;
+    hpf["enabled"] = t.strip.hpfEnabled.load();
+    hpf["freq"]    = t.strip.hpfFreq.load();
+    obj["hpf"] = std::move (hpf);
 
-    auto* lpf = new juce::DynamicObject();
-    lpf->setProperty ("enabled", t.strip.lpfEnabled.load());
-    lpf->setProperty ("freq",    t.strip.lpfFreq.load());
-    obj->setProperty ("lpf", juce::var (lpf));
+    JObj lpf;
+    lpf["enabled"] = t.strip.lpfEnabled.load();
+    lpf["freq"]    = t.strip.lpfFreq.load();
+    obj["lpf"] = std::move (lpf);
 
-    auto* eq = new juce::DynamicObject();
-    eq->setProperty ("enabled", t.strip.eqEnabled.load());
-    eq->setProperty ("type", t.strip.eqBlackMode.load() ? "black" : "brown");
+    JObj eq;
+    eq["enabled"] = t.strip.eqEnabled.load();
+    eq["type"]    = t.strip.eqBlackMode.load() ? "black" : "brown";
     auto bandObj = [] (float gain, float freq, float q = -1.0f)
     {
-        auto* b = new juce::DynamicObject();
-        b->setProperty ("gain", gain);
-        b->setProperty ("freq", freq);
-        if (q >= 0.0f) b->setProperty ("q", q);
-        return juce::var (b);
+        JObj b;
+        b["gain"] = gain;
+        b["freq"] = freq;
+        if (q >= 0.0f) b["q"] = q;
+        return b;
     };
-    eq->setProperty ("lf", bandObj (t.strip.lfGainDb.load(), t.strip.lfFreq.load()));
-    eq->setProperty ("lm", bandObj (t.strip.lmGainDb.load(), t.strip.lmFreq.load(), t.strip.lmQ.load()));
-    eq->setProperty ("hm", bandObj (t.strip.hmGainDb.load(), t.strip.hmFreq.load(), t.strip.hmQ.load()));
-    eq->setProperty ("hf", bandObj (t.strip.hfGainDb.load(), t.strip.hfFreq.load()));
-    obj->setProperty ("eq", juce::var (eq));
+    eq["lf"] = bandObj (t.strip.lfGainDb.load(), t.strip.lfFreq.load());
+    eq["lm"] = bandObj (t.strip.lmGainDb.load(), t.strip.lmFreq.load(), t.strip.lmQ.load());
+    eq["hm"] = bandObj (t.strip.hmGainDb.load(), t.strip.hmFreq.load(), t.strip.hmQ.load());
+    eq["hf"] = bandObj (t.strip.hfGainDb.load(), t.strip.hfFreq.load());
+    obj["eq"] = std::move (eq);
 
-    auto* comp = new juce::DynamicObject();
-    comp->setProperty ("enabled",     t.strip.compEnabled.load());
-    comp->setProperty ("mode_picked", t.strip.compModePicked.load());
-    comp->setProperty ("mode",        t.strip.compMode.load());
-    comp->setProperty ("threshold_db", t.strip.compThresholdDb.load());  // legacy meter-strip drag
+    JObj comp;
+    comp["enabled"]      = t.strip.compEnabled.load();
+    comp["mode_picked"]  = t.strip.compModePicked.load();
+    comp["mode"]         = t.strip.compMode.load();
+    comp["threshold_db"] = t.strip.compThresholdDb.load();  // legacy meter-strip drag
     // Per-mode parameters - UniversalCompressor's native shape.
-    comp->setProperty ("opto_peak_red", t.strip.compOptoPeakRed.load());
-    comp->setProperty ("opto_gain",     t.strip.compOptoGain.load());
-    comp->setProperty ("opto_limit",    t.strip.compOptoLimit.load());
-    comp->setProperty ("fet_input",       t.strip.compFetInput.load());
-    comp->setProperty ("fet_output",      t.strip.compFetOutput.load());
-    comp->setProperty ("fet_attack",      t.strip.compFetAttack.load());
-    comp->setProperty ("fet_release",     t.strip.compFetRelease.load());
-    comp->setProperty ("fet_ratio",       t.strip.compFetRatio.load());
-    comp->setProperty ("fet_threshold_db", t.strip.compFetThresholdDb.load());
-    comp->setProperty ("vca_thresh_db", t.strip.compVcaThreshDb.load());
-    comp->setProperty ("vca_ratio",     t.strip.compVcaRatio.load());
-    comp->setProperty ("vca_attack",    t.strip.compVcaAttack.load());
-    comp->setProperty ("vca_release",   t.strip.compVcaRelease.load());
-    comp->setProperty ("vca_output",    t.strip.compVcaOutput.load());
-    comp->setProperty ("vca_overeasy",  t.strip.compVcaOverEasy.load());
-    comp->setProperty ("vca_detector_classic", t.strip.compVcaDetectorClassic.load());
-    obj->setProperty ("comp", juce::var (comp));
+    comp["opto_peak_red"] = t.strip.compOptoPeakRed.load();
+    comp["opto_gain"]     = t.strip.compOptoGain.load();
+    comp["opto_limit"]    = t.strip.compOptoLimit.load();
+    comp["fet_input"]        = t.strip.compFetInput.load();
+    comp["fet_output"]       = t.strip.compFetOutput.load();
+    comp["fet_attack"]       = t.strip.compFetAttack.load();
+    comp["fet_release"]      = t.strip.compFetRelease.load();
+    comp["fet_ratio"]        = t.strip.compFetRatio.load();
+    comp["fet_threshold_db"] = t.strip.compFetThresholdDb.load();
+    comp["vca_thresh_db"] = t.strip.compVcaThreshDb.load();
+    comp["vca_ratio"]     = t.strip.compVcaRatio.load();
+    comp["vca_attack"]    = t.strip.compVcaAttack.load();
+    comp["vca_release"]   = t.strip.compVcaRelease.load();
+    comp["vca_output"]    = t.strip.compVcaOutput.load();
+    comp["vca_overeasy"]  = t.strip.compVcaOverEasy.load();
+    comp["vca_detector_classic"] = t.strip.compVcaDetectorClassic.load();
+    obj["comp"] = std::move (comp);
 
     // External hardware-insert state. The routing snapshot is read via
     // AtomicSnapshot::current() (message-thread side), the scalar knobs
@@ -479,78 +485,78 @@ juce::DynamicObject::Ptr trackToObject (const Track& t, const juce::File& sessio
     // strip's insertMode (Phase 3) is currently set to Hardware - if
     // the user flips back to Hardware later, the settings are restored.
     {
-        auto* hwi = new juce::DynamicObject();
-        hwi->setProperty ("enabled",         t.hardwareInsert.enabled.load());
+        JObj hwi;
+        hwi["enabled"] = t.hardwareInsert.enabled.load();
         const auto& routing = t.hardwareInsert.routing.current();
-        hwi->setProperty ("output_ch_l",     routing.outputChL);
-        hwi->setProperty ("output_ch_r",     routing.outputChR);
-        hwi->setProperty ("input_ch_l",      routing.inputChL);
-        hwi->setProperty ("input_ch_r",      routing.inputChR);
-        hwi->setProperty ("latency_samples", routing.latencySamples);
-        hwi->setProperty ("format",          routing.format);
-        hwi->setProperty ("output_gain_db",  t.hardwareInsert.outputGainDb.load());
-        hwi->setProperty ("input_gain_db",   t.hardwareInsert.inputGainDb .load());
-        hwi->setProperty ("dry_wet",         t.hardwareInsert.dryWet      .load());
-        obj->setProperty ("hardware_insert", juce::var (hwi));
+        hwi["output_ch_l"]     = routing.outputChL;
+        hwi["output_ch_r"]     = routing.outputChR;
+        hwi["input_ch_l"]      = routing.inputChL;
+        hwi["input_ch_r"]      = routing.inputChR;
+        hwi["latency_samples"] = routing.latencySamples;
+        hwi["format"]          = routing.format;
+        hwi["output_gain_db"]  = t.hardwareInsert.outputGainDb.load();
+        hwi["input_gain_db"]   = t.hardwareInsert.inputGainDb .load();
+        hwi["dry_wet"]         = t.hardwareInsert.dryWet      .load();
+        obj["hardware_insert"] = std::move (hwi);
     }
 
-    juce::Array<juce::var> regions;
+    JObj regions = JObj::array();
     for (auto& r : t.regions)
     {
-        auto* rObj = new juce::DynamicObject();
-        rObj->setProperty ("file",            portablePath (r.file, sessionDir));
-        rObj->setProperty ("timeline_start",  (juce::int64) r.timelineStart);
-        rObj->setProperty ("length",          (juce::int64) r.lengthInSamples);
-        rObj->setProperty ("source_offset",   (juce::int64) r.sourceOffset);
+        JObj rObj;
+        rObj["file"]           = toStd (portablePath (r.file, sessionDir));
+        rObj["timeline_start"] = (juce::int64) r.timelineStart;
+        rObj["length"]         = (juce::int64) r.lengthInSamples;
+        rObj["source_offset"]  = (juce::int64) r.sourceOffset;
         if (r.numChannels != 1)
-            rObj->setProperty ("num_channels", r.numChannels);
+            rObj["num_channels"] = r.numChannels;
         // Fade samples emitted only when non-zero so existing sessions
         // don't gain noise. PlaybackEngine treats absent fields as 0.
-        if (r.fadeInSamples  > 0) rObj->setProperty ("fade_in",  (juce::int64) r.fadeInSamples);
-        if (r.fadeOutSamples > 0) rObj->setProperty ("fade_out", (juce::int64) r.fadeOutSamples);
+        if (r.fadeInSamples  > 0) rObj["fade_in"]  = (juce::int64) r.fadeInSamples;
+        if (r.fadeOutSamples > 0) rObj["fade_out"] = (juce::int64) r.fadeOutSamples;
         // Fade shapes emit only when non-Linear so older sessions stay
         // diff-clean. Stored as the int enum value (0..4) matching FadeShape.
-        if (r.fadeInShape  != FadeShape::Linear) rObj->setProperty ("fade_in_shape",  (int) r.fadeInShape);
-        if (r.fadeOutShape != FadeShape::Linear) rObj->setProperty ("fade_out_shape", (int) r.fadeOutShape);
-        if (r.fadeInAuto)  rObj->setProperty ("fade_in_auto",  true);
-        if (r.fadeOutAuto) rObj->setProperty ("fade_out_auto", true);
+        if (r.fadeInShape  != FadeShape::Linear) rObj["fade_in_shape"]  = (int) r.fadeInShape;
+        if (r.fadeOutShape != FadeShape::Linear) rObj["fade_out_shape"] = (int) r.fadeOutShape;
+        if (r.fadeInAuto)  rObj["fade_in_auto"]  = true;
+        if (r.fadeOutAuto) rObj["fade_out_auto"] = true;
         // Skip gain_db when at unity to keep older sessions diff-clean
         // and avoid bloating the JSON for unedited regions. Float
         // exact-zero comparison is fine because the field is set
         // either by a default-construct (0.0f) or by an explicit user
         // drag - no float-arithmetic accumulation path exists.
-        if (r.gainDb != 0.0f) rObj->setProperty ("gain_db", (double) r.gainDb);
+        if (r.gainDb != 0.0f) rObj["gain_db"] = (double) r.gainDb;
         // Custom colour - only when the user explicitly set one
         // (default-constructed is transparent = "use track colour").
         // Stored as an 8-digit ARGB hex string via Colour::toString().
         if (! r.customColour.isTransparent())
-            rObj->setProperty ("custom_colour", r.customColour.toString());
+            rObj["custom_colour"] = toStd (r.customColour.toString());
         // Label - skip when empty so unedited regions stay diff-clean.
         if (r.label.isNotEmpty())
-            rObj->setProperty ("label", r.label);
-        if (r.muted)  rObj->setProperty ("muted",  true);
-        if (r.locked) rObj->setProperty ("locked", true);
+            rObj["label"] = toStd (r.label);
+        if (r.muted)  rObj["muted"]  = true;
+        if (r.locked) rObj["locked"] = true;
 
         // Take history. Empty array on the common case (no overdubs); only
         // serialised when at least one prior take has been captured to keep
         // session.json compact.
         if (! r.previousTakes.empty())
         {
-            juce::Array<juce::var> prior;
+            JObj prior = JObj::array();
             for (auto& take : r.previousTakes)
             {
-                auto* tObj = new juce::DynamicObject();
-                tObj->setProperty ("file",          portablePath (take.file, sessionDir));
-                tObj->setProperty ("source_offset", (juce::int64) take.sourceOffset);
-                tObj->setProperty ("length",        (juce::int64) take.lengthInSamples);
-                prior.add (juce::var (tObj));
+                JObj tObj;
+                tObj["file"]          = toStd (portablePath (take.file, sessionDir));
+                tObj["source_offset"] = (juce::int64) take.sourceOffset;
+                tObj["length"]        = (juce::int64) take.lengthInSamples;
+                prior.push_back (std::move (tObj));
             }
-            rObj->setProperty ("previous_takes", prior);
+            rObj["previous_takes"] = std::move (prior);
         }
 
-        regions.add (juce::var (rObj));
+        regions.push_back (std::move (rObj));
     }
-    obj->setProperty ("regions", regions);
+    obj["regions"] = std::move (regions);
 
     // MIDI regions. Same shape as audio regions (timelineStart + length)
     // but holds events in tick time instead of a WAV file path. Notes and
@@ -559,184 +565,180 @@ juce::DynamicObject::Ptr trackToObject (const Track& t, const juce::File& sessio
     // audio tracks so existing sessions don't gain noise.
     if (! t.midiRegions.current().empty())
     {
-        juce::Array<juce::var> midiRegions;
+        JObj midiRegions = JObj::array();
         for (const auto& r : t.midiRegions.current())
         {
-            auto* rObj = new juce::DynamicObject();
-            rObj->setProperty ("timeline_start",   (juce::int64) r.timelineStart);
-            rObj->setProperty ("length_samples",   (juce::int64) r.lengthInSamples);
-            rObj->setProperty ("length_ticks",     (juce::int64) r.lengthInTicks);
+            JObj rObj;
+            rObj["timeline_start"] = (juce::int64) r.timelineStart;
+            rObj["length_samples"] = (juce::int64) r.lengthInSamples;
+            rObj["length_ticks"]   = (juce::int64) r.lengthInTicks;
 
-            juce::Array<juce::var> notes;
-            notes.ensureStorageAllocated ((int) r.notes.size());
+            JObj notes = JObj::array();
             for (const auto& n : r.notes)
             {
-                auto* nObj = new juce::DynamicObject();
-                nObj->setProperty ("ch",    n.channel);
-                nObj->setProperty ("note",  n.noteNumber);
-                nObj->setProperty ("vel",   n.velocity);
-                nObj->setProperty ("start", (juce::int64) n.startTick);
-                nObj->setProperty ("len",   (juce::int64) n.lengthInTicks);
-                notes.add (juce::var (nObj));
+                JObj nObj;
+                nObj["ch"]    = n.channel;
+                nObj["note"]  = n.noteNumber;
+                nObj["vel"]   = n.velocity;
+                nObj["start"] = (juce::int64) n.startTick;
+                nObj["len"]   = (juce::int64) n.lengthInTicks;
+                notes.push_back (std::move (nObj));
             }
-            rObj->setProperty ("notes", notes);
+            rObj["notes"] = std::move (notes);
 
             if (! r.ccs.empty())
             {
-                juce::Array<juce::var> ccs;
-                ccs.ensureStorageAllocated ((int) r.ccs.size());
+                JObj ccs = JObj::array();
                 for (const auto& c : r.ccs)
                 {
-                    auto* cObj = new juce::DynamicObject();
-                    cObj->setProperty ("ch",   c.channel);
-                    cObj->setProperty ("ctrl", c.controller);
-                    cObj->setProperty ("val",  c.value);
-                    cObj->setProperty ("at",   (juce::int64) c.atTick);
-                    ccs.add (juce::var (cObj));
+                    JObj cObj;
+                    cObj["ch"]   = c.channel;
+                    cObj["ctrl"] = c.controller;
+                    cObj["val"]  = c.value;
+                    cObj["at"]   = (juce::int64) c.atTick;
+                    ccs.push_back (std::move (cObj));
                 }
-                rObj->setProperty ("ccs", ccs);
+                rObj["ccs"] = std::move (ccs);
             }
 
             // Same custom-colour / label fields as AudioRegion -
             // skipped when unset so older sessions stay diff-clean.
             if (! r.customColour.isTransparent())
-                rObj->setProperty ("custom_colour", r.customColour.toString());
+                rObj["custom_colour"] = toStd (r.customColour.toString());
             if (r.label.isNotEmpty())
-                rObj->setProperty ("label", r.label);
-            if (r.muted)  rObj->setProperty ("muted",  true);
-        if (r.locked) rObj->setProperty ("locked", true);
+                rObj["label"] = toStd (r.label);
+            if (r.muted)  rObj["muted"]  = true;
+            if (r.locked) rObj["locked"] = true;
 
             // BPM-change semantics (DuskStudio.md §5b). Default is locked,
             // so emit only when the user has explicitly unlocked. recorded_at_bpm
             // is always emitted so legacy sessions can be anchored deterministically
             // on first BPM change.
-            if (! r.tempoLock) rObj->setProperty ("tempo_lock", false);
-            rObj->setProperty ("recorded_at_bpm", r.recordedAtBPM);
+            if (! r.tempoLock) rObj["tempo_lock"] = false;
+            rObj["recorded_at_bpm"] = r.recordedAtBPM;
 
             // MIDI take history mirrors audio: previously-recorded versions
             // of the same range stack here when an overdub fully overlaps
             // an existing region.
             if (! r.previousTakes.empty())
             {
-                juce::Array<juce::var> prior;
+                JObj prior = JObj::array();
                 for (const auto& take : r.previousTakes)
                 {
-                    auto* tObj = new juce::DynamicObject();
-                    tObj->setProperty ("length_ticks", (juce::int64) take.lengthInTicks);
-                    juce::Array<juce::var> tnotes;
+                    JObj tObj;
+                    tObj["length_ticks"] = (juce::int64) take.lengthInTicks;
+                    JObj tnotes = JObj::array();
                     for (const auto& n : take.notes)
                     {
-                        auto* nObj = new juce::DynamicObject();
-                        nObj->setProperty ("ch",    n.channel);
-                        nObj->setProperty ("note",  n.noteNumber);
-                        nObj->setProperty ("vel",   n.velocity);
-                        nObj->setProperty ("start", (juce::int64) n.startTick);
-                        nObj->setProperty ("len",   (juce::int64) n.lengthInTicks);
-                        tnotes.add (juce::var (nObj));
+                        JObj nObj;
+                        nObj["ch"]    = n.channel;
+                        nObj["note"]  = n.noteNumber;
+                        nObj["vel"]   = n.velocity;
+                        nObj["start"] = (juce::int64) n.startTick;
+                        nObj["len"]   = (juce::int64) n.lengthInTicks;
+                        tnotes.push_back (std::move (nObj));
                     }
-                    tObj->setProperty ("notes", tnotes);
+                    tObj["notes"] = std::move (tnotes);
                     if (! take.ccs.empty())
                     {
-                        juce::Array<juce::var> tccs;
+                        JObj tccs = JObj::array();
                         for (const auto& c : take.ccs)
                         {
-                            auto* cObj = new juce::DynamicObject();
-                            cObj->setProperty ("ch",   c.channel);
-                            cObj->setProperty ("ctrl", c.controller);
-                            cObj->setProperty ("val",  c.value);
-                            cObj->setProperty ("at",   (juce::int64) c.atTick);
-                            tccs.add (juce::var (cObj));
+                            JObj cObj;
+                            cObj["ch"]   = c.channel;
+                            cObj["ctrl"] = c.controller;
+                            cObj["val"]  = c.value;
+                            cObj["at"]   = (juce::int64) c.atTick;
+                            tccs.push_back (std::move (cObj));
                         }
-                        tObj->setProperty ("ccs", tccs);
+                        tObj["ccs"] = std::move (tccs);
                     }
-                    prior.add (juce::var (tObj));
+                    prior.push_back (std::move (tObj));
                 }
-                rObj->setProperty ("previous_takes", prior);
+                rObj["previous_takes"] = std::move (prior);
             }
 
-            midiRegions.add (juce::var (rObj));
+            midiRegions.push_back (std::move (rObj));
         }
-        obj->setProperty ("midi_regions", midiRegions);
+        obj["midi_regions"] = std::move (midiRegions);
     }
 
     // Automation: per-strip mode + one array per non-empty lane. Empty
     // lanes are omitted to keep session.json compact for the common case
     // (no automation recorded yet). The "automation" object is omitted
     // entirely when nothing has been recorded.
-    obj->setProperty ("automation_mode", t.automationMode.load (std::memory_order_relaxed));
-    juce::DynamicObject::Ptr autoObj = new juce::DynamicObject();
+    obj["automation_mode"] = t.automationMode.load (std::memory_order_relaxed);
+    JObj autoObj;
     bool anyLane = false;
     for (int p = 0; p < kNumAutomationParams; ++p)
     {
         const auto& lane = t.automationLanes[(size_t) p];
         if (lane.pointsConst().empty()) continue;
-        juce::Array<juce::var> pts;
-        pts.ensureStorageAllocated ((int) lane.pointsConst().size());
+        JObj pts = JObj::array();
         for (const auto& pt : lane.pointsConst())
         {
-            auto* pObj = new juce::DynamicObject();
-            pObj->setProperty ("t",   (juce::int64) pt.timeSamples);
-            pObj->setProperty ("v",   (double) pt.value);
-            pObj->setProperty ("bpm", (double) pt.recordedAtBPM);
-            pts.add (juce::var (pObj));
+            JObj pObj;
+            pObj["t"]   = (juce::int64) pt.timeSamples;
+            pObj["v"]   = (double) pt.value;
+            pObj["bpm"] = (double) pt.recordedAtBPM;
+            pts.push_back (std::move (pObj));
         }
-        autoObj->setProperty (automationParamKey ((AutomationParam) p), pts);
+        autoObj[automationParamKey ((AutomationParam) p)] = std::move (pts);
         anyLane = true;
     }
     if (anyLane)
-        obj->setProperty ("automation", juce::var (autoObj.get()));
+        obj["automation"] = std::move (autoObj);
 
     return obj;
 }
 
-juce::DynamicObject::Ptr busToObject (const Bus& a)
+JObj busToObject (const Bus& a)
 {
-    auto* obj = new juce::DynamicObject();
-    obj->setProperty ("name",     a.name);
-    obj->setProperty ("colour",   colourToHex (a.colour));
-    obj->setProperty ("fader_db", a.strip.faderDb.load());
-    obj->setProperty ("pan",      a.strip.pan.load());
-    obj->setProperty ("mute",     a.strip.mute.load());
-    obj->setProperty ("solo",     a.strip.solo.load());
+    JObj obj;
+    obj["name"]     = toStd (a.name);
+    obj["colour"]   = toStd (colourToHex (a.colour));
+    obj["fader_db"] = a.strip.faderDb.load();
+    obj["pan"]      = a.strip.pan.load();
+    obj["mute"]     = a.strip.mute.load();
+    obj["solo"]     = a.strip.solo.load();
 
-    obj->setProperty ("eq_enabled",   a.strip.eqEnabled.load());
-    obj->setProperty ("eq_lf_db",     a.strip.eqLfGainDb.load());
-    obj->setProperty ("eq_mid_db",    a.strip.eqMidGainDb.load());
-    obj->setProperty ("eq_hf_db",     a.strip.eqHfGainDb.load());
+    obj["eq_enabled"] = a.strip.eqEnabled.load();
+    obj["eq_lf_db"]   = a.strip.eqLfGainDb.load();
+    obj["eq_mid_db"]  = a.strip.eqMidGainDb.load();
+    obj["eq_hf_db"]   = a.strip.eqHfGainDb.load();
 
-    obj->setProperty ("comp_enabled",     a.strip.compEnabled.load());
-    obj->setProperty ("comp_thresh_db",   a.strip.compThreshDb.load());
-    obj->setProperty ("comp_ratio",       a.strip.compRatio.load());
-    obj->setProperty ("comp_attack_ms",   a.strip.compAttackMs.load());
-    obj->setProperty ("comp_release_ms",  a.strip.compReleaseMs.load());
-    obj->setProperty ("comp_release_auto", a.strip.compReleaseAuto.load());
-    obj->setProperty ("comp_makeup_db",   a.strip.compMakeupDb.load());
+    obj["comp_enabled"]      = a.strip.compEnabled.load();
+    obj["comp_thresh_db"]    = a.strip.compThreshDb.load();
+    obj["comp_ratio"]        = a.strip.compRatio.load();
+    obj["comp_attack_ms"]    = a.strip.compAttackMs.load();
+    obj["comp_release_ms"]   = a.strip.compReleaseMs.load();
+    obj["comp_release_auto"] = a.strip.compReleaseAuto.load();
+    obj["comp_makeup_db"]    = a.strip.compMakeupDb.load();
 
     // Automation: same shape as tracks — mode + one array per non-empty lane.
     // Only FaderDb / Pan / Mute are populated for a bus, but we iterate all
     // params for symmetry (empty lanes are skipped).
-    obj->setProperty ("automation_mode", a.strip.automationMode.load (std::memory_order_relaxed));
-    juce::DynamicObject::Ptr autoObj = new juce::DynamicObject();
+    obj["automation_mode"] = a.strip.automationMode.load (std::memory_order_relaxed);
+    JObj autoObj;
     bool anyLane = false;
     for (int p = 0; p < kNumAutomationParams; ++p)
     {
         const auto& lane = a.strip.automationLanes[(size_t) p];
         if (lane.pointsConst().empty()) continue;
-        juce::Array<juce::var> pts;
-        pts.ensureStorageAllocated ((int) lane.pointsConst().size());
+        JObj pts = JObj::array();
         for (const auto& pt : lane.pointsConst())
         {
-            auto* pObj = new juce::DynamicObject();
-            pObj->setProperty ("t",   (juce::int64) pt.timeSamples);
-            pObj->setProperty ("v",   (double) pt.value);
-            pObj->setProperty ("bpm", (double) pt.recordedAtBPM);
-            pts.add (juce::var (pObj));
+            JObj pObj;
+            pObj["t"]   = (juce::int64) pt.timeSamples;
+            pObj["v"]   = (double) pt.value;
+            pObj["bpm"] = (double) pt.recordedAtBPM;
+            pts.push_back (std::move (pObj));
         }
-        autoObj->setProperty (automationParamKey ((AutomationParam) p), pts);
+        autoObj[automationParamKey ((AutomationParam) p)] = std::move (pts);
         anyLane = true;
     }
     if (anyLane)
-        obj->setProperty ("automation", juce::var (autoObj.get()));
+        obj["automation"] = std::move (autoObj);
 
     return obj;
 }
@@ -1247,281 +1249,274 @@ void restoreBus (Bus& a, const juce::var& v, double defaultRecordBpm)
 
 juce::String SessionSerializer::serialize (const Session& s)
 {
-    auto* root = new juce::DynamicObject();
-    root->setProperty ("version", kFormatVersion);
+    JObj root;
+    root["version"] = kFormatVersion;
     if (s.sessionSampleRate > 0.0)
-        root->setProperty ("session_sample_rate", s.sessionSampleRate);
+        root["session_sample_rate"] = s.sessionSampleRate;
 
-    juce::Array<juce::var> tracks;
+    JObj tracks = JObj::array();
     for (int i = 0; i < Session::kNumTracks; ++i)
-        tracks.add (juce::var (trackToObject (s.track (i), s.getSessionDirectory()).get()));
-    root->setProperty ("tracks", tracks);
+        tracks.push_back (trackToObject (s.track (i), s.getSessionDirectory()));
+    root["tracks"] = std::move (tracks);
 
-    juce::Array<juce::var> busesArr;
+    JObj busesArr = JObj::array();
     for (int i = 0; i < Session::kNumBuses; ++i)
-        busesArr.add (juce::var (busToObject (s.bus (i)).get()));
-    root->setProperty ("buses", busesArr);
+        busesArr.push_back (busToObject (s.bus (i)));
+    root["buses"] = std::move (busesArr);
 
-    juce::Array<juce::var> auxLanesArr;
+    JObj auxLanesArr = JObj::array();
     for (int i = 0; i < Session::kNumAuxLanes; ++i)
     {
         const auto& lane = s.auxLane (i);
-        auto* obj = new juce::DynamicObject();
-        obj->setProperty ("name",   lane.name);
-        obj->setProperty ("colour", colourToHex (lane.colour));
-        obj->setProperty ("return_level_db", lane.params.returnLevelDb.load());
-        obj->setProperty ("mute",            lane.params.mute.load());
-        obj->setProperty ("output_pair",     lane.params.outputPair.load());
+        JObj obj;
+        obj["name"]   = toStd (lane.name);
+        obj["colour"] = toStd (colourToHex (lane.colour));
+        obj["return_level_db"] = lane.params.returnLevelDb.load();
+        obj["mute"]            = lane.params.mute.load();
+        obj["output_pair"]     = lane.params.outputPair.load();
         // Per-slot plugin state. Empty strings serialise as empty - same
         // pattern as Track.
-        juce::Array<juce::var> slots;
+        JObj slots = JObj::array();
         for (int p = 0; p < AuxLaneParams::kMaxLanePlugins; ++p)
         {
-            auto* slot = new juce::DynamicObject();
-            slot->setProperty ("plugin_desc_xml", lane.pluginDescriptionXml[(size_t) p]);
-            slot->setProperty ("plugin_state",    lane.pluginStateBase64[(size_t) p]);
+            JObj slot;
+            slot["plugin_desc_xml"] = toStd (lane.pluginDescriptionXml[(size_t) p]);
+            slot["plugin_state"]    = toStd (lane.pluginStateBase64[(size_t) p]);
 
             // Native CLAP slot (mutually exclusive with the JUCE plugin). Only emit
             // when set, so JUCE-only sessions are unchanged.
             if (lane.nativeClapPath[(size_t) p].isNotEmpty())
             {
-                slot->setProperty ("native_clap_path",   lane.nativeClapPath[(size_t) p]);
-                slot->setProperty ("native_clap_plugin", lane.nativeClapPluginId[(size_t) p]);
-                slot->setProperty ("native_clap_state",  lane.nativeClapStateBase64[(size_t) p]);
+                slot["native_clap_path"]   = toStd (lane.nativeClapPath[(size_t) p]);
+                slot["native_clap_plugin"] = toStd (lane.nativeClapPluginId[(size_t) p]);
+                slot["native_clap_state"]  = toStd (lane.nativeClapStateBase64[(size_t) p]);
             }
             if (lane.nativeLv2Path[(size_t) p].isNotEmpty())
             {
-                slot->setProperty ("native_lv2_path",   lane.nativeLv2Path[(size_t) p]);
-                slot->setProperty ("native_lv2_plugin", lane.nativeLv2PluginId[(size_t) p]);
-                slot->setProperty ("native_lv2_state",  lane.nativeLv2StateBase64[(size_t) p]);
+                slot["native_lv2_path"]   = toStd (lane.nativeLv2Path[(size_t) p]);
+                slot["native_lv2_plugin"] = toStd (lane.nativeLv2PluginId[(size_t) p]);
+                slot["native_lv2_state"]  = toStd (lane.nativeLv2StateBase64[(size_t) p]);
             }
             if (lane.nativeVst3Path[(size_t) p].isNotEmpty())
             {
-                slot->setProperty ("native_vst3_path",   lane.nativeVst3Path[(size_t) p]);
-                slot->setProperty ("native_vst3_plugin", lane.nativeVst3PluginId[(size_t) p]);
-                slot->setProperty ("native_vst3_state",  lane.nativeVst3StateBase64[(size_t) p]);
+                slot["native_vst3_path"]   = toStd (lane.nativeVst3Path[(size_t) p]);
+                slot["native_vst3_plugin"] = toStd (lane.nativeVst3PluginId[(size_t) p]);
+                slot["native_vst3_state"]  = toStd (lane.nativeVst3StateBase64[(size_t) p]);
             }
 
             // Hardware-insert side of this slot. Same shape as the
             // Track::hardwareInsert block above.
-            auto* hwi = new juce::DynamicObject();
+            JObj hwi;
             const auto& hw = lane.hardwareInserts[(size_t) p];
-            hwi->setProperty ("enabled",         hw.enabled.load());
+            hwi["enabled"] = hw.enabled.load();
             const auto& routing = hw.routing.current();
-            hwi->setProperty ("output_ch_l",     routing.outputChL);
-            hwi->setProperty ("output_ch_r",     routing.outputChR);
-            hwi->setProperty ("input_ch_l",      routing.inputChL);
-            hwi->setProperty ("input_ch_r",      routing.inputChR);
-            hwi->setProperty ("latency_samples", routing.latencySamples);
-            hwi->setProperty ("format",          routing.format);
-            hwi->setProperty ("output_gain_db",  hw.outputGainDb.load());
-            hwi->setProperty ("input_gain_db",   hw.inputGainDb .load());
-            hwi->setProperty ("dry_wet",         hw.dryWet      .load());
-            slot->setProperty ("hardware_insert", juce::var (hwi));
+            hwi["output_ch_l"]     = routing.outputChL;
+            hwi["output_ch_r"]     = routing.outputChR;
+            hwi["input_ch_l"]      = routing.inputChL;
+            hwi["input_ch_r"]      = routing.inputChR;
+            hwi["latency_samples"] = routing.latencySamples;
+            hwi["format"]          = routing.format;
+            hwi["output_gain_db"]  = hw.outputGainDb.load();
+            hwi["input_gain_db"]   = hw.inputGainDb .load();
+            hwi["dry_wet"]         = hw.dryWet      .load();
+            slot["hardware_insert"] = std::move (hwi);
 
-            slots.add (juce::var (slot));
+            slots.push_back (std::move (slot));
         }
-        obj->setProperty ("plugin_slots", slots);
+        obj["plugin_slots"] = std::move (slots);
 
         // Automation: aux fader + mute lanes. Same shape as per-track.
-        obj->setProperty ("automation_mode",
-                           lane.params.automationMode.load (std::memory_order_relaxed));
-        juce::DynamicObject::Ptr autoObj = new juce::DynamicObject();
+        obj["automation_mode"] = lane.params.automationMode.load (std::memory_order_relaxed);
+        JObj autoObj;
         bool anyLane = false;
         for (int p = 0; p < kNumAutomationParams; ++p)
         {
             const auto& al = lane.params.automationLanes[(size_t) p];
             if (al.pointsConst().empty()) continue;
-            juce::Array<juce::var> pts;
-            pts.ensureStorageAllocated ((int) al.pointsConst().size());
+            JObj pts = JObj::array();
             for (const auto& pt : al.pointsConst())
             {
-                auto* pObj = new juce::DynamicObject();
-                pObj->setProperty ("t",   (juce::int64) pt.timeSamples);
-                pObj->setProperty ("v",   (double) pt.value);
-                pObj->setProperty ("bpm", (double) pt.recordedAtBPM);
-                pts.add (juce::var (pObj));
+                JObj pObj;
+                pObj["t"]   = (juce::int64) pt.timeSamples;
+                pObj["v"]   = (double) pt.value;
+                pObj["bpm"] = (double) pt.recordedAtBPM;
+                pts.push_back (std::move (pObj));
             }
-            autoObj->setProperty (automationParamKey ((AutomationParam) p), pts);
+            autoObj[automationParamKey ((AutomationParam) p)] = std::move (pts);
             anyLane = true;
         }
         if (anyLane)
-            obj->setProperty ("automation", juce::var (autoObj.get()));
+            obj["automation"] = std::move (autoObj);
 
-        auxLanesArr.add (juce::var (obj));
+        auxLanesArr.push_back (std::move (obj));
     }
-    root->setProperty ("aux_lanes", auxLanesArr);
+    root["aux_lanes"] = std::move (auxLanesArr);
 
-    juce::Array<juce::var> markersArr;
+    JObj markersArr = JObj::array();
     for (const auto& m : s.getMarkers())
     {
-        auto* obj = new juce::DynamicObject();
-        obj->setProperty ("name",   m.name);
-        obj->setProperty ("time",   (juce::int64) m.timelineSamples);
-        obj->setProperty ("colour", colourToHex (m.colour));
-        markersArr.add (juce::var (obj));
+        JObj obj;
+        obj["name"]   = toStd (m.name);
+        obj["time"]   = (juce::int64) m.timelineSamples;
+        obj["colour"] = toStd (colourToHex (m.colour));
+        markersArr.push_back (std::move (obj));
     }
-    root->setProperty ("markers", markersArr);
+    root["markers"] = std::move (markersArr);
 
-    auto* master = new juce::DynamicObject();
-    master->setProperty ("fader_db",     s.master().faderDb.load());
-    master->setProperty ("output_pair",  s.master().outputPair.load());
+    JObj master;
+    master["fader_db"]    = s.master().faderDb.load();
+    master["output_pair"] = s.master().outputPair.load();
     if (s.master().mute.load (std::memory_order_relaxed))
-        master->setProperty ("mute", true);
+        master["mute"] = true;
     if (s.master().monoSum.load (std::memory_order_relaxed))
-        master->setProperty ("mono_sum", true);
-    master->setProperty ("tape_enabled", s.master().tapeEnabled.load());
-    master->setProperty ("tape_hq",      s.master().tapeHQ.load());
+        master["mono_sum"] = true;
+    master["tape_enabled"] = s.master().tapeEnabled.load();
+    master["tape_hq"]      = s.master().tapeHQ.load();
 
     // Pultec EQ (all atoms — every knob the user can move).
-    master->setProperty ("eq_enabled",            s.master().eqEnabled.load());
-    master->setProperty ("eq_lf_boost",           s.master().eqLfBoost.load());
-    master->setProperty ("eq_lf_atten",           s.master().eqLfAtten.load());
-    master->setProperty ("eq_lf_freq",            s.master().eqLfFreq.load());
-    master->setProperty ("eq_hf_boost",           s.master().eqHfBoost.load());
-    master->setProperty ("eq_hf_boost_freq",      s.master().eqHfBoostFreq.load());
-    master->setProperty ("eq_hf_boost_bandwidth", s.master().eqHfBoostBandwidth.load());
-    master->setProperty ("eq_hf_atten",           s.master().eqHfAtten.load());
-    master->setProperty ("eq_hf_atten_freq",      s.master().eqHfAttenFreq.load());
-    master->setProperty ("eq_output_gain_db",     s.master().eqOutputGainDb.load());
+    master["eq_enabled"]            = s.master().eqEnabled.load();
+    master["eq_lf_boost"]           = s.master().eqLfBoost.load();
+    master["eq_lf_atten"]           = s.master().eqLfAtten.load();
+    master["eq_lf_freq"]            = s.master().eqLfFreq.load();
+    master["eq_hf_boost"]           = s.master().eqHfBoost.load();
+    master["eq_hf_boost_freq"]      = s.master().eqHfBoostFreq.load();
+    master["eq_hf_boost_bandwidth"] = s.master().eqHfBoostBandwidth.load();
+    master["eq_hf_atten"]           = s.master().eqHfAtten.load();
+    master["eq_hf_atten_freq"]      = s.master().eqHfAttenFreq.load();
+    master["eq_output_gain_db"]     = s.master().eqOutputGainDb.load();
 
     // Bus comp (SSL-style).
-    master->setProperty ("comp_enabled",      s.master().compEnabled.load());
-    master->setProperty ("comp_thresh_db",    s.master().compThreshDb.load());
-    master->setProperty ("comp_ratio",        s.master().compRatio.load());
-    master->setProperty ("comp_attack_ms",    s.master().compAttackMs.load());
-    master->setProperty ("comp_release_ms",   s.master().compReleaseMs.load());
-    master->setProperty ("comp_release_auto", s.master().compReleaseAuto.load());
-    master->setProperty ("comp_makeup_db",    s.master().compMakeupDb.load());
+    master["comp_enabled"]      = s.master().compEnabled.load();
+    master["comp_thresh_db"]    = s.master().compThreshDb.load();
+    master["comp_ratio"]        = s.master().compRatio.load();
+    master["comp_attack_ms"]    = s.master().compAttackMs.load();
+    master["comp_release_ms"]   = s.master().compReleaseMs.load();
+    master["comp_release_auto"] = s.master().compReleaseAuto.load();
+    master["comp_makeup_db"]    = s.master().compMakeupDb.load();
     // TapeMachine APVTS state (base64). Skipped when empty so existing
     // sessions don't gain a noisy field they don't need.
     if (s.master().tapeStateBase64.isNotEmpty())
-        master->setProperty ("tape_state", s.master().tapeStateBase64);
+        master["tape_state"] = toStd (s.master().tapeStateBase64);
 
     // Master automation: only FaderDb is automatable per spec. Reuses
     // the same shape as track / aux serialization for symmetry.
-    master->setProperty ("automation_mode",
-                          s.master().automationMode.load (std::memory_order_relaxed));
+    master["automation_mode"] = s.master().automationMode.load (std::memory_order_relaxed);
     {
-        juce::DynamicObject::Ptr autoObj = new juce::DynamicObject();
+        JObj autoObj;
         bool anyLane = false;
         for (int p = 0; p < kNumAutomationParams; ++p)
         {
             const auto& al = s.master().automationLanes[(size_t) p];
             if (al.pointsConst().empty()) continue;
-            juce::Array<juce::var> pts;
-            pts.ensureStorageAllocated ((int) al.pointsConst().size());
+            JObj pts = JObj::array();
             for (const auto& pt : al.pointsConst())
             {
-                auto* pObj = new juce::DynamicObject();
-                pObj->setProperty ("t",   (juce::int64) pt.timeSamples);
-                pObj->setProperty ("v",   (double) pt.value);
-                pObj->setProperty ("bpm", (double) pt.recordedAtBPM);
-                pts.add (juce::var (pObj));
+                JObj pObj;
+                pObj["t"]   = (juce::int64) pt.timeSamples;
+                pObj["v"]   = (double) pt.value;
+                pObj["bpm"] = (double) pt.recordedAtBPM;
+                pts.push_back (std::move (pObj));
             }
-            autoObj->setProperty (automationParamKey ((AutomationParam) p), pts);
+            autoObj[automationParamKey ((AutomationParam) p)] = std::move (pts);
             anyLane = true;
         }
         if (anyLane)
-            master->setProperty ("automation", juce::var (autoObj.get()));
+            master["automation"] = std::move (autoObj);
     }
 
-    root->setProperty ("master", juce::var (master));
+    root["master"] = std::move (master);
 
     // Mastering chain - separate from the master strip so its EQ/comp/limiter
     // settings can diverge from the in-mix master DSP.
-    auto* mast = new juce::DynamicObject();
-    mast->setProperty ("source_file",       portablePath (s.mastering().sourceFile,
-                                                           s.getSessionDirectory()));
-    mast->setProperty ("eq_enabled",        s.mastering().eqEnabled.load());
+    JObj mast;
+    mast["source_file"] = toStd (portablePath (s.mastering().sourceFile, s.getSessionDirectory()));
+    mast["eq_enabled"]  = s.mastering().eqEnabled.load();
     for (int b = 0; b < MasteringParams::kNumEqBands; ++b)
     {
-        const auto idx = juce::String (b);
-        mast->setProperty ("eq_band_" + idx + "_freq",    s.mastering().eqBandFreq[b].load());
-        mast->setProperty ("eq_band_" + idx + "_gain_db", s.mastering().eqBandGainDb[b].load());
-        mast->setProperty ("eq_band_" + idx + "_q",       s.mastering().eqBandQ[b].load());
+        const auto idx = std::string ("eq_band_") + std::to_string (b);
+        mast[idx + "_freq"]    = s.mastering().eqBandFreq[b].load();
+        mast[idx + "_gain_db"] = s.mastering().eqBandGainDb[b].load();
+        mast[idx + "_q"]       = s.mastering().eqBandQ[b].load();
     }
-    mast->setProperty ("eq_lf_boost",       s.mastering().eqLfBoost.load());
-    mast->setProperty ("eq_hf_boost",       s.mastering().eqHfBoost.load());
-    mast->setProperty ("eq_hf_atten",       s.mastering().eqHfAtten.load());
-    mast->setProperty ("eq_tube_drive",     s.mastering().eqTubeDrive.load());
-    mast->setProperty ("eq_output_gain_db", s.mastering().eqOutputGainDb.load());
-    mast->setProperty ("comp_enabled",      s.mastering().compEnabled.load());
-    mast->setProperty ("comp_thresh_db",    s.mastering().compThreshDb.load());
-    mast->setProperty ("comp_ratio",        s.mastering().compRatio.load());
-    mast->setProperty ("comp_attack_ms",    s.mastering().compAttackMs.load());
-    mast->setProperty ("comp_release_ms",   s.mastering().compReleaseMs.load());
-    mast->setProperty ("comp_release_auto", s.mastering().compReleaseAuto.load());
-    mast->setProperty ("comp_makeup_db",    s.mastering().compMakeupDb.load());
-    mast->setProperty ("limiter_enabled",     s.mastering().limiterEnabled.load());
-    mast->setProperty ("limiter_drive_db",    s.mastering().limiterDriveDb.load());
-    mast->setProperty ("limiter_ceiling_db",  s.mastering().limiterCeilingDb.load());
-    mast->setProperty ("limiter_release_ms",  s.mastering().limiterReleaseMs.load());
-    mast->setProperty ("limiter_lookahead_ms", s.mastering().limiterLookaheadMs.load());
-    mast->setProperty ("limiter_mode",        s.mastering().limiterMode.load());
-    mast->setProperty ("limiter_stereo_link", s.mastering().limiterStereoLink.load());
-    mast->setProperty ("target_preset",     s.mastering().targetPresetIndex.load());
-    root->setProperty ("mastering", juce::var (mast));
+    mast["eq_lf_boost"]       = s.mastering().eqLfBoost.load();
+    mast["eq_hf_boost"]       = s.mastering().eqHfBoost.load();
+    mast["eq_hf_atten"]       = s.mastering().eqHfAtten.load();
+    mast["eq_tube_drive"]     = s.mastering().eqTubeDrive.load();
+    mast["eq_output_gain_db"] = s.mastering().eqOutputGainDb.load();
+    mast["comp_enabled"]      = s.mastering().compEnabled.load();
+    mast["comp_thresh_db"]    = s.mastering().compThreshDb.load();
+    mast["comp_ratio"]        = s.mastering().compRatio.load();
+    mast["comp_attack_ms"]    = s.mastering().compAttackMs.load();
+    mast["comp_release_ms"]   = s.mastering().compReleaseMs.load();
+    mast["comp_release_auto"] = s.mastering().compReleaseAuto.load();
+    mast["comp_makeup_db"]    = s.mastering().compMakeupDb.load();
+    mast["limiter_enabled"]      = s.mastering().limiterEnabled.load();
+    mast["limiter_drive_db"]     = s.mastering().limiterDriveDb.load();
+    mast["limiter_ceiling_db"]   = s.mastering().limiterCeilingDb.load();
+    mast["limiter_release_ms"]   = s.mastering().limiterReleaseMs.load();
+    mast["limiter_lookahead_ms"] = s.mastering().limiterLookaheadMs.load();
+    mast["limiter_mode"]         = s.mastering().limiterMode.load();
+    mast["limiter_stereo_link"]  = s.mastering().limiterStereoLink.load();
+    mast["target_preset"]        = s.mastering().targetPresetIndex.load();
+    root["mastering"] = std::move (mast);
 
     // Transport (loop + punch). Mirrored onto Session by
     // AudioEngine::publishTransportStateForSave before this call runs.
-    auto* tport = new juce::DynamicObject();
-    tport->setProperty ("loop_enabled",  s.savedLoopEnabled);
-    tport->setProperty ("loop_start",    (juce::int64) s.savedLoopStart);
-    tport->setProperty ("loop_end",      (juce::int64) s.savedLoopEnd);
-    tport->setProperty ("punch_enabled", s.savedPunchEnabled);
-    tport->setProperty ("punch_in",      (juce::int64) s.savedPunchIn);
-    tport->setProperty ("punch_out",     (juce::int64) s.savedPunchOut);
-    tport->setProperty ("snap_to_grid",      s.snapToGrid);
-    tport->setProperty ("audio_editor_snap", s.audioEditorSnap);
-    tport->setProperty ("midi_editor_snap",  s.midiEditorSnap);
-    tport->setProperty ("snap_resolution",   (int) s.snapResolution);
-    tport->setProperty ("piano_roll_key_snap", s.pianoRollKeySnap);
-    tport->setProperty ("tempo_bpm",         s.tempoBpm.load());
+    JObj tport;
+    tport["loop_enabled"]  = s.savedLoopEnabled;
+    tport["loop_start"]    = (juce::int64) s.savedLoopStart;
+    tport["loop_end"]      = (juce::int64) s.savedLoopEnd;
+    tport["punch_enabled"] = s.savedPunchEnabled;
+    tport["punch_in"]      = (juce::int64) s.savedPunchIn;
+    tport["punch_out"]     = (juce::int64) s.savedPunchOut;
+    tport["snap_to_grid"]      = s.snapToGrid;
+    tport["audio_editor_snap"] = s.audioEditorSnap;
+    tport["midi_editor_snap"]  = s.midiEditorSnap;
+    tport["snap_resolution"]   = (int) s.snapResolution;
+    tport["piano_roll_key_snap"] = s.pianoRollKeySnap;
+    tport["tempo_bpm"]         = s.tempoBpm.load();
     if (! s.tempoMap.empty())
     {
-        juce::Array<juce::var> tpArr;
+        JObj tpArr = JObj::array();
         for (const auto& p : s.tempoMap.points())
         {
-            auto* o = new juce::DynamicObject();
-            o->setProperty ("sample", p.timelineSamples);
-            o->setProperty ("bpm",    (double) p.bpm);
-            tpArr.add (juce::var (o));
+            JObj o;
+            o["sample"] = p.timelineSamples;
+            o["bpm"]    = (double) p.bpm;
+            tpArr.push_back (std::move (o));
         }
-        tport->setProperty ("tempo_points", tpArr);
+        tport["tempo_points"] = std::move (tpArr);
     }
-    tport->setProperty ("ui_stage",          s.uiStage.load());
-    tport->setProperty ("sync_source_input",  s.syncSourceInputIdentifier);
-    tport->setProperty ("sync_follow_tempo",
-                          s.externalSyncFollowsTempo.load());
-    tport->setProperty ("sync_chase_transport",
-                          s.externalSyncChasesTransport.load());
-    tport->setProperty ("sync_output",         s.syncOutputIdentifier);
-    tport->setProperty ("sync_emit_clock",     s.syncOutputEmitClock.load());
+    tport["ui_stage"]         = s.uiStage.load();
+    tport["sync_source_input"] = toStd (s.syncSourceInputIdentifier);
+    tport["sync_follow_tempo"]    = s.externalSyncFollowsTempo.load();
+    tport["sync_chase_transport"] = s.externalSyncChasesTransport.load();
+    tport["sync_output"]         = toStd (s.syncOutputIdentifier);
+    tport["sync_emit_clock"]     = s.syncOutputEmitClock.load();
 
     // Mackie Control Universal device pair + last-used assign mode.
     // Bank + selectedChannel are session-runtime state and intentionally
     // NOT persisted -- a fresh launch always starts on bank 0 / ch 0.
-    tport->setProperty ("mcu_input_id",   s.mcu.inputIdentifier);
-    tport->setProperty ("mcu_output_id",  s.mcu.outputIdentifier);
-    tport->setProperty ("mcu_assign_mode", s.mcu.assignMode.load (std::memory_order_relaxed));
-    tport->setProperty ("beats_per_bar",     s.beatsPerBar.load());
-    tport->setProperty ("beat_unit",         s.beatUnit.load());
-    tport->setProperty ("metronome_enabled",          s.metronomeEnabled.load());
-    tport->setProperty ("metronome_vol_db",           s.metronomeVolDb.load());
-    tport->setProperty ("metronome_click_recording",  s.metronomeClickWhileRecording.load());
-    tport->setProperty ("metronome_click_playing",    s.metronomeClickWhilePlaying.load());
-    tport->setProperty ("metronome_only_countin",     s.metronomeOnlyDuringCountIn.load());
-    tport->setProperty ("metronome_polyphonic",       s.metronomePolyphonic.load());
-    tport->setProperty ("count_in_enabled",  s.countInEnabled.load());
-    tport->setProperty ("time_display_mode", s.timeDisplayMode.load());
+    tport["mcu_input_id"]   = toStd (s.mcu.inputIdentifier);
+    tport["mcu_output_id"]  = toStd (s.mcu.outputIdentifier);
+    tport["mcu_assign_mode"] = s.mcu.assignMode.load (std::memory_order_relaxed);
+    tport["beats_per_bar"]     = s.beatsPerBar.load();
+    tport["beat_unit"]         = s.beatUnit.load();
+    tport["metronome_enabled"]          = s.metronomeEnabled.load();
+    tport["metronome_vol_db"]           = s.metronomeVolDb.load();
+    tport["metronome_click_recording"]  = s.metronomeClickWhileRecording.load();
+    tport["metronome_click_playing"]    = s.metronomeClickWhilePlaying.load();
+    tport["metronome_only_countin"]     = s.metronomeOnlyDuringCountIn.load();
+    tport["metronome_polyphonic"]       = s.metronomePolyphonic.load();
+    tport["count_in_enabled"]  = s.countInEnabled.load();
+    tport["time_display_mode"] = s.timeDisplayMode.load();
     // Tascam-style transport-cluster state. The last-record point is
     // what the FFWD-while-stopped tap (= TO LAST REC) snaps to.
-    tport->setProperty ("last_record_point",  (juce::int64) s.lastRecordPointSamples.load());
-    tport->setProperty ("pre_roll_seconds",   (double) s.preRollSeconds.load());
-    tport->setProperty ("post_roll_seconds",  (double) s.postRollSeconds.load());
-    tport->setProperty ("pre_roll_enabled",   s.preRollEnabled.load());
-    tport->setProperty ("post_roll_enabled",  s.postRollEnabled.load());
+    tport["last_record_point"]  = (juce::int64) s.lastRecordPointSamples.load();
+    tport["pre_roll_seconds"]   = (double) s.preRollSeconds.load();
+    tport["post_roll_seconds"]  = (double) s.postRollSeconds.load();
+    tport["pre_roll_enabled"]   = s.preRollEnabled.load();
+    tport["post_roll_enabled"]  = s.postRollEnabled.load();
 
     // MIDI controller bindings. Each entry stamps a (channel, dataNumber,
     // trigger) source onto a target enum + per-strip index. Only emit
@@ -1529,25 +1524,25 @@ juce::String SessionSerializer::serialize (const Session& s)
     // sessions that never wire a controller.
     if (! s.midiBindings.current().empty())
     {
-        juce::Array<juce::var> arr;
+        JObj arr = JObj::array();
         for (const auto& b : s.midiBindings.current())
         {
-            auto* o = new juce::DynamicObject();
-            o->setProperty ("channel",     b.channel);
-            o->setProperty ("data",        b.dataNumber);
-            o->setProperty ("trigger",     (int) b.trigger);
-            o->setProperty ("target",      (int) b.target);
-            o->setProperty ("target_idx",  b.targetIndex);
-            o->setProperty ("param_idx",   b.paramIndex);
-            o->setProperty ("button_mode", (int) b.buttonMode);
-            arr.add (juce::var (o));
+            JObj o;
+            o["channel"]     = b.channel;
+            o["data"]        = b.dataNumber;
+            o["trigger"]     = (int) b.trigger;
+            o["target"]      = (int) b.target;
+            o["target_idx"]  = b.targetIndex;
+            o["param_idx"]   = b.paramIndex;
+            o["button_mode"] = (int) b.buttonMode;
+            arr.push_back (std::move (o));
         }
-        tport->setProperty ("midi_bindings", arr);
+        tport["midi_bindings"] = std::move (arr);
     }
-    tport->setProperty ("oversampling_factor", s.oversamplingFactor.load());
-    root->setProperty ("transport", juce::var (tport));
+    tport["oversampling_factor"] = s.oversamplingFactor.load();
+    root["transport"] = std::move (tport);
 
-    return juce::JSON::toString (juce::var (root), false /*allOnOneLine*/);
+    return juce::String (root.dump (2));
 }
 
 bool SessionSerializer::writeAtomic (const juce::File& target, const juce::String& json)
