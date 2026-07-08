@@ -1,6 +1,6 @@
 #pragma once
 
-#include <juce_core/juce_core.h>
+#include <algorithm>
 
 #if JUCE_LINUX
  #include <sched.h>
@@ -40,7 +40,7 @@ inline int jucePriorityForSchedCeiling (int ceilingSched, int rrMin, int rrMax) 
     int p = 10;
     while (p >= 0 && rrMin + (p * span) / 10 > ceilingSched)
         --p;
-    return juce::jmax (-1, p);
+    return std::max (-1, p);
 }
 
 inline RtPriorityInfo queryRealtimePriority() noexcept
@@ -50,14 +50,14 @@ inline RtPriorityInfo queryRealtimePriority() noexcept
     if (getrlimit (RLIMIT_RTPRIO, &rl) != 0)
         return { -1, false, -1 };
 
-    const int rrMin = juce::jmax (0, sched_get_priority_min (SCHED_RR));
-    const int rrMax = juce::jmax (1, sched_get_priority_max (SCHED_RR));
+    const int rrMin = std::max (0, sched_get_priority_min (SCHED_RR));
+    const int rrMax = std::max (1, sched_get_priority_max (SCHED_RR));
 
     if (rl.rlim_cur == RLIM_INFINITY)
         return { jucePriorityForSchedCeiling (rrMax, rrMin, rrMax), true, -1 };
 
     const auto limit = (long long) rl.rlim_cur;
-    return { jucePriorityForSchedCeiling ((int) juce::jmin (limit, (long long) rrMax),
+    return { jucePriorityForSchedCeiling ((int) std::min (limit, (long long) rrMax),
                                           rrMin, rrMax),
              true, limit };
    #else

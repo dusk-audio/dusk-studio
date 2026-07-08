@@ -1,7 +1,7 @@
 #include "KeyboardStateLinux.h"
 
 // Sealed X11 translation unit — must NOT include any JUCE header. Xlib's
-// `#define KeyPress 2` (and Bool/None/Status/Window) collide with juce:: names.
+// `#define KeyPress 2` (and Bool/None/Status/Window) collide with JUCE names.
 #include <X11/Xlib.h>
 
 namespace duskstudio

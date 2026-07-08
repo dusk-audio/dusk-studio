@@ -62,7 +62,6 @@ src/engine/PluginSlot.cpp
 src/engine/PluginSlot.h
 src/engine/RecordManager.cpp
 src/engine/RecordManager.h
-src/engine/RtPriority.h
 src/engine/alsa/AlsaAudioIODevice.cpp
 src/engine/alsa/AlsaAudioIODevice.h
 src/engine/alsa/AlsaAudioIODeviceType.cpp
@@ -177,7 +176,6 @@ src/ui/HardwareInsertEditor.cpp
 src/ui/HardwareInsertEditor.h
 src/ui/ImportTargetPicker.cpp
 src/ui/ImportTargetPicker.h
-src/ui/KeyboardStateLinux.cpp
 src/ui/KeyboardStateLinux.h
 src/ui/Lv2PluginEditorComponent.cpp
 src/ui/Lv2PluginEditorComponent.h
