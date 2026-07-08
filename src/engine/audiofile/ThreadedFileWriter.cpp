@@ -7,11 +7,12 @@ namespace dusk::audio
 {
 ThreadedFileWriter::ThreadedFileWriter (std::unique_ptr<FileWriter> w, int fifoFrames)
     : writer (std::move (w)),
-      channels (writer->numChannels()),
+      channels (writer != nullptr ? writer->numChannels() : 0),
       capacityFrames ((int64_t) std::max (2, fifoFrames) + 1)
 {
     ring.resize ((size_t) capacityFrames * (size_t) channels, 0.0f);
-    worker = std::thread ([this] { run(); });
+    if (writer != nullptr)
+        worker = std::thread ([this] { run(); });
 }
 
 ThreadedFileWriter::~ThreadedFileWriter()

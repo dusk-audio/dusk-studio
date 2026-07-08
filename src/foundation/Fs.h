@@ -27,6 +27,7 @@ inline bool writeStringToFile (const std::filesystem::path& path, std::string_vi
     std::ofstream out (path, std::ios::binary | std::ios::trunc);
     if (! out) return false;
     out.write (text.data(), (std::streamsize) text.size());
+    out.flush();   // surface disk-full / write errors that only appear at flush
     return (bool) out;
 }
 

@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <random>
 #include <set>
 #include <string>
 
@@ -34,7 +35,8 @@ std::set<std::string> duskNames (const stdfs::path& dir, const std::string& wild
 
 TEST_CASE ("dusk::fs matches juce::File", "[foundation][fs]")
 {
-    const auto root = stdfs::temp_directory_path() / "dusk_fs_test";
+    const auto root = stdfs::temp_directory_path()
+                          / ("dusk_fs_test_" + std::to_string (std::random_device {}()));
     stdfs::remove_all (root);
     stdfs::create_directories (root / "sub");
 
