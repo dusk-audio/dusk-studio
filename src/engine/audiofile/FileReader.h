@@ -18,6 +18,11 @@ struct FileInfo
 // Random-access sound-file reader backed by libsndfile. Format is sniffed on
 // open (WAV/AIFF/FLAC and anything else the linked libsndfile handles). Reads
 // are deinterleaved float, which is the shape the rest of the engine wants.
+//
+// NOT real-time safe: read() grows a scratch buffer on demand and libsndfile
+// itself does I/O, so call it only from the message thread or a background
+// disk thread (import, offline edits, playback prefetch) — never the audio
+// callback. The RT capture path is ThreadedFileWriter, not this.
 class FileReader
 {
 public:

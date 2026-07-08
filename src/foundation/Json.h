@@ -60,8 +60,14 @@ inline int getInt (const Json& j, const char* key, int def)
 {
     if (! has (j, key)) return def;
     const auto& v = j[key];
+    // Unsigned first: is_number_integer() is also true for unsigned, so a
+    // uint past INT_MAX would otherwise reach get<int64_t>() and wrap negative.
+    if (v.is_number_unsigned())
+    {
+        const auto u = v.get<std::uint64_t>();
+        return u <= (std::uint64_t) std::numeric_limits<int>::max() ? (int) u : def;
+    }
     if (v.is_number_integer())  return (int) v.get<std::int64_t>();
-    if (v.is_number_unsigned()) return (int) v.get<std::uint64_t>();
     if (v.is_number_float())
     {
         // Range-check before narrowing: casting an out-of-int double is UB.
@@ -77,8 +83,15 @@ inline std::int64_t getInt64 (const Json& j, const char* key, std::int64_t def)
 {
     if (! has (j, key)) return def;
     const auto& v = j[key];
+    // Unsigned first (is_number_integer() is also true for unsigned): a uint
+    // past INT64_MAX would otherwise reach get<int64_t>() and wrap negative.
+    if (v.is_number_unsigned())
+    {
+        const auto u = v.get<std::uint64_t>();
+        return u <= (std::uint64_t) std::numeric_limits<std::int64_t>::max()
+                   ? (std::int64_t) u : def;
+    }
     if (v.is_number_integer())  return v.get<std::int64_t>();
-    if (v.is_number_unsigned()) return (std::int64_t) v.get<std::uint64_t>();
     if (v.is_number_float())
     {
         // Range-check before narrowing: casting a double past int64 range is UB.
