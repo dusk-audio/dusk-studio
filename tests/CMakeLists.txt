@@ -130,6 +130,7 @@ target_sources(dusk-studio-tests PRIVATE
     audiofile_ab_null.cpp
     foundation_text.cpp
     foundation_fs.cpp
+    foundation_json.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/audiofile/FileReader.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/audiofile/FileWriter.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/audiofile/ThreadedFileWriter.cpp)
