@@ -44,6 +44,15 @@ inline void storeFiniteFloat (std::atomic<float>& dst, const juce::var& src) noe
         dst.store ((float) d);
 }
 
+// Scalar sibling for plain-float fields (region gain, etc.) that aren't atomics.
+inline float finiteFloatOr (const juce::var& src, float fallback) noexcept
+{
+    const double d = (double) src;
+    if (std::isfinite (d) && std::abs (d) <= (double) std::numeric_limits<float>::max())
+        return (float) d;
+    return fallback;
+}
+
 // Parse one automation point from JSON, hardening every field against a
 // hand-edited or truncated file: timeSamples >= 0 and recordedAtBPM finite.
 // The lane evaluator's binary search assumes non-negative, sorted times, and
@@ -1056,7 +1065,7 @@ void restoreTrack (Track& t, const juce::var& v, double defaultRecordBpm,
             r.fadeInAuto      = rv.hasProperty ("fade_in_auto")  && (bool) rv["fade_in_auto"];
             r.fadeOutAuto     = rv.hasProperty ("fade_out_auto") && (bool) rv["fade_out_auto"];
             r.numChannels     = juce::jlimit (1, 2, rv.hasProperty ("num_channels") ? (int) rv["num_channels"] : 1);
-            r.gainDb          = rv.hasProperty ("gain_db")  ? (float) (double) rv["gain_db"] : 0.0f;
+            r.gainDb          = rv.hasProperty ("gain_db")  ? finiteFloatOr (rv["gain_db"], 0.0f) : 0.0f;
             r.customColour    = rv.hasProperty ("custom_colour")
                                  ? juce::Colour::fromString (rv["custom_colour"].toString())
                                  : juce::Colour();

@@ -390,6 +390,10 @@ void PluginSlot::prepareToPlay (double sampleRate, int blockSize)
             cachedLatencySamples.store (0, std::memory_order_relaxed);
             return;
         }
+        // Re-publish the live remote: a prior oversized-block prepare or
+        // releaseResources() may have nulled currentRemote, and the success
+        // path must restore it or the slot stays silent until a reload.
+        currentRemote.store (ownedRemote.get(), std::memory_order_release);
         // Latency stays whatever loadPlugin reported; OOP doesn't currently
         // re-query it on prepareToPlay (the child reapplies the existing
         // setLatencySamples value). Leave cachedLatencySamples as set by
