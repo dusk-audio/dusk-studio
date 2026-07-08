@@ -336,10 +336,8 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
             rewPressedAtMs = 0;
             if (rewIsScrubbing)
                 rewIsScrubbing = false;   // was a hold-scrub, not a tap
-            else if (engine.getTransport().isStopped() && engine.getSession().getMarkers().empty())
-                engine.jumpToZero();
             else
-                engine.jumpToPrevMarker();
+                rewindTap();
         }
     };
 
@@ -355,10 +353,8 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
             ffwdPressedAtMs = 0;
             if (ffwdIsScrubbing)
                 ffwdIsScrubbing = false;   // was a hold-scrub, not a tap
-            else if (engine.getTransport().isStopped() && engine.getSession().getMarkers().empty())
-                engine.jumpToLastRecordPoint();
             else
-                engine.jumpToNextMarker();
+                forwardTap();
         }
     };
 
@@ -636,6 +632,22 @@ bool TransportBar::isTapeStripExpanded() const
 
 TransportBar::~TransportBar() { stopTimer(); }   // before derived members destruct
 
+void TransportBar::rewindTap()
+{
+    if (engine.getTransport().isStopped() && engine.getSession().getMarkers().empty())
+        engine.jumpToZero();
+    else
+        engine.jumpToPrevMarker();
+}
+
+void TransportBar::forwardTap()
+{
+    if (engine.getTransport().isStopped() && engine.getSession().getMarkers().empty())
+        engine.jumpToLastRecordPoint();
+    else
+        engine.jumpToNextMarker();
+}
+
 void TransportBar::timerCallback()
 {
     // 10x scrub. Once a REW / FFWD button has been held past
@@ -648,12 +660,12 @@ void TransportBar::timerCallback()
     const double sr  = engine.getCurrentSampleRate();
     if (sr > 0.0)
     {
-        const auto handleScrub = [&] (TransportIconButton& btn,
+        const auto handleScrub = [&] (bool isHeld,
                                         juce::int64& pressedAt,
                                         bool& scrubbing,
                                         int direction)
         {
-            if (! btn.isHeldDown() || pressedAt == 0) return;
+            if (! isHeld || pressedAt == 0) return;
             const auto held = nowMs - pressedAt;
             if (held < kHoldThresholdMs) return;
             scrubbing = true;
@@ -669,9 +681,41 @@ void TransportBar::timerCallback()
             engine.getTransport().setPlayhead (juce::jmax ((juce::int64) 0,
                 cur + (juce::int64) direction * delta));
         };
-        handleScrub (rewButton,  rewPressedAtMs,  rewIsScrubbing,  -1);
-        handleScrub (ffwdButton, ffwdPressedAtMs, ffwdIsScrubbing, +1);
-        if (! rewIsScrubbing && ! ffwdIsScrubbing) lastScrubTickMs = 0;
+
+        // MCU REW/FFWD have no Component events; synthesise press/release
+        // edges from the receiver's held-flags so they share the buttons'
+        // tap-on-release + hold-scrub gesture.
+        auto& sess = engine.getSession();
+        const bool mcuRew  = sess.mcu.rewHeld.load  (std::memory_order_relaxed);
+        const bool mcuFfwd = sess.mcu.ffwdHeld.load (std::memory_order_relaxed);
+        const auto mcuEdge = [&] (bool isHeld, juce::uint32 pressCount, juce::uint32& lastCount,
+                                  juce::int64& pressedAt, bool& scrubbing, auto tap)
+        {
+            const bool newPress = pressCount != lastCount;
+            lastCount = pressCount;
+            if (isHeld && pressedAt == 0)
+                pressedAt = nowMs;
+            else if (! isHeld && pressedAt != 0)
+            {
+                const bool wasScrub = scrubbing;
+                pressedAt = 0;
+                scrubbing = false;
+                if (! wasScrub) tap();   // short press → marker jump
+            }
+            else if (! isHeld && pressedAt == 0 && newPress)
+                tap();   // press+release fell entirely between two polls → fast tap
+        };
+        mcuEdge (mcuRew,  sess.mcu.rewPressCount.load  (std::memory_order_relaxed),
+                 mcuRewLastPressCount,  mcuRewPressedAtMs,  mcuRewIsScrubbing,  [this] { rewindTap();  });
+        mcuEdge (mcuFfwd, sess.mcu.ffwdPressCount.load (std::memory_order_relaxed),
+                 mcuFfwdLastPressCount, mcuFfwdPressedAtMs, mcuFfwdIsScrubbing, [this] { forwardTap(); });
+
+        handleScrub (rewButton.isHeldDown(),  rewPressedAtMs,  rewIsScrubbing,  -1);
+        handleScrub (ffwdButton.isHeldDown(), ffwdPressedAtMs, ffwdIsScrubbing, +1);
+        handleScrub (mcuRew,  mcuRewPressedAtMs,  mcuRewIsScrubbing,  -1);
+        handleScrub (mcuFfwd, mcuFfwdPressedAtMs, mcuFfwdIsScrubbing, +1);
+        if (! rewIsScrubbing && ! ffwdIsScrubbing
+            && ! mcuRewIsScrubbing && ! mcuFfwdIsScrubbing) lastScrubTickMs = 0;
     }
 
     const auto playhead = engine.getTransport().getPlayhead();
@@ -779,21 +823,6 @@ void TransportBar::timerCallback()
                 auto& tr = engine.getTransport();
                 tr.setLoopEnabled (! tr.isLoopEnabled());
                 s.savedLoopEnabled = tr.isLoopEnabled();
-                break;
-            }
-            case PendingTransportAction::GoToEnd:
-            {
-                // No fixed timeline end — jump to the end of the furthest
-                // content across all tracks (audio + MIDI regions).
-                juce::int64 end = 0;
-                for (int t = 0; t < Session::kNumTracks; ++t)
-                {
-                    for (const auto& r : s.track (t).regions)
-                        end = juce::jmax (end, r.timelineStart + r.lengthInSamples);
-                    for (const auto& r : s.track (t).midiRegions.current())
-                        end = juce::jmax (end, r.timelineStart + r.lengthInSamples);
-                }
-                engine.getTransport().setPlayhead (end);
                 break;
             }
             case PendingTransportAction::None:   break;
