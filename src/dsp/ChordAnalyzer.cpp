@@ -1,6 +1,8 @@
 #include "ChordAnalyzer.h"
+#include "../foundation/Text.h"
 #include <algorithm>
 #include <cmath>
+#include <string>
 
 //==============================================================================
 // Chord patterns - interval sets from root (in semitones)
@@ -159,7 +161,7 @@ void ChordAnalyzer::setKey(int rootNote, bool isMinor)
     minorKey = isMinor;
 }
 
-juce::String ChordAnalyzer::getKeyName() const
+std::string ChordAnalyzer::getKeyName() const
 {
     return pitchClassToName(keyRoot) + (minorKey ? " Minor" : " Major");
 }
@@ -332,7 +334,7 @@ float ChordAnalyzer::calculateConfidence(const std::set<int>& intervals, int mat
     float patternMatch = static_cast<float>(matchedIntervals) / static_cast<float>(pattern.intervals.size());
     float penalty = static_cast<float>(extraIntervals) * 0.1f;
 
-    return juce::jlimit(0.0f, 1.0f, patternMatch - penalty);
+    return std::clamp(patternMatch - penalty, 0.0f, 1.0f);
 }
 
 //==============================================================================
@@ -391,7 +393,7 @@ bool ChordAnalyzer::isChromatic(int chordRoot) const
     }
 }
 
-juce::String ChordAnalyzer::getAccidental(int chordRoot) const
+std::string ChordAnalyzer::getAccidental(int chordRoot) const
 {
     int interval = (chordRoot - keyRoot + 12) % 12;
 
@@ -417,20 +419,20 @@ juce::String ChordAnalyzer::getAccidental(int chordRoot) const
     return "";
 }
 
-juce::String ChordAnalyzer::degreeToRoman(int degree, bool uppercase) const
+std::string ChordAnalyzer::degreeToRoman(int degree, bool uppercase) const
 {
-    static const juce::String upperNumerals[] = {"I", "II", "III", "IV", "V", "VI", "VII"};
-    static const juce::String lowerNumerals[] = {"i", "ii", "iii", "iv", "v", "vi", "vii"};
+    static const std::string upperNumerals[] = {"I", "II", "III", "IV", "V", "VI", "VII"};
+    static const std::string lowerNumerals[] = {"i", "ii", "iii", "iv", "v", "vi", "vii"};
 
     if (degree < 1 || degree > 7) return "?";
 
     return uppercase ? upperNumerals[degree - 1] : lowerNumerals[degree - 1];
 }
 
-juce::String ChordAnalyzer::buildRomanNumeral(int chordRoot, ChordQuality quality) const
+std::string ChordAnalyzer::buildRomanNumeral(int chordRoot, ChordQuality quality) const
 {
     int degree = getScaleDegree(chordRoot);
-    juce::String accidental = getAccidental(chordRoot);
+    std::string accidental = getAccidental(chordRoot);
 
     // Determine if uppercase (major quality) or lowercase (minor quality)
     bool uppercase = true;
@@ -453,13 +455,13 @@ juce::String ChordAnalyzer::buildRomanNumeral(int chordRoot, ChordQuality qualit
             break;
     }
 
-    juce::String numeral = accidental + degreeToRoman(degree, uppercase);
+    std::string numeral = accidental + degreeToRoman(degree, uppercase);
 
     // Add quality suffix
     switch (quality)
     {
         case ChordQuality::Diminished:
-            numeral += juce::String::fromUTF8("\xC2\xB0");  // degree sign
+            numeral += std::string("\xC2\xB0");  // degree sign
             break;
         case ChordQuality::Augmented:
             numeral += "+";
@@ -474,10 +476,10 @@ juce::String ChordAnalyzer::buildRomanNumeral(int chordRoot, ChordQuality qualit
             numeral += "7";
             break;
         case ChordQuality::HalfDiminished7:
-            numeral += juce::String::fromUTF8("\xC3\xB8") + "7";  // slashed o
+            numeral += std::string("\xC3\xB8") + "7";  // slashed o
             break;
         case ChordQuality::Diminished7:
-            numeral += juce::String::fromUTF8("\xC2\xB0") + "7";
+            numeral += std::string("\xC2\xB0") + "7";
             break;
         case ChordQuality::Sus2:
             numeral += "sus2";
@@ -555,7 +557,7 @@ HarmonicFunction ChordAnalyzer::getHarmonicFunction(int chordRoot, ChordQuality 
 }
 
 //==============================================================================
-juce::String ChordAnalyzer::getRootNameInKey(int degree) const
+std::string ChordAnalyzer::getRootNameInKey(int degree) const
 {
     // Calculate the pitch class for this scale degree
     static const int majorIntervals[] = {0, 2, 4, 5, 7, 9, 11};
@@ -570,7 +572,7 @@ juce::String ChordAnalyzer::getRootNameInKey(int degree) const
     return getSpellingForKey(pitchClass);
 }
 
-juce::String ChordAnalyzer::getSpellingForKey(int pitchClass) const
+std::string ChordAnalyzer::getSpellingForKey(int pitchClass) const
 {
     // Determine correct enharmonic spelling based on key signature
     // This ensures scale degrees use the musically correct note names
@@ -641,8 +643,8 @@ void ChordAnalyzer::addBasicSuggestions(std::vector<ChordSuggestion>& suggestion
                                          int currentDegree, ChordQuality /*quality*/) const
 {
     // Common progressions based on current chord
-    auto addSuggestion = [&](int degree, const juce::String& roman, ChordQuality q,
-                             const juce::String& reason, float commonality)
+    auto addSuggestion = [&](int degree, const std::string& roman, ChordQuality q,
+                             const std::string& reason, float commonality)
     {
         ChordSuggestion s;
         s.romanNumeral = roman;
@@ -733,8 +735,8 @@ void ChordAnalyzer::addBasicSuggestions(std::vector<ChordSuggestion>& suggestion
 void ChordAnalyzer::addIntermediateSuggestions(std::vector<ChordSuggestion>& suggestions,
                                                 int currentDegree, ChordQuality quality) const
 {
-    auto addSuggestion = [&](const juce::String& roman, const juce::String& name,
-                             const juce::String& reason, float commonality)
+    auto addSuggestion = [&](const std::string& roman, const std::string& name,
+                             const std::string& reason, float commonality)
     {
         ChordSuggestion s;
         s.romanNumeral = roman;
@@ -796,8 +798,8 @@ void ChordAnalyzer::addIntermediateSuggestions(std::vector<ChordSuggestion>& sug
 void ChordAnalyzer::addAdvancedSuggestions(std::vector<ChordSuggestion>& suggestions,
                                             int currentDegree, ChordQuality /*quality*/) const
 {
-    auto addSuggestion = [&](const juce::String& roman, const juce::String& name,
-                             const juce::String& reason, float commonality)
+    auto addSuggestion = [&](const std::string& roman, const std::string& name,
+                             const std::string& reason, float commonality)
     {
         ChordSuggestion s;
         s.romanNumeral = roman;
@@ -853,14 +855,14 @@ void ChordAnalyzer::addAdvancedSuggestions(std::vector<ChordSuggestion>& suggest
 
 //==============================================================================
 // Static utility functions
-juce::String ChordAnalyzer::noteToName(int midiNote, bool useFlats)
+std::string ChordAnalyzer::noteToName(int midiNote, bool useFlats)
 {
     int pitchClass = midiNote % 12;
     int octave = (midiNote / 12) - 1;
-    return pitchClassToName(pitchClass, useFlats) + juce::String(octave);
+    return pitchClassToName(pitchClass, useFlats) + std::to_string(octave);
 }
 
-juce::String ChordAnalyzer::pitchClassToName(int pitchClass, bool useFlats)
+std::string ChordAnalyzer::pitchClassToName(int pitchClass, bool useFlats)
 {
     static const char* sharpNames[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
     static const char* flatNames[] = {"C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"};
@@ -871,10 +873,10 @@ juce::String ChordAnalyzer::pitchClassToName(int pitchClass, bool useFlats)
     return useFlats ? flatNames[pitchClass] : sharpNames[pitchClass];
 }
 
-int ChordAnalyzer::nameToNote(const juce::String& name)
+int ChordAnalyzer::nameToNote(const std::string& name)
 {
-    juce::String upper = name.toUpperCase().trim();
-    if (upper.isEmpty()) return -1;
+    std::string upper = dusk::text::trim (dusk::text::toUpperCase (name));
+    if (upper.empty()) return -1;
 
     int base = -1;
     switch (upper[0])
@@ -899,7 +901,7 @@ int ChordAnalyzer::nameToNote(const juce::String& name)
     return (base + 12) % 12;
 }
 
-juce::String ChordAnalyzer::qualityToString(ChordQuality quality)
+std::string ChordAnalyzer::qualityToString(ChordQuality quality)
 {
     switch (quality)
     {
@@ -940,7 +942,7 @@ juce::String ChordAnalyzer::qualityToString(ChordQuality quality)
     }
 }
 
-juce::String ChordAnalyzer::qualityToSuffix(ChordQuality quality)
+std::string ChordAnalyzer::qualityToSuffix(ChordQuality quality)
 {
     switch (quality)
     {
@@ -981,7 +983,7 @@ juce::String ChordAnalyzer::qualityToSuffix(ChordQuality quality)
     }
 }
 
-juce::String ChordAnalyzer::functionToString(HarmonicFunction func)
+std::string ChordAnalyzer::functionToString(HarmonicFunction func)
 {
     switch (func)
     {

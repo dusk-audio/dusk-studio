@@ -1,6 +1,6 @@
 #pragma once
 
-#include <juce_core/juce_core.h>
+#include <string>
 #include <vector>
 #include <set>
 #include <map>
@@ -71,14 +71,14 @@ enum class SuggestionCategory
 // Chord information structure
 struct ChordInfo
 {
-    juce::String name;              // e.g., "Cmaj7", "Dm", "G7"
-    juce::String romanNumeral;      // e.g., "I", "ii", "V7"
+    std::string name;              // e.g., "Cmaj7", "Dm", "G7"
+    std::string romanNumeral;      // e.g., "I", "ii", "V7"
     HarmonicFunction function = HarmonicFunction::Unknown;
     std::vector<int> midiNotes;     // MIDI note numbers (sorted)
     int rootNote = -1;              // Root pitch class (0-11, C=0)
     int bassNote = -1;              // Lowest note pitch class
     ChordQuality quality = ChordQuality::Unknown;
-    juce::String extensions;        // Any additional text
+    std::string extensions;        // Any additional text
     int inversion = 0;              // 0=root, 1=first, 2=second, etc.
     bool isValid = false;
     float confidence = 0.0f;        // 0.0-1.0 confidence score
@@ -98,10 +98,10 @@ struct ChordInfo
 // Chord suggestion structure
 struct ChordSuggestion
 {
-    juce::String romanNumeral;
-    juce::String chordName;         // Actual chord name in current key
+    std::string romanNumeral;
+    std::string chordName;         // Actual chord name in current key
     SuggestionCategory category;
-    juce::String reason;            // Why this suggestion makes sense
+    std::string reason;            // Why this suggestion makes sense
     float commonality = 0.5f;       // How common this progression is (0.0-1.0)
 };
 
@@ -121,11 +121,11 @@ public:
     void setKey(int rootNote, bool isMinor);
     int getKeyRoot() const { return keyRoot; }
     bool isMinorKey() const { return minorKey; }
-    juce::String getKeyName() const;
+    std::string getKeyName() const;
 
     //==========================================================================
     // Get Roman numeral for chord in current key
-    juce::String getRomanNumeral(const ChordInfo& chord) const;
+    std::string getRomanNumeral(const ChordInfo& chord) const;
 
     // Get harmonic function
     HarmonicFunction getHarmonicFunction(int chordRoot, ChordQuality quality) const;
@@ -137,12 +137,12 @@ public:
 
     //==========================================================================
     // Static utilities
-    static juce::String noteToName(int midiNote, bool useFlats = false);
-    static juce::String pitchClassToName(int pitchClass, bool useFlats = false);
-    static int nameToNote(const juce::String& name);
-    static juce::String qualityToString(ChordQuality quality);
-    static juce::String qualityToSuffix(ChordQuality quality);
-    static juce::String functionToString(HarmonicFunction func);
+    static std::string noteToName(int midiNote, bool useFlats = false);
+    static std::string pitchClassToName(int pitchClass, bool useFlats = false);
+    static int nameToNote(const std::string& name);
+    static std::string qualityToString(ChordQuality quality);
+    static std::string qualityToSuffix(ChordQuality quality);
+    static std::string functionToString(HarmonicFunction func);
 
 private:
     int keyRoot = 0;        // C
@@ -154,7 +154,7 @@ private:
     {
         std::set<int> intervals;    // Semitone intervals from root
         ChordQuality quality;
-        juce::String suffix;
+        std::string suffix;
         int priority;               // Higher = preferred match
     };
 
@@ -177,17 +177,18 @@ private:
     // Roman numeral helpers
     int getScaleDegree(int chordRoot) const;
     bool isChromatic(int chordRoot) const;
-    juce::String getAccidental(int chordRoot) const;
-    juce::String degreeToRoman(int degree, bool uppercase) const;
-    juce::String buildRomanNumeral(int chordRoot, ChordQuality quality) const;
+    std::string getAccidental(int chordRoot) const;
+    std::string degreeToRoman(int degree, bool uppercase) const;
+    std::string buildRomanNumeral(int chordRoot, ChordQuality quality) const;
 
     //==========================================================================
     // Suggestion generation
-    juce::String getRootNameInKey(int degree) const;
-    juce::String getSpellingForKey(int pitchClass) const;
+    std::string getRootNameInKey(int degree) const;
+    std::string getSpellingForKey(int pitchClass) const;
     void addBasicSuggestions(std::vector<ChordSuggestion>& suggestions, int currentDegree, ChordQuality quality) const;
     void addIntermediateSuggestions(std::vector<ChordSuggestion>& suggestions, int currentDegree, ChordQuality quality) const;
     void addAdvancedSuggestions(std::vector<ChordSuggestion>& suggestions, int currentDegree, ChordQuality quality) const;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ChordAnalyzer)
+    ChordAnalyzer (const ChordAnalyzer&)            = delete;
+    ChordAnalyzer& operator= (const ChordAnalyzer&) = delete;
 };

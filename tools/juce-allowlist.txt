@@ -8,8 +8,6 @@ src/dsp/BusStrip.cpp
 src/dsp/BusStrip.h
 src/dsp/ChannelStrip.cpp
 src/dsp/ChannelStrip.h
-src/dsp/ChordAnalyzer.cpp
-src/dsp/ChordAnalyzer.h
 src/dsp/HardwareInsertSlot.cpp
 src/dsp/HardwareInsertSlot.h
 src/dsp/LoudnessMeter.cpp
