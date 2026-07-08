@@ -3,6 +3,7 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_dsp/juce_dsp.h>
 #include <array>
+#include <filesystem>
 #include <memory>
 #include <vector>
 #include "../session/Session.h"
@@ -97,7 +98,7 @@ public:
     const lv2::NativeLv2Slot& getNativeLv2Slot() const noexcept { return nativeLv2Slot; }
     void setPendingNativeLv2 (const juce::File& path, std::vector<uint8_t> state,
                               const juce::String& pluginId = {},
-                              const juce::File& stateDir = {}) noexcept;
+                              const std::filesystem::path& stateDir = {}) noexcept;
     bool nativeLv2ReloadFailed() const noexcept { return lv2ReloadFailed.load (std::memory_order_relaxed); }
     void markNativeLv2RestoreFailed() noexcept { lv2ReloadFailed.store (true, std::memory_order_relaxed); }
 #else
@@ -281,7 +282,7 @@ private:
     juce::String         pendingLv2Path;
     juce::String         pendingLv2PluginId;
     std::vector<uint8_t> pendingLv2State;
-    juce::File           pendingLv2StateDir;
+    std::filesystem::path pendingLv2StateDir;
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_VST3
     juce::String         pendingVst3Path;

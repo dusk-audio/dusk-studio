@@ -187,11 +187,12 @@ static juce::File audioDeviceStateFile()
 // slots at state/lv2/trackNN, aux slots at state/lv2/auxA_slotS. Empty when
 // the session has no directory yet — saves fall back to blob-only. Save As
 // consolidation copies the whole state/ tree (SessionSerializer).
-static juce::File lv2StateDirFor (Session& session, const juce::String& slotTag)
+static std::filesystem::path lv2StateDirFor (Session& session, const juce::String& slotTag)
 {
     const auto dir = session.getSessionDirectory();
     if (dir == juce::File()) return {};
-    return dir.getChildFile ("state").getChildFile ("lv2").getChildFile (slotTag);
+    return std::filesystem::u8path (dir.getChildFile ("state").getChildFile ("lv2")
+                                        .getChildFile (slotTag).getFullPathName().toStdString());
 }
 #endif
 

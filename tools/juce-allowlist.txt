@@ -81,11 +81,8 @@ src/engine/ipc/PluginIpc.h
 src/engine/ipc/PluginScanProtocol.h
 src/engine/ipc/RemotePluginConnection.cpp
 src/engine/ipc/RemotePluginConnection.h
-src/engine/lv2/Lv2Instance.cpp
-src/engine/lv2/Lv2Instance.h
 src/engine/lv2/Lv2Scanner.cpp
 src/engine/lv2/Lv2Scanner.h
-src/engine/lv2/NativeLv2Slot.h
 src/engine/multisample/AriaBank.cpp
 src/engine/multisample/AriaBank.h
 src/engine/multisample/AriaGui.cpp

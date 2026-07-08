@@ -140,7 +140,7 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
         pendingLv2Path.clear();
         pendingLv2PluginId.clear();
         pendingLv2State.clear();
-        pendingLv2StateDir = juce::File();
+        pendingLv2StateDir.clear();
     }
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_VST3
@@ -555,7 +555,7 @@ void ChannelStrip::unloadNativeLv2() noexcept
 
 void ChannelStrip::setPendingNativeLv2 (const juce::File& path, std::vector<uint8_t> state,
                                         const juce::String& pluginId,
-                                        const juce::File& stateDir) noexcept
+                                        const std::filesystem::path& stateDir) noexcept
 {
     pendingLv2Path     = path.getFullPathName();
     pendingLv2PluginId = pluginId;
