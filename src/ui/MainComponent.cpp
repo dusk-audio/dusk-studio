@@ -46,6 +46,13 @@ namespace duskstudio
 {
 namespace
 {
+juce::Array<juce::File> toFileArray (const std::vector<std::filesystem::path>& paths)
+{
+    juce::Array<juce::File> out;
+    for (auto& p : paths) out.add (juce::File (p.string()));
+    return out;
+}
+
 // Shared helpers for the file-import flow (both menu-driven and
 // drag-and-drop). Lives at file scope so the TapeStrip drop callback
 // wired up in the MainComponent ctor can reference them.
@@ -2072,7 +2079,7 @@ void MainComponent::doMixdown()
 
 void MainComponent::launchStartupDialog()
 {
-    auto recents = RecentSessions::load();
+    auto recents = toFileArray (RecentSessions::load());
 
     startupDialog = std::make_unique<StartupDialog> (recents);
     // Fixed size — the table scrolls internally when the list grows past
@@ -2381,7 +2388,7 @@ bool MainComponent::saveSessionTo (const juce::File& dir)
             // prompt.
             deleteAutosaveFor (oldDir);
         }
-        RecentSessions::add (dir);
+        RecentSessions::add (dir.getFullPathName().toStdString());
         // A successful manual save makes the autosave stale - drop it so the
         // recovery prompt doesn't fire on the next clean load.
         deleteAutosaveFor (dir);
@@ -3196,7 +3203,7 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
         tapeStrip->refreshAfterSessionLoad();
     const auto tAfterConsole = juce::Time::getMillisecondCounterHiRes();
 
-    RecentSessions::add (dir);
+    RecentSessions::add (dir.getFullPathName().toStdString());
     setStatusForPath ("Loaded", sourceJson, /*isAutosave*/ loadedFromAutosave);
 
     // Seed the saved-state snapshot from the live in-memory session now
@@ -4270,7 +4277,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelMenuIndex,
         // "Recent Sessions" submenu: cached on the way out so the click
         // handler can resolve by index. Capped at RecentSessions::kMaxEntries
         // (the on-disk file is also capped, so this match isn't load-bearing).
-        menuRecentSessions = RecentSessions::load();
+        menuRecentSessions = toFileArray (RecentSessions::load());
         juce::Logger::writeToLog ("[Dusk Studio/MainComponent] Recent Sessions submenu: "
                                      + juce::String (menuRecentSessions.size())
                                      + " entries from RecentSessions::load()");

@@ -107,8 +107,6 @@ src/session/MarkerEditActions.h
 src/session/MidiBindings.cpp
 src/session/MidiBindings.h
 src/session/ParamEditAction.h
-src/session/RecentSessions.cpp
-src/session/RecentSessions.h
 src/session/RegionEditActions.cpp
 src/session/RegionEditActions.h
 src/session/Session.cpp
