@@ -347,11 +347,13 @@ void McuReceiver::handleNotePress (int noteNumber, bool pressed) noexcept
     // scrub, mirroring the on-screen Rewind / Forward buttons.
     if (noteNumber == mcu::btn::Rewind)
     {
+        if (pressed) session.mcu.rewPressCount.fetch_add (1, std::memory_order_relaxed);
         session.mcu.rewHeld.store (pressed, std::memory_order_relaxed);
         return;
     }
     if (noteNumber == mcu::btn::FastForward)
     {
+        if (pressed) session.mcu.ffwdPressCount.fetch_add (1, std::memory_order_relaxed);
         session.mcu.ffwdHeld.store (pressed, std::memory_order_relaxed);
         return;
     }

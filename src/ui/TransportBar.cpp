@@ -688,8 +688,11 @@ void TransportBar::timerCallback()
         auto& sess = engine.getSession();
         const bool mcuRew  = sess.mcu.rewHeld.load  (std::memory_order_relaxed);
         const bool mcuFfwd = sess.mcu.ffwdHeld.load (std::memory_order_relaxed);
-        const auto mcuEdge = [&] (bool isHeld, juce::int64& pressedAt, bool& scrubbing, auto tap)
+        const auto mcuEdge = [&] (bool isHeld, juce::uint32 pressCount, juce::uint32& lastCount,
+                                  juce::int64& pressedAt, bool& scrubbing, auto tap)
         {
+            const bool newPress = pressCount != lastCount;
+            lastCount = pressCount;
             if (isHeld && pressedAt == 0)
                 pressedAt = nowMs;
             else if (! isHeld && pressedAt != 0)
@@ -699,9 +702,13 @@ void TransportBar::timerCallback()
                 scrubbing = false;
                 if (! wasScrub) tap();   // short press → marker jump
             }
+            else if (! isHeld && pressedAt == 0 && newPress)
+                tap();   // press+release fell entirely between two polls → fast tap
         };
-        mcuEdge (mcuRew,  mcuRewPressedAtMs,  mcuRewIsScrubbing,  [this] { rewindTap();  });
-        mcuEdge (mcuFfwd, mcuFfwdPressedAtMs, mcuFfwdIsScrubbing, [this] { forwardTap(); });
+        mcuEdge (mcuRew,  sess.mcu.rewPressCount.load  (std::memory_order_relaxed),
+                 mcuRewLastPressCount,  mcuRewPressedAtMs,  mcuRewIsScrubbing,  [this] { rewindTap();  });
+        mcuEdge (mcuFfwd, sess.mcu.ffwdPressCount.load (std::memory_order_relaxed),
+                 mcuFfwdLastPressCount, mcuFfwdPressedAtMs, mcuFfwdIsScrubbing, [this] { forwardTap(); });
 
         handleScrub (rewButton.isHeldDown(),  rewPressedAtMs,  rewIsScrubbing,  -1);
         handleScrub (ffwdButton.isHeldDown(), ffwdPressedAtMs, ffwdIsScrubbing, +1);

@@ -133,6 +133,10 @@ private:
     juce::int64 mcuFfwdPressedAtMs = 0;
     bool        mcuRewIsScrubbing  = false;
     bool        mcuFfwdIsScrubbing = false;
+    // Last press-counter value seen by the timer, to catch taps that fall
+    // entirely between two polls (see Session::McuSessionState).
+    juce::uint32 mcuRewLastPressCount  = 0;
+    juce::uint32 mcuFfwdLastPressCount = 0;
     juce::int64 lastScrubTickMs = 0;
     TransportIconButton clickToggle { "Metronome",
                                           TransportIconButton::Icon::Metronome,

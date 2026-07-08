@@ -1408,6 +1408,13 @@ public:
         // Rewind / Forward buttons.
         std::atomic<bool> rewHeld  { false };
         std::atomic<bool> ffwdHeld { false };
+
+        // Rising-edge press counter, bumped on every press. A tap whose
+        // press+release both land between two 20 Hz timer polls leaves
+        // rewHeld/ffwdHeld false at both polls, so the timer would miss the
+        // edge; it watches this counter to still fire the tap.
+        std::atomic<juce::uint32> rewPressCount  { 0 };
+        std::atomic<juce::uint32> ffwdPressCount { 0 };
     };
     McuSessionState mcu;
 
