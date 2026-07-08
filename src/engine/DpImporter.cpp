@@ -36,7 +36,7 @@ struct HeaderInfo
 {
     bool        ok = false;
     double      sampleRate = 0.0;
-    juce::int64 lengthSamples = 0;
+    std::int64_t lengthSamples = 0;
     int         bitDepth = 0;
     int         numChannels = 0;
 };
@@ -47,7 +47,7 @@ HeaderInfo readWavHeader (juce::AudioFormatManager& fm, const juce::File& f)
     std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (f));
     if (reader == nullptr) return h;
     h.sampleRate    = reader->sampleRate;
-    h.lengthSamples = (juce::int64) reader->lengthInSamples;
+    h.lengthSamples = (std::int64_t) reader->lengthInSamples;
     h.bitDepth      = (int) reader->bitsPerSample;
     h.numChannels   = (int) reader->numChannels;
     h.ok = (h.sampleRate > 0.0 && h.lengthSamples > 0 && h.numChannels > 0);
@@ -231,50 +231,50 @@ std::vector<MixerStrip> decodeMixerScene (const juce::File& songSys, int deviceT
 // confident match (e.g. a take that sits at song start, or undecodable).
 constexpr int kPosRegionBegin = 0x340;   // after scene block 1, before the EQ-preset block
 constexpr int kPosRegionEnd   = 0x6a0;
-constexpr juce::int64 kEndTolerance = 600;   // ~12 ms slack on end = start + length
+constexpr std::int64_t kEndTolerance = 600;   // ~12 ms slack on end = start + length
 
 constexpr int kSongLengthOffset = 0x364;   // u32 song length in samples @ song SR
 
-std::vector<juce::int64> decodeClipStarts (const juce::File& songSys,
-                                           const std::vector<juce::int64>& lengths)
+std::vector<std::int64_t> decodeClipStarts (const juce::File& songSys,
+                                           const std::vector<std::int64_t>& lengths)
 {
-    std::vector<juce::int64> starts (lengths.size(), 0);
+    std::vector<std::int64_t> starts (lengths.size(), 0);
     juce::MemoryBlock mb;
     if (! songSys.existsAsFile() || ! songSys.loadFileAsData (mb)) return starts;
     if ((int) mb.getSize() != kSongSysSize) return starts;
     const auto* d = (const juce::uint8*) mb.getData();
 
-    const juce::int64 songLen = (juce::int64) juce::ByteOrder::littleEndianInt (d + kSongLengthOffset);
+    const std::int64_t songLen = (std::int64_t) juce::ByteOrder::littleEndianInt (d + kSongLengthOffset);
 
     // Candidate positions: every 4-byte-aligned u32 in [1, songLength] in the region.
-    std::vector<juce::int64> cand;
-    const juce::int64 hi = (songLen > 0 ? songLen : (juce::int64) 96000 * 60 * 60) + 2000;
+    std::vector<std::int64_t> cand;
+    const std::int64_t hi = (songLen > 0 ? songLen : (std::int64_t) 96000 * 60 * 60) + 2000;
     for (int o = kPosRegionBegin; o + 4 <= kPosRegionEnd; o += 4)   // positions are 4-byte aligned
     {
-        const juce::int64 v = (juce::int64) juce::ByteOrder::littleEndianInt (d + o);
+        const std::int64_t v = (std::int64_t) juce::ByteOrder::littleEndianInt (d + o);
         if (v >= 1 && v <= hi) cand.push_back (v);
     }
-    std::set<juce::int64> candSet (cand.begin(), cand.end());
+    std::set<std::int64_t> candSet (cand.begin(), cand.end());
 
     // A near-full-length take spans the song and sits at 0; never length-match it
     // (its hypothetical end coincides with song-end-ish values and false-matches).
-    const juce::int64 fullLenThresh = songLen > 0 ? (songLen * 85) / 100 : 0;
+    const std::int64_t fullLenThresh = songLen > 0 ? (songLen * 85) / 100 : 0;
 
     // Track starts already claimed so two clips of the same length don't both
     // grab the same position (deterministic misplacement). Each start is used once.
-    std::set<juce::int64> usedStarts;
+    std::set<std::int64_t> usedStarts;
     for (size_t i = 0; i < lengths.size(); ++i)
     {
-        const juce::int64 L = lengths[i];
+        const std::int64_t L = lengths[i];
         if (L <= 0) continue;
         if (fullLenThresh > 0 && L >= fullLenThresh) continue;   // full-length take -> stays 0
-        juce::int64 best = -1;
+        std::int64_t best = -1;
         for (const auto S : candSet)
         {
             if (S + L > hi || usedStarts.count (S)) continue;
             // accept if some candidate end is within tolerance of S + L.
             bool endFound = false;
-            for (juce::int64 e = S + L - kEndTolerance; e <= S + L && ! endFound; ++e)
+            for (std::int64_t e = S + L - kEndTolerance; e <= S + L && ! endFound; ++e)
                 if (candSet.count (e)) endFound = true;
             if (endFound && (best < 0 || S < best)) best = S;
         }
@@ -344,12 +344,12 @@ std::vector<DpMarker> decodeMarkers (const juce::File& songSys)
     if (! songSys.existsAsFile() || ! songSys.loadFileAsData (mb)) return out;
     if ((int) mb.getSize() != kSongSysSize) return out;
     const auto* d = (const juce::uint8*) mb.getData();
-    const juce::int64 songLen = (juce::int64) juce::ByteOrder::littleEndianInt (d + kSongLengthOffset);
+    const std::int64_t songLen = (std::int64_t) juce::ByteOrder::littleEndianInt (d + kSongLengthOffset);
     if (songLen <= 0) return out;
 
     for (int o = kMarkerRegionBegin; o + 8 <= kMarkerRegionEnd; o += 8)
     {
-        const juce::int64 pos  = (juce::int64) juce::ByteOrder::littleEndianInt (d + o);
+        const std::int64_t pos  = (std::int64_t) juce::ByteOrder::littleEndianInt (d + o);
         const juce::uint32 iw  = (juce::uint32) juce::ByteOrder::littleEndianInt (d + o + 4);
         const int idx = (int) (iw >> 24);
         if (pos > 0 && pos <= songLen && (iw & 0x00FFFFFFu) == 0 && idx >= 1 && idx <= 64)
@@ -594,7 +594,7 @@ SongScan scanSongFolder (const juce::File& folder)
         if (stem.equalsIgnoreCase (folder.getFileName())) break;    // prefer <SongName>.WAV
     }
     // Clip start positions from song.sys (device's own data; works with no mixdown).
-    std::vector<juce::int64> lengths;
+    std::vector<std::int64_t> lengths;
     lengths.reserve (scan.tracks.size());
     for (const auto& t : scan.tracks) lengths.push_back (t.fragment.lengthSamples);
     const auto starts = decodeClipStarts (folder.getChildFile ("song.sys"), lengths);

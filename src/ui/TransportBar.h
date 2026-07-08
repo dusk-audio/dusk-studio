@@ -124,20 +124,20 @@ private:
     // deliberate tap is never misread as a scrub-hold and swallowed.
     static constexpr int kHoldThresholdMs   = 400;
     static constexpr float kScrubMultiplier = 10.0f;
-    juce::int64 rewPressedAtMs  = 0;
-    juce::int64 ffwdPressedAtMs = 0;
+    std::int64_t rewPressedAtMs  = 0;
+    std::int64_t ffwdPressedAtMs = 0;
     bool        rewIsScrubbing  = false;
     bool        ffwdIsScrubbing = false;
     // MCU REW/FFWD mirror the above, edge-detected from session.mcu held-flags.
-    juce::int64 mcuRewPressedAtMs  = 0;
-    juce::int64 mcuFfwdPressedAtMs = 0;
+    std::int64_t mcuRewPressedAtMs  = 0;
+    std::int64_t mcuFfwdPressedAtMs = 0;
     bool        mcuRewIsScrubbing  = false;
     bool        mcuFfwdIsScrubbing = false;
     // Last press-counter value seen by the timer, to catch taps that fall
     // entirely between two polls (see Session::McuSessionState).
     juce::uint32 mcuRewLastPressCount  = 0;
     juce::uint32 mcuFfwdLastPressCount = 0;
-    juce::int64 lastScrubTickMs = 0;
+    std::int64_t lastScrubTickMs = 0;
     TransportIconButton clickToggle { "Metronome",
                                           TransportIconButton::Icon::Metronome,
                                           juce::Colour (0xff60c060) };
@@ -168,7 +168,7 @@ private:
     // BPM. After timeout the ring resets (user's starting a new pulse).
     static constexpr int kTapWindow      = 4;
     static constexpr int kTapTimeoutMs   = 2000;
-    std::array<juce::int64, kTapWindow> tapStamps {};
+    std::array<std::int64_t, kTapWindow> tapStamps {};
     int  tapStampCount = 0;
     void onTap();
 

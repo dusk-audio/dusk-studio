@@ -34,7 +34,7 @@ public:
 
     bool        isLoaded() const noexcept    { return ownedReader != nullptr; }
     juce::File  getLoadedFile() const         { return loadedFile; }
-    juce::int64 getLengthSamples() const noexcept;
+    std::int64_t getLengthSamples() const noexcept;
     double      getSourceSampleRate() const noexcept;
 
     // Transport.
@@ -42,8 +42,8 @@ public:
     void stop() noexcept    { playing.store (false, std::memory_order_relaxed); }
     bool isPlaying() const noexcept { return playing.load (std::memory_order_relaxed); }
 
-    juce::int64 getPlayhead() const noexcept     { return playhead.load (std::memory_order_relaxed); }
-    void setPlayhead (juce::int64 p) noexcept    { playhead.store (p, std::memory_order_relaxed); }
+    std::int64_t getPlayhead() const noexcept     { return playhead.load (std::memory_order_relaxed); }
+    void setPlayhead (std::int64_t p) noexcept    { playhead.store (p, std::memory_order_relaxed); }
 
     // Audio thread. Writes `numSamples` of stereo audio to L/R. Both must
     // be valid pointers. Output is silence when not playing or when the
@@ -92,7 +92,7 @@ private:
     std::atomic<double> speedRatio { 1.0 };
     juce::AudioBuffer<float>  inScratch;
     juce::LagrangeInterpolator interpL, interpR;
-    juce::int64 resampleReadPos = -1;   // audio thread only
+    std::int64_t resampleReadPos = -1;   // audio thread only
     int    preparedBlockSize   = 0;    // message thread only
     double preparedDeviceRate  = 0.0;  // message thread only
 
@@ -115,6 +115,6 @@ private:
                                         // successful parkAndWaitForAudio
 
     std::atomic<bool>        playing  { false };
-    std::atomic<juce::int64> playhead { 0 };
+    std::atomic<std::int64_t> playhead { 0 };
 };
 } // namespace duskstudio

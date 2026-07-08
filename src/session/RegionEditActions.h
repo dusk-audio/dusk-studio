@@ -39,7 +39,7 @@ class SplitRegionAction final : public juce::UndoableAction
 public:
     SplitRegionAction (Session& session, AudioEngine& engine,
                         int trackIdx, int regionIdx,
-                        juce::int64 splitAtTimelineSample);
+                        std::int64_t splitAtTimelineSample);
 
     bool perform() override;
     bool undo()    override;
@@ -50,7 +50,7 @@ private:
     AudioEngine& engine;
     int trackIdx;
     int regionIdx;
-    juce::int64 splitAt;
+    std::int64_t splitAt;
     AudioRegion originalState;  // captured at first perform; restored on undo
 };
 
@@ -84,9 +84,9 @@ class CreateMidiRegionAction final : public juce::UndoableAction
 public:
     CreateMidiRegionAction (Session& session,
                               int trackIdx,
-                              juce::int64 timelineStart,
-                              juce::int64 lengthInSamples,
-                              juce::int64 lengthInTicks);
+                              std::int64_t timelineStart,
+                              std::int64_t lengthInSamples,
+                              std::int64_t lengthInTicks);
 
     bool perform() override;
     bool undo()    override;
@@ -100,9 +100,9 @@ public:
 private:
     Session&    session;
     int         trackIdx;
-    juce::int64 timelineStart;
-    juce::int64 lengthInSamples;
-    juce::int64 lengthInTicks;
+    std::int64_t timelineStart;
+    std::int64_t lengthInSamples;
+    std::int64_t lengthInTicks;
     int         insertedAt = -1;
 };
 

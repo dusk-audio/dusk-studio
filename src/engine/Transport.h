@@ -1,6 +1,6 @@
 #pragma once
 
-#include <juce_core/juce_core.h>
+#include <cstdint>
 #include <atomic>
 
 namespace duskstudio
@@ -20,8 +20,8 @@ public:
 
     void setState (State s) noexcept { state.store (s, std::memory_order_relaxed); }
 
-    juce::int64 getPlayhead() const noexcept { return playheadSamples.load (std::memory_order_relaxed); }
-    void setPlayhead (juce::int64 s) noexcept { playheadSamples.store (s, std::memory_order_relaxed); }
+    std::int64_t getPlayhead() const noexcept { return playheadSamples.load (std::memory_order_relaxed); }
+    void setPlayhead (std::int64_t s) noexcept { playheadSamples.store (s, std::memory_order_relaxed); }
 
     // Called from the audio callback when state is Playing or Recording.
     void advancePlayhead (int numSamples) noexcept
@@ -35,9 +35,9 @@ public:
     // timeline (loop-take-stacking is a future feature).
     bool        isLoopEnabled() const noexcept    { return loopEnabled.load (std::memory_order_relaxed); }
     void        setLoopEnabled (bool e) noexcept  { loopEnabled.store (e, std::memory_order_relaxed); }
-    juce::int64 getLoopStart() const noexcept     { return loopStart.load (std::memory_order_relaxed); }
-    juce::int64 getLoopEnd() const noexcept       { return loopEnd.load (std::memory_order_relaxed); }
-    void        setLoopRange (juce::int64 s, juce::int64 e) noexcept
+    std::int64_t getLoopStart() const noexcept     { return loopStart.load (std::memory_order_relaxed); }
+    std::int64_t getLoopEnd() const noexcept       { return loopEnd.load (std::memory_order_relaxed); }
+    void        setLoopRange (std::int64_t s, std::int64_t e) noexcept
     {
         loopStart.store (s, std::memory_order_relaxed);
         loopEnd.store   (e, std::memory_order_relaxed);
@@ -49,9 +49,9 @@ public:
     // is not written to disk.
     bool        isPunchEnabled() const noexcept    { return punchEnabled.load (std::memory_order_relaxed); }
     void        setPunchEnabled (bool e) noexcept  { punchEnabled.store (e, std::memory_order_relaxed); }
-    juce::int64 getPunchIn() const noexcept        { return punchIn.load (std::memory_order_relaxed); }
-    juce::int64 getPunchOut() const noexcept       { return punchOut.load (std::memory_order_relaxed); }
-    void        setPunchRange (juce::int64 s, juce::int64 e) noexcept
+    std::int64_t getPunchIn() const noexcept        { return punchIn.load (std::memory_order_relaxed); }
+    std::int64_t getPunchOut() const noexcept       { return punchOut.load (std::memory_order_relaxed); }
+    void        setPunchRange (std::int64_t s, std::int64_t e) noexcept
     {
         punchIn.store  (s, std::memory_order_relaxed);
         punchOut.store (e, std::memory_order_relaxed);
@@ -59,14 +59,14 @@ public:
 
 private:
     std::atomic<State>       state            { State::Stopped };
-    std::atomic<juce::int64> playheadSamples  { 0 };
+    std::atomic<std::int64_t> playheadSamples  { 0 };
 
     std::atomic<bool>        loopEnabled      { false };
-    std::atomic<juce::int64> loopStart        { 0 };
-    std::atomic<juce::int64> loopEnd          { 0 };
+    std::atomic<std::int64_t> loopStart        { 0 };
+    std::atomic<std::int64_t> loopEnd          { 0 };
 
     std::atomic<bool>        punchEnabled     { false };
-    std::atomic<juce::int64> punchIn          { 0 };
-    std::atomic<juce::int64> punchOut         { 0 };
+    std::atomic<std::int64_t> punchIn          { 0 };
+    std::atomic<std::int64_t> punchOut         { 0 };
 };
 } // namespace duskstudio

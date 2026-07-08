@@ -34,9 +34,9 @@ MiniTimelineStrip::~MiniTimelineStrip()
     engine.getUndoManager().removeChangeListener (this);
 }
 
-juce::int64 MiniTimelineStrip::songEndSamples() const noexcept
+std::int64_t MiniTimelineStrip::songEndSamples() const noexcept
 {
-    juce::int64 end = engine.getTransport().getPlayhead();
+    std::int64_t end = engine.getTransport().getPlayhead();
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         for (const auto& r : session.track (t).regions)
@@ -50,25 +50,25 @@ juce::int64 MiniTimelineStrip::songEndSamples() const noexcept
     for (const auto& mk : session.getMarkers())
         end = juce::jmax (end, mk.timelineSamples);
     const double sr = engine.getCurrentSampleRate();
-    const juce::int64 floorLen = (juce::int64) ((sr > 0.0 ? sr : 48000.0) * 60.0);  // 60 s
+    const std::int64_t floorLen = (std::int64_t) ((sr > 0.0 ? sr : 48000.0) * 60.0);  // 60 s
     return juce::jmax (end, floorLen);
 }
 
-int MiniTimelineStrip::xForSample (juce::int64 s, juce::int64 end) const noexcept
+int MiniTimelineStrip::xForSample (std::int64_t s, std::int64_t end) const noexcept
 {
     const int usable = juce::jmax (1, getWidth() - kPadL - kPadR);
     const double frac = end > 0 ? juce::jlimit (0.0, 1.0, (double) s / (double) end) : 0.0;
     return kPadL + (int) std::lround (frac * (double) usable);
 }
 
-juce::int64 MiniTimelineStrip::sampleForX (int x, juce::int64 end) const noexcept
+std::int64_t MiniTimelineStrip::sampleForX (int x, std::int64_t end) const noexcept
 {
     const int usable = juce::jmax (1, getWidth() - kPadL - kPadR);
     const double frac = juce::jlimit (0.0, 1.0, (double) (x - kPadL) / (double) usable);
-    return (juce::int64) (frac * (double) end);
+    return (std::int64_t) (frac * (double) end);
 }
 
-int MiniTimelineStrip::markerIndexAtX (int x, juce::int64 end) const noexcept
+int MiniTimelineStrip::markerIndexAtX (int x, std::int64_t end) const noexcept
 {
     // Nearest marker within the hit radius, not the first — when two ticks fall
     // inside kMarkerHitPx, the closer one should win.
@@ -90,8 +90,8 @@ void MiniTimelineStrip::paint (juce::Graphics& g)
     g.setColour (kBorder);
     g.drawRoundedRectangle (b.reduced (0.5f), 3.0f, 0.8f);
 
-    const juce::int64 end = songEndSamples();
-    const juce::int64 ph  = engine.getTransport().getPlayhead();
+    const std::int64_t end = songEndSamples();
+    const std::int64_t ph  = engine.getTransport().getPlayhead();
     const float midY = b.getCentreY();
     const int   x0 = xForSample (0,   end);
     const int   x1 = xForSample (end, end);
@@ -178,7 +178,7 @@ int MiniTimelineStrip::markerAtX (int x) const noexcept
 
 void MiniTimelineStrip::mouseDown (const juce::MouseEvent& ev)
 {
-    const juce::int64 end = songEndSamples();
+    const std::int64_t end = songEndSamples();
     const int mi = markerAtX (ev.x);
     if (mi >= 0)
         engine.getTransport().setPlayhead (session.getMarkers()[(size_t) mi].timelineSamples);

@@ -13,7 +13,7 @@ namespace duskstudio
 class AddMarkerAction final : public juce::UndoableAction
 {
 public:
-    AddMarkerAction (Session& session, juce::int64 timelineSamples,
+    AddMarkerAction (Session& session, std::int64_t timelineSamples,
                        juce::String name = {});
 
     bool perform() override;
@@ -26,7 +26,7 @@ public:
 
 private:
     Session&     session;
-    juce::int64  timelineSamples;
+    std::int64_t  timelineSamples;
     juce::String name;
     int          insertedIdx = -1;
 };
@@ -58,8 +58,8 @@ class MoveMarkerAction final : public juce::UndoableAction
 {
 public:
     MoveMarkerAction (Session& session, juce::String markerName,
-                        juce::int64 fromTimelineSamples,
-                        juce::int64 toTimelineSamples);
+                        std::int64_t fromTimelineSamples,
+                        std::int64_t toTimelineSamples);
 
     bool perform() override;
     bool undo()    override;
@@ -68,7 +68,7 @@ public:
 private:
     Session&     session;
     juce::String name;
-    juce::int64  fromSamples;
-    juce::int64  toSamples;
+    std::int64_t  fromSamples;
+    std::int64_t  toSamples;
 };
 } // namespace duskstudio

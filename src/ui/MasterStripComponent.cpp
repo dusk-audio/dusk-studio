@@ -1388,7 +1388,7 @@ void MasterStripComponent::captureFaderWritePoint (float denormDb)
     if (! lane.empty())
     {
         constexpr float kDeltaEps = 0.001f;
-        constexpr juce::int64 kMaxSpanSamples = 22050;
+        constexpr std::int64_t kMaxSpanSamples = 22050;
         const auto& last = lane.back();
         if (std::abs (pt.value - last.value) < kDeltaEps
             && (pt.timeSamples - last.timeSamples) < kMaxSpanSamples)
@@ -1401,7 +1401,7 @@ void MasterStripComponent::captureFaderWritePoint (float denormDb)
         {
             auto cutoff = std::lower_bound (lane.begin(), lane.end(),
                 pt.timeSamples,
-                [] (const AutomationPoint& a, juce::int64 t) { return a.timeSamples < t; });
+                [] (const AutomationPoint& a, std::int64_t t) { return a.timeSamples < t; });
             lane.erase (cutoff, lane.end());
         }
         if (! lane.empty() && lane.back().timeSamples == pt.timeSamples)

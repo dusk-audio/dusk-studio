@@ -3863,7 +3863,7 @@ void ChannelStripComponent::captureWritePoint (AutomationParam param, float deno
     if (isContinuousParam (param) && ! lane.empty())
     {
         constexpr float kDeltaEps = 0.001f;
-        constexpr juce::int64 kMaxSpanSamples = 22050;   // ~500 ms @ 44.1 k
+        constexpr std::int64_t kMaxSpanSamples = 22050;   // ~500 ms @ 44.1 k
         const auto& last = lane.back();
         if (std::abs (pt.value - last.value) < kDeltaEps
             && pt.timeSamples >= last.timeSamples
@@ -3890,7 +3890,7 @@ void ChannelStripComponent::captureWritePoint (AutomationParam param, float deno
         {
             auto cutoff = std::lower_bound (lane.begin(), lane.end(),
                 pt.timeSamples,
-                [] (const AutomationPoint& a, juce::int64 t) { return a.timeSamples < t; });
+                [] (const AutomationPoint& a, std::int64_t t) { return a.timeSamples < t; });
             lane.erase (cutoff, lane.end());
         }
         // Same-sample replace: keep the latest value at this exact sample.

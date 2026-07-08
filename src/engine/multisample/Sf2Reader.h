@@ -107,10 +107,10 @@ struct Sf2File
     // Byte offset + length of the sdta 'smpl' chunk PCM (16-bit LE) in
     // the source file, for on-demand sample extraction. sm24 is the
     // optional 8-bit LSB extension for 24-bit samples (0 size = absent).
-    juce::int64 smplOffset { 0 };
-    juce::int64 smplSize   { 0 };
-    juce::int64 sm24Offset { 0 };
-    juce::int64 sm24Size   { 0 };
+    std::int64_t smplOffset { 0 };
+    std::int64_t smplSize   { 0 };
+    std::int64_t sm24Offset { 0 };
+    std::int64_t sm24Size   { 0 };
 
     bool         ok    { false };
     juce::String error;

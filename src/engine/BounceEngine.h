@@ -100,7 +100,7 @@ public:
     // until done; unlike start() it does NOT spin the worker thread. Returns
     // false on failure (getLastError set); deletes a partial file on failure.
     bool renderFreezeTrack (int trackIndex, const juce::File& outFile,
-                            juce::int64 lenSamples, double sampleRate,
+                            std::int64_t lenSamples, double sampleRate,
                             int blockSize = 1024);
 
     // Async wrapper around renderFreezeTrack: spins the worker thread (like
@@ -108,7 +108,7 @@ public:
     // isRendering()/getProgress(), cancel() to abort, onFinished fires on the
     // worker thread when done. False if a render is already in flight.
     bool startFreeze (int trackIndex, const juce::File& outFile,
-                      juce::int64 lenSamples, double sampleRate, int blockSize = 1024);
+                      std::int64_t lenSamples, double sampleRate, int blockSize = 1024);
 
     bool         isRendering() const noexcept { return rendering.load (std::memory_order_relaxed); }
     float        getProgress() const noexcept { return progress.load (std::memory_order_relaxed); }
@@ -124,7 +124,7 @@ public:
         const juce::ScopedLock lock (lastErrorLock);
         return lastError;
     }
-    juce::int64  getRenderedSamples() const noexcept { return renderedSamples.load (std::memory_order_relaxed); }
+    std::int64_t  getRenderedSamples() const noexcept { return renderedSamples.load (std::memory_order_relaxed); }
 
     // Called on the worker thread. Use MessageManager::callAsync for UI.
     std::function<void()>                  onStarted;
@@ -142,24 +142,24 @@ private:
     double       renderSampleRate = 0.0;
     int          renderBlockSize  = 1024;
     double       tailSeconds      = 5.0;
-    juce::int64  totalSamples     = 0;
+    std::int64_t  totalSamples     = 0;
     Mode         renderMode       = Mode::MasterMix;
     Format       renderFormat     = Format::Wav;
     int          renderBitrateKbps = 320;
     int          renderWavBitDepth = 24;
     int          freezeTrackIndex = -1;   // Mode::FreezeTrack target
-    juce::int64  freezeLenSamples = 0;
+    std::int64_t  freezeLenSamples = 0;
 
     std::atomic<bool>  rendering        { false };
     std::atomic<bool>  cancelRequested  { false };
     std::atomic<float> progress         { 0.0f };
-    std::atomic<juce::int64> renderedSamples { 0 };
+    std::atomic<std::int64_t> renderedSamples { 0 };
     std::atomic<int>   currentStemIndex   { 0 };
     std::atomic<int>   totalStemsToRender { 0 };
     juce::String lastError;
     juce::CriticalSection lastErrorLock;
 
-    juce::int64 computeBounceLength (double sampleRate, double tail) const;
+    std::int64_t computeBounceLength (double sampleRate, double tail) const;
 
     // Create the WAV or MP3 writer for the chosen format over an already-opened
     // (truncated) output stream. Returns null + sets errOut on failure. Takes
@@ -172,7 +172,7 @@ private:
     // stemFractionStart + stemFractionWidth slice the progress bar so
     // the UI sees monotonic 0..1 across all stems.
     bool renderOneStem (const juce::File& outFile,
-                          juce::int64 lenSamples,
+                          std::int64_t lenSamples,
                           float stemFractionStart,
                           float stemFractionWidth);
 };

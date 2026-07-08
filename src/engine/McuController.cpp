@@ -426,7 +426,7 @@ juce::MidiBuffer McuController::buildEmitBuffer (bool forceAll)
     // emit pure digits with no separators).
     std::array<char, mcu::sysex::kTimecodeDigits> tc {};
     tc.fill (' ');
-    juce::int64 playhead = 0;
+    std::int64_t playhead = 0;
     if (transportProvider)
         if (auto* transport = transportProvider())
             playhead = transport->getPlayhead();

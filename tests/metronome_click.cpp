@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <vector>
 
 using Catch::Matchers::WithinAbs;
@@ -43,7 +44,7 @@ float runRolling (duskstudio::Metronome& m, int numBlocks, bool rolling)
 {
     std::vector<float> L (kBlock), R (kBlock);
     float peak = 0.0f;
-    juce::int64 playhead = 0;
+    std::int64_t playhead = 0;
     for (int b = 0; b < numBlocks; ++b)
     {
         std::fill (L.begin(), L.end(), 0.0f);

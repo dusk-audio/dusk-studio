@@ -19,7 +19,6 @@ src/dsp/MasteringChain.h
 src/dsp/MasteringDigitalEq.cpp
 src/dsp/MasteringDigitalEq.h
 src/dsp/Metronome.cpp
-src/dsp/Metronome.h
 src/engine/AtomicPark.h
 src/engine/AudioEngine.cpp
 src/engine/AudioEngine.h
@@ -64,7 +63,6 @@ src/engine/PluginSlot.h
 src/engine/RecordManager.cpp
 src/engine/RecordManager.h
 src/engine/RtPriority.h
-src/engine/Transport.h
 src/engine/alsa/AlsaAudioIODevice.cpp
 src/engine/alsa/AlsaAudioIODevice.h
 src/engine/alsa/AlsaAudioIODeviceType.cpp

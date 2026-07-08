@@ -76,7 +76,7 @@ public:
     // Clone immediately after the original via PasteRegionAction.
     bool duplicateSelectedRegion();
     // Negative deltaSamples moves earlier. Clamped at zero.
-    bool nudgeSelectedRegion (juce::int64 deltaSamples);
+    bool nudgeSelectedRegion (std::int64_t deltaSamples);
     // Forward: next previous take becomes live, old live moves to back.
     // Backward: last previous take becomes live, old moves to front.
     bool cycleSelectedTakeForward();
@@ -105,7 +105,7 @@ public:
     // trackHint = row under the drop, -1 if dropped on ruler / outside.
     // Host (batch-import) picks adjacent tracks for subsequent files.
     std::function<void (juce::Array<juce::File> files,
-                         juce::int64 timelineStart,
+                         std::int64_t timelineStart,
                          int trackHint)> onFilesDropped;
 
     bool isInterestedInFileDrag (const juce::StringArray& files) override;
@@ -165,11 +165,11 @@ private:
 
     // Rightmost sample any content occupies (audio + MIDI regions + playhead).
     // Shared by pixelsPerSecond() and zoomFit() so their extent can't diverge.
-    juce::int64 rightmostContentSample() const noexcept;
+    std::int64_t rightmostContentSample() const noexcept;
 
     double pixelsPerSecond() const noexcept;
-    juce::int64 sampleAtX (int x) const noexcept;
-    int xForSample (juce::int64 s) const noexcept;
+    std::int64_t sampleAtX (int x) const noexcept;
+    int xForSample (std::int64_t s) const noexcept;
 
     // op = which sub-area (body / edges / fade handles / take badge).
     enum class RegionOp { None, Move, TrimStart, TrimEnd, TakeBadge, FadeIn, FadeOut, AdjustGain };
@@ -219,18 +219,18 @@ private:
     // routes through commitTempoPoints so it's a single undoable transaction.
     void commitTempoPoints (std::vector<duskstudio::TempoPoint> after,
                              const juce::String& name);
-    void promptAddTempoPoint (juce::int64 sample);   // prompt, add on accept
-    void editTempoPointBpm (juce::int64 atSample);
+    void promptAddTempoPoint (std::int64_t sample);   // prompt, add on accept
+    void editTempoPointBpm (std::int64_t atSample);
     // Edit the song's starting tempo when no tempo map exists yet (the bar-1
     // base handle). hitTestTempoPoint returns kTempoBaseHandle for it.
     void editBaseTempo();
-    void deleteTempoPoint (juce::int64 atSample);
+    void deleteTempoPoint (std::int64_t atSample);
     void paintTempoPoints (juce::Graphics&);
 
     Session& session;
     AudioEngine& engine;
 
-    juce::int64 lastPlayhead = -1;
+    std::int64_t lastPlayhead = -1;
 
     // Playhead band repaint rides the display's vblank so motion steps
     // once per frame. A free-running 30 Hz Timer beats against the
@@ -244,7 +244,7 @@ private:
     float userZoomFactor = 1.0f;
     // Leftmost visible sample when zoomed. 0 when factor == 1. Wheel +
     // zoom clamp it so the visible window stays inside content.
-    juce::int64 scrollSamples = 0;
+    std::int64_t scrollSamples = 0;
 
     bool chaseEnabled = false;
 
@@ -303,11 +303,11 @@ private:
     std::array<juce::Colour, Session::kNumTracks> lastColours;
 
     bool        lastLoopEnabled  = false;
-    juce::int64 lastLoopStart    = -1;
-    juce::int64 lastLoopEnd      = -1;
+    std::int64_t lastLoopStart    = -1;
+    std::int64_t lastLoopEnd      = -1;
     bool        lastPunchEnabled = false;
-    juce::int64 lastPunchIn      = -1;
-    juce::int64 lastPunchOut     = -1;
+    std::int64_t lastPunchIn      = -1;
+    std::int64_t lastPunchOut     = -1;
 
     // Full-repaint on Stopped <-> Recording — the thin playhead band
     // isn't wide enough to cover the live-recording overlay's first
@@ -320,12 +320,12 @@ private:
         int track     = -1;
         int regionIdx = -1;
         RegionOp op   = RegionOp::None;
-        juce::int64 mouseDownSample = 0;
-        juce::int64 origTimelineStart = 0;
-        juce::int64 origLength        = 0;
-        juce::int64 origSourceOffset  = 0;
-        juce::int64 origFadeIn        = 0;
-        juce::int64 origFadeOut       = 0;
+        std::int64_t mouseDownSample = 0;
+        std::int64_t origTimelineStart = 0;
+        std::int64_t origLength        = 0;
+        std::int64_t origSourceOffset  = 0;
+        std::int64_t origFadeIn        = 0;
+        std::int64_t origFadeOut       = 0;
         float       origGainDb        = 0.0f;
 
         // Captured at mouseDown by (track, regionIdx) — the latter can
@@ -336,7 +336,7 @@ private:
         {
             int track;
             int regionIdx;
-            juce::int64 origTimelineStart;
+            std::int64_t origTimelineStart;
             float       origGainDb;
         };
         std::vector<AdditionalOrig> additional;
@@ -349,8 +349,8 @@ private:
     {
         int track     = -1;
         int regionIdx = -1;
-        juce::int64 mouseDownSample   = 0;
-        juce::int64 origTimelineStart = 0;
+        std::int64_t mouseDownSample   = 0;
+        std::int64_t origTimelineStart = 0;
         MidiRegion  origState;
         bool active() const noexcept { return track >= 0 && regionIdx >= 0; }
         void clear() noexcept
@@ -371,8 +371,8 @@ private:
     struct RulerSelection
     {
         bool active     = false;
-        juce::int64 originSample  = 0;
-        juce::int64 currentSample = 0;
+        std::int64_t originSample  = 0;
+        std::int64_t currentSample = 0;
     };
     RulerSelection rulerSelection;
 
@@ -382,8 +382,8 @@ private:
         bool active   = false;
         bool moved    = false;
         int  index    = -1;
-        juce::int64 originSample = 0;
-        juce::int64 mouseDownSample = 0;
+        std::int64_t originSample = 0;
+        std::int64_t mouseDownSample = 0;
     };
     MarkerDrag markerDrag;
 
@@ -393,9 +393,9 @@ private:
     {
         bool       active = false;
         BracketHit type   = BracketHit::None;
-        juce::int64 mouseDownSample = 0;
-        juce::int64 origStart = 0;
-        juce::int64 origEnd   = 0;
+        std::int64_t mouseDownSample = 0;
+        std::int64_t origStart = 0;
+        std::int64_t origEnd   = 0;
     };
     BracketDrag bracketDrag;
 
@@ -408,7 +408,7 @@ private:
         bool active = false;
         bool moved  = false;
         int  index  = -1;
-        juce::int64 mouseDownSample = 0;
+        std::int64_t mouseDownSample = 0;
         std::vector<duskstudio::TempoPoint> orig;
     };
     TempoDrag tempoDrag;

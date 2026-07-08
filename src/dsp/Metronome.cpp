@@ -1,4 +1,5 @@
 #include "Metronome.h"
+#include <juce_audio_basics/juce_audio_basics.h>
 #include <cmath>
 
 namespace duskstudio
@@ -16,11 +17,11 @@ void Metronome::reset() noexcept
     clickPos = -1;
     for (auto& v : voices) v.pos = -1;
     nextVoice = 0;
-    lastBeatIdx = std::numeric_limits<juce::int64>::min();
+    lastBeatIdx = std::numeric_limits<std::int64_t>::min();
     lastBeatSeeded = false;
 }
 
-void Metronome::process (juce::int64 playheadStart, bool transportRolling,
+void Metronome::process (std::int64_t playheadStart, bool transportRolling,
                           float* L, float* R, int numSamples,
                           bool forceEnable) noexcept
 {
@@ -103,7 +104,7 @@ void Metronome::process (juce::int64 playheadStart, bool transportRolling,
 
     for (int i = 0; i < numSamples; ++i)
     {
-        const juce::int64 absSample = playheadStart + i;
+        const std::int64_t absSample = playheadStart + i;
 
         if (transportRolling && effectiveEnabled)
         {
@@ -112,8 +113,8 @@ void Metronome::process (juce::int64 playheadStart, bool transportRolling,
             // the playhead to startSample - countInSamples). The old ceil()-1
             // form mis-indexed exact-beat negative positions, double/skipping
             // clicks across sample 0.
-            const juce::int64 beatIdx =
-                (juce::int64) std::floor ((double) absSample / samplesPerBeat);
+            const std::int64_t beatIdx =
+                (std::int64_t) std::floor ((double) absSample / samplesPerBeat);
 
             if (! lastBeatSeeded)
             {

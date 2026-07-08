@@ -44,7 +44,7 @@ juce::String formatDuration (double seconds)
     if (seconds < 60.0)
         return juce::String (seconds, 1) + " s";
 
-    const auto total = (juce::int64) std::round (seconds);
+    const auto total = (std::int64_t) std::round (seconds);
     const int h = (int) (total / 3600);
     const int m = (int) ((total % 3600) / 60);
     const int s = (int) (total % 60);
@@ -185,7 +185,7 @@ struct MultiImportTargetPicker::Row : public juce::Component
 
 MultiImportTargetPicker::MultiImportTargetPicker (Session& s,
                                                     std::vector<ImportTargetPicker::FileSummary> sums,
-                                                    juce::int64 timelineStartSamples,
+                                                    std::int64_t timelineStartSamples,
                                                     std::function<void (std::vector<Assignment>)> commit,
                                                     std::function<void()> cancel)
     : session (s),

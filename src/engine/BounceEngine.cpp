@@ -60,14 +60,14 @@ BounceEngine::makeWriter (std::unique_ptr<juce::FileOutputStream> outStream,
     return writer;
 }
 
-juce::int64 BounceEngine::computeBounceLength (double sampleRate, double tail) const
+std::int64_t BounceEngine::computeBounceLength (double sampleRate, double tail) const
 {
     // Longest region end across all tracks defines the natural bounce end;
     // tail extends that so reverb/comp/EQ ringouts decay before we cut.
     // MIDI regions and freeze WAVs count too — a virtual-instrument song has
     // no audio regions at all, and MIDI playing past the last audio region
     // must not be truncated.
-    juce::int64 maxRegionEnd = 0;
+    std::int64_t maxRegionEnd = 0;
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         const auto& track = session.track (t);
@@ -81,8 +81,8 @@ juce::int64 BounceEngine::computeBounceLength (double sampleRate, double tail) c
                                         track.frozenRegion.timelineStart
                                             + track.frozenRegion.lengthInSamples);
     }
-    if (maxRegionEnd <= 0) maxRegionEnd = (juce::int64) (sampleRate * 1.0);  // 1 s of silence
-    return maxRegionEnd + (juce::int64) (sampleRate * tail);
+    if (maxRegionEnd <= 0) maxRegionEnd = (std::int64_t) (sampleRate * 1.0);  // 1 s of silence
+    return maxRegionEnd + (std::int64_t) (sampleRate * tail);
 }
 
 bool BounceEngine::start (const juce::File& outFile, double sr, int bs, double tail,
@@ -129,9 +129,9 @@ bool BounceEngine::start (const juce::File& outFile, double sr, int bs, double t
         const auto playerLen = engine.getMasteringPlayer().getLengthSamples();
         const auto sourceSr  = engine.getMasteringPlayer().getSourceSampleRate();
         const auto playerLenAtRender = sourceSr > 0.0
-            ? (juce::int64) std::llround ((double) playerLen * renderSampleRate / sourceSr)
+            ? (std::int64_t) std::llround ((double) playerLen * renderSampleRate / sourceSr)
             : playerLen;
-        totalSamples = playerLenAtRender + (juce::int64) (renderSampleRate * tailSeconds);
+        totalSamples = playerLenAtRender + (std::int64_t) (renderSampleRate * tailSeconds);
         if (totalSamples <= 0) return false;  // no file loaded
     }
 
@@ -303,21 +303,21 @@ void BounceEngine::run()
     // the deepest aux-lane latency. Render that many extra samples and discard
     // them up front so the file isn't shifted. The MasteringChain path bypasses
     // the channel strips and aux lanes, so it carries no lead-in.
-    const juce::int64 leadIn = (renderMode == Mode::MasteringChain)
+    const std::int64_t leadIn = (renderMode == Mode::MasteringChain)
                                  ? 0
-                                 : (juce::int64) engine.getAggregatePdcLatencySamples()
-                                     + (juce::int64) engine.getMasterDryPdcTargetSamples();
-    const juce::int64 toRender = totalSamples + leadIn;
+                                 : (std::int64_t) engine.getAggregatePdcLatencySamples()
+                                     + (std::int64_t) engine.getMasterDryPdcTargetSamples();
+    const std::int64_t toRender = totalSamples + leadIn;
 
-    juce::int64 done    = 0;   // samples processed through the engine
-    juce::int64 written = 0;   // samples committed to the file
-    juce::int64 dropped = 0;   // lead-in samples discarded
+    std::int64_t done    = 0;   // samples processed through the engine
+    std::int64_t written = 0;   // samples committed to the file
+    std::int64_t dropped = 0;   // lead-in samples discarded
     bool succeeded = true;
     const bool dither16 = renderFormat == Format::Wav && renderWavBitDepth == 16;
     juce::Random ditherRng;
     while (done < toRender && ! cancelRequested.load (std::memory_order_relaxed))
     {
-        const int remaining = (int) juce::jmin ((juce::int64) renderBlockSize,
+        const int remaining = (int) juce::jmin ((std::int64_t) renderBlockSize,
                                                   toRender - done);
 
         // Reset outputs each block.
@@ -331,7 +331,7 @@ void BounceEngine::run()
         int writeStart = 0;
         if (dropped < leadIn)
         {
-            writeStart = (int) juce::jmin ((juce::int64) remaining, leadIn - dropped);
+            writeStart = (int) juce::jmin ((std::int64_t) remaining, leadIn - dropped);
             dropped += writeStart;
         }
         const int writeCount = remaining - writeStart;
@@ -421,7 +421,7 @@ void BounceEngine::run()
 }
 
 bool BounceEngine::renderOneStem (const juce::File& outFile,
-                                    juce::int64 lenSamples,
+                                    std::int64_t lenSamples,
                                     float stemFractionStart,
                                     float stemFractionWidth)
 {
@@ -470,17 +470,17 @@ bool BounceEngine::renderOneStem (const juce::File& outFile,
     // path, so it's delayed by the deepest track latency plus the
     // master-stage aux PDC. Drop those leading samples so all stems stay
     // mutually aligned and start at sample 0.
-    const juce::int64 leadIn  = (juce::int64) engine.getAggregatePdcLatencySamples()
-                                  + (juce::int64) engine.getMasterDryPdcTargetSamples();
-    const juce::int64 toRender = lenSamples + leadIn;
+    const std::int64_t leadIn  = (std::int64_t) engine.getAggregatePdcLatencySamples()
+                                  + (std::int64_t) engine.getMasterDryPdcTargetSamples();
+    const std::int64_t toRender = lenSamples + leadIn;
 
-    juce::int64 done    = 0;
-    juce::int64 written = 0;
-    juce::int64 dropped = 0;
+    std::int64_t done    = 0;
+    std::int64_t written = 0;
+    std::int64_t dropped = 0;
     bool ok = true;
     while (done < toRender && ! cancelRequested.load (std::memory_order_relaxed))
     {
-        const int remaining = (int) juce::jmin ((juce::int64) renderBlockSize,
+        const int remaining = (int) juce::jmin ((std::int64_t) renderBlockSize,
                                                   toRender - done);
 
         for (auto& o : outputs) std::fill (o.begin(), o.end(), 0.0f);
@@ -492,7 +492,7 @@ bool BounceEngine::renderOneStem (const juce::File& outFile,
         int writeStart = 0;
         if (dropped < leadIn)
         {
-            writeStart = (int) juce::jmin ((juce::int64) remaining, leadIn - dropped);
+            writeStart = (int) juce::jmin ((std::int64_t) remaining, leadIn - dropped);
             dropped += writeStart;
         }
         const int writeCount = remaining - writeStart;
@@ -629,7 +629,7 @@ bool BounceEngine::runStemsMode()
 }
 
 bool BounceEngine::startFreeze (int trackIndex, const juce::File& outFile,
-                                juce::int64 lenSamples, double sampleRate, int blockSize)
+                                std::int64_t lenSamples, double sampleRate, int blockSize)
 {
     if (rendering.load (std::memory_order_relaxed))
         return false;
@@ -663,7 +663,7 @@ bool BounceEngine::startFreeze (int trackIndex, const juce::File& outFile,
 }
 
 bool BounceEngine::renderFreezeTrack (int trackIndex, const juce::File& outFile,
-                                      juce::int64 lenSamples, double sampleRate, int blockSize)
+                                      std::int64_t lenSamples, double sampleRate, int blockSize)
 {
     // Clear any stale error from a prior render at the API boundary: a direct
     // synchronous call (test harness) doesn't go through startFreeze (which clears
@@ -760,16 +760,16 @@ bool BounceEngine::renderFreezeTrack (int trackIndex, const juce::File& outFile,
     const bool isMidiTrack =
         session.track (trackIndex).mode.load (std::memory_order_relaxed)
             == (int) Track::Mode::Midi;
-    const juce::int64 leadIn = isMidiTrack ? 0
-        : (juce::int64) engine.getChannelStrip (trackIndex)
+    const std::int64_t leadIn = isMidiTrack ? 0
+        : (std::int64_t) engine.getChannelStrip (trackIndex)
                               .getPluginSlot().getLatencySamples();
-    const juce::int64 toRender = lenSamples + leadIn;
+    const std::int64_t toRender = lenSamples + leadIn;
 
-    juce::int64 done = 0, written = 0, dropped = 0;
+    std::int64_t done = 0, written = 0, dropped = 0;
     bool ok = true;
     while (done < toRender && ! cancelRequested.load (std::memory_order_relaxed))
     {
-        const int remaining = (int) juce::jmin ((juce::int64) renderBlockSize, toRender - done);
+        const int remaining = (int) juce::jmin ((std::int64_t) renderBlockSize, toRender - done);
         for (auto& o : outputs) std::fill (o.begin(), o.end(), 0.0f);
         std::fill (capL.begin(), capL.end(), 0.0f);
         std::fill (capR.begin(), capR.end(), 0.0f);
@@ -781,7 +781,7 @@ bool BounceEngine::renderFreezeTrack (int trackIndex, const juce::File& outFile,
         int writeStart = 0;
         if (dropped < leadIn)
         {
-            writeStart = (int) juce::jmin ((juce::int64) remaining, leadIn - dropped);
+            writeStart = (int) juce::jmin ((std::int64_t) remaining, leadIn - dropped);
             dropped += writeStart;
         }
         const int writeCount = remaining - writeStart;

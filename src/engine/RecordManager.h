@@ -21,10 +21,10 @@ public:
     ~RecordManager();
 
     // Message thread. False if no tracks armed.
-    bool startRecording (double sampleRate, juce::int64 startSample);
+    bool startRecording (double sampleRate, std::int64_t startSample);
 
     // Message thread. Closes writers, finalizes WAV, appends regions.
-    void stopRecording (juce::int64 endSample);
+    void stopRecording (std::int64_t endSample);
 
     // Audio thread. R == nullptr for mono. numSamples == 0 early-returns.
     void writeInputBlock (int trackIndex,
@@ -37,7 +37,7 @@ public:
     // drain time. Lock-free push into a pre-sized ring.
     void writeMidiBlock (int trackIndex,
                           const juce::MidiBuffer& events,
-                          juce::int64 blockStartFromRecord) noexcept;
+                          std::int64_t blockStartFromRecord) noexcept;
 
     bool isActive() const noexcept { return active.load (std::memory_order_relaxed); }
 
@@ -56,7 +56,7 @@ public:
     {
         int trackIndex;
         RecordErrorKind kind;
-        juce::uint64    count;
+        std::uint64_t    count;
     };
     const std::vector<RecordError>& getLastRecordErrors() const noexcept
     {
@@ -86,9 +86,9 @@ private:
     {
         std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter> writer;
         juce::File file;
-        juce::int64 framesWritten = 0;
+        std::int64_t framesWritten = 0;
         int numChannels = 1;
-        std::atomic<juce::uint64> writeFailures { 0 };
+        std::atomic<std::uint64_t> writeFailures { 0 };
     };
 
     juce::TimeSliceThread diskThread { "Dusk Studio recorder" };
@@ -102,7 +102,7 @@ private:
     {
         struct RawEvent
         {
-            juce::int64 samplePos = 0;
+            std::int64_t samplePos = 0;
             juce::uint8 status = 0;
             juce::uint8 data1 = 0;
             juce::uint8 data2 = 0;
@@ -110,7 +110,7 @@ private:
         static constexpr int kCapacity = 65536;
         std::vector<RawEvent>  events;
         juce::AbstractFifo     fifo { kCapacity };
-        std::atomic<juce::uint64> overflowCount { 0 };
+        std::atomic<std::uint64_t> overflowCount { 0 };
         PerTrackMidi() : events ((size_t) kCapacity) {}
     };
 
@@ -147,7 +147,7 @@ private:
     std::vector<int> lastSetupFailures;
     std::vector<RecordError> lastRecordErrors;
 
-    juce::int64 recordStartSample = 0;
+    std::int64_t recordStartSample = 0;
     double      recordSampleRate  = 0.0;
 
     std::vector<TrackCommitDiff> lastCommitDiff;

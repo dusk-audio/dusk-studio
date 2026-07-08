@@ -72,7 +72,7 @@ private:
     // Sets overlapPrev / overlapNext to the overlap length in samples (0
     // when none) and the neighbour's complementary fade shape used to
     // draw the crossing "X" curve. Const + cheap (few regions per track).
-    void overlapNeighbours (juce::int64& overlapPrev, juce::int64& overlapNext,
+    void overlapNeighbours (std::int64_t& overlapPrev, std::int64_t& overlapNext,
                              FadeShape& prevOutShape, FadeShape& nextInShape) const;
 
     juce::AudioFormatManager formatManager;
@@ -92,11 +92,11 @@ private:
     // the anchor stays put so the waveform doesn't shift/zoom and the
     // new slices appear in the same on-screen place. pixelsPerSample
     // + scrollSamples scale TIMELINE samples within this range.
-    juce::int64 anchorTimelineStart  = 0;
-    juce::int64 anchorTimelineLength = 0;
+    std::int64_t anchorTimelineStart  = 0;
+    std::int64_t anchorTimelineLength = 0;
     float pixelsPerSample = 0.0f;
-    juce::int64 scrollSamples = 0;
-    juce::int64 editCursorSample = 0;
+    std::int64_t scrollSamples = 0;
+    std::int64_t editCursorSample = 0;
 
     // mouseDown captures regionAtDragStart so mouseUp submits a
     // RegionEditAction(before, after). MoveCursor is not undoable;
@@ -104,20 +104,20 @@ private:
     enum class DragMode { None, FadeIn, FadeOut, Gain, TrimStart, TrimEnd, MoveCursor, Range, MoveRegion, Pan, AutomationPoint,
                           AutomationPaint, LoopIn, LoopOut, PunchIn, PunchOut };
     DragMode dragMode = DragMode::None;
-    juce::int64 dragOriginTimelineSample = 0;
+    std::int64_t dragOriginTimelineSample = 0;
     // [start, end) in absolute file samples. Active when end > start;
     // range ops (Split / Delete / Fade-fit) operate on this band.
-    juce::int64 rangeStartSample = 0;
-    juce::int64 rangeEndSample   = 0;
+    std::int64_t rangeStartSample = 0;
+    std::int64_t rangeEndSample   = 0;
     bool        rangeActive      = false;
     AudioRegion regionAtDragStart;
-    juce::int64 dragOriginSample  = 0;
+    std::int64_t dragOriginSample  = 0;
     int         dragOriginMouseY  = 0;
     float       dragOriginGainDb  = 0.0f;
     // panStartScroll = scrollSamples at drag start so mouseDrag
     // computes absolute delta without accumulating float errors.
     int         panStartMouseX    = 0;
-    juce::int64 panStartScroll    = 0;
+    std::int64_t panStartScroll    = 0;
 
     // Focused regionIdx is the primary selection and always implicit.
     // Drives Delete (removes all), drag-move (translates the set), and
@@ -125,10 +125,10 @@ private:
     std::vector<int> additionalSelectedRegions;
     // Same length + order as focused-first + additional. Resized in
     // mouseDown's MoveRegion-prep paths.
-    std::vector<juce::int64> dragMultiOriginStarts;
+    std::vector<std::int64_t> dragMultiOriginStarts;
     // -1 = no guide. Drawn as 1-px vertical line at the snap target
     // during a drag; cleared on mouseUp.
-    juce::int64 snapGuideTimelineSample = -1;
+    std::int64_t snapGuideTimelineSample = -1;
 
     // Generous grab slop wider than the painted glyph. Empty rect when
     // the handle isn't visible (locked region, too narrow).
@@ -265,7 +265,7 @@ private:
     // Freehand pencil (DragMode::AutomationPaint) trackers: last point laid
     // down this stroke, so each step overwrites the swept band and throttles
     // new-point density.
-    juce::int64 automationPaintLastT = 0;
+    std::int64_t automationPaintLastT = 0;
     int  automationPaintLastX = -1;
     // Lay/update one automation point under (x,y) for the freehand pencil.
     // first = gesture start (no swept-band erase). Overwrites pre-existing
@@ -294,8 +294,8 @@ private:
     // Honours session.audioEditorSnap + active snapResolution. bypass
     // short-circuits to input (Cmd-bypass during drags). Shared so
     // every gesture lands on the same grid.
-    juce::int64 snapFileSampleToGrid (juce::int64 fileSample, bool bypass) const noexcept;
-    juce::int64 snapTimelineSampleToGrid (juce::int64 timelineSample, bool bypass) const noexcept;
+    std::int64_t snapFileSampleToGrid (std::int64_t fileSample, bool bypass) const noexcept;
+    std::int64_t snapTimelineSampleToGrid (std::int64_t timelineSample, bool bypass) const noexcept;
 
     // All finalise through engine.getUndoManager. normalize is
     // non-destructive (gainDb adjust); reverse rewrites the source file.
@@ -323,11 +323,11 @@ private:
     // primitives; xForSample wraps in file-sample form (file -> timeline
     // via the focused region's sourceOffset + timelineStart) so existing
     // callers (fade discs, trim strips, edit cursor) keep working.
-    int         xForTimelineSample (juce::int64 timelineSample,
+    int         xForTimelineSample (std::int64_t timelineSample,
                                       juce::Rectangle<int> area) const;
-    juce::int64 timelineSampleForX (int x, juce::Rectangle<int> area) const;
-    int  xForSample (juce::int64 absSample, juce::Rectangle<int> area) const;
-    juce::int64 sampleForX (int x, juce::Rectangle<int> area) const;
+    std::int64_t timelineSampleForX (int x, juce::Rectangle<int> area) const;
+    int  xForSample (std::int64_t absSample, juce::Rectangle<int> area) const;
+    std::int64_t sampleForX (int x, juce::Rectangle<int> area) const;
 
     // Called on ctor / nav. Splits do NOT re-call.
     void zoomFitToArea (juce::Rectangle<int> area);

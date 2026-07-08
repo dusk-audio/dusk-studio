@@ -41,7 +41,7 @@ private:
     juce::AudioDeviceManager& deviceManager;
     int trackIndex;
     juce::File outFile;
-    juce::int64 lenSamples = 0;
+    std::int64_t lenSamples = 0;
 
     std::unique_ptr<BounceEngine> bounceEngine;
 

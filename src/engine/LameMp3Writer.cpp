@@ -80,7 +80,7 @@ bool LameMp3Writer::finalize()
         const size_t tagSize = lame_get_lametag_frame (g, tag, sizeof (tag));
         if (tagSize > 0 && tagSize <= sizeof (tag))
         {
-            const juce::int64 endPos = output->getPosition();
+            const std::int64_t endPos = output->getPosition();
             if (output->setPosition (0))
             {
                 output->write (tag, tagSize);

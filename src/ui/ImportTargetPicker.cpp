@@ -172,7 +172,7 @@ struct ImportTargetPicker::Row final : public juce::Component
 
 ImportTargetPicker::ImportTargetPicker (Session& s,
                                             FileSummary fileSummary,
-                                            juce::int64 timelineStartSamples,
+                                            std::int64_t timelineStartSamples,
                                             double      sampleRate,
                                             float       bpm,
                                             int         bpb,

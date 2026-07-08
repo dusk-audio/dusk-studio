@@ -29,7 +29,7 @@ struct AudioImportRequest
     int          trackIndex = 0;    // for the generated filename ("import_track{NN}_...")
     double       sessionSampleRate;   // required - importer rejects <= 0
     int          targetChannels = 1;  // 1 = mono, 2 = stereo
-    juce::int64  timelineStart = 0;   // samples
+    std::int64_t  timelineStart = 0;   // samples
 };
 
 struct AudioImportResult
@@ -46,7 +46,7 @@ struct MidiImportRequest
     juce::File   source;
     double       sessionSampleRate;   // required - importer rejects <= 0
     float        sessionBpm = 120.0f;
-    juce::int64  timelineStart = 0;
+    std::int64_t  timelineStart = 0;
 };
 
 struct MidiImportResult
@@ -61,5 +61,5 @@ MidiImportResult importMidi (const MidiImportRequest&);
 // Maximum samples per channel accepted by the audio importer. ~30 min at
 // 96 kHz; rejects bigger files with a clear error so we don't OOM trying
 // to load a multi-hour stem in one allocation.
-constexpr juce::int64 kMaxImportSamplesPerChannel = 96000ll * 60ll * 30ll;
+constexpr std::int64_t kMaxImportSamplesPerChannel = 96000ll * 60ll * 30ll;
 } // namespace duskstudio::fileimport

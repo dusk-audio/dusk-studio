@@ -19,7 +19,7 @@ std::vector<float> decodeMono (juce::AudioFormatManager& fm, const juce::File& f
     std::vector<float> out;
     std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (f));
     if (reader == nullptr) return out;
-    const auto len = (juce::int64) reader->lengthInSamples;
+    const auto len = (std::int64_t) reader->lengthInSamples;
     const int  ch  = (int) reader->numChannels;
     if (len <= 0 || ch <= 0 || reader->sampleRate <= 0.0) return out;
     // Guard against absurd files eating all RAM. A stereo decode allocates
@@ -46,7 +46,7 @@ std::vector<float> decodeMono (juce::AudioFormatManager& fm, const juce::File& f
     else
     {
         const float inv = 1.0f / (float) usedCh;
-        for (juce::int64 i = 0; i < len; ++i)
+        for (std::int64_t i = 0; i < len; ++i)
         {
             float s = 0.0f;
             for (int c = 0; c < usedCh; ++c) s += buf.getSample (c, (int) i);
@@ -204,7 +204,7 @@ std::vector<Alignment> alignToMixdown (const juce::File& mixdown,
         if (frag.empty()) { result[i] = a; continue; }
 
         // Full-length take (spans the whole song) -> sits at song start.
-        if ((juce::int64) frag.size() >= (juce::int64) mix.size())
+        if ((std::int64_t) frag.size() >= (std::int64_t) mix.size())
         {
             a.placed = true; a.fullLength = true;
             a.timelineStartSamples = 0; a.positionSeconds = 0.0;
@@ -218,7 +218,7 @@ std::vector<Alignment> alignToMixdown (const juce::File& mixdown,
         a.sigma      = cc.sigma;
         a.dominance  = cc.dominance;
         a.positionSeconds      = (double) cc.lagFrames * kHop / mixSr;
-        a.timelineStartSamples = (juce::int64) cc.lagFrames * kHop;
+        a.timelineStartSamples = (std::int64_t) cc.lagFrames * kHop;
         a.placed     = (cc.dominance >= dominanceGate);
         result[i] = a;
     }

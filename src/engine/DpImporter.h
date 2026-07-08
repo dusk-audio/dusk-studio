@@ -22,7 +22,7 @@ struct Fragment
     juce::File   mono1;            // _1 (mono / left)
     juce::File   mono2;            // _2 (right); empty unless stereo
     bool         stereo = false;
-    juce::int64  lengthSamples = 0;
+    std::int64_t  lengthSamples = 0;
     double       sampleRate = 0.0;
     int          bitDepth = 0;
 };
@@ -54,7 +54,7 @@ struct ImportedTrack
 {
     juce::String name;               // "DP 0006" (the ZZ fragment id)
     Fragment     fragment;
-    juce::int64  timelineStart = 0;  // 0 until the placement table is solved
+    std::int64_t  timelineStart = 0;  // 0 until the placement table is solved
     MixerStrip   mixer;
 };
 
@@ -62,7 +62,7 @@ struct ImportedTrack
 // stores position + index only (no name text).
 struct DpMarker
 {
-    juce::int64 positionSamples = 0;   // at song sample-rate
+    std::int64_t positionSamples = 0;   // at song sample-rate
     int         index = 0;
 };
 

@@ -142,21 +142,21 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
 
     // Audio regions on tracks 0 and 1 (bank 0, visible on the tape strip).
     const auto wav = writeDemoWav (outDir.getChildFile ("_demo"), sr);
-    const juce::int64 lenSamples = (juce::int64) (sr * 1.8);
-    auto makeRegion = [&] (juce::int64 start) {
+    const std::int64_t lenSamples = (std::int64_t) (sr * 1.8);
+    auto makeRegion = [&] (std::int64_t start) {
         AudioRegion r;
         r.file            = wav;
         r.timelineStart   = start;
         r.lengthInSamples = lenSamples;
         r.numChannels     = 2;
-        r.fadeInSamples   = (juce::int64) (sr * 0.05);
-        r.fadeOutSamples  = (juce::int64) (sr * 0.15);
+        r.fadeInSamples   = (std::int64_t) (sr * 0.05);
+        r.fadeOutSamples  = (std::int64_t) (sr * 0.15);
         r.fadeInShape     = FadeShape::EqualPower;
         r.fadeOutShape    = FadeShape::Exp;
         return r;
     };
-    session.track (0).regions = { makeRegion (0), makeRegion ((juce::int64) (sr * 2.4)) };
-    session.track (1).regions = { makeRegion ((juce::int64) (sr * 0.6)) };
+    session.track (0).regions = { makeRegion (0), makeRegion ((std::int64_t) (sr * 2.4)) };
+    session.track (1).regions = { makeRegion ((std::int64_t) (sr * 0.6)) };
 
     // MIDI region with a short riff on track 8 (for the piano roll).
     session.track (8).name = "Synth";
@@ -165,7 +165,7 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
         MidiRegion m;
         m.timelineStart = 0;
         m.lengthInTicks = 4 * 480;
-        m.lengthInSamples = (juce::int64) (sr * 2.0);
+        m.lengthInSamples = (std::int64_t) (sr * 2.0);
         const int pitches[8] = { 60, 64, 67, 72, 71, 67, 64, 60 };
         for (int i = 0; i < 8; ++i)
         {
@@ -183,8 +183,8 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
         });
     }
 
-    session.addMarker ((juce::int64) (sr * 1.2), "Verse");
-    session.addMarker ((juce::int64) (sr * 3.0), "Chorus");
+    session.addMarker ((std::int64_t) (sr * 1.2), "Verse");
+    session.addMarker ((std::int64_t) (sr * 3.0), "Chorus");
     session.track (0).strip.busAssign[0].store (true, std::memory_order_relaxed);
 
     if (consoleView != nullptr)

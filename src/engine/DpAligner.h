@@ -22,7 +22,7 @@ namespace duskstudio::dp
 struct Alignment
 {
     bool        placed = false;        // confident enough to use
-    juce::int64 timelineStartSamples = 0;  // in mixdown sample-rate
+    std::int64_t timelineStartSamples = 0;  // in mixdown sample-rate
     double      positionSeconds = 0.0;
     float       sigma = 0.0f;          // peak height in std-devs (informational)
     float       dominance = 0.0f;      // peak / next-best-far-away peak (the real gate)

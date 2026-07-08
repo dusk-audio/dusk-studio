@@ -136,10 +136,10 @@ private:
     // Shared between File-menu prompts and TapeStrip drag-drop.
     // trackHint >= 0 biases the recommendation when the file matches.
     void runAudioImportFlow (const juce::File& source,
-                              juce::int64 timelineStart,
+                              std::int64_t timelineStart,
                               int trackHint);
     void runMidiImportFlow  (const juce::File& source,
-                              juce::int64 timelineStart,
+                              std::int64_t timelineStart,
                               int trackHint);
 
     // Two batch flows:
@@ -149,15 +149,15 @@ private:
     //  openMultiImportPicker + enqueueImportsWithTargets: one modal
     //    with a row per file; commit dispatches the batch.
     void enqueueImports (juce::Array<juce::File> files,
-                          juce::int64 timelineStart,
+                          std::int64_t timelineStart,
                           int trackHint);
     void openMultiImportPicker (juce::Array<juce::File> files,
-                                  juce::int64 timelineStart);
+                                  std::int64_t timelineStart);
     void enqueueImportsWithTargets (std::vector<MultiImportTargetPicker::Assignment> assignments,
-                                       juce::int64 timelineStart);
+                                       std::int64_t timelineStart);
     void kickNextImport();
     void commitImportNoModal (const MultiImportTargetPicker::Assignment& a,
-                                juce::int64 timelineStart);
+                                std::int64_t timelineStart);
     void cancelImportChain();
 
     struct PendingImport
@@ -167,7 +167,7 @@ private:
         bool       isMidi     = false;
     };
     std::vector<PendingImport> pendingImportQueue;
-    juce::int64 pendingImportTimelineStart = 0;
+    std::int64_t pendingImportTimelineStart = 0;
     int  pendingImportInitialHint   = -1;
     int  pendingImportLastCommitted = -2;
 

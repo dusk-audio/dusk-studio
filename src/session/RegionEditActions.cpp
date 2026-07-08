@@ -106,7 +106,7 @@ bool MidiRegionEditAction::undo()
 // ── SplitRegionAction ─────────────────────────────────────────────────────
 
 SplitRegionAction::SplitRegionAction (Session& s, AudioEngine& e,
-                                        int t, int idx, juce::int64 atSample)
+                                        int t, int idx, std::int64_t atSample)
     : session (s), engine (e), trackIdx (t), regionIdx (idx), splitAt (atSample)
 {}
 
@@ -136,10 +136,10 @@ bool SplitRegionAction::perform()
     // NOT introduce auto-fades — the boundary is a hard cut by default.
     // Crossfades only happen when regions are dragged to actually overlap;
     // PlaybackEngine's implicit-overlap detection handles that case.
-    orig.fadeInSamples   = juce::jlimit<juce::int64> (0, orig.lengthInSamples, orig.fadeInSamples);
-    orig.fadeOutSamples  = juce::jlimit<juce::int64> (0, orig.lengthInSamples - orig.fadeInSamples, orig.fadeOutSamples);
-    right.fadeInSamples  = juce::jlimit<juce::int64> (0, right.lengthInSamples, right.fadeInSamples);
-    right.fadeOutSamples = juce::jlimit<juce::int64> (0, right.lengthInSamples - right.fadeInSamples, right.fadeOutSamples);
+    orig.fadeInSamples   = juce::jlimit<std::int64_t> (0, orig.lengthInSamples, orig.fadeInSamples);
+    orig.fadeOutSamples  = juce::jlimit<std::int64_t> (0, orig.lengthInSamples - orig.fadeInSamples, orig.fadeOutSamples);
+    right.fadeInSamples  = juce::jlimit<std::int64_t> (0, right.lengthInSamples, right.fadeInSamples);
+    right.fadeOutSamples = juce::jlimit<std::int64_t> (0, right.lengthInSamples - right.fadeInSamples, right.fadeOutSamples);
 
     regs.insert (regs.begin() + regionIdx + 1, right);
 
@@ -199,9 +199,9 @@ bool PasteRegionAction::undo()
 
 CreateMidiRegionAction::CreateMidiRegionAction (Session& s,
                                                   int t,
-                                                  juce::int64 startSamples,
-                                                  juce::int64 lenSamples,
-                                                  juce::int64 lenTicks)
+                                                  std::int64_t startSamples,
+                                                  std::int64_t lenSamples,
+                                                  std::int64_t lenTicks)
     : session (s), trackIdx (t),
       timelineStart (startSamples),
       lengthInSamples (lenSamples),
@@ -631,8 +631,8 @@ bool JoinRegionsAction::perform()
     // abut. "Abut" tolerates a 1-sample rounding gap so a series of splits
     // that snapped to slightly different sub-sample boundaries still
     // collapse cleanly.
-    constexpr juce::int64 kAbutTolerance = 1;
-    auto abs64 = [] (juce::int64 v) noexcept -> juce::int64
+    constexpr std::int64_t kAbutTolerance = 1;
+    auto abs64 = [] (std::int64_t v) noexcept -> std::int64_t
     { return v < 0 ? -v : v; };
     bool sameFile = true, abuts = true;
     for (size_t i = 1; i < beforeRegions.size(); ++i)
@@ -696,7 +696,7 @@ bool JoinRegionsAction::perform()
     const int    bits = juce::jmax (16, (int) firstReader->bitsPerSample);
     const int    chs  = juce::jmax (1, (int) beforeRegions.front().numChannels);
 
-    const auto totalSamples = (int) juce::jlimit<juce::int64> (
+    const auto totalSamples = (int) juce::jlimit<std::int64_t> (
         1, std::numeric_limits<int>::max(), totalLen);
     juce::AudioBuffer<float> mixBuf (chs, totalSamples);
     mixBuf.clear();
@@ -705,7 +705,7 @@ bool JoinRegionsAction::perform()
     {
         std::unique_ptr<juce::AudioFormatReader> rdr (fm.createReaderFor (reg.file));
         if (rdr == nullptr) continue;
-        const int regSamples = (int) juce::jlimit<juce::int64> (
+        const int regSamples = (int) juce::jlimit<std::int64_t> (
             0, std::numeric_limits<int>::max(), reg.lengthInSamples);
         if (regSamples == 0) continue;
         juce::AudioBuffer<float> tmp (chs, regSamples);
@@ -868,7 +868,7 @@ bool ReverseRegionAction::perform()
         // stereo-max) and to what the reader actually has.
         const int chs = juce::jlimit (1, juce::jmin (2, (int) rdr->numChannels),
                                        (int) beforeState.numChannels);
-        const juce::int64 len = juce::jlimit<juce::int64> (
+        const std::int64_t len = juce::jlimit<std::int64_t> (
             1, std::numeric_limits<int>::max(), beforeState.lengthInSamples);
         const double sr   = rdr->sampleRate;
         const int    bits = juce::jmax (16, (int) rdr->bitsPerSample);
@@ -891,11 +891,11 @@ bool ReverseRegionAction::perform()
         // write aborts + discards the partial file instead of committing garbage.
         constexpr int kChunk = 1 << 16;   // 64k frames per chunk
         juce::AudioBuffer<float> chunk (chs, kChunk);
-        juce::int64 remaining = len;
+        std::int64_t remaining = len;
         bool ioOk = true;
         while (remaining > 0)
         {
-            const int n = (int) juce::jmin ((juce::int64) kChunk, remaining);
+            const int n = (int) juce::jmin ((std::int64_t) kChunk, remaining);
             chunk.clear();
             if (! rdr->read (&chunk, 0, n,
                              beforeState.sourceOffset + (remaining - n), true, chs > 1))

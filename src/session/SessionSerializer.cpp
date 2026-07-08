@@ -84,7 +84,7 @@ inline AutomationPoint parseAutomationPoint (const nlohmann::json& pv, double fa
     // negative / oversized time → 0.
     const double rawT = json::getDouble (pv, "t", 0.0);
     pt.timeSamples   = (std::isfinite (rawT) && rawT > 0.0 && rawT < 9223372036854775808.0)
-                           ? (juce::int64) rawT : (juce::int64) 0;
+                           ? (std::int64_t) rawT : (std::int64_t) 0;
     // NaN slips through jlimit unchanged (NaN compares false both ways), so it
     // would otherwise poison the lane's binary search / a DSP param. Map it to a
     // safe default; ±inf is already clamped to the [0,1] range by jlimit.
@@ -414,7 +414,7 @@ JObj trackToObject (const Track& t, const juce::File& sessionDir)
         obj["frozen_audio_path"] = toStd (portablePath (juce::File (t.frozenAudioPath), sessionDir));
         // Length + channels so load rebuilds frozenRegion without opening the
         // WAV (PlaybackEngine needs frozenRegion populated to play it back).
-        obj["frozen_len"]      = (juce::int64) t.frozenRegion.lengthInSamples;
+        obj["frozen_len"]      = (std::int64_t) t.frozenRegion.lengthInSamples;
         obj["frozen_channels"] = t.frozenRegion.numChannels;
         // Pre-freeze bypass so unfreeze-after-reload restores the user's setting.
         obj["frozen_plugin_bypass"] = t.frozenPluginBypass.load();
@@ -514,15 +514,15 @@ JObj trackToObject (const Track& t, const juce::File& sessionDir)
     {
         JObj rObj;
         rObj["file"]           = toStd (portablePath (r.file, sessionDir));
-        rObj["timeline_start"] = (juce::int64) r.timelineStart;
-        rObj["length"]         = (juce::int64) r.lengthInSamples;
-        rObj["source_offset"]  = (juce::int64) r.sourceOffset;
+        rObj["timeline_start"] = (std::int64_t) r.timelineStart;
+        rObj["length"]         = (std::int64_t) r.lengthInSamples;
+        rObj["source_offset"]  = (std::int64_t) r.sourceOffset;
         if (r.numChannels != 1)
             rObj["num_channels"] = r.numChannels;
         // Fade samples emitted only when non-zero so existing sessions
         // don't gain noise. PlaybackEngine treats absent fields as 0.
-        if (r.fadeInSamples  > 0) rObj["fade_in"]  = (juce::int64) r.fadeInSamples;
-        if (r.fadeOutSamples > 0) rObj["fade_out"] = (juce::int64) r.fadeOutSamples;
+        if (r.fadeInSamples  > 0) rObj["fade_in"]  = (std::int64_t) r.fadeInSamples;
+        if (r.fadeOutSamples > 0) rObj["fade_out"] = (std::int64_t) r.fadeOutSamples;
         // Fade shapes emit only when non-Linear so older sessions stay
         // diff-clean. Stored as the int enum value (0..4) matching FadeShape.
         if (r.fadeInShape  != FadeShape::Linear) rObj["fade_in_shape"]  = (int) r.fadeInShape;
@@ -556,8 +556,8 @@ JObj trackToObject (const Track& t, const juce::File& sessionDir)
             {
                 JObj tObj;
                 tObj["file"]          = toStd (portablePath (take.file, sessionDir));
-                tObj["source_offset"] = (juce::int64) take.sourceOffset;
-                tObj["length"]        = (juce::int64) take.lengthInSamples;
+                tObj["source_offset"] = (std::int64_t) take.sourceOffset;
+                tObj["length"]        = (std::int64_t) take.lengthInSamples;
                 prior.push_back (std::move (tObj));
             }
             rObj["previous_takes"] = std::move (prior);
@@ -578,9 +578,9 @@ JObj trackToObject (const Track& t, const juce::File& sessionDir)
         for (const auto& r : t.midiRegions.current())
         {
             JObj rObj;
-            rObj["timeline_start"] = (juce::int64) r.timelineStart;
-            rObj["length_samples"] = (juce::int64) r.lengthInSamples;
-            rObj["length_ticks"]   = (juce::int64) r.lengthInTicks;
+            rObj["timeline_start"] = (std::int64_t) r.timelineStart;
+            rObj["length_samples"] = (std::int64_t) r.lengthInSamples;
+            rObj["length_ticks"]   = (std::int64_t) r.lengthInTicks;
 
             JObj notes = JObj::array();
             for (const auto& n : r.notes)
@@ -589,8 +589,8 @@ JObj trackToObject (const Track& t, const juce::File& sessionDir)
                 nObj["ch"]    = n.channel;
                 nObj["note"]  = n.noteNumber;
                 nObj["vel"]   = n.velocity;
-                nObj["start"] = (juce::int64) n.startTick;
-                nObj["len"]   = (juce::int64) n.lengthInTicks;
+                nObj["start"] = (std::int64_t) n.startTick;
+                nObj["len"]   = (std::int64_t) n.lengthInTicks;
                 notes.push_back (std::move (nObj));
             }
             rObj["notes"] = std::move (notes);
@@ -604,7 +604,7 @@ JObj trackToObject (const Track& t, const juce::File& sessionDir)
                     cObj["ch"]   = c.channel;
                     cObj["ctrl"] = c.controller;
                     cObj["val"]  = c.value;
-                    cObj["at"]   = (juce::int64) c.atTick;
+                    cObj["at"]   = (std::int64_t) c.atTick;
                     ccs.push_back (std::move (cObj));
                 }
                 rObj["ccs"] = std::move (ccs);
@@ -635,7 +635,7 @@ JObj trackToObject (const Track& t, const juce::File& sessionDir)
                 for (const auto& take : r.previousTakes)
                 {
                     JObj tObj;
-                    tObj["length_ticks"] = (juce::int64) take.lengthInTicks;
+                    tObj["length_ticks"] = (std::int64_t) take.lengthInTicks;
                     JObj tnotes = JObj::array();
                     for (const auto& n : take.notes)
                     {
@@ -643,8 +643,8 @@ JObj trackToObject (const Track& t, const juce::File& sessionDir)
                         nObj["ch"]    = n.channel;
                         nObj["note"]  = n.noteNumber;
                         nObj["vel"]   = n.velocity;
-                        nObj["start"] = (juce::int64) n.startTick;
-                        nObj["len"]   = (juce::int64) n.lengthInTicks;
+                        nObj["start"] = (std::int64_t) n.startTick;
+                        nObj["len"]   = (std::int64_t) n.lengthInTicks;
                         tnotes.push_back (std::move (nObj));
                     }
                     tObj["notes"] = std::move (tnotes);
@@ -657,7 +657,7 @@ JObj trackToObject (const Track& t, const juce::File& sessionDir)
                             cObj["ch"]   = c.channel;
                             cObj["ctrl"] = c.controller;
                             cObj["val"]  = c.value;
-                            cObj["at"]   = (juce::int64) c.atTick;
+                            cObj["at"]   = (std::int64_t) c.atTick;
                             tccs.push_back (std::move (cObj));
                         }
                         tObj["ccs"] = std::move (tccs);
@@ -687,7 +687,7 @@ JObj trackToObject (const Track& t, const juce::File& sessionDir)
         for (const auto& pt : lane.pointsConst())
         {
             JObj pObj;
-            pObj["t"]   = (juce::int64) pt.timeSamples;
+            pObj["t"]   = (std::int64_t) pt.timeSamples;
             pObj["v"]   = (double) pt.value;
             pObj["bpm"] = (double) pt.recordedAtBPM;
             pts.push_back (std::move (pObj));
@@ -738,7 +738,7 @@ JObj busToObject (const Bus& a)
         for (const auto& pt : lane.pointsConst())
         {
             JObj pObj;
-            pObj["t"]   = (juce::int64) pt.timeSamples;
+            pObj["t"]   = (std::int64_t) pt.timeSamples;
             pObj["v"]   = (double) pt.value;
             pObj["bpm"] = (double) pt.recordedAtBPM;
             pts.push_back (std::move (pObj));
@@ -1050,11 +1050,11 @@ void restoreTrack (Track& t, const nlohmann::json& v, double defaultRecordBpm,
             // loader below) so a hand-edited or truncated session.json can't
             // seed negative values that underflow PlaybackEngine's read-pointer
             // math (readStart = sourceOffset + (firstWithin - timelineStart)).
-            r.timelineStart   = juce::jmax ((juce::int64) 0, (juce::int64) json::getInt64 (rv, "timeline_start", 0));
-            r.lengthInSamples = juce::jmax ((juce::int64) 0, (juce::int64) json::getInt64 (rv, "length", 0));
-            r.sourceOffset    = juce::jmax ((juce::int64) 0, (juce::int64) json::getInt64 (rv, "source_offset", 0));
-            r.fadeInSamples   = juce::jmax ((juce::int64) 0, (juce::int64) json::getInt64 (rv, "fade_in", 0));
-            r.fadeOutSamples  = juce::jmax ((juce::int64) 0, (juce::int64) json::getInt64 (rv, "fade_out", 0));
+            r.timelineStart   = juce::jmax ((std::int64_t) 0, (std::int64_t) json::getInt64 (rv, "timeline_start", 0));
+            r.lengthInSamples = juce::jmax ((std::int64_t) 0, (std::int64_t) json::getInt64 (rv, "length", 0));
+            r.sourceOffset    = juce::jmax ((std::int64_t) 0, (std::int64_t) json::getInt64 (rv, "source_offset", 0));
+            r.fadeInSamples   = juce::jmax ((std::int64_t) 0, (std::int64_t) json::getInt64 (rv, "fade_in", 0));
+            r.fadeOutSamples  = juce::jmax ((std::int64_t) 0, (std::int64_t) json::getInt64 (rv, "fade_out", 0));
             auto loadShape = [] (int i) -> FadeShape
             {
                 if (i >= 0 && i <= (int) FadeShape::RaisedCosine) return (FadeShape) i;
@@ -1081,8 +1081,8 @@ void restoreTrack (Track& t, const nlohmann::json& v, double defaultRecordBpm,
                     TakeRef take;
                     take.file            = resolvePortablePath (json::getString (tv, "file"),
                                                                  sessionDir, missingFiles);
-                    take.sourceOffset    = juce::jmax ((juce::int64) 0, (juce::int64) json::getInt64 (tv, "source_offset", 0));
-                    take.lengthInSamples = juce::jmax ((juce::int64) 0, (juce::int64) json::getInt64 (tv, "length", 0));
+                    take.sourceOffset    = juce::jmax ((std::int64_t) 0, (std::int64_t) json::getInt64 (tv, "source_offset", 0));
+                    take.lengthInSamples = juce::jmax ((std::int64_t) 0, (std::int64_t) json::getInt64 (tv, "length", 0));
                     r.previousTakes.push_back (std::move (take));
                 }
             }
@@ -1107,8 +1107,8 @@ void restoreTrack (Track& t, const nlohmann::json& v, double defaultRecordBpm,
             n.channel       = juce::jlimit (1, 16,  json::getInt (nv, "ch", 1));
             n.noteNumber    = juce::jlimit (0, 127, json::getInt (nv, "note", 60));
             n.velocity      = juce::jlimit (1, 127, json::getInt (nv, "vel", 100));
-            n.startTick     = juce::jmax ((juce::int64) 0, (juce::int64) json::getInt64 (nv, "start", 0));
-            n.lengthInTicks = juce::jmax ((juce::int64) 0, (juce::int64) json::getInt64 (nv, "len", 0));
+            n.startTick     = juce::jmax ((std::int64_t) 0, (std::int64_t) json::getInt64 (nv, "start", 0));
+            n.lengthInTicks = juce::jmax ((std::int64_t) 0, (std::int64_t) json::getInt64 (nv, "len", 0));
             dst.push_back (n);
         }
     };
@@ -1123,7 +1123,7 @@ void restoreTrack (Track& t, const nlohmann::json& v, double defaultRecordBpm,
             c.channel    = juce::jlimit (1, 16,  json::getInt (cv, "ch", 1));
             c.controller = juce::jlimit (0, 127, json::getInt (cv, "ctrl", 0));
             c.value      = juce::jlimit (0, 127, json::getInt (cv, "val", 0));
-            c.atTick     = juce::jmax ((juce::int64) 0, (juce::int64) json::getInt64 (cv, "at", 0));
+            c.atTick     = juce::jmax ((std::int64_t) 0, (std::int64_t) json::getInt64 (cv, "at", 0));
             dst.push_back (c);
         }
     };
@@ -1138,9 +1138,9 @@ void restoreTrack (Track& t, const nlohmann::json& v, double defaultRecordBpm,
         {
             if (! rv.is_object()) continue;
             MidiRegion r;
-            r.timelineStart   = juce::jmax ((juce::int64) 0, (juce::int64) json::getInt64 (rv, "timeline_start", 0));
-            r.lengthInSamples = juce::jmax ((juce::int64) 0, (juce::int64) json::getInt64 (rv, "length_samples", 0));
-            r.lengthInTicks   = juce::jmax ((juce::int64) 0, (juce::int64) json::getInt64 (rv, "length_ticks", 0));
+            r.timelineStart   = juce::jmax ((std::int64_t) 0, (std::int64_t) json::getInt64 (rv, "timeline_start", 0));
+            r.lengthInSamples = juce::jmax ((std::int64_t) 0, (std::int64_t) json::getInt64 (rv, "length_samples", 0));
+            r.lengthInTicks   = juce::jmax ((std::int64_t) 0, (std::int64_t) json::getInt64 (rv, "length_ticks", 0));
             r.customColour    = json::has (rv, "custom_colour")
                                  ? juce::Colour::fromString (juce::String (json::getString (rv, "custom_colour")))
                                  : juce::Colour();
@@ -1169,7 +1169,7 @@ void restoreTrack (Track& t, const nlohmann::json& v, double defaultRecordBpm,
                 {
                     if (! tv.is_object()) continue;
                     MidiTakeRef take;
-                    take.lengthInTicks = juce::jmax ((juce::int64) 0, (juce::int64) json::getInt64 (tv, "length_ticks", 0));
+                    take.lengthInTicks = juce::jmax ((std::int64_t) 0, (std::int64_t) json::getInt64 (tv, "length_ticks", 0));
                     parseNotes (json::array (tv, "notes"), take.notes);
                     parseCcs   (json::array (tv, "ccs"),   take.ccs);
                     r.previousTakes.push_back (std::move (take));
@@ -1326,7 +1326,7 @@ juce::String SessionSerializer::serialize (const Session& s)
             for (const auto& pt : al.pointsConst())
             {
                 JObj pObj;
-                pObj["t"]   = (juce::int64) pt.timeSamples;
+                pObj["t"]   = (std::int64_t) pt.timeSamples;
                 pObj["v"]   = (double) pt.value;
                 pObj["bpm"] = (double) pt.recordedAtBPM;
                 pts.push_back (std::move (pObj));
@@ -1346,7 +1346,7 @@ juce::String SessionSerializer::serialize (const Session& s)
     {
         JObj obj;
         obj["name"]   = toStd (m.name);
-        obj["time"]   = (juce::int64) m.timelineSamples;
+        obj["time"]   = (std::int64_t) m.timelineSamples;
         obj["colour"] = toStd (colourToHex (m.colour));
         markersArr.push_back (std::move (obj));
     }
@@ -1401,7 +1401,7 @@ juce::String SessionSerializer::serialize (const Session& s)
             for (const auto& pt : al.pointsConst())
             {
                 JObj pObj;
-                pObj["t"]   = (juce::int64) pt.timeSamples;
+                pObj["t"]   = (std::int64_t) pt.timeSamples;
                 pObj["v"]   = (double) pt.value;
                 pObj["bpm"] = (double) pt.recordedAtBPM;
                 pts.push_back (std::move (pObj));
@@ -1453,11 +1453,11 @@ juce::String SessionSerializer::serialize (const Session& s)
     // AudioEngine::publishTransportStateForSave before this call runs.
     JObj tport;
     tport["loop_enabled"]  = s.savedLoopEnabled;
-    tport["loop_start"]    = (juce::int64) s.savedLoopStart;
-    tport["loop_end"]      = (juce::int64) s.savedLoopEnd;
+    tport["loop_start"]    = (std::int64_t) s.savedLoopStart;
+    tport["loop_end"]      = (std::int64_t) s.savedLoopEnd;
     tport["punch_enabled"] = s.savedPunchEnabled;
-    tport["punch_in"]      = (juce::int64) s.savedPunchIn;
-    tport["punch_out"]     = (juce::int64) s.savedPunchOut;
+    tport["punch_in"]      = (std::int64_t) s.savedPunchIn;
+    tport["punch_out"]     = (std::int64_t) s.savedPunchOut;
     tport["snap_to_grid"]      = s.snapToGrid;
     tport["audio_editor_snap"] = s.audioEditorSnap;
     tport["midi_editor_snap"]  = s.midiEditorSnap;
@@ -1501,7 +1501,7 @@ juce::String SessionSerializer::serialize (const Session& s)
     tport["time_display_mode"] = s.timeDisplayMode.load();
     // Tascam-style transport-cluster state. The last-record point is
     // what the FFWD-while-stopped tap (= TO LAST REC) snaps to.
-    tport["last_record_point"]  = (juce::int64) s.lastRecordPointSamples.load();
+    tport["last_record_point"]  = (std::int64_t) s.lastRecordPointSamples.load();
     tport["pre_roll_seconds"]   = (double) s.preRollSeconds.load();
     tport["post_roll_seconds"]  = (double) s.postRollSeconds.load();
     tport["pre_roll_enabled"]   = s.preRollEnabled.load();

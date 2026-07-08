@@ -800,7 +800,7 @@ void AudioEngine::applyMasterPdcTargetsNow() noexcept
     }
 }
 
-bool AudioEngine::freezePrepare (int trackIndex, juce::File& outFile, juce::int64& lenSamples)
+bool AudioEngine::freezePrepare (int trackIndex, juce::File& outFile, std::int64_t& lenSamples)
 {
     lastFreezeError.clear();
     if (trackIndex < 0 || trackIndex >= Session::kNumTracks)
@@ -815,7 +815,7 @@ bool AudioEngine::freezePrepare (int trackIndex, juce::File& outFile, juce::int6
     // instrument + EQ/comp; audio tracks freeze the recorded audio through its
     // insert + EQ/comp (a big win at high oversampling).
     const bool isMidi = track.mode.load (std::memory_order_relaxed) == (int) Track::Mode::Midi;
-    juce::int64 contentEnd = 0;
+    std::int64_t contentEnd = 0;
     if (isMidi)
         for (const auto& mr : track.midiRegions.current())
             contentEnd = juce::jmax (contentEnd, mr.timelineStart + mr.lengthInSamples);
@@ -829,7 +829,7 @@ bool AudioEngine::freezePrepare (int trackIndex, juce::File& outFile, juce::int6
     if (sr <= 0.0)
         { lastFreezeError = "Audio device not running"; return false; }
     constexpr double kFreezeTailSeconds = 5.0;
-    lenSamples = contentEnd + (juce::int64) (sr * kFreezeTailSeconds);
+    lenSamples = contentEnd + (std::int64_t) (sr * kFreezeTailSeconds);
 
     auto audioDir = session.getAudioDirectory();
     if (audioDir.createDirectory().failed())
@@ -844,7 +844,7 @@ bool AudioEngine::freezePrepare (int trackIndex, juce::File& outFile, juce::int6
     return true;
 }
 
-void AudioEngine::commitFreeze (int trackIndex, const juce::File& outFile, juce::int64 lenSamples)
+void AudioEngine::commitFreeze (int trackIndex, const juce::File& outFile, std::int64_t lenSamples)
 {
     if (trackIndex < 0 || trackIndex >= Session::kNumTracks)
         return;
@@ -1420,7 +1420,7 @@ void AudioEngine::stop()
     if (wasRecording)
     {
         recordManager.stopRecording (transport.getPlayhead());
-        activeRecordStart.store (std::numeric_limits<juce::int64>::min(),
+        activeRecordStart.store (std::numeric_limits<std::int64_t>::min(),
                                   std::memory_order_relaxed);
 
         // RecordManager already mutated state; action captures the
@@ -1501,7 +1501,7 @@ void AudioEngine::record()
     // the region's timelineStart must be punchIn. Audio thread skips
     // writes until playhead reaches punchIn so WAV time-zero lines up.
     // Inside / past the window = fall back to playhead (no truncation).
-    juce::int64 startSample = transport.getPlayhead();
+    std::int64_t startSample = transport.getPlayhead();
     if (transport.isPunchEnabled()
         && transport.getPunchOut() > transport.getPunchIn()
         && startSample < transport.getPunchIn())
@@ -1536,7 +1536,7 @@ void AudioEngine::record()
         if (bpm > 0.0f && beatsBar > 0)
         {
             const auto countInSamples =
-                (juce::int64) (sr * 60.0 / (double) bpm * (double) beatsBar);
+                (std::int64_t) (sr * 60.0 / (double) bpm * (double) beatsBar);
             transport.setPlayhead (startSample - countInSamples);
         }
     }
@@ -1550,8 +1550,8 @@ void AudioEngine::record()
                             : 0.0f;
         if (pre > 0.0f)
         {
-            const auto preSamples = (juce::int64) ((double) pre * sr);
-            const auto candidate = juce::jmax ((juce::int64) 0, startSample - preSamples);
+            const auto preSamples = (std::int64_t) ((double) pre * sr);
+            const auto candidate = juce::jmax ((std::int64_t) 0, startSample - preSamples);
             if (candidate < transport.getPlayhead())
                 transport.setPlayhead (candidate);
         }
@@ -1569,7 +1569,7 @@ void AudioEngine::jumpToPrevMarker()
     // Walk in reverse for the largest marker strictly before the playhead.
     // "Strictly before" so a press while sitting ON a marker steps to the
     // previous one rather than restating the current position.
-    juce::int64 target = 0;
+    std::int64_t target = 0;
     bool found = false;
     for (auto it = markers.rbegin(); it != markers.rend(); ++it)
     {
@@ -2835,7 +2835,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
     // lap when disabled; the mastering-stage shortcut and other early
     // returns simply never lap, so only full mixer passes are counted.
     const bool perfOn = perf.enabled.load (std::memory_order_relaxed);
-    juce::int64 perfMark = callbackStart;
+    std::int64_t perfMark = callbackStart;
     auto perfLap = [&] (int section) noexcept
     {
         if (! perfOn) return;
@@ -2987,7 +2987,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
             {
                 // Initial lock on rising edge.
                 session.pendingTransportPlayhead.store (
-                    (juce::int64) ((double) mtcFrames * sPerFrame),
+                    (std::int64_t) ((double) mtcFrames * sPerFrame),
                     std::memory_order_relaxed);
                 session.pendingTransportAction.store (
                     (int) PendingTransportAction::Play,
@@ -3018,10 +3018,10 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                 {
                     const auto transportSamples = transport.getPlayhead();
                     const auto mtcSamples =
-                        (juce::int64) ((double) mtcFrames * sPerFrame);
+                        (std::int64_t) ((double) mtcFrames * sPerFrame);
                     const auto deltaSamples = transportSamples - mtcSamples;
                     const auto deltaFrames = std::llabs (
-                        (juce::int64) ((double) deltaSamples / sPerFrame));
+                        (std::int64_t) ((double) deltaSamples / sPerFrame));
                     if (deltaFrames > kFreewheelToleranceFrames)
                     {
                         if (++mtcDriftWindowFrames >= kFreewheelReSyncWindow)
@@ -3863,7 +3863,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
 
     if ((int) mixL.size() < numSamples)
     {
-        silentDims.store (((juce::uint64) (juce::uint32) mixL.size() << 32)
+        silentDims.store (((std::uint64_t) (juce::uint32) mixL.size() << 32)
                           | (juce::uint32) numSamples, std::memory_order_relaxed);
         silentBlocks.fetch_add (1, std::memory_order_relaxed);   // drained by diagTimer
         if (outputChannelData != nullptr)
@@ -3953,14 +3953,14 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
     const auto state = transport.getState();
     const bool isPlaying   = (state == Transport::State::Playing);
     const bool isRecording = (state == Transport::State::Recording);
-    const juce::int64 blockStartSamples = transport.getPlayhead();
+    const std::int64_t blockStartSamples = transport.getPlayhead();
 
     // Loop-aware disk reads: mirrors the wrap gate at the bottom of the
     // callback (plain playback only — recording keeps the playhead linear).
     const bool loopReadActive = isPlaying && ! isRecording && transport.isLoopEnabled()
                                  && transport.getLoopEnd() > transport.getLoopStart();
-    const juce::int64 loopReadStart = loopReadActive ? transport.getLoopStart() : -1;
-    const juce::int64 loopReadEnd   = loopReadActive ? transport.getLoopEnd()   : -1;
+    const std::int64_t loopReadStart = loopReadActive ? transport.getLoopStart() : -1;
+    const std::int64_t loopReadEnd   = loopReadActive ? transport.getLoopEnd()   : -1;
 
     // Hanging-note protection. Detect two events that warrant a per-MIDI-
     // track "All Notes Off" flush this block:
@@ -4293,8 +4293,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
             // 0 latency = no shift (the common case for synths). Audio
             // tracks have no instrument plugin so latency is 0 even when
             // the slot is loaded with an effect.
-            const juce::int64 pluginLatency = midiTrack
-                ? (juce::int64) strips[(size_t) t].getPluginSlot().getLatencySamples()
+            const std::int64_t pluginLatency = midiTrack
+                ? (std::int64_t) strips[(size_t) t].getPluginSlot().getLatencySamples()
                 : 0;
             const auto schedStart = blockStartSamples + pluginLatency;
             const auto blockEnd   = schedStart + numSamples;
@@ -4321,8 +4321,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                 {
                     if (region.muted) continue;
                     const auto regStart = region.timelineStart;
-                    const auto regStartTick = useMap ? tm->samplesToTicks (regStart, sr) : (juce::int64) 0;
-                    auto absOf = [&] (juce::int64 relTick)
+                    const auto regStartTick = useMap ? tm->samplesToTicks (regStart, sr) : (std::int64_t) 0;
+                    auto absOf = [&] (std::int64_t relTick)
                     {
                         return useMap ? tm->ticksToSamples (regStartTick + relTick, sr)
                                       : regStart + ticksToSamples (relTick, sr, bpm);
@@ -4346,8 +4346,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
             {
                 if (region.muted) continue;
                 const auto regStart = region.timelineStart;
-                const auto regStartTick = useMap ? tm->samplesToTicks (regStart, sr) : (juce::int64) 0;
-                auto absOf = [&] (juce::int64 relTick)
+                const auto regStartTick = useMap ? tm->samplesToTicks (regStart, sr) : (std::int64_t) 0;
+                auto absOf = [&] (std::int64_t relTick)
                 {
                     return useMap ? tm->ticksToSamples (regStartTick + relTick, sr)
                                   : regStart + ticksToSamples (relTick, sr, bpm);
@@ -4635,8 +4635,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
             // Both reduce to a single [from, to) intersection with the
             // current block.
             const auto recStart  = activeRecordStart.load (std::memory_order_relaxed);
-            juce::int64 effIn    = recStart;  // floor; never write before this
-            juce::int64 effOut   = std::numeric_limits<juce::int64>::max();
+            std::int64_t effIn    = recStart;  // floor; never write before this
+            std::int64_t effOut   = std::numeric_limits<std::int64_t>::max();
             if (transport.isPunchEnabled())
             {
                 const auto pIn  = transport.getPunchIn();
@@ -4900,7 +4900,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
             // sample-rate change can't hold a stale count against the
             // new window.
             const double srNow = currentSampleRate.load (std::memory_order_relaxed);
-            const juce::int64 tailSamples = (juce::int64) (kAuxTailSilenceSeconds
+            const std::int64_t tailSamples = (std::int64_t) (kAuxTailSilenceSeconds
                                                             * (srNow > 0.0 ? srNow : 48000.0));
             // Empty lanes skip immediately on silent input (no tail to
             // protect); plugin lanes wait out the tail window.
@@ -5021,7 +5021,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         // The click mixes post-master, AFTER the master-stage aux PDC delayed
         // the program by masterDryPdcApplied — reference the click to the
         // delayed position or it leads everything it's supposed to mark.
-        metronome.process (blockStartSamples - (juce::int64) masterDryPdcApplied,
+        metronome.process (blockStartSamples - (std::int64_t) masterDryPdcApplied,
                             clickRolling,
                             mixL.data(), mixR.data(), numSamples,
                             /*forceEnable*/ inCountIn);

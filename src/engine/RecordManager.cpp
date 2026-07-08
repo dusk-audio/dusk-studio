@@ -34,7 +34,7 @@ RecordManager::~RecordManager()
     diskThread.stopThread (2000);
 }
 
-bool RecordManager::startRecording (double sampleRate, juce::int64 startSample)
+bool RecordManager::startRecording (double sampleRate, std::int64_t startSample)
 {
     if (active.load (std::memory_order_relaxed))
         return true;
@@ -226,7 +226,7 @@ bool RecordManager::startRecording (double sampleRate, juce::int64 startSample)
     return true;
 }
 
-void RecordManager::stopRecording (juce::int64 endSample)
+void RecordManager::stopRecording (std::int64_t endSample)
 {
     if (! active.load (std::memory_order_relaxed))
         return;
@@ -314,7 +314,7 @@ void RecordManager::stopRecording (juce::int64 endSample)
     // ordering doesn't matter, but doing MIDI first keeps the two paths
     // visibly separate and the failure cases isolated.
     const float bpm = session.tempoBpm.load (std::memory_order_relaxed);
-    const juce::int64 totalSamples = juce::jmax ((juce::int64) 1, endSample - recordStartSample);
+    const std::int64_t totalSamples = juce::jmax ((std::int64_t) 1, endSample - recordStartSample);
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         auto& cap = midiCaptures[(size_t) t];
@@ -366,7 +366,7 @@ void RecordManager::stopRecording (juce::int64 endSample)
         // on (channel, noteNumber) so concurrent notes on different keys
         // don't collide. Vel-0 Note On counts as Note Off (running-status
         // controllers use this convention to save bandwidth).
-        struct PendingNote { juce::int64 startSample; int velocity; };
+        struct PendingNote { std::int64_t startSample; int velocity; };
         std::unordered_map<int, PendingNote> pending;
         auto noteKey = [] (int ch, int note) { return ch * 256 + note; };
 
@@ -397,7 +397,7 @@ void RecordManager::stopRecording (juce::int64 endSample)
                 n.velocity   = it->second.velocity;
                 n.startTick  = samplesToTicks (it->second.startSample, recordSampleRate, bpm);
                 const auto offTick = samplesToTicks (ev.samplePos, recordSampleRate, bpm);
-                n.lengthInTicks = juce::jmax ((juce::int64) 1, offTick - n.startTick);
+                n.lengthInTicks = juce::jmax ((std::int64_t) 1, offTick - n.startTick);
                 region.notes.push_back (n);
                 pending.erase (it);
             }
@@ -428,7 +428,7 @@ void RecordManager::stopRecording (juce::int64 endSample)
             n.noteNumber = (key % 256);
             n.velocity   = pn.velocity;
             n.startTick  = samplesToTicks (pn.startSample, recordSampleRate, bpm);
-            n.lengthInTicks = juce::jmax ((juce::int64) 1,
+            n.lengthInTicks = juce::jmax ((std::int64_t) 1,
                 region.lengthInTicks - n.startTick);
             region.notes.push_back (n);
         }
@@ -448,8 +448,8 @@ void RecordManager::stopRecording (juce::int64 endSample)
         // NOT absorbed - the user can still see / cycle to the older
         // takes via the badge UI; partial-overlap merging would need
         // a tick-domain split routine that's out of scope here.
-        const juce::int64 newStart = region.timelineStart;
-        const juce::int64 newEnd   = newStart + region.lengthInSamples;
+        const std::int64_t newStart = region.timelineStart;
+        const std::int64_t newEnd   = newStart + region.lengthInSamples;
         session.track (t).midiRegions.mutate (
             [&region, newStart, newEnd] (std::vector<MidiRegion>& mregs)
             {
@@ -510,8 +510,8 @@ void RecordManager::stopRecording (juce::int64 endSample)
             // draws the new region on top inside the punch range. Phase 3
             // proper will handle splitting a partially-overlapping region
             // into outer fragments + a new take cycle slot.
-            const juce::int64 newStart = region.timelineStart;
-            const juce::int64 newEnd   = newStart + region.lengthInSamples;
+            const std::int64_t newStart = region.timelineStart;
+            const std::int64_t newEnd   = newStart + region.lengthInSamples;
             auto& regs = session.track (t).regions;
 
             // Crossfade length: 64 samples per side, raised-cosine
@@ -520,9 +520,9 @@ void RecordManager::stopRecording (juce::int64 endSample)
             // but enough to suppress the boundary discontinuity. Bound
             // by half the new take's length so a punch shorter than 128
             // samples still gets symmetric ramps that don't overlap.
-            constexpr juce::int64 kPunchFadeSamples = 64;
-            const juce::int64 fadeSamples = juce::jmax (
-                (juce::int64) 0, juce::jmin (kPunchFadeSamples, region.lengthInSamples / 2));
+            constexpr std::int64_t kPunchFadeSamples = 64;
+            const std::int64_t fadeSamples = juce::jmax (
+                (std::int64_t) 0, juce::jmin (kPunchFadeSamples, region.lengthInSamples / 2));
 
             // Pass 1 — fully-contained takes get absorbed into the new
             // region's previousTakes (no audio overlap, just history).
@@ -588,7 +588,7 @@ void RecordManager::stopRecording (juce::int64 endSample)
                     // Right fragment ends at the original exEnd, so any fade-out
                     // the source region carried still applies. Clamp so the new
                     // shorter length still satisfies fadeIn + fadeOut <= length.
-                    right.fadeOutSamples  = juce::jmax ((juce::int64) 0,
+                    right.fadeOutSamples  = juce::jmax ((std::int64_t) 0,
                         juce::jmin (right.fadeOutSamples,
                                      right.lengthInSamples - right.fadeInSamples));
                     right.previousTakes.clear();  // history stays with the left half
@@ -612,7 +612,7 @@ void RecordManager::stopRecording (juce::int64 endSample)
                 else if (spansRight)
                 {
                     // Right overlap only: shift start to newEnd - fade.
-                    const juce::int64 newLeft = newEnd - fadeSamples;
+                    const std::int64_t newLeft = newEnd - fadeSamples;
                     it->sourceOffset    += (newLeft - exStart);
                     it->timelineStart    = newLeft;
                     it->lengthInSamples  = exEnd - newLeft;
@@ -712,7 +712,7 @@ void RecordManager::stopRecording (juce::int64 endSample)
 
 void RecordManager::writeMidiBlock (int trackIndex,
                                      const juce::MidiBuffer& events,
-                                     juce::int64 blockStartFromRecord) noexcept
+                                     std::int64_t blockStartFromRecord) noexcept
 {
     AudioInFlightScope guard (audioInFlight);
     if (! active.load (std::memory_order_acquire)) return;
