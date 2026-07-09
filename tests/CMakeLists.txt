@@ -123,6 +123,7 @@ target_sources(dusk-studio-tests PRIVATE
     foundation_fs.cpp
     foundation_special_locations.cpp
     foundation_json.cpp
+    foundation_audio_math.cpp
     lv2_state_paths.cpp)
 
 # Phase 1a de-JUCE: JUCE-free audio file I/O (libsndfile backend), test-only for
