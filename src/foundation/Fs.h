@@ -260,21 +260,30 @@ inline std::filesystem::path tempDir()
 inline std::filesystem::path currentExecutablePath()
 {
 #if defined(_WIN32)
-    wchar_t buf[MAX_PATH + 256];
-    buf[0] = 0;
-    GetModuleFileNameW (nullptr, buf, (DWORD) (sizeof (buf) / sizeof (buf[0])));
-    return std::filesystem::path (buf);
+    std::vector<wchar_t> buf (MAX_PATH);
+    for (;;)
+    {
+        const DWORD n = GetModuleFileNameW (nullptr, buf.data(), (DWORD) buf.size());
+        if (n == 0) return {};
+        if (n < buf.size()) return std::filesystem::path (std::wstring (buf.data(), n));
+        buf.resize (buf.size() * 2);   // truncated (n == size) — grow and retry
+    }
 #elif defined(__APPLE__)
-    char buf[4096];
-    std::uint32_t size = sizeof (buf);
-    if (_NSGetExecutablePath (buf, &size) != 0) return {};
-    return std::filesystem::path (buf);
+    std::uint32_t size = 0;
+    _NSGetExecutablePath (nullptr, &size);   // sets size to the required length
+    std::vector<char> buf (size + 1, '\0');
+    if (_NSGetExecutablePath (buf.data(), &size) != 0) return {};
+    return std::filesystem::u8path (std::string (buf.data()));
 #else
-    char buf[4096];
-    const auto n = ::readlink ("/proc/self/exe", buf, sizeof (buf) - 1);
-    if (n <= 0) return {};
-    buf[n] = 0;
-    return std::filesystem::path (buf);
+    std::vector<char> buf (4096);
+    for (;;)
+    {
+        const auto n = ::readlink ("/proc/self/exe", buf.data(), buf.size());
+        if (n < 0) return {};
+        if ((std::size_t) n < buf.size())
+            return std::filesystem::u8path (std::string (buf.data(), (std::size_t) n));
+        buf.resize (buf.size() * 2);   // possibly truncated — grow and retry
+    }
 #endif
 }
 } // namespace dusk::fs

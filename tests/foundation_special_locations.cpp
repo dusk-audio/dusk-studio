@@ -13,7 +13,9 @@ namespace
 {
 stdfs::path jucePath (juce::File::SpecialLocationType type)
 {
-    return stdfs::path (juce::File::getSpecialLocation (type).getFullPathName().toStdString());
+    // toStdString() is UTF-8; u8path interprets it as such (path(std::string)
+    // would use the active code page on Windows).
+    return stdfs::u8path (juce::File::getSpecialLocation (type).getFullPathName().toStdString());
 }
 } // namespace
 

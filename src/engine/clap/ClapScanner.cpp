@@ -39,9 +39,12 @@ std::vector<stdfs::path> ClapScanner::findClapFiles (const std::vector<stdfs::pa
 {
     std::vector<stdfs::path> files;
     std::error_code ec;
-    for (const auto& dir : dirs)
+    for (const auto& dirIn : dirs)
     {
-        if (! stdfs::is_directory (dir, ec)) continue;
+        // Absolute so a cached bundle path (and its native identifier) stays
+        // stable regardless of cwd, even for a relative $CLAP_PATH entry.
+        const auto dir = stdfs::absolute (dirIn, ec);
+        if (ec || ! stdfs::is_directory (dir, ec)) continue;
         for (const auto& f : dusk::fs::findChildFiles (dir, "*.clap", true))
         {
             bool seen = false;

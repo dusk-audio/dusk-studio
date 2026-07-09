@@ -11,13 +11,20 @@
 namespace duskstudio::lv2::statepaths
 {
 // Restore side: an abstract path from a state blob resolves against <dir>/cur.
-// Already-absolute abstract paths (and an empty stateDir) pass through.
+// Already-absolute abstract paths (and an empty stateDir) pass through. A blob
+// with "../" segments that would escape cur/ is refused (passed through
+// unresolved) rather than mapped to a file outside the state directory.
 inline std::string toAbsolute (const std::filesystem::path& stateDir,
                                const std::string& abstractPath)
 {
     if (stateDir.empty() || std::filesystem::path (abstractPath).is_absolute())
         return abstractPath;
-    return (stateDir / "cur" / std::filesystem::u8path (abstractPath)).u8string();
+    const auto cur      = stateDir / "cur";
+    const auto resolved = (cur / std::filesystem::u8path (abstractPath)).lexically_normal();
+    const auto rel      = resolved.lexically_relative (cur);
+    if (rel.empty() || *rel.begin() == std::filesystem::path (".."))
+        return abstractPath;
+    return resolved.u8string();
 }
 
 // Save side: an absolute path lilv hands us becomes a cur/-relative abstract
