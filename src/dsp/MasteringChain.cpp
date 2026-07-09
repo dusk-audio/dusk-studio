@@ -1,4 +1,7 @@
 #include "MasteringChain.h"
+#include "../foundation/Decibels.h"
+#include "../foundation/ScopedNoDenormals.h"
+#include <algorithm>
 #include <cstring>
 
 namespace duskstudio
@@ -10,7 +13,7 @@ void MasteringChain::bind (const MasteringParams& params) noexcept
 
 void MasteringChain::prepare (double sampleRate, int blockSize, int oversamplingFactor)
 {
-    const int bs = juce::jmax (1, blockSize);
+    const int bs = std::max (1, blockSize);
     sampleRateForMeter = sampleRate > 0.0 ? sampleRate : 44100.0;
     vuRmsLinL = vuRmsLinR = 0.0f;
     meterBlockSize = bs;
@@ -67,7 +70,7 @@ int MasteringChain::readScopeLatest (float* dest, int count) const noexcept
 {
     const int ringSize = scopeRing.getNumSamples();
     if (ringSize == 0 || count <= 0 || dest == nullptr) return 0;
-    count = juce::jmin (count, ringSize);
+    count = std::min (count, ringSize);
     const int mask = scopeRingMask.load (std::memory_order_relaxed);
     if (mask == 0) return 0;   // matches pushScope; guards a mask-not-yet-stored race
     const long long wp = scopeWritePos.load (std::memory_order_acquire);
@@ -161,7 +164,7 @@ void MasteringChain::updateLimiterParameters() noexcept
 
 void MasteringChain::processInPlace (float* L, float* R, int numSamples) noexcept
 {
-    juce::ScopedNoDenormals noDenormals;
+    dusk::audio::ScopedNoDenormals noDenormals;
 
     jassert (numSamples <= preparedBlockSize);
     if (numSamples == 0) return;
@@ -181,7 +184,7 @@ void MasteringChain::processInPlace (float* L, float* R, int numSamples) noexcep
         updateCompParameters();
         for (int offset = 0; offset < numSamples; offset += bufSize)
         {
-            const int n = juce::jmin (bufSize, numSamples - offset);
+            const int n = std::min (bufSize, numSamples - offset);
             compStereoBuffer.copyFrom (0, 0, L + offset, n);
             compStereoBuffer.copyFrom (1, 0, R + offset, n);
             compMidi.clear();
@@ -220,11 +223,11 @@ void MasteringChain::processInPlace (float* L, float* R, int numSamples) noexcep
     if (paramsRef != nullptr)
     {
         const auto toDb = [] (float a) { return a > 1.0e-5f
-            ? juce::Decibels::gainToDecibels (a, -100.0f) : -100.0f; };
+            ? dusk::audio::gainToDecibels (a, -100.0f) : -100.0f; };
         paramsRef->meterPostMasterLDb.store (toDb (peakL), std::memory_order_relaxed);
         paramsRef->meterPostMasterRDb.store (toDb (peakR), std::memory_order_relaxed);
 
-        const float invN    = 1.0f / (float) juce::jmax (1, numSamples);
+        const float invN    = 1.0f / (float) std::max (1, numSamples);
         const float rmsBlkL = std::sqrt (sumSqL * invN);
         const float rmsBlkR = std::sqrt (sumSqR * invN);
         const float alpha   = (numSamples == meterBlockSize)

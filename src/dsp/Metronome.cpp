@@ -1,9 +1,12 @@
 #include "Metronome.h"
-#include <juce_audio_basics/juce_audio_basics.h>
+#include "../foundation/Decibels.h"
+#include <algorithm>
 #include <cmath>
 
 namespace duskstudio
 {
+constexpr float kPi = 3.14159265358979323846f;
+
 void Metronome::prepare (double sampleRate)
 {
     sr = sampleRate;
@@ -48,8 +51,8 @@ void Metronome::process (std::int64_t playheadStart, bool transportRolling,
     const double samplesPerBeat = sr * 60.0 / (double) bpm;
     if (samplesPerBeat < 1.0) return;
 
-    const int   bpb  = juce::jmax (1, beatsPerBar.load (std::memory_order_relaxed));
-    const float vol  = juce::Decibels::decibelsToGain (
+    const int   bpb  = std::max (1, beatsPerBar.load (std::memory_order_relaxed));
+    const float vol  = dusk::audio::decibelsToGain (
                          volumeDb.load (std::memory_order_relaxed));
 
     auto triggerClick = [this, poly] (float freq)
@@ -85,7 +88,7 @@ void Metronome::process (std::int64_t playheadStart, bool transportRolling,
     {
         if (pos < 0 || pos >= length) return;
         const float t = (float) pos / (float) sr;
-        const int rampLen = juce::jmax (1, length / 4);
+        const int rampLen = std::max (1, length / 4);
         float env = 1.0f;
         if (pos < rampLen)
             env = (float) pos / (float) rampLen;
@@ -93,9 +96,7 @@ void Metronome::process (std::int64_t playheadStart, bool transportRolling,
             env = (float) (length - pos) / (float) rampLen;
 
         const float accent = (freq > 1000.0f) ? 1.4f : 1.0f;
-        const float s = std::sin (2.0f * juce::MathConstants<float>::pi
-                                   * freq * t)
-                         * env * vol * accent;
+        const float s = std::sin (2.0f * kPi * freq * t) * env * vol * accent;
         L_[i] += s;
         R_[i] += s;
         ++pos;
