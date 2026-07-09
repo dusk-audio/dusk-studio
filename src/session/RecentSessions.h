@@ -1,11 +1,12 @@
 #pragma once
 
-#include <juce_core/juce_core.h>
+#include <filesystem>
+#include <vector>
 
 namespace duskstudio
 {
 // Persistent list of session directories the user has recently saved/loaded.
-// Stored as a newline-delimited file at <userApplicationDataDirectory>/Dusk Studio/recent.txt
+// Stored as a newline-delimited file at <userConfigDir>/Dusk Studio/recent.txt
 // (one absolute path per line, most recent first). Cap at kMaxEntries - older
 // entries are evicted on overflow. Stale paths (directory removed) are pruned
 // on read so the startup dialog never shows broken entries.
@@ -18,11 +19,11 @@ class RecentSessions
 public:
     static constexpr int kMaxEntries = 10;
 
-    static juce::Array<juce::File> load();
-    static void                    add (const juce::File& sessionDirectory);
-    static void                    clear();
+    static std::vector<std::filesystem::path> load();
+    static void                               add (const std::filesystem::path& sessionDirectory);
+    static void                               clear();
 
 private:
-    static juce::File getStoreFile();
+    static std::filesystem::path getStoreFile();
 };
 } // namespace duskstudio

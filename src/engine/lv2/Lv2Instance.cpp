@@ -1,5 +1,6 @@
 #include "Lv2Instance.h"
 #include "Lv2Bundle.h"
+#include "Lv2StatePaths.h"
 #include "../hosting/SpscRing.h"
 
 #include <lilv/lilv.h>
@@ -98,28 +99,19 @@ struct Lv2Instance::Impl
     // ABSTRACT (cur/-relative) paths, so we supply the mapping back to
     // absolute ourselves. Returned strings are malloc'd — the plugin frees
     // them through freePathCb (or plain free()), per the state spec.
-    juce::File stateDir;
+    std::filesystem::path stateDir;
 
     static char* absolutePathCb (LV2_State_Map_Path_Handle handle, const char* abstractPath)
     {
         if (abstractPath == nullptr) return nullptr;
         auto* self = static_cast<Impl*> (handle);
-        const auto abs = juce::String::fromUTF8 (abstractPath);
-        if (self->stateDir == juce::File() || juce::File::isAbsolutePath (abs))
-            return ::strdup (abstractPath);
-        return ::strdup (self->stateDir.getChildFile ("cur").getChildFile (abs)
-                             .getFullPathName().toRawUTF8());
+        return ::strdup (statepaths::toAbsolute (self->stateDir, abstractPath).c_str());
     }
     static char* abstractPathCb (LV2_State_Map_Path_Handle handle, const char* absolutePath)
     {
         if (absolutePath == nullptr) return nullptr;
         auto* self = static_cast<Impl*> (handle);
-        const juce::File f { juce::String::fromUTF8 (absolutePath) };
-        const auto cur = self->stateDir.getChildFile ("cur");
-        if (self->stateDir != juce::File() && f.isAChildOf (cur))
-            return ::strdup (f.getRelativePathFrom (cur)
-                                 .replaceCharacter ('\\', '/').toRawUTF8());
-        return ::strdup (absolutePath);
+        return ::strdup (statepaths::toAbstract (self->stateDir, absolutePath).c_str());
     }
     static void freePathCb (LV2_State_Free_Path_Handle, char* path) { ::free (path); }
 
@@ -791,7 +783,7 @@ void Lv2Instance::processBlock (const hosting::PortBuffers& io) noexcept
                                     std::memory_order_relaxed);
 }
 
-void Lv2Instance::setStateDirectory (const juce::File& dir)
+void Lv2Instance::setStateDirectory (const std::filesystem::path& dir)
 {
     impl->stateDir = dir;
 }
@@ -808,28 +800,32 @@ bool Lv2Instance::saveState (std::vector<uint8_t>& out) const
     // state (sample banks, IRs) into <dir>/cur/ and emits abstract paths in
     // the Turtle; without one, file-writing plugins keep only their in-memory
     // state (the pre-file-state behaviour, fine for effects).
-    juce::String curPath;
-    if (impl->stateDir != juce::File())
+    std::string curPath;
+    if (! impl->stateDir.empty())
     {
         // Rotate generations instead of wiping: a disk-streaming sampler may
         // still be reading the files the PREVIOUS save snapshotted — those
         // survive one more save cycle in prev/.
-        const auto cur  = impl->stateDir.getChildFile ("cur");
-        const auto prev = impl->stateDir.getChildFile ("prev");
-        bool rotated = prev.deleteRecursively();
-        if (rotated && cur.isDirectory())
-            rotated = cur.moveFileTo (prev);
+        std::error_code ec;
+        const auto cur  = impl->stateDir / "cur";
+        const auto prev = impl->stateDir / "prev";
+        std::filesystem::remove_all (prev, ec);
+        bool rotated = ! ec;
+        if (rotated && std::filesystem::is_directory (cur, ec))
+        {
+            std::filesystem::rename (cur, prev, ec);
+            rotated = ! ec;
+        }
         if (rotated)
         {
-            cur.createDirectory();
-            curPath = cur.getFullPathName();
+            std::filesystem::create_directories (cur, ec);
+            curPath = cur.u8string();
         }
         // Rotation failed: leave curPath empty so lilv gets no directory and
         // falls back to a blob-only (in-memory) save rather than writing a new
         // generation on top of the stale cur/ files.
     }
-    const auto curUtf8 = curPath.toStdString();
-    const char* dirC   = curUtf8.empty() ? nullptr : curUtf8.c_str();
+    const char* dirC = curPath.empty() ? nullptr : curPath.c_str();
 
     LilvState* state = lilv_state_new_from_instance (
         impl->plugin, impl->instance, &impl->mapFeature,

@@ -2,7 +2,7 @@
 
 #include "../hosting/INativeInstance.h"
 
-#include <juce_core/juce_core.h>
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <vector>
@@ -65,7 +65,7 @@ public:
     // the engine before saveState/loadState. saveState rotates
     // <dir>/prev <- <dir>/cur and snapshots referenced files into cur/;
     // loadState resolves the blob's abstract paths against cur/.
-    void setStateDirectory (const juce::File& dir);
+    void setStateDirectory (const std::filesystem::path& dir);
 
     int getLatencySamples() const noexcept override;
 

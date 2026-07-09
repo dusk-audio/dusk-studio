@@ -7,14 +7,25 @@
 
 #include "engine/clap/ClapScanner.h"
 
+#include <juce_core/juce_core.h>
+
 #include <cstdlib>
+#include <filesystem>
 
 using duskstudio::clap::ClapScanner;
+
+namespace
+{
+std::filesystem::path toPath (const juce::File& f)
+{
+    return std::filesystem::u8path (f.getFullPathName().toStdString());
+}
+} // namespace
 
 TEST_CASE ("ClapScanner default search paths are existing directories", "[clap][scan]")
 {
     for (const auto& d : ClapScanner::defaultSearchPaths())
-        REQUIRE (d.isDirectory());
+        REQUIRE (std::filesystem::is_directory (d));
 }
 
 TEST_CASE ("ClapScanner finds nothing in an empty directory", "[clap][scan]")
@@ -25,8 +36,8 @@ TEST_CASE ("ClapScanner finds nothing in an empty directory", "[clap][scan]")
     tmp.deleteRecursively();
     REQUIRE (tmp.createDirectory());
 
-    REQUIRE (ClapScanner::findClapFiles ({ tmp }).empty());
-    REQUIRE (ClapScanner::scan ({ tmp }).empty());
+    REQUIRE (ClapScanner::findClapFiles ({ toPath (tmp) }).empty());
+    REQUIRE (ClapScanner::scan ({ toPath (tmp) }).empty());
 
     tmp.deleteRecursively();
 }
@@ -43,13 +54,13 @@ TEST_CASE ("ClapScanner discovers and describes a real CLAP bundle", "[clap][sca
     const juce::File bundle (juce::String (path).trim());
     REQUIRE (bundle.existsAsFile());
 
-    const auto found = ClapScanner::scan ({ bundle.getParentDirectory() });
+    const auto found = ClapScanner::scan ({ toPath (bundle.getParentDirectory()) });
     REQUIRE_FALSE (found.empty());
 
     bool sawBundle = false;
     for (const auto& s : found)
     {
-        if (s.bundlePath == bundle.getFullPathName())
+        if (s.bundlePath == bundle.getFullPathName().toStdString())
         {
             sawBundle = true;
             REQUIRE_FALSE (s.desc.id.empty());     // a usable plugin id to instantiate

@@ -121,7 +121,9 @@ target_include_directories(dusk-studio-tests SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/
 target_sources(dusk-studio-tests PRIVATE
     foundation_text.cpp
     foundation_fs.cpp
-    foundation_json.cpp)
+    foundation_special_locations.cpp
+    foundation_json.cpp
+    lv2_state_paths.cpp)
 
 # Phase 1a de-JUCE: JUCE-free audio file I/O (libsndfile backend), test-only for
 # now. Optional — where libsndfile isn't installed (some CI platforms) the unit

@@ -39,7 +39,7 @@ class NativeLv2Slot final : public hosting::NativeInsertSlot<Lv2SlotTraits>
 public:
     // Session-scoped file-state directory — set by the engine ahead of
     // saveState/loadState (see Lv2Instance::setStateDirectory).
-    void setStateDirectory (const juce::File& dir)
+    void setStateDirectory (const std::filesystem::path& dir)
         { if (instance != nullptr) instance->setStateDirectory (dir); }
 
     // Parameters (message thread for read/enumerate; setParamValue is the control

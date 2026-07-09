@@ -70,8 +70,6 @@ src/engine/alsa/AlsaPerformanceTest.cpp
 src/engine/alsa/AlsaPerformanceTest.h
 src/engine/clap/ClapInstance.cpp
 src/engine/clap/ClapInstance.h
-src/engine/clap/ClapScanner.cpp
-src/engine/clap/ClapScanner.h
 src/engine/hosting/InsertAdapter.cpp
 src/engine/hosting/InsertAdapter.h
 src/engine/hosting/NativeInsertSlot.h
@@ -83,11 +81,8 @@ src/engine/ipc/PluginIpc.h
 src/engine/ipc/PluginScanProtocol.h
 src/engine/ipc/RemotePluginConnection.cpp
 src/engine/ipc/RemotePluginConnection.h
-src/engine/lv2/Lv2Instance.cpp
-src/engine/lv2/Lv2Instance.h
 src/engine/lv2/Lv2Scanner.cpp
 src/engine/lv2/Lv2Scanner.h
-src/engine/lv2/NativeLv2Slot.h
 src/engine/multisample/AriaBank.cpp
 src/engine/multisample/AriaBank.h
 src/engine/multisample/AriaGui.cpp
@@ -100,15 +95,11 @@ src/engine/multisample/Sf2Reader.cpp
 src/engine/multisample/Sf2Reader.h
 src/engine/multisample/Sf2ToSfz.cpp
 src/engine/multisample/Sf2ToSfz.h
-src/engine/vst3/Vst3Scanner.cpp
-src/engine/vst3/Vst3Scanner.h
 src/session/MarkerEditActions.cpp
 src/session/MarkerEditActions.h
 src/session/MidiBindings.cpp
 src/session/MidiBindings.h
 src/session/ParamEditAction.h
-src/session/RecentSessions.cpp
-src/session/RecentSessions.h
 src/session/RegionEditActions.cpp
 src/session/RegionEditActions.h
 src/session/Session.cpp
@@ -118,8 +109,6 @@ src/session/SessionSerializer.h
 src/session/SessionTemplates.cpp
 src/ui/AnalogVuMeter.cpp
 src/ui/AnalogVuMeter.h
-src/ui/AppConfig.cpp
-src/ui/AppConfig.h
 src/ui/AudioRegionEditor.cpp
 src/ui/AudioRegionEditor.h
 src/ui/AudioSettingsPanel.cpp

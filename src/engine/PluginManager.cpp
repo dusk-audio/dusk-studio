@@ -443,9 +443,12 @@ void PluginManager::scanClapPlugins()
     // in under it. The cache write also stays outside so a picker open on the
     // message thread can't stall behind this thread's file I/O.
     juce::Array<juce::PluginDescription> fresh;
-    for (const auto& file : clap::ClapScanner::findClapFiles (clap::ClapScanner::defaultSearchPaths()))
+    for (const auto& path : clap::ClapScanner::findClapFiles (clap::ClapScanner::defaultSearchPaths()))
+    {
+        const juce::File file (juce::String::fromUTF8 (path.u8string().c_str()));
         if (! scanNativeBundleSandboxed ("clap", file, fresh))
             nativescan::appendClapRows (file, fresh);   // no sandbox available — in-process
+    }
     {
         const juce::ScopedLock sl (nativeDescriptionsLock);
         clapDescriptions.swapWith (fresh);
@@ -573,9 +576,12 @@ void PluginManager::scanVst3NativePlugins()
 {
 #if DUSKSTUDIO_HAS_NATIVE_VST3
     juce::Array<juce::PluginDescription> fresh;
-    for (const auto& file : vst3::Vst3Scanner::findVst3Bundles (vst3::Vst3Scanner::defaultSearchPaths()))
+    for (const auto& path : vst3::Vst3Scanner::findVst3Bundles (vst3::Vst3Scanner::defaultSearchPaths()))
+    {
+        const juce::File file (juce::String::fromUTF8 (path.u8string().c_str()));
         if (! scanNativeBundleSandboxed ("vst3", file, fresh))
             nativescan::appendVst3Rows (file, fresh);   // no sandbox available — in-process
+    }
     {
         const juce::ScopedLock sl (nativeDescriptionsLock);
         vst3NativeDescriptions.swapWith (fresh);
