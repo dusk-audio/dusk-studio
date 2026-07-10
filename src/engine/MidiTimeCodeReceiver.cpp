@@ -168,7 +168,7 @@ void MidiTimeCodeReceiver::onFullFrameSysex (const std::uint8_t* msg, int sz,
     commitAssembledFrame (atSample, /*applyTwoFrameOffset*/ false);
 }
 
-void MidiTimeCodeReceiver::process (const juce::MidiBuffer& events,
+void MidiTimeCodeReceiver::process (const dusk::MidiBuffer& events,
                                       std::int64_t blockStartSample,
                                       int numSamples) noexcept
 {

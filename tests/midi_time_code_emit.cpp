@@ -2,6 +2,7 @@
 
 #include "engine/MidiTimeCodeEmitter.h"
 #include "engine/MidiTimeCodeReceiver.h"
+#include "support/DuskMidiTestBridge.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
@@ -9,6 +10,7 @@ namespace
 {
 using duskstudio::MidiTimeCodeEmitter;
 using duskstudio::MidiTimeCodeReceiver;
+using duskstudio::test::toDusk;
 
 // Count specific status bytes in a MidiBuffer.
 int countOf (const juce::MidiBuffer& buf, juce::uint8 status)
@@ -91,7 +93,7 @@ TEST_CASE ("MidiTimeCodeEmitter: round-trip through receiver recovers playhead",
                        + (juce::int64) ((double) b * 1024.0);
         emit.generateBlock (blockStart, 1024, ps, true,
                               R::Fps30, out);
-        rx.process (out, blockStart, 1024);
+        rx.process (toDusk (out), blockStart, 1024);
         blockStart += 1024;
     }
 

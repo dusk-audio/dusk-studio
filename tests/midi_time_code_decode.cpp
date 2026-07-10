@@ -2,12 +2,14 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "engine/MidiTimeCodeReceiver.h"
+#include "support/DuskMidiTestBridge.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
 namespace
 {
 using duskstudio::MidiTimeCodeReceiver;
+using duskstudio::test::toDusk;
 
 // Build the 8 QF bytes that encode (hh, mm, ss, ff) at rate r.
 // Nibble layout matches the receiver (and the emitter):
@@ -46,7 +48,7 @@ void pushSequence (MidiTimeCodeReceiver& rx,
     juce::MidiBuffer buf;
     for (int i = 0; i < 8; ++i)
         buf.addEvent (juce::MidiMessage (0xF1, bytes[(size_t) i]), i * 4);
-    rx.process (buf, blockStartSample, blockSize);
+    rx.process (toDusk (buf), blockStartSample, blockSize);
 }
 
 // Expected absolute SMPTE frame count (with +2 compensation) for a
@@ -124,7 +126,7 @@ TEST_CASE ("MidiTimeCodeReceiver: full-frame sysex emits instant SMPTE without +
     };
     juce::MidiBuffer buf;
     buf.addEvent (juce::MidiMessage (sysex, 10), 0);
-    rx.process (buf, /*blockStart*/ 0, /*numSamples*/ 64);
+    rx.process (toDusk (buf), /*blockStart*/ 0, /*numSamples*/ 64);
 
     REQUIRE (rx.isRolling());
     REQUIRE (rx.getFrameRate() == R::Fps30);
@@ -157,7 +159,7 @@ TEST_CASE ("MidiTimeCodeReceiver: reverse-QF freezes output without stutter",
     juce::MidiBuffer rev;
     for (int i = 7; i >= 1; --i)
         rev.addEvent (juce::MidiMessage (0xF1, bytes[(size_t) i]), (7 - i) * 4);
-    rx.process (rev, /*blockStart*/ 1000, /*numSamples*/ 64);
+    rx.process (toDusk (rev), /*blockStart*/ 1000, /*numSamples*/ 64);
 
     REQUIRE (rx.isReversed());
     REQUIRE_FALSE (rx.isRolling());
@@ -176,6 +178,6 @@ TEST_CASE ("MidiTimeCodeReceiver: QF watchdog drops rolling on silence",
 
     // Empty block 1 second later (>500 ms watchdog timeout at 48k).
     juce::MidiBuffer empty;
-    rx.process (empty, /*blockStart*/ 48000, /*numSamples*/ 64);
+    rx.process (toDusk (empty), /*blockStart*/ 48000, /*numSamples*/ 64);
     REQUIRE_FALSE (rx.isRolling());
 }

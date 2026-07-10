@@ -464,6 +464,10 @@ private:
     PitchDetector    pitchDetector;
     MidiSyncReceiver       midiSyncReceiver;
     MidiTimeCodeReceiver   midiTimeCodeReceiver;
+    // Scratch the sync/MTC input block is bridged into: the receivers take a
+    // dusk::MidiBuffer, so each block the JUCE input buffer is walked into this
+    // (pre-reserved so the fill never allocates on the audio thread).
+    dusk::MidiBuffer       syncMidiScratch;
     std::unique_ptr<class McuReceiver>   mcuReceiver;
     std::unique_ptr<class McuController> mcuController;
 

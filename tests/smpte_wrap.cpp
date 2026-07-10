@@ -2,11 +2,13 @@
 
 #include "engine/MidiTimeCodeEmitter.h"
 #include "engine/MidiTimeCodeReceiver.h"
+#include "support/DuskMidiTestBridge.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
 using duskstudio::MidiTimeCodeEmitter;
 using duskstudio::MidiTimeCodeReceiver;
+using duskstudio::test::toDusk;
 
 namespace
 {
@@ -73,7 +75,7 @@ TEST_CASE ("MTC round-trip: a 24h playhead decodes back to ~0", "[mtc][smpte][wr
         { hasFullFrame = true; break; }
     REQUIRE (hasFullFrame);
 
-    rx.process (buf, 0, 512);
+    rx.process (toDusk (buf), 0, 512);
 
     // The full-frame sysex carried wrapped 00:00:00:00, so the receiver's
     // absolute frame count reads ~0 rather than 2,592,000.
