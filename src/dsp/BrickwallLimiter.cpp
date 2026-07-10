@@ -1,11 +1,24 @@
 #include "BrickwallLimiter.h"
+#include "../foundation/Decibels.h"
+#include "../foundation/ScopedNoDenormals.h"
+
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace duskstudio
 {
 namespace
 {
+// JUCE approximatelyEqual, finite path (drive / release-ms are always finite):
+// relative epsilon, or an absolute floor at the smallest normal.
+bool approximatelyEqual (float a, float b) noexcept
+{
+    const float diff = std::abs (a - b);
+    return diff <= std::numeric_limits<float>::min()
+        || diff <= std::numeric_limits<float>::epsilon() * std::max (std::abs (a), std::abs (b));
+}
+
 inline float onePoleCoef (float timeMs, double rate) noexcept
 {
     const float t = timeMs * 0.001f * (float) rate;
@@ -30,21 +43,17 @@ void BrickwallLimiter::prepare (double sampleRate, int maxBlockSize, double init
     osFactor = 4;
     osRate   = sr * (double) osFactor;
 
-    const int bs     = juce::jmax (1, maxBlockSize);
-    const int stages = 2;   // two 2x stages = 4x
+    const int bs = std::max (1, maxBlockSize);
 
-    // Linear-phase FIR so the limiter doesn't smear transients with phase
-    // distortion; integer latency keeps delay compensation exact.
-    oversampler = std::make_unique<juce::dsp::Oversampling<float>> (
-        2, (size_t) stages,
-        juce::dsp::Oversampling<float>::filterHalfBandFIREquiripple,
-        true /*max quality*/, true /*integer latency*/);
-    oversampler->initProcessing ((size_t) bs);
-    oversampler->reset();
+    // Linear-phase halfband FIR so the limiter doesn't smear transients with
+    // phase distortion; the group delay is a whole number of base-rate samples
+    // so delay compensation stays exact.
+    oversampler.setFactor (osFactor);
+    oversampler.prepare (bs);
 
     // Size the delay + deque for the MAX lookahead; the active read offset is
     // set below (and re-settable at runtime) within this allocation.
-    maxLookaheadOs = juce::jmax (1, (int) (osRate * kMaxLookaheadMs / 1000.0));
+    maxLookaheadOs = std::max (1, (int) (osRate * kMaxLookaheadMs / 1000.0));
     bufLen         = maxLookaheadOs + 1;
     delayL.assign ((size_t) bufLen, 0.0f);
     delayR.assign ((size_t) bufLen, 0.0f);
@@ -62,7 +71,7 @@ void BrickwallLimiter::prepare (double sampleRate, int maxBlockSize, double init
     }
     sampleCounter = 0;
 
-    holdOs        = juce::jmax (0, (int) (osRate * 5.0 / 1000.0));   // default (Modern)
+    holdOs        = std::max (0, (int) (osRate * 5.0 / 1000.0));   // default (Modern)
     lastReleaseMs = -1.0f;   // force release/hold recompute on first block
     lastMode      = -1;
     {
@@ -72,9 +81,9 @@ void BrickwallLimiter::prepare (double sampleRate, int maxBlockSize, double init
     }
     relDepthCoef  = onePoleCoef (kRelDepthTrackMs, osRate);
 
-    osLatencyBase = (int) std::lround (oversampler->getLatencyInSamples());
+    osLatencyBase = (int) std::lround (oversampler.latency());
     const float la0 = std::isfinite ((float) initialLookaheadMs) ? (float) initialLookaheadMs : 2.0f;
-    lookaheadMs.store (juce::jlimit (kMinLookaheadMs, kMaxLookaheadMs, la0), std::memory_order_relaxed);
+    lookaheadMs.store (std::clamp (la0, kMinLookaheadMs, kMaxLookaheadMs), std::memory_order_relaxed);
     recomputeActiveLookahead();
     lastActiveLaOs = activeLookaheadOs.load (std::memory_order_relaxed);
 
@@ -87,7 +96,7 @@ void BrickwallLimiter::setLookaheadMs (float ms) noexcept
     // compares false against both bounds) and recomputeActiveLookahead would
     // then cast NaN to int — undefined. Ignore garbage, keep the last value.
     if (! std::isfinite (ms)) return;
-    lookaheadMs.store (juce::jlimit (kMinLookaheadMs, kMaxLookaheadMs, ms), std::memory_order_relaxed);
+    lookaheadMs.store (std::clamp (ms, kMinLookaheadMs, kMaxLookaheadMs), std::memory_order_relaxed);
     recomputeActiveLookahead();
 }
 
@@ -99,9 +108,9 @@ void BrickwallLimiter::recomputeActiveLookahead() noexcept
     // oversampled count from it. This keeps laOs an exact multiple of osFactor,
     // so the reported latency (lookaheadBase, base samples) equals the delay
     // actually applied (laOs / osFactor) — no sub-sample drift between them.
-    const int maxLookaheadBase = juce::jmax (1, maxLookaheadOs / osFactor);
-    const int lookaheadBase = juce::jlimit (1, maxLookaheadBase,
-                                            (int) std::lround (sr * (double) ms / 1000.0));
+    const int maxLookaheadBase = std::max (1, maxLookaheadOs / osFactor);
+    const int lookaheadBase = std::clamp ((int) std::lround (sr * (double) ms / 1000.0),
+                                          1, maxLookaheadBase);
     activeLookaheadOs.store (lookaheadBase * osFactor, std::memory_order_relaxed);
     latencySamplesBase.store (osLatencyBase + lookaheadBase, std::memory_order_relaxed);
 }
@@ -120,29 +129,28 @@ void BrickwallLimiter::reset() noexcept
         relDepth[c] = 0.0f;
     }
     lastActiveLaOs = activeLookaheadOs.load (std::memory_order_relaxed);
-    if (oversampler != nullptr)
-        oversampler->reset();
+    oversampler.reset();
     currentGrDb.store (0.0f, std::memory_order_relaxed);
 }
 
 void BrickwallLimiter::processInPlace (float* L, float* R, int numSamples) noexcept
 {
-    if (oversampler == nullptr || bufLen == 0 || numSamples <= 0 || L == nullptr || R == nullptr)
+    if (bufLen == 0 || numSamples <= 0 || L == nullptr || R == nullptr)
         return;
 
-    juce::ScopedNoDenormals noDenormals;
+    dusk::audio::ScopedNoDenormals noDenormals;
 
     const bool  active  = enabled.load (std::memory_order_relaxed);
-    const float drive   = active ? juce::Decibels::decibelsToGain (
+    const float drive   = active ? dusk::audio::decibelsToGain (
                                         inputDrive.load (std::memory_order_relaxed))
                                   : 1.0f;
-    const float ceiling = juce::Decibels::decibelsToGain (
+    const float ceiling = dusk::audio::decibelsToGain (
                             ceilingDb.load (std::memory_order_relaxed));
 
     {
         const int   modeNow = mode.load (std::memory_order_relaxed);
         const float relMs   = releaseMs.load (std::memory_order_relaxed);
-        if (modeNow != lastMode || ! juce::approximatelyEqual (relMs, lastReleaseMs))
+        if (modeNow != lastMode || ! approximatelyEqual (relMs, lastReleaseMs))
         {
             lastMode      = modeNow;
             lastReleaseMs = relMs;
@@ -158,21 +166,19 @@ void BrickwallLimiter::processInPlace (float* L, float* R, int numSamples) noexc
             }
             releaseCoefFast = onePoleCoef (effRelMs * 0.5f, osRate);
             releaseCoefSlow = onePoleCoef (effRelMs * 2.0f, osRate);
-            holdOs      = juce::jmax (0, (int) (osRate * (double) holdMs / 1000.0));
+            holdOs      = std::max (0, (int) (osRate * (double) holdMs / 1000.0));
         }
     }
     const bool linked = stereoLink.load (std::memory_order_relaxed);
 
-    if (! juce::approximatelyEqual (drive, 1.0f))
+    if (! approximatelyEqual (drive, 1.0f))
         for (int i = 0; i < numSamples; ++i) { L[i] *= drive; R[i] *= drive; }
 
-    float* basePtrs[2] = { L, R };
-    juce::dsp::AudioBlock<float> baseBlock (basePtrs, 2, (size_t) numSamples);
-    auto up = oversampler->processSamplesUp (baseBlock);
+    auto up = oversampler.processSamplesUp (L, R, numSamples);
 
-    const int osN = (int) up.getNumSamples();
-    float* uL = up.getChannelPointer (0);
-    float* uR = up.getChannelPointer (1);
+    const int osN = up.numSamples;
+    float* uL = up.L;
+    float* uR = up.R;
 
     const int cap = (int) dqVal[0].size();
     // Active lookahead read once per block — keeps the read offset and the
@@ -206,7 +212,7 @@ void BrickwallLimiter::processInPlace (float* L, float* R, int numSamples) noexc
         float tgt[2];
         if (linked)
         {
-            const float peak = juce::jmax (std::abs (inL), std::abs (inR));
+            const float peak = std::max (std::abs (inL), std::abs (inR));
             tgt[0] = tgt[1] = (peak > ceiling && peak > 1.0e-9f) ? ceiling / peak : 1.0f;
         }
         else
@@ -268,7 +274,7 @@ void BrickwallLimiter::processInPlace (float* L, float* R, int numSamples) noexc
                 // Program-dependent release: blend fast↔slow by the smoothed
                 // reduction depth carried from the (deep, sustained vs brief)
                 // limiting that preceded this recovery.
-                const float blend = juce::jlimit (0.0f, 1.0f, relDepth[c] * kReleaseAdaptGain);
+                const float blend = std::clamp (relDepth[c] * kReleaseAdaptGain, 0.0f, 1.0f);
                 const float coef  = releaseCoefFast + (releaseCoefSlow - releaseCoefFast) * blend;
                 env[c] += (wmin - env[c]) * coef;
             }
@@ -282,33 +288,33 @@ void BrickwallLimiter::processInPlace (float* L, float* R, int numSamples) noexc
         float oR = delayR[(size_t) readPos] * (active ? env[1] : 1.0f);
         if (active)
         {
-            oL = juce::jlimit (-ceiling, ceiling, oL);
-            oR = juce::jlimit (-ceiling, ceiling, oR);
+            oL = std::clamp (oL, -ceiling, ceiling);
+            oR = std::clamp (oR, -ceiling, ceiling);
         }
         uL[i] = oL;
         uR[i] = oR;
 
         if (active)
-            blockMinEnv = juce::jmin (blockMinEnv, juce::jmin (env[0], env[1]));
+            blockMinEnv = std::min (blockMinEnv, std::min (env[0], env[1]));
 
         writePos = (writePos + 1) % bufLen;
         ++sampleCounter;
     }
 
-    oversampler->processSamplesDown (baseBlock);
+    oversampler.processSamplesDown (L, R, numSamples);
 
     // Residual overshoot from the downsampling reconstruction filter - clamp at
     // base rate so the published ceiling is a hard guarantee.
     if (active)
         for (int i = 0; i < numSamples; ++i)
         {
-            L[i] = juce::jlimit (-ceiling, ceiling, L[i]);
-            R[i] = juce::jlimit (-ceiling, ceiling, R[i]);
+            L[i] = std::clamp (L[i], -ceiling, ceiling);
+            R[i] = std::clamp (R[i], -ceiling, ceiling);
         }
 
     const float grDb = (blockMinEnv >= 1.0f)
                         ? 0.0f
-                        : juce::Decibels::gainToDecibels (blockMinEnv, -60.0f);
+                        : dusk::audio::gainToDecibels (blockMinEnv, -60.0f);
     currentGrDb.store (grDb, std::memory_order_relaxed);
 }
 } // namespace duskstudio

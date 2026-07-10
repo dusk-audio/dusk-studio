@@ -8,7 +8,6 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(Catch2)
 
 add_executable(dusk-studio-tests
-    smoke_brickwall_limiter.cpp
     # Shared native-host foundation (PortLayout / PortBuffers / INativeInstance)
     # is header-only + platform-neutral, so it links in the base target.
     hosting_port_layout.cpp
@@ -91,7 +90,6 @@ add_executable(dusk-studio-tests
     # multisample editor now uses (its showPopup override) — link it so the
     # editor TU resolves.
     ${CMAKE_SOURCE_DIR}/src/ui/DuskComboBox.cpp
-    ${CMAKE_SOURCE_DIR}/src/dsp/BrickwallLimiter.cpp
     ${CMAKE_SOURCE_DIR}/src/dsp/HardwareInsertSlot.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/FileImporter.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/DpImporter.cpp
@@ -299,6 +297,9 @@ if(DUSK_PLUGINS_PATH)
         bus_strip.cpp
         mastering_chain.cpp
         mastering_digital_eq.cpp
+        dsp_stereo_oversampler.cpp
+        smoke_brickwall_limiter.cpp
+        ${CMAKE_SOURCE_DIR}/src/dsp/BrickwallLimiter.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/BusStrip.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/MasteringChain.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/MasteringDigitalEq.cpp

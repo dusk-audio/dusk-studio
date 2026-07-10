@@ -2,8 +2,6 @@ src/DuskStudioApp.cpp
 src/DuskStudioApp.h
 src/dsp/AuxLaneStrip.cpp
 src/dsp/AuxLaneStrip.h
-src/dsp/BrickwallLimiter.cpp
-src/dsp/BrickwallLimiter.h
 src/dsp/BusStrip.cpp
 src/dsp/BusStrip.h
 src/dsp/ChannelStrip.cpp

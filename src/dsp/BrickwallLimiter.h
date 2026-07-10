@@ -1,10 +1,8 @@
 #pragma once
 
-#include <juce_audio_basics/juce_audio_basics.h>
-#include <juce_core/juce_core.h>
-#include <juce_dsp/juce_dsp.h>
+#include "../foundation/StereoOversampler.h"
+
 #include <atomic>
-#include <memory>
 #include <vector>
 
 namespace duskstudio
@@ -103,7 +101,7 @@ private:
     std::atomic<int> latencySamplesBase { 0 };
     int osLatencyBase = 0;   // oversampler FIR latency, base-rate samples
 
-    std::unique_ptr<juce::dsp::Oversampling<float>> oversampler;
+    dusk::audio::StereoOversampler oversampler;
 
     // Stereo delay line at the OVERSAMPLED rate — circular, sized for the max
     // lookahead. The active read offset (activeLookaheadOs) is variable, so the
