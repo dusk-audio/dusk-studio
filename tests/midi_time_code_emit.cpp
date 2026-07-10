@@ -2,31 +2,32 @@
 
 #include "engine/MidiTimeCodeEmitter.h"
 #include "engine/MidiTimeCodeReceiver.h"
-#include "support/DuskMidiTestBridge.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
+
+#include <cstdint>
 
 namespace
 {
 using duskstudio::MidiTimeCodeEmitter;
 using duskstudio::MidiTimeCodeReceiver;
-using duskstudio::test::toDusk;
 
-// Count specific status bytes in a MidiBuffer.
-int countOf (const juce::MidiBuffer& buf, juce::uint8 status)
+// Count events whose status byte matches, in the emitter's dusk output.
+int countOf (const dusk::MidiBuffer& buf, std::uint8_t status)
 {
     int n = 0;
     for (const auto m : buf)
         if (m.getMessage().getRawDataSize() >= 1
-            && (juce::uint8) m.getMessage().getRawData()[0] == status)
+            && m.getMessage().getRawData()[0] == status)
             ++n;
     return n;
 }
 
-bool containsSysex (const juce::MidiBuffer& buf)
+bool containsSysex (const dusk::MidiBuffer& buf)
 {
     for (const auto m : buf)
-        if (m.getMessage().isSysEx()) return true;
+        if (m.getMessage().getRawDataSize() >= 1
+            && m.getMessage().getRawData()[0] == 0xF0) return true;
     return false;
 }
 } // namespace
@@ -37,7 +38,7 @@ TEST_CASE ("MidiTimeCodeEmitter: rising edge fires full-frame sysex",
     MidiTimeCodeEmitter e;
     e.prepare (48000.0);
 
-    juce::MidiBuffer buf;
+    dusk::MidiBuffer buf;
     // 1 second playhead at 30 fps → 30 frames. First block with
     // rolling=true: should emit one F0...F7 sysex + start the QF
     // stream.
@@ -54,7 +55,7 @@ TEST_CASE ("MidiTimeCodeEmitter: stopped transport emits nothing",
 {
     MidiTimeCodeEmitter e;
     e.prepare (48000.0);
-    juce::MidiBuffer buf;
+    dusk::MidiBuffer buf;
     e.generateBlock (0, 512, 0, /*isRolling*/ false,
                        MidiTimeCodeReceiver::Fps30, buf);
     REQUIRE (buf.isEmpty());
@@ -82,7 +83,7 @@ TEST_CASE ("MidiTimeCodeEmitter: round-trip through receiver recovers playhead",
     // At 30 fps QF cadence is 4/frame = 120 QF/sec → ~67 ms for 8
     // QFs. 1024-sample block at 48k = 21.3 ms → need ~4 blocks.
     juce::int64 blockStart = 0;
-    juce::MidiBuffer out;
+    dusk::MidiBuffer out;
     for (int b = 0; b < 8; ++b)
     {
         out.clear();
@@ -93,7 +94,7 @@ TEST_CASE ("MidiTimeCodeEmitter: round-trip through receiver recovers playhead",
                        + (juce::int64) ((double) b * 1024.0);
         emit.generateBlock (blockStart, 1024, ps, true,
                               R::Fps30, out);
-        rx.process (toDusk (out), blockStart, 1024);
+        rx.process (out, blockStart, 1024);
         blockStart += 1024;
     }
 
@@ -116,7 +117,7 @@ TEST_CASE ("MidiTimeCodeEmitter: frame-rate change re-emits sysex",
     using R = MidiTimeCodeReceiver;
     MidiTimeCodeEmitter e;
     e.prepare (48000.0);
-    juce::MidiBuffer buf;
+    dusk::MidiBuffer buf;
 
     // First block at 30 fps to set rate.
     e.generateBlock (0, 512, 48000, true, R::Fps30, buf);

@@ -2,8 +2,6 @@
 
 #include "MidiTimeCodeReceiver.h"
 
-#include <juce_audio_basics/juce_audio_basics.h>
-
 namespace duskstudio
 {
 // MTC emitter — companion to MidiClockEmitter. QFs at 4 × frameRate Hz
@@ -52,7 +50,7 @@ public:
                         std::int64_t playheadSamples,
                         bool isRolling,
                         FrameRate rate,
-                        juce::MidiBuffer& out) noexcept;
+                        dusk::MidiBuffer& out) noexcept;
 
 private:
     // > 2 + rounding margin. sequenceFrames is stale by up to 2 frames
@@ -64,11 +62,11 @@ private:
                             int nibble,
                             std::int64_t frames,
                             FrameRate rate,
-                            juce::MidiBuffer& out) noexcept;
+                            dusk::MidiBuffer& out) noexcept;
     void emitFullFrameSysex (std::int64_t atSample,
                               std::int64_t frames,
                               FrameRate rate,
-                              juce::MidiBuffer& out) noexcept;
+                              dusk::MidiBuffer& out) noexcept;
 
     double sr = 48000.0;
 

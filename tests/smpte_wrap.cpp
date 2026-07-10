@@ -2,13 +2,11 @@
 
 #include "engine/MidiTimeCodeEmitter.h"
 #include "engine/MidiTimeCodeReceiver.h"
-#include "support/DuskMidiTestBridge.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
 using duskstudio::MidiTimeCodeEmitter;
 using duskstudio::MidiTimeCodeReceiver;
-using duskstudio::test::toDusk;
 
 namespace
 {
@@ -30,13 +28,13 @@ int emittedHours (juce::int64 frames)
     e.prepare (kSr);
     const auto playhead = (juce::int64) ((double) frames * kSamplesPerFrame30);
 
-    juce::MidiBuffer buf;
+    dusk::MidiBuffer buf;
     e.generateBlock (0, 512, playhead, /*isRolling*/ true,
                      MidiTimeCodeReceiver::Fps30, buf);
     for (const auto m : buf)
     {
         const auto& msg = m.getMessage();
-        if (msg.isSysEx() && msg.getRawDataSize() >= 6)
+        if (msg.getRawDataSize() >= 6 && msg.getRawData()[0] == 0xF0)
             return msg.getRawData()[5] & 0x1F;
     }
     return -1;
@@ -63,7 +61,7 @@ TEST_CASE ("MTC round-trip: a 24h playhead decodes back to ~0", "[mtc][smpte][wr
     const auto frames24h = framesAt30 (24, 0, 0, 0);
     const auto playhead  = (juce::int64) ((double) frames24h * kSamplesPerFrame30);
 
-    juce::MidiBuffer buf;
+    dusk::MidiBuffer buf;
     e.generateBlock (0, 512, playhead, true, MidiTimeCodeReceiver::Fps30, buf);
 
     // Assert emission, not just receiver state: without a startup full-frame SysEx the
@@ -71,11 +69,11 @@ TEST_CASE ("MTC round-trip: a 24h playhead decodes back to ~0", "[mtc][smpte][wr
     // wrong reason (nothing was sent).
     bool hasFullFrame = false;
     for (const auto m : buf)
-        if (m.getMessage().isSysEx() && m.getMessage().getRawDataSize() >= 6)
+        if (m.getMessage().getRawDataSize() >= 6 && m.getMessage().getRawData()[0] == 0xF0)
         { hasFullFrame = true; break; }
     REQUIRE (hasFullFrame);
 
-    rx.process (toDusk (buf), 0, 512);
+    rx.process (buf, 0, 512);
 
     // The full-frame sysex carried wrapped 00:00:00:00, so the receiver's
     // absolute frame count reads ~0 rather than 2,592,000.

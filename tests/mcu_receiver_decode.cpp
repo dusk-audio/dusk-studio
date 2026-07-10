@@ -4,40 +4,39 @@
 #include "engine/McuProtocol.h"
 #include "engine/McuReceiver.h"
 #include "session/Session.h"
+#include "support/DuskMidiTestBridge.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
 using Catch::Matchers::WithinAbs;
 using namespace duskstudio;
+using duskstudio::test::toDusk;
 
 namespace
 {
 // Synthesize a single-event MidiBuffer matching the MCU wire format
-// we expect McuReceiver to decode. Used by the test cases below to
-// keep the byte-stuffing in one place.
+// we expect McuReceiver to decode, bridged into the dusk::MidiBuffer the
+// receiver takes. Keeps the byte-stuffing in one place.
 
-juce::MidiBuffer makePitchBend (int channel, int value14)
+dusk::MidiBuffer makePitchBend (int channel, int value14)
 {
     juce::MidiBuffer mb;
-    const int lsb = value14 & 0x7F;
-    const int msb = (value14 >> 7) & 0x7F;
     mb.addEvent (juce::MidiMessage::pitchWheel (channel + 1, value14), 0);
-    juce::ignoreUnused (lsb, msb);
-    return mb;
+    return toDusk (mb);
 }
 
-juce::MidiBuffer makeNoteOn (int note, int velocity)
+dusk::MidiBuffer makeNoteOn (int note, int velocity)
 {
     juce::MidiBuffer mb;
     mb.addEvent (juce::MidiMessage::noteOn (1, note, (juce::uint8) velocity), 0);
-    return mb;
+    return toDusk (mb);
 }
 
-juce::MidiBuffer makeCc (int controller, int value)
+dusk::MidiBuffer makeCc (int controller, int value)
 {
     juce::MidiBuffer mb;
     mb.addEvent (juce::MidiMessage::controllerEvent (1, controller, value), 0);
-    return mb;
+    return toDusk (mb);
 }
 } // namespace
 

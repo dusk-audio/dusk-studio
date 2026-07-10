@@ -1,6 +1,8 @@
 #pragma once
 
-#include <juce_audio_basics/juce_audio_basics.h>
+#include "../foundation/MidiBuffer.h"
+
+#include <cstdint>
 
 namespace duskstudio
 {
@@ -57,7 +59,7 @@ public:
     // for the current block; `blockStartSample` is the engine's
     // absolute playhead at the start of the block (used to time
     // jog-wheel scrub steps against a monotonic sample clock).
-    void process (const juce::MidiBuffer& events,
+    void process (const dusk::MidiBuffer& events,
                   std::int64_t blockStartSample) noexcept;
 
 private:
