@@ -145,7 +145,7 @@ TEST_CASE ("BusStrip: silent input -> silent output", "[BusStrip]")
     }
 
     // No analog noise floor on a silent bus even with EQ + comp engaged
-    // (BusStrip::bindCompParams forces the donor's noise_enable off).
+    // (the framework-free comp core carries no analog-hiss stage).
     REQUIRE (outPeak < 1.0e-4f);
 }
 
@@ -207,7 +207,9 @@ TEST_CASE ("BusStrip: comp-off bus is OS-latency compensated at 4x", "[BusStrip]
     // With comp off, factor 4 skips the comp oversampler but delays the signal
     // by the oversampler's latency so the bus stays aligned with comp-on buses.
     // The EQ is identical (native) in both runs, so the factor-4 stream should
-    // equal the factor-1 stream shifted by a small positive lag.
+    // equal the factor-1 stream shifted by the skip delay: the donor halfband
+    // FIR round trip is 26.5 base samples at 4x, applied as a 27-sample
+    // (lround) integer delay.
     const float amp = juce::Decibels::decibelsToGain (-12.0f);
 
     auto capture = [&] (int factor)
@@ -224,9 +226,8 @@ TEST_CASE ("BusStrip: comp-off bus is OS-latency compensated at 4x", "[BusStrip]
     const auto f1 = capture (1);
     const auto f4 = capture (4);
 
-    const auto [lag, err] = bestLag (f1, f4, 16);   // does f4 == f1 delayed?
-    REQUIRE (lag >= 1);                  // a real compensation delay is applied
-    REQUIRE (lag <= 8);                  // ~4.4 samples at 4× → rounds to 4
+    const auto [lag, err] = bestLag (f1, f4, 40);   // does f4 == f1 delayed?
+    REQUIRE (lag == 27);                 // lround(26.5) — the applied skip delay
     REQUIRE (err < 1.0e-7);              // and at that lag the streams match
 }
 
