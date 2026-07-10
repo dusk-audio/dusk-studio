@@ -1,8 +1,10 @@
 #include "MidiSyncReceiver.h"
 
+#include <algorithm>
+
 namespace duskstudio
 {
-void MidiSyncReceiver::process (const juce::MidiBuffer& events,
+void MidiSyncReceiver::process (const dusk::MidiBuffer& events,
                                   std::int64_t blockStartSample) noexcept
 {
     for (const auto meta : events)
@@ -12,9 +14,8 @@ void MidiSyncReceiver::process (const juce::MidiBuffer& events,
         if (msg.getRawDataSize() < 1) continue;
         const std::uint8_t status = data[0];
 
-        // F8 / FA / FB / FC are system-realtime bytes. They're not
-        // matched by juce::MidiMessage::isMidiClock() etc. on every
-        // path, so we test the raw status byte directly.
+        // F8 / FA / FB / FC are system-realtime bytes. We test the raw
+        // status byte directly rather than relying on message-type helpers.
         if (status == 0xF8)  // Clock
         {
             const std::int64_t sampleAt = blockStartSample + meta.samplePosition;
@@ -63,7 +64,7 @@ void MidiSyncReceiver::process (const juce::MidiBuffer& events,
                                 // Clamp to a sane range so a garbage
                                 // stream doesn't push the session into
                                 // 0 / inf BPM.
-                                bpm.store (juce::jlimit (10.0f, 999.0f, computed),
+                                bpm.store (std::clamp (computed, 10.0f, 999.0f),
                                              std::memory_order_relaxed);
                             }
                         }

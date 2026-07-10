@@ -1,7 +1,9 @@
 #pragma once
 
-#include <juce_audio_basics/juce_audio_basics.h>
+#include "../foundation/MidiBuffer.h"
+
 #include <atomic>
+#include <cstdint>
 
 namespace duskstudio
 {
@@ -54,7 +56,7 @@ public:
 
     // blockStartSample is the engine's monotonic sample clock (same as
     // MidiClockEmitter / MidiSyncReceiver).
-    void process (const juce::MidiBuffer& events,
+    void process (const dusk::MidiBuffer& events,
                   std::int64_t blockStartSample,
                   int numSamples) noexcept;
 

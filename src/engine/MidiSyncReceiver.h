@@ -1,7 +1,9 @@
 #pragma once
 
-#include <juce_audio_basics/juce_audio_basics.h>
+#include "../foundation/MidiBuffer.h"
+
 #include <atomic>
+#include <cstdint>
 
 namespace duskstudio
 {
@@ -63,7 +65,7 @@ public:
     // engine's absolute playhead at the start of this block - we use
     // it + each event's sample offset to timestamp ticks against a
     // monotonically increasing sample clock.
-    void process (const juce::MidiBuffer& events,
+    void process (const dusk::MidiBuffer& events,
                   std::int64_t blockStartSample) noexcept;
 
     // Smoothed BPM derived from the recent clock interval. 0 until the

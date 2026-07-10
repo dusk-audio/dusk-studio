@@ -33,12 +33,8 @@ src/engine/McuReceiver.cpp
 src/engine/McuReceiver.h
 src/engine/MidiClockEmitter.cpp
 src/engine/MidiClockEmitter.h
-src/engine/MidiSyncReceiver.cpp
-src/engine/MidiSyncReceiver.h
 src/engine/MidiTimeCodeEmitter.cpp
 src/engine/MidiTimeCodeEmitter.h
-src/engine/MidiTimeCodeReceiver.cpp
-src/engine/MidiTimeCodeReceiver.h
 src/engine/NativeScanRows.h
 src/engine/PlaybackEngine.cpp
 src/engine/PlaybackEngine.h

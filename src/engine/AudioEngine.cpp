@@ -1040,6 +1040,7 @@ void AudioEngine::rebuildMidiInputBank()
     // Pre-reserve like perTrackMidiScratch: removeNextBlockOfMessages grows the
     // destination on the audio thread if a burst exceeds prior capacity.
     for (auto& m : perInputMidi) m.ensureSize (4096);
+    syncMidiScratch.reserveBytes (4096);   // same headroom for the juce->dusk bridge
 
     // Re-resolve on every rebuild so a hot-plug doesn't strand the
     // index at a stale slot. Empty / no match = -1 (no sync).
@@ -2933,8 +2934,16 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
 
     if (syncIdx >= 0 && (size_t) syncIdx < perInputMidi.size())
     {
-        midiSyncReceiver.process (perInputMidi[(size_t) syncIdx], midiSyncSampleClock);
-        midiTimeCodeReceiver.process (perInputMidi[(size_t) syncIdx],
+        // Bridge the JUCE input block into the dusk buffer the receivers take.
+        // Pre-reserved in prepareForSelfTest, so this refill doesn't allocate.
+        syncMidiScratch.clear();
+        for (const auto meta : perInputMidi[(size_t) syncIdx])
+            syncMidiScratch.addEvent (meta.getMessage().getRawData(),
+                                      meta.getMessage().getRawDataSize(),
+                                      meta.samplePosition);
+
+        midiSyncReceiver.process (syncMidiScratch, midiSyncSampleClock);
+        midiTimeCodeReceiver.process (syncMidiScratch,
                                          midiSyncSampleClock, numSamples);
         // Publish MTC decoded state. Same input port — Clock + MTC
         // multiplex on it; both decoders ignore bytes they don't own.

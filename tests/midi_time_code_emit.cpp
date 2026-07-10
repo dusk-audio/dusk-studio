@@ -10,6 +10,17 @@ namespace
 using duskstudio::MidiTimeCodeEmitter;
 using duskstudio::MidiTimeCodeReceiver;
 
+// Bridge a juce::MidiBuffer into the dusk::MidiBuffer the receiver takes,
+// exactly as AudioEngine does per block.
+dusk::MidiBuffer toDusk (const juce::MidiBuffer& j)
+{
+    dusk::MidiBuffer d;
+    for (const auto meta : j)
+        d.addEvent (meta.getMessage().getRawData(), meta.getMessage().getRawDataSize(),
+                    meta.samplePosition);
+    return d;
+}
+
 // Count specific status bytes in a MidiBuffer.
 int countOf (const juce::MidiBuffer& buf, juce::uint8 status)
 {
@@ -91,7 +102,7 @@ TEST_CASE ("MidiTimeCodeEmitter: round-trip through receiver recovers playhead",
                        + (juce::int64) ((double) b * 1024.0);
         emit.generateBlock (blockStart, 1024, ps, true,
                               R::Fps30, out);
-        rx.process (out, blockStart, 1024);
+        rx.process (toDusk (out), blockStart, 1024);
         blockStart += 1024;
     }
 

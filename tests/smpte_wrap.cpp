@@ -10,6 +10,17 @@ using duskstudio::MidiTimeCodeReceiver;
 
 namespace
 {
+// Bridge a juce::MidiBuffer into the dusk::MidiBuffer the receiver takes,
+// exactly as AudioEngine does per block.
+dusk::MidiBuffer toDusk (const juce::MidiBuffer& j)
+{
+    dusk::MidiBuffer d;
+    for (const auto meta : j)
+        d.addEvent (meta.getMessage().getRawData(), meta.getMessage().getRawDataSize(),
+                    meta.samplePosition);
+    return d;
+}
+
 constexpr double kSr = 48000.0;
 constexpr double kSamplesPerFrame30 = kSr / 30.0;   // 1600
 
@@ -73,7 +84,7 @@ TEST_CASE ("MTC round-trip: a 24h playhead decodes back to ~0", "[mtc][smpte][wr
         { hasFullFrame = true; break; }
     REQUIRE (hasFullFrame);
 
-    rx.process (buf, 0, 512);
+    rx.process (toDusk (buf), 0, 512);
 
     // The full-frame sysex carried wrapped 00:00:00:00, so the receiver's
     // absolute frame count reads ~0 rather than 2,592,000.
