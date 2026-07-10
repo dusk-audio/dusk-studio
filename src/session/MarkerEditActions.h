@@ -3,6 +3,8 @@
 #include <juce_data_structures/juce_data_structures.h>
 #include "Session.h"
 
+#include <string>
+
 namespace duskstudio
 {
 // UndoableActions for the marker timeline. Mirrors the shape of
@@ -14,7 +16,7 @@ class AddMarkerAction final : public juce::UndoableAction
 {
 public:
     AddMarkerAction (Session& session, std::int64_t timelineSamples,
-                       juce::String name = {});
+                       std::string name = {});
 
     bool perform() override;
     bool undo()    override;
@@ -27,7 +29,7 @@ public:
 private:
     Session&     session;
     std::int64_t  timelineSamples;
-    juce::String name;
+    std::string  name;
     int          insertedIdx = -1;
 };
 
@@ -57,7 +59,7 @@ private:
 class MoveMarkerAction final : public juce::UndoableAction
 {
 public:
-    MoveMarkerAction (Session& session, juce::String markerName,
+    MoveMarkerAction (Session& session, std::string markerName,
                         std::int64_t fromTimelineSamples,
                         std::int64_t toTimelineSamples);
 
@@ -67,7 +69,7 @@ public:
 
 private:
     Session&     session;
-    juce::String name;
+    std::string  name;
     std::int64_t  fromSamples;
     std::int64_t  toSamples;
 };

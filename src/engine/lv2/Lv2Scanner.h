@@ -2,8 +2,7 @@
 
 #include "Lv2Bundle.h"
 
-#include <juce_core/juce_core.h>
-
+#include <string>
 #include <vector>
 
 namespace duskstudio::lv2
@@ -11,7 +10,7 @@ namespace duskstudio::lv2
 // One discoverable LV2 plugin: the bundle directory it lives in plus its descriptor.
 struct ScannedLv2
 {
-    juce::String bundlePath;   // absolute path to the .lv2 bundle directory
+    std::string  bundlePath;   // absolute path to the .lv2 bundle directory
     PluginDesc   desc;
 };
 
