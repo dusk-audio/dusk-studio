@@ -231,6 +231,38 @@ TEST_CASE ("BusStrip: comp-off bus is OS-latency compensated at 4x", "[BusStrip]
     REQUIRE (err < 1.0e-7);              // and at that lag the streams match
 }
 
+TEST_CASE ("BusStrip: comp-off toggle at 4x leaves no silent gap", "[BusStrip]")
+{
+    // Disabling the comp switches from the oversampled path to the skip-delay
+    // path. The skip ring is fed on comp-on blocks too, so the first comp-off
+    // block emits continuous (delayed) signal — not the zero fill a cold ring
+    // would produce.
+    duskstudio::BusParams params;
+    params.compEnabled.store (true, std::memory_order_relaxed);
+
+    duskstudio::BusStrip strip;
+    strip.prepare (kSr, kBlock, 4);
+    strip.bind (params);
+
+    const float amp = juce::Decibels::decibelsToGain (-12.0f);
+    double phase = driveSine (strip, 0.0, 1000.0, amp, 16);   // settle comp-on
+
+    params.compEnabled.store (false, std::memory_order_relaxed);
+    std::vector<float> outL, outR;
+    driveSine (strip, phase, 1000.0, amp, 1, &outL, &outR, 0);
+
+    // Longest run of near-silent samples in the first comp-off block. A 1 kHz
+    // sine at 48 k crosses zero one sample at a time; a cold ring would emit
+    // ~27 consecutive zeros.
+    int run = 0, maxRun = 0;
+    for (float x : outL)
+    {
+        run    = (std::abs (x) < 1.0e-6f) ? run + 1 : 0;
+        maxRun = std::max (maxRun, run);
+    }
+    REQUIRE (maxRun < 8);
+}
+
 TEST_CASE ("BusStrip: hot input stays finite", "[BusStrip]")
 {
     duskstudio::BusParams params;

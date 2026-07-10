@@ -76,6 +76,13 @@ private:
     dusk::audio::IntDelayLine osSkipDelayR;
     int osLatencySamples = 0;
 
+    // The skip ring is fed on EVERY block at OS factors > 1 (comp-on blocks
+    // push and discard) so a comp-off toggle emits continuous delayed dry
+    // instead of a zero-filled gap while the ring refills. The oversampler is
+    // reset on the comp-on edge so its FIR ramps in from silence, not a stale
+    // tail from the last time the comp ran.
+    bool prevCompOsActive { false };
+
     // Skip the EQ filter entirely when the bus EQ is disengaged (it would
     // otherwise run at unity, burning cycles for nothing). Init true so the
     // first block with EQ off doesn't fire a spurious reset; reset on the

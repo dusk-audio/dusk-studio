@@ -204,8 +204,24 @@ void BusStrip::processInPlace (float* L, float* R, int numSamples) noexcept
         eq.processBlock (eqIn, eqOut, 2, numSamples);
     }
 
-    if (compEnabled && osFactor > 1)
+    const bool compOsActive = compEnabled && osFactor > 1;
+    if (compOsActive && ! prevCompOsActive)
+        oversampler.reset();
+    prevCompOsActive = compOsActive;
+
+    if (compOsActive)
     {
+        // Keep the skip ring warm (see header) — push the pre-comp signal,
+        // discard the pops.
+        if (osLatencySamples > 0)
+        {
+            for (int i = 0; i < numSamples; ++i)
+            {
+                osSkipDelayL.pushSample (L[i]);  osSkipDelayL.popSample();
+                osSkipDelayR.pushSample (R[i]);  osSkipDelayR.popSample();
+            }
+        }
+
         // Oversample around the comp only — band-limits its saturation. The
         // comp was prepared at sampleRate × factor in prepare(). Contract:
         // numSamples must not exceed the blockSize passed to prepare — the

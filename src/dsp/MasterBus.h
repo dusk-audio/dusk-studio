@@ -94,6 +94,13 @@ private:
     dusk::audio::IntDelayLine osSkipDelayR;
     int osLatencySamples = 0;
 
+    // The skip ring is fed on EVERY block at OS factors > 1 (wrap-on blocks
+    // push and discard) so toggling EQ+comp off emits continuous delayed dry
+    // instead of a zero-filled gap while the ring refills. The oversampler is
+    // reset on the wrap-on edge so its FIR ramps in from silence, not a stale
+    // tail from the last time the wrap ran.
+    bool prevWrapActive { false };
+
     // juce::dsp integer delay line, retained for the tape crossfade dry-path PDC
     // below (the tape stage keeps its JUCE API).
     using OsDelayLine = juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::None>;

@@ -222,8 +222,24 @@ void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
     const bool compOn = paramsRef != nullptr
                      && paramsRef->compEnabled.load (std::memory_order_relaxed);
 
-    if (currentOxFactor > 1 && (eqOn || compOn))
+    const bool wrapActive = currentOxFactor > 1 && (eqOn || compOn);
+    if (wrapActive && ! prevWrapActive)
+        oversampler.reset();
+    prevWrapActive = wrapActive;
+
+    if (wrapActive)
     {
+        // Keep the skip ring warm (see header) — push the pre-wrap signal,
+        // discard the pops.
+        if (osLatencySamples > 0)
+        {
+            for (int i = 0; i < numSamples; ++i)
+            {
+                osSkipDelayL.pushSample (L[i]);  osSkipDelayL.popSample();
+                osSkipDelayR.pushSample (R[i]);  osSkipDelayR.popSample();
+            }
+        }
+
         // Oversampled path. Wrap (TubeEQ + busComp) inside the up/down so their
         // saturation is band-limited before downsampling. Both were prepped at
         // oversampled rate / block size in prepare().
