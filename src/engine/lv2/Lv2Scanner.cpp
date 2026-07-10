@@ -23,7 +23,7 @@ std::vector<ScannedLv2> Lv2Scanner::scan()
         char* bundleDir = lilv_file_uri_parse (lilv_node_as_uri (bundleUri), nullptr);
         if (bundleDir == nullptr) continue;
 
-        found.push_back ({ juce::String (juce::CharPointer_UTF8 (bundleDir)),
+        found.push_back ({ std::string (bundleDir),
                            Lv2Bundle::describePlugin (world, p) });
         lilv_free (bundleDir);
     }

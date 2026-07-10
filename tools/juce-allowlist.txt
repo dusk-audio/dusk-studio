@@ -79,8 +79,6 @@ src/engine/ipc/PluginIpc.h
 src/engine/ipc/PluginScanProtocol.h
 src/engine/ipc/RemotePluginConnection.cpp
 src/engine/ipc/RemotePluginConnection.h
-src/engine/lv2/Lv2Scanner.cpp
-src/engine/lv2/Lv2Scanner.h
 src/engine/multisample/AriaBank.cpp
 src/engine/multisample/AriaBank.h
 src/engine/multisample/AriaGui.cpp
@@ -93,7 +91,6 @@ src/engine/multisample/Sf2Reader.cpp
 src/engine/multisample/Sf2Reader.h
 src/engine/multisample/Sf2ToSfz.cpp
 src/engine/multisample/Sf2ToSfz.h
-src/session/MarkerEditActions.cpp
 src/session/MarkerEditActions.h
 src/session/MidiBindings.cpp
 src/session/MidiBindings.h

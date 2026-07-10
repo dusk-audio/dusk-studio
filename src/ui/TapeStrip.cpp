@@ -1946,7 +1946,7 @@ void TapeStrip::mouseUp (const juce::MouseEvent& e)
             auto& mks = session.getMarkers();
             const auto& m = mks[(size_t) markerDrag.index];
             const auto toSamples = m.timelineSamples;
-            const auto name      = m.name;
+            const std::string name = m.name.toStdString();
 
             // Re-sort by timelineSamples so the painter still iterates
             // left-to-right after the drag.

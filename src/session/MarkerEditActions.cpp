@@ -13,12 +13,12 @@ void sortMarkers (Session& s)
         { return a.timelineSamples < b.timelineSamples; });
 }
 
-int findMarkerByNameAt (Session& s, const juce::String& name, std::int64_t atSamples)
+int findMarkerByNameAt (Session& s, const std::string& name, std::int64_t atSamples)
 {
     const auto& m = s.getMarkers();
     for (int i = 0; i < (int) m.size(); ++i)
         if (m[(size_t) i].timelineSamples == atSamples
-            && m[(size_t) i].name == name)
+            && m[(size_t) i].name == name.c_str())
             return i;
     return -1;
 }
@@ -26,7 +26,7 @@ int findMarkerByNameAt (Session& s, const juce::String& name, std::int64_t atSam
 
 // ── AddMarkerAction ───────────────────────────────────────────────────────
 
-AddMarkerAction::AddMarkerAction (Session& s, std::int64_t t, juce::String n)
+AddMarkerAction::AddMarkerAction (Session& s, std::int64_t t, std::string n)
     : session (s), timelineSamples (t), name (std::move (n))
 {}
 
@@ -36,9 +36,9 @@ bool AddMarkerAction::perform()
     // Capture the auto-generated name on the FIRST perform so undo knows
     // exactly which marker to remove if the user added more in between.
     if (insertedIdx >= 0 && insertedIdx < (int) session.getMarkers().size()
-        && name.isEmpty())
+        && name.empty())
     {
-        name = session.getMarkers()[(size_t) insertedIdx].name;
+        name = session.getMarkers()[(size_t) insertedIdx].name.toStdString();
     }
     return insertedIdx >= 0;
 }
@@ -81,7 +81,7 @@ bool RemoveMarkerAction::undo()
 
 // ── MoveMarkerAction ──────────────────────────────────────────────────────
 
-MoveMarkerAction::MoveMarkerAction (Session& s, juce::String n,
+MoveMarkerAction::MoveMarkerAction (Session& s, std::string n,
                                       std::int64_t from, std::int64_t to)
     : session (s), name (std::move (n)), fromSamples (from), toSamples (to)
 {}
