@@ -29,12 +29,8 @@ src/engine/MasteringPlayer.cpp
 src/engine/MasteringPlayer.h
 src/engine/McuController.cpp
 src/engine/McuController.h
-src/engine/McuReceiver.cpp
-src/engine/McuReceiver.h
 src/engine/MidiClockEmitter.cpp
 src/engine/MidiClockEmitter.h
-src/engine/MidiTimeCodeEmitter.cpp
-src/engine/MidiTimeCodeEmitter.h
 src/engine/NativeScanRows.h
 src/engine/PlaybackEngine.cpp
 src/engine/PlaybackEngine.h

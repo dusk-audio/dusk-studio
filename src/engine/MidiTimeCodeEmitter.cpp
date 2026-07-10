@@ -1,5 +1,8 @@
 #include "MidiTimeCodeEmitter.h"
 
+#include <cmath>
+#include <cstdlib>
+
 namespace duskstudio
 {
 namespace
@@ -92,7 +95,7 @@ void MidiTimeCodeEmitter::emitQuarterFrame (std::int64_t atSample,
                                               int nibble,
                                               std::int64_t frames,
                                               FrameRate rate,
-                                              juce::MidiBuffer& out) noexcept
+                                              dusk::MidiBuffer& out) noexcept
 {
     int hh = 0, mm = 0, ss = 0, ff = 0;
     framesToSmpte (frames, rate, hh, mm, ss, ff);
@@ -119,15 +122,14 @@ void MidiTimeCodeEmitter::emitQuarterFrame (std::int64_t atSample,
         case 7: data = (((int) rate) << 1) | ((hh >> 4) & 0x01); break;
         default: return;
     }
-    const std::uint8_t byte1 = (std::uint8_t) (((nibble & 0x07) << 4) | (data & 0x0F));
-    out.addEvent (juce::MidiMessage (0xF1, byte1),
-                   (int) (atSample - lastBlockStart));
+    const std::uint8_t qf[2] = { 0xF1, (std::uint8_t) (((nibble & 0x07) << 4) | (data & 0x0F)) };
+    out.addEvent (qf, 2, (int) (atSample - lastBlockStart));
 }
 
 void MidiTimeCodeEmitter::emitFullFrameSysex (std::int64_t atSample,
                                                 std::int64_t frames,
                                                 FrameRate rate,
-                                                juce::MidiBuffer& out) noexcept
+                                                dusk::MidiBuffer& out) noexcept
 {
     int hh = 0, mm = 0, ss = 0, ff = 0;
     framesToSmpte (frames, rate, hh, mm, ss, ff);
@@ -142,8 +144,7 @@ void MidiTimeCodeEmitter::emitFullFrameSysex (std::int64_t atSample,
         (std::uint8_t) (ff & 0x1F),
         0xF7
     };
-    out.addEvent (juce::MidiMessage (bytes, 10),
-                   (int) (atSample - lastBlockStart));
+    out.addEvent (bytes, 10, (int) (atSample - lastBlockStart));
 }
 
 void MidiTimeCodeEmitter::generateBlock (std::int64_t blockStartSample,
@@ -151,7 +152,7 @@ void MidiTimeCodeEmitter::generateBlock (std::int64_t blockStartSample,
                                            std::int64_t playheadSamples,
                                            bool isRolling,
                                            FrameRate rate,
-                                           juce::MidiBuffer& out) noexcept
+                                           dusk::MidiBuffer& out) noexcept
 {
     if (numSamples <= 0 || sr <= 0.0) return;
     lastBlockStart = blockStartSample;

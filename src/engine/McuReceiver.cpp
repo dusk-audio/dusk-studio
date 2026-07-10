@@ -2,8 +2,17 @@
 #include "McuProtocol.h"
 #include "../session/Session.h"
 
+#include <algorithm>
+
 namespace duskstudio
 {
+namespace
+{
+// clamp with jlimit's argument order (lo, hi, value).
+template <typename T>
+inline T jlimit (T lo, T hi, T value) noexcept { return std::clamp (value, lo, hi); }
+} // namespace
+
 namespace mcu_local
 {
 constexpr float kFaderMinDb = ChannelStripParams::kFaderMinDb;   // -100
@@ -119,35 +128,35 @@ void McuReceiver::applyVpotDelta (int stripIndex, int delta) noexcept
         {
             switch (stripIndex)
             {
-                case 0: strip.hpfFreq.store (juce::jlimit (ChannelStripParams::kHpfMinHz,
+                case 0: strip.hpfFreq.store (jlimit (ChannelStripParams::kHpfMinHz,
                                                             ChannelStripParams::kHpfMaxHz,
                                                             strip.hpfFreq.load() + d * 4.0f),
                                               std::memory_order_relaxed); break;
-                case 1: strip.lfGainDb.store (juce::jlimit (ChannelStripParams::kBandGainMin,
+                case 1: strip.lfGainDb.store (jlimit (ChannelStripParams::kBandGainMin,
                                                              ChannelStripParams::kBandGainMax,
                                                              strip.lfGainDb.load() + d * 0.3f),
                                                std::memory_order_relaxed); break;
-                case 2: strip.lfFreq.store (juce::jlimit (ChannelStripParams::kLfFreqMin,
+                case 2: strip.lfFreq.store (jlimit (ChannelStripParams::kLfFreqMin,
                                                            ChannelStripParams::kLfFreqMax,
                                                            strip.lfFreq.load() + d * 5.0f),
                                              std::memory_order_relaxed); break;
-                case 3: strip.lmGainDb.store (juce::jlimit (ChannelStripParams::kBandGainMin,
+                case 3: strip.lmGainDb.store (jlimit (ChannelStripParams::kBandGainMin,
                                                              ChannelStripParams::kBandGainMax,
                                                              strip.lmGainDb.load() + d * 0.3f),
                                                std::memory_order_relaxed); break;
-                case 4: strip.lmFreq.store (juce::jlimit (ChannelStripParams::kLmFreqMin,
+                case 4: strip.lmFreq.store (jlimit (ChannelStripParams::kLmFreqMin,
                                                            ChannelStripParams::kLmFreqMax,
                                                            strip.lmFreq.load() + d * 20.0f),
                                              std::memory_order_relaxed); break;
-                case 5: strip.hmGainDb.store (juce::jlimit (ChannelStripParams::kBandGainMin,
+                case 5: strip.hmGainDb.store (jlimit (ChannelStripParams::kBandGainMin,
                                                              ChannelStripParams::kBandGainMax,
                                                              strip.hmGainDb.load() + d * 0.3f),
                                                std::memory_order_relaxed); break;
-                case 6: strip.hfGainDb.store (juce::jlimit (ChannelStripParams::kBandGainMin,
+                case 6: strip.hfGainDb.store (jlimit (ChannelStripParams::kBandGainMin,
                                                              ChannelStripParams::kBandGainMax,
                                                              strip.hfGainDb.load() + d * 0.3f),
                                                std::memory_order_relaxed); break;
-                case 7: strip.hfFreq.store (juce::jlimit (ChannelStripParams::kHfFreqMin,
+                case 7: strip.hfFreq.store (jlimit (ChannelStripParams::kHfFreqMin,
                                                            ChannelStripParams::kHfFreqMax,
                                                            strip.hfFreq.load() + d * 100.0f),
                                              std::memory_order_relaxed); break;
@@ -158,23 +167,23 @@ void McuReceiver::applyVpotDelta (int stripIndex, int delta) noexcept
         {
             switch (stripIndex)
             {
-                case 0: strip.compThresholdDb.store (juce::jlimit (ChannelStripParams::kCompThreshMin,
+                case 0: strip.compThresholdDb.store (jlimit (ChannelStripParams::kCompThreshMin,
                                                                     ChannelStripParams::kCompThreshMax,
                                                                     strip.compThresholdDb.load() + d * 0.5f),
                                                        std::memory_order_relaxed); break;
-                case 1: strip.compVcaRatio.store (juce::jlimit (ChannelStripParams::kCompRatioMin,
+                case 1: strip.compVcaRatio.store (jlimit (ChannelStripParams::kCompRatioMin,
                                                                   ChannelStripParams::kCompRatioMax,
                                                                   strip.compVcaRatio.load() + d * 0.2f),
                                                     std::memory_order_relaxed); break;
-                case 2: strip.compVcaAttack.store (juce::jlimit (ChannelStripParams::kCompAttackMin,
+                case 2: strip.compVcaAttack.store (jlimit (ChannelStripParams::kCompAttackMin,
                                                                    ChannelStripParams::kCompAttackMax,
                                                                    strip.compVcaAttack.load() + d * 0.5f),
                                                      std::memory_order_relaxed); break;
-                case 3: strip.compVcaRelease.store (juce::jlimit (ChannelStripParams::kCompReleaseMin,
+                case 3: strip.compVcaRelease.store (jlimit (ChannelStripParams::kCompReleaseMin,
                                                                     ChannelStripParams::kCompReleaseMax,
                                                                     strip.compVcaRelease.load() + d * 10.0f),
                                                       std::memory_order_relaxed); break;
-                case 4: strip.compMakeupDb.store (juce::jlimit (ChannelStripParams::kCompMakeupMin,
+                case 4: strip.compMakeupDb.store (jlimit (ChannelStripParams::kCompMakeupMin,
                                                                   ChannelStripParams::kCompMakeupMax,
                                                                   strip.compMakeupDb.load() + d * 0.3f),
                                                     std::memory_order_relaxed); break;
@@ -193,7 +202,7 @@ void McuReceiver::applyVpotDelta (int stripIndex, int delta) noexcept
     {
         // PAN: ±1 per tick * kVpotPanStep, clamp to [-1, +1].
         const float cur = strip.pan.load (std::memory_order_relaxed);
-        const float nxt = juce::jlimit (-1.0f, 1.0f,
+        const float nxt = jlimit (-1.0f, 1.0f,
             cur + (float) delta * mcu_local::kVpotPanStep);
         strip.pan.store (nxt, std::memory_order_relaxed);
     }
@@ -212,7 +221,7 @@ void McuReceiver::applyVpotDelta (int stripIndex, int delta) noexcept
             atom.store (ChannelStripParams::kAuxSendOffDb,
                          std::memory_order_relaxed);
         else
-            atom.store (juce::jlimit (ChannelStripParams::kAuxSendMinDb,
+            atom.store (jlimit (ChannelStripParams::kAuxSendMinDb,
                                         ChannelStripParams::kAuxSendMaxDb,
                                         nxt),
                          std::memory_order_relaxed);
@@ -410,10 +419,10 @@ void McuReceiver::handleNotePress (int noteNumber, bool pressed) noexcept
     }
 }
 
-void McuReceiver::process (const juce::MidiBuffer& events,
+void McuReceiver::process (const dusk::MidiBuffer& events,
                             std::int64_t blockStartSample) noexcept
 {
-    juce::ignoreUnused (blockStartSample);
+    (void) blockStartSample;
     for (const auto meta : events)
     {
         const auto& m = meta.getMessage();
@@ -492,7 +501,7 @@ void McuReceiver::process (const juce::MidiBuffer& events,
                 const auto pending = session.pendingTransportPlayhead.load (
                     std::memory_order_relaxed);
                 const std::int64_t base = (pending >= 0) ? pending : blockStartSample;
-                const std::int64_t target = juce::jmax ((std::int64_t) 0,
+                const std::int64_t target = std::max ((std::int64_t) 0,
                                                          base + stepSamples);
                 session.pendingTransportPlayhead.store (target,
                                                           std::memory_order_relaxed);

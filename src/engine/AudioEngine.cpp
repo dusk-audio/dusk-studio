@@ -1041,6 +1041,7 @@ void AudioEngine::rebuildMidiInputBank()
     // destination on the audio thread if a burst exceeds prior capacity.
     for (auto& m : perInputMidi) m.ensureSize (4096);
     syncMidiScratch.reserveBytes (4096);   // same headroom for the juce->dusk bridge
+    mcuMidiScratch .reserveBytes (4096);
 
     // Re-resolve on every rebuild so a hot-plug doesn't strand the
     // index at a stale slot. Empty / no match = -1 (no sync).
@@ -2462,6 +2463,7 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
     for (auto& v : playbackScratchR) v.assign ((size_t) bs, 0.0f);
     for (auto& m : perTrackMidiScratch) m.ensureSize (4096);
     midiClockOutScratch.ensureSize (4096);
+    mtcOutScratch.reserveBytes (4096);
     {
         // Serialize the resize with the MIDI pump: drainMidiOutQueue() reads
         // slot.events under midiOutBankMutex on the pump thread, which keeps
@@ -2929,7 +2931,14 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
     {
         const int mcuIdx = session.mcu.resolvedInputIdx.load (std::memory_order_acquire);
         if (mcuIdx >= 0 && (size_t) mcuIdx < perInputMidi.size())
-            mcuReceiver->process (perInputMidi[(size_t) mcuIdx], midiSyncSampleClock);
+        {
+            mcuMidiScratch.clear();
+            for (const auto meta : perInputMidi[(size_t) mcuIdx])
+                mcuMidiScratch.addEvent (meta.getMessage().getRawData(),
+                                         meta.getMessage().getRawDataSize(),
+                                         meta.samplePosition);
+            mcuReceiver->process (mcuMidiScratch, midiSyncSampleClock);
+        }
     }
 
     if (syncIdx >= 0 && (size_t) syncIdx < perInputMidi.size())
@@ -3150,11 +3159,18 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
             // chosen MidiOutput delivers both message types together.
             const auto rate = (MidiTimeCodeEmitter::FrameRate)
                 session.syncOutputTimeCodeFrameRate.load (std::memory_order_relaxed);
+            // The emitter writes dusk::MidiBuffer; merge its events into the
+            // shared JUCE output scratch (pre-reserved, so no allocation).
+            mtcOutScratch.clear();
             midiTimeCodeEmitter.generateBlock (midiSyncSampleClock - numSamples,
                                                   numSamples,
                                                   transport.getPlayhead(),
                                                   rolling, rate,
-                                                  midiClockOutScratch);
+                                                  mtcOutScratch);
+            for (const auto meta : mtcOutScratch)
+                midiClockOutScratch.addEvent (meta.getMessage().getRawData(),
+                                              meta.getMessage().getRawDataSize(),
+                                              meta.samplePosition);
         }
 
         if (! midiClockOutScratch.isEmpty())
