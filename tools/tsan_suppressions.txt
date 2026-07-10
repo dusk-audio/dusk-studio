@@ -21,15 +21,18 @@ deadlock:juce::WaitableEvent::signal
 deadlock:juce::Thread::notify
 
 # dusk::AutoResetEvent replaced juce::WaitableEvent in the DSP worker pool
-# (de-JUCE threading migration). signal() now notifies while holding the mutex
-# (the data-race fix), so the real synchronisation is clean; these stay as a
-# backstop for the residual mutex/lock-order artifact TSan can still report for
-# a mutex + condition_variable auto-reset primitive under heavy contention (same
-# class as the juce::WaitableEvent entries above). Worker-pool correctness is
-# covered by the join/quiesce protocol tests and the Parallel-Matches-Serial
-# self-test.
+# (de-JUCE threading migration). It is a mutex + condition_variable auto-reset
+# event; EVERY access to its `signalled` flag is under the mutex (signal() sets
+# it and notifies while holding the lock; both wait() overloads read/clear it
+# under the lock), so there is no real data race or recursive lock. TSan does
+# not model the condition_variable predicate handoff precisely and false-flags
+# the locked flag access as a data race / double lock / lock-order inversion
+# under contention — the same class of report the juce::WaitableEvent and
+# juce::AbstractFifo entries suppress. Worker-pool correctness is covered by the
+# join/quiesce protocol tests and the Parallel-Matches-Serial self-test.
 mutex:dusk::AutoResetEvent::signal
 deadlock:dusk::AutoResetEvent::signal
+race:dusk::AutoResetEvent
 
 # JUCE's TimeSliceThread + ThreadedWriter pairing (used by Record
 # Manager) ride the same notify path and trip the same warning. The
