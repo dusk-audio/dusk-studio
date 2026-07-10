@@ -1,10 +1,15 @@
 #include "HardwareInsertSlot.h"
 #include "../session/Session.h"
+#include "../foundation/Decibels.h"
+#include "../foundation/ScopedNoDenormals.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace duskstudio
 {
+namespace { constexpr double kPi = 3.141592653589793238; }
+
 HardwareInsertSlot::HardwareInsertSlot() = default;
 HardwareInsertSlot::~HardwareInsertSlot() = default;
 
@@ -13,19 +18,10 @@ void HardwareInsertSlot::prepare (double sampleRate, int blockSize)
     prepSampleRate = sampleRate;
     prepBlockSize  = blockSize;
 
-    juce::dsp::ProcessSpec spec;
-    spec.sampleRate       = sampleRate;
-    spec.maximumBlockSize = (std::uint32_t) blockSize;
-    spec.numChannels      = 1;
-
-    dryDelayL.prepare (spec);
-    dryDelayR.prepare (spec);
     dryDelayL.setMaximumDelayInSamples (kMaxDelaySamples);
     dryDelayR.setMaximumDelayInSamples (kMaxDelaySamples);
-    dryDelayL.reset();
-    dryDelayR.reset();
-    dryDelayL.setDelay (0.0f);
-    dryDelayR.setDelay (0.0f);
+    dryDelayL.setDelay (0);
+    dryDelayR.setDelay (0);
 
     // Ping calibration buffers. Chirp is pre-rendered at session SR so
     // the audio thread never builds a sine table in-callback. Capture
@@ -74,29 +70,29 @@ void HardwareInsertSlot::renderChirp (double sampleRate)
     // don't read as Diracs to the hardware's input stage. Pre-computed
     // sum of the squared samples seeds the auto-correlation peak used
     // by the result-threshold check.
-    const int targetLen = juce::jmin (kChirpMaxSamples,
-                                        (int) std::lround (0.100 * sampleRate));
-    chirpLength = juce::jmax (64, targetLen);
+    const int targetLen = std::min (kChirpMaxSamples,
+                                      (int) std::lround (0.100 * sampleRate));
+    chirpLength = std::max (64, targetLen);
 
     const double f0 = 20.0;
     const double f1 = 20000.0;
     const double duration = (double) chirpLength / sampleRate;
     const double sweepRate = (f1 - f0) / duration;
     constexpr float peak = 0.2512f;   // -12 dBFS
-    const int fadeSamples = juce::jmin (chirpLength / 4,
-                                          (int) std::lround (0.005 * sampleRate));
+    const int fadeSamples = std::min (chirpLength / 4,
+                                        (int) std::lround (0.005 * sampleRate));
 
     pingAutoPeak = 0.0f;
     for (int i = 0; i < chirpLength; ++i)
     {
         const double t = (double) i / sampleRate;
-        const double phase = 2.0 * juce::MathConstants<double>::pi
+        const double phase = 2.0 * kPi
                                 * (f0 * t + 0.5 * sweepRate * t * t);
         float s = peak * (float) std::sin (phase);
 
         if (i < fadeSamples)
         {
-            const float w = 0.5f * (1.0f - std::cos (juce::MathConstants<float>::pi
+            const float w = 0.5f * (1.0f - std::cos ((float) kPi
                                                        * (float) i / (float) fadeSamples));
             s *= w;
         }
@@ -107,7 +103,7 @@ void HardwareInsertSlot::renderChirp (double sampleRate)
             // the last sample of the tail (at i = chirpLength - 1) was
             // outside both branches and stayed at full amplitude.
             const int j = chirpLength - i;
-            const float w = 0.5f * (1.0f - std::cos (juce::MathConstants<float>::pi
+            const float w = 0.5f * (1.0f - std::cos ((float) kPi
                                                        * (float) j / (float) fadeSamples));
             s *= w;
         }
@@ -155,7 +151,7 @@ void HardwareInsertSlot::processStereoBlock (float* L, float* R, int numSamples,
                                                 float* const*       deviceOutputs,
                                                 int numDeviceOutputs) noexcept
 {
-    juce::ScopedNoDenormals nd;
+    dusk::audio::ScopedNoDenormals nd;
     if (paramsRef == nullptr || L == nullptr || R == nullptr || numSamples <= 0)
         return;
 
@@ -169,23 +165,23 @@ void HardwareInsertSlot::processStereoBlock (float* L, float* R, int numSamples,
     // Update the dry-path delay length when the user changes the latency
     // setpoint. The delay line was pre-sized to kMaxDelaySamples in
     // prepare(), so setDelay() is a parameter update only - no realloc.
-    const int requestedLatency = juce::jlimit (0, kMaxDelaySamples,
-                                                  routing.latencySamples);
+    const int requestedLatency = std::clamp (routing.latencySamples,
+                                                0, kMaxDelaySamples);
     const int previousLatency = cachedLatencySamples.load (std::memory_order_relaxed);
     if (requestedLatency != previousLatency)
     {
         cachedLatencySamples.store (requestedLatency, std::memory_order_relaxed);
-        dryDelayL.setDelay ((float) requestedLatency);
-        dryDelayR.setDelay ((float) requestedLatency);
+        dryDelayL.setDelay (requestedLatency);
+        dryDelayR.setDelay (requestedLatency);
     }
 
     // Pull the latest knob values onto the smoother targets.
     const float outDb = paramsRef->outputGainDb.load (std::memory_order_relaxed);
     const float inDb  = paramsRef->inputGainDb .load (std::memory_order_relaxed);
     const float dw    = paramsRef->dryWet      .load (std::memory_order_relaxed);
-    outGainLin  .setTargetValue (juce::Decibels::decibelsToGain (outDb));
-    inGainLin   .setTargetValue (juce::Decibels::decibelsToGain (inDb));
-    dryWetSmooth.setTargetValue (juce::jlimit (0.0f, 1.0f, dw));
+    outGainLin  .setTargetValue (dusk::audio::decibelsToGain (outDb));
+    inGainLin   .setTargetValue (dusk::audio::decibelsToGain (inDb));
+    dryWetSmooth.setTargetValue (std::clamp (dw, 0.0f, 1.0f));
 
     const bool midSide = (routing.format == 1);
 
@@ -207,8 +203,8 @@ void HardwareInsertSlot::processStereoBlock (float* L, float* R, int numSamples,
     // capture finishes.
     if (pingState == PingState::Correlating)
     {
-        const int chirpLen = juce::jmin (chirpLength, (int) chirpBuffer.size());
-        const int maxK = juce::jmax (0, (int) captureBuffer.size() - chirpLen);
+        const int chirpLen = std::min (chirpLength, (int) chirpBuffer.size());
+        const int maxK = std::max (0, (int) captureBuffer.size() - chirpLen);
         int kCount = 0;
         while (pingCorrelateK < maxK && kCount < kCorrelationsPerBlock)
         {
@@ -265,10 +261,10 @@ void HardwareInsertSlot::processStereoBlock (float* L, float* R, int numSamples,
         // Phase-align the dry copy with the wet return. The hardware
         // takes `latency` samples to round-trip the audio; we delay
         // the dry by the same amount so the dry/wet mix is coherent.
-        dryDelayL.pushSample (0, drySrcL);
-        dryDelayR.pushSample (0, drySrcR);
-        const float dryL = dryDelayL.popSample (0);
-        const float dryR = dryDelayR.popSample (0);
+        dryDelayL.pushSample (drySrcL);
+        dryDelayR.pushSample (drySrcR);
+        const float dryL = dryDelayL.popSample();
+        const float dryR = dryDelayR.popSample();
 
         // Encode the SEND. Mid/Side uses 0.5 scaling on encode so the
         // matching decode below (which sums M+S and M-S unscaled)
