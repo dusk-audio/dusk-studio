@@ -1,7 +1,9 @@
 #pragma once
 
-#include <juce_audio_basics/juce_audio_basics.h>
-#include <juce_dsp/juce_dsp.h>
+#include "../foundation/StereoOversampler.h"
+
+#include <dsp/DuskFilters.hpp>
+
 #include <atomic>
 #include <vector>
 
@@ -66,8 +68,8 @@ private:
     double sr = 0.0;
 
     // K-weighting - two cascaded biquads per channel (one per stage).
-    juce::dsp::IIR::Filter<float> kStage1L, kStage1R;
-    juce::dsp::IIR::Filter<float> kStage2L, kStage2R;
+    duskaudio::Biquad kStage1L, kStage1R;
+    duskaudio::Biquad kStage2L, kStage2R;
 
     // Per-block accumulators.
     int    blockSamplesRemaining = 0;
@@ -90,10 +92,9 @@ private:
     float currentTruePeak = 0.0f;
 
     // 4× oversampler for true-peak detection. Used purely for measurement
-    // - we don't keep the upsampled audio. Sized at prepare(); thread
-    // confined to the audio thread for processing.
-    juce::dsp::Oversampling<float> oversampler;
-    juce::AudioBuffer<float>       oversampleInput;  // 2 ch × maxBlockSize, pre-allocated
+    // - we scan the upsampled samples for the peak and discard them (never
+    // downsample). Sized at prepare(); audio-thread confined.
+    dusk::audio::StereoOversampler oversampler;
     int preparedMaxBlockSize = 0;
 
     std::atomic<float> momentaryLufs   { -100.0f };

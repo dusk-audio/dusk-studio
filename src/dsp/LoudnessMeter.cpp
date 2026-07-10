@@ -1,4 +1,7 @@
 #include "LoudnessMeter.h"
+#include "../foundation/Decibels.h"
+
+#include <algorithm>
 #include <cmath>
 
 namespace duskstudio
@@ -13,18 +16,17 @@ namespace
 //
 // Reference Q values come from the spec (Stage 1: 1/sqrt(2) = 0.707;
 // Stage 2: ~0.5).
-juce::dsp::IIR::Coefficients<float>::Ptr makeKStage1 (double sampleRate)
+duskaudio::BiquadCoeffs makeKStage1 (double sampleRate)
 {
     // High-shelf, +4 dB at 1681 Hz, Q ≈ 0.707.
-    return juce::dsp::IIR::Coefficients<float>::makeHighShelf (
-        sampleRate, 1681.0, 1.0 / std::sqrt (2.0), juce::Decibels::decibelsToGain (4.0f));
+    return duskaudio::Biquad::shelf (sampleRate, 1681.0f, 4.0f,
+                                     (float) (1.0 / std::sqrt (2.0)), /*high*/ true);
 }
 
-juce::dsp::IIR::Coefficients<float>::Ptr makeKStage2 (double sampleRate)
+duskaudio::BiquadCoeffs makeKStage2 (double sampleRate)
 {
     // 2nd-order high-pass, ~38 Hz, Q ≈ 0.5.
-    return juce::dsp::IIR::Coefficients<float>::makeHighPass (
-        sampleRate, 38.0, 0.5);
+    return duskaudio::Biquad::highPass (sampleRate, 38.0f, 0.5f);
 }
 
 // Convert mean-square energy to LUFS. BS.1770: L = -0.691 + 10·log10(MS),
@@ -37,12 +39,7 @@ inline float msToLUFS (double meanSquared)
 }
 } // namespace
 
-LoudnessMeter::LoudnessMeter()
-    : oversampler (2 /*channels*/,
-                    2 /*stages - 2^2 = 4× oversampling, ITU BS.1770 Annex 2*/,
-                    juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR,
-                    /*isMaximumQuality*/ true)
-{}
+LoudnessMeter::LoudnessMeter() = default;
 
 void LoudnessMeter::prepare (double sampleRate, int maxBlockSize)
 {
@@ -50,20 +47,14 @@ void LoudnessMeter::prepare (double sampleRate, int maxBlockSize)
     blockSize = (int) (sampleRate * 0.1);  // 100 ms
     if (blockSize <= 0) blockSize = 1;
 
-    preparedMaxBlockSize = juce::jmax (1, maxBlockSize);
-    oversampleInput.setSize (2, preparedMaxBlockSize, false, false, true);
-    oversampler.initProcessing ((size_t) preparedMaxBlockSize);
-    oversampler.reset();
+    preparedMaxBlockSize = std::max (1, maxBlockSize);
+    oversampler.setFactor (4);   // ITU BS.1770 Annex 2 true-peak
+    oversampler.prepare (preparedMaxBlockSize);
 
-    auto s1 = makeKStage1 (sampleRate);
-    auto s2 = makeKStage2 (sampleRate);
-    kStage1L.coefficients = s1;
-    kStage1R.coefficients = s1;
-    kStage2L.coefficients = s2;
-    kStage2R.coefficients = s2;
-    juce::dsp::ProcessSpec spec { sampleRate, 1, 1 };
-    kStage1L.prepare (spec); kStage1R.prepare (spec);
-    kStage2L.prepare (spec); kStage2R.prepare (spec);
+    const auto s1 = makeKStage1 (sampleRate);
+    const auto s2 = makeKStage2 (sampleRate);
+    kStage1L.setCoeffs (s1); kStage1R.setCoeffs (s1);
+    kStage2L.setCoeffs (s2); kStage2R.setCoeffs (s2);
 
     reset();
 }
@@ -95,7 +86,7 @@ void LoudnessMeter::finishBlock()
 {
     // Mean squared over this 100 ms block (sum of L^2 + R^2 across both
     // channels, normalized by samples × 2 channels of weight 1.0).
-    const double ms = blockSumSquared / juce::jmax (1, blockSize);
+    const double ms = blockSumSquared / std::max (1, blockSize);
     if (blockHistory.size() < (size_t) kMaxHistoryBlocks)
     {
         blockHistory.push_back (ms);
@@ -139,7 +130,7 @@ void LoudnessMeter::finishBlock()
         const double relativeGateLUFS = msToLUFS (meanPass1) - 10.0;
         const double relativeMS = std::pow (10.0,
                                               (relativeGateLUFS + 0.691) / 10.0);
-        const double gateMS = juce::jmax (absoluteMS, relativeMS);
+        const double gateMS = std::max (absoluteMS, relativeMS);
 
         double sumPass2 = 0.0;
         int    countPass2 = 0;
@@ -164,8 +155,8 @@ void LoudnessMeter::process (const float* L, const float* R, int numSamples) noe
     // ── K-weighted block accumulation (LUFS) ──
     for (int i = 0; i < numSamples; ++i)
     {
-        const float kL = kStage2L.processSample (kStage1L.processSample (L[i]));
-        const float kR = kStage2R.processSample (kStage1R.processSample (R[i]));
+        const float kL = kStage2L.process (kStage1L.process (L[i]));
+        const float kR = kStage2R.process (kStage1R.process (R[i]));
 
         blockSumSquared += (double) kL * kL + (double) kR * kR;
         if (--blockSamplesRemaining == 0) finishBlock();
@@ -175,33 +166,25 @@ void LoudnessMeter::process (const float* L, const float* R, int numSamples) noe
     // Per ITU BS.1770 Annex 2, true-peak is measured on the 4×-upsampled
     // signal. The downsampled output is discarded - we only need the
     // upsampled samples for the peak scan.
-    const int n = juce::jmin (numSamples, preparedMaxBlockSize);
+    const int n = std::min (numSamples, preparedMaxBlockSize);
     if (n > 0)
     {
-        oversampleInput.copyFrom (0, 0, L, n);
-        oversampleInput.copyFrom (1, 0, R, n);
-
-        float* channels[2] = { oversampleInput.getWritePointer (0),
-                                oversampleInput.getWritePointer (1) };
-        juce::dsp::AudioBlock<float> inBlock (channels, 2, (size_t) n);
-        auto upBlock = oversampler.processSamplesUp (inBlock);
-
-        const int upN = (int) upBlock.getNumSamples();
+        // Upsample straight from L/R into the oversampler's own scratch; we
+        // never downsample, so the FIR state advances but the samples are read
+        // once for the peak scan and discarded.
+        const auto up = oversampler.processSamplesUp (L, R, n);
         float peak = currentTruePeak;
-        for (int ch = 0; ch < 2; ++ch)
-        {
-            const float* p = upBlock.getChannelPointer ((size_t) ch);
-            for (int i = 0; i < upN; ++i)
+        for (const float* p : { up.L, up.R })
+            for (int i = 0; i < up.numSamples; ++i)
             {
                 const float a = std::fabs (p[i]);
                 if (a > peak) peak = a;
             }
-        }
         currentTruePeak = peak;
     }
 
     truePeakDb.store (currentTruePeak > 1.0e-5f
-                        ? juce::Decibels::gainToDecibels (currentTruePeak, -100.0f)
+                        ? dusk::audio::gainToDecibels (currentTruePeak, -100.0f)
                         : -100.0f,
                        std::memory_order_relaxed);
 }

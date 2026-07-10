@@ -299,6 +299,7 @@ if(DUSK_PLUGINS_PATH)
         mastering_digital_eq.cpp
         dsp_stereo_oversampler.cpp
         smoke_brickwall_limiter.cpp
+        dsp_loudness_meter.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/BrickwallLimiter.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/BusStrip.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/MasteringChain.cpp

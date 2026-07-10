@@ -6,8 +6,6 @@ src/dsp/BusStrip.cpp
 src/dsp/BusStrip.h
 src/dsp/ChannelStrip.cpp
 src/dsp/ChannelStrip.h
-src/dsp/LoudnessMeter.cpp
-src/dsp/LoudnessMeter.h
 src/dsp/MasterBus.cpp
 src/dsp/MasterBus.h
 src/dsp/MasteringChain.h
