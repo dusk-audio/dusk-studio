@@ -1,21 +1,44 @@
 #include "AudioWorkerPool.h"
+#include "RtPriority.h"
+
+#include <algorithm>
+#include <chrono>
+#include <cstdio>
+#include <thread>
+
+#if defined(__linux__)
+ #include <pthread.h>
+#endif
 
 namespace duskstudio
 {
-struct AudioWorkerPool::Worker : public juce::Thread
+struct AudioWorkerPool::Worker
 {
-    Worker (AudioWorkerPool& p, int idx)
-        : juce::Thread ("DuskDSP " + juce::String (idx)), pool (p), lane (idx) {}
+    Worker (AudioWorkerPool& p, int idx, int rtPrio)
+        : pool (p), lane (idx), rtJucePriority (rtPrio) {}
 
-    void run() override
+    void start() { th = std::thread ([this] { run(); }); }
+
+    void run()
     {
-        while (! threadShouldExit())
+        // Same realtime priority as the audio I/O thread (RtPriority.h) so RR
+        // round-robins fairly if a worker shares the audio thread's core; on an
+        // RT-denied system the thread simply runs at the default class.
+        rt::applyRealtimeSchedRR (rtJucePriority);
+       #if defined(__linux__)
+        char name[16];
+        std::snprintf (name, sizeof name, "DuskDSP %d", lane);
+        pthread_setname_np (pthread_self(), name);
+       #endif
+
+        while (! shouldExit.load (std::memory_order_acquire))
         {
             // Park until dispatched (or quiesced, or quitting). Auto-reset
             // event: a signal landing between our ack below and this wait() is
             // latched, so a wakeup is never lost.
             wake.wait();
-            if (threadShouldExit() || pool.quit.load (std::memory_order_acquire))
+            if (shouldExit.load (std::memory_order_acquire)
+                || pool.quit.load (std::memory_order_acquire))
                 break;
 
             const auto s = pool.seq.load (std::memory_order_acquire);
@@ -35,10 +58,21 @@ struct AudioWorkerPool::Worker : public juce::Thread
         }
     }
 
+    void requestExitAndWake() noexcept
+    {
+        shouldExit.store (true, std::memory_order_release);
+        wake.signal();   // unpark so run() can observe the exit
+    }
+
+    void join() { if (th.joinable()) th.join(); }
+
     AudioWorkerPool&      pool;
     int                   lane;
-    juce::WaitableEvent   wake;       // auto-reset
+    int                   rtJucePriority;
+    std::thread           th;
+    dusk::AutoResetEvent  wake;             // auto-reset
     std::atomic<uint32_t> acked { 0 };
+    std::atomic<bool>     shouldExit { false };
 };
 
 AudioWorkerPool::AudioWorkerPool() = default;
@@ -53,24 +87,13 @@ void AudioWorkerPool::start (int workers, std::function<void (int)> job, int rtJ
     seq.store (0, std::memory_order_release);
     done.store (0, std::memory_order_release);
 
-    const int want = juce::jmax (0, workers);
+    const int want = std::max (0, workers);
     for (int i = 0; i < want; ++i)
     {
-        auto w = std::make_unique<Worker> (*this, (int) workers_.size());
-        // Same realtime priority as the audio I/O thread (RtPriority.h) so RR
-        // round-robins fairly if a worker shares the audio thread's core; fall
-        // back to the highest normal priority if the OS denies real-time.
-        const bool started = (rtJucePriority >= 0
-                               && w->startRealtimeThread (juce::Thread::RealtimeOptions{}
-                                                              .withPriority (rtJucePriority)))
-                          || w->startThread (juce::Thread::Priority::highest);
-        if (started)
-            workers_.push_back (std::move (w));
-        // A worker that failed to start is dropped: it would never reach its
-        // wake/job loop, so the join would wait forever on its completion.
+        auto w = std::make_unique<Worker> (*this, (int) workers_.size(), rtJucePriority);
+        w->start();
+        workers_.push_back (std::move (w));
     }
-    // numWorkers reflects threads that actually started, so laneCount() and the
-    // join can never expect a completion that won't arrive.
     numWorkers = (int) workers_.size();
 }
 
@@ -78,16 +101,13 @@ void AudioWorkerPool::stop()
 {
     if (workers_.empty()) { numWorkers = 0; return; }
 
-    quiesce();   // joins in-flight lanes so stopThread never kills one mid-job
+    quiesce();   // joins in-flight lanes so no thread is killed mid-job
 
     quit.store (true, std::memory_order_release);
     for (auto& w : workers_)
-    {
-        w->signalThreadShouldExit();
-        w->wake.signal();             // unpark so run() can observe the exit
-    }
+        w->requestExitAndWake();
     for (auto& w : workers_)
-        w->stopThread (1000);
+        w->join();
     workers_.clear();
     numWorkers = 0;
 }
@@ -118,7 +138,7 @@ void AudioWorkerPool::runBlock() noexcept
     {
         if (done.load (std::memory_order_acquire) >= numWorkers)
             return;
-        juce::Thread::yield();
+        std::this_thread::yield();
     }
     int waitedMs = 0;
     while (done.load (std::memory_order_acquire) < numWorkers)
@@ -151,7 +171,7 @@ void AudioWorkerPool::quiesce()
             w->wake.signal();
     for (auto& w : workers_)
         while (w->acked.load (std::memory_order_acquire) != s)
-            juce::Thread::sleep (1);
+            std::this_thread::sleep_for (std::chrono::milliseconds (1));
 
     quiescing.store (false, std::memory_order_release);
 }
@@ -164,7 +184,7 @@ void AudioWorkerPool::dispatchForTest (int signalOnlyFirst)
     done.store (0, std::memory_order_release);
     seq.fetch_add (1, std::memory_order_release);
     const int n = signalOnlyFirst < 0 ? numWorkers
-                                      : juce::jmin (signalOnlyFirst, numWorkers);
+                                      : std::min (signalOnlyFirst, numWorkers);
     for (int i = 0; i < n; ++i)
         workers_[(size_t) i]->wake.signal();
 }

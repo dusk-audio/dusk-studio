@@ -1,7 +1,8 @@
 #pragma once
 
 #include <atomic>
-#include <juce_core/juce_core.h>
+#include <chrono>
+#include <thread>
 
 namespace duskstudio
 {
@@ -40,7 +41,7 @@ T* withParkedAtomicPointer (std::atomic<T*>& slot, Fn&& fn, int sleepMs = 25)
     if (p == nullptr) return nullptr;
     slot.store (nullptr, std::memory_order_release);
     if (sleepMs > 0)
-        juce::Thread::sleep (sleepMs);
+        std::this_thread::sleep_for (std::chrono::milliseconds (sleepMs));
     fn (*p);
     slot.store (p, std::memory_order_release);
     return p;

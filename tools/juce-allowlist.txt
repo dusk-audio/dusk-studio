@@ -9,13 +9,10 @@ src/dsp/ChannelStrip.h
 src/dsp/MasterBus.cpp
 src/dsp/MasterBus.h
 src/dsp/MasteringChain.h
-src/engine/AtomicPark.h
 src/engine/AudioEngine.cpp
 src/engine/AudioEngine.h
 src/engine/AudioPipelineSelfTest.cpp
 src/engine/AudioPipelineSelfTest.h
-src/engine/AudioWorkerPool.cpp
-src/engine/AudioWorkerPool.h
 src/engine/BounceEngine.cpp
 src/engine/BounceEngine.h
 src/engine/DpAligner.cpp

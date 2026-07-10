@@ -2,7 +2,8 @@
 
 #include <algorithm>
 
-#if JUCE_LINUX
+#if defined(__linux__)
+ #include <pthread.h>
  #include <sched.h>
  #include <sys/resource.h>
 #endif
@@ -43,9 +44,30 @@ inline int jucePriorityForSchedCeiling (int ceilingSched, int rrMin, int rrMax) 
     return std::max (-1, p);
 }
 
+// Puts the CALLING thread on SCHED_RR at the sched_priority that a JUCE
+// realtime priority p in [0, 10] maps to (rrMin + p·span/10, the same forward
+// map queryRealtimePriority walks) — the native equivalent of JUCE's
+// startRealtimeThread(RealtimeOptions().withPriority(p)). Returns false if the
+// kernel refuses (EPERM over RLIMIT_RTPRIO, non-Linux), leaving the thread at
+// its default scheduling class.
+inline bool applyRealtimeSchedRR (int jucePriority) noexcept
+{
+   #if defined(__linux__)
+    const int rrMin = std::max (0, sched_get_priority_min (SCHED_RR));
+    const int rrMax = std::max (1, sched_get_priority_max (SCHED_RR));
+    const int p     = std::clamp (jucePriority, 0, 10);
+    sched_param sp {};
+    sp.sched_priority = rrMin + (p * (rrMax - rrMin)) / 10;
+    return pthread_setschedparam (pthread_self(), SCHED_RR, &sp) == 0;
+   #else
+    (void) jucePriority;
+    return false;
+   #endif
+}
+
 inline RtPriorityInfo queryRealtimePriority() noexcept
 {
-   #if JUCE_LINUX
+   #if defined(__linux__)
     struct rlimit rl {};
     if (getrlimit (RLIMIT_RTPRIO, &rl) != 0)
         return { -1, false, -1 };

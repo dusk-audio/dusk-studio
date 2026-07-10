@@ -2,6 +2,8 @@
 
 #include "engine/AudioWorkerPool.h"
 
+#include <juce_core/juce_core.h>   // test-side timing / manual-reset gate only
+
 #include <array>
 #include <atomic>
 #include <cstdio>
