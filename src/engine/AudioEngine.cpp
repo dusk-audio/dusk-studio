@@ -2935,7 +2935,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
     if (syncIdx >= 0 && (size_t) syncIdx < perInputMidi.size())
     {
         // Bridge the JUCE input block into the dusk buffer the receivers take.
-        // Pre-reserved in prepareForSelfTest, so this refill doesn't allocate.
+        // Pre-reserved (and capacity-capped) in rebuildMidiInputBank, so this
+        // refill never allocates — over-cap events are dropped, not grown into.
         syncMidiScratch.clear();
         for (const auto meta : perInputMidi[(size_t) syncIdx])
             syncMidiScratch.addEvent (meta.getMessage().getRawData(),

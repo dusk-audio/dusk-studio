@@ -2,25 +2,16 @@
 
 #include "engine/MidiTimeCodeEmitter.h"
 #include "engine/MidiTimeCodeReceiver.h"
+#include "support/DuskMidiTestBridge.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
 using duskstudio::MidiTimeCodeEmitter;
 using duskstudio::MidiTimeCodeReceiver;
+using duskstudio::test::toDusk;
 
 namespace
 {
-// Bridge a juce::MidiBuffer into the dusk::MidiBuffer the receiver takes,
-// exactly as AudioEngine does per block.
-dusk::MidiBuffer toDusk (const juce::MidiBuffer& j)
-{
-    dusk::MidiBuffer d;
-    for (const auto meta : j)
-        d.addEvent (meta.getMessage().getRawData(), meta.getMessage().getRawDataSize(),
-                    meta.samplePosition);
-    return d;
-}
-
 constexpr double kSr = 48000.0;
 constexpr double kSamplesPerFrame30 = kSr / 30.0;   // 1600
 

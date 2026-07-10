@@ -46,15 +46,23 @@ class MidiBuffer
 public:
     void clear()               noexcept { data.clear(); }
     bool isEmpty()       const noexcept { return data.empty(); }
-    void reserveBytes (std::size_t n)   { data.reserve (n); }
+
+    // Reserves capacity AND caps it: once reserved, addEvent never grows past
+    // `n` bytes — it drops events that would exceed the cap instead of
+    // reallocating. This is what makes the per-block refill allocation-free on
+    // the audio thread. Left unreserved (message-thread use) the buffer grows
+    // freely like a plain vector.
+    void reserveBytes (std::size_t n) { data.reserve (n); capBytes = n; }
 
     void addEvent (const std::uint8_t* bytes, int numBytes, int samplePosition)
     {
         if (numBytes <= 0 || bytes == nullptr) return;
         const std::size_t base = data.size();
-        data.resize (base + kHeader + (std::size_t) numBytes);
-        std::memcpy (data.data() + base,     &samplePosition, sizeof (int));
-        std::memcpy (data.data() + base + 4, &numBytes,       sizeof (int));
+        const std::size_t need = kHeader + (std::size_t) numBytes;
+        if (base + need > capBytes) return;   // over the reserved cap: drop, never realloc
+        data.resize (base + need);
+        std::memcpy (data.data() + base,               &samplePosition, sizeof (int));
+        std::memcpy (data.data() + base + sizeof (int), &numBytes,       sizeof (int));
         std::memcpy (data.data() + base + kHeader, bytes, (std::size_t) numBytes);
     }
 
@@ -84,6 +92,8 @@ private:
         return v;
     }
 
+    static constexpr std::size_t kUnbounded = static_cast<std::size_t> (-1);
     std::vector<std::uint8_t> data;
+    std::size_t capBytes = kUnbounded;
 };
 } // namespace dusk

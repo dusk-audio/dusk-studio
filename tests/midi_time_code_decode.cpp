@@ -2,23 +2,14 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "engine/MidiTimeCodeReceiver.h"
+#include "support/DuskMidiTestBridge.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
 namespace
 {
 using duskstudio::MidiTimeCodeReceiver;
-
-// Bridge a juce::MidiBuffer into the dusk::MidiBuffer the receiver takes,
-// exactly as AudioEngine does per block.
-dusk::MidiBuffer toDusk (const juce::MidiBuffer& j)
-{
-    dusk::MidiBuffer d;
-    for (const auto meta : j)
-        d.addEvent (meta.getMessage().getRawData(), meta.getMessage().getRawDataSize(),
-                    meta.samplePosition);
-    return d;
-}
+using duskstudio::test::toDusk;
 
 // Build the 8 QF bytes that encode (hh, mm, ss, ff) at rate r.
 // Nibble layout matches the receiver (and the emitter):
