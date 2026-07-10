@@ -1,6 +1,6 @@
 #pragma once
 
-#include <juce_core/juce_core.h>
+#include "../foundation/AutoResetEvent.h"
 
 #include <atomic>
 #include <cstdint>
@@ -15,7 +15,7 @@ namespace duskstudio
 // runs on each of the `workers` worker threads for lane in [0, workers), and on
 // the audio thread itself for lane == workers. So laneCount() == workers + 1.
 //
-// Workers park on an auto-reset juce::WaitableEvent between blocks and are woken
+// Workers park on an auto-reset event between blocks and are woken
 // by the audio thread's signal() — a bounded, uncontended, ns-scale event that
 // is the one deliberate exception to the no-lock-on-the-audio-thread rule, used
 // ONLY in this opt-in parallel mode. The join is a short bounded spin (fast
@@ -42,11 +42,11 @@ public:
     AudioWorkerPool();
     ~AudioWorkerPool();
 
-    // Message thread only. Spawns `workers` real-time threads at the given JUCE
-    // realtime priority (see RtPriority.h; <= 0 or RT-denied falls back to the
-    // highest normal priority); `job` is stored once (never reallocated per
-    // block) and invoked as job(lane). A count <= 0 leaves the pool inactive
-    // (runBlock then runs job(0) inline on the caller).
+    // Message thread only. Spawns `workers` real-time threads at the given
+    // realtime priority on JUCE's 0..10 scale (see RtPriority.h; < 0 or an
+    // RT-denied thread runs at the OS default scheduling class); `job` is stored
+    // once (never reallocated per block) and invoked as job(lane). A count <= 0
+    // leaves the pool inactive (runBlock then runs job(0) inline on the caller).
     void start (int workers, std::function<void (int lane)> job, int rtJucePriority = 5);
     void stop();   // message thread only; quiesces, then joins every worker.
 
@@ -82,8 +82,9 @@ private:
     std::atomic<bool>     quiescing { false };
     std::atomic<bool>     quit { false };
     std::atomic<int>      joinStalls { 0 };    // count of >2 s join stalls (diagnostic)
-    juce::WaitableEvent   completion;          // auto-reset; signalled by the last worker
+    dusk::AutoResetEvent  completion;          // auto-reset; signalled by the last worker
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AudioWorkerPool)
+    AudioWorkerPool (const AudioWorkerPool&) = delete;
+    AudioWorkerPool& operator= (const AudioWorkerPool&) = delete;
 };
 } // namespace duskstudio
