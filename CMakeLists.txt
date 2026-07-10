@@ -782,6 +782,7 @@ if(DEFINED DUSK_PLUGINS_PATH)
     # without the vendored headers blocking the build.
     target_include_directories(DuskStudio SYSTEM PRIVATE
         "${DUSK_PLUGINS_PATH}/plugins/shared"
+        "${DUSK_PLUGINS_PATH}/plugins/shared-dpf"
         "${DUSK_PLUGINS_PATH}/plugins/shared/AnalogEmulation"
         "${DUSK_PLUGINS_PATH}/plugins/shared/channel-comp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-q"

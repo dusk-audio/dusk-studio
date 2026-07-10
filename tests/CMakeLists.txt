@@ -92,8 +92,6 @@ add_executable(dusk-studio-tests
     # editor TU resolves.
     ${CMAKE_SOURCE_DIR}/src/ui/DuskComboBox.cpp
     ${CMAKE_SOURCE_DIR}/src/dsp/BrickwallLimiter.cpp
-    mastering_digital_eq.cpp
-    ${CMAKE_SOURCE_DIR}/src/dsp/MasteringDigitalEq.cpp
     ${CMAKE_SOURCE_DIR}/src/dsp/HardwareInsertSlot.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/FileImporter.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/DpImporter.cpp
@@ -300,6 +298,7 @@ if(DUSK_PLUGINS_PATH)
         tape_hysteresis.cpp
         bus_strip.cpp
         mastering_chain.cpp
+        mastering_digital_eq.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/BusStrip.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/MasteringChain.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/MasteringDigitalEq.cpp
@@ -321,6 +320,7 @@ if(DUSK_PLUGINS_PATH)
 
     target_include_directories(dusk-studio-tests SYSTEM PRIVATE
         "${DUSK_PLUGINS_PATH}/plugins/shared"
+        "${DUSK_PLUGINS_PATH}/plugins/shared-dpf"
         "${DUSK_PLUGINS_PATH}/plugins/shared/AnalogEmulation"
         "${DUSK_PLUGINS_PATH}/plugins/shared/channel-comp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-q"

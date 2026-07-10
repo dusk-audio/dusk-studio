@@ -13,8 +13,6 @@ src/dsp/LoudnessMeter.h
 src/dsp/MasterBus.cpp
 src/dsp/MasterBus.h
 src/dsp/MasteringChain.h
-src/dsp/MasteringDigitalEq.cpp
-src/dsp/MasteringDigitalEq.h
 src/engine/AtomicPark.h
 src/engine/AudioEngine.cpp
 src/engine/AudioEngine.h

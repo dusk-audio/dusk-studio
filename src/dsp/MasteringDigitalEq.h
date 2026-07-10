@@ -1,9 +1,10 @@
 #pragma once
 
-#include <juce_dsp/juce_dsp.h>
+#include <dsp/DuskFilters.hpp>
+#include <dsp/DuskOversampler.hpp>
+
 #include <atomic>
 #include <array>
-#include <memory>
 
 namespace duskstudio
 {
@@ -15,13 +16,15 @@ namespace duskstudio
 //   Band 3 - High-mid bell
 //   Band 4 - High shelf (default 12 kHz, Q≈0.7)
 //
-// Implementation: each band is a juce::dsp::IIR::Filter (minimum-phase
-// biquad), cascaded in series per channel. The cascade runs 2x OVERSAMPLED so
-// the shelves/bells stay accurate up to 20 kHz: at the base rate an RBJ high
-// shelf/bell craps progressively toward Nyquist (the turnover compresses and
-// the gain falls short), which is exactly what a mastering EQ must not do.
-// Oversampling pushes Nyquist out of the audio band so the band shapes match
-// their analog targets. Adds a few samples of (reported, compensated) latency.
+// Implementation: each band is a duskaudio::Biquad (transposed-direct-form-II,
+// minimum-phase), cascaded in series per channel. The cascade runs 4x
+// OVERSAMPLED so the shelves/bells stay accurate up to 20 kHz: at the base rate
+// an RBJ high shelf/bell craps progressively toward Nyquist (the turnover
+// compresses and the gain falls short), which is exactly what a mastering EQ
+// must not do. Oversampling pushes Nyquist out of the audio band so the band
+// shapes match their analog targets. The oversampler is a halfband-FIR
+// (linear-phase) round trip and adds a few samples of reported, compensated
+// latency.
 //
 // Threading: the param setters are lock-free and allocation-free, so they
 // are safe to call from either thread. The chain pulls the latest param
@@ -78,17 +81,14 @@ private:
         return BandType::Peak;
     }
 
-    using Filter = juce::dsp::IIR::Filter<float>;
-    // Pre-allocate a passthrough coefficient object (message thread, in
-    // prepare) so the audio thread can overwrite its 5 raw taps in place.
-    static void initCoeffs  (Filter& f);
+    using Filter = duskaudio::Biquad;
     static void writeCoeffs (Filter& f, const Coeffs& c) noexcept;
 
     void rebuildIfDirty (int idx) noexcept;
 
     double sr = 0.0;                 // the OVERSAMPLED rate the biquads run at (base * kOversample)
     int    latencySamples = 0;       // oversampler group delay, in base-rate samples
-    std::unique_ptr<juce::dsp::Oversampling<float>> oversampler;
+    duskaudio::Oversampler osL, osR; // per-channel (functor-driven, single-channel each)
     std::atomic<bool> enabled { false };
 
     struct Band
@@ -100,9 +100,8 @@ private:
     };
     std::array<Band, kNumBands> bands;
 
-    // Per channel × per band biquad. JUCE's IIR::Filter is mono, so L/R are
-    // separate instances. Each owns its own coefficient object (pre-allocated
-    // in prepare); rebuildIfDirty writes identical taps into both in place.
+    // Per channel × per band biquad. The Biquad is mono, so L/R are separate
+    // instances; rebuildIfDirty writes identical coeffs into both in place.
     std::array<Filter, kNumBands> filtersL, filtersR;
 };
 } // namespace duskstudio

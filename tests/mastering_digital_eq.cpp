@@ -8,7 +8,11 @@
 
 #include "dsp/MasteringDigitalEq.h"
 
+#include <dsp/DuskFilters.hpp>
+#include <juce_dsp/juce_dsp.h>
+
 #include <cmath>
+#include <random>
 #include <vector>
 
 using duskstudio::MasteringDigitalEq;
@@ -31,6 +35,32 @@ float tailRms (const std::vector<float>& x, int fromIndex)
     return n > 0 ? (float) std::sqrt (acc / n) : 0.0f;
 }
 } // namespace
+
+TEST_CASE ("duskaudio::Biquad matches juce::dsp::IIR::Filter", "[mastering][eq]")
+{
+    // The filter swap is null-exact: for identical coefficients, the donor
+    // Biquad reproduces juce::dsp::IIR::Filter sample-for-sample. So the only
+    // audible change from the migration is the oversampler, not the bands.
+    for (int band : { 0, 2, 4 })
+    {
+        const auto c = MasteringDigitalEq::computeCoeffs (band, 192000.0, 3000.0f, 1.2f, 6.0f);
+
+        duskaudio::Biquad dusk;
+        dusk.setCoeffs ({ c.b0, c.b1, c.b2, c.a1, c.a2 });
+
+        juce::dsp::IIR::Filter<float> j;
+        j.coefficients = new juce::dsp::IIR::Coefficients<float> (c.b0, c.b1, c.b2, 1.0f, c.a1, c.a2);
+        j.reset();
+
+        std::mt19937 rng ((unsigned) (0x5EED + band));
+        std::uniform_real_distribution<float> dist (-1.0f, 1.0f);
+        for (int i = 0; i < 4096; ++i)
+        {
+            const float x = dist (rng);
+            REQUIRE (dusk.process (x) == j.processSample (x));
+        }
+    }
+}
 
 TEST_CASE ("MasteringDigitalEq magnitudeDb matches expected RBJ response", "[mastering][eq]")
 {
