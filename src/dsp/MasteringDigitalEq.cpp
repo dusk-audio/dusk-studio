@@ -21,7 +21,7 @@ bool approximatelyEqual (float a, float b) noexcept
 }
 } // namespace
 
-void MasteringDigitalEq::prepare (double sampleRate, int blockSize)
+void MasteringDigitalEq::prepare (double sampleRate, int /*blockSize*/)
 {
     // The biquads run oversampled, so their coefficients are computed at the
     // oversampled rate. Clamp the base rate first: a 0 or non-finite sampleRate
