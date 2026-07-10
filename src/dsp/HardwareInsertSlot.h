@@ -1,14 +1,15 @@
 #pragma once
 
-#include <juce_audio_basics/juce_audio_basics.h>
-#include <juce_dsp/juce_dsp.h>
+#include "../foundation/IntDelayLine.h"
+#include "../foundation/SmoothedValue.h"
+
 #include <atomic>
 #include <vector>
 
 namespace duskstudio
 {
 // HardwareInsertParams / Routing live in Session.h. Forward declared
-// here so juce_dsp doesn't leak into Session.h.
+// here so the header doesn't pull in Session.h.
 struct HardwareInsertParams;
 struct HardwareInsertRouting;
 
@@ -77,14 +78,12 @@ private:
     double prepSampleRate = 0.0;
     int    prepBlockSize  = 0;
 
-    juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::None>
-        dryDelayL { kMaxDelaySamples };
-    juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::None>
-        dryDelayR { kMaxDelaySamples };
+    dusk::audio::IntDelayLine dryDelayL;
+    dusk::audio::IntDelayLine dryDelayR;
 
-    juce::SmoothedValue<float> outGainLin;
-    juce::SmoothedValue<float> inGainLin;
-    juce::SmoothedValue<float> dryWetSmooth;
+    dusk::audio::SmoothedValue<float> outGainLin;
+    dusk::audio::SmoothedValue<float> inGainLin;
+    dusk::audio::SmoothedValue<float> dryWetSmooth;
 
     std::atomic<int> cachedLatencySamples { 0 };
 
