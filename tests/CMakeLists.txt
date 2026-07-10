@@ -300,6 +300,7 @@ if(DUSK_PLUGINS_PATH)
         mastering_digital_eq.cpp
         dsp_stereo_oversampler.cpp
         eq_british_ab.cpp
+        comp_core_ab.cpp
         smoke_brickwall_limiter.cpp
         dsp_loudness_meter.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/BrickwallLimiter.cpp
@@ -309,6 +310,7 @@ if(DUSK_PLUGINS_PATH)
         ${CMAKE_SOURCE_DIR}/src/dsp/LoudnessMeter.cpp
         "${DUSK_PLUGINS_PATH}/plugins/shared-dpf/dsp/FourKEQDSP.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/multicomp.cpp"
+        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/core/UniversalCompressorDSP.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/AnalogLookAndFeel.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/EnhancedCompressorEditor.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/shared/LEDMeter.cpp")
@@ -334,7 +336,9 @@ if(DUSK_PLUGINS_PATH)
         "${DUSK_PLUGINS_PATH}/plugins/shared/channel-comp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-q"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp"
+        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/core"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/HardwareEmulation"
+        "${DUSK_PLUGINS_PATH}/plugins/shared-dpf/dsp"
         "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source")
 
     # Modules referenced only transitively by the projucer-shim umbrella header.
