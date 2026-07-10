@@ -60,8 +60,9 @@ TEST_CASE ("LoudnessMeter K-weighting matches the JUCE-designed filters", "[dsp]
 
 TEST_CASE ("LoudnessMeter true peak tracks a hot signal", "[dsp][loudness]")
 {
-    constexpr double sr = 48000.0;
-    constexpr int    N  = 4096;
+    constexpr double sr    = 48000.0;
+    constexpr double kTwoPi = 6.283185307179586476925286766559;
+    constexpr int    N     = 4096;
     duskstudio::LoudnessMeter m;
     m.prepare (sr, N);
 
@@ -69,7 +70,7 @@ TEST_CASE ("LoudnessMeter true peak tracks a hot signal", "[dsp][loudness]")
     // of a near-Nyquist-safe tone are ~0 dB); silence reads the -100 floor.
     std::vector<float> L (N), R (N);
     for (int i = 0; i < N; ++i)
-        L[(size_t) i] = R[(size_t) i] = std::sin (2.0 * M_PI * 1000.0 * i / sr);
+        L[(size_t) i] = R[(size_t) i] = std::sin (kTwoPi * 1000.0 * i / sr);
     for (int blk = 0; blk < 4; ++blk)
         m.process (L.data(), R.data(), N);
 
