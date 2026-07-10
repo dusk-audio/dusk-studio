@@ -300,6 +300,7 @@ if(DUSK_PLUGINS_PATH)
         mastering_digital_eq.cpp
         dsp_stereo_oversampler.cpp
         eq_british_ab.cpp
+        tube_multiq_ab.cpp
         comp_core_ab.cpp
         smoke_brickwall_limiter.cpp
         dsp_loudness_meter.cpp

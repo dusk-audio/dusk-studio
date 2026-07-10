@@ -1,6 +1,8 @@
 #include "MasterBus.h"
+#include "../foundation/Decibels.h"
+#include "../foundation/ScopedNoDenormals.h"
+#include <algorithm>
 #include <cmath>
-#include <cstring>
 
 namespace duskstudio
 {
@@ -16,7 +18,7 @@ void MasterBus::prepare (double sampleRate, int blockSize, int oversamplingFacto
     sampleRateForMeter = sampleRate > 0.0 ? sampleRate : 44100.0;
     vuRmsLinL = vuRmsLinR = 0.0f;
     {
-        const int bs = juce::jmax (1, blockSize);
+        const int bs = std::max (1, blockSize);
         meterBlockSize = bs;
         meterRmsAlpha  = std::exp (-((float) bs / (float) sampleRateForMeter) / 0.3f);
     }
@@ -83,36 +85,21 @@ void MasterBus::prepare (double sampleRate, int blockSize, int oversamplingFacto
 
     // Master oversampler around (TubeEQ + busComp). Both stages have donor
     // saturation that aliases at native rate; the wrap moves them to
-    // oversampled rate. UC's internal toggle is OFF here because Dusk Studio
-    // does the up/downsample around the chain. TapeMachine has its own
-    // internal oversampling (driven via APVTS above) so it processes at
-    // native rate AFTER this wrap.
-    oversamplerStages = (currentOxFactor == 4) ? 2 : (currentOxFactor == 2) ? 1 : 0;
-    const int bsClamped = juce::jmax (1, blockSize);
-    if (oversamplerStages > 0)
-    {
-        oversampler = std::make_unique<juce::dsp::Oversampling<float>> (
-            2, (size_t) oversamplerStages,
-            juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR,
-            /*isMaximumQuality*/ true);
-        oversampler->initProcessing ((size_t) bsClamped);
-        oversampler->reset();
-        osLatencySamples = juce::jmin (kMaxOsLatency,
-            (int) std::lround (oversampler->getLatencyInSamples()));
-    }
-    else
-    {
-        oversampler.reset();
-        osLatencySamples = 0;
-    }
+    // oversampled rate. The comp core's internal oversampling path is never
+    // engaged because Dusk Studio does the up/downsample around the chain.
+    // TapeMachine has its own internal oversampling (driven via APVTS above) so
+    // it processes at native rate AFTER this wrap.
+    const int bsClamped = std::max (1, blockSize);
+    oversampler.setFactor (currentOxFactor);
+    oversampler.prepare (bsClamped);
+    osLatencySamples = (currentOxFactor > 1)
+        ? std::min (kMaxOsLatency, (int) std::lround (oversampler.latency()))
+        : 0;
 
-    const juce::dsp::ProcessSpec osSpec { sampleRate, (std::uint32_t) bsClamped, 1 };
-    osSkipDelayL.prepare (osSpec);
-    osSkipDelayR.prepare (osSpec);
     osSkipDelayL.setMaximumDelayInSamples (kMaxOsLatency);
     osSkipDelayR.setMaximumDelayInSamples (kMaxOsLatency);
-    osSkipDelayL.setDelay ((float) osLatencySamples);
-    osSkipDelayR.setDelay ((float) osLatencySamples);
+    osSkipDelayL.setDelay (osLatencySamples);
+    osSkipDelayR.setDelay (osLatencySamples);
     osSkipDelayL.reset();
     osSkipDelayR.reset();
 
@@ -122,52 +109,24 @@ void MasterBus::prepare (double sampleRate, int blockSize, int oversamplingFacto
     tubeEQ.prepare (prepSr, prepBs, 2);
     tubeEQ.reset();
 
-    busComp.setPlayConfigDetails (2, 2, prepSr, prepBs);
-    busComp.prepareToPlay (prepSr, prepBs);
-    busComp.setInternalOversamplingEnabled (false);  // External wrap handles oversampling.
-    compStereoBuffer.setSize (2, prepBs, false, false, true);
-    compMidi.clear();
-    bindCompParams();
+    busComp.setMode (3);            // Bus mode
+    busComp.setMix (100.0f);
+    busComp.setBusMix (100.0f);
+    busComp.setAutoMakeup (false);
+    // The core does not port the donor's analog-noise stage, so no explicit
+    // force-off is needed — the master chain stays clean under signal.
+    busComp.prepare (prepSr, prepBs);
+    busComp.reset();
+    compMaxBlock = prepBs;
 #endif
-
-    preparedBlockSize = blockSize;
 }
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
-void MasterBus::bindCompParams()
-{
-    auto& apvts = busComp.getParameters();
-    compModeAtom       = apvts.getRawParameterValue ("mode");
-    compBypassAtom     = apvts.getRawParameterValue ("bypass");
-    compMixAtom        = apvts.getRawParameterValue ("mix");
-    compAutoMakeupAtom = apvts.getRawParameterValue ("auto_makeup");
-    compBusThreshAtom  = apvts.getRawParameterValue ("bus_threshold");
-    compBusRatioAtom   = apvts.getRawParameterValue ("bus_ratio");
-    compBusAttackAtom  = apvts.getRawParameterValue ("bus_attack");
-    compBusReleaseAtom = apvts.getRawParameterValue ("bus_release");
-    compBusMakeupAtom  = apvts.getRawParameterValue ("bus_makeup");
-    compBusMixAtom     = apvts.getRawParameterValue ("bus_mix");
-
-    // Lock the comp into Bus mode (CompressorMode::Bus = 3); set wet-only mix.
-    storeAtom (compModeAtom, 3.0f);
-    storeAtom (compMixAtom,         100.0f);
-    storeAtom (compBusMixAtom,      100.0f);
-    storeAtom (compAutoMakeupAtom,    0.0f);  // Off
-    // The donor's "Analog Noise" feature injects ~-80 dB white noise on every
-    // analog mode (Bus included) and defaults ON. The master chain runs the
-    // comp every block whenever it's engaged, so that hiss would sit on the
-    // output continuously (~-67 dB peak, two channels) and print into bounces.
-    // Force it off — Dusk Studio's master bus is meant to be clean.
-    storeAtom (apvts.getRawParameterValue ("noise_enable"), 0.0f);
-}
-
 void MasterBus::updateEqParameters() noexcept
 {
     if (paramsRef == nullptr) return;
 
-    // Value-init padding to zero so the memcmp cache against lastTubeEqParams
-    // is reliable - see ChannelStrip equivalent for full reasoning.
-    TubeEQProcessor::Parameters p {};
+    duskaudio::MultiQTube::Parameters p {};
     p.lfBoostGain      = paramsRef->eqLfBoost.load (std::memory_order_relaxed);
     p.lfBoostFreq      = paramsRef->eqLfFreq.load (std::memory_order_relaxed);
     p.lfAttenGain      = paramsRef->eqLfAtten.load (std::memory_order_relaxed);
@@ -192,57 +151,48 @@ void MasterBus::updateEqParameters() noexcept
     // "warm but not saturated" character, like a real EQP-1A at unity.
     p.tubeDrive  = 0.02f;
     p.bypass     = ! paramsRef->eqEnabled.load (std::memory_order_relaxed);
-    if (std::memcmp (&p, &lastTubeEqParams, sizeof (p)) != 0)
-    {
-        tubeEQ.setParameters (p);
-        lastTubeEqParams = p;
-    }
+    // The core's setParameters self-gates on operator!= (marks filters dirty
+    // only on an actual change), preserving the "updateFilters only on change"
+    // semantics that keep the end-of-block HF inductor-Q remodulation persistent
+    // — no external memcmp cache needed.
+    tubeEQ.setParameters (p);
 }
 
 void MasterBus::updateCompParameters() noexcept
 {
     if (paramsRef == nullptr) return;
 
-    storeAtom (compBypassAtom,
-               paramsRef->compEnabled.load (std::memory_order_relaxed) ? 0.0f : 1.0f);
-    storeAtom (compBusThreshAtom,  paramsRef->compThreshDb.load   (std::memory_order_relaxed));
+    busComp.setBypass (! paramsRef->compEnabled.load (std::memory_order_relaxed));
+    busComp.setBusThreshold (paramsRef->compThreshDb.load (std::memory_order_relaxed));
     // bus_ratio / bus_attack are SSL-style stepped Choice params, NOT
-    // continuous. Storing the raw knob value treated it as an out-of-range
-    // index (ratio 4.0 -> 2:1, attack 10 ms -> 30 ms). Map to the nearest
-    // discrete index.  bus_ratio: 0=2:1 1=4:1 2=10:1.  bus_attack: 0=0.1
-    // 1=0.3 2=1 3=3 4=10 5=30 ms.
+    // continuous. Map the raw knob value to the nearest discrete index.
+    //   bus_ratio: 0=2:1 1=4:1 2=10:1.  bus_attack: 0=0.1 1=0.3 2=1 3=3 4=10
+    //   5=30 ms.
     const float ratio  = paramsRef->compRatio.load (std::memory_order_relaxed);
-    storeAtom (compBusRatioAtom, ratio < 3.0f ? 0.0f : (ratio < 7.0f ? 1.0f : 2.0f));
+    busComp.setBusRatio (ratio < 3.0f ? 0 : (ratio < 7.0f ? 1 : 2));
     const float atkMs  = paramsRef->compAttackMs.load (std::memory_order_relaxed);
-    storeAtom (compBusAttackAtom,
-               atkMs < 0.2f ? 0.0f
-             : (atkMs < 0.65f ? 1.0f
-             : (atkMs < 2.0f ? 2.0f
-             : (atkMs < 6.5f ? 3.0f
-             : (atkMs < 20.0f ? 4.0f : 5.0f)))));
-    // The donor's bus_release is a Choice param indexed 0..4 over
-    // {0.1s, 0.3s, 0.6s, 1.2s, Auto}. Map Dusk Studio's continuous release knob
-    // to the nearest discrete index, or send 4 ("Auto") when the Auto
-    // toggle is engaged so the comp uses its program-dependent envelope.
+    busComp.setBusAttack (atkMs < 0.2f ? 0
+                        : (atkMs < 0.65f ? 1
+                        : (atkMs < 2.0f ? 2
+                        : (atkMs < 6.5f ? 3
+                        : (atkMs < 20.0f ? 4 : 5)))));
+    // bus_release is a Choice indexed 0..4 over {0.1s, 0.3s, 0.6s, 1.2s, Auto}.
+    // Map the continuous release knob to the nearest discrete index, or send 4
+    // ("Auto") when the Auto toggle is engaged so the comp uses its
+    // program-dependent envelope.
     const bool autoRel = paramsRef->compReleaseAuto.load (std::memory_order_relaxed);
     const float relMs  = paramsRef->compReleaseMs.load   (std::memory_order_relaxed);
-    const float relIdx = autoRel ? 4.0f
-                       : (relMs < 200.0f ? 0.0f
-                       : (relMs < 450.0f ? 1.0f
-                       : (relMs < 900.0f ? 2.0f : 3.0f)));
-    storeAtom (compBusReleaseAtom, relIdx);
-    storeAtom (compBusMakeupAtom,  paramsRef->compMakeupDb.load   (std::memory_order_relaxed));
+    busComp.setBusRelease (autoRel ? 4
+                         : (relMs < 200.0f ? 0
+                         : (relMs < 450.0f ? 1
+                         : (relMs < 900.0f ? 2 : 3))));
+    busComp.setBusMakeup (paramsRef->compMakeupDb.load (std::memory_order_relaxed));
 }
 #endif
 
 void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
 {
-    juce::ScopedNoDenormals noDenormals;
-
-    // Contract: numSamples must not exceed what was passed to prepare().
-    // If a host violates this, our chunk loop below correctly handles the
-    // comp portion; the assert just makes the violation visible in debug.
-    jassert (numSamples <= preparedBlockSize);
+    dusk::audio::ScopedNoDenormals noDenormals;
 
     const bool tapeOn = paramsRef != nullptr
                        && paramsRef->tapeEnabled.load (std::memory_order_relaxed);
@@ -255,7 +205,7 @@ void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
         const float faderDb = paramsRef->liveFaderDb.load (std::memory_order_relaxed);
         const float gain = (faderDb <= ChannelStripParams::kFaderInfThreshDb)
                            ? 0.0f
-                           : juce::Decibels::decibelsToGain (faderDb);
+                           : dusk::audio::decibelsToGain (faderDb);
         faderGain.setTargetValue (gain);
     }
 
@@ -272,75 +222,57 @@ void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
     const bool compOn = paramsRef != nullptr
                      && paramsRef->compEnabled.load (std::memory_order_relaxed);
 
-    if (oversamplerStages > 0 && oversampler != nullptr && (eqOn || compOn))
+    if (currentOxFactor > 1 && (eqOn || compOn))
     {
-        // Oversampled path. Wrap (TubeEQ + busComp) inside the up/down so
-        // their saturation is band-limited before downsampling. EQ and UC
-        // were prepped at oversampled rate / block size in prepare().
-        const float* readPtrs[2]  = { L, R };
-        float*       writePtrs[2] = { L, R };
-        juce::dsp::AudioBlock<const float> nativeIn  (readPtrs,  2, (size_t) numSamples);
-        juce::dsp::AudioBlock<float>       nativeOut (writePtrs, 2, (size_t) numSamples);
-
-        auto upBlock = oversampler->processSamplesUp (nativeIn);
-        const int upN = (int) upBlock.getNumSamples();
-        float* upPtrs[2] = { upBlock.getChannelPointer (0),
-                              upBlock.getChannelPointer (1) };
-        juce::AudioBuffer<float> upBuf (upPtrs, 2, upN);
+        // Oversampled path. Wrap (TubeEQ + busComp) inside the up/down so their
+        // saturation is band-limited before downsampling. Both were prepped at
+        // oversampled rate / block size in prepare().
+        auto up = oversampler.processSamplesUp (L, R, numSamples);
         if (eqOn)
-            tubeEQ.process (upBuf);
-
+        {
+            float* eqPtrs[2] = { up.L, up.R };
+            tubeEQ.process (eqPtrs, 2, up.numSamples);
+        }
         if (compOn)
         {
-            const int compBufSize = compStereoBuffer.getNumSamples();
-            for (int offset = 0; offset < upN; offset += compBufSize)
+            for (int offset = 0; offset < up.numSamples; offset += compMaxBlock)
             {
-                const int n = juce::jmin (compBufSize, upN - offset);
-                float* compView[2] = { upPtrs[0] + offset, upPtrs[1] + offset };
-                juce::AudioBuffer<float> compBuf (compView, 2, n);
-                compMidi.clear();
-                busComp.processBlock (compBuf, compMidi);
+                const int n = std::min (compMaxBlock, up.numSamples - offset);
+                const float* compIn[2]  = { up.L + offset, up.R + offset };
+                float*       compOut[2] = { up.L + offset, up.R + offset };
+                busComp.processBlock (compIn, compOut, 2, n);
             }
         }
-
-        oversampler->processSamplesDown (nativeOut);
+        oversampler.processSamplesDown (L, R, numSamples);
     }
     else if (eqOn || compOn)
     {
-        // Native-rate path (factor == 1, or a single active stage). Chunk
-        // both passes to honor preparedBlockSize / compStereoBuffer sizes.
+        // Native-rate path (factor == 1). The tube EQ has no block-size limit;
+        // chunk only the comp to honor compMaxBlock.
         if (eqOn)
         {
-            const int eqBuf = juce::jmax (1, preparedBlockSize);
-            for (int offset = 0; offset < numSamples; offset += eqBuf)
-            {
-                const int n = juce::jmin (eqBuf, numSamples - offset);
-                float* channels[2] = { L + offset, R + offset };
-                juce::AudioBuffer<float> buf (channels, 2, n);
-                tubeEQ.process (buf);
-            }
+            float* eqPtrs[2] = { L, R };
+            tubeEQ.process (eqPtrs, 2, numSamples);
         }
         if (compOn)
         {
-            const int compBuf = compStereoBuffer.getNumSamples();
-            for (int offset = 0; offset < numSamples; offset += compBuf)
+            for (int offset = 0; offset < numSamples; offset += compMaxBlock)
             {
-                const int n = juce::jmin (compBuf, numSamples - offset);
-                float* lrView[2] = { L + offset, R + offset };
-                juce::AudioBuffer<float> cb (lrView, 2, n);
-                compMidi.clear();
-                busComp.processBlock (cb, compMidi);
+                const int n = std::min (compMaxBlock, numSamples - offset);
+                const float* compIn[2]  = { L + offset, R + offset };
+                float*       compOut[2] = { L + offset, R + offset };
+                busComp.processBlock (compIn, compOut, 2, n);
             }
         }
     }
-    else if (oversamplerStages > 0 && osLatencySamples > 0)
+    else if (currentOxFactor > 1 && osLatencySamples > 0)
     {
         // EQ + comp both bypassed → oversampler skipped. Delay by its latency
         // so the master's latency stays invariant to the EQ/comp toggle.
         for (int i = 0; i < numSamples; ++i)
         {
-            osSkipDelayL.pushSample (0, L[i]);  L[i] = osSkipDelayL.popSample (0);
-            osSkipDelayR.pushSample (0, R[i]);  R[i] = osSkipDelayR.popSample (0);
+            osSkipDelayL.pushSample (L[i]);  L[i] = osSkipDelayL.popSample();
+            osSkipDelayR.pushSample (R[i]);  R[i] = osSkipDelayR.popSample();
         }
     }
     // else (factor == 1, both off): signal passes through. TapeMachine still
@@ -357,8 +289,8 @@ void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
     // The donor hard-bypasses (early-returns, no ramp), so we own the on/off
     // crossfade here: blend the dry (pre-tape) signal against the wet output
     // over 20 ms. Tape is run only while audible — fully on, or still fading —
-    // so a disengaged tape costs ~nothing. Chunked by preparedBlockSize
-    // because the donor's internal scratch is sized to that.
+    // so a disengaged tape costs ~nothing. Chunked to the tape scratch size
+    // because the donor's internal scratch is sized to the prepared block.
     const float tapeTarget = tapeOn ? 1.0f : 0.0f;
     if (! tapeMixPrimed)
     {
@@ -480,11 +412,11 @@ void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
     if (paramsRef != nullptr)
     {
         const auto toDb = [] (float a) { return a > 1.0e-5f
-            ? juce::Decibels::gainToDecibels (a, -100.0f) : -100.0f; };
+            ? dusk::audio::gainToDecibels (a, -100.0f) : -100.0f; };
         paramsRef->meterPostMasterLDb.store (toDb (postPeakL), std::memory_order_relaxed);
         paramsRef->meterPostMasterRDb.store (toDb (postPeakR), std::memory_order_relaxed);
 
-        const float invN    = 1.0f / (float) juce::jmax (1, numSamples);
+        const float invN    = 1.0f / (float) std::max (1, numSamples);
         const float rmsBlkL = std::sqrt (sumSqL * invN);
         const float rmsBlkR = std::sqrt (sumSqR * invN);
         const float alpha   = (numSamples == meterBlockSize)
