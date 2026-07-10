@@ -16,10 +16,11 @@ class AutoResetEvent
 public:
     void signal() noexcept
     {
-        {
-            std::lock_guard<std::mutex> lk (m);
-            signalled = true;
-        }
+        // Notify while holding the lock: notifying after releasing it leaves the
+        // store-to-signalled and the waiter's cv.wait relock unsynchronised, which
+        // ThreadSanitizer flags as a data race on the shared state.
+        std::lock_guard<std::mutex> lk (m);
+        signalled = true;
         cv.notify_one();
     }
 
