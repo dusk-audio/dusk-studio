@@ -66,8 +66,10 @@ jobs:
           GH_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
         run: |
           set -euo pipefail
-          if ! gh api "repos/${RELEASES_REPO}" >/dev/null; then
-            echo "::error::RELEASES_REPO_TOKEN cannot access ${RELEASES_REPO} (expired, revoked, or missing contents scope). Rotate the RELEASES_REPO_TOKEN secret with contents:write on that repo, then re-run this workflow." >&2
+          # .permissions.push reflects contents:write for the token; a read-only
+          # token can fetch repo metadata and would pass a bare existence probe.
+          if [[ "$(gh api "repos/${RELEASES_REPO}" --jq '.permissions.push // false' 2>/dev/null)" != "true" ]]; then
+            echo "::error::RELEASES_REPO_TOKEN cannot WRITE to ${RELEASES_REPO} (expired, revoked, or missing contents:write). Rotate the RELEASES_REPO_TOKEN secret with contents:write on that repo, then re-run this workflow." >&2
             exit 1
           fi
 

@@ -2,6 +2,7 @@
 
 #if defined (__linux__)
 #include <cstdlib>
+#include <strings.h>
 
 // Dusk Studio is an X11/XWayland client on Linux: every window (main UI and
 // plugin-editor peers) is forced to an X11 peer, so the JUCE fork's hybrid
@@ -20,7 +21,13 @@ struct ForceXWaylandByDefault
 {
     ForceXWaylandByDefault()
     {
-        if (std::getenv ("DUSKSTUDIO_NATIVE_WAYLAND") == nullptr)
+        // Truthy per the DUSKSTUDIO_* env-flag convention (envFlagSet): a
+        // non-zero integer or "true". Unset, "0" or junk keep the XWayland
+        // default — setting the flag to 0 must not enable the native path.
+        const char* v = std::getenv ("DUSKSTUDIO_NATIVE_WAYLAND");
+        const bool nativeWayland = v != nullptr
+                                    && (std::atoi (v) != 0 || strcasecmp (v, "true") == 0);
+        if (! nativeWayland)
             setenv ("JUCE_XWAYLAND", "1", 0);
     }
 };
