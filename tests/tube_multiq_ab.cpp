@@ -21,6 +21,7 @@ constexpr int    kBlock      = 512;
 constexpr int    kBlocks     = 40;
 constexpr int    kTotal      = kBlock * kBlocks;   // 20480 samples
 constexpr int    kWarmup     = kBlock * 16;        // 8192 samples before measuring
+constexpr double kPi         = 3.14159265358979323846;
 
 // Deterministic stereo excitation: log sine sweep + periodic impulses + noise.
 // L and R differ (offset phase + independent noise) so the per-channel HF
@@ -41,7 +42,7 @@ void makeInput (std::vector<float>& L, std::vector<float>& R)
     {
         const double t = (double) n / (double) kTotal;
         const double freq = f0 * std::exp (logRatio * t);
-        const double dphase = 2.0 * M_PI * freq / kSampleRate;
+        const double dphase = 2.0 * kPi * freq / kSampleRate;
         phaseL += dphase;
         phaseR += dphase;
 
