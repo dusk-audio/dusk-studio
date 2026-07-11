@@ -48,6 +48,49 @@ elif ! grep -qF "## [$NEW_VERSION]" CHANGELOG.md; then
     exit 1
 fi
 
+# Anti-drift gate: sibling JUCE-wayland dev fork vs the release snapshot.
+# linux-release.yml pins the Linux build to a Dusk-owned mirror snapshot
+# (JUCE_REV under an immutable dusk-wayland-vN tag). If a maintainer keeps a
+# sibling ../JUCE-wayland dev checkout, make sure a release can't be cut from a
+# fork state that no snapshot captures:
+#   (a) HARD FAIL if that checkout is dirty - uncommitted fork changes are in no
+#       snapshot and would silently not ship.
+#   (b) WARN if the fork HEAD tree differs from the snapshot the release pins -
+#       the dev fork has moved on and a new dusk-wayland-vN tag is due.
+JUCE_FORK_DIR="$REPO_DIR/../JUCE-wayland"
+RELEASE_WORKFLOW=".github/workflows/linux-release.yml"
+if [[ -e "$JUCE_FORK_DIR/.git" ]]; then
+    if [[ -n "$(git -C "$JUCE_FORK_DIR" status --porcelain 2>/dev/null)" ]]; then
+        echo "error: sibling JUCE fork at $JUCE_FORK_DIR has uncommitted changes." >&2
+        echo "       Commit + snapshot to the mirror before cutting a release -" >&2
+        echo "       a dirty working tree is in no dusk-wayland-vN snapshot." >&2
+        exit 1
+    fi
+
+    JUCE_REV="$(sed -n 's/^[[:space:]]*JUCE_REV:[[:space:]]*//p' "$RELEASE_WORKFLOW" | head -n1)"
+    JUCE_TAG="$(sed -n 's/^[[:space:]]*JUCE_TAG:[[:space:]]*//p' "$RELEASE_WORKFLOW" | head -n1)"
+    JUCE_MIRROR="$(sed -n 's/^[[:space:]]*JUCE_MIRROR:[[:space:]]*//p' "$RELEASE_WORKFLOW" | head -n1)"
+
+    if [[ -z "$JUCE_REV" ]]; then
+        echo "warning: could not read JUCE_REV from $RELEASE_WORKFLOW; skipping the fork-drift check." >&2
+    elif ! git -C "$JUCE_FORK_DIR" cat-file -e "$JUCE_REV" 2>/dev/null; then
+        # The snapshot commit may exist only on the mirror, not in this checkout.
+        echo "note: release snapshot $JUCE_REV is not present in $JUCE_FORK_DIR; skipping the fork-drift check." >&2
+        echo "      To enable it, fetch the snapshot first:" >&2
+        echo "        git -C $JUCE_FORK_DIR fetch $JUCE_MIRROR tag $JUCE_TAG" >&2
+    else
+        FORK_TREE="$(git -C "$JUCE_FORK_DIR" rev-parse 'HEAD^{tree}')"
+        SNAP_TREE="$(git -C "$JUCE_FORK_DIR" rev-parse "${JUCE_REV}^{tree}")"
+        if [[ "$FORK_TREE" != "$SNAP_TREE" ]]; then
+            echo "warning: sibling JUCE fork HEAD tree ($FORK_TREE)" >&2
+            echo "         != release snapshot ${JUCE_TAG} tree ($SNAP_TREE)." >&2
+            echo "         The dev fork has moved past the pinned snapshot - push a new" >&2
+            echo "         dusk-wayland-vN tag to the mirror and bump JUCE_TAG / JUCE_REV" >&2
+            echo "         in $RELEASE_WORKFLOW before releasing." >&2
+        fi
+    fi
+fi
+
 TODAY="$(date -u +%Y-%m-%d)"
 
 echo "$NEW_VERSION" > VERSION

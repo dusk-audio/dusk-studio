@@ -110,8 +110,8 @@ jobs:
         # Mac + Windows stay on upstream.
         env:
           JUCE_MIRROR: https://github.com/dusk-audio/JUCE-wayland.git
-          JUCE_TAG: dusk-wayland-v1
-          JUCE_REV: 46ab52f4b6e12acf24309fefb6c349f3f78ed52e
+          JUCE_TAG: dusk-wayland-v2
+          JUCE_REV: 4d85afa175a45e0b5da11f9211de3ba88705588e
         run: |
           set -euo pipefail
           git init -q "${RUNNER_TEMP}/JUCE-wayland"
