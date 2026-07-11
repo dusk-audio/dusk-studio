@@ -2912,8 +2912,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         {
             // Bridge the dusk event to juce for its message-parsing API (same
             // per-event cost as the pre-flip juce buffer's getMessage()).
-            const juce::MidiMessage m (meta.getMessage().getRawData(),
-                                       meta.getMessage().getRawDataSize());
+            const auto& v = meta.getMessage();
+            const juce::MidiMessage m (v.getRawData(), v.getRawDataSize());
             if (m.isNoteOn() && m.getVelocity() > 0)
             {
                 const int n = m.getNoteNumber();
@@ -2954,8 +2954,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
             if (buf.isEmpty()) continue;
             for (const auto meta : buf)
             {
-                const juce::MidiMessage m (meta.getMessage().getRawData(),
-                                           meta.getMessage().getRawDataSize());
+                const auto& v = meta.getMessage();
+                const juce::MidiMessage m (v.getRawData(), v.getRawDataSize());
                 MidiBindingTrigger tg;
                 int dn = 0, val = 0;
                 if      (m.isController())                    { tg = MidiBindingTrigger::CC;         dn = m.getControllerNumber(); val = m.getControllerValue(); }
@@ -4161,11 +4161,19 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                 for (const auto meta : perInputMidi[(size_t) srcIdx])
                 {
                     // dusk (perInputMidi) -> juce (perTrackMidiScratch, feeds
-                    // the instrument + recorder): bridge each event to juce.
-                    const juce::MidiMessage m (meta.getMessage().getRawData(),
-                                               meta.getMessage().getRawDataSize());
-                    if (chFilter == 0 || m.getChannel() == chFilter)
-                        perTrackMidiScratch[(size_t) t].addEvent (m, meta.samplePosition);
+                    // the instrument + recorder): raw-byte copy, no message
+                    // object. Channel read mirrors the juce getChannel
+                    // convention: 1..16 for channel messages, 0 for system.
+                    const auto& v = meta.getMessage();
+                    if (chFilter != 0)
+                    {
+                        const std::uint8_t status = v.getRawDataSize() > 0 ? v.getRawData()[0] : 0;
+                        const int ch = (status & 0xF0) != 0xF0 ? (int) (status & 0x0F) + 1 : 0;
+                        if (ch != chFilter) continue;
+                    }
+                    perTrackMidiScratch[(size_t) t].addEvent (v.getRawData(),
+                                                              v.getRawDataSize(),
+                                                              meta.samplePosition);
                 }
             };
 
