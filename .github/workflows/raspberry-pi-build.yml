@@ -40,39 +40,44 @@ jobs:
             libwebkit2gtk-4.0-dev libglu1-mesa-dev xvfb \
             libwayland-dev libxkbcommon-dev libdecor-0-dev
 
-      - name: Clone JUCE 8.0.4 (upstream)
+      - name: Clone JUCE (Dusk-owned Wayland mirror, pinned)
+        # Same pinned Dusk-owned mirror snapshot as linux-build.yml. The
+        # snapshot carries the SIMDNativeOps<long long> alias on the SSE header
+        # but NOT the NEON one, so arm64 (which compiles the NEON variant) must
+        # patch it in: GCC instantiates SIMDRegister<long long> for
+        # jmax<juce::int64>(), and int64_t is a distinct type from long long —
+        # an incomplete-type hard error without the alias. Applied only when
+        # absent, so a future snapshot that already ships the NEON alias makes
+        # this a no-op (double-defining the specialisation would fail to
+        # compile). Keep JUCE_TAG / JUCE_REV in lockstep with the other Linux
+        # workflows.
+        env:
+          JUCE_MIRROR: https://github.com/dusk-audio/JUCE-wayland.git
+          JUCE_TAG: dusk-wayland-v2
+          JUCE_REV: 4d85afa175a45e0b5da11f9211de3ba88705588e
         run: |
-          git clone --depth 1 --branch 8.0.4 \
-            https://github.com/juce-framework/JUCE.git \
-            "${RUNNER_TEMP}/JUCE-wayland"
-
-      - name: Patch JUCE — SIMDNativeOps<long long> alias (NEON)
-        # Upstream JUCE 8.0.4 defines SIMDNativeOps<int64_t> but not
-        # SIMDNativeOps<long long>; on GCC those are distinct types and JUCE
-        # instantiates SIMDRegister<long long> for jmax<juce::int64>() — an
-        # incomplete-type hard error. The plugdata-team JUCE-wayland fork adds
-        # the aliases; we apply them to the NEON header here so the arm64 build
-        # is clean. (The SSE header is patched the same way in linux-build.yml;
-        # it isn't compiled on arm64.)
-        run: |
-          file="${RUNNER_TEMP}/JUCE-wayland/modules/juce_dsp/native/juce_SIMDNativeOps_neon.h"
-          if [ ! -f "$file" ]; then
-            echo "ERROR: $file not present in this JUCE checkout." >&2
-            exit 1
-          fi
-          awk '
-            /^}[[:space:]]*\/\/.*juce.*dsp/ && !done {
-              print "#if defined (__GNUC__) && defined (__SIZEOF_LONG__) && __SIZEOF_LONG__ == 8 && !defined (_WIN32)"
-              print "template <> struct SIMDNativeOps<long long> : SIMDNativeOps<int64_t> {};"
-              print "template <> struct SIMDNativeOps<unsigned long long> : SIMDNativeOps<uint64_t> {};"
-              print "#endif"
-              done = 1
-            }
-            { print }
-          ' "$file" > "$file.new" && mv "$file.new" "$file"
-          if ! grep -q "SIMDNativeOps<long long>" "$file"; then
-            echo "ERROR: SIMDNativeOps<long long> alias not present after patch — the awk anchor likely no longer matches upstream JUCE." >&2
-            exit 1
+          set -euo pipefail
+          git init -q "${RUNNER_TEMP}/JUCE-wayland"
+          cd "${RUNNER_TEMP}/JUCE-wayland"
+          git remote add origin "${JUCE_MIRROR}"
+          git fetch --depth 1 origin "refs/tags/${JUCE_TAG}"
+          git checkout -q FETCH_HEAD
+          [[ "$(git rev-parse HEAD)" == "${JUCE_REV}" ]] || {
+            echo "ERROR: JUCE checkout $(git rev-parse HEAD) != pinned ${JUCE_REV}" >&2; exit 1; }
+          neon="modules/juce_dsp/native/juce_SIMDNativeOps_neon.h"
+          if ! grep -q "SIMDNativeOps<long long>" "$neon"; then
+            awk '
+              /^}[[:space:]]*\/\/.*juce.*dsp/ && !done {
+                print "#if defined (__GNUC__) && defined (__SIZEOF_LONG__) && __SIZEOF_LONG__ == 8 && !defined (_WIN32)"
+                print "template <> struct SIMDNativeOps<long long> : SIMDNativeOps<int64_t> {};"
+                print "template <> struct SIMDNativeOps<unsigned long long> : SIMDNativeOps<uint64_t> {};"
+                print "#endif"
+                done = 1
+              }
+              { print }
+            ' "$neon" > "$neon.new" && mv "$neon.new" "$neon"
+            grep -q "SIMDNativeOps<long long>" "$neon" || {
+              echo "ERROR: NEON SIMDNativeOps<long long> alias still missing after patch (awk anchor no longer matches the mirror header)." >&2; exit 1; }
           fi
 
       - name: Clone Dusk plugins (donor DSP)

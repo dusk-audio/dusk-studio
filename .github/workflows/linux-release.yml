@@ -55,6 +55,24 @@ jobs:
           submodules: recursive
           persist-credentials: false
 
+      - name: Preflight - releases-repo token is valid (tag builds only)
+        # Fail fast BEFORE the ~17-minute build if RELEASES_REPO_TOKEN is dead.
+        # A v0.12.0 run once burned a full green build then hit HTTP 401 at the
+        # publish step (expired token), and the `|| echo raced` fallback masked
+        # it as a benign race. Probe the token up front so an expired/revoked
+        # secret stops the run in seconds. Mirrors the publish step's tag guard.
+        if: ${{ github.ref_type == 'tag' }}
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          # .permissions.push reflects contents:write for the token; a read-only
+          # token can fetch repo metadata and would pass a bare existence probe.
+          if [[ "$(gh api "repos/${RELEASES_REPO}" --jq '.permissions.push // false' 2>/dev/null)" != "true" ]]; then
+            echo "::error::RELEASES_REPO_TOKEN cannot WRITE to ${RELEASES_REPO} (expired, revoked, or missing contents:write). Rotate the RELEASES_REPO_TOKEN secret with contents:write on that repo, then re-run this workflow." >&2
+            exit 1
+          fi
+
       - name: Verify tag matches VERSION
         # Assets are named from the VERSION file, not the tag — a mismatch
         # would publish wrongly-labelled artifacts silently.
@@ -81,9 +99,9 @@ jobs:
         # Linux ships against the Wayland fork, NOT upstream: it carries the
         # XEmbed mapping / X11-on-Wayland / peer-creation-latch commits that
         # plugin-editor hosting on Wayland depends on, plus the
-        # SIMDNativeOps<long long> alias GCC needs for int64 SIMD (so no
-        # separate patch step — re-applying it would duplicate the
-        # specialization and fail to compile).
+        # SIMDNativeOps<long long> alias GCC needs for int64 SIMD (present on
+        # the SSE header, so x86_64 needs no patch; the aarch64 leg patches the
+        # NEON header — see below).
         #
         # Pinned to a Dusk-OWNED mirror (dusk-audio/JUCE-wayland), NOT the
         # upstream plugdata-team fork: that fork rebased + GC'd the exact commit
@@ -92,10 +110,17 @@ jobs:
         # can't be broken by a third-party fork's history rewrite. To bump JUCE,
         # push a new snapshot tag to the mirror and update JUCE_TAG / JUCE_REV.
         # Mac + Windows stay on upstream.
+        #
+        # The snapshot carries the SIMDNativeOps<long long> alias on the SSE
+        # header (x86_64) but NOT the NEON one, so the aarch64 matrix leg patches
+        # the NEON header when the alias is absent (same rationale as
+        # raspberry-pi-build.yml). Applied conditionally, so it is a no-op on
+        # x86_64 (NEON header not compiled) and on any future snapshot that
+        # already ships the alias — double-defining it would fail to compile.
         env:
           JUCE_MIRROR: https://github.com/dusk-audio/JUCE-wayland.git
-          JUCE_TAG: dusk-wayland-v1
-          JUCE_REV: 46ab52f4b6e12acf24309fefb6c349f3f78ed52e
+          JUCE_TAG: dusk-wayland-v2
+          JUCE_REV: 4d85afa175a45e0b5da11f9211de3ba88705588e
         run: |
           set -euo pipefail
           git init -q "${RUNNER_TEMP}/JUCE-wayland"
@@ -107,13 +132,40 @@ jobs:
             echo "ERROR: JUCE checkout $(git rev-parse HEAD) != pinned ${JUCE_REV}" >&2; exit 1; }
           grep -q "SIMDNativeOps<long long>" \
             modules/juce_dsp/native/juce_SIMDNativeOps_sse.h || {
-            echo "ERROR: pinned JUCE missing the SIMDNativeOps<long long> alias." >&2; exit 1; }
+            echo "ERROR: pinned JUCE missing the SIMDNativeOps<long long> alias (SSE)." >&2; exit 1; }
+          neon="modules/juce_dsp/native/juce_SIMDNativeOps_neon.h"
+          if ! grep -q "SIMDNativeOps<long long>" "$neon"; then
+            awk '
+              /^}[[:space:]]*\/\/.*juce.*dsp/ && !done {
+                print "#if defined (__GNUC__) && defined (__SIZEOF_LONG__) && __SIZEOF_LONG__ == 8 && !defined (_WIN32)"
+                print "template <> struct SIMDNativeOps<long long> : SIMDNativeOps<int64_t> {};"
+                print "template <> struct SIMDNativeOps<unsigned long long> : SIMDNativeOps<uint64_t> {};"
+                print "#endif"
+                done = 1
+              }
+              { print }
+            ' "$neon" > "$neon.new" && mv "$neon.new" "$neon"
+            grep -q "SIMDNativeOps<long long>" "$neon" || {
+              echo "ERROR: NEON SIMDNativeOps<long long> alias still missing after patch (awk anchor no longer matches the mirror header)." >&2; exit 1; }
+          fi
 
-      - name: Clone Dusk plugins (donor DSP)
+      - name: Clone Dusk plugins (donor DSP, pinned)
+        # Pinned to a specific donor SHA, mirroring the JUCE pin above. An
+        # unpinned `git clone` of main HEAD makes old tags non-reproducible:
+        # a later donor commit would silently change the DSP a past release
+        # was built from. To move the donor forward, bump DONOR_REV.
+        env:
+          DONOR_REPO: https://github.com/dusk-audio/dusk-audio-plugins.git
+          DONOR_REV: 69f04318e3b7063e382c80ac1cde2388170e668b
         run: |
-          git clone --depth 1 \
-            https://github.com/dusk-audio/dusk-audio-plugins.git \
-            "${RUNNER_TEMP}/plugins-main"
+          set -euo pipefail
+          git init -q "${RUNNER_TEMP}/plugins-main"
+          cd "${RUNNER_TEMP}/plugins-main"
+          git remote add origin "${DONOR_REPO}"
+          git fetch --depth 1 origin "${DONOR_REV}"
+          git checkout -q "${DONOR_REV}"
+          [[ "$(git rev-parse HEAD)" == "${DONOR_REV}" ]] || {
+            echo "ERROR: donor checkout $(git rev-parse HEAD) != pinned ${DONOR_REV}" >&2; exit 1; }
 
       - name: Refresh Patreon supporters (best-effort)
         # Bakes the live supporters list into the release binary via
@@ -209,17 +261,26 @@ jobs:
           fi
           ASSETS=( "${TARBALLS[@]}" "SHA256SUMS.linux-${ARCH}" )
 
-          # The amd64 + arm64 matrix jobs publish to the SAME tag in parallel, so
-          # the release may be absent when we look yet created by the sibling a
-          # moment later. Create best-effort (tolerate the race), then always
-          # upload our arch's assets with --clobber. Asset names carry the arch,
-          # so the two jobs never overwrite each other's tarballs.
+          # The amd64 + arm64 matrix jobs publish to the SAME tag in parallel,
+          # so the release may be absent when we look yet created by the sibling
+          # a moment later. That race is benign; a real create failure (e.g. a
+          # dead token) is NOT. Distinguish them: if `create` fails, re-check
+          # existence - only a still-absent release is fatal, and we surface the
+          # actual create error before exiting. Asset names carry the arch, so
+          # the two jobs never overwrite each other's tarballs on upload.
           if ! gh release view "$TAG" --repo "$RELEASES_REPO" >/dev/null 2>&1; then
-            gh release create "$TAG" \
+            if ! create_err=$(gh release create "$TAG" \
               --repo "$RELEASES_REPO" \
               --title "Dusk Studio $TAG" \
-              --notes "$NOTES" \
-              || echo "release create raced with the sibling arch job; uploading instead."
+              --notes "$NOTES" 2>&1); then
+              if gh release view "$TAG" --repo "$RELEASES_REPO" >/dev/null 2>&1; then
+                echo "release create raced with the sibling arch job; the release now exists, uploading."
+              else
+                echo "::error::gh release create failed for ${TAG} and no release exists:" >&2
+                echo "${create_err}" >&2
+                exit 1
+              fi
+            fi
           fi
           gh release upload "$TAG" --repo "$RELEASES_REPO" --clobber "${ASSETS[@]}"
           echo "Published ${#ASSETS[@]} ${ARCH} asset(s) to ${RELEASES_REPO} @ ${TAG}"

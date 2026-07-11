@@ -5,13 +5,16 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
-## [0.12.0] - 2026-07-05
+## [0.12.0] - 2026-07-11
 
 Beta. The biggest release so far: Linux-native plugin hosting across CLAP,
 LV2 and VST3 (effects and instruments), a production-readiness pass over the
 whole engine — sample-rate safety, seamless looping, Save As that takes your
 audio with it, latency compensation across every path — and new delivery
-options for the master.
+options for the master. This cut also brings the console EQ on every channel
+and bus onto the new-generation EQ core (a subtle, deliberate re-voicing —
+see Changed) with a lighter CPU footprint, and fails with clear instructions
+instead of a core dump when launched on Wayland without XWayland.
 
 ### Added
 
@@ -111,6 +114,21 @@ options for the master.
 
 ### Changed
 
+- **Console EQ engine.** The channel-strip and bus EQ moved to the
+  new-generation parallel-summing console core (the engine behind 4K EQ
+  version 2). Band interaction and the brown/black voicings track the
+  hardware model more closely, and an engaged EQ carries a trace of
+  transformer character even when flat. Existing sessions will sound
+  slightly different on the strip EQ at the same settings; the compressors
+  are bit-identical. The channel EQ/compressor path also costs roughly
+  10-20% less CPU.
+- **Launching without a display.** On a Wayland session without XWayland,
+  Dusk Studio now prints instructions for enabling it and exits cleanly
+  instead of crashing (#56). An X11 display (XWayland on Wayland desktops)
+  remains a requirement — now stated in the manual.
+- **MIDI engine internals.** Device enumeration, input routing and the
+  clock/MTC output path were modernised. Behavior is intended to be
+  identical; report any regression, especially external clock/MTC timing.
 - **Dusk-native UI sweep.** The remaining stock-JUCE dialogs and pickers
   (including the last native alert on the stem-overwrite prompt) now use
   Dusk Studio's in-window equivalents — no more separate OS windows fighting

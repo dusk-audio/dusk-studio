@@ -15,7 +15,7 @@ VENDORED DEPENDENCIES (compiled into the Dusk Studio binary)
 ------------------------------------------------------
 
 JUCE (audio framework)
-  Version  : 8.x  (Linux pin: plugdata-team/JUCE wayland-juce8;
+  Version  : 8.x  (Linux pin: dusk-audio/JUCE-wayland tag dusk-wayland-v2;
                    macOS/Win: upstream juce-framework/JUCE)
   License  : Dual-licensed — GPL-3.0 (used here) OR JUCE Commercial
   Path     : ../JUCE-wayland (Linux), ../JUCE (macOS/Windows)

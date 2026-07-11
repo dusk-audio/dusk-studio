@@ -30,9 +30,16 @@
   <content_rating type="oars-1.1"/>
   <releases>
     <!-- scripts/bump-version.sh prepends new <release> entries here. -->
-    <release version="0.12.0" date="2026-07-05">
+    <release version="0.12.0" date="2026-07-11">
       <description>
-        <p>Beta: native CLAP/LV2/VST3 hosting on Linux, session sample-rate safety, seamless looping, Save As consolidation, send-effect latency compensation, mastering delivery presets, MIDI soft takeover.</p>
+        <p>Beta. Workflow: session sample-rate policy, seamless loop playback,
+        Save As consolidation, aux return latency compensation, MIDI soft
+        takeover, LV2 file state in sessions, delivery presets, and background
+        audio imports. Sound: the console EQ on every channel and bus moves to
+        a new-generation core with a subtle re-voicing, and the channel EQ and
+        compressor path is lighter on the CPU. Launching on Wayland without
+        XWayland now shows a clear message explaining how to enable it instead
+        of crashing, and the MIDI engine internals have been modernised.</p>
       </description>
     </release>
     <release version="0.11.1" date="2026-06-24">
