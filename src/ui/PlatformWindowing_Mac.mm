@@ -104,6 +104,7 @@ private:
 } // namespace
 
 
+bool hasUsableDisplay()                                   { return true; }
 void bringWindowToFront (juce::ComponentPeer&)             {}
 void flushWindowOperations()                                {}
 void prepareNativePeerForChildAttach (juce::ComponentPeer&) {}

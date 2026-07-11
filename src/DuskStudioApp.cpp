@@ -1338,6 +1338,31 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
         return;
     }
 
+    // Preflight the windowing system before touching anything that opens
+    // a native window (Desktop display enumeration, the main window). Dusk
+    // Studio's Linux UI is X11-only — the main window and every plugin-
+    // editor peer are X11 surfaces, reached via XWayland on a Wayland
+    // session — so a pure-Wayland session with XWayland disabled (sway
+    // without `xwayland enable`, niri/labwc without an XWayland satellite)
+    // has no display we can open. Without this guard JUCE null-derefs deep
+    // inside window creation and the process core-dumps with no usable
+    // message. All headless env-gate paths above have already returned, so
+    // this is only reached by a real GUI launch.
+    if (! duskstudio::platform::hasUsableDisplay())
+    {
+        std::fprintf (stderr,
+            "Dusk Studio needs an X11 display and could not open one.\n"
+            "This is a Wayland session without XWayland. Enable it, then relaunch:\n"
+            "  sway:   add `xwayland enable` to your config and restart sway\n"
+            "  niri:   run `xwayland-satellite` and export the DISPLAY it prints\n"
+            "  labwc:  start labwc with XWayland enabled (the default build)\n"
+            "  river / mango / other wlroots: ensure XWayland is installed and enabled\n");
+        std::fflush (stderr);
+        setApplicationReturnValue (1);
+        quit();
+        return;
+    }
+
     // Install crash handler + FileLogger AFTER every selftest env-gate
     // above has had its chance to quit. Self-test paths don't want
     // stray daily log files littering the user's data dir (or CI

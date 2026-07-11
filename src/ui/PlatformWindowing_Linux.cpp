@@ -104,6 +104,21 @@ juce::ComponentPeer* pickSiblingFocusTargetPeer (juce::Component& departing)
 }
 } // namespace
 
+bool hasUsableDisplay()
+{
+    // JUCE's XWindowSystem is lazy and not yet created at preflight time,
+    // so we can't reuse its ::Display*; open a throwaway connection.
+    // XOpenDisplay(nullptr) reads $DISPLAY itself and returns null when no
+    // X server / XWayland is reachable — the "pure Wayland, no XWayland"
+    // case that otherwise crashes deep in JUCE window creation.
+    if (::Display* d = ::XOpenDisplay (nullptr))
+    {
+        ::XCloseDisplay (d);
+        return true;
+    }
+    return false;
+}
+
 void installNonFatalXErrorHandler()
 {
     // Install once. XSetErrorHandler returns the previously-installed handler
