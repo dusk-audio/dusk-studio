@@ -97,9 +97,9 @@ jobs:
         # Linux ships against the Wayland fork, NOT upstream: it carries the
         # XEmbed mapping / X11-on-Wayland / peer-creation-latch commits that
         # plugin-editor hosting on Wayland depends on, plus the
-        # SIMDNativeOps<long long> alias GCC needs for int64 SIMD (so no
-        # separate patch step — re-applying it would duplicate the
-        # specialization and fail to compile).
+        # SIMDNativeOps<long long> alias GCC needs for int64 SIMD (present on
+        # the SSE header, so x86_64 needs no patch; the aarch64 leg patches the
+        # NEON header — see below).
         #
         # Pinned to a Dusk-OWNED mirror (dusk-audio/JUCE-wayland), NOT the
         # upstream plugdata-team fork: that fork rebased + GC'd the exact commit
@@ -108,6 +108,13 @@ jobs:
         # can't be broken by a third-party fork's history rewrite. To bump JUCE,
         # push a new snapshot tag to the mirror and update JUCE_TAG / JUCE_REV.
         # Mac + Windows stay on upstream.
+        #
+        # The snapshot carries the SIMDNativeOps<long long> alias on the SSE
+        # header (x86_64) but NOT the NEON one, so the aarch64 matrix leg patches
+        # the NEON header when the alias is absent (same rationale as
+        # raspberry-pi-build.yml). Applied conditionally, so it is a no-op on
+        # x86_64 (NEON header not compiled) and on any future snapshot that
+        # already ships the alias — double-defining it would fail to compile.
         env:
           JUCE_MIRROR: https://github.com/dusk-audio/JUCE-wayland.git
           JUCE_TAG: dusk-wayland-v2
@@ -123,7 +130,22 @@ jobs:
             echo "ERROR: JUCE checkout $(git rev-parse HEAD) != pinned ${JUCE_REV}" >&2; exit 1; }
           grep -q "SIMDNativeOps<long long>" \
             modules/juce_dsp/native/juce_SIMDNativeOps_sse.h || {
-            echo "ERROR: pinned JUCE missing the SIMDNativeOps<long long> alias." >&2; exit 1; }
+            echo "ERROR: pinned JUCE missing the SIMDNativeOps<long long> alias (SSE)." >&2; exit 1; }
+          neon="modules/juce_dsp/native/juce_SIMDNativeOps_neon.h"
+          if ! grep -q "SIMDNativeOps<long long>" "$neon"; then
+            awk '
+              /^}[[:space:]]*\/\/.*juce.*dsp/ && !done {
+                print "#if defined (__GNUC__) && defined (__SIZEOF_LONG__) && __SIZEOF_LONG__ == 8 && !defined (_WIN32)"
+                print "template <> struct SIMDNativeOps<long long> : SIMDNativeOps<int64_t> {};"
+                print "template <> struct SIMDNativeOps<unsigned long long> : SIMDNativeOps<uint64_t> {};"
+                print "#endif"
+                done = 1
+              }
+              { print }
+            ' "$neon" > "$neon.new" && mv "$neon.new" "$neon"
+            grep -q "SIMDNativeOps<long long>" "$neon" || {
+              echo "ERROR: NEON SIMDNativeOps<long long> alias still missing after patch (awk anchor no longer matches the mirror header)." >&2; exit 1; }
+          fi
 
       - name: Clone Dusk plugins (donor DSP, pinned)
         # Pinned to a specific donor SHA, mirroring the JUCE pin above. An
