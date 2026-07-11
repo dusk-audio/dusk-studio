@@ -185,6 +185,25 @@ public:
 DuskStudioApp::DuskStudioApp() = default;
 DuskStudioApp::~DuskStudioApp() = default;
 
+// True when a native window can be created; on failure prints the XWayland
+// guidance. Called before the main window AND at the top of each *_EDITOR_TEST
+// gate (those open real X11 windows too) — but never on the headless paths,
+// which must keep running without any display.
+static bool displayUsableOrExplain()
+{
+    if (duskstudio::platform::hasUsableDisplay())
+        return true;
+    std::fprintf (stderr,
+        "Dusk Studio needs an X11 display and could not open one.\n"
+        "This is a Wayland session without XWayland. Enable it, then relaunch:\n"
+        "  sway:   add `xwayland enable` to your config and restart sway\n"
+        "  niri:   run `xwayland-satellite` and export the DISPLAY it prints\n"
+        "  labwc:  start labwc with XWayland enabled (the default build)\n"
+        "  river / mango / other wlroots: ensure XWayland is installed and enabled\n");
+    std::fflush (stderr);
+    return false;
+}
+
 #if JUCE_LINUX
 static void primeRealtimeAudio()
 {
@@ -1006,6 +1025,7 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
     if (const char* path = std::getenv ("DUSKSTUDIO_CLAP_EDITOR_TEST"); path != nullptr && *path)
     {
+        if (! displayUsableOrExplain()) { setApplicationReturnValue (1); quit(); return; }
         duskstudio::platform::preferX11ForNextNativeWindow();   // editor host needs an X11 peer
         auto comp = std::make_unique<duskstudio::ClapPluginEditorComponent>();
         juce::String err;
@@ -1045,6 +1065,7 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
 #if DUSKSTUDIO_HAS_NATIVE_LV2
     if (const char* path = std::getenv ("DUSKSTUDIO_LV2_EDITOR_TEST"); path != nullptr && *path)
     {
+        if (! displayUsableOrExplain()) { setApplicationReturnValue (1); quit(); return; }
         duskstudio::platform::preferX11ForNextNativeWindow();   // editor host needs an X11 peer
         lv2EditorTest = std::make_unique<Lv2EditorTest>();
         std::string err;
@@ -1088,6 +1109,7 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
 #if DUSKSTUDIO_HAS_NATIVE_VST3
     if (const char* path = std::getenv ("DUSKSTUDIO_VST3_EDITOR_TEST"); path != nullptr && *path)
     {
+        if (! displayUsableOrExplain()) { setApplicationReturnValue (1); quit(); return; }
         duskstudio::platform::preferX11ForNextNativeWindow();   // editor host needs an X11 peer
         vst3EditorTest = std::make_unique<Vst3EditorTest>();
         std::string err;
@@ -1334,6 +1356,23 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
         std::fprintf (stdout, "%s\n", report.toRawUTF8());
         std::fflush (stdout);
 
+        quit();
+        return;
+    }
+
+    // Preflight the windowing system before touching anything that opens
+    // a native window (Desktop display enumeration, the main window). Dusk
+    // Studio's Linux UI is X11-only — the main window and every plugin-
+    // editor peer are X11 surfaces, reached via XWayland on a Wayland
+    // session — so a pure-Wayland session with XWayland disabled (sway
+    // without `xwayland enable`, niri/labwc without an XWayland satellite)
+    // has no display we can open. Without this guard JUCE null-derefs deep
+    // inside window creation and the process core-dumps with no usable
+    // message. All headless env-gate paths above have already returned, so
+    // this is only reached by a real GUI launch.
+    if (! displayUsableOrExplain())
+    {
+        setApplicationReturnValue (1);
         quit();
         return;
     }

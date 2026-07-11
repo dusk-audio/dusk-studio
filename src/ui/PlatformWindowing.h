@@ -27,6 +27,18 @@ namespace duskstudio::platform
 // Linux, so the platform asymmetry of past bug reports does NOT mean
 // the other platforms are bug-free.
 
+// Preflight, before any window is created: true when a native display
+// connection can actually be opened. Dusk Studio's Linux UI is X11-only
+// (the main window and every plugin-editor peer are X11 surfaces, via
+// XWayland on a Wayland session), so this reports whether an X server /
+// XWayland is reachable. A pure-Wayland session with XWayland disabled
+// returns false; the caller prints guidance and exits cleanly instead of
+// letting JUCE null-deref deep inside window creation and core-dump.
+//
+// macOS / Windows: always true — their native windowing is present once
+// the process has a GUI session.
+bool hasUsableDisplay();
+
 // Bring the given window's native peer to the foreground and grant it
 // focus. Used after creating a fresh top-level window (main window,
 // plugin editor) so the WM doesn't bury it under existing windows or
