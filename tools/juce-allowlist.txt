@@ -27,8 +27,6 @@ src/engine/MasteringPlayer.cpp
 src/engine/MasteringPlayer.h
 src/engine/McuController.cpp
 src/engine/McuController.h
-src/engine/MidiClockEmitter.cpp
-src/engine/MidiClockEmitter.h
 src/engine/NativeScanRows.h
 src/engine/PlaybackEngine.cpp
 src/engine/PlaybackEngine.h
@@ -58,6 +56,8 @@ src/engine/ipc/PluginIpc.h
 src/engine/ipc/PluginScanProtocol.h
 src/engine/ipc/RemotePluginConnection.cpp
 src/engine/ipc/RemotePluginConnection.h
+src/engine/midi/MidiDevices.cpp
+src/engine/midi/MidiDevices.h
 src/engine/multisample/AriaBank.cpp
 src/engine/multisample/AriaBank.h
 src/engine/multisample/AriaGui.cpp

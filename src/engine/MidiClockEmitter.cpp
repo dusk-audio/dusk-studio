@@ -1,12 +1,14 @@
 #include "MidiClockEmitter.h"
 
+#include <cmath>
+
 namespace duskstudio
 {
 void MidiClockEmitter::generateBlock (std::int64_t blockStartSample,
                                        int numSamples,
                                        float bpm,
                                        bool isRolling,
-                                       juce::MidiBuffer& out) noexcept
+                                       dusk::MidiBuffer& out) noexcept
 {
     if (numSamples <= 0 || sr <= 0.0) return;
 
@@ -18,7 +20,7 @@ void MidiClockEmitter::generateBlock (std::int64_t blockStartSample,
     {
         const std::uint8_t statusByte = isRolling ? (std::uint8_t) 0xFA   // Start
                                                   : (std::uint8_t) 0xFC; // Stop
-        out.addEvent (juce::MidiMessage (statusByte), 0);
+        out.addEvent (&statusByte, 1, 0);
         lastRolling = isRolling;
         if (isRolling)
         {
@@ -48,7 +50,10 @@ void MidiClockEmitter::generateBlock (std::int64_t blockStartSample,
         const int offset = (int) ((std::int64_t) std::llround (clockPhase)
                                    - blockStartSample);
         if (offset >= 0 && offset < numSamples)
-            out.addEvent (juce::MidiMessage ((std::uint8_t) 0xF8), offset);
+        {
+            const std::uint8_t clockByte = 0xF8;
+            out.addEvent (&clockByte, 1, offset);
+        }
         clockPhase += samplesPerClock;
     }
 }

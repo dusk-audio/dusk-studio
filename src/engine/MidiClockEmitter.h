@@ -1,14 +1,14 @@
 #pragma once
 
-#include <juce_audio_basics/juce_audio_basics.h>
+#include "../foundation/MidiBuffer.h"
+#include <cstdint>
 
 namespace duskstudio
 {
 // Generates MIDI Clock (F8) + transport (FA / FC) bytes for a per-block
-// MidiBuffer. The caller routes the buffer to a juce::MidiOutput via
-// sendBlockOfMessages so delivery happens on JUCE's background thread.
-// Audio-thread safe - the emitter holds only POD state and writes
-// timestamped bytes into a pre-allocated MidiBuffer.
+// MidiBuffer. The caller routes the buffer to a MIDI output port for
+// delivery on its background thread. Audio-thread safe - the emitter holds
+// only POD state and writes timestamped bytes into a pre-allocated MidiBuffer.
 //
 // Sample-accurate placement: F8 ticks fire on a monotonic sample clock
 // that advances independent of the transport playhead. This means a
@@ -48,7 +48,7 @@ public:
                         int numSamples,
                         float bpm,
                         bool isRolling,
-                        juce::MidiBuffer& out) noexcept;
+                        dusk::MidiBuffer& out) noexcept;
 
 private:
     double sr = 48000.0;

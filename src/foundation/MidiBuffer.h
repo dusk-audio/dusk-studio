@@ -54,16 +54,20 @@ public:
     // freely like a plain vector.
     void reserveBytes (std::size_t n) { data.reserve (n); capBytes = n; }
 
-    void addEvent (const std::uint8_t* bytes, int numBytes, int samplePosition)
+    // Returns false when the event was dropped (invalid, or over the reserved
+    // cap) so RT callers can keep whole-block semantics instead of splitting
+    // paired events at the cap.
+    bool addEvent (const std::uint8_t* bytes, int numBytes, int samplePosition)
     {
-        if (numBytes <= 0 || bytes == nullptr) return;
+        if (numBytes <= 0 || bytes == nullptr) return false;
         const std::size_t base = data.size();
         const std::size_t need = kHeader + (std::size_t) numBytes;
-        if (base + need > capBytes) return;   // over the reserved cap: drop, never realloc
+        if (base + need > capBytes) return false;   // over the reserved cap: drop, never realloc
         data.resize (base + need);
         std::memcpy (data.data() + base,               &samplePosition, sizeof (int));
         std::memcpy (data.data() + base + sizeof (int), &numBytes,       sizeof (int));
         std::memcpy (data.data() + base + kHeader, bytes, (std::size_t) numBytes);
+        return true;
     }
 
     class Iterator

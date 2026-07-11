@@ -17,6 +17,7 @@
 #include "MidiTimeCodeReceiver.h"
 #include "MidiClockEmitter.h"
 #include "MidiTimeCodeEmitter.h"
+#include "midi/MidiDevices.h"
 #include "../session/Session.h"
 #include "AudioWorkerPool.h"
 #include "MasteringPlayer.h"
@@ -31,7 +32,6 @@ namespace duskstudio
 // input -> channel strip (live or playback source) -> aux/master.
 // Owns Transport, recording, playback, plugin host.
 class AudioEngine final : public juce::AudioIODeviceCallback,
-                            public juce::MidiInputCallback,
                             public juce::ChangeBroadcaster,
                             public juce::ChangeListener
 {
@@ -140,34 +140,31 @@ public:
     // openConfiguredMidiOutputs. Message-thread only.
     void reresolveTrackMidiFromSession();
 
-    const juce::Array<juce::MidiDeviceInfo>& getMidiInputDevices() const noexcept
+    const std::vector<duskstudio::midi::MidiDeviceInfo>& getMidiInputDevices() const noexcept
     {
-        return midiInputDevices;
+        return midiIn.getDevices();
     }
-    const juce::Array<juce::MidiDeviceInfo>& getMidiOutputDevices() const noexcept
+    const std::vector<duskstudio::midi::MidiDeviceInfo>& getMidiOutputDevices() const noexcept
     {
-        return midiOutputDevices;
+        return midiOut.getDevices();
     }
 
-    // Synthetic "Virtual Keyboard (Dusk Studio)" collector appended to
-    // midiInputDevices. nullptr until rebuildMidiInputBank has run.
-    juce::MidiMessageCollector* getVirtualKeyboardCollector() noexcept;
+    // Synthetic "Virtual Keyboard (Dusk Studio)" collector appended to the
+    // input bank. nullptr until the input bank has been built.
+    juce::MidiMessageCollector* getVirtualKeyboardCollector() noexcept
+    {
+        return midiIn.getVirtualKeyboardCollector();
+    }
 
-    // Index of the virtual keyboard inside midiInputDevices, or -1 if
-    // the bank hasn't been built yet. Used by UI flows that auto-route
-    // the on-screen keyboard to a freshly loaded instrument track.
-    int getVirtualKeyboardInputIndex() const noexcept { return virtualKeyboardCollectorIndex; }
+    // Index of the virtual keyboard inside the input bank, or -1 if the bank
+    // hasn't been built yet. Used by UI flows that auto-route the on-screen
+    // keyboard to a freshly loaded instrument track.
+    int getVirtualKeyboardInputIndex() const noexcept { return midiIn.getVirtualKeyboardIndex(); }
 
     // Lazy-open + start delivery thread. Opening every available output
     // at startup blocks the main thread (snd_seq_connect_to is sync).
     // Message-thread only.
-    bool ensureMidiOutputOpen (int index);
-
-    // No implicit ensure — caller checks state first. Message thread
-    // only (MCU feedback sink). The audio thread routes MIDI out through
-    // queueMidiOutBlock instead — sendBlockOfMessages locks and
-    // allocates, so it must never run in the callback.
-    bool sendMidiToOutput (int index, const juce::MidiBuffer& events) noexcept;
+    bool ensureMidiOutputOpen (int index) { return midiOut.ensureOpen (index); }
 
     // Open the MIDI output every track is routed to. Called once after
     // SessionSerializer::load resolves identifiers. Message-thread only.
@@ -176,7 +173,7 @@ public:
 
     // Same, but for live callers (session load) where the audio callback is
     // attached: detaches it around the bank mutation so the audio thread
-    // never reads midiOutputs mid-open. Message-thread only.
+    // never reads the output bank mid-open. Message-thread only.
     void openConfiguredMidiOutputsSafely();
 
     juce::UndoManager& getUndoManager() noexcept { return undoManager; }
@@ -259,12 +256,6 @@ public:
     // guarantee a follow-up audioDeviceStopped, so we do the same
     // flush-record-and-stop dance to keep recordings recoverable.
     void audioDeviceError (const juce::String& errorMessage) override;
-
-    // Bound via addMidiInputDeviceCallback("", this). Fires from JUCE's
-    // MIDI input thread (NOT the audio thread); routes to per-input
-    // collectors that the audio thread drains lock-free.
-    void handleIncomingMidiMessage (juce::MidiInput* source,
-                                       const juce::MidiMessage& message) override;
 
     // Prepare without a real AudioIODevice. The self-test detaches the
     // engine and drives audioDeviceIOCallbackWithContext directly with
@@ -464,21 +455,15 @@ private:
     PitchDetector    pitchDetector;
     MidiSyncReceiver       midiSyncReceiver;
     MidiTimeCodeReceiver   midiTimeCodeReceiver;
-    // Scratch the sync/MTC and MCU input blocks are bridged into: the receivers
-    // take a dusk::MidiBuffer, so each block the JUCE input buffer is walked
-    // into these (pre-reserved so the fill never allocates on the audio thread;
-    // MCU and sync can be different input ports, hence two buffers).
-    dusk::MidiBuffer       syncMidiScratch;
-    dusk::MidiBuffer       mcuMidiScratch;
     std::unique_ptr<class McuReceiver>   mcuReceiver;
     std::unique_ptr<class McuController> mcuController;
 
     MidiClockEmitter     midiClockEmitter;
     MidiTimeCodeEmitter  midiTimeCodeEmitter;
-    juce::MidiBuffer midiClockOutScratch;
-    // MTC emitter writes dusk::MidiBuffer; its events are merged into
-    // midiClockOutScratch each block (pre-reserved, allocation-free).
-    dusk::MidiBuffer mtcOutScratch;
+    // Clock + MTC multiplex onto this one dusk buffer each block (Clock bytes
+    // first, MTC appended); the out-bank's queueRt converts + timestamps it.
+    // Pre-reserved so the emitters never allocate on the audio thread.
+    dusk::MidiBuffer midiClockOutScratch;
     int              lastSyncOutputIdx = -1;
 
     // Monotonic sample clock the sync receiver timestamps clock ticks
@@ -631,68 +616,33 @@ private:
     void processStripLane (int lane) noexcept;            // one worker lane
     void reduceLaneAccum (int numSamples) noexcept;       // sum lanes → mix
 
-    // One MidiMessageCollector per registered input. MIDI thread
-    // addMessageToQueue's; audio thread drains per-block into
-    // perInputMidi[i]. Both sides lock-free per JUCE contract.
-    juce::Array<juce::MidiDeviceInfo> midiInputDevices;
-    std::vector<std::unique_ptr<juce::MidiMessageCollector>> midiInputCollectors;
-    std::vector<juce::MidiBuffer> perInputMidi;
-    std::array<juce::MidiBuffer, Session::kNumTracks> perTrackMidiScratch;
+    // The single JUCE-device seam. midiIn owns the per-input collector bank and
+    // is itself the input callback; midiOut owns the output-port bank + RT
+    // out-queue + pump thread. The audio thread only calls midiIn.drainBlock /
+    // midiOut.queueRt (both take dusk::MidiBuffer). The detach-rebuild-reattach
+    // fence around a hot-plug is orchestrated by rebuildMidiBanks below.
+    duskstudio::midi::MidiInputClient  midiIn;
+    duskstudio::midi::MidiOutputBank   midiOut;
 
-    // Recomputed every rebuildMidiInputBank so hot-plug doesn't invalidate.
-    int virtualKeyboardCollectorIndex { -1 };
+    // Per-input drained block. midiIn.drainBlock fills each every block
+    // (destructive per collector). Sized to midiIn.getNumInputs() and
+    // reserveBytes'd off the RT path in rebuildMidiBanks so the drain and the
+    // test-inject merge never allocate on the audio thread.
+    std::vector<dusk::MidiBuffer> perInputMidi;
+    // Per-track routing buffer feeding the strip's instrument + the recorder —
+    // both take juce::MidiBuffer, so this stays juce-typed.
+    std::array<juce::MidiBuffer, Session::kNumTracks> perTrackMidiScratch;
+    // juce->dusk bridge for a MIDI track's external output: perTrackMidiScratch
+    // (juce) is copied into this before midiOut.queueRt (dusk). Pre-reserved.
+    dusk::MidiBuffer midiOutTrackScratch;
 
     // SPSC handoff. Producer must not touch testInjectMidi while
     // testInjectReady==true. Single relaxed load + branch per block in
-    // production.
+    // production. Staged as juce (the test builds a juce buffer); merged into
+    // the dusk perInputMidi slot on the audio thread.
     juce::MidiBuffer  testInjectMidi;
     std::atomic<int>  testInjectInputIdx { -1 };
     std::atomic<bool> testInjectReady    { false };
-
-    juce::Array<juce::MidiDeviceInfo> midiOutputDevices;
-    std::vector<std::unique_ptr<juce::MidiOutput>> midiOutputs;
-
-    // MIDI-out handoff. juce::MidiOutput::sendBlockOfMessages is NOT
-    // audio-thread safe: it takes the delivery thread's mutex (which
-    // that thread holds across waits of up to ~20 ms) and inserts into
-    // a heap-allocating multiset under it. The audio thread instead
-    // writes whole per-port event blocks into this lock-free FIFO; the
-    // pump thread drains it every millisecond and does the
-    // sendBlockOfMessages call where blocking is harmless. Slot
-    // MidiBuffers are pre-sized in prepareForSelfTest so the audio-
-    // thread copy never allocates. Queue-full drops the block —
-    // dropping clock bytes beats an xrun.
-    static constexpr int kMidiOutQueueSlots = 64;
-    static constexpr int kMidiOutSlotBytes  = 4096;
-    struct QueuedMidiOut
-    {
-        int    port       = -1;
-        double timeMs     = 0.0;
-        double sampleRate = 48000.0;
-        juce::MidiBuffer events;
-    };
-    juce::AbstractFifo midiOutFifo { kMidiOutQueueSlots };
-    std::array<QueuedMidiOut, kMidiOutQueueSlots> midiOutQueue;
-
-    // Serialises the pump thread's port access against message-thread
-    // bank mutation (rebuildMidiOutputBank / ensureMidiOutputOpen). The
-    // audio thread never takes it — it only touches the FIFO.
-    std::mutex midiOutBankMutex;
-
-    class MidiOutPump final : public juce::Thread
-    {
-    public:
-        explicit MidiOutPump (AudioEngine& e)
-            : juce::Thread ("Dusk Studio MIDI out"), engine (e) {}
-        void run() override;
-    private:
-        AudioEngine& engine;
-    };
-    MidiOutPump midiOutPump { *this };
-
-    void queueMidiOutBlock (int port, const juce::MidiBuffer& events,
-                            double sampleRate) noexcept;
-    void drainMidiOutQueue();
 
     // Previous block's midiInputIndex per track — detects mid-play
     // input swaps so we can fire All-Notes-Off + Sustain-Off on the
@@ -700,11 +650,12 @@ private:
     // keep ringing (Note Off never arrives on the now-unrouted source).
     std::array<int, Session::kNumTracks> lastMidiInputIndex {};
 
-    // Called from ctor BEFORE callbacks register, and from
-    // refreshMidiInputs WHILE callbacks are detached. The detach-rebuild-
-    // reattach fence is what makes vector mutation safe.
-    void rebuildMidiInputBank();
-    void rebuildMidiOutputBank();
+    // Rebuild both device banks (message thread, input+audio callbacks
+    // DETACHED by the caller). Enumerates hardware, sizes perInputMidi,
+    // re-resolves the session sync/MCU identifiers to indices, eager-opens the
+    // sync + MCU output ports, and resets the receivers/clock emitter. Called
+    // from the ctor and refreshMidiInputs inside their detach fences.
+    void rebuildMidiBanks();
 
     // Write the finished master mix (mixL/mixR) to its configured device output
     // pair. Accumulates, so an aux lane routed to the same pair sums in rather

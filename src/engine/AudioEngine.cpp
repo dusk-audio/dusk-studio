@@ -366,8 +366,10 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
     mcuController = std::make_unique<McuController> (session);
     mcuController->setSink ([this] (const juce::MidiBuffer& buf)
     {
+        // Message thread (30 Hz MCU tick). The bank's juce send overload keeps
+        // McuController juce-typed (events-tower coupling).
         const int outIdx = session.mcu.resolvedOutputIdx.load (std::memory_order_acquire);
-        if (outIdx >= 0) sendMidiToOutput (outIdx, buf);
+        if (outIdx >= 0) midiOut.send (outIdx, buf);
     });
     mcuController->setTransportProvider ([this] { return &transport; });
     mcuController->setSampleRateProvider ([this] { return getCurrentSampleRate(); });
@@ -395,7 +397,7 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
 
     // High priority so a loaded message thread can't starve clock /
     // note delivery; still below the audio thread.
-    midiOutPump.startThread (juce::Thread::Priority::high);
+    midiOut.startPump();
 
     for (int i = 0; i < Session::kNumTracks; ++i)
     {
@@ -559,6 +561,14 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
     }
    #endif
 
+    // Build both MIDI banks before ANY callback is registered — the audio
+    // callback iterates perInputMidi, so it must not be attachable while
+    // rebuildMidiBanks sizes the vector. Empty deviceIdentifier = every
+    // enabled input fans out to midiIn, routed there by source identifier.
+    midiIn.setDeviceManager (deviceManager);
+    rebuildMidiBanks();
+    midiIn.attachCallback();
+
     deviceManager.addAudioCallback (this);
 
     // H5: subscribe to AudioDeviceManager change broadcasts so we can
@@ -566,12 +576,6 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
     // one). Fires on the message thread per JUCE's ChangeBroadcaster
     // contract.
     deviceManager.addChangeListener (this);
-
-    // Empty deviceIdentifier = "every enabled input fans out to this
-    // callback"; handleIncomingMidiMessage routes by source pointer.
-    rebuildMidiInputBank();
-    rebuildMidiOutputBank();
-    deviceManager.addMidiInputDeviceCallback ({}, this);
 }
 
 void AudioEngine::refreshMidiInputs()
@@ -581,26 +585,24 @@ void AudioEngine::refreshMidiInputs()
     // rare hot-plug event; lock-free vector mutation would cost more
     // throughout the audio path than it's worth.
     deviceManager.removeAudioCallback (this);
-    deviceManager.removeMidiInputDeviceCallback ({}, this);
+    midiIn.detachCallback();
 
     // Disable currently-enabled inputs before rebuilding so the device
     // manager's own bookkeeping releases the OS handles. The new pass
     // re-enables whichever devices are still present.
-    for (const auto& d : midiInputDevices)
-        deviceManager.setMidiInputDeviceEnabled (d.identifier, false);
+    midiIn.disableAllDevices();
 
-    rebuildMidiInputBank();
-    rebuildMidiOutputBank();
+    rebuildMidiBanks();
 
     // The track-side index atoms may now point at moved or removed
     // devices. Re-resolve each track's saved identifier so a refresh
     // doesn't silently break existing routing. Tracks with no saved
     // identifier (very old sessions) keep their raw index, clamped.
-    auto resolveByIdentifier = [] (const juce::Array<juce::MidiDeviceInfo>& devices,
+    auto resolveByIdentifier = [] (const std::vector<duskstudio::midi::MidiDeviceInfo>& devices,
                                     const juce::String& wantedId)
     {
-        for (int i = 0; i < devices.size(); ++i)
-            if (devices[i].identifier == wantedId)
+        for (int i = 0; i < (int) devices.size(); ++i)
+            if (devices[(size_t) i].identifier == wantedId)
                 return i;
         return -1;
     };
@@ -610,34 +612,34 @@ void AudioEngine::refreshMidiInputs()
         if (track.midiInputIdentifier.isNotEmpty())
         {
             track.midiInputIndex.store (
-                resolveByIdentifier (midiInputDevices, track.midiInputIdentifier),
+                resolveByIdentifier (midiIn.getDevices(), track.midiInputIdentifier),
                 std::memory_order_relaxed);
         }
         else
         {
             const int cur = track.midiInputIndex.load (std::memory_order_relaxed);
-            if (cur >= midiInputDevices.size())
+            if (cur >= (int) midiIn.getDevices().size())
                 track.midiInputIndex.store (-1, std::memory_order_relaxed);
         }
         if (track.midiOutputIdentifier.isNotEmpty())
         {
             track.midiOutputIndex.store (
-                resolveByIdentifier (midiOutputDevices, track.midiOutputIdentifier),
+                resolveByIdentifier (midiOut.getDevices(), track.midiOutputIdentifier),
                 std::memory_order_relaxed);
         }
         else
         {
             const int cur = track.midiOutputIndex.load (std::memory_order_relaxed);
-            if (cur >= midiOutputDevices.size())
+            if (cur >= (int) midiOut.getDevices().size())
                 track.midiOutputIndex.store (-1, std::memory_order_relaxed);
         }
     }
 
     // Must run BEFORE re-attaching callbacks — otherwise the audio
-    // thread iterates midiOutputs while ensureMidiOutputOpen mutates it.
+    // thread reads the output bank while ensureOpen mutates it.
     openConfiguredMidiOutputs();
 
-    deviceManager.addMidiInputDeviceCallback ({}, this);
+    midiIn.attachCallback();
     deviceManager.addAudioCallback (this);
 
     sendChangeMessage();
@@ -940,11 +942,11 @@ void AudioEngine::reresolveTrackMidiFromSession()
     // no audio glitch. Cheap enough to run on every session load. (The full
     // refreshMidiInputs hot-plug path would detach/reattach the audio callback
     // and disable/re-enable every MIDI device — seconds of frozen UI on load.)
-    auto resolveByIdentifier = [] (const juce::Array<juce::MidiDeviceInfo>& devices,
+    auto resolveByIdentifier = [] (const std::vector<duskstudio::midi::MidiDeviceInfo>& devices,
                                     const juce::String& wantedId)
     {
-        for (int i = 0; i < devices.size(); ++i)
-            if (devices[i].identifier == wantedId)
+        for (int i = 0; i < (int) devices.size(); ++i)
+            if (devices[(size_t) i].identifier == wantedId)
                 return i;
         return -1;
     };
@@ -953,16 +955,16 @@ void AudioEngine::reresolveTrackMidiFromSession()
         auto& track = session.track (t);
         if (track.midiInputIdentifier.isNotEmpty())
             track.midiInputIndex.store (
-                resolveByIdentifier (midiInputDevices, track.midiInputIdentifier),
+                resolveByIdentifier (midiIn.getDevices(), track.midiInputIdentifier),
                 std::memory_order_relaxed);
-        else if (track.midiInputIndex.load (std::memory_order_relaxed) >= midiInputDevices.size())
+        else if (track.midiInputIndex.load (std::memory_order_relaxed) >= (int) midiIn.getDevices().size())
             track.midiInputIndex.store (-1, std::memory_order_relaxed);
 
         if (track.midiOutputIdentifier.isNotEmpty())
             track.midiOutputIndex.store (
-                resolveByIdentifier (midiOutputDevices, track.midiOutputIdentifier),
+                resolveByIdentifier (midiOut.getDevices(), track.midiOutputIdentifier),
                 std::memory_order_relaxed);
-        else if (track.midiOutputIndex.load (std::memory_order_relaxed) >= midiOutputDevices.size())
+        else if (track.midiOutputIndex.load (std::memory_order_relaxed) >= (int) midiOut.getDevices().size())
             track.midiOutputIndex.store (-1, std::memory_order_relaxed);
     }
 
@@ -972,16 +974,16 @@ void AudioEngine::reresolveTrackMidiFromSession()
     // engine's sync + MCU consumers read stale indices until the user reopens
     // Audio Settings. release-ordered to match their setters in AudioSettingsPanel.
     auto resolveSessionIdx = [&] (std::atomic<int>& idx,
-                                   const juce::Array<juce::MidiDeviceInfo>& devices,
+                                   const std::vector<duskstudio::midi::MidiDeviceInfo>& devices,
                                    const juce::String& wantedId)
     {
         idx.store (wantedId.isNotEmpty() ? resolveByIdentifier (devices, wantedId) : -1,
                    std::memory_order_release);
     };
-    resolveSessionIdx (session.syncSourceInputIdx,    midiInputDevices,  session.syncSourceInputIdentifier);
-    resolveSessionIdx (session.syncOutputIdx,         midiOutputDevices, session.syncOutputIdentifier);
-    resolveSessionIdx (session.mcu.resolvedInputIdx,  midiInputDevices,  session.mcu.inputIdentifier);
-    resolveSessionIdx (session.mcu.resolvedOutputIdx, midiOutputDevices, session.mcu.outputIdentifier);
+    resolveSessionIdx (session.syncSourceInputIdx,    midiIn.getDevices(),  session.syncSourceInputIdentifier);
+    resolveSessionIdx (session.syncOutputIdx,         midiOut.getDevices(), session.syncOutputIdentifier);
+    resolveSessionIdx (session.mcu.resolvedInputIdx,  midiIn.getDevices(),  session.mcu.inputIdentifier);
+    resolveSessionIdx (session.mcu.resolvedOutputIdx, midiOut.getDevices(), session.mcu.outputIdentifier);
 
     // A session load may have replaced the tempo map — republish the audio
     // thread's snapshot so the MIDI scheduler + metronome see the loaded points.
@@ -993,269 +995,48 @@ void AudioEngine::reresolveTrackMidiFromSession()
     // load (same place the per-track outputs open).
 }
 
-void AudioEngine::rebuildMidiInputBank()
+void AudioEngine::rebuildMidiBanks()
 {
-    // Safe to mutate ONLY with both callbacks detached. Ctor's first
-    // call satisfies that (callbacks not yet registered);
-    // refreshMidiInputs does remove-then-call-then-add. Callbacks
-    // active during mutation = UB.
-    midiInputDevices = juce::MidiInput::getAvailableDevices();
-    midiInputCollectors.clear();
-    midiInputCollectors.reserve ((size_t) midiInputDevices.size() + 1);
+    // Safe to mutate ONLY with the input + audio callbacks detached. Ctor's
+    // first call satisfies that (callbacks not yet registered); refreshMidiInputs
+    // does remove-then-call-then-add. Callbacks active during mutation = UB.
     const double sr = currentSampleRate.load (std::memory_order_relaxed);
-    for (int i = 0; i < midiInputDevices.size(); ++i)
-    {
-        auto col = std::make_unique<juce::MidiMessageCollector>();
-        if (sr > 0.0) col->reset (sr);
-        // setMidiInputDeviceEnabled returns void — re-query to verify.
-        // Failure usually = OS denied access (another app exclusively
-        // owns the port). Log so the user can diagnose missing input.
-        const auto& devId = midiInputDevices[i].identifier;
-        deviceManager.setMidiInputDeviceEnabled (devId, true);
-        if (! deviceManager.isMidiInputDeviceEnabled (devId))
-        {
-            std::fprintf (stderr,
-                          "[Dusk Studio/AudioEngine] WARNING: failed to enable MIDI input \"%s\" "
-                          "(id %s). Another application may be holding it open.\n",
-                          midiInputDevices[i].name.toRawUTF8(),
-                          devId.toRawUTF8());
-        }
-        midiInputCollectors.push_back (std::move (col));
-    }
+    midiIn.rebuild (sr);
+    midiOut.rebuild();
 
-    // Appended after real hardware so the VKB's index is stable across
-    // hot-plug. Fixed identifier so saved sessions resolve back to it.
-    // Not bound to any OS device — VKB UI addMessageToQueues directly;
-    // audio drains it as perInputMidi[virtualKeyboardCollectorIndex].
-    juce::MidiDeviceInfo virtualKb { "Virtual Keyboard (Dusk Studio)", "Dusk Studio:virtual-keyboard" };
-    midiInputDevices.add (virtualKb);
-    {
-        auto vkbCol = std::make_unique<juce::MidiMessageCollector>();
-        if (sr > 0.0) vkbCol->reset (sr);
-        midiInputCollectors.push_back (std::move (vkbCol));
-    }
-    virtualKeyboardCollectorIndex = (int) midiInputCollectors.size() - 1;
+    // One drained-block buffer per input, reserved off the RT path so the
+    // per-block drain + test-inject merge never allocate on the audio thread.
+    perInputMidi.assign ((size_t) midiIn.getNumInputs(), dusk::MidiBuffer{});
+    for (auto& m : perInputMidi) m.reserveBytes (4096);
 
-    perInputMidi.assign ((size_t) midiInputDevices.size(), juce::MidiBuffer{});
-    // Pre-reserve like perTrackMidiScratch: removeNextBlockOfMessages grows the
-    // destination on the audio thread if a burst exceeds prior capacity.
-    for (auto& m : perInputMidi) m.ensureSize (4096);
-    syncMidiScratch.reserveBytes (4096);   // same headroom for the juce->dusk bridge
-    mcuMidiScratch .reserveBytes (4096);
-
-    // Re-resolve on every rebuild so a hot-plug doesn't strand the
-    // index at a stale slot. Empty / no match = -1 (no sync).
-    int resolvedSyncIdx = -1;
-    const auto& wantedId = session.syncSourceInputIdentifier;
-    if (wantedId.isNotEmpty())
+    // Re-resolve the session's sync + MCU wiring against the fresh banks so a
+    // hot-plug doesn't strand an index at a stale slot (STAYS in the engine —
+    // the banks don't know session identifiers). Empty / no match = -1. release
+    // pairs with the audio-thread acquires and the AudioSettingsPanel setters.
+    auto resolve = [] (const std::vector<duskstudio::midi::MidiDeviceInfo>& devices,
+                        const juce::String& wantedId)
     {
-        for (int i = 0; i < midiInputDevices.size(); ++i)
-        {
-            if (midiInputDevices[i].identifier == wantedId)
-            {
-                resolvedSyncIdx = i;
-                break;
-            }
-        }
-    }
-    session.syncSourceInputIdx.store (resolvedSyncIdx, std::memory_order_release);
+        if (wantedId.isEmpty()) return -1;
+        for (int i = 0; i < (int) devices.size(); ++i)
+            if (devices[(size_t) i].identifier == wantedId) return i;
+        return -1;
+    };
+    session.syncSourceInputIdx   .store (resolve (midiIn.getDevices(),  session.syncSourceInputIdentifier), std::memory_order_release);
+    session.mcu.resolvedInputIdx .store (resolve (midiIn.getDevices(),  session.mcu.inputIdentifier),       std::memory_order_release);
+    session.syncOutputIdx        .store (resolve (midiOut.getDevices(), session.syncOutputIdentifier),      std::memory_order_release);
+    session.mcu.resolvedOutputIdx.store (resolve (midiOut.getDevices(), session.mcu.outputIdentifier),      std::memory_order_release);
 
-    // Same resolve pattern. -1 = MCU surface off.
-    int resolvedMcuInputIdx = -1;
-    const auto& wantedMcuInputId = session.mcu.inputIdentifier;
-    if (wantedMcuInputId.isNotEmpty())
-    {
-        for (int i = 0; i < midiInputDevices.size(); ++i)
-        {
-            if (midiInputDevices[i].identifier == wantedMcuInputId)
-            {
-                resolvedMcuInputIdx = i;
-                break;
-            }
-        }
-    }
-    session.mcu.resolvedInputIdx.store (resolvedMcuInputIdx, std::memory_order_release);
+    // Eager-open the sync + MCU output ports so the first clock byte / MCU tick
+    // doesn't wait on a synchronous ALSA snd_seq_connect. Per-track outputs open
+    // lazily via openConfiguredMidiOutputs.
+    if (const int i = session.syncOutputIdx.load (std::memory_order_acquire); i >= 0)
+        midiOut.ensureOpen (i);
+    if (const int i = session.mcu.resolvedOutputIdx.load (std::memory_order_acquire); i >= 0)
+        midiOut.ensureOpen (i);
 
     midiSyncReceiver.reset();
     midiTimeCodeReceiver.reset();
-}
-
-juce::MidiMessageCollector* AudioEngine::getVirtualKeyboardCollector() noexcept
-{
-    const int idx = virtualKeyboardCollectorIndex;
-    if (idx < 0 || idx >= (int) midiInputCollectors.size())
-        return nullptr;
-    return midiInputCollectors[(size_t) idx].get();
-}
-
-void AudioEngine::rebuildMidiOutputBank()
-{
-    // Mutating midiOutputs is safe only with audio callback detached
-    // (audio writes port indices into the out-FIFO while running) and
-    // under midiOutBankMutex (the pump thread dereferences the ports).
-    // Enumerate but don't open — eager open at startup blocks the
-    // message thread on each snd_seq_connect_to and spawns one thread
-    // per port; stalls MainWindow::setVisible(true) for seconds on
-    // systems with USB MIDI. Open on demand via ensureMidiOutputOpen.
-    {
-        const std::lock_guard<std::mutex> lock (midiOutBankMutex);
-        // Discard queued-but-unsent blocks first: their port indices were
-        // minted against the OLD device order and could land on a different
-        // physical port after re-enumeration. The callback is detached, so
-        // nothing new is being written; the mutex excludes the pump's drain.
-        const int stale = midiOutFifo.getNumReady();
-        if (stale > 0)
-        {
-            int s1 = 0, n1 = 0, s2 = 0, n2 = 0;
-            midiOutFifo.prepareToRead (stale, s1, n1, s2, n2);
-            midiOutFifo.finishedRead (n1 + n2);
-        }
-        midiOutputs.clear();
-        midiOutputDevices = juce::MidiOutput::getAvailableDevices();
-        midiOutputs.resize ((size_t) midiOutputDevices.size());
-    }
-
-    // Eager-open the chosen sync port so the first clock byte the
-    // audio thread emits doesn't wait on a sync ALSA connect.
-    int resolvedSyncOutIdx = -1;
-    const auto& wantedOutId = session.syncOutputIdentifier;
-    if (wantedOutId.isNotEmpty())
-    {
-        for (int i = 0; i < midiOutputDevices.size(); ++i)
-        {
-            if (midiOutputDevices[i].identifier == wantedOutId)
-            {
-                resolvedSyncOutIdx = i;
-                ensureMidiOutputOpen (i);
-                break;
-            }
-        }
-    }
-    session.syncOutputIdx.store (resolvedSyncOutIdx, std::memory_order_release);
-
-    // Same eager-open pattern — McuController's first 30 Hz tick
-    // doesn't race ALSA's sync connect.
-    int resolvedMcuOutIdx = -1;
-    const auto& wantedMcuOutId = session.mcu.outputIdentifier;
-    if (wantedMcuOutId.isNotEmpty())
-    {
-        for (int i = 0; i < midiOutputDevices.size(); ++i)
-        {
-            if (midiOutputDevices[i].identifier == wantedMcuOutId)
-            {
-                resolvedMcuOutIdx = i;
-                ensureMidiOutputOpen (i);
-                break;
-            }
-        }
-    }
-    session.mcu.resolvedOutputIdx.store (resolvedMcuOutIdx, std::memory_order_release);
-
     midiClockEmitter.reset();
-}
-
-bool AudioEngine::ensureMidiOutputOpen (int index)
-{
-    if (index < 0 || index >= (int) midiOutputs.size())
-        return false;
-    if (midiOutputs[(size_t) index] != nullptr)
-        return true;  // already open
-
-    auto out = juce::MidiOutput::openDevice (midiOutputDevices[index].identifier);
-    if (out == nullptr)
-    {
-        std::fprintf (stderr,
-                      "[Dusk Studio/AudioEngine] WARNING: failed to open MIDI output \"%s\" "
-                      "(id %s). Another application may be holding it open.\n",
-                      midiOutputDevices[index].name.toRawUTF8(),
-                      midiOutputDevices[index].identifier.toRawUTF8());
-        return false;
-    }
-    // Background thread so the pump thread's sendBlockOfMessages
-    // enqueues without blocking on the OS port.
-    out->startBackgroundThread();
-    {
-        // The pump thread may be dereferencing this slot's pointer.
-        const std::lock_guard<std::mutex> lock (midiOutBankMutex);
-        midiOutputs[(size_t) index] = std::move (out);
-    }
-    return true;
-}
-
-void AudioEngine::MidiOutPump::run()
-{
-    while (! threadShouldExit())
-    {
-        engine.drainMidiOutQueue();
-        wait (1);
-    }
-}
-
-void AudioEngine::queueMidiOutBlock (int port, const juce::MidiBuffer& events,
-                                     double sampleRate) noexcept
-{
-    // A block bigger than the slot's pre-allocated capacity would make
-    // addEvents reallocate on the audio thread — drop it instead, same
-    // policy as queue-full.
-    if (events.data.size() > kMidiOutSlotBytes) return;
-
-    int start1 = 0, size1 = 0, start2 = 0, size2 = 0;
-    midiOutFifo.prepareToWrite (1, start1, size1, start2, size2);
-    if (size1 + size2 < 1) return;   // pump stalled — drop the block
-
-    // The lone writable slot lands in the SECOND segment when the write wraps
-    // (size1 == 0, size2 == 1); use start2 then, not the stale start1.
-    auto& slot = midiOutQueue[(size_t) (size1 > 0 ? start1 : start2)];
-    slot.port       = port;
-    slot.timeMs     = juce::Time::getMillisecondCounterHiRes();
-    slot.sampleRate = sampleRate > 0.0 ? sampleRate : 48000.0;
-    slot.events.clear();   // keeps the pre-sized capacity
-    slot.events.addEvents (events, 0, -1, 0);
-    midiOutFifo.finishedWrite (1);
-}
-
-void AudioEngine::drainMidiOutQueue()
-{
-    // The whole read cycle holds midiOutBankMutex — not just the port
-    // dereference — so rebuildMidiOutputBank can discard stale slots
-    // under the same mutex without racing a half-finished drain (the
-    // FIFO's reader side is single-consumer). The audio thread only
-    // touches the writer side and never takes this mutex.
-    const std::lock_guard<std::mutex> lock (midiOutBankMutex);
-
-    const int ready = midiOutFifo.getNumReady();
-    if (ready <= 0) return;
-
-    int start1 = 0, size1 = 0, start2 = 0, size2 = 0;
-    midiOutFifo.prepareToRead (ready, start1, size1, start2, size2);
-    auto send = [this] (int start, int n)
-    {
-        for (int i = 0; i < n; ++i)
-        {
-            auto& slot = midiOutQueue[(size_t) (start + i)];
-            if (slot.port >= 0 && slot.port < (int) midiOutputs.size())
-                if (auto* out = midiOutputs[(size_t) slot.port].get())
-                    out->sendBlockOfMessages (slot.events, slot.timeMs,
-                                               slot.sampleRate);
-        }
-    };
-    send (start1, size1);
-    send (start2, size2);
-    midiOutFifo.finishedRead (size1 + size2);
-}
-
-bool AudioEngine::sendMidiToOutput (int index, const juce::MidiBuffer& events) noexcept
-{
-    if (index < 0 || index >= (int) midiOutputs.size())
-        return false;
-    auto* out = midiOutputs[(size_t) index].get();
-    if (out == nullptr) return false;
-    // Absolute ms-since-epoch base; getMillisecondCounterHiRes = "ASAP".
-    // Lower latency than buffering for the next audio block.
-    out->sendBlockOfMessages (events,
-                                juce::Time::getMillisecondCounterHiRes(),
-                                /* sampleRate for time stamps only */ 48000.0);
-    return true;
 }
 
 void AudioEngine::openConfiguredMidiOutputs()
@@ -1264,47 +1045,28 @@ void AudioEngine::openConfiguredMidiOutputs()
     {
         const int idx = session.track (t).midiOutputIndex.load (std::memory_order_relaxed);
         if (idx >= 0)
-            ensureMidiOutputOpen (idx);
+            midiOut.ensureOpen (idx);
     }
 
     // Sync clock + MCU feedback ports the loaded session resolved (see
     // reresolveTrackMidiFromSession). Opened here so clock / MCU feedback flow
     // without the user reopening Audio Settings, alongside the per-track opens.
     if (const int i = session.syncOutputIdx.load (std::memory_order_acquire); i >= 0)
-        ensureMidiOutputOpen (i);
+        midiOut.ensureOpen (i);
     if (const int i = session.mcu.resolvedOutputIdx.load (std::memory_order_acquire); i >= 0)
-        ensureMidiOutputOpen (i);
+        midiOut.ensureOpen (i);
 }
 
 void AudioEngine::openConfiguredMidiOutputsSafely()
 {
-    // Session-load calls this with the audio callback ATTACHED, but
-    // ensureMidiOutputOpen mutates the midiOutputs bank the audio thread
-    // reads (midiOutputs[idx] in the clock / MCU send paths). Detach the
-    // callback for the brief open pass — same contract refreshMidiInputs()
-    // and rebuildMidiOutputBank() rely on. The startup caller runs pre-attach
-    // and uses openConfiguredMidiOutputs() directly.
+    // Session-load calls this with the audio callback ATTACHED, but ensureOpen
+    // mutates the output bank the audio thread reads (in the clock / MCU send
+    // paths). Detach the callback for the brief open pass — same contract
+    // refreshMidiInputs() relies on. The startup caller runs pre-attach and
+    // uses openConfiguredMidiOutputs() directly.
     deviceManager.removeAudioCallback (this);
     openConfiguredMidiOutputs();
     deviceManager.addAudioCallback (this);
-}
-
-void AudioEngine::handleIncomingMidiMessage (juce::MidiInput* source,
-                                                const juce::MidiMessage& message)
-{
-    if (source == nullptr) return;
-    // JUCE guarantees identifier stability per device per session.
-    const auto& sourceId = source->getIdentifier();
-    for (int i = 0; i < midiInputDevices.size(); ++i)
-    {
-        if (midiInputDevices[(size_t) i].identifier == sourceId)
-        {
-            if (i < (int) midiInputCollectors.size()
-                && midiInputCollectors[(size_t) i] != nullptr)
-                midiInputCollectors[(size_t) i]->addMessageToQueue (message);
-            return;
-        }
-    }
 }
 
 int AudioEngine::getBackendXRunCount() const noexcept
@@ -1358,11 +1120,11 @@ AudioEngine::~AudioEngine()
         recordManager.stopRecording (transport.getPlayhead());
     deviceManager.removeChangeListener (this);
     deviceManager.removeAudioCallback (this);
-    deviceManager.removeMidiInputDeviceCallback ({}, this);
+    midiIn.detachCallback();
     deviceManager.closeAudioDevice();
-    // After the callback is gone — nothing pushes to the out-FIFO, the
-    // pump drains or drops what's left, then midiOutputs can destruct.
-    midiOutPump.stopThread (2000);
+    // After the callback is gone — nothing pushes to the out-queue, the
+    // pump drains or drops what's left, then the output bank can destruct.
+    midiOut.stopPump();
 }
 
 void AudioEngine::drainCallbackDiagnostics()
@@ -2289,15 +2051,9 @@ void AudioEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
 
     // Reset every MIDI collector with the current sample rate so it can
     // convert the MIDI thread's millisecond timestamps into per-block sample
-    // positions. Without this, removeNextBlockOfMessages would emit
-    // garbage timestamps the first block. Safe to call here — the audio
-    // callback hasn't fired yet for this open.
-    {
-        const double sr = device->getCurrentSampleRate();
-        for (auto& c : midiInputCollectors)
-            if (c != nullptr)
-                c->reset (sr);
-    }
+    // positions. Without this, the first drain would emit garbage timestamps.
+    // Safe to call here — the audio callback hasn't fired yet for this open.
+    midiIn.resetCollectors (device->getCurrentSampleRate());
 
     prepareForSelfTest (device->getCurrentSampleRate(),
                          device->getCurrentBufferSizeSamples());
@@ -2462,16 +2218,8 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
     for (auto& v : playbackScratch)  v.assign ((size_t) bs, 0.0f);
     for (auto& v : playbackScratchR) v.assign ((size_t) bs, 0.0f);
     for (auto& m : perTrackMidiScratch) m.ensureSize (4096);
-    midiClockOutScratch.ensureSize (4096);
-    mtcOutScratch.reserveBytes (4096);
-    {
-        // Serialize the resize with the MIDI pump: drainMidiOutQueue() reads
-        // slot.events under midiOutBankMutex on the pump thread, which keeps
-        // running across a device re-open. ensureSize() reallocates the buffer,
-        // so it must hold the same lock.
-        const std::lock_guard<std::mutex> lock (midiOutBankMutex);
-        for (auto& q : midiOutQueue) q.events.ensureSize (kMidiOutSlotBytes);
-    }
+    midiClockOutScratch.reserveBytes (4096);
+    midiOutTrackScratch.reserveBytes (4096);
     silentInputScratch.assign ((size_t) bs, 0.0f);
 
     for (auto& a : laneAccum)
@@ -2868,16 +2616,11 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
             std::memset (outputChannelData[ch], 0,
                           sizeof (float) * (size_t) numSamples);
 
-    // Drain each MIDI input's collector into its per-input buffer for this
-    // block. Each removeNextBlockOfMessages is lock-free with respect to
-    // the MIDI thread's addMessageToQueue, so the audio thread never
-    // contends. Empty buffers cost ~nothing.
-    for (size_t i = 0; i < midiInputCollectors.size() && i < perInputMidi.size(); ++i)
-    {
-        perInputMidi[i].clear();
-        if (midiInputCollectors[i] != nullptr)
-            midiInputCollectors[i]->removeNextBlockOfMessages (perInputMidi[i], numSamples);
-    }
+    // Drain each MIDI input into its per-input buffer for this block. The
+    // layer's drain is lock-free with respect to the MIDI thread's enqueue,
+    // so the audio thread never contends. Empty buffers cost ~nothing.
+    for (int i = 0; i < midiIn.getNumInputs() && i < (int) perInputMidi.size(); ++i)
+        midiIn.drainBlock (i, perInputMidi[(size_t) i], numSamples);
 
     // Test-hook: if the message thread staged a buffer via
     // stageTestMidiInjection, merge it into the requested input's
@@ -2888,7 +2631,10 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
     {
         const int idx = testInjectInputIdx.load (std::memory_order_relaxed);
         if (idx >= 0 && (size_t) idx < perInputMidi.size())
-            perInputMidi[(size_t) idx].addEvents (testInjectMidi, 0, numSamples, 0);
+            for (const auto meta : testInjectMidi)
+                if (meta.samplePosition >= 0 && meta.samplePosition < numSamples)
+                    perInputMidi[(size_t) idx].addEvent (meta.data, meta.numBytes,
+                                                         meta.samplePosition);
         testInjectMidi.clear();
         testInjectReady.store (false, std::memory_order_release);
     }
@@ -2931,29 +2677,15 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
     {
         const int mcuIdx = session.mcu.resolvedInputIdx.load (std::memory_order_acquire);
         if (mcuIdx >= 0 && (size_t) mcuIdx < perInputMidi.size())
-        {
-            mcuMidiScratch.clear();
-            for (const auto meta : perInputMidi[(size_t) mcuIdx])
-                mcuMidiScratch.addEvent (meta.getMessage().getRawData(),
-                                         meta.getMessage().getRawDataSize(),
-                                         meta.samplePosition);
-            mcuReceiver->process (mcuMidiScratch, midiSyncSampleClock);
-        }
+            mcuReceiver->process (perInputMidi[(size_t) mcuIdx], midiSyncSampleClock);
     }
 
     if (syncIdx >= 0 && (size_t) syncIdx < perInputMidi.size())
     {
-        // Bridge the JUCE input block into the dusk buffer the receivers take.
-        // Pre-reserved (and capacity-capped) in rebuildMidiInputBank, so this
-        // refill never allocates — over-cap events are dropped, not grown into.
-        syncMidiScratch.clear();
-        for (const auto meta : perInputMidi[(size_t) syncIdx])
-            syncMidiScratch.addEvent (meta.getMessage().getRawData(),
-                                      meta.getMessage().getRawDataSize(),
-                                      meta.samplePosition);
-
-        midiSyncReceiver.process (syncMidiScratch, midiSyncSampleClock);
-        midiTimeCodeReceiver.process (syncMidiScratch,
+        // The drained input block is already a dusk::MidiBuffer — feed it
+        // straight to the receivers (Clock + MTC multiplex on the same port).
+        midiSyncReceiver.process (perInputMidi[(size_t) syncIdx], midiSyncSampleClock);
+        midiTimeCodeReceiver.process (perInputMidi[(size_t) syncIdx],
                                          midiSyncSampleClock, numSamples);
         // Publish MTC decoded state. Same input port — Clock + MTC
         // multiplex on it; both decoders ignore bytes they don't own.
@@ -3114,16 +2846,15 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
     }
     midiSyncSampleClock += numSamples;
 
-    // MIDI Clock OUTPUT (master mode). Generates F8 + FA/FC bytes into
-    // a scratch MidiBuffer and hands it to the chosen MidiOutput's
-    // background delivery thread. Uses the same monotonic sync clock
-    // so receiver + emitter share a sample-time origin (matters when
-    // a user has Dusk Studio as both slave AND master - rare but possible
-    // via a MIDI thru).
-    // acquire pairs with release stores in AudioEngine::rebuildMidiOutputBank
-    // and AudioSettingsPanel: any state the writer published before flipping
-    // the index (the opened juce::MidiOutput inside midiOutputs[idx] and its
-    // background-thread state) is visible here before we route bytes to it.
+    // MIDI Clock OUTPUT (master mode). Generates F8 + FA/FC (+ MTC) bytes into
+    // a dusk scratch buffer and hands it to the out-bank's RT queue for the
+    // pump thread to deliver. Uses the same monotonic sync clock so receiver +
+    // emitter share a sample-time origin (matters when a user has Dusk Studio
+    // as both slave AND master - rare but possible via a MIDI thru).
+    // acquire pairs with the release stores in rebuildMidiBanks and
+    // AudioSettingsPanel: any state the writer published before flipping the
+    // index (the opened output port + its background-thread state) is visible
+    // here before we route bytes to it.
     const int syncOutIdx = session.syncOutputIdx.load (std::memory_order_acquire);
     if (syncOutIdx != lastSyncOutputIdx)
     {
@@ -3131,9 +2862,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         midiTimeCodeEmitter.reset();
         lastSyncOutputIdx = syncOutIdx;
     }
-    const bool portReady = syncOutIdx >= 0
-                         && (size_t) syncOutIdx < midiOutputs.size()
-                         && midiOutputs[(size_t) syncOutIdx] != nullptr;
+    const bool portReady = syncOutIdx >= 0 && midiOut.isOpen (syncOutIdx);
     const bool emitClock = portReady
                          && session.syncOutputEmitClock.load (std::memory_order_relaxed);
     const bool emitTimeCode = portReady
@@ -3155,32 +2884,20 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         }
         if (emitTimeCode)
         {
-            // MTC + Clock multiplex onto the same scratch buffer; the
-            // chosen MidiOutput delivers both message types together.
+            // MTC + Clock multiplex onto the same buffer; the emitter appends
+            // its QF/sysex bytes after the clock bytes, delivered together.
             const auto rate = (MidiTimeCodeEmitter::FrameRate)
                 session.syncOutputTimeCodeFrameRate.load (std::memory_order_relaxed);
-            // The emitter writes dusk::MidiBuffer; merge its events into the
-            // shared JUCE output scratch (pre-reserved, so no allocation).
-            mtcOutScratch.clear();
             midiTimeCodeEmitter.generateBlock (midiSyncSampleClock - numSamples,
                                                   numSamples,
                                                   transport.getPlayhead(),
                                                   rolling, rate,
-                                                  mtcOutScratch);
-            for (const auto meta : mtcOutScratch)
-                midiClockOutScratch.addEvent (meta.getMessage().getRawData(),
-                                              meta.getMessage().getRawDataSize(),
-                                              meta.samplePosition);
+                                                  midiClockOutScratch);
         }
 
         if (! midiClockOutScratch.isEmpty())
-        {
-            // Hand off to the pump thread — sendBlockOfMessages locks
-            // the delivery thread's mutex and allocates, neither of
-            // which is audio-thread safe (see midiOutFifo).
-            queueMidiOutBlock (syncOutIdx, midiClockOutScratch,
-                               currentSampleRate.load (std::memory_order_relaxed));
-        }
+            midiOut.queueRt (syncOutIdx, midiClockOutScratch,
+                             currentSampleRate.load (std::memory_order_relaxed));
     }
 
     // Held-MIDI-notes tracking for the chord display. Walk every drained
@@ -3193,7 +2910,10 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         if (buf.isEmpty()) continue;
         for (const auto meta : buf)
         {
-            const auto m = meta.getMessage();
+            // Bridge the dusk event to juce for its message-parsing API (same
+            // per-event cost as the pre-flip juce buffer's getMessage()).
+            const auto& v = meta.getMessage();
+            const juce::MidiMessage m (v.getRawData(), v.getRawDataSize());
             if (m.isNoteOn() && m.getVelocity() > 0)
             {
                 const int n = m.getNoteNumber();
@@ -3234,7 +2954,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
             if (buf.isEmpty()) continue;
             for (const auto meta : buf)
             {
-                const auto m = meta.getMessage();
+                const auto& v = meta.getMessage();
+                const juce::MidiMessage m (v.getRawData(), v.getRawDataSize());
                 MidiBindingTrigger tg;
                 int dn = 0, val = 0;
                 if      (m.isController())                    { tg = MidiBindingTrigger::CC;         dn = m.getControllerNumber(); val = m.getControllerValue(); }
@@ -4439,9 +4160,20 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                 if (perInputMidi[(size_t) srcIdx].isEmpty()) return;
                 for (const auto meta : perInputMidi[(size_t) srcIdx])
                 {
-                    const auto m = meta.getMessage();
-                    if (chFilter == 0 || m.getChannel() == chFilter)
-                        perTrackMidiScratch[(size_t) t].addEvent (m, meta.samplePosition);
+                    // dusk (perInputMidi) -> juce (perTrackMidiScratch, feeds
+                    // the instrument + recorder): raw-byte copy, no message
+                    // object. Channel read mirrors the juce getChannel
+                    // convention: 1..16 for channel messages, 0 for system.
+                    const auto& v = meta.getMessage();
+                    if (chFilter != 0)
+                    {
+                        const std::uint8_t status = v.getRawDataSize() > 0 ? v.getRawData()[0] : 0;
+                        const int ch = (status & 0xF0) != 0xF0 ? (int) (status & 0x0F) + 1 : 0;
+                        if (ch != chFilter) continue;
+                    }
+                    perTrackMidiScratch[(size_t) t].addEvent (v.getRawData(),
+                                                              v.getRawDataSize(),
+                                                              meta.samplePosition);
                 }
             };
 
@@ -4457,8 +4189,9 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
             // virtual keyboard. Skip when the explicit input already IS
             // the VK so events aren't doubled.
             const bool trackArmed = session.track (t).recordArmed.load (std::memory_order_relaxed);
-            if (trackArmed && virtualKeyboardCollectorIndex != midiIdx)
-                pullInput (virtualKeyboardCollectorIndex);
+            const int vkbIdx = midiIn.getVirtualKeyboardIndex();
+            if (trackArmed && vkbIdx != midiIdx)
+                pullInput (vkbIdx);
 
             if (! perTrackMidiScratch[(size_t) t].isEmpty())
                 session.track (t).midiActivity.store (true, std::memory_order_relaxed);
@@ -4480,17 +4213,30 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         // External MIDI output. When this MIDI track has a hardware port
         // selected, mirror the just-built per-track buffer to that port
         // so an external synth/drum machine receives the same notes the
-        // loaded instrument plugin (if any) does. Handed to the pump
-        // thread via the lock-free out-FIFO (see midiOutFifo) — the
-        // pump validates the port index against the bank under its
-        // mutex. Empty buffer skipped to avoid pointless slot use.
+        // loaded instrument plugin (if any) does. Handed to the pump thread
+        // via the out-bank's lock-free RT queue, which validates the port
+        // under its mutex. Empty buffer skipped to avoid pointless slot use.
         if (midiTrack && ! perTrackMidiScratch[(size_t) t].isEmpty())
         {
             const int outIdx = session.track (t).midiOutputIndex.load (
                                   std::memory_order_relaxed);
             if (outIdx >= 0)
-                queueMidiOutBlock (outIdx, perTrackMidiScratch[(size_t) t],
-                                   currentSampleRate.load (std::memory_order_relaxed));
+            {
+                // Bridge the juce per-track buffer into the dusk out-scratch
+                // (pre-reserved) for queueRt's dusk boundary. Whole-block or
+                // nothing: a partial copy on cap overflow could split paired
+                // events (note on/off), so mirror the pre-flip whole-block
+                // drop semantics.
+                midiOutTrackScratch.clear();
+                bool fits = true;
+                for (const auto meta : perTrackMidiScratch[(size_t) t])
+                    if (! midiOutTrackScratch.addEvent (meta.data, meta.numBytes,
+                                                        meta.samplePosition))
+                    { fits = false; break; }
+                if (fits)
+                    midiOut.queueRt (outIdx, midiOutTrackScratch,
+                                     currentSampleRate.load (std::memory_order_relaxed));
+            }
         }
 
         // Tell the strip whether the recorder is going to ask for the

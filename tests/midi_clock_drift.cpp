@@ -3,9 +3,9 @@
 
 #include "engine/MidiClockEmitter.h"
 
-#include <juce_audio_basics/juce_audio_basics.h>
-
+#include <algorithm>
 #include <cmath>
+#include <cstdint>
 
 using duskstudio::MidiClockEmitter;
 using Catch::Matchers::WithinAbs;
@@ -15,8 +15,8 @@ namespace
 struct ClockRun
 {
     long long count = 0;
-    juce::int64 firstSample = -1;
-    juce::int64 lastSample  = -1;
+    std::int64_t firstSample = -1;
+    std::int64_t lastSample  = -1;
 };
 
 // Drive the emitter for `seconds` of audio in fixed blocks, counting F8 ticks
@@ -27,12 +27,12 @@ ClockRun runClock (double sr, float bpm, double seconds, int blockSize = 512)
     MidiClockEmitter e;
     e.prepare (sr);
 
-    const juce::int64 total = (juce::int64) (sr * seconds);
+    const std::int64_t total = (std::int64_t) (sr * seconds);
     ClockRun r;
-    juce::MidiBuffer buf;
-    for (juce::int64 start = 0; start < total; start += blockSize)
+    dusk::MidiBuffer buf;
+    for (std::int64_t start = 0; start < total; start += blockSize)
     {
-        const int n = (int) juce::jmin ((juce::int64) blockSize, total - start);
+        const int n = (int) std::min ((std::int64_t) blockSize, total - start);
         buf.clear();
         e.generateBlock (start, n, bpm, /*isRolling*/ true, buf);
         for (const auto m : buf)
@@ -40,7 +40,7 @@ ClockRun runClock (double sr, float bpm, double seconds, int blockSize = 512)
             const auto& msg = m.getMessage();
             if (msg.getRawDataSize() == 1 && msg.getRawData()[0] == 0xF8)
             {
-                const juce::int64 abs = start + m.samplePosition;
+                const std::int64_t abs = start + m.samplePosition;
                 if (r.firstSample < 0) r.firstSample = abs;
                 r.lastSample = abs;
                 ++r.count;
@@ -93,9 +93,9 @@ TEST_CASE ("MidiClockEmitter: transport edges emit Start / Stop", "[midiclock]")
 {
     MidiClockEmitter e;
     e.prepare (48000.0);
-    juce::MidiBuffer buf;
+    dusk::MidiBuffer buf;
 
-    auto countStatus = [] (const juce::MidiBuffer& b, juce::uint8 s)
+    auto countStatus = [] (const dusk::MidiBuffer& b, std::uint8_t s)
     {
         int n = 0;
         for (const auto m : b)
