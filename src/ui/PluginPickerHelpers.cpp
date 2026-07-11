@@ -203,6 +203,13 @@ void runScanModal (PluginManager& manager, juce::Component* parent,
                 added, added == 1 ? "" : "s",
                 manager.getKnownPluginList().getNumTypes());
 
+            if (const int skipped = manager.getLastScanSandboxSkips(); skipped > 0)
+                message << juce::String::formatted (
+                    "\n\nWarning: the plugin scanning sandbox was unavailable — "
+                    "%d plugin%s skipped (left unscanned). Rescan once the plugin "
+                    "host is present.",
+                    skipped, skipped == 1 ? "" : "s");
+
             if (auto* h = safeHost.getComponent())
                 showDuskAlert (*h, "Plugin scan complete", std::move (message),
                                   std::move (onAlertDismiss));

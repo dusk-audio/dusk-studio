@@ -19,6 +19,19 @@ namespace duskstudio::scanproto
 inline constexpr const char* kPayloadBegin = "==DUSK_SCAN_BEGIN==";
 inline constexpr const char* kPayloadEnd   = "==DUSK_SCAN_END==";
 
+// Scan-sandbox policy: which formats load third-party binary code and therefore
+// MUST be probed out-of-process — an unauthorized or crashy plugin scanned
+// in-process takes down the whole app. Our own in-house formats (e.g.
+// DuskMultisample) are trusted and scan in-process. Centralised here so the
+// scanner's routing and its unit test read from one list.
+inline bool formatRequiresSandbox (const juce::String& formatName)
+{
+    return formatName == "VST3"
+        || formatName == "LV2"
+        || formatName == "AudioUnit"
+        || formatName == "VST";
+}
+
 // Child side: serialise the discovered descriptions into the stdout payload.
 // The plugin's own stdout chatter (if any) is emitted by its init code, which
 // runs BEFORE this is printed, so it lands ahead of kPayloadBegin and the

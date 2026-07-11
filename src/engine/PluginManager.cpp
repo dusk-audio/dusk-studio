@@ -41,18 +41,32 @@ class OutOfProcessPluginScanner final : public juce::KnownPluginList::CustomScan
 {
 public:
     OutOfProcessPluginScanner (juce::String hostExe, juce::KnownPluginList& list,
-                               const std::atomic<bool>* abortFlag)
-        : hostExecutable (std::move (hostExe)), knownList (list), abort (abortFlag) {}
+                               const std::atomic<bool>* abortFlag, int* skipCounter)
+        : hostExecutable (std::move (hostExe)), knownList (list), abort (abortFlag),
+          sandboxSkips (skipCounter),
+          hostPresent (juce::File (hostExecutable).existsAsFile()) {}
 
     bool findPluginTypesFor (juce::AudioPluginFormat& format,
                              juce::OwnedArray<juce::PluginDescription>& result,
                              const juce::String& fileOrIdentifier) override
     {
-        // Native (in-house) formats are our own code and can't crash the host,
-        // so scan them in-process. Only third-party binary formats get sandboxed.
-        if (! isSandboxedFormat (format))
+        // In-house formats are our own code and can't crash the host, so scan
+        // them in-process. Third-party binary formats are sandboxed — and for
+        // those we NEVER fall back to in-process: an unauthorized or crashy
+        // plugin scanned in-process takes down the whole app (issue #45).
+        if (! scanproto::formatRequiresSandbox (format.getName()))
         {
             format.findAllTypesForFile (result, fileOrIdentifier);
+            return true;
+        }
+
+        if (! hostPresent)
+        {
+            // No sandbox binary to isolate the scan with. Skip rather than probe
+            // in-process. Returning true with an empty result marks the plugin
+            // UNSCANNED (JUCE blacklists only on a false return) — it did nothing
+            // wrong, and a later scan with the host present re-probes it.
+            noteSandboxUnavailable (fileOrIdentifier);
             return true;
         }
 
@@ -62,9 +76,9 @@ public:
 
         if (! proc.start (args, juce::ChildProcess::wantStdOut))
         {
-            // Couldn't even spawn the sandbox — fall back to in-process rather
-            // than silently dropping a plugin the user has installed.
-            format.findAllTypesForFile (result, fileOrIdentifier);
+            // Host present but wouldn't spawn (AV block, transient OS limit).
+            // Same rule as above: skip, don't scan in-process, don't blacklist.
+            noteSandboxUnavailable (fileOrIdentifier);
             return true;
         }
 
@@ -74,7 +88,8 @@ public:
         // single getMillisecondCounter() wrap (every ~49 days of uptime), so
         // compare the interval rather than an absolute deadline.
         const std::uint32_t startMs = juce::Time::getMillisecondCounter();
-        bool aborted = false;
+        bool aborted  = false;
+        bool timedOut = false;
 
         for (;;)
         {
@@ -101,43 +116,57 @@ public:
 
             if (juce::Time::getMillisecondCounter() - startMs >= (std::uint32_t) kScanTimeoutMs)
             {
-                proc.kill();
-                proc.waitForProcessToFinish (200);  // reap the SIGKILLed child, no zombie
+                proc.kill();                         // TerminateProcess on Windows — unblocks a modal dialog
+                proc.waitForProcessToFinish (200);   // reap the SIGKILLed child, no zombie
+                timedOut = true;
                 break;
             }
             juce::Thread::sleep (5);
         }
 
-        if (aborted) return false;
+        // Abort tears the whole scan down; leave the in-flight file UNSCANNED
+        // (return true) rather than blacklisting a plugin the user cancelled on.
+        if (aborted) return true;
 
         const juce::String payload = scanproto::extractPayload (captured.toString());
 
-        if (payload.isEmpty())
+        if (timedOut || payload.isEmpty())
         {
-            // No clean payload => the child crashed or hung. Quarantine the
-            // file so the next scan skips it instead of re-crashing.
+            // A hang (timed out) or a crash (child died with no clean payload):
+            // quarantine so the next scan skips it instead of re-hanging /
+            // re-crashing. A hung scan is most often a plugin blocking on a
+            // license / authorization dialog it cannot show during discovery.
             knownList.addToBlacklist (fileOrIdentifier);
+            std::fprintf (stderr, timedOut
+                ? "[Dusk Studio/scan] quarantined \"%s\": timed out (possible license dialog)\n"
+                : "[Dusk Studio/scan] quarantined \"%s\": scan crashed (no payload)\n",
+                fileOrIdentifier.toRawUTF8());
+            std::fflush (stderr);
             return false;
         }
 
         // A clean payload means the child completed the scan without crashing,
         // so this is a successful scan even when the file legitimately yields
-        // zero descriptions. Returning false here would re-probe / quarantine a
-        // perfectly-good file. Only the empty-payload (crash/hang) case fails.
+        // zero descriptions. Only the crash (empty payload) / timeout cases fail.
         scanproto::parsePayload (payload, result);
         return true;
     }
 
 private:
-    static bool isSandboxedFormat (const juce::AudioPluginFormat& f)
+    void noteSandboxUnavailable (const juce::String& fileOrIdentifier)
     {
-        const auto n = f.getName();
-        return n == "VST3" || n == "LV2" || n == "AudioUnit" || n == "VST";
+        if (sandboxSkips != nullptr) ++(*sandboxSkips);
+        std::fprintf (stderr,
+                      "[Dusk Studio/scan] sandbox unavailable — left unscanned: %s\n",
+                      fileOrIdentifier.toRawUTF8());
+        std::fflush (stderr);
     }
 
     juce::String                 hostExecutable;
     juce::KnownPluginList&        knownList;
-    const std::atomic<bool>*      abort;   // polled mid-file; null = never aborts
+    const std::atomic<bool>*      abort;         // polled mid-file; null = never aborts
+    int*                          sandboxSkips;   // ++ per third-party file left unscanned; may be null
+    const bool                    hostPresent;    // sandbox child binary exists at construction
 };
 } // namespace
 #endif // DUSKSTUDIO_HAS_OOP_PLUGINS
@@ -217,16 +246,17 @@ int PluginManager::scanInstalledPlugins (
     const auto deadMansPedalFile = getDeadMansPedalFile();
 
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
-    // Sandbox third-party plugin discovery in the child process when the host
-    // binary is present. A plugin that crashes its scan kills only the child;
-    // we blacklist it and continue. Falls through to in-process scanning if
-    // the binary is missing (e.g. a stripped build).
+    // Sandbox third-party plugin discovery in the child process. A plugin that
+    // crashes/hangs its scan kills only the child; we quarantine it and carry on.
+    // The custom scanner is installed UNCONDITIONALLY: if the child binary is
+    // missing or won't spawn, third-party formats are left UNSCANNED (and counted
+    // here) rather than scanned in-process, so an unauthorized/crashy plugin can
+    // never take down the app. First-party formats always scan in-process.
+    int sandboxSkips = 0;
     const juce::File hostExe (getHostExecutablePath());
-    const bool sandboxScan = hostExe.existsAsFile();
-    if (sandboxScan)
-        knownPluginList.setCustomScanner (
-            std::make_unique<OutOfProcessPluginScanner> (hostExe.getFullPathName(),
-                                                         knownPluginList, abort));
+    knownPluginList.setCustomScanner (
+        std::make_unique<OutOfProcessPluginScanner> (hostExe.getFullPathName(),
+                                                     knownPluginList, abort, &sandboxSkips));
    #else
     juce::ignoreUnused (abort);
    #endif
@@ -302,8 +332,8 @@ int PluginManager::scanInstalledPlugins (
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
     // Release the child-launching scanner — load-time instantiation must stay
     // in-process and doesn't go through the custom scanner anyway.
-    if (sandboxScan)
-        knownPluginList.setCustomScanner (nullptr);
+    knownPluginList.setCustomScanner (nullptr);
+    lastScanSandboxSkips.store (sandboxSkips, std::memory_order_relaxed);
    #endif
 
     // Prune dead entries so the picker never offers a plugin that can't load.

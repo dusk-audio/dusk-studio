@@ -1586,6 +1586,10 @@ void MainComponent::maybeStartStartupPluginScan()
             std::fprintf (stderr,
                           "[Dusk Studio] Scan-on-startup: added %d new plugins (%d total).\n",
                           added, total);
+            if (const int skipped = m.getLastScanSandboxSkips(); skipped > 0)
+                std::fprintf (stderr,
+                              "[Dusk Studio] Scan-on-startup: sandbox unavailable — %d plugin(s) left unscanned.\n",
+                              skipped);
             std::fflush (stderr);
         });
 
