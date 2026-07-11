@@ -1,11 +1,14 @@
 #pragma once
 
 #include <juce_audio_basics/juce_audio_basics.h>
-#include <juce_dsp/juce_dsp.h>
+#include <algorithm>
 #include <array>
 #include <filesystem>
 #include <memory>
 #include <vector>
+#include "../foundation/IntDelayLine.h"
+#include "../foundation/SmoothedValue.h"
+#include "../foundation/StereoOversampler.h"
 #include "../session/Session.h"
 #include "../engine/PluginSlot.h"
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
@@ -20,13 +23,13 @@
 #include "HardwareInsertSlot.h"
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
-  #include "BritishEQProcessor.h"
-  // Use UniversalCompressor directly (not the ChannelComp facade) so
-  // the strip behaves like a DAW hosting the standalone multi-comp:
-  // full feature set with the donor's internal oversampling disabled
-  // because the strip wraps EQ+Comp in its own oversampler — running
-  // both would double-OS.
-  #include "UniversalCompressor.h"
+  // Framework-free donor cores. The strip drives the full comp feature set
+  // (Opto/FET/VCA) with the core's internal oversampling left off because the
+  // strip wraps EQ+Comp in its own StereoOversampler — running both would
+  // double-OS. The EQ likewise runs 1x internally inside that same wrap (its
+  // console saturation is the only saturating stage and the wrap band-limits it).
+  #include <dsp/FourKEQDSP.hpp>
+  #include <core/UniversalCompressorDSP.hpp>
 #endif
 
 namespace duskstudio
@@ -49,7 +52,7 @@ public:
     static constexpr int kMaxPdcSamples = 16384;   // ~340 ms @ 48k, matches HW insert
     void setPdcCompensationSamples (int n) noexcept
     {
-        pdcTargetSamples.store (juce::jlimit (0, kMaxPdcSamples, n), std::memory_order_relaxed);
+        pdcTargetSamples.store (std::clamp (n, 0, kMaxPdcSamples), std::memory_order_relaxed);
     }
     int getPdcCompensationSamples() const noexcept
     {
@@ -229,30 +232,35 @@ public:
 
 private:
     const ChannelStripParams* paramsRef = nullptr;
-    juce::SmoothedValue<float> faderGain  { 0.0f };
-    juce::SmoothedValue<float> panGainL   { 0.7071f };
-    juce::SmoothedValue<float> panGainR   { 0.7071f };
+    dusk::audio::SmoothedValue<float> faderGain  { 0.0f };
+    dusk::audio::SmoothedValue<float> panGainL   { 0.7071f };
+    dusk::audio::SmoothedValue<float> panGainR   { 0.7071f };
     // Binary bus routing smoothed 0..1 to avoid clicks on toggle.
-    std::array<juce::SmoothedValue<float>, kNumBuses> busGain;
-    std::array<juce::SmoothedValue<float>, kNumAuxSends> auxSendGain;
+    std::array<dusk::audio::SmoothedValue<float>, kNumBuses> busGain;
+    std::array<dusk::audio::SmoothedValue<float>, kNumAuxSends> auxSendGain;
     // Sampled at the top of processAndAccumulate so the inner loop
     // avoids per-sample atomic loads.
     std::array<bool, kNumAuxSends> auxSendPre {};
 
     std::vector<float> tempMono;
-    juce::AudioBuffer<float> eqMonoBuffer;
 
     // 2-channel even on mono so a mid-session mono->stereo flip doesn't
-    // fault on missing filter / envelope state.
+    // fault on missing filter / envelope state. Shared with the plugin /
+    // hardware insert hosting path, so it stays a juce::AudioBuffer.
     juce::AudioBuffer<float> tempStereoBuffer;
 
-    // Built once per prepare from Session::oversamplingFactor: nullptr
-    // at 1×, 1 stage at 2×, 2 stages at 4×. Without this the donor's
-    // BritishEQ console saturation and UC saturation alias.
-    std::unique_ptr<juce::dsp::Oversampling<float>> oversamplerMono;
-    std::unique_ptr<juce::dsp::Oversampling<float>> oversamplerStereo;
-    int oversamplerStages = 0;
-    int oversampleFactor  = 1;   // 1 / 2 / 4 — drives the comp sub-chunk size
+    // Per-strip Dusk Studio-side oversampler wrapping (EQ + Comp). The donor
+    // EQ's always-on console saturation and the comp's saturation alias hard at
+    // native rate; the wrap moves the whole per-channel DSP to the oversampled
+    // rate so the half-band FIRs band-limit it before downsampling. One
+    // StereoOversampler serves both track widths: mono feeds channel 0 with a
+    // silent channel 1 (osMonoScratchR) and processes only channel 0 — the
+    // wasted R half-band FIR runs on silence, but avoids doubling the expensive
+    // EQ + comp work a duplicate-mono approach would incur, and no mono-only
+    // primitive exists.
+    dusk::audio::StereoOversampler oversampler;
+    std::vector<float> osMonoScratchR;
+    int oversampleFactor = 1;    // 1 / 2 / 4 — drives the comp sub-chunk size
 
     // Sits between phase invert and the EQ stage.
     PluginSlot pluginSlot;
@@ -304,9 +312,8 @@ private:
     // currently-applied length) so a latency change never clicks. pdcApplied /
     // pdcSilentRun are audio-thread-only; pdcTargetSamples is the cross-thread
     // setpoint.
-    using PdcDelayLine = juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::None>;
-    PdcDelayLine pdcDelayL { kMaxPdcSamples };
-    PdcDelayLine pdcDelayR { kMaxPdcSamples };
+    dusk::audio::IntDelayLine pdcDelayL;
+    dusk::audio::IntDelayLine pdcDelayR;
     std::atomic<int> pdcTargetSamples { 0 };
     int          pdcAppliedSamples = 0;
     std::int64_t  pdcSilentRun = 0;
@@ -316,8 +323,9 @@ private:
     // state). The EQ — which carries the always-on console saturation — runs
     // every block, so the oversampler is never skipped; this value is kept only
     // so the silent-skip can account for the oversampler's tail before dropping
-    // a block (see requiredDrain in processAndAccumulate).
-    static constexpr int kMaxOsLatency = 16;
+    // a block (see requiredDrain in processAndAccumulate). The FIR round trip is
+    // 23 (2x) / lround(26.5)=27 (4x) base-rate samples.
+    static constexpr int kMaxOsLatency = 32;
     int          osLatencySamples = 0;
 
     // Empty buffer for the channel insert plugin; PluginSlot's
@@ -326,69 +334,48 @@ private:
     juce::MidiBuffer pluginMidiScratch;
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
-    BritishEQProcessor eq;
+    duskaudio::FourKEQDSP eq;
     // On false->true we eq.reset() so a disabled-then-re-enabled EQ
     // doesn't emit a transient from stale filter history.
     bool prevEqEnabled { true };
-    // memcmp against last block — only call setParameters when bytes
-    // differ, skipping the 8-14 biquad recompute when no knob moved.
-    // Value-init {} so padding bytes are zeroed.
-    BritishEQProcessor::Parameters lastEqParams {};
 
-    UniversalCompressor compressor;
-    juce::MidiBuffer compMidiScratch;
+    // memcmp against last block — only push the EQ setters when a field
+    // changed, skipping the biquad recompute when no knob moved. Plain-float
+    // struct (no padding) value-init to zero so memcmp is byte-reliable, and
+    // so a bypassed EQ's flat defaults (all bands 0 dB, filters off) are the
+    // literal zero image.
+    struct EqSnapshot
+    {
+        float hpfEnabled = 0, hpfFreq = 0, lpfEnabled = 0, lpfFreq = 0;
+        float lfGain = 0, lfFreq = 0, lfBell = 0;
+        float lmGain = 0, lmFreq = 0, lmQ = 0;
+        float hmGain = 0, hmFreq = 0, hmQ = 0;
+        float hfGain = 0, hfFreq = 0, hfBell = 0;
+        float eqType = 0, saturation = 0, inputGain = 0, outputGain = 0;
+    };
+    EqSnapshot lastEqParams {};
 
-    // Cached APVTS atomic pointers — write here goes directly to the
-    // same std::atomic<float> UniversalCompressor reads each block,
-    // skipping the string lookup. Values stored DENORMALISED (SI / index
-    // / 0-or-1).
-    std::atomic<float>* compModeAtom        = nullptr;
-    std::atomic<float>* compBypassAtom      = nullptr;
-    std::atomic<float>* compMixAtom         = nullptr;
-    std::atomic<float>* compAutoMakeupAtom  = nullptr;
-    // VCA defaults to 60 Hz (SSL/dbx convention — keeps kick pumping at
-    // bay), Opto and FET stay at 0 Hz so their feedback-detector
-    // character is unchanged.
-    std::atomic<float>* compScHpAtom        = nullptr;
-    std::atomic<float>* compOptoPeakRedAtom = nullptr;
-    std::atomic<float>* compOptoGainAtom    = nullptr;
-    std::atomic<float>* compOptoLimitAtom   = nullptr;
-    std::atomic<float>* compFetInputAtom    = nullptr;
-    std::atomic<float>* compFetOutputAtom   = nullptr;
-    std::atomic<float>* compFetAttackAtom   = nullptr;
-    std::atomic<float>* compFetReleaseAtom  = nullptr;
-    std::atomic<float>* compFetRatioAtom    = nullptr;
-    std::atomic<float>* compFetThresholdAtom = nullptr;
-    std::atomic<float>* compVcaThreshAtom   = nullptr;
-    std::atomic<float>* compVcaRatioAtom    = nullptr;
-    std::atomic<float>* compVcaAttackAtom   = nullptr;
-    std::atomic<float>* compVcaReleaseAtom  = nullptr;
-    std::atomic<float>* compVcaOutputAtom   = nullptr;
-    std::atomic<float>* compVcaOverEasyAtom = nullptr;
-    std::atomic<float>* compVcaDetectorModeAtom = nullptr;
+    duskaudio::UniversalCompressorDSP compressor;
 
     // 20 ms ramps for continuous params so knob drags don't zipper.
-    // Discrete params (mode, bypass, LIMIT, FET ratio) bypass.
-    juce::SmoothedValue<float> smoothedOptoPeakRed;
-    juce::SmoothedValue<float> smoothedOptoGain;
-    juce::SmoothedValue<float> smoothedFetInput;
-    juce::SmoothedValue<float> smoothedFetOutput;
-    juce::SmoothedValue<float> smoothedFetAttack;
-    juce::SmoothedValue<float> smoothedFetRelease;
-    juce::SmoothedValue<float> smoothedFetThreshold;
-    juce::SmoothedValue<float> smoothedVcaThresh;
-    juce::SmoothedValue<float> smoothedVcaRatio;
-    juce::SmoothedValue<float> smoothedVcaAttack;
-    juce::SmoothedValue<float> smoothedVcaRelease;
-    juce::SmoothedValue<float> smoothedVcaOutput;
+    // Discrete params (mode, bypass, LIMIT, FET ratio) bypass. Their per-chunk
+    // published values feed the core's atomic setters (no APVTS atoms to cache
+    // — the core does not port the donor's analog-hiss stage, so the old
+    // noise_enable force-off is unnecessary).
+    dusk::audio::SmoothedValue<float> smoothedOptoPeakRed;
+    dusk::audio::SmoothedValue<float> smoothedOptoGain;
+    dusk::audio::SmoothedValue<float> smoothedFetInput;
+    dusk::audio::SmoothedValue<float> smoothedFetOutput;
+    dusk::audio::SmoothedValue<float> smoothedFetAttack;
+    dusk::audio::SmoothedValue<float> smoothedFetRelease;
+    dusk::audio::SmoothedValue<float> smoothedFetThreshold;
+    dusk::audio::SmoothedValue<float> smoothedVcaThresh;
+    dusk::audio::SmoothedValue<float> smoothedVcaRatio;
+    dusk::audio::SmoothedValue<float> smoothedVcaAttack;
+    dusk::audio::SmoothedValue<float> smoothedVcaRelease;
+    dusk::audio::SmoothedValue<float> smoothedVcaOutput;
 
     void publishSmoothedCompParams (int numSamples) noexcept;
-
-    void bindCompParams();
-    static inline void storeAtom (std::atomic<float>* a, float v) noexcept
-    {
-        if (a != nullptr) a->store (v, std::memory_order_relaxed);
-    }
 #endif
 
     std::atomic<float> currentGrDb { 0.0f };

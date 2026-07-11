@@ -1,10 +1,18 @@
 #include "ChannelStrip.h"
+#include "../foundation/Decibels.h"
+#include "../foundation/ScopedNoDenormals.h"
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 
 namespace duskstudio
 {
-// Always-on console drive for the channel EQ. The BritishEQProcessor's
+namespace
+{
+constexpr float kHalfPi = 1.57079632679489661923f;
+} // namespace
+
+// Always-on console drive for the channel EQ. The FourKEQDSP's
 // ConsoleSaturation is an ADAA polynomial waveshaper; this fixed amount sets
 // the large-format-console harmonic signature to the real hardware's bench
 // THD: E-series (Brown) ≈ 0.02 % THD (H2 ≈ -74 dB) at 0 VU (-18 dBFS), the
@@ -58,14 +66,10 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     // by the engine's PDC aggregator; here we just (re)latch the applied length
     // and clear history. pdcSilentRun starts maxed so a pending change can apply
     // on the very first block.
-    const juce::dsp::ProcessSpec pdcSpec
-        { sampleRate, (std::uint32_t) juce::jmax (1, blockSize), 1 };
-    pdcDelayL.prepare (pdcSpec);
-    pdcDelayR.prepare (pdcSpec);
     pdcDelayL.setMaximumDelayInSamples (kMaxPdcSamples);
     pdcDelayR.setMaximumDelayInSamples (kMaxPdcSamples);
-    pdcDelayL.setDelay ((float) pdcAppliedSamples);
-    pdcDelayR.setDelay ((float) pdcAppliedSamples);
+    pdcDelayL.setDelay (pdcAppliedSamples);
+    pdcDelayR.setDelay (pdcAppliedSamples);
     pdcDelayL.reset();
     pdcDelayR.reset();
     pdcSilentRun = (std::int64_t) kMaxPdcSamples;
@@ -75,7 +79,6 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     // channel-voice messages per block; far above any sane density even
     // for instrument plugins generating dense controller streams.
     pluginMidiScratch.ensureSize (4096);
-    compMidiScratch  .ensureSize (4096);
 
     // Plugin slot - prepared at the same SR/BS so the audio thread never
     // sees an unprepared instance. If the slot has no plugin loaded, this
@@ -168,44 +171,24 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     }
 #endif
 
-    // Oversampling: build a Dusk Studio-side wrapper around (EQ + Comp) when the
-    // user picks 2× / 4× in Audio Settings. The donor's BritishEQ console
-    // saturation and ChannelComp/UC saturation alias hard at native rate;
-    // wrapping the chain with juce::dsp::Oversampling moves the entire
-    // per-channel DSP to oversampled rate so the saturation is band-limited
-    // before downsampling. EQ + Comp are then prepared at the OVERSAMPLED
-    // sample rate / block size so their coefficients and scratch are sized
-    // correctly. Two oversampler instances (1ch + 2ch) so mono / stereo
-    // tracks each get the right channel count without wasted DSP.
+    // Oversampling: wrap (EQ + Comp) in a Dusk Studio-side oversampler when the
+    // user picks 2× / 4× in Audio Settings. The EQ's always-on console
+    // saturation and the comp's saturation alias hard at native rate; the wrap
+    // moves the entire per-channel DSP to the oversampled rate so the half-band
+    // FIRs band-limit it before downsampling. EQ + Comp are then prepared at the
+    // OVERSAMPLED sample rate / block size so their coefficients and scratch are
+    // sized correctly. One StereoOversampler serves both widths (mono uses
+    // channel 0 with a silent channel 1 — see osMonoScratchR).
     const int factor = (oversamplingFactor == 2 || oversamplingFactor == 4)
                             ? oversamplingFactor : 1;
-    oversamplerStages = (factor == 4) ? 2 : (factor == 2) ? 1 : 0;
-    oversampleFactor  = factor;
+    oversampleFactor = factor;
     const int bsClamped = juce::jmax (1, blockSize);
-    if (oversamplerStages > 0)
-    {
-        const auto stages = (size_t) oversamplerStages;
-        oversamplerMono = std::make_unique<juce::dsp::Oversampling<float>> (
-            1, stages,
-            juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR,
-            /*isMaximumQuality*/ true);
-        oversamplerStereo = std::make_unique<juce::dsp::Oversampling<float>> (
-            2, stages,
-            juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR,
-            /*isMaximumQuality*/ true);
-        oversamplerMono  ->initProcessing ((size_t) bsClamped);
-        oversamplerStereo->initProcessing ((size_t) bsClamped);
-        oversamplerMono  ->reset();
-        oversamplerStereo->reset();
-        osLatencySamples = juce::jmin (kMaxOsLatency,
-            (int) std::lround (oversamplerMono->getLatencyInSamples()));
-    }
-    else
-    {
-        oversamplerMono.reset();
-        oversamplerStereo.reset();
-        osLatencySamples = 0;
-    }
+    oversampler.setFactor (factor);
+    oversampler.prepare (bsClamped);
+    osMonoScratchR.assign ((size_t) bsClamped, 0.0f);
+    osLatencySamples = (factor > 1)
+        ? std::min (kMaxOsLatency, (int) std::lround (oversampler.latency()))
+        : 0;
 
     const double prepSr = sampleRate * (double) factor;
     const int    prepBs = bsClamped * factor;
@@ -215,40 +198,45 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     // filter coefficients + scratch sizes track the upsampled buffer the
     // chain processes when factor > 1. At factor == 1 this collapses to
     // (sampleRate, blockSize), preserving the legacy path.
-    eq.prepare (prepSr, prepBs, 2);
+    //
+    // The EQ core runs 1x internally (setOversampling(0)) — the strip's wrap is
+    // the only oversampling, so its console saturation is band-limited there,
+    // not doubled. M/S, auto-gain and bypass are neutralised once; the variable
+    // band / HPF / type / saturation params are pushed per block by
+    // updateEqParameters through the memcmp gate. setOversampling must precede
+    // prepare (prepare reads it to choose the internal factor).
+    eq.setOversampling (0);
+    eq.setMsMode (false);
+    eq.setAutoGain (false);
+    eq.setBypass (false);
+    eq.prepare (prepSr, prepBs);
     eq.reset();
     // H8 idempotence: re-clear the memcmp cache + the false→true edge
     // detector so a re-prepare (sample-rate change, oversampling toggle,
-    // mid-session blockSize bump) forces a fresh setParameters call
-    // against the now-reset filter state. Without this, lastEqParams
-    // could hold the SAME params as the live paramsRef → memcmp returns
-    // 0 → setParameters skipped → filters keep their zero coefficients
-    // post-reset → silent EQ.
+    // mid-session blockSize bump) forces a fresh setter push against the
+    // now-reset filter state. Without this, lastEqParams could hold the SAME
+    // params as the live paramsRef → memcmp returns 0 → setters skipped →
+    // filters keep their reset (silent-EQ) state.
     lastEqParams  = {};
     prevEqEnabled = true;
 
-    // Force the full multi-comp processing path (sidechain HP, true-peak,
-    // transient shaper, stereo linking, auto-makeup, bypass-fade, lookahead)
-    // and disable the donor's internal oversampling since Dusk Studio already
-    // wraps the strip in its own oversampler.
-    compressor.setMinimalProcessing (false);
-    compressor.setInternalOversamplingEnabled (false);
-    compressor.setPlayConfigDetails (2, 2, prepSr, juce::jmax (1, prepBs));
-    compressor.prepareToPlay (prepSr, juce::jmax (1, prepBs));
-    // H8 belt-and-braces: explicit reset() after prepareToPlay so any
-    // detector / envelope state cached across the prior session
-    // (different sample rate, different block size) is wiped to
-    // initial conditions. Some donor builds reset internal state
-    // inside prepareToPlay, some do not — calling reset() makes the
-    // behaviour deterministic across donor revisions and rules out
-    // NaN-prone detectors firing on the first post-prepare block.
+    // Full comp path at the OVERSAMPLED rate; the core's internal oversampling
+    // is never engaged since the strip already wraps the chain. Mix fully wet,
+    // auto-makeup off (makeup is via the per-mode output param). No analog-hiss
+    // force-off — the core carries no noise stage (see BusStrip). Mode + the
+    // continuous params are pushed per block by updateCompParameters.
+    compressor.setMix (100.0f);
+    compressor.setAutoMakeup (false);
+    compressor.prepare (prepSr, std::max (1, prepBs));
+    // Explicit reset() after prepare so any detector / envelope state cached
+    // across a prior session (different rate / block size) is wiped to initial
+    // conditions before the first post-prepare block.
     compressor.reset();
-    bindCompParams();
 
-    // SmoothedValue ramp at the OVERSAMPLED sample rate (the rate the
-    // donor sees inside processBlock). 20 ms is the same constant the
-    // fader / pan / bus gains use.
-    auto seedComp = [prepSr] (juce::SmoothedValue<float>& sv, float v)
+    // SmoothedValue ramp at the OVERSAMPLED sample rate (the rate the core sees
+    // inside processBlock). 20 ms is the same constant the fader / pan / bus
+    // gains use.
+    auto seedComp = [prepSr] (dusk::audio::SmoothedValue<float>& sv, float v)
     {
         sv.reset (prepSr, 0.020);
         sv.setCurrentAndTargetValue (v);
@@ -271,46 +259,6 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
 #endif
 }
 
-#if DUSKSTUDIO_HAS_DUSK_DSP
-void ChannelStrip::bindCompParams()
-{
-    auto& apvts = compressor.getParameters();
-    // getRawParameterValue() returns a pointer to the parameter's denormalised
-    // value atomic - the same atomic that UniversalCompressor's processBlock()
-    // reads. Writing here is lock-free and notification-free, suitable for the
-    // audio thread. Stores hold SI-unit / index / 0-or-1 values.
-    compModeAtom        = apvts.getRawParameterValue ("mode");
-    compBypassAtom      = apvts.getRawParameterValue ("bypass");
-    compMixAtom         = apvts.getRawParameterValue ("mix");
-    compAutoMakeupAtom  = apvts.getRawParameterValue ("auto_makeup");
-    compScHpAtom        = apvts.getRawParameterValue ("sidechain_hp");
-    compOptoPeakRedAtom = apvts.getRawParameterValue ("opto_peak_reduction");
-    compOptoGainAtom    = apvts.getRawParameterValue ("opto_gain");
-    compOptoLimitAtom   = apvts.getRawParameterValue ("opto_limit");
-    compFetInputAtom     = apvts.getRawParameterValue ("fet_input");
-    compFetOutputAtom    = apvts.getRawParameterValue ("fet_output");
-    compFetAttackAtom    = apvts.getRawParameterValue ("fet_attack");
-    compFetReleaseAtom   = apvts.getRawParameterValue ("fet_release");
-    compFetRatioAtom     = apvts.getRawParameterValue ("fet_ratio");
-    compFetThresholdAtom = apvts.getRawParameterValue ("fet_threshold");
-    compVcaThreshAtom   = apvts.getRawParameterValue ("vca_threshold");
-    compVcaRatioAtom    = apvts.getRawParameterValue ("vca_ratio");
-    compVcaAttackAtom   = apvts.getRawParameterValue ("vca_attack");
-    compVcaReleaseAtom  = apvts.getRawParameterValue ("vca_release");
-    compVcaOutputAtom   = apvts.getRawParameterValue ("vca_output");
-    compVcaOverEasyAtom = apvts.getRawParameterValue ("vca_overeasy");
-    compVcaDetectorModeAtom = apvts.getRawParameterValue ("vca_detector_mode");
-
-    // Mix=100% wet, auto-makeup off (we control makeup via per-mode output param).
-    storeAtom (compMixAtom,        100.0f);
-    storeAtom (compAutoMakeupAtom,   0.0f);  // Choice index 0 = "Off"
-    // Donor's "Analog Noise" injects ~-80 dB white noise on every analog mode
-    // (FET / Opto / VCA) and defaults ON — force it off so an engaged channel
-    // comp doesn't raise the noise floor. See MasterBus::bindCompParams.
-    storeAtom (apvts.getRawParameterValue ("noise_enable"), 0.0f);
-}
-#endif
-
 void ChannelStrip::updateGainTargets() noexcept
 {
     if (paramsRef == nullptr) return;
@@ -324,13 +272,14 @@ void ChannelStrip::updateGainTargets() noexcept
 
     const float gain = (muted || faderDb <= ChannelStripParams::kFaderInfThreshDb)
                        ? 0.0f
-                       : juce::Decibels::decibelsToGain (faderDb);
+                       : dusk::audio::decibelsToGain (faderDb);
     faderGain.setTargetValue (gain);
 
     // Read livePan (engine routes manual pan or lane value through it),
     // matching the liveFaderDb pattern.
-    const float p     = juce::jlimit (-1.0f, 1.0f, paramsRef->livePan.load (std::memory_order_relaxed));
-    const float angle = (p + 1.0f) * (juce::MathConstants<float>::halfPi * 0.5f);
+    const float p     = std::clamp (paramsRef->livePan.load (std::memory_order_relaxed),
+                                    -1.0f, 1.0f);
+    const float angle = (p + 1.0f) * (kHalfPi * 0.5f);
     panGainL.setTargetValue (std::cos (angle));
     panGainR.setTargetValue (std::sin (angle));
 
@@ -347,7 +296,7 @@ void ChannelStrip::updateGainTargets() noexcept
         const float db = paramsRef->liveAuxSendDb[(size_t) i].load (std::memory_order_relaxed);
         const float g  = (db <= ChannelStripParams::kAuxSendOffDb)
                             ? 0.0f
-                            : juce::Decibels::decibelsToGain (db);
+                            : dusk::audio::decibelsToGain (db);
         auxSendGain[(size_t) i].setTargetValue (g);
         auxSendPre[(size_t) i] =
             paramsRef->auxSendPreFader[(size_t) i].load (std::memory_order_relaxed);
@@ -358,27 +307,30 @@ void ChannelStrip::updateEqParameters() noexcept
 {
 #if DUSKSTUDIO_HAS_DUSK_DSP
     if (paramsRef == nullptr) return;
-    // Value-init so padding bytes are zero - paired with lastEqParams's {}
+    // Plain-float snapshot (no padding) - paired with lastEqParams's {}
     // initializer, this lets memcmp tell us reliably whether the params
-    // actually changed since last block. Skipping setParameters() when they
-    // haven't avoids a full BritishEQProcessor coefficient recompute (8-14
-    // biquads) on every silent block on every channel.
+    // actually changed since last block. Skipping the setter push when they
+    // haven't avoids a full FourKEQDSP coefficient recompute on every silent
+    // block on every channel.
     //
     // The console saturation is the channel's always-on console floor, so the
     // EQ processor runs every block regardless of the EQ bypass. When the EQ
-    // section is bypassed we leave the filter params at their flat value-init
-    // defaults (filters off, every band 0 dB) so only the saturation +
+    // section is bypassed we leave the band / filter params at their flat
+    // value-init zeros (filters off, every band 0 dB) so only the saturation +
     // transformer character is applied — the tone shaping is what bypasses.
-    BritishEQProcessor::Parameters p {};
+    // FourKEQDSP tolerates the zero-freq/zero-Q flat image: the HPF/LPF are
+    // gated by their enable flags (so their freq-0 coeffs never process), and
+    // the parallel bands compute a finite (zero) output scaled by K = 0.
+    EqSnapshot p {};
     if (paramsRef->eqEnabled.load (std::memory_order_relaxed))
     {
-        p.hpfEnabled = paramsRef->hpfEnabled.load (std::memory_order_relaxed);
+        p.hpfEnabled = paramsRef->hpfEnabled.load (std::memory_order_relaxed) ? 1.0f : 0.0f;
         p.hpfFreq    = paramsRef->hpfFreq.load    (std::memory_order_relaxed);
-        p.lpfEnabled = paramsRef->lpfEnabled.load (std::memory_order_relaxed);
+        p.lpfEnabled = paramsRef->lpfEnabled.load (std::memory_order_relaxed) ? 1.0f : 0.0f;
         p.lpfFreq    = paramsRef->lpfFreq.load    (std::memory_order_relaxed);
         p.lfGain     = paramsRef->lfGainDb.load (std::memory_order_relaxed);
         p.lfFreq     = paramsRef->lfFreq.load   (std::memory_order_relaxed);
-        p.lfBell     = false;
+        p.lfBell     = 0.0f;
         p.lmGain     = paramsRef->lmGainDb.load (std::memory_order_relaxed);
         p.lmFreq     = paramsRef->lmFreq.load   (std::memory_order_relaxed);
         p.lmQ        = paramsRef->lmQ.load      (std::memory_order_relaxed);
@@ -387,15 +339,24 @@ void ChannelStrip::updateEqParameters() noexcept
         p.hmQ        = paramsRef->hmQ.load      (std::memory_order_relaxed);
         p.hfGain     = paramsRef->hfGainDb.load (std::memory_order_relaxed);
         p.hfFreq     = paramsRef->hfFreq.load   (std::memory_order_relaxed);
-        p.hfBell     = false;
+        p.hfBell     = 0.0f;
     }
-    p.isBlackMode = paramsRef->eqBlackMode.load (std::memory_order_relaxed);
-    p.saturation  = kConsoleSaturationDrive;
-    p.inputGain   = 0.0f;
-    p.outputGain  = 0.0f;
+    p.eqType     = paramsRef->eqBlackMode.load (std::memory_order_relaxed) ? 1.0f : 0.0f;
+    p.saturation = kConsoleSaturationDrive;
+    p.inputGain  = 0.0f;
+    p.outputGain = 0.0f;
     if (std::memcmp (&p, &lastEqParams, sizeof (p)) != 0)
     {
-        eq.setParameters (p);
+        eq.setHpfEnabled (p.hpfEnabled > 0.5f);  eq.setHpfFreq (p.hpfFreq);
+        eq.setLpfEnabled (p.lpfEnabled > 0.5f);  eq.setLpfFreq (p.lpfFreq);
+        eq.setLfGain (p.lfGain);  eq.setLfFreq (p.lfFreq);  eq.setLfBell (p.lfBell > 0.5f);
+        eq.setLmGain (p.lmGain);  eq.setLmFreq (p.lmFreq);  eq.setLmQ (p.lmQ);
+        eq.setHmGain (p.hmGain);  eq.setHmFreq (p.hmFreq);  eq.setHmQ (p.hmQ);
+        eq.setHfGain (p.hfGain);  eq.setHfFreq (p.hfFreq);  eq.setHfBell (p.hfBell > 0.5f);
+        eq.setEqType ((int) p.eqType);
+        eq.setSaturation (p.saturation);
+        eq.setInputGainDb (p.inputGain);
+        eq.setOutputGainDb (p.outputGain);
         lastEqParams = p;
     }
 #endif
@@ -407,29 +368,25 @@ void ChannelStrip::updateCompParameters() noexcept
     if (paramsRef == nullptr) return;
 
     // Discrete params (no smoothing): bypass + mode + LIMIT toggle + FET
-    // ratio index. Stored directly on the donor atoms.
-    storeAtom (compBypassAtom,
-               paramsRef->compEnabled.load (std::memory_order_relaxed) ? 0.0f : 1.0f);
+    // ratio index. Pushed straight to the core's atomic setters. Mode map:
+    // session compMode 0..2 -> Opto/FET/VCA (setMode 0/1/2).
+    compressor.setBypass (! paramsRef->compEnabled.load (std::memory_order_relaxed));
 
-    const int modeIdx = juce::jlimit (0, 2, paramsRef->compMode.load (std::memory_order_relaxed));
-    storeAtom (compModeAtom, (float) modeIdx);
+    const int modeIdx = std::clamp (paramsRef->compMode.load (std::memory_order_relaxed), 0, 2);
+    compressor.setMode (modeIdx);
 
     // Per-mode sidechain HPF preset. VCA gets 60 Hz to match the SSL G /
     // dbx convention (keeps low-end transients from pumping the mids);
     // Opto and FET stay at 0 Hz so their original feedback-detector
     // character is preserved.
-    const float scHpHz = (modeIdx == 2) ? 60.0f : 0.0f;
-    storeAtom (compScHpAtom, scHpHz);
+    compressor.setSidechainHp ((modeIdx == 2) ? 60.0f : 0.0f);
 
-    storeAtom (compOptoLimitAtom,
-               paramsRef->compOptoLimit.load (std::memory_order_relaxed) ? 1.0f : 0.0f);
-    storeAtom (compFetRatioAtom,
-               (float) paramsRef->compFetRatio.load (std::memory_order_relaxed));
-    storeAtom (compVcaOverEasyAtom,
-               paramsRef->compVcaOverEasy.load (std::memory_order_relaxed) ? 1.0f : 0.0f);
+    compressor.setOptoLimit (paramsRef->compOptoLimit.load (std::memory_order_relaxed));
+    compressor.setFetRatio  (paramsRef->compFetRatio.load  (std::memory_order_relaxed));
+    compressor.setVcaOverEasy (paramsRef->compVcaOverEasy.load (std::memory_order_relaxed));
     // 0 = Adaptive (donor default), 1 = Classic (dbx 160 fixed 10 ms).
-    storeAtom (compVcaDetectorModeAtom,
-               paramsRef->compVcaDetectorClassic.load (std::memory_order_relaxed) ? 1.0f : 0.0f);
+    compressor.setVcaDetectorMode (
+        paramsRef->compVcaDetectorClassic.load (std::memory_order_relaxed) ? 1 : 0);
 
     // Continuous params: set smoother targets. The per-chunk
     // publishSmoothedCompParams() advances the smoothers and writes the
@@ -454,32 +411,25 @@ void ChannelStrip::publishSmoothedCompParams (int numSamples) noexcept
 {
 #if DUSKSTUDIO_HAS_DUSK_DSP
     if (numSamples <= 0) return;
-    // Advance each smoother by N samples then write the end-of-chunk
-    // value to the donor atom. Called once per inner chunk so chunks
-    // shorter than the smoother's 20 ms ramp see a STEPPED-but-fine-
-    // grained param trajectory (one step per 64 samples) rather than
-    // one step per audio block. Donor reads each atom only at the
-    // start of its processBlock call - true per-sample interpolation
-    // would require calling processBlock per-sample.
-    auto step = [numSamples] (juce::SmoothedValue<float>& sv,
-                                 std::atomic<float>* atom)
-    {
-        sv.skip (numSamples);
-        if (atom != nullptr) atom->store (sv.getCurrentValue(),
-                                            std::memory_order_relaxed);
-    };
-    step (smoothedOptoPeakRed, compOptoPeakRedAtom);
-    step (smoothedOptoGain,    compOptoGainAtom);
-    step (smoothedFetInput,    compFetInputAtom);
-    step (smoothedFetOutput,   compFetOutputAtom);
-    step (smoothedFetAttack,   compFetAttackAtom);
-    step (smoothedFetRelease,  compFetReleaseAtom);
-    step (smoothedFetThreshold,compFetThresholdAtom);
-    step (smoothedVcaThresh,   compVcaThreshAtom);
-    step (smoothedVcaRatio,    compVcaRatioAtom);
-    step (smoothedVcaAttack,   compVcaAttackAtom);
-    step (smoothedVcaRelease,  compVcaReleaseAtom);
-    step (smoothedVcaOutput,   compVcaOutputAtom);
+    // Advance each smoother by N samples then push the end-of-chunk value to
+    // the core's atomic setter. Called once per inner chunk so chunks shorter
+    // than the smoother's 20 ms ramp see a STEPPED-but-fine-grained param
+    // trajectory (one step per 64 samples) rather than one step per audio
+    // block. The core reads each atom only at the start of its processBlock
+    // call — true per-sample interpolation would require calling processBlock
+    // per-sample.
+    smoothedOptoPeakRed.skip (numSamples); compressor.setOptoPeakReduction (smoothedOptoPeakRed.getCurrentValue());
+    smoothedOptoGain   .skip (numSamples); compressor.setOptoGain          (smoothedOptoGain   .getCurrentValue());
+    smoothedFetInput   .skip (numSamples); compressor.setFetInput          (smoothedFetInput   .getCurrentValue());
+    smoothedFetOutput  .skip (numSamples); compressor.setFetOutput         (smoothedFetOutput  .getCurrentValue());
+    smoothedFetAttack  .skip (numSamples); compressor.setFetAttack         (smoothedFetAttack  .getCurrentValue());
+    smoothedFetRelease .skip (numSamples); compressor.setFetRelease        (smoothedFetRelease .getCurrentValue());
+    smoothedFetThreshold.skip (numSamples); compressor.setFetThreshold     (smoothedFetThreshold.getCurrentValue());
+    smoothedVcaThresh  .skip (numSamples); compressor.setVcaThreshold      (smoothedVcaThresh  .getCurrentValue());
+    smoothedVcaRatio   .skip (numSamples); compressor.setVcaRatio          (smoothedVcaRatio   .getCurrentValue());
+    smoothedVcaAttack  .skip (numSamples); compressor.setVcaAttack         (smoothedVcaAttack  .getCurrentValue());
+    smoothedVcaRelease .skip (numSamples); compressor.setVcaRelease        (smoothedVcaRelease .getCurrentValue());
+    smoothedVcaOutput  .skip (numSamples); compressor.setVcaOutput         (smoothedVcaOutput  .getCurrentValue());
 #else
     (void) numSamples;
 #endif
@@ -638,7 +588,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
                                          int   numDeviceOutputs,
                                          bool  isFrozen) noexcept
 {
-    juce::ScopedNoDenormals noDenormals;
+    dusk::audio::ScopedNoDenormals noDenormals;
 
     // Insert-mode crossfade gate. Run once at the top of every block.
     //   - If the user (or session-load) flipped insertMode, ramp the
@@ -718,9 +668,9 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         return;
 
     // Skip the heavy DSP when the strip isn't passing to master and the
-    // recorder doesn't need a processed buffer either. With 16 channels each
-    // hosting a UniversalCompressor (a full juce::AudioProcessor), running
-    // the chain on every silent track was an xrun-class CPU spike.
+    // recorder doesn't need a processed buffer either. With 24 strips each
+    // running a full EQ + comp core, running the chain on every silent track
+    // was an xrun-class CPU spike.
     // A pending hardware-insert ping must still reach the slot (transport
     // stopped + IN off is the normal way to ping): the chirp goes only to
     // the insert's device send pair, and the !passByGate gain targets below
@@ -938,8 +888,8 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             if (pdcAppliedSamples > 0 && freezeCapL == nullptr)
                 for (int i = 0; i < numSamples; ++i)
                 {
-                    pdcDelayL.pushSample (0, tempMono[(size_t) i]);
-                    tempMono[(size_t) i] = pdcDelayL.popSample (0);
+                    pdcDelayL.pushSample (tempMono[(size_t) i]);
+                    tempMono[(size_t) i] = pdcDelayL.popSample();
                 }
         }
 
@@ -955,50 +905,45 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             const int compBufSize = 64 * oversampleFactor;
             for (int offset = 0; offset < total; offset += compBufSize)
             {
-                const int n = juce::jmin (compBufSize, total - offset);
-                float* compView[1] = { base + offset };
-                juce::AudioBuffer<float> compBuf (compView, 1, n);
+                const int n = std::min (compBufSize, total - offset);
+                const float* compIn[1]  = { base + offset };
+                float*       compOut[1] = { base + offset };
                 publishSmoothedCompParams (n);
-                compMidiScratch.clear();
-                compressor.processBlock (compBuf, compMidiScratch);
+                compressor.processBlock (compIn, compOut, 1, n);
             }
         };
 
-        if (oversamplerStages > 0 && oversamplerMono != nullptr)
+        if (oversampleFactor > 1)
         {
             // Oversampled chain: the EQ (carrying the always-on console
             // saturation) and, when engaged, the comp run on the upsampled view,
-            // then downsample back into tempMono. Donor saturation aliasing is
-            // suppressed by the half-band filters inside juce::dsp::Oversampling.
-            const float* readPtrs[1]  = { tempMono.data() };
-            float*       writePtrs[1] = { tempMono.data() };
-            juce::dsp::AudioBlock<const float> nativeIn  (readPtrs,  1, (size_t) numSamples);
-            juce::dsp::AudioBlock<float>       nativeOut (writePtrs, 1, (size_t) numSamples);
-
-            auto upBlock = oversamplerMono->processSamplesUp (nativeIn);
-            const int upN = (int) upBlock.getNumSamples();
-            float* upPtrs[1] = { upBlock.getChannelPointer (0) };
-            juce::AudioBuffer<float> upBuf (upPtrs, 1, upN);
-            eq.process (upBuf);
+            // then downsample back into tempMono. Saturation aliasing is
+            // suppressed by the half-band FIRs inside StereoOversampler. Mono
+            // feeds channel 0; the silent channel 1 (osMonoScratchR) is the
+            // oversampler's throwaway R and is never touched by the EQ / comp.
+            auto up = oversampler.processSamplesUp (tempMono.data(), osMonoScratchR.data(), numSamples);
+            const float* eqIn[1]  = { up.L };
+            float*       eqOut[1] = { up.L };
+            eq.processBlock (eqIn, eqOut, 1, up.numSamples);
             if (compEnabled)
-                runComp (upPtrs[0], upN);
+                runComp (up.L, up.numSamples);
 
-            oversamplerMono->processSamplesDown (nativeOut);
+            oversampler.processSamplesDown (tempMono.data(), osMonoScratchR.data(), numSamples);
         }
         else
         {
             // Native-rate path (factor == 1). The EQ (with the always-on
             // console saturation) always runs; the comp runs when engaged.
-            float* monoChannel[1] = { tempMono.data() };
-            juce::AudioBuffer<float> monoBuf (monoChannel, 1, numSamples);
-            eq.process (monoBuf);
+            const float* eqIn[1]  = { tempMono.data() };
+            float*       eqOut[1] = { tempMono.data() };
+            eq.processBlock (eqIn, eqOut, 1, numSamples);
             if (compEnabled)
                 runComp (tempMono.data(), numSamples);
         }
 
         // When bypassed, force the GR atom to 0 so the meter doesn't hold
-        // the last-computed reduction (the donor's getGainReduction()
-        // returns the cached value from its detector even while bypass=1).
+        // the last-computed reduction (the core's getGainReduction() returns
+        // the cached value from its detector even while bypass=1).
         currentGrDb.store (compEnabled ? compressor.getGainReduction() : 0.0f,
                             std::memory_order_relaxed);
 #endif
@@ -1136,8 +1081,8 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             if (pdcAppliedSamples > 0 && freezeCapL == nullptr)
                 for (int i = 0; i < numSamples; ++i)
                 {
-                    pdcDelayL.pushSample (0, L[i]);  L[i] = pdcDelayL.popSample (0);
-                    pdcDelayR.pushSample (0, R[i]);  R[i] = pdcDelayR.popSample (0);
+                    pdcDelayL.pushSample (L[i]);  L[i] = pdcDelayL.popSample();
+                    pdcDelayR.pushSample (R[i]);  R[i] = pdcDelayR.popSample();
                 }
         }
 
@@ -1150,12 +1095,11 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             const int compBufSize = 64 * oversampleFactor;
             for (int offset = 0; offset < total; offset += compBufSize)
             {
-                const int n = juce::jmin (compBufSize, total - offset);
-                float* compView[2] = { l + offset, r + offset };
-                juce::AudioBuffer<float> compBuf (compView, 2, n);
+                const int n = std::min (compBufSize, total - offset);
+                const float* compIn[2]  = { l + offset, r + offset };
+                float*       compOut[2] = { l + offset, r + offset };
                 publishSmoothedCompParams (n);
-                compMidiScratch.clear();
-                compressor.processBlock (compBuf, compMidiScratch);
+                compressor.processBlock (compIn, compOut, 2, n);
             }
         };
 
@@ -1163,31 +1107,24 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         // during the freeze render, so re-running them would double-process.
         if (! isFrozen)
         {
-            if (oversamplerStages > 0 && oversamplerStereo != nullptr)
+            if (oversampleFactor > 1)
             {
-                const float* readPtrs[2]  = { L, R };
-                float*       writePtrs[2] = { L, R };
-                juce::dsp::AudioBlock<const float> nativeIn  (readPtrs,  2, (size_t) numSamples);
-                juce::dsp::AudioBlock<float>       nativeOut (writePtrs, 2, (size_t) numSamples);
-
-                auto upBlock = oversamplerStereo->processSamplesUp (nativeIn);
-                const int upN = (int) upBlock.getNumSamples();
-                float* upPtrs[2] = { upBlock.getChannelPointer (0),
-                                      upBlock.getChannelPointer (1) };
-                juce::AudioBuffer<float> upBuf (upPtrs, 2, upN);
-                eq.process (upBuf);
+                auto up = oversampler.processSamplesUp (L, R, numSamples);
+                const float* eqIn[2]  = { up.L, up.R };
+                float*       eqOut[2] = { up.L, up.R };
+                eq.processBlock (eqIn, eqOut, 2, up.numSamples);
                 if (compEnabled)
-                    runCompStereo (upPtrs[0], upPtrs[1], upN);
+                    runCompStereo (up.L, up.R, up.numSamples);
 
-                oversamplerStereo->processSamplesDown (nativeOut);
+                oversampler.processSamplesDown (L, R, numSamples);
             }
             else
             {
                 // Native-rate path (factor == 1). EQ (with console saturation)
                 // always runs; comp when engaged.
-                float* stereoChannels[2] = { L, R };
-                juce::AudioBuffer<float> stereoBuf (stereoChannels, 2, numSamples);
-                eq.process (stereoBuf);
+                const float* eqIn[2]  = { L, R };
+                float*       eqOut[2] = { L, R };
+                eq.processBlock (eqIn, eqOut, 2, numSamples);
                 if (compEnabled)
                     runCompStereo (L, R, numSamples);
             }
@@ -1268,9 +1205,9 @@ void ChannelStrip::processAndAccumulate (const float* inL,
     float outPeakL = 0.0f, outPeakR = 0.0f;
     const auto publishOutMeter = [this] (float pL, float pR)
     {
-        currentOutLDb.store (pL > 1e-5f ? juce::Decibels::gainToDecibels (pL, -100.0f) : -100.0f,
+        currentOutLDb.store (pL > 1e-5f ? dusk::audio::gainToDecibels (pL, -100.0f) : -100.0f,
                              std::memory_order_relaxed);
-        currentOutRDb.store (pR > 1e-5f ? juce::Decibels::gainToDecibels (pR, -100.0f) : -100.0f,
+        currentOutRDb.store (pR > 1e-5f ? dusk::audio::gainToDecibels (pR, -100.0f) : -100.0f,
                              std::memory_order_relaxed);
     };
 

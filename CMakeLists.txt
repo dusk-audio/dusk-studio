@@ -785,8 +785,10 @@ if(DEFINED DUSK_PLUGINS_PATH)
         "${DUSK_PLUGINS_PATH}/plugins/shared-dpf"
         "${DUSK_PLUGINS_PATH}/plugins/shared/AnalogEmulation"
         "${DUSK_PLUGINS_PATH}/plugins/shared/channel-comp"
+        "${DUSK_PLUGINS_PATH}/plugins/shared-dpf/dsp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-q"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp"
+        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/core"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/HardwareEmulation"
         "${DUSK_PLUGINS_PATH}/plugins/tape-echo/Source/DSP"
         "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source"
@@ -795,8 +797,12 @@ if(DEFINED DUSK_PLUGINS_PATH)
     # Compile multi-comp's processor + editor + shared LEDMeter so
     # UniversalCompressor links cleanly. Editor sources are linked but not
     # invoked from Dusk Studio's UI — they exist only because UniversalCompressor's
-    # createEditor() references them.
+    # createEditor() references them. The framework-free cores
+    # (UniversalCompressorDSP / FourKEQDSP) are the de-JUCE'd donors BusStrip
+    # uses directly.
     target_sources(DuskStudio PRIVATE
+        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/core/UniversalCompressorDSP.cpp"
+        "${DUSK_PLUGINS_PATH}/plugins/shared-dpf/dsp/FourKEQDSP.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/multicomp.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/AnalogLookAndFeel.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/EnhancedCompressorEditor.cpp"

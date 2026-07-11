@@ -299,6 +299,9 @@ if(DUSK_PLUGINS_PATH)
         mastering_chain.cpp
         mastering_digital_eq.cpp
         dsp_stereo_oversampler.cpp
+        eq_british_ab.cpp
+        tube_multiq_ab.cpp
+        comp_core_ab.cpp
         smoke_brickwall_limiter.cpp
         dsp_loudness_meter.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/BrickwallLimiter.cpp
@@ -306,7 +309,9 @@ if(DUSK_PLUGINS_PATH)
         ${CMAKE_SOURCE_DIR}/src/dsp/MasteringChain.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/MasteringDigitalEq.cpp
         ${CMAKE_SOURCE_DIR}/src/dsp/LoudnessMeter.cpp
+        "${DUSK_PLUGINS_PATH}/plugins/shared-dpf/dsp/FourKEQDSP.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/multicomp.cpp"
+        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/core/UniversalCompressorDSP.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/AnalogLookAndFeel.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/EnhancedCompressorEditor.cpp"
         "${DUSK_PLUGINS_PATH}/plugins/shared/LEDMeter.cpp")
@@ -321,15 +326,28 @@ if(DUSK_PLUGINS_PATH)
         PROPERTIES
         COMPILE_DEFINITIONS "AnalogVUMeter=MultiCompAnalogVUMeter")
 
+    # projucer-shim satisfies BritishEQProcessor.h's `#include <JuceHeader.h>`
+    # (the donor EQ under A/B test in eq_british_ab.cpp); the shim pulls in a
+    # few JUCE modules the base test link is missing, added below.
     target_include_directories(dusk-studio-tests SYSTEM PRIVATE
+        "${CMAKE_SOURCE_DIR}/external/projucer-shim"
         "${DUSK_PLUGINS_PATH}/plugins/shared"
         "${DUSK_PLUGINS_PATH}/plugins/shared-dpf"
         "${DUSK_PLUGINS_PATH}/plugins/shared/AnalogEmulation"
         "${DUSK_PLUGINS_PATH}/plugins/shared/channel-comp"
         "${DUSK_PLUGINS_PATH}/plugins/multi-q"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp"
+        "${DUSK_PLUGINS_PATH}/plugins/multi-comp/core"
         "${DUSK_PLUGINS_PATH}/plugins/multi-comp/HardwareEmulation"
+        "${DUSK_PLUGINS_PATH}/plugins/shared-dpf/dsp"
         "${DUSK_PLUGINS_PATH}/plugins/TapeMachine/Source")
+
+    # Modules referenced only transitively by the projucer-shim umbrella header.
+    target_link_libraries(dusk-studio-tests PRIVATE
+        juce::juce_audio_utils
+        juce::juce_data_structures
+        juce::juce_events
+        juce::juce_gui_extra)
 
     target_compile_definitions(dusk-studio-tests PRIVATE
         DUSKSTUDIO_HAS_DUSK_DSP=1
