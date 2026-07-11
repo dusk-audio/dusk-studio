@@ -834,7 +834,7 @@ void AudioSettingsPanel::applyMainOutputChange()
 
 void AudioSettingsPanel::populateSyncSourceCombo()
 {
-    // ID 1 = "(none)"; IDs 2..N+1 map to engine.midiInputDevices[i-2].
+    // ID 1 = "(none)"; IDs 2..N+1 map to engine.getMidiInputDevices()[i-2].
     // Identifier-based selection because indices shift on hot-plug.
     syncSourceCombo.clear (juce::dontSendNotification);
     syncSourceCombo.addItem ("(none)", 1);

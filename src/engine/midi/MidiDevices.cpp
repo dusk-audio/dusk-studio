@@ -46,9 +46,10 @@ void MidiInputClient::rebuild (double sampleRate)
     }
     virtualKeyboardIndex = (int) collectors.size() - 1;
 
-    // Pre-size the RT drain scratch like the pre-flip perInputMidi: a burst past
-    // this grows the destination on the audio thread (rare) — same property.
-    drainScratch.ensureSize (4096);
+    // Pre-size the RT drain scratch well past the 4096-byte dusk copy cap so a
+    // dense burst drops downstream (bounded) instead of reallocating here on
+    // the audio thread.
+    drainScratch.ensureSize (16384);
 }
 
 void MidiInputClient::detachCallback()
@@ -228,13 +229,6 @@ bool MidiOutputBank::send (int index, const juce::MidiBuffer& events) noexcept
 {
     // sampleRate is for time stamps only — the direct send carries no offsets.
     return sendJuce (index, events, 48000.0);
-}
-
-bool MidiOutputBank::send (int index, const dusk::MidiBuffer& events, double sampleRate)
-{
-    juce::MidiBuffer juceEvents;
-    toJuceBuffer (events, juceEvents);
-    return sendJuce (index, juceEvents, sampleRate);
 }
 
 void MidiOutputBank::queueRt (int port, const dusk::MidiBuffer& events, double sampleRate) noexcept

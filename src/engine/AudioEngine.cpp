@@ -2616,10 +2616,9 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
             std::memset (outputChannelData[ch], 0,
                           sizeof (float) * (size_t) numSamples);
 
-    // Drain each MIDI input's collector into its per-input buffer for this
-    // block. Each removeNextBlockOfMessages is lock-free with respect to
-    // the MIDI thread's addMessageToQueue, so the audio thread never
-    // contends. Empty buffers cost ~nothing.
+    // Drain each MIDI input into its per-input buffer for this block. The
+    // layer's drain is lock-free with respect to the MIDI thread's enqueue,
+    // so the audio thread never contends. Empty buffers cost ~nothing.
     for (int i = 0; i < midiIn.getNumInputs() && i < (int) perInputMidi.size(); ++i)
         midiIn.drainBlock (i, perInputMidi[(size_t) i], numSamples);
 
@@ -2633,7 +2632,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         const int idx = testInjectInputIdx.load (std::memory_order_relaxed);
         if (idx >= 0 && (size_t) idx < perInputMidi.size())
             for (const auto meta : testInjectMidi)
-                if (meta.samplePosition < numSamples)
+                if (meta.samplePosition >= 0 && meta.samplePosition < numSamples)
                     perInputMidi[(size_t) idx].addEvent (meta.data, meta.numBytes,
                                                          meta.samplePosition);
         testInjectMidi.clear();
@@ -4216,13 +4215,19 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
             if (outIdx >= 0)
             {
                 // Bridge the juce per-track buffer into the dusk out-scratch
-                // (pre-reserved) for queueRt's dusk boundary.
+                // (pre-reserved) for queueRt's dusk boundary. Whole-block or
+                // nothing: a partial copy on cap overflow could split paired
+                // events (note on/off), so mirror the pre-flip whole-block
+                // drop semantics.
                 midiOutTrackScratch.clear();
+                bool fits = true;
                 for (const auto meta : perTrackMidiScratch[(size_t) t])
-                    midiOutTrackScratch.addEvent (meta.data, meta.numBytes,
-                                                  meta.samplePosition);
-                midiOut.queueRt (outIdx, midiOutTrackScratch,
-                                 currentSampleRate.load (std::memory_order_relaxed));
+                    if (! midiOutTrackScratch.addEvent (meta.data, meta.numBytes,
+                                                        meta.samplePosition))
+                    { fits = false; break; }
+                if (fits)
+                    midiOut.queueRt (outIdx, midiOutTrackScratch,
+                                     currentSampleRate.load (std::memory_order_relaxed));
             }
         }
 
