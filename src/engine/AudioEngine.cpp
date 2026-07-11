@@ -561,6 +561,14 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
     }
    #endif
 
+    // Build both MIDI banks before ANY callback is registered — the audio
+    // callback iterates perInputMidi, so it must not be attachable while
+    // rebuildMidiBanks sizes the vector. Empty deviceIdentifier = every
+    // enabled input fans out to midiIn, routed there by source identifier.
+    midiIn.setDeviceManager (deviceManager);
+    rebuildMidiBanks();
+    midiIn.attachCallback();
+
     deviceManager.addAudioCallback (this);
 
     // H5: subscribe to AudioDeviceManager change broadcasts so we can
@@ -568,14 +576,6 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
     // one). Fires on the message thread per JUCE's ChangeBroadcaster
     // contract.
     deviceManager.addChangeListener (this);
-
-    // Build both banks pre-attach (no callback registered yet, so the mutation
-    // is safe without a fence), then attach midiIn as the input callback. Empty
-    // deviceIdentifier = every enabled input fans out to midiIn, routed there
-    // by source identifier.
-    midiIn.setDeviceManager (deviceManager);
-    rebuildMidiBanks();
-    midiIn.attachCallback();
 }
 
 void AudioEngine::refreshMidiInputs()
