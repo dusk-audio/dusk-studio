@@ -58,6 +58,8 @@ src/engine/ipc/PluginIpc.h
 src/engine/ipc/PluginScanProtocol.h
 src/engine/ipc/RemotePluginConnection.cpp
 src/engine/ipc/RemotePluginConnection.h
+src/engine/midi/MidiDevices.cpp
+src/engine/midi/MidiDevices.h
 src/engine/multisample/AriaBank.cpp
 src/engine/multisample/AriaBank.h
 src/engine/multisample/AriaGui.cpp
