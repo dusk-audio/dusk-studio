@@ -318,7 +318,7 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 
 ## System requirements
 
-- **Linux**: PipeWire (recommended) or JACK or ALSA. JUCE 8's JACK backend drives PipeWire transparently.
+- **Linux**: PipeWire (recommended) or JACK or ALSA. JUCE 8's JACK backend drives PipeWire transparently. An X11 display is required: on a Wayland desktop this means XWayland (present and enabled by default on GNOME and KDE; compositors like sway, niri and labwc can run without it — enable it there, or Dusk Studio will refuse to start with a message pointing here).
 - **macOS**: 14.4 (Sonoma) or later for the out-of-process plugin sandbox; older macOS still runs plugins in-process.
 - **Windows**: Windows 10 or later, ASIO driver recommended.
 
