@@ -68,6 +68,7 @@ add_executable(dusk-studio-tests
     session_mcu_roundtrip.cpp
     mcu_receiver_decode.cpp
     mcu_controller_emit.cpp
+    mcu_fader_taper.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/McuReceiver.cpp
     ${CMAKE_SOURCE_DIR}/src/engine/McuController.cpp
     multisample_state_roundtrip.cpp

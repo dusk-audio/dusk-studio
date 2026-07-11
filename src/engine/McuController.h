@@ -67,7 +67,6 @@ private:
     void timerCallback() override;
 
     juce::MidiBuffer buildEmitBuffer (bool forceAll);
-    int faderDbToPitchBend (float db) const noexcept;
 
     Session&     session;
     SinkFn       sink;

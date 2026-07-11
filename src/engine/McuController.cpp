@@ -1,5 +1,6 @@
 #include "McuController.h"
 #include "McuProtocol.h"
+#include "McuFaderTaper.h"
 #include "Transport.h"
 #include "../session/Session.h"
 
@@ -101,16 +102,6 @@ McuController::~McuController()
     stopTimer();
 }
 
-int McuController::faderDbToPitchBend (float db) const noexcept
-{
-    constexpr float kMin = ChannelStripParams::kFaderMinDb;
-    constexpr float kMax = ChannelStripParams::kFaderMaxDb;
-    if (db < kMin) db = kMin;
-    if (db > kMax) db = kMax;
-    const float norm = (db - kMin) / (kMax - kMin);
-    return (int) (norm * (float) mcu::kPitchBendMaxValue);
-}
-
 juce::MidiBuffer McuController::buildEmitBuffer (bool forceAll)
 {
     juce::MidiBuffer buf;
@@ -127,7 +118,7 @@ juce::MidiBuffer McuController::buildEmitBuffer (bool forceAll)
 
         // Fader. liveFaderDb (post-automation) so motors track Read mode.
         const float liveDb = trk.strip.liveFaderDb.load (std::memory_order_relaxed);
-        const int pb14 = faderDbToPitchBend (liveDb);
+        const int pb14 = mcu::faderDbToPitchBend14 (liveDb);
         if (forceAll || pb14 != lastFader[(size_t) strip])
         {
             // MidiMessage::pitchWheel uses 1-based channels.
@@ -165,7 +156,7 @@ juce::MidiBuffer McuController::buildEmitBuffer (bool forceAll)
 
     // ── Master fader ──
     const float masterDb = session.master().liveFaderDb.load (std::memory_order_relaxed);
-    const int masterPb = faderDbToPitchBend (masterDb);
+    const int masterPb = mcu::faderDbToPitchBend14 (masterDb);
     if (forceAll || masterPb != lastMasterFader)
     {
         buf.addEvent (juce::MidiMessage::pitchWheel (mcu::kMasterFaderIndex + 1, masterPb), 0);

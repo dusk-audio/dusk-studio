@@ -1,5 +1,6 @@
 #include "McuReceiver.h"
 #include "McuProtocol.h"
+#include "McuFaderTaper.h"
 #include "../session/Session.h"
 
 #include <algorithm>
@@ -15,9 +16,6 @@ inline T jlimit (T lo, T hi, T value) noexcept { return std::clamp (value, lo, h
 
 namespace mcu_local
 {
-constexpr float kFaderMinDb = ChannelStripParams::kFaderMinDb;   // -100
-constexpr float kFaderMaxDb = ChannelStripParams::kFaderMaxDb;   //  +12
-
 // MCU V-pot encoder ticks divided by this many to convert one tick into
 // a "musical" delta. Logic uses ~64 ticks per full sweep; we want a knob
 // turn (10..20 ticks for a deliberate move) to be a noticeable change
@@ -31,24 +29,6 @@ void McuReceiver::reset() noexcept
     // No accumulator state today - V-pot deltas are stateless per
     // event. If a future change adds a multi-byte sysex decode
     // (e.g. MCU device-info handshake) this is where to clear it.
-}
-
-float McuReceiver::pitchBendToFaderDb (int pb14) const noexcept
-{
-    if (pb14 < 0) pb14 = 0;
-    if (pb14 > mcu::kPitchBendMaxValue) pb14 = mcu::kPitchBendMaxValue;
-    const float norm = (float) pb14 / (float) mcu::kPitchBendMaxValue;
-    return mcu_local::kFaderMinDb
-         + norm * (mcu_local::kFaderMaxDb - mcu_local::kFaderMinDb);
-}
-
-int McuReceiver::faderDbToPitchBend (float db) const noexcept
-{
-    if (db < mcu_local::kFaderMinDb) db = mcu_local::kFaderMinDb;
-    if (db > mcu_local::kFaderMaxDb) db = mcu_local::kFaderMaxDb;
-    const float norm = (db - mcu_local::kFaderMinDb)
-                     / (mcu_local::kFaderMaxDb - mcu_local::kFaderMinDb);
-    return (int) (norm * (float) mcu::kPitchBendMaxValue);
 }
 
 void McuReceiver::resetVpotTarget (int stripIndex) noexcept
@@ -439,7 +419,7 @@ void McuReceiver::process (const dusk::MidiBuffer& events,
             const int lsb = raw[1] & 0x7F;
             const int msb = raw[2] & 0x7F;
             const int pb14 = lsb | (msb << 7);
-            const float db = pitchBendToFaderDb (pb14);
+            const float db = mcu::pitchBend14ToFaderDb (pb14);
             if (channel == mcu::kMasterFaderIndex)
             {
                 session.master().faderDb.store (db, std::memory_order_relaxed);

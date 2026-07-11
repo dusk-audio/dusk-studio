@@ -1585,6 +1585,17 @@ Once connected:
 - **Jog wheel** scrubs the playhead.
 - **Touch sense** drives Touch automation: touching a fader on the surface puts it into touch-write mode while you hold it.
 
+**Prefer MCU mode over manual MIDI mapping.** Mixer-style controllers with an
+MCU or "Mackie Control" emulation mode (Tascam Model 12, Behringer X-Touch,
+and similar) should be switched to that mode and selected here — not
+hand-mapped through MIDI bindings. MIDI bindings are one-way: they can drive
+Dusk Studio, but Dusk Studio cannot light the controller's Mute/Solo/Record
+LEDs, move its motor faders, or reach transport features like Rewind/Forward
+— those exist only in MCU mode. On the transport: **Rewind/Forward tap to
+jump between markers and hold to scrub**; they are not a continuous tape
+shuttle. The fader scale follows the Mackie taper, so the printed **0**
+position on the surface matches 0 dB on screen.
+
 \newpage
 
 # MIDI bindings

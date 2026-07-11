@@ -65,17 +65,6 @@ public:
 private:
     Session& session;
 
-    // Convert a 14-bit MCU pitch-bend value (0..16383) into the
-    // session's faderDb range. Linear-in-dB for v1; MCU's hardware
-    // fader curve is actually log-derived but matches Logic's
-    // calibration only - a future commit can swap in the proper
-    // curve when motorized-fader users complain about feel.
-    float pitchBendToFaderDb (int pb14) const noexcept;
-
-    // Reverse mapping (used by McuController emit). Kept here so the
-    // receiver + controller share the same curve constants.
-    int faderDbToPitchBend (float db) const noexcept;
-
     // Dispatch a V-pot delta (signed -63..+63) through the current
     // assign-mode atom to the right strip parameter.
     void applyVpotDelta (int stripIndex, int delta) noexcept;
