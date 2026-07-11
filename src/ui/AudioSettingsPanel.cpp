@@ -840,7 +840,7 @@ void AudioSettingsPanel::populateSyncSourceCombo()
     syncSourceCombo.addItem ("(none)", 1);
     const auto& devices = engine.getMidiInputDevices();
     int matchId = 1;
-    for (int i = 0; i < devices.size(); ++i)
+    for (int i = 0; i < (int) devices.size(); ++i)
     {
         syncSourceCombo.addItem (devices[i].name, i + 2);
         if (devices[i].identifier == session.syncSourceInputIdentifier)
@@ -860,7 +860,7 @@ void AudioSettingsPanel::applySyncSourceChange()
     }
     const auto& devices = engine.getMidiInputDevices();
     const int idx = id - 2;
-    if (idx < 0 || idx >= devices.size()) return;
+    if (idx < 0 || idx >= (int) devices.size()) return;
     session.syncSourceInputIdentifier = devices[idx].identifier;
     session.syncSourceInputIdx.store (idx, std::memory_order_release);
 }
@@ -873,7 +873,7 @@ void AudioSettingsPanel::populateSyncOutputCombo()
     syncOutputCombo.addItem ("(none)", 1);
     const auto& devices = engine.getMidiOutputDevices();
     int matchId = 1;
-    for (int i = 0; i < devices.size(); ++i)
+    for (int i = 0; i < (int) devices.size(); ++i)
     {
         syncOutputCombo.addItem (devices[i].name, i + 2);
         if (devices[i].identifier == session.syncOutputIdentifier)
@@ -893,7 +893,7 @@ void AudioSettingsPanel::applySyncOutputChange()
     }
     const auto& devices = engine.getMidiOutputDevices();
     const int idx = id - 2;
-    if (idx < 0 || idx >= devices.size()) return;
+    if (idx < 0 || idx >= (int) devices.size()) return;
     session.syncOutputIdentifier = devices[idx].identifier;
     session.syncOutputIdx.store (idx, std::memory_order_release);
     // Eagerly open the port so the first audio-thread emission doesn't
@@ -907,7 +907,7 @@ void AudioSettingsPanel::populateMcuInputCombo()
     mcuInputCombo.addItem ("(none)", 1);
     const auto& devices = engine.getMidiInputDevices();
     int matchId = 1;
-    for (int i = 0; i < devices.size(); ++i)
+    for (int i = 0; i < (int) devices.size(); ++i)
     {
         mcuInputCombo.addItem (devices[i].name, i + 2);
         if (devices[i].identifier == session.mcu.inputIdentifier)
@@ -922,7 +922,7 @@ void AudioSettingsPanel::populateMcuOutputCombo()
     mcuOutputCombo.addItem ("(none)", 1);
     const auto& devices = engine.getMidiOutputDevices();
     int matchId = 1;
-    for (int i = 0; i < devices.size(); ++i)
+    for (int i = 0; i < (int) devices.size(); ++i)
     {
         mcuOutputCombo.addItem (devices[i].name, i + 2);
         if (devices[i].identifier == session.mcu.outputIdentifier)
@@ -942,7 +942,7 @@ void AudioSettingsPanel::applyMcuInputChange()
     }
     const auto& devices = engine.getMidiInputDevices();
     const int idx = id - 2;
-    if (idx < 0 || idx >= devices.size()) return;
+    if (idx < 0 || idx >= (int) devices.size()) return;
     session.mcu.inputIdentifier = devices[idx].identifier;
     session.mcu.resolvedInputIdx.store (idx, std::memory_order_release);
 }
@@ -958,7 +958,7 @@ void AudioSettingsPanel::applyMcuOutputChange()
     }
     const auto& devices = engine.getMidiOutputDevices();
     const int idx = id - 2;
-    if (idx < 0 || idx >= devices.size()) return;
+    if (idx < 0 || idx >= (int) devices.size()) return;
     session.mcu.outputIdentifier = devices[idx].identifier;
     session.mcu.resolvedOutputIdx.store (idx, std::memory_order_release);
     // Eagerly open so the first 30 Hz emit doesn't race with ALSA's

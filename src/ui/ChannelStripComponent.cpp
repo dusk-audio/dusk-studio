@@ -1203,7 +1203,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         if (idx >= 0)
         {
             const auto& inputs = engine.getMidiInputDevices();
-            track.midiInputIdentifier = (idx < inputs.size())
+            track.midiInputIdentifier = (idx < (int) inputs.size())
                                           ? inputs[idx].identifier
                                           : juce::String();
         }
@@ -1246,7 +1246,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         if (idx >= 0)
         {
             const auto& outs = engine.getMidiOutputDevices();
-            track.midiOutputIdentifier = (idx < outs.size())
+            track.midiOutputIdentifier = (idx < (int) outs.size())
                                            ? outs[idx].identifier
                                            : juce::String();
             // Eagerly open the port so the first audio-thread emission
@@ -1567,7 +1567,7 @@ void ChannelStripComponent::rebuildMidiInputDropdown()
     midiInputSelector.clear (juce::dontSendNotification);
     midiInputSelector.addItem ("(none)", 1);
     const auto& inputs = engine.getMidiInputDevices();
-    for (int i = 0; i < inputs.size(); ++i)
+    for (int i = 0; i < (int) inputs.size(); ++i)
         midiInputSelector.addItem (inputs[i].name, 2 + i);
 
     // Prefer identifier-based selection when we have one - it survives
@@ -1576,7 +1576,7 @@ void ChannelStripComponent::rebuildMidiInputDropdown()
     int idx = -1;
     if (track.midiInputIdentifier.isNotEmpty())
     {
-        for (int i = 0; i < inputs.size(); ++i)
+        for (int i = 0; i < (int) inputs.size(); ++i)
         {
             if (inputs[i].identifier == track.midiInputIdentifier)
             {
@@ -1587,7 +1587,7 @@ void ChannelStripComponent::rebuildMidiInputDropdown()
     else
     {
         idx = track.midiInputIndex.load (std::memory_order_relaxed);
-        if (idx >= inputs.size()) idx = -1;
+        if (idx >= (int) inputs.size()) idx = -1;
     }
     track.midiInputIndex.store (idx, std::memory_order_relaxed);
     midiInputSelector.setSelectedId (idx >= 0 ? (2 + idx) : 1,
@@ -1601,13 +1601,13 @@ void ChannelStripComponent::rebuildMidiOutputDropdown()
     midiOutputSelector.clear (juce::dontSendNotification);
     midiOutputSelector.addItem ("(none)", 1);
     const auto& outs = engine.getMidiOutputDevices();
-    for (int i = 0; i < outs.size(); ++i)
+    for (int i = 0; i < (int) outs.size(); ++i)
         midiOutputSelector.addItem (outs[i].name, 2 + i);
 
     int idx = -1;
     if (track.midiOutputIdentifier.isNotEmpty())
     {
-        for (int i = 0; i < outs.size(); ++i)
+        for (int i = 0; i < (int) outs.size(); ++i)
         {
             if (outs[i].identifier == track.midiOutputIdentifier)
             {
@@ -1618,7 +1618,7 @@ void ChannelStripComponent::rebuildMidiOutputDropdown()
     else
     {
         idx = track.midiOutputIndex.load (std::memory_order_relaxed);
-        if (idx >= outs.size()) idx = -1;
+        if (idx >= (int) outs.size()) idx = -1;
     }
     track.midiOutputIndex.store (idx, std::memory_order_relaxed);
     midiOutputSelector.setSelectedId (idx >= 0 ? (2 + idx) : 1,

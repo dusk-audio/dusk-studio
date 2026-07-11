@@ -553,7 +553,7 @@ static void runHeadlessPipelineTest (const juce::String& pluginPath)
     // - Otherwise pick index 0 if any MIDI input exists, and force track
     //   0's midiInputIndex to match so the test can inject end-to-end.
     int midiInputIdx = -1;
-    const int numMidiInputs = engine->getMidiInputDevices().size();
+    const int numMidiInputs = (int) engine->getMidiInputDevices().size();
     if (numMidiInputs == 0)
     {
         std::fprintf (stderr, "WARN: no MIDI inputs available; injection will be a no-op.\n");
