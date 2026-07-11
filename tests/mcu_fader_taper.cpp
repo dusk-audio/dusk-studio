@@ -3,6 +3,7 @@
 
 #include "engine/McuFaderTaper.h"
 #include "engine/McuProtocol.h"
+#include "engine/FaderBindingMap.h"
 
 using Catch::Matchers::WithinAbs;
 using namespace duskstudio;
@@ -82,6 +83,59 @@ TEST_CASE ("McuFaderTaper: dB round-trips through pitch-bend within one code",
         const int   pb  = mcu::faderDbToPitchBend14 (db);
         const float rtd = mcu::pitchBend14ToFaderDb (pb);
         REQUIRE_THAT (rtd, WithinAbs (db, 0.2f));
+    }
+}
+
+// The MIDI-bindings apply/pickup path (AudioEngine) shares these two helpers
+// for its fader-dB targets: TrackFader, BusFader, AuxLaneFader, MasterFader.
+// A PitchBend-triggered binding rides the Mackie taper; a CC/Note binding
+// stays linear (generic 7-bit knob, no printed scale).
+
+TEST_CASE ("FaderBindingMap: PitchBend fader binds ride the Mackie taper",
+           "[mcu][taper][bindings]")
+{
+    // Unity (pb 12808) is what a Model-12-style motor fader sends at its
+    // printed 0 dB — the taper must land it on 0 dB, not the ~-10 dB the old
+    // linear-in-dB binding map produced. Consumed through the shared helper.
+    const float unityFrac = 12808.0f / (float) mcu::kPitchBendMaxValue;
+    REQUIRE_THAT (faderBindingFracToDb (unityFrac, /*pitchBend*/ true),
+                  WithinAbs (0.0f, 1e-3f));
+
+    // Top of throw = +12 dB; bottom = -100 dB, which sits below the
+    // ChannelStripParams hard-mute floor (-90) so a zeroed motor fader still
+    // silences the strip.
+    REQUIRE_THAT (faderBindingFracToDb (1.0f, true), WithinAbs (12.0f, 1e-3f));
+    REQUIRE_THAT (faderBindingFracToDb (0.0f, true), WithinAbs (-100.0f, 1e-3f));
+    REQUIRE (faderBindingFracToDb (0.0f, true) < -90.0f);
+}
+
+TEST_CASE ("FaderBindingMap: CC/Note fader binds stay linear -90..+12 dB",
+           "[mcu][taper][bindings]")
+{
+    REQUIRE_THAT (faderBindingFracToDb (0.0f, /*pitchBend*/ false), WithinAbs (-90.0f, 1e-4f));
+    REQUIRE_THAT (faderBindingFracToDb (1.0f, false), WithinAbs (12.0f, 1e-4f));
+    REQUIRE_THAT (faderBindingFracToDb (0.5f, false), WithinAbs (-39.0f, 1e-4f));
+
+    // A 7-bit CC lands 0 dB at ~0.882 of throw — the deliberately different
+    // behaviour from the PB taper (0 dB at ~0.782).
+    REQUIRE_THAT (faderBindingFracToDb (90.0f / 102.0f, false), WithinAbs (0.0f, 1e-3f));
+}
+
+TEST_CASE ("FaderBindingMap: apply and pickup inverse agree (soft-takeover symmetry)",
+           "[mcu][taper][bindings]")
+{
+    // faderBindingDbToFrac is the pickup read-back; it must invert
+    // faderBindingFracToDb for the SAME trigger or takeover latches at the
+    // wrong spot. Quantisation-limited on the PB side (14-bit codes).
+    for (bool pb : { false, true })
+    {
+        for (int i = 0; i <= 100; ++i)
+        {
+            const float frac = (float) i / 100.0f;
+            const float db   = faderBindingFracToDb (frac, pb);
+            const float back = faderBindingDbToFrac (db, pb);
+            REQUIRE_THAT (back, WithinAbs (frac, 2e-3f));
+        }
     }
 }
 
