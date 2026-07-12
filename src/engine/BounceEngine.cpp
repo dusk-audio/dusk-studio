@@ -37,6 +37,30 @@ BounceEngine::~BounceEngine()
     stopThread (5000);
 }
 
+void BounceEngine::runOnMessageThread (std::function<void()> fn)
+{
+    auto* mm = juce::MessageManager::getInstanceWithoutCreating();
+    if (mm == nullptr || mm->isThisTheMessageThread())
+    {
+        fn();
+        return;
+    }
+
+    // The queued lambda owns the sync state and fn, so abandoning the wait on
+    // shutdown (below) can never leave a dangling reference behind it.
+    struct Sync { juce::WaitableEvent done; };
+    auto sync = std::make_shared<Sync>();
+    juce::MessageManager::callAsync ([sync, fn = std::move (fn)]
+    {
+        fn();
+        sync->done.signal();
+    });
+
+    while (! sync->done.wait (50))
+        if (threadShouldExit())
+            break;   // app shutdown: don't block ~BounceEngine's stopThread join
+}
+
 std::unique_ptr<juce::AudioFormatWriter>
 BounceEngine::makeWriter (std::unique_ptr<juce::FileOutputStream> outStream,
                             juce::String& errOut) const
@@ -258,11 +282,16 @@ void BounceEngine::run()
     // callback ourselves at non-realtime pace. State is restored at the
     // bottom of this function regardless of how we exit.
     ScopedOfflineRender offlineGuard (engine);
-    deviceManager.removeAudioCallback (&engine);
-    // Render the saturating stages at 4× so the bounce is alias-free; cleared
-    // before the live re-prepare below.
-    engine.setRenderOversamplingOverride (kRenderOversamplingFactor);
-    engine.prepareForSelfTest (renderSampleRate, renderBlockSize);
+    // Detach + re-prepare on the message thread: prepareForSelfTest reaches every
+    // hosted plugin's (de)activate, which the CLAP contract forbids off the main
+    // thread. Render the saturating stages at 4× so the bounce is alias-free;
+    // cleared before the live re-prepare below.
+    runOnMessageThread ([this]
+    {
+        deviceManager.removeAudioCallback (&engine);
+        engine.setRenderOversamplingOverride (kRenderOversamplingFactor);
+        engine.prepareForSelfTest (renderSampleRate, renderBlockSize);
+    });
 
     // Synthetic input buffers - silent, since the bounce is master-mix
     // (we render whatever's on the timeline through the channel strips,
@@ -422,9 +451,14 @@ void BounceEngine::run()
         engine.getMasteringPlayer().setPlayhead (0);
     }
     engine.setStage (savedStage);
-    // Back to the user's realtime oversampling before the live re-prepare.
-    engine.setRenderOversamplingOverride (0);
-    deviceManager.addAudioCallback (&engine);
+    // Back to the user's realtime oversampling, then reattach on the message
+    // thread - addAudioCallback re-prepares the engine (plugin (de)activate),
+    // which must not run on this worker.
+    runOnMessageThread ([this]
+    {
+        engine.setRenderOversamplingOverride (0);
+        deviceManager.addAudioCallback (&engine);
+    });
 
     rendering.store (false, std::memory_order_relaxed);
     juce::String errSnapshot;
@@ -578,11 +612,16 @@ bool BounceEngine::runStemsMode()
     // Detach engine + prepare for offline rate just once. Each stem
     // re-uses the same prepared state.
     ScopedOfflineRender offlineGuard (engine);
-    deviceManager.removeAudioCallback (&engine);
-    // Stems render through the full strip path too, so oversample them 4× for
-    // alias-free output; cleared before the live re-prepare below.
-    engine.setRenderOversamplingOverride (kRenderOversamplingFactor);
-    engine.prepareForSelfTest (renderSampleRate, renderBlockSize);
+    // Detach + re-prepare on the message thread (plugin (de)activate must not run
+    // on this worker - see runOnMessageThread). Stems render through the full
+    // strip path too, so oversample them 4× for alias-free output; cleared before
+    // the live re-prepare below.
+    runOnMessageThread ([this]
+    {
+        deviceManager.removeAudioCallback (&engine);
+        engine.setRenderOversamplingOverride (kRenderOversamplingFactor);
+        engine.prepareForSelfTest (renderSampleRate, renderBlockSize);
+    });
 
     auto& transport = engine.getTransport();
     const auto savedTransportState = transport.getState();
@@ -631,9 +670,14 @@ bool BounceEngine::runStemsMode()
     transport.setState (savedTransportState);
     transport.setPlayhead (savedPlayhead);
     engine.setStage (savedStage);
-    // Back to the user's realtime oversampling before the live re-prepare.
-    engine.setRenderOversamplingOverride (0);
-    deviceManager.addAudioCallback (&engine);
+    // Back to the user's realtime oversampling, then reattach on the message
+    // thread - addAudioCallback re-prepares the engine (plugin (de)activate),
+    // which must not run on this worker.
+    runOnMessageThread ([this]
+    {
+        engine.setRenderOversamplingOverride (0);
+        deviceManager.addAudioCallback (&engine);
+    });
 
     if (cancelRequested.load (std::memory_order_relaxed))
     {
@@ -721,11 +765,15 @@ bool BounceEngine::renderFreezeTrack (int trackIndex, const juce::File& outFile,
         return false;
     }
 
-    // Detach + offline-prepare, exactly like the stem path.
+    // Detach + offline-prepare, exactly like the stem path (on the message
+    // thread - plugin (de)activate must not run on this worker).
     ScopedOfflineRender offlineGuard (engine);
-    deviceManager.removeAudioCallback (&engine);
-    engine.setRenderOversamplingOverride (kRenderOversamplingFactor);
-    engine.prepareForSelfTest (renderSampleRate, renderBlockSize);
+    runOnMessageThread ([this]
+    {
+        deviceManager.removeAudioCallback (&engine);
+        engine.setRenderOversamplingOverride (kRenderOversamplingFactor);
+        engine.prepareForSelfTest (renderSampleRate, renderBlockSize);
+    });
 
     constexpr int kNumIn = 16;
     std::vector<std::vector<float>> inputs (kNumIn,
@@ -833,8 +881,13 @@ bool BounceEngine::renderFreezeTrack (int trackIndex, const juce::File& outFile,
     transport.setState (savedTransportState);
     transport.setPlayhead (savedPlayhead);
     engine.setStage (savedStage);
-    engine.setRenderOversamplingOverride (0);
-    deviceManager.addAudioCallback (&engine);
+    // Reattach on the message thread (addAudioCallback re-prepares the engine,
+    // reaching plugin (de)activate - must not run on this worker).
+    runOnMessageThread ([this]
+    {
+        engine.setRenderOversamplingOverride (0);
+        deviceManager.addAudioCallback (&engine);
+    });
 
     if (! ok || cancelRequested.load (std::memory_order_relaxed))
     {

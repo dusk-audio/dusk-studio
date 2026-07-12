@@ -134,6 +134,18 @@ public:
 private:
     void run() override;
 
+    // Run fn on the message thread and block the worker until it completes.
+    // The offline render detaches the audio device and re-prepares the engine,
+    // which reaches every hosted plugin's activate/deactivate - CLAP (and the
+    // VST3/LV2 contracts) require those on the MAIN thread, and a live plugin
+    // editor keeps pumping its GUI on the real message thread during the bounce,
+    // so the (de)activate must be serialised there, not run on this worker.
+    // Runs fn inline when already on the message thread (the synchronous freeze
+    // path) or when no MessageManager exists (headless tests). Polls so app
+    // shutdown (stopThread -> signalThreadShouldExit) can't deadlock the worker
+    // against ~BounceEngine's join.
+    void runOnMessageThread (std::function<void()> fn);
+
     AudioEngine& engine;
     Session&     session;
     juce::AudioDeviceManager& deviceManager;
