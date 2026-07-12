@@ -2103,7 +2103,7 @@ void MasterStripComponent::showTapeSectionMenu()
 {
     // Tape has no inline strip knobs (its only controls live in the popup
     // editor), so there is no per-knob double-click precedent to build a
-    // whole-section reset from — the menu offers just "Open editor...".
+    // whole-section reset from - the menu offers just "Open editor...".
     juce::PopupMenu menu;
     menu.addItem (11, "Open editor...");
     juce::Component& anchor = compactMode ? (juce::Component&) tapeButton
@@ -2120,7 +2120,7 @@ void MasterStripComponent::showTapeSectionMenu()
 void MasterStripComponent::resetEqSection()
 {
     // Replays each EQ knob's double-click return value through its live
-    // onValueChange path (no new defaults). Restore the engaged state after —
+    // onValueChange path (no new defaults). Restore the engaged state after -
     // the knobs auto-arm on change, but a reset shouldn't toggle the EQ on.
     const bool wasEnabled = params.eqEnabled.load (std::memory_order_relaxed);
     auto reset = [] (juce::Slider& s)

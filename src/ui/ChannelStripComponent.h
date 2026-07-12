@@ -307,7 +307,7 @@ private:
     void showEqSectionMenu();
     void showCompSectionMenu();
     void showAuxSectionMenu();
-    // Whole-section resets — replays each section knob's own double-click
+    // Whole-section resets - replays each section knob's own double-click
     // return value through its live onValueChange path (message thread).
     void resetEqSection();
     void resetCompSection();

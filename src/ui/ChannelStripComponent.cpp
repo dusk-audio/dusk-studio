@@ -242,7 +242,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     };
     addAndMakeVisible (eqTypeChip);
 
-    // ── EQ region ──
+    //  EQ region 
     // Single EQ header button - unified section grammar. Left-click
     // toggles eqEnabled; right-click opens the EQ section menu (type +
     // reset + open editor); double-click opens the full EQ editor.
@@ -4523,7 +4523,7 @@ void ChannelStripComponent::showEqSectionMenu()
 
 void ChannelStripComponent::showCompSectionMenu()
 {
-    // Unified COMP section menu — mode items (OPTO / FET / VCA) + whole-
+    // Unified COMP section menu - mode items (OPTO / FET / VCA) + whole-
     // section reset + open editor. Bypass lives on the header's left-click.
     const int m = juce::jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
     juce::PopupMenu menu;
@@ -4555,7 +4555,7 @@ void ChannelStripComponent::showCompSectionMenu()
 
 void ChannelStripComponent::showAuxSectionMenu()
 {
-    // Compact AUX pill context menu — mirrors the full-mode aux-knob menu
+    // Compact AUX pill context menu - mirrors the full-mode aux-knob menu
     // (per-send PRE/POST toggle) minus the knob-specific MIDI-learn items,
     // plus a whole-section reset and open editor.
     juce::Component::SafePointer<ChannelStripComponent> safeThis (this);
@@ -4589,7 +4589,7 @@ void ChannelStripComponent::resetEqSection()
 {
     // Replays each EQ knob's own double-click return value through its live
     // onValueChange path (no new defaults invented). The band knobs auto-arm
-    // eqEnabled on change, so restore the prior engaged state afterwards — a
+    // eqEnabled on change, so restore the prior engaged state afterwards - a
     // reset flattens the EQ but shouldn't toggle it on.
     const bool wasEnabled = track.strip.eqEnabled.load (std::memory_order_relaxed);
     auto reset = [] (juce::Slider& s)

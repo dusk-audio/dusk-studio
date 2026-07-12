@@ -1802,7 +1802,7 @@ void BusComponent::resetEqSection()
 {
     // Replays each EQ gain knob's double-click return value (flat, 0 dB) through
     // its live onValueChange path. The band knobs auto-arm on change, so restore
-    // the prior engaged state — a reset flattens the EQ but shouldn't toggle it on.
+    // the prior engaged state - a reset flattens the EQ but shouldn't toggle it on.
     const bool wasEnabled = bus.strip.eqEnabled.load (std::memory_order_relaxed);
     auto reset = [] (juce::Slider& s)
     {

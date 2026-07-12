@@ -142,7 +142,7 @@ public:
     {
         if (e.mods.isPopupMenu())
             return;
-        if (toggleFn) toggleFn();   // undo the first click's toggle → no net change
+        if (toggleFn) toggleFn();   // undo the first click's toggle -> no net change
         repaint();
         if (doubleClickFn) doubleClickFn();
     }
