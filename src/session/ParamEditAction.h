@@ -13,7 +13,7 @@ namespace duskstudio
 //
 // Continuous controls push ONE action per gesture: capture the value at
 // drag-start, push at drag-end (before != after). Toggles push one per click.
-// The closures capture the target atomic by pointer — valid for the life of
+// The closures capture the target atomic by pointer - valid for the life of
 // the session (the undo history is cleared on session load), and they run on
 // the message thread exactly like the normal UI write, so no new RT race.
 class ParamEditAction final : public juce::UndoableAction

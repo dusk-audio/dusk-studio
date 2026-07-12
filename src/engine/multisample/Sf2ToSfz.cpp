@@ -65,7 +65,7 @@ bool writeSampleWav(juce::FileInputStream& in,
     if (s.end <= s.start) return false;
     const std::int64_t frames64 = (std::int64_t) s.end - (std::int64_t) s.start;
     if (smplSize <= 0 || (std::int64_t) s.end * 2 > smplSize) return false;
-    if (frames64 > 0x10000000) return false;   // 256 M frames ≈ 512 MB — no real instrument sample
+    if (frames64 > 0x10000000) return false;   // 256 M frames ≈ 512 MB - no real instrument sample
     const int numFrames = (int) frames64;
 
     in.setPosition(smplOffset + (std::int64_t) s.start * 2);
@@ -180,7 +180,7 @@ Sf2Conversion convertSf2Preset(const juce::File& sf2,
             GenMap eff = instGlobal;
             mergeZone(eff, instZone);
 
-            // ── Key / velocity ranges (intersect with preset layer) ──
+            // Key / velocity ranges (intersect with preset layer)
             int loKey = 0, hiKey = 127, loVel = 0, hiVel = 127;
             if (auto it = eff.find(kGenKeyRange); it != eff.end())
             {
@@ -204,7 +204,7 @@ Sf2Conversion convertSf2Preset(const juce::File& sf2,
             }
             if (loKey > hiKey || loVel > hiVel) continue;   // empty after intersect
 
-            // ── Pitch ──
+            // Pitch
             const int rootKey = genOr(eff, kGenOverridingRootKey, smp.originalPitch);
             const int coarse  = genOr(eff, kGenCoarseTune, 0)
                               + genOr(presetLayer, kGenCoarseTune, 0);
@@ -212,12 +212,12 @@ Sf2Conversion convertSf2Preset(const juce::File& sf2,
                               + genOr(presetLayer, kGenFineTune, 0)
                               + smp.pitchCorrection;
 
-            // ── Level / pan ──
+            // Level / pan
             const int attenCb = genOr(eff, kGenInitialAttenuation, 0)
                               + genOr(presetLayer, kGenInitialAttenuation, 0);
             const double volumeDb = -((double) attenCb) / 10.0;
 
-            // Pan: explicit generator wins (-500..500 → -100..100). When
+            // Pan: explicit generator wins (-500..500 -> -100..100). When
             // absent, derive from the sample's stereo type so linked
             // left/right samples land hard L/R as the SF2 intends.
             const bool hasPanGen = (eff.count(kGenPan) || presetLayer.count(kGenPan));
@@ -234,11 +234,11 @@ Sf2Conversion convertSf2Preset(const juce::File& sf2,
                 else if (type == 2) pan =  100.0;            // right
             }
 
-            // ── Loop ──
+            // Loop
             const int sampleModes = genOr(eff, kGenSampleModes, 0);
             const bool loops = (sampleModes == 1 || sampleModes == 3);
 
-            // ── Volume envelope (timecents → seconds; cB → % sustain) ──
+            // Volume envelope (timecents -> seconds; cB -> % sustain)
             auto tcToSec = [](int tc) { return std::pow(2.0, (double) tc / 1200.0); };
             juce::String env;
             if (auto it = eff.find(kGenDelayVolEnv);   it != eff.end())
@@ -259,7 +259,7 @@ Sf2Conversion convertSf2Preset(const juce::File& sf2,
             if (auto it = eff.find(kGenReleaseVolEnv); it != eff.end())
                 env << " ampeg_release=" << juce::String(tcToSec(it->second), 4);
 
-            // ── Lowpass filter ──
+            // Lowpass filter
             // initialFilterFc is absolute cents (8.176 Hz reference);
             // default 13500 cents (~20 kHz) = effectively open, skip.
             const int fcCents = genOr(eff, kGenInitialFilterFc, 13500)
@@ -275,11 +275,11 @@ Sf2Conversion convertSf2Preset(const juce::File& sf2,
             if (resCb > 0)
                 env << " resonance=" << juce::String((double) resCb / 10.0, 2);
 
-            // ── Key tracking (scaleTuning, cents/key; default 100) ──
+            // Key tracking (scaleTuning, cents/key; default 100)
             if (auto it = eff.find(kGenScaleTuning); it != eff.end() && it->second != 100)
                 env << " pitch_keytrack=" << (int) it->second;
 
-            // ── Exclusive class → self-choking group (drum hi-hats) ──
+            // Exclusive class -> self-choking group (drum hi-hats)
             if (auto it = eff.find(kGenExclusiveClass); it != eff.end() && it->second != 0)
                 env << " group=" << (int) it->second
                     << " off_by=" << (int) it->second;
@@ -297,7 +297,7 @@ Sf2Conversion convertSf2Preset(const juce::File& sf2,
             }
             const auto& wavName = exIt->second;
 
-            // ── Emit region ──
+            // Emit region
             juce::String r;
             r << "<region> sample=" << wavName
               << " lokey=" << loKey << " hikey=" << hiKey

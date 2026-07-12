@@ -12,26 +12,26 @@ namespace duskstudio::hosting
 // stereo-in / stereo-out insert contract. This is the ONE place the "an insert
 // is stereo" invariant lives:
 //
-//   * mono plugin  → the stereo feed is summed to a mono input, and the mono
+//   * mono plugin  -> the stereo feed is summed to a mono input, and the mono
 //                    output is broadcast back to L and R;
-//   * stereo plugin→ straight L/R through;
-//   * multi-out    → only main-out channels 0/1 reach the mixer; aux output
+//   * stereo plugin-> straight L/R through;
+//   * multi-out    -> only main-out channels 0/1 reach the mixer; aux output
 //                    buses are dropped (an insert has nowhere to send them);
-//   * sidechain    → fed from the tap when routed, otherwise pre-sized silence
-//                    (never a null pointer — plugins may dereference it);
-//   * instrument   → no audio input; the plugin's output IS the signal.
+//   * sidechain    -> fed from the tap when routed, otherwise pre-sized silence
+//                    (never a null pointer - plugins may dereference it);
+//   * instrument   -> no audio input; the plugin's output IS the signal.
 //
 // Owns every process-scratch buffer, sized once in prepare(); process() runs on
 // the audio thread and allocates nothing.
 class InsertAdapter
 {
 public:
-    // Message thread. Size scratch for `layout` at `maxBlockFrames`. Idempotent —
+    // Message thread. Size scratch for `layout` at `maxBlockFrames`. Idempotent -
     // safe to call again when the layout or block size changes.
     void prepare (const PortLayout& layout, int maxBlockFrames);
 
     // Audio thread. Run `inst` as a stereo insert over L/R in place. sidechainL/R
-    // feed the plugin's sidechain bus when it has one (null → silence). midiIn /
+    // feed the plugin's sidechain bus when it has one (null -> silence). midiIn /
     // transport are forwarded for instrument / tempo-synced plugins (null ok).
     // Leaves L/R untouched (dry passthrough) if `inst` is inactive or numFrames
     // exceeds the prepared maximum.

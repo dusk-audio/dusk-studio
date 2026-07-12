@@ -7,7 +7,7 @@
 #include <os/os_sync_wait_on_address.h>
 #include <thread>
 
-// macOS 14.4+ provides os_sync_wait_on_address — equivalent to
+// macOS 14.4+ provides os_sync_wait_on_address - equivalent to
 // Linux's FUTEX_WAIT_BITSET / Windows' WaitOnAddress, and supports
 // cross-process wait/wake when the address is in a shared mapping
 // via the OS_SYNC_WAIT_ON_ADDRESS_SHARED flag.

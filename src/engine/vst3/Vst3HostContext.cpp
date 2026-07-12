@@ -26,7 +26,7 @@ class HostObject final : public Vst::HostApplication,
 public:
     explicit HostObject (Vst3HostContext::Callbacks*& cb) : callbacks (cb) {}
 
-    // ── FUnknown: extend HostApplication's QI with the extra facets ──
+    // FUnknown: extend HostApplication's QI with the extra facets
     tresult PLUGIN_API queryInterface (const TUID iid, void** obj) override
     {
         QUERY_INTERFACE (iid, obj, Vst::IComponentHandler::iid, Vst::IComponentHandler)
@@ -37,7 +37,7 @@ public:
     uint32 PLUGIN_API addRef() override  { return Vst::HostApplication::addRef(); }
     uint32 PLUGIN_API release() override { return Vst::HostApplication::release(); }
 
-    // ── IHostApplication ──
+    // IHostApplication
     tresult PLUGIN_API getName (Vst::String128 name) override
     {
         static const char16_t kName[] = u"Dusk Studio";
@@ -45,7 +45,7 @@ public:
         return kResultTrue;
     }
 
-    // ── IComponentHandler (controller → host parameter edits) ──
+    // IComponentHandler (controller -> host parameter edits)
     tresult PLUGIN_API beginEdit (Vst::ParamID id) override
     {
         if (callbacks != nullptr) callbacks->onBeginEdit ((uint32_t) id);
@@ -67,7 +67,7 @@ public:
         return kResultOk;
     }
 
-    // ── IPlugFrame (editor asks the host to resize its window) ──
+    // IPlugFrame (editor asks the host to resize its window)
     tresult PLUGIN_API resizeView (IPlugView* /*view*/, ViewRect* newSize) override
     {
         if (newSize == nullptr) return kInvalidArgument;
@@ -76,7 +76,7 @@ public:
         return ok ? kResultOk : kResultFalse;
     }
 
-    // ── Linux::IRunLoop (fd + timer registry, pumped from the message thread) ──
+    // Linux::IRunLoop (fd + timer registry, pumped from the message thread)
     tresult PLUGIN_API registerEventHandler (Linux::IEventHandler* handler,
                                              Linux::FileDescriptor fd) override
     {

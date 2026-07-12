@@ -7,7 +7,7 @@ namespace
 {
 // One static modal per nesting level. Submenus open into a SECOND
 // modal so the parent stays painted underneath while the submenu is
-// visible — matches juce::PopupMenu's behaviour.
+// visible - matches juce::PopupMenu's behaviour.
 EmbeddedModal& sharedContextModal()
 {
     static EmbeddedModal m;
@@ -85,8 +85,8 @@ public:
 
         // Width: max of measured text widths + padding for tick + arrow.
         // Font size MUST match the row-paint font (16 pt, see paint())
-        // — measuring at a smaller size undercounts and truncates the
-        // last few characters (the "About Dusk Studio" → "Studi" bug).
+        // - measuring at a smaller size undercounts and truncates the
+        // last few characters (the "About Dusk Studio" -> "Studi" bug).
         const juce::Font font { juce::FontOptions (16.0f) };
         int maxText = 0;
         for (const auto& r : rowsData)
@@ -194,7 +194,7 @@ public:
         auto action = r.action;
         const int id = r.itemId;
         auto onPick = onPickFn;
-        // Close BOTH modals unconditionally — submenu first so the
+        // Close BOTH modals unconditionally - submenu first so the
         // parent doesn't briefly paint on top of a stale submenu, then
         // the parent. Earlier code skipped the parent close when the
         // pick came from a submenu, which left the parent visible after
@@ -349,7 +349,7 @@ void showContextMenu (const juce::PopupMenu& menu,
     juce::Point<int> anchor = screenPos;
     if (anchor.x < 0 || anchor.y < 0)
     {
-        // Anchor below the target by default — matches PopupMenu's
+        // Anchor below the target by default - matches PopupMenu's
         // withTargetComponent fallback positioning.
         const auto tb = target.getScreenBounds();
         anchor = { tb.getX(), tb.getBottom() + 2 };

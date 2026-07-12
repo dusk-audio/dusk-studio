@@ -6,7 +6,7 @@
 
 namespace duskstudio
 {
-// Real-mixer look — dark disc with coloured rim that lights up when
+// Real-mixer look - dark disc with coloured rim that lights up when
 // the button is the active state, vector icon (square / triangle /
 // disc) centred. Reuses Button base for click/hover/state.
 class TransportIconButton final : public juce::Button
@@ -44,7 +44,7 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
     // Catches right-clicks routed up from child buttons via
-    // addMouseListener — jumpback button's preset menu uses this.
+    // addMouseListener - jumpback button's preset menu uses this.
     void mouseDown (const juce::MouseEvent&) override;
     // Double-click on the BPM readout opens the tempo prompt.
     void mouseDoubleClick (const juce::MouseEvent&) override;
@@ -52,13 +52,13 @@ public:
     // Hidden when MainComponent overlays stage + bank buttons on top.
     void setHintVisible (bool visible);
 
-    // Keyboard-shortcut entry points (MainComponent::keyPressed) — same
+    // Keyboard-shortcut entry points (MainComponent::keyPressed) - same
     // code paths as the corresponding buttons.
     void tapTempo();
     void openTimeSigMenu();
     void toggleTimeFormat();
 
-    // Hard-coding tuner X from outside is fragile — the right-anchored
+    // Hard-coding tuner X from outside is fragile - the right-anchored
     // cluster (BPM / tap / time-sig / mode toggles) shifts the tuner
     // left by ~376 px in expanded mode and ~280 px in compact mode.
     int getTunerLeftX() const noexcept { return tuneButton.getX(); }
@@ -69,7 +69,7 @@ public:
 
     // Below this width SNAP->S, TIMELINE->chevron, clock shrinks,
     // MainComponent's bank overlay shrinks to match. Calibrated to
-    // fire just above the OS-enforced resize floor (~1790 px) — the
+    // fire just above the OS-enforced resize floor (~1790 px) - the
     // previous 1600 never triggered.
     static constexpr int kCompactTransportWidth = 1850;
 
@@ -180,13 +180,13 @@ private:
 
     // Double-click on the BPM readout. Constant-tempo sessions edit the
     // session tempo (with the usual retime confirm); tempo-mapped sessions
-    // edit the point governing the playhead — the value the readout shows.
+    // edit the point governing the playhead - the value the readout shows.
     void promptEditTempoAtPlayhead();
 
     juce::TextButton tapeToggle    { juce::CharPointer_UTF8 ("\xe2\x96\xbe TIMELINE") };  // "▾ TIMELINE"
     juce::Label      clockLabel;
     // Label always shows the format the user will get on click (so
-    // looking at bars shows "TIME"). Hidden in compact mode — right-
+    // looking at bars shows "TIME"). Hidden in compact mode - right-
     // click on clockLabel is the always-available fallback.
     // Icon flips inverse of active mode so it shows "what you'll get
     // on click".
@@ -203,7 +203,7 @@ public:
     std::function<void (bool)> onTapeStripToggle;
 
     // Sync the TIMELINE button's visual state from outside (keyboard
-    // shortcut path). dontSendNotification — caller updates the rest of
+    // shortcut path). dontSendNotification - caller updates the rest of
     // the chain (tapeStrip visibility, console compact mode) directly.
     void setTapeToggleVisualState (bool expanded) noexcept
     {

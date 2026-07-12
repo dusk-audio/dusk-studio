@@ -29,7 +29,7 @@ bool ThreadedFileWriter::push (const float* const* src, int numCh, int64_t numFr
     if (numFrames <= 0)
         return true;
     if (! isValid())
-        return false;   // null writer or a failed disk write — never report success
+        return false;   // null writer or a failed disk write - never report success
 
     const int64_t w = writePos.load (std::memory_order_relaxed);
     const int64_t r = readPos.load (std::memory_order_acquire);

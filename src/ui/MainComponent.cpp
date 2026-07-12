@@ -85,7 +85,7 @@ juce::AudioFormatManager& importAudioFormatManager()
 
 // Background worker for the DP-song bulk import: mixdown alignment plus every
 // fragment decode/convert runs here so a large song doesn't wedge the message
-// thread for minutes. NO session access — the outcomes are applied on the
+// thread for minutes. NO session access - the outcomes are applied on the
 // message thread in MainComponent::finishDpImport once `done` flips. Cancel
 // deletes the WAVs already produced (nothing references them until apply).
 class DpImportJob final : public juce::Thread
@@ -308,7 +308,7 @@ void showImportError (const juce::String& title, const juce::String& message)
     }
     // No top-level to host the in-window alert (headless / shutdown paths
     // only). A native AlertWindow here would be the one separate-window
-    // dialog left in the app — and on a headless path it can't be seen
+    // dialog left in the app - and on a headless path it can't be seen
     // anyway. Log instead; the assert makes a reachable-in-normal-use
     // regression loud in debug builds.
     std::fprintf (stderr, "[Dusk Studio] %s: %s\n",
@@ -492,7 +492,7 @@ private:
 
 MainComponent::MainComponent()
 {
-    // Accessibility floor — screen readers announce the root view as
+    // Accessibility floor - screen readers announce the root view as
     // "Dusk Studio mixer" instead of "Component". Tab navigation across
     // strips is enabled per-strip via setWantsKeyboardFocus on each
     // ChannelStripComponent in resized().
@@ -500,7 +500,7 @@ MainComponent::MainComponent()
     setDescription ("16-channel portastudio-style mixer");
 
     // JUCE's TooltipWindow never disables click interception, and ours is
-    // parented in-window and anchored into the menu row — every visible tip
+    // parented in-window and anchored into the menu row - every visible tip
     // was an always-on-top click shield over the stage tabs / bank buttons /
     // transport ("I have to click twice"). Tips are display-only; let every
     // click pass through to what's underneath.
@@ -510,12 +510,12 @@ MainComponent::MainComponent()
 
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
     // Plugins run IN-PROCESS by default. On Linux/XWayland the out-of-process
-    // editor path (cross-process XEmbed) is structurally unreliable — the
-    // compositor fights X11 reparenting — and in-process hosting gives instant,
+    // editor path (cross-process XEmbed) is structurally unreliable - the
+    // compositor fights X11 reparenting - and in-process hosting gives instant,
     // correct plugin editors with the lowest CPU/latency. The trade-off is
     // crash isolation: a misbehaving plugin can take down the app instead of
     // just a child. Opt back into the OOP sandbox with
-    // DUSKSTUDIO_USE_OOP_PLUGINS=1. Read once at startup — flipping mid-session
+    // DUSKSTUDIO_USE_OOP_PLUGINS=1. Read once at startup - flipping mid-session
     // would require reloading every plugin to pick up the new mode.
     {
         const char* env = std::getenv ("DUSKSTUDIO_USE_OOP_PLUGINS");
@@ -525,7 +525,7 @@ MainComponent::MainComponent()
    #endif
 
     // Optional plugin scan on launch. Per-machine setting (AppConfig);
-    // default off. Synchronous — blocks the message thread for a few
+    // default off. Synchronous - blocks the message thread for a few
     // Push the user's persisted Stop-behavior preference into the session
     // atom so AudioEngine::stop reads the right policy on the first Stop
     // after launch. The AudioSettingsPanel combo updates this same atom
@@ -750,7 +750,7 @@ MainComponent::MainComponent()
     addAndMakeVisible (consoleView.get());
     // Propagate the persisted timeline-expanded state: tapeStrip visibility +
     // the transport toggle were set above, but the console strips' compact
-    // mode wasn't — without this they start full-height even when the timeline
+    // mode wasn't - without this they start full-height even when the timeline
     // is expanded on launch.
     consoleView->setStripsCompactMode (tapeStripExpanded);
     consoleView->setOnStripFocusRequested ([this] (int t)
@@ -759,7 +759,7 @@ MainComponent::MainComponent()
     });
 
     // Initial stage is Recording (engine default + recordingStageBtn
-    // toggled on) — sync strip controls so the first paint shows
+    // toggled on) - sync strip controls so the first paint shows
     // input / IN / ARM / PRINT instead of aux sends. switchToStage()
     // handles subsequent changes.
     consoleView->setStripsMixingMode (engine.getStage() == AudioEngine::Stage::Mixing);
@@ -785,7 +785,7 @@ MainComponent::MainComponent()
     h = juce::jmax (h, minContentH);
 
     // Gate the startup plugin scan BEFORE setSize(): setSize drives a
-    // synchronous resized() → maybeStartStartupPluginScan(), and if the
+    // synchronous resized() -> maybeStartStartupPluginScan(), and if the
     // dialog-pending flag isn't set yet that call latches startupScanTriggered
     // and shows the scan modal over the still-blank canvas, defeating the
     // startup-dialog gate. We're pending iff the picker will actually appear:
@@ -832,8 +832,8 @@ MainComponent::MainComponent()
 
     // Surface a "can't record" reason (no armed track / no device) as an
     // in-window alert instead of only logging it to stderr. Covers every
-    // record trigger — on-screen Record, the R key, and the MCU Record
-    // button — since they all funnel through engine.record().
+    // record trigger - on-screen Record, the R key, and the MCU Record
+    // button - since they all funnel through engine.record().
     engine.setRecordBlockedSink ([this] (juce::String msg)
     {
         showDuskAlert (*this, "Cannot record", msg);
@@ -848,8 +848,8 @@ MainComponent::MainComponent()
 
     // Startup: if the saved audio device was in use (held by PipeWire / JACK /
     // another DAW), the engine ctor already tried to fall back to a working one.
-    // Tell the user what happened — switched to another device, or left with
-    // none — with a route into Audio Settings. Deferred so it paints over the
+    // Tell the user what happened - switched to another device, or left with
+    // none - with a route into Audio Settings. Deferred so it paints over the
     // main window, not a blank canvas. consume clears it (one-shot).
     if (auto deviceMsg = engine.consumeStartupDeviceMessage(); deviceMsg.isNotEmpty())
     {
@@ -890,7 +890,7 @@ MainComponent::MainComponent()
     {
         // startupDialogPending was already set before setSize() above (so the
         // scan-kicking resized() saw the gate); just queue the dialog here.
-        // Capture mode suppresses the picker too — its modal would overlay
+        // Capture mode suppresses the picker too - its modal would overlay
         // the snapshots (mirrors the CAPTURE_DIR guard in the scan path).
         juce::Component::SafePointer<MainComponent> safeThis (this);
         juce::MessageManager::callAsync ([safeThis]
@@ -923,12 +923,12 @@ MainComponent::MainComponent()
     // other MainComponent child + paints the Grab / Cut / Draw glyph
     // at the mouse position. The editors push their local mouse
     // position to it via callbacks (component-to-component conversion
-    // via the JUCE tree — Wayland's screen coords are broken for
+    // via the JUCE tree - Wayland's screen coords are broken for
     // Desktop::getMousePosition / Component::getScreenPosition, so
     // we cannot rely on screen-space polling).
     cursorOverlay = std::make_unique<CursorOverlay>();
     addAndMakeVisible (cursorOverlay.get());
-    // Size it now — setSize() above already ran resized() before this overlay
+    // Size it now - setSize() above already ran resized() before this overlay
     // existed, so without this it sits at 0x0 (invisible glyph) until the
     // first window resize.
     cursorOverlay->setBounds (getLocalBounds());
@@ -987,7 +987,7 @@ MainComponent::~MainComponent()
         auxView->dropAllNativeEditors();
 
     // Force-delete any modal body we launched, synchronously. close()
-    // would defer body destruction to the next message-loop tick — but
+    // would defer body destruction to the next message-loop tick - but
     // the dispatch loop has already exited on this path, so the deferred
     // lambda would run AFTER our AudioEngine + AudioDeviceManager are
     // gone. AudioSettingsPanel's destructor removes listeners from both;
@@ -1036,7 +1036,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     const bool shift   = mods.isShiftDown();
     const bool noMods  = ! cmd && ! shift && ! mods.isAltDown();
 
-    // ── Edit-mode shortcuts (Ardour-style). 'G' picks Grab Mode so the
+    // Edit-mode shortcuts (Ardour-style). 'G' picks Grab Mode so the
     // user can flip back to move/select after a Range or Cut detour. No
     // modifiers so it never collides with the Cmd+letter clipboard ops.
     if (code == 'G' && noMods)
@@ -1048,7 +1048,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         return true;
     }
 
-    // ── Bank switching: plain 1/2/3/4 select the visible channel bank. Maps to
+    // Bank switching: plain 1/2/3/4 select the visible channel bank. Maps to
     // ConsoleView::setBank which also publishes the active bank to the audio
     // thread so bank-relative MIDI bindings retarget. Out-of-range digits (more
     // banks than the window currently shows) fall through unhandled.
@@ -1062,7 +1062,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         }
     }
 
-    // ── Stage switching: Cmd/Ctrl + 1/2/3/4 select Recording / Mixing /
+    // Stage switching: Cmd/Ctrl + 1/2/3/4 select Recording / Mixing /
     // Mastering / Aux. Plain digits are bank switching (above).
     if (cmd && ! shift)
     {
@@ -1076,10 +1076,10 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         }
     }
 
-    // ── Shift+Left / Shift+Right mirror the transport Rewind / Forward taps:
+    // Shift+Left / Shift+Right mirror the transport Rewind / Forward taps:
     // previous / next marker, with the buttons' stopped-and-empty fallbacks
     // (start of session / last record point). Cmd+arrows are region nudge,
-    // plain arrows are strip focus — this claims the remaining pair.
+    // plain arrows are strip focus - this claims the remaining pair.
     if (shift && ! cmd && ! mods.isAltDown()
         && (key == juce::KeyPress::leftKey || key == juce::KeyPress::rightKey))
     {
@@ -1094,7 +1094,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         return true;
     }
 
-    // ── Plain Left/Right move the channel-strip focus ring across the 24
+    // Plain Left/Right move the channel-strip focus ring across the 24
     // strips (Recording / Mixing stages), auto-flipping the visible bank at a
     // boundary. The focused strip becomes the A / S / X target. Cmd+arrows are
     // region nudge (handled above), so the unmodified form is free here.
@@ -1107,14 +1107,14 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         return true;
     }
 
-    // ── '?' (Shift+/) opens the keyboard-shortcut reference.
+    // '?' (Shift+/) opens the keyboard-shortcut reference.
     if (key.getTextCharacter() == '?')
     {
         openShortcuts();
         return true;
     }
 
-    // ── TIMELINE toggle: T (or Cmd/Ctrl + \) shows / hides the tape strip.
+    // TIMELINE toggle: T (or Cmd/Ctrl + \) shows / hides the tape strip.
     // Mirrors the TransportBar's TIMELINE button so the user can flip the
     // arrangement view without mousing. Plain T is the mnemonic ("Timeline");
     // \\ is the Reaper / Pro Tools-style alias. (Alt+T is take cycling below.)
@@ -1125,7 +1125,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         return true;
     }
 
-    // ── Take cycling. Alt+T = forward (next take), Alt+Shift+T = backward.
+    // Take cycling. Alt+T = forward (next take), Alt+Shift+T = backward.
     // Routes through TapeStrip's selection state; no-op when no region
     // is selected or the selection has no take history. T (plain) is
     // already claimed by split-at-playhead, hence the Alt modifier.
@@ -1139,8 +1139,8 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         }
     }
 
-    // ── TapeStrip zoom: '=' / '+' zoom in, '-' zoom out, '0' fit.
-    // Skipped when a modal editor (audio / piano roll) has focus —
+    // TapeStrip zoom: '=' / '+' zoom in, '-' zoom out, '0' fit.
+    // Skipped when a modal editor (audio / piano roll) has focus -
     // those have their own zoom keypress paths and grab focus first.
     if (tapeStrip != nullptr && audioEditor == nullptr && pianoRoll == nullptr)
     {
@@ -1162,7 +1162,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         }
     }
 
-    // ── Edit: Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z, Ctrl/Cmd+Y ──
+    // Edit: Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z, Ctrl/Cmd+Y
     if (code == 'Z' && cmd && ! shift) { um.undo(); return true; }
     if ((code == 'Z' && cmd && shift) || (code == 'Y' && cmd))
     {
@@ -1170,7 +1170,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         return true;
     }
 
-    // ── Region clipboard: Ctrl/Cmd+C, Ctrl/Cmd+X, Ctrl/Cmd+V; Delete ──
+    // Region clipboard: Ctrl/Cmd+C, Ctrl/Cmd+X, Ctrl/Cmd+V; Delete
     // Each routes through TapeStrip, which owns the selection state. They
     // no-op when nothing's selected (or for paste, when the clipboard's
     // empty), letting the keypress fall through to default handling.
@@ -1235,7 +1235,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         }
     }
 
-    // ── File: Ctrl/Cmd+S (save), Ctrl/Cmd+Shift+S (save as), Ctrl/Cmd+O (open) ──
+    // File: Ctrl/Cmd+S (save), Ctrl/Cmd+Shift+S (save as), Ctrl/Cmd+O (open)
     // Buttons are gone (replaced by the menu bar) - dispatch to menu IDs
     // directly so the keyboard path keeps working.
     if (code == 'S' && cmd && ! shift) { menuItemSelected (1003, 0); return true; }   // Save
@@ -1245,10 +1245,10 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
     if (code == 'I' && cmd && ! shift) { menuItemSelected (1006, 0); return true; }   // Import
     if (code == 'Q' && cmd)            { menuItemSelected (1099, 0); return true; }   // Quit
 
-    // ── Bounce: Ctrl/Cmd+B (Logic-style; intuitive "B for Bounce") ──
+    // Bounce: Ctrl/Cmd+B (Logic-style; intuitive "B for Bounce")
     if (code == 'B' && cmd) { menuItemSelected (1011, 0); return true; }              // Bounce
 
-    // ── Transport: Space toggles play/stop, R toggles record ──
+    // Transport: Space toggles play/stop, R toggles record
     // Pro Tools / Reaper / Logic / Bitwig all use Space as the universal
     // play-stop toggle. R for record matches Pro Tools / Cubase. Both
     // require no modifiers so a focused button or text editor still owns
@@ -1277,9 +1277,9 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         return true;
     }
 
-    // ── Virtual MIDI Keyboard: K toggles the embedded VKB modal so the
+    // Virtual MIDI Keyboard: K toggles the embedded VKB modal so the
     // user's typing keyboard becomes a MIDI input source. The modal pushes
-    // events into the synthetic "Virtual Keyboard (Dusk Studio)" device — to
+    // events into the synthetic "Virtual Keyboard (Dusk Studio)" device - to
     // hear notes, a track must select that device on its MIDI input
     // dropdown and have an instrument plugin loaded.
     if (code == 'K' && noMods)
@@ -1288,7 +1288,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         return true;
     }
 
-    // ── Navigation: Home → playhead to 0 (universal). End is intentionally
+    // Navigation: Home -> playhead to 0 (universal). End is intentionally
     // skipped because "end of timeline" isn't a fixed sample on a portastudio
     // - the timeline grows with the longest region.
     if (key == juce::KeyPress::homeKey)
@@ -1297,7 +1297,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         return true;
     }
 
-    // ── '.' (period) → stop transport and rewind to 0. Pro Tools / Cubase
+    // '.' (period) -> stop transport and rewind to 0. Pro Tools / Cubase
     // convention. Mirrors the Stop button on the transport bar with the
     // added rewind that the bare Stop doesn't provide.
     if (key.getTextCharacter() == '.' && noMods)
@@ -1312,7 +1312,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         return true;
     }
 
-    // ── Markers: 'M' (no modifiers) drops a marker at the current playhead.
+    // Markers: 'M' (no modifiers) drops a marker at the current playhead.
     // Common DAW shortcut. Skips when typing - the noMods guard means this
     // only fires when no text editor has focus.
     if (code == 'M' && noMods)
@@ -1320,8 +1320,8 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         const auto playhead = engine.getTransport().getPlayhead();
         um.beginNewTransaction ("Add marker");
         auto* add = new AddMarkerAction (session, playhead);
-        // The UndoManager owns the action — and DELETES it if perform()
-        // fails — so only dereference `add` after a successful perform.
+        // The UndoManager owns the action - and DELETES it if perform()
+        // fails - so only dereference `add` after a successful perform.
         const bool added = um.perform (add);
         if (tapeStrip != nullptr)
         {
@@ -1335,7 +1335,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         return true;
     }
 
-    // ── Loop / punch: bracket keys set the current playhead as in/out;
+    // Loop / punch: bracket keys set the current playhead as in/out;
     // L and P toggle the corresponding mode on/off. Shift+bracket switches
     // to punch boundaries; the unshifted form sets loop boundaries.
     auto& transport = engine.getTransport();
@@ -1391,7 +1391,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         return true;
     }
 
-    // ── Metronome click toggle: 'C' (no modifiers). Matches the C/I
+    // Metronome click toggle: 'C' (no modifiers). Matches the C/I
     // (count-in) abbreviation already used on the transport bar's button.
     // The TransportBar's clickToggle button polls the same atom on its
     // 30 Hz timer and re-syncs its visual state.
@@ -1403,7 +1403,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         return true;
     }
 
-    // ── Count-in toggle: Shift+C (pairs with plain C's metronome). The
+    // Count-in toggle: Shift+C (pairs with plain C's metronome). The
     // transport bar's C/I button re-syncs from the atom on its timer.
     if (code == 'C' && shift && ! cmd && ! mods.isAltDown())
     {
@@ -1412,7 +1412,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         return true;
     }
 
-    // ── Remaining transport-bar controls, one key each so every transport
+    // Remaining transport-bar controls, one key each so every transport
     // control is reachable without the mouse: B = tap tempo ("BPM"),
     // Shift+M = time-signature menu (plain M drops a marker), U = tuner,
     // F = time/bars display format.
@@ -1428,7 +1428,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         return true;
     }
 
-    // ── Track arm / solo / mute on the selected track. Selection state
+    // Track arm / solo / mute on the selected track. Selection state
     // lives on TapeStrip (the most-recently-clicked region's track); when
     // nothing's selected, the shortcuts no-op rather than guessing. The
     // ChannelStrip's existing 30 Hz timer picks up the atom changes and
@@ -1471,7 +1471,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key)
         }
     }
 
-    // ── Window: F11 toggles fullscreen. Walks up to the parent
+    // Window: F11 toggles fullscreen. Walks up to the parent
     // ResizableWindow because that's the layer that owns the OS window
     // state, not MainComponent itself.
     if (key == juce::KeyPress::F11Key)
@@ -1537,7 +1537,7 @@ void MainComponent::syncBankButtons (int desiredCount)
 
 void MainComponent::maybeStartStartupPluginScan()
 {
-    // Screenshot-capture mode never scans — its progress modal would overlay
+    // Screenshot-capture mode never scans - its progress modal would overlay
     // the full-window snapshots. Guard on the env var directly because
     // resized() (which calls us) can fire mid-ctor, before the capture hook
     // gets a chance to latch any member flag.
@@ -1588,7 +1588,7 @@ void MainComponent::maybeStartStartupPluginScan()
                           added, total);
             if (const int skipped = m.getLastScanSandboxSkips(); skipped > 0)
                 std::fprintf (stderr,
-                              "[Dusk Studio] Scan-on-startup: sandbox unavailable — %d plugin(s) left unscanned.\n",
+                              "[Dusk Studio] Scan-on-startup: sandbox unavailable - %d plugin(s) left unscanned.\n",
                               skipped);
             std::fflush (stderr);
         });
@@ -1627,7 +1627,7 @@ void MainComponent::resized()
     const bool inAux       = (curStage == AudioEngine::Stage::Aux);
     const bool inFullscreenView = inMastering || inAux;
 
-    // ── Combined transport / stage / bank row ──
+    // Combined transport / stage / bank row
     // Everything that used to live on three separate rows (stage selector,
     // bank buttons, transport bar) collapses into ONE row. The transport
     // bar paints the row's chrome + transport buttons + clock + right-edge
@@ -1656,11 +1656,11 @@ void MainComponent::resized()
     // alongside the always-anchored bus + master column at min width.
     // When all 16 fit we render NO bank buttons (numBanks == 1). When
     // they don't fit, we render one button per bank with the actual
-    // 1-based range as the label ("1-13", "14-16", etc.) — bank size
+    // 1-based range as the label ("1-13", "14-16", etc.) - bank size
     // tracks the window width, not a fixed stride of 8.
     //
     // CRITICAL: use the WIDTH the console is ABOUT to receive (area's
-    // current width), not consoleView->getWidth() — the latter reflects
+    // current width), not consoleView->getWidth() - the latter reflects
     // the PREVIOUS resize pass, so a fast snap-to-half-screen would
     // render labels one frame stale (showed "1-6" with only 3 strips
     // visible).
@@ -1883,7 +1883,7 @@ void MainComponent::showSnapResolutionMenu()
                     session.snapResolution == kOpts[i]);
     }
     juce::Component::SafePointer<MainComponent> safe (this);
-    // Route through the app's in-window popup path, not JUCE's showMenuAsync —
+    // Route through the app's in-window popup path, not JUCE's showMenuAsync -
     // raw JUCE popups flicker / mis-dismiss under X11 / Wayland, which is why
     // every other menu in this file goes through showContextMenu.
     duskstudio::showContextMenu (m, hdrSnapResBtn,
@@ -1918,10 +1918,10 @@ void MainComponent::openAudioSettings()
     // MIDI Bindings + MIDI Sync + General + Advanced, each with a
     // section header + separator) fits without any group being clipped.
     // The Audio block hosts JUCE's AudioDeviceSelectorComponent in a
-    // fixed 360 px slot — see AudioSettingsPanel::resized.
+    // fixed 360 px slot - see AudioSettingsPanel::resized.
     constexpr int kPanelW = 820;
     // Content height with the bumped 360 px audio block + every
-    // section ends just past 1060 px — anything less clips the
+    // section ends just past 1060 px - anything less clips the
     // Advanced rows (ALSA periods / oversampling / self-test / rescan,
     // plus the Multicore DSP row) off the bottom even with a scroll
     // wrapper, because the viewport never sees the missing pixels.
@@ -1950,7 +1950,7 @@ void MainComponent::openAudioSettings()
     };
 
     // Reserve room for the dim/backdrop margin + transport row + menu
-    // bar that frame the modal — without this, the centred modal
+    // bar that frame the modal - without this, the centred modal
     // overflows the visible canvas at the bottom and the Advanced
     // section gets clipped even though the host theoretically "fits"
     // inside MainComponent's bounds.
@@ -1987,7 +1987,7 @@ void MainComponent::switchToStage (AudioEngine::Stage s)
     std::fflush (stderr);
     engine.setStage (s);
     // Mirror into session so save/load round-trips the user's last
-    // visited stage — new sessions still default to Recording via the
+    // visited stage - new sessions still default to Recording via the
     // Session::uiStage default + AudioEngine::stage default.
     session.uiStage.store ((int) s, std::memory_order_relaxed);
 
@@ -1999,8 +1999,8 @@ AuxView* MainComponent::ensureAuxView()
 {
     if (auxView == nullptr)
     {
-        // addChildComponent (not addAndMakeVisible): stays hidden until a switch — or a
-        // pre-warm — needs it. The AuxLaneComponent ctors run rebuildSlots here, which
+        // addChildComponent (not addAndMakeVisible): stays hidden until a switch - or a
+        // pre-warm - needs it. The AuxLaneComponent ctors run rebuildSlots here, which
         // is what builds the native-CLAP editors (gui->create). Bounds come from the
         // next resized() (it lays out auxView whenever Aux is the active stage), and the
         // X11 embed stays deferred to first-show via ClapPluginEditorComponent.
@@ -2098,7 +2098,7 @@ void MainComponent::launchStartupDialog()
     auto recents = toFileArray (RecentSessions::load());
 
     startupDialog = std::make_unique<StartupDialog> (recents);
-    // Fixed size — the table scrolls internally when the list grows past
+    // Fixed size - the table scrolls internally when the list grows past
     // what fits, so we don't need to grow the dialog with row count.
     startupDialog->setSize (720, 460);
 
@@ -2120,7 +2120,7 @@ void MainComponent::launchStartupDialog()
     startupDialog->onDismiss    = [this] { dismissStartupDialog(); };
 
     // Dim backdrop covers the rest of the UI and SWALLOWS clicks so the
-    // startup dialog behaves like a modal — clicking the dim or the DAW
+    // startup dialog behaves like a modal - clicking the dim or the DAW
     // behind it must NOT dismiss the dialog (the user lost work that
     // way: accidental click on the timeline disappeared the picker
     // mid-choice). Dismissal is only via Quit / Open / NEW / OPEN /
@@ -2130,8 +2130,8 @@ void MainComponent::launchStartupDialog()
     startupDim->onClick = [] {};
     addAndMakeVisible (startupDim.get());
 
-    // Centered on the main window. The dialog is plain dark — no native
-    // title bar — to match the embedded-modal aesthetic shared with the
+    // Centered on the main window. The dialog is plain dark - no native
+    // title bar - to match the embedded-modal aesthetic shared with the
     // TapeMachine gear modal and the TIMELINE EQ/COMP popups.
     const auto bounds = getLocalBounds()
                             .withSizeKeepingCentre (startupDialog->getWidth(),
@@ -2155,7 +2155,7 @@ void MainComponent::launchStartupDialog()
 
 void MainComponent::dismissStartupDialog (std::function<void()> onDone)
 {
-    // Defer the actual delete by one message-loop tick — closeDialog is
+    // Defer the actual delete by one message-loop tick - closeDialog is
     // typically called from inside one of the dialog's own button click
     // handlers, and tearing down the dialog from inside its own callback
     // chain is fragile. callAsync runs on the message thread after the
@@ -2190,14 +2190,14 @@ void MainComponent::guardUnsavedThen (const juce::String& title,
                                        const juce::String& message,
                                        std::function<void()> proceed)
 {
-    // Clean session — nothing to lose, run straight through.
+    // Clean session - nothing to lose, run straight through.
     if (! currentSessionDirty())
     {
         proceed();
         return;
     }
 
-    // Unsaved work — Save / Don't Save / Cancel, deferring each action via
+    // Unsaved work - Save / Don't Save / Cancel, deferring each action via
     // callAsync so the button-click stack unwinds before the modal closes
     // (closing an EmbeddedModal from inside its own button onClick is a UAF).
     // `proceed` runs only after a successful Save or an explicit Don't Save.
@@ -2218,7 +2218,7 @@ void MainComponent::guardUnsavedThen (const juce::String& title,
             if (auto* s = safe.getComponent())
             {
                 s->quitModal.close();
-                // Discarding changes — delete the current session's autosave
+                // Discarding changes - delete the current session's autosave
                 // (still the OLD dir here) so it doesn't later offer to
                 // "recover" the work just thrown away. Mirrors requestQuit.
                 s->deleteAutosaveFor (s->session.getSessionDirectory());
@@ -2246,7 +2246,7 @@ void MainComponent::guardUnsavedThen (const juce::String& title,
 
 void MainComponent::newSessionPrompt()
 {
-    // Starting a new session blanks the current one — guard unsaved work first.
+    // Starting a new session blanks the current one - guard unsaved work first.
     guardUnsavedThen (
         "Save changes before starting a new session?",
         "Your current session has unsaved changes. If you don't save, "
@@ -2275,7 +2275,7 @@ void MainComponent::promptNewSessionLocation()
     {
         if (chosen == juce::File()) return;
         // The chosen path becomes the new session folder. Start from a clean
-        // default state — NOT the current session saved under a new name.
+        // default state - NOT the current session saved under a new name.
         createNewSessionAt (chosen);
     });
 }
@@ -2290,10 +2290,10 @@ void MainComponent::createNewSessionAt (const juce::File& dir)
     // every model collection (regions, takes, markers, automation, tempo map,
     // MIDI bindings), consumePluginStateAfterLoad unloads plugins absent from
     // the new session, and finishLoadingSessionFrom resets transport + undo,
-    // re-resolves MIDI, and rebuilds the console / aux / mastering UI — so
+    // re-resolves MIDI, and rebuilds the console / aux / mastering UI - so
     // nothing from the previous session carries over.
     const auto target = dir.getChildFile ("session.json");
-    // Refuse to clobber an existing session — "New" must never blank someone
+    // Refuse to clobber an existing session - "New" must never blank someone
     // else's work. The user picks a fresh name (or opens the existing one).
     if (target.existsAsFile())
     {
@@ -2321,7 +2321,7 @@ bool MainComponent::saveSessionTo (const juce::File& dir)
     // session-owned file into the new dir and repoint the model BEFORE the
     // directory swap, so serialize below emits relative paths. Plain Ctrl+S
     // (same dir) is a no-op here. Copying precedes the audio-callback detach
-    // — it touches no plugin state, so a long copy adds no dropout.
+    // - it touches no plugin state, so a long copy adds no dropout.
     const auto oldDir   = session.getSessionDirectory();
     const bool isSaveAs = oldDir != juce::File() && dir != oldDir;
     if (isSaveAs)
@@ -2390,7 +2390,7 @@ bool MainComponent::saveSessionTo (const juce::File& dir)
     {
         if (isSaveAs)
         {
-            // Undo actions snapshot whole AudioRegions including their files —
+            // Undo actions snapshot whole AudioRegions including their files -
             // undoing past the consolidation would resurrect old-dir paths.
             // Same policy as Clean Out Unreferenced Files.
             engine.getUndoManager().clearUndoHistory();
@@ -2399,7 +2399,7 @@ bool MainComponent::saveSessionTo (const juce::File& dir)
             // until the next stop/play rebuild.
             if (engine.getTransport().isStopped())
                 engine.getPlaybackEngine().preparePlayback();
-            // The old folder's autosave still holds pre-consolidation paths —
+            // The old folder's autosave still holds pre-consolidation paths -
             // without this, re-opening the old session pops a stale recovery
             // prompt.
             deleteAutosaveFor (oldDir);
@@ -2596,7 +2596,7 @@ bool MainComponent::currentSessionDirty()
     const auto dir = session.getSessionDirectory();
     if (dir == juce::File()) return false;
 
-    // Publish live plugin + transport/tape state into the Session model first —
+    // Publish live plugin + transport/tape state into the Session model first -
     // the serializer reads only from Session, so without this a just-touched
     // plugin/tape param stays at its last-published value and the compare would
     // falsely read clean. Audio is live here so no detach.
@@ -2615,7 +2615,7 @@ void MainComponent::requestQuit()
 {
     // Industry-standard dirty-only prompt. Compare the live serialized
     // session JSON against the snapshot we took at the last successful
-    // save (or session load) — any single-knob / fader / region edit
+    // save (or session load) - any single-knob / fader / region edit
     // diverges the JSON immediately, so this catches changes that the
     // autosave-timestamp check below would miss (autosave fires every
     // 30 s; closing within that window with a moved fader used to skip
@@ -2653,12 +2653,12 @@ void MainComponent::requestQuit()
     //
     // Save / Don't Save also detach the audio callback up front. This
     // does two things on the quit path:
-    //   • the save below can call publishPluginStateForSave with the
+    //   - the save below can call publishPluginStateForSave with the
     //     "audio detached" fast path (no atomic-park sleeps), which is
     //     the difference between a snappy save and several hundred
     //     milliseconds of message-thread blocking on a session with
     //     multiple heavy plugins;
-    //   • plugin getStateInformation runs with no concurrent
+    //   - plugin getStateInformation runs with no concurrent
     //     processBlock, which side-steps the data race in plugins that
     //     don't honour JUCE's "must not overlap" contract on Linux.
     juce::Component::SafePointer<MainComponent> safeThis (this);
@@ -2673,7 +2673,7 @@ void MainComponent::requestQuit()
     };
     dialog->onDontSave = [safeThis]
     {
-        // "Don't save" means discard — delete the autosave too, so the next
+        // "Don't save" means discard - delete the autosave too, so the next
         // launch doesn't offer to recover the work the user just discarded.
         // Recovery is then reserved for an actual crash (unclean exit, where
         // this clean-shutdown path never runs and the autosave survives).
@@ -2782,12 +2782,12 @@ void MainComponent::beginSafeShutdown()
     markPhase ("phase 4: drop plugin editor windows");
     if (consoleView != nullptr)
         consoleView->dropAllPluginEditors();
-    // JUCE AUX plugin editors tear down fine with the normal ~MainWindow → ~AuxView
+    // JUCE AUX plugin editors tear down fine with the normal ~MainWindow -> ~AuxView
     // cascade. NATIVE editors (CLAP, LV2, VST3) do NOT: each opens its own X11
     // Display + a host window parented into the main peer, and its close (plugin-UI
     // destroy + XCloseDisplay) hangs if it runs in the late cascade after the main
-    // peer is gone — CLAP/LV2 additionally leak their plugin UIs there. Tear them
-    // down here — main peer + message loop alive, audio callback detached (phase 3).
+    // peer is gone - CLAP/LV2 additionally leak their plugin UIs there. Tear them
+    // down here - main peer + message loop alive, audio callback detached (phase 3).
     if (auxView != nullptr)
         auxView->dropAllNativeEditors();
 
@@ -2929,7 +2929,7 @@ void MainComponent::openSessionPath (const juce::File& path)
         // Clear the startup New / Open-recent flow first so a CLI / file-manager
         // open doesn't stack a session-load (recovery) modal over the startup
         // dialog. dismissStartupDialog tears down asynchronously, so defer the
-        // load into its completion callback — otherwise the recovery prompt
+        // load into its completion callback - otherwise the recovery prompt
         // would open on top of the still-present startup dialog.
         juce::Component::SafePointer<MainComponent> safeThis (this);
         dismissStartupDialog ([safeThis, sessionJson]
@@ -3036,7 +3036,7 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     // Sample-rate policy: region WAVs play 1:1 (no SRC in the playback path),
     // so the device must run at the session's canonical rate for correct
     // speed and pitch. Legacy sessions (no stored rate) adopt the device's.
-    // On a mismatch, try to switch the device; when that fails, warn loudly —
+    // On a mismatch, try to switch the device; when that fails, warn loudly -
     // the session still opens, but audio runs fast/slow until the rates
     // match.
     warnedSampleRateMismatch = false;
@@ -3098,7 +3098,7 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     engine.getUndoManager().clearUndoHistory();
 
     // Native plugin editors (CLAP/LV2/VST3) reference the instances the
-    // reload below evicts — a suil/plugin UI whose pump timer ticks after
+    // reload below evicts - a suil/plugin UI whose pump timer ticks after
     // the instance is gone crashes inside the plugin's own event loop.
     // Tear every editor down NOW, while the instances are still alive
     // (same order the strip loaders use). The console is rebuilt after
@@ -3136,7 +3136,7 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
         }
     }
 
-    // Same surface for unresolved audio files — without it a moved or
+    // Same surface for unresolved audio files - without it a moved or
     // hand-edited session loads "successfully" and plays silence with no
     // hint why.
     if (! session.missingAudioFilesAfterLoad.empty())
@@ -3166,7 +3166,7 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     // restores the saved identifiers (MCU input, sync source, per-track MIDI
     // in) but NOT the runtime index each maps to, so without this the MCU
     // surface (and track MIDI inputs) stay dead until the user re-picks the
-    // device in Settings. Use the LIGHTWEIGHT per-track re-resolve — the full
+    // device in Settings. Use the LIGHTWEIGHT per-track re-resolve - the full
     // refreshMidiInputs() hot-plug path detaches/reattaches the audio callback
     // and disables/re-enables every MIDI device, which froze the UI for a few
     // seconds on every load. The physical devices are unchanged since startup,
@@ -3208,7 +3208,7 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
             engine.setStage (wantStage);
         syncStageUi (wantStage);
     }
-    refreshSnapUi();   // snap on/off + resolution are serialized — reflect the loaded values
+    refreshSnapUi();   // snap on/off + resolution are serialized - reflect the loaded values
     resized();
     // resized()'s indirect refresh of the tape strip (setConsoleVisibleRange /
     // setBounds) no-ops when the reopened session has the same track layout +
@@ -3232,7 +3232,7 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
     // Recovery must end with the recovered state on disk. Without this,
     // the snapshot seeded above makes the session look clean: the quit
     // dirty-check passes, the autosave tick skips, and the recovered
-    // work exists nowhere durable — quit + relaunch would land on the
+    // work exists nowhere durable - quit + relaunch would land on the
     // stale session.json. saveSessionTo persists it and (only on
     // success) deletes the autosave; on failure the autosave survives
     // and the save-failed alert fires.
@@ -3249,7 +3249,7 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
                   (int) (tAfterConsole  - t0));
 
     // Loading churns the component tree (console + stage rebuild) and, on
-    // XWayland, can leave the main window without input focus — the toolbar then
+    // XWayland, can leave the main window without input focus - the toolbar then
     // renders in its inactive/dimmed state and the first click only re-focuses.
     // Reassert front + keyboard focus once the rebuild settles.
     juce::Component::SafePointer<MainComponent> safeThis (this);
@@ -3260,14 +3260,14 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
         if (auto* peer = self->getPeer())
             duskstudio::platform::bringWindowToFront (*peer);
         // Bring the window forward always, but don't yank keyboard focus when a modal
-        // is up (a missing-plugin / missing-audio alert raised by the load) — that
+        // is up (a missing-plugin / missing-audio alert raised by the load) - that
         // would steal focus from the dialog the user needs to dismiss.
         if (juce::ModalComponentManager::getInstance()->getNumModalComponents() == 0)
             self->grabKeyboardFocus();
 
         // Pre-warm the AUX view if this session has any aux insert loaded. Building it
         // here (hidden) moves the AuxView construction + the native-CLAP gui->create off
-        // the first Mixing→Aux switch, so that switch isn't stalled building plugin
+        // the first Mixing->Aux switch, so that switch isn't stalled building plugin
         // editors. Deferred to this post-load callAsync so the main window paints first;
         // the native slots are already loaded (consumePluginStateAfterLoad ran above).
         bool anyAuxInsert = false;
@@ -3287,7 +3287,7 @@ bool MainComponent::finishLoadingSessionFrom (const juce::File& sourceJson,
 
 void MainComponent::openFromFilePrompt()
 {
-    // Opening another session discards the current one — guard unsaved work
+    // Opening another session discards the current one - guard unsaved work
     // before the browser appears (mirrors New Session / Open Recent).
     guardUnsavedThen (
         "Save changes before opening another session?",
@@ -3369,7 +3369,7 @@ void MainComponent::openBounceStemsDialog()
         defaultDir = juce::File::getSpecialLocation (juce::File::userMusicDirectory);
     const auto defaultFile = defaultDir.getChildFile ("stems.wav");
 
-    // Stems are WAV-only — MP3 encoder delay/padding would misalign them for
+    // Stems are WAV-only - MP3 encoder delay/padding would misalign them for
     // re-import, so don't offer .mp3 here (the master / mastering bounces do).
     filebrowser::open (*this, {
         /*title*/                  "Bounce stems (one WAV per track)",
@@ -3488,7 +3488,7 @@ void MainComponent::runAudioImportFlow (const juce::File& source,
             if (self == nullptr) return;
             self->importTargetModal.close();
 
-            // Re-check transport state — the user could have hit Play
+            // Re-check transport state - the user could have hit Play
             // between opening the picker and confirming a target. The
             // success path mutates Track::regions in place, which is
             // only safe with playback halted. Abort the WHOLE chain on
@@ -3815,7 +3815,7 @@ void MainComponent::runDpImport (const dp::SongScan& scan,
     if (dpImportJob != nullptr) return;   // one import at a time
 
     double sr = engine.getCurrentSampleRate();
-    // Device not open yet → SR reads 0; FileImporter resamples content to 48k in
+    // Device not open yet -> SR reads 0; FileImporter resamples content to 48k in
     // that case, so use the same fallback here or every clip/marker would be
     // placed at 0 (timeline offsets multiplied by sr).
     if (sr <= 0.0) sr = 48000.0;
@@ -4211,7 +4211,7 @@ void MainComponent::openMultiImportPicker (juce::Array<juce::File> files,
     importTargetModal.show (*this, std::move (picker), {}, /*dismissOnClickOutside*/ false);
 }
 
-// ── MenuBarModel ─────────────────────────────────────────────────────────
+// MenuBarModel
 //
 // Two top-level menus drive every header action that used to be a separate
 // TextButton. Item IDs are namespaced per-menu so menuItemSelected can
@@ -4310,7 +4310,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelMenuIndex,
                 const auto& dir    = menuRecentSessions.getReference (i);
                 const auto  json   = dir.getChildFile ("session.json");
                 const auto  parent = dir.getParentDirectory().getFullPathName();
-                // Always enabled — load() already pruned dirs that have
+                // Always enabled - load() already pruned dirs that have
                 // disappeared, and a missing session.json inside a
                 // surviving dir is rare enough that we'd rather let the
                 // user click + see the error than greyout an entry that
@@ -4511,7 +4511,7 @@ void MainComponent::menuItemSelected (int menuItemID, int /*topLevelMenuIndex*/)
                 && menuItemID < kMenuFileTemplateBase + (int) SessionTemplate::kCount)
             {
                 const auto tmpl = (SessionTemplate) (menuItemID - kMenuFileTemplateBase);
-                // Applying a template rewrites the current session in place —
+                // Applying a template rewrites the current session in place -
                 // guard unsaved work first (mirrors New / Open).
                 guardUnsavedThen (
                     "Save changes before applying a template?",
@@ -4762,7 +4762,7 @@ void MainComponent::openPianoRoll (int trackIdx, int regionIdx)
         // Close + reopen on the new region. Same-track only; the
         // editor already validated the bounds before calling.
         // Deferred: the call arrives from the editor's own keyPressed
-        // frame — closing in place would destroy the component (and the
+        // frame - closing in place would destroy the component (and the
         // invoked std::function) while both are still on the stack.
         juce::Component::SafePointer<MainComponent> safe (this);
         juce::MessageManager::callAsync ([safe, t, newIdx]
@@ -4782,14 +4782,14 @@ void MainComponent::openPianoRoll (int trackIdx, int regionIdx)
 
 void MainComponent::closePianoRoll()
 {
-    // Cancel any in-flight collapse animation BEFORE resetting — the
+    // Cancel any in-flight collapse animation BEFORE resetting - the
     // ComponentAnimator holds raw pointers and would tick into freed
     // memory otherwise (false = leave at current pos, don't snap).
     auto& animator = juce::Desktop::getInstance().getAnimator();
     if (pianoRoll != nullptr) animator.cancelAnimation (pianoRoll.get(), false);
     if (pianoRollDim != nullptr) animator.cancelAnimation (pianoRollDim.get(), false);
 
-    // Clear the shared CursorOverlay first — JUCE doesn't fire
+    // Clear the shared CursorOverlay first - JUCE doesn't fire
     // mouseExit on a component being removed, so the editor's
     // onMouseExitedForCursor callback won't run on its own. Without
     // this, the painted glyph stays stuck at the last position and
@@ -4899,7 +4899,7 @@ void MainComponent::openAudioEditor (int trackIdx, int regionIdx)
         [this] { if (cursorOverlay != nullptr) cursorOverlay->clearMousePosition(); };
     audioEditor->onNavigateToRegion = [this] (int t, int newIdx)
     {
-        // Deferred — see the piano-roll navigate handler.
+        // Deferred - see the piano-roll navigate handler.
         juce::Component::SafePointer<MainComponent> safe (this);
         juce::MessageManager::callAsync ([safe, t, newIdx]
         {
@@ -4918,13 +4918,13 @@ void MainComponent::openAudioEditor (int trackIdx, int regionIdx)
 
 void MainComponent::closeAudioEditor()
 {
-    // Cancel any in-flight collapse animation BEFORE resetting — the
+    // Cancel any in-flight collapse animation BEFORE resetting - the
     // ComponentAnimator holds raw pointers (see closePianoRoll).
     auto& animator = juce::Desktop::getInstance().getAnimator();
     if (audioEditor    != nullptr) animator.cancelAnimation (audioEditor.get(), false);
     if (audioEditorDim != nullptr) animator.cancelAnimation (audioEditorDim.get(), false);
 
-    // Same reasoning as closePianoRoll — clear the overlay first so
+    // Same reasoning as closePianoRoll - clear the overlay first so
     // the painted glyph + Linux native-cursor hide don't outlive the
     // editor.
     if (cursorOverlay != nullptr) cursorOverlay->clearMousePosition();
@@ -5057,7 +5057,7 @@ void MainComponent::closeTuner()
     tunerPoller.reset();
     if (tuner    != nullptr) removeChildComponent (tuner.get());
     if (tunerDim != nullptr) removeChildComponent (tunerDim.get());
-    // Deferred destruction — closeTuner is reached from tunerDim's own
+    // Deferred destruction - closeTuner is reached from tunerDim's own
     // mouseDown and the overlay's onDismiss, so resetting in place would
     // destroy the component whose mouse handler is still on the stack
     // (the EmbeddedModal::close() teardown pattern).

@@ -8,7 +8,7 @@
 // to whole samples (floor), push writes at the write head and decrements it
 // mod totalSize, pop reads at (readPos + delayInt) mod totalSize and decrements
 // readPos the same way. totalSize = max(4, maxDelay + 2) matches JUCE so the
-// index arithmetic — and therefore the delayed output — is identical. JUCE's
+// index arithmetic - and therefore the delayed output - is identical. JUCE's
 // DelayLine is per-instance-multichannel; Dusk only ever uses one channel per
 // instance, so this drops the channel argument.
 namespace dusk::audio

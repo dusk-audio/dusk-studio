@@ -257,7 +257,7 @@ void readInterleavedFloat (const void* src, juce::AudioBuffer<float>& dest,
 // 2 (the bare minimum) gives the kernel exactly one period of slack
 // before underrun: at 256 samples / 48 kHz that's only ~5 ms total,
 // not enough on Linux even with SCHED_RR when the DSP graph has a few
-// plugins. PipeWire / JACK use 3 internally for the same reason —
+// plugins. PipeWire / JACK use 3 internally for the same reason -
 // match them so the default ALSA experience doesn't xrun out of the
 // box. Users who need lower latency can drop to 2 in Audio Settings.
 std::atomic<int> gRequestedPeriods { 3 };
@@ -274,8 +274,8 @@ const int kCandidateBufferSizes[] = {
 };
 
 // Extract the symbolic card id from an "hw:CARD,DEV" string. "hw:UMC1820,0"
-// → "UMC1820"; "hw:PCH,1" → "PCH"; anything that doesn't start with "hw:"
-// → empty. Used by open() to gate snd_pcm_link to same-card pairs (so
+// -> "UMC1820"; "hw:PCH,1" -> "PCH"; anything that doesn't start with "hw:"
+// -> empty. Used by open() to gate snd_pcm_link to same-card pairs (so
 // cross-card duplex doesn't silently drift), and exercised by runSelfTest().
 juce::String cardOfHwId (const juce::String& id)
 {
@@ -646,7 +646,7 @@ juce::String AlsaAudioIODevice::open (const juce::BigInteger& inputChannels,
     activeOutDeviceChannelIndex.clearQuick();
     activeInDeviceChannelIndex.clearQuick();
     // Clamp to the channel count the device actually opened. outNumChannels /
-    // inNumChannels can be smaller than the requested mask — a 12-output
+    // inNumChannels can be smaller than the requested mask - a 12-output
     // interface asked to open 32 negotiates down to 12. Without this clamp a
     // device-channel index >= the opened count reaches the interleave loop and
     // addresses the interleaved buffer (sized to the opened count) out of
@@ -786,7 +786,7 @@ void AlsaAudioIODevice::start (juce::AudioIODeviceCallback* newCallback)
         {
             // EPIPE here means the device went into XRUN state during prepare
             // (rare, but seen on some USB drivers). Recover and retry once.
-            // Use snd_pcm_recover directly, NOT recoverFromXrun — the start
+            // Use snd_pcm_recover directly, NOT recoverFromXrun - the start
             // sequence below (prefill + snd_pcm_start) is the re-arm, and
             // recoverFromXrun's rearmStream would prefill+start a second time.
             xrunCount.fetch_add (1, std::memory_order_relaxed);
@@ -809,8 +809,8 @@ void AlsaAudioIODevice::start (juce::AudioIODeviceCallback* newCallback)
         snd_pcm_start (startHandle);
     }
 
-    // Run the I/O thread at real-time priority. The rlimit→priority mapping is
-    // shared with the DSP worker pool (see RtPriority.h — the pool MUST run at
+    // Run the I/O thread at real-time priority. The rlimit->priority mapping is
+    // shared with the DSP worker pool (see RtPriority.h - the pool MUST run at
     // the same SCHED_RR level as this thread or the per-block join can starve a
     // worker sharing this core). jucePriority < 0 means the rlimit admits no
     // JUCE-reachable realtime level; don't bother asking. 0 IS a valid level
@@ -895,11 +895,11 @@ void AlsaAudioIODevice::rearmStream() noexcept
     // snd_pcm_recover leaves the stream PREPARED, not RUNNING. For a linked
     // duplex device that's fatal: the next snd_pcm_wait blocks forever on the
     // un-started capture handle and the device sits in PREPARED with no audio
-    // (the "audio stops until you change the buffer" stall — changing the
+    // (the "audio stops until you change the buffer" stall - changing the
     // buffer re-opens the device, which runs this exact start sequence). So
     // mirror open(): prepare both handles, prefill the playback ring past its
     // start_threshold from the pre-allocated silence block, then snd_pcm_start
-    // (which starts both directions via snd_pcm_link). No allocation — these
+    // (which starts both directions via snd_pcm_link). No allocation - these
     // are the same kernel calls the I/O loop already makes each block.
     if (outHandle == nullptr)
     {
@@ -919,19 +919,19 @@ void AlsaAudioIODevice::rearmStream() noexcept
         const auto*  src        = silencePrefill.getData();
         // NONBLOCK PCM: writei can return a short count, or -EPIPE if the ring
         // underran during re-arm. Loop until the full prefill lands (recovering
-        // on error) so we never snd_pcm_start an underfilled ring → instant
-        // underrun → straight back into recovery. Bounded so a wedged device
+        // on error) so we never snd_pcm_start an underfilled ring -> instant
+        // underrun -> straight back into recovery. Bounded so a wedged device
         // can't spin forever.
         snd_pcm_uframes_t done = 0;
         for (int attempts = 0; done < frames && attempts < 16; ++attempts)
         {
             const auto n = snd_pcm_writei (outHandle, src + done * frameBytes, frames - done);
             if (n == -EAGAIN)
-                break;      // NONBLOCK ring is full — prefilled as much as it holds; go start it
+                break;      // NONBLOCK ring is full - prefilled as much as it holds; go start it
             if (n < 0)
             {
                 snd_pcm_recover (outHandle, (int) n, /*silent*/ 1);
-                done = 0;   // recover re-prepares (empties) the ring — refill from the start
+                done = 0;   // recover re-prepares (empties) the ring - refill from the start
             }
             else
                 done += (snd_pcm_uframes_t) n;
@@ -942,7 +942,7 @@ void AlsaAudioIODevice::rearmStream() noexcept
         snd_pcm_start (outHandle);
 
     // When the duplex pair was NOT snd_pcm_link'd (cross-card in/out), starting
-    // playback doesn't start capture — it'd sit PREPARED and stall the capture
+    // playback doesn't start capture - it'd sit PREPARED and stall the capture
     // wait. The state check makes this a no-op for the linked case (capture is
     // already RUNNING via the link).
     if (inHandle != nullptr && snd_pcm_state (inHandle) != SND_PCM_STATE_RUNNING)
@@ -996,7 +996,7 @@ void AlsaAudioIODevice::run()
     // we capture the snd_strerror text and surface it to the
     // AudioIODeviceCallback after the loop exits. Without this the
     // audio thread dies silently and AudioEngine's transport keeps
-    // "rolling" against a missing device — recordings continue against
+    // "rolling" against a missing device - recordings continue against
     // a stalled writer until the user notices.
     int          fatalErr = 0;
     const char*  fatalCtx = nullptr;
@@ -1144,7 +1144,7 @@ loopExit: ;
     // Surface the device loss to AudioDeviceManager so it can switch
     // to a fallback device (or post audioDeviceError to the UI). Without
     // this, JUCE's AudioDeviceManager has no signal that the audio
-    // thread died — Dusk Studio's transport keeps "running" with no callbacks
+    // thread died - Dusk Studio's transport keeps "running" with no callbacks
     // firing and a recording-in-progress accumulates against a stalled
     // writer.
     if (fatalErr != 0)

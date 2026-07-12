@@ -2,7 +2,7 @@
 
 namespace duskstudio
 {
-// ── Public glyph paint helpers ──────────────────────────────────────
+// Public glyph paint helpers
 // Used by makeXxxCursor (image cursor builders) AND by CursorOverlay
 // (direct paint, bypassing the platform cursor pipeline). Each helper
 // expects (cx, cy) to be the cursor hotspot in the supplied Graphics
@@ -87,7 +87,7 @@ void paintPencilGlyph (juce::Graphics& g, float cx, float cy)
 
     const auto apex = P (tip.x, tip.y);
 
-    // Outer silhouette (apex → wood widen → straight barrel → eraser end and
+    // Outer silhouette (apex -> wood widen -> straight barrel -> eraser end and
     // back) for the halo stroke.
     juce::Path sil;
     sil.startNewSubPath (apex);
@@ -130,10 +130,10 @@ void paintPencilGlyph (juce::Graphics& g, float cx, float cy)
 void paintHandGlyph (juce::Graphics& g, float cx, float cy)
 {
     // Pointing hand: index finger extended up, the other fingers curled into a
-    // fist with a thumb off the left — the classic Ardour Grab cursor. White
+    // fist with a thumb off the left - the classic Ardour Grab cursor. White
     // body + black halo so it reads on any track colour. (cx, cy) is the INDEX
     // FINGERTIP (the cursor hotspot); the hand hangs down-right of it so the
-    // finger — not the palm — points at / selects the region under the cursor.
+    // finger - not the palm - points at / selects the region under the cursor.
     const float ox = cx - 8.6f;
     const float oy = cy - 2.0f;
 
@@ -222,7 +222,7 @@ juce::MouseCursor invisibleCursor()
         // 2x2 fully-transparent ARGB image. Goes through the same X11
         // XCreatePixmapCursor / NSCursor with empty image / Win32
         // CreateCursor with empty AND mask path that all our custom
-        // image cursors use — so it works wherever the image-cursor
+        // image cursors use - so it works wherever the image-cursor
         // path works (i.e. anywhere our scissors/hand cursors render).
         juce::Image img (juce::Image::ARGB, 2, 2, true);
         return juce::MouseCursor (img, 0, 0);

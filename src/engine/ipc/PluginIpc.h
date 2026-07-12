@@ -65,7 +65,7 @@ enum class OpCode : std::uint32_t
     Release          = 4,   // payload: empty.
     GetState         = 5,   // payload: empty. reply: state size; bytes are at kStateOffset.
     SetState         = 6,   // payload: state size; bytes at kStateOffset.
-    SetParam         = 7,   // payload: SetParamPayload. ONE-SHOT — child sends NO reply.
+    SetParam         = 7,   // payload: SetParamPayload. ONE-SHOT - child sends NO reply.
                             //          The reader loop must not enqueue a reply slot.
     ShowEditor       = 8,   // Phase 3.
     HideEditor       = 9,   // Phase 3.
@@ -77,11 +77,11 @@ enum class OpCode : std::uint32_t
     // preset load). The parent's reader thread demuxes this opcode out
     // of the sync reply path and dispatches the payload onto the parent's
     // registered ParamChangedSink via juce::MessageManager::callAsync.
-    // ONE-SHOT — parent sends NO reply.
+    // ONE-SHOT - parent sends NO reply.
     ParamChangedFromChild = 11,
 };
 
-// Wire payload for OpCode::SetParam (parent → child). Fixed 8 bytes today;
+// Wire payload for OpCode::SetParam (parent -> child). Fixed 8 bytes today;
 // 3c-3b may extend with a sequence number once the loop-breaker mechanism
 // is chosen.
 struct SetParamPayload
@@ -90,7 +90,7 @@ struct SetParamPayload
     float         value;
 };
 
-// Wire payload for OpCode::ParamChangedFromChild (child → parent).
+// Wire payload for OpCode::ParamChangedFromChild (child -> parent).
 // sequenceNumber is included so the parent-side loop-breaker (3c-3b) can
 // drop echo-back frames whose seq matches a SetParam the parent itself
 // originated. 3c-3a wires only the protocol; the parent's sink will
@@ -140,7 +140,7 @@ struct ShowEditorReply
     std::uint32_t reserved;
 };
 
-// ResizeEditor request payload. Sent parent→child when the user resizes
+// ResizeEditor request payload. Sent parent->child when the user resizes
 // the embedding window; the child resizes its native editor wrapper to
 // match so the plugin's GUI gets a JUCE resized() callback.
 struct ResizeEditorPayload

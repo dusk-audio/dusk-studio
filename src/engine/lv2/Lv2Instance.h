@@ -18,14 +18,14 @@ class Lv2Bundle;
 //
 // LV2 fixes the sample rate at instantiate (unlike CLAP's activate), so reactivate
 // re-instantiates the plugin, carrying the full state across (control ports + the
-// plugin's state:interface blob via saveState/loadState — lilv state serialized
+// plugin's state:interface blob via saveState/loadState - lilv state serialized
 // as Turtle). The suil editor attaches through the opaque accessors below.
 class Lv2Instance : public hosting::INativeInstance
 {
 public:
     // One plugin parameter: an input control port, or a patch:writable float
     // property (JUCE-built LV2s expose ONLY the latter). Values are in the
-    // parameter's own units (min..max), like CLAP. `id` is opaque — port index
+    // parameter's own units (min..max), like CLAP. `id` is opaque - port index
     // for control ports, a marked property token for patch properties; round-trip
     // it through get/setParamValue, don't interpret it.
     struct ParamInfo
@@ -61,7 +61,7 @@ public:
 
     // Session-scoped directory for FILE-BACKED plugin state (a sampler's
     // loaded bank, a convolution IR). Empty = blob-only save (control ports
-    // + in-memory state:interface — the pre-file-state behaviour). Set by
+    // + in-memory state:interface - the pre-file-state behaviour). Set by
     // the engine before saveState/loadState. saveState rotates
     // <dir>/prev <- <dir>/cur and snapshots referenced files into cur/;
     // loadState resolves the blob's abstract paths against cur/.
@@ -69,9 +69,9 @@ public:
 
     int getLatencySamples() const noexcept override;
 
-    // ── Editor support (message thread; opaque so this header stays lilv-free) ──
+    // Editor support (message thread; opaque so this header stays lilv-free)
     // The LilvPlugin*, the live LilvInstance* (null when inactive), and this
-    // instance's URID map/unmap LV2_Features — the UI must share the plugin's
+    // instance's URID map/unmap LV2_Features - the UI must share the plugin's
     // URID space, so the editor forwards these instead of building its own.
     void*       lilvWorld()        const noexcept;
     const void* lilvPlugin()       const noexcept;
@@ -79,11 +79,11 @@ public:
     void*       uridMapFeature()   const noexcept;
     void*       uridUnmapFeature() const noexcept;
 
-    // UI → plugin control-port write (ui:floatProtocol). Staged into a lock-free
+    // UI -> plugin control-port write (ui:floatProtocol). Staged into a lock-free
     // ring; the audio thread applies it at the top of its next processBlock so
     // nothing writes portValues while run() reads it.
     void setControlPortValue (uint32_t portIndex, float value) noexcept;
-    // Same, from the plugin's OWN editor — also stamps the MIDI Learn
+    // Same, from the plugin's OWN editor - also stamps the MIDI Learn
     // last-touched tracker (host-initiated writes must not self-stamp).
     void setControlPortValueFromUi (uint32_t portIndex, float value) noexcept;
     // Port index for the suil port-index-by-symbol callback; -1 when unknown.

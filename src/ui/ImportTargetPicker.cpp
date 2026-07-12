@@ -62,7 +62,7 @@ juce::String modeBadgeText (Track::Mode m)
 
 juce::String summaryLine (const ImportTargetPicker::FileSummary& s)
 {
-    // Middle dots are UTF-8 multibyte — they must go through CharPointer_UTF8.
+    // Middle dots are UTF-8 multibyte - they must go through CharPointer_UTF8.
     // juce::String (const char*) reads bytes as single characters, so a plain
     // literal renders the classic mojibake ("Â·", GH issue #27).
     if (s.isMidi)
@@ -298,11 +298,11 @@ ImportTargetPicker::ImportTargetPicker (Session& s,
     addAndMakeVisible (cancelButton);
     addAndMakeVisible (importButton);
 
-    // setSize last — all children + listContainer rows are now created
+    // setSize last - all children + listContainer rows are now created
     // and addAndMakeVisible'd, so the resized() that setSize fires lays
     // everything out. EmbeddedModal::show will only call setBounds
     // (position-only on a fixed-size panel), and setBounds with no size
-    // change doesn't trigger resized() — meaning rows would never be
+    // change doesn't trigger resized() - meaning rows would never be
     // positioned if setSize ran at the top of the ctor.
     setSize (kPanelW, kPanelH);
 }

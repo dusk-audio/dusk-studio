@@ -25,7 +25,7 @@ void HardwareInsertSlot::prepare (double sampleRate, int blockSize)
 
     // Ping calibration buffers. Chirp is pre-rendered at session SR so
     // the audio thread never builds a sine table in-callback. Capture
-    // holds the full chirp plus the maximum measurable lag — the
+    // holds the full chirp plus the maximum measurable lag - the
     // correlator slides the chirp across [0, kMaxDelaySamples] INCLUSIVE.
     // The +1 makes maxK = kMaxDelaySamples + 1 so the loop's `< maxK` test
     // still reaches a lag of exactly kMaxDelaySamples (the latency clamp's

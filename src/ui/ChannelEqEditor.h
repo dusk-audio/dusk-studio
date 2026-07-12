@@ -24,7 +24,7 @@ private:
 
     juce::Label titleLabel;
     juce::TextButton typeButton { "E" };
-    // EQ section ON/OFF toggle — mirrors the strip's EQ-header LED so
+    // EQ section ON/OFF toggle - mirrors the strip's EQ-header LED so
     // the popup can engage or bypass the whole 4-band + HPF/LPF stack
     // without closing the editor.
     juce::TextButton enableButton { "EQ" };

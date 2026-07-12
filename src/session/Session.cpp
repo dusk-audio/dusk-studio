@@ -115,7 +115,7 @@ void Session::setTrackArmed (int trackIndex, bool armed) noexcept
 {
     if (trackIndex < 0 || trackIndex >= kNumTracks) return;
     // A frozen track can't record (playback is the baked WAV). Refuse arming it
-    // from ANY path — the strip button, the selected-track shortcut, MCU, MIDI
+    // from ANY path - the strip button, the selected-track shortcut, MCU, MIDI
     // bindings all route through here. (The strip button still shows its own
     // alert + toggle rollback for UI feedback; this is the shared backstop.)
     if (armed && tracks[(size_t) trackIndex].frozen.load (std::memory_order_relaxed))
@@ -397,15 +397,15 @@ void thinAutomationLane (std::vector<AutomationPoint>& points,
                             AutomationParam param,
                             double epsilon) noexcept
 {
-    // Discrete params (mute / solo) are bit-exact — RDP'd values would
+    // Discrete params (mute / solo) are bit-exact - RDP'd values would
     // round wrong and silently lose state transitions. Skip thinning;
     // the existing same-sample coalesce in captureWritePoint is enough.
     if (! isContinuousParam (param)) return;
     if (points.size() <= 2) return;
 
     // Negative epsilon would make `worst > epsilon` always true (since
-    // perpendicularDistance returns |…| ≥ 0), so every interior point
-    // would be marked keep — defeating the thin entirely. Clamp for
+    // perpendicularDistance returns |...| ≥ 0), so every interior point
+    // would be marked keep - defeating the thin entirely. Clamp for
     // safety; the caller should already pass a non-negative value.
     epsilon = std::max (epsilon, 0.0);
 
@@ -430,7 +430,7 @@ void handleWritePassComplete (Session& s) noexcept
     // typical "ride" gesture.
     constexpr double kEpsilon = 0.002;
 
-    // Thin via mutatePoints (copy → thin → atomic publish) so a stray reader
+    // Thin via mutatePoints (copy -> thin -> atomic publish) so a stray reader
     // never sees the reshape mid-flight. Skip lanes that can't change (discrete,
     // or ≤ 2 points) to avoid a pointless republish of an identical vector.
     const auto thinLane = [&] (AutomationLane& lane, AutomationParam p)
@@ -457,7 +457,7 @@ void applyTempoChange (Session& s, float newBpm, double sampleRate) noexcept
     const float oldBpm = s.tempoBpm.load (std::memory_order_relaxed);
 
     // Clamp before storing so an external caller can't push 0 / NaN /
-    // negative tempos into the audio thread's tick→sample math. Same
+    // negative tempos into the audio thread's tick->sample math. Same
     // limits the TransportBar's spinner and tap-tempo enforce. Note:
     // juce::jlimit returns NaN when its input is NaN (the comparisons
     // it relies on are both false for NaN), so an explicit isfinite
@@ -470,7 +470,7 @@ void applyTempoChange (Session& s, float newBpm, double sampleRate) noexcept
     {
         const double oldB = (double) oldBpm;
         const double newB = (double) newBpm;
-        const double factor = oldB / newB;   // positions in beats stay fixed → scale samples
+        const double factor = oldB / newB;   // positions in beats stay fixed -> scale samples
 
         for (int ti = 0; ti < Session::kNumTracks; ++ti)
         {

@@ -54,7 +54,7 @@ std::optional<AriaBank> AriaBank::tryLoadFromSfz(const juce::File& sfzFile)
 
     // If the caller passed a *.bank.xml directly (e.g. the file browser's
     // bank-manifest path), use it as-is. Only fall back to the directory
-    // walk for a plain .sfz — that scan can pick the wrong sibling manifest
+    // walk for a plain .sfz - that scan can pick the wrong sibling manifest
     // when several live near each other.
     const auto bankFile = sfzFile.getFileName().toLowerCase().endsWith(".bank.xml")
                               ? sfzFile

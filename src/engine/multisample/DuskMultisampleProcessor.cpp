@@ -135,7 +135,7 @@ void DuskMultisampleProcessor::releaseResources()
 
 int DuskMultisampleProcessor::getNumRegions() const noexcept
 {
-    // A background load is mutating the synth off-thread — don't read it.
+    // A background load is mutating the synth off-thread - don't read it.
     if (impl == nullptr || impl->synth == nullptr || isLoadPending()) return 0;
     return sfizz_get_num_regions (impl->synth);
 }
@@ -280,7 +280,7 @@ bool DuskMultisampleProcessor::applySf2Preset (const juce::File& sf2,
     const auto virtualSfz = newDir.getChildFile ("preset.sfz");
     const auto body       = conv.sfzText.toStdString();
     const auto pathStr    = virtualSfz.getFullPathName().toStdString();
-    // Only the sfizz call itself is serialised against processBlock — the
+    // Only the sfizz call itself is serialised against processBlock - the
     // expensive conversion above runs unlocked so the audio thread keeps
     // rendering during it.
     const juce::SpinLock::ScopedLockType lock (sfizzLock);
@@ -306,13 +306,13 @@ bool DuskMultisampleProcessor::applySf2Preset (const juce::File& sf2,
 
 void DuskMultisampleProcessor::setPolyphony (int newPolyphony)
 {
-    // Message/loader-thread entry point — never the audio thread.
+    // Message/loader-thread entry point - never the audio thread.
     const int clamped = juce::jlimit (1, 256, newPolyphony);
     overrides.polyphony.store (clamped, std::memory_order_relaxed);
     if (impl != nullptr && impl->synth != nullptr)
     {
         // sfizz_set_num_voices is marked OFF (not callable while RT
-        // functions run) — hold the render lock so processBlock dry-passes
+        // functions run) - hold the render lock so processBlock dry-passes
         // for the duration instead of racing it.
         const juce::SpinLock::ScopedLockType lock (sfizzLock);
         sfizz_set_num_voices (impl->synth, clamped);
@@ -352,7 +352,7 @@ bool DuskMultisampleProcessor::loadSfzFile (const juce::File& sfz,
         impl->sf2TempDir.deleteRecursively();
         impl->sf2TempDir = juce::File();
     }
-    // Clear SF2 preset state — an SFZ load has no presets, and leaving
+    // Clear SF2 preset state - an SFZ load has no presets, and leaving
     // the previous SF2's list around would show a stale program switcher.
     sf2PresetNames.clear();
     sf2PresetIndex = -1;
@@ -381,7 +381,7 @@ void DuskMultisampleProcessor::processBlock (juce::AudioBuffer<float>& buf,
     }
 
     // Loads mutate the sfizz synth from the loader thread; TRY-lock and pass
-    // one silent block instead of racing them (PluginSlot's prepare↔process
+    // one silent block instead of racing them (PluginSlot's prepare<->process
     // pattern). The message-thread mutators take this lock blocking.
     const juce::SpinLock::ScopedTryLockType renderLock (sfizzLock);
     if (! renderLock.isLocked())

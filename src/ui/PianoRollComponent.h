@@ -23,7 +23,7 @@ class EditModeToolbar;
 // swap-load atomic ptr.
 //
 // The roll is the one visible exception to DuskStudio's "everything
-// visible" rule — modal overlay on top of TapeStrip, Esc / click-out
+// visible" rule - modal overlay on top of TapeStrip, Esc / click-out
 // to dismiss.
 class PianoRollComponent final : public juce::Component,
                                     private juce::Timer,
@@ -59,12 +59,12 @@ public:
     void mouseWheelMove (const juce::MouseEvent&,
                           const juce::MouseWheelDetails&) override;
 
-    // CursorOverlay sink — MainComponent wires these so the editor
+    // CursorOverlay sink - MainComponent wires these so the editor
     // pushes its local mouse position into the shared overlay (which
     // bypasses the platform cursor pipeline that fails on this hybrid
     // X11/Wayland setup). Same pattern as AudioRegionEditor.
     // The juce::Range<int> argument carries the cut-line Y span (unused
-    // on the piano roll — Cut mode has no glyph here — but the
+    // on the piano roll - Cut mode has no glyph here - but the
     // signature matches AudioRegionEditor's so MainComponent can use
     // a single forwarder lambda).
     std::function<void (juce::Component&, juce::Point<int>, EditMode,
@@ -101,7 +101,7 @@ private:
 
     // chordHadNotes flips true on the first Note On and back to false
     // when the count drops to zero. First Note On of the NEXT chord
-    // advances the playhead before placing — chord notes share start.
+    // advances the playhead before placing - chord notes share start.
     int  stepRecordHeld     = 0;
     bool stepRecordChordHad = false;
 
@@ -110,7 +110,7 @@ private:
 
     // 0 = free positioning. 120 ticks = 1/16 at 480 PPQN. This is the chosen
     // RESOLUTION (grid combo); the MIDI editor's own snap-enable
-    // (session.midiEditorSnap) decides whether it actually applies — see
+    // (session.midiEditorSnap) decides whether it actually applies - see
     // effectiveSnapTicks(), which returns 0 (no snap) when the enable is off.
     std::int64_t snapTicks = 120;
     std::int64_t effectiveSnapTicks() const noexcept;
@@ -163,10 +163,10 @@ private:
     std::int64_t rangeEndTick   = 0;
     bool        rangeActive    = false;
 
-    // In-component state only — reopening resets to defaults (editor
+    // In-component state only - reopening resets to defaults (editor
     // state, not session state).
     int velocityStripH = kVelocityStripHDefault;
-    // Starts collapsed — "don't show what you're not using" portastudio
+    // Starts collapsed - "don't show what you're not using" portastudio
     // bias. Toggle-CC button or top-edge drag reveals.
     int ccStripH       = 0;
 
@@ -195,14 +195,14 @@ private:
     enum class NoteEntryMode { Grid, Free, Triplet, Dotted };
     NoteEntryMode noteEntryMode = NoteEntryMode::Grid;
     // false = honour click's exact row without extra snap (the row IS
-    // the noteNumber, so we still snap visually — just no constraint pass).
+    // the noteNumber, so we still snap visually - just no constraint pass).
     bool keySnap = true;
     std::int64_t dragOriginTick    = 0;
     int         dragOriginNoteNum = 0;
     std::int64_t dragNoteStartTick = 0;
     std::int64_t dragNoteLenTicks  = 0;
 
-    // Reaper-style gold cursor — "I am here" signal independent of
+    // Reaper-style gold cursor - "I am here" signal independent of
     // the transport.
     std::int64_t editCursorTick = 0;
 
@@ -353,7 +353,7 @@ private:
 
     // Push (x, y) into the shared CursorOverlay if it's inside the
     // note grid and the active mode wants a glyph (Grab / Draw).
-    // Called from BOTH mouseMove and mouseDrag — drag fires only
+    // Called from BOTH mouseMove and mouseDrag - drag fires only
     // mouseDrag, so without this the overlay freezes at the click
     // point while the note follows the pointer underneath.
     void pushCursorPosition (int x, int y);

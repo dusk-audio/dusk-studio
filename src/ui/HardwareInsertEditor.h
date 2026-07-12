@@ -20,10 +20,10 @@ namespace duskstudio
 //
 // The class already owns pingButton + timerCallback (the 10 Hz poller
 // that reads HardwareInsertParams::pingResult and writes the measured
-// lag back into latencySlider on success). What's still deferred to
-// Phase 6: automatic / periodic re-pinging (e.g. on session load, or
-// when the device sample rate changes). The manual Ping button drives
-// the existing handshake today; the timer + button are not placeholders.
+// lag back into latencySlider on success). Automatic / periodic re-pinging
+// (e.g. on session load, or when the device sample rate changes) is not
+// implemented. The manual Ping button drives
+// the existing handshake today.
 class HardwareInsertEditor final : public juce::Component,
                                        private juce::Timer
 {

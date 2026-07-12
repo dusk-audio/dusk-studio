@@ -16,7 +16,7 @@ void styleSelectorButton (juce::TextButton& b, juce::Colour onColour)
     b.setColour (juce::TextButton::textColourOnId,   juce::Colours::white);
 }
 
-// In-window rename panel — replaces juce::AlertWindow so the rename UI
+// In-window rename panel - replaces juce::AlertWindow so the rename UI
 // matches the project's other modals (DimOverlay backdrop, rounded
 // panel, Esc/click-outside dismiss). Owned and shown via EmbeddedModal.
 class RenameAuxPanel final : public juce::Component
@@ -159,7 +159,7 @@ AuxView::~AuxView()
     // Stop the polling timer BEFORE the derived members (sessionPtr,
     // selectorButtons, lanes) tear down. juce::Timer's own dtor would
     // call stopTimer too, but only after the AuxView destructor body
-    // returns — by then the timerCallback has nothing alive to touch.
+    // returns - by then the timerCallback has nothing alive to touch.
     stopTimer();
 }
 

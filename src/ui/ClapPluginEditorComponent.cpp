@@ -7,7 +7,7 @@ namespace duskstudio
 ClapPluginEditorComponent::ClapPluginEditorComponent()
 {
     setOpaque (false);
-    // EmbeddedModal hides tagged editors while a modal is up — see the same tag
+    // EmbeddedModal hides tagged editors while a modal is up - see the same tag
     // in Lv2PluginEditorComponent.
     getProperties().set (kPluginEditorTag, true);
 }
@@ -48,8 +48,8 @@ bool ClapPluginEditorComponent::openEditorOn (clap::ClapInstance& inst, juce::St
     if (! editor.open (inst.getPlugin(), inst.getHost(), err))
     { errorOut = "editor: " + juce::String (err); return false; }
 
-    // The plugin asked to resize → resize this component (which re-bounds the host
-    // window). The GUI closed → tear the editor down.
+    // The plugin asked to resize -> resize this component (which re-bounds the host
+    // window). The GUI closed -> tear the editor down.
     editor.onResize = [this] (int w, int h)
     {
         if (w > 0 && h > 0)
@@ -82,7 +82,7 @@ unsigned long ClapPluginEditorComponent::peerX11() const
 void ClapPluginEditorComponent::tryEmbed()
 {
     // Embed ONLY when actually on-screen. Some plugins (u-he Satin) abort() if asked
-    // to set_parent/show into a parent that isn't viewable yet — so no pre-warm: build
+    // to set_parent/show into a parent that isn't viewable yet - so no pre-warm: build
     // + map when shown, exactly like the JUCE editor path. The kept-alive remap on a
     // later tab switch keeps re-opens instant.
     if (! loaded || embedded || ! isShowing()) return;
@@ -107,7 +107,7 @@ void ClapPluginEditorComponent::tryEmbed()
     {
         std::fprintf (stderr, "[clap editor] embed failed: %s\n", err.c_str());
         // A failed embed tears the ClapEditor down (set_parent/show call close()), so
-        // the GUI is gone. Stop treating this component as live — otherwise the next
+        // the GUI is gone. Stop treating this component as live - otherwise the next
         // resized()/visibilityChanged would retry embed against a destroyed editor
         // every frame.
         loaded = false;
@@ -119,7 +119,7 @@ void ClapPluginEditorComponent::pushBounds()
 {
     if (! embedded) return;
     // Borrowed bodies get setBounds'd by EmbeddedModal BEFORE being re-added
-    // to a parent — getTopLevelComponent() is then `this` and the area
+    // to a parent - getTopLevelComponent() is then `this` and the area
     // degenerates to (0,0), slamming the native window to the origin. Skip
     // while unparented; parentHierarchyChanged re-syncs once re-added.
     if (getParentComponent() == nullptr || getPeer() == nullptr) return;
@@ -156,7 +156,7 @@ void ClapPluginEditorComponent::leakForShutdown()
 void ClapPluginEditorComponent::verifyGeometry()
 {
     // The message flow can miss a move (compositor interference, an event
-    // arriving while unparented) — poll the REAL geometry ~3 Hz, snap back on
+    // arriving while unparented) - poll the REAL geometry ~3 Hz, snap back on
     // drift, and log the numbers so field reports say what actually happened.
     if (! isShowing() || getParentComponent() == nullptr || getPeer() == nullptr) return;
     if (++geometryCheckTick < 20) return;
@@ -201,7 +201,7 @@ void ClapPluginEditorComponent::timerCallback()
 {
     // Keep the native X11 window's mapped state in sync with our real on-screen
     // visibility. visibilityChanged() does NOT fire for ancestor (aux-tab / stage)
-    // changes, so without this poll the window stays mapped — floating over whatever
+    // changes, so without this poll the window stays mapped - floating over whatever
     // view replaced the aux lane. reveal()/hide() are idempotent (guarded by `mapped`).
     if (embedded)
     {

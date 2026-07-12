@@ -31,7 +31,7 @@ namespace duskstudio::lv2
 {
 struct Lv2Instance::Impl
 {
-    // ── URID map/unmap host feature (a simple intern table) ──
+    // URID map/unmap host feature (a simple intern table)
     std::unordered_map<std::string, uint32_t> uridForUri;
     std::vector<std::string> uriForUrid { std::string() };   // index 0 unused (URIDs start at 1)
     LV2_URID_Map   mapFeature   {};
@@ -42,7 +42,7 @@ struct Lv2Instance::Impl
     LV2_Feature    boundedFeatureStruct {};
     std::vector<const LV2_Feature*> features;
 
-    // Backing storage for the options feature — must outlive the instance, which
+    // Backing storage for the options feature - must outlive the instance, which
     // keeps pointers to these. Rebuilt per activate() with the live SR / block size.
     int32_t optMinBlock = 1, optMaxBlock = 0, optNominalBlock = 0;
     float   optSampleRate = 0.0f;
@@ -93,11 +93,11 @@ struct Lv2Instance::Impl
              uridPatchPut = 0, uridPatchBody = 0, uridSequence = 0, uridFloatType = 0,
              uridUridType = 0;
 
-    // ── state:mapPath / state:freePath for file-backed state ──
+    // state:mapPath / state:freePath for file-backed state
     // Save side: lilv builds its own map/make-path from the directories we
     // hand lilv_state_new_from_instance. Restore side: the blob carries
     // ABSTRACT (cur/-relative) paths, so we supply the mapping back to
-    // absolute ourselves. Returned strings are malloc'd — the plugin frees
+    // absolute ourselves. Returned strings are malloc'd - the plugin frees
     // them through freePathCb (or plain free()), per the state spec.
     std::filesystem::path stateDir;
 
@@ -140,7 +140,7 @@ struct Lv2Instance::Impl
                      &optionsFeatureStruct, &boundedFeatureStruct, nullptr };
     }
 
-    // ── plugin + instance ──
+    // plugin + instance
     LilvWorld*        world  = nullptr;   // owned by the bundle
     const LilvPlugin* plugin = nullptr;   // owned by the bundle's world
     LilvInstance*     instance = nullptr;
@@ -153,7 +153,7 @@ struct Lv2Instance::Impl
 
     // Port classification (indices into the plugin's port list).
     std::vector<uint32_t> audioInPorts, audioOutPorts, controlPorts, atomInPorts, atomOutPorts;
-    std::vector<uint32_t> otherPorts;   // CV / unclassified — LV2 requires every port connected
+    std::vector<uint32_t> otherPorts;   // CV / unclassified - LV2 requires every port connected
     int latencyPortIndex = -1;
 
     // Per-port scratch backing otherPorts: maxFrames floats each, so an audio-rate
@@ -166,7 +166,7 @@ struct Lv2Instance::Impl
     // channels each block. Inputs share the silence, outputs share the sink.
     std::vector<float> audioSilence, audioSink;
 
-    // UI → audio-thread control-port writes. The UI must not store into portValues
+    // UI -> audio-thread control-port writes. The UI must not store into portValues
     // directly (run() reads it concurrently); writes stage here and processBlock
     // drains them before run().
     struct PortWrite { uint32_t idx; float value; };
@@ -189,7 +189,7 @@ struct Lv2Instance::Impl
     // patch:Set atoms staged UI/host-side, injected into the control atom input
     // at the top of the next process block. 128 bytes covers a patch:Set with a
     // float payload several times over; larger UI atoms are dropped (only the
-    // instance-access shortcut loses nothing — see forwardUiAtomEvent).
+    // instance-access shortcut loses nothing - see forwardUiAtomEvent).
     struct AtomBlob { uint32_t size = 0; uint8_t data[128]; };
     hosting::SpscRing<AtomBlob, 64> atomRing;
 
@@ -199,7 +199,7 @@ struct Lv2Instance::Impl
     // Mirrors it for the plugin's outgoing patch responses (-1 = no atom output).
     int controlAtomOutPos = -1;
 
-    // Plugin → host property feedback (audio-thread parse of the control atom
+    // Plugin -> host property feedback (audio-thread parse of the control atom
     // output, drained into patchShadow on the message thread).
     struct PatchFeedback { LV2_URID prop; float value; };
     hosting::SpscRing<PatchFeedback, 128> patchOutRing;
@@ -231,12 +231,12 @@ struct Lv2Instance::Impl
         }
     }
 
-    // Last host/UI-written value per patch property (message thread) — the
+    // Last host/UI-written value per patch property (message thread) - the
     // read-back source until patch:Put parsing exists.
     std::unordered_map<LV2_URID, float> patchShadow;
 
     // Message-thread shadow of the UI writes. A bypassed slot never runs
-    // processBlock, so the ring may never drain — state saves and reactivate read
+    // processBlock, so the ring may never drain - state saves and reactivate read
     // UI-touched ports from here instead of waiting on a drain that may not come.
     // Audio thread never touches these.
     std::vector<float>   uiShadow;
@@ -263,7 +263,7 @@ struct Lv2Instance::Impl
     }
 
     // Filled at create(); lilv's state save/restore resolves every port by symbol,
-    // so this lookup runs once per port per save — keep it O(1).
+    // so this lookup runs once per port per save - keep it O(1).
     std::unordered_map<std::string, uint32_t> portIndexBySymbol;
 
     int portIndexForSymbol (const char* symbol) const
@@ -361,7 +361,7 @@ bool Lv2Instance::create (const Lv2Bundle& bundle, const std::string& uri, std::
         else if (lilv_port_is_a (impl->plugin, port, atomClass))
             (isInput ? impl->atomInPorts : impl->atomOutPorts).push_back (i);
         else
-            impl->otherPorts.push_back (i);   // CV / unknown → scratch in activate()
+            impl->otherPorts.push_back (i);   // CV / unknown -> scratch in activate()
     }
 
     // Input control ports double as the parameter surface (MIDI bindings /
@@ -383,7 +383,7 @@ bool Lv2Instance::create (const Lv2Bundle& bundle, const std::string& uri, std::
             // Designated ports (lv2:enabled, lv2:freeWheeling, time/transport
             // feeds) are host-managed, not user parameters; notOnGUI ports are
             // hidden by the plugin's own request. JUCE-wrapped LV2s expose ONLY
-            // such ports — their real parameters ride atom patch messages, which
+            // such ports - their real parameters ride atom patch messages, which
             // this surface doesn't cover (yet).
             if (LilvNodes* desig = lilv_port_get_value (impl->plugin, port, designation))
             {
@@ -413,7 +413,7 @@ bool Lv2Instance::create (const Lv2Bundle& bundle, const std::string& uri, std::
         }
         lilv_node_free (notOnGuiProp);
 
-        // patch:writable float properties join the surface — JUCE-built LV2s
+        // patch:writable float properties join the surface - JUCE-built LV2s
         // expose ALL their parameters this way (their control ports are only
         // the designated host-managed ones). Non-float ranges (paths, strings)
         // aren't parameters and are skipped.
@@ -622,7 +622,7 @@ bool Lv2Instance::activate (double sampleRate, int maxBlockFrames, std::string& 
         lilv_instance_connect_port (impl->instance, idx, impl->otherScratch.back().data());
     }
 
-    // Baseline audio-port wiring (see Impl::audioSilence) — processBlock overrides
+    // Baseline audio-port wiring (see Impl::audioSilence) - processBlock overrides
     // the main channels every block.
     impl->audioSilence.assign ((size_t) impl->maxFrames, 0.0f);
     impl->audioSink.assign ((size_t) impl->maxFrames, 0.0f);
@@ -702,7 +702,7 @@ void Lv2Instance::processBlock (const hosting::PortBuffers& io) noexcept
     for (int c = 0; c < nout; ++c)
         lilv_instance_connect_port (impl->instance, impl->audioOutPorts[(size_t) c], io.mainOut[c]);
 
-    // Drain the UI's staged control-port writes (single consumer — this thread).
+    // Drain the UI's staged control-port writes (single consumer - this thread).
     impl->writeRing.drain ([this] (const Impl::PortWrite& pw)
     {
         if ((size_t) pw.idx < impl->portValues.size())
@@ -710,7 +710,7 @@ void Lv2Instance::processBlock (const hosting::PortBuffers& io) noexcept
     });
 
     // Rebuild the control atom input's sequence: staged patch/UI atoms first
-    // (frame 0), then the block's MIDI at its sample offsets — the sequence
+    // (frame 0), then the block's MIDI at its sample offsets - the sequence
     // stays time-sorted. Input sequences are host-owned, so the reset is cheap
     // and the other atom inputs keep their empty headers from activate().
     if (! impl->atomInPorts.empty())
@@ -724,7 +724,7 @@ void Lv2Instance::processBlock (const hosting::PortBuffers& io) noexcept
             const uint32_t evSize = (uint32_t) sizeof (LV2_Atom_Event) + size;
             const uint32_t padded = lv2_atom_pad_size (evSize);
             const uint32_t used   = (uint32_t) sizeof (LV2_Atom) + seq->atom.size;
-            if (used + padded > buf.size()) return;   // sequence full — drop
+            if (used + padded > buf.size()) return;   // sequence full - drop
             auto* ev = reinterpret_cast<LV2_Atom_Event*> (buf.data() + used);
             ev->time.frames = frames;
             ev->body.size   = size;
@@ -760,7 +760,7 @@ void Lv2Instance::processBlock (const hosting::PortBuffers& io) noexcept
     lilv_instance_run (impl->instance, (uint32_t) numFrames);
 
     // The plugin's outgoing patch responses (its own UI / preset loads) keep
-    // the read-back shadow honest — parse the control atom output and stage
+    // the read-back shadow honest - parse the control atom output and stage
     // the float properties for the message-thread drain.
     if (impl->controlAtomOutPos >= 0)
     {
@@ -804,7 +804,7 @@ bool Lv2Instance::saveState (std::vector<uint8_t>& out) const
     if (! impl->stateDir.empty())
     {
         // Rotate generations instead of wiping: a disk-streaming sampler may
-        // still be reading the files the PREVIOUS save snapshotted — those
+        // still be reading the files the PREVIOUS save snapshotted - those
         // survive one more save cycle in prev/.
         std::error_code ec;
         const auto cur  = impl->stateDir / "cur";
@@ -855,7 +855,7 @@ bool Lv2Instance::loadState (const std::vector<uint8_t>& in)
 
     // Restores control ports through setPortValue (the plugin reads portValues on
     // its next run()) and hands the state:interface blob to the plugin. Callers
-    // fence the audio thread when the instance is live — same as activate().
+    // fence the audio thread when the instance is live - same as activate().
     // mapPath/freePath resolve the blob's abstract file paths against the
     // slot's state directory (no-ops when none is set / the blob has none).
     LV2_State_Map_Path  mapPath  { impl.get(), &Impl::abstractPathCb, &Impl::absolutePathCb };
@@ -890,9 +890,9 @@ void Lv2Instance::setControlPortValue (uint32_t portIndex, float value) noexcept
     impl->uiShadow[(size_t) portIndex] = value;
     impl->uiDirty [(size_t) portIndex] = 1;
 
-    // Stage into the SPSC ring — the audio thread owns portValues (run() reads
+    // Stage into the SPSC ring - the audio thread owns portValues (run() reads
     // it concurrently) and applies these at the top of its next processBlock.
-    impl->writeRing.push ({ portIndex, value });   // full ⇒ drop (pathological flood only)
+    impl->writeRing.push ({ portIndex, value });   // full => drop (pathological flood only)
 }
 
 void Lv2Instance::setControlPortValueFromUi (uint32_t portIndex, float value) noexcept
@@ -965,7 +965,7 @@ void Lv2Instance::setParamValue (uint32_t paramId, double value) noexcept
     blob.size = (uint32_t) sizeof (LV2_Atom) + atom->size;
 
     impl->patchShadow[propUrid] = v;
-    impl->atomRing.push (blob);   // full ⇒ drop (pathological flood only)
+    impl->atomRing.push (blob);   // full => drop (pathological flood only)
 }
 
 void Lv2Instance::drainPatchFeedback()
@@ -993,7 +993,7 @@ void Lv2Instance::forwardUiAtomEvent (const void* atomData, uint32_t sizeBytes) 
     const auto* atom = static_cast<const LV2_Atom*> (atomData);
     if (sizeof (LV2_Atom) + atom->size != sizeBytes) return;
 
-    // patch:Set → stamp MIDI Learn's last-touched + the read-back shadow.
+    // patch:Set -> stamp MIDI Learn's last-touched + the read-back shadow.
     if (atom->type == impl->uridObject)
     {
         const auto* obj = reinterpret_cast<const LV2_Atom_Object*> (atom);
@@ -1017,7 +1017,7 @@ void Lv2Instance::forwardUiAtomEvent (const void* atomData, uint32_t sizeBytes) 
     }
 
     // Forward onto the control atom port so the DSP hears the event without
-    // relying on the instance-access shortcut. Oversized atoms are dropped —
+    // relying on the instance-access shortcut. Oversized atoms are dropped -
     // for JUCE-built UIs instance access already carried the change.
     if (sizeBytes <= sizeof (Impl::AtomBlob::data))
     {

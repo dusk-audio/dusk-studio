@@ -29,7 +29,7 @@ namespace duskstudio
 // Threading: the param setters are lock-free and allocation-free, so they
 // are safe to call from either thread. The chain pulls the latest param
 // atomics at block start and the audio thread re-applies any changed band's
-// coefficients in place (no heap allocation — see writeCoeffs / computeCoeffs).
+// coefficients in place (no heap allocation - see writeCoeffs / computeCoeffs).
 class MasteringDigitalEq
 {
 public:

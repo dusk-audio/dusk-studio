@@ -160,7 +160,7 @@ bool ClapInstance::create (const ClapBundle& bundle, const std::string& pluginId
             if (! paramsExt->get_info (plugin, i, &info)) continue;
             ParamInfo pi;
             pi.id           = info.id;
-            // Bound the copy at the buffer size — don't trust a third-party plugin to
+            // Bound the copy at the buffer size - don't trust a third-party plugin to
             // NUL-terminate its fixed char[] (an unterminated name would over-read).
             pi.name.assign (info.name, ::strnlen (info.name, sizeof (info.name)));
             pi.minValue     = info.min_value;
@@ -250,7 +250,7 @@ bool ClapInstance::saveState (std::vector<uint8_t>& out) const
     os.ctx   = &out;
     os.write = [] (const clap_ostream_t* s, const void* buffer, uint64_t size) -> int64_t
     {
-        // The plugin calls this across a C boundary — an allocation failure in
+        // The plugin calls this across a C boundary - an allocation failure in
         // insert() must not throw out of the callback. Report a short write (<0).
         try
         {
@@ -266,7 +266,7 @@ bool ClapInstance::saveState (std::vector<uint8_t>& out) const
 
 bool ClapInstance::loadState (const std::vector<uint8_t>& in)
 {
-    // Don't reject an empty buffer up front — a plugin with zero-byte state is a valid
+    // Don't reject an empty buffer up front - a plugin with zero-byte state is a valid
     // round-trip; let it flow through the stream (read() returns EOF immediately).
     if (plugin == nullptr) return false;
     const auto* st = static_cast<const clap_plugin_state_t*> (
@@ -307,13 +307,13 @@ void ClapInstance::setParamValue (clap_id id, double value) noexcept
 {
     void* cookie = nullptr;
     for (const auto& p : params) if (p.id == id) { cookie = p.cookie; break; }
-    paramRing.push ({ id, value, cookie });   // full ⇒ drop (pathological flood only)
+    paramRing.push ({ id, value, cookie });   // full => drop (pathological flood only)
 }
 
 void ClapInstance::drainParamRing() noexcept
 {
     // Drain queued parameter changes into this block's CLAP event list (audio thread
-    // = single consumer). All at time 0 — sample-accurate automation is a later step.
+    // = single consumer). All at time 0 - sample-accurate automation is a later step.
     eventCount = 0;
     paramRing.drain ([this] (const ParamChange& pc)
     {
@@ -339,7 +339,7 @@ void ClapInstance::appendMidiEvents (const juce::MidiBuffer& midi) noexcept
     const uint32_t cap = (uint32_t) eventScratch.size();
     for (const auto meta : midi)
     {
-        if (eventCount >= cap) break;   // scratch full — drop the tail
+        if (eventCount >= cap) break;   // scratch full - drop the tail
         const auto* d = meta.data;
         if (meta.numBytes < 1) continue;
         const auto status  = (uint8_t) (d[0] & 0xF0u);
@@ -364,7 +364,7 @@ void ClapInstance::appendMidiEvents (const juce::MidiBuffer& midi) noexcept
         }
         else if (noteDialectMidi && meta.numBytes <= 3 && status >= 0x80 && status <= 0xE0)
         {
-            // Everything else (CC, pitch bend, aftertouch — and the notes
+            // Everything else (CC, pitch bend, aftertouch - and the notes
             // themselves when the plugin only takes raw MIDI).
             auto& ev = slot.midi;
             ev.header = { (uint32_t) sizeof (clap_event_midi_t),
@@ -395,7 +395,7 @@ void ClapInstance::processStereo (const float* inL, const float* inR,
         return;
     }
 
-    if (startFailed)   // plugin already refused to start — stay silent, don't hammer it every block
+    if (startFailed)   // plugin already refused to start - stay silent, don't hammer it every block
     {
         std::memset (outL, 0, sizeof (float) * (size_t) numFrames);
         std::memset (outR, 0, sizeof (float) * (size_t) numFrames);
@@ -475,7 +475,7 @@ void ClapInstance::processBlock (const hosting::PortBuffers& io) noexcept
         return;
     }
 
-    if (startFailed)   // plugin already refused to start — stay silent
+    if (startFailed)   // plugin already refused to start - stay silent
     {
         clearOutputs();
         return;
@@ -497,7 +497,7 @@ void ClapInstance::processBlock (const hosting::PortBuffers& io) noexcept
     if (io.midiIn != nullptr)
         appendMidiEvents (*io.midiIn);
 
-    // Point the CLAP audio buffers straight at the caller's pre-sized scratch — the
+    // Point the CLAP audio buffers straight at the caller's pre-sized scratch - the
     // plugin writes its output there, no instance-owned copy. Clamp to the channel
     // counts negotiated at activate() so a mismatched block can't over-index; a null
     // mainIn (instrument-style caller) processes as zero input ports.

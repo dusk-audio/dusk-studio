@@ -93,20 +93,20 @@ private:
 
     // EQ = custom curve + band controls. Comp embeds ONLY the donor's
     // MultibandCompressorPanel (not the full UniversalCompressor editor
-    // — mode selector for Opto/FET/VCA/Bus is irrelevant here).
+    // - mode selector for Opto/FET/VCA/Bus is irrelevant here).
     // Limiter = Waves L4-style. Each panel has its own ON toggle.
     std::unique_ptr<class MasteringEqEditor>      eqEditor;
     std::unique_ptr<juce::Component>              compEditor;
     std::unique_ptr<class MasteringLimiterEditor> limiterEditor;
 
-    // Plugin editor draws to its own bounds with no header — wrapper
+    // Plugin editor draws to its own bounds with no header - wrapper
     // hosts (title + ON toggle) above it. Without the wrapper there's
     // no way to bypass the comp outside a context menu.
     std::unique_ptr<juce::Component>              compPanelWrapper;
-    // Shared console chrome for the donor multiband panel — the same LED-pill
+    // Shared console chrome for the donor multiband panel - the same LED-pill
     // header the EQ + limiter editors now use, so all three sections match.
     std::unique_ptr<class CompHeaderButton>       compHeaderBtn;
-    // Last compEnabled state pushed to compHeaderBtn — the button only repaints
+    // Last compEnabled state pushed to compHeaderBtn - the button only repaints
     // on its own click, so the 20 Hz timer watches this to pick up external
     // changes (e.g. session load).
     bool compHeaderEnabledSeen { false };

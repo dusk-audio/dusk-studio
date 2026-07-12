@@ -17,28 +17,28 @@ class Session;
 // and writes the decoded events directly to Session atoms.
 //
 // MCU surface decoded by this class:
-//   - Pitch-bend (status 0xE0+N) — channel N is strip N's fader
+//   - Pitch-bend (status 0xE0+N) - channel N is strip N's fader
 //     (banked); channel 8 is the master fader. 14-bit position.
-//   - Note On 0x00..0x07 — rec arm per strip
-//   - Note On 0x08..0x0F — solo per strip
-//   - Note On 0x10..0x17 — mute per strip
-//   - Note On 0x18..0x1F — channel select per strip (drives the
+//   - Note On 0x00..0x07 - rec arm per strip
+//   - Note On 0x08..0x0F - solo per strip
+//   - Note On 0x10..0x17 - mute per strip
+//   - Note On 0x18..0x1F - channel select per strip (drives the
 //     globally-selected channel)
-//   - Note On 0x20..0x27 — V-pot push (encoder click; resets the
+//   - Note On 0x20..0x27 - V-pot push (encoder click; resets the
 //     current parameter target to its default)
-//   - Note On 0x28..0x2D — assign-mode buttons (PAN / SEND /
+//   - Note On 0x28..0x2D - assign-mode buttons (PAN / SEND /
 //     PLUGIN / EQ / INST; the receiver only maps PAN / SEND
 //     / EQ / COMP for now per the v1 plan)
-//   - Note On 0x2E / 0x2F — bank LEFT / RIGHT (step by 8)
-//   - Note On 0x30 / 0x31 — channel LEFT / RIGHT (step by 1)
-//   - Note On 0x56 — loop toggle
-//   - Note On 0x5B / 0x5C — rewind / fast-forward (engine.jumpTo*
+//   - Note On 0x2E / 0x2F - bank LEFT / RIGHT (step by 8)
+//   - Note On 0x30 / 0x31 - channel LEFT / RIGHT (step by 1)
+//   - Note On 0x56 - loop toggle
+//   - Note On 0x5B / 0x5C - rewind / fast-forward (engine.jumpTo*
 //     via the existing pendingTransportPlayhead path)
-//   - Note On 0x5D / 0x5E / 0x5F — stop / play / record
-//   - Note On 0x68..0x70 — fader touch sense (drives the strip's
+//   - Note On 0x5D / 0x5E / 0x5F - stop / play / record
+//   - Note On 0x68..0x70 - fader touch sense (drives the strip's
 //     faderTouched latch so write/touch automation behaves)
-//   - CC 0x10..0x17 — V-pot rotation (signed 7-bit delta)
-//   - CC 0x3C       — jog wheel rotation (signed 7-bit delta;
+//   - CC 0x10..0x17 - V-pot rotation (signed 7-bit delta)
+//   - CC 0x3C       - jog wheel rotation (signed 7-bit delta;
 //     drives the playhead while transport is stopped)
 //
 // `process` is RT-safe. Writes to Session atoms use release-ordering

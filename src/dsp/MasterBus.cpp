@@ -114,7 +114,7 @@ void MasterBus::prepare (double sampleRate, int blockSize, int oversamplingFacto
     busComp.setBusMix (100.0f);
     busComp.setAutoMakeup (false);
     // The core does not port the donor's analog-noise stage, so no explicit
-    // force-off is needed — the master chain stays clean under signal.
+    // force-off is needed - the master chain stays clean under signal.
     busComp.prepare (prepSr, prepBs);
     busComp.reset();
     compMaxBlock = prepBs;
@@ -145,16 +145,16 @@ void MasterBus::updateEqParameters() noexcept
     // Fixed tube drive calibrated to ~-70 dB H2 at 0 dBFS sine input, matching
     // a UAD EQP-1A at +0 dB. With the donor TubeEQTubeStage polynomial
     // (H2 ≈ b·drive·DRIVE_SCALE·A/2, b=0.015, DRIVE_SCALE=2), drive=0.02 yields
-    // 0.015·0.04·0.5 = 3e-4 → 20·log10(3e-4) ≈ -70.5 dB H2 at 0 dBFS. H3 sits
+    // 0.015·0.04·0.5 = 3e-4 -> 20·log10(3e-4) ≈ -70.5 dB H2 at 0 dBFS. H3 sits
     // ~50 dB below (polynomial physics, H3 ∝ drive²·A²). The legacy user-
-    // facing Drive knob is gone — the master tube stage is now a fixed
+    // facing Drive knob is gone - the master tube stage is now a fixed
     // "warm but not saturated" character, like a real EQP-1A at unity.
     p.tubeDrive  = 0.02f;
     p.bypass     = ! paramsRef->eqEnabled.load (std::memory_order_relaxed);
     // The core's setParameters self-gates on operator!= (marks filters dirty
     // only on an actual change), preserving the "updateFilters only on change"
     // semantics that keep the end-of-block HF inductor-Q remodulation persistent
-    // — no external memcmp cache needed.
+    // - no external memcmp cache needed.
     tubeEQ.setParameters (p);
 }
 
@@ -215,8 +215,8 @@ void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
 
     // The master tube EQ and bus comp are the only saturating stages inside
     // this wrap (TapeMachine handles its own OS below). When BOTH are bypassed
-    // the up/downsample round-trip is pure waste — both donors would just pass
-    // the signal through dry — so we skip the oversampler entirely.
+    // the up/downsample round-trip is pure waste - both donors would just pass
+    // the signal through dry - so we skip the oversampler entirely.
     const bool eqOn   = paramsRef != nullptr
                      && paramsRef->eqEnabled.load (std::memory_order_relaxed);
     const bool compOn = paramsRef != nullptr
@@ -229,7 +229,7 @@ void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
 
     if (wrapActive)
     {
-        // Keep the skip ring warm (see header) — push the pre-wrap signal,
+        // Keep the skip ring warm (see header) - push the pre-wrap signal,
         // discard the pops.
         if (osLatencySamples > 0)
         {
@@ -283,7 +283,7 @@ void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
     }
     else if (currentOxFactor > 1 && osLatencySamples > 0)
     {
-        // EQ + comp both bypassed → oversampler skipped. Delay by its latency
+        // EQ + comp both bypassed -> oversampler skipped. Delay by its latency
         // so the master's latency stays invariant to the EQ/comp toggle.
         for (int i = 0; i < numSamples; ++i)
         {
@@ -304,7 +304,7 @@ void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
     // global factor via its `oversampling` APVTS param, written in prepare()).
     // The donor hard-bypasses (early-returns, no ramp), so we own the on/off
     // crossfade here: blend the dry (pre-tape) signal against the wet output
-    // over 20 ms. Tape is run only while audible — fully on, or still fading —
+    // over 20 ms. Tape is run only while audible - fully on, or still fading -
     // so a disengaged tape costs ~nothing. Chunked to the tape scratch size
     // because the donor's internal scratch is sized to the prepared block.
     const float tapeTarget = tapeOn ? 1.0f : 0.0f;
@@ -321,7 +321,7 @@ void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
 
     if (! runTape && ! alignDry)
     {
-        // 1× (no latency) and fully faded out → dry passes through untouched
+        // 1× (no latency) and fully faded out -> dry passes through untouched
         // (free). Keep the donor's bypass atom set so any open editor agrees.
         storeAtom (tapeBypassAtom, 1.0f);
     }
@@ -337,8 +337,8 @@ void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
             float* Rc = R + offset;
 
             // Capture the dry (pre-tape) signal. With tape latency present we
-            // push it through a matching delay — fed EVERY block so the ring
-            // stays warm → seamless next toggle. At 0 latency a plain copy
+            // push it through a matching delay - fed EVERY block so the ring
+            // stays warm -> seamless next toggle. At 0 latency a plain copy
             // suffices and is only needed while blending.
             if (alignDry)
             {
@@ -368,7 +368,7 @@ void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
             const float* dryR = tapeDryBuffer.getReadPointer (1);
             if (! runTape)
             {
-                // Fully off but latency-compensated → emit the delayed dry so
+                // Fully off but latency-compensated -> emit the delayed dry so
                 // master latency stays constant (no timing jump on re-engage).
                 juce::FloatVectorOperations::copy (Lc, dryL, n);
                 juce::FloatVectorOperations::copy (Rc, dryR, n);
@@ -382,7 +382,7 @@ void MasterBus::processInPlace (float* L, float* R, int numSamples) noexcept
                     Rc[i] = dryR[i] * (1.0f - g) + Rc[i] * g;
                 }
             }
-            // else fully on → Lc/Rc already hold the wet output.
+            // else fully on -> Lc/Rc already hold the wet output.
         }
     }
 #endif

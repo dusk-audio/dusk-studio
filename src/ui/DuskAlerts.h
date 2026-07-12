@@ -11,12 +11,12 @@ namespace duskstudio
 // fights for focus on XWayland and stacks badly on small displays.
 //
 // Three modal interaction modes:
-//   • Plugin-style (default for showDuskAlert): click-outside / Esc
+//   - Plugin-style (default for showDuskAlert): click-outside / Esc
 //     dismiss as well as the OK button. Use for non-destructive info.
-//   • Soft-confirm (showDuskConfirm with dismissOnOutside=true): two
+//   - Soft-confirm (showDuskConfirm with dismissOnOutside=true): two
 //     buttons; click-outside fires the secondary (Cancel). Use for
 //     "would you like to retime?" style prompts.
-//   • Decision (showDuskConfirm with dismissOnOutside=false OR
+//   - Decision (showDuskConfirm with dismissOnOutside=false OR
 //     showDuskDecision): focus-locked, no Esc / click-outside. Use for
 //     destructive deletes, save-before-quit, mandatory choices.
 //
@@ -31,7 +31,7 @@ void showDuskAlert (juce::Component& parent,
 
 // Two-button confirm. primaryLabel = action (e.g. "Save", "Delete"),
 // secondaryLabel = cancel-equivalent. If `destructive` is true the
-// primary button paints red AND click-outside / Esc are disabled — the
+// primary button paints red AND click-outside / Esc are disabled - the
 // user must hit an explicit button.
 void showDuskConfirm (juce::Component& parent,
                        juce::String title,

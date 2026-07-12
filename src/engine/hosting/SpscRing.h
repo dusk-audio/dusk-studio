@@ -6,7 +6,7 @@
 
 namespace duskstudio::hosting
 {
-// Fixed-capacity single-producer / single-consumer ring for UI→RT parameter
+// Fixed-capacity single-producer / single-consumer ring for UI->RT parameter
 // traffic. The producer is the message thread (a host param set, an editor's
 // performEdit); the consumer is the audio thread, draining at the top of each
 // process block. No locks, no allocation; one slot is sacrificed to tell full
@@ -15,7 +15,7 @@ template <typename T, uint32_t Capacity>
 class SpscRing
 {
 public:
-    // Single producer. False when full — the caller drops the item (only under a
+    // Single producer. False when full - the caller drops the item (only under a
     // pathological flood; the next block drains up to Capacity-1 items).
     bool push (const T& v) noexcept
     {
@@ -48,7 +48,7 @@ public:
 
     // Consumer side: discard everything queued so far (e.g. entries aimed at a
     // plugin that was just replaced). Items the producer pushes concurrently
-    // may survive — callers reset again once the swap is fully published.
+    // may survive - callers reset again once the swap is fully published.
     void clear() noexcept
     {
         readIdx.store (writeIdx.load (std::memory_order_acquire),

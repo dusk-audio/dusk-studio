@@ -49,7 +49,7 @@ public:
     ~AudioEngine() override;
 
     // Message thread. Target worker count for the next prepare; clamped to the
-    // host cap. Does NOT re-prepare — caller drives a device-callback detach/
+    // host cap. Does NOT re-prepare - caller drives a device-callback detach/
     // reattach (as the Audio Settings panel does) to apply it live. Ignored
     // while DUSKSTUDIO_AUDIO_WORKERS pins the count.
     void setDesiredWorkers (int n) noexcept { desiredWorkers = juce::jmax (0, n); }
@@ -60,7 +60,7 @@ public:
     static constexpr int getMaxWorkerCount() noexcept { return kMaxDspLanes - 1; }
 
     // Message thread. CALLER MUST have removed this engine as the audio callback
-    // first (so no audio thread is inside the worker pool's runBlock) — the
+    // first (so no audio thread is inside the worker pool's runBlock) - the
     // Audio Settings panel detaches around the change. Stops+restarts the pool
     // to the current desired count. This is the ONLY live-reconfigure path;
     // routine device re-opens (buffer-size/rate changes) must NOT touch the pool
@@ -76,7 +76,7 @@ public:
     void resumeProcessing() noexcept;
 
     // Test-only. Immediately stop+start the pool to `n` workers. Safe only when
-    // no audio callback is concurrently in runBlock() — the offline self-test
+    // no audio callback is concurrently in runBlock() - the offline self-test
     // drives the callback synchronously, so the A/B harness can flip the count
     // between captures.
     void setWorkerCountForTest (int n);
@@ -86,14 +86,14 @@ public:
     // Track FREEZE (message thread). The render is ASYNC (BounceEngine::
     // startFreeze on a worker thread) so a long render never wedges the UI, so
     // the engine exposes the two message-thread halves the dialog drives:
-    //   freezePrepare — validate the track (MIDI, not already frozen, has
+    //   freezePrepare - validate the track (MIDI, not already frozen, has
     //     content) and compute the output WAV path + render length. Returns
     //     false + getLastFreezeError() on reject; renders nothing.
-    //   commitFreeze  — after the worker render lands, point frozenRegion at the
+    //   commitFreeze  - after the worker render lands, point frozenRegion at the
     //     WAV, bypass the instrument, flag the track frozen (release), and
     //     reopen the readers so the audio thread plays the WAV with the plugin +
     //     EQ/comp skipped.
-    // unfreezeTrack reverts (live instrument, WAV deleted) — it's cheap, no
+    // unfreezeTrack reverts (live instrument, WAV deleted) - it's cheap, no
     // render, so it stays synchronous.
     bool freezePrepare (int trackIndex, juce::File& outFile, std::int64_t& lenSamples);
     void commitFreeze  (int trackIndex, const juce::File& outFile, std::int64_t lenSamples);
@@ -178,7 +178,7 @@ public:
 
     juce::UndoManager& getUndoManager() noexcept { return undoManager; }
 
-    // MIDI soft takeover (pickup) for continuous absolute bindings — see the
+    // MIDI soft takeover (pickup) for continuous absolute bindings - see the
     // member block below. Pushed from the UI at startup and on toggle.
     void setMidiSoftTakeover (bool on) noexcept
     {
@@ -236,7 +236,7 @@ public:
     void stop();
     void record();
 
-    // Marker jumps clamp to known points — no overshoot past zero or
+    // Marker jumps clamp to known points - no overshoot past zero or
     // past the last marker. Message-thread only.
     void jumpToPrevMarker();
     void jumpToNextMarker();
@@ -271,12 +271,22 @@ public:
     void setRenderOversamplingOverride (int factor) noexcept
         { renderOversamplingOverride.store (juce::jmax (0, factor), std::memory_order_relaxed); }
 
+    // Offline-render latch. While an offline bounce/stem/freeze drives the audio
+    // callback on its worker thread, the live MIDI-input path stays open (the
+    // input devices are never closed) - so without this, live controller notes
+    // arriving during a render would print into the deterministic file. Set true
+    // for the full duration of every offline render loop, false otherwise. Read
+    // relaxed on the driving thread: the render worker both sets it and drives
+    // the callback, and the live device path never sees it true.
+    void setOfflineRenderActive (bool active) noexcept
+        { offlineRenderActive.store (active, std::memory_order_relaxed); }
+
     // Cross-track Plugin Delay Compensation. Reads each track's reported insert
     // latency (plugin OR hardware, gated by mode; MIDI tracks count 0 because
     // their instrument latency is already absorbed by the MIDI scheduling
     // pre-shift), finds the deepest, and sets every strip's compensation =
-    // deepest − own so all tracks line up. Pure atomic loads/stores — no alloc,
-    // lock, or I/O — so it runs once per audio block (auto-tracks any latency
+    // deepest − own so all tracks line up. Pure atomic loads/stores - no alloc,
+    // lock, or I/O - so it runs once per audio block (auto-tracks any latency
     // change: plugin load/unload, HW measure, auto-bypass) and also at prepare.
     // aggregatePdcLatencySamples exposes the deepest track latency for bounce
     // lead-in trimming.
@@ -294,7 +304,7 @@ public:
         return masterDryPdcTarget.load (std::memory_order_relaxed);
     }
 
-    // Offline-render only — call with the audio callback DETACHED. The
+    // Offline-render only - call with the audio callback DETACHED. The
     // in-callback relatch of the master-stage PDC is gated on a stopped
     // transport, which an offline drive never satisfies (it forces Playing
     // before the first driven block), so without this a bounce rendered with
@@ -375,9 +385,9 @@ public:
     // tick. nullptr during selftest static-init.
     class McuController* getMcuController() noexcept { return mcuController.get(); }
 
-    // H5: UI sink invoked when the active audio device disappears
+    // UI sink invoked when the active audio device disappears
     // unexpectedly (hot-unplug, OS audio service restart). Sink runs
-    // on the message thread — engine marshals via callAsync from the
+    // on the message thread - engine marshals via callAsync from the
     // ChangeListener path. UI typically surfaces a non-blocking
     // EmbeddedModal banner with a route to Audio Settings.
     //
@@ -391,7 +401,7 @@ public:
 
     // One-shot startup device-open outcome. Empty = the saved device opened.
     // Non-empty when the saved device was busy and we fell back (or couldn't).
-    // The UI reads it ONCE after construction — the alert sinks above are still
+    // The UI reads it ONCE after construction - the alert sinks above are still
     // null while AudioEngine itself is being constructed, so the startup result
     // can't go through them.
     juce::String consumeStartupDeviceMessage()
@@ -404,14 +414,14 @@ public:
     // Fired when record() refuses to start (no track armed, or no audio
     // device open) so the UI can show an in-window alert instead of the
     // failure only reaching stderr. Set at startup (MainComponent), nullable.
-    // Message-thread-only — record() is never called from the audio thread.
+    // Message-thread-only - record() is never called from the audio thread.
     using RecordBlockedSink = std::function<void (juce::String)>;
     void setRecordBlockedSink (RecordBlockedSink sink) noexcept
     {
         onRecordBlocked_ = std::move (sink);
     }
 
-    // juce::ChangeListener — fires on the message thread when
+    // juce::ChangeListener - fires on the message thread when
     // AudioDeviceManager's device list / current device changes.
     // We use it to detect hot-unplug (current device became nullptr
     // while we had one). Message-thread-only.
@@ -447,7 +457,7 @@ private:
     // acquire-loads and never frees. The pool is only ever appended to, and
     // only from the message thread, so the audio thread can read a published
     // copy without it being freed or reallocated under it. Retired copies stay
-    // alive for the session (each is tiny — a few tempo points) and are freed
+    // alive for the session (each is tiny - a few tempo points) and are freed
     // when the engine is destroyed. null pointer = treat as constant tempoBpm.
     std::vector<std::unique_ptr<TempoMap>> rtTempoMapPool;
     std::atomic<const TempoMap*>           rtTempoMap { nullptr };
@@ -469,10 +479,10 @@ private:
     // Monotonic sample clock the sync receiver timestamps clock ticks
     // against. Reset when syncSourceInputIdx changes so old interval
     // history doesn't poison the new source's BPM. Can't use
-    // transport.getPlayhead — it jumps on loop wrap and scrub.
+    // transport.getPlayhead - it jumps on loop wrap and scrub.
     std::int64_t midiSyncSampleClock = 0;
     int         lastSyncSourceIdx   = -1;
-    // Rolling-edge detector — act on the transition, not the steady
+    // Rolling-edge detector - act on the transition, not the steady
     // state, so a long Start signal doesn't restart every block.
     bool        lastExtRolling      = false;
     // MTC chase state.
@@ -511,7 +521,7 @@ private:
     // lane (masterDryPdc*) and each lane return waits for (deepest - own)
     // (auxReturnPdc*), so wet and dry land together. Targets are written by
     // recomputePdc; the audio thread relatches ONLY while the transport is
-    // stopped — the master path is rarely silent, and a mid-roll retarget
+    // stopped - the master path is rarely silent, and a mid-roll retarget
     // would click. Zero targets skip the delay processing entirely.
     using MasterPdcDelay = juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::None>;
     MasterPdcDelay masterDryPdcL { ChannelStrip::kMaxPdcSamples };
@@ -526,6 +536,10 @@ private:
     // Render-time oversampling override (0 = use session factor). See
     // setRenderOversamplingOverride.
     std::atomic<int> renderOversamplingOverride { 0 };
+
+    // True only while an offline render drives the callback. See
+    // setOfflineRenderActive.
+    std::atomic<bool> offlineRenderActive { false };
 
     std::array<ChannelStrip, Session::kNumTracks> strips;
     std::array<BusStrip,  Session::kNumBuses> busStrips;
@@ -542,20 +556,20 @@ private:
     static constexpr double kAuxTailSilenceSeconds = 2.0;
     std::array<std::int64_t, Session::kNumAuxLanes> auxSilentRunSamples {};
     // Per-track disk-playback buffers. One per track (not a single shared
-    // scratch) so the per-block work can run as two passes — a serial PREP
+    // scratch) so the per-block work can run as two passes - a serial PREP
     // pass that resolves each track's source + MIDI, then a DSP pass that
-    // processes the strips — without a later track's prep clobbering an
+    // processes the strips - without a later track's prep clobbering an
     // earlier track's not-yet-processed source. (Prerequisite for running the
     // DSP pass across cores.)
     std::array<std::vector<float>, Session::kNumTracks> playbackScratch;
     std::array<std::vector<float>, Session::kNumTracks> playbackScratchR;
     // Fed to strips with a generator-style insert when the track has no
-    // audio source — lets the insert emit even without input or playback.
+    // audio source - lets the insert emit even without input or playback.
     std::vector<float> silentInputScratch;
 
     // Per-track DSP inputs resolved by the PREP pass and consumed by the DSP
     // pass. Pointers reference the persistent per-track buffers above (disk),
-    // the device input block (live), or silentInputScratch — all valid for the
+    // the device input block (live), or silentInputScratch - all valid for the
     // whole callback.
     struct TrackDspJob
     {
@@ -567,12 +581,12 @@ private:
         bool         armed       = false;
         bool         stereoInput = false;
         bool         frozen      = false;   // play pre-rendered WAV, skip plugin + EQ/comp
-        bool         hardwareInsert = false; // send writes a SHARED device output — excluded
+        bool         hardwareInsert = false; // send writes a SHARED device output - excluded
                                              // from parallel lanes, summed on the audio thread
     };
     std::array<TrackDspJob, Session::kNumTracks> trackJobs;
 
-    // ── Opt-in parallel strip DSP ────────────────────────────────────────
+    // Opt-in parallel strip DSP
     // The DSP pass over the 24 strips can be fanned out across worker threads
     // when DUSKSTUDIO_AUDIO_WORKERS is set (default: serial, the proven path).
     // Each lane accumulates its strip subset into its OWN buffer set so the
@@ -593,7 +607,7 @@ private:
     int  desiredWorkers = 0;
     // The pool is started exactly once (first prepare) and thereafter only
     // reconfigured via applyDesiredWorkers with the callback detached. Device
-    // re-opens (buffer/rate change) must not stop+start it — start/stop mutate
+    // re-opens (buffer/rate change) must not stop+start it - start/stop mutate
     // worker state that a live runBlock reads lock-free. (In-flight LANES are
     // separately handled: prepare/stopped quiesce the pool first.)
     bool workerPoolStarted = false;
@@ -614,7 +628,7 @@ private:
                           const std::array<float*, ChannelStripParams::kNumAuxSends>& aR,
                           int numSamples) noexcept;
     void processStripLane (int lane) noexcept;            // one worker lane
-    void reduceLaneAccum (int numSamples) noexcept;       // sum lanes → mix
+    void reduceLaneAccum (int numSamples) noexcept;       // sum lanes -> mix
 
     // The single JUCE-device seam. midiIn owns the per-input collector bank and
     // is itself the input callback; midiOut owns the output-port bank + RT
@@ -629,7 +643,7 @@ private:
     // reserveBytes'd off the RT path in rebuildMidiBanks so the drain and the
     // test-inject merge never allocate on the audio thread.
     std::vector<dusk::MidiBuffer> perInputMidi;
-    // Per-track routing buffer feeding the strip's instrument + the recorder —
+    // Per-track routing buffer feeding the strip's instrument + the recorder -
     // both take juce::MidiBuffer, so this stays juce-typed.
     std::array<juce::MidiBuffer, Session::kNumTracks> perTrackMidiScratch;
     // juce->dusk bridge for a MIDI track's external output: perTrackMidiScratch
@@ -644,7 +658,7 @@ private:
     std::atomic<int>  testInjectInputIdx { -1 };
     std::atomic<bool> testInjectReady    { false };
 
-    // Previous block's midiInputIndex per track — detects mid-play
+    // Previous block's midiInputIndex per track - detects mid-play
     // input swaps so we can fire All-Notes-Off + Sustain-Off on the
     // new input. Without this, held notes from the previous device
     // keep ringing (Note Off never arrives on the now-unrouted source).
@@ -699,7 +713,7 @@ private:
     std::atomic<int>    callbacksInFlight   { 0 };
     // Silent-output diagnostics. The audio callback only bumps these atomics
     // (RT-safe); diagTimer drains them on the message thread and emits the
-    // stderr line — stdio locks must never touch the audio thread. A silent-
+    // stderr line - stdio locks must never touch the audio thread. A silent-
     // output stall is otherwise opaque without a debugger.
     std::atomic<std::int64_t> earlyOutBlocks  { 0 };   // GATED (processingSuspended) callbacks
     std::atomic<std::int64_t> silentBlocks    { 0 };   // undersized-buffer SILENT callbacks
@@ -728,7 +742,7 @@ private:
     std::atomic<int>    backendXrunBaseline { 0 };
     std::atomic<float>  cpuUsage          { 0.0f };
 
-    // Valid for the duration of one callback only — strips consume
+    // Valid for the duration of one callback only - strips consume
     // synchronously and never cache across blocks.
     const float* const* currentDeviceInputs   = nullptr;
     int                 numCurrentDeviceInputs  = 0;
@@ -763,10 +777,10 @@ private:
 
     // Audio-thread-only. Together these let us detect two events that
     // require a per-block "All Notes Off" flush:
-    //   • rolling -> stopped: held notes from playback or live input
+    //   - rolling -> stopped: held notes from playback or live input
     //     would otherwise sustain forever.
-    //   • playhead discontinuity (loop wrap, scrub): notes whose Note
-    //     Off is past the jump never fire — synth stuck.
+    //   - playhead discontinuity (loop wrap, scrub): notes whose Note
+    //     Off is past the jump never fire - synth stuck.
     bool         wasRolling          = false;
     std::int64_t  lastBlockEndSample  = 0;
 };

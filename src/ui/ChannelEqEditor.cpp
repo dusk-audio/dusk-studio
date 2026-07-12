@@ -68,7 +68,7 @@ ChannelEqEditor::ChannelEqEditor (Track& t) : track (t)
     refreshTypeButton();
     addAndMakeVisible (typeButton);
 
-    // EQ section ON/OFF toggle — pill with green LED-style fill when
+    // EQ section ON/OFF toggle - pill with green LED-style fill when
     // engaged. Mirrors track.strip.eqEnabled so it stays in sync with
     // the strip's header pill + the band-knob auto-arm path.
     enableButton.setClickingTogglesState (true);
@@ -86,7 +86,7 @@ ChannelEqEditor::ChannelEqEditor (Track& t) : track (t)
     };
     addAndMakeVisible (enableButton);
 
-    // HPF + LPF — SSL 9000 J white-filter top section. Both knobs share
+    // HPF + LPF - SSL 9000 J white-filter top section. Both knobs share
     // the white accent so they read as a filter pair (matches the
     // inline strip's filter row).
     const auto filterWhite = juce::Colour (sslEqColors::kFilterWhite);
@@ -136,7 +136,7 @@ ChannelEqEditor::ChannelEqEditor (Track& t) : track (t)
     };
     addAndMakeVisible (hpfKnob);
 
-    // LPF — symmetric counterpart on the right side of the filter row.
+    // LPF - symmetric counterpart on the right side of the filter row.
     lpfLabel.setText ("LPF", juce::dontSendNotification);
     lpfLabel.setJustificationType (juce::Justification::centred);
     lpfLabel.setColour (juce::Label::textColourId, filterWhite);
@@ -204,7 +204,7 @@ ChannelEqEditor::ChannelEqEditor (Track& t) : track (t)
             knob->onValueChange = [knob, atomicPtr, eqEnabledPtr]
             {
                 atomicPtr->store ((float) knob->getValue(), std::memory_order_relaxed);
-                // Auto-arm — same UX as the inline strip-band knobs.
+                // Auto-arm - same UX as the inline strip-band knobs.
                 eqEnabledPtr->store (true, std::memory_order_release);
             };
         }
@@ -267,7 +267,7 @@ ChannelEqEditor::ChannelEqEditor (Track& t) : track (t)
     // Tight fit to resized()'s layout: header 24 + gap 8 + HPF 80 + gap 4
     // + rows[ HF 84 + HM 160 + LM 160 + LF 84, each + 4 gap = 504 ] = 620 inner,
     // + outer reduced(12) padding 24 = 644, + 4 px bottom breathing room = 648. The
-    // bell rows are full-height now that the Q block matches the gain/freq block
+    // bell rows are full-height because the Q block matches the gain/freq block
     // (kQBlockH == kKnobBlockH).
     setSize (380, 648);
 }
@@ -313,7 +313,7 @@ void ChannelEqEditor::resized()
     constexpr int kBellRowH     = kKnobBlockH + kQBlockH;
     constexpr int kRowGap       = 4;
 
-    // Filter row — HPF | LPF side-by-side, white-faced SSL 9000 J top.
+    // Filter row - HPF | LPF side-by-side, white-faced SSL 9000 J top.
     {
         auto row = area.removeFromTop (kHpfRowH);
         // Carve same kRowLabelW gutter as the band rows so the filter
@@ -324,7 +324,7 @@ void ChannelEqEditor::resized()
         auto lpfCell = row;
 
         // Label sits at the top of each cell (centred, 16-pt bold) and
-        // the knob takes the remaining height — matches the inline
+        // the knob takes the remaining height - matches the inline
         // strip's HPF/LPF layout grammar.
         constexpr int kFilterLabelH = 18;
         hpfLabel.setBounds (hpfCell.removeFromTop (kFilterLabelH));

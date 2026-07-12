@@ -111,7 +111,7 @@ DuskMultisampleEditor::DuskMultisampleEditor (DuskMultisampleProcessor& proc)
     {
         const int idx = ariaProgramSelector.getSelectedId() - 1;
         if (idx < 0 || idx >= (int) ariaProgramFiles.size()) return;
-        // loadedFilePath changes → timerCallback rebuilds the skin for
+        // loadedFilePath changes -> timerCallback rebuilds the skin for
         // the newly selected program on the next tick after the load lands.
         startAsyncLoad (ariaProgramFiles[(size_t) idx]);
     };
@@ -156,7 +156,7 @@ void DuskMultisampleEditor::timerCallback()
 
     // Skin lives or dies with the loaded file path. Rebuild on a path
     // change (load, clear, different file, state restore) OR on a same-
-    // path mtime change — Reload after an external edit re-loads the
+    // path mtime change - Reload after an external edit re-loads the
     // same path, which a path-only check would miss.
     const auto modTime = path.isNotEmpty() ? juce::File (path).getLastModificationTime()
                                             : juce::Time();
@@ -277,7 +277,7 @@ void DuskMultisampleEditor::rebuildSkin()
 
 void DuskMultisampleEditor::openFileChooser()
 {
-    // In-window Dusk-native browser — no standalone window, no
+    // In-window Dusk-native browser - no standalone window, no
     // Wayland positioning workarounds. SafePointer still guards the
     // async result against tear-down (plugin removed / track torn
     // down while the dialog is open).
@@ -298,9 +298,9 @@ void DuskMultisampleEditor::openFileChooser()
         const auto fileName = file.getFileName().toLowerCase();
 
         // ARIA bank manifest - find the first program's .sfz inside the
-        // bank and load that. Phase 4 adds the program switcher; for now
-        // pick the first valid AriaProgram so the user can audition the
-        // pack without drilling into Programs/ themselves.
+        // bank and load that. No program switcher yet: pick the first valid
+        // AriaProgram so the user can audition the pack without drilling into
+        // Programs/ themselves.
         if (fileName.endsWith (".bank.xml"))
         {
             // tryLoadFromSfz walks up from the passed file's directory
@@ -317,7 +317,7 @@ void DuskMultisampleEditor::openFileChooser()
             return;
         }
 
-        // .sf2 and .sfz both go through the background load — an SF2 GM bank
+        // .sf2 and .sfz both go through the background load - an SF2 GM bank
         // extracts every preset sample first (~seconds) and used to wedge the
         // message thread for the duration.
         self->startAsyncLoad (file);
@@ -347,7 +347,7 @@ void DuskMultisampleEditor::startAsyncLoad (const juce::File& file, int presetIn
     auto onDone = [safe] (bool ok, juce::String err)
     {
         // The processor outlives a closed editor (worker joins in ITS
-        // destructor) — only the UI refresh needs the guard.
+        // destructor) - only the UI refresh needs the guard.
         if (auto* self = safe.getComponent())
         {
             self->setLoadControlsEnabled (true);

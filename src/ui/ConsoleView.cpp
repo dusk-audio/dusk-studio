@@ -38,10 +38,9 @@ ConsoleView::ConsoleView (Session& session, AudioEngine& engine) : sessionRef (s
 #endif
     addAndMakeVisible (masterStrip.get());
 
-    // BANK A/B controls were previously rendered here as a 28-px row at the
-    // top of ConsoleView. They moved up to MainComponent (under the stage
-    // selector) so the channel strips get the full vertical body for taller
-    // faders. ConsoleView now owns only the bank-state model + visibility.
+    // ConsoleView owns only the bank-state model + visibility. The BANK A/B
+    // controls live in MainComponent (under the stage selector) so the channel
+    // strips get the full vertical body for taller faders.
     updateBankVisibility();
 }
 
@@ -156,7 +155,7 @@ void ConsoleView::setBank (int bankIndex)
     // valid screen bank (Cmd+1/2/3 within numBanks). The MCU has its own fixed
     // 3-bank range (kNumBanks); when this call is the timer mirroring a
     // hardware bank the screen can't show (numBanks collapsed because all
-    // tracks fit at once), the request clamps — writing the clamped value back
+    // tracks fit at once), the request clamps - writing the clamped value back
     // would force the surface off banks 9-16/17-24. Skip the store then.
     if (requested == bankIndex)
         sessionRef.mcu.bank.store (bankIndex, std::memory_order_relaxed);
@@ -202,7 +201,7 @@ void ConsoleView::resized()
 
     // "Show all 16" trigger: window wide enough to seat every channel
     // strip at kMinChannelWidth alongside the always-anchored bus +
-    // master column. Below this we fall back to dynamic banking — bank
+    // master column. Below this we fall back to dynamic banking - bank
     // stride = channelsThatFit().
     showingAllTracks = (area.getWidth() >= fixedWidthFor16Tracks() - 12);
     // Re-clamp the active bank index against the (possibly changed)
@@ -213,7 +212,7 @@ void ConsoleView::resized()
     if (currentBank != preClampBank)
     {
         // Republish the clamped SCREEN bank so bank-relative MIDI bindings
-        // don't stay pointed past the end. Do NOT clamp mcu.bank here — the
+        // don't stay pointed past the end. Do NOT clamp mcu.bank here - the
         // MCU surface owns its own fixed 3-bank range (kNumBanks) independent
         // of the width-driven screen banking; clamping it to numBanks would
         // strand the surface on bank 0 whenever the window is wide enough to
@@ -241,7 +240,7 @@ void ConsoleView::resized()
     // scale up: extra horizontal space stays as whitespace on the right.
     //
     // Scale based on the FULL-BANK width (stride * kRefChannelWidth) rather
-    // than visibleChannels — so a sparse last bank uses the SAME channel
+    // than visibleChannels - so a sparse last bank uses the SAME channel
     // width as a full bank. Without this, bank 2 with only 2 strips would
     // be wider than bank 1 with 14 strips on the same window: bank 2's
     // refTotal would fit and skip the scale-down branch.
@@ -275,7 +274,7 @@ void ConsoleView::resized()
         // protected the longest because its 5 × 40 px comp knob row will
         // clip the rightmost knob the instant the strip goes below 210.
         // Secondary fit pass uses widthRefChannels (the bank-stride
-        // budget) — same reason as the primary scale: width stays
+        // budget) - same reason as the primary scale: width stays
         // stable across banks regardless of how many strips are
         // visible RIGHT NOW.
         const auto totalOf = [&]
@@ -450,7 +449,7 @@ void ConsoleView::paintOverChildren (juce::Graphics& g)
     auto* strip = strips[(size_t) focusedStrip].get();
     if (strip == nullptr || ! strip->isVisible()) return;
 
-    // Gold ring around the focused strip — the keyboard "I am here" signal.
+    // Gold ring around the focused strip - the keyboard "I am here" signal.
     g.setColour (juce::Colour (0xffd0a050));
     g.drawRoundedRectangle (strip->getBounds().toFloat().reduced (1.0f), 4.0f, 2.0f);
 }

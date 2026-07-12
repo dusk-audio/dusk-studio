@@ -3,7 +3,7 @@
 
 namespace duskstudio::midi
 {
-// ── MidiInputClient ─────────────────────────────────────────────────────────
+// MidiInputClient
 
 void MidiInputClient::rebuild (double sampleRate)
 {
@@ -22,7 +22,7 @@ void MidiInputClient::rebuild (double sampleRate)
         auto col = std::make_unique<juce::MidiMessageCollector>();
         if (sampleRate > 0.0) col->reset (sampleRate);
 
-        // setMidiInputDeviceEnabled returns void — re-query to verify. Failure
+        // setMidiInputDeviceEnabled returns void - re-query to verify. Failure
         // usually = OS denied access (another app exclusively owns the port).
         deviceManager->setMidiInputDeviceEnabled (d.identifier, true);
         if (! deviceManager->isMidiInputDeviceEnabled (d.identifier))
@@ -35,7 +35,7 @@ void MidiInputClient::rebuild (double sampleRate)
     }
 
     // Appended after real hardware so the VKB's index is stable across hot-plug.
-    // Not bound to any OS device — the on-screen keyboard addMessageToQueues into
+    // Not bound to any OS device - the on-screen keyboard addMessageToQueues into
     // its collector directly; the audio thread drains it like any other input.
     devices.push_back ({ juce::String ("Virtual Keyboard (Dusk Studio)"),
                          juce::String (kVirtualKeyboardIdentifier) });
@@ -114,7 +114,7 @@ void MidiInputClient::handleIncomingMidiMessage (juce::MidiInput* source,
     }
 }
 
-// ── MidiOutputBank ──────────────────────────────────────────────────────────
+// MidiOutputBank
 
 MidiOutputBank::MidiOutputBank()
 {
@@ -227,7 +227,7 @@ bool MidiOutputBank::sendJuce (int index, const juce::MidiBuffer& events, double
 
 bool MidiOutputBank::send (int index, const juce::MidiBuffer& events) noexcept
 {
-    // sampleRate is for time stamps only — the direct send carries no offsets.
+    // sampleRate is for time stamps only - the direct send carries no offsets.
     return sendJuce (index, events, 48000.0);
 }
 
@@ -235,7 +235,7 @@ void MidiOutputBank::queueRt (int port, const dusk::MidiBuffer& events, double s
 {
     int start1 = 0, size1 = 0, start2 = 0, size2 = 0;
     fifo.prepareToWrite (1, start1, size1, start2, size2);
-    if (size1 + size2 < 1) return;   // pump stalled — drop the block
+    if (size1 + size2 < 1) return;   // pump stalled - drop the block
 
     // The lone writable slot lands in the SECOND segment when the write wraps
     // (size1 == 0, size2 == 1); use start2 then, not the stale start1.
@@ -266,7 +266,7 @@ void MidiOutputBank::queueRt (int port, const dusk::MidiBuffer& events, double s
 
 void MidiOutputBank::drainQueue()
 {
-    // The whole read cycle holds bankMutex — not just the port dereference — so
+    // The whole read cycle holds bankMutex - not just the port dereference - so
     // rebuild can discard stale slots under the same mutex without racing a
     // half-finished drain (the FIFO's reader side is single-consumer). The audio
     // thread only touches the writer side and never takes this mutex.

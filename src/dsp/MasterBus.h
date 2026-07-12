@@ -17,8 +17,8 @@
 
 namespace duskstudio
 {
-// Phase 1a master bus: Pultec-style Tube EQ → bus compressor → tape
-// saturation → master fader. Parameters come from session.master() via
+// Phase 1a master bus: Pultec-style Tube EQ -> bus compressor -> tape
+// saturation -> master fader. Parameters come from session.master() via
 // MasterBusParams; UI mutates the atomics, the audio thread reads them.
 class MasterBus
 {
@@ -59,7 +59,7 @@ private:
     duskaudio::MultiQTube             tubeEQ;
     duskaudio::UniversalCompressorDSP busComp;
     // Max samples per busComp.processBlock call (the oversampled prepare block
-    // size — the core degrades to dry passthrough beyond it); the process chunk
+    // size - the core degrades to dry passthrough beyond it); the process chunk
     // loop splits anything larger. The tube EQ has no block-size limit.
     int compMaxBlock = 0;
 
@@ -88,7 +88,7 @@ private:
     // When EQ + comp are both bypassed the oversampler is skipped. Its FIR round
     // trip imposes 23 (2x) / 26.5 (4x) native samples of latency, so delay the
     // skip path by that amount to keep the master's latency invariant to the
-    // EQ/comp toggle. Integer delay — the 0.5-sample residual at 4x is inaudible.
+    // EQ/comp toggle. Integer delay - the 0.5-sample residual at 4x is inaudible.
     static constexpr int kMaxOsLatency = 32;
     dusk::audio::IntDelayLine osSkipDelayL;
     dusk::audio::IntDelayLine osSkipDelayR;
@@ -110,7 +110,7 @@ private:
     // the on/off blend phase-coherent (no comb mid-fade) and seamless (no
     // timing jump at the fade ends). Resolved in prepare from the donor's
     // reported latency; max sized to it. Fed every block at >0 latency so the
-    // ring stays warm for the next toggle — a constant, sub-ms master latency.
+    // ring stays warm for the next toggle - a constant, sub-ms master latency.
     OsDelayLine tapeDryDelayL { 1 };
     OsDelayLine tapeDryDelayR { 1 };
     int tapeLatencySamples = 0;

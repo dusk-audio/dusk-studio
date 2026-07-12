@@ -26,7 +26,7 @@ namespace duskstudio::vst3
 using namespace Steinberg;
 
 // Impl is the host-context Callbacks owner: editor param edits (performEdit) land
-// here and join host-initiated setParamValue in one UI→RT ring; resize requests
+// here and join host-initiated setParamValue in one UI->RT ring; resize requests
 // forward to whatever Vst3Editor is attached.
 struct Vst3Instance::Impl : public Vst3HostContext::Callbacks
 {
@@ -37,7 +37,7 @@ struct Vst3Instance::Impl : public Vst3HostContext::Callbacks
     IPtr<Vst::IEditController> controller;
     bool controllerIsComponent = false;   // single-component plugin
 
-    // Keeps component↔controller messaging alive (presets, custom UIs).
+    // Keeps component<->controller messaging alive (presets, custom UIs).
     IPtr<Vst::ConnectionProxy> componentCP, controllerCP;
 
     hosting::PortLayout layout;
@@ -59,7 +59,7 @@ struct Vst3Instance::Impl : public Vst3HostContext::Callbacks
     std::vector<float>       sink;                    // shared output sink scratch
     std::vector<float*>      scratchPtrs;             // per-channel pointer scratch
 
-    // Parameters: snapshot at create(); UI→RT ring drained into inParams each block.
+    // Parameters: snapshot at create(); UI->RT ring drained into inParams each block.
     std::vector<ParamInfo> params;
     struct ParamChange { uint32_t id; double value; };
     hosting::SpscRing<ParamChange, 512> paramRing;
@@ -78,10 +78,10 @@ struct Vst3Instance::Impl : public Vst3HostContext::Callbacks
     std::atomic<bool> paramInfoChanged { false };
     std::atomic<bool> ccMapChanged     { false };
 
-    // MIDI CC → parameter bridge (VST3 has no CC events: IMidiMapping assigns a
+    // MIDI CC -> parameter bridge (VST3 has no CC events: IMidiMapping assigns a
     // parameter per (channel, controller) and the host feeds value changes).
-    // Cached on the message thread — getMidiControllerAssignment is a controller
-    // call — and read lock-free by the audio thread per incoming CC.
+    // Cached on the message thread - getMidiControllerAssignment is a controller
+    // call - and read lock-free by the audio thread per incoming CC.
     static constexpr uint32_t kNoCcParam = 0xFFFFFFFFu;
     std::array<std::atomic<uint32_t>, 16 * Vst::kCountCtrlNumber> ccParamId {};
 
@@ -123,11 +123,11 @@ struct Vst3Instance::Impl : public Vst3HostContext::Callbacks
         }
     }
 
-    // ── Vst3HostContext::Callbacks (message thread) ──
+    // Vst3HostContext::Callbacks (message thread)
     void onPerformEdit (uint32_t paramId, double normalised) override
     {
         // The controller already holds the new value (the edit came from its own
-        // editor); the processor hears it through the ring → IParameterChanges.
+        // editor); the processor hears it through the ring -> IParameterChanges.
         paramRing.push ({ paramId, normalised });
         lastTouchedParamId.store ((int64_t) paramId, std::memory_order_relaxed);
     }
@@ -140,7 +140,7 @@ struct Vst3Instance::Impl : public Vst3HostContext::Callbacks
         // Flag-only: values need no action (nothing caches them), param-info and
         // latency changes are consumed by the engine's message-thread drain
         // timer (the snapshot allocates and the latency pickup needs a fenced
-        // setActive cycle — and misbehaving plugins call this off-thread).
+        // setActive cycle - and misbehaving plugins call this off-thread).
         // kIoChanged (a live bus re-layout) stays unhandled: the PortLayout is
         // fixed at create() and no hosted effect exercises it yet.
         if ((flags & Vst::RestartFlags::kParamTitlesChanged) != 0)
@@ -221,10 +221,10 @@ bool Vst3Instance::paramValueToText (uint32_t id, double value, std::string& out
 void Vst3Instance::setParamValue (uint32_t id, double value) noexcept
 {
     // Controller first so an open editor tracks the move; processor hears it
-    // through the ring → IParameterChanges on the next block.
+    // through the ring -> IParameterChanges on the next block.
     if (impl->controller)
         impl->controller->setParamNormalized ((Vst::ParamID) id, value);
-    impl->paramRing.push ({ id, value });   // full ⇒ drop (pathological flood only)
+    impl->paramRing.push ({ id, value });   // full => drop (pathological flood only)
 }
 
 void Vst3Instance::setResizeViewHandler (std::function<bool (int, int)> fn)
@@ -306,7 +306,7 @@ bool Vst3Instance::create (const Vst3Bundle& bundle, const std::string& classId,
         impl->controller->setComponentHandler (
             static_cast<Vst::IComponentHandler*> (impl->host.componentHandler()));
 
-        // Wire the private component↔controller message path, then hand the
+        // Wire the private component<->controller message path, then hand the
         // controller the component's initial state so both sides agree.
         FUnknownPtr<Vst::IConnectionPoint> compICP (impl->component);
         FUnknownPtr<Vst::IConnectionPoint> ctrlICP (impl->controller);
@@ -329,9 +329,9 @@ bool Vst3Instance::create (const Vst3Bundle& bundle, const std::string& classId,
     }
     impl->host.setCallbacks (impl.get());
 
-    // ── Bus discovery → PortLayout. The InsertAdapter folds whatever the plugin
+    // Bus discovery -> PortLayout. The InsertAdapter folds whatever the plugin
     // really has onto the stereo insert, so we take the default arrangements
-    // as-is instead of forcing stereo. ──
+    // as-is instead of forcing stereo.
     impl->layout = {};
     impl->mainInBus = impl->mainOutBus = impl->sidechainBus = -1;
 
@@ -440,7 +440,7 @@ bool Vst3Instance::activate (double sampleRate, int maxBlockFrames, std::string&
     // HostProcessData builds the AudioBusBuffers arrays from the component's bus
     // config. bufferSamples MUST be 0: a non-zero count makes it allocate and OWN
     // the channel buffers, and setChannelBuffers then silently refuses to point
-    // at ours — the plugin would process the SDK's private (silent) scratch.
+    // at ours - the plugin would process the SDK's private (silent) scratch.
     if (! impl->processData.prepare (*impl->component, 0, Vst::kSample32))
     { errorOut = "process-data prepare failed"; return false; }
     impl->processData.inputParameterChanges  = &impl->inParams;
@@ -549,8 +549,8 @@ void Vst3Instance::processBlock (const hosting::PortBuffers& io) noexcept
     impl->inParams.clearQueue();
     impl->outParams.clearQueue();
 
-    // Queued UI/editor parameter changes → this block's IParameterChanges.
-    // All at offset 0 — sample-accurate automation is a later step.
+    // Queued UI/editor parameter changes -> this block's IParameterChanges.
+    // All at offset 0 - sample-accurate automation is a later step.
     impl->paramRing.drain ([&] (const Impl::ParamChange& pc)
     {
         int32 queueIndex = 0;
@@ -561,7 +561,7 @@ void Vst3Instance::processBlock (const hosting::PortBuffers& io) noexcept
         }
     });
 
-    // Notes → the event bus; CCs / pitch bend / channel pressure → the
+    // Notes -> the event bus; CCs / pitch bend / channel pressure -> the
     // IMidiMapping-assigned parameters (VST3 has no CC events by design).
     if (io.midiIn != nullptr)
     {
@@ -631,7 +631,7 @@ void Vst3Instance::processBlock (const hosting::PortBuffers& io) noexcept
 }
 
 // State blob: "DV31" magic, then u32-LE-length-prefixed component and
-// controller streams. VST3 state is dual-stream — persisting only the
+// controller streams. VST3 state is dual-stream - persisting only the
 // component stream loses controller-private data (UI prefs, custom curves).
 namespace
 {

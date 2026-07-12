@@ -15,7 +15,7 @@
 // targets the same address, or the timeout elapses.
 //
 // Works across processes when `addr` lies inside a shared mapping
-// (CreateFileMapping + MapViewOfFile) — the kernel hashes the page
+// (CreateFileMapping + MapViewOfFile) - the kernel hashes the page
 // frame, the same way Linux futex does.
 //
 // Link with synchronization.lib.
@@ -61,7 +61,7 @@ WaitResult waitOnAddress (std::atomic<std::uint32_t>* addr,
                               ? deadlineToTimeoutMs (*deadline)
                               : INFINITE;
 
-    // Don't short-circuit on timeoutMs == 0 — pass it through so the
+    // Don't short-circuit on timeoutMs == 0 - pass it through so the
     // value-comparison in WaitOnAddress still runs; otherwise a wake
     // that arrived between the caller's load and our call would look
     // like a timeout to the caller and trigger a spurious crash.

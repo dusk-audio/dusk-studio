@@ -96,7 +96,7 @@ namespace duskstudio::snap
     // session's active SnapResolution. Falls back to a 1-second step when
     // the resolution is musical but no tempo is set, preserving the prior
     // "snap to something" guarantee callers relied on.
-    // Delta-snap math WITHOUT any enable gate — for callers that gate on their
+    // Delta-snap math WITHOUT any enable gate - for callers that gate on their
     // OWN snap flag (e.g. the audio editor's session.audioEditorSnap) and must
     // not also require the global session.snapToGrid.
     inline std::int64_t snapDeltaToGridUnchecked (std::int64_t delta, const Session& s,
@@ -156,7 +156,7 @@ namespace duskstudio::snap
     // step is available (matches prior new-region behaviour). Musical
     // resolutions snap in tick space through the session tempo map, so the grid
     // follows tempo changes; the constant-tempo case is unchanged.
-    // Absolute-snap math WITHOUT any enable gate — see snapDeltaToGridUnchecked.
+    // Absolute-snap math WITHOUT any enable gate - see snapDeltaToGridUnchecked.
     inline std::int64_t snapAbsoluteToGridUnchecked (std::int64_t sample, const Session& s,
                                                     double sampleRate) noexcept
     {

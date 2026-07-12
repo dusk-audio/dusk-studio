@@ -33,7 +33,7 @@ void styleSmallKnob (juce::Slider& s, double minV, double maxV, double midPt,
     s.setColour (juce::Slider::textBoxOutlineColourId,    juce::Colours::transparentBlack);
     s.setNumDecimalPlacesToDisplay (decimals);
     s.setTextValueSuffix (suffix);
-    // Double-click → midPt reset, Shift-drag → velocity-precision
+    // Double-click -> midPt reset, Shift-drag -> velocity-precision
     // fine adjust. Mirrors channel-strip knob behaviour.
     s.setDoubleClickReturnValue (true, midPt);
     s.setVelocityBasedMode (false);
@@ -45,7 +45,7 @@ void styleSmallLabel (juce::Label& lbl, const juce::String& text, juce::Colour c
     lbl.setText (text, juce::dontSendNotification);
     lbl.setJustificationType (juce::Justification::centred);
     lbl.setColour (juce::Label::textColourId, col);
-    // Bumped from 8.5 pt → 10.5 pt + minimum horizontal scale so the
+    // Bumped from 8.5 pt -> 10.5 pt + minimum horizontal scale so the
     // program-EQ captions ("HF BOOST FREQ", "HF− ATTEN FREQ") stay legible
     // against the new blue section background without clipping at the
     // narrow column width.
@@ -119,14 +119,14 @@ void styleEditorEnableBtn (juce::TextButton& b, juce::Colour onColour)
     b.setColour (juce::TextButton::textColourOnId,   juce::Colour (0xff121214));
 }
 
-// Master EQ modal — full(er) program-EQ surface mirroring the donor's
+// Master EQ modal - full(er) program-EQ surface mirroring the donor's
 // TubeEQProcessor parameter set. 2×4 grid:
 //   Row 1 (LF + OUT):  LF BOOST | LF ATTEN | LF FREQ | OUT
 //   Row 2 (HF):        HF BOOST | HF ATTEN | HF BOOST FREQ | HF ATTEN FREQ
 // program-EQ freq pickers are discrete (donor accepts float; we expose the
 // canonical Pultec-hardware values via DuskComboBox so the UX matches
 // what engineers expect from EQP-1A clones). Bandwidth + Mid Dip/Peak
-// + Tube Drive + Input gain stay hidden — bandwidth/drive are fixed
+// + Tube Drive + Input gain stay hidden - bandwidth/drive are fixed
 // per spec; Mid section belongs on the dedicated mastering view.
 class MasterEqEditorPanel final : public juce::Component
 {
@@ -179,7 +179,7 @@ public:
         addAndMakeVisible (hfBoost); addAndMakeVisible (hfAtten);
         addAndMakeVisible (hfBandwidth);
 
-        // Thumb override — styleEditorKnob doesn't explicitly set thumb
+        // Thumb override - styleEditorKnob doesn't explicitly set thumb
         // colour; cream pointer reads against the black bakelite body.
         for (auto* k : { &lfBoost, &lfAtten, &hfBoost, &hfAtten, &hfBandwidth })
         {
@@ -187,7 +187,7 @@ public:
         }
 
         // program-EQ discrete-frequency rotaries (dented knobs). Same range
-        // / format logic as the inline strip version — snaps to the
+        // / format logic as the inline strip version - snaps to the
         // hardware-canonical Hz positions and renders the label in the
         // textbox below.
         auto setupFreqKnob = [this, arm, pultecGold, pultecCream] (juce::Slider& k, const int* hz, int count,
@@ -270,7 +270,7 @@ public:
 
     void paint (juce::Graphics& g) override
     {
-        // program-EQ EQP-1A chassis blue (teal) — same paint as the inline
+        // program-EQ EQP-1A chassis blue (teal) - same paint as the inline
         // strip's eqArea so the popup reads as the same hardware unit
         // scaled up.
         g.fillAll (juce::Colour (0xff2c5060));
@@ -358,16 +358,16 @@ private:
     juce::Label  hfBoostLbl, hfAttenLbl, hfBoostFreqLbl, hfAttenFreqLbl;
 };
 
-// Master COMP modal — same layout grammar as ChannelCompEditor + the new
+// Master COMP modal - same layout grammar as ChannelCompEditor + the new
 // BusCompEditorPanel: ON top-right, LEFT meter strip (triangle threshold
 // drag + IN + GR bars), RIGHT 2×2 knob grid (RAT/MAK over ATK/REL). No
-// THR knob — threshold via the triangle on the IN bar.
+// THR knob - threshold via the triangle on the IN bar.
 class MasterCompEditorPanel final : public juce::Component, private juce::Timer
 {
 public:
     MasterCompEditorPanel (MasterBusParams& p) : params (p)
     {
-        // SSL G-bus comp palette — powder-blue knobs + near-black
+        // SSL G-bus comp palette - powder-blue knobs + near-black
         // chassis. Variable name kept for callsite compatibility.
         const auto compGold = juce::Colour (0xff7da8c5);
         styleEditorEnableBtn (enableBtn, compGold);
@@ -394,7 +394,7 @@ public:
         mak.setTooltip ("Master bus comp make-up gain (-10..+20 dB). Double-click for 0 dB; Shift-drag for fine.");
         mak.onValueChange = [this] { params.compMakeupDb .store ((float) mak.getValue(), std::memory_order_relaxed); };
 
-        // Stepped SSL selectors — donor bus_* params are Choices.
+        // Stepped SSL selectors - donor bus_* params are Choices.
         configureSteppedKnob (rat, sslsteps::ratioValues(), sslsteps::ratioLabels(),
                               params.compRatio.load(),
                               [this] (double v) { params.compRatio.store ((float) v, std::memory_order_relaxed); });
@@ -429,7 +429,7 @@ public:
 
     void paint (juce::Graphics& g) override
     {
-        // SSL G-bus comp chassis — near-black with powder-blue accent.
+        // SSL G-bus comp chassis - near-black with powder-blue accent.
         g.fillAll (juce::Colour (0xff0a0a0a));
         g.setColour (juce::Colour (0xff7da8c5).withAlpha (0.40f));
         g.drawRect (getLocalBounds(), 1);
@@ -679,7 +679,7 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     const auto pultecGold  = pultecBlack;   // legacy variable name; now black
     const auto compGold    = juce::Colour (0xff7da8c5);   // SSL G-bus comp powder blue (legacy var name)
 
-    // EQ header — shared CompHeaderButton pill (green LED + bold label).
+    // EQ header - shared CompHeaderButton pill (green LED + bold label).
     // Left-click toggles; right-click opens the EQ editor (matches COMP / TAPE).
     eqHeaderBtn = std::make_unique<CompHeaderButton> (
         /*getEnabled*/ [this] { return params.eqEnabled.load (std::memory_order_relaxed); },
@@ -716,7 +716,7 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
 
     // Auto-arm the master program-EQ EQ on any band touch. EQ defaults to
     // off (Session.h) so the LED only lights once the engineer shapes
-    // the sound — same UX as channel + bus EQ headers.
+    // the sound - same UX as channel + bus EQ headers.
     auto armMasterEq = [this]
     {
         params.eqEnabled.store (true, std::memory_order_release);
@@ -731,13 +731,13 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     addAndMakeVisible (eqLfBoost); addAndMakeVisible (eqLfAtten);
     addAndMakeVisible (eqHfBoost); addAndMakeVisible (eqHfAtten);
 
-    // HF Bandwidth lives in the popup editor only — set-once setup
+    // HF Bandwidth lives in the popup editor only - set-once setup
     // control. See MasterEqEditorPanel for the knob.
 
     // Discrete Pultec-position freq pickers (LF FREQ, HF BOOST FREQ,
     // HF ATTEN FREQ). Lists + format mirror MasterEqEditorPanel so the
     // inline surface stays in lock-step with the popup.
-    // Stepped rotary knob — snaps to the discrete program-EQ position
+    // Stepped rotary knob - snaps to the discrete program-EQ position
     // indices (0..N-1). textFromValueFunction maps the index back to
     // the Hz / kHz string so the knob's textbox reads like a freq
     // picker. Dragging the knob feels detent-like because the range
@@ -782,7 +782,7 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
             armMasterEq();
         };
         addAndMakeVisible (k);
-        (void) fmt;   // fmt no longer used — textFromValueFunction owns formatting
+        (void) fmt;   // fmt no longer used - textFromValueFunction owns formatting
     };
     static const int kLfHz[]      = { 20, 30, 60, 100 };
     static const int kHfBoostHz[] = { 3000, 4000, 5000, 8000, 10000, 12000, 16000 };
@@ -800,7 +800,7 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
 
     // Inline now shows the full program-EQ surface (mirrors the popup editor):
     // Row 1 = 4 gain knobs, Row 2 = LF FREQ / HF BANDWIDTH / HF BOOST FREQ
-    // / HF ATTEN FREQ, Row 3 = OUT centred. The "FREQS…" button is gone.
+    // / HF ATTEN FREQ, Row 3 = OUT centred. The "FREQS..." button is gone.
     styleSmallLabel (eqLfBoostLabel, "LF BOOST", pultecCream);
     styleSmallLabel (eqLfAttenLabel, "LF ATTEN", pultecCream);
     styleSmallLabel (eqHfBoostLabel, "HF BOOST", pultecCream);
@@ -823,7 +823,7 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
 
     // Comp section. Same shell as bus + channel strips:
     //   - CompHeaderButton (white text, green LED, left-click toggles
-    //     enable). No mode picker — fixed SSL-style glue topology.
+    //     enable). No mode picker - fixed SSL-style glue topology.
     //   - CompMeterStrip on the LEFT (triangle-handle threshold, IN bar
     //     + dB scale + GR bar). Threshold drag writes compThreshDb.
     //   - Knob grid (RAT / MAK on top, ATK / REL on bottom) on the
@@ -889,7 +889,7 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
 
     compMakeup   .onValueChange = [this] { params.compMakeupDb .store ((float) compMakeup   .getValue(), std::memory_order_relaxed); };
 
-    // Ratio / attack / release are SSL-style stepped selectors — the donor's
+    // Ratio / attack / release are SSL-style stepped selectors - the donor's
     // bus_* params are Choices, so the knob detents on the real values.
     configureSteppedKnob (compRatio, sslsteps::ratioValues(), sslsteps::ratioLabels(),
                           params.compRatio.load(),
@@ -925,7 +925,7 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     eqCompactButton  .setTooltip ("Left-click EQ on/off. Right-click to open the editor.");
     compCompactButton.setTooltip ("Left-click comp on/off. Right-click to open the editor.");
     // Same grammar as the expanded headers: left-click toggles, right-click opens
-    // the editor. (Was: any click opened the modal — inconsistent with expanded mode.)
+    // the editor. (Was: any click opened the modal - inconsistent with expanded mode.)
     eqCompactButton.onClick = [this]
     {
         const bool now = ! params.eqEnabled.load (std::memory_order_relaxed);
@@ -953,10 +953,10 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     addAndMakeVisible (compRatLabel); addAndMakeVisible (compAtkLabel);
     addAndMakeVisible (compRelLabel); addAndMakeVisible (compMakLabel);
 
-    // TAPE pill (compact / tape-strip mode only) — matches the EQ / COMP compact
+    // TAPE pill (compact / tape-strip mode only) - matches the EQ / COMP compact
     // pills: any click opens the tape editor modal, where the on/off toggle
     // lives. (The regular-mode tapeHeaderBtn keeps its own left-toggle /
-    // right-open grammar — unchanged.) Lit state still reflects the tapeEnabled
+    // right-open grammar - unchanged.) Lit state still reflects the tapeEnabled
     // atom (synced from timerCallback) so the engine's auto-arm-on-edit shows up.
     {
         const auto tapeAccent = juce::Colour (0xffd0a060);
@@ -981,7 +981,7 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
         addAndMakeVisible (tapeButton);
     }
 
-    // Regular-mode TAPE header — CompHeaderButton (LED + label). Left-click
+    // Regular-mode TAPE header - CompHeaderButton (LED + label). Left-click
     // toggles enable (matches the EQ / COMP headers); right-click opens the
     // editor (tape has no inline controls, so the popup is its only editor).
     // The LED reflects tapeEnabled. setCompactMode swaps visibility between
@@ -1017,7 +1017,7 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     faderSlider.setSkewFactorFromMidPoint (-12.0);
     faderSlider.setValue (params.faderDb.load (std::memory_order_relaxed), juce::dontSendNotification);
     faderSlider.setDoubleClickReturnValue (true, 0.0);
-    // No textbox — standalone faderValueLabel below shows the value (matches
+    // No textbox - standalone faderValueLabel below shows the value (matches
     // channel + bus strip's fader-side grammar; lets the cap fully reach the
     // slider's min / max ticks without clipping into the textbox).
     faderSlider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
@@ -1056,7 +1056,7 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     faderValueLabel.setText (formatFaderDb (faderSlider.getValue()), juce::dontSendNotification);
     addAndMakeVisible (faderValueLabel);
 
-    // Automation mode button — cycles Off / R / W / T via popup.
+    // Automation mode button - cycles Off / R / W / T via popup.
     // Transparent fill so the bottom row reads as plain text rather
     // than a boxed pill (matches the channel-strip auto button's
     // off-state look + the user's "no boxes around bottom labels" pass).
@@ -1140,7 +1140,7 @@ void MasterStripComponent::audioProcessorParameterChanged (juce::AudioProcessor*
 void MasterStripComponent::audioProcessorChanged (juce::AudioProcessor*,
                                                     const juce::AudioProcessorListener::ChangeDetails&)
 {
-    // Layout / preset changes — no-op for the tape arm-on-touch UX.
+    // Layout / preset changes - no-op for the tape arm-on-touch UX.
 }
 
 MasterStripComponent::~MasterStripComponent()
@@ -1166,7 +1166,7 @@ MasterStripComponent::~MasterStripComponent()
 
 void MasterStripComponent::timerCallback()
 {
-    // Compact-mode button illumination — same grammar as bus + channel
+    // Compact-mode button illumination - same grammar as bus + channel
     // strips. EQ + COMP pills light up when their corresponding
     // section is engaged so TIMELINE users still see at-a-glance state.
     if (compactMode)
@@ -1235,9 +1235,9 @@ void MasterStripComponent::timerCallback()
     if (! grMeterArea.isEmpty())
         repaint (grMeterArea.expanded (2, 10));   // include "GR" caption
 
-    // Motor-fader animate + Write/Touch capture — mirrors the per-channel
+    // Motor-fader animate + Write/Touch capture - mirrors the per-channel
     // and per-aux pattern. Master only has one automatable param.
-    // Animate whenever liveFaderDb diverges and the user isn't dragging —
+    // Animate whenever liveFaderDb diverges and the user isn't dragging -
     // mode-agnostic so MIDI-bound master fader moves the on-screen slider
     // in Off mode too.
     {
@@ -1266,7 +1266,7 @@ void MasterStripComponent::timerCallback()
             captureFaderWritePoint (params.faderDb.load (std::memory_order_relaxed));
     }
 
-    // Master mute / mono toggle visual sync — poll the atoms so any MIDI
+    // Master mute / mono toggle visual sync - poll the atoms so any MIDI
     // path (or future binding target) that flips them is reflected on
     // screen. No automation lane on these so liveMute isn't needed.
     {
@@ -1288,7 +1288,7 @@ void MasterStripComponent::timerCallback()
         (void) eqOn;
     }
     {
-        // TAPE pill state — sync toggle from atom so MIDI bind / future
+        // TAPE pill state - sync toggle from atom so MIDI bind / future
         // automation reflects the lit state.
         const bool tapeOn = params.tapeEnabled.load (std::memory_order_relaxed);
         if (tapeButton.getToggleState() != tapeOn)
@@ -1311,7 +1311,7 @@ void MasterStripComponent::timerCallback()
     syncKnob (eqLfAtten,     params.eqLfAtten         .load (std::memory_order_relaxed));
     syncKnob (eqHfBoost,     params.eqHfBoost         .load (std::memory_order_relaxed));
     syncKnob (eqHfAtten,     params.eqHfAtten         .load (std::memory_order_relaxed));
-    // HF Bandwidth no longer inline; popup syncs from atom on open.
+    // HF Bandwidth is popup-only; it syncs from the atom on open.
 
     // Snap stepped freq knobs to nearest discrete program-EQ position so
     // popup edits / MIDI-bound writes reflect on the inline knob.
@@ -1360,7 +1360,7 @@ void MasterStripComponent::setAutoMode (AutomationMode m)
 {
     // Release-store on the mode word so any pending captureFaderWritePoint
     // appends from a Write/Touch pass are visible before the audio thread's
-    // next acquire-load. Thinning is intentionally NOT triggered here —
+    // next acquire-load. Thinning is intentionally NOT triggered here -
     // handleWritePassComplete rewrites lane wholesale and would race
     // the audio thread; the safe entry point is File ▸ Optimize automation,
     // which gates on transport-stopped + all modes Off.
@@ -1430,19 +1430,19 @@ void MasterStripComponent::paint (juce::Graphics& g)
     // EQ / COMP framed bands - same grammar as channel + bus strips.
     if (! eqArea.isEmpty())
     {
-        // program-EQ EQP-1A chassis blue (teal-ish) — black bakelite knobs
+        // program-EQ EQP-1A chassis blue (teal-ish) - black bakelite knobs
         // + cream stencilling read as the real-hardware grammar.
         g.setColour (juce::Colour (0xff2c5060));
         g.fillRoundedRectangle (eqArea.toFloat(), 3.0f);
         g.setColour (juce::Colour (0xff90c0d0).withAlpha (0.45f));
         g.drawRoundedRectangle (eqArea.toFloat().reduced (0.5f), 3.0f, 0.8f);
 
-        // No section captions / vertical separator — single-column
+        // No section captions / vertical separator - single-column
         // stacked layout (see resized() for the row breakdown).
     }
     if (! compArea.isEmpty())
     {
-        // SSL G-bus comp chassis — near-black with powder-blue accent.
+        // SSL G-bus comp chassis - near-black with powder-blue accent.
         g.setColour (juce::Colour (0xff0a0a0a));
         g.fillRoundedRectangle (compArea.toFloat(), 3.0f);
         g.setColour (juce::Colour (0xff7da8c5).withAlpha (0.40f));
@@ -1450,7 +1450,7 @@ void MasterStripComponent::paint (juce::Graphics& g)
     }
     if (! tapeArea.isEmpty())
     {
-        // Warm tape-deck chassis (TEAC/Studer brown) + amber accent — ties to
+        // Warm tape-deck chassis (TEAC/Studer brown) + amber accent - ties to
         // the tape pill's amber and gives the header its own band so it reads
         // as a section, not part of the fader area below. The transparent
         // CompHeaderButton lets this tint show through, same as EQ / COMP.
@@ -1465,7 +1465,7 @@ void MasterStripComponent::paint (juce::Graphics& g)
     {
         constexpr float kBarGap = 1.0f;
 
-        // Meter dB → y uses the fader's NormalisableRange (same skew,
+        // Meter dB -> y uses the fader's NormalisableRange (same skew,
         // same range) so "0 dB" on the meter lands at exactly the same
         // Y as the fader's "0" tick. Linear -60..+6 was the prior
         // approach and produced a visible scale mismatch with the fader.
@@ -1478,7 +1478,7 @@ void MasterStripComponent::paint (juce::Graphics& g)
             g.setColour (juce::Colour (0xff2a2a2e));
             g.drawRoundedRectangle (bar, 1.5f, 0.6f);
 
-            // LED-style hard zones — match the channel-strip + bus meters.
+            // LED-style hard zones - match the channel-strip + bus meters.
             const juce::Colour kLedGreen  (0xff20d040);
             const juce::Colour kLedYellow (0xfff0e020);
             const juce::Colour kLedRed    (0xffff2020);
@@ -1545,7 +1545,7 @@ void MasterStripComponent::paint (juce::Graphics& g)
     }
 
     // Master-bus comp GR meter - fills DOWN from the top as compression
-    // bites. Same gold→red colour story as the channel and aux strips.
+    // bites. Same gold->red colour story as the channel and aux strips.
     if (! grMeterArea.isEmpty())
     {
         const auto bar = grMeterArea.toFloat();
@@ -1580,7 +1580,7 @@ void MasterStripComponent::paint (juce::Graphics& g)
                      juce::Justification::centred, false);
     }
 
-    // Fader dB scale labels — track-3 grammar, drawn LEFT of the slider's
+    // Fader dB scale labels - track-3 grammar, drawn LEFT of the slider's
     // track (no separate carved column). Same kFaderTicks set as channel +
     // bus strips so the entire mixer reads identically.
     {
@@ -1626,7 +1626,7 @@ void MasterStripComponent::setCompactMode (bool compact)
 
     // Reset the gated-repaint sentinels so the next timer tick republishes
     // the pill colours after re-entering compact mode (matches the
-    // BusComponent fix — without this a previous cache value would
+    // BusComponent fix - without this a previous cache value would
     // suppress the first refresh when EQ/COMP state hasn't flipped).
     lastCompactEqOn   = -1;
     lastCompactCompOn = -1;
@@ -1816,7 +1816,7 @@ void MasterStripComponent::resized()
         s.removeFromTop (2);
 
         auto body = s.removeFromTop (kCompBodyH);
-        // compMeter moved out of the COMP section — now the fader-side GR
+        // compMeter moved out of the COMP section - now the fader-side GR
         // LED (placed below). 4-knob row uses the full body width.
         juce::ignoreUnused (kCompMeterW, kCompMeterGap);
 
@@ -1836,7 +1836,7 @@ void MasterStripComponent::resized()
     area.removeFromTop (6);
     } // end !compactMode EQ + COMP branch
 
-    // TAPE row — compact mode uses the pill-style tapeButton (click
+    // TAPE row - compact mode uses the pill-style tapeButton (click
     // opens editor, atom drives lit state); regular mode swaps in
     // tapeHeaderBtn (CompHeaderButton with green LED, matches the EQ
     // / COMP header grammar). Visibility set in setCompactMode.
@@ -1867,7 +1867,7 @@ void MasterStripComponent::resized()
     // stays graphical - the GR LED bar communicates it without a number.
     outputPeakLabel.setVisible (true);
 
-    // Centred [fader | level meter | GR LED] cluster — fader-side grammar
+    // Centred [fader | level meter | GR LED] cluster - fader-side grammar
     // matching channel + bus strips, but centred in the (wider) master strip
     // instead of right-pinned. Scale labels drawn by paint() to the LEFT of
     // the slider's track via kSharedXOver math. No separate carved column.
@@ -1892,14 +1892,14 @@ void MasterStripComponent::resized()
     area.removeFromLeft (kMeterToGrGap);
     auto compMeterCol = area.removeFromLeft (kGrLedW);
 
-    // Trim meter top so it lines up with the slider's +6 tick — same grammar
+    // Trim meter top so it lines up with the slider's +6 tick - same grammar
     // as channel + bus strips. Bottom trimmed to match the fader's bottom
     // (kFaderValueH + 8 value-label reserve) so the meter doesn't overhang
     // past the "off" tick.
     const int meterTopY = faderColArea.getY() + (int) duskstudio::kFaderTrackPad;
     meterArea = meterArea.withTop (meterTopY)
                           .withTrimmedBottom (kFaderValueH + 8);
-    // Legacy carves cleared — paint() short-circuits on empty rects.
+    // Legacy carves cleared - paint() short-circuits on empty rects.
     faderScaleArea = juce::Rectangle<int>();
     grMeterArea    = juce::Rectangle<int>();
 
@@ -1913,8 +1913,7 @@ void MasterStripComponent::resized()
                                  kFaderValueH);
 
     // Output-peak readout centred under the meter cluster (meter + GR LED
-    // columns). Previously never laid out, so it had zero size and the
-    // post-master peak level was invisible on the master strip.
+    // columns).
     outputPeakLabel.setBounds (meterArea.getX(),
                                  meterArea.getBottom() + 4,
                                  compMeterCol.getRight() - meterArea.getX(),
@@ -2016,7 +2015,7 @@ void MasterStripComponent::openTapeMachineModal()
                         .withSizeKeepingCentre (body->getWidth(), body->getHeight()));
     topLevel->addAndMakeVisible (body);
     // This modal uses a raw DimOverlay rather than EmbeddedModal, so it doesn't
-    // get EmbeddedModal's key forwarding for free — attach the forwarder so
+    // get EmbeddedModal's key forwarding for free - attach the forwarder so
     // Space / R / Home / loop+punch shortcuts still reach MainComponent while
     // the tape editor holds focus.
     attachTransportKeyForwarder (*body);

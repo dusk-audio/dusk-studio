@@ -40,7 +40,7 @@ public:
                            std::string& errorOut) noexcept;
 
     // Child path: take ownership of a NativeHandle received over the
-    // channel and mmap it. `inherited` is consumed — on return (success
+    // channel and mmap it. `inherited` is consumed - on return (success
     // or failure) its fd is closed and the handle is invalidated.
     bool mapInheritedHandle (NativeHandle& inherited,
                                std::size_t size,

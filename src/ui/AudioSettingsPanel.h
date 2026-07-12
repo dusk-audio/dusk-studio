@@ -15,7 +15,7 @@ class Session;
 
 // Wraps juce::AudioDeviceSelectorComponent + adds a Periods combo
 // (the only config knob JUCE's stock selector doesn't expose, but
-// materially affects USB audio on Linux — fractional periods cause
+// materially affects USB audio on Linux - fractional periods cause
 // jitter; certain kernel+device combos distort at specific counts).
 // Also hosts a "Run Self-Test" button (SelfTestPanel).
 class AudioSettingsPanel final : public juce::Component,
@@ -79,11 +79,11 @@ private:
     DuskComboBox syncOutputCombo;
     juce::ToggleButton syncEmitClockToggle { "Emit clock (Dusk Studio as master)" };
 
-    // MTC slave — when on AND receiver rolling, engine locks playhead
+    // MTC slave - when on AND receiver rolling, engine locks playhead
     // to master frame count on rising edge + freewheels with re-locate.
     juce::ToggleButton mtcChaseToggle { "Chase transport from MTC" };
 
-    // MTC master — emit QF + full-frame sysex on the existing Sync Output.
+    // MTC master - emit QF + full-frame sysex on the existing Sync Output.
     juce::ToggleButton mtcEmitToggle { "Emit MTC (Dusk Studio as master)" };
     juce::Label        mtcEmitFrameRateLabel { {}, "MTC frame rate" };
     DuskComboBox     mtcEmitFrameRateCombo;

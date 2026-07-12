@@ -58,7 +58,7 @@ private:
     // 3-band EQ controls (LF / MID / HF gains, fixed musical frequencies).
     // Header is a CompHeaderButton (LED + label pill) so the EQ section
     // shares its visual grammar with the COMP header above and with the
-    // channel-strip EQ header — single look across the desk.
+    // channel-strip EQ header - single look across the desk.
     std::unique_ptr<CompHeaderButton> eqHeaderBtn;
     juce::Slider     eqLfGain  { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
     juce::Slider     eqMidGain { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
@@ -68,7 +68,7 @@ private:
     // Bus compressor controls. Shell mirrors the channel-strip COMP
     // section visually: a single CompHeaderButton on top, a CompMeterStrip
     // on the left, and the parameter knob grid on the right. The DSP
-    // underneath is still a fixed SSL-style glue topology — no mode
+    // underneath is still a fixed SSL-style glue topology - no mode
     // picker, so the header button only toggles enable.
     std::unique_ptr<CompHeaderButton> compHeaderBtn;
     std::unique_ptr<CompMeterStrip>   compMeter;
@@ -83,14 +83,14 @@ private:
     juce::Label  panLbl;
 
     juce::Slider     faderSlider { juce::Slider::LinearVertical, juce::Slider::TextBoxBelow };
-    // Standalone fader value readout below the slider — mirrors the channel
+    // Standalone fader value readout below the slider - mirrors the channel
     // strip's fader-side grammar so the bus value sits in the same place /
     // font weight as a track's value.
     juce::Label      faderValueLabel;
     juce::TextButton muteButton { "M" };
     juce::TextButton soloButton { "S" };
 
-    // Automation-mode button — thin full-width row above M/S, exactly like
+    // Automation-mode button - thin full-width row above M/S, exactly like
     // the channel strips. Cycles Off/Read/Write/Touch via an in-window menu;
     // the engine's per-block bus automation routing honours the mode for the
     // fader, pan, and mute.
@@ -111,7 +111,7 @@ private:
 
     // Stereo output meter (L | R) on the right side of the fader, matching
     // the master strip's layout. Smoothed and peak-hold values per channel.
-    // Plus a slim vertical GR bar (top-down fill, gold→red) so the user
+    // Plus a slim vertical GR bar (top-down fill, gold->red) so the user
     // sees compressor activity at a glance, not just as a numeric readout.
     juce::Rectangle<int> meterArea;
     juce::Rectangle<int> grMeterArea;

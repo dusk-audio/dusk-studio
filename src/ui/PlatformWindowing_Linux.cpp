@@ -53,7 +53,7 @@ int nonFatalXErrorHandler (::Display* d, ::XErrorEvent* e)
     // OOP plugin editors are X11 toplevels owned by a SEPARATE process. When
     // one dies (crash / timeout-kill) the parent's already-queued reparent /
     // query-tree / configure requests reference a window the server has freed.
-    // Xlib's default handler abort()s on the resulting BadWindow etc. — turning
+    // Xlib's default handler abort()s on the resulting BadWindow etc. - turning
     // a plugin's death into a host core-dump. Swallow those benign races and
     // log them; defer anything else to the prior handler so real bugs stay loud.
     if (e != nullptr)
@@ -109,7 +109,7 @@ bool hasUsableDisplay()
     // JUCE's XWindowSystem is lazy and not yet created at preflight time,
     // so we can't reuse its ::Display*; open a throwaway connection.
     // XOpenDisplay(nullptr) reads $DISPLAY itself and returns null when no
-    // X server / XWayland is reachable — the "pure Wayland, no XWayland"
+    // X server / XWayland is reachable - the "pure Wayland, no XWayland"
     // case that otherwise crashes deep in JUCE window creation.
     if (::Display* d = ::XOpenDisplay (nullptr))
     {
@@ -122,8 +122,8 @@ bool hasUsableDisplay()
 void installNonFatalXErrorHandler()
 {
     // Install once. XSetErrorHandler returns the previously-installed handler
-    // (JUCE's, if it set one during peer creation — call this AFTER the main
-    // window exists — otherwise Xlib's default), which we chain to for any
+    // (JUCE's, if it set one during peer creation - call this AFTER the main
+    // window exists - otherwise Xlib's default), which we chain to for any
     // error we don't recognise as a benign plugin-window race.
     if (xErrorHandlerInstalled) return;
     xErrorHandlerInstalled = true;
@@ -137,7 +137,7 @@ void setNativeCursorVisibleOnPeer (juce::ComponentPeer& peer, bool visible)
     const auto win = (::Window) (uintptr_t) peer.getNativeHandle();
     if (win == 0) return;
 
-    // Cache one invisible 1x1 pixmap cursor for the process — JUCE's
+    // Cache one invisible 1x1 pixmap cursor for the process - JUCE's
     // setMouseCursor(NoCursor) and image-cursor paths both go through
     // routes that get dropped on this hybrid X11/Wayland setup, so we
     // do XDefineCursor directly here. XUndefineCursor restores the
@@ -211,7 +211,7 @@ void bringWindowToFront (juce::ComponentPeer& peer)
                    &act);
 
     // EWMH activate marks the window as the X focus target, but Mutter's XWayland
-    // bridge doesn't actually route keyboard input to it until the user clicks —
+    // bridge doesn't actually route keyboard input to it until the user clicks -
     // so every widget needs two clicks (first focuses, second hits). Force input
     // focus directly. Guard on viewability: XSetInputFocus on an unmapped window
     // is a BadMatch.
@@ -332,7 +332,7 @@ void clearPreferX11ForNativeWindow()
     // (XWayland) so the main window, popup menus, plugin editors,
     // and dialog windows share one peer backend. Clearing the latch
     // would let the next PopupMenu create a wl_surface peer that can't
-    // parent to the X11 main window — symptom: picker menu never opens.
+    // parent to the X11 main window - symptom: picker menu never opens.
     // Once preferX11ForNextNativeWindow() is called (during MainWindow
     // ctor), the latch stays on for the process lifetime.
 }

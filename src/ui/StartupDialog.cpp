@@ -63,7 +63,7 @@ juce::String formatLastModified (juce::Time t)
 }
 
 // Pull sample rate + bit depth from the first audio file in <dir>/audio/.
-// Cheap header read, no full file scan. Empty strings if we can't tell —
+// Cheap header read, no full file scan. Empty strings if we can't tell -
 // session.json doesn't store sample-rate at the session level so this is
 // the best we can do without an in-progress engine.
 void inferAudioFormat (const juce::File& sessionDir,
@@ -115,7 +115,7 @@ StartupDialog::StartupDialog (juce::Array<juce::File> r)
         BinaryData::dsicon_png, BinaryData::dsicon_pngSize);
     if (img.isValid())
     {
-        // centred + fillDestination — source PNG is square so aspect
+        // centred + fillDestination - source PNG is square so aspect
         // ratio is preserved; without fillDestination the icon was
         // shrinking to leave large empty margins inside its slot.
         brandIcon.setImage (img, juce::RectanglePlacement::centred
@@ -161,7 +161,7 @@ StartupDialog::StartupDialog (juce::Array<juce::File> r)
 
     recentTab.onClick = [this]
     {
-        // RECENT just focuses the table — no-op if it's already visible.
+        // RECENT just focuses the table - no-op if it's already visible.
         table.grabKeyboardFocus();
     };
     // The host callbacks (onOpenFile / onNewSession / onOpenRecent / onQuit)
@@ -205,7 +205,7 @@ StartupDialog::StartupDialog (juce::Array<juce::File> r)
     addAndMakeVisible (table);
 
     // Auto-select the newest session so Enter / "Open" works without an
-    // extra click — matches Ardour's behaviour.
+    // extra click - matches Ardour's behaviour.
     if (! rows.empty())
         table.selectRow (0);
 
@@ -310,7 +310,7 @@ void StartupDialog::paint (juce::Graphics& g)
 {
     g.fillAll (kBg);
 
-    // Sidebar background — separate column from the table body.
+    // Sidebar background - separate column from the table body.
     const int sidebarW = 100;
     auto sidebar = getLocalBounds().removeFromLeft (sidebarW);
     g.setColour (kSidebarBg);
@@ -387,7 +387,7 @@ void StartupDialog::setUpdateAvailable (const juce::String& tagName)
 
 void StartupDialog::timerCallback()
 {
-    // Flash by alternating the badge between amber and dim — text stays
+    // Flash by alternating the badge between amber and dim - text stays
     // put so it remains readable mid-blink. A few blinks draw the eye;
     // after that the badge settles on steady amber instead of strobing
     // for as long as the dialog is open.

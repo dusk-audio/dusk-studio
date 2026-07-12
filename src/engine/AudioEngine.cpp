@@ -26,8 +26,8 @@ static const float kHpfLogRange = std::log (ChannelStripParams::kHpfMaxHz
 
 // Soft-takeover read-back: the parameter's CURRENT position as the same 0..1
 // fraction the apply switch below maps FROM. Each case is the exact inverse
-// of its apply-side mapping — change one, change the other. Returns < 0 for
-// targets pickup doesn't cover (discrete toggles, transport, plugin params —
+// of its apply-side mapping - change one, change the other. Returns < 0 for
+// targets pickup doesn't cover (discrete toggles, transport, plugin params -
 // plugin values have no RT-safe read-back). Audio thread; relaxed loads only.
 static float currentFracForTarget (Session& session, const MidiBinding& b) noexcept
 {
@@ -191,7 +191,7 @@ static juce::File audioDeviceStateFile()
 #if DUSKSTUDIO_HAS_NATIVE_LV2
 // Per-slot directory for LV2 FILE-BACKED state, under the session: track
 // slots at state/lv2/trackNN, aux slots at state/lv2/auxA_slotS. Empty when
-// the session has no directory yet — saves fall back to blob-only. Save As
+// the session has no directory yet - saves fall back to blob-only. Save As
 // consolidation copies the whole state/ tree (SessionSerializer).
 static std::filesystem::path lv2StateDirFor (Session& session, const juce::String& slotTag)
 {
@@ -202,8 +202,8 @@ static std::filesystem::path lv2StateDirFor (Session& session, const juce::Strin
 }
 #endif
 
-// Session-carried native plugin state blob (base64) → bytes. Empty on any
-// decode failure — callers treat "no state" and "bad state" the same.
+// Session-carried native plugin state blob (base64) -> bytes. Empty on any
+// decode failure - callers treat "no state" and "bad state" the same.
 static std::vector<uint8_t> decodeBase64Blob (const juce::String& s)
 {
     std::vector<uint8_t> blob;
@@ -228,7 +228,7 @@ private:
 
 void AudioEngine::printPerfTable()
 {
-    // The per-counter exchanges aren't a consistent snapshot — a block
+    // The per-counter exchanges aren't a consistent snapshot - a block
     // can land between them, skewing the averages by ~1 block out of
     // the hundreds in a reporting window. Fine for a diagnostic.
     const auto blocks = perf.blocks.exchange (0, std::memory_order_relaxed);
@@ -396,7 +396,7 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
                                                   &currentSampleRate);
 
     // -1 sentinel so the first block sees a "swap" if a device is
-    // already selected (harmless flush — no notes held yet).
+    // already selected (harmless flush - no notes held yet).
     lastMidiInputIndex.fill (-1);
 
     publishTempoMap();   // seed the snapshot (empty -> constant tempoBpm)
@@ -431,7 +431,7 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
     // scanForDevices so init's pickCurrentDeviceTypeWithDevices doesn't
     // trip hasScanned assertions. Dropdown ends up with "ALSA" (ours)
     // + "JACK", no double-listing.
-    // macOS / Windows let JUCE auto-register natives — DUSKSTUDIO_HAS_ALSA
+    // macOS / Windows let JUCE auto-register natives - DUSKSTUDIO_HAS_ALSA
     // isn't defined there.
    #if defined(DUSKSTUDIO_HAS_ALSA)
     if (auto* jackType = juce::AudioIODeviceType::createAudioIODeviceType_JACK())
@@ -448,7 +448,7 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
     // FIRST registered type that has devices, and createDeviceTypesIfNeeded
     // only auto-registers JUCE's defaults when the list is empty. So
     // pre-registering in preference order both chooses the default backend
-    // and prevents double-listing — same mechanism as the Linux block above.
+    // and prevents double-listing - same mechanism as the Linux block above.
     //
     // Order: ASIO (lowest latency; only compiled in when the SDK was present
     // at build time) -> WASAPI exclusive (low-latency, no SDK needed: our
@@ -474,7 +474,7 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
 
     // Restore the persisted device setup so the backend pick above only
     // decides the FIRST launch. Without this, every start re-runs the
-    // default pick — on Windows that re-selects the first ASIO entry,
+    // default pick - on Windows that re-selects the first ASIO entry,
     // re-instantiating app-shim "drivers" (JRiver et al) the user already
     // switched away from. Null XML (fresh machine, unreadable file) makes
     // initialise behave exactly like initialiseWithDefaultDevices.
@@ -494,10 +494,10 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
    #if defined(DUSKSTUDIO_HAS_ALSA)
     // The saved setup can pin an ALSA hw: device that another app (PipeWire,
     // JACK, another DAW) holds exclusively. JUCE's selectDefaultDeviceOnFailure
-    // only re-picks another device NAME on the same ALSA type — the same hw
-    // conflict — so it never falls through to JACK. Recover explicitly: JACK
+    // only re-picks another device NAME on the same ALSA type - the same hw
+    // conflict - so it never falls through to JACK. Recover explicitly: JACK
     // (routes through PipeWire and reaches the interface even while the raw hw
-    // handle is held) → the first ALSA device that opens → give up and tell the
+    // handle is held) -> the first ALSA device that opens -> give up and tell the
     // user. This runs BEFORE addAudioCallback / addChangeListener: the audio
     // thread isn't attached and the engine isn't a change listener yet, so the
     // setup-switch broadcasts reach no one (no re-entrancy, no fallback loop).
@@ -557,7 +557,7 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
 
         // Resolve the outcome unconditionally: this also catches the case where
         // JUCE's own selectDefaultDeviceOnFailure SILENTLY moved us onto a
-        // different working device than the one saved — the user should still be
+        // different working device than the one saved - the user should still be
         // told their interface wasn't available. startupDeviceMessage() returns
         // empty when the saved device opened, so the normal path stays silent.
         auto* dev = deviceManager.getCurrentAudioDevice();
@@ -567,7 +567,7 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
     }
    #endif
 
-    // Build both MIDI banks before ANY callback is registered — the audio
+    // Build both MIDI banks before ANY callback is registered - the audio
     // callback iterates perInputMidi, so it must not be attachable while
     // rebuildMidiBanks sizes the vector. Empty deviceIdentifier = every
     // enabled input fans out to midiIn, routed there by source identifier.
@@ -577,7 +577,7 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
 
     deviceManager.addAudioCallback (this);
 
-    // H5: subscribe to AudioDeviceManager change broadcasts so we can
+    // Subscribe to AudioDeviceManager change broadcasts so we can
     // detect hot-unplug (current device becomes null while we had
     // one). Fires on the message thread per JUCE's ChangeBroadcaster
     // contract.
@@ -586,7 +586,7 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
 
 void AudioEngine::refreshMidiInputs()
 {
-    // Detach both callbacks — JUCE's remove* joins the audio + MIDI
+    // Detach both callbacks - JUCE's remove* joins the audio + MIDI
     // dispatch sides before returning. Cheapest correct sync for a
     // rare hot-plug event; lock-free vector mutation would cost more
     // throughout the audio path than it's worth.
@@ -641,7 +641,7 @@ void AudioEngine::refreshMidiInputs()
         }
     }
 
-    // Must run BEFORE re-attaching callbacks — otherwise the audio
+    // Must run BEFORE re-attaching callbacks - otherwise the audio
     // thread reads the output bank while ensureOpen mutates it.
     openConfiguredMidiOutputs();
 
@@ -655,7 +655,7 @@ void AudioEngine::publishTempoMap()
 {
     // Message thread. Heap-allocate an immutable copy, keep it alive in the
     // pool, then release-store its pointer so the audio thread's next
-    // acquire-load sees a fully-built map. The old copy is NOT freed here — a
+    // acquire-load sees a fully-built map. The old copy is NOT freed here - a
     // concurrent callback may still hold it (publishes can be as frequent as a
     // drag's mouse-moves); the pool is trimmed in audioDeviceStopped, when no
     // callback can be in flight. Each copy is tiny (a few tempo points).
@@ -668,7 +668,7 @@ void AudioEngine::publishTempoMap()
     // limit between audioDeviceStopped reclamations. Generous on purpose: a
     // queued-event burst (post-stall drain of a tempo-handle drag) can land
     // many publishes inside ONE audio block while the callback still holds
-    // an old map across its MIDI-region scheduling scan — a tight bound here
+    // an old map across its MIDI-region scheduling scan - a tight bound here
     // would free that map under the reader. 256 publishes inside a single
     // block is not a reachable burst; each map is a few tempo points.
     constexpr size_t kMaxRtTempoMaps = 256;
@@ -702,7 +702,7 @@ void AudioEngine::recomputePdc() noexcept
         const bool midi = session.track (t).mode.load (std::memory_order_relaxed)
                               == (int) Track::Mode::Midi;
         // A frozen track plays its baked WAV with the insert bypassed, so its
-        // plugin / hardware latency must not count toward PDC — it's a zero-latency
+        // plugin / hardware latency must not count toward PDC - it's a zero-latency
         // disk source (the bake was captured pre-PDC; see ChannelStrip freeze tap).
         const bool frozen = session.track (t).frozen.load (std::memory_order_relaxed);
         if (! midi && ! frozen)
@@ -712,7 +712,7 @@ void AudioEngine::recomputePdc() noexcept
             {
                 lat = strip.getPluginSlot().getLatencySamples();
                 // A native insert replaces the JUCE slot (which then reports 0),
-                // so its latency must feed PDC instead. Skip it while bypassed —
+                // so its latency must feed PDC instead. Skip it while bypassed -
                 // bypass passes audio through at zero delay, matching the JUCE
                 // slot's getLatencySamples() returning 0 when bypassed.
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
@@ -746,7 +746,7 @@ void AudioEngine::recomputePdc() noexcept
     // Aux-lane (send-effect) latency delays only the wet return. Master-stage
     // targets: dry mix waits for the deepest lane, each return for
     // (deepest - own). Buses host no plugins, so delaying the mix after the
-    // bus pass covers them too. Slots on a lane run in series — their
+    // bus pass covers them too. Slots on a lane run in series - their
     // latencies sum.
     int auxLat[Session::kNumAuxLanes];
     int deepestAux = 0;
@@ -872,13 +872,13 @@ void AudioEngine::commitFreeze (int trackIndex, const juce::File& outFile, std::
     track.frozenAudioPath = outFile.getFullPathName();
 
     // A frozen track can't record (playback is the baked WAV), so it must not stay
-    // record-armed — disarm via setTrackArmed so armedTrackCount stays consistent
+    // record-armed - disarm via setTrackArmed so armedTrackCount stays consistent
     // (done before frozen is set; setTrackArmed only refuses to ARM a frozen track).
     session.setTrackArmed (trackIndex, false);
 
     // Capture the user's current bypass before forcing it on, so unfreeze can
     // restore it (freeze always bypasses to free CPU). Then bypass the
-    // instrument (defensive — the frozen strip path already skips it) and
+    // instrument (defensive - the frozen strip path already skips it) and
     // publish frozen with release so the audio thread sees the flag only after
     // frozenRegion + the path are fully written.
     auto& slot = strips[(size_t) trackIndex].getPluginSlot();
@@ -909,13 +909,13 @@ void AudioEngine::unfreezeTrack (int trackIndex)
     // BEFORE deleting the file.
     playbackEngine.preparePlayback();
 
-    // Delete the baked WAV — but only one we created: inside the session's audio
+    // Delete the baked WAV - but only one we created: inside the session's audio
     // dir and named like our freeze output. A corrupt session could otherwise
     // point frozenAudioPath at an unrelated user file, and deleteFile() is
     // destructive.
     const juce::File wav (track.frozenAudioPath);
     // Match the EXACT name freezePrepare generates for THIS track, not just the
-    // "freeze_track*" prefix — so a corrupt path can't delete another track's
+    // "freeze_track*" prefix - so a corrupt path can't delete another track's
     // freeze WAV (or any other freeze_track*.wav) by accident.
     const auto expectedName = "freeze_track"
                             + juce::String (trackIndex + 1).paddedLeft ('0', 2) + ".wav";
@@ -944,10 +944,10 @@ void AudioEngine::reresolveTrackMidiFromSession()
 {
     // Re-map saved per-track MIDI identifiers to runtime indices against the
     // EXISTING device banks. Only atomic index stores (the audio thread reads
-    // these), no bank mutation — so no callback detach, no device reconfigure,
+    // these), no bank mutation - so no callback detach, no device reconfigure,
     // no audio glitch. Cheap enough to run on every session load. (The full
     // refreshMidiInputs hot-plug path would detach/reattach the audio callback
-    // and disable/re-enable every MIDI device — seconds of frozen UI on load.)
+    // and disable/re-enable every MIDI device - seconds of frozen UI on load.)
     auto resolveByIdentifier = [] (const std::vector<duskstudio::midi::MidiDeviceInfo>& devices,
                                     const juce::String& wantedId)
     {
@@ -976,7 +976,7 @@ void AudioEngine::reresolveTrackMidiFromSession()
 
     // Re-resolve the session-level MIDI wiring the same way: the sync
     // source/output and the MCU control surface each store a saved identifier,
-    // so a session load must remap them to current bank indices too — else the
+    // so a session load must remap them to current bank indices too - else the
     // engine's sync + MCU consumers read stale indices until the user reopens
     // Audio Settings. release-ordered to match their setters in AudioSettingsPanel.
     auto resolveSessionIdx = [&] (std::atomic<int>& idx,
@@ -991,7 +991,7 @@ void AudioEngine::reresolveTrackMidiFromSession()
     resolveSessionIdx (session.mcu.resolvedInputIdx,  midiIn.getDevices(),  session.mcu.inputIdentifier);
     resolveSessionIdx (session.mcu.resolvedOutputIdx, midiOut.getDevices(), session.mcu.outputIdentifier);
 
-    // A session load may have replaced the tempo map — republish the audio
+    // A session load may have replaced the tempo map - republish the audio
     // thread's snapshot so the MIDI scheduler + metronome see the loaded points.
     publishTempoMap();
 
@@ -1016,7 +1016,7 @@ void AudioEngine::rebuildMidiBanks()
     for (auto& m : perInputMidi) m.reserveBytes (4096);
 
     // Re-resolve the session's sync + MCU wiring against the fresh banks so a
-    // hot-plug doesn't strand an index at a stale slot (STAYS in the engine —
+    // hot-plug doesn't strand an index at a stale slot (STAYS in the engine -
     // the banks don't know session identifiers). Empty / no match = -1. release
     // pairs with the audio-thread acquires and the AudioSettingsPanel setters.
     auto resolve = [] (const std::vector<duskstudio::midi::MidiDeviceInfo>& devices,
@@ -1067,7 +1067,7 @@ void AudioEngine::openConfiguredMidiOutputsSafely()
 {
     // Session-load calls this with the audio callback ATTACHED, but ensureOpen
     // mutates the output bank the audio thread reads (in the clock / MCU send
-    // paths). Detach the callback for the brief open pass — same contract
+    // paths). Detach the callback for the brief open pass - same contract
     // refreshMidiInputs() relies on. The startup caller runs pre-attach and
     // uses openConfiguredMidiOutputs() directly.
     deviceManager.removeAudioCallback (this);
@@ -1078,7 +1078,7 @@ void AudioEngine::openConfiguredMidiOutputsSafely()
 int AudioEngine::getBackendXRunCount() const noexcept
 {
     // const_cast: getCurrentAudioDevice is non-const for historical
-    // reasons. Benign — getXRunCount is noexcept and returns a counter.
+    // reasons. Benign - getXRunCount is noexcept and returns a counter.
     if (auto* dev = const_cast<juce::AudioDeviceManager&> (deviceManager).getCurrentAudioDevice())
         return juce::jmax (0, dev->getXRunCount()
                                   - backendXrunBaseline.load (std::memory_order_relaxed));
@@ -1099,7 +1099,7 @@ void AudioEngine::setStage (Stage s) noexcept
     const auto current = stage.load (std::memory_order_relaxed);
     if (current == s) return;
 
-    // Recording/Mixing/Aux share live track-to-master flow — only UI
+    // Recording/Mixing/Aux share live track-to-master flow - only UI
     // changes across those swaps. Mastering = wholly separate path
     // (stereo file -> MasteringChain -> output) so transport must be
     // force-stopped when crossing into or out of it.
@@ -1114,7 +1114,7 @@ void AudioEngine::setStage (Stage s) noexcept
         playbackEngine.stopPlayback();
     }
 
-    // Gates two different signal flows on the audio thread — release/acquire
+    // Gates two different signal flows on the audio thread - release/acquire
     // so the stop sequencing above is visible before the path switches.
     stage.store (s, std::memory_order_release);
 }
@@ -1128,7 +1128,7 @@ AudioEngine::~AudioEngine()
     deviceManager.removeAudioCallback (this);
     midiIn.detachCallback();
     deviceManager.closeAudioDevice();
-    // After the callback is gone — nothing pushes to the out-queue, the
+    // After the callback is gone - nothing pushes to the out-queue, the
     // pump drains or drops what's left, then the output bank can destruct.
     midiOut.stopPump();
 }
@@ -1138,7 +1138,7 @@ void AudioEngine::drainCallbackDiagnostics()
     const auto gated = earlyOutBlocks.load (std::memory_order_relaxed);
     if (gated != lastReportedGated)
     {
-        std::fprintf (stderr, "[Dusk Studio/AudioEngine] callback GATED (processingSuspended=true) — "
+        std::fprintf (stderr, "[Dusk Studio/AudioEngine] callback GATED (processingSuspended=true) - "
                               "%lld silent block(s) since last report; if persistent, the gate is stuck\n",
                       (long long) (gated - lastReportedGated));
         lastReportedGated = gated;
@@ -1149,7 +1149,7 @@ void AudioEngine::drainCallbackDiagnostics()
     {
         const auto dims = silentDims.load (std::memory_order_relaxed);
         std::fprintf (stderr, "[Dusk Studio/AudioEngine] callback SILENT: engine buffers sized %d but device "
-                              "delivered %d samples — re-prepare missed the block size (%lld block(s))\n",
+                              "delivered %d samples - re-prepare missed the block size (%lld block(s))\n",
                       (int) (dims >> 32),
                       (int) (dims & 0xffffffffu),
                       (long long) (silent - lastReportedSilent));
@@ -1162,7 +1162,7 @@ void AudioEngine::play()
     if (transport.isPlaying() || transport.isRecording()) return;
 
     // The audio callback already wraps playhead >= loopEnd back, but
-    // has no symmetric guard for before-loop — linear playback would
+    // has no symmetric guard for before-loop - linear playback would
     // audibly run through the pre-loop area. Snap at Play-press so
     // "loop engaged" actually means "play inside the loop".
     if (transport.isLoopEnabled())
@@ -1243,7 +1243,7 @@ void AudioEngine::record()
         return;
     }
 
-    // Defensive resync — some paths (RegionEditActions clone/restore)
+    // Defensive resync - some paths (RegionEditActions clone/restore)
     // write recordArmed directly and leave the counter stale, making
     // anyTrackArmed() incorrectly false. Cheap (24-track scan).
     session.recomputeRtCounters();
@@ -1287,7 +1287,7 @@ void AudioEngine::record()
                               "file could not be created).\n");
         if (onRecordBlocked_)
             onRecordBlocked_ ("Recording could not start.\n\nThe armed track(s) could not be "
-                              "set up — a frozen track can't record (unfreeze it first), or "
+                              "set up - a frozen track can't record (unfreeze it first), or "
                               "the take file could not be created.");
         return;
     }
@@ -1426,10 +1426,10 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
         }
         else if (! strip.nativeClapReloadFailed())
         {
-            // Slot genuinely empty (user removed it, or never had one) — drop the
+            // Slot genuinely empty (user removed it, or never had one) - drop the
             // persisted refs. When a restore FAILED (e.g. the .clap was missing this
             // launch) the slot is also empty, but we keep the path/state so the
-            // reference survives to reconnect on a future launch — mirrors how an
+            // reference survives to reconnect on a future launch - mirrors how an
             // offline JUCE plugin preserves its descXml.
             track.nativeClapPath.clear();
             track.nativeClapPluginId.clear();
@@ -1445,7 +1445,7 @@ void AudioEngine::publishPluginStateForSave (bool audioCallbackDetached)
             strip.getNativeLv2Slot().setStateDirectory (
                 lv2StateDirFor (session, "track" + juce::String (t + 1).paddedLeft ('0', 2)));
             // Preserve the carried blob when a plugin can't serialize (no state
-            // extension / save failure) — don't wipe it on a save round-trip.
+            // extension / save failure) - don't wipe it on a save round-trip.
             if (strip.getNativeLv2Slot().saveState (blob) && ! blob.empty())
                 track.nativeLv2StateBase64 = juce::Base64::toBase64 (blob.data(), blob.size());
         }
@@ -1675,7 +1675,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                 resumeProcessing();
                 if (! ok)
                 {
-                    // A failed RESTORE is not a user removal — mark it so the save
+                    // A failed RESTORE is not a user removal - mark it so the save
                     // path keeps the persisted refs (loadNativeClap cleared the flag).
                     strip.markNativeClapRestoreFailed();
                     lastPluginLoadFailures.push_back ({
@@ -1685,7 +1685,7 @@ void AudioEngine::consumePluginStateAfterLoad()
             }
             else
             {
-                // Not prepared → no live audio; safe to clear carried-over native
+                // Not prepared -> no live audio; safe to clear carried-over native
                 // hosts unfenced (the prepared path's loadNativeClap evicts them).
                 strip.unloadNativeLv2();
                 strip.unloadNativeVst3();
@@ -1717,7 +1717,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                 resumeProcessing();
                 if (! ok)
                 {
-                    strip.markNativeLv2RestoreFailed();   // keep refs — see the CLAP twin
+                    strip.markNativeLv2RestoreFailed();   // keep refs - see the CLAP twin
                     lastPluginLoadFailures.push_back ({
                         "Track " + juce::String (t + 1),
                         lv2File.getFileNameWithoutExtension() });
@@ -1753,7 +1753,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                 resumeProcessing();
                 if (! ok)
                 {
-                    strip.markNativeVst3RestoreFailed();   // keep refs — see the CLAP twin
+                    strip.markNativeVst3RestoreFailed();   // keep refs - see the CLAP twin
                     lastPluginLoadFailures.push_back ({
                         "Track " + juce::String (t + 1),
                         vst3File.getFileNameWithoutExtension() });
@@ -1769,7 +1769,7 @@ void AudioEngine::consumePluginStateAfterLoad()
         }
 #endif
 
-        // No native host in this session for this strip — tear down any native
+        // No native host in this session for this strip - tear down any native
         // instance carried over from the previously-loaded session before the JUCE
         // restore below (unload destroys the instance, so fence it when live).
         if (strip.isNativeClapLoaded() || strip.isNativeLv2Loaded() || strip.isNativeVst3Loaded())
@@ -1789,7 +1789,7 @@ void AudioEngine::consumePluginStateAfterLoad()
 
         if (track.pluginDescriptionXml.isEmpty())
         {
-            slot.unload();   // session has no plugin here — clear any carried over from the prior one
+            slot.unload();   // session has no plugin here - clear any carried over from the prior one
             // Reconstruct the insert mode from session state so a strip that ran
             // a plugin in the previous session doesn't stay in kInsertPlugin and
             // route around an enabled hardware insert (mirrors the aux path below).
@@ -1799,7 +1799,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                 std::memory_order_release);
             continue;
         }
-        // Plugin intended on this track — pin the mode to Plugin (offline if the
+        // Plugin intended on this track - pin the mode to Plugin (offline if the
         // restore below fails) so a prior session's kInsertHardware can't linger.
         strip.insertMode.store (ChannelStrip::kInsertPlugin, std::memory_order_release);
         juce::String error;
@@ -1846,7 +1846,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                     resumeProcessing();
                     if (! ok)
                     {
-                        strip.markNativeClapRestoreFailed (s);   // keep refs — restore, not removal
+                        strip.markNativeClapRestoreFailed (s);   // keep refs - restore, not removal
                         lastPluginLoadFailures.push_back ({
                             "Aux " + juce::String (a + 1) + " slot " + juce::String (s + 1),
                             clapFile.getFileNameWithoutExtension() });
@@ -1854,13 +1854,13 @@ void AudioEngine::consumePluginStateAfterLoad()
                 }
                 else
                 {
-                    // Not prepared → no live audio; clear carried-over native hosts unfenced.
+                    // Not prepared -> no live audio; clear carried-over native hosts unfenced.
                     strip.unloadNativeLv2 (s);
                     strip.unloadNativeVst3 (s);
                     strip.setPendingNativeClap (s, clapFile, std::move (blob),
                                                 lane.nativeClapPluginId[(size_t) s]);
                 }
-                continue;   // native handled — skip the JUCE restore for this slot
+                continue;   // native handled - skip the JUCE restore for this slot
             }
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_LV2
@@ -1888,7 +1888,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                     resumeProcessing();
                     if (! ok)
                     {
-                        strip.markNativeLv2RestoreFailed (s);   // keep refs — restore, not removal
+                        strip.markNativeLv2RestoreFailed (s);   // keep refs - restore, not removal
                         lastPluginLoadFailures.push_back ({
                             "Aux " + juce::String (a + 1) + " slot " + juce::String (s + 1),
                             lv2File.getFileNameWithoutExtension() });
@@ -1904,7 +1904,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                                                    "aux" + juce::String (a + 1)
                                                        + "_slot" + juce::String (s + 1)));
                 }
-                continue;   // native handled — skip the JUCE restore for this slot
+                continue;   // native handled - skip the JUCE restore for this slot
             }
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_VST3
@@ -1927,7 +1927,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                     resumeProcessing();
                     if (! ok)
                     {
-                        strip.markNativeVst3RestoreFailed (s);   // keep refs — restore, not removal
+                        strip.markNativeVst3RestoreFailed (s);   // keep refs - restore, not removal
                         lastPluginLoadFailures.push_back ({
                             "Aux " + juce::String (a + 1) + " slot " + juce::String (s + 1),
                             vst3File.getFileNameWithoutExtension() });
@@ -1940,11 +1940,11 @@ void AudioEngine::consumePluginStateAfterLoad()
                     strip.setPendingNativeVst3 (s, vst3File, std::move (blob),
                                                 lane.nativeVst3PluginId[(size_t) s]);
                 }
-                continue;   // native handled — skip the JUCE restore for this slot
+                continue;   // native handled - skip the JUCE restore for this slot
             }
 #endif
 
-            // No native host for this slot — tear down any instance carried over from
+            // No native host for this slot - tear down any instance carried over from
             // the previous session before the JUCE restore (fence when live).
             if (strip.isNativeClapLoaded (s) || strip.isNativeLv2Loaded (s) || strip.isNativeVst3Loaded (s))
             {
@@ -1964,7 +1964,7 @@ void AudioEngine::consumePluginStateAfterLoad()
             const auto& descXml = lane.pluginDescriptionXml[(size_t) s];
             if (descXml.isEmpty())
             {
-                // No plugin in this slot — unload any instance left from the
+                // No plugin in this slot - unload any instance left from the
                 // prior session and route around it (or through the hardware
                 // insert when this slot is in HW mode).
                 slot.unload();
@@ -1974,7 +1974,7 @@ void AudioEngine::consumePluginStateAfterLoad()
                     std::memory_order_release);
                 continue;
             }
-            // Plugin intended on this aux slot — pin the mode to Plugin BEFORE the
+            // Plugin intended on this aux slot - pin the mode to Plugin BEFORE the
             // restore (offline if it fails) so a prior session's mode can't linger.
             // The crossfade gate defaults to kInsertEmpty after prepare() (routes
             // AROUND the plugin); without this a reload leaves a restored plugin
@@ -2015,7 +2015,7 @@ void AudioEngine::consumePluginStateAfterLoad()
 
 void AudioEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
 {
-    // H5: mark we now have a live device so the next
+    // Mark that a live device is present so the next
     // changeListenerCallback observing a null current device can
     // distinguish hot-unplug from steady-state "device was never up".
     // Release ordering so the message-thread reader in
@@ -2058,7 +2058,7 @@ void AudioEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
     // Reset every MIDI collector with the current sample rate so it can
     // convert the MIDI thread's millisecond timestamps into per-block sample
     // positions. Without this, the first drain would emit garbage timestamps.
-    // Safe to call here — the audio callback hasn't fired yet for this open.
+    // Safe to call here - the audio callback hasn't fired yet for this open.
     midiIn.resetCollectors (device->getCurrentSampleRate());
 
     prepareForSelfTest (device->getCurrentSampleRate(),
@@ -2080,7 +2080,7 @@ void AudioEngine::stageTestMidiInjection (int inputIdx, juce::MidiBuffer events)
                      && testInjectReady.load (std::memory_order_acquire); ++n)
         std::this_thread::yield();
     // If the audio thread still holds the slot after the bounded spin,
-    // bail without swapping — touching testInjectMidi while the audio
+    // bail without swapping - touching testInjectMidi while the audio
     // thread is mid-read races on the MidiBuffer state. The dropped
     // injection surfaces as a test failure; that's strictly better than
     // a release-build data race.
@@ -2139,7 +2139,7 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
     // oversampler (each rebuilds its juce::dsp::Oversampling at this factor in
     // prepare). Aux lanes host plugin chains only (no Dusk EQ/Comp), so they
     // don't take the factor. The cost only materialises when a strip is
-    // actually processing audio — silent / skipped strips dodge the chain.
+    // actually processing audio - silent / skipped strips dodge the chain.
     // An offline bounce overrides the factor (e.g. 4×) so the printed mix is
     // alias-free even though realtime monitoring runs at the user's lighter
     // setting; the override is cleared before the engine re-prepares for live.
@@ -2156,7 +2156,7 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
     auxSilentRunSamples.fill (0);
 
     // Strips just re-prepared their plugins (re-caching latency) and rebuilt
-    // their PDC delay lines — recompute the compensation against the fresh
+    // their PDC delay lines - recompute the compensation against the fresh
     // latencies.
     recomputePdc();
 
@@ -2240,12 +2240,12 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
 
     // Parallel strip DSP. Start the worker pool ONCE, here on the first prepare
     // (this initial call has no audio thread running yet, so the start is safe).
-    // The pool is block-size independent — its threads park until runBlock
+    // The pool is block-size independent - its threads park until runBlock
     // dispatches and only touch the per-block laneAccum buffers (resized above),
     // so later device re-opens (buffer/rate changes) must NOT stop+start it:
     // their prepare runs while the audio callback is still attached and a
     // stop()/start() would race a live runBlock. Live worker-count changes go
-    // through applyDesiredWorkers (callback detached). 0 → serial.
+    // through applyDesiredWorkers (callback detached). 0 -> serial.
     if (! workerPoolStarted)
     {
         workerPoolStarted = true;
@@ -2291,7 +2291,7 @@ void AudioEngine::reconcileWorkerPool (int target)
 {
     // Cap = cores - 2. The workers run at real-time priority alongside the
     // audio callback thread, so `workers + audio-thread` must stay BELOW the
-    // core count — otherwise the real-time set saturates every core and starves
+    // core count - otherwise the real-time set saturates every core and starves
     // the normal-priority message (UI) thread, freezing the app exactly under
     // the heavy load this is meant to help. cores - 2 leaves one core for the
     // UI + the OS on top of the audio thread.
@@ -2323,7 +2323,7 @@ void AudioEngine::audioDeviceError (const juce::String& errorMessage)
     // write, RecordManager::stopRecording, Transport state-flip) is
     // message-thread-only and gets dispatched via callAsync. Without
     // the dispatch we'd join the disk thread + flush a ThreadedWriter
-    // on the audio thread — RecordManager's stopRecording contract
+    // on the audio thread - RecordManager's stopRecording contract
     // forbids it. JUCE doesn't guarantee a follow-up
     // audioDeviceStopped after this callback, so we force it.
     std::fprintf (stderr, "[Dusk Studio/AudioEngine] audioDeviceError: %s\n",
@@ -2341,7 +2341,7 @@ void AudioEngine::audioDeviceError (const juce::String& errorMessage)
 void AudioEngine::audioDeviceStopped()
 {
     // Drain any in-flight worker lanes FIRST, while the device's input buffers
-    // (which trackJobs points into) are still alive — the device close() that
+    // (which trackJobs points into) are still alive - the device close() that
     // follows this callback frees them. Covers the force-killed-I/O-thread case
     // where dispatched lanes outlive their dispatcher; a healthy stop makes
     // this a no-op.
@@ -2349,7 +2349,7 @@ void AudioEngine::audioDeviceStopped()
 
     // Same force-kill case for the callback-level gate: an I/O thread killed by
     // stopThread()'s timeout can die mid-callback, before InFlightGuard
-    // decrements callbacksInFlight — leaking the count so the NEXT
+    // decrements callbacksInFlight - leaking the count so the NEXT
     // suspendProcessing() would wait on it forever. The I/O thread is confirmed
     // stopped by the time this hook runs (no callback can be in flight), so
     // reset the counter to reconcile any such leak.
@@ -2366,9 +2366,9 @@ void AudioEngine::audioDeviceStopped()
     // pre-disconnect "Recording".
     if (recordManager.isActive())
         recordManager.stopRecording (transport.getPlayhead());
-    // H5: force-stop the transport on ANY device loss (not just
+    // Force-stop the transport on ANY device loss (not just
     // Recording). A hot-unplug while playing leaves the transport
-    // in Playing with no device to render — user gets a silent
+    // in Playing with no device to render - user gets a silent
     // running transport which is confusing. Stop it explicitly so
     // the next device come-up doesn't pick up mid-play.
     if (transport.isPlaying() || transport.isRecording())
@@ -2398,7 +2398,7 @@ void AudioEngine::changeListenerCallback (juce::ChangeBroadcaster* source)
 
     // Persist the chosen setup. createStateXml returns null until the
     // user has explicitly picked something (treatAsChosenDevice), so the
-    // first-launch default pick is never frozen into the file — only
+    // first-launch default pick is never frozen into the file - only
     // deliberate choices survive a restart.
     if (deviceManager.getCurrentAudioDevice() != nullptr)
         if (const auto xml = deviceManager.createStateXml())
@@ -2408,7 +2408,7 @@ void AudioEngine::changeListenerCallback (juce::ChangeBroadcaster* source)
     // current device is null." User-driven settings changes also
     // close the device, but they're followed by addAudioCallback /
     // audioDeviceAboutToStart for the new selection within the same
-    // dispatch loop tick — hadLiveDevice_ would still be true and
+    // dispatch loop tick - hadLiveDevice_ would still be true and
     // we'd false-alarm. To avoid that, we re-check after a one-shot
     // callAsync defer: if a new device came up in the meantime,
     // hadLiveDevice_ is true AND getCurrentAudioDevice() is non-null,
@@ -2486,7 +2486,7 @@ void AudioEngine::processStripLane (int lane) noexcept
     const int n     = currentBlockSamples;
     auto& acc = laneAccum[(size_t) lane];
 
-    // Each lane owns its accum set — clear it, build pointer views, accumulate
+    // Each lane owns its accum set - clear it, build pointer views, accumulate
     // a contiguous strip subset. No lane writes another lane's buffers.
     juce::FloatVectorOperations::clear (acc.mixL.data(), n);
     juce::FloatVectorOperations::clear (acc.mixR.data(), n);
@@ -2548,8 +2548,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
     juce::ScopedNoDenormals noDenormals;
 
     // Empty callbacks happen during device transitions (JUCE/JACK both
-    // can send numSamples==0). Skip the entire pipeline — MIDI parsing,
-    // automation routing, strip DSP, master bus, recording — so we don't
+    // can send numSamples==0). Skip the entire pipeline - MIDI parsing,
+    // automation routing, strip DSP, master bus, recording - so we don't
     // burn cycles or risk corrupting downstream invariants (smoothers,
     // playhead) on a zero-length block.
     if (numSamples <= 0) return;
@@ -2557,7 +2557,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
     // Process gate (the Ardour _process_lock pattern, lock-free flavour).
     // suspendProcessing() (message thread) raises the flag and waits for
     // in-flight callbacks to drain; from then until resumeProcessing() every
-    // callback — from ANY backend thread, joined or not — emits one silent
+    // callback - from ANY backend thread, joined or not - emits one silent
     // buffer instead of touching engine state mid-reconfigure. The double
     // check around the counter closes the raise-after-first-load window.
     auto clearOutputs = [&]
@@ -2660,7 +2660,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
     {
         // Source changed (or first run). Reset both the receiver's
         // history and the local sample clock so the new source starts
-        // from a clean baseline. Also clear lastExtRolling — without
+        // from a clean baseline. Also clear lastExtRolling - without
         // this, if the old source was rolling and the new source is
         // stopped, the first block fires a spurious Stop edge; if the
         // new source is rolling first-block, an old "rolling" latch can
@@ -2688,12 +2688,12 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
 
     if (syncIdx >= 0 && (size_t) syncIdx < perInputMidi.size())
     {
-        // The drained input block is already a dusk::MidiBuffer — feed it
+        // The drained input block is already a dusk::MidiBuffer - feed it
         // straight to the receivers (Clock + MTC multiplex on the same port).
         midiSyncReceiver.process (perInputMidi[(size_t) syncIdx], midiSyncSampleClock);
         midiTimeCodeReceiver.process (perInputMidi[(size_t) syncIdx],
                                          midiSyncSampleClock, numSamples);
-        // Publish MTC decoded state. Same input port — Clock + MTC
+        // Publish MTC decoded state. Same input port - Clock + MTC
         // multiplex on it; both decoders ignore bytes they don't own.
         const auto mtcFrames  = midiTimeCodeReceiver.getFrames();
         const bool mtcRolling = midiTimeCodeReceiver.isRolling();
@@ -2706,12 +2706,12 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                                                    std::memory_order_relaxed);
 
         // MTC transport chase (freewheeling model).
-        //   Initial lock: rolling false→true → set playhead + Play.
+        //   Initial lock: rolling false->true -> set playhead + Play.
         //   Freewheel:    |transport - mtc| ≤ kFreewheelToleranceFrames
-        //                 → trust internal clock, no relocate.
+        //                 -> trust internal clock, no relocate.
         //   Soft re-locate: drift > tolerance for kFreewheelReSyncWindow
-        //                   consecutive MTC frames → set playhead.
-        //   Stop:         rolling true→false → Stop (UNLESS the false
+        //                   consecutive MTC frames -> set playhead.
+        //   Stop:         rolling true->false -> Stop (UNLESS the false
         //                 came from a reverse-scrub park; reverse keeps
         //                 transport rolling forward per plan).
         const bool chaseEnabled =
@@ -2731,7 +2731,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
             constexpr int kFreewheelReSyncWindow    = 4;
 
             // Samples-per-frame at the current SMPTE rate. Reads sr
-            // off the engine atom — well-defined because this block
+            // off the engine atom - well-defined because this block
             // can't execute until audioDeviceAboutToStart published a
             // non-zero rate.
             const double sr = currentSampleRate.load (std::memory_order_relaxed);
@@ -2755,7 +2755,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
             }
             else if (! mtcRolling && lastMtcRolling && ! reversed)
             {
-                // Falling edge → stop. Gated on !reversed so a reverse-
+                // Falling edge -> stop. Gated on !reversed so a reverse-
                 // scrub (which the receiver reports as rolling=false +
                 // reversed=true) doesn't drag the transport into Stop;
                 // master scrubbing back leaves Dusk Studio rolling forward.
@@ -2946,10 +2946,10 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
     // aren't RT-safe). Note triggers fire on press only (NoteOn vel > 0);
     // NoteOff and CC release are ignored per the v1 spec.
     //
-    // Also enter the loop when a MIDI Learn capture is pending — the
+    // Also enter the loop when a MIDI Learn capture is pending - the
     // capture lives inside this loop, and gating it on bindings being
     // non-empty would make it impossible to learn the FIRST binding
-    // (no bindings → no loop → no capture → no first binding ever).
+    // (no bindings -> no loop -> no capture -> no first binding ever).
     const auto* bindings = session.midiBindings.read();
     const bool hasBindings = bindings != nullptr && ! bindings->empty();
     const bool learnPending = session.midiLearnPending.load (std::memory_order_relaxed) >= 0;
@@ -3069,13 +3069,13 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
 
                     // 7-bit (CC/Note vel) and 14-bit (pitch-bend) sources
                     // normalize to a common 0..1 fraction. `pressed` is the
-                    // trigger for discrete (toggle) targets — its
+                    // trigger for discrete (toggle) targets - its
                     // definition depends on `buttonMode` so latching
                     // controllers (D-type buttons that alternate 127/0
                     // each press, e.g. Panorama T6 in some modes) toggle
                     // once per physical press instead of every other.
                     //
-                    // MMC commands are one-shot events with no value — treat
+                    // MMC commands are one-shot events with no value - treat
                     // them as fully-pressed (frac = 1, pressed = true) so a
                     // bound transport / arm target fires on receipt.
                     float frac;
@@ -3099,7 +3099,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                     // Soft takeover (pickup): an absolute controller snaps the
                     // target to its own position on first touch. When enabled,
                     // a continuous binding stays dormant until the controller
-                    // lands near — or sweeps across — the parameter's current
+                    // lands near - or sweeps across - the parameter's current
                     // position, then latches and tracks 1:1. Latch state is
                     // keyed by snapshot index and reset whenever the bindings
                     // snapshot is republished (edits re-arm the pickup).
@@ -3161,7 +3161,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                                 // CC/Note: linear -90..+12 dB. PitchBend: the
                                 // Mackie taper (faderBindingFracToDb) so an
                                 // MCU-style motor fader tracks its printed
-                                // scale — 0 dB at ~3/4 throw, bottom at -100 dB
+                                // scale - 0 dB at ~3/4 throw, bottom at -100 dB
                                 // (below kFaderInfThreshDb, hard-muted).
                                 const float db = faderBindingFracToDb (
                                     frac, b.trigger == MidiBindingTrigger::PitchBend);
@@ -3190,7 +3190,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                                 // Route through Session helper so the
                                 // soloTrackCount RT counter stays in sync.
                                 // Direct atom store bypasses the counter
-                                // → audio thread misjudges "any soloed?".
+                                // -> audio thread misjudges "any soloed?".
                                 const bool was = session.track (b.targetIndex).strip.solo
                                                        .load (std::memory_order_relaxed);
                                 session.setTrackSoloed (b.targetIndex, ! was);
@@ -3280,7 +3280,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                         case MidiBindingTarget::TrackEqFreq:
                         {
                             // Per-band frequency, log-mapped over each band's range
-                            // (LF/LM/HM/HF have distinct min/max — see ChannelStripParams).
+                            // (LF/LM/HM/HF have distinct min/max - see ChannelStripParams).
                             const int trk  = unpackTrackEqTrack (b.targetIndex);
                             const int band = unpackTrackEqBand  (b.targetIndex);
                             if (trk >= 0 && trk < Session::kNumTracks
@@ -3405,8 +3405,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                             // inline-validation pattern other targets use;
                             // the setters also no-op on out-of-range as a
                             // second line of defence. A native host owns the
-                            // insert when loaded — same precedence as the
-                            // audio chain (CLAP → LV2 → VST3 → JUCE).
+                            // insert when loaded - same precedence as the
+                            // audio chain (CLAP -> LV2 -> VST3 -> JUCE).
                             if (b.targetIndex >= 0
                                 && b.targetIndex < Session::kNumTracks
                                 && b.paramIndex >= 0)
@@ -3444,7 +3444,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                         case MidiBindingTarget::AuxPluginParam:
                         {
                             // Same shape as TrackPluginParam: the loaded host
-                            // owns the slot (CLAP → LV2 → VST3 → JUCE).
+                            // owns the slot (CLAP -> LV2 -> VST3 -> JUCE).
                             if (b.targetIndex >= 0
                                 && b.targetIndex < Session::kNumAuxLanes
                                 && b.paramIndex >= 0)
@@ -3505,11 +3505,10 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                             break;
                         }
 
-                        // ── H3 expansion dispatch (Phase 5b) ────────────
-                        // Per-track discrete toggles. `pressed` covers
+                        // Per-track discrete expansion toggles. `pressed` covers
                         // both Press (rising-edge from upstream) and
                         // Toggle (every-message from upstream) button
-                        // modes — the binding-decoder normalises both
+                        // modes - the binding-decoder normalises both
                         // into a single rising edge here.
                         case MidiBindingTarget::TrackEqEnabled:
                             if (pressed && b.targetIndex >= 0
@@ -3560,7 +3559,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                             break;
                         }
 
-                        // ── Bus EQ gain (packed bus * kBusEqBands + band) ─
+                        // Bus EQ gain (packed bus * kBusEqBands + band)
                         case MidiBindingTarget::BusEqGain:
                         {
                             const int bus  = unpackBusEqBus  (b.targetIndex);
@@ -3580,7 +3579,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                             break;
                         }
 
-                        // ── Master section (one master — targetIndex unused) ──
+                        // Master section (one master - targetIndex unused)
                         case MidiBindingTarget::MasterEqLfBoost:
                             // Pultec low-boost: 0..10 (per
                             // MasterBusParams::eqLfBoost doc comment).
@@ -3631,8 +3630,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         return;
     }
 
-    // Mastering stage runs an entirely different signal flow: stereo file →
-    // MasteringChain → output. No track processing, no aux/master, no
+    // Mastering stage runs an entirely different signal flow: stereo file ->
+    // MasteringChain -> output. No track processing, no aux/master, no
     // recorder. We share `mixL/mixR` as scratch so we don't allocate on
     // the audio thread.
     if (stage.load (std::memory_order_acquire) == Stage::Mastering)
@@ -3682,7 +3681,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
     recomputePdc();
 
     // Solo automation routes into per-track liveSolo (in the strip loop below)
-    // and bypasses the manual-solo RT counter anyTrackSoloed() reads — so an
+    // and bypasses the manual-solo RT counter anyTrackSoloed() reads - so an
     // automation-only solo would never engage the aggregate mute gate. Scan
     // liveSolo too (last block's routed value: one block stale, imperceptible
     // for a discrete solo) so the gate fires for automated solos as well.
@@ -3713,8 +3712,14 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
     const bool isRecording = (state == Transport::State::Recording);
     const std::int64_t blockStartSamples = transport.getPlayhead();
 
+    // Offline renders must be deterministic - live input never prints. An offline
+    // bounce/stem/freeze drives this callback from a worker thread while the MIDI
+    // input path stays open, so this latch gates every live-MIDI pull below. Read
+    // once per callback (relaxed: the render worker sets it and drives this call).
+    const bool offlineRender = offlineRenderActive.load (std::memory_order_relaxed);
+
     // Loop-aware disk reads: mirrors the wrap gate at the bottom of the
-    // callback (plain playback only — recording keeps the playhead linear).
+    // callback (plain playback only - recording keeps the playhead linear).
     const bool loopReadActive = isPlaying && ! isRecording && transport.isLoopEnabled()
                                  && transport.getLoopEnd() > transport.getLoopStart();
     const std::int64_t loopReadStart = loopReadActive ? transport.getLoopStart() : -1;
@@ -3722,9 +3727,9 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
 
     // Hanging-note protection. Detect two events that warrant a per-MIDI-
     // track "All Notes Off" flush this block:
-    //   • Transport rolling -> stopped (held notes won't get their Note
+    //   - Transport rolling -> stopped (held notes won't get their Note
     //     Off from the region or input stream).
-    //   • Playhead discontinuity while still rolling (loop wrap, scrub).
+    //   - Playhead discontinuity while still rolling (loop wrap, scrub).
     // Both cases produce stuck synth voices without an explicit flush.
     const bool isRolling = isPlaying || isRecording;
     const bool transportJustStopped = wasRolling && ! isRolling;
@@ -3833,24 +3838,24 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         // un-armed tracks (so other tracks keep playing while we record into
         // an armed one). Otherwise the strip's source is live device input.
         // A frozen track reads its baked WAV during Play/Record even if armed
-        // (frozen playback is the render, never live input) — but it stays silent
+        // (frozen playback is the render, never live input) - but it stays silent
         // when stopped, like any other disk track.
         const bool willReadFromDisk = isPlaying || (isRecording && (isFrozen || ! armed));
 
         // Live-input monitor gate. IN is the ONLY control over live-input
         // monitoring. ARM is purely a recorder-enable; it does NOT gate
         // monitor passthrough. Safety against feedback comes from IN
-        // defaulting to false — the user must explicitly click IN to
-        // open the live-input → master path. Disk playback always passes
+        // defaulting to false - the user must explicitly click IN to
+        // open the live-input -> master path. Disk playback always passes
         // (independent of IN).
-        // A frozen track plays its baked WAV only — never live input. When stopped it
+        // A frozen track plays its baked WAV only - never live input. When stopped it
         // stays silent instead of monitoring the device through a frozen (bypassed) strip.
         const bool monitorPasses = willReadFromDisk ? true : (monitorEnabled && ! isFrozen);
 
         // SIP-style bus solo (matches Pro Tools / Logic / Cubase): when any
         // bus is soloed, a track is audible ONLY if it feeds a soloed bus.
-        // Tracks routed solely to non-soloed buses — and direct-to-master
-        // (unassigned) tracks like a guitar with no bus — are muted entirely,
+        // Tracks routed solely to non-soloed buses - and direct-to-master
+        // (unassigned) tracks like a guitar with no bus - are muted entirely,
         // so their dry, bus, AND aux sends all stop. Aux RETURNS stay
         // solo-safe (summed unconditionally further down). Without this, an
         // unassigned track bypassed the bus-solo gate and leaked to master.
@@ -3900,7 +3905,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         //     the strip processes.
         //   - Stopped & armed (or stopped + IN on, un-armed): live input
         //     for monitoring.
-        //   - Stopped & un-armed & IN off: monoIn null → strip is silent.
+        //   - Stopped & un-armed & IN off: monoIn null -> strip is silent.
         const float* monoIn = nullptr;
         const bool stereoTrackInput = session.track (t).mode.load (std::memory_order_relaxed)
                                           == (int) Track::Mode::Stereo;
@@ -3928,7 +3933,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
             // pre-zeroed buffer so the chain runs and the plugin can
             // emit its output. Costs one extra strip per loaded-but-
             // unfed channel; effects feeding zero just produce zero.
-            // Same feed while a hardware-insert ping is in flight —
+            // Same feed while a hardware-insert ping is in flight -
             // with transport stopped and IN off the track has no
             // source, and the slot needs to be serviced to run the
             // chirp + capture.
@@ -3982,7 +3987,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         }
         session.track (t).meterInputRDb.store (inputRDb, std::memory_order_relaxed);
 
-        // MIDI input filter — pull events from the track's selected input
+        // MIDI input filter - pull events from the track's selected input
         // Hanging-note flush. Emitted FIRST (sample 0) so the synth
         // releases any held voices before we add this block's new events
         // on top. CC 64 = sustain pedal off, CC 123 = all notes off.
@@ -3993,8 +3998,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         // stays an empty buffer for effect inserts.
         //
         // Three triggers warrant a flush, all OR'd together:
-        //   • engine-wide flushHangingMidi (transport stop / playhead jump)
-        //   • this track's midiInputIndex changed since last block (the
+        //   - engine-wide flushHangingMidi (transport stop / playhead jump)
+        //   - this track's midiInputIndex changed since last block (the
         //     user swapped MIDI controllers - held notes from the old
         //     device would otherwise hang on the synth forever).
         const int currentMidiIdx = session.track (t).midiInputIndex.load (
@@ -4017,26 +4022,79 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
 
         // Build this block's per-track MIDI buffer. Two source paths,
         // mutually exclusive (matches the audio source decision above):
-        //   • Disk playback (willReadFromDisk): walk the track's
+        //   - Disk playback (willReadFromDisk): walk the track's
         //     midiRegions and emit any note/CC events whose absolute
         //     sample-position falls inside this block. This is the
         //     scheduled-playback path - the synth hears notes that were
         //     previously recorded onto the timeline.
-        //   • Live monitoring (else): pull from the input MIDI collector
-        //     and apply the per-track channel filter, just like before.
+        //   - Live monitoring (else): pull from the input MIDI collector
+        //     and apply the per-track channel filter.
         // The strip's instrument plugin then sees one unified buffer.
         // Note: scratch already cleared above by the flush block, plus any
         // emitted All Notes Off events. Both source paths add to those.
+        // Live-input MIDI pull. Shared by the stopped/record live-monitor
+        // branch and the play-along overlay in the disk-playback branch:
+        // applies the per-track channel filter, mirrors the dusk->juce raw-byte
+        // copy that feeds the instrument + recorder, and - on an armed track -
+        // always auditions the on-screen keyboard. Only meaningful on MIDI
+        // tracks; harmless (no matching input events consumed) otherwise.
+        auto pullInput = [&] (int srcIdx, int chFilter)
+        {
+            if (srcIdx < 0 || srcIdx >= (int) perInputMidi.size()) return;
+            if (perInputMidi[(size_t) srcIdx].isEmpty()) return;
+            for (const auto meta : perInputMidi[(size_t) srcIdx])
+            {
+                // dusk (perInputMidi) -> juce (perTrackMidiScratch, feeds
+                // the instrument + recorder): raw-byte copy, no message
+                // object. Channel read mirrors the juce getChannel
+                // convention: 1..16 for channel messages, 0 for system.
+                const auto& v = meta.getMessage();
+                if (chFilter != 0)
+                {
+                    const std::uint8_t status = v.getRawDataSize() > 0 ? v.getRawData()[0] : 0;
+                    const int ch = (status & 0xF0) != 0xF0 ? (int) (status & 0x0F) + 1 : 0;
+                    if (ch != chFilter) continue;
+                }
+                perTrackMidiScratch[(size_t) t].addEvent (v.getRawData(),
+                                                          v.getRawDataSize(),
+                                                          meta.samplePosition);
+            }
+        };
+        auto pullLiveMidi = [&] ()
+        {
+            // Channel filter loaded once per pull, so only tracks that actually
+            // monitor pay the read (0 = omni).
+            const int chFilter = session.track (t).midiChannel.load (std::memory_order_relaxed);
+
+            // The track's explicitly-selected MIDI input. Reuse currentMidiIdx
+            // (loaded above for the hanging-note flush) rather than re-loading:
+            // a message-thread device swap between the two loads would otherwise
+            // pull from the new device here while the flush targeted the old one.
+            pullInput (currentMidiIdx, chFilter);
+
+            // A record-armed MIDI track ALWAYS auditions the on-screen
+            // keyboard, even when its explicit input isn't the VK. This
+            // makes the keyboard "just work" no matter how the instrument
+            // was loaded (editor Browse, session restore, picker) - the
+            // user expects an armed instrument track to play from the
+            // virtual keyboard. Skip when the explicit input already IS
+            // the VK so events aren't doubled.
+            const bool trackArmed = session.track (t).recordArmed.load (std::memory_order_relaxed);
+            const int vkbIdx = midiIn.getVirtualKeyboardIndex();
+            if (trackArmed && vkbIdx != currentMidiIdx)
+                pullInput (vkbIdx, chFilter);
+        };
+
         if (willReadFromDisk && ! isFrozen)
         {
-            // Frozen tracks skip MIDI scheduling — the instrument is bypassed
+            // Frozen tracks skip MIDI scheduling - the instrument is bypassed
             // and the notes are already baked into the WAV being read above.
             // Acquire on tempoBpm pairs with the release store in
             // duskstudio::applyTempoChange so this MIDI scheduling block
             // observes the BPM that matches the published-with-release
             // MidiRegion sample positions. Without acquire here, a stale
             // BPM combined with new region positions could schedule notes
-            // at the wrong tick→sample translation for one audio block
+            // at the wrong tick->sample translation for one audio block
             // following a BPM change.
             const float bpm = session.tempoBpm.load (std::memory_order_acquire);
             const double sr = currentSampleRate.load (std::memory_order_relaxed);
@@ -4153,59 +4211,40 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                     }
                 }
             }
-            if (! perTrackMidiScratch[(size_t) t].isEmpty())
-                session.track (t).midiActivity.store (true, std::memory_order_relaxed);
+
+            // Play-along overlay. Live-MIDI delivery is a PER-BRANCH obligation:
+            // every transport-source branch that builds perTrackMidiScratch must
+            // pull live input itself, or play-along goes silent in that state.
+            // The same IN control is checked through two different audibility
+            // gates depending on the branch:
+            //   - stopped/record (the else branch below): monitorPasses is the
+            //     master-accumulation gate, and it already folds in IN.
+            //   - playing (here): monitorPasses is forced open during playback,
+            //     so IN has to be checked explicitly instead.
+            // A future third source branch must likewise pull live input under
+            // whichever gate governs its audibility. With IN engaged the live
+            // controller (and, on an armed track, the on-screen keyboard) merges
+            // ON TOP of the scheduled timeline notes so the instrument sounds
+            // both the recorded part and what the user plays while the transport
+            // rolls. Overlay events are additive, so the recorder (armed +
+            // Recording only, below) and scheduled playback are untouched.
+            if (midiTrack && monitorEnabled && ! offlineRender)
+                pullLiveMidi();
         }
-        else if (midiTrack)
+        else if (midiTrack && ! offlineRender)
         {
             // Live monitoring path - only meaningful on MIDI tracks; effect
             // inserts on Mono / Stereo strips don't consume per-track MIDI
             // (their pluginMidiScratch is built fresh inside the strip).
-            const int chFilter = session.track (t)
-                                    .midiChannel.load (std::memory_order_relaxed);
-
-            auto pullInput = [&] (int srcIdx)
-            {
-                if (srcIdx < 0 || srcIdx >= (int) perInputMidi.size()) return;
-                if (perInputMidi[(size_t) srcIdx].isEmpty()) return;
-                for (const auto meta : perInputMidi[(size_t) srcIdx])
-                {
-                    // dusk (perInputMidi) -> juce (perTrackMidiScratch, feeds
-                    // the instrument + recorder): raw-byte copy, no message
-                    // object. Channel read mirrors the juce getChannel
-                    // convention: 1..16 for channel messages, 0 for system.
-                    const auto& v = meta.getMessage();
-                    if (chFilter != 0)
-                    {
-                        const std::uint8_t status = v.getRawDataSize() > 0 ? v.getRawData()[0] : 0;
-                        const int ch = (status & 0xF0) != 0xF0 ? (int) (status & 0x0F) + 1 : 0;
-                        if (ch != chFilter) continue;
-                    }
-                    perTrackMidiScratch[(size_t) t].addEvent (v.getRawData(),
-                                                              v.getRawDataSize(),
-                                                              meta.samplePosition);
-                }
-            };
-
-            // The track's explicitly-selected MIDI input.
-            const int midiIdx = session.track (t).midiInputIndex.load (std::memory_order_relaxed);
-            pullInput (midiIdx);
-
-            // A record-armed MIDI track ALWAYS auditions the on-screen
-            // keyboard, even when its explicit input isn't the VK. This
-            // makes the keyboard "just work" no matter how the instrument
-            // was loaded (editor Browse, session restore, picker) - the
-            // user expects an armed instrument track to play from the
-            // virtual keyboard. Skip when the explicit input already IS
-            // the VK so events aren't doubled.
-            const bool trackArmed = session.track (t).recordArmed.load (std::memory_order_relaxed);
-            const int vkbIdx = midiIn.getVirtualKeyboardIndex();
-            if (trackArmed && vkbIdx != midiIdx)
-                pullInput (vkbIdx);
-
-            if (! perTrackMidiScratch[(size_t) t].isEmpty())
-                session.track (t).midiActivity.store (true, std::memory_order_relaxed);
+            // Gated off during offline render: a frozen MIDI track reaches this
+            // branch under an offline drive (transport is Playing, so
+            // willReadFromDisk holds, but the ! isFrozen guard on the disk branch
+            // fails), and live input must never print into a deterministic file.
+            pullLiveMidi();
         }
+
+        if (midiTrack && ! perTrackMidiScratch[(size_t) t].isEmpty())
+            session.track (t).midiActivity.store (true, std::memory_order_relaxed);
 
         // Recording capture has to happen BEFORE the strip's instrument
         // plugin sees the buffer. AudioPluginInstance::processBlock is
@@ -4258,10 +4297,10 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         strips[(size_t) t].setNeedsProcessedMono (needPrintBuffer);
 
         // Stereo input source for stereo tracks. Two paths:
-        //   • Disk playback: PlaybackEngine wrote the R channel into
+        //   - Disk playback: PlaybackEngine wrote the R channel into
         //     playbackScratchR above (when stereoTrackInput is true), so
         //     point monoInR at that buffer.
-        //   • Live input: source from the user's R input mapping.
+        //   - Live input: source from the user's R input mapping.
         const float* monoInR = nullptr;
         if ((stereoTrackInput || isFrozen) && monoIn != nullptr)
         {
@@ -4301,12 +4340,12 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                                       == ChannelStrip::kInsertHardware };
     }
 
-    // ── DSP pass ─────────────────────────────────────────────────────────
+    // DSP pass
     // Heavy per-strip DSP (the only thing that fans out). Serial path
     // accumulates straight into mixL/busL/auxLaneL; the opt-in worker pool
     // instead has each lane accumulate its strip subset into its own buffer
     // set, then a serial reduce sums the lanes in. Metering + recording run on
-    // the serial tail below — the audio thread, after all strips are done —
+    // the serial tail below - the audio thread, after all strips are done -
     // reading each strip's just-produced output, so worker threads only ever
     // run pure DSP. (The parallel reduce regroups the float sum, so the master
     // is bit-identical only in serial mode; the parallel difference is a
@@ -4335,7 +4374,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
 
     perfLap (PerfSections::kStrips);
 
-    // ── Post-DSP serial tail: metering + recording (audio thread). ───────
+    // Post-DSP serial tail: metering + recording (audio thread).
     for (int t = 0; t < Session::kNumTracks; ++t)
     {
         const auto& job = trackJobs[(size_t) t];
@@ -4406,14 +4445,14 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                 {
                     recL = processed;
                     if (job.stereoInput)
-                        recR = strip.getLastProcessedR();  // may be nullptr → recorder duplicates L
+                        recR = strip.getLastProcessedR();  // may be nullptr -> recorder duplicates L
                 }
             }
 
             // Unified write-gate - honours BOTH:
-            //   • activeRecordStart  (count-in pre-roll: skip writes until
+            //   - activeRecordStart  (count-in pre-roll: skip writes until
             //     the playhead reaches the take's intended start)
-            //   • punch-in / punch-out  (only commit samples in the window
+            //   - punch-in / punch-out  (only commit samples in the window
             //     when punch is on)
             // Both reduce to a single [from, to) intersection with the
             // current block.
@@ -4431,7 +4470,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                 }
                 else
                 {
-                    effIn = effOut;  // empty/inverted punch window → no capture
+                    effIn = effOut;  // empty/inverted punch window -> no capture
                 }
             }
 
@@ -4456,7 +4495,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
     {
         const auto& params = session.bus (a).strip;
 
-        // Bus automation routing — mirror of the per-track / per-aux blocks.
+        // Bus automation routing - mirror of the per-track / per-aux blocks.
         // Drive liveFaderDb / livePan / liveMute from the lane in Read or
         // (Touch && !touched) mode; pass the manual setpoint through
         // otherwise. BusStrip::updateGainTargets reads liveFaderDb / livePan;
@@ -4520,7 +4559,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
             {
                 // Bus pass is being skipped (no audio routed). Reset the
                 // post-bus meter to silence so the UI doesn't keep showing
-                // the last-played level — otherwise the LED freezes at
+                // the last-played level - otherwise the LED freezes at
                 // whatever value the meter held right before the skip
                 // engaged.
                 params.meterPostBusLDb.store (-100.0f, std::memory_order_relaxed);
@@ -4547,8 +4586,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
 
     perfLap (PerfSections::kBuses);
 
-    // Master-stage PDC (see recomputePdc): the dry mix — tracks + buses, all
-    // summed by here — waits for the deepest aux-lane latency so the wet
+    // Master-stage PDC (see recomputePdc): the dry mix - tracks + buses, all
+    // summed by here - waits for the deepest aux-lane latency so the wet
     // returns added below land aligned. Retarget only while stopped; a
     // mid-roll delay-length change on the full mix would click.
     {
@@ -4594,7 +4633,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
     // up at the top: for each aux lane, drive liveReturnLevelDb /
     // liveMute from the lane in Read or (Touch && !touched) mode,
     // and pass the manual setpoint through otherwise. AuxLaneStrip
-    // reads the live atoms — see updateGainTarget / the mute check
+    // reads the live atoms - see updateGainTarget / the mute check
     // in AuxLaneStrip::processStereoBlock.
     for (int a = 0; a < Session::kNumAuxLanes; ++a)
     {
@@ -4624,7 +4663,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         }
     }
 
-    // Master automation routing — single FaderDb lane.
+    // Master automation routing - single FaderDb lane.
     {
         auto& mparams = session.master();
         const int amode = mparams.automationMode.load (std::memory_order_acquire);
@@ -4649,7 +4688,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         // would hard-cut the tail at a block boundary. Instead, a lane
         // with loaded plugin slots only sleeps once its wet OUTPUT has
         // measured <= 1e-6 (~-120 dBFS) for kAuxTailSilenceSeconds of
-        // CONSECUTIVE blocks — any audible output resets the clock
+        // CONSECUTIVE blocks - any audible output resets the clock
         // below, so the skip cannot engage mid-decay. What freezes is
         // the plugin's sub-audible residue, which resumes (still
         // sub-audible) on the next send. Hardware-insert lanes never
@@ -4692,7 +4731,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                                   || auxSilentRunSamples[(size_t) a] >= tailSamples);
             if (canSkip)
             {
-                // Reset the aux-lane meter on skip — same rationale as the
+                // Reset the aux-lane meter on skip - same rationale as the
                 // bus-pass skip above. Without this the lane LED freezes
                 // at the last-played level.
                 auto& auxLaneRef = session.auxLane (a);
@@ -4735,7 +4774,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                                             numSamples);
 
         // Tail clock: advances only while the wet output has decayed to
-        // silence (input silence is implied — a loud input resets the
+        // silence (input silence is implied - a loud input resets the
         // run above before processing). Once it passes the tail window
         // the skip engages on the next silent-input block.
         if (laneHasPlugin && ! laneHasHardware)
@@ -4756,11 +4795,11 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
     // bus. Click is post-master so it never gets EQ'd or compressed by
     // the master strip - it's purely a monitoring aid.
     // Apply per-mode metronome flags from the right-click menu:
-    //   • clickWhileRecording / clickWhilePlaying gate the engine-side
+    //   - clickWhileRecording / clickWhilePlaying gate the engine-side
     //     "is the click eligible at all this block?" decision.
-    //   • onlyDuringCountIn overrides both during a record pass — the
+    //   - onlyDuringCountIn overrides both during a record pass - the
     //     click stops the instant the take's first sample arrives.
-    //   • polyphonic forwarded to Metronome.setPolyphonic so a new
+    //   - polyphonic forwarded to Metronome.setPolyphonic so a new
     //     click can trigger before the previous body finishes.
     const bool wantWhileRec  = session.metronomeClickWhileRecording.load (std::memory_order_relaxed);
     const bool wantWhilePlay = session.metronomeClickWhilePlaying  .load (std::memory_order_relaxed);
@@ -4786,11 +4825,11 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         const bool inCountIn  = isRecording && blockStartSamples < recStart;
 
         // Decide whether the click is eligible this block.
-        //   • Recording (post-count-in): gated by clickWhileRecording AND
+        //   - Recording (post-count-in): gated by clickWhileRecording AND
         //     NOT (onlyDuringCountIn). If onlyDuringCountIn is set the
         //     click is suppressed once the take begins.
-        //   • Playing: gated by clickWhilePlaying.
-        //   • Count-in pre-roll: ALWAYS forced on — user enabled count-in
+        //   - Playing: gated by clickWhilePlaying.
+        //   - Count-in pre-roll: ALWAYS forced on - user enabled count-in
         //     specifically to get the lead-in clicks regardless of the
         //     CLICK toggle.
         bool clickRolling = false;
@@ -4802,7 +4841,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
             clickRolling = wantWhilePlay;
 
         // The click mixes post-master, AFTER the master-stage aux PDC delayed
-        // the program by masterDryPdcApplied — reference the click to the
+        // the program by masterDryPdcApplied - reference the click to the
         // delayed position or it leads everything it's supposed to mark.
         metronome.process (blockStartSamples - (std::int64_t) masterDryPdcApplied,
                             clickRolling,

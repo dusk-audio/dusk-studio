@@ -11,13 +11,13 @@ namespace duskstudio
 // the parts that don't belong in the embedded context:
 //   - Painted nameplate / subtitle / "Dusk Audio" footer covered by
 //     opaque masks (can't suppress donor paint without modding source).
-//   - HQ oversampling combo/label hidden — global oversampling comes
+//   - HQ oversampling combo/label hidden - global oversampling comes
 //     from Audio Settings; per-plugin would fight the host.
-//   - Corner resize handle hidden — modal sized once on open.
+//   - Corner resize handle hidden - modal sized once on open.
 //   - Preset combo + Save/Del recentered (donor pins flush right).
 //   - Signal Path + EQ Std recentered under the 3-col row above.
 //
-// Located by traversal (donor children have no stable IDs) — matched
+// Located by traversal (donor children have no stable IDs) - matched
 // by combo items / button text / label text. Overrides applied after
 // donor's resized() runs.
 class TapeMachineModalEditor final : public juce::Component,
@@ -50,7 +50,7 @@ public:
         // cluster + enable button are reparented on top below, so they still
         // receive their own clicks; only the bare header area is blocked.
         headerMask.setInterceptsMouseClicks (true, false);
-        // Reparent AFTER the masks so it ends up topmost in z-order —
+        // Reparent AFTER the masks so it ends up topmost in z-order -
         // otherwise the header mask covers the cluster too.
         if (presetCombo != nullptr) addAndMakeVisible (presetCombo.getComponent());
         if (saveBtn     != nullptr) addAndMakeVisible (saveBtn.getComponent());
@@ -189,9 +189,9 @@ private:
         recenterRowTwoSelectors (editor);
     }
 
-    // Structural detection — find Save/Del by text, then pick the
+    // Structural detection - find Save/Del by text, then pick the
     // ComboBox horizontally adjacent and left of Save on the same row.
-    // Item-count heuristic ("ComboBox with > 6 items") was unreliable —
+    // Item-count heuristic ("ComboBox with > 6 items") was unreliable -
     // depended on the donor finishing its async factory-list populate
     // before our ctor ran.
     void findPresetCluster (juce::Component& editor)
@@ -299,7 +299,7 @@ private:
     Mask footerMask;
     // findPresetCluster runs once. SafePointers don't re-discover if
     // the donor rebuilds its child tree (it doesn't today). A deleted
-    // component reads as nullptr — cluster vanishes from the header
+    // component reads as nullptr - cluster vanishes from the header
     // until reopened, no crash. Add a ComponentListener
     // (componentChildrenChanged -> re-run discovery) if this breaks.
     juce::Component::SafePointer<juce::ComboBox>   presetCombo;

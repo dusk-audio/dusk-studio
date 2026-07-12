@@ -16,7 +16,7 @@ const juce::Colour kGlyphActive { 0xffffffff };
 void paintGrabGlyph (juce::Graphics& g, juce::Rectangle<float> r)
 {
     // Pointing hand: index finger extended up, the other fingers curled into a
-    // fist with a thumb off the left — the classic Ardour Grab-Mode cursor.
+    // fist with a thumb off the left - the classic Ardour Grab-Mode cursor.
     // Drawn as one filled path (no bitmap asset).
     const float cx = r.getCentreX();
     const float cy = r.getCentreY();
@@ -144,7 +144,7 @@ EditModeToolbar::ModeButton::ModeButton (const juce::String& name, EditMode m)
 {
     setClickingTogglesState (false);
     setMouseCursor (juce::MouseCursor::PointingHandCursor);
-    // Don't steal keyboard focus from the host modal on click — otherwise
+    // Don't steal keyboard focus from the host modal on click - otherwise
     // a follow-up Ctrl+Z lands on the button instead of the editor's
     // keyPressed handler.
     setMouseClickGrabsKeyboardFocus (false);
@@ -201,7 +201,7 @@ EditModeToolbar::EditModeToolbar (AudioEngine& engineRef) : engine (engineRef)
     snapToggleButton.setWantsKeyboardFocus (false);
     // Toggle-on uses the same accent-rim colour as the active edit-mode
     // button so the user gets a clear "snap is on" cue. JUCE default
-    // toggle look only differs subtly in shade between states — too
+    // toggle look only differs subtly in shade between states - too
     // easy to miss in a row of similar buttons.
     snapToggleButton.setColour (juce::TextButton::buttonOnColourId,  kActiveRim);
     snapToggleButton.setColour (juce::TextButton::buttonColourId,    kButtonFill);

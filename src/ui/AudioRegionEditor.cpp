@@ -26,7 +26,7 @@ const juce::Colour kWaveformFill  { 0xff80b0e0 };
 const juce::Colour kFadeStroke    { 0xffe0c060 };
 const juce::Colour kEditCursor    { 0xffffd060 };
 // Soft cream so it reads against the yellow edit cursor without
-// competing — same colour the piano roll uses for its transport line.
+// competing - same colour the piano roll uses for its transport line.
 const juce::Colour kTransportPlayhead { 0xffffe8c0 };
 
 // Region-properties popup colour palette. Mirrors the palette in
@@ -85,7 +85,7 @@ AudioRegionEditor::AudioRegionEditor (Session& s, AudioEngine& e, int t, int r)
     // dispatch, so a pick here is global.
     editModeToolbar = std::make_unique<EditModeToolbar> (engine);
     // Grid edits the tempo map, which is a timeline concept, not a per-region
-    // one — it lives on the main edit-tools strip, not in here.
+    // one - it lives on the main edit-tools strip, not in here.
     editModeToolbar->setVisibleModes ({ EditMode::Grab, EditMode::Range,
                                           EditMode::Cut, EditMode::Draw });
     // Update the mouse cursor the instant the mode changes, without
@@ -266,7 +266,7 @@ AudioRegionEditor::AudioRegionEditor (Session& s, AudioEngine& e, int t, int r)
     addAndMakeVisible (muteToggle);
     addAndMakeVisible (lockToggle);
 
-    // Automation param picker — short pill button on the icon row.
+    // Automation param picker - short pill button on the icon row.
     // Click pops a menu listing each automatable param (Off + Fader /
     // Pan / Mute / AuxSend1..4). Selection updates automationParam +
     // repaints so the lane overlay re-renders.
@@ -294,7 +294,7 @@ AudioRegionEditor::AudioRegionEditor (Session& s, AudioEngine& e, int t, int r)
     startTimerHz (30);
 
     // Force default-cursored child labels / buttons to defer to this
-    // editor's stored cursor — without this the JUCE default null-handle
+    // editor's stored cursor - without this the JUCE default null-handle
     // cursor (which compares as NormalCursor, NOT ParentCursor)
     // silently shadows the editor's Grab / Cut cursor any time the
     // mouse hovers a label or readout sitting over the waveform.
@@ -376,7 +376,7 @@ void AudioRegionEditor::resized()
     zoomFitToArea (waveArea);
     syncScrollBarRange();
 
-    // Re-apply cursor inheritance — covers any child added or relaid out
+    // Re-apply cursor inheritance - covers any child added or relaid out
     // after the ctor (the dynamic IconRow + status-bar widgets all
     // reposition here).
     inheritCursorOnDescendants (*this);
@@ -706,7 +706,7 @@ void AudioRegionEditor::paintRuler (juce::Graphics& g, juce::Rectangle<int> area
     const auto* r = region();
     if (r == nullptr || r->lengthInSamples <= 0) return;
     // The bar grid + the "time" ruler must speak in the WAV's OWN
-    // sample-rate domain — region.timelineStart / lengthInSamples were
+    // sample-rate domain - region.timelineStart / lengthInSamples were
     // stored at recording-time SR, and the rendered waveform uses the
     // WAV file's native SR via the thumbnail. Using engine.getCurrentSampleRate()
     // here drifts the grid against the audio whenever the user hot-swaps
@@ -726,7 +726,7 @@ void AudioRegionEditor::paintRuler (juce::Graphics& g, juce::Rectangle<int> area
         // Bar boundaries are musical-time positions resolved through the session
         // tempo map (constant tempoBpm when empty). Use the SAME file-domain
         // sample rate (`sr`) the waveform + Time-mode grid use, not the engine
-        // rate — otherwise a region whose file SR differs from the device SR
+        // rate - otherwise a region whose file SR differs from the device SR
         // draws its bar lines drifted against the waveform underneath.
         const std::int64_t anchorEndTimeline = anchorTimelineStart + anchorTimelineLength;
 
@@ -961,7 +961,7 @@ void AudioRegionEditor::paintWaveform (juce::Graphics& g, juce::Rectangle<int> a
     }
 
     // Slice boundary lines: subtle dark stroke at each region's edge.
-    // Reaper-style — visible enough to identify a cut but not so loud
+    // Reaper-style - visible enough to identify a cut but not so loud
     // it competes with the waveform itself.
     g.setColour (juce::Colour (0xff404048).withAlpha (0.55f));
     for (const auto& reg : regs)
@@ -1127,7 +1127,7 @@ void AudioRegionEditor::paintEditCursor (juce::Graphics& g,
     g.fillPath (tri);
 }
 
-// ── Handle hit-test rects ────────────────────────────────────────────
+// Handle hit-test rects
 // All rects are in screen coords inside the waveform area. Each handle
 // gets a generous grab slop wider than the painted glyph (forgiving for
 // mouse precision, especially at low pixelsPerSample).
@@ -1194,7 +1194,7 @@ bool AudioRegionEditor::pointOverRegionBody (int x, juce::Rectangle<int> waveAre
 
 juce::MouseCursor AudioRegionEditor::cursorForPoint (int x, int y) const
 {
-    // Single source of truth for cursor selection — shared between
+    // Single source of truth for cursor selection - shared between
     // mouseMove and updateModeCursor so a toolbar-driven session.editMode
     // flip can't overwrite a stationary resize cursor.
     const auto waveArea = juce::Rectangle<int> (0, kIconRowHeight + kRulerHeight,
@@ -1241,11 +1241,11 @@ juce::MouseCursor AudioRegionEditor::cursorForPoint (int x, int y) const
         // For Grab / Cut / Draw the CursorOverlay paints the glyph
         // directly at the mouse position; hide the native cursor so
         // both don't show at once. Range (IBeam) + Grid (Crosshair)
-        // stay native — they're standard OS cursors that render
+        // stay native - they're standard OS cursors that render
         // correctly without the overlay.
         const auto m = session.editMode;
         // Only hide the native cursor when the overlay sink is actually wired
-        // (same guard pushCursorPosition uses) — otherwise no glyph is painted
+        // (same guard pushCursorPosition uses) - otherwise no glyph is painted
         // and the cursor would just vanish.
         if (onMouseMovedForCursor != nullptr)
         {
@@ -1257,7 +1257,7 @@ juce::MouseCursor AudioRegionEditor::cursorForPoint (int x, int y) const
                 return pointOverRegionBody (x, waveArea) ? invisibleCursor()
                                                           : juce::MouseCursor::NormalCursor;
             // Draw is the automation pencil: the glyph only makes sense when a
-            // lane is selected. No lane → plain arrow (nothing to draw).
+            // lane is selected. No lane -> plain arrow (nothing to draw).
             if (m == EditMode::Draw)
                 return automationParam >= 0 ? invisibleCursor()
                                             : juce::MouseCursor::NormalCursor;
@@ -1310,7 +1310,7 @@ void AudioRegionEditor::pushCursorPosition (int x, int y)
     // when the cursor X is over the REGION's painted audio range
     // (between its timelineStart and timelineStart + lengthInSamples
     // mapped through xForTimelineSample). Empty area before / after
-    // the region — scrolled past the audio block — gets the plain
+    // the region - scrolled past the audio block - gets the plain
     // scissor with no dashed line.
     juce::Range<int> cutLine;
     int visualX = x;
@@ -1337,7 +1337,7 @@ void AudioRegionEditor::pushCursorPosition (int x, int y)
                 // Snap the visual cursor X to the same grid the cut
                 // commits to (snapTimelineSampleToGrid). Without this
                 // the scissor renders at the raw cursor X while the
-                // actual split lands at the nearest grid line — user
+                // actual split lands at the nearest grid line - user
                 // reads it as "the cut happened left of the scissor".
                 if (session.audioEditorSnap)
                 {
@@ -1430,7 +1430,7 @@ void AudioRegionEditor::mouseDown (const juce::MouseEvent& e)
     // Automation overlay: when a param lane is active, intercept clicks
     // inside the wave area BEFORE the region-edit branches so the
     // engineer can edit points without first hitting "Off" on the
-    // automation picker. Editing is GATED ON TRANSPORT STOPPED — the
+    // automation picker. Editing is GATED ON TRANSPORT STOPPED - the
     // audio thread reads lane.points lock-free in Read/Touch mode, so
     // mid-play mutation would race.
     if (automationParam >= 0
@@ -1445,13 +1445,13 @@ void AudioRegionEditor::mouseDown (const juce::MouseEvent& e)
 
         if (e.mods.isPopupMenu())
         {
-            // Right-click a dot → delete. Right-click empty → no-op so
+            // Right-click a dot -> delete. Right-click empty -> no-op so
             // the user can still get the region context menu by aiming
             // away from any dot.
             if (hit >= 0)
             {
                 // Build before/after locally and let the action's perform()
-                // do the atomic publish — no in-place lane mutation needed.
+                // do the atomic publish - no in-place lane mutation needed.
                 auto before = lane.pointsConst();
                 auto after  = before;
                 after.erase (after.begin() + hit);
@@ -1488,14 +1488,14 @@ void AudioRegionEditor::mouseDown (const juce::MouseEvent& e)
                 setMouseCursor (juce::MouseCursor::DraggingHandCursor);
                 return;
             }
-            // Empty area click → add a point at the snapped click position.
+            // Empty area click -> add a point at the snapped click position.
             const auto fileSample = sampleForX (e.x, waveArea);
             const auto snappedFile = snapFileSampleToGrid (fileSample,
                                                               e.mods.isCommandDown());
             const auto fileToTimeline = r->timelineStart - r->sourceOffset;
             const std::int64_t t = snappedFile + fileToTimeline;
             float v01 = automationValueForY (e.y, waveArea);
-            // Discrete lanes (Mute / Solo) store 0/1 only — intermediate
+            // Discrete lanes (Mute / Solo) store 0/1 only - intermediate
             // values would render correctly via the connected-dot view
             // but evaluateLane thresholds at 0.5, so a 0.3-stored value
             // round-trips to 0 anyway. Quantize at storage time so the
@@ -1536,7 +1536,7 @@ void AudioRegionEditor::mouseDown (const juce::MouseEvent& e)
         }
     }
 
-    // Right-click → context menu (split / reset gain / reset fades / mute /
+    // Right-click -> context menu (split / reset gain / reset fades / mute /
     // lock / colour). Captured here so it doesn't slip through to the
     // edit-cursor branch below. Right-click on a fade handle goes to the
     // fade-shape submenu instead so the user can pick the curve type.
@@ -1565,7 +1565,7 @@ void AudioRegionEditor::mouseDown (const juce::MouseEvent& e)
         return;
     }
 
-    // Drag in the bar/time ruler at the top of the modal → start a
+    // Drag in the bar/time ruler at the top of the modal -> start a
     // range selection. Captured BEFORE the handle / waveform branches
     // so it never gets shadowed by them. Plain click in the ruler
     // clears an existing range without forcing a drag-to-clear.
@@ -1626,7 +1626,7 @@ void AudioRegionEditor::mouseDown (const juce::MouseEvent& e)
         }
     }
 
-    // Draw is the automation pencil — it must never grab/move the region.
+    // Draw is the automation pencil - it must never grab/move the region.
     // With a lane selected + transport stopped the overlay block above already
     // handled (and returned for) the click; reaching here in Draw mode means
     // no lane is selected (or audio is rolling). Swallow it so the body-move
@@ -1739,7 +1739,7 @@ void AudioRegionEditor::mouseDown (const juce::MouseEvent& e)
                     regionAtDragStart = *nr;
                 // Drop the edit cursor on the click too (same mapping as the
                 // normal click-to-focus flow), now that sampleForX maps against
-                // the new focus — so split / paste / loop-at-cursor stay aligned
+                // the new focus - so split / paste / loop-at-cursor stay aligned
                 // with the slice the range was taken on.
                 editCursorSample = snapFileSampleToGrid (sampleForX (e.x, waveArea),
                                                          e.mods.isCommandDown());
@@ -1781,7 +1781,7 @@ void AudioRegionEditor::mouseDown (const juce::MouseEvent& e)
         // swap regionIdx to that slice and re-anchor the edit cursor
         // inside it. Same-slice clicks fall through to the existing
         // edit-cursor-drop + MoveRegion-prep behaviour. Transport
-        // playhead is NOT moved by region clicks — the user picks up
+        // playhead is NOT moved by region clicks - the user picks up
         // an item to move it, not to seek; the ruler band handles
         // explicit seek clicks separately. Clicking on a region that
         // is already part of the multi-selection preserves the set so
@@ -1910,7 +1910,7 @@ void AudioRegionEditor::mouseDrag (const juce::MouseEvent& e)
         const std::int64_t t = juce::jmax<std::int64_t> (0, snappedFile + fileToTimeline);
         float v01 = automationValueForY (e.y, waveArea);
         // Discrete lanes (Mute / Solo): same quantization rationale as
-        // the click-add path above — store 0/1 so the painted dot and
+        // the click-add path above - store 0/1 so the painted dot and
         // the audible behaviour agree.
         if (! isContinuousParam ((AutomationParam) automationParam))
             v01 = (v01 >= 0.5f) ? 1.0f : 0.0f;
@@ -1921,7 +1921,7 @@ void AudioRegionEditor::mouseDrag (const juce::MouseEvent& e)
 
         // Maintain sort: if the new time crosses a neighbour, sort the
         // lane and refind our point's new index by identity (time +
-        // value match — collisions are negligible at click resolution).
+        // value match - collisions are negligible at click resolution).
         const auto needSort = (draggedPointIdx > 0
                                   && live[(size_t) draggedPointIdx - 1].timeSamples > t)
                              || (draggedPointIdx + 1 < (int) live.size()
@@ -1962,7 +1962,7 @@ void AudioRegionEditor::mouseDrag (const juce::MouseEvent& e)
     // overrides). Snap operates in TIMELINE space (where the user reads
     // the bar/beat ruler) but the underlying state mutations are
     // file-sample-based, so we round-trip through the focused slice's
-    // sourceOffset → timelineStart mapping.
+    // sourceOffset -> timelineStart mapping.
     const bool bypassSnap = e.mods.isCommandDown();
     const double sampleRate = engine.getCurrentSampleRate();
 
@@ -2155,9 +2155,9 @@ void AudioRegionEditor::mouseUp (const juce::MouseEvent&)
         repaint();
         return;
     }
-    // Automation point gesture finishes (add / move). The whole gesture —
+    // Automation point gesture finishes (add / move). The whole gesture -
     // a click-add followed by an immediate drag, or a drag of an existing
-    // point — collapses to one before/after lane snapshot pushed here, so
+    // point - collapses to one before/after lane snapshot pushed here, so
     // Cmd+Z reverts it in a single step. Editing is gated on
     // transport=Stopped at mouseDown, so no acquire-load races the swap.
     if (dragMode == DragMode::AutomationPoint || dragMode == DragMode::AutomationPaint)
@@ -2165,13 +2165,13 @@ void AudioRegionEditor::mouseUp (const juce::MouseEvent&)
         // Commit the whole gesture (the live in-place add/drag above) as one
         // undoable transaction. AutomationLaneEditAction::perform() atomically
         // publishes the after-state, which is the release the audio thread's
-        // next acquire-load pairs with — no separate mode re-store needed.
+        // next acquire-load pairs with - no separate mode re-store needed.
         if (trackIdx >= 0 && trackIdx < Session::kNumTracks
             && automationParam >= 0 && automationParam < kNumAutomationParams
             && automationDragParam == automationParam)
         {
             auto& lane = session.track (trackIdx).automationLanes[(size_t) automationParam];
-            // A freehand stroke lays one point every few px — thin it (RDP, 0.2%
+            // A freehand stroke lays one point every few px - thin it (RDP, 0.2%
             // vertical) before committing so it stores like a hand-placed curve.
             if (dragMode == DragMode::AutomationPaint)
                 thinAutomationLane (lane.mutableForWritePass(),
@@ -2313,7 +2313,7 @@ bool AudioRegionEditor::cutRange()
 
     const auto a = juce::jmin (rangeStartSample, rangeEndSample);
     const auto b = juce::jmax (rangeStartSample, rangeEndSample);
-    if (b <= a) return false;   // empty selection — nothing to cut
+    if (b <= a) return false;   // empty selection - nothing to cut
 
     // Cut the selected range to the clipboard, then remove that slice from the
     // region. Compute the timeline edges + whether each needs a split against r
@@ -2353,7 +2353,7 @@ bool AudioRegionEditor::cutRange()
     }
     um.perform (new DeleteRegionAction (session, engine, trackIdx, deleteIdx));
     rangeActive = false;
-    // The active slice was just removed — reanchor regionIdx onto a survivor (or
+    // The active slice was just removed - reanchor regionIdx onto a survivor (or
     // close) so it isn't left pointing at a deleted region.
     reanchorOrClose();
     return true;
@@ -2610,7 +2610,7 @@ bool AudioRegionEditor::keyPressed (const juce::KeyPress& k)
     // Edit-mode shortcuts. The modal grabs keyboard focus on open so
     // MainComponent::keyPressed never sees these while the editor is up.
     // G/R/C also reclaim the global transport bindings (R=record toggle,
-    // C=metronome toggle) for the duration of the modal — handled locally,
+    // C=metronome toggle) for the duration of the modal - handled locally,
     // returns true so the global handler doesn't re-fire.
     if (noMods)
     {
@@ -2631,7 +2631,7 @@ bool AudioRegionEditor::keyPressed (const juce::KeyPress& k)
 
     // Local Cmd+Z / Cmd+Shift+Z. The engine's UndoManager has a global
     // keyboard binding, but it doesn't know to invalidate this editor's
-    // view — so without this handler the audio data reverts but the
+    // view - so without this handler the audio data reverts but the
     // modal still paints the pre-undo geometry. Calling undo() here
     // and then repainting + refreshing the readouts keeps the view in
     // sync with the model on every step of the undo stack.
@@ -2701,7 +2701,7 @@ bool AudioRegionEditor::keyPressed (const juce::KeyPress& k)
                 {
                     // An unset partner reads as 0 (the transport sentinel). Fold
                     // that to cursorTl so ']' alone drops a zero-width out marker
-                    // at the cursor — symmetric with '[' above — instead of
+                    // at the cursor - symmetric with '[' above - instead of
                     // synthesising a 0..cursor range.
                     auto start = sh ? transport.getPunchIn() : transport.getLoopStart();
                     if (start == 0) start = cursorTl;
@@ -2816,12 +2816,12 @@ bool AudioRegionEditor::keyPressed (const juce::KeyPress& k)
 
         if (cutRange()) return true;
         // A range was selected but cutRange() refused it (locked region / frozen
-        // track). Don't fall through to the whole-region delete below — that would
+        // track). Don't fall through to the whole-region delete below - that would
         // nuke the entire region on a Ctrl+X the user meant as a no-op range cut.
         if (rangeActive) return true;
 
         // Whole-region cut path: a locked region / frozen track is edit-locked
-        // everywhere else (cutRange, the Delete handler) — consume the key as a no-op
+        // everywhere else (cutRange, the Delete handler) - consume the key as a no-op
         // rather than clipboarding + deleting content the user can't edit.
         if (r->locked || session.track (trackIdx).frozen.load (std::memory_order_relaxed))
             return true;
@@ -2859,17 +2859,17 @@ bool AudioRegionEditor::keyPressed (const juce::KeyPress& k)
     }
 
     // Delete - two paths.
-    //   • Range active: split at both boundaries, then delete the
+    //   - Range active: split at both boundaries, then delete the
     //     middle slice. Region's anchor stays valid (the left slice
     //     keeps the original regionIdx) so the editor stays open.
-    //   • No range: delete the whole region (Editor closes).
+    //   - No range: delete the whole region (Editor closes).
     // Both routed through UndoManager - Cmd+Z reverts.
     if (k == juce::KeyPress::backspaceKey || k == juce::KeyPress::deleteKey)
     {
         auto* r = region();
         if (rangeActive && r != nullptr)
         {
-            // Locked region / frozen track is edit-locked — consume the key, no-op.
+            // Locked region / frozen track is edit-locked - consume the key, no-op.
             if (r->locked || session.track (trackIdx).frozen.load (std::memory_order_relaxed))
                 return true;
 
@@ -2901,7 +2901,7 @@ bool AudioRegionEditor::keyPressed (const juce::KeyPress& k)
                 rangeActive = false;
                 reanchorOrClose();
             }
-            return true;   // range selected → Delete acts on the range (consume the key)
+            return true;   // range selected -> Delete acts on the range (consume the key)
         }
         auto& um = engine.getUndoManager();
 
@@ -2988,12 +2988,12 @@ void AudioRegionEditor::zoomByFactor (float factor)
     repaint();
 }
 
-// ── Top icon-row buttons ──────────────────────────────────────────────
+// Top icon-row buttons
 AudioRegionEditor::IconButton::IconButton (const juce::String& name, Glyph g)
     : juce::Button (name), glyph (g)
 {
     setClickingTogglesState (false);
-    // Don't steal keyboard focus from the host modal — otherwise a
+    // Don't steal keyboard focus from the host modal - otherwise a
     // follow-up Ctrl+Z (or any other modal hotkey) routes to the
     // button instead of the editor's keyPressed.
     setMouseClickGrabsKeyboardFocus (false);
@@ -3201,7 +3201,7 @@ void AudioRegionEditor::layoutIconRow (juce::Rectangle<int> area)
         editModeToolbar->setBounds (inner.removeFromLeft (w));
         inner.removeFromLeft (gap);
     }
-    // Automation param picker — sits between the edit-mode toolbar and
+    // Automation param picker - sits between the edit-mode toolbar and
     // the title strip so it's discoverable without crowding the actions.
     {
         constexpr int kAutoBtnW = 130;
@@ -3273,7 +3273,7 @@ void AudioRegionEditor::syncAutoCrossfades()
         AudioRegion after = before;
 
         // Fade-in is governed by overlap with the preceding region.
-        // Mutate only when the fade is auto-managed (or absent —
+        // Mutate only when the fade is auto-managed (or absent -
         // implicitly auto, will be promoted). User-pinned fades stay.
         if (after.fadeInAuto || after.fadeInSamples == 0)
         {
@@ -3355,7 +3355,7 @@ juce::String formatBarBeatTickAt (std::int64_t sliceFileSample,
 {
     const double samplesPerBeat = juce::jmax (1.0, sampleRate * 60.0 / juce::jmax (1.0, bpm));
     const double samplesPerBar  = samplesPerBeat * juce::jmax (1, beatsPerBar);
-    // Convert file-sample → timeline-sample (slice-relative offset added to timelineStart).
+    // Convert file-sample -> timeline-sample (slice-relative offset added to timelineStart).
     const double timelineSample = (double) r.timelineStart
                                     + (double) (sliceFileSample - r.sourceOffset);
     const double bar  = std::floor (timelineSample / samplesPerBar);
@@ -3392,7 +3392,7 @@ void AudioRegionEditor::reanchorOrClose()
 void AudioRegionEditor::refreshStatusBarReadouts()
 {
     const auto* r = region();
-    // Use the WAV's native SR — same reasoning as paintRuler /
+    // Use the WAV's native SR - same reasoning as paintRuler /
     // paintWaveform: anchorTimelineLength + lengthInSamples were
     // captured at recording-time SR. Reading at engine SR drifts the
     // bar/beat display vs the rendered audio after a device hot-swap.
@@ -3536,7 +3536,7 @@ void AudioRegionEditor::showRegionPropertiesPopup()
                     auto* self = safe.getComponent();
                     if (self == nullptr) return;
                     // Fall back to the editor component itself if no top-
-                    // level exists — the rename should still proceed; the
+                    // level exists - the rename should still proceed; the
                     // modal just renders centred on the editor instead of
                     // the whole window.
                     auto* host = self->getTopLevelComponent();
@@ -3686,8 +3686,8 @@ int AudioRegionEditor::nextRegionIndex (int delta) const
     if (regionIdx < 0 || regionIdx >= (int) regs.size()) return -1;
 
     // Sort by (timelineStart, storageIndex) so ties are deterministic.
-    // delta=+1 → smallest key strictly greater than current's key;
-    // delta=-1 → largest key strictly less than current's key.
+    // delta=+1 -> smallest key strictly greater than current's key;
+    // delta=-1 -> largest key strictly less than current's key.
     using Key = std::pair<std::int64_t, int>;
     const Key cur { regs[(size_t) regionIdx].timelineStart, regionIdx };
     int bestIdx = -1;
@@ -3717,8 +3717,8 @@ void AudioRegionEditor::navigateRegion (int delta)
 int AudioRegionEditor::transportPlayheadX (juce::Rectangle<int> waveArea) const
 {
     // Map the transport playhead via the anchor TIMELINE window so the
-    // line shows up across the entire wave area — including over the
-    // dimmed neighborhood slices and the gaps between them — not just
+    // line shows up across the entire wave area - including over the
+    // dimmed neighborhood slices and the gaps between them - not just
     // inside the focused region's file-sample range.
     const auto playheadTimeline = engine.getTransport().getPlayhead();
     if (anchorTimelineLength <= 0) return -1;
@@ -3733,10 +3733,10 @@ int AudioRegionEditor::transportPlayheadX (juce::Rectangle<int> waveArea) const
 void AudioRegionEditor::paintTransportPlayhead (juce::Graphics& g,
                                                   juce::Rectangle<int> waveArea)
 {
-    // Cache-vs-live decision by clip width — see the matching
+    // Cache-vs-live decision by clip width - see the matching
     // comment in PianoRollComponent::paintTransportPlayhead for the
-    // full rationale. Narrow clip → cache (avoids torn line from
-    // live-read drift past the queued dirty band). Wide clip →
+    // full rationale. Narrow clip -> cache (avoids torn line from
+    // live-read drift past the queued dirty band). Wide clip ->
     // live (cache may be stale after zoom/scroll/region change).
     constexpr int kNarrowBandWidth = 64;
     const int clipW = g.getClipBounds().getWidth();
@@ -3794,7 +3794,7 @@ void AudioRegionEditor::timerCallback()
         getWidth(),
         getHeight() - kIconRowHeight - kRulerHeight - kStatusBarH - kScrollBarH);
 
-    // Cache the per-tick playhead X — used by both the chase logic and
+    // Cache the per-tick playhead X - used by both the chase logic and
     // the standard repaint-when-the-line-moves check.
     int x = transportPlayheadX (waveArea);
 
@@ -3837,7 +3837,7 @@ void AudioRegionEditor::timerCallback()
     lastPlayheadX = x;
 }
 
-// ── Automation overlay ────────────────────────────────────────────────────
+// Automation overlay
 
 namespace
 {
@@ -3909,7 +3909,7 @@ void AudioRegionEditor::showAutomationParamMenu()
 
 juce::Rectangle<int> AudioRegionEditor::automationLaneArea (juce::Rectangle<int> waveArea) const
 {
-    // Overlay sits OVER the waveform — not a separate band — so the lane
+    // Overlay sits OVER the waveform - not a separate band - so the lane
     // line + dots stay aligned with the audio they're shaping. Inset
     // matches paintWaveform's reduced(4,4) so dots don't clip the frame.
     return waveArea.reduced (4, 4);
@@ -3925,7 +3925,7 @@ int AudioRegionEditor::automationYForValue (float v01, juce::Rectangle<int> wave
 void AudioRegionEditor::autoArmAutomationRead()
 {
     if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return;
-    // Flip Off / Write → Read so the drawn lane plays back. If already
+    // Flip Off / Write -> Read so the drawn lane plays back. If already
     // Read / Touch, re-store the same value so the publication still
     // happens-after any in-place lane write the caller just made (the
     // store-release pairs with the audio thread's next acquire-load).
@@ -3952,7 +3952,7 @@ void AudioRegionEditor::paintAutomationStep (int x, int y, juce::Rectangle<int> 
     const auto fileToTimeline = rr->timelineStart - rr->sourceOffset;
     const std::int64_t t = juce::jmax<std::int64_t> (0, snappedFile + fileToTimeline);
     float v01 = automationValueForY (y, waveArea);
-    // Discrete lanes (Mute / Solo) store 0/1 only — same quantization as the
+    // Discrete lanes (Mute / Solo) store 0/1 only - same quantization as the
     // click-add path so the painted dot matches its audible behaviour.
     if (! isContinuousParam ((AutomationParam) automationParam))
         v01 = (v01 >= 0.5f) ? 1.0f : 0.0f;
@@ -4070,7 +4070,7 @@ void AudioRegionEditor::paintAutomationOverlay (juce::Graphics& g, juce::Rectang
 
     // Polyline through the points. Step-hold for discrete (Mute / Solo),
     // linear otherwise. evaluateLane already encodes the right semantic
-    // but for the overlay we just connect dots — same visual idiom Reaper
+    // but for the overlay we just connect dots - same visual idiom Reaper
     // / Ardour use for envelope lanes.
     const bool discrete = ! isContinuousParam ((AutomationParam) automationParam);
     juce::Path line;

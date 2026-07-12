@@ -42,11 +42,11 @@ void InsertAdapter::process (INativeInstance& inst,
                              const juce::AudioPlayHead::PositionInfo* transport) noexcept
 {
     if (! inst.isActive() || numFrames <= 0 || numFrames > maxFrames)
-        return;   // dry passthrough — leave L/R untouched
+        return;   // dry passthrough - leave L/R untouched
 
     const auto n = (size_t) numFrames;
 
-    // ── INPUT FOLD: stereo L/R → the plugin's main-in channel count ──
+    // INPUT FOLD: stereo L/R -> the plugin's main-in channel count
     if (inChans == 1)
     {
         // Sum to mono so a mono plugin hears both sides.
@@ -61,9 +61,9 @@ void InsertAdapter::process (INativeInstance& inst,
         for (int c = 2; c < inChans; ++c)   // extra main-in channels (rare) get silence
             juce::FloatVectorOperations::clear (inPtrs[(size_t) c], numFrames);
     }
-    // inChans == 0 → instrument: no audio input to build.
+    // inChans == 0 -> instrument: no audio input to build.
 
-    // ── SIDECHAIN: fill the bus from the tap, or silence (never null) ──
+    // SIDECHAIN: fill the bus from the tap, or silence (never null)
     if (scChans >= 1)
     {
         if (sidechainL != nullptr) std::memcpy (scPtrs[0], sidechainL, n * sizeof (float));
@@ -71,7 +71,7 @@ void InsertAdapter::process (INativeInstance& inst,
 
         if (scChans >= 2)
         {
-            const float* r = sidechainR != nullptr ? sidechainR : sidechainL;   // mono source → dup
+            const float* r = sidechainR != nullptr ? sidechainR : sidechainL;   // mono source -> dup
             if (r != nullptr) std::memcpy (scPtrs[1], r, n * sizeof (float));
             else              juce::FloatVectorOperations::clear (scPtrs[1], numFrames);
 
@@ -98,7 +98,7 @@ void InsertAdapter::process (INativeInstance& inst,
 
     inst.processBlock (io);
 
-    // ── OUTPUT FOLD: the plugin's main-out → stereo L/R ──
+    // OUTPUT FOLD: the plugin's main-out -> stereo L/R
     if (outChans == 1)
     {
         const float* s = outPtrs[0];   // broadcast mono to both sides
@@ -111,6 +111,6 @@ void InsertAdapter::process (INativeInstance& inst,
         std::memcpy (R, outPtrs[1], n * sizeof (float));
         // main-out channels >= 2 (multi-out) are dropped: an insert is stereo.
     }
-    // outChans == 0 → nothing to fold; L/R pass through unchanged.
+    // outChans == 0 -> nothing to fold; L/R pass through unchanged.
 }
 } // namespace duskstudio::hosting

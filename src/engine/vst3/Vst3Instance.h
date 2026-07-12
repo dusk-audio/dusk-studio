@@ -13,7 +13,7 @@ namespace duskstudio::vst3
 class Vst3Bundle;
 class Vst3HostContext;
 
-// One VST3 plugin instance driven through the host-agnostic INativeInstance —
+// One VST3 plugin instance driven through the host-agnostic INativeInstance -
 // the third implementer after CLAP and LV2, so a plugin slot hosts all formats
 // through one pointer. Mirrors ClapInstance/Lv2Instance: create from a bundle +
 // class UID, activate at a fixed sample rate / max block, process audio.
@@ -44,7 +44,7 @@ public:
 
     // Resolve `classId` (the factory class UID string) in `bundle`, instantiate
     // component + controller, negotiate buses, and build the PortLayout. The
-    // bundle owns the module backing the vtables — it MUST outlive this instance.
+    // bundle owns the module backing the vtables - it MUST outlive this instance.
     bool create (const Vst3Bundle& bundle, const std::string& classId, std::string& errorOut);
 
     const hosting::PortLayout& portLayout() const noexcept override;
@@ -68,7 +68,7 @@ public:
     // Queue a normalized parameter change. SINGLE PRODUCER: message thread only.
     // Reaches the processor via IParameterChanges on the next audio block, and the
     // controller immediately so an open editor tracks the move. Editor-originated
-    // edits (IComponentHandler::performEdit) feed the same ring — without that a
+    // edits (IComponentHandler::performEdit) feed the same ring - without that a
     // spec-compliant plugin's knob moves never reach its processor.
     void setParamValue (uint32_t id, double value) noexcept;
 
@@ -83,7 +83,7 @@ public:
 
     // True once after the plugin signalled kLatencyChanged (restartComponent).
     // The caller reactivates the instance under the engine gate and recomputes
-    // PDC — VST3 only re-reads latency across a setActive cycle.
+    // PDC - VST3 only re-reads latency across a setActive cycle.
     bool consumeLatencyChanged() noexcept;
 
     // Message thread: re-snapshot the parameter surface / MIDI-CC map if the
@@ -98,11 +98,11 @@ public:
     int getLatencySamples() const noexcept override;
 
     // The host context this instance hands to the plugin (component handler,
-    // run loop, plug frame) — the editor layer pumps and extends it.
+    // run loop, plug frame) - the editor layer pumps and extends it.
     Vst3HostContext&       getHost()       noexcept;
     const Vst3HostContext& getHost() const noexcept;
 
-    // Steinberg::Vst::IEditController* (opaque — the editor layer casts back).
+    // Steinberg::Vst::IEditController* (opaque - the editor layer casts back).
     // Null until create() succeeds; rare plugins expose no controller at all.
     void* editController() const noexcept;
 

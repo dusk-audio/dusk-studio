@@ -10,7 +10,7 @@ namespace duskstudio::clap
 {
 // Native X11 editor embed for a CLAP plugin (Linux). Owns a host X11 window
 // created UNMAPPED as a child of the app's window; the plugin embeds its GUI into
-// it (set_parent + show), and we XMapWindow it ONLY on reveal() — so the first
+// it (set_parent + show), and we XMapWindow it ONLY on reveal() - so the first
 // open is an instant map with no stray-window flash, by construction. Drives the
 // plugin's fd/timer event pump (via ClapHost) on the message thread.
 //
@@ -33,7 +33,7 @@ public:
     bool embed (unsigned long parentX11, int x, int y, int w, int h, std::string& errorOut);
 
     void setBounds (int x, int y, int w, int h);
-    void reveal();   // XMapWindow — the instant first-open
+    void reveal();   // XMapWindow - the instant first-open
     void hide();     // XUnmapWindow
     void close();
 
@@ -45,7 +45,7 @@ public:
     bool getActualGeometry (int& x, int& y, int& w, int& h) const;
 
     // App shutdown: leak the plugin GUI instead of destroying it. u-he (Satin/Diva)
-    // hang in gui->destroy on teardown — same reason the JUCE host leaks plugins on
+    // hang in gui->destroy on teardown - same reason the JUCE host leaks plugins on
     // quit. close() then skips gui->hide/gui->destroy; the process is exiting anyway.
     void setLeakOnClose (bool b) noexcept { leakOnClose = b; }
 
@@ -68,7 +68,7 @@ public:
     void onGuiClosed (bool wasDestroyed) override;
 
 private:
-    // The plugin's gui host callbacks are [thread-safe] — it may call request_resize/
+    // The plugin's gui host callbacks are [thread-safe] - it may call request_resize/
     // show/hide/closed from a non-message thread. Those handlers only stash these
     // atomics; drainPendingCallbacks() (from pump(), on the message thread) does all
     // the X11 + JUCE work, so nothing touches Xlib / a JUCE Component off-thread.

@@ -33,8 +33,8 @@ public:
     static constexpr int kTrackLabelW    = 44;
     static constexpr int kTrackLabelWMax = 200;
     // Ruler bands:
-    //   y=0..tick band        — time labels + tick marks
-    //   y=tick..pill band     — markers row + loop/punch pills
+    //   y=0..tick band        - time labels + tick marks
+    //   y=tick..pill band     - markers row + loop/punch pills
     // Loop/punch solid bar paints the bottom 4 px of the pill band.
     static constexpr int kRulerTickBandH = 14;
     static constexpr int kRulerPillBandH = 16;
@@ -83,11 +83,11 @@ public:
     bool cycleSelectedTakeBackward();
 
     // Single-click is reserved for direct manipulation. Double-click
-    // opens the dedicated editor — one mental model across audio + MIDI.
+    // opens the dedicated editor - one mental model across audio + MIDI.
     std::function<void (int trackIdx, int regionIdx)> onMidiRegionDoubleClicked;
     std::function<void (int trackIdx, int regionIdx)> onAudioRegionDoubleClicked;
 
-    // CursorOverlay sink — MainComponent wires these so the strip can push
+    // CursorOverlay sink - MainComponent wires these so the strip can push
     // its local mouse position into the shared overlay (which can't poll
     // Desktop::getMousePosition reliably on Wayland). Grab/Cut mode hides
     // the native cursor with NoCursor; without these the overlay never gets
@@ -132,7 +132,7 @@ public:
     // Explicit refresh for the session-load path. The strip otherwise relies on
     // indirect side effects (setConsoleVisibleRange / setBounds / the 30 Hz
     // timer) to repaint, and ALL of them no-op when a reopened session has the
-    // same track layout + window size as the current view — so freshly-loaded
+    // same track layout + window size as the current view - so freshly-loaded
     // regions never get drawn. Rebuilds the visible rows, refits the horizontal
     // zoom/scroll to the loaded content (a session saved while zoomed-in must not
     // open with its regions scrolled off-screen), and repaints unconditionally.
@@ -151,7 +151,7 @@ private:
     // refreshLabelColumnWidth() on construction, layout, and name changes.
     int  labelColW { kTrackLabelW };
     void refreshLabelColumnWidth();
-    // Empty rect when trackIdx is collapsed — callers iterating must
+    // Empty rect when trackIdx is collapsed - callers iterating must
     // respect this so hit tests / painters skip hidden rows.
     juce::Rectangle<int> rowBounds (int trackIdx) const noexcept;
 
@@ -206,7 +206,7 @@ private:
     BracketHit hitTestBracket (int x, int y) const noexcept;
     void rebuildPlaybackIfStopped();
     void showRegionContextMenu (const RegionHit&, juce::Point<int> screenPos);
-    // Smaller than audio version — Rename + Color + mute/lock, all routed
+    // Smaller than audio version - Rename + Color + mute/lock, all routed
     // through MidiRegionEditAction for undo.
     void showMidiRegionContextMenu (int trackIdx, int regionIdx,
                                        juce::Point<int> screenPos);
@@ -298,7 +298,7 @@ private:
     void clampRowScroll() noexcept;
 
     // Without these, the strip's only repaint trigger is playhead
-    // motion — renaming a track wouldn't reflect until the next play.
+    // motion - renaming a track wouldn't reflect until the next play.
     std::array<juce::String, Session::kNumTracks> lastNames;
     std::array<juce::Colour, Session::kNumTracks> lastColours;
 
@@ -309,7 +309,7 @@ private:
     std::int64_t lastPunchIn      = -1;
     std::int64_t lastPunchOut     = -1;
 
-    // Full-repaint on Stopped <-> Recording — the thin playhead band
+    // Full-repaint on Stopped <-> Recording - the thin playhead band
     // isn't wide enough to cover the live-recording overlay's first
     // paint at Record-press.
     bool        lastIsRecording  = false;
@@ -328,7 +328,7 @@ private:
         std::int64_t origFadeOut       = 0;
         float       origGainDb        = 0.0f;
 
-        // Captured at mouseDown by (track, regionIdx) — the latter can
+        // Captured at mouseDown by (track, regionIdx) - the latter can
         // be reordered between mouseDown and mouseUp by concurrent
         // record / undo, so the pair at capture time is the stable form.
         // Empty = single-region drag.
@@ -367,7 +367,7 @@ private:
     // Ruler drag-to-create-range. A drag on the ruler sweeps a neutral
     // highlight; on release a popup asks whether the range is a loop or a
     // punch. A drag shorter than ~1024 samples is treated as a click and
-    // just seeks the playhead — so plain click-to-seek still works.
+    // just seeks the playhead - so plain click-to-seek still works.
     struct RulerSelection
     {
         bool active     = false;
@@ -424,7 +424,7 @@ private:
     bool dropAccepted   = false;
 
     // Audio + MIDI share a vector index space within a track but are
-    // distinct types — separate selection slots avoid "which type is
+    // distinct types - separate selection slots avoid "which type is
     // index 3?" ambiguity.
     int selectedMidiTrack  = -1;
     int selectedMidiRegion = -1;
@@ -450,11 +450,11 @@ private:
     bool isRegionSelected (int track, int idx) const noexcept;
     std::vector<RegionId> allSelectedRegions() const;
     void clearAllSelections() noexcept;
-    // Add or remove if already present — Shift / Cmd-click extends
+    // Add or remove if already present - Shift / Cmd-click extends
     // without collapsing back to a single anchor.
     void toggleRegionSelected (int track, int idx);
 
-    // Drives affordance visibility — fade handles only paint on
+    // Drives affordance visibility - fade handles only paint on
     // hovered / selected region.
     int hoveredTrack  = -1;
     int hoveredRegion = -1;

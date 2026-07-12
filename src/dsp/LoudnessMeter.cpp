@@ -152,7 +152,7 @@ void LoudnessMeter::process (const float* L, const float* R, int numSamples) noe
 {
     if (sr <= 0.0 || L == nullptr || R == nullptr) return;
 
-    // ── K-weighted block accumulation (LUFS) ──
+    // K-weighted block accumulation (LUFS)
     for (int i = 0; i < numSamples; ++i)
     {
         const float kL = kStage2L.process (kStage1L.process (L[i]));
@@ -162,7 +162,7 @@ void LoudnessMeter::process (const float* L, const float* R, int numSamples) noe
         if (--blockSamplesRemaining == 0) finishBlock();
     }
 
-    // ── True-peak detection (4× oversampled) ──
+    // True-peak detection (4× oversampled)
     // Per ITU BS.1770 Annex 2, true-peak is measured on the 4×-upsampled
     // signal. The downsampled output is discarded - we only need the
     // upsampled samples for the peak scan.

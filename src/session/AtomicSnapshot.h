@@ -45,7 +45,7 @@ public:
     const T& current() const noexcept { return *owned; }
 
     // PianoRoll note-drag / velocity-edit handlers are the canonical
-    // in-place callers — they edit existing entries without reshaping
+    // in-place callers - they edit existing entries without reshaping
     // the container so the audio thread observes mutation through its
     // existing acquire-loaded pointer.
     T& currentMutable() noexcept { return *owned; }

@@ -36,7 +36,7 @@ inline std::string toAbstract (const std::filesystem::path& stateDir,
     const auto cur = stateDir / "cur";
     const auto rel = std::filesystem::u8path (absolutePath).lexically_relative (cur);
     // lexically_relative yields "" for unrelated roots, "." for the dir itself,
-    // and a "../"-leading path for siblings — none of which are children.
+    // and a "../"-leading path for siblings - none of which are children.
     if (! rel.empty() && rel != std::filesystem::path (".")
         && *rel.begin() != std::filesystem::path (".."))
         return rel.generic_string();

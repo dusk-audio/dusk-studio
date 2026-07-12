@@ -4,9 +4,9 @@
 
 namespace duskstudio
 {
-// MTC emitter — companion to MidiClockEmitter. QFs at 4 × frameRate Hz
+// MTC emitter - companion to MidiClockEmitter. QFs at 4 × frameRate Hz
 // (120 QF/s at 30 fps; ~400 samples per QF at 48 k). 8 QFs assemble
-// one SMPTE value, the value sampled at sequence START — 2 frames
+// one SMPTE value, the value sampled at sequence START - 2 frames
 // behind wall time when QF7 lands.
 //
 // 2-frame transmission-delay compensation: master encodes
@@ -18,7 +18,7 @@ namespace duskstudio
 //   - rolling false->true edge (Locate + Play)
 //   - frame-rate change mid-emission
 //   - mid-sequence playhead jump > kJumpDetectFrames
-// Sysex is instantaneous (no -2) — slave skips its +2.
+// Sysex is instantaneous (no -2) - slave skips its +2.
 class MidiTimeCodeEmitter
 {
 public:

@@ -25,7 +25,7 @@ void MasteringDigitalEq::prepare (double sampleRate, int /*blockSize*/)
 {
     // The biquads run oversampled, so their coefficients are computed at the
     // oversampled rate. Clamp the base rate first: a 0 or non-finite sampleRate
-    // from a bad device-rate transition would otherwise poison sr — mirrors the
+    // from a bad device-rate transition would otherwise poison sr - mirrors the
     // BounceEngine fallback.
     const double baseSr = (sampleRate > 0.0 && std::isfinite (sampleRate)) ? sampleRate : 48000.0;
     sr = baseSr * (double) kOversample;
@@ -68,7 +68,7 @@ void MasteringDigitalEq::setBandFreq (int idx, float hz) noexcept
     if (approximatelyEqual (b.freq.load (std::memory_order_relaxed), hz)) return;
     b.freq.store (hz, std::memory_order_relaxed);
     // Release so the reader (rebuildIfDirty, acquire) sees the new value once
-    // it observes dirty — dirty is the synchronisation point for the update.
+    // it observes dirty - dirty is the synchronisation point for the update.
     b.dirty.store (true, std::memory_order_release);
 }
 
@@ -119,7 +119,7 @@ MasteringDigitalEq::Coeffs MasteringDigitalEq::computeCoeffs (int idx, double sa
     Coeffs out;
     // Guard every input up front: clamping freq alone still lets a NaN/inf q or
     // gainDb flow into std::pow / std::sin / std::sqrt and produce NaN taps that
-    // would blow up the filter. Non-finite anything → passthrough.
+    // would blow up the filter. Non-finite anything -> passthrough.
     if (sampleRate <= 0.0
         || ! std::isfinite (sampleRate)
         || ! std::isfinite (freq)
@@ -182,7 +182,7 @@ MasteringDigitalEq::Coeffs MasteringDigitalEq::computeCoeffs (int idx, double sa
     out.a2 = (float) (a2 * inv);
 
     // A pathological gainDb (huge A) can still overflow a tap to NaN/Inf even with
-    // finite inputs; never hand the live filters non-finite coefficients — fall
+    // finite inputs; never hand the live filters non-finite coefficients - fall
     // back to passthrough (the default Coeffs: b0 = 1, rest 0).
     if (! (std::isfinite (out.b0) && std::isfinite (out.b1) && std::isfinite (out.b2)
            && std::isfinite (out.a1) && std::isfinite (out.a2)))
@@ -229,7 +229,7 @@ void MasteringDigitalEq::rebuildIfDirty (int idx) noexcept
     const float qVal = std::clamp (b.q.load (std::memory_order_relaxed), 0.1f, 10.0f);
     const float dB   = b.gainDb.load (std::memory_order_relaxed);
 
-    // Compute + write in place — no heap allocation on the audio thread.
+    // Compute + write in place - no heap allocation on the audio thread.
     const Coeffs c = computeCoeffs (idx, sr, freq, qVal, dB);
     writeCoeffs (filtersL[(size_t) idx], c);
     writeCoeffs (filtersR[(size_t) idx], c);
@@ -262,7 +262,7 @@ void MasteringDigitalEq::processInPlace (float* L, float* R, int numSamples) noe
 
     // Always run the oversampler round-trip so the reported latency is constant
     // whether the EQ is engaged or not (matches the limiter's always-latent
-    // bypass — a toggle never shifts the master). The functor runs the active
+    // bypass - a toggle never shifts the master). The functor runs the active
     // bands' series cascade at the oversampled rate; with no active band it is
     // the identity and the round trip is a pure delay.
     for (int i = 0; i < numSamples; ++i)

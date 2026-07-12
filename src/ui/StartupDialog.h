@@ -47,7 +47,7 @@ private:
     void openSelectedRow();
     void timerCallback() override;   // flashes the update badge
 
-    // juce::TableListBoxModel ─────────────────────────────────────────
+    // juce::TableListBoxModel
     int  getNumRows() override;
     void paintRowBackground (juce::Graphics& g, int rowNumber, int width, int height,
                                 bool rowIsSelected) override;

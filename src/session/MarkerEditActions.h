@@ -52,7 +52,7 @@ private:
 // Marker drag finalisation. The drag mutates the marker in-place for live
 // feedback; on drag-end we wrap the swap as a transaction so a subsequent
 // perform() / undo() / redo() flips between fromSamples and toSamples.
-// Markers are identified by (name + currentExpectedSamples) — the action
+// Markers are identified by (name + currentExpectedSamples) - the action
 // finds the marker at whichever of from/to it currently sits at, which
 // stays unambiguous across perform/undo cycles (the marker is always at
 // one of those two times).

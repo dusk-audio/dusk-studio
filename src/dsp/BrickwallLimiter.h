@@ -13,12 +13,12 @@ namespace duskstudio
 //
 // Signal flow (all RT-safe; buffers + oversampler allocated only in prepare):
 //   1. Input drive.
-//   2. 4x linear-phase FIR oversampling — the whole limiting process runs at
+//   2. 4x linear-phase FIR oversampling - the whole limiting process runs at
 //      the oversampled rate so inter-sample peaks are actually detected AND
 //      controlled (sample-rate-only detection lets ISP through after the DAC
 //      reconstruction filter). NOTE: this is an intentional, documented
 //      exception to the project's "no per-DSP-unit internal oversampling" rule
-//      — a true-peak limiter cannot function without its own oversampling and
+//      - a true-peak limiter cannot function without its own oversampling and
 //      it is the terminal output stage, so there is no donor saturation
 //      downstream to double-oversample.
 //   3. Lookahead delay (~2 ms at the oversampled rate).
@@ -33,7 +33,7 @@ namespace duskstudio
 //   7. Downsample 4x.
 //   8. Final safety clamp at the ceiling (the smoother carries the load; the
 //      clamp only catches sub-dB residual overshoot from the attack lag and
-//      the downsampling filter) — this is what makes the ceiling a hard,
+//      the downsampling filter) - this is what makes the ceiling a hard,
 //      true-peak guarantee.
 class BrickwallLimiter
 {
@@ -51,14 +51,14 @@ public:
     void setInputDriveDb (float dB) noexcept       { inputDrive.store (dB, std::memory_order_relaxed); }
     void setCeilingDb  (float dB) noexcept         { ceilingDb.store (dB, std::memory_order_relaxed); }
     void setReleaseMs  (float ms) noexcept         { releaseMs.store (ms, std::memory_order_relaxed); }
-    // 0 Modern, 1 Transparent, 2 Punchy — shapes hold + release around the
+    // 0 Modern, 1 Transparent, 2 Punchy - shapes hold + release around the
     // release knob. Stereo link off = independent per-channel gain reduction.
     void setMode       (int m) noexcept            { mode.store (m, std::memory_order_relaxed); }
     void setStereoLink (bool b) noexcept           { stereoLink.store (b, std::memory_order_relaxed); }
     // Active lookahead, in ms. The delay/deque are pre-allocated for a fixed
     // maximum in prepare(), so this only re-derives the active read offset,
     // window and reported latency. Called every block from the mastering chain
-    // (audio thread), so it must stay RT-safe — no allocation, lock or I/O.
+    // (audio thread), so it must stay RT-safe - no allocation, lock or I/O.
     void setLookaheadMs (float ms) noexcept;
 
     bool  isEnabled() const noexcept    { return enabled.load (std::memory_order_relaxed); }
@@ -71,7 +71,7 @@ public:
 
     // Audio thread. In-place stereo process; L and R must be at least
     // `numSamples` floats. `numSamples` must not exceed the maxBlockSize passed
-    // to prepare() — the oversampler is sized for it (the mastering chain
+    // to prepare() - the oversampler is sized for it (the mastering chain
     // enforces this). When disabled it stays transparent but still applies the
     // (constant) lookahead + oversampling latency so toggling never pops.
     void processInPlace (float* L, float* R, int numSamples) noexcept;
@@ -88,7 +88,7 @@ private:
     // Re-derives the active lookahead (read offset, window, latency) from the
     // lookaheadMs atomic. Runs on the audio thread (via setLookaheadMs), so it
     // stays RT-safe. Reads the plain members osRate/maxLookaheadOs/osFactor/
-    // osLatencyBase, which only prepare() writes — safe because the engine
+    // osLatencyBase, which only prepare() writes - safe because the engine
     // suspends audio around prepare(), so it never overlaps process().
     void recomputeActiveLookahead() noexcept;
 
@@ -103,7 +103,7 @@ private:
 
     dusk::audio::StereoOversampler oversampler;
 
-    // Stereo delay line at the OVERSAMPLED rate — circular, sized for the max
+    // Stereo delay line at the OVERSAMPLED rate - circular, sized for the max
     // lookahead. The active read offset (activeLookaheadOs) is variable, so the
     // lookahead can change at runtime without reallocating.
     int maxLookaheadOs = 0;
@@ -114,7 +114,7 @@ private:
     // Last laOs the process loop actually ran with. When activeLookaheadOs
     // changes (live lookahead drag), the min-deque is rebuilt forward from
     // empty rather than extended in place over a window whose older samples it
-    // already dropped — see processInPlace.
+    // already dropped - see processInPlace.
     int lastActiveLaOs = 0;
 
     // Per-channel monotonic min deque over the active lookahead window

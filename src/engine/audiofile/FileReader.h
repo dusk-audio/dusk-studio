@@ -21,7 +21,7 @@ struct FileInfo
 //
 // NOT real-time safe: read() grows a scratch buffer on demand and libsndfile
 // itself does I/O, so call it only from the message thread or a background
-// disk thread (import, offline edits, playback prefetch) — never the audio
+// disk thread (import, offline edits, playback prefetch) - never the audio
 // callback. The RT capture path is ThreadedFileWriter, not this.
 class FileReader
 {

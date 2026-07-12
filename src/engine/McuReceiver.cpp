@@ -462,7 +462,7 @@ void McuReceiver::process (const dusk::MidiBuffer& events,
                 // Jog wheel: same sign encoding as V-pot. Magnitude is
                 // detent count; nudge the playhead by a fixed sample
                 // count per detent (~50 ms at 48 kHz; close enough at
-                // common sample rates — jog feel is approximate).
+                // common sample rates - jog feel is approximate).
                 // setPlayhead isn't RT-safe so queue via the existing
                 // pendingTransportPlayhead atom drained on the message
                 // thread (same channel Rewind / FFwd / MTC-chase use).

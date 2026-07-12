@@ -8,7 +8,7 @@ namespace duskstudio
 {
 // Owns AudioPluginFormatManager + shared KnownPluginList. Channel strips
 // hold a PluginSlot that calls back here to instantiate plugins.
-// Message-thread only — audio thread never touches this class; it reads
+// Message-thread only - audio thread never touches this class; it reads
 // the slot's atomic instance pointer instead.
 class PluginManager
 {
@@ -41,13 +41,13 @@ public:
     juce::Array<juce::PluginDescription> getInstrumentDescriptions() const;
     juce::Array<juce::PluginDescription> getEffectDescriptions() const;
 
-    // Native-CLAP plugins — scanned separately (CLAP is NOT a juce::AudioPluginFormat).
+    // Native-CLAP plugins - scanned separately (CLAP is NOT a juce::AudioPluginFormat).
     // Synthesised PluginDescriptions: pluginFormatName "CLAP", fileOrIdentifier = the
     // .clap bundle path. The unified picker merges these in for surfaces that have a
     // native CLAP host (aux lanes); routing keys on pluginFormatName == "CLAP".
     juce::Array<juce::PluginDescription> getClapEffectDescriptions() const;
     juce::Array<juce::PluginDescription> getClapInstrumentDescriptions() const;
-    // Rescan CLAP search paths (slow — loads each bundle). Folded into the Scan button
+    // Rescan CLAP search paths (slow - loads each bundle). Folded into the Scan button
     // via scanInstalledPlugins; result cached in memory for the session.
     void scanClapPlugins();
 
@@ -81,7 +81,7 @@ public:
                            juce::String& errorMessage);
 
     // Off-thread variant: creates the instance on a background thread (for
-    // formats that allow it — e.g. the multisample player's slow sample
+    // formats that allow it - e.g. the multisample player's slow sample
     // decode) and invokes `callback` ON THE MESSAGE THREAD with the finished
     // instance (or nullptr + error). Keeps the UI responsive during load.
     void createPluginInstanceAsync (
@@ -98,7 +98,7 @@ public:
     juce::File getDeadMansPedalFile() const;
 
     // Scans default install locations across every supported format.
-    // Synchronous, 10-30 s first run — run it on a background thread (see
+    // Synchronous, 10-30 s first run - run it on a background thread (see
     // PluginScanModal) and surface progress, otherwise the app looks frozen.
     int scanInstalledPlugins();
 
@@ -117,7 +117,7 @@ private:
     juce::KnownPluginList          knownPluginList;
     // Native-format descriptions. scanInstalledPlugins runs on a background
     // thread (PluginScanModal) and repopulates these while the message thread
-    // may be reading them for the picker — every access goes through this lock.
+    // may be reading them for the picker - every access goes through this lock.
     mutable juce::CriticalSection nativeDescriptionsLock;
     juce::Array<juce::PluginDescription> clapDescriptions;       // native CLAP (scanned separately)
     juce::Array<juce::PluginDescription> lv2Descriptions;        // native LV2 (scanned separately)
@@ -158,7 +158,7 @@ inline juce::String PluginManager::getHostExecutablePath() const
     auto exe = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
    #if JUCE_WINDOWS
     // CreateProcess (lpApplicationName) and File::existsAsFile both require the
-    // explicit .exe on Windows — without it the sandbox host is never found and
+    // explicit .exe on Windows - without it the sandbox host is never found and
     // third-party scanning silently falls through to the crash-prone in-process
     // path (issue #45).
     const char* const childName = "dusk-studio-plugin-host.exe";

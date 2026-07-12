@@ -94,7 +94,7 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
     if (nativeClapSlot.isLoaded())
     {
-        // Re-activate in place — a full reload would destroy the instance the editor's
+        // Re-activate in place - a full reload would destroy the instance the editor's
         // GUI is attached to (plugin->destroy with a live GUI aborts u-he plugins) and
         // reset the plugin's parameters. Track failure so the save path keeps the
         // persisted path instead of mistaking a failed re-activate for a user removal.
@@ -138,7 +138,7 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
             }
             lv2ReloadFailed.store (! ok, std::memory_order_relaxed);
         }
-        // Consumed either way — a CLAP-suppressed pending must not replay on a
+        // Consumed either way - a CLAP-suppressed pending must not replay on a
         // later prepare() once the CLAP is unloaded.
         pendingLv2Path.clear();
         pendingLv2PluginId.clear();
@@ -178,7 +178,7 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     // FIRs band-limit it before downsampling. EQ + Comp are then prepared at the
     // OVERSAMPLED sample rate / block size so their coefficients and scratch are
     // sized correctly. One StereoOversampler serves both widths (mono uses
-    // channel 0 with a silent channel 1 — see osMonoScratchR).
+    // channel 0 with a silent channel 1 - see osMonoScratchR).
     const int factor = (oversamplingFactor == 2 || oversamplingFactor == 4)
                             ? oversamplingFactor : 1;
     oversampleFactor = factor;
@@ -199,7 +199,7 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     // chain processes when factor > 1. At factor == 1 this collapses to
     // (sampleRate, blockSize), preserving the legacy path.
     //
-    // The EQ core runs 1x internally (setOversampling(0)) — the strip's wrap is
+    // The EQ core runs 1x internally (setOversampling(0)) - the strip's wrap is
     // the only oversampling, so its console saturation is band-limited there,
     // not doubled. M/S, auto-gain and bypass are neutralised once; the variable
     // band / HPF / type / saturation params are pushed per block by
@@ -211,11 +211,11 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     eq.setBypass (false);
     eq.prepare (prepSr, prepBs);
     eq.reset();
-    // H8 idempotence: re-clear the memcmp cache + the false→true edge
+    // H8 idempotence: re-clear the memcmp cache + the false->true edge
     // detector so a re-prepare (sample-rate change, oversampling toggle,
     // mid-session blockSize bump) forces a fresh setter push against the
     // now-reset filter state. Without this, lastEqParams could hold the SAME
-    // params as the live paramsRef → memcmp returns 0 → setters skipped →
+    // params as the live paramsRef -> memcmp returns 0 -> setters skipped ->
     // filters keep their reset (silent-EQ) state.
     lastEqParams  = {};
     prevEqEnabled = true;
@@ -223,7 +223,7 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     // Full comp path at the OVERSAMPLED rate; the core's internal oversampling
     // is never engaged since the strip already wraps the chain. Mix fully wet,
     // auto-makeup off (makeup is via the per-mode output param). No analog-hiss
-    // force-off — the core carries no noise stage (see BusStrip). Mode + the
+    // force-off - the core carries no noise stage (see BusStrip). Mode + the
     // continuous params are pushed per block by updateCompParameters.
     compressor.setMix (100.0f);
     compressor.setAutoMakeup (false);
@@ -317,7 +317,7 @@ void ChannelStrip::updateEqParameters() noexcept
     // EQ processor runs every block regardless of the EQ bypass. When the EQ
     // section is bypassed we leave the band / filter params at their flat
     // value-init zeros (filters off, every band 0 dB) so only the saturation +
-    // transformer character is applied — the tone shaping is what bypasses.
+    // transformer character is applied - the tone shaping is what bypasses.
     // FourKEQDSP tolerates the zero-freq/zero-Q flat image: the HPF/LPF are
     // gated by their enable flags (so their freq-0 coeffs never process), and
     // the parallel bands compute a finite (zero) output scaled by K = 0.
@@ -416,7 +416,7 @@ void ChannelStrip::publishSmoothedCompParams (int numSamples) noexcept
     // than the smoother's 20 ms ramp see a STEPPED-but-fine-grained param
     // trajectory (one step per 64 samples) rather than one step per audio
     // block. The core reads each atom only at the start of its processBlock
-    // call — true per-sample interpolation would require calling processBlock
+    // call - true per-sample interpolation would require calling processBlock
     // per-sample.
     smoothedOptoPeakRed.skip (numSamples); compressor.setOptoPeakReduction (smoothedOptoPeakRed.getCurrentValue());
     smoothedOptoGain   .skip (numSamples); compressor.setOptoGain          (smoothedOptoGain   .getCurrentValue());
@@ -447,14 +447,14 @@ bool ChannelStrip::loadNativeClap (const juce::File& path, std::string& errorOut
     if (preparedSampleRate <= 0.0 || preparedBlockSize <= 0)
     { errorOut = "channel strip not prepared"; return false; }
     // One host per insert: evict the other native formats and any JUCE plugin so
-    // the audio-thread chain (CLAP → LV2 → VST3 → JUCE) can never see two loaded
+    // the audio-thread chain (CLAP -> LV2 -> VST3 -> JUCE) can never see two loaded
     // at once. Callers fence the audio thread around this call.
     unloadNativeLv2();
     unloadNativeVst3();
     pluginSlot.unload();
     const bool ok = nativeClapSlot.load (path, preparedSampleRate, preparedBlockSize, errorOut, pluginId);
     // A user-initiated load is not a restore, so it always ends any "failed restore"
-    // state — whether it succeeds (recovered) or fails (caller clears the persisted
+    // state - whether it succeeds (recovered) or fails (caller clears the persisted
     // refs). Clearing unconditionally keeps the flag's meaning independent of the caller.
     nativeReloadFailed.store (false, std::memory_order_relaxed);
     return ok;
@@ -463,7 +463,7 @@ bool ChannelStrip::loadNativeClap (const juce::File& path, std::string& errorOut
 void ChannelStrip::unloadNativeClap() noexcept
 {
     nativeClapSlot.unload();
-    nativeReloadFailed.store (false, std::memory_order_relaxed);   // slot reset — clear stale failure
+    nativeReloadFailed.store (false, std::memory_order_relaxed);   // slot reset - clear stale failure
     pendingClapPath.clear();
     pendingClapPluginId.clear();
     pendingClapState.clear();
@@ -484,7 +484,7 @@ bool ChannelStrip::loadNativeLv2 (const juce::File& path, std::string& errorOut,
 {
     if (preparedSampleRate <= 0.0 || preparedBlockSize <= 0)
     { errorOut = "channel strip not prepared"; return false; }
-    // One host per insert — see loadNativeClap.
+    // One host per insert - see loadNativeClap.
     unloadNativeClap();
     unloadNativeVst3();
     pluginSlot.unload();
@@ -520,7 +520,7 @@ bool ChannelStrip::loadNativeVst3 (const juce::File& path, std::string& errorOut
 {
     if (preparedSampleRate <= 0.0 || preparedBlockSize <= 0)
     { errorOut = "channel strip not prepared"; return false; }
-    // One host per insert — see loadNativeClap.
+    // One host per insert - see loadNativeClap.
     unloadNativeClap();
     unloadNativeLv2();
     pluginSlot.unload();
@@ -552,10 +552,10 @@ void ChannelStrip::relatchPdcIfDrained (float blockPeakAbs, int numSamples) noex
 {
     // Track how long the signal feeding the delay has been silent. We only
     // change the delay length once the line has fully drained (silent for at
-    // least the currently-applied length) — then a reset() drops only silence,
+    // least the currently-applied length) - then a reset() drops only silence,
     // so the latency change is click-free. A continuously-loud track defers the
     // change to its next silent gap (latency edits happen on plugin load, which
-    // is normally done with the transport stopped → silent → immediate).
+    // is normally done with the transport stopped -> silent -> immediate).
     constexpr float kSilenceEps = 1.0e-6f;
     if (blockPeakAbs < kSilenceEps) pdcSilentRun += numSamples;
     else                            pdcSilentRun = 0;
@@ -641,10 +641,10 @@ void ChannelStrip::processAndAccumulate (const float* inL,
     // MIDI tracks always run a stereo audio path: the instrument plugin fills
     // L+R from MIDI events and the rest of the strip processes that as a
     // stereo signal. Mono / Stereo audio tracks behave as before. A frozen
-    // track also takes the stereo path — inL/inR carry its pre-rendered audio.
+    // track also takes the stereo path - inL/inR carry its pre-rendered audio.
     const bool stereo = (inR != nullptr) || isMidi || isFrozen;
 
-    // No params, or an audio track with no input → tick the smoothers down
+    // No params, or an audio track with no input -> tick the smoothers down
     // (so M/S transitions sound smooth) and bail. MIDI tracks are exempt
     // from the inL == nullptr bail because their audio source comes from
     // the plugin, not an input buffer.
@@ -692,7 +692,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         return;
     }
 
-    // Per-track silent-skip — when the audio source is dead silent AND
+    // Per-track silent-skip - when the audio source is dead silent AND
     // there's no insert plugin that could produce tail / generated
     // audio, the whole HPF / 4-band EQ / comp / sends chain is a no-op
     // worth dodging. 24 strips × full DSP per block is an xrun-class
@@ -716,12 +716,12 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         };
         const float peakL = peakAbs (inL, numSamples);
         const float peakR = (stereo && inR != nullptr) ? peakAbs (inR, numSamples) : 0.0f;
-        // Hold off the skip until the PDC delay line has drained — otherwise the
+        // Hold off the skip until the PDC delay line has drained - otherwise the
         // last pdcAppliedSamples of this track's signal (still sitting in the
         // line) would be truncated. While the tail flushes we fall through to
         // the normal path; relatchPdcIfDrained there advances pdcSilentRun, and
         // once it reaches the applied length this skip re-engages. (Empty insert
-        // ⇒ post-insert == input, so the input-peak silence test is exact.)
+        // => post-insert == input, so the input-peak silence test is exact.)
         // The PDC delay line and the oversampler are in SERIES (insert -> PDC
         // delay -> oversampler), both fed the post-insert signal that
         // pdcSilentRun tracks. The oversampler holds osLatencySamples of
@@ -737,13 +737,13 @@ void ChannelStrip::processAndAccumulate (const float* inL,
            #if DUSKSTUDIO_HAS_DUSK_DSP
             // No comp ran this block, so the GR meter would otherwise pin
             // at the last reduction value. Force it to 0 so a silent track
-            // reads no gain reduction — same intent as the bypass path that
+            // reads no gain reduction - same intent as the bypass path that
             // zeroes the GR atom after the comp pass below.
             currentGrDb.store (0.0f, std::memory_order_relaxed);
            #endif
             // Output meter already defaulted to -inf at the top of this call.
             // Smoothers stay FROZEN on skip (no setTargetValue,
-            // no getNextValue) — when audio returns, they pick up
+            // no getNextValue) - when audio returns, they pick up
             // at the configured value with no click. The track's
             // input meter is written by AudioEngine before this
             // call and already reflects -inf for silent input, so
@@ -772,7 +772,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
     const bool compEnabled = paramsRef->compEnabled.load (std::memory_order_relaxed);
 
     // Source-pointer set used by the accumulation loop below. For mono,
-    // both point at tempMono (so srcL[i] and srcR[i] are the same sample —
+    // both point at tempMono (so srcL[i] and srcR[i] are the same sample -
     // the existing equal-power pan distributes the mono signal to L/R).
     // For stereo, they point at the two channels of tempStereoBuffer; the
     // pan gains then act as a per-channel balance.
@@ -807,7 +807,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
             if (nativeClapSlot.isLoaded())
             {
-                // Native CLAP is stereo-only — duplicate mono to L+R, process, average
+                // Native CLAP is stereo-only - duplicate mono to L+R, process, average
                 // back (same collapse as the hardware mono path). insertScratchR is free
                 // here (only the hardware branch uses it).
                 std::memcpy (insertScratchR.data(), tempMono.data(), sizeof (float) * (size_t) numSamples);
@@ -883,7 +883,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             // Skip PDC while freeze-capturing: the strip's delay-comp is an
             // inter-track alignment shift, not part of the track's audio. Baking
             // it in would double-apply it on frozen playback (which re-runs PDC),
-            // and the frozen-track PDC differs anyway (bypassed plugin → 0 native
+            // and the frozen-track PDC differs anyway (bypassed plugin -> 0 native
             // latency). Capture pre-PDC; playback applies the right amount once.
             if (pdcAppliedSamples > 0 && freezeCapL == nullptr)
                 for (int i = 0; i < numSamples; ++i)
@@ -897,7 +897,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         // Sub-chunk the compressor so the SmoothedValue ramp updates the donor's
         // atoms many times per block (it reads each atom once per processBlock).
         // Scale the chunk by the OS factor so the update cadence is constant in
-        // NATIVE time regardless of oversampling — at 4× a 64-sample native
+        // NATIVE time regardless of oversampling - at 4× a 64-sample native
         // chunk would otherwise become 16 calls/256-block instead of 4. 256
         // samples at 4× = 1.33 ms ≪ audible zipper threshold.
         const auto runComp = [this] (float* base, int total)
@@ -988,7 +988,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             // for a MIDI track that has an instrument loaded). We still
             // tick the smoother to keep its state in sync in case the
             // track later flips to audio mode. A native host owns the slot
-            // when loaded — same precedence as the effect-insert path.
+            // when loaded - same precedence as the effect-insert path.
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
             if (nativeClapSlot.isLoaded())
                 nativeClapSlot.processStereo (L, R, L, R, numSamples, &trackMidi);
@@ -1067,7 +1067,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         }
 
         // PDC: delay this track's post-insert L/R to align with the session's
-        // deepest-latency track (covers the MIDI-instrument branch above too —
+        // deepest-latency track (covers the MIDI-instrument branch above too -
         // its compensation is relative to its own already-scheduling-shifted
         // output, which the aggregator treats as zero latency).
         {
@@ -1087,7 +1087,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         }
 
 #if DUSKSTUDIO_HAS_DUSK_DSP
-        // Comp sub-chunk scaled by OS factor — same rationale as the mono path:
+        // Comp sub-chunk scaled by OS factor - same rationale as the mono path:
         // keep the donor-atom update cadence constant in native time so 4× OS
         // doesn't multiply the per-call overhead.
         const auto runCompStereo = [this] (float* l, float* r, int total)
@@ -1103,7 +1103,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             }
         };
 
-        // Frozen tracks skip EQ/comp entirely — both were baked into the WAV
+        // Frozen tracks skip EQ/comp entirely - both were baked into the WAV
         // during the freeze render, so re-running them would double-process.
         if (! isFrozen)
         {
@@ -1130,7 +1130,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             }
         }
 
-        // See mono-path comment above — zero the GR atom when bypassed (or
+        // See mono-path comment above - zero the GR atom when bypassed (or
         // frozen, where comp didn't run) so the meter doesn't pin at the
         // last-computed reduction value.
         currentGrDb.store ((! isFrozen && compEnabled) ? compressor.getGainReduction() : 0.0f,
@@ -1139,7 +1139,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
 
         srcL = L;
         srcR = R;
-        // Recorder reads getLastProcessedMono() / getLastProcessedR() —
+        // Recorder reads getLastProcessedMono() / getLastProcessedR() -
         // both pointers are valid for stereo tracks so the recorder can
         // capture both channels when printEffects is engaged.
         lastProcessedPtr = L;
@@ -1148,7 +1148,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
     }
 
     // Offline freeze render tap: srcL/srcR are the post-EQ/comp, pre-fader
-    // signal — exactly what the freeze WAV must bake. Captured regardless of
+    // signal - exactly what the freeze WAV must bake. Captured regardless of
     // the pass gate below so a soloed-out render block is still written. Costs
     // nothing live (freezeCapL is nullptr unless a render set it).
     if (freezeCapL != nullptr && freezeCapR != nullptr && srcL != nullptr)
@@ -1215,7 +1215,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
     {
         // Master-only fast path - no bus, no aux. The common steady state
         // for a track that's just summing direct to master. srcL == srcR
-        // for mono (existing equal-power pan distributes mono → L/R); for
+        // for mono (existing equal-power pan distributes mono -> L/R); for
         // stereo, srcL / srcR are the two channels of tempStereoBuffer
         // and pan acts as a per-channel balance.
         for (int i = 0; i < numSamples; ++i)

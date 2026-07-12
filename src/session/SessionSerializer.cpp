@@ -34,7 +34,7 @@ inline std::string toStd (const juce::String& s) { return s.toStdString(); }
 
 // Bump whenever the JSON shape gains a NEW required field or changes
 // the meaning of an existing one. Adding optional fields that default
-// sensibly when absent does NOT require a bump — the load path
+// sensibly when absent does NOT require a bump - the load path
 // gracefully ignores unknown keys.
 // Loader rejects sessions with version > kFormatVersion (newer Dusk Studio
 // can read older files via migrateSession; older Dusk Studio refusing
@@ -42,7 +42,7 @@ inline std::string toStd (const juce::String& s) { return s.toStdString(); }
 constexpr int kFormatVersion = 3;
 
 // Store a float from JSON only when it's finite, so a corrupt or hand-edited
-// session.json can't push NaN / inf into a DSP parameter — the in-memory
+// session.json can't push NaN / inf into a DSP parameter - the in-memory
 // default is kept instead. Mirrors the master Pultec EQ's loadMasterFloat.
 inline void storeFiniteFloat (std::atomic<float>& dst, const nlohmann::json& src) noexcept
 {
@@ -74,14 +74,14 @@ inline float finiteFloatOr (const nlohmann::json& src, float fallback) noexcept
 // is range-limited to [0, 1].
 inline AutomationPoint parseAutomationPoint (const nlohmann::json& pv, double fallbackBpm) noexcept
 {
-    // The fallback itself must be strictly positive + finite — a 0/negative session
+    // The fallback itself must be strictly positive + finite - a 0/negative session
     // tempo would otherwise pass straight through as recordedAtBPM and break retime math.
     const float safeFallback = (std::isfinite (fallbackBpm) && fallbackBpm > 0.0) ? (float) fallbackBpm : 120.0f;
     AutomationPoint pt;
-    // Validate finiteness AND int64 range BEFORE narrowing — casting a +inf or
+    // Validate finiteness AND int64 range BEFORE narrowing - casting a +inf or
     // out-of-range double (a hand-edited 1e40) to int64 is UB. 2^63 is exactly
     // representable as double; the strict upper bound rejects it. Non-finite /
-    // negative / oversized time → 0.
+    // negative / oversized time -> 0.
     const double rawT = json::getDouble (pv, "t", 0.0);
     pt.timeSamples   = (std::isfinite (rawT) && rawT > 0.0 && rawT < 9223372036854775808.0)
                            ? (std::int64_t) rawT : (std::int64_t) 0;
@@ -103,7 +103,7 @@ inline AutomationPoint parseAutomationPoint (const nlohmann::json& pv, double fa
 // by mutating in place. Add cases as the format evolves:
 //   case 1: do_v1_to_v2 (root); ++v; break;
 //   case 2: do_v2_to_v3 (root); ++v; break;
-// Each case MUST do its own ++v before break — the loop relies on the
+// Each case MUST do its own ++v before break - the loop relies on the
 // case body advancing the version. Without it the loop would spin
 // forever on the same version.
 // Returns true on success, false if a step refuses to migrate.
@@ -120,9 +120,9 @@ bool migrateSession (nlohmann::json& root, int from)
         switch (v)
         {
             case 1:
-                // v1 → v2: no field changes. v1 sessions are
+                // v1 -> v2: no field changes. v1 sessions are
                 // forward-compatible with v2 readers because v2 didn't
-                // add or remove any keys — it just claimed the version
+                // add or remove any keys - it just claimed the version
                 // marker as a forward-compat anchor so the migrator
                 // loop has an actual case to exercise. Bumping the
                 // version field is the only mutation; the rest of the
@@ -134,7 +134,7 @@ bool migrateSession (nlohmann::json& root, int from)
                 break;
 
             case 2:
-                // v2 → v3: region "file" / mastering "source_file" may now
+                // v2 -> v3: region "file" / mastering "source_file" may now
                 // be SESSION-RELATIVE (portable sessions). v2 files only
                 // ever stored absolute paths, which resolvePortablePath
                 // still handles, so the version stamp is the only mutation.
@@ -153,7 +153,7 @@ bool migrateSession (nlohmann::json& root, int from)
                 return false;
         }
         // Belt-and-suspenders against a future migrator that forgets
-        // its ++v — would otherwise spin the loop forever.
+        // its ++v - would otherwise spin the loop forever.
         if (v == before)
         {
             std::fprintf (stderr,
@@ -182,7 +182,7 @@ namespace
 //                 GENERIC_READ + FILE_FLAG_BACKUP_SEMANTICS because
 //                 GENERIC_WRITE on a directory handle fails ACCESS
 //                 DENIED on NTFS. Directory flush is a best-effort no-op
-//                 on NTFS — rename+file-flush carries the data-
+//                 on NTFS - rename+file-flush carries the data-
 //                 durability invariant.
 void fsyncFile (const juce::File& path)
 {
@@ -269,7 +269,7 @@ static const char* automationParamKey (AutomationParam p) noexcept
 }
 
 // Audio file paths are stored relative to the session directory whenever
-// the file lives inside it (the normal case — RecordManager writes into
+// the file lives inside it (the normal case - RecordManager writes into
 // <sessionDir>/audio). Absolute paths are kept for files referenced from
 // outside the session folder. This keeps sessions portable across a
 // rename, a copy to another machine, or the macOS<->Linux flow where the
@@ -278,7 +278,7 @@ juce::String portablePath (const juce::File& f, const juce::File& sessionDir)
 {
     if (f == juce::File()) return {};
     if (sessionDir != juce::File() && f.isAChildOf (sessionDir))
-        // Canonical separator is '/' regardless of OS — Windows'
+        // Canonical separator is '/' regardless of OS - Windows'
         // getRelativePathFrom returns backslashes, which a POSIX load
         // would treat as literal filename characters.
         return f.getRelativePathFrom (sessionDir).replaceCharacter ('\\', '/');
@@ -330,7 +330,7 @@ juce::File resolvePortablePath (const juce::String& stored,
     // renamed session). A relative path NOT under audio/ (e.g. a mastering
     // mixdown at the session root), and any absolute path where audio/ is not
     // the direct parent (external media that merely contains an audio/ segment),
-    // must not silently remap to an unrelated same-named take — report missing.
+    // must not silently remap to an unrelated same-named take - report missing.
     const auto fileName = normalised.fromLastOccurrenceOf ("/", false, false);
     const bool sessionLocal = normalised.startsWith ("audio/")
                            || (isAbsolute
@@ -401,12 +401,12 @@ JObj trackToObject (const Track& t, const juce::File& sessionDir)
     obj["midi_output_id"]  = toStd (t.midiOutputIdentifier);
     obj["midi_channel"]    = t.midiChannel.load();
     obj["track_mode"]      = t.mode.load();
-    // Never write frozen=true without a restorable capture — a frozen flag with no
+    // Never write frozen=true without a restorable capture - a frozen flag with no
     // path would load as a locked track with no audio. Gate the flag on both, same
     // as the freeze fields below.
     const bool emitFrozen = t.frozen.load() && ! t.frozenAudioPath.isEmpty();
     obj["frozen"] = emitFrozen;
-    // Only emit freeze fields when the track is actually frozen AND has a path —
+    // Only emit freeze fields when the track is actually frozen AND has a path -
     // a stale path left on a since-unfrozen (or reused) Session must not write
     // phantom freeze state that load() would then resurrect.
     if (emitFrozen)
@@ -724,7 +724,7 @@ JObj busToObject (const Bus& a)
     obj["comp_release_auto"] = a.strip.compReleaseAuto.load();
     obj["comp_makeup_db"]    = a.strip.compMakeupDb.load();
 
-    // Automation: same shape as tracks — mode + one array per non-empty lane.
+    // Automation: same shape as tracks - mode + one array per non-empty lane.
     // Only FaderDb / Pan / Mute are populated for a bus, but we iterate all
     // params for symmetry (empty lanes are skipped).
     obj["automation_mode"] = a.strip.automationMode.load (std::memory_order_relaxed);
@@ -855,7 +855,7 @@ void restoreTrack (Track& t, const nlohmann::json& v, double defaultRecordBpm,
         fr.gainDb          = 0.0f;
         t.frozenPluginBypass.store (json::getBool (v, "frozen_plugin_bypass", false));
         // A frozen flag with no usable WAV (missing file, zero length) is
-        // meaningless — drop the whole freeze (flag + path + region) so it can't
+        // meaningless - drop the whole freeze (flag + path + region) so it can't
         // be re-saved as phantom state, and the track falls back to live.
         if (! wav.existsAsFile() || fr.lengthInSamples <= 0)
         {
@@ -867,7 +867,7 @@ void restoreTrack (Track& t, const nlohmann::json& v, double defaultRecordBpm,
     }
     else
     {
-        // frozen_audio_path absent ⇒ not frozen, regardless of a stale flag.
+        // frozen_audio_path absent => not frozen, regardless of a stale flag.
         // Fully reset freeze state (not just the flag) so a reused Session can't
         // carry a stale path / region forward and re-save it as phantom freeze.
         t.frozen.store (false);
@@ -971,7 +971,7 @@ void restoreTrack (Track& t, const nlohmann::json& v, double defaultRecordBpm,
 
     // Enabled is stored unconditionally: load() reuses the live Session,
     // so a key absent from the file (pre-HW-insert session) must reset
-    // the flag — inheriting the prior session's enabled insert would
+    // the flag - inheriting the prior session's enabled insert would
     // route audio out to hardware this session never asked for.
     t.hardwareInsert.enabled.store (json::getBool (json::child (v, "hardware_insert"), "enabled", false));
     if (json::has (v, "hardware_insert"))
@@ -1032,7 +1032,7 @@ void restoreTrack (Track& t, const nlohmann::json& v, double defaultRecordBpm,
             t.automationLanes[(size_t) p].publishPoints (std::move (tmp));
         }
     }
-    // Unconditional store (default Off when absent) — same hazard as
+    // Unconditional store (default Off when absent) - same hazard as
     // restoreBus's automation_mode: a track left in Write by the prior
     // session must not keep writing over the loaded session's lanes.
     t.automationMode.store (json::getInt (v, "automation_mode", 0), std::memory_order_release);
@@ -1205,7 +1205,7 @@ void restoreBus (Bus& a, const nlohmann::json& v, double defaultRecordBpm)
     if (json::has (v, "comp_release_auto")) a.strip.compReleaseAuto.store (json::getBool (v, "comp_release_auto", false));
     if (json::has (v, "comp_makeup_db"))   a.strip.compMakeupDb .store (json::getFloat (v, "comp_makeup_db", 0.0f));
 
-    // Automation — mirror restoreTrack: clear lanes, rebuild from JSON, then
+    // Automation - mirror restoreTrack: clear lanes, rebuild from JSON, then
     // release-store the mode so the audio thread never reads a half-rebuilt
     // lane vector. Only FaderDb / Pan / Mute lanes are ever populated.
     for (auto& lane : a.strip.automationLanes)
@@ -1231,7 +1231,7 @@ void restoreBus (Bus& a, const nlohmann::json& v, double defaultRecordBpm)
         }
     }
     // Always write the mode so a re-load into a reused strip can't inherit a
-    // stale value: an absent key means the saved session predates automation → Off.
+    // stale value: an absent key means the saved session predates automation -> Off.
     a.strip.automationMode.store (json::getInt (v, "automation_mode", 0), std::memory_order_release);
 }
 } // namespace
@@ -1362,7 +1362,7 @@ juce::String SessionSerializer::serialize (const Session& s)
     master["tape_enabled"] = s.master().tapeEnabled.load();
     master["tape_hq"]      = s.master().tapeHQ.load();
 
-    // Pultec EQ (all atoms — every knob the user can move).
+    // Pultec EQ (all atoms - every knob the user can move).
     master["eq_enabled"]            = s.master().eqEnabled.load();
     master["eq_lf_boost"]           = s.master().eqLfBoost.load();
     master["eq_lf_atten"]           = s.master().eqLfAtten.load();
@@ -1561,7 +1561,7 @@ bool SessionSerializer::writeAtomic (const juce::File& target, const juce::Strin
     // session.json renamed but with empty / partial content.
     fsyncFile (tmp);
     // On replace failure, KEEP the tmp: it holds a complete, fsynced copy
-    // of the state being saved — the only one if the target was lost.
+    // of the state being saved - the only one if the target was lost.
     // The next successful save overwrites it.
     if (! tmp.replaceFileIn (target)) return false;
     // POSIX rename() is atomic in-memory only; durability of the rename
@@ -1586,7 +1586,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
     s.missingAudioFilesAfterLoad.clear();
 
     // Format version gate. Missing key (pre-versioning sessions) is
-    // treated as v1 — the format was effectively stable at v1 when the
+    // treated as v1 - the format was effectively stable at v1 when the
     // version field landed. Future-versioned sessions are rejected up
     // front rather than partial-loaded; downgrading Dusk Studio to read a
     // session saved by a newer build silently dropping new state is
@@ -1605,7 +1605,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         return false;
 
     // Unconditional (reset-when-absent): a pre-SR-aware file must not inherit
-    // the previous session's rate — 0 tells the load UI to adopt the device's.
+    // the previous session's rate - 0 tells the load UI to adopt the device's.
     {
         const double sr = json::getDouble (root, "session_sample_rate", 0.0);
         s.sessionSampleRate = (std::isfinite (sr) && sr >= 8000.0 && sr <= 384000.0)
@@ -1625,7 +1625,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
             // Clamp to the same 30-300 range the final tempoBpm store uses, so
             // the automation / MIDI fallback tempo stays aligned with the loaded
             // session tempo instead of using a raw out-of-range value. Reject a
-            // value past float range before it narrows (UB) — keep the seeded tempo.
+            // value past float range before it narrows (UB) - keep the seeded tempo.
             if (std::isfinite (peeked) && std::abs (peeked) <= (double) std::numeric_limits<float>::max())
                 sessionLoadBpm = juce::jlimit (30.0, 300.0, peeked);
         }
@@ -1633,7 +1633,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
 
     // A truncated / hand-edited file may lack whole section keys, or list
     // fewer buses / aux lanes than this build has. Every slot must still be
-    // driven through restore — skipping any leaves the PREVIOUS session's
+    // driven through restore - skipping any leaves the PREVIOUS session's
     // content (regions, plugins, mixer state) alive under the new session's
     // name. restoreBus and the aux-lane path inherit any absent property, so
     // an empty object is not enough to blank them: substitute the serialized
@@ -1650,7 +1650,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                                  ? json::array (root, "tracks") : json::array (sectionDefaults, "tracks");
         // Restore EVERY track slot, not just the ones the JSON lists. A session
         // with fewer tracks than this build (hand-edited, or written by a tool
-        // like the DP importer) must blank the surplus slots — otherwise they
+        // like the DP importer) must blank the surplus slots - otherwise they
         // keep the PREVIOUS session's regions / MIDI / automation / plugin, i.e.
         // ghost content that still plays back. Driving an absent slot through
         // restoreTrack with an empty object runs the same unconditional clears
@@ -1734,7 +1734,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                 }
             }
 
-            // Mode publish happens AFTER lane mutations below — same
+            // Mode publish happens AFTER lane mutations below - same
             // ordering rationale as the track-load block: avoid the
             // audio thread reading half-rebuilt lane vectors.
             for (auto& al : lane.params.automationLanes)
@@ -1765,7 +1765,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
             lane.params.automationMode.store (json::getInt (v, "automation_mode", 0), std::memory_order_release);
         }
     }
-    // Clear unconditionally — a session without the key must not keep the
+    // Clear unconditionally - a session without the key must not keep the
     // prior session's markers.
     s.getMarkers().clear();
     {
@@ -1784,7 +1784,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
     if (json::has (root, "master"))
     {
         const auto& master = json::child (root, "master");
-        // Reset to struct defaults when a key is absent — load() reuses the live
+        // Reset to struct defaults when a key is absent - load() reuses the live
         // session (no pre-load reset), so a conditional store would inherit the
         // previously-loaded session's value. (Audible master state: level /
         // routing / mute.)
@@ -1806,7 +1806,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
             if (json::has (master, key))
             {
                 const float v = json::getFloat (master, key, 0.0f);
-                if (std::isfinite (v)) dst.store (v);   // reject NaN/inf from a corrupt file — keep the default
+                if (std::isfinite (v)) dst.store (v);   // reject NaN/inf from a corrupt file - keep the default
             }
         };
         auto loadMasterBool = [&master] (std::atomic<bool>& dst, const char* key)
@@ -1832,7 +1832,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         loadMasterFloat (s.master().compReleaseMs,    "comp_release_ms");
         loadMasterBool  (s.master().compReleaseAuto,  "comp_release_auto");
         loadMasterFloat (s.master().compMakeupDb,     "comp_makeup_db");
-        // Mode publish happens AFTER lane mutations below — same
+        // Mode publish happens AFTER lane mutations below - same
         // ordering rationale as the track-load + aux-load blocks.
         for (auto& al : s.master().automationLanes)
             al.publishPoints ({});
@@ -1897,7 +1897,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         loadF ("comp_release_ms",   m.compReleaseMs);
         loadB ("comp_release_auto", m.compReleaseAuto);
         loadF ("comp_makeup_db",    m.compMakeupDb);
-        // Limiter fields are newly persisted, so old sessions lack them — reset
+        // Limiter fields are newly persisted, so old sessions lack them - reset
         // to the struct defaults when absent instead of inheriting the prior
         // session's limiter state (loadB/loadF conditional-store, no reset).
         m.limiterEnabled.store    (json::getBool  (mast, "limiter_enabled", true));
@@ -1926,7 +1926,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         if (json::has (tport, "punch_in"))      s.savedPunchIn      = json::getInt64 (tport, "punch_in", 0);
         if (json::has (tport, "punch_out"))     s.savedPunchOut     = json::getInt64 (tport, "punch_out", 0);
         // Assign unconditionally (default false when absent) so a session
-        // missing the key doesn't inherit a stale snapToGrid from a prior load —
+        // missing the key doesn't inherit a stale snapToGrid from a prior load -
         // the per-editor fallback below reads this value.
         s.snapToGrid = json::getBool (tport, "snap_to_grid", false);
         // Per-editor snap is newer than snap_to_grid. Always assign (don't leave
@@ -1975,7 +1975,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
             s.tempoMap.setPoints (std::move (pts));
         }
         else
-            s.tempoMap.setPoints ({});   // no map in the file → clear any stale map from a prior load
+            s.tempoMap.setPoints ({});   // no map in the file -> clear any stale map from a prior load
         if (json::has (tport, "ui_stage"))          s.uiStage.store          (juce::jlimit (0, 3, json::getInt (tport, "ui_stage", 0)));
         if (json::has (tport, "sync_source_input"))
             s.syncSourceInputIdentifier = json::getString (tport, "sync_source_input");
@@ -2163,7 +2163,7 @@ SessionSerializer::consolidateInto (Session& s, const juce::File& newSessionDir)
     if (newSessionDir == juce::File() || newSessionDir == oldDir)
         return res;
 
-    // Phase A — plan. Map each unique source to its destination without
+    // Phase A - plan. Map each unique source to its destination without
     // touching the model. Files under the old session dir keep their relative
     // subpath (audio/, audio/freeze/, a root mixdown.wav); anything else is
     // flattened into audio/ with a numeric suffix on basename collisions.
@@ -2219,7 +2219,7 @@ SessionSerializer::consolidateInto (Session& s, const juce::File& newSessionDir)
 
     // Native plugin file-backed state (state/lv2/<slot>/...) travels with the
     // session as a whole tree: the serialized blobs reference it by
-    // cur/-relative abstract paths, so no model repoint is needed — the copy
+    // cur/-relative abstract paths, so no model repoint is needed - the copy
     // just has to exist under the new root before the post-swap re-save
     // refreshes it.
     juce::File copiedStateDir;
@@ -2241,7 +2241,7 @@ SessionSerializer::consolidateInto (Session& s, const juce::File& newSessionDir)
         }
     }
 
-    // Phase B — copy. Any failure rolls back the files copied so far (including
+    // Phase B - copy. Any failure rolls back the files copied so far (including
     // the state tree above) and returns with the model untouched.
     std::vector<juce::File> copied;
     for (const auto& [srcPath, target] : remap)
@@ -2261,7 +2261,7 @@ SessionSerializer::consolidateInto (Session& s, const juce::File& newSessionDir)
     }
     res.filesCopied = (int) copied.size();
 
-    // Phase C — repoint the model.
+    // Phase C - repoint the model.
     auto repoint = [&remap] (juce::File& f)
     {
         auto it = remap.find (f.getFullPathName());

@@ -116,7 +116,7 @@ private:
 
     std::array<std::unique_ptr<PerTrackMidi>, Session::kNumTracks> midiCaptures;
 
-    // Diagnostic — distinguishes "track wasn't armed in MIDI mode"
+    // Diagnostic - distinguishes "track wasn't armed in MIDI mode"
     // (counter 0, cap null) from "armed but no events arrived"
     // (counter 0, cap exists) from "events filtered out at drain"
     // (counter > drained.size()).

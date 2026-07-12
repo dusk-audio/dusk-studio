@@ -92,7 +92,7 @@ juce::String describeBindingTarget (const MidiBinding& b,
             // Try to resolve the parameter's name via the engine. If
             // no plugin is loaded or paramIndex is out of range, fall
             // back to the index so the user still sees something
-            // identifiable (and can right-click → Remove it).
+            // identifiable (and can right-click -> Remove it).
             juce::String paramName;
             if (engine != nullptr
                 && b.targetIndex >= 0
@@ -261,7 +261,7 @@ namespace midilearn
 namespace
 {
 // Set by the UI layer (setLearnMenuShowHook) to render the learn menu
-// in-window. Null until then → showLearnMenu logs, asserts and drops the menu.
+// in-window. Null until then -> showLearnMenu logs, asserts and drops the menu.
 LearnMenuShowFn& learnMenuShowHook()
 {
     static LearnMenuShowFn hook;
@@ -333,7 +333,7 @@ static bool tryGetBankedVariant (MidiBindingTarget kind, int absIndex,
     }
 }
 
-// Discrete (toggle) targets — those that show "Button mode" in the
+// Discrete (toggle) targets - those that show "Button mode" in the
 // learn menu so the user can switch a latching D-type controller from
 // the default rising-edge fire to fire-on-every-message.
 static bool isToggleTarget (MidiBindingTarget t) noexcept
@@ -349,7 +349,7 @@ static bool isToggleTarget (MidiBindingTarget t) noexcept
         case MidiBindingTarget::BusMute:
         case MidiBindingTarget::BusSolo:
         case MidiBindingTarget::AuxLaneMute:
-        // Discrete on/off targets — latch-friendly, so the learn menu
+        // Discrete on/off targets - latch-friendly, so the learn menu
         // offers Press/Toggle button modes for them.
         case MidiBindingTarget::TrackEqEnabled:
         case MidiBindingTarget::TrackCompEnabled:
@@ -384,7 +384,7 @@ void showLearnMenu (juce::Component& target,
     const bool        hasBanked   = tryGetBankedVariant (kind, index,
                                                             bankedKind, bankedIndex);
 
-    // Find existing bindings — absolute first, then banked. Both can
+    // Find existing bindings - absolute first, then banked. Both can
     // coexist (user could bind two different controllers, one each).
     const MidiBinding* existingAbsolute = nullptr;
     const MidiBinding* existingBanked   = nullptr;
@@ -440,7 +440,7 @@ void showLearnMenu (juce::Component& target,
         m.addItem (boundLabel, false, false, []{});
 
         // Button-mode submenu for discrete (toggle) targets. Lets the
-        // user flip a binding from rising-edge (default — fires once on
+        // user flip a binding from rising-edge (default - fires once on
         // press 127, releases on 0) to fire-on-every-message for
         // latching controllers whose physical press alternates 127/0
         // each click (e.g. Panorama T6 in some modes).
@@ -498,7 +498,7 @@ void showLearnMenu (juce::Component& target,
     }
     else
     {
-        // Log too — the assert compiles out in release, and the menu silently
+        // Log too - the assert compiles out in release, and the menu silently
         // not opening must stay diagnosable in the field.
         juce::Logger::writeToLog ("MidiBindings::showLearnMenu: no in-window "
                                   "menu hook installed; learn menu dropped");
@@ -597,7 +597,7 @@ std::optional<std::vector<MidiBinding>> deserializeBindingsPreset (const juce::S
             case MidiBindingTarget::AuxLaneMute:
             case MidiBindingTarget::AuxPluginParam:
             case MidiBindingTarget::MasterFader:
-            // Bank-relative variants — were silently dropped, breaking preset
+            // Bank-relative variants - were silently dropped, breaking preset
             // round-trip for any banked binding.
             case MidiBindingTarget::TrackFaderBank:
             case MidiBindingTarget::TrackPanBank:

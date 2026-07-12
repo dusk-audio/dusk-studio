@@ -8,8 +8,8 @@
 #include <vector>
 
 // The single seam between Dusk Studio's engine and JUCE's MIDI device backend.
-// Its BOUNDARY type is dusk::MidiBuffer — the RT drain hands the audio thread
-// dusk events, and the RT out-queue takes them — so a future native ALSA-
+// Its BOUNDARY type is dusk::MidiBuffer - the RT drain hands the audio thread
+// dusk events, and the RT out-queue takes them - so a future native ALSA-
 // sequencer backend can replace this file pair without touching the engine.
 // Internal storage stays juce-typed (collectors, outputs, the SPSC slots); only
 // the API is dusk. This is the only JUCE-device-touching code, hence the
@@ -25,7 +25,7 @@ struct MidiDeviceInfo
 // Owns the per-input MidiMessageCollector bank and is itself the juce callback
 // bound to every enabled input; routes by source identifier. The detach-rebuild-
 // reattach fence around a hot-plug is orchestrated by the engine (which also
-// detaches its own audio callback) — this class only exposes the pieces.
+// detaches its own audio callback) - this class only exposes the pieces.
 class MidiInputClient final : public juce::MidiInputCallback
 {
 public:
@@ -40,7 +40,7 @@ public:
     // Message thread, input callback DETACHED. Enumerate the hardware inputs,
     // enable each on the device manager, build a per-input MidiMessageCollector,
     // then append the synthetic Virtual-Keyboard slot last (fixed identifier, no
-    // OS device). Mutating the bank with the callback active is UB — see the
+    // OS device). Mutating the bank with the callback active is UB - see the
     // detach/attach fence.
     void rebuild (double sampleRate);
 
@@ -67,7 +67,7 @@ public:
     // Audio thread. Pull this input's block out of its collector and copy the
     // events into the dusk boundary buffer. RT-safe provided (a) `out` was
     // reserveBytes()'d off the RT path by the caller and (b) the incoming burst
-    // fits the collector's pre-sized scratch — a rare overflow grows it, exactly
+    // fits the collector's pre-sized scratch - a rare overflow grows it, exactly
     // as the pre-flip perInputMidi drain did. Call once per input index per
     // block: the collector drain is destructive.
     void drainBlock (int inputIndex, dusk::MidiBuffer& out, int numSamples) noexcept;
@@ -129,7 +129,7 @@ public:
     // instead pushes whole per-port blocks into the lock-free FIFO; the pump
     // drains them. Slot buffers are pre-sized so the copy never allocates; a
     // block past the slot cap OR a full queue drops the block (dropping clock
-    // bytes beats an xrun). timeMs/sampleRate carry the sample-offset→ms math.
+    // bytes beats an xrun). timeMs/sampleRate carry the sample-offset->ms math.
     void queueRt (int port, const dusk::MidiBuffer& events, double sampleRate) noexcept;
 
     // Pump lifecycle (message thread). High priority so a loaded message thread
@@ -150,7 +150,7 @@ private:
     std::vector<std::unique_ptr<juce::MidiOutput>> outputs;
 
     // Serialises the pump thread's port access against message-thread bank
-    // mutation (rebuild / ensureOpen). The audio thread never takes it — it only
+    // mutation (rebuild / ensureOpen). The audio thread never takes it - it only
     // touches the FIFO writer side.
     std::mutex bankMutex;
 

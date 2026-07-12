@@ -16,14 +16,14 @@ struct PluginDesc
     std::string id, name, vendor, version, description;
     std::vector<std::string> features;   // CLAP plugin-feature tags (e.g. "audio-effect", "instrument")
 
-    // True when the plugin is an instrument (no audio input) — not hostable on an
+    // True when the plugin is an instrument (no audio input) - not hostable on an
     // effects-only AUX return lane.
     bool isInstrument() const;
 };
 
 // Loads a .clap shared object (dlopen), runs its entry init(), and exposes the
 // plugin factory + descriptors. RAII: deinit() + dlclose() on destruction.
-// Message thread only — loading/unloading is not real-time safe.
+// Message thread only - loading/unloading is not real-time safe.
 //
 // Foundation of the native CLAP host (replaces JUCE plugin hosting, aux-first).
 // This stage only loads + enumerates; instance/process/editor land in later

@@ -49,10 +49,10 @@ private:
     juce::TextButton modeFet   { "FET"  };
     juce::TextButton modeVca   { "VCA"  };
     // VCA-only knee selector: hard knee (default) vs soft (parabolic) knee.
-    // Visible / enabled only in VCA mode — see refreshLabelsForMode().
+    // Visible / enabled only in VCA mode - see refreshLabelsForMode().
     juce::TextButton vcaOverEasyBtn { "Soft Knee" };
     // VCA detector mode: ADAPT (level-dependent) vs CLASSIC (fixed 10 ms TC).
-    // Visible / enabled only in VCA mode — see refreshLabelsForMode().
+    // Visible / enabled only in VCA mode - see refreshLabelsForMode().
     juce::TextButton vcaDetectorBtn { "Classic" };
 
     juce::Label  threshLabel,  ratioLabel,  attackLabel,  releaseLabel,  makeupLabel;

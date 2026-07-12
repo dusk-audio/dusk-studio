@@ -35,7 +35,7 @@ namespace duskstudio::platform
 // returns false; the caller prints guidance and exits cleanly instead of
 // letting JUCE null-deref deep inside window creation and core-dump.
 //
-// macOS / Windows: always true — their native windowing is present once
+// macOS / Windows: always true - their native windowing is present once
 // the process has a GUI session.
 bool hasUsableDisplay();
 
@@ -143,14 +143,14 @@ void requestFocusOnMainWaylandSurface();
 // Component::createNewPeer routes to LinuxComponentPeer (X11) instead
 // of WaylandComponentPeer, even on a Wayland session. Used so the
 // main window, popup menus, plugin editor peers, and dialog windows
-// all share the X11 backend — required because the Linux plugin
+// all share the X11 backend - required because the Linux plugin
 // protocols (VST3 X11EmbedWindowID, LV2 LV2_UI__X11UI, JUCE-plugin
 // X11-windowed renderer) need an X11 parent to attach to, AND because
 // wl_surface popups can't parent to an X11 main window.
 //
 // Sticky on Linux: once preferX11ForNextNativeWindow() runs (during
 // MainWindow ctor), the latch stays on for the process lifetime.
-// clearPreferX11ForNativeWindow() is a no-op on Linux — clearing the
+// clearPreferX11ForNativeWindow() is a no-op on Linux - clearing the
 // latch would let the next popup menu pick wl_surface and silently
 // fail to map under an X11 parent.
 //
@@ -175,15 +175,15 @@ void installNonFatalXErrorHandler();
 // OOP plugin-editor path to host the child process's editor window
 // inside the DAW UI instead of letting it float as a separate top-level.
 //
-// Linux  : returns nullptr — the Linux OOP editor path already uses
+// Linux  : returns nullptr - the Linux OOP editor path already uses
 //          juce::XEmbedComponent directly (better fit for the XEmbed
 //          protocol than a generic foreign-window wrapper).
 // Windows: returns a Component that SetParents the HWND on attach,
-//          strips its top-level styles (WS_POPUP / WS_CAPTION → WS_CHILD),
+//          strips its top-level styles (WS_POPUP / WS_CAPTION -> WS_CHILD),
 //          and tracks SetWindowPos to the Component's bounds on resize.
 //          On destruction, detaches the HWND back to the desktop so the
 //          OOP host can cleanly destroy its window.
-// macOS  : returns nullptr today — cross-process NSView reparenting is
+// macOS  : returns nullptr today - cross-process NSView reparenting is
 //          its own research project; the Mac OOP editor stays floating.
 std::unique_ptr<juce::Component> createForeignNativeWindowEmbed (
     std::uint64_t nativeHandle);
@@ -193,7 +193,7 @@ std::unique_ptr<juce::Component> createForeignNativeWindowEmbed (
 // a juce::Component. The editor's processor is the in-process "shell"
 // instance owned by PluginSlot; DSP runs in the OOP child via IPC.
 //
-// Linux + Windows do NOT declare this overload — they reparent the
+// Linux + Windows do NOT declare this overload - they reparent the
 // child's native editor window into the parent process via XEmbed
 // (Linux) or SetParent (Windows) and have no need for a parent-side
 // shell instance. Call sites must gate on JUCE_MAC before invoking.

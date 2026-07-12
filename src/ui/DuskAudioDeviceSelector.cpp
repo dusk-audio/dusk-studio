@@ -8,7 +8,7 @@ namespace
 constexpr int kNoneId = 1;   // "(None)" entry in the device combos
 
 // How many device channels to request open. The engine imposes no fixed
-// channel cap — it bounds-checks every output-pair tap against the device's
+// channel cap - it bounds-checks every output-pair tap against the device's
 // actual open outputs at runtime (OutputPairRouting::tapStereoPairInto). These
 // are generous open-request ceilings so the output-pair menu sees every usable
 // pair without per-channel check-boxes.
@@ -69,7 +69,7 @@ DuskAudioDeviceSelector::~DuskAudioDeviceSelector()
 
 void DuskAudioDeviceSelector::changeListenerCallback (juce::ChangeBroadcaster*)
 {
-    // External change (hot-plug, another panel) — re-sync our combos.
+    // External change (hot-plug, another panel) - re-sync our combos.
     if (! updating)
         rebuildFromManager();
 }
@@ -158,7 +158,7 @@ void DuskAudioDeviceSelector::applySetupChange (bool deviceChanged)
     }
     else
     {
-        // New device may not support the previous device's rate/buffer — clear
+        // New device may not support the previous device's rate/buffer - clear
         // them (0 = "pick a valid default for this device") so the open doesn't
         // fail when switching between devices with disjoint capabilities.
         setup.sampleRate = 0.0;
@@ -166,7 +166,7 @@ void DuskAudioDeviceSelector::applySetupChange (bool deviceChanged)
     }
 
     // Open a generous fixed number of channels so the main-output pair menu can
-    // offer every active pair — we don't draw per-channel check-boxes. JUCE
+    // offer every active pair - we don't draw per-channel check-boxes. JUCE
     // clamps the request to what the device actually exposes.
     setup.useDefaultOutputChannels = false;
     setup.outputChannels.clear();

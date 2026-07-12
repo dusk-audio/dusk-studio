@@ -1,6 +1,6 @@
 #include "PlatformWindowing.h"
 #include <juce_audio_processors/juce_audio_processors.h>
-#import <AppKit/AppKit.h>   // NSCursor (hide/unhide) — not pulled in transitively
+#import <AppKit/AppKit.h>   // NSCursor (hide/unhide) - not pulled in transitively
 
 // Stubs for now. The Mac/Win equivalents of the Linux fixes haven't
 // surfaced yet because the user smoke-tests on Linux only - but the
@@ -24,21 +24,21 @@ namespace
 // Wraps a parent-process juce::AudioProcessorEditor (created from
 // PluginSlot's shell instance) so it can be hosted as a regular
 // juce::Component inside the main app window. Owns the editor via
-// unique_ptr — when the wrapper destructs, the editor destructs,
+// unique_ptr - when the wrapper destructs, the editor destructs,
 // which fires AudioProcessor::editorBeingDeleted on the shell
 // instance. PluginSlot's releaseShellInstance is then safe to run
 // because the editor's processor pointer no longer references the
 // shell.
 //
 // Resize protocol:
-//   • Wrapper.resized() (host changed bounds)  -> editor.setBounds
+//   - Wrapper.resized() (host changed bounds)  -> editor.setBounds
 //     to fill the wrapper. Standard JUCE pattern.
-//   • Editor's componentMovedOrResized (plugin-initiated scale, e.g.
+//   - Editor's componentMovedOrResized (plugin-initiated scale, e.g.
 //     Diva's "150%" zoom popup) -> wrapper.setSize matches the editor.
 //     A parent->resized() nudge is issued so the modal container
 //     re-layouts around the new size. applyingFromEditor flag breaks
-//     the resize feedback loop (editor.setBounds → editor resized →
-//     wrapper.setSize → wrapper.resized → editor.setBounds → ...).
+//     the resize feedback loop (editor.setBounds -> editor resized ->
+//     wrapper.setSize -> wrapper.resized -> editor.setBounds -> ...).
 class InProcessEditorHost final : public juce::Component,
                                     private juce::ComponentListener
 {
@@ -61,7 +61,7 @@ public:
     {
         if (owned != nullptr)
             owned->removeComponentListener (this);
-        // unique_ptr dtor runs after this body — destroys the editor,
+        // unique_ptr dtor runs after this body - destroys the editor,
         // which calls AudioProcessor::editorBeingDeleted on the shell
         // instance. Safe ordering because PluginSlot::releaseShellInstance
         // refuses while this wrapper is outstanding (tracked via

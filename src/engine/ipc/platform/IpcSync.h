@@ -9,13 +9,13 @@
 // signal each other when a block is ready / a reply has arrived without
 // either side allocating or holding a mutex.
 //
-// Linux  : futex(SYS_futex, FUTEX_WAIT_BITSET / FUTEX_WAKE) — non-private
+// Linux  : futex(SYS_futex, FUTEX_WAIT_BITSET / FUTEX_WAKE) - non-private
 //          so the address is hashed by physical page and works across
 //          two processes mmap'ing the same memfd.
 // macOS  : os_sync_wait_on_address_with_timeout / os_sync_wake_by_address
-//          (macOS 14.4+) — supports OS_SYNC_WAIT_ON_ADDRESS_SHARED for
+//          (macOS 14.4+) - supports OS_SYNC_WAIT_ON_ADDRESS_SHARED for
 //          cross-process. Fallback: POSIX semaphores in shared memory.
-// Windows: WaitOnAddress / WakeByAddressSingle — supports cross-process
+// Windows: WaitOnAddress / WakeByAddressSingle - supports cross-process
 //          when the address is in a shared mapping.
 //
 // MUST be RT-safe on the audio path: no allocation, no exceptions, the
@@ -26,7 +26,7 @@ namespace duskstudio::ipc::platform
 
 enum class WaitResult
 {
-    Awoken,        // wake call delivered (possibly spurious) — caller re-checks atom
+    Awoken,        // wake call delivered (possibly spurious) - caller re-checks atom
     ValueChanged,  // atom already differed from `expected` when entering kernel
     Timeout,       // deadline elapsed without a wake
     Interrupted,   // signal-interrupted; caller may retry the wait
@@ -45,14 +45,14 @@ struct Deadline
 Deadline deadlineFromNow (long long nsFromNow) noexcept;
 
 // Block while `addr->load() == expected`, up to `*deadline` if non-null.
-// Atomic memory order on `addr` is the caller's responsibility — pass an
+// Atomic memory order on `addr` is the caller's responsibility - pass an
 // atomic loaded with `acquire`. Spurious wakes are possible (FUTEX_WAIT
 // semantics); always re-check the atom after a return.
 WaitResult waitOnAddress (std::atomic<std::uint32_t>* addr,
                             std::uint32_t expected,
                             const Deadline* deadline) noexcept;
 
-// Wake a single waiter sleeping on `addr`. Wakes are best-effort —
+// Wake a single waiter sleeping on `addr`. Wakes are best-effort -
 // missed wakes are recovered by the wait-side polling on next entry.
 void wakeOneAddress (std::atomic<std::uint32_t>* addr) noexcept;
 

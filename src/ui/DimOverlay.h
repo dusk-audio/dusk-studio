@@ -16,7 +16,7 @@ inline constexpr float kEditorDimAlpha = 0.28f;
 // etc.). Sits as a sibling of the modal in the top-level component, sized
 // to the parent's local bounds.
 //
-// onClick fires when the user clicks anywhere on the overlay — owners use
+// onClick fires when the user clicks anywhere on the overlay - owners use
 // this to dismiss whatever modal is being shadowed.
 class DimOverlay final : public juce::Component
 {

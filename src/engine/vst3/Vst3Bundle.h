@@ -9,7 +9,7 @@ namespace duskstudio::vst3
 // One plugin class advertised by a .vst3 module's factory.
 struct PluginDesc
 {
-    std::string id;      // class UID as a hex string — the stable id persisted in sessions
+    std::string id;      // class UID as a hex string - the stable id persisted in sessions
     std::string name;
     std::string vendor;
     std::string version;

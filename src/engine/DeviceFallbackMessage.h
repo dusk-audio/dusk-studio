@@ -18,21 +18,21 @@ inline std::string startupDeviceMessage (bool opened,
 {
     if (opened)
     {
-        // The saved device opened (or there was nothing specific to compare) —
+        // The saved device opened (or there was nothing specific to compare) -
         // nothing to report.
         if (savedName.empty() || actualName == savedName)
             return {};
 
         // Fell back to a different device that works.
-        return "Your saved audio device \"" + savedName + "\" could not be opened — it "
+        return "Your saved audio device \"" + savedName + "\" could not be opened - it "
                "may be in use by another application (PipeWire, JACK, browser audio, "
                "another DAW) or no longer available.\n\nAudio has switched to \"" + actualName
              + "\" so you can keep working. To use your original device, free it in "
                "the other app, then reselect it in Audio Settings. Dusk Studio did not "
-               "change your saved device — it will be tried again next launch.";
+               "change your saved device - it will be tried again next launch.";
     }
 
-    // Nothing opened at all — the session is silent until a device frees up.
+    // Nothing opened at all - the session is silent until a device frees up.
     std::string msg = "No audio device could be opened.\n\n";
     if (! savedName.empty())
         msg += "Your saved device \"" + savedName + "\" appears to be in use by another "

@@ -24,7 +24,7 @@ int findMarkerByNameAt (Session& s, const std::string& name, std::int64_t atSamp
 }
 } // namespace
 
-// ── AddMarkerAction ───────────────────────────────────────────────────────
+// AddMarkerAction
 
 AddMarkerAction::AddMarkerAction (Session& s, std::int64_t t, std::string n)
     : session (s), timelineSamples (t), name (std::move (n))
@@ -54,7 +54,7 @@ bool AddMarkerAction::undo()
     return true;
 }
 
-// ── RemoveMarkerAction ────────────────────────────────────────────────────
+// RemoveMarkerAction
 
 RemoveMarkerAction::RemoveMarkerAction (Session& s, int idx)
     : session (s), markerIdx (idx)
@@ -74,12 +74,12 @@ bool RemoveMarkerAction::undo()
 {
     if (! haveRemoved) return false;
     // Re-insert at the marker's original timeline position. addMarker
-    // re-sorts by samples, so the index slot may differ — that's fine.
+    // re-sorts by samples, so the index slot may differ - that's fine.
     session.addMarker (removed.timelineSamples, removed.name);
     return true;
 }
 
-// ── MoveMarkerAction ──────────────────────────────────────────────────────
+// MoveMarkerAction
 
 MoveMarkerAction::MoveMarkerAction (Session& s, std::string n,
                                       std::int64_t from, std::int64_t to)

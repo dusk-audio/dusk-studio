@@ -56,7 +56,7 @@ private:
     // the long-term rate correct; rounding only at emission. An int64 that
     // advanced by llround(samplesPerClock) per tick accumulated the same
     // rounding error every tick (+0.5 sample at any x.5 interval ≈ 0.05 %
-    // tempo error — slaves drifted ~90 ms over a 3-minute song).
+    // tempo error - slaves drifted ~90 ms over a 3-minute song).
     double clockPhase = 0.0;
     bool lastRolling = false;
 };

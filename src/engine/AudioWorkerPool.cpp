@@ -128,7 +128,7 @@ void AudioWorkerPool::runBlock() noexcept
     job_ (numWorkers);                // caller runs the last lane
 
     // Fast path: workers usually finish within a short spin. Past that, BLOCK
-    // on the completion event — never spin unboundedly: sched_yield from a
+    // on the completion event - never spin unboundedly: sched_yield from a
     // high-priority SCHED_RR thread won't cede the core to a lower-priority
     // worker, so an unbounded spin can deadlock the callback. The counter is
     // the source of truth; the event (auto-reset, signalled once per dispatch
@@ -145,8 +145,8 @@ void AudioWorkerPool::runBlock() noexcept
     {
         completion.wait (1);
         // Stall diagnostic. A worker wedged inside a plugin's processBlock holds
-        // the whole callback hostage. Latch it RT-safely — just bump an atomic,
-        // NO stderr on the audio thread — and let a non-RT consumer surface
+        // the whole callback hostage. Latch it RT-safely - just bump an atomic,
+        // NO stderr on the audio thread - and let a non-RT consumer surface
         // joinStallCount(). At 2 s the deadline is long dead, so a reader racing
         // this increment is immaterial.
         if (++waitedMs == 2000)

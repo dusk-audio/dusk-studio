@@ -43,7 +43,7 @@ public:
 
     // Fired once when the dialog is dismissed AFTER a successful render.
     // Not fired on cancel or failure. Caller can use it to chain post-bounce
-    // workflow (e.g. Mixdown → switch to Mastering with the new file loaded).
+    // workflow (e.g. Mixdown -> switch to Mastering with the new file loaded).
     // Defer any heavy work (stage switches, etc.) via callAsync - this fires
     // from inside the close-button callback.
     std::function<void(juce::File)> onSuccessfulFinish;

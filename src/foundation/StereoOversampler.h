@@ -10,13 +10,13 @@
 // per-sample functor, this splits the round trip into a block UP phase and a
 // block DOWN phase so a stereo, look-ahead, sample-buffered algorithm (the
 // brickwall limiter, true-peak metering) can run its own pass over BOTH
-// channels' oversampled samples in between — the functor form can't, because it
+// channels' oversampled samples in between - the functor form can't, because it
 // hands back each processed sample before the next channel is seen.
 //
 // The FIR operations, tap sets and per-stage ordering are exactly the donor's
-// (2x = stage A 47-tap, 4x = stage A then stage B 15-tap), so up→down with no
+// (2x = stage A 47-tap, 4x = stage A then stage B 15-tap), so up->down with no
 // intervening processing is the same linear-phase round trip the donor performs
-// — verified sample-for-sample against duskaudio::Oversampler in the tests.
+// - verified sample-for-sample against duskaudio::Oversampler in the tests.
 namespace dusk::audio
 {
 class StereoOversampler

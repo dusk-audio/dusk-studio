@@ -22,7 +22,7 @@ public:
         writePos_ = 0;
         latestHz_ = 0.0f;
         latestLevel_ = 0.0f;
-        // Search range: 50..1500 Hz → lag range
+        // Search range: 50..1500 Hz -> lag range
         minLag_ = std::max (2, static_cast<int> (std::floor (sampleRate / 1500.0)));
         maxLag_ = std::min (static_cast<int> (history_.size()) - 2,
                             static_cast<int> (std::ceil  (sampleRate /   50.0)));
@@ -91,13 +91,13 @@ public:
             // YIN absolute-threshold step: once cmnd dips below the threshold,
             // follow the dip DOWN to its local minimum rather than taking the
             // first crossing. Breaking on the first sub-threshold value lands on
-            // the downslope (period too short → pitch reads sharp); the true
+            // the downslope (period too short -> pitch reads sharp); the true
             // period sits at the bottom of the dip.
             if (inDip)
             {
                 if (cmnd < bestValue) { bestValue = cmnd; bestTau = tau; }
-                else if (cmnd > bestValue) break; // truly climbed back out → local min found
-                // cmnd == bestValue: flat plateau at the minimum (quantised CMNDF) —
+                else if (cmnd > bestValue) break; // truly climbed back out -> local min found
+                // cmnd == bestValue: flat plateau at the minimum (quantised CMNDF) -
                 // keep scanning so a deeper dip just past the plateau isn't missed.
             }
             else if (cmnd < kCMNDThreshold)
@@ -107,7 +107,7 @@ public:
                 bestTau   = tau;
             }
             // No pre-dip fallback: committing the global CMNDF minimum even when nothing
-            // ever crosses the threshold defeats YIN's voicing gate — aperiodic / noisy
+            // ever crosses the threshold defeats YIN's voicing gate - aperiodic / noisy
             // input would report a bogus pitch. bestTau stays -1 until a real dip, so
             // unvoiced input falls through to the 0 Hz return below.
         }

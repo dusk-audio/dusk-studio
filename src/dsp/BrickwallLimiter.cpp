@@ -25,10 +25,10 @@ inline float onePoleCoef (float timeMs, double rate) noexcept
     return (t > 0.0f) ? 1.0f - std::exp (-1.0f / t) : 1.0f;
 }
 
-// Maps the smoothed reduction depth (linear, 0..1) to the fast↔slow release
-// blend. 2.0 → full slow at ~6 dB of sustained GR, mostly fast at ≤1 dB.
+// Maps the smoothed reduction depth (linear, 0..1) to the fast<->slow release
+// blend. 2.0 -> full slow at ~6 dB of sustained GR, mostly fast at ≤1 dB.
 constexpr float kReleaseAdaptGain = 2.0f;
-// Time constant of the reduction-depth tracker that drives the blend — short
+// Time constant of the reduction-depth tracker that drives the blend - short
 // enough to follow program, long enough that a lone transient stays "fast".
 constexpr float kRelDepthTrackMs  = 30.0f;
 // Lookahead bounds. The delay/deque are sized for the max so the active value
@@ -94,7 +94,7 @@ void BrickwallLimiter::setLookaheadMs (float ms) noexcept
 {
     // Guard against non-finite input: jlimit would pass NaN through (NaN
     // compares false against both bounds) and recomputeActiveLookahead would
-    // then cast NaN to int — undefined. Ignore garbage, keep the last value.
+    // then cast NaN to int - undefined. Ignore garbage, keep the last value.
     if (! std::isfinite (ms)) return;
     lookaheadMs.store (std::clamp (ms, kMinLookaheadMs, kMaxLookaheadMs), std::memory_order_relaxed);
     recomputeActiveLookahead();
@@ -107,7 +107,7 @@ void BrickwallLimiter::recomputeActiveLookahead() noexcept
     // Quantize the lookahead in BASE-rate samples FIRST, then derive the
     // oversampled count from it. This keeps laOs an exact multiple of osFactor,
     // so the reported latency (lookaheadBase, base samples) equals the delay
-    // actually applied (laOs / osFactor) — no sub-sample drift between them.
+    // actually applied (laOs / osFactor) - no sub-sample drift between them.
     const int maxLookaheadBase = std::max (1, maxLookaheadOs / osFactor);
     const int lookaheadBase = std::clamp ((int) std::lround (sr * (double) ms / 1000.0),
                                           1, maxLookaheadBase);
@@ -181,7 +181,7 @@ void BrickwallLimiter::processInPlace (float* L, float* R, int numSamples) noexc
     float* uR = up.R;
 
     const int cap = (int) dqVal[0].size();
-    // Active lookahead read once per block — keeps the read offset and the
+    // Active lookahead read once per block - keeps the read offset and the
     // deque window consistent even if setLookaheadMs() runs mid-stream.
     const int laOs      = activeLookaheadOs.load (std::memory_order_relaxed);
     const int windowLen = laOs + 1;
@@ -246,7 +246,7 @@ void BrickwallLimiter::processInPlace (float* L, float* R, int numSamples) noexc
             // When bypassed, hold the smoother neutral. The target/deque above
             // still track (so the window is warm on re-enable), but env and the
             // program-dependent depth tracker must NOT accumulate reduction from
-            // material the limiter isn't actually reducing — otherwise the first
+            // material the limiter isn't actually reducing - otherwise the first
             // release after re-enabling would be biased by stale history.
             if (! active)
             {
@@ -271,7 +271,7 @@ void BrickwallLimiter::processInPlace (float* L, float* R, int numSamples) noexc
             }
             else
             {
-                // Program-dependent release: blend fast↔slow by the smoothed
+                // Program-dependent release: blend fast<->slow by the smoothed
                 // reduction depth carried from the (deep, sustained vs brief)
                 // limiting that preceded this recovery.
                 const float blend = std::clamp (relDepth[c] * kReleaseAdaptGain, 0.0f, 1.0f);

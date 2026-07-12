@@ -86,7 +86,7 @@ public:
         addAndMakeVisible (okBtn);
         addAndMakeVisible (cancelBtn);
 
-        // Comfortable browse size — clamped to parent by EmbeddedModal.
+        // Comfortable browse size - clamped to parent by EmbeddedModal.
         setSize (820, 560);
     }
 
@@ -125,7 +125,7 @@ public:
     }
 
 private:
-    // FileBrowserListener — double-click on a file triggers Open. Single
+    // FileBrowserListener - double-click on a file triggers Open. Single
     // selection writes the path into the active filename for Save mode.
     void selectionChanged() override {}
     void fileClicked (const juce::File&, const juce::MouseEvent&) override {}

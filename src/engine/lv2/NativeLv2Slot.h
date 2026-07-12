@@ -32,18 +32,18 @@ struct Lv2SlotTraits
     }
 };
 
-// LV2 insert slot — the shared NativeInsertSlot plus parameter forwarding
+// LV2 insert slot - the shared NativeInsertSlot plus parameter forwarding
 // (input control ports, values in the port's own units; mirrors NativeClapSlot).
 class NativeLv2Slot final : public hosting::NativeInsertSlot<Lv2SlotTraits>
 {
 public:
-    // Session-scoped file-state directory — set by the engine ahead of
+    // Session-scoped file-state directory - set by the engine ahead of
     // saveState/loadState (see Lv2Instance::setStateDirectory).
     void setStateDirectory (const std::filesystem::path& dir)
         { if (instance != nullptr) instance->setStateDirectory (dir); }
 
     // Parameters (message thread for read/enumerate; setParamValue is the control
-    // entry — staged and applied on the next audio block). No-op / empty when unloaded.
+    // entry - staged and applied on the next audio block). No-op / empty when unloaded.
     int paramCount() const noexcept { return instance != nullptr ? instance->paramCount() : 0; }
     const Lv2Instance::ParamInfo* paramInfo (int index) const noexcept
         { return instance != nullptr ? instance->paramInfo (index) : nullptr; }
@@ -57,7 +57,7 @@ public:
         { return instance != nullptr ? instance->lastTouchedParamIndex() : -1; }
 
 protected:
-    // MIDI binding: 0..1 fraction → the port's own min..max range.
+    // MIDI binding: 0..1 fraction -> the port's own min..max range.
     void applyParamBinding (uint32_t paramIndex, float frac) override
     {
         const auto* p = paramInfo ((int) paramIndex);

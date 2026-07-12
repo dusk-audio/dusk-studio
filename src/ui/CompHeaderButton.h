@@ -52,7 +52,7 @@ public:
         const auto r = getLocalBounds().toFloat().reduced (1.0f);
         const bool on = isEnabledFn ? isEnabledFn() : false;
 
-        // Mostly transparent pill — only a faint outline + LED + label
+        // Mostly transparent pill - only a faint outline + LED + label
         // are drawn. Lets the underlying section band tint show through.
         g.setColour (juce::Colour (0xff242428).withAlpha (0.18f));
         g.fillRoundedRectangle (r, 4.0f);
@@ -105,7 +105,7 @@ public:
         g.drawText (text, textBounds, juce::Justification::centred, false);
 
         // Accent stripe along the bottom edge (only when a non-
-        // transparent accent was set AND no chip is drawn — when a
+        // transparent accent was set AND no chip is drawn - when a
         // chip is present, the chip itself carries the colour).
         if (chip.isEmpty() && ! accent.isTransparent())
         {

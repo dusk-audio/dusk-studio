@@ -115,11 +115,12 @@ private:
     juce::String testCompHeavyGR();          // extreme settings: characterize harmonics at heavy GR
     juce::String testCompPerTrack();         // all 16 tracks under Opto produce identical output
     juce::String testParallelMatchesSerial(); // worker-pool mix == serial mix within float-reassoc tol
+    juce::String testMidiPlayAlongMonitor();   // armed+IN MIDI track sounds live notes in Stopped AND Playing
     juce::String testBackendsOpenCleanly();
     juce::String probeUMC1820AlsaFormat();   // explicitly open UMC1820 ALSA & report format
 
     // Per-config benchmark cell. Drives `numBlocks` callbacks and returns one
-    // formatted line "[OK]/[OVER]  config  → median X us / p95 Y us / max Z us
+    // formatted line "[OK]/[OVER]  config  -> median X us / p95 Y us / max Z us
     // (budget B us, overruns N/total)". budget = blockSize * 1e6 / sampleRate.
     juce::String runPerfBenchmark (const juce::String& label,
                                     double sampleRate, int blockSize,

@@ -46,7 +46,7 @@ public:
     void setBeatsPerBar (int n) noexcept           { beatsPerBar.store (n, std::memory_order_relaxed); }
     void setVolumeDb (float dB) noexcept           { volumeDb.store (dB, std::memory_order_relaxed); }
     // When true, a fresh click can trigger before the previous click
-    // finishes — both bodies render together. When false (default), a
+    // finishes - both bodies render together. When false (default), a
     // new beat boundary cuts the previous click off (legacy mono
     // behaviour, used at typical BPMs where click bodies always end
     // before the next beat anyway).

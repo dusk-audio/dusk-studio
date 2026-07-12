@@ -60,14 +60,14 @@ private:
 
     // Pull the latest post-EQ window from the chain, window + FFT it, fold
     // the magnitudes into specDb (peak-attack / slow-release). Returns true
-    // if specDb changed (→ repaint the curve area).
+    // if specDb changed (-> repaint the curve area).
     bool updateSpectrum();
     void drawSpectrum (juce::Graphics&, juce::Rectangle<float> plot) const;
 
     MasteringParams& params;
     MasteringChain*  chain = nullptr;
 
-    // ── Spectrum analyzer ──
+    // Spectrum analyzer
     static constexpr int kFftOrder = 11;            // 2048-point
     static constexpr int kFftSize  = 1 << kFftOrder;
     static constexpr int kNumBins  = kFftSize / 2;
@@ -84,7 +84,7 @@ private:
 
     // Shared console chrome: LED-pill header (click toggles enable), same
     // component the channel / bus / master strips use for their EQ + COMP
-    // headers — so the mastering panels read as part of the same desk.
+    // headers - so the mastering panels read as part of the same desk.
     std::unique_ptr<class CompHeaderButton> headerBtn;
 
     struct BandUI

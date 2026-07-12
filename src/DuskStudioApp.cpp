@@ -39,7 +39,7 @@
 #endif
 #include "ui/PlatformWindowing.h"
 
-// Embedded brand icon — wired in CMakeLists.txt via juce_add_binary_data.
+// Embedded brand icon - wired in CMakeLists.txt via juce_add_binary_data.
 // Linux relies on this for runtime _NET_WM_ICON since JUCE 8 has no
 // getApplicationIcon hook; macOS / Windows get it from the bundled
 // .icns / PE .ico but setIcon is harmless there.
@@ -70,7 +70,7 @@ public:
         // the single addToDesktop call at the end of this ctor.
         //
         // Linux: route the main peer to X11 (XWayland) instead of
-        // wl_surface. Required for inline-embedded plugin editors —
+        // wl_surface. Required for inline-embedded plugin editors -
         // VST3/LV2/CLAP SDKs hand back X11 Window IDs that can only
         // reparent into an X11 host. XWayland is transparent and ships
         // on every mainstream Wayland session.
@@ -170,7 +170,7 @@ public:
         // Delegate to MainComponent's requestQuit, which checks dirty
         // state (autosave-newer-than-saved) and shows the Dusk Studio-styled
         // Save / Don't Save / Cancel modal only when there are actual
-        // unsaved changes. No dirty changes → quit immediately.
+        // unsaved changes. No dirty changes -> quit immediately.
         if (auto* main = dynamic_cast<MainComponent*> (getContentComponent()))
         {
             main->requestQuit();
@@ -187,7 +187,7 @@ DuskStudioApp::~DuskStudioApp() = default;
 
 // True when a native window can be created; on failure prints the XWayland
 // guidance. Called before the main window AND at the top of each *_EDITOR_TEST
-// gate (those open real X11 windows too) — but never on the headless paths,
+// gate (those open real X11 windows too) - but never on the headless paths,
 // which must keep running without any display.
 static bool displayUsableOrExplain()
 {
@@ -445,8 +445,8 @@ static void runHeadlessPipelineTest (const juce::String& pluginPath)
 
     // The ctor may have opened a real device + added the engine as its callback.
     // This path drives the callback manually below (including the BS-cycle
-    // re-prepares), so detach FIRST — before prepareForSelfTest mutates DSP
-    // state — so the device thread can't process the engine mid-re-prepare
+    // re-prepares), so detach FIRST - before prepareForSelfTest mutates DSP
+    // state - so the device thread can't process the engine mid-re-prepare
     // (matches runHeadlessSessionPerf).
     engine->getDeviceManager().removeAudioCallback (engine.get());
     // Don't depend on a real device coming up - prepare directly.
@@ -620,8 +620,8 @@ static void runHeadlessPipelineTest (const juce::String& pluginPath)
     juce::AudioIODeviceCallbackContext ctx {};
 
     // Two probes:
-    //   • Master output peak/RMS - what the device would hear.
-    //   • Strip-level peak via Track::peakDb meter, polled every block.
+    //   - Master output peak/RMS - what the device would hear.
+    //   - Strip-level peak via Track::peakDb meter, polled every block.
     //     The strip writes meterPeakDbL/R from inside processAndAccumulate
     //     (see ChannelStrip), so it reflects post-pan / post-fader state.
     float  masterPeak = 0.0f;
@@ -712,7 +712,7 @@ static void runHeadlessPipelineTest (const juce::String& pluginPath)
                               "MIDI not reaching plugin OR strip fader/mute is silencing it.\n");
 
     // DUSKSTUDIO_PIPELINE_TEST_BS_CYCLE="512,1024,256": after the main run,
-    // re-prepare at each listed block size and drive blocks with a held chord —
+    // re-prepare at each listed block size and drive blocks with a held chord -
     // reproduces the buffer-size-change crash path (device reopen at a new
     // period) headlessly, plugin and all, without touching a real device.
     if (const char* cyc = std::getenv ("DUSKSTUDIO_PIPELINE_TEST_BS_CYCLE"))
@@ -772,7 +772,7 @@ static void runHeadlessPipelineTest (const juce::String& pluginPath)
 // headlessly at 48 kHz / 256 samples, paced to realtime so the playback
 // prefetch behaves as it does live, then print the per-section perf
 // table. Measures the full mixer path (region playback, automation,
-// buses, aux, master) with no audio device — for attributing a DSP-load
+// buses, aux, master) with no audio device - for attributing a DSP-load
 // report to a specific section of the callback.
 static void runHeadlessSessionPerf (const juce::String& sessionPath)
 {
@@ -790,7 +790,7 @@ static void runHeadlessSessionPerf (const juce::String& sessionPath)
     auto engine  = std::make_unique<AudioEngine> (*session);
     // The AudioEngine ctor registered with its AudioDeviceManager (and may have
     // opened a real device). This perf path drives the callback MANUALLY below,
-    // so detach FIRST — before prepareForSelfTest mutates DSP state — so the
+    // so detach FIRST - before prepareForSelfTest mutates DSP state - so the
     // device thread can't process the engine while that state is in flux.
     engine->getDeviceManager().removeAudioCallback (engine.get());
     engine->prepareForSelfTest (sampleRate, blockSize);
@@ -951,7 +951,7 @@ static juce::File sessionPathFromCommandLine (const juce::String& commandLine)
 struct DuskStudioApp::Lv2EditorTest
 {
     duskstudio::lv2::NativeLv2Slot slot;
-    std::unique_ptr<juce::DocumentWindow> window;   // declared last → destroyed first
+    std::unique_ptr<juce::DocumentWindow> window;   // declared last -> destroyed first
 };
 #endif
 
@@ -960,7 +960,7 @@ struct DuskStudioApp::Vst3EditorTest
 {
     duskstudio::vst3::Vst3Bundle bundle;            // backs the instance's vtables
     duskstudio::vst3::Vst3Instance instance;
-    std::unique_ptr<juce::DocumentWindow> window;   // declared last → destroyed first
+    std::unique_ptr<juce::DocumentWindow> window;   // declared last -> destroyed first
 };
 #endif
 
@@ -971,7 +971,7 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
     // `Dusk Studio --version` into the support DM) and by the Linux CI smoke
     // launch (verifies the binary actually links + starts headless).
     // Check BEFORE any audio init so the path works on machines with
-    // no audio device. Tokenize commandLine — substring match would
+    // no audio device. Tokenize commandLine - substring match would
     // false-trip on session paths containing "--version" (e.g.
     // ~/Sessions/test--version-bug/session.json).
     const auto cliTokens = juce::StringArray::fromTokens (commandLine, true);
@@ -1018,7 +1018,7 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
         return;
     }
 
-    // DUSKSTUDIO_CLAP_EDITOR_TEST=/path/to.clap — standalone live-verification of
+    // DUSKSTUDIO_CLAP_EDITOR_TEST=/path/to.clap - standalone live-verification of
     // the native CLAP editor embed (no engine, no main window). Opens the plugin's
     // embedded-X11 editor through our own host in a plain window. Close it to quit.
     // Linux-only (the native CLAP host + X11 embed).
@@ -1046,21 +1046,21 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
             { juce::JUCEApplication::getInstance()->systemRequestedQuit(); }
         };
         clapEditorTestWindow = std::make_unique<TestWindow> (
-            "Dusk — CLAP editor test", juce::Colours::black, juce::DocumentWindow::allButtons);
+            "Dusk - CLAP editor test", juce::Colours::black, juce::DocumentWindow::allButtons);
         clapEditorTestWindow->setUsingNativeTitleBar (true);
         clapEditorTestWindow->setContentOwned (comp.release(), true);
         clapEditorTestWindow->centreWithSize (w, h);
-        clapEditorTestWindow->setVisible (true);   // creates the peer → consumes the X11 latch
+        clapEditorTestWindow->setVisible (true);   // creates the peer -> consumes the X11 latch
         // Match MainWindow's native-window setup: release the X11 latch now the peer
         // exists, and install the non-fatal X error handler so a dying CLAP editor
         // window can't core-dump this harness.
         duskstudio::platform::clearPreferX11ForNativeWindow();
         duskstudio::platform::installNonFatalXErrorHandler();
-        return;   // standalone — skip the normal engine + main-window startup
+        return;   // standalone - skip the normal engine + main-window startup
     }
 #endif // DUSKSTUDIO_HAS_NATIVE_CLAP
 
-    // DUSKSTUDIO_LV2_EDITOR_TEST=/path/to.lv2 — same standalone live-verification
+    // DUSKSTUDIO_LV2_EDITOR_TEST=/path/to.lv2 - same standalone live-verification
     // for the native LV2 (suil) editor embed. Close the window to quit.
 #if DUSKSTUDIO_HAS_NATIVE_LV2
     if (const char* path = std::getenv ("DUSKSTUDIO_LV2_EDITOR_TEST"); path != nullptr && *path)
@@ -1093,18 +1093,18 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
             { juce::JUCEApplication::getInstance()->systemRequestedQuit(); }
         };
         lv2EditorTest->window = std::make_unique<TestWindow> (
-            "Dusk — LV2 editor test", juce::Colours::black, juce::DocumentWindow::allButtons);
+            "Dusk - LV2 editor test", juce::Colours::black, juce::DocumentWindow::allButtons);
         lv2EditorTest->window->setUsingNativeTitleBar (true);
         lv2EditorTest->window->setContentOwned (comp.release(), true);
         lv2EditorTest->window->centreWithSize (w, h);
-        lv2EditorTest->window->setVisible (true);   // creates the peer → consumes the X11 latch
+        lv2EditorTest->window->setVisible (true);   // creates the peer -> consumes the X11 latch
         duskstudio::platform::clearPreferX11ForNativeWindow();
         duskstudio::platform::installNonFatalXErrorHandler();
         return;
     }
 #endif // DUSKSTUDIO_HAS_NATIVE_LV2
 
-    // DUSKSTUDIO_VST3_EDITOR_TEST=/path/to.vst3 — same standalone live-verification
+    // DUSKSTUDIO_VST3_EDITOR_TEST=/path/to.vst3 - same standalone live-verification
     // for the native VST3 (IPlugView) editor embed. Close the window to quit.
 #if DUSKSTUDIO_HAS_NATIVE_VST3
     if (const char* path = std::getenv ("DUSKSTUDIO_VST3_EDITOR_TEST"); path != nullptr && *path)
@@ -1148,18 +1148,18 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
             { juce::JUCEApplication::getInstance()->systemRequestedQuit(); }
         };
         vst3EditorTest->window = std::make_unique<TestWindow> (
-            "Dusk — VST3 editor test", juce::Colours::black, juce::DocumentWindow::allButtons);
+            "Dusk - VST3 editor test", juce::Colours::black, juce::DocumentWindow::allButtons);
         vst3EditorTest->window->setUsingNativeTitleBar (true);
         vst3EditorTest->window->setContentOwned (comp.release(), true);
         vst3EditorTest->window->centreWithSize (w, h);
-        vst3EditorTest->window->setVisible (true);   // creates the peer → consumes the X11 latch
+        vst3EditorTest->window->setVisible (true);   // creates the peer -> consumes the X11 latch
         duskstudio::platform::clearPreferX11ForNativeWindow();
         duskstudio::platform::installNonFatalXErrorHandler();
         return;
     }
 #endif // DUSKSTUDIO_HAS_NATIVE_VST3
 
-    // DUSKSTUDIO_REPLACE_TEST=A.vst3:B.vst3 — exercises the Replace plugin...
+    // DUSKSTUDIO_REPLACE_TEST=A.vst3:B.vst3 - exercises the Replace plugin...
     // swap pattern under live processing. Loads A, runs audio, swaps to
     // B mid-stream via loadFromDescription, runs more audio. Mirrors the
     // user's GUI flow: right-click slot button -> Replace plugin -> pick
@@ -1362,9 +1362,9 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
 
     // Preflight the windowing system before touching anything that opens
     // a native window (Desktop display enumeration, the main window). Dusk
-    // Studio's Linux UI is X11-only — the main window and every plugin-
+    // Studio's Linux UI is X11-only - the main window and every plugin-
     // editor peer are X11 surfaces, reached via XWayland on a Wayland
-    // session — so a pure-Wayland session with XWayland disabled (sway
+    // session - so a pure-Wayland session with XWayland disabled (sway
     // without `xwayland enable`, niri/labwc without an XWayland satellite)
     // has no display we can open. Without this guard JUCE null-derefs deep
     // inside window creation and the process core-dumps with no usable
@@ -1421,11 +1421,11 @@ void DuskStudioApp::shutdown()
     // Dismiss any still-open modal dialogs (e.g. the Audio Device selector)
     // BEFORE destroying mainWindow. The selector's `AudioDeviceSelectorComponent`
     // is registered as a change-listener on `AudioEngine::deviceManager`. If we
-    // skip this, `mainWindow.reset()` destroys MainComponent → AudioEngine →
+    // skip this, `mainWindow.reset()` destroys MainComponent -> AudioEngine ->
     // AudioDeviceManager, then ScopedJuceInitialiser_GUI's destructor (which
     // runs AFTER us, in JUCEApplicationBase::main) destroys ModalComponentManager,
     // which finally destroys the dialog - its destructor calls removeChangeListener
-    // on the freed AudioDeviceManager → SIGSEGV.
+    // on the freed AudioDeviceManager -> SIGSEGV.
     //
     // The AudioSettingsPanel modal dialog is freed inside MainComponent's
     // destructor (via a tracked Component::SafePointer) so the
@@ -1461,7 +1461,7 @@ void DuskStudioApp::shutdown()
     // Tear down the FileLogger installed by crash_handler::install so
     // JUCE's leak detector doesn't complain at exit. The crash callback
     // installed via setApplicationCrashHandler is harmless if it stays
-    // registered — process is exiting either way.
+    // registered - process is exiting either way.
     duskstudio::crash_handler::uninstall();
 }
 

@@ -37,7 +37,7 @@ bool indexValid (Session& s, int trackIdx, int regionIdx)
 
 // Frozen tracks are edit-locked: their audio/MIDI is baked into a rendered WAV,
 // so any region edit would silently desync it. Region actions bail here (the
-// gesture reverts, model unchanged) — unfreeze to edit.
+// gesture reverts, model unchanged) - unfreeze to edit.
 bool frozenLocked (Session& s, int trackIdx)
 {
     return trackIdx >= 0 && trackIdx < Session::kNumTracks
@@ -45,7 +45,7 @@ bool frozenLocked (Session& s, int trackIdx)
 }
 } // namespace
 
-// ── RegionEditAction ──────────────────────────────────────────────────────
+// RegionEditAction
 
 RegionEditAction::RegionEditAction (Session& s, AudioEngine& e,
                                       int t, int idx,
@@ -72,7 +72,7 @@ bool RegionEditAction::undo()
     return true;
 }
 
-// ── MidiRegionEditAction ──────────────────────────────────────────────────
+// MidiRegionEditAction
 
 MidiRegionEditAction::MidiRegionEditAction (Session& s, AudioEngine& e,
                                                 int t, int idx,
@@ -103,7 +103,7 @@ bool MidiRegionEditAction::undo()
     return true;
 }
 
-// ── SplitRegionAction ─────────────────────────────────────────────────────
+// SplitRegionAction
 
 SplitRegionAction::SplitRegionAction (Session& s, AudioEngine& e,
                                         int t, int idx, std::int64_t atSample)
@@ -133,7 +133,7 @@ bool SplitRegionAction::perform()
 
     // Clamp fades against the new half-lengths so the original's existing
     // fadeIn / fadeOut don't exceed their half's length. Split itself does
-    // NOT introduce auto-fades — the boundary is a hard cut by default.
+    // NOT introduce auto-fades - the boundary is a hard cut by default.
     // Crossfades only happen when regions are dragged to actually overlap;
     // PlaybackEngine's implicit-overlap detection handles that case.
     orig.fadeInSamples   = juce::jlimit<std::int64_t> (0, orig.lengthInSamples, orig.fadeInSamples);
@@ -165,7 +165,7 @@ bool SplitRegionAction::undo()
     return true;
 }
 
-// ── PasteRegionAction ─────────────────────────────────────────────────────
+// PasteRegionAction
 
 PasteRegionAction::PasteRegionAction (Session& s, AudioEngine& e,
                                         int t, const AudioRegion& r)
@@ -195,7 +195,7 @@ bool PasteRegionAction::undo()
     return true;
 }
 
-// ── CreateMidiRegionAction ────────────────────────────────────────────────
+// CreateMidiRegionAction
 
 CreateMidiRegionAction::CreateMidiRegionAction (Session& s,
                                                   int t,
@@ -250,7 +250,7 @@ bool CreateMidiRegionAction::undo()
     return removed;
 }
 
-// ── DeleteRegionAction ────────────────────────────────────────────────────
+// DeleteRegionAction
 
 DeleteRegionAction::DeleteRegionAction (Session& s, AudioEngine& e,
                                           int t, int idx)
@@ -282,7 +282,7 @@ bool DeleteRegionAction::undo()
     return true;
 }
 
-// ── DeleteMidiRegionAction ────────────────────────────────────────────────
+// DeleteMidiRegionAction
 
 DeleteMidiRegionAction::DeleteMidiRegionAction (Session& s, AudioEngine& e,
                                                     int t, int idx)
@@ -314,7 +314,7 @@ bool DeleteMidiRegionAction::undo()
     return true;
 }
 
-// ── CloneTrackAction ─────────────────────────────────────────────────────
+// CloneTrackAction
 
 // POD snapshot of every per-track field the clone should duplicate.
 // Atomics are loaded into plain values; vectors are copied by value.
@@ -544,7 +544,7 @@ bool CloneTrackAction::perform()
     if (dstIdx < 0 || dstIdx >= Session::kNumTracks) return false;
     if (srcIdx == dstIdx) return false;
     // The clone snapshot doesn't carry the frozen flag / frozenRegion, so
-    // cloning to or from a frozen track would desync. Refuse — unfreeze first.
+    // cloning to or from a frozen track would desync. Refuse - unfreeze first.
     if (session.track (srcIdx).frozen.load (std::memory_order_relaxed)
         || session.track (dstIdx).frozen.load (std::memory_order_relaxed)) return false;
 
@@ -571,7 +571,7 @@ bool CloneTrackAction::undo()
     if (beforeState == nullptr) return false;
     if (dstIdx < 0 || dstIdx >= Session::kNumTracks) return false;
     // The Impl snapshot doesn't carry frozen state, so restoring beforeState onto a
-    // now-frozen destination would desync its baked WAV. Refuse — mirrors perform()'s
+    // now-frozen destination would desync its baked WAV. Refuse - mirrors perform()'s
     // frozen guard. Unfreeze first to undo.
     if (session.track (dstIdx).frozen.load (std::memory_order_relaxed)) return false;
     applyTrack (session.track (dstIdx), engine, dstIdx, *beforeState);
@@ -579,7 +579,7 @@ bool CloneTrackAction::undo()
     return true;
 }
 
-// ── JoinRegionsAction ─────────────────────────────────────────────────────
+// JoinRegionsAction
 
 JoinRegionsAction::JoinRegionsAction (Session& s, AudioEngine& e,
                                        int t, const std::vector<int>& idxs)
@@ -711,7 +711,7 @@ bool JoinRegionsAction::perform()
         juce::AudioBuffer<float> tmp (chs, regSamples);
         tmp.clear();
         if (! rdr->read (&tmp, 0, regSamples, reg.sourceOffset, true, chs > 1))
-            return false;   // unreadable region body — abort the join, leave regions unchanged
+            return false;   // unreadable region body - abort the join, leave regions unchanged
                             // (no output file created yet, nothing to clean up)
         const int destOffset = (int) (reg.timelineStart - firstStart);
         for (int c = 0; c < chs; ++c)
@@ -796,7 +796,7 @@ bool JoinRegionsAction::undo()
     return true;
 }
 
-// ── RecordCommitAction ───────────────────────────────────────────────────
+// RecordCommitAction
 
 RecordCommitAction::RecordCommitAction (Session& s, AudioEngine& e,
                                           std::vector<TrackDiff> d)
@@ -805,7 +805,7 @@ RecordCommitAction::RecordCommitAction (Session& s, AudioEngine& e,
 bool RecordCommitAction::perform()
 {
     // The first perform() is the UndoManager's bookkeeping replay of
-    // the commit RecordManager already applied to session state — no
+    // the commit RecordManager already applied to session state - no
     // need to write the after-state again. Subsequent calls (redo
     // after an undo) actually mutate state.
     if (! firstPerformDone)
@@ -839,7 +839,7 @@ bool RecordCommitAction::undo()
     return true;
 }
 
-// ── ReverseRegionAction ───────────────────────────────────────────────────
+// ReverseRegionAction
 
 ReverseRegionAction::ReverseRegionAction (Session& s, AudioEngine& e,
                                             int t, int idx)
@@ -883,7 +883,7 @@ bool ReverseRegionAction::perform()
         std::unique_ptr<juce::AudioFormatWriter> writer (
             wav.createWriterFor (out.get(), sr, (std::uint32_t) chs, bits, {}, 0));
         if (writer == nullptr) { out.reset(); outFile.deleteFile(); return false; }
-        out.release();   // ownership → writer
+        out.release();   // ownership -> writer
 
         // Stream the source tail-first in bounded chunks: read the chunk ending
         // at `remaining`, reverse each channel, append it. This reverses the

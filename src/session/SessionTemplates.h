@@ -23,7 +23,7 @@ enum class SessionTemplate
     kCount
 };
 
-// Display label for a template - shown in the File → New menu.
+// Display label for a template - shown in the File -> New menu.
 const char* nameForTemplate (SessionTemplate t) noexcept;
 
 // Stamp the given template onto an existing Session. Resets per-track

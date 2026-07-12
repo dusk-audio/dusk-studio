@@ -193,7 +193,7 @@ AuxLaneComponent::AuxLaneComponent (AuxLane& l, AuxLaneStrip& s, int idx,
                                        AudioEngine& e)
     : lane (l), strip (s), engine (e), laneIndex (idx)
 {
-    // Accessibility floor — screen readers announce the lane as
+    // Accessibility floor - screen readers announce the lane as
     // "Aux N" instead of "Component".
     setTitle ("Aux " + juce::String (idx + 1));
     setDescription ("Aux send/return lane " + juce::String (idx + 1));
@@ -214,7 +214,7 @@ AuxLaneComponent::AuxLaneComponent (AuxLane& l, AuxLaneStrip& s, int idx,
             nameLabel.setText (lane.name, juce::dontSendNotification);
             return;
         }
-        // Cap aux name length — channel strips render this same name above
+        // Cap aux name length - channel strips render this same name above
         // their AUX1-4 send knobs in a narrow column; keeping the cap here
         // ensures the channel-strip displays stay readable.
         constexpr int kAuxNameMaxChars = 12;
@@ -256,7 +256,7 @@ AuxLaneComponent::AuxLaneComponent (AuxLane& l, AuxLaneStrip& s, int idx,
     {
         lane.params.faderTouched.store (false, std::memory_order_release);
     };
-    // Right-click on fader or mute → MIDI Learn menu (mouseDown handler
+    // Right-click on fader or mute -> MIDI Learn menu (mouseDown handler
     // checks eventComponent).
     returnFader.addMouseListener (this, false);
     addAndMakeVisible (returnFader);
@@ -326,7 +326,7 @@ AuxLaneComponent::AuxLaneComponent (AuxLane& l, AuxLaneStrip& s, int idx,
         s.openOrAddButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff5a4880));
         s.openOrAddButton.setColour (juce::TextButton::textColourOffId, juce::Colour (0xff9080c0));
         s.openOrAddButton.setColour (juce::TextButton::textColourOnId,  juce::Colours::white);
-        s.openOrAddButton.addMouseListener (this, false);   // right-click → MIDI Learn
+        s.openOrAddButton.addMouseListener (this, false);   // right-click -> MIDI Learn
         s.openOrAddButton.onClick = [this, i]
         {
             auto& slotRef = strip.getPluginSlot (i);
@@ -394,7 +394,7 @@ AuxLaneComponent::AuxLaneComponent (AuxLane& l, AuxLaneStrip& s, int idx,
         refreshSlotControls (i);
     rebuildSlots();
 
-    // Deeper a11y — name every user-driven control on the lane.
+    // Deeper a11y - name every user-driven control on the lane.
     const auto an = juce::String (laneIndex + 1);
     returnFader .setTitle ("Aux " + an + " return fader");
     muteButton  .setTitle ("Aux " + an + " mute");
@@ -431,7 +431,7 @@ void AuxLaneComponent::timerCallback()
 
     // Motor-fader animate + Write/Touch capture, mirroring the per-
     // channel pattern in ChannelStripComponent::timerCallback. Animate
-    // is mode-agnostic — gated only on the user not dragging — so a
+    // is mode-agnostic - gated only on the user not dragging - so a
     // MIDI-bound aux return moves the on-screen fader in Off mode too.
     const int amode = lane.params.automationMode.load (std::memory_order_relaxed);
     const bool isWrite = amode == (int) AutomationMode::Write;
@@ -457,7 +457,7 @@ void AuxLaneComponent::timerCallback()
                                 lane.params.returnLevelDb.load (std::memory_order_relaxed));
     }
 
-    // Mute visual sync — read the manual atom in Off / Write so we
+    // Mute visual sync - read the manual atom in Off / Write so we
     // don't race against AudioEngine's 1-block-stale liveMute (which
     // used to re-toggle the button right after the user clicked,
     // making mute look stuck). Read / Touch still read the live atom
@@ -476,7 +476,7 @@ void AuxLaneComponent::timerCallback()
     }
 
     // Rebuild the output-pair menu when the device's ACTIVE output set changes
-    // (e.g. the user enabled/swapped outputs in Audio settings — the physical
+    // (e.g. the user enabled/swapped outputs in Audio settings - the physical
     // name count wouldn't move, only the active mask).
     if (auto* dev = engine.getDeviceManager().getCurrentAudioDevice())
         if (dev->getActiveOutputChannels() != lastOutputChannelMask
@@ -492,7 +492,7 @@ void AuxLaneComponent::populateOutputPairCombo()
     juce::BigInteger activeMask;
     if (auto* device = engine.getDeviceManager().getCurrentAudioDevice())
     {
-        // Only list pairs the engine can write to — both channels must be in the
+        // Only list pairs the engine can write to - both channels must be in the
         // device's active-output set. Offering inactive physical outputs would
         // route a cue to a dead pair (no sound). activeMask is cached so the
         // timer re-populates when the user toggles outputs in Audio settings
@@ -547,7 +547,7 @@ void AuxLaneComponent::showAutoModeMenu()
 
 void AuxLaneComponent::setAutoMode (AutomationMode m)
 {
-    // See ChannelStripComponent::setAutoMode for the full rationale —
+    // See ChannelStripComponent::setAutoMode for the full rationale -
     // auto-thin on mode-flip is racy until lanes move to AtomicSnapshot.
     // Pre-filter at capture time handles the worst bloat; File ▸
     // Optimize automation is the safe explicit RDP entrypoint.
@@ -600,7 +600,7 @@ void AuxLaneComponent::captureWritePoint (AutomationParam param, float denormVal
     // as the per-channel captureWritePoint pre-filter; spec lines
     // 750-753 (delta + max-span before RDP). The pt.timeSamples >=
     // last.timeSamples guard keeps us from short-circuiting after a
-    // loop-wrap or transport rewind — those need the truncation block
+    // loop-wrap or transport rewind - those need the truncation block
     // below to drop the now-stale future points.
     if (isContinuousParam (param) && ! laneRef.empty())
     {
@@ -739,9 +739,9 @@ void AuxLaneComponent::refreshSlotControls (int i)
             ui.displayedName = name;
             ui.openOrAddButton.setButtonText (name);
             // First-time-loaded trigger (mirrors the offline branch
-            // below). If we transitioned offline → loaded, the prior
+            // below). If we transitioned offline -> loaded, the prior
             // resized() ran the offline layout which skips
-            // bypassButton.setBounds — without re-running resized()
+            // bypassButton.setBounds - without re-running resized()
             // here the bypass button is visible at the empty layout's
             // zero rectangle and uncliclable.
             resized();
@@ -767,7 +767,7 @@ void AuxLaneComponent::refreshSlotControls (int i)
         {
             ui.displayedName = label;
             ui.openOrAddButton.setButtonText (label);
-            // First time we enter offline state for this slot — re-run
+            // First time we enter offline state for this slot - re-run
             // resized() so removeButton gets its header-strip bounds.
             // Without this the button is visible at the prior empty
             // layout's zero rectangle and the user can't dismiss the
@@ -788,11 +788,11 @@ void AuxLaneComponent::refreshSlotControls (int i)
 
 void AuxLaneComponent::openPickerForSlot (int slotIdx)
 {
-    // Unified picker — JUCE formats (VST3/AU/LV2) + native CLAP in one list. CLAP
+    // Unified picker - JUCE formats (VST3/AU/LV2) + native CLAP in one list. CLAP
     // rows route to our native host; the rest to JUCE. Effects only (aux is a return).
     const auto cursor = juce::Desktop::getMousePosition();
     juce::Component::SafePointer<AuxLaneComponent> safe (this);
-    // Native CLAP route — Linux-only; empty elsewhere so the picker shows no CLAP rows.
+    // Native CLAP route - Linux-only; empty elsewhere so the picker shows no CLAP rows.
     std::function<void (const juce::File&, const juce::String&)> onClap;
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
     onClap = [safe, slotIdx] (const juce::File& clapFile, const juce::String& id)
@@ -828,7 +828,7 @@ void AuxLaneComponent::openPickerForSlot (int slotIdx)
                                                          std::memory_order_release);
 
                                             // One host per slot: a successful JUCE load evicts any
-                                            // native slot — the audio chain checks natives first, so
+                                            // native slot - the audio chain checks natives first, so
                                             // a lingering native would shadow the picked plugin.
                                             if (self->strip.getPluginSlot (slotIdx).isLoaded()
                                                 && (self->strip.isNativeClapLoaded (slotIdx)
@@ -933,7 +933,7 @@ void AuxLaneComponent::unloadSlot (int slotIdx)
         }
         // Clear the model's enabled flag so any consumer that polls
         // lane.hardwareInserts[slotIdx].enabled sees a disabled slot
-        // after unload — without this the flag could stay true and
+        // after unload - without this the flag could stay true and
         // confuse session save / routing diagnostics.
         self->lane.hardwareInserts[(size_t) slotIdx].enabled.store (
             false, std::memory_order_release);
@@ -949,7 +949,7 @@ void AuxLaneComponent::unloadSlot (int slotIdx)
 
 void AuxLaneComponent::toggleEditorForSlot (int /*slotIdx*/)
 {
-    // Editor embeds inline whenever the slot is loaded — nothing to
+    // Editor embeds inline whenever the slot is loaded - nothing to
     // toggle. Clicks on the slot's name button when loaded fall through
     // to a no-op; users use the X button to unload the slot.
 }
@@ -993,9 +993,9 @@ void AuxLaneComponent::loadNativeClapForSlot (int slotIdx, const juce::File& cla
 {
     if (slotIdx < 0 || slotIdx >= AuxLaneParams::kMaxLanePlugins) return;
 
-    // A slot hosts exactly one thing — drop any JUCE plugin / hardware / native-CLAP
+    // A slot hosts exactly one thing - drop any JUCE plugin / hardware / native-CLAP
     // editor first. The native editor shares the slot's ClapInstance, so it MUST be
-    // detached before loadNativeClap destroys that instance — otherwise the stale
+    // detached before loadNativeClap destroys that instance - otherwise the stale
     // editor's destructor (in the later rebuildSlots) calls gui->destroy on a freed
     // plugin (use-after-free).
     detachEditorForSlot (slotIdx);
@@ -1021,7 +1021,7 @@ void AuxLaneComponent::loadNativeClapForSlot (int slotIdx, const juce::File& cla
         std::fprintf (stderr, "[aux clap] load failed: %s\n", err.c_str());
         showDuskAlert (*this, "Couldn't load CLAP plugin",
                        clapFile.getFileNameWithoutExtension() + ":\n" + juce::String (err));
-        // Slot is empty now — drop any persisted refs (incl. a previous plugin's state
+        // Slot is empty now - drop any persisted refs (incl. a previous plugin's state
         // blob) so a save doesn't carry a stale path/state for a slot the user sees empty.
         lane.nativeClapPath[(size_t) slotIdx].clear();
         lane.nativeClapPluginId[(size_t) slotIdx].clear();
@@ -1033,7 +1033,7 @@ void AuxLaneComponent::loadNativeClapForSlot (int slotIdx, const juce::File& cla
     // Fresh plugin: don't inherit the previous slot occupant's state blob. The next
     // save re-captures this plugin's real state.
     lane.nativeClapStateBase64[(size_t) slotIdx].clear();
-    // The load evicted the other native hosts in this slot — drop their refs too.
+    // The load evicted the other native hosts in this slot - drop their refs too.
     lane.nativeLv2Path[(size_t) slotIdx].clear();
     lane.nativeLv2PluginId[(size_t) slotIdx].clear();
     lane.nativeLv2StateBase64[(size_t) slotIdx].clear();
@@ -1051,7 +1051,7 @@ void AuxLaneComponent::loadNativeLv2ForSlot (int slotIdx, const juce::File& bund
 {
     if (slotIdx < 0 || slotIdx >= AuxLaneParams::kMaxLanePlugins) return;
 
-    // A slot hosts exactly one thing — drop any editor first (the CLAP editor
+    // A slot hosts exactly one thing - drop any editor first (the CLAP editor
     // references an instance the load below evicts). Mirrors loadNativeClapForSlot.
     detachEditorForSlot (slotIdx);
     detachHardwareInsertForSlot (slotIdx);
@@ -1100,7 +1100,7 @@ void AuxLaneComponent::loadNativeVst3ForSlot (int slotIdx, const juce::File& vst
 {
     if (slotIdx < 0 || slotIdx >= AuxLaneParams::kMaxLanePlugins) return;
 
-    // A slot hosts exactly one thing — drop any editor first (an open native editor
+    // A slot hosts exactly one thing - drop any editor first (an open native editor
     // references an instance the load below evicts). Mirrors loadNativeClapForSlot.
     detachEditorForSlot (slotIdx);
     detachHardwareInsertForSlot (slotIdx);
@@ -1199,14 +1199,14 @@ void AuxLaneComponent::dropAllNativeEditors()
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_VST3
     for (int i = 0; i < AuxLaneParams::kMaxLanePlugins; ++i)
-        detachVst3EditorForSlot (i);   // in-process C++ teardown — no leak path needed
+        detachVst3EditorForSlot (i);   // in-process C++ teardown - no leak path needed
 #endif
 }
 
 void AuxLaneComponent::hideEditorsKeepingAlive()
 {
     // Lane went off-screen (tab switch). Keep the already-realised plugin
-    // editor + its hosted GUI resident and just hide it — setVisible(false)
+    // editor + its hosted GUI resident and just hide it - setVisible(false)
     // unmaps the embedded X11 window, so nothing lingers on-screen, but the
     // next show is a cheap remap rather than a rebuild. Genuine teardown
     // (unload / HW-mode switch / stale instance) still goes through
@@ -1216,7 +1216,7 @@ void AuxLaneComponent::hideEditorsKeepingAlive()
         auto& ui = slots[(size_t) i];
         if (ui.editor == nullptr) continue;
         // If the slot's live instance no longer matches this editor (the plugin
-        // was unloaded or swapped while the lane was hidden — e.g. a session
+        // was unloaded or swapped while the lane was hidden - e.g. a session
         // load), keeping the invisible editor would let it outlive its
         // processor. Tear it down instead, mirroring rebuildSlots' stale check.
         auto* instance = strip.getPluginSlot (i).getInstance();
@@ -1337,7 +1337,7 @@ void AuxLaneComponent::rebuildSlots()
 
         if (mode == AuxLaneStrip::kInsertHardware)
         {
-            // HW mode wins — drop any plugin editor that was attached
+            // HW mode wins - drop any plugin editor that was attached
             // before the mode flip.
             if (ui.editor != nullptr) detachEditorForSlot (i);
             if (ui.hwInsertEditor == nullptr) attachHardwareInsertForSlot (i);
@@ -1348,7 +1348,7 @@ void AuxLaneComponent::rebuildSlots()
 
             // Native CLAP slot owns the center editor area when loaded. The editor
             // embeds only when actually shown (ClapPluginEditorComponent gates on
-            // isShowing — some plugins abort embedding into a non-viewable parent);
+            // isShowing - some plugins abort embedding into a non-viewable parent);
             // its own visibilityChanged maps/unmaps as the tab shows/hides. Linux-only.
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
             if (strip.isNativeClapLoaded (i))
@@ -1432,8 +1432,8 @@ void AuxLaneComponent::rebuildSlots()
             auto* instance = strip.getPluginSlot (i).getInstance();
 
             // A kept-alive editor (we hide rather than destroy on tab switch)
-            // that no longer matches the slot's live instance — unloaded, or
-            // swapped while this lane was hidden — is stale. Tear it down so the
+            // that no longer matches the slot's live instance - unloaded, or
+            // swapped while this lane was hidden - is stale. Tear it down so the
             // block below rebuilds against the current instance.
             if (ui.editor != nullptr
                 && (instance == nullptr || ui.editor->getAudioProcessor() != instance))
@@ -1442,7 +1442,7 @@ void AuxLaneComponent::rebuildSlots()
             // Build the editor once this lane is actually on a realised,
             // visible peer. Creating it while hidden (all 4 lanes are built up
             // front; AuxView shows one) maps the plugin's X11 editor window to
-            // the root window — a stray top-level flash until it reparents.
+            // the root window - a stray top-level flash until it reparents.
             // visibilityChanged() re-runs rebuildSlots when the lane is shown.
             if (instance != nullptr && ui.editor == nullptr && isShowing())
             {
@@ -1452,7 +1452,7 @@ void AuxLaneComponent::rebuildSlots()
                     // keep it for safety on platforms that don't force the
                     // main peer to X11 (and to keep the call sites uniform
                     // with ChannelStripComponent). Process exclusion: see
-                    // the matching block there — dry-pass this lane while
+                    // the matching block there - dry-pass this lane while
                     // the editor constructs.
                     const juce::SpinLock::ScopedLockType processExclusion (
                         strip.getPluginSlot (i).getProcessLock());
@@ -1468,7 +1468,7 @@ void AuxLaneComponent::rebuildSlots()
             {
                 // Kept-alive editor returning on a tab switch: re-show and
                 // re-center only. No createEditorIfNeeded, no XWayland reparent,
-                // no stale-size refit cycle — this is what makes clicking back
+                // no stale-size refit cycle - this is what makes clicking back
                 // to a loaded AUX lane feel instant instead of lagging on
                 // GNOME/Wayland (XWayland).
                 ui.editor->setVisible (true);
@@ -1486,7 +1486,7 @@ void AuxLaneComponent::rebuildSlots()
 void AuxLaneComponent::visibilityChanged()
 {
     // Build the editor lazily on first show (creating it hidden maps the
-    // plugin's X11 window to the root window — a stray flash). Once built,
+    // plugin's X11 window to the root window - a stray flash). Once built,
     // keep it alive across tab switches and just hide it: re-showing then
     // costs an X11 remap instead of a full createEditor + reparent + size
     // negotiation, which on GNOME/Wayland (XWayland) was the visible lag when
@@ -1505,18 +1505,18 @@ void AuxLaneComponent::refreshEditorsForShowState()
 void AuxLaneComponent::parentHierarchyChanged()
 {
     // Catches the lane being added to (or removed from) a realised, on-screen
-    // window — visibilityChanged alone doesn't fire on the initial desktop
+    // window - visibilityChanged alone doesn't fire on the initial desktop
     // attach. Same build-when-showing / hide-when-off-screen policy.
     //
     // A TOP-LEVEL PEER CHANGE (fullscreen toggle recreates the native X11 peer)
     // is different from a tab/stage visibility change: a kept-alive editor's
     // embedded X11 window stays parented to the destroyed peer, and the re-show
-    // path only setVisible(true)s it — it never re-embeds. Tear stale editors
+    // path only setVisible(true)s it - it never re-embeds. Tear stale editors
     // down so rebuildSlots recreates them against the new peer. detachEditorForSlot
     // is a no-op when no editor exists, so a same-peer change costs nothing.
     // Only act on a real peer CHANGE to a new non-null peer. A transient null
     // (mid-reparent / briefly off-desktop) must NOT tear down kept-alive editors
-    // — lastSeenPeer is left intact so the editors survive until the genuine new
+    // - lastSeenPeer is left intact so the editors survive until the genuine new
     // peer (or the same one) arrives.
     if (auto* peer = getPeer(); peer != nullptr && peer != lastSeenPeer)
     {
@@ -1598,8 +1598,8 @@ void AuxLaneComponent::resized()
     // Offline placeholder + hardware-insert mode share the header
     // layout. Without the hardware branch the HW editor would overlap
     // openOrAddButton (which would otherwise fill the entire center),
-    // and removeButton — made visible by refreshSlotControls in HW
-    // mode — would never get bounds and the user couldn't dismiss
+    // and removeButton - made visible by refreshSlotControls in HW
+    // mode - would never get bounds and the user couldn't dismiss
     // the HW insert.
     const bool nativeLoaded = strip.isNativeClapLoaded (0) || strip.isNativeLv2Loaded (0)
                            || strip.isNativeVst3Loaded (0);
@@ -1623,7 +1623,7 @@ void AuxLaneComponent::resized()
     // Right column: send-source panel fills.
     if (sendPanel != nullptr) sendPanel->setBounds (getSendPanelArea());
 
-    // Inline plugin editor — sits below the slot header in the center
+    // Inline plugin editor - sits below the slot header in the center
     // column, centered horizontally and vertically inside the remaining
     // area. layoutEditorForSlot is a no-op when the editor isn't
     // attached, so loaded-vs-empty branches above don't need to know.
@@ -1646,7 +1646,7 @@ void AuxLaneComponent::childBoundsChanged (juce::Component* child)
         else if (ui.hwInsertEditor.get() == child) body = ui.hwInsertEditor.get();
         if (body != nullptr)
         {
-            // Only re-center if the editor is sized within the area —
+            // Only re-center if the editor is sized within the area -
             // direct recursion through setBounds is impossible because
             // layoutEditorForSlot pins width/height to jmin(pref,area).
             // Calling setBounds with the same w/h re-emits
@@ -1695,7 +1695,7 @@ void AuxLaneComponent::mouseDown (const juce::MouseEvent& e)
                                     MidiBindingTarget::AuxLaneMute, laneIndex);
         return;
     }
-    // Slot name button → learn the plugin parameter the user last moved in the
+    // Slot name button -> learn the plugin parameter the user last moved in the
     // slot's editor. Only offered while some host has a plugin loaded (the
     // resolve site reads that host's last-touched tracker when the MIDI source
     // arrives, so an untouched plugin just cancels the learn).

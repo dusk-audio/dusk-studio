@@ -16,7 +16,7 @@ namespace duskstudio
 //
 // Output + input channels are opened wide (all the device exposes, clamped to
 // the engine's limits) so AudioSettingsPanel's main-output pair menu still
-// finds every active pair — channel check-boxes aren't reproduced.
+// finds every active pair - channel check-boxes aren't reproduced.
 class DuskAudioDeviceSelector final : public juce::Component,
                                        public juce::ChangeListener
 {

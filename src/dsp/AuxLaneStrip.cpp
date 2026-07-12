@@ -10,7 +10,7 @@ void AuxLaneStrip::prepare (double sampleRate, int blockSize)
     preparedBlockSize  = juce::jmax (1, blockSize);
 
     // A loaded native CLAP was activated at the prior spec; re-activate at the
-    // new one. Reload by path (the instance has no in-place re-prepare) — a
+    // new one. Reload by path (the instance has no in-place re-prepare) - a
     // sample-rate change resets DSP state anyway. Engine fences this via its
     // process gate, so the audio thread never sees a half-swapped slot.
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
@@ -20,8 +20,8 @@ void AuxLaneStrip::prepare (double sampleRate, int blockSize)
         if (ncs.isLoaded())
         {
             // Re-activate in place (NOT a full reload): a reload destroys the instance
-            // the editor's GUI is attached to — plugin->destroy with a live GUI aborts
-            // u-he plugins — and resets the plugin's parameters. reactivate keeps the
+            // the editor's GUI is attached to - plugin->destroy with a live GUI aborts
+            // u-he plugins - and resets the plugin's parameters. reactivate keeps the
             // instance + GUI + state and only re-sizes for the new spec.
             std::string err;
             const bool ok = ncs.reactivate (preparedSampleRate, preparedBlockSize, err);
@@ -29,7 +29,7 @@ void AuxLaneStrip::prepare (double sampleRate, int blockSize)
         }
         else if (pendingClapPath[(size_t) s].isNotEmpty())
         {
-            // Pending session-restore load — SR is known now. insertMode was already
+            // Pending session-restore load - SR is known now. insertMode was already
             // set to kInsertPlugin by the engine before it stashed this.
             const juce::File p (pendingClapPath[(size_t) s]);
             std::string err;
@@ -69,7 +69,7 @@ void AuxLaneStrip::prepare (double sampleRate, int blockSize)
                 }
                 lv2ReloadFailed[(size_t) s].store (! ok, std::memory_order_relaxed);
             }
-            // Consumed either way — a CLAP-suppressed pending must not replay on a
+            // Consumed either way - a CLAP-suppressed pending must not replay on a
             // later prepare() once the CLAP is unloaded.
             pendingLv2Path[(size_t) s].clear();
             pendingLv2PluginId[(size_t) s].clear();
@@ -148,14 +148,14 @@ bool AuxLaneStrip::loadNativeClap (int slotIdx, const juce::File& path, std::str
     if (preparedSampleRate <= 0.0 || preparedBlockSize <= 0)
     { errorOut = "aux lane not prepared"; return false; }
     // One host per slot: evict the other native formats and any JUCE plugin so the
-    // audio chain (CLAP → LV2 → VST3 → JUCE) never sees two loaded. Callers fence
+    // audio chain (CLAP -> LV2 -> VST3 -> JUCE) never sees two loaded. Callers fence
     // the audio thread around this call.
     unloadNativeLv2 (slotIdx);
     unloadNativeVst3 (slotIdx);
     slots[(size_t) slotIdx].unload();
     const bool ok = nativeClapSlots[(size_t) slotIdx].load (path, preparedSampleRate, preparedBlockSize, errorOut, pluginId);
     // User-initiated load always ends any "failed restore" state (see ChannelStrip::
-    // loadNativeClap) — clear regardless of outcome so the flag stays caller-independent.
+    // loadNativeClap) - clear regardless of outcome so the flag stays caller-independent.
     nativeReloadFailed[(size_t) slotIdx].store (false, std::memory_order_relaxed);
     return ok;
 }
@@ -164,7 +164,7 @@ void AuxLaneStrip::unloadNativeClap (int slotIdx) noexcept
 {
     jassert (slotIdx >= 0 && slotIdx < kMaxPlugins);
     nativeClapSlots[(size_t) slotIdx].unload();
-    nativeReloadFailed[(size_t) slotIdx].store (false, std::memory_order_relaxed);   // slot reset — clear stale failure
+    nativeReloadFailed[(size_t) slotIdx].store (false, std::memory_order_relaxed);   // slot reset - clear stale failure
     pendingClapPath[(size_t) slotIdx].clear();
     pendingClapPluginId[(size_t) slotIdx].clear();
     pendingClapState[(size_t) slotIdx].clear();
@@ -188,7 +188,7 @@ bool AuxLaneStrip::loadNativeLv2 (int slotIdx, const juce::File& path, std::stri
     jassert (slotIdx >= 0 && slotIdx < kMaxPlugins);
     if (preparedSampleRate <= 0.0 || preparedBlockSize <= 0)
     { errorOut = "aux lane not prepared"; return false; }
-    // One host per slot — see loadNativeClap.
+    // One host per slot - see loadNativeClap.
     unloadNativeClap (slotIdx);
     unloadNativeVst3 (slotIdx);
     slots[(size_t) slotIdx].unload();
@@ -227,7 +227,7 @@ bool AuxLaneStrip::loadNativeVst3 (int slotIdx, const juce::File& path, std::str
     jassert (slotIdx >= 0 && slotIdx < kMaxPlugins);
     if (preparedSampleRate <= 0.0 || preparedBlockSize <= 0)
     { errorOut = "aux lane not prepared"; return false; }
-    // One host per slot — see loadNativeClap.
+    // One host per slot - see loadNativeClap.
     unloadNativeClap (slotIdx);
     unloadNativeLv2 (slotIdx);
     slots[(size_t) slotIdx].unload();
@@ -282,7 +282,7 @@ void AuxLaneStrip::processStereoBlock (float* L, float* R, int numSamples,
 
     // Oversized-block bail. insertScratchL/R are sized to prepare()'s
     // blockSize and the audio thread refuses to allocate, so a host that
-    // hands us numSamples > scratch capacity must skip the whole block —
+    // hands us numSamples > scratch capacity must skip the whole block -
     // partial processing would desync the meter / smoother bookkeeping
     // between the slot loop and the return-gain pass below. L/R is the
     // lane accumulator with channel-strip sends already summed in, so

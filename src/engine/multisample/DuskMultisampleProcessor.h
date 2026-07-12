@@ -10,14 +10,8 @@ namespace duskstudio
 // vendored sfizz engine. Lives in src/engine/multisample/ alongside
 // the SFZ/SF2 -> sfizz adapters.
 //
-// Step 1 (this commit): zero-feature stub. Reports the correct bus
-// layout + plugin description + clears the output buffer. Step 2
-// wires the sfizz_synth_t lifecycle + processBlock; step 3 wires the
-// PluginFormat that produces instances of this class via the plugin
-// picker.
-//
-// Lifetime: created on the message thread by McuController... wait,
-// by PluginManager via DuskMultisamplePluginFormat::createPluginInstance.
+// Lifetime: created on the message thread by PluginManager via
+// DuskMultisamplePluginFormat::createPluginInstance.
 // Owned by PluginSlot via std::unique_ptr<juce::AudioPluginInstance>.
 // Atomic-swap of the slot's currentInstance pointer follows the same
 // rules every other hosted plugin uses (see PluginSlot.h:34).
@@ -90,7 +84,7 @@ public:
     // take seconds on a GM bank) runs on the processor's own worker thread
     // and onDone(ok, error) fires on the message thread. The worker joins in
     // the destructor, so a slot unload blocks until an in-flight load
-    // finishes instead of destroying the synth under it. One load at a time —
+    // finishes instead of destroying the synth under it. One load at a time -
     // callers gate UI on isLoadPending().
     void loadFileAsync (const juce::File& file,
                         std::function<void (bool, juce::String)> onDone);
@@ -134,7 +128,7 @@ public:
     Overrides& getOverrides() noexcept { return overrides; }
     const Overrides& getOverrides() const noexcept { return overrides; }
 
-    // ── High-definition CC control (drives ARIA custom-UI widgets) ──
+    // High-definition CC control (drives ARIA custom-UI widgets)
     // setHDCC is called from the message thread (editor widget drag);
     // it caches the value + queues it lock-free for the audio thread,
     // which drains the queue at block top and calls sfizz_send_hdcc.
@@ -190,7 +184,7 @@ private:
 
     // Serialises sfizz mutations (load/unload/voice-count) against
     // processBlock: the audio thread TRY-locks and passes one silent block
-    // when a mutator holds it (PluginSlot's prepare↔process pattern).
+    // when a mutator holds it (PluginSlot's prepare<->process pattern).
     juce::SpinLock sfizzLock;
 
     // sfizz handle owned via pimpl so the public header doesn't drag

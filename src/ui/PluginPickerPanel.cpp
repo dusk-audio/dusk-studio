@@ -4,7 +4,7 @@ namespace duskstudio
 {
 
 // Self-contained scrollable list. Rolls its own scroll offset instead
-// of relying on juce::Viewport — Viewport's internal contentHolder
+// of relying on juce::Viewport - Viewport's internal contentHolder
 // sizing under our nested-EmbeddedModal setup left rows invisible on
 // first open.
 class PluginPickerPanel::ListBody final : public juce::Component
@@ -334,7 +334,7 @@ PluginPickerPanel::PluginPickerPanel (juce::Array<juce::PluginDescription> descr
 
     setWantsKeyboardFocus (true);
 
-    // setSize last — all children are now created and addAndMakeVisible'd,
+    // setSize last - all children are now created and addAndMakeVisible'd,
     // so the resized() that setSize fires lays everything out correctly.
     // If a child is added after this line, the next setBounds from
     // EmbeddedModal won't trigger resized() (same size, position-only

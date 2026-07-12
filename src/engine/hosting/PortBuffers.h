@@ -6,7 +6,7 @@ namespace duskstudio::hosting
 {
 // The single audio-thread argument to INativeInstance::processBlock, replacing
 // the CLAP host's fixed (inL, inR, outL, outR, numFrames). Every pointer refers
-// to storage the caller/instance sized ahead of time — NOTHING here is allocated
+// to storage the caller/instance sized ahead of time - NOTHING here is allocated
 // or locked on the audio thread. Channel arrays are `float* const*` (an array of
 // per-channel pointers), so mono / stereo / multi-out all use one shape.
 //
@@ -16,8 +16,8 @@ namespace duskstudio::hosting
 struct PortBuffers
 {
     // Main audio I/O. The audio arrays are mutable (float* const*) because
-    // in-place-capable hosts — CLAP's clap_audio_buffer.data32, VST3's
-    // ProcessData — hand the plugin writable input buffers; the InsertAdapter
+    // in-place-capable hosts - CLAP's clap_audio_buffer.data32, VST3's
+    // ProcessData - hand the plugin writable input buffers; the InsertAdapter
     // owns and refills that storage each block, so a plugin scribbling on its
     // input is harmless. The const is on the array, not the samples.
     float* const* mainIn          = nullptr;
@@ -27,7 +27,7 @@ struct PortBuffers
 
     // Optional sidechain input. When a slot could take a sidechain but none is
     // routed, the InsertAdapter feeds pre-sized silence rather than a null
-    // pointer — some plugins dereference their sidechain unconditionally.
+    // pointer - some plugins dereference their sidechain unconditionally.
     float* const* sidechainIn         = nullptr;
     int           sidechainInChannels = 0;
 

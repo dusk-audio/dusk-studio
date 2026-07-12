@@ -59,7 +59,7 @@ void Metronome::process (std::int64_t playheadStart, bool transportRolling,
     {
         if (poly)
         {
-            // Round-robin voice grab — overwrite the oldest voice (the
+            // Round-robin voice grab - overwrite the oldest voice (the
             // slot we last assigned). With kVoices=4 and click bodies
             // ~80 ms at 5 ms sine + 4× envelope ramp, four overlapping
             // voices covers any realistic polyrhythm. Worst case = a

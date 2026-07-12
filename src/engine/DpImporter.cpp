@@ -183,7 +183,7 @@ std::vector<MixerStrip> decodeMixerScene (const juce::File& songSys, int deviceT
     // The fader/pan array (0xc4, 18 entries with stereo pairing for tracks
     // 13..24) is verified on DP-24 ONLY. Apply it solely for a confirmed DP-24
     // (deviceTrackLimit == 18). DP-32 (20) has an unmapped layout, and an
-    // unknown/unreadable model (0) could be either — in both cases leave the
+    // unknown/unreadable model (0) could be either - in both cases leave the
     // strip defaults (0 dB / centre) rather than read the wrong entries.
     const bool faderPanKnown = (deviceTrackLimit == 18);
 
@@ -330,8 +330,8 @@ bool readTimeSignature (const juce::File& songSys, int& num, int& den)
         if (d[kStripBase + c * kStripStride + kSentinelByte] != kSentinel)
             return false;
     const int packed = d[kTimeSigOffset];
-    const int denExp = packed / 12;       // 0..3 → 1/2/4/8
-    if (denExp > 3) return false;         // out of the device's range → treat as garbage
+    const int denExp = packed / 12;       // 0..3 -> 1/2/4/8
+    if (denExp > 3) return false;         // out of the device's range -> treat as garbage
     num = (packed % 12) + 1;              // 1..12
     den = 1 << denExp;
     return true;

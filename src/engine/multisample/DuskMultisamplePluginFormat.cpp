@@ -28,7 +28,7 @@ juce::String DuskMultisamplePluginFormat::getNameOfPluginFromIdentifier (const j
     const auto file = juce::File (path);
     if (file.existsAsFile())
         return file.getFileNameWithoutExtension();
-    // Empty / unresolved identifier — rarely hit now that the picker's
+    // Empty / unresolved identifier - rarely hit now that the picker's
     // "Load Soundfont..." entry goes straight through loadFromFile;
     // this label only surfaces if a saved session ever round-trips an
     // unresolved soundfont description.

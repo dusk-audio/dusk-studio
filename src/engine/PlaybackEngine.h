@@ -37,7 +37,7 @@ public:
 
     // Hot-update region gain + mute on the live snapshot without
     // rebuilding readers. Matches streams to AudioRegion entries by
-    // (file, timelineStart, lengthInSamples) — structural changes
+    // (file, timelineStart, lengthInSamples) - structural changes
     // (split / join / move) fall through to the next preparePlayback.
     void refreshLiveRegionParams();
 
@@ -95,7 +95,7 @@ private:
         // Loop-start pre-cache. BufferingAudioReader prefetches forward
         // only, so the backward seek at every loop wrap misses and (with
         // timeout 0) returns silence until the prefetch thread catches
-        // up — an audible dropout at the top of every cycle. These hold
+        // up - an audible dropout at the top of every cycle. These hold
         // the region's raw source samples for the timeline window
         // [loopCacheTimelineStart, +loopCacheLen), filled on the message
         // thread in preparePlayback while the audio thread is guaranteed

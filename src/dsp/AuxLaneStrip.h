@@ -23,7 +23,7 @@ namespace duskstudio
 // series + return-level gain + stereo meters. Lane input is the
 // per-channel send accumulation; this processes in place and
 // AudioEngine sums into master after the bus pass.
-// Lighter than BusStrip (no EQ / no comp / no pan) — the plugin is the
+// Lighter than BusStrip (no EQ / no comp / no pan) - the plugin is the
 // EQ / comp / character on a return.
 class AuxLaneStrip
 {
@@ -60,13 +60,13 @@ public:
     const HardwareInsertSlot& getHardwareInsertSlot (int idx) const noexcept { jassert (idx >= 0 && idx < kMaxPlugins); return hardwareSlots[(size_t) idx]; }
 
     // Native CLAP host path. When a slot's native CLAP is loaded, processStereoBlock
-    // routes the kInsertPlugin pass through it INSTEAD of the JUCE PluginSlot — this
+    // routes the kInsertPlugin pass through it INSTEAD of the JUCE PluginSlot - this
     // is the JUCE-hosting replacement (see docs/native-clap-host-plan.md). Empty by
     // default, so a lane with no native CLAP behaves exactly as before. Message thread.
     bool isPrepared() const noexcept { return preparedSampleRate > 0.0 && preparedBlockSize > 0; }
 
     // Linux-only native CLAP host (DUSKSTUDIO_HAS_NATIVE_CLAP); stubbed elsewhere so the
-    // bool/void API still compiles. getNativeClapSlot returns a clap type → Linux-only.
+    // bool/void API still compiles. getNativeClapSlot returns a clap type -> Linux-only.
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
     bool loadNativeClap   (int slotIdx, const juce::File& path, std::string& errorOut,
                            const juce::String& pluginId = {});
@@ -85,7 +85,7 @@ public:
     // True when a sample-rate re-prepare reload of a loaded native CLAP failed (the
     // slot is now empty). The UI reads this to report which lane lost its plugin.
     bool nativeClapReloadFailed (int slotIdx) const noexcept { jassert (slotIdx >= 0 && slotIdx < kMaxPlugins); return nativeReloadFailed[(size_t) slotIdx].load (std::memory_order_relaxed); }
-    // See ChannelStrip::markNativeClapRestoreFailed — re-marks a failed engine restore.
+    // See ChannelStrip::markNativeClapRestoreFailed - re-marks a failed engine restore.
     void markNativeClapRestoreFailed (int slotIdx) noexcept { jassert (slotIdx >= 0 && slotIdx < kMaxPlugins); nativeReloadFailed[(size_t) slotIdx].store (true, std::memory_order_relaxed); }
 #else
     bool isNativeClapLoaded (int) const noexcept { return false; }
@@ -93,7 +93,7 @@ public:
     bool nativeClapReloadFailed (int) const noexcept { return false; }
 #endif
 
-    // Native LV2 host path — same contract as the CLAP block above.
+    // Native LV2 host path - same contract as the CLAP block above.
 #if DUSKSTUDIO_HAS_NATIVE_LV2
     bool loadNativeLv2   (int slotIdx, const juce::File& path, std::string& errorOut,
                           const juce::String& pluginId = {});
@@ -112,7 +112,7 @@ public:
     bool nativeLv2ReloadFailed (int) const noexcept { return false; }
 #endif
 
-    // Native VST3 host path — same contract as the CLAP block above.
+    // Native VST3 host path - same contract as the CLAP block above.
 #if DUSKSTUDIO_HAS_NATIVE_VST3
     bool loadNativeVst3   (int slotIdx, const juce::File& path, std::string& errorOut,
                            const juce::String& pluginId = {});
@@ -207,7 +207,7 @@ private:
     std::vector<float> insertScratchL;
     std::vector<float> insertScratchR;
 
-    // Aux hosts effects only — buffer stays empty. Held as member so
+    // Aux hosts effects only - buffer stays empty. Held as member so
     // the audio thread never default-constructs one.
     juce::MidiBuffer pluginMidiScratch;
 

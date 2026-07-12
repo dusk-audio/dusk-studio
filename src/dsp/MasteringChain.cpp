@@ -27,7 +27,7 @@ void MasteringChain::prepare (double sampleRate, int blockSize, int oversampling
     busComp.prepareToPlay (sampleRate, bs);
     // Honor the global Effect Oversampling setting. The donor defaults to
     // internal-oversampling=ON, so without this the mastering bus comp
-    // always oversamples regardless of the user's pick. 1× → off; 2× / 4× →
+    // always oversamples regardless of the user's pick. 1× -> off; 2× / 4× ->
     // engages the donor's internal 2× (it doesn't expose 4× at the comp
     // level today, but enables anti-aliasing for the saturation stage).
     busComp.setInternalOversamplingEnabled (oversamplingFactor > 1);

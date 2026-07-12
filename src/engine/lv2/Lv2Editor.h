@@ -15,7 +15,7 @@ class Lv2Instance;
 //
 // Lifecycle mirrors ClapEditor with one structural difference: an LV2 UI takes
 // its ui:parent at instantiate time, so open() only discovers the UI and the
-// real instantiation happens in embed() — there is no pre-built unmapped stage.
+// real instantiation happens in embed() - there is no pre-built unmapped stage.
 //
 // No X11 / lilv / suil types leak here: everything lives behind the pImpl.
 class Lv2Editor
@@ -28,7 +28,7 @@ public:
 
     // Discover an embeddable UI for the (created + activated) instance: native
     // X11UI preferred, else the best UI suil can wrap into X11. False (+errorOut)
-    // when the plugin ships no usable UI. Keeps a reference to `inst` — the slot
+    // when the plugin ships no usable UI. Keeps a reference to `inst` - the slot
     // owning it must outlive this editor.
     bool open (Lv2Instance& inst, std::string& errorOut);
 
@@ -48,7 +48,7 @@ public:
                                   int& relX, int& relY) const;
     bool getActualGeometry (int& x, int& y, int& w, int& h) const;
 
-    // App shutdown: skip suil_instance_free — a foreign-toolkit UI's destructor
+    // App shutdown: skip suil_instance_free - a foreign-toolkit UI's destructor
     // can hang on the way out (same rationale as the CLAP editor leak path).
     void setLeakOnClose (bool b) noexcept;
 

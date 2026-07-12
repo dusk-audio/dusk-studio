@@ -11,12 +11,12 @@
 namespace duskstudio::rt
 {
 // JUCE maps a realtime priority p in [0, 10] onto a kernel SCHED_RR
-// sched_priority via jmap (p, 0, 10, min, max) — integer-truncating, 1..99 on
+// sched_priority via jmap (p, 0, 10, min, max) - integer-truncating, 1..99 on
 // Linux. pthread_setschedparam refuses a sched_priority above the soft
 // RLIMIT_RTPRIO ceiling with EPERM, and JUCE then silently drops the thread to
 // SCHED_OTHER. Every realtime thread in the engine (ALSA I/O thread, DSP worker
 // pool) must therefore request a priority whose MAPPED value fits under the
-// ceiling — and they must all use the same computation, or they end up at
+// ceiling - and they must all use the same computation, or they end up at
 // different SCHED_RR levels and the audio thread's join can starve a worker
 // sharing its core (RR only round-robins between equal priorities).
 
@@ -28,7 +28,7 @@ struct RtPriorityInfo
 };
 
 // Largest p in [0, 10] whose forward-mapped sched_priority fits under
-// ceilingSched. Walks down from 10 against the forward map directly — the
+// ceilingSched. Walks down from 10 against the forward map directly - the
 // closed-form inverse mis-rounds in both directions under integer division.
 // Returns -1 when nothing fits: 0 is a VALID JUCE priority (maps to the lowest
 // SCHED_RR level) so it cannot double as the "no RT" sentinel.
@@ -46,7 +46,7 @@ inline int jucePriorityForSchedCeiling (int ceilingSched, int rrMin, int rrMax) 
 
 // Puts the CALLING thread on SCHED_RR at the sched_priority that a JUCE
 // realtime priority p in [0, 10] maps to (rrMin + p·span/10, the same forward
-// map queryRealtimePriority walks) — the native equivalent of JUCE's
+// map queryRealtimePriority walks) - the native equivalent of JUCE's
 // startRealtimeThread(RealtimeOptions().withPriority(p)). Returns false if the
 // kernel refuses (EPERM over RLIMIT_RTPRIO, non-Linux), leaving the thread at
 // its default scheduling class.

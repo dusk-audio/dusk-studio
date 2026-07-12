@@ -6,7 +6,7 @@
 
 namespace duskstudio
 {
-// MIDI Learn bindings — bind external CC/Note/PB/MMC to a Dusk Studio
+// MIDI Learn bindings - bind external CC/Note/PB/MMC to a Dusk Studio
 // target (transport / fader / mute / solo / arm / etc). Persist in
 // session JSON so the user's controller setup travels with the project.
 //
@@ -18,17 +18,17 @@ enum class MidiBindingTrigger : int
 {
     CC         = 0,
     Note       = 1,
-    PitchBend  = 2,   // dataNumber unused (per-channel). 14-bit 0..16383 —
+    PitchBend  = 2,   // dataNumber unused (per-channel). 14-bit 0..16383 -
                       // for MCU-style fader controllers.
     MmcCommand = 3,   // dataNumber = MMC code (1=stop, 2=play, 3=def-play,
                       // 4=ffwd, 5=rew, 6=recStart, 7=recStop, 9=pause).
-                      // Sysex → no channel. One-shot press.
+                      // Sysex -> no channel. One-shot press.
 };
 
 // Same wire stream from two different hardware button styles:
-//   Momentary (B-type) : each press sends 127 then 0 — rising edge fires
+//   Momentary (B-type) : each press sends 127 then 0 - rising edge fires
 //     once. Default.
-//   Latching (D-type)  : each press alternates 127/0 — rising edge
+//   Latching (D-type)  : each press alternates 127/0 - rising edge
 //     fires every other click. Must fire on EVERY received message to
 //     toggle once per click.
 // User picks via right-click menu (can't tell them apart from the wire).
@@ -55,7 +55,7 @@ enum class MidiBindingTarget : int
     TrackAuxSend      = 105, // targetIndex = track * kNumAuxSends + auxIdx
     TrackHpfFreq      = 106,
     TrackEqGain       = 107, // targetIndex = track * 4 + band (0=LF 1=LM 2=HM 3=HF)
-    // Comp targets bind the LOGICAL knob — apply path reads compMode and
+    // Comp targets bind the LOGICAL knob - apply path reads compMode and
     // writes the matching per-mode atom so a single binding survives
     // mode flips (Opto/FET/VCA all have different ranges).
     TrackCompThresh   = 108,
@@ -64,7 +64,7 @@ enum class MidiBindingTarget : int
     TrackEqFreq       = 111, // targetIndex = track * 4 + band (log-mapped freq)
     TrackEqQ          = 112, // targetIndex = track * 4 + band; only LM(1)/HM(2) act
 
-    // Bank-relative — targetIndex is a POSITION 0..kBankSize-1 (or
+    // Bank-relative - targetIndex is a POSITION 0..kBankSize-1 (or
     // packed pos*N+sub). Resolved at audio time via
     //   absoluteTrack = activeBank * kBankSize + pos.
     // Lets one 8-fader controller drive whichever 8 of the 24 tracks
@@ -91,7 +91,7 @@ enum class MidiBindingTarget : int
     AuxLaneFader      = 160,
     AuxLaneMute       = 161,
     AuxPluginParam    = 162, // targetIndex = lane; paramIndex = plugin parameter.
-                              // Single insert slot per lane today — the layout
+                              // Single insert slot per lane today - the layout
                               // block that grows kMaxLanePlugins revisits this.
 
     MasterFader       = 200,
@@ -99,7 +99,7 @@ enum class MidiBindingTarget : int
     // Discrete toggles (buttons).
     TrackEqEnabled       = 210, // targetIndex = track
     TrackCompEnabled     = 211, // targetIndex = track
-    TrackInsertBypass    = 212, // targetIndex = track — bypasses the
+    TrackInsertBypass    = 212, // targetIndex = track - bypasses the
                                  // per-channel hardware insert slot.
     TrackAuxSendPrePost  = 213, // targetIndex = packTrackAux(track, aux).
                                  // Toggles between pre-fader and post-fader
@@ -107,11 +107,11 @@ enum class MidiBindingTarget : int
 
     // Continuous bus EQ. targetIndex = bus * kBusEqBands + band.
     // BusStrip exposes LF / MID / HF gains (3-band). Frequencies are
-    // fixed by BusStrip's tone-shaping spec — gain is the only knob
+    // fixed by BusStrip's tone-shaping spec - gain is the only knob
     // user-mapped from a CC.
     BusEqGain            = 220,
 
-    // Master EQ — Pultec-style. Two main user knobs (low boost, high
+    // Master EQ - Pultec-style. Two main user knobs (low boost, high
     // boost). targetIndex unused.
     MasterEqLfBoost      = 230,
     MasterEqHfBoost      = 231,
@@ -222,7 +222,7 @@ constexpr bool needsPackedTrackAuxIndex (MidiBindingTarget t) noexcept
         || t == MidiBindingTarget::TrackAuxSendPrePost;
 }
 
-// 24 × 4 = 96, fits in targetIndex. Header-only — Session.h pulls in
+// 24 × 4 = 96, fits in targetIndex. Header-only - Session.h pulls in
 // too much.
 constexpr int kPackedAuxLanes = 4;
 constexpr int packTrackAux (int track, int aux) noexcept
@@ -261,7 +261,7 @@ struct MidiBinding
     MidiBindingTrigger trigger = MidiBindingTrigger::CC;
     MidiBindingTarget  target  = MidiBindingTarget::None;
     int targetIndex = 0;
-    // TrackPluginParam only — which parameter slot in the plugin.
+    // TrackPluginParam only - which parameter slot in the plugin.
     // Filled at learn-resolve from PluginSlot::getLastTouchedParamIndex.
     int paramIndex = 0;
     // Discrete (button) targets only.
@@ -318,7 +318,7 @@ constexpr int unpackLearnTargetIndex (int packed) noexcept
     return packed < 0 ? 0 : (packed & 0xff);
 }
 
-// Audio→message handoff. Packed int64: 8b trigger + 8b channel + 8b
+// Audio->message handoff. Packed int64: 8b trigger + 8b channel + 8b
 // dataNumber + 1b valid. Audio CAS-stores when learnPending; message
 // loads + clears.
 constexpr std::int64_t packLearnCapture (MidiBindingTrigger tg, int ch, int dn) noexcept
@@ -385,7 +385,7 @@ void showLearnMenu (juce::Component& target,
 
 // The learn menu is built as a juce::PopupMenu but SHOWN through this hook,
 // so the UI layer can render it in-window (DuskContextMenu) rather than a
-// native popup — native popups flash / mis-dismiss / mis-stack on X11 and
+// native popup - native popups flash / mis-dismiss / mis-stack on X11 and
 // Wayland. The UI sets this once at startup; if it's left unset,
 // showLearnMenu logs, asserts and drops the menu (a native popup must
 // never ship).

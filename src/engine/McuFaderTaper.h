@@ -17,7 +17,7 @@ namespace duskstudio::mcu
 //
 // Below unity the breakpoints are sampled from Ardour's Mackie-surface fader
 // law (`gain_to_slider_position`, pbd/dB.h: ((6*log2(g)+192)/198)^8), the
-// de-facto open-source MCU calibration — it lands 0 dB at position 0.782.
+// de-facto open-source MCU calibration - it lands 0 dB at position 0.782.
 // Above unity, 0..+12 dB maps linearly across the remaining top of throw so
 // the surface spans the full ChannelStripParams fader range (kFaderMinDb
 // = -100 .. kFaderMaxDb = +12) rather than the +6 dB Logic Control ceiling.

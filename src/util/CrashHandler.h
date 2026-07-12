@@ -10,8 +10,8 @@ namespace duskstudio::crash_handler
 // getCrashDir().
 //
 // Layout under ${userApplicationData}/Dusk Studio/:
-//   log/dusk-studio-YYYYMMDD.log   — rotating daily, FileLogger
-//   crashes/crash-<iso>.txt  — one per terminate; backtrace + env summary
+//   log/dusk-studio-YYYYMMDD.log   - rotating daily, FileLogger
+//   crashes/crash-<iso>.txt  - one per terminate; backtrace + env summary
 //
 // Patreon support flow: ask user to attach the most recent file from
 // each folder to their DM. With the --version output (see DuskStudioApp),

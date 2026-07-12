@@ -26,7 +26,7 @@ public:
     virtual ~INativeInstance() = default;
 
     // The negotiated bus/port shape. Valid after the concrete create(); stable
-    // until deactivate(). Message-thread read — the audio thread uses the slot's
+    // until deactivate(). Message-thread read - the audio thread uses the slot's
     // cached copy, not this vtable.
     virtual const PortLayout& portLayout() const noexcept = 0;
 

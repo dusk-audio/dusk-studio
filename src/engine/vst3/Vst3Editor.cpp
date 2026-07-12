@@ -30,7 +30,7 @@ struct Vst3Editor::Impl
     float contentScale = 0.0f;
     bool  embedded = false, mapped = false;
 
-    // ── IPlugFrame::resizeView, routed through the instance's resize handler ──
+    // IPlugFrame::resizeView, routed through the instance's resize handler
     bool onResizeView (int w, int h)
     {
         if (w <= 0 || h <= 0 || ! view) return false;
@@ -42,7 +42,7 @@ struct Vst3Editor::Impl
         }
         if (owner->onResize) owner->onResize (w, h);
         // Spec: a honoured resizeView is confirmed back with onSize. The owner's
-        // setSize chain may already have pushed it — lastW/lastH dedups.
+        // setSize chain may already have pushed it - lastW/lastH dedups.
         confirmSize (w, h);
         return true;
     }
@@ -110,7 +110,7 @@ bool Vst3Editor::embed (unsigned long parentX11, int x, int y, int w, int h, std
     const int hh = h > 0 ? h : (impl->prefH > 0 ? impl->prefH : 320);
 
     // Solid background (not None) so the map fills with black instead of stale
-    // framebuffer — same rationale as the CLAP/LV2 editors.
+    // framebuffer - same rationale as the CLAP/LV2 editors.
     XSetWindowAttributes swa {};
     swa.background_pixel = BlackPixel (dpy, DefaultScreen (dpy));
     swa.border_pixel     = 0;
@@ -124,7 +124,7 @@ bool Vst3Editor::embed (unsigned long parentX11, int x, int y, int w, int h, std
                                       (unsigned) ww, (unsigned) hh, 0,
                                       CopyFromParent, InputOutput, (Visual*) CopyFromParent,
                                       CWBackPixel | CWBorderPixel | CWEventMask | CWOverrideRedirect, &swa);
-    // Viewable BEFORE the view attaches — toolkit-backed editors can abort
+    // Viewable BEFORE the view attaches - toolkit-backed editors can abort
     // realising into an unmapped parent.
     XMapWindow (dpy, impl->hostWindow);
     XSync (dpy, False);
@@ -136,7 +136,7 @@ bool Vst3Editor::embed (unsigned long parentX11, int x, int y, int w, int h, std
     { errorOut = "IPlugView::attached failed"; close(); return false; }
 
     // attached() may have re-decided the size (resizeView fires synchronously
-    // through the frame) — re-query so the owner adopts the real one.
+    // through the frame) - re-query so the owner adopts the real one.
     ViewRect size {};
     if (impl->view->getSize (&size) == kResultOk
         && size.getWidth() > 0 && size.getHeight() > 0)

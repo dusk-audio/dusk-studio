@@ -85,7 +85,7 @@ private:
 
     juce::Label nameLabel;
 
-    // Right-click context menu — used to be only via strip-body
+    // Right-click context menu - used to be only via strip-body
     // right-click (undiscoverable).
     struct PluginSlotButton final : public juce::TextButton
     {
@@ -96,14 +96,14 @@ private:
             if (e.mods.isPopupMenu() && onRightClick)
             {
                 onRightClick (e);
-                return;   // skip base — don't want a stuck "down" state.
+                return;   // skip base - don't want a stuck "down" state.
             }
             juce::TextButton::mouseDown (e);
         }
     };
     PluginSlotButton pluginSlotButton { "+ Plugin" };
     juce::String     lastSlotName;
-    // Bypass LED overlaid on the insert button's left edge — same
+    // Bypass LED overlaid on the insert button's left edge - same
     // grammar as the EQ / COMP header LEDs. Green = insert engaged.
     std::unique_ptr<class CompBypassLed> insertBypassLed;
     bool insertSlotOccupied() const;
@@ -136,7 +136,7 @@ private:
 
     // Holds the union of all three modes' params; shows only the
     // current mode. Illumination relies on LookAndFeel reading
-    // getToggleState — we do NOT setClickingTogglesState(true) (that
+    // getToggleState - we do NOT setClickingTogglesState(true) (that
     // would flip on every click and detach visual from compEnabled).
     // onClick opens the mode menu; compEnabled mutated separately.
     std::unique_ptr<CompHeaderButton> compModeButton;
@@ -174,7 +174,7 @@ private:
     // Refresh the standalone dB readout from the fader slider's current value.
     // Called from faderSlider.onValueChange (user drag) AND from the 30 Hz
     // timer after it pulls an external change (MIDI binding / MCU / automation)
-    // into the slider with dontSendNotification — which skips onValueChange,
+    // into the slider with dontSendNotification - which skips onValueChange,
     // so the label must be refreshed explicitly or it freezes.
     void refreshFaderValueLabel();
 
@@ -211,7 +211,7 @@ private:
     void showAutoModeMenu();
     void setAutoMode (AutomationMode mode);
     void refreshAutoModeButton();
-    // Strict ascending order — evaluateLane's binary search depends on
+    // Strict ascending order - evaluateLane's binary search depends on
     // it. Same-sample writes coalesce; loop wraparound truncates future
     // points.
     void captureWritePoint (AutomationParam param, float denormValue);
@@ -287,14 +287,14 @@ private:
     // compMode / compEnabled mutation.
     void refreshCompModeButtonState();
     // Heavy: shows current mode's knobs + hides others. Only on real
-    // mode change or visibility flip — NOT from the 30 Hz timer.
+    // mode change or visibility flip - NOT from the 30 Hz timer.
     void refreshCompKnobVisibility();
 
     // Last compMode value the UI's knob-visibility filter was applied
     // for. The 30 Hz tick compares against the atom and calls
-    // refreshCompKnobVisibility() ONLY when they differ — catches
-    // session-load mode changes (which previously left every mode's
-    // knobs overlapping in the comp section).
+    // refreshCompKnobVisibility() ONLY when they differ - without it a
+    // session-load mode change leaves every mode's knobs overlapping in
+    // the comp section.
     int lastAppliedCompMode = -1;
     void showCompModeMenu();
     void showEqTypeMenu();
@@ -323,7 +323,7 @@ private:
     // Editor hosted inline as an EmbeddedModal (centred, dim backdrop,
     // click-out / Esc dismiss). showBorrowed doesn't own the body so
     // GL / Cairo / native resources survive close/reopen cycles. Both
-    // generic-fallback and native editors share this modal — X11 sub-
+    // generic-fallback and native editors share this modal - X11 sub-
     // window reparents into the modal wrapper without its own top-
     // level peer.
     EmbeddedModal pluginEditorModal;
@@ -331,20 +331,20 @@ private:
     juce::AudioProcessor* pluginEditorOwner = nullptr;
 
     // Native CLAP insert editor (shares the strip's NativeClapSlot instance). Kept
-    // alive across modal opens — showBorrowed hides on close rather than destroying
+    // alive across modal opens - showBorrowed hides on close rather than destroying
     // (u-he hangs in gui->destroy); leaked on shutdown via dropPluginEditor. Linux-only.
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
     std::unique_ptr<class ClapPluginEditorComponent> clapEditor;
     void loadNativeClapForChannel (const juce::File& clapFile, const juce::String& pluginId = {});
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_LV2
-    // Native LV2 insert editor (suil) — same kept-alive/showBorrowed lifecycle as
+    // Native LV2 insert editor (suil) - same kept-alive/showBorrowed lifecycle as
     // clapEditor above.
     std::unique_ptr<class Lv2PluginEditorComponent> lv2Editor;
     void loadNativeLv2ForChannel (const juce::File& bundleDir, const juce::String& pluginId = {});
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_VST3
-    // Native VST3 insert editor (IPlugView) — same lifecycle as clapEditor above.
+    // Native VST3 insert editor (IPlugView) - same lifecycle as clapEditor above.
     std::unique_ptr<class Vst3PluginEditorComponent> vst3Editor;
     void loadNativeVst3ForChannel (const juce::File& vst3File, const juce::String& pluginId = {});
 #endif
@@ -382,7 +382,7 @@ private:
     juce::TextButton  auxCompactButton  { "AUX" };
     // EQ / COMP / AUX compact editors, each a centred EmbeddedModal (dim
     // backdrop, Esc / click-outside dismiss, transport-key forwarding, focus
-    // restore all handled internally). Mutually exclusive — opening one closes
+    // restore all handled internally). Mutually exclusive - opening one closes
     // the others.
     EmbeddedModal eqEditorModal;
     EmbeddedModal compEditorModal;

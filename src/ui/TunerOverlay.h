@@ -1,9 +1,9 @@
-// TunerOverlay.h — full-editor modal showing detected note name + cents.
+// TunerOverlay.h - full-editor modal showing detected note name + cents.
 //
 // Mirrors the pattern of plugins/shared/SupportersOverlay.h: a Component
 // that paints a panel over the editor and dismisses on click. The note +
 // cents indicator is driven by setDetected(hz, level) calls from the
-// editor's timer — the overlay itself is not aware of audio threads.
+// editor's timer - the overlay itself is not aware of audio threads.
 
 #pragma once
 
@@ -99,7 +99,7 @@ public:
             // Octave subscript next to the note
             g.setFont (juce::Font (juce::FontOptions (28.0f)));
             g.setColour (juce::Colour (0xffa0a0a0));
-            // Right-align after the centred note text — measure note width
+            // Right-align after the centred note text - measure note width
             // approximately by glyph count.
             const int noteApproxW = 60; // glyph width estimate at 96 pt
             g.drawText (octaveStr,
@@ -114,7 +114,7 @@ public:
                         panel.getX(), panel.getY() + 175,
                         panel.getWidth(), 18, juce::Justification::centred);
 
-            // Cents bar — ±50 cents range, centred at panel midline
+            // Cents bar - ±50 cents range, centred at panel midline
             const int barY = panel.getY() + 215;
             const int barH = 26;
             const int barW = panel.getWidth() - 80;

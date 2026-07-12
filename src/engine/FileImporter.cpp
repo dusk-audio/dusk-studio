@@ -133,8 +133,8 @@ AudioImportResult importAudio (const AudioImportRequest& req)
     }
 
     // Faithful fast path: when the source already matches the session's sample
-    // rate AND the requested channel layout, copy it in verbatim — no decode,
-    // no resample, no bit-depth change — so an import never alters audio the
+    // rate AND the requested channel layout, copy it in verbatim - no decode,
+    // no resample, no bit-depth change - so an import never alters audio the
     // user didn't ask to change (a 16-bit or 32-float source is preserved
     // exactly, in its original format). Only an actual rate or channel conform
     // falls through to the decode + re-encode path below.
@@ -239,7 +239,7 @@ AudioImportResult importAudio (const AudioImportRequest& req)
     // createWriterFor takes ownership of the stream on success.
     stream.release();
 
-    // Stream decode → conform → (sinc-)resample → write in bounded chunks.
+    // Stream decode -> conform -> (sinc-)resample -> write in bounded chunks.
     // The old whole-file path allocated three full-length buffers (a 30-min
     // 96 kHz stereo stem needed ~1.4 GB before the writer even opened) and
     // froze the message thread on the allocation; this loop peaks at a few

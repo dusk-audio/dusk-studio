@@ -116,7 +116,7 @@ void showDuskAlert (juce::Component& parent,
 {
     auto panel = std::make_unique<DuskAlertPanel> (std::move (title),
                                                      std::move (message));
-    // CONTRACT: onDismiss fires exactly once per show. Two paths exist —
+    // CONTRACT: onDismiss fires exactly once per show. Two paths exist -
     // panel.onOK (button click) and show()'s onDismiss (dim-click / Esc).
     // These are mutually exclusive ONLY because EmbeddedModal::close()
     // does NOT invoke userOnDismiss; it just tears down the dim /
@@ -205,7 +205,7 @@ void runScanModal (PluginManager& manager, juce::Component* parent,
 
             if (const int skipped = manager.getLastScanSandboxSkips(); skipped > 0)
                 message << juce::String::formatted (
-                    "\n\nWarning: the plugin scanning sandbox was unavailable — "
+                    "\n\nWarning: the plugin scanning sandbox was unavailable - "
                     "%d plugin%s skipped (left unscanned). Rescan once the plugin "
                     "host is present.",
                     skipped, skipped == 1 ? "" : "s");
@@ -253,7 +253,7 @@ void rejectMismatchedKind (PluginSlot& slot, PluginKind kind)
             }
     // No top-level component available (shouldn't happen in normal
     // use). Log loudly instead of dropping a native juce::AlertWindow
-    // — those break window stacking on XWayland.
+    // - those break window stacking on XWayland.
     juce::Logger::writeToLog ("[Dusk Studio/PluginPicker] Plugin kind mismatch: " + msg);
     std::fprintf (stderr,
                   "[Dusk Studio/PluginPicker] Plugin kind mismatch (no parent): %s\n",
@@ -452,7 +452,7 @@ void openPickerMenu (PluginSlot& slot,
 
         // Capture for the post-alert reopen. Run scan, then schedule
         // picker reopen ONLY after the user dismisses the completion
-        // alert — otherwise the picker stacks back over the alert (alert
+        // alert - otherwise the picker stacks back over the alert (alert
         // was added before the picker, so JUCE z-order puts the picker
         // on top), making the result message invisible.
         auto reopenPicker = [slotPtr, safeTarget,                               onChange, kind, onPickHardwareInsert, onPickNativeClap,
@@ -479,7 +479,7 @@ void openPickerMenu (PluginSlot& slot,
     // Hardware-insert + soundfont bottom-row buttons are SUPPRESSED when
     // this picker was reached via the two-step InsertChooser (those
     // options are already on the chooser's top-level buttons). Other
-    // entry points — Replace plugin..., Scan rescan-reopen — keep them
+    // entry points - Replace plugin..., Scan rescan-reopen - keep them
     // for ergonomic in-place switching.
     if (onPickHardwareInsert && ! suppressSecondaryButtons)
     {
@@ -511,7 +511,7 @@ void openPickerMenu (PluginSlot& slot,
 
         // Native rows route to the native hosts, not the JUCE loader. The native
         // handlers do their own success refresh + failure alert (loadNativeXxxFor*),
-        // so DON'T also fire the generic onChange here — on a failed load it would
+        // so DON'T also fire the generic onChange here - on a failed load it would
         // refresh state as if the slot loaded (the JUCE path only refreshes on a
         // successful async load).
         if (desc.pluginFormatName == "CLAP"
@@ -583,7 +583,7 @@ void openPickerMenu (PluginSlot& slot,
                                 /*onDismiss*/ [] { sharedPickerModal().close(); });
 }
 
-// ── InsertChooserPanel — three big buttons in a stack ────────────────────
+// InsertChooserPanel - three big buttons in a stack
 
 namespace
 {
@@ -723,12 +723,12 @@ void openInsertChooser (PluginSlot& slot,
 
     auto closeChooser = [] { sharedChooserModal().close(); };
 
-    // HW insert only makes sense on audio (effects) slots — a MIDI
+    // HW insert only makes sense on audio (effects) slots - a MIDI
     // instrument slot can't route audio out to a physical pair.
     // Soundfont is shown ALWAYS when the multisample backend is built
     // in: it loads via the same path as an instrument plugin, and the
     // engine routes MIDI-driven content even on an audio track (the
-    // user picks the SFZ for a reason — flagging it as "wrong slot"
+    // user picks the SFZ for a reason - flagging it as "wrong slot"
     // here hides a valid choice).
     const bool showHw = (kind == PluginKind::Effects)
                         && static_cast<bool> (onPickHardwareInsert);

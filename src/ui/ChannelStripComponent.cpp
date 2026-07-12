@@ -34,7 +34,7 @@ namespace duskstudio
 // Custom header button for the COMP section. Acts as both an
 // enable-toggle (left click) and a mode-picker (right click). Single
 // affordance replacing the older COMP label + mode pill + bypass LED
-// triplet — less visual noise, one obvious click target.
+// triplet - less visual noise, one obvious click target.
 class ChannelStripComponent::CompHeaderButton final : public juce::Component,
                                                           public juce::SettableTooltipClient
 {
@@ -56,7 +56,7 @@ public:
     }
 
     // EQ header uses these to surface the active type (Brown / Black)
-    // — see ChannelStripComponent::timerCallback. COMP header leaves
+    // - see ChannelStripComponent::timerCallback. COMP header leaves
     // them at defaults.
     void setChipText (juce::String t)
     {
@@ -72,7 +72,7 @@ public:
         const auto r = getLocalBounds().toFloat().reduced (1.0f);
         const bool on = isEnabledFn ? isEnabledFn() : false;
 
-        // Pill background — same dark fill regardless of state.
+        // Pill background - same dark fill regardless of state.
         g.setColour (juce::Colour (0xff242428));
         g.fillRoundedRectangle (r, 4.0f);
         g.setColour (juce::Colour (0xff3a3a40));
@@ -286,7 +286,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     };
     addAndMakeVisible (nameLabel);
 
-    // ── Top filter section: HPF + LPF, white-faced (SSL 9000 J grammar).
+    // Top filter section: HPF + LPF, white-faced (SSL 9000 J grammar).
     const auto filterWhite = juce::Colour (sslEqColors::kFilterWhite);
     hpfLabel.setText ("HPF", juce::dontSendNotification);
     hpfLabel.setJustificationType (juce::Justification::centred);
@@ -335,7 +335,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     lpfKnob.onValueChange = [this] { onLpfKnobChanged(); };
     addAndMakeVisible (lpfKnob);
 
-    // ── EQ type chip (E/G) — small toggle that lives mid-strip between
+    // EQ type chip (E/G) - small toggle that lives mid-strip between
     // the HM and LM rows in the freq column. Replaces the chip that
     // used to sit on the EQ header pill so the type indicator is more
     // prominent on the EQ panel itself.
@@ -357,8 +357,8 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     };
     addAndMakeVisible (eqTypeChip);
 
-    // ── EQ region ──
-    // Single EQ header button — same grammar as COMP. Left-click
+    // EQ region
+    // Single EQ header button - same grammar as COMP. Left-click
     // toggles eqEnabled; right-click pops the EQ-type picker
     // (Brown E / Black G). Built-in green LED illuminates when
     // engaged (auto-armed on first knob touch); text always white.
@@ -376,7 +376,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     eqHeaderBtn->setTooltip ("Left-click to enable / disable. Right-click to choose type (Brown E / Black G).");
     addAndMakeVisible (eqHeaderBtn.get());
 
-    // ── COMP region ──
+    // COMP region
     // Single COMP header button: left-click enables/disables, right-
     // click opens the mode picker. Shows "COMP" until the user picks
     // a mode, then shows the mode name (OPTO/FET/VCA). Built-in green
@@ -426,7 +426,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         label.setFont (juce::Font (juce::FontOptions (9.0f, juce::Font::bold)));
     };
 
-    // ── Opto knobs (LA-2A: peak reduction + gain + LIMIT toggle) ──
+    // Opto knobs (LA-2A: peak reduction + gain + LIMIT toggle)
     setupCompKnob (optoPeakRedKnob, optoPeakRedLabel, "PEAK",
                    0.0, 100.0, 30.0, 0.0, "Peak Reduction (%)",
                    track.strip.compOptoPeakRed, "", 0);
@@ -469,7 +469,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     };
     addAndMakeVisible (optoLimitButton);
 
-    // ── FET knobs (1176: in/out/atk/rel + ratio button row) ──
+    // FET knobs (1176: in/out/atk/rel + ratio button row)
     setupCompKnob (fetInputKnob,   fetInputLabel,   "IN",
                    -20.0, 40.0, 0.0, 0.0, "Input drive (dB)",
                    track.strip.compFetInput, " dB", 1);
@@ -523,9 +523,9 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     fetRatioLabel.setFont (juce::Font (juce::FontOptions (9.0f, juce::Font::bold)));
     addAndMakeVisible (fetRatioLabel);
 
-    // ── VCA knobs (ratio/attack/release/output - threshold lives on the
+    // VCA knobs (ratio/attack/release/output - threshold lives on the
     //   meter-strip drag handle so the engineer pulls it directly against
-    //   the input level, the way a real VCA panel works) ──
+    // the input level, the way a real VCA panel works)
     setupCompKnob (vcaRatioKnob,   vcaRatioLabel,   "RAT",
                    1.0, 120.0, 4.0, 4.0, "Ratio (n:1)",
                    track.strip.compVcaRatio, ":1", 1);
@@ -550,12 +550,12 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     // Experimental track-3 fader-side layout: hide the IN bar (the main
     // level meter already shows it) but keep the threshold-drag triangle
     // handle so the engineer can still set the comp threshold from the
-    // strip. GR bar stays slim — column width sized accordingly below.
+    // strip. GR bar stays slim - column width sized accordingly below.
     if (usesFaderThresholdLayout())
     {
         compMeter->setShowInputBar (false);
         compMeter->setHandleVisible (true);   // pure-GR + handle stays
-        // Handle on the RIGHT side of the GR bar — keeps the bar's left
+        // Handle on the RIGHT side of the GR bar - keeps the bar's left
         // edge clean against the main meter glued to it on the left.
         compMeter->setHandleOnRight (true);
         // Lock the threshold-drag range to the level-meter scale's visible
@@ -567,7 +567,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         compMeter->setRangeDb (-60.0f, 0.0f);
         // Note: fader-side overrides (NoTextBox + restricted range) are
         // applied AFTER the default fader setup further down in the
-        // ctor (search for "Track-3 fader overrides") — otherwise the
+        // ctor (search for "Track-3 fader overrides") - otherwise the
         // default block clobbers them.
         // Drop unit suffixes on the single-row FET / VCA comp knobs so
         // the value text ("0.0", "0.20", "400", "4.0") fits in the narrow
@@ -613,7 +613,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         row.gain->textFromValueFunction = [] (double v) { return formatBandGain (v); };
         row.gain->setValue (spec.gainPtr (track.strip)->load (std::memory_order_relaxed),
                             juce::dontSendNotification);
-        row.gain->updateText();  // setValue skips updateText() when value didn't change (default 0 → loaded 0)
+        row.gain->updateText();  // setValue skips updateText() when value didn't change (default 0 -> loaded 0)
         {
             auto* atomicPtr = spec.gainPtr (track.strip);
             auto* knob = row.gain.get();
@@ -670,7 +670,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
                     eqEnabledPtr->store (true, std::memory_order_release);
                 };
             }
-            row.q->addMouseListener (this, false);   // right-click → MIDI Learn (TrackEqQ)
+            row.q->addMouseListener (this, false);   // right-click -> MIDI Learn (TrackEqQ)
             addAndMakeVisible (row.q.get());
 
             row.qLabel.setText ("Q", juce::dontSendNotification);
@@ -689,15 +689,15 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
                 eqEnabledPtr->store (true, std::memory_order_release);
             };
         }
-        row.freq->addMouseListener (this, false);   // right-click → MIDI Learn (TrackEqFreq)
+        row.freq->addMouseListener (this, false);   // right-click -> MIDI Learn (TrackEqFreq)
         addAndMakeVisible (row.freq.get());
     }
 
-    // ── Bus assigns - on/off toggles laid out vertically alongside the fader.
+    // Bus assigns - on/off toggles laid out vertically alongside the fader.
     // Each button takes the colour of its corresponding aux bus header (the
     // same HSV ramp Session::Session() uses to colour the four aux strips),
-    // so the engineer reads "BUS 1 = teal, BUS 2 = blue, …" without consulting
-    // the strip headers. ──
+    // so the engineer reads "BUS 1 = teal, BUS 2 = blue, ..." without consulting
+    // the strip headers.
     for (int i = 0; i < ChannelStripParams::kNumBuses; ++i)
     {
         const auto busColour = session.bus (i).colour;
@@ -720,7 +720,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         busButtons[(size_t) i] = std::move (btn);
     }
 
-    // ── Pan / Fader / M / S ──
+    // Pan / Fader / M / S
     panLabel.setText ("PAN", juce::dontSendNotification);
     panLabel.setJustificationType (juce::Justification::centred);
     panLabel.setColour (juce::Label::textColourId, juce::Colour (0xffe07070));
@@ -763,7 +763,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     faderSlider.setHelpText ("Channel level in decibels; double-click to reset to 0 dB.");
     // Domain-specific text for screen readers + the visible textbox.
     // JUCE's default AccessibilityHandler on juce::Slider calls
-    // getCurrentValueAsText() → textFromValueFunction, so the announced
+    // getCurrentValueAsText() -> textFromValueFunction, so the announced
     // value matches what's drawn ("-4.2 dB" rather than raw "-4.2").
     faderSlider.textFromValueFunction = [] (double v) -> juce::String
     {
@@ -773,7 +773,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     // No "dB" suffix - strip is narrow enough that "0.0 dB" truncates.
     // The dB scale column to the right of the meter makes the unit obvious.
     faderSlider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 50, 16);
-    // Borderless value box — matches the rotary-knob textbox grammar so the
+    // Borderless value box - matches the rotary-knob textbox grammar so the
     // fader number reads as text-only instead of a framed pill.
     faderSlider.setColour (juce::Slider::textBoxBackgroundColourId, juce::Colours::transparentBlack);
     faderSlider.setColour (juce::Slider::textBoxOutlineColourId,    juce::Colours::transparentBlack);
@@ -847,14 +847,14 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     faderSlider.addMouseListener (this, false);
     addAndMakeVisible (faderSlider);
 
-    // Track-3 fader overrides — applied AFTER the default range / textbox
+    // Track-3 fader overrides - applied AFTER the default range / textbox
     // setup above so they aren't clobbered. Restricts range to the
     // visible scale (-90 .. +6) and uses the on-fader labels instead of
     // a textbox.
     if (usesFaderThresholdLayout())
     {
         faderSlider.getProperties().set ("dusk_drawFaderScaleLabels", true);
-        // NO textbox inside the slider — at min value the cap (36 px tall)
+        // NO textbox inside the slider - at min value the cap (36 px tall)
         // would always overlap a textbox hosted inside the slider's
         // bounds (textbox is 14 px tall, can't escape the cap geometry).
         // Use a separate faderValueLabel positioned below the slider in
@@ -887,7 +887,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
 
         // Update the standalone label whenever the slider value changes
         // (drag, automation, programmatic setValue). Chain onto the
-        // existing onValueChange handler set earlier in the ctor —
+        // existing onValueChange handler set earlier in the ctor -
         // capture it so the original behaviour (atom store, group
         // propagation) still runs.
         const auto previousOnChange = faderSlider.onValueChange;
@@ -967,7 +967,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
                                 "fader+pan moves; TOUCH replays until you grab a "
                                 "control, then captures while held.");
     autoModeButton.onClick = [this] { showAutoModeMenu(); };
-    // Borderless: same grammar as the other strip labels — text only,
+    // Borderless: same grammar as the other strip labels - text only,
     // mode colour applied to the text via refreshAutoModeButton().
     autoModeButton.setColour (juce::TextButton::buttonColourId,   juce::Colours::transparentBlack);
     autoModeButton.setColour (juce::TextButton::buttonOnColourId, juce::Colours::transparentBlack);
@@ -976,7 +976,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     displayedLiveFaderDb = track.strip.liveFaderDb.load (std::memory_order_relaxed);
     displayedLivePan     = track.strip.livePan    .load (std::memory_order_relaxed);
 
-    // ── Peak input level readout ──
+    // Peak input level readout
     inputPeakLabel.setJustificationType (juce::Justification::centred);
     inputPeakLabel.setColour (juce::Label::textColourId, juce::Colour (0xffd0d0d0));
     inputPeakLabel.setColour (juce::Label::backgroundColourId, juce::Colours::transparentBlack);
@@ -1003,7 +1003,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
                              "Goes inert when the comp is bypassed.");
     addAndMakeVisible (grPeakLabel);
 
-    // Track-3 fader-side GR numeric readout — mirrors grPeakLabel's
+    // Track-3 fader-side GR numeric readout - mirrors grPeakLabel's
     // styling so it reads as the same UI element, just attached to the
     // fader-side slim LED instead of the COMP section. Hidden by default;
     // resized() flips it on when the layout is active.
@@ -1044,7 +1044,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     threshMeterLabel.setFont (juce::Font (juce::FontOptions (8.5f, juce::Font::bold)));
     addAndMakeVisible (threshMeterLabel);
 
-    // ── Input monitor toggle (IN) ──
+    // Input monitor toggle (IN)
     monitorButton.setClickingTogglesState (true);
     monitorButton.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff202024));
     monitorButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (fourKColors::kPanCyan));
@@ -1060,7 +1060,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     };
     addAndMakeVisible (monitorButton);
 
-    // ── Record arm ──
+    // Record arm
     armButton.setClickingTogglesState (true);
     armButton.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff202024));
     armButton.setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xffd03030));
@@ -1071,7 +1071,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     armButton.setTooltip ("Record arm - press REC on the transport to capture this input");
     armButton.onClick = [this]
     {
-        // A frozen track can't record (playback is the baked WAV) — captured
+        // A frozen track can't record (playback is the baked WAV) - captured
         // MIDI would be silent and desync the rendering. Refuse + restore the
         // toggle; unfreeze to record.
         if (armButton.getToggleState()
@@ -1121,7 +1121,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     // mode flip toggles the disabled state.
     refreshPrintButtonForMode();
 
-    // ── Input selector ──
+    // Input selector
     // -2 = follow track index; -1 = none; 0..N = explicit input. We populate
     // a small set of options here; the device may have fewer inputs at runtime
     // and we'll just route silence in that case.
@@ -1145,7 +1145,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     inputSelector.onChange = [this] { onInputSelectorChanged(); };
     addChildComponent (inputSelector);   // hidden inline; lives in the I/O popup
 
-    // ── Mode selector (Mono / Stereo / MIDI) ──
+    // Mode selector (Mono / Stereo / MIDI)
     modeSelector.addItem ("Mono",   1);   // ID 1 = Mode::Mono
     modeSelector.addItem ("Stereo", 2);   // ID 2 = Mode::Stereo
     modeSelector.addItem ("MIDI",   3);   // ID 3 = Mode::Midi
@@ -1159,7 +1159,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     modeSelector.onChange = [this] { onTrackModeChanged(); };
     addChildComponent (modeSelector);   // hidden inline; lives in the I/O popup
 
-    // ── Stereo R-channel input (mirrors the L selector's options) ──
+    // Stereo R-channel input (mirrors the L selector's options)
     inputSelectorR.addItem ("In " + juce::String (trackIndex + 2), 1);   // ID 1 = follow (-2 -> L+1)
     inputSelectorR.addItem ("None", 2);                                   // ID 2 = -1
     for (int i = 0; i < 16; ++i)
@@ -1183,7 +1183,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     };
     addChildComponent (inputSelectorR);   // visibility toggled by refreshInputSelectorVisibility
 
-    // ── MIDI input selector — populated from the engine's current MIDI
+    // MIDI input selector - populated from the engine's current MIDI
     // input bank. Re-populated whenever AudioEngine signals a refresh
     // (USB hot-plug etc.) via the ChangeListener wiring in the dtor /
     // changeListenerCallback below. Item ID 1 = "(none)" (maps to
@@ -1215,7 +1215,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     styleCombo (midiInputSelector);
     addChildComponent (midiInputSelector);
 
-    // ── MIDI channel filter (Omni / 1..16) ──
+    // MIDI channel filter (Omni / 1..16)
     // ID 1 = Omni (atom = 0), IDs 2..17 = channels 1..16 (atom = 1..16).
     midiChannelSelector.addItem ("Omni", 1);
     for (int ch = 1; ch <= 16; ++ch)
@@ -1234,7 +1234,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     styleCombo (midiChannelSelector);
     addChildComponent (midiChannelSelector);
 
-    // ── MIDI OUTPUT selector. Routes this track's per-block MIDI buffer
+    // MIDI OUTPUT selector. Routes this track's per-block MIDI buffer
     // to a hardware synth port in addition to (or instead of) the
     // loaded instrument plugin. Visible in MIDI mode only.
     rebuildMidiOutputDropdown();
@@ -1262,7 +1262,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     addChildComponent (midiOutputSelector);
 
     // MIDI activity LED. Tiny custom paint inside a juce::Component child;
-    // intercepts no clicks. Blink state is owned by ChannelStripComponent —
+    // intercepts no clicks. Blink state is owned by ChannelStripComponent -
     // timerCallback flips midiActivityLit from track.midiActivity (clear-
     // on-read) and triggers a repaint.
     midiActivityLed.setInterceptsMouseClicks (false, false);
@@ -1282,7 +1282,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     addAndMakeVisible (ioConfigButton);
     refreshIoConfigButton();
 
-    // ── Aux send knobs (Mixing stage only) ──
+    // Aux send knobs (Mixing stage only)
     // Phase A: knobs + atomics only - audio routing through the aux buses
     // happens in Phase B. The four send levels feed AUX 1..4's plugin chain
     // (reverb / delay / etc.). Default -inf (no send).
@@ -1297,7 +1297,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     {
         auto& lbl = auxIndexLabels[(size_t) i];
         // Read the current aux-lane name from session (defaults to "AUX 1"
-        // .. "AUX 4" on a fresh session — see Session::Session()).
+        // .. "AUX 4" on a fresh session - see Session::Session()).
         lbl.setText (session.auxLane (i).name, juce::dontSendNotification);
         lbl.setJustificationType (juce::Justification::centred);
         lbl.setColour (juce::Label::textColourId, kAuxColours[i].brighter (0.2f));
@@ -1315,7 +1315,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
             auto txt = lblRef.getText().trim();
             if (txt.isEmpty())
             {
-                // Empty rename — revert to the existing session name.
+                // Empty rename - revert to the existing session name.
                 lblRef.setText (session.auxLane (i).name, juce::dontSendNotification);
                 return;
             }
@@ -1335,7 +1335,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     {
         // Build the base level string (either the "−" sentinel for a
         // muted send or the dB number), then append " PRE" if the send
-        // is pre-fader regardless of level — a user who's parked the
+        // is pre-fader regardless of level - a user who's parked the
         // knob at off still needs to see whether it's PRE so they know
         // what'll happen when they bump it back up.
         // Tight format: integer when |v| >= 10 ("-12"), else 1 decimal ("0.0").
@@ -1473,7 +1473,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
         },
         [this]
         {
-            // Empty slot: nothing to bypass — don't flip (and persist) state
+            // Empty slot: nothing to bypass - don't flip (and persist) state
             // the user can't see.
             if (! insertSlotOccupied()) return;
             const bool now = ! track.strip.insertBypassed.load (std::memory_order_relaxed);
@@ -1509,7 +1509,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     addChildComponent (compCompactButton);
     addChildComponent (auxCompactButton);
 
-    // Accessibility floor (deeper a11y pass — names every user-driven
+    // Accessibility floor (deeper a11y pass - names every user-driven
     // control on the strip so screen readers announce intent, not just
     // role+index). Track-relative names because each strip's controls
     // are otherwise indistinguishable to the AT.
@@ -1541,7 +1541,7 @@ ChannelStripComponent::~ChannelStripComponent()
     // teardown never runs (leak) or fires during MessageManager shutdown after
     // members are gone. The I/O popup additionally re-parents this strip's live
     // modeSelector / midiActivityLed children, so its body must be gone while
-    // those members are still alive — closeAndDeleteBodyNow() runs here, before
+    // those members are still alive - closeAndDeleteBodyNow() runs here, before
     // any member destructs. Same variant MainComponent uses for shutdown.
     eqEditorModal.closeAndDeleteBodyNow();
     compEditorModal.closeAndDeleteBodyNow();
@@ -1664,7 +1664,7 @@ void ChannelStripComponent::setCompSectionVisible (bool visible)
     // knobs) so it follows section visibility. In compact mode the popup
     // owns its own threshold drag so we don't lose access.
     if (compMeter != nullptr) compMeter->setVisible (visible);
-    threshMeterLabel.setVisible (false);   // legacy "THR" header, no longer used
+    threshMeterLabel.setVisible (false);   // "THR" header unused; drag lives in the COMP meter strip
     grPeakLabel    .setVisible (false);    // numeric GR readout retired - the
                                             // meter bar already shows GR clearly
 
@@ -1755,9 +1755,9 @@ void ChannelStripComponent::setMixingMode (bool mixing)
 }
 
 // Click semantics for the compact-mode placeholder buttons:
-//   • Click while no popup is open → open this section's popup
-//   • Click while THIS popup is already open → close it (toggle off)
-//   • Click while the OTHER popup is open → close the other, open this one
+//   - Click while no popup is open -> open this section's popup
+//   - Click while THIS popup is already open -> close it (toggle off)
+//   - Click while the OTHER popup is open -> close the other, open this one
 // The mutual-exclusion path lets the user move quickly between EQ and COMP
 // without first having to dismiss the open dialog manually.
 void ChannelStripComponent::openPluginPicker (bool useChooser)
@@ -1781,7 +1781,7 @@ void ChannelStripComponent::openPluginPicker (bool useChooser)
 
     // Two-step flow: chooser modal first (Hardware / Soundfont / Plugin)
     // so the plugin list isn't the user's only path. Picking "Plugin"
-    // from the chooser routes to the existing openPickerMenu — same
+    // from the chooser routes to the existing openPickerMenu - same
     // callbacks below. The right-click "Replace plugin..." path passes
     // useChooser=false: the user is already committed to a plugin, so
     // skip the chooser and jump straight to the plugin list.
@@ -1796,7 +1796,7 @@ void ChannelStripComponent::openPluginPicker (bool useChooser)
                                                                   std::memory_order_release);
 
                                         // One host per insert: a successful JUCE load evicts any
-                                        // native slot — the audio chain checks natives first, so a
+                                        // native slot - the audio chain checks natives first, so a
                                         // lingering native would silently shadow the picked plugin.
                                         if (self->pluginSlot.isLoaded()
                                             && (chStrip.isNativeClapLoaded() || chStrip.isNativeLv2Loaded()
@@ -1828,7 +1828,7 @@ void ChannelStripComponent::openPluginPicker (bool useChooser)
                                         }
 
                                         // Loading an instrument (soundfont or VST/LV2 synth) on a
-                                        // non-MIDI track leaves the strip silent — instrument
+                                        // non-MIDI track leaves the strip silent - instrument
                                         // ignores audio input, no MIDI source feeds it. Flip the
                                         // track to MIDI automatically so the user doesn't have to.
                                         // setSelectedId on the mode selector fires its own change
@@ -1855,8 +1855,8 @@ void ChannelStripComponent::openPluginPicker (bool useChooser)
                                         //
                                         // Auto-open the new plugin's editor so a pick / replace
                                         // immediately surfaces the GUI. Sequence each step on its
-                                        // own message-loop tick: close (now) → refresh (next
-                                        // tick) → open (the tick after that). The two-tick gap
+                                        // own message-loop tick: close (now) -> refresh (next
+                                        // tick) -> open (the tick after that). The two-tick gap
                                         // separates the old editor's destruction from the new
                                         // editor's construction so plugins with fragile lifecycle
                                         // teardown (Diva, MininnDrum) don't see destroy+create
@@ -1879,7 +1879,7 @@ void ChannelStripComponent::openPluginPicker (bool useChooser)
                                         });
                                     };
 
-    // Native CLAP route — effects and instruments both load through the channel's
+    // Native CLAP route - effects and instruments both load through the channel's
     // native host (the picker merges whichever kind fits the slot).
     // Linux-only; elsewhere the callback stays empty so the picker shows no CLAP rows.
     std::function<void (const juce::File&, const juce::String&)> onClap;
@@ -1890,7 +1890,7 @@ void ChannelStripComponent::openPluginPicker (bool useChooser)
             self->loadNativeClapForChannel (f, id);
     };
 #endif
-    // Native LV2 route — same shape; LV2-Native rows replace the JUCE LV2 rows.
+    // Native LV2 route - same shape; LV2-Native rows replace the JUCE LV2 rows.
     std::function<void (const juce::File&, const juce::String&)> onLv2;
 #if DUSKSTUDIO_HAS_NATIVE_LV2
     onLv2 = [safe] (const juce::File& f, const juce::String& id)
@@ -1899,7 +1899,7 @@ void ChannelStripComponent::openPluginPicker (bool useChooser)
             self->loadNativeLv2ForChannel (f, id);
     };
 #endif
-    // Native VST3 route — same shape; VST3-Native rows replace the JUCE VST3 rows.
+    // Native VST3 route - same shape; VST3-Native rows replace the JUCE VST3 rows.
     std::function<void (const juce::File&, const juce::String&)> onVst3;
 #if DUSKSTUDIO_HAS_NATIVE_VST3
     onVst3 = [safe] (const juce::File& f, const juce::String& id)
@@ -2124,7 +2124,7 @@ bool ChannelStripComponent::insertSlotOccupied() const
 
 void ChannelStripComponent::refreshPluginSlotButton()
 {
-    // Native CLAP insert — name from the loaded .clap bundle. The JUCE pluginSlot is
+    // Native CLAP insert - name from the loaded .clap bundle. The JUCE pluginSlot is
     // empty for a native insert, so this must precede the slot-based bookkeeping below
     // (which would otherwise mislabel "Insert" and drop the live clap editor). Linux-only.
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
@@ -2272,7 +2272,7 @@ void ChannelStripComponent::openPluginEditor()
             self->closePluginEditor();
     };
 
-    // Native CLAP insert — show our editor (shared instance) borrowed in the modal,
+    // Native CLAP insert - show our editor (shared instance) borrowed in the modal,
     // so closing hides (not destroys) it. Takes precedence over the JUCE editor. Linux-only.
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
     if (engine.getChannelStrip (trackIndex).isNativeClapLoaded())
@@ -2336,7 +2336,7 @@ void ChannelStripComponent::openPluginEditor()
         // OOP path: ask the child to show the editor + report its
         // native window handle. The child owns the editor's lifecycle;
         // we either embed the handle (Linux XEmbed) or let it float
-        // as its own top-level window (Mac — cross-process NSView
+        // as its own top-level window (Mac - cross-process NSView
         // embedding is a polish item, not a 1.0 blocker).
         std::uint64_t windowId = 0;
         int w = 0, h = 0;
@@ -2356,7 +2356,7 @@ void ChannelStripComponent::openPluginEditor()
             remoteEditorEmbed->setSize (juce::jmax (200, w),
                                           juce::jmax (200, h));
             // Tag so EmbeddedModal hides this XEmbed window for the
-            // lifetime of any subsequent settings / quit modal — native
+            // lifetime of any subsequent settings / quit modal - native
             // X11 z-order otherwise paints the plugin window above the
             // JUCE-rendered modal.
             remoteEditorEmbed->getProperties().set (kPluginEditorTag, true);
@@ -2379,7 +2379,7 @@ void ChannelStripComponent::openPluginEditor()
             // AudioProcessor state and applies it to the shell BEFORE
             // we hand the editor off to the modal. Without this the
             // shell editor would show its default state, not the
-            // running DSP's state — confusing UX after a session
+            // running DSP's state - confusing UX after a session
             // reload + immediate editor open. Failure logs + continues;
             // the user can still drive the mirror by moving knobs.
             juce::String syncErr;
@@ -2398,7 +2398,7 @@ void ChannelStripComponent::openPluginEditor()
             // Editor fires AudioProcessor::editorBeingDeleted on the
             // shell instance, which is the correct cleanup path for an
             // editor we never wrapped. On success we .release() the
-            // unique_ptr — ownership transfers into the wrapper's own
+            // unique_ptr - ownership transfers into the wrapper's own
             // unique_ptr<AudioProcessorEditor> member.
             std::unique_ptr<juce::AudioProcessorEditor> shellEditor (
                 pluginSlot.createShellEditor());
@@ -2411,7 +2411,7 @@ void ChannelStripComponent::openPluginEditor()
                     // Register the wrapper with PluginSlot so it can
                     // refuse a second concurrent editor + defer shell
                     // release until this wrapper destructs. SafePointer
-                    // auto-nulls on wrapper dtor — no explicit "released"
+                    // auto-nulls on wrapper dtor - no explicit "released"
                     // callback needed.
                     pluginSlot.notifyShellEditorWrapper (embed.get());
                 }
@@ -2431,8 +2431,8 @@ void ChannelStripComponent::openPluginEditor()
             embed->setSize (juce::jmax (200, w), juce::jmax (200, h));
             // Tag so a later settings / quit modal hides the shell-editor
             // wrapper too (same reason as the Linux XEmbed + in-process
-            // paths). Defensive today — createInProcessEditorHost is a Mac
-            // stub returning nullptr — but correct once the shell host lands.
+            // paths). Defensive today - createInProcessEditorHost is a Mac
+            // stub returning nullptr - but correct once the shell host lands.
             embed->getProperties().set (kPluginEditorTag, true);
             pluginEditorModal.showBorrowed (*parent, *embed, onClose);
             remoteForeignEmbed = std::move (embed);
@@ -2443,7 +2443,7 @@ void ChannelStripComponent::openPluginEditor()
             // Subsequent clicks re-fire ShowEditor and the child raises
             // the existing window. NOTE: this floating window lives in the
             // child process and is NOT a child of our parent, so EmbeddedModal
-            // cannot hide it under a settings/quit modal — that needs an
+            // cannot hide it under a settings/quit modal - that needs an
             // explicit IPC HideEditor/ShowEditor round-trip driven by modal
             // open/close, deferred to the tracked NSView-embed work.
             juce::ignoreUnused (w, h);
@@ -2458,7 +2458,7 @@ void ChannelStripComponent::openPluginEditor()
         {
             embed->setSize (juce::jmax (200, w), juce::jmax (200, h));
             // Tag so a later settings / quit modal hides the reparented HWND
-            // wrapper too — native window z-order otherwise paints the plugin
+            // wrapper too - native window z-order otherwise paints the plugin
             // above the JUCE-rendered modal.
             embed->getProperties().set (kPluginEditorTag, true);
             pluginEditorModal.showBorrowed (*parent, *embed, onClose);
@@ -2466,7 +2466,7 @@ void ChannelStripComponent::openPluginEditor()
         }
         else
         {
-            // Embed creation failed (HWND no longer valid, etc.) — let
+            // Embed creation failed (HWND no longer valid, etc.) - let
             // the child's floating window stand in.
             juce::ignoreUnused (w, h);
         }
@@ -2492,7 +2492,7 @@ void ChannelStripComponent::openPluginEditor()
         std::unique_ptr<juce::AudioProcessorEditor> fresh;
         if (instance->hasEditor())
         {
-            // Dry-pass this strip while the editor constructs — sampler
+            // Dry-pass this strip while the editor constructs - sampler
             // editors can block processBlock on their internal loader lock
             // for seconds, which would stall the whole audio callback.
             const juce::SpinLock::ScopedLockType processExclusion (
@@ -2520,7 +2520,7 @@ void ChannelStripComponent::closePluginEditor()
    #if DUSKSTUDIO_HAS_OOP_PLUGINS && ! JUCE_LINUX
     // Mac OOP floating-window path (no embed available): the editor
     // window lives in the child process; the parent has no modal body
-    // to tear down — just send HideEditor.
+    // to tear down - just send HideEditor.
     if (pluginSlot.isRemote() && remoteForeignEmbed == nullptr)
     {
         pluginSlot.hideRemoteEditor();
@@ -2548,7 +2548,7 @@ void ChannelStripComponent::dropPluginEditor()
 {
     closePluginEditor();
 
-    // Native CLAP editor: leak rather than destroy — u-he plugins hang in
+    // Native CLAP editor: leak rather than destroy - u-he plugins hang in
     // gui->destroy on shutdown (same class as the JUCE leak-on-shutdown). The
     // shared instance is leaked separately by the engine's shutdown loop. Linux-only.
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
@@ -2566,7 +2566,7 @@ void ChannelStripComponent::dropPluginEditor()
     }
 #endif
 #if DUSKSTUDIO_HAS_NATIVE_VST3
-    vst3Editor.reset();   // in-process C++ teardown — no leak path needed
+    vst3Editor.reset();   // in-process C++ teardown - no leak path needed
 #endif
     // ~AudioProcessorEditor tears down the plugin's internal X11
     // children synchronously (colour pickers, preset browsers,
@@ -2598,7 +2598,7 @@ void ChannelStripComponent::dropPluginEditor()
    #if DUSKSTUDIO_HAS_OOP_PLUGINS && ! JUCE_LINUX
     // Windows: ~ForeignHwndEmbed (in PlatformWindowing_Windows.cpp)
     // SetParent's the child HWND back to desktop so the OOP host can
-    // hide/destroy it cleanly. Mac: nullptr — no-op.
+    // hide/destroy it cleanly. Mac: nullptr - no-op.
     remoteForeignEmbed.reset();
    #endif
 }
@@ -2627,7 +2627,7 @@ void ChannelStripComponent::loadNativeClapForChannel (const juce::File& clapFile
 {
     auto& strip = engine.getChannelStrip (trackIndex);
 
-    // One insert per strip — tear down whatever editor is open first. The app is
+    // One insert per strip - tear down whatever editor is open first. The app is
     // alive here (not shutdown), so a plain reset destroys the old clap editor
     // cleanly; only shutdown needs the leak path.
     closePluginEditor();
@@ -2640,7 +2640,7 @@ void ChannelStripComponent::loadNativeClapForChannel (const juce::File& clapFile
 #endif
     pluginEditor.reset();
     pluginEditorOwner = nullptr;
-    // Release any OOP-side embed too — replacing a remote (OOP) plugin with a native
+    // Release any OOP-side embed too - replacing a remote (OOP) plugin with a native
     // CLAP would otherwise leave the foreign X11 / HWND wrapper behind (mirrors
     // dropPluginEditor's teardown).
    #if JUCE_LINUX && DUSKSTUDIO_HAS_OOP_PLUGINS
@@ -2665,7 +2665,7 @@ void ChannelStripComponent::loadNativeClapForChannel (const juce::File& clapFile
         std::fprintf (stderr, "[chan clap] load failed: %s\n", err.c_str());
         showDuskAlert (*this, "Couldn't load CLAP plugin",
                        clapFile.getFileNameWithoutExtension() + ":\n" + juce::String (err));
-        // The runtime slot is now empty — clear the persisted native-CLAP refs so a
+        // The runtime slot is now empty - clear the persisted native-CLAP refs so a
         // save doesn't carry a stale path/state for a slot the user sees as empty.
         track.nativeClapPath = {};
         track.nativeClapPluginId = {};
@@ -2680,7 +2680,7 @@ void ChannelStripComponent::loadNativeClapForChannel (const juce::File& clapFile
     // Fresh bundle: don't reuse the previous plugin's state blob. The next save
     // re-captures this plugin's real state.
     track.nativeClapStateBase64 = {};
-    // The load evicted the other native hosts in this insert — drop their refs too.
+    // The load evicted the other native hosts in this insert - drop their refs too.
     track.nativeLv2Path = {};
     track.nativeLv2PluginId = {};
     track.nativeLv2StateBase64 = {};
@@ -2698,7 +2698,7 @@ void ChannelStripComponent::loadNativeLv2ForChannel (const juce::File& bundleDir
 {
     auto& strip = engine.getChannelStrip (trackIndex);
 
-    // One insert per strip — tear down whatever editor is open first (the CLAP
+    // One insert per strip - tear down whatever editor is open first (the CLAP
     // editor references an instance the load below evicts). Mirrors
     // loadNativeClapForChannel.
     closePluginEditor();
@@ -2760,7 +2760,7 @@ void ChannelStripComponent::loadNativeVst3ForChannel (const juce::File& vst3File
 {
     auto& strip = engine.getChannelStrip (trackIndex);
 
-    // One insert per strip — tear down whatever editor is open first (any open
+    // One insert per strip - tear down whatever editor is open first (any open
     // editor references an instance the load below evicts). Mirrors
     // loadNativeClapForChannel.
     closePluginEditor();
@@ -2911,7 +2911,7 @@ void ChannelStripComponent::openIoConfigPopup()
 
     // The panel borrows this strip's live combo children; owning show() re-parents
     // them into the panel. On close the panel is destroyed and the combos are left
-    // parentless (still owned as strip members, so they survive) — invisible until
+    // parentless (still owned as strip members, so they survive) - invisible until
     // the next open re-parents them, which is what we want: compact mode shows the
     // ioConfigButton, never the bare combos. The DuskComboBox dropdowns render as
     // nested in-window modals, so no CallOutBox-style "sticky while a native popup
@@ -2932,7 +2932,7 @@ void ChannelStripComponent::refreshAuxSendLabel (int auxIdx)
     const bool  isPre = track.strip.auxSendPreFader[(size_t) auxIdx]
                               .load (std::memory_order_relaxed);
 
-    // Inline the formatter — the ctor's `formatAuxSend` lambda is
+    // Inline the formatter - the ctor's `formatAuxSend` lambda is
     // out of scope here. Same logic, kept terse. PRE suffix appended
     // regardless of level so users can see pre-fader state even when
     // the send is parked at off.
@@ -2947,7 +2947,7 @@ void ChannelStripComponent::refreshAuxSendLabel (int auxIdx)
 
     auxKnobLabels[(size_t) auxIdx].setText (text, juce::dontSendNotification);
 
-    // Outline-colour cue mirrors the PRE text — bright amber ring when
+    // Outline-colour cue mirrors the PRE text - bright amber ring when
     // pre-fader, dim default when post. Updated here (not just in ctor)
     // so the right-click PRE/POST toggle reflects on the knob ring
     // without needing a strip rebuild.
@@ -2968,7 +2968,7 @@ void ChannelStripComponent::refreshPrintButtonForMode()
     const bool frozen = track.frozen.load (std::memory_order_relaxed);
 
     // The button is FREEZE for any MIDI track, and for an audio track once it
-    // has a recorded take — at that point PRINT (a capture-time decision) is
+    // has a recorded take - at that point PRINT (a capture-time decision) is
     // moot and you'd rather bake the insert + EQ/comp to reclaim CPU (a big win
     // at high oversampling). An empty audio track keeps PRINT. Driven each timer
     // tick, so the button flips to FREEZE the moment a recording lands.
@@ -2988,7 +2988,7 @@ void ChannelStripComponent::refreshPrintButtonForMode()
                                   "the post-EQ/post-comp signal (effects baked "
                                   "in). Off = clean input recorded; effects "
                                   "only at playback.");
-        // Restore the PRINT-specific a11y metadata — otherwise a FREEZE→PRINT flip
+        // Restore the PRINT-specific a11y metadata - otherwise a FREEZE->PRINT flip
         // leaves the stale "Freeze track" title/help for assistive tech.
         printButton.setTitle ("Print effects on record");
         printButton.setHelpText (printButton.getTooltip());
@@ -3001,7 +3001,7 @@ void ChannelStripComponent::refreshPrintButtonForMode()
     const juce::String what = isMidi ? "instrument + EQ + comp"
                                       : "insert + EQ + comp";
     printButton.setClickingTogglesState (false);
-    // Clear any leftover toggle bit from a prior PRINT-ON state — otherwise the
+    // Clear any leftover toggle bit from a prior PRINT-ON state - otherwise the
     // button paints with buttonOnColourId/textColourOnId (the orange PRINT-on
     // look) instead of the FREEZE/snowflake colours set below.
     printButton.setToggleState (false, juce::dontSendNotification);
@@ -3027,7 +3027,7 @@ void ChannelStripComponent::refreshPrintButtonForMode()
 void ChannelStripComponent::handleFreezeClick()
 {
     // Freeze/unfreeze rebuild playback and the freeze render detaches the
-    // audio callback — mid-take that kills the recording, mid-playback it
+    // audio callback - mid-take that kills the recording, mid-playback it
     // glitches. Same isStopped gate as the other offline operations.
     if (! engine.getTransport().isStopped())
     {
@@ -3037,7 +3037,7 @@ void ChannelStripComponent::handleFreezeClick()
         return;
     }
 
-    // Unfreeze is cheap (no render) — do it inline and refresh the button.
+    // Unfreeze is cheap (no render) - do it inline and refresh the button.
     if (track.frozen.load (std::memory_order_relaxed))
     {
         engine.unfreezeTrack (trackIndex);
@@ -3105,7 +3105,7 @@ void ChannelStripComponent::openEqEditorPopup()
 {
     if (eqEditorModal.isOpen()) { eqEditorModal.close(); return; }
 
-    // Mutual exclusion — one processing editor at a time.
+    // Mutual exclusion - one processing editor at a time.
     if (compEditorModal.isOpen()) compEditorModal.close();
     if (auxEditorModal.isOpen())  auxEditorModal.close();
 
@@ -3128,7 +3128,7 @@ void ChannelStripComponent::openCompEditorPopup()
     if (auxEditorModal.isOpen()) auxEditorModal.close();
 
     // ChannelCompEditor sizes itself in its ctor (uniform height across all
-    // comp modes — see refreshLabelsForMode), so it's fully sized before show().
+    // comp modes - see refreshLabelsForMode), so it's fully sized before show().
     auto panel = std::make_unique<ChannelCompEditor> (track);
 
     auto* topLevel = getTopLevelComponent();
@@ -3144,7 +3144,7 @@ namespace
 // Compact-mode popup body for the AUX sends. Mirrors the inline 4-knob row's
 // behaviour: same param atoms (track.strip.auxSendDb), same colour grammar,
 // same off-sentinel mapping. Sized so the 4 knobs sit at a comfortable
-// editing diameter — bigger than the inline strip's 24 px rotaries.
+// editing diameter - bigger than the inline strip's 24 px rotaries.
 class AuxSendsCompactPanel : public juce::Component, private juce::Timer
 {
 public:
@@ -3324,7 +3324,7 @@ public:
             if (vl.getText (false) != txt)
                 vl.setText (txt, juce::dontSendNotification);
 
-            // Outline-colour cue mirrors the PRE text — bright amber
+            // Outline-colour cue mirrors the PRE text - bright amber
             // ring when pre-fader, dim default when post.
             const auto wantOutline = isPre ? juce::Colour (0xffffc060)
                                             : juce::Colour (0xff404048);
@@ -3388,7 +3388,7 @@ void ChannelStripComponent::timerCallback()
     // just an atomic-pointer read + string compare against the cached name.
     refreshPluginSlotButton();
 
-    // PRINT↔FREEZE flips on an audio track the moment a recording lands (or its
+    // PRINT<->FREEZE flips on an audio track the moment a recording lands (or its
     // last region is deleted). Idempotent + cheap (setButtonText/Colour are
     // no-ops when unchanged), so polling here avoids a cross-component signal.
     refreshPrintButtonForMode();
@@ -3422,7 +3422,7 @@ void ChannelStripComponent::timerCallback()
         repaint();
     }
 
-    // Aux send name sync — when another strip (or the AuxLaneComponent
+    // Aux send name sync - when another strip (or the AuxLaneComponent
     // header) renames an aux lane, every strip's matching label must
     // update so the rename reads as global.
     for (int i = 0; i < ChannelStripParams::kNumAuxSends; ++i)
@@ -3433,7 +3433,7 @@ void ChannelStripComponent::timerCallback()
             lbl.setText (laneName, juce::dontSendNotification);
     }
 
-    // MIDI activity LED. Read-and-clear the engine's flag each tick — a
+    // MIDI activity LED. Read-and-clear the engine's flag each tick - a
     // continuous stream sets it back to true on the next block, so the LED
     // stays lit while traffic flows and turns off ~33 ms after it stops.
     {
@@ -3489,7 +3489,7 @@ void ChannelStripComponent::timerCallback()
     // Sync the inline COMP knobs with their underlying atoms so writes
     // from the meter-strip threshold drag or the popout editor reflect
     // here without the user having to reload. Skip a knob the user is
-    // actively dragging — otherwise their drag would snap back to the
+    // actively dragging - otherwise their drag would snap back to the
     // stored value mid-motion.
     {
         auto syncKnob = [] (juce::Slider& k, float target)
@@ -3517,7 +3517,7 @@ void ChannelStripComponent::timerCallback()
     // popup. Bullet character + brighter background when on.
     if (compactMode)
     {
-        // Channel-strip EQ illuminates on eqEnabled alone — the same state the
+        // Channel-strip EQ illuminates on eqEnabled alone - the same state the
         // pill's left-click toggles and the expanded EQ header reflects. HPF is
         // deliberately excluded: it has its own independent gate, and folding it
         // in here left the pill stuck lit while HPF was engaged, so a click
@@ -3680,7 +3680,7 @@ void ChannelStripComponent::timerCallback()
         const bool playing = engine.getTransport().isPlaying();
 
         // Fader animate / capture. Animate whenever liveFaderDb diverges
-        // from what we've drawn AND the user isn't dragging — this covers
+        // from what we've drawn AND the user isn't dragging - this covers
         // automation Read/Touch AS WELL AS external sources that mutate
         // faderDb directly (MIDI Learn bindings, MCU faders, future
         // remote controls). Gating on `isRead || isTouch` previously
@@ -3694,7 +3694,7 @@ void ChannelStripComponent::timerCallback()
                 displayedLiveFaderDb = live;
                 faderSlider.setValue (live, juce::dontSendNotification);
                 // dontSendNotification skips onValueChange, which is what
-                // refreshes the standalone dB readout — do it explicitly so an
+                // refreshes the standalone dB readout - do it explicitly so an
                 // external fader move (MIDI binding / MCU / automation) updates
                 // the value shown under the fader, not just the cap position.
                 refreshFaderValueLabel();
@@ -3733,7 +3733,7 @@ void ChannelStripComponent::timerCallback()
         }
 
         // Mute / Solo - discrete params. In Off / Write modes the button
-        // is authoritative — read the manual atom so we don't race
+        // is authoritative - read the manual atom so we don't race
         // against the audio thread's 1-block-stale liveSolo / liveMute
         // (which used to re-light the button right after the user
         // clicked, making solo / mute look "stuck"). Only Read / Touch
@@ -3757,7 +3757,7 @@ void ChannelStripComponent::timerCallback()
             if (soloButton.getToggleState() != effective)
                 soloButton.setToggleState (effective, juce::dontSendNotification);
         }
-        // ARM has no Live atom (no automation lane) — read recordArmed
+        // ARM has no Live atom (no automation lane) - read recordArmed
         // directly. Needed so a MIDI-bound arm toggle reflects on screen.
         {
             const bool armed = track.recordArmed.load (std::memory_order_relaxed);
@@ -3788,7 +3788,7 @@ void ChannelStripComponent::timerCallback()
 
             // External pre/post flips (TrackAuxSendPrePost MIDI binding,
             // undo, session reload) update the atom without touching the
-            // UI — poll it here so the " PRE" label suffix + amber
+            // UI - poll it here so the " PRE" label suffix + amber
             // outline ring stay in sync without needing a strip rebuild.
             const bool curPre = track.strip.auxSendPreFader[(size_t) i]
                                       .load (std::memory_order_relaxed);
@@ -3853,7 +3853,7 @@ void ChannelStripComponent::captureWritePoint (AutomationParam param, float deno
 
     // Pre-filter: drop near-identical samples close together in time
     // (the timer fires every 33 ms; if the fader hasn't moved, those
-    // ticks are noise). Continuous params only — discrete state needs
+    // ticks are noise). Continuous params only - discrete state needs
     // every transition. Spec: delta + max-span pre-filter. 0.001
     // normalized = 0.1% of the lane's storage range. The
     // pt.timeSamples >= last.timeSamples guard prevents a backward
@@ -3935,7 +3935,7 @@ void ChannelStripComponent::setAutoMode (AutomationMode mode)
     //
     // Auto-thin on mode-flip would be tempting here, but the existing
     // concurrency model partitions lane reads/writes by (mode, touched)
-    // and handleWritePassComplete rewrites lane unconditionally —
+    // and handleWritePassComplete rewrites lane unconditionally -
     // there's no safe ordering relative to the audio thread acquiring
     // the new mode (or to OTHER strips that are in Read). Thinning needs
     // AtomicSnapshot on each lane before it can fire on mode-flip; for
@@ -3962,7 +3962,7 @@ void ChannelStripComponent::refreshAutoModeButton()
 {
     const int m = track.automationMode.load (std::memory_order_relaxed);
     const char* label = "OFF";
-    // Off state has no fill — reads as a plain text label so the bottom
+    // Off state has no fill - reads as a plain text label so the bottom
     // of the strip doesn't get crowded with a boxed "OFF" pill. Armed
     // modes keep their semantic colours (green/red/amber) since the
     // fill IS the indicator that automation is live.
@@ -4051,7 +4051,7 @@ void ChannelStripComponent::mouseDown (const juce::MouseEvent& e)
                 // ConsoleView with the popup still open). Capture a
                 // SafePointer<ChannelStripComponent> instead of raw
                 // `this` so each lambda no-ops cleanly if the strip is
-                // gone — without these guards the lambdas would
+                // gone - without these guards the lambdas would
                 // dereference `track`, `session`, `auxKnobs`, etc. on
                 // freed memory.
                 juce::Component::SafePointer<ChannelStripComponent> safeThis (this);
@@ -4193,7 +4193,7 @@ void ChannelStripComponent::applyTrackColour (juce::Colour c)
 
 void ChannelStripComponent::showColourMenu()
 {
-    // Eight 4K-palette presets for fast picking, plus a "Custom…" entry that
+    // Eight 4K-palette presets for fast picking, plus a "Custom..." entry that
     // pops a JUCE ColourSelector for fine-grained choice.
     const std::pair<const char*, std::uint32_t> presets[] = {
         { "Red",        fourKColors::kHfRed     },
@@ -4325,7 +4325,7 @@ void ChannelStripComponent::onTrackModeChanged()
     const int id = modeSelector.getSelectedId();
     const int mode = juce::jlimit (0, 2, id - 1);  // 0..2 = Track::Mode
 
-    // A frozen track is locked to its current mode — its baked WAV + bypassed
+    // A frozen track is locked to its current mode - its baked WAV + bypassed
     // DSP assume it. Block ANY change (restoring the selector to the track's
     // real mode) until the user unfreezes. Audio tracks freeze too now, so this
     // must restore Mono/Stereo, not hardcode MIDI.
@@ -4371,11 +4371,11 @@ void ChannelStripComponent::onTrackModeChanged()
     refreshIoConfigButton();
     refreshPrintButtonForMode();
     // If the I/O popup is open it needs to grow / shrink (rows differ per
-    // mode: 2 for audio, 4 for MIDI), then re-centre — EmbeddedModal centres
+    // mode: 2 for audio, 4 for MIDI), then re-centre - EmbeddedModal centres
     // only at show() time, so a plain setSize would leave the grown MIDI panel
     // anchored off-centre with its extra rows clipped. resized() runs
-    // unconditionally after setSize because mono ↔ stereo both use rows == 2
-    // (no height change → setSize no-ops), yet the inner layout still differs
+    // unconditionally after setSize because mono <-> stereo both use rows == 2
+    // (no height change -> setSize no-ops), yet the inner layout still differs
     // (full-width mono input vs L/R halves) and must re-lay-out.
     if (ioConfigModal.isOpen())
     {
@@ -4416,7 +4416,7 @@ void ChannelStripComponent::refreshInputSelectorVisibility()
     const bool isMidi   = (mode == 2);
 
     // Tracking-stage selectors hide entirely when the strip is in
-    // Mixing mode — without this gate, post-setMixingMode calls (track
+    // Mixing mode - without this gate, post-setMixingMode calls (track
     // mode change, plugin load triggering a re-layout) flip them back
     // on and leave stale rows above the EQ on MIDI / stereo strips.
     const bool trackingVisible = ! mixingMode;
@@ -4436,7 +4436,7 @@ void ChannelStripComponent::onHpfKnobChanged()
     // 16 channels worth of biquad cost when nobody's using HPF.
     const bool hpfOn = freq > ChannelStripParams::kHpfOffHz + 0.5f;
     track.strip.hpfEnabled.store (hpfOn, std::memory_order_relaxed);
-    // Auto-arm the EQ header LED whenever the HPF is engaged — band-
+    // Auto-arm the EQ header LED whenever the HPF is engaged - band-
     // knob touches do the same via the EQ rows' onValueChange paths.
     if (hpfOn)
         track.strip.eqEnabled.store (true, std::memory_order_release);
@@ -4446,8 +4446,8 @@ void ChannelStripComponent::onLpfKnobChanged()
 {
     const float freq = (float) lpfKnob.getValue();
     track.strip.lpfFreq.store (freq, std::memory_order_relaxed);
-    // At max → bypass the LPF DSP. Same per-channel cost optimisation
-    // as HPF — donor BritishEQProcessor skips its LPF biquad when the
+    // At max -> bypass the LPF DSP. Same per-channel cost optimisation
+    // as HPF - donor BritishEQProcessor skips its LPF biquad when the
     // enabled flag is false.
     const bool lpfOn = freq < ChannelStripParams::kLpfOffHz - 0.5f;
     track.strip.lpfEnabled.store (lpfOn, std::memory_order_relaxed);
@@ -4469,7 +4469,7 @@ void ChannelStripComponent::refreshCompModeButtonState()
 {
     if (compModeButton == nullptr) return;
     // Label always carries "COMP" so the section reads as a compressor at a
-    // glance whatever its state: disabled → "COMP"; enabled → "COMP - <mode>"
+    // glance whatever its state: disabled -> "COMP"; enabled -> "COMP - <mode>"
     // (OPTO / FET / VCA) so the active topology is explicit without right-
     // clicking the mode menu. The LED on the left of the pill also shows
     // engaged state.
@@ -4492,7 +4492,7 @@ void ChannelStripComponent::refreshCompKnobVisibility()
 
     // OPTO peak-reduction + FET input + VCA threshold are all set via
     // the triangle drag handle on the GR meter strip. No "main amount"
-    // knob is shown for any mode — the per-mode knobs in the right-side
+    // knob is shown for any mode - the per-mode knobs in the right-side
     // grid are the remaining mode-specific controls only.
     optoPeakRedKnob.setVisible (false);  optoPeakRedLabel.setVisible (false);
     fetInputKnob   .setVisible (false);  fetInputLabel   .setVisible (false);
@@ -4514,7 +4514,7 @@ void ChannelStripComponent::refreshCompKnobVisibility()
 void ChannelStripComponent::showCompModeMenu()
 {
     // Mode-only dropdown. Bypass lives on the round LED in the lower
-    // left of the comp section — click that LED to toggle compEnabled.
+    // left of the comp section - click that LED to toggle compEnabled.
     const int m = juce::jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
     juce::PopupMenu menu;
     menu.addItem (2, "OPTO - program-dependent, smooth", true, m == 0);
@@ -4533,7 +4533,7 @@ void ChannelStripComponent::showCompModeMenu()
 
 void ChannelStripComponent::showEqTypeMenu()
 {
-    // EQ type picker — right-click on the EQ header button. Mirrors
+    // EQ type picker - right-click on the EQ header button. Mirrors
     // showCompModeMenu's grammar (ticked current choice). Two types
     // for the British EQ donor: Brown (E-series) vs Black (G-series).
     const bool isBlack = track.strip.eqBlackMode.load (std::memory_order_relaxed);
@@ -4660,17 +4660,17 @@ void ChannelStripComponent::paint (juce::Graphics& g)
         g.drawRoundedRectangle (auxRowArea.toFloat().reduced (0.5f), 3.0f, 0.8f);
     }
 
-    // ── Channel input LED (next to the fader). Shows the pre-fader signal
+    // Channel input LED (next to the fader). Shows the pre-fader signal
     //    level so the engineer always sees what's hitting the strip.
     //    Threshold + GR meters live INSIDE the COMP section now, so this is
     //    just a clean input bar with a peak-hold tick.
     //
-    // The LED's dB-to-y mapping uses the fader's NormalisableRange — same
-    // skew, same range — so the meter's "0 dB" line sits at exactly the
+    // The LED's dB-to-y mapping uses the fader's NormalisableRange - same
+    // skew, same range - so the meter's "0 dB" line sits at exactly the
     // same Y as the fader's "0" tick. Linear (-60..+6) was the prior
     // approach and put 0 dB at 91 % of bar height while the fader's "0"
     // tick (with SkewFactorFromMidPoint(-12) on a -100..+12 range) lived
-    // at ~96 % — they read as two different scales for the same signal.
+    // at ~96 % - they read as two different scales for the same signal.
     const auto& faderRange = faderSlider.getNormalisableRange();
     auto dbToFrac = [&] (float db) {
         const double clamped = juce::jlimit ((double) faderRange.start,
@@ -4695,7 +4695,7 @@ void ChannelStripComponent::paint (juce::Graphics& g)
             g.setColour (juce::Colour (0xff2a2a30));
             g.drawRoundedRectangle (bar, 1.5f, 0.5f);
 
-            // LED-style colour zones — hard transitions at -5 dB (green ->
+            // LED-style colour zones - hard transitions at -5 dB (green ->
             // yellow) and +5 dB (yellow -> red). Bright saturated values
             // matching the reference image's hardware-LED look instead of
             // the prior soft gradient.
@@ -4718,7 +4718,7 @@ void ChannelStripComponent::paint (juce::Graphics& g)
                 const float y = bar.getBottom() - 1.0f - fillH;
                 const auto fillRect = juce::Rectangle<float> (x, y, w, fillH);
 
-                // Soft outer glow under the fill — tip-colour driven so the
+                // Soft outer glow under the fill - tip-colour driven so the
                 // glow shifts with the meter peak.
                 const auto tipCol = colourForDb (dispDb);
                 g.setColour (tipCol.withAlpha (0.20f));
@@ -4808,7 +4808,7 @@ void ChannelStripComponent::paint (juce::Graphics& g)
         }
     }
 
-    // Track-3 fader scale labels — drawn here (not in the LookAndFeel)
+    // Track-3 fader scale labels - drawn here (not in the LookAndFeel)
     // so they can extend into the strip area to the LEFT of the slider
     // bounds. LookAndFeel only draws the ticks for this layout.
     if (usesFaderThresholdLayout())
@@ -4831,7 +4831,7 @@ void ChannelStripComponent::paint (juce::Graphics& g)
             g.setColour (isZero ? juce::Colour (0xffffffff)
                                 : juce::Colour (0xffb8b8c0));
             // Uniform font for every label so weight differences don't
-            // throw off the visual right-alignment — the brighter colour
+            // throw off the visual right-alignment - the brighter colour
             // alone marks 0 dB. The ∞ glyph renders visually smaller than the
             // digits at a given point size, so upsize it to match their height.
             const juce::Font font (juce::FontOptions (isBottom ? 16.0f : 10.5f,
@@ -4842,7 +4842,7 @@ void ChannelStripComponent::paint (juce::Graphics& g)
             const juce::String label = isBottom ? juce::String (juce::CharPointer_UTF8 ("\xe2\x88\x9e"))   /* ∞ = -inf dB / fully off */
                                                 : juce::String (t.label);
             // Visible glyph spans (baseline - ascent) to (baseline + descent).
-            // For visible centre == tick y → baseline = y + (ascent - descent)/2.
+            // For visible centre == tick y -> baseline = y + (ascent - descent)/2.
             // Empirical -2 px bias compensates for JUCE FreeType's tendency
             // to include a small amount of line-leading inside ascent on
             // X11; without it the glyph centre drifts ~2 px below the tick.
@@ -4868,8 +4868,8 @@ void ChannelStripComponent::paint (juce::Graphics& g)
         // Map scale labels to the METER's dB-to-Y curve (using kFloorDb /
         // kCeilingDb, same dbToFrac the bar fill uses) instead of the
         // FADER's skewed slider track. They sit next to the LED bar so the
-        // user reads the scale as the meter's level scale — not the
-        // fader's position scale — and they need to line up with the bar
+        // user reads the scale as the meter's level scale - not the
+        // fader's position scale - and they need to line up with the bar
         // fill height, not the slider thumb position.
         const auto meterRect = inputMeterArea.toFloat();
         if (! meterRect.isEmpty())
@@ -4935,7 +4935,7 @@ void ChannelStripComponent::resized()
     // currently visible.
     // Tracking-only block (mode selector + input + IN/ARM/PRINT). Hidden in
     // Mixing stage - the AUX send knobs land below the COMP section instead
-    // (signal-flow placement: EQ → COMP → SENDS → PAN → fader).
+    // (signal-flow placement: EQ -> COMP -> SENDS -> PAN -> fader).
     if (! mixingMode)
     {
         // I/O region: one summary button (opens the I/O config popup with
@@ -4993,15 +4993,15 @@ void ChannelStripComponent::resized()
     else
     {
 
-    // ── EQ block ─ SSL 9000J / E-EQ inspired layout.
-    //   • Each band is a 2-column pair: GAIN on the left, FREQ on the right
+    // EQ block SSL 9000J / E-EQ inspired layout.
+    //   - Each band is a 2-column pair: GAIN on the left, FREQ on the right
     //     (same Y, prominent same-size knobs).
-    //   • Bell bands (HM, LM) add a Q knob STACKED BELOW the gain in
+    //   - Bell bands (HM, LM) add a Q knob STACKED BELOW the gain in
     //     the same left column - no third column competing for horizontal
     //     space, freq stays on the right.
-    //   • HPF lives at the top of the block as a single centred knob.
-    //   • Shelf rows are short; bell rows are taller (gain block + Q block).
-    // EQ knobs sit just a touch larger than the 24 px AUX / COMP knobs — big
+    //   - HPF lives at the top of the block as a single centred knob.
+    //   - Shelf rows are short; bell rows are taller (gain block + Q block).
+    // EQ knobs sit just a touch larger than the 24 px AUX / COMP knobs - big
     // enough for the SSL milled-skirt knob to read, small enough that the EQ
     // block doesn't eat fader height. Q matches gain/freq; no subordinate size.
     constexpr int kKnobSize    = 26;
@@ -5033,7 +5033,7 @@ void ChannelStripComponent::resized()
 
         constexpr int kRowLabelW = 28;
 
-        // Filter row — HPF | LPF aligned with the band-row columns
+        // Filter row - HPF | LPF aligned with the band-row columns
         // below. Label strip on top (centred captions over each knob),
         // knob strip below sized identically to band gain/freq knobs
         // (same colW, same kKnobBlockH) so the white knobs read as the
@@ -5067,7 +5067,7 @@ void ChannelStripComponent::resized()
             auto row = s.removeFromTop (rowH);
             // LM row (i == 2) shifted up a few pixels so it sits closer
             // to the HM row above. Overlaps the bottom of HM's Q value
-            // label slot — that slot has padding so visible text isn't
+            // label slot - that slot has padding so visible text isn't
             // clipped. Pure visual lift; rowH still reserves the same
             // vertical chunk so downstream rows (LF) stay put.
             if (i == 2)
@@ -5115,7 +5115,7 @@ void ChannelStripComponent::resized()
 
             // E/G type chip slot between HM (i==1) and LM (i==2),
             // positioned in the freq column so it sits between the
-            // HM freq knob above and the LM freq knob below — the
+            // HM freq knob above and the LM freq knob below - the
             // user-requested mid-strip prominence.
             if (i == 1)
             {
@@ -5146,7 +5146,7 @@ void ChannelStripComponent::resized()
     constexpr int kCompMeterGap     = 4;
 
     // Body height = standard 2 × knob row + gap, plus a small extra
-    // strip kept at 0 — the Fst/Slo hint labels under ATK/REL were
+    // strip kept at 0 - the Fst/Slo hint labels under ATK/REL were
     // removed; the value-label rendering inside each knob block now
     // gets the full block height with no extra padding.
     constexpr int kCompBodyExtraH = 0;
@@ -5169,11 +5169,11 @@ void ChannelStripComponent::resized()
         s.removeFromTop (2);
 
         // Body: GR meter strip (handle + IN + dB scale + GR) on the
-        // LEFT — matches Mixbus's threshold-fader-on-the-left grammar.
+        // LEFT - matches Mixbus's threshold-fader-on-the-left grammar.
         // Remaining width on the right holds the mode-specific knob
         // grid. The "main amount" param (OPTO peak red / FET input /
         // VCA threshold) is set by dragging the triangle handle on the
-        // meter strip — no dedicated knob or slider for it.
+        // meter strip - no dedicated knob or slider for it.
         auto body = s.removeFromTop (effectiveCompBodyH);
         // Track 3 (experimental): the CompMeterStrip moves to a slim
         // column next to the fader, so the COMP section's body uses the
@@ -5231,7 +5231,7 @@ void ChannelStripComponent::resized()
         {
             if (track3OneRowComp)
             {
-                // RAT / ATK / REL / MAK — matches the bus comp's single-row
+                // RAT / ATK / REL / MAK - matches the bus comp's single-row
                 // order so every comp in the mixer reads identically.
                 auto row = body.removeFromTop (kCompKnobRowH);
                 const int colW = row.getWidth() / 4;
@@ -5256,7 +5256,7 @@ void ChannelStripComponent::resized()
         {
             if (track3OneRowComp)
             {
-                // RAT / ATK / REL / MAK — matches the bus comp's single-row
+                // RAT / ATK / REL / MAK - matches the bus comp's single-row
                 // order so every comp in the mixer reads identically.
                 auto row = body.removeFromTop (kCompKnobRowH);
                 const int colW = row.getWidth() / 4;
@@ -5281,12 +5281,12 @@ void ChannelStripComponent::resized()
     area.removeFromTop (usesFaderThresholdLayout() ? 6 : 3);
     }   // end of else (! compactMode)
 
-    // ── AUX sends (Mixing stage only). Single row of 4 knobs with a slight
+    // AUX sends (Mixing stage only). Single row of 4 knobs with a slight
     //    vertical zig-zag - even-index knobs sit higher, odd-index sit lower.
     //    Staggering keeps each knob full-size while they share a narrow strip
     //    width that wouldn't allow 4 knobs at the same Y without crowding the
     //    value labels. Sits between COMP and PAN to match signal-flow order:
-    //    EQ → COMP → SENDS → PAN → fader.
+    //    EQ -> COMP -> SENDS -> PAN -> fader.
     if ((mixingMode || usesFaderThresholdLayout()) && compactMode)
     {
         // Match the EQ + COMP compact pill geometry (20h × reduced(4,0))
@@ -5394,27 +5394,27 @@ void ChannelStripComponent::resized()
     auto peakRow = faderArea.removeFromBottom (kPeakLabelH);
     faderArea.removeFromBottom (2);
     // Track 3 wants the full remaining vertical real estate for its
-    // fader column — skip the kMaxFaderHeight cap that other strips use.
+    // fader column - skip the kMaxFaderHeight cap that other strips use.
     if (! usesFaderThresholdLayout()
         && faderArea.getHeight() > kMaxFaderHeight + kPeakLabelH + 2)
         faderArea = faderArea.removeFromBottom (kMaxFaderHeight + kPeakLabelH + 2);
 
     // Vertical bus-assign column. Lives on the LEFT of the fader by default
-    // (Tascam Model 2400 grammar — buttons under the engineer's left hand).
+    // (Tascam Model 2400 grammar - buttons under the engineer's left hand).
     // At narrow strip widths it migrates to the RIGHT side, past the meter
     // cluster, so it can't visually overlap the fader cap when the strip
     // is squeezed below its design min width.
     constexpr int kBusColumnW   = 18;
     constexpr int kBusColumnGap = 3;
-    constexpr int kBusButtonH   = 20;   // fixed height; evenly spaced across the 0→∞ scale
+    constexpr int kBusButtonH   = 20;   // fixed height; evenly spaced across the 0->∞ scale
     juce::Rectangle<int> busColumn;
 
     juce::Rectangle<int> meterColumn, scaleColumn;
     juce::Rectangle<int> faderCompMeterCol;
     if (usesFaderThresholdLayout())
     {
-        // Track-3 layout (right → left): GR LED hugs the right side of
-        // the main level meter (1 px gap — reads as one continuous pair),
+        // Track-3 layout (right -> left): GR LED hugs the right side of
+        // the main level meter (1 px gap - reads as one continuous pair),
         // both glued IMMEDIATELY to the right of the fader. compMeter
         // internally flips its handle to the RIGHT (see setHandleOnRight)
         // so the triangle points LEFT at the GR bar instead of poking
@@ -5445,7 +5445,7 @@ void ChannelStripComponent::resized()
             // Bus migrates to the FAR RIGHT past the meter cluster; no
             // leftShift needed since the fader column starts at the strip
             // edge. Cap drifts slightly left of strip centre but can no
-            // longer overlap the bus buttons — the right-side stack is the
+            // longer overlap the bus buttons - the right-side stack is the
             // ONLY thing carved from the strip, fader gets all remaining
             // width.
             faderArea.removeFromRight (kRightPad);
@@ -5507,13 +5507,13 @@ void ChannelStripComponent::resized()
     meterColumn = meterColumn.withTrimmedBottom (bottomTrim);
     scaleColumn = scaleColumn.withTrimmedBottom (bottomTrim);
 
-    // Hide the legacy "THR" header - threshold drag now lives in the COMP
-    // section's meter strip, so the header next to the fader is misleading.
+    // Hide the "THR" header: threshold drag lives in the COMP section's meter
+    // strip, so a header next to the fader would be misleading.
     threshMeterLabel.setVisible (false);
 
     // Pan section pinned to the TOP of the fader column. Knob is
     // centered on the fader's x-centre (faderArea after busColumn +
-    // peakColumn carve-outs) — NOT the strip centre — so it visually
+    // peakColumn carve-outs) - NOT the strip centre - so it visually
     // sits over the slider thumb's track.
     constexpr int kPanKnobSize = 26;
     constexpr int kPanValueH   = 12;
@@ -5526,10 +5526,10 @@ void ChannelStripComponent::resized()
     //               by kFaderTrackPad top + bottom so the cap fully fits)
     // Meter LED + GR LED tops pin to the +6 tick. kPanFaderGap is the
     // visible gap between pan-knob's "C" textbox bottom and the cap-at-max
-    // top — small positive value leaves a clean separator without the cap
+    // top - small positive value leaves a clean separator without the cap
     // reaching into the pan area.
     constexpr int kPanFaderGap     = 4;
-    constexpr int kTrack3ExtraTrim = 0;    // no additional withTrimmedTop — slider eats reclaimed space
+    constexpr int kTrack3ExtraTrim = 0;    // no additional withTrimmedTop - slider eats reclaimed space
     const int sliderTopRelative = kPanLabelH + kPanBlockH
                                  + (usesFaderThresholdLayout() ? kTrack3ExtraTrim : 0)
                                  + kPanFaderGap;
@@ -5600,14 +5600,14 @@ void ChannelStripComponent::resized()
     {
         // Anchor the GR LED's bar top (grBarArea.top, which sits 10 px below
         // compMeter.top to leave room for the "GR" caption) on the LEVEL
-        // METER's 0 dB tick — so the threshold-drag triangle's MAX position
+        // METER's 0 dB tick - so the threshold-drag triangle's MAX position
         // lines up with the visible "0" mark on the fader scale instead of
         // floating between "0" and "+6".
         // Use the SAME dB-to-Y mapping the level-meter draw uses
         // (faderSlider.getNormalisableRange()) so the GR threshold
         // handle sits on the visible 0 dB tick. Linear -60..+6 was
         // wrong once the level meter moved to the fader's skewed
-        // range — handle stayed at the old ~91% position while the
+        // range - handle stayed at the old ~91% position while the
         // visible 0 tick had moved to ~96%.
         const auto& faderRange = faderSlider.getNormalisableRange();
         const float zeroFrac = (float) faderRange.convertTo0to1 (0.0);

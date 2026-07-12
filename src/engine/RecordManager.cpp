@@ -80,7 +80,7 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample)
 
     // Tracks whether any track actually got a writer / MIDI capture. If every
     // armed track is skipped (e.g. all frozen), starting would arm a no-op
-    // recording that captures nothing — fail instead so the caller can surface it.
+    // recording that captures nothing - fail instead so the caller can surface it.
     bool anyArmedSetup = false;
 
     for (int t = 0; t < Session::kNumTracks; ++t)
@@ -117,7 +117,7 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample)
         }
 
         // No %s through String::formatted: MSVC's wide printf reads a char* as
-        // wchar_t* and garbles the name into invalid filename characters — the
+        // wchar_t* and garbles the name into invalid filename characters - the
         // writer then fails to open and the take is silently dropped.
         auto trackName = "track" + juce::String (t + 1).paddedLeft ('0', 2)
                            + "_" + stamp + ".wav";
@@ -161,8 +161,8 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample)
                           t + 1);
             lastSetupFailures.push_back (t);
             // juce::AudioFormat::createWriterFor contract: takes ownership
-            // of the stream on success AND deletes it on failure. Double-
-            // delete here was the prior shape; removed.
+            // of the stream on success AND deletes it on failure, so we must
+            // not delete it ourselves here.
             continue;
         }
 
@@ -182,11 +182,11 @@ bool RecordManager::startRecording (double sampleRate, std::int64_t startSample)
         // so a catch-and-cleanup is ambiguous (potential double-free if
         // JUCE already destroyed the writer in unwind). On bad_alloc the
         // exception propagates out of startRecording cleanly:
-        //   • any per-track writers we already built unwind via the array's
+        //   - any per-track writers we already built unwind via the array's
         //     unique_ptr dtors (each drains its FIFO + closes its WAV);
-        //   • active was never set to true, so the audio thread sees
+        //   - active was never set to true, so the audio thread sees
         //     active=false and is a no-op;
-        //   • caller (AudioEngine::record) sees a false return and surfaces
+        //   - caller (AudioEngine::record) sees a false return and surfaces
         //     "recording cannot start" to the user.
         // bad_alloc here means the system is in genuine memory exhaustion;
         // failing the record arm is the correct response.
@@ -238,13 +238,13 @@ void RecordManager::stopRecording (std::int64_t endSample)
     // and writeMidiBlock bump audioInFlight before touching their slots;
     // when it reaches zero the audio thread is guaranteed to have left
     // those entry points and any pointers it captured are no longer in
-    // use. Yield in a bounded loop — happy-path wait is sub-ms to ~10 ms
+    // use. Yield in a bounded loop - happy-path wait is sub-ms to ~10 ms
     // (one audio block), short enough for the message thread to absorb
     // during a stop transition.
     //
     // Cap at kMaxSpinIterations so a stuck / detached audio thread cannot
     // hang the message thread forever. At a ~1 µs yield cost this is
-    // ~1 ms worst-case latency — orders of magnitude over a sane audio
+    // ~1 ms worst-case latency - orders of magnitude over a sane audio
     // block. If we exceed the cap, BAIL the entire teardown: writers[]
     // and midiCaptures[] stay populated, no regions get committed for
     // this take. The audio thread may still be inside writeInputBlock
@@ -255,7 +255,7 @@ void RecordManager::stopRecording (std::int64_t endSample)
     // == 0 before overwriting writers[]. If the audio thread eventually
     // unstuck (transient scheduling glitch), the slot is reclaimed
     // there. If permanently stuck (real-time priority lost, OS bug),
-    // the slot stays leaked until ~RecordManager — better than a UAF
+    // the slot stays leaked until ~RecordManager - better than a UAF
     // crash mid-session.
     constexpr int kMaxSpinIterations = 1000;
     int spinIters = 0;
@@ -524,7 +524,7 @@ void RecordManager::stopRecording (std::int64_t endSample)
             const std::int64_t fadeSamples = juce::jmax (
                 (std::int64_t) 0, juce::jmin (kPunchFadeSamples, region.lengthInSamples / 2));
 
-            // Pass 1 — fully-contained takes get absorbed into the new
+            // Pass 1 - fully-contained takes get absorbed into the new
             // region's previousTakes (no audio overlap, just history).
             // Partial overlaps fall through to Pass 2 below.
             std::vector<AudioRegion> spawnedFragments;
@@ -552,15 +552,15 @@ void RecordManager::stopRecording (std::int64_t endSample)
                 it = regs.erase (it);
             }
 
-            // Pass 2 — partial overlaps get split / trimmed so the new
+            // Pass 2 - partial overlaps get split / trimmed so the new
             // take's edges crossfade against the existing region's audio
             // instead of clicking. Three cases:
-            //   • Left overlap  (exStart < newStart, exEnd inside punch):
+            //   - Left overlap  (exStart < newStart, exEnd inside punch):
             //     trim ex to [exStart, newStart + fade], fadeOut at end.
-            //   • Right overlap (exStart inside punch, exEnd > newEnd):
+            //   - Right overlap (exStart inside punch, exEnd > newEnd):
             //     trim ex to [newEnd - fade, exEnd] + advance sourceOffset.
-            //   • Span (ex wraps both ends): produce two fragments — left
-            //     half + right half — sharing the original source file.
+            //   - Span (ex wraps both ends): produce two fragments - left
+            //     half + right half - sharing the original source file.
             // Fades are matched on the new region by hasOverlapL / R below.
             bool hasOverlapL = false, hasOverlapR = false;
             for (auto it = regs.begin(); it != regs.end(); )
@@ -623,7 +623,7 @@ void RecordManager::stopRecording (std::int64_t endSample)
                 }
                 else
                 {
-                    // Should be unreachable — fully-contained was handled
+                    // Should be unreachable - fully-contained was handled
                     // in Pass 1. Defensive ++ to avoid an infinite loop.
                     ++it;
                 }
@@ -669,7 +669,7 @@ void RecordManager::stopRecording (std::int64_t endSample)
                                                                && a.sourceOffset == b.sourceOffset; }));
         // Deep-compare like the audio path: an overdub that replaces exactly
         // one region keeps the count equal, so size alone misses it and the
-        // take becomes un-undoable. Event contents matter too — with
+        // take becomes un-undoable. Event contents matter too - with
         // previousTakes at its cap, a same-length redo with the same note
         // count would otherwise compare equal.
         const bool midiChanged  = ! (afterM.size() == beforeMidi[(size_t) t].size()
@@ -746,19 +746,19 @@ void RecordManager::writeMidiBlock (int trackIndex,
         if (cap->fifo.getFreeSpace() < needed)
         {
             cap->overflowCount.fetch_add (1, std::memory_order_relaxed);
-            continue;  // FIFO full → drop this event, try next
+            continue;  // FIFO full -> drop this event, try next
         }
         int s1 = 0, sz1 = 0, s2 = 0, sz2 = 0;
         cap->fifo.prepareToWrite (needed, s1, sz1, s2, sz2);
         if (sz1 + sz2 < needed)
         {
             cap->overflowCount.fetch_add (1, std::memory_order_relaxed);
-            // Don't advance the write pointer when we didn't write — calling
+            // Don't advance the write pointer when we didn't write - calling
             // finishedWrite(sz1+sz2) would expose stale/uninitialized slots
             // to the reader on drain. finishedWrite(0) matches the actual
             // bytes written. Rare today (the getFreeSpace guard above
             // usually catches the no-room case first) but not strictly
-            // unreachable — getFreeSpace + prepareToWrite aren't atomic,
+            // unreachable - getFreeSpace + prepareToWrite aren't atomic,
             // a concurrent drain could shrink the window in between.
             cap->fifo.finishedWrite (0);
             continue;
@@ -787,10 +787,10 @@ void RecordManager::writeInputBlock (int trackIndex,
     // Build the channel-pointer array to match the writer's channel count.
     // ThreadedWriter::write reads exactly numChannels pointers from the
     // array, so each slot it touches must be non-null.
-    //   • Mono writer (numChannels == 1): only L is read; R is ignored even
+    //   - Mono writer (numChannels == 1): only L is read; R is ignored even
     //     if the caller supplied it (mono-armed track + stereo input is a
     //     caller bug, asserted below).
-    //   • Stereo writer (numChannels == 2): if R is null we duplicate L so
+    //   - Stereo writer (numChannels == 2): if R is null we duplicate L so
     //     the second channel is never a missing pointer.
     jassert (L != nullptr);
     const float* channels[2] = { L, (R != nullptr) ? R : L };

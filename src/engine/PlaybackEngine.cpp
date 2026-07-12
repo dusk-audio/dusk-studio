@@ -10,7 +10,7 @@ namespace duskstudio
 {
 namespace
 {
-// Samples pre-cached at the loop start per region (~0.68 s at 48 kHz) —
+// Samples pre-cached at the loop start per region (~0.68 s at 48 kHz) -
 // comfortably longer than the prefetch thread needs to re-warm a reader
 // after the backward seek at a loop wrap.
 constexpr int kLoopCacheSamples = 32768;
@@ -121,7 +121,7 @@ void PlaybackEngine::preparePlayback()
             // Wrap in a BufferingAudioReader. Sample rate of the source isn't
             // known at this scope without inspecting `rawReader`, so size by
             // a fixed sample count: 96000 samples is ~1 s at 96 kHz / ~2 s at
-            // 44.1 kHz - generous given block sizes are 256–2048. Read
+            // 44.1 kHz - generous given block sizes are 256-2048. Read
             // timeout 0 keeps the audio thread non-blocking; missed reads
             // return silence until prefetch catches up.
             constexpr int kSamplesToBuffer = 96000;
@@ -262,9 +262,9 @@ void PlaybackEngine::stopPlayback()
     // The audio callback latches the transport state once per block, so
     // it can still be mid-sum when the message thread gets here. Time-
     // bounded drain (a fixed yield count can elapse in microseconds on a
-    // contended box — less than one legitimate callback — and bail
+    // contended box - less than one legitimate callback - and bail
     // spuriously). If the audio thread is genuinely stuck past the
-    // deadline, leave the streams allocated — streamsActive stays false
+    // deadline, leave the streams allocated - streamsActive stays false
     // so no new reads start, and the next stopPlayback retries the
     // drain. Leak beats UAF.
     constexpr auto kDrainTimeout = std::chrono::milliseconds (200);
@@ -344,7 +344,7 @@ void PlaybackEngine::readForTrack (int trackIndex,
     for (int s = 0; s < numSeams; ++s)
     {
         const int seam = seamOffsets[s];
-        // Fade out into the seam, fade in out of it — raised-cosine, zero
+        // Fade out into the seam, fade in out of it - raised-cosine, zero
         // slope at both ends, same shape as the punch click-mask.
         for (int i = 1; i <= kLoopSeamFade; ++i)
         {

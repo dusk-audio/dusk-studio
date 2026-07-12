@@ -28,7 +28,7 @@ public:
     // history, freeze WAVs, a session-local mastering source) into
     // newSessionDir and repoint the in-memory model, so the subsequent
     // serialize emits paths relative to the new directory. Without this a
-    // Save As writes absolute paths into the old folder — deleting it loses
+    // Save As writes absolute paths into the old folder - deleting it loses
     // all audio. External mastering sources stay absolute (leave-external-
     // media); already-external region/take files are pulled in, which also
     // heals sessions whose refs point into another session's folder.

@@ -9,7 +9,7 @@
 // events in order, read each message's raw status/data bytes and its
 // sample offset within the block. Owning + pre-sizable so the audio thread can
 // clear() and refill it every block with no allocation (reserveBytes() off the
-// RT path). It is a byte-level container — it does not parse MIDI semantics;
+// RT path). It is a byte-level container - it does not parse MIDI semantics;
 // the decoders read raw bytes directly.
 namespace dusk
 {
@@ -48,7 +48,7 @@ public:
     bool isEmpty()       const noexcept { return data.empty(); }
 
     // Reserves capacity AND caps it: once reserved, addEvent never grows past
-    // `n` bytes — it drops events that would exceed the cap instead of
+    // `n` bytes - it drops events that would exceed the cap instead of
     // reallocating. This is what makes the per-block refill allocation-free on
     // the audio thread. Left unreserved (message-thread use) the buffer grows
     // freely like a plain vector.

@@ -60,7 +60,7 @@ MasteringLimiterEditor::MasteringLimiterEditor (MasteringParams& p,
             if (headerBtn != nullptr) headerBtn->repaint();
         });
     headerBtn->setLabelText ("LIMITER");
-    headerBtn->setAccentColour (juce::Colour (0xffe05050));   // red — brickwall
+    headerBtn->setAccentColour (juce::Colour (0xffe05050));   // red - brickwall
     addAndMakeVisible (headerBtn.get());
 
     // Mode shapes the limiter's hold + release: Modern (balanced), Transparent
@@ -139,7 +139,7 @@ MasteringLimiterEditor::~MasteringLimiterEditor() { stopTimer(); }
 float MasteringLimiterEditor::yToDriveDb (int y) const noexcept
 {
     // The handle is a threshold (0..-20 dB top-to-bottom) but the limiter has
-    // no threshold — it drives the input into the ceiling. Lower threshold =
+    // no threshold - it drives the input into the ceiling. Lower threshold =
     // more drive = louder, so drive = -threshold (0..+20 dB).
     return -yToDb (y, kThreshMinDb, kThreshMaxDb, threshMeterArea.toFloat());
 }
@@ -153,7 +153,7 @@ void MasteringLimiterEditor::timerCallback()
 {
     // Mode / stereo-link / release are set once in the ctor, so a session load
     // (which rewrites the params in place) would leave them stale. Re-sync from
-    // the params here — dontSendNotification so this never re-fires the onChange
+    // the params here - dontSendNotification so this never re-fires the onChange
     // write-back. Skip the knob while the user is dragging it.
     const int modeId = juce::jlimit (0, modeCombo.getNumItems() - 1,
                                      params.limiterMode.load (std::memory_order_relaxed)) + 1;
@@ -251,7 +251,7 @@ void MasteringLimiterEditor::paint (juce::Graphics& g)
                      juce::Justification::centred, false);
     };
 
-    // ── Threshold meter (live signal fills it; handle = drive setting) ──
+    // Threshold meter (live signal fills it; handle = drive setting)
     if (! threshMeterArea.isEmpty())
     {
         const auto bar = threshMeterArea.toFloat();
@@ -302,7 +302,7 @@ void MasteringLimiterEditor::paint (juce::Graphics& g)
                      valBox, juce::Justification::centred, false);
     }
 
-    // ── Ceiling meter ──
+    // Ceiling meter
     if (! ceilingMeterArea.isEmpty())
     {
         const auto bar = ceilingMeterArea.toFloat();
@@ -348,7 +348,7 @@ void MasteringLimiterEditor::paint (juce::Graphics& g)
                      valBox, juce::Justification::centred, false);
     }
 
-    // ── Atten meter (live GR; fills downward from top) ──
+    // Atten meter (live GR; fills downward from top)
     if (! attenMeterArea.isEmpty())
     {
         const auto bar = attenMeterArea.toFloat();
@@ -393,7 +393,7 @@ void MasteringLimiterEditor::paint (juce::Graphics& g)
                      juce::Justification::centred, false);
     }
 
-    // ── LUFS readout box ──
+    // LUFS readout box
     if (! lufsBoxArea.isEmpty())
     {
         const auto box = lufsBoxArea.toFloat().reduced (1.0f);

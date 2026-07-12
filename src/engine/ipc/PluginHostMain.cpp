@@ -66,7 +66,7 @@ namespace ipcp = duskstudio::ipc::platform;
 
 // Single mutex guards every outbound write on the control socket so the
 // sockThread's sync-RPC replies cannot interleave with the async push
-// path (pushParamChangedFromChild — called from a JUCE parameter listener
+// path (pushParamChangedFromChild - called from a JUCE parameter listener
 // that may fire on any thread, including the audio worker via the
 // plugin's own callbacks).
 std::mutex& channelWriteMutex()
@@ -91,7 +91,7 @@ bool sendControlReply (ipcp::NativeHandle& ch, std::uint32_t op,
     return true;
 }
 
-// One-shot outbound push. Stubbed entry point — 3c-3b installs the
+// One-shot outbound push. Stubbed entry point - 3c-3b installs the
 // parameter listener on the child's DSP instance and calls this when
 // the plugin changes a value (host automation, MIDI-mapped controller,
 // preset reload). Wire format matches duskstudio::ipc::ParamChangedPayload.
@@ -202,7 +202,7 @@ int runIpcStub (int argc, const char* const* argv) noexcept
 // --- Phase 2 host mode ---------------------------------------------------
 
 #if JUCE_MAC
-class ChildParamListener;  // forward — defined below HostState
+class ChildParamListener;  // forward - defined below HostState
 #endif
 
 struct HostState
@@ -225,7 +225,7 @@ struct HostState
     std::atomic<bool> shouldQuit { false };
 
    #if JUCE_MAC
-    // Mirror state (3c-3b, Mac-only — Linux/Windows children don't
+    // Mirror state (3c-3b, Mac-only - Linux/Windows children don't
     // have a parent-side shell editor to mirror to, so installing
     // listeners + pushing back over the socket would be pure waste).
     //
@@ -235,7 +235,7 @@ struct HostState
     //
     // outboundParamSeq: monotonic counter stamped into every push.
     // Parent doesn't yet use it (loop-breaker is the flag); allocated
-    // for future inflight-tracking. Increment + read under no lock —
+    // for future inflight-tracking. Increment + read under no lock -
     // listener fires sequentially per plugin contract.
     std::atomic<bool>         applyingFromMirror { false };
     std::atomic<std::uint32_t> outboundParamSeq  { 0 };
@@ -244,7 +244,7 @@ struct HostState
 
     // Editor embedding (Phase 4). The plugin's editor lives in this
     // process; the parent either embeds our native window (Linux XEmbed)
-    // or lets it float as a native-titlebar toplevel (Win/Mac — see
+    // or lets it float as a native-titlebar toplevel (Win/Mac - see
     // handleShowEditor for the per-platform chrome choice). editorWindow
     // wraps the plugin's AudioProcessorEditor so it has its own native
     // peer; editor is a non-owning pointer (the wrapper window owns the
@@ -257,13 +257,13 @@ struct HostState
 #if JUCE_MAC
 // Listener installed on every parameter of the loaded DSP instance.
 // Fires on whichever thread the plugin chose to call setValueNotifying
-// Host on — host automation lanes (audio worker), preset-load
+// Host on - host automation lanes (audio worker), preset-load
 // callbacks (message thread), MIDI-mapped controllers (sockThread via
-// our SetParam → callAsync path). pushParamChangedFromChild takes
+// our SetParam -> callAsync path). pushParamChangedFromChild takes
 // channelWriteMutex internally so concurrent writes can't byte-
 // interleave with the sockThread's reply traffic.
 //
-// applyingFromMirror is checked first so a parent → child SetParam
+// applyingFromMirror is checked first so a parent -> child SetParam
 // doesn't echo back as a push (handleSetParamAsync sets the flag
 // across its setValueNotifyingHost call).
 //
@@ -273,7 +273,7 @@ struct HostState
 // stutters the parent's message thread because callAsync queues
 // build up faster than the message loop drains. Per-param
 // deduplication + a min-interval gate caps the push rate at ~200 Hz
-// per param — well above any human-perceptible knob-twiddle rate,
+// per param - well above any human-perceptible knob-twiddle rate,
 // well below the worst-case automation flood.
 class ChildParamListener final : public juce::AudioProcessorParameter::Listener
 {
@@ -303,7 +303,7 @@ public:
         // + message thread) does not race-tear lastSentValue /
         // lastSentTimeNs. ThreadSanitizer would flag the previous
         // non-atomic shape; relaxed ordering is sufficient because
-        // each slot tracks its own state — no cross-param invariant
+        // each slot tracks its own state - no cross-param invariant
         // depends on these reads/writes happening in any particular
         // order.
         constexpr float kMinDelta = 1.0e-4f;
@@ -440,9 +440,9 @@ std::uint32_t handleLoadPlugin (HostState& host,
     // Listener gets a fresh state vector sized to this plugin's
     // parameter count so the 3c-4 rate-limit dedup tracks each
     // param independently. A subsequent LoadPlugin (slot replace)
-    // reaches handleRelease first → detach + reset listener → fresh
+    // reaches handleRelease first -> detach + reset listener -> fresh
     // sizing on the next load. Plugins with thousands of params
-    // (Diva, Massive X) pay ~12 bytes per param of tracking state —
+    // (Diva, Massive X) pay ~12 bytes per param of tracking state -
     // bounded + bounded-lifetime.
     const int paramCount = host.ownedInstance->getParameters().size();
     host.paramListener = std::make_unique<ChildParamListener> (host, paramCount);
@@ -628,7 +628,7 @@ std::uint32_t handleResizeEditor (HostState& host,
 // Inbound SetParam from parent (3c-3a). Marshals onto the JUCE message
 // thread via callAsync so setValueNotifyingHost runs where JUCE expects
 // (the same thread that owns the editor + listener machinery). We
-// intentionally do NOT take a MessageManagerLock on the sockThread —
+// intentionally do NOT take a MessageManagerLock on the sockThread -
 // blocking the sockThread until the message thread is free has caused
 // a teardown-time deadlock in prior phases (sockThread holds lock,
 // message thread tries to join sockThread during shutdown).
@@ -824,7 +824,7 @@ int runIpcHost (int argc, const char* const* argv) noexcept
             if (hdr.payloadLen > kMaxControlPayload) break;  // refuse oversized alloc
             // Header self-consistency: both writers set totalLen = sizeof(hdr) +
             // payloadLen, so a frame where they disagree is a framing bug or
-            // corruption — drop the link rather than trust a malformed header.
+            // corruption - drop the link rather than trust a malformed header.
             if (hdr.totalLen != (std::uint32_t) sizeof (hdr) + hdr.payloadLen) break;
             std::vector<std::uint8_t> payload (hdr.payloadLen);
             if (hdr.payloadLen > 0
@@ -834,7 +834,7 @@ int runIpcHost (int argc, const char* const* argv) noexcept
             std::vector<std::uint8_t> reply;
             std::uint32_t status = 0;
 
-            // SetParam is one-shot per the protocol contract — no reply
+            // SetParam is one-shot per the protocol contract - no reply
             // is written. Skip the switch + sendControlReply path
             // entirely and continue to the next inbound frame.
             if ((OpCode) hdr.op == OpCode::SetParam)
@@ -856,7 +856,7 @@ int runIpcHost (int argc, const char* const* argv) noexcept
                 case OpCode::ResizeEditor:   status = handleResizeEditor (host, payload); break;
                 case OpCode::SetParam:       continue;  // handled above
                 case OpCode::ParamChangedFromChild:
-                    // Push frames are child → parent only; receiving one
+                    // Push frames are child -> parent only; receiving one
                     // here means the parent shipped junk. Drop + continue.
                     continue;
                 default:                     status = 99; break;
@@ -895,7 +895,7 @@ int runIpcHost (int argc, const char* const* argv) noexcept
 //
 // We instantiate the plugin just far enough to read its PluginDescription(s)
 // and print them as XML between sentinel markers on stdout. If the plugin
-// segfaults or hangs in findAllTypesForFile, only THIS process dies — the
+// segfaults or hangs in findAllTypesForFile, only THIS process dies - the
 // parent times it out / sees the crash, blacklists the file, and keeps
 // running. The plugin's own stdout chatter (if any) is emitted by its init
 // code, which runs BEFORE we print kScanPayloadBegin, so the parent's
@@ -979,7 +979,7 @@ int runScan (int argc, const char* const* argv) noexcept
     }
 
     juce::OwnedArray<juce::PluginDescription> found;
-    chosen->findAllTypesForFile (found, fileOrId);   // may crash/hang — that is the point
+    chosen->findAllTypesForFile (found, fileOrId);   // may crash/hang - that is the point
 
     std::fputs (duskstudio::scanproto::makePayload (found).toRawUTF8(), stdout);
     std::fflush (stdout);

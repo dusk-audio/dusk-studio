@@ -29,7 +29,7 @@ bool MasteringPlayer::parkAndWaitForAudio()
     // process() bumps audioInFlight BEFORE loading currentReader, so once
     // the counter reaches zero no callback can be touching the scratch or
     // interpolators (new entries see null and bail). Happy path is sub-ms;
-    // the deadline only fires on a stuck/detached audio thread — stale
+    // the deadline only fires on a stuck/detached audio thread - stale
     // resample state then beats a data race.
     constexpr auto kDrainTimeout = std::chrono::milliseconds (200);
     const auto deadline = std::chrono::steady_clock::now() + kDrainTimeout;
@@ -90,7 +90,7 @@ bool MasteringPlayer::loadFile (const juce::File& file)
 
     // Wrap in a BufferingAudioReader so process() reads from prefetched
     // memory. 96000 samples ≈ 1-2 s of lead; timeout 0 keeps the audio
-    // thread non-blocking — a prefetch miss (right after a seek) returns
+    // thread non-blocking - a prefetch miss (right after a seek) returns
     // silence until the prefetch catches up. Same pattern as
     // PlaybackEngine.
     constexpr int kSamplesToBuffer = 96000;
@@ -107,7 +107,7 @@ bool MasteringPlayer::loadFile (const juce::File& file)
 
     // Park the audio thread on null AND drain any in-flight callback: the
     // scratch resize + interpolator resets below race a block that latched
-    // the old reader before the park. On a drain timeout refuse the load —
+    // the old reader before the park. On a drain timeout refuse the load -
     // stale state beats a data race.
     if (! parkAndWaitForAudio())
     {
@@ -122,7 +122,7 @@ bool MasteringPlayer::loadFile (const juce::File& file)
     loadedFile     = file;
     playhead.store (0, std::memory_order_relaxed);
     // Size the resample scratch for this source's rate BEFORE the reader is
-    // published — the audio thread is parked on null until the store below.
+    // published - the audio thread is parked on null until the store below.
     updateResampleState();
     currentReader.store (ownedReader.get(), std::memory_order_release);
     return true;
@@ -205,7 +205,7 @@ void MasteringPlayer::process (float* L, float* R, int numSamples) noexcept
     const int inNeeded = (int) std::ceil ((double) numSamples * ratio) + 8;
     if (inNeeded > inScratch.getNumSamples()) return;  // prepare/load sizes this
 
-    // A seek (or first block after load) breaks read continuity — drop the
+    // A seek (or first block after load) breaks read continuity - drop the
     // interpolators' history so the jump doesn't smear.
     if (start != resampleReadPos)
     {
