@@ -1120,6 +1120,107 @@ juce::String AudioPipelineSelfTest::testParallelMatchesSerial()
                           : "");
 }
 
+juce::String AudioPipelineSelfTest::testMidiPlayAlongMonitor()
+{
+    // Regression guard: an armed, input-monitored MIDI track must sound the
+    // live controller in ALL transport states — Stopped, Playing, and Stopped
+    // again. The historical bug: pressing PLAY silenced live play-along
+    // because the disk-playback routing branch never merged live input.
+    //
+    // Observable: session.track(0).midiActivity, set true whenever a block
+    // routes any event into the track's per-track MIDI buffer (the buffer the
+    // instrument would receive). No instrument needed — the routing decision
+    // is what regressed, and midiActivity is its direct proxy.
+    prepareCleanState();
+
+    const int vkbIdx = engine.getVirtualKeyboardInputIndex();
+
+    // Snapshot the MIDI atoms the outer runAll save/restore doesn't cover.
+    auto& t0 = session.track (0);
+    const int   savedMidiIdx = t0.midiInputIndex.load (std::memory_order_relaxed);
+    const int   savedMidiCh  = t0.midiChannel.load (std::memory_order_relaxed);
+    const bool  savedActivity = t0.midiActivity.load (std::memory_order_relaxed);
+
+    if (vkbIdx < 0)
+    {
+        return juce::String ("[PASS] MIDI play-along monitor: SKIPPED "
+                             "(no virtual-keyboard input available headlessly)");
+    }
+
+    const double sr = 48000.0;
+    const int    bs = 256;
+    const int    numIn = 2, numOut = 2;
+
+    engine.prepareForSelfTest (sr, bs);
+
+    // Track 0: armed, input-monitored MIDI track listening to the virtual
+    // keyboard (the synthetic input this test injects into), omni channel.
+    t0.mode.store           ((int) Track::Mode::Midi, std::memory_order_relaxed);
+    t0.inputMonitor.store   (true, std::memory_order_relaxed);
+    t0.recordArmed.store    (true, std::memory_order_relaxed);
+    t0.midiInputIndex.store (vkbIdx, std::memory_order_relaxed);
+    t0.midiChannel.store    (0, std::memory_order_relaxed);
+    // Other tracks non-MIDI so only track 0 can raise midiActivity.
+    for (int t = 1; t < Session::kNumTracks; ++t)
+        session.track (t).mode.store ((int) Track::Mode::Mono, std::memory_order_relaxed);
+    session.recomputeRtCounters();
+
+    std::vector<std::vector<float>> inb ((size_t) numIn, std::vector<float> ((size_t) bs, 0.0f));
+    std::vector<const float*> inp ((size_t) numIn, nullptr);
+    for (int c = 0; c < numIn; ++c) inp[(size_t) c] = inb[(size_t) c].data();
+    std::vector<std::vector<float>> outb ((size_t) numOut, std::vector<float> ((size_t) bs, 0.0f));
+    std::vector<float*> outp ((size_t) numOut, nullptr);
+    for (int c = 0; c < numOut; ++c) outp[(size_t) c] = outb[(size_t) c].data();
+    juce::AudioIODeviceCallbackContext ctx {};
+
+    auto runBlock = [&] ()
+    {
+        for (auto& o : outb) std::fill (o.begin(), o.end(), 0.0f);
+        engine.audioDeviceIOCallbackWithContext (inp.data(), numIn, outp.data(),
+                                                  numOut, bs, ctx);
+    };
+
+    // Probe one transport state: run a few settle blocks so the stop/seek
+    // hanging-note flush clears and the playhead reaches a contiguous steady
+    // state (a flush block would raise midiActivity on its own and mask the
+    // real signal). Then inject a fresh note on the measure block — the
+    // injection is consumed in a single block — and read the latch.
+    auto probe = [&] (Transport::State st) -> bool
+    {
+        engine.getTransport().setState (st);
+        for (int i = 0; i < 4; ++i)
+            runBlock();
+
+        juce::MidiBuffer m;
+        m.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
+        engine.stageTestMidiInjection (vkbIdx, std::move (m));
+        t0.midiActivity.store (false, std::memory_order_relaxed);
+        runBlock();
+        return t0.midiActivity.load (std::memory_order_relaxed);
+    };
+
+    const bool stoppedBefore = probe (Transport::State::Stopped);
+    const bool playing       = probe (Transport::State::Playing);
+    const bool stoppedAfter  = probe (Transport::State::Stopped);
+
+    // Restore the atoms outside SavedState's scope; the outer runAll restore
+    // handles mode / IN / arm for every track.
+    engine.getTransport().setState (Transport::State::Stopped);
+    t0.midiInputIndex.store (savedMidiIdx, std::memory_order_relaxed);
+    t0.midiChannel.store    (savedMidiCh,  std::memory_order_relaxed);
+    t0.midiActivity.store   (savedActivity, std::memory_order_relaxed);
+
+    const bool pass = stoppedBefore && playing && stoppedAfter;
+    return juce::String::formatted (
+        "%s MIDI play-along monitor (armed + IN MIDI track, live note each state)\n"
+        "      stopped=%s  playing=%s  stopped-again=%s %s",
+        fmtPassFail (pass).toRawUTF8(),
+        stoppedBefore ? "sound" : "SILENT",
+        playing       ? "sound" : "SILENT",
+        stoppedAfter  ? "sound" : "SILENT",
+        pass ? "" : "<-- live MIDI dropped (play-along must sound while rolling)");
+}
+
 juce::String AudioPipelineSelfTest::runAll()
 {
     juce::StringArray report;
@@ -1154,6 +1255,7 @@ juce::String AudioPipelineSelfTest::runAll()
     report.add (testCompHeavyGR());
     report.add (testCompPerTrack());
     report.add (testParallelMatchesSerial());
+    report.add (testMidiPlayAlongMonitor());
     report.add ("");
 
    #if defined(__linux__)

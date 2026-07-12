@@ -4027,6 +4027,54 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         // The strip's instrument plugin then sees one unified buffer.
         // Note: scratch already cleared above by the flush block, plus any
         // emitted All Notes Off events. Both source paths add to those.
+        // Live-input MIDI pull. Shared by the stopped/record live-monitor
+        // branch and the play-along overlay in the disk-playback branch:
+        // applies the per-track channel filter, mirrors the dusk→juce raw-byte
+        // copy that feeds the instrument + recorder, and — on an armed track —
+        // always auditions the on-screen keyboard. Only meaningful on MIDI
+        // tracks; harmless (no matching input events consumed) otherwise.
+        const int chFilter = session.track (t).midiChannel.load (std::memory_order_relaxed);
+        auto pullInput = [&] (int srcIdx)
+        {
+            if (srcIdx < 0 || srcIdx >= (int) perInputMidi.size()) return;
+            if (perInputMidi[(size_t) srcIdx].isEmpty()) return;
+            for (const auto meta : perInputMidi[(size_t) srcIdx])
+            {
+                // dusk (perInputMidi) -> juce (perTrackMidiScratch, feeds
+                // the instrument + recorder): raw-byte copy, no message
+                // object. Channel read mirrors the juce getChannel
+                // convention: 1..16 for channel messages, 0 for system.
+                const auto& v = meta.getMessage();
+                if (chFilter != 0)
+                {
+                    const std::uint8_t status = v.getRawDataSize() > 0 ? v.getRawData()[0] : 0;
+                    const int ch = (status & 0xF0) != 0xF0 ? (int) (status & 0x0F) + 1 : 0;
+                    if (ch != chFilter) continue;
+                }
+                perTrackMidiScratch[(size_t) t].addEvent (v.getRawData(),
+                                                          v.getRawDataSize(),
+                                                          meta.samplePosition);
+            }
+        };
+        auto pullLiveMidi = [&] ()
+        {
+            // The track's explicitly-selected MIDI input.
+            const int midiIdx = session.track (t).midiInputIndex.load (std::memory_order_relaxed);
+            pullInput (midiIdx);
+
+            // A record-armed MIDI track ALWAYS auditions the on-screen
+            // keyboard, even when its explicit input isn't the VK. This
+            // makes the keyboard "just work" no matter how the instrument
+            // was loaded (editor Browse, session restore, picker) - the
+            // user expects an armed instrument track to play from the
+            // virtual keyboard. Skip when the explicit input already IS
+            // the VK so events aren't doubled.
+            const bool trackArmed = session.track (t).recordArmed.load (std::memory_order_relaxed);
+            const int vkbIdx = midiIn.getVirtualKeyboardIndex();
+            if (trackArmed && vkbIdx != midiIdx)
+                pullInput (vkbIdx);
+        };
+
         if (willReadFromDisk && ! isFrozen)
         {
             // Frozen tracks skip MIDI scheduling — the instrument is bypassed
@@ -4153,59 +4201,31 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                     }
                 }
             }
-            if (! perTrackMidiScratch[(size_t) t].isEmpty())
-                session.track (t).midiActivity.store (true, std::memory_order_relaxed);
+
+            // Play-along overlay. With input monitoring engaged, merge the
+            // live controller (and, on an armed track, the on-screen keyboard)
+            // ON TOP of the scheduled timeline notes so the instrument sounds
+            // both the recorded part and what the user plays while the
+            // transport rolls. Without this, live play-along fell silent the
+            // moment PLAY was pressed (the disk-playback branch never pulled
+            // live input). IN is the only gate here — master accumulation is
+            // already open during playback (monitorPasses == true), matching
+            // the stopped/record monitor semantics where IN governs
+            // audibility. Overlay events are additive, so the recorder (armed
+            // + Recording only, below) and scheduled playback are untouched.
+            if (midiTrack && monitorEnabled)
+                pullLiveMidi();
         }
         else if (midiTrack)
         {
             // Live monitoring path - only meaningful on MIDI tracks; effect
             // inserts on Mono / Stereo strips don't consume per-track MIDI
             // (their pluginMidiScratch is built fresh inside the strip).
-            const int chFilter = session.track (t)
-                                    .midiChannel.load (std::memory_order_relaxed);
-
-            auto pullInput = [&] (int srcIdx)
-            {
-                if (srcIdx < 0 || srcIdx >= (int) perInputMidi.size()) return;
-                if (perInputMidi[(size_t) srcIdx].isEmpty()) return;
-                for (const auto meta : perInputMidi[(size_t) srcIdx])
-                {
-                    // dusk (perInputMidi) -> juce (perTrackMidiScratch, feeds
-                    // the instrument + recorder): raw-byte copy, no message
-                    // object. Channel read mirrors the juce getChannel
-                    // convention: 1..16 for channel messages, 0 for system.
-                    const auto& v = meta.getMessage();
-                    if (chFilter != 0)
-                    {
-                        const std::uint8_t status = v.getRawDataSize() > 0 ? v.getRawData()[0] : 0;
-                        const int ch = (status & 0xF0) != 0xF0 ? (int) (status & 0x0F) + 1 : 0;
-                        if (ch != chFilter) continue;
-                    }
-                    perTrackMidiScratch[(size_t) t].addEvent (v.getRawData(),
-                                                              v.getRawDataSize(),
-                                                              meta.samplePosition);
-                }
-            };
-
-            // The track's explicitly-selected MIDI input.
-            const int midiIdx = session.track (t).midiInputIndex.load (std::memory_order_relaxed);
-            pullInput (midiIdx);
-
-            // A record-armed MIDI track ALWAYS auditions the on-screen
-            // keyboard, even when its explicit input isn't the VK. This
-            // makes the keyboard "just work" no matter how the instrument
-            // was loaded (editor Browse, session restore, picker) - the
-            // user expects an armed instrument track to play from the
-            // virtual keyboard. Skip when the explicit input already IS
-            // the VK so events aren't doubled.
-            const bool trackArmed = session.track (t).recordArmed.load (std::memory_order_relaxed);
-            const int vkbIdx = midiIn.getVirtualKeyboardIndex();
-            if (trackArmed && vkbIdx != midiIdx)
-                pullInput (vkbIdx);
-
-            if (! perTrackMidiScratch[(size_t) t].isEmpty())
-                session.track (t).midiActivity.store (true, std::memory_order_relaxed);
+            pullLiveMidi();
         }
+
+        if (midiTrack && ! perTrackMidiScratch[(size_t) t].isEmpty())
+            session.track (t).midiActivity.store (true, std::memory_order_relaxed);
 
         // Recording capture has to happen BEFORE the strip's instrument
         // plugin sees the buffer. AudioPluginInstance::processBlock is

@@ -115,6 +115,7 @@ private:
     juce::String testCompHeavyGR();          // extreme settings: characterize harmonics at heavy GR
     juce::String testCompPerTrack();         // all 16 tracks under Opto produce identical output
     juce::String testParallelMatchesSerial(); // worker-pool mix == serial mix within float-reassoc tol
+    juce::String testMidiPlayAlongMonitor();   // armed+IN MIDI track sounds live notes in Stopped AND Playing
     juce::String testBackendsOpenCleanly();
     juce::String probeUMC1820AlsaFormat();   // explicitly open UMC1820 ALSA & report format
 
