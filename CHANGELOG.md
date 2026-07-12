@@ -40,7 +40,7 @@ and a Windows plugin-scan crash.
   out), a labelled MIDI-activity LED, equal-width dropdowns, and honest
   wording: the follow-track default reads "In N (follow)" and empty
   selections read "None" everywhere.
-- **One click grammar for strip sections.** EQ, COMP, AUX and TAPE behave
+- **One interaction grammar for strip sections.** EQ, COMP, AUX and TAPE behave
   identically on channel, bus and master strips, expanded or compact:
   left-click toggles the section, right-click opens its menu (character or
   mode, reset where supported, open editor), double-click opens the editor.

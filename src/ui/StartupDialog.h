@@ -26,9 +26,10 @@ public:
     bool keyPressed (const juce::KeyPress& key) override;
     void mouseUp (const juce::MouseEvent& e) override;
 
-    // Shows the flashing "update available" badge in the sidebar.
+    // Shows the "update available" banner above the sessions heading.
     // Called (message thread) when the async tag check finds a release
-    // newer than this build; never called when up to date.
+    // newer than this build; never called when up to date. The banner is
+    // click- and keyboard-activatable and opens the downloads page.
     void setUpdateAvailable (const juce::String& tagName);
 
     // Each action callback also triggers the dialog to dismiss itself.
@@ -46,6 +47,7 @@ public:
 private:
     void closeDialog (int returnCode);
     void openSelectedRow();
+    void openDownloadsPage();
     void timerCallback() override;   // flashes the update badge
 
     // juce::TableListBoxModel

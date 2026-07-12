@@ -197,7 +197,7 @@ static bool displayUsableOrExplain()
     {
         // One self-describing line so support reports name their session type.
         if (onWayland)
-            std::fprintf (stderr, "Dusk Studio: Wayland session detected - running via XWayland.\n");
+            std::fprintf (stderr, "Dusk Studio: Wayland session detected - using the X11 display.\n");
         return true;
     }
     const char* xDisplay = std::getenv ("DISPLAY");
