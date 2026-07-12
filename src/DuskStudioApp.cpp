@@ -191,15 +191,28 @@ DuskStudioApp::~DuskStudioApp() = default;
 // which must keep running without any display.
 static bool displayUsableOrExplain()
 {
+    const char* waylandDisplay = std::getenv ("WAYLAND_DISPLAY");
+    const bool onWayland = waylandDisplay != nullptr && waylandDisplay[0] != '\0';
     if (duskstudio::platform::hasUsableDisplay())
+    {
+        // One self-describing line so support reports name their session type.
+        if (onWayland)
+            std::fprintf (stderr, "Dusk Studio: Wayland session detected - running via XWayland.\n");
         return true;
-    std::fprintf (stderr,
-        "Dusk Studio needs an X11 display and could not open one.\n"
-        "This is a Wayland session without XWayland. Enable it, then relaunch:\n"
-        "  sway:   add `xwayland enable` to your config and restart sway\n"
-        "  niri:   run `xwayland-satellite` and export the DISPLAY it prints\n"
-        "  labwc:  start labwc with XWayland enabled (the default build)\n"
-        "  river / mango / other wlroots: ensure XWayland is installed and enabled\n");
+    }
+    if (onWayland)
+        std::fprintf (stderr,
+            "Dusk Studio needs an X11 display and could not open one.\n"
+            "This is a Wayland session without XWayland. Enable it, then relaunch:\n"
+            "  sway:   add `xwayland enable` to your config and restart sway\n"
+            "  niri:   run `xwayland-satellite` and export the DISPLAY it prints\n"
+            "  labwc:  start labwc with XWayland enabled (the default build)\n"
+            "  river / mango / other wlroots: ensure XWayland is installed and enabled\n");
+    else
+        std::fprintf (stderr,
+            "Dusk Studio needs an X11 display and could not open one.\n"
+            "No display was found (DISPLAY is unset or unreachable). Launch from a\n"
+            "graphical session, or set DISPLAY to a reachable X server.\n");
     std::fflush (stderr);
     return false;
 }
