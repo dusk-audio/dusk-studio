@@ -186,8 +186,8 @@ In compact mode (window narrower than 1850 px) labels shorten: `TIMELINE` become
 | 2   | Insert slot         | One plugin or one hardware insert. 20 ms equal-power crossfade between modes.                               |
 | 3   | HPF                 | High-pass filter, 20–300 Hz. LED green when on.                                                             |
 | 4   | LPF                 | Low-pass filter, 3 kHz–20 kHz.                                                                              |
-| 5   | 4-band EQ           | LF (shelf) / LM (peak) / HM (peak) / HF (shelf). Right-click header to flip between E and G saturation characters. |
-| 6   | Compressor          | Opto / FET / VCA, right-click header to switch. GR meter to the left.                                       |
+| 5   | 4-band EQ           | LF (shelf) / LM (peak) / HM (peak) / HF (shelf). Left-click header to enable, right-click for the EQ menu (E / G character, reset, open editor), double-click to open the editor. |
+| 6   | Compressor          | Opto / FET / VCA. Left-click header to enable, right-click for the COMP menu (mode, reset, open editor), double-click to open the editor. GR meter to the left. |
 | 7   | Aux 1 send          | Post-fader by default; right-click to flip pre-fader.                                                       |
 | 8   | Aux 2 send          |                                                                                                             |
 | 9   | Aux 3 send          |                                                                                                             |
@@ -235,9 +235,9 @@ Assign a strip to one of eight fader groups (right-click the strip → **Fader g
 
 | #   | Name                  | Description                                                                                      |
 | --- | --------------------- | ------------------------------------------------------------------------------------------------ |
-| 1   | Program EQ            | Tube-saturated low + high program EQ. Right-click for the modal editor.                          |
-| 2   | Master bus compressor | Identical DSP to the bus comp, typically used slower.                                            |
-| 3   | Tape saturation       | Reel-to-reel model. Oversampling follows the global Effect Oversampling setting (Audio settings). Click to toggle the tape on/off; right-click for the tape-machine modal. |
+| 1   | Program EQ            | Tube-saturated low + high program EQ. Left-click header to enable, right-click for the EQ menu (reset, open editor), double-click to open the editor. |
+| 2   | Master bus compressor | Identical DSP to the bus comp, typically used slower. Left-click header to enable, right-click for the COMP menu (reset, open editor), double-click to open the editor. |
+| 3   | Tape saturation       | Reel-to-reel model. Oversampling follows the global Effect Oversampling setting (Audio settings). Left-click header to toggle tape on/off, right-click for the TAPE menu (open editor), double-click to open the tape-machine editor. |
 | 4   | Master fader          | −∞ to +12 dB.                                                                                    |
 | 5   | Mono                  | Sums L+R to mono on both legs for phase / single-speaker checks.                                 |
 | 6   | Peak meters           | Post-output L/R.                                                                                 |
@@ -564,20 +564,22 @@ Mute, Solo, and the input-monitor (IN) toggle gate the entire accumulation — w
 
 This is the order the audio actually flows. On screen, controls are arranged for ergonomics — the fader is at the bottom, the EQ in the middle — but the underlying chain never changes.
 
+Every processing section (EQ, compressor, tape) follows one consistent grammar on its header — and on its compact pill when the strip collapses, and on the channel, bus, and master strips alike: **left-click toggles the section on or off, right-click opens the section menu (character / mode where it has one, reset where the section supports it, open editor), and double-click opens the full editor.**
+
 ## Track name and colour
 
 Click the name label at the top of the strip to rename the track. Right-click to choose a colour from the 12-hue palette or open a custom colour picker. The colour appears as the strip's accent and on every region that track owns in the tape strip.
 
 ## Input block (RECORDING stage)
 
-This block is only visible in the RECORDING stage. In other stages it collapses into a single small **I/O** button you can click to reopen it.
+This block is visible in the RECORDING stage, alongside a small **I/O** button that opens the same controls as a popup titled with the track name. In the MIXING stage the block and the button give way to the four AUX send knobs — switch back to RECORDING to change a track's inputs. Each row carries an on-screen caption (**Mode**, **Input**, **MIDI port**, **Channel**, **MIDI out**).
 
 - **Mode**: **Mono**, **Stereo**, or **MIDI**. Determines whether the track records one audio channel, two audio channels, or MIDI events.
-- **Input** (Mono mode): the audio device input to record from. The default `−2: follow track index` means track 1 reads device input 1, track 2 reads device input 2, and so on. Choose a specific input to override.
+- **Input** (Mono mode): the audio device input to record from. The default, shown as **In N (follow)** (e.g. `In 1 (follow)` on track 1), means track 1 reads device input 1, track 2 reads device input 2, and so on. Choose a specific input to override, or **None** for no input.
 - **Input L / Input R** (Stereo mode): the left and right device inputs.
-- **MIDI port** (MIDI mode): which MIDI input to record from.
-- **MIDI channel** (MIDI mode): **Omni** (all 16 channels) or a single channel filter.
-- **MIDI output** (MIDI mode): optional external MIDI output to drive a hardware synth as you play.
+- **MIDI port** (MIDI mode): which MIDI input to record from, or **None**.
+- **Channel** (MIDI mode): **Omni** (all 16 channels) or a single channel filter.
+- **MIDI out** (MIDI mode): optional external MIDI output to drive a hardware synth as you play, or **None**.
 - **Activity LED**: blinks green when MIDI arrives on the chosen channel.
 
 ## ARM, IN, PRINT/FREEZE (RECORDING stage)
@@ -618,7 +620,7 @@ Useful for taming hi-hat bleed, cymbal harshness on a mic that's picking up too 
 
 ![The channel EQ editor — HPF, LPF, and four parametric bands.](docs/images/fx-01-eq.png)
 
-A British console-style 4-band EQ. Left-click the **EQ** header to enable; the LED lights green. Right-click to choose the saturation character:
+A British console-style 4-band EQ. Left-click the **EQ** header to enable; the LED lights green. Right-click the header for the EQ menu — the saturation character, **Reset EQ**, and **Open editor…** — and double-click the header to open the editor directly. The saturation character:
 
 - **E** (brown, default): brown character — slightly more aggressive midrange.
 - **G** (black): black character — smoother high band.
@@ -642,7 +644,7 @@ EQ in Dusk Studio does **not cramp** near Nyquist; the British EQ does its own i
 
 The channel compressor has three mutually-exclusive modes. Settings are remembered per mode — switch from FET back to Opto and your Opto settings are exactly as you left them.
 
-Left-click the **COMP** header to enable. Right-click to pick **Opto**, **FET**, or **VCA**.
+Left-click the **COMP** header to enable. Right-click the header for the COMP menu — the mode (**Opto**, **FET**, **VCA**), **Reset comp**, and **Open editor…** — and double-click the header to open the editor directly.
 
 All three modes share one set of knobs — **THRESHOLD, RATIO, ATTACK, RELEASE, MAKEUP** — that route to the right underlying parameter for whichever mode is active. Set the **threshold** by dragging the triangle handle on the gain-reduction meter strip (this also engages the compressor); the remaining knobs sit in a 2×2 grid below the header. The **MAKEUP** knob is the shared makeup gain (−12 to +24 dB) and is available in every mode. Knob ranges retune per mode, as listed below.
 
@@ -683,7 +685,7 @@ The gain-reduction meter (the thin vertical bar to the left of the comp section)
 In the MIXING stage the input block is replaced by four send knobs, one per aux lane. Each knob is colour-matched to its destination aux.
 
 - **Range**: −60 to +6 dB, or **OFF** (−100 dB, the bottom of the knob's travel).
-- **Pre / post fader**: right-click the knob to toggle. Post-fader is the default.
+- **Pre / post fader**: right-click the knob to toggle. Post-fader is the default. In compact mode, right-click the **AUX** pill for the same per-send pre/post toggles plus **Reset sends** and **Open AUX editor…**.
 
 Pre-fader sends are used for headphone cue mixes: the singer can hear their voice at the same level even when you pull their fader down. Post-fader sends are used for effects: when you pull the channel fader down, the reverb level falls with it.
 
@@ -789,7 +791,7 @@ master input → program EQ → master bus compressor → tape saturation → ma
 Models a small reel-to-reel tape machine.
 
 - **Bypass / engage**: left-click the **TAPE** header to toggle the tape stage in or out of the signal path.
-- **Open the editor**: right-click the **TAPE** header to open the full tape-machine modal editor, where drive, saturation, and tape-character controls live.
+- **Open the editor**: double-click the **TAPE** header, or right-click it and choose **Open editor…**, to open the full tape-machine modal editor, where drive, saturation, and tape-character controls live.
 - **Oversampling**: tape oversampling follows the engine-wide **Effect Oversampling** setting in the Audio Device panel — it is not a per-stage toggle.
 
 Tape saturation is the right tool to glue a mix together. A light application thickens the low-mids, rounds the transients, and adds a touch of harmonic colour.
@@ -811,7 +813,7 @@ The program EQ is tube-saturated; pushing the boosts harder adds harmonic conten
 
 ## Master bus compressor
 
-Identical in DSP to the bus-strip compressor but typically used with slower settings: a 10 ms attack, auto-release, 2:1 to 4:1 ratio, and 1–3 dB of gain reduction on peaks. Click the **COMP** header to enable.
+Identical in DSP to the bus-strip compressor but typically used with slower settings: a 10 ms attack, auto-release, 2:1 to 4:1 ratio, and 1–3 dB of gain reduction on peaks. Left-click the **COMP** header to enable; right-click for the COMP menu, double-click to open the editor.
 
 ## Master fader
 
@@ -1323,7 +1325,7 @@ In the MIXING stage, each channel's four send knobs appear where the input block
 - **Post-fader** (default): pulling the channel fader down also pulls the send level down. Use for effects (reverb, delay) so the wet level stays proportional to the dry.
 - **Pre-fader**: the send is independent of the channel fader. Use for cue mixes (you can mute the channel in the main mix while still sending it to the headphone aux).
 
-Right-click a send knob to toggle pre/post.
+Right-click a send knob to toggle pre/post. In compact mode the aux sends collapse into a single **AUX** pill — right-click it for the same per-send pre/post toggles, plus **Reset sends** and **Open AUX editor…**.
 
 ## Bus routing
 

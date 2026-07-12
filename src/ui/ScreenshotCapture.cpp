@@ -243,6 +243,20 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
         snapshotComponent (consoleView->getBusComponent (0),   outDir, "np-05-bus-strip.png");
         snapshotComponent (consoleView->getMasterStripComponent(), outDir, "np-06-master-strip.png");
 
+        // Compact-mode strips: EQ / COMP (and TAPE / AUX) collapse into section
+        // pills that carry the same left-toggle / right-menu / double-click-editor
+        // grammar as the full headers. Capture channel, bus, and master compacted,
+        // then restore full mode so later shots aren't collapsed.
+        consoleView->setStripsCompactMode (true);
+        resized();
+        settle (300);
+        snapshotComponent (consoleView->getStripComponent (0),     outDir, "cs-01-channel-compact.png");
+        snapshotComponent (consoleView->getBusComponent (0),       outDir, "cs-02-bus-compact.png");
+        snapshotComponent (consoleView->getMasterStripComponent(), outDir, "cs-03-master-compact.png");
+        consoleView->setStripsCompactMode (false);
+        resized();
+        settle (200);
+
         // Automation-mode label in WRITE.
         session.track (0).automationMode.store ((int) AutomationMode::Write, std::memory_order_relaxed);
         resized();
@@ -281,6 +295,27 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
     switchToStage (AudioEngine::Stage::Mixing);
     resized();
     settle (200);
+
+    // I/O config popup (three mode variants). The popup borrows a strip's
+    // live combos, so drive it through a real strip and snapshot the modal
+    // body. Restored to mono afterwards.
+    if (consoleView != nullptr)
+    {
+        if (auto* s0 = consoleView->getStripComponent (0))
+        {
+            const char* ioNames[3] = { "io-01-input-config-mono.png",
+                                       "io-02-input-config-stereo.png",
+                                       "io-03-input-config-midi.png" };
+            for (int m = 0; m < 3; ++m)
+            {
+                if (auto* body = s0->openIoConfigPopupForCapture (m))
+                    snapshotComponent (body, outDir, ioNames[m], 200);
+                s0->closeIoConfigPopupForCapture();
+            }
+            s0->openIoConfigPopupForCapture (0);
+            s0->closeIoConfigPopupForCapture();
+        }
+    }
 
     // Modal panels (standalone, snapshot directly)
     auto modalShot = [&] (juce::Component& m, int w, int h, const juce::String& name, int settleMs)

@@ -70,6 +70,30 @@ rest are manual (transient states, popup menus, OS dialogs) with notes below.
 | `bnc-01-bounce-dialog.png`      | L1617  | ✅   | Bounce dialog (file picker + progress). (No format options — see note.) |
 | `ts-02-plugin-offline.png`      | L1815  | ⚠️   | A plugin slot showing the `⚠ (offline)` state.            |
 
+## Compact-mode strips (captured, not yet referenced by `MANUAL.md`)
+
+The harness collapses the channel, bus, and master strips into compact mode
+(EQ / COMP — plus TAPE / AUX — become section pills) and snapshots each. The
+pills carry the same left-toggle / right-menu / double-click-editor grammar as
+the full headers; these figures document that collapsed presentation.
+
+| Filename                     | Manual | Auto | What to capture                                             |
+| ---------------------------- | ------ | ---- | ---------------------------------------------------------- |
+| `cs-01-channel-compact.png`  | —      | ✅   | One channel strip in compact mode (EQ / COMP / AUX pills). |
+| `cs-02-bus-compact.png`      | —      | ✅   | One bus strip in compact mode (EQ / COMP pills).           |
+| `cs-03-master-compact.png`   | —      | ✅   | Master strip in compact mode (EQ / COMP / TAPE pills).     |
+
+## I/O config popup (captured, not yet referenced by `MANUAL.md`)
+
+The harness renders the track I/O config popup in all three modes. No
+`MANUAL.md` reference is wired yet — pick one after visual review.
+
+| Filename                        | Manual | Auto | What to capture                                           |
+| ------------------------------- | ------ | ---- | --------------------------------------------------------- |
+| `io-01-input-config-mono.png`   | —      | ✅   | I/O popup, Mono mode: title + Mode / Input captions.      |
+| `io-02-input-config-stereo.png` | —      | ✅   | I/O popup, Stereo mode: Input L / Input R rows.           |
+| `io-03-input-config-midi.png`   | —      | ✅   | I/O popup, MIDI mode: port / channel / out + activity LED.|
+
 ---
 
 ## Manual-only shots (notes)

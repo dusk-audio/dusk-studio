@@ -7,18 +7,21 @@ namespace duskstudio
 {
 // Shared compressor-section header button. Pill with a green LED on the
 // left and white text. Left-click toggles enable (toggleFn); optional
-// right-click invokes pickFn (mode picker). Pass an empty pickFn to
-// disable the right-click action (fixed-topology bus/master comps).
+// right-click invokes pickFn (section context menu). Pass an empty pickFn
+// to disable the right-click action. Optional onDoubleClick opens the
+// section's full editor.
 class CompHeaderButton final : public juce::Component,
                                 public juce::SettableTooltipClient
 {
 public:
     CompHeaderButton (std::function<bool()> getEnabled,
                        std::function<void()> onToggleEnable,
-                       std::function<void()> onPickMode = {})
+                       std::function<void()> onPickMode = {},
+                       std::function<void()> onDoubleClickEditor = {})
         : isEnabledFn (std::move (getEnabled)),
           toggleFn    (std::move (onToggleEnable)),
-          pickFn      (std::move (onPickMode))
+          pickFn      (std::move (onPickMode)),
+          doubleClickFn (std::move (onDoubleClickEditor))
     {
         setMouseCursor (juce::MouseCursor::PointingHandCursor);
         setTooltip (pickFn
@@ -122,18 +125,33 @@ public:
         if (e.mods.isPopupMenu())
         {
             if (pickFn) pickFn();
+            return;
         }
-        else
-        {
-            if (toggleFn) toggleFn();
-            repaint();
-        }
+        // Double-click grammar: the first click (numClicks == 1) toggles
+        // immediately; the second click arrives as a fresh mouseDown with
+        // numClicks == 2 which we skip here, then mouseDoubleClick toggles
+        // BACK and opens the editor. Net effect of a double-click: no enable
+        // change + editor opens. No timers, so single clicks stay lag-free.
+        if (e.getNumberOfClicks() >= 2)
+            return;
+        if (toggleFn) toggleFn();
+        repaint();
+    }
+
+    void mouseDoubleClick (const juce::MouseEvent& e) override
+    {
+        if (e.mods.isPopupMenu())
+            return;
+        if (toggleFn) toggleFn();   // undo the first click's toggle -> no net change
+        repaint();
+        if (doubleClickFn) doubleClickFn();
     }
 
 private:
     std::function<bool()> isEnabledFn;
     std::function<void()> toggleFn;
     std::function<void()> pickFn;
+    std::function<void()> doubleClickFn;
     juce::String text { "COMP" };
     juce::String chip;                                 // empty = no chip
     juce::Colour accent { juce::Colours::transparentBlack };

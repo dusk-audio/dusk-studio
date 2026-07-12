@@ -228,6 +228,15 @@ StartupDialog::StartupDialog (juce::Array<juce::File> r)
 
 bool StartupDialog::keyPressed (const juce::KeyPress& key)
 {
+    // Banner activation only while the banner itself holds focus - Return
+    // otherwise means "open the selected session" in this dialog.
+    if (updateLabel.isVisible() && updateLabel.hasKeyboardFocus (true)
+        && (key.isKeyCode (juce::KeyPress::returnKey)
+            || key.isKeyCode (juce::KeyPress::spaceKey)))
+    {
+        openDownloadsPage();
+        return true;
+    }
     if (key.isKeyCode (juce::KeyPress::escapeKey))
     {
         // onSkip may synchronously dismiss + delete this dialog (via the
@@ -376,13 +385,37 @@ void StartupDialog::resized()
 
 void StartupDialog::setUpdateAvailable (const juce::String& tagName)
 {
-    updateLabel.setText ("Update available: " + tagName, juce::dontSendNotification);
-    updateLabel.setTooltip ("A newer Dusk Studio release (" + tagName + ") is available.");
+    updateLabel.setText ("Update available: " + tagName + "  -  click to download",
+                         juce::dontSendNotification);
+    updateLabel.setTooltip ("A newer Dusk Studio release (" + tagName + ") is "
+                            "available. Click to open the Dusk Audio downloads "
+                            "page (access is gated for supporters).");
     updateLabel.setColour (juce::Label::textColourId, juce::Colour (0xffe0a050));
+    updateLabel.setMouseCursor (juce::MouseCursor::PointingHandCursor);
+    updateLabel.addMouseListener (this, false);
+    updateLabel.setWantsKeyboardFocus (true);   // tab stop; Return/Space activate
     updateLabel.setVisible (true);
     resized();   // reserve the banner row above the heading now that it's shown
     updateBlinkCount = 0;
     startTimer (500);
+}
+
+void StartupDialog::openDownloadsPage()
+{
+    // The downloads page is Dusk-owned so the destination can change without
+    // an app update; artifacts themselves are supporter-gated behind it (the
+    // releases repo is private, so no direct artifact URL exists).
+    juce::URL ("https://builds.duskaudio.com/latest").launchInDefaultBrowser();
+}
+
+void StartupDialog::mouseUp (const juce::MouseEvent& e)
+{
+    if (e.eventComponent == &updateLabel && updateLabel.isVisible()
+        && e.mouseWasClicked()
+        && e.getNumberOfClicks() == 1
+        && e.mods.isLeftButtonDown()
+        && ! e.mods.isPopupMenu())
+        openDownloadsPage();
 }
 
 void StartupDialog::timerCallback()
