@@ -56,14 +56,14 @@ private:
     juce::Label        titleLabel;
     juce::Label        statusLabel;
     // Declared BEFORE progressBar: the ProgressBar ctor binds a double& to
-    // this, and members construct in declaration order — so it must be live
+    // this, and members construct in declaration order - so it must be live
     // (initialised) before progressBar's ctor runs.
     double             progressValue { 0.0 };
     juce::ProgressBar  progressBar;
     bool               finishedFired { false };
 
     // Keep the completion state on screen for a beat so a fast (warm-cache)
-    // scan doesn't just flash and vanish — otherwise an enabled scan-on-startup
+    // scan doesn't just flash and vanish - otherwise an enabled scan-on-startup
     // looks like nothing happened.
     bool          completeShown { false };
     std::uint32_t  completeAtMs  { 0 };

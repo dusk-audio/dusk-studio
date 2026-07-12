@@ -10,7 +10,7 @@ namespace duskstudio
 // Ground-truth physical key state via X11 XQueryKeymap, for the typing-keyboard
 // MIDI input. JUCE's JUCE KeyPress::isKeyCurrentlyDown derives "down" from the
 // X11 event stream, which under XWayland goes stale during OS key auto-repeat
-// (a held key reads false between repeats) — so a held note would drop and
+// (a held key reads false between repeats) - so a held note would drop and
 // re-trigger. XQueryKeymap reports the server's physical key state directly,
 // unaffected by the auto-repeat event pairs.
 //
@@ -18,7 +18,7 @@ namespace duskstudio
 // digits). Returns:
 //   1  -> key physically down
 //   0  -> key physically up
-//  -1  -> unknown (no X display, or keysym unmapped) — caller should fall back
+//  -1  -> unknown (no X display, or keysym unmapped) - caller should fall back
 //         to JUCE KeyPress::isKeyCurrentlyDown.
 int isKeyPhysicallyDown (int juceKeyCode) noexcept;
 } // namespace duskstudio

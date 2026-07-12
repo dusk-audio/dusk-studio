@@ -8,7 +8,7 @@ namespace duskstudio
 // A juce::AudioFormatWriter backed by libmp3lame (constant bitrate). Owns the
 // OutputStream like every JUCE writer (the base destructor deletes it). When the
 // build has no LAME (DUSKSTUDIO_HAS_LAME unset), construction yields
-// isOk() == false and the caller errors out / falls back to WAV — the class
+// isOk() == false and the caller errors out / falls back to WAV - the class
 // always compiles so call sites don't need their own #if guards.
 class LameMp3Writer final : public juce::AudioFormatWriter
 {
@@ -22,7 +22,7 @@ public:
 
     // Flush the encoder's buffered frames to the stream and report whether the
     // write succeeded. The destructor also flushes, but it can't report a
-    // failure — call this first when the caller needs to distinguish a
+    // failure - call this first when the caller needs to distinguish a
     // truncated file (disk full at flush) from a good one. Idempotent.
     bool finalize();
 

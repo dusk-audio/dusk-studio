@@ -24,7 +24,7 @@ public:
     ThreadedFileWriter& operator= (const ThreadedFileWriter&) = delete;
 
     // False once construction got a null FileWriter (a failed create) or the
-    // disk write has failed — callers must check this before trusting push().
+    // disk write has failed - callers must check this before trusting push().
     bool isValid() const noexcept { return writer != nullptr && ! writeFailed.load (std::memory_order_acquire); }
 
     // Audio thread. Deinterleaved src, numCh pointers of >= numFrames. Returns

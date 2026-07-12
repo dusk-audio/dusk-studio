@@ -173,7 +173,7 @@ void AnalogVuMeter::resized()
     // Aspect-locked dial with a wide hardware-style sweep (150° total).
     // Pivot at the bottom-centre of a tight safe area; arcRadius is solved
     // from the sweep angle so the extreme labels just clear the safe edges
-    // horizontally and the arc top clears the safe top. Always circular —
+    // horizontally and the arc top clears the safe top. Always circular -
     // single scalar radius driving every element.
     const auto safe = getLocalBounds().toFloat().reduced (6.0f, 4.0f);
     pivot.x = safe.getCentreX();
@@ -340,7 +340,7 @@ void AnalogVuMeter::rebuildCachedFace()
 
     // ALL element radii are fractions of the single arcRadius scalar so
     // the dial stays circular when the host strip changes aspect ratio.
-    // Layout (smallest → largest from pivot):
+    // Layout (smallest -> largest from pivot):
     //   baselineRad   curved scale arc + bottom of every tick
     //   tick top       baselineRad + tickLenMaj  (numbered) / + tickLenMin (sub)
     //   labelRad       baselineRad + tickLenMaj + labelInset
@@ -355,7 +355,7 @@ void AnalogVuMeter::rebuildCachedFace()
     const float tickLenMin  = arcRadius * 0.06f;
     baselineRad             = arcRadius * 0.78f;
 
-    // Curved baseline arc — one continuous black stroke spanning the full
+    // Curved baseline arc - one continuous black stroke spanning the full
     // sweep, with a red overlay over the 0..+3 segment. Drawing black
     // underneath gives the red a clean start without a rounded-end bulge
     // at the junction (which is what made the two-stroke version look
@@ -400,7 +400,7 @@ void AnalogVuMeter::rebuildCachedFace()
         g.drawLine (juce::Line<float> (pIn, pOut), thickness);
     }
 
-    // Numeric labels — upright sans-serif horizontally centred above the
+    // Numeric labels - upright sans-serif horizontally centred above the
     // tick outer end (Justification::centredBottom anchors the text just
     // above the tick). Suppressed under kLabelMinWidth.
     if (showLabels)
@@ -451,7 +451,7 @@ void AnalogVuMeter::rebuildCachedFace()
         drawEnd ( 1.0f, juce::String ("+"), juce::Colours::red);
     }
 
-    // Semicircular pivot hub centred exactly on (pivot.x, pivot.y) — the
+    // Semicircular pivot hub centred exactly on (pivot.x, pivot.y) - the
     // same point every other element radiates from. Top half of a circle
     // of radius arcRadius * 0.10, so it scales with the dial without
     // dominating narrow bus faces.
@@ -484,7 +484,7 @@ void AnalogVuMeter::rebuildCachedFace()
         }
     }
 
-    // PEAK indicator — small LED in the upper-right corner of the face,
+    // PEAK indicator - small LED in the upper-right corner of the face,
     // matching the SSL-style placement. Caption dropped since the dot is
     // self-explanatory in that corner and there's no clean room for text
     // without crowding the +3 label.
@@ -506,7 +506,7 @@ void AnalogVuMeter::rebuildCachedFace()
         g.drawEllipse (peakLedRect, 0.5f);
     }
 
-    // "VU" badge — plain sans-serif above the pivot hub. Suppressed on
+    // "VU" badge - plain sans-serif above the pivot hub. Suppressed on
     // narrow bus faces (same threshold as the numeric labels) where the
     // badge would collide with the hub and the +3 label.
     if (showLabels)
@@ -540,7 +540,7 @@ void AnalogVuMeter::rebuildCachedFace()
         }
     }
 
-    // Glass specular — drawn LAST so the printed scale reads as if under convex
+    // Glass specular - drawn LAST so the printed scale reads as if under convex
     // glass. Rich face only; baked into the cache (zero per-frame cost).
     if (richStyle)
     {
@@ -567,7 +567,7 @@ void AnalogVuMeter::paint (juce::Graphics& g)
 {
     // Blit the physical-resolution cache back to logical bounds so it stays crisp on
     // HiDPI. Derive the inverse scale from the cache's ACTUAL pixel dimensions vs the
-    // logical size — the cache size was rounded to integer px in rebuildCachedFace, so
+    // logical size - the cache size was rounded to integer px in rebuildCachedFace, so
     // 1/lastScale would be slightly off at fractional DPI and soften the blit.
     if (cachedFace.isValid() && getWidth() > 0 && getHeight() > 0)
         g.drawImageTransformed (cachedFace, juce::AffineTransform::scale (
@@ -579,7 +579,7 @@ void AnalogVuMeter::paint (juce::Graphics& g)
         const float deg = angleFrac * halfArcDeg - 90.0f;
         const float rad  = juce::degreesToRadians (deg);
         // Needle starts EXACTLY at the pivot and radiates outward to the
-        // baseline. No baseR offset — using a non-zero base distance made
+        // baseline. No baseR offset - using a non-zero base distance made
         // the line look like it continued past the pivot when the segment
         // was extrapolated visually by the eye through the hub.
         const float tipR  = baselineRad - arcRadius * 0.02f;
@@ -593,7 +593,7 @@ void AnalogVuMeter::paint (juce::Graphics& g)
     // Rich needle: a tapered blade (wide at the hub, fine point at the tip)
     // with a soft offset shadow so it reads as a physical pointer above the
     // face. Built into the hoisted needlePath (clear()'d each frame) and
-    // rotated with a single AffineTransform — allocation- and trig-per-point-
+    // rotated with a single AffineTransform - allocation- and trig-per-point-
     // free. Canonical needle points straight up (angleFrac 0); rotate by the
     // angle so the tip lands on the scale.
     auto drawRichNeedle = [&] (float angleFrac, juce::Colour c)

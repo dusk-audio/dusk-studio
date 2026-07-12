@@ -8,7 +8,7 @@ namespace duskstudio
 {
 // Bulletproof cross-OS cursor for the edit-mode tools (Grab / Cut /
 // Draw / Range / Grid). Bypasses the platform cursor pipeline
-// entirely — paints the glyph as a transparent JUCE Component
+// entirely - paints the glyph as a transparent JUCE Component
 // overlay polled from juce::Desktop::getMousePosition(). Works
 // identically on macOS / Windows / Linux X11 / Wayland / XWayland;
 // immune to native cursor theme issues, peer-type dispatch bugs in
@@ -21,7 +21,7 @@ namespace duskstudio
 //   3. Editor surfaces push their local mouse position in via
 //      setMousePosition (source, localPoint, EditMode, ...) from their
 //      own mouseMove / mouseDrag; the overlay converts to its own coords
-//      through the JUCE component tree (NOT screen space — Wayland's
+//      through the JUCE component tree (NOT screen space - Wayland's
 //      screen coords are unreliable) and draws that EditMode's glyph, or
 //      nothing after clearMousePosition() on mouseExit.
 //
@@ -43,7 +43,7 @@ public:
     // Editors call this from their own mouseMove with (e.x, e.y) in
     // their own local coords + the wanted glyph mode. The overlay
     // converts to its own local via JUCE's tree-based getLocalPoint
-    // (component-to-component, NOT screen-based — Wayland has broken
+    // (component-to-component, NOT screen-based - Wayland has broken
     // screen coords). Call with EditMode::Grab/Cut/Draw when over a
     // content area; call clearMousePosition() on mouseExit / when the
     // editor's content area shouldn't show a glyph.

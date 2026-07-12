@@ -71,7 +71,7 @@ void WaveformDisplay::paint (juce::Graphics& g)
     g.setColour (juce::Colour (0xff202028));
     g.drawHorizontalLine (bounds.getCentreY(), (float) bounds.getX(), (float) bounds.getRight());
 
-    // Played portion bright, unplayed dim — position reads at a glance.
+    // Played portion bright, unplayed dim - position reads at a glance.
     if (total > 0.0 && frac > 0.0f)
     {
         g.setColour (juce::Colour (0xff7ab0ee));
@@ -80,7 +80,7 @@ void WaveformDisplay::paint (juce::Graphics& g)
     g.setColour (juce::Colour (0xff3c5c84));
     thumbnail.drawChannels (g, bounds.withLeft (splitX), playSec, total, 1.0f);
 
-    // Time ruler along the bottom — a handful of mm:ss ticks.
+    // Time ruler along the bottom - a handful of mm:ss ticks.
     if (total > 0.0)
     {
         double step = 30.0;
@@ -99,7 +99,7 @@ void WaveformDisplay::paint (juce::Graphics& g)
         }
     }
 
-    // Playhead — bright line + a small flag at the top.
+    // Playhead - bright line + a small flag at the top.
     if (sr > 0.0 && total > 0.0)
     {
         g.setColour (juce::Colour (0xffff5555));
@@ -148,7 +148,7 @@ constexpr int kNumMasteringTargets = (int) (sizeof (kMasteringTargets) / sizeof 
 MasteringView::MasteringView (Session& s, AudioEngine& e)
     : session (s), engine (e)
 {
-    // ── header ──
+    // header
     sourceFileLabel.setText ("No mix loaded", juce::dontSendNotification);
     sourceFileLabel.setColour (juce::Label::textColourId, juce::Colour (0xffd0d0d0));
     sourceFileLabel.setJustificationType (juce::Justification::centredLeft);
@@ -160,7 +160,7 @@ MasteringView::MasteringView (Session& s, AudioEngine& e)
     addAndMakeVisible (loadButton);
     addAndMakeVisible (loadLatestMixdown);
 
-    // ── transport ──
+    // transport
     playButton.onClick   = [this] { engine.getMasteringPlayer().play(); };
     stopButton.onClick   = [this] { engine.getMasteringPlayer().stop(); };
     rewindButton.onClick = [this] { engine.getMasteringPlayer().setPlayhead (0); };
@@ -182,7 +182,7 @@ MasteringView::MasteringView (Session& s, AudioEngine& e)
 
     auto& m = session.mastering();
 
-    // ── Meter + LUFS ──
+    // Meter + LUFS
     auto styleMeter = [] (juce::Label& l)
     {
         l.setJustificationType (juce::Justification::centred);
@@ -196,7 +196,7 @@ MasteringView::MasteringView (Session& s, AudioEngine& e)
     styleMeter (lufsI);
     styleMeter (truePeak);
     lufsI.setColour (juce::Label::backgroundColourId, juce::Colour (0xff1a2228));  // brighter - the target reading
-    // Integrated LUFS is the headline mastering number — bold it so it reads
+    // Integrated LUFS is the headline mastering number - bold it so it reads
     // as primary against the momentary/short-term cells.
     lufsI.setFont (juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(),
                                                     13.0f, juce::Font::bold)));
@@ -212,7 +212,7 @@ MasteringView::MasteringView (Session& s, AudioEngine& e)
     addAndMakeVisible (resetLoudness);
 
     // Streaming-target preset dropdown. Populated 1..N (index 0 is "Off").
-    // ComboBox uses 1-based item IDs; we map item-id N → array index N-1.
+    // ComboBox uses 1-based item IDs; we map item-id N -> array index N-1.
     targetCaption.setText ("Target", juce::dontSendNotification);
     targetCaption.setJustificationType (juce::Justification::centredRight);
     targetCaption.setColour (juce::Label::textColourId, juce::Colour (0xff707074));
@@ -244,22 +244,22 @@ MasteringView::MasteringView (Session& s, AudioEngine& e)
     };
     addAndMakeVisible (masteringTargetCombo);
 
-    // ── Export ──
+    // Export
     exportButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff2a3a48));
     exportButton.setColour (juce::TextButton::textColourOffId, juce::Colour (0xffd0e0f0));
     exportButton.onClick = [this] { doExport(); };
     addAndMakeVisible (exportButton);
 
-    // ── Waveform display (top of view) ──
+    // Waveform display (top of view)
     waveform = std::make_unique<WaveformDisplay> (engine.getMasteringPlayer());
     addAndMakeVisible (waveform.get());
 
-    // ── Custom Digital EQ editor (curve + band controls) ──
+    // Custom Digital EQ editor (curve + band controls)
     eqEditor = std::make_unique<MasteringEqEditor> (session.mastering(),
                                                      &engine.getMasteringChain());
     addAndMakeVisible (eqEditor.get());
 
-    // ── Embedded Multiband Comp editor + header wrapper ──
+    // Embedded Multiband Comp editor + header wrapper
     // The mastering chain's UniversalCompressor is in Multiband mode (7),
     // so the editor we get back is the Multi-Comp's multiband UI. Wrap it
     // in a panel that has its own title + ON toggle so the user can bypass
@@ -278,7 +278,7 @@ MasteringView::MasteringView (Session& s, AudioEngine& e)
             if (compHeaderBtn != nullptr) compHeaderBtn->repaint();
         });
     compHeaderBtn->setLabelText ("MULTIBAND COMP");
-    compHeaderBtn->setAccentColour (juce::Colour (0xffe0c050));   // gold — comp
+    compHeaderBtn->setAccentColour (juce::Colour (0xffe0c050));   // gold - comp
     compHeaderEnabledSeen = session.mastering().compEnabled.load (std::memory_order_relaxed);
     compPanelWrapper->addAndMakeVisible (compHeaderBtn.get());
 
@@ -316,13 +316,13 @@ MasteringView::MasteringView (Session& s, AudioEngine& e)
         if (id >= 2)
             applyMultibandPreset (id - 2);
         // Leave the picked preset name showing so the user sees what's loaded
-        // (it stays selected even after they tweak a band — it's a starting
+        // (it stays selected even after they tweak a band - it's a starting
         // point, not live state).
     };
     compPanelWrapper->addAndMakeVisible (compPresetCombo);
 #endif
 
-    // ── Custom Limiter editor ──
+    // Custom Limiter editor
     limiterEditor = std::make_unique<MasteringLimiterEditor> (
         session.mastering(), engine.getMasteringChain().getLimiter());
     addAndMakeVisible (limiterEditor.get());
@@ -395,10 +395,9 @@ void MasteringView::applyMultibandPreset (int presetIndex)
     setP ("auto_makeup", 0.0f);   // Choice: 0 = Off, matching the chart
 
     // No explicit panel refresh: the donor's MultibandCompressorPanel now picks
-    // up programmatic APVTS writes on its own — the visible band's knobs are
+    // up programmatic APVTS writes on its own - the visible band's knobs are
     // live SliderAttachments and its repaint timer re-syncs the crossover faders
-    // and per-band enable layout within a tick. (Its refreshFromParameters() was
-    // removed in the donor's per-band-enable refactor.)
+    // and per-band enable layout within a tick.
 #else
     juce::ignoreUnused (presetIndex);
 #endif
@@ -426,7 +425,7 @@ void MasteringView::resized()
 {
     auto area = getLocalBounds().reduced (12);
 
-    // ── Header (load buttons + filename label) ──
+    // Header (load buttons + filename label)
     auto header = area.removeFromTop (28);
     loadButton.setBounds (header.removeFromLeft (110));
     header.removeFromLeft (4);
@@ -437,11 +436,11 @@ void MasteringView::resized()
     sourceFileLabel.setBounds (header);
     area.removeFromTop (8);
 
-    // ── Transport row (now also hosts the LUFS readouts so the
+    // Transport row (now also hosts the LUFS readouts so the
     //    loudness target context sits next to the playback cluster
     //    instead of being buried at the bottom of the view). Width-
     //    clamped placement so narrow windows don't render widgets
-    //    with negative widths. ──
+    // with negative widths.
     auto transportRow = area.removeFromTop (36);
 
     // Transport cluster on the left.
@@ -485,7 +484,7 @@ void MasteringView::resized()
         loudnessClusterBounds = {};
     area.removeFromTop (8);
 
-    // ── Waveform: a slim band at the top so the plugin row gets the bulk
+    // Waveform: a slim band at the top so the plugin row gets the bulk
     //    of the vertical real estate. Fixed height; what's left in `area`
     //    above the bottom strip and the panel row goes to the plugins.
     constexpr int kWaveH = 90;
@@ -493,7 +492,7 @@ void MasteringView::resized()
         waveform->setBounds (area.removeFromTop (kWaveH));
     area.removeFromTop (6);
 
-    // ── 3-panel row: Digital EQ | Multiband Comp | Limiter ──
+    // 3-panel row: Digital EQ | Multiband Comp | Limiter
     // The EQ curve + 5-band knob row reads better with more width, and
     // the multiband panel's 4 columns are still legible at a smaller
     // share. Limiter is naturally narrow so it gets the leftover.
@@ -535,7 +534,7 @@ void MasteringView::resized()
         const int dropW   = juce::jmin (190, presetRow.getWidth() - capW - 6);
         if (dropW <= 0)
         {
-            // Too narrow for caption + combo — hide rather than lay out negative
+            // Too narrow for caption + combo - hide rather than lay out negative
             // widths (mirrors the transport row's width-clamped placement above).
             compPresetCaption.setVisible (false);
             compPresetCombo.setVisible (false);

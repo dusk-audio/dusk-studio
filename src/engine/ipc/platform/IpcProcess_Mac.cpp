@@ -11,7 +11,7 @@
 // macOS has no prctl(PR_SET_PDEATHSIG). If the parent crashes without
 // running its disconnect()/destructor, the child is orphaned and
 // continues running until the user kills it. Acceptable trade-off
-// for Phase 3 — the normal teardown path (parent's ~ChildProcess
+// for Phase 3 - the normal teardown path (parent's ~ChildProcess
 // invokes terminate()) covers the common case. A future revision
 // could add a kqueue(NOTE_EXIT) watcher thread in the child, or have
 // the child poll getppid()==1 (reparent to launchd) periodically.

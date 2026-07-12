@@ -64,7 +64,7 @@ FreezeDialog::FreezeDialog (AudioEngine& e, Session& s,
                              : "Rendering insert + EQ + comp to audio...",
                          juce::dontSendNotification);
 
-    // Async render on the worker thread; the timer polls progress. No worker→UI
+    // Async render on the worker thread; the timer polls progress. No worker->UI
     // callbacks, so there's no lifetime race against a closing dialog.
     bounceEngine = std::make_unique<BounceEngine> (engine, session, deviceManager);
     if (! bounceEngine->startFreeze (trackIndex, outFile, lenSamples,
@@ -118,7 +118,7 @@ void FreezeDialog::timerCallback()
     finalizeIfStopped();
 }
 
-// Drive the dialog to its finished state once the worker stops — latched by
+// Drive the dialog to its finished state once the worker stops - latched by
 // `finished` so it runs once whether the timer notices the stop or a Cancel
 // click lands in the gap. On success it commits the freeze (frozenRegion +
 // bypass + preparePlayback) on the message thread, exactly once via `committed`.
@@ -140,8 +140,8 @@ void FreezeDialog::finalizeIfStopped()
         }
         titleLabel.setText ("Track frozen", juce::dontSendNotification);
         statusLabel.setText (isMidiTrack
-                                 ? "Instrument bypassed — playing from rendered audio."
-                                 : "Insert + EQ + comp bypassed — playing from rendered audio.",
+                                 ? "Instrument bypassed - playing from rendered audio."
+                                 : "Insert + EQ + comp bypassed - playing from rendered audio.",
                              juce::dontSendNotification);
         progressValue = 1.0;
         progressBar.repaint();
@@ -164,7 +164,7 @@ void FreezeDialog::finalizeIfStopped()
 
 void FreezeDialog::closeDialog()
 {
-    // Cancel pressed mid-render: request a cancel and return without blocking —
+    // Cancel pressed mid-render: request a cancel and return without blocking -
     // the worker's teardown re-attaches the audio device and needs the message
     // loop to keep turning. The timer flips us to the finished state once it
     // actually stops, then the Close button appears.

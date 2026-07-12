@@ -64,7 +64,7 @@ private:
     // Pultec-style Tube EQ. Inline matches the popup editor so on-strip
     // dialling and modal-open dialling see the same controls.
     // Header pill = shared CompHeaderButton (green LED + bold label).
-    // Single Pultec topology — no right-click mode picker.
+    // Single Pultec topology - no right-click mode picker.
     std::unique_ptr<CompHeaderButton> eqHeaderBtn;
     juce::Slider     eqLfBoost   { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
     juce::Slider     eqLfAtten   { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
@@ -72,9 +72,9 @@ private:
     juce::Slider     eqHfAtten   { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
     juce::Label      eqLfBoostLabel, eqLfAttenLabel;
     juce::Label      eqHfBoostLabel, eqHfAttenLabel;
-    // OUT trim removed — eqOutputGainDb atom stays at 0 dB and still
-    // feeds the donor TubeEQ's outputGain, but no UI knob. Master fader
-    // is the canonical output-level control.
+    // No OUT trim knob: eqOutputGainDb atom stays at 0 dB and still feeds
+    // the donor TubeEQ's outputGain. Master fader is the canonical
+    // output-level control.
     // Stepped (dented) rotary knobs that snap to Pultec discrete
     // positions. Value is the index 0..N-1; textFromValueFunction
     // renders the Hz/kHz label. HF Bandwidth lives only in the popup
@@ -87,7 +87,7 @@ private:
 
     // Same shell as channel + bus strips: CompHeaderButton top,
     // CompMeterStrip (triangle-handle threshold) left, knob grid right.
-    // Fixed SSL-style glue topology — no mode picker.
+    // Fixed SSL-style glue topology - no mode picker.
     std::unique_ptr<CompHeaderButton> compHeaderBtn;
     std::unique_ptr<CompMeterStrip>   compMeter;
     juce::Slider     compRatio     { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
@@ -130,7 +130,7 @@ private:
     std::unique_ptr<AnalogVuMeter> vuMeter;
 
     juce::Rectangle<int> meterArea;
-    // Slim GR bar between fader and L/R output bars — comp's
+    // Slim GR bar between fader and L/R output bars - comp's
     // contribution to the final signal at a glance.
     juce::Rectangle<int> grMeterArea;
     juce::Rectangle<int> faderScaleArea;

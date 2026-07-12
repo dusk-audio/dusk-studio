@@ -70,7 +70,7 @@ void ClapBundle::unload()
 {
     descriptors.clear();
     factory = nullptr;
-    // deinit() is only valid after a successful init() — failure paths that set
+    // deinit() is only valid after a successful init() - failure paths that set
     // `entry` from dlsym but never initialised it must not call it.
     if (entry != nullptr && initialised && entry->deinit != nullptr)
         entry->deinit();

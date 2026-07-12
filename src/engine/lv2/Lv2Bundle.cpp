@@ -21,7 +21,7 @@ bool Lv2Bundle::load (const std::string& path, std::string& errorOut)
     std::string dir = path;
     if (! dir.empty() && dir.back() != '/') dir += '/';
 
-    // Load only this bundle, not the whole LV2_PATH — fast and side-effect-free.
+    // Load only this bundle, not the whole LV2_PATH - fast and side-effect-free.
     LilvNode* bundleUri = lilv_new_file_uri (world, nullptr, dir.c_str());
     if (bundleUri == nullptr)
     { errorOut = "invalid bundle path: " + path; lilv_world_free (world); return false; }

@@ -8,7 +8,7 @@
 namespace duskstudio
 {
 // Turns a juce::Slider into a stepped selector with hard detents over a small
-// set of discrete values — used for the SSL-style bus/master comp controls
+// set of discrete values - used for the SSL-style bus/master comp controls
 // (ratio 2:1/4:1/10:1, attack 0.1..30 ms, release 0.1..1.2 s + Auto) whose
 // donor params are AudioParameterChoice, so a continuous knob both lies about
 // the value and lands between the real steps.
@@ -38,7 +38,7 @@ inline void configureSteppedKnob (juce::Slider& s,
     for (size_t i = 0; i < values.size(); ++i)
     {
         // The AUTO sentinel (-1.0) is not a real value on the dB/ms axis, so it
-        // must only be chosen by an exact match, never by distance — otherwise a
+        // must only be chosen by an exact match, never by distance - otherwise a
         // small real value (e.g. a 40 ms release) sits closer to -1 than to the
         // first real step and wrongly selects AUTO.
         if (values[i] == -1.0)

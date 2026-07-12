@@ -10,11 +10,11 @@
 namespace duskstudio
 {
 // Stereo loudness meter conforming to ITU BS.1770-4 / EBU R128. Computes:
-//   • Momentary LUFS  - sliding 400 ms window
-//   • Short-term LUFS - sliding 3-second window
-//   • Integrated LUFS - running mean across the program with the standard
+//   - Momentary LUFS  - sliding 400 ms window
+//   - Short-term LUFS - sliding 3-second window
+//   - Integrated LUFS - running mean across the program with the standard
 //                        absolute (−70 LUFS) and relative (−10 LU) gates
-//   • True peak (dBTP) - max |x| in the 4×-upsampled domain (ITU BS.1770
+//   - True peak (dBTP) - max |x| in the 4×-upsampled domain (ITU BS.1770
 //                         Annex 2). Catches inter-sample peaks that the raw
 //                         sample stream hides; required for streaming-platform
 //                         compliance (Spotify / Apple Music both reject
@@ -31,9 +31,9 @@ namespace duskstudio
 //      the last reset.
 //
 // Threading:
-//   • prepare() / reset() - message thread.
-//   • process()           - audio thread, no allocation.
-//   • getXxxLufs() / getSamplePeakDb() - atomic loads, any thread.
+//   - prepare() / reset() - message thread.
+//   - process()           - audio thread, no allocation.
+//   - getXxxLufs() / getSamplePeakDb() - atomic loads, any thread.
 class LoudnessMeter
 {
 public:
@@ -79,7 +79,7 @@ private:
     // Block history. Stored as MS-per-block; LUFS is computed on demand
     // from sliding-window means. Capped at kMaxHistoryBlocks (1 hour at
     // 100 ms per block) so the audio-thread push_back in finishBlock never
-    // reallocates. Sessions longer than an hour silently saturate — the
+    // reallocates. Sessions longer than an hour silently saturate - the
     // integrated reading stops absorbing new blocks past the cap.
     static constexpr int kMaxHistoryBlocks = 36000;
     std::vector<double> blockHistory;

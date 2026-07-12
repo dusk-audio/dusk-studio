@@ -7,7 +7,7 @@ namespace
 {
 // Each helper owns its own static modal so an alert can stack OVER a
 // confirm (e.g. picker's scan-complete inside a destructive-action
-// prompt — admittedly rare). Pattern mirrors sharedPickerModal vs
+// prompt - admittedly rare). Pattern mirrors sharedPickerModal vs
 // sharedAlertModal in PluginPickerHelpers.cpp.
 EmbeddedModal& alertModal()    { static EmbeddedModal m; return m; }
 EmbeddedModal& confirmModal()  { static EmbeddedModal m; return m; }
@@ -131,7 +131,7 @@ public:
     }
     bool keyPressed (const juce::KeyPress& k) override
     {
-        // Enter triggers primary, Esc triggers secondary — only when
+        // Enter triggers primary, Esc triggers secondary - only when
         // dismissOnEscape was true at show() time (the modal swallows
         // Esc otherwise). Mirrors native dialog conventions.
         if (k == juce::KeyPress::returnKey)
@@ -190,7 +190,7 @@ public:
             if (i > 0) row.removeFromRight (8);
         }
     }
-    // No keyPressed override — decision modals do nothing on Enter / Esc
+    // No keyPressed override - decision modals do nothing on Enter / Esc
     // (Esc swallowed by EmbeddedModal when dismissOnEscape=false). Forces
     // an explicit button click.
 

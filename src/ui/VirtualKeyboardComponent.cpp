@@ -161,16 +161,16 @@ bool VirtualKeyboardComponent::keyPressed (const juce::KeyPress& k)
     if (note < 0) return false;
 
     // keyPressed fires again for an already-held key from two sources:
-    //   • auto-repeat — the key never left the board; silentScans stays 0
+    //   - auto-repeat - the key never left the board; silentScans stays 0
     //     because timerCallback (which uses the reliable X11 physical-state
     //     query) keeps seeing it down. Swallow: don't re-trigger Note On.
-    //   • a genuine fast re-press — the key was released and pressed again
+    //   - a genuine fast re-press - the key was released and pressed again
     //     before the kReleaseScans debounce fired Note Off; the timer observed
     //     it physically up, so silentScans > 0. Retrigger: Note Off the still-
     //     sounding old note, then Note On the new one.
     if (held[(size_t) code].note >= 0)
     {
-        // Retrigger only on CONFIRMED release evidence — the key must have read
+        // Retrigger only on CONFIRMED release evidence - the key must have read
         // not-down for at least kReleaseScans-1 consecutive scans. A lone silentScans
         // increment (one stale read) coinciding with an auto-repeat keyPressed must NOT
         // fire a spurious Note Off / Note On on a note that's really still held.
@@ -205,7 +205,7 @@ void VirtualKeyboardComponent::timerCallback()
             continue;
         }
         // Not down this scan. Only fire Note Off after it stays not-down for
-        // kReleaseScans in a row — cheap guard against a one-off stale read.
+        // kReleaseScans in a row - cheap guard against a one-off stale read.
         if (++slot.silentScans >= kReleaseScans)
         {
             sendNoteOff (slot.note, slot.channel);
@@ -308,7 +308,7 @@ int VirtualKeyboardComponent::noteAtPoint (juce::Point<int> p) const
             x += wkW;
         }
     }
-    // Then white keys (full rect — black keys above already short-circuited).
+    // Then white keys (full rect - black keys above already short-circuited).
     x = kbX;
     for (int m = firstNote; m <= lastNote; ++m)
     {
@@ -334,7 +334,7 @@ void VirtualKeyboardComponent::mouseDrag (const juce::MouseEvent& e)
     if (mouseHeld.note < 0) return;
     const int note = noteAtPoint (e.getPosition());
     if (note < 0 || note == mouseHeld.note) return;
-    // Glissando — release the previous note before triggering the new one.
+    // Glissando - release the previous note before triggering the new one.
     sendNoteOff (mouseHeld.note, mouseHeld.channel);
     mouseHeld = { note, channel };
     sendNoteOn (note, velocity, channel);
@@ -365,7 +365,7 @@ void VirtualKeyboardComponent::resized()
     header.removeFromRight (kBtnGap);
     octDownBtn.setBounds (header.removeFromRight (kBtnW).reduced (2, 2));
 
-    // Keyboard fills the rest (no footer legend — letters live ON the
+    // Keyboard fills the rest (no footer legend - letters live ON the
     // keys now).
     keyboardArea = bounds;
 }
@@ -377,7 +377,7 @@ void VirtualKeyboardComponent::paint (juce::Graphics& g)
     g.setColour (juce::Colour (0xff1a1a20));
     g.fillRect (bounds);
 
-    // Title strip — text on the left, status text in the middle (between
+    // Title strip - text on the left, status text in the middle (between
     // the buttons that resized() already placed on the right).
     auto titleArea = bounds.removeFromTop (24.0f);
     g.setColour (juce::Colour (0xffd0d0d0));
@@ -396,9 +396,9 @@ void VirtualKeyboardComponent::paint (juce::Graphics& g)
     g.drawText (status, statusRect, juce::Justification::centredRight);
 
     // Piano keyboard. Show 2 octaves anchored so centreNote sits at the
-    // start of the upper octave — one octave of context below (so the
+    // start of the upper octave - one octave of context below (so the
     // user has bass-side reference) and one octave above where the typed
-    // Z/Q-row letters land. Centre C2 → display C1..C3 by default.
+    // Z/Q-row letters land. Centre C2 -> display C1..C3 by default.
     const int firstNote = juce::jmax (0, centreNote - 12);
     // One octave of bass context below the centre, then up to the top typed key
     // (centreNote + 28 = the 'P' key in the I9O0P top row) so every typeable
@@ -417,14 +417,14 @@ void VirtualKeyboardComponent::paint (juce::Graphics& g)
     const float bkW = wkW * 0.62f;
     const float bkH = wkH * 0.62f;
 
-    // Highlight set: notes currently held (any source — typing keyboard OR mouse).
+    // Highlight set: notes currently held (any source - typing keyboard OR mouse).
     std::array<bool, 128> isHeld {};
     for (const auto& slot : held)
         if (slot.note >= 0)
             isHeld[(size_t) slot.note] = true;
     if (mouseHeld.note >= 0) isHeld[(size_t) mouseHeld.note] = true;
 
-    // Path with only its bottom corners rounded — the Logic / hardware
+    // Path with only its bottom corners rounded - the Logic / hardware
     // key silhouette (square shoulders at the top, rounded toe).
     auto bottomRoundedKey = [] (juce::Rectangle<float> r, float radius)
     {
@@ -444,7 +444,7 @@ void VirtualKeyboardComponent::paint (juce::Graphics& g)
     const juce::Colour kActiveLo (0xff3a78b8);
 
     // First pass: white keys. Subtle top-to-bottom gradient + a darker
-    // toe band, square shoulders, rounded toe — reads like a real key.
+    // toe band, square shoulders, rounded toe - reads like a real key.
     float x = kb.getX();
     for (int m = firstNote; m <= lastNote; ++m)
     {
@@ -463,7 +463,7 @@ void VirtualKeyboardComponent::paint (juce::Graphics& g)
         g.setGradientFill (grad);
         g.fillPath (path);
 
-        // Toe shadow — a thin darker strip at the very bottom for depth.
+        // Toe shadow - a thin darker strip at the very bottom for depth.
         g.setColour ((active ? kActiveLo : juce::Colour (0xffcccdd2)).withAlpha (0.9f));
         g.fillRect (r.getX(), r.getBottom() - 3.0f, r.getWidth(), 3.0f);
 
@@ -496,7 +496,7 @@ void VirtualKeyboardComponent::paint (juce::Graphics& g)
         x += wkW;
     }
 
-    // Second pass: black keys — beveled 3D look (lighter top cap, near-
+    // Second pass: black keys - beveled 3D look (lighter top cap, near-
     // black body, rounded toe), overlaid on the white keys.
     x = kb.getX();
     for (int m = firstNote; m <= lastNote; ++m)
@@ -516,7 +516,7 @@ void VirtualKeyboardComponent::paint (juce::Graphics& g)
             g.setGradientFill (grad);
             g.fillPath (path);
 
-            // Glossy top cap — a slightly inset lighter rectangle near
+            // Glossy top cap - a slightly inset lighter rectangle near
             // the top edge gives the raised, beveled appearance.
             auto cap = r.reduced (r.getWidth() * 0.18f, 0.0f)
                           .withHeight (r.getHeight() * 0.16f)

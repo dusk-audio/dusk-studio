@@ -30,13 +30,13 @@ struct Vst3SlotTraits
     }
 };
 
-// VST3 insert slot — the shared NativeInsertSlot plus parameter forwarding
+// VST3 insert slot - the shared NativeInsertSlot plus parameter forwarding
 // (normalized values; mirrors NativeClapSlot's surface).
 class NativeVst3Slot final : public hosting::NativeInsertSlot<Vst3SlotTraits>
 {
 public:
     // Parameters (message thread for read/enumerate; setParamValue is the control
-    // entry — queued and applied on the next audio block). No-op / empty when unloaded.
+    // entry - queued and applied on the next audio block). No-op / empty when unloaded.
     int paramCount() const noexcept { return instance != nullptr ? instance->paramCount() : 0; }
     const Vst3Instance::ParamInfo* paramInfo (int index) const noexcept
         { return instance != nullptr ? instance->paramInfo (index) : nullptr; }
@@ -54,7 +54,7 @@ public:
         { return instance != nullptr && instance->consumeLatencyChanged(); }
 
 protected:
-    // MIDI binding: VST3 parameters are normalized — the fraction maps directly.
+    // MIDI binding: VST3 parameters are normalized - the fraction maps directly.
     void applyParamBinding (uint32_t paramIndex, float frac) override
     {
         const auto* p = paramInfo ((int) paramIndex);

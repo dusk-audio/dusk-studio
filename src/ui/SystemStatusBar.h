@@ -23,7 +23,7 @@ public:
 private:
     void timerCallback() override;
 
-    // The DSP segment's bounds — shared by paint() and the double-click
+    // The DSP segment's bounds - shared by paint() and the double-click
     // hit test so the reset zone always matches what's drawn.
     juce::Rectangle<int> dspSegmentBounds() const noexcept
     {

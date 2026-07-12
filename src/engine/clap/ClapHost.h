@@ -12,7 +12,7 @@
 namespace duskstudio::clap
 {
 // Minimal CLAP host: owns a clap_host_t and the host extensions an embedded-GUI
-// audio host needs — log, thread-check, gui, posix-fd-support, timer-support.
+// audio host needs - log, thread-check, gui, posix-fd-support, timer-support.
 // One per plugin instance. The plugin's editor runs its own X11 event loop and
 // asks us to pump its fd + timers; pumpGui() does that from the message thread.
 // See docs/native-clap-host-plan.md.
@@ -36,14 +36,14 @@ public:
 
     const clap_host_t* get() const noexcept { return &host; }
 
-    // The plugin's thread-check ext is [thread-safe] — it may read the audio-thread
+    // The plugin's thread-check ext is [thread-safe] - it may read the audio-thread
     // identity from any thread while the audio thread publishes it. Store a hash in a
     // lock-free atomic (the write happens on the audio thread, so it must not lock):
     // release on publish, acquire on read.
     void setAudioThread (std::thread::id id) noexcept
         { audioThreadHash.store (std::hash<std::thread::id>{} (id), std::memory_order_release); }
     void setPlugin (const clap_plugin* p) noexcept    { plugin = p; }
-    // The gui request callbacks (request_resize/show/hide) are CLAP [thread-safe] —
+    // The gui request callbacks (request_resize/show/hide) are CLAP [thread-safe] -
     // the plugin may fire them from its own thread while teardown swaps this target on
     // the message thread. Publish atomically; the trampolines load-acquire before deref.
     void setCallbacks (Callbacks* c) noexcept         { callbacks.store (c, std::memory_order_release); }
@@ -90,7 +90,7 @@ private:
     std::vector<RegFd>    fds;
     std::vector<RegTimer> timers;
     clap_id nextTimerId = 1;
-    std::atomic<bool> callbackRequested { false };   // request_callback → on_main_thread, drained in pumpGui
+    std::atomic<bool> callbackRequested { false };   // request_callback -> on_main_thread, drained in pumpGui
 
     const std::thread::id mainThreadId { std::this_thread::get_id() };
     std::atomic<std::size_t> audioThreadHash { 0 };

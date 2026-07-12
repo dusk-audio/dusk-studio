@@ -109,7 +109,7 @@ void logLoadedPlugin (const juce::AudioPluginInstance& instance)
 PluginSlot::PluginSlot()
 {
     // Drain the param-write SPSC FIFO at 30 Hz on the message thread.
-    // The rate is the same the meter UI ticks at — fine-grained enough
+    // The rate is the same the meter UI ticks at - fine-grained enough
     // that an automated controller stream feels live, cheap enough that
     // an idle slot pays one atomic-load + branch per tick. Started here
     // (not lazily) so the queue is live from the moment the audio
@@ -129,7 +129,7 @@ PluginSlot::~PluginSlot()
     // Release the Mac shell instance before tearing down the OOP child.
     // releaseShellInstance refuses if a wrapper is still outstanding;
     // when that happens we cannot let the shellInstanceForEditor unique
-    // _ptr's member dtor run at the end of ~PluginSlot — that would
+    // _ptr's member dtor run at the end of ~PluginSlot - that would
     // destroy the AudioProcessor while the wrapper's editor still
     // holds a non-owning reference to it, dangling the editor's
     // processor pointer on the next AppKit event.
@@ -140,7 +140,7 @@ PluginSlot::~PluginSlot()
     // shutdown listener callback) and intentionally LEAK the
     // AudioProcessor via .release(). The wrapper continues to hold a
     // reference to a leaked-but-still-mapped processor; the OS reclaims
-    // its memory at process exit. Acceptable in the dtor path — the
+    // its memory at process exit. Acceptable in the dtor path - the
     // alternative is a UAF.
     releaseShellInstance();
     if (shellInstanceForEditor != nullptr)
@@ -207,7 +207,7 @@ void PluginSlot::leakInstanceForShutdown()
         if (slot != nullptr) (void) slot.release();
 
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
-    // OOP plugins live in a separate process — the in-process leak hack
+    // OOP plugins live in a separate process - the in-process leak hack
     // is irrelevant. Cleanly disconnecting kills the child, which
     // releases its plugin in its own address space (so any plugin-side
     // dtor crash is confined to the child and ignored).
@@ -227,7 +227,7 @@ void PluginSlot::pollRemoteReaper()
     if (r->pollReaper())
     {
         // Child has exited. Park the audio path immediately (defense in
-        // depth — the audio thread will set autoBypassed itself on the
+        // depth - the audio thread will set autoBypassed itself on the
         // next processBlockSync, but proactively bypassing closes the
         // window where transport-stopped slots silently hold a dead
         // connection).
@@ -237,7 +237,7 @@ void PluginSlot::pollRemoteReaper()
         std::fprintf (stderr,
                       "[Dusk Studio/PluginSlot] OOP child process exited; slot "
                       "auto-bypassed. Reload the plugin to recover.\n");
-        // Stop polling — child has been reaped, nothing more to watch.
+        // Stop polling - child has been reaped, nothing more to watch.
         reaperTimer.stopTimer();
     }
 }
@@ -349,7 +349,7 @@ void PluginSlot::prepareToPlay (double sampleRate, int blockSize)
         // Release BEFORE re-preparing. setPlayConfigDetails updates the
         // processor's cached block size, and a JUCE VST3 wrapper's prepareToPlay
         // skips re-running setupProcessing when it sees (isActive && same SR &&
-        // same blockSize) — so a block-size change could leave the plugin's
+        // same blockSize) - so a block-size change could leave the plugin's
         // INTERNAL buffers at the old size while it's fed the new one (overrun /
         // crash in a multi-bus instrument). releaseResources() clears isActive
         // so the re-prepare always takes. This is the conventional host cycle.
@@ -500,7 +500,7 @@ bool PluginSlot::loadFromFile (const juce::File& pluginFile, juce::String& error
         return false;
     }
 
-    // Invalidate any audio-thread-queued ParamWrites still in the FIFO —
+    // Invalidate any audio-thread-queued ParamWrites still in the FIFO -
     // their paramIndex targeted the now-deposed plugin. Release pairs
     // with the audio-thread acquire load in setParamNormalised so the
     // bump is observed before the next stamp.
@@ -721,7 +721,7 @@ bool PluginSlot::loadFromDescription (const juce::PluginDescription& desc,
                 }
             }
         }
-        // Fall through into the in-process load below — we still want
+        // Fall through into the in-process load below - we still want
         // the user's load to succeed.
     }
    #endif
@@ -741,7 +741,7 @@ bool PluginSlot::loadFromDescription (const juce::PluginDescription& desc,
 
 // Message-thread install tail shared by the synchronous loadFromDescription and
 // the off-thread loadFromDescriptionAsync completion. Primes the freshly-built
-// instance, then atomically swaps it into currentInstance — the audio thread
+// instance, then atomically swaps it into currentInstance - the audio thread
 // reads via acquire. Caller has already rotated the keep-alive ring + nulled
 // currentInstance, so this only installs the new owner.
 bool PluginSlot::installInProcessInstance (std::unique_ptr<juce::AudioPluginInstance> fresh)
@@ -815,7 +815,7 @@ void PluginSlot::loadFromDescriptionAsync (const juce::PluginDescription& desc,
     juce::PluginDescription fixedDesc = desc;
     normalizeVst3FileOrIdentifier (fixedDesc);
 
-    // Rotate the keep-alive ring + null currentInstance now — the slot goes
+    // Rotate the keep-alive ring + null currentInstance now - the slot goes
     // silent for the duration of the off-thread load. Same shape as the
     // synchronous path's pre-swap rotation (loadFromDescription).
     if (ownedInstance != nullptr && lastTouchedListener != nullptr)
@@ -837,7 +837,7 @@ void PluginSlot::loadFromDescriptionAsync (const juce::PluginDescription& desc,
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
     // A prior load may have been OOP (mode is per-load). Mirror the sync path's
     // remote teardown so processBlock stops routing to the remote before the
-    // in-process instance becomes the active processor — without this the slot
+    // in-process instance becomes the active processor - without this the slot
     // keeps playing the OOP plugin after currentInstance is nulled. Two-deep
     // deferred-destruction ring, same as loadFromDescription / unload.
     reaperTimer.stopTimer();
@@ -850,7 +850,7 @@ void PluginSlot::loadFromDescriptionAsync (const juce::PluginDescription& desc,
 
     // Off-thread create; the completion fires on the MESSAGE thread. weak_ptr
     // to lifeToken guards against the slot being destroyed mid-load (token dies
-    // with the slot → weak_ptr expires → bail before touching `this`).
+    // with the slot -> weak_ptr expires -> bail before touching `this`).
     std::weak_ptr<char> life = lifeToken;
     manager->createPluginInstanceAsync (fixedDesc, preparedSampleRate, preparedBlockSize,
         [this, life, epoch, onDone] (std::unique_ptr<juce::AudioPluginInstance> inst,
@@ -881,7 +881,7 @@ void PluginSlot::unload()
 
    #if JUCE_MAC && DUSKSTUDIO_HAS_OOP_PLUGINS
     // Track-unload is an explicit user action and the modal-editor close
-    // protocol (closePluginEditor → modal close → wrapper dtor) is
+    // protocol (closePluginEditor -> modal close -> wrapper dtor) is
     // assumed to have run by now. releaseShellInstance refuses + logs
     // if the wrapper is still alive; the shell instance then sticks
     // around until the next unload / dtor when the wrapper has died.
@@ -953,7 +953,7 @@ juce::String PluginSlot::getDescriptionXmlForSave (int parkSleepMs)
     bool ok = false;
     // fillInPluginDescription is metadata-only (uid + format + path + name)
     // and does NOT race the renderer. No releaseResources/prepareToPlay
-    // needed — atomic-park alone is sufficient.
+    // needed - atomic-park alone is sufficient.
     withParkedAtomicPointer (currentInstance, [&] (juce::AudioPluginInstance& p)
     {
         p.fillInPluginDescription (desc);
@@ -989,7 +989,7 @@ juce::String PluginSlot::getStateBase64ForSave (int parkSleepMs)
     if (auto* r = currentRemote.load (std::memory_order_acquire))
     {
         // OOP path: the parking + setActive(false) bracket is intrinsic
-        // to the IPC — the child runs the plugin on its own audio worker
+        // to the IPC - the child runs the plugin on its own audio worker
         // and serialises getStateInformation under MessageManagerLock.
         // No parent-side park needed; the parent just blocks on the
         // control-plane reply.
@@ -1063,7 +1063,7 @@ bool PluginSlot::restoreFromSavedState (const juce::String& descriptionXml,
         return true;
     }
 
-    // Session-load is a plugin swap from the user's point of view —
+    // Session-load is a plugin swap from the user's point of view -
     // bump the epoch + invalidate Mac shell the same way as
     // loadFromDescription.
     currentLoadEpoch.fetch_add (1, std::memory_order_release);
@@ -1074,7 +1074,7 @@ bool PluginSlot::restoreFromSavedState (const juce::String& descriptionXml,
 
     // Stash the inputs up front. On any failure path below the slot
     // ends up empty, but these copies survive so getDescriptionXmlForSave
-    // / getStateBase64ForSave still return the user's saved data — a
+    // / getStateBase64ForSave still return the user's saved data - a
     // subsequent autosave or manual save then round-trips it instead of
     // wiping it because the plugin happened to be unavailable. Cleared
     // by every success path and by unload().
@@ -1104,7 +1104,7 @@ bool PluginSlot::restoreFromSavedState (const juce::String& descriptionXml,
     normalizeVst3FileOrIdentifier (desc);
 
     // Try the OOP path first if enabled. On any failure we fall through
-    // to the in-process load below — the user's session restore should
+    // to the in-process load below - the user's session restore should
     // succeed even if the host child can't be spawned for some reason
     // (e.g. binary not present in a stripped-down build).
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
@@ -1218,12 +1218,12 @@ void PluginSlot::processMonoBlock (float* monoData, int numSamples,
     // Time-budget watchdog. A plugin that consistently overruns the buffer
     // gets auto-bypassed so it can't freeze the audio thread. Two
     // refinements over a naive single-block trip:
-    //   • Warm-up grace: kGraceBlocks after a load (or prepareToPlay) the
+    //   - Warm-up grace: kGraceBlocks after a load (or prepareToPlay) the
     //     watchdog is silent. Reverbs / look-ahead limiters / oversamplers
     //     all do real work on their first few blocks (cold caches, internal
     //     ramps) and would otherwise be auto-bypassed before they ever
     //     produce wet output.
-    //   • Consecutive-overrun threshold: a single late block (other-thread
+    //   - Consecutive-overrun threshold: a single late block (other-thread
     //     preemption, GC, kernel scheduling jitter) shouldn't kill a
     //     plugin. Require kMaxConsecutiveOverruns in a row.
     constexpr int    kGraceBlocks            = 16;
@@ -1341,7 +1341,7 @@ void PluginSlot::processMonoBlock (float* monoData, int numSamples,
     }
     else
     {
-        // Stereo (or wider) plugin: duplicate mono → L+R, process, average
+        // Stereo (or wider) plugin: duplicate mono -> L+R, process, average
         // back to mono. Use the pre-allocated scratch so we don't touch
         // the heap.
         if (numSamples > stereoScratch.getNumSamples())
@@ -1444,7 +1444,7 @@ void PluginSlot::processStereoBlock (float* L, float* R, int numSamples,
             // marked crashed. Engage auto-bypass so the engine sees a
             // clean silence/pass-through instead of repeating the
             // timeout every block (the futex cost itself is what we're
-            // avoiding here — re-trying a dead connection still pays
+            // avoiding here - re-trying a dead connection still pays
             // the deadline cost).
             engageAutoBypass();
             return;
@@ -1519,7 +1519,7 @@ void PluginSlot::processStereoBlock (float* L, float* R, int numSamples,
 
         // Buffer width must be max(numIn, numOut) so the plugin can write
         // its stereo output. Pre-fill the extra channel with the mono mix
-        // — JUCE's contract is that the plugin only reads numIn channels,
+        // - JUCE's contract is that the plugin only reads numIn channels,
         // but copying mono there is harmless and avoids leaving uninit
         // memory in the buffer (which we otherwise read back as outR).
         const int procCh = juce::jmin (juce::jmax (numIn, numOut),
@@ -1616,7 +1616,7 @@ void PluginSlot::setParamNormalised (int paramIndex, float value01) noexcept
     paramFifo.prepareToWrite (1, s1, sz1, s2, sz2);
     if (sz1 + sz2 == 0)
     {
-        // FIFO full. Drop the write — protecting the audio thread from
+        // FIFO full. Drop the write - protecting the audio thread from
         // blocking is more important than a single missed param update,
         // and the 30 Hz drain catches up within one tick once the queue
         // pressure subsides. With 256 entries this branch is only
@@ -1638,7 +1638,7 @@ void PluginSlot::setParamNormalised (int paramIndex, float value01) noexcept
 void PluginSlot::timerCallback()
 {
     // Message thread. Drain every pending ParamWrite into the live
-    // plugin instance. Bounded loop — caller (juce::Timer) marshals us
+    // plugin instance. Bounded loop - caller (juce::Timer) marshals us
     // here so JUCE_ASSERT_MESSAGE_THREAD in applyParamWriteOnMessageThread
     // is satisfied by construction.
     const int avail = paramFifo.getNumReady();
@@ -1658,7 +1658,7 @@ void PluginSlot::timerCallback()
     // Without this, every subsequent ShellParamListener fire would
     // call ownedRemote->setRemoteParam which silently returns false
     // (peer closed). The user would see the shell editor responding
-    // but no DSP would update — confusing. Better: detach the
+    // but no DSP would update - confusing. Better: detach the
     // listener + clear the sink so the editor functions locally
     // without pretending to drive a dead DSP.
     //
@@ -1692,7 +1692,7 @@ void PluginSlot::applyParamWriteOnMessageThread (const ParamWrite& pw) noexcept
     // This is the ONE place where a JUCE parameter setter is invoked.
     // The assertion fires in any debug build (and therefore under
     // DUSKSTUDIO_RUN_SELFTEST=1, which the test runner builds as Debug)
-    // if a future change ever routes the call from the audio thread —
+    // if a future change ever routes the call from the audio thread -
     // exactly the regression Phase 2 is meant to prevent.
     JUCE_ASSERT_MESSAGE_THREAD;
 
@@ -1717,10 +1717,10 @@ void PluginSlot::applyParamWriteOnMessageThread (const ParamWrite& pw) noexcept
     }
 
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
-    // In-process instance not present — this slot is OOP-routed.
+    // In-process instance not present - this slot is OOP-routed.
     // Forward the write across the IPC control channel; the child
     // applies it on its DSP-side instance via the existing
-    // SetParam → callAsync → setValueNotifyingHost path. Acquire
+    // SetParam -> callAsync -> setValueNotifyingHost path. Acquire
     // load pairs with the message-thread release stores in
     // loadFromDescription / unload that swap currentRemote.
     if (auto* r = currentRemote.load (std::memory_order_acquire))
@@ -1736,7 +1736,7 @@ bool PluginSlot::ensureShellInstanceForEditor (juce::String& err)
     if (shellInstanceForEditor != nullptr)
     {
         err.clear();
-        return true;  // idempotent — already loaded for this slot
+        return true;  // idempotent - already loaded for this slot
     }
 
     if (manager == nullptr)
@@ -1755,7 +1755,7 @@ bool PluginSlot::ensureShellInstanceForEditor (juce::String& err)
     // file. The instance is editor-only: prepareToPlay is called so
     // the editor's bounds + initial parameter snapshot match the
     // engine's current SR/BS, but processBlock is NEVER invoked on
-    // this instance — DSP runs in the OOP child.
+    // this instance - DSP runs in the OOP child.
     auto xml = juce::XmlDocument::parse (savedDescriptionXml);
     if (xml == nullptr)
     {
@@ -1789,7 +1789,7 @@ bool PluginSlot::ensureShellInstanceForEditor (juce::String& err)
 
     // 3c-3b: install the shell-side parameter listener + register the
     // ParamChangedFromChild sink on ownedRemote. Both sides of the
-    // mirror are wired before the editor opens — the next user knob
+    // mirror are wired before the editor opens - the next user knob
     // move on the shell sends SetParam to the child, and any child-
     // initiated change (host automation, preset reload) arrives back
     // via the sink. applyingFromMirror breaks the listener loop.
@@ -1802,7 +1802,7 @@ bool PluginSlot::ensureShellInstanceForEditor (juce::String& err)
         ownedRemote->setParamChangedSink (
             [this] (int paramIndex, float value01, std::uint32_t /*seq*/)
             {
-                // Already on the message thread — RemotePluginConnection's
+                // Already on the message thread - RemotePluginConnection's
                 // reader marshalled here via juce::MessageManager::callAsync.
                 applyShellParamFromChild (paramIndex, value01);
             });
@@ -1820,7 +1820,7 @@ void PluginSlot::ShellParamListener::parameterValueChanged (int paramIndex, floa
     if (slot.applyingFromMirror.load (std::memory_order_acquire)) return;
     if (slot.ownedRemote == nullptr) return;
     // 3c-4 fast-path crash check. setRemoteParam would return false
-    // anyway (peer closed → write fails) but isCrashed() short-circuits
+    // anyway (peer closed -> write fails) but isCrashed() short-circuits
     // before touching controlMutex, so a knob drag against a dead
     // child doesn't pay the lock-acquire cost per listener fire. The
     // 30 Hz timerCallback will detach this listener on the next tick;
@@ -1916,7 +1916,7 @@ void PluginSlot::releaseShellInstance()
 
     if (outstandingShellWrapper.getComponent() != nullptr)
     {
-        // Wrapper is still alive — its inner unique_ptr<editor> holds a
+        // Wrapper is still alive - its inner unique_ptr<editor> holds a
         // reference to this AudioProcessor. Destroying the processor here
         // would dangle the editor's processor pointer and crash on the
         // next AppKit event. Skip + log; the next unload / dtor will
@@ -1932,7 +1932,7 @@ void PluginSlot::releaseShellInstance()
     // lives inside each parameter; destroying the processor while a
     // listener is registered dangles the parameter's listener-list
     // entry. Clearing the sink stops any in-flight callAsync lambda
-    // from invoking the listener on a freed processor — the lambda
+    // from invoking the listener on a freed processor - the lambda
     // re-reads paramChangedSink_ under controlMutex at dispatch time,
     // so this clear races safely with a queued push.
     if (shellParamListener != nullptr)

@@ -102,7 +102,7 @@ AudioSettingsPanel::AudioSettingsPanel (juce::AudioDeviceManager& dm,
     oversamplingCombo.onChange = [this] { applyOversamplingChange(); };
     addAndMakeVisible (oversamplingCombo);
 
-    // Multicore DSP — per-machine. Item IDs: 1 = Off, 2 = Auto, 10+N = Manual N
+    // Multicore DSP - per-machine. Item IDs: 1 = Off, 2 = Auto, 10+N = Manual N
     // workers. The manual entries cover 1..maxMulticoreWorkers() (cores - 2);
     // hosts with < 3 cores offer Off + Auto (which resolves to serial) only.
     addAndMakeVisible (multicoreLabel);
@@ -122,7 +122,7 @@ AudioSettingsPanel::AudioSettingsPanel (juce::AudioDeviceManager& dm,
             case appconfig::MulticoreDspMode::Auto: selId = 2; break;
             case appconfig::MulticoreDspMode::Manual:
                 selId = (maxW > 0) ? 10 + juce::jlimit (1, maxW, appconfig::getMulticoreManualWorkers())
-                                   : 2;   // no manual range on this host → fall back to Auto
+                                   : 2;   // no manual range on this host -> fall back to Auto
                 break;
         }
         multicoreCombo.setSelectedId (selId, juce::dontSendNotification);
@@ -131,7 +131,7 @@ AudioSettingsPanel::AudioSettingsPanel (juce::AudioDeviceManager& dm,
         "Spread the 24 channel strips' per-block DSP across real-time worker "
         "threads so the mixer uses more than one CPU core. Off is the single-"
         "core path. Auto uses (cores - 2) workers, leaving a core for the UI "
-        "and OS. Per-machine — it is not saved in the session, so a project "
+        "and OS. Per-machine - it is not saved in the session, so a project "
         "made on a many-core machine won't overload a smaller one.");
     multicoreCombo.onChange = [this] { applyMulticoreChange(); };
     addAndMakeVisible (multicoreCombo);
@@ -195,7 +195,7 @@ AudioSettingsPanel::AudioSettingsPanel (juce::AudioDeviceManager& dm,
     addAndMakeVisible (syncEmitClockToggle);
 
     // MTC chase toggle (slave-side absolute-time follow). Off by
-    // default — same UX baseline as the Clock chase toggle.
+    // default - same UX baseline as the Clock chase toggle.
     mtcChaseToggle.setToggleState (
         session.externalTimeCodeChasesTransport.load (std::memory_order_relaxed),
         juce::dontSendNotification);
@@ -212,7 +212,7 @@ AudioSettingsPanel::AudioSettingsPanel (juce::AudioDeviceManager& dm,
     addAndMakeVisible (mtcChaseToggle);
 
     // MTC emit toggle (master-side). Multiplexes onto the existing
-    // Sync Output port — same MIDI cable carries Clock + MTC.
+    // Sync Output port - same MIDI cable carries Clock + MTC.
     mtcEmitToggle.setToggleState (
         session.syncOutputEmitTimeCode.load (std::memory_order_relaxed),
         juce::dontSendNotification);
@@ -349,7 +349,7 @@ AudioSettingsPanel::AudioSettingsPanel (juce::AudioDeviceManager& dm,
     };
     addAndMakeVisible (scanOnStartupToggle);
 
-    // Section header labels — each visually marks one group of settings
+    // Section header labels - each visually marks one group of settings
     // rows. paint() draws a thin separator between groups using Ys
     // captured during resized().
     auto styleSectionLabel = [] (juce::Label& l)
@@ -517,7 +517,7 @@ void AudioSettingsPanel::resized()
     };
     auto takeStdRow = [&] { return takeRow (kRowH); };
 
-    // ── Audio ────────────────────────────────────────────────────────
+    // Audio
     sectionHeader (audioSectionLabel);
     auto audioBlock = area.removeFromTop (kAudioBlockH);
     selector->setBounds (audioBlock);
@@ -528,7 +528,7 @@ void AudioSettingsPanel::resized()
     }
     endSection();
 
-    // ── Control Surface (MCU) ────────────────────────────────────────
+    // Control Surface (MCU)
     sectionHeader (controlSurfaceSectionLabel);
     {
         auto row = takeStdRow();
@@ -542,7 +542,7 @@ void AudioSettingsPanel::resized()
     }
     endSection();
 
-    // ── MIDI Bindings ────────────────────────────────────────────────
+    // MIDI Bindings
     sectionHeader (midiBindingsSectionLabel);
     {
         auto row = takeStdRow();
@@ -550,7 +550,7 @@ void AudioSettingsPanel::resized()
     }
     endSection();
 
-    // ── MIDI Sync ────────────────────────────────────────────────────
+    // MIDI Sync
     sectionHeader (midiSyncSectionLabel);
     {
         auto row = takeStdRow();
@@ -577,7 +577,7 @@ void AudioSettingsPanel::resized()
     }
     endSection();
 
-    // ── General ──────────────────────────────────────────────────────
+    // General
     sectionHeader (generalSectionLabel);
     {
         auto row = takeStdRow();
@@ -617,7 +617,7 @@ void AudioSettingsPanel::resized()
     }
     endSection();
 
-    // ── Advanced ─────────────────────────────────────────────────────
+    // Advanced
     sectionHeader (advancedSectionLabel);
     {
         auto row = takeRow (32);
@@ -683,7 +683,7 @@ void AudioSettingsPanel::applyRescan()
 
     // The selector subscribes to AudioDeviceManager change broadcasts. Most
     // backends' scanForDevices() will already fire callDeviceChangeListeners()
-    // (which routes through audioDeviceListChanged() → sendChangeMessage()),
+    // (which routes through audioDeviceListChanged() -> sendChangeMessage()),
     // but some only broadcast on a real diff. Force a refresh either way.
     // Re-applying the same setup via setAudioDeviceSetup is a no-op when
     // newSetup == currentSetup (JUCE early-returns without notifying), so
@@ -728,8 +728,8 @@ void AudioSettingsPanel::applyOversamplingChange()
     // device close/restart disturbs the window peer on Linux (mouse-offset
     // regression). Instead, detach + reattach the engine as the audio callback:
     // removeAudioCallback fires audioDeviceStopped, addAudioCallback fires
-    // audioDeviceAboutToStart → prepareForSelfTest, rebuilding every
-    // strip/bus/master oversampler at the new factor — all WITHOUT touching the
+    // audioDeviceAboutToStart -> prepareForSelfTest, rebuilding every
+    // strip/bus/master oversampler at the new factor - all WITHOUT touching the
     // device or the window. Brief silence gap only.
     deviceManager.removeAudioCallback (&engine);
     deviceManager.addAudioCallback (&engine);
@@ -756,7 +756,7 @@ void AudioSettingsPanel::applyMulticoreChange()
     // reconfigure the pool, then reattach. removeAudioCallback quiesces the
     // callback (and waits out any in-flight block); applyDesiredWorkers does the
     // stop+start safely; addAudioCallback re-prepares DSP and resumes. The pool
-    // is changed ONLY here — prepare no longer touches it — so a routine
+    // is changed ONLY here - prepare no longer touches it - so a routine
     // buffer-size change can never race the pool. Brief silence gap only.
     deviceManager.removeAudioCallback (&engine);
     engine.applyDesiredWorkers();
@@ -783,7 +783,7 @@ void AudioSettingsPanel::changeListenerCallback (juce::ChangeBroadcaster*)
     populateMainOutputCombo();
 
     // A device change alters the selector's height (channel-list sizes), which
-    // the audio-block layout is computed from — re-lay-out so the rows below
+    // the audio-block layout is computed from - re-lay-out so the rows below
     // follow it instead of overlapping or floating.
     resized();
 }
@@ -801,7 +801,7 @@ void AudioSettingsPanel::populateMainOutputCombo()
         // makes it appear to vanish.
         const auto active = device->getActiveOutputChannels();
         const int count = device->getOutputChannelNames().size();
-        // Skip the first pair — it's already the "1-2 (default)" item.
+        // Skip the first pair - it's already the "1-2 (default)" item.
         for (int i = 2; i + 1 < count; i += 2)
             if (active[i] && active[i + 1])
                 mainOutputCombo.addItem ("Out " + juce::String (i + 1) + "-" + juce::String (i + 2),
@@ -818,7 +818,7 @@ void AudioSettingsPanel::populateMainOutputCombo()
     // Persist the fallback so the engine doesn't keep routing the master to a
     // pair that's no longer active (which would silence it) while the UI shows
     // "1-2 (default)". Normalize to the same encoding applyMainOutputChange
-    // writes: item 1 = default → -1.
+    // writes: item 1 = default -> -1.
     const int normalized = wantId <= 1 ? -1 : wantId;
     if (normalized != stored)
         session.master().outputPair.store (normalized, std::memory_order_relaxed);

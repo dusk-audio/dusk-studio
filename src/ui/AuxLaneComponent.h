@@ -113,12 +113,12 @@ private:
 
     // Active-output channel mask the combo was last built for; the timer
     // rebuilds it when the device's active-output set changes. A bitmask (not
-    // just a set-bit count) so swapping which pair is active — same count,
-    // different channels — still triggers a repopulate.
+    // just a set-bit count) so swapping which pair is active - same count,
+    // different channels - still triggers a repopulate.
     juce::BigInteger lastOutputChannelMask;
     // Output channel count the combo was last built for. The mask alone can
-    // match across two devices (both stereo → bits 0,1) while the physical
-    // output count — which drives how many pairs the menu lists — differs, so
+    // match across two devices (both stereo -> bits 0,1) while the physical
+    // output count - which drives how many pairs the menu lists - differs, so
     // a device swap with the same active mask still needs a repopulate.
     int lastOutputChannelCount { -1 };
 
@@ -147,8 +147,8 @@ private:
 
         // Exactly one of these is attached at a time, gated by
         // strip.insertMode[i]:
-        //   kInsertPlugin   → `editor` (plugin's AudioProcessorEditor)
-        //   kInsertHardware → `hwInsertEditor` (HardwareInsertEditor panel)
+        //   kInsertPlugin   -> `editor` (plugin's AudioProcessorEditor)
+        //   kInsertHardware -> `hwInsertEditor` (HardwareInsertEditor panel)
         std::unique_ptr<juce::AudioProcessorEditor> editor;
         std::unique_ptr<HardwareInsertEditor>       hwInsertEditor;
         // Native CLAP editor (when strip.isNativeClapLoaded(i)); shares the lane's
@@ -156,11 +156,11 @@ private:
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
         std::unique_ptr<ClapPluginEditorComponent>  clapEditor;
 #endif
-        // Native LV2 (suil) editor — same contract as clapEditor.
+        // Native LV2 (suil) editor - same contract as clapEditor.
 #if DUSKSTUDIO_HAS_NATIVE_LV2
         std::unique_ptr<class Lv2PluginEditorComponent> lv2Editor;
 #endif
-        // Native VST3 (IPlugView) editor — same contract as clapEditor.
+        // Native VST3 (IPlugView) editor - same contract as clapEditor.
 #if DUSKSTUDIO_HAS_NATIVE_VST3
         std::unique_ptr<class Vst3PluginEditorComponent> vst3Editor;
 #endif

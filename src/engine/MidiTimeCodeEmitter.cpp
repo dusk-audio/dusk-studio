@@ -27,7 +27,7 @@ constexpr int framesPerSecondGrid (MidiTimeCodeEmitter::FrameRate r) noexcept
            : (int) kNominalFps[(int) r];
 }
 
-// frames (absolute count from 00:00:00:00 in drop-aware semantics) →
+// frames (absolute count from 00:00:00:00 in drop-aware semantics) ->
 // (hh, mm, ss, ff) tuple suitable for MTC encoding. Symmetric to
 // MidiTimeCodeReceiver::smpteToFrames.
 void framesToSmpte (std::int64_t frames,
@@ -134,7 +134,7 @@ void MidiTimeCodeEmitter::emitFullFrameSysex (std::int64_t atSample,
     int hh = 0, mm = 0, ss = 0, ff = 0;
     framesToSmpte (frames, rate, hh, mm, ss, ff);
 
-    // F0 7F 7F 01 01 hr mn sc fr F7 — 10 bytes. hr packs rate in bits 5..6.
+    // F0 7F 7F 01 01 hr mn sc fr F7 - 10 bytes. hr packs rate in bits 5..6.
     const std::uint8_t hrByte = (std::uint8_t) ((((int) rate) << 5) | (hh & 0x1F));
     const std::uint8_t bytes[10] = {
         0xF0, 0x7F, 0x7F, 0x01, 0x01,
@@ -162,7 +162,7 @@ void MidiTimeCodeEmitter::generateBlock (std::int64_t blockStartSample,
     if (sPerFrame <= 0.0) return;
     const double sPerQF = sPerFrame * 0.25;   // 4 QFs per frame
 
-    // Frame-rate change → restart with a fresh full-frame sysex so
+    // Frame-rate change -> restart with a fresh full-frame sysex so
     // slaves learn the new rate from sysex byte 5 instead of waiting
     // for the next nibble-7 round. Same shape as a transport-jump.
     if ((int) rate != lastEmittedRate)
@@ -172,9 +172,9 @@ void MidiTimeCodeEmitter::generateBlock (std::int64_t blockStartSample,
         lastEmittedRate    = (int) rate;
     }
 
-    // Transport rolling edges. Falling edge → Stop-equivalent (no
+    // Transport rolling edges. Falling edge -> Stop-equivalent (no
     // explicit MTC byte; the slave's QF watchdog times out). Rising
-    // edge → arm a full-frame sysex Locate at block offset 0.
+    // edge -> arm a full-frame sysex Locate at block offset 0.
     if (isRolling != lastRolling)
     {
         if (isRolling)
@@ -188,7 +188,7 @@ void MidiTimeCodeEmitter::generateBlock (std::int64_t blockStartSample,
     if (! isRolling) return;
 
     // Convert the live playhead to absolute SMPTE frames. The QF
-    // sequence encodes (currentFrames - 2) — see header comment on
+    // sequence encodes (currentFrames - 2) - see header comment on
     // the 2-frame compensation. Sequence value is frozen at nibble 0
     // and held across all 8 nibbles.
     const auto liveFrames = (std::int64_t) (playheadSamples / sPerFrame);
@@ -213,7 +213,7 @@ void MidiTimeCodeEmitter::generateBlock (std::int64_t blockStartSample,
         needFullFrameSysex     = false;
     }
 
-    // Realign on long idle (large gap since last QF — emitter was
+    // Realign on long idle (large gap since last QF - emitter was
     // disabled or sr changed mid-stream). Mirrors the Clock emitter
     // anti-burst guard.
     if (nextQuarterFrameSample + (std::int64_t) (sPerQF * 4.0) < blockStartSample)

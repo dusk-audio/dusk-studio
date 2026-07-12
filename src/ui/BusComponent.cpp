@@ -31,7 +31,7 @@ void styleSmallKnob (juce::Slider& s, double minV, double maxV, double midPt,
     s.setColour (juce::Slider::textBoxOutlineColourId,    juce::Colours::transparentBlack);
     s.setNumDecimalPlacesToDisplay (decimals);
     s.setTextValueSuffix (suffix);
-    // Double-click → reset to midPt (canonical "default" for skewed
+    // Double-click -> reset to midPt (canonical "default" for skewed
     // knobs). Velocity-based mode w/ shift-swap = drag is positional
     // by default, holding Shift while dragging engages JUCE's slow
     // velocity-precision mode for fine adjust. Mirrors what channel-
@@ -49,7 +49,7 @@ void styleSmallLabel (juce::Label& lbl, const juce::String& text, juce::Colour c
     lbl.setFont (juce::Font (juce::FontOptions (8.5f, juce::Font::bold)));
 }
 
-// Dusk editor-modal styling helpers — match ChannelEqEditor / ChannelCompEditor
+// Dusk editor-modal styling helpers - match ChannelEqEditor / ChannelCompEditor
 // (380-wide popups, 56-px rotary knobs, 80×18 text boxes, 16-pt bold accent
 // band labels). Used by Bus / Master EQ + COMP modals so the UI conforms
 // across every strip type.
@@ -91,7 +91,7 @@ void styleEditorLabel (juce::Label& l, const juce::String& text, juce::Colour ac
     l.setFont (juce::Font (juce::FontOptions (16.0f, juce::Font::bold)));
 }
 
-// 11-pt comp-knob label — matches ChannelCompEditor's styleLabel exactly.
+// 11-pt comp-knob label - matches ChannelCompEditor's styleLabel exactly.
 void styleEditorCompLabel (juce::Label& l, const juce::String& text)
 {
     l.setText (text, juce::dontSendNotification);
@@ -194,7 +194,7 @@ private:
 //   - LEFT: handle column (threshold drag) | IN meter | GR meter
 //   - RIGHT: 2×2 knob grid (RAT / MAK top, ATK / REL bottom)
 // No mode picker (bus comp is a fixed SSL-style glue topology). No
-// standalone THR knob — threshold is set via the triangle handle.
+// standalone THR knob - threshold is set via the triangle handle.
 class BusCompEditorPanel final : public juce::Component, private juce::Timer
 {
 public:
@@ -258,7 +258,7 @@ public:
         // Same fixed size as ChannelCompEditor's grid mode for visual
         // parity. Channel computes: kHeaderH(24)+gap(8)+modeRow(24)+gap(12)
         // + 2×knobBlockH(80) + footerPad(16) + 24 = 268. Bus has no
-        // mode row — drop those rows + use ~244h.
+        // mode row - drop those rows + use ~244h.
         setSize (380, 268);
         startTimerHz (30);
     }
@@ -267,7 +267,7 @@ public:
 
     void paint (juce::Graphics& g) override
     {
-        // SSL G-bus comp chassis — near-black with powder-blue accent.
+        // SSL G-bus comp chassis - near-black with powder-blue accent.
         g.fillAll (juce::Colour (0xff0a0a0a));
         g.setColour (juce::Colour (0xff7da8c5).withAlpha (0.40f));
         g.drawRect (getLocalBounds(), 1);
@@ -526,7 +526,7 @@ BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
     // pan-control language is consistent across channels and buses.
     const auto panRed   = juce::Colour (0xffc04040);
 
-    // EQ section header — CompHeaderButton (LED + label pill) matches the
+    // EQ section header - CompHeaderButton (LED + label pill) matches the
     // COMP header below and the channel-strip EQ header. Left-click toggles
     // enable; no right-click (bus EQ has fixed topology, no mode picker).
     eqHeaderBtn = std::make_unique<CompHeaderButton> (
@@ -575,7 +575,7 @@ BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
     //   - CompMeterStrip on the LEFT (handle + IN bar + dB scale + GR
     //     bar). Threshold drag writes bus.strip.compThreshDb (-60..0).
     //   - Knob grid on the RIGHT: RAT / ATK + REL / MAK across two rows.
-    //     The standalone THR knob is gone — threshold is set via the
+    //     The standalone THR knob is gone - threshold is set via the
     //     triangle handle on the meter.
     compHeaderBtn = std::make_unique<CompHeaderButton> (
         /*getEnabled*/ [this] { return bus.strip.compEnabled.load (std::memory_order_relaxed); },
@@ -633,14 +633,14 @@ BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
     compAttack .setTooltip ("Bus comp attack (stepped: 0.1 / 0.3 / 1 / 3 / 10 / 30 ms).");
     compRelease.setTooltip ("Bus comp release (stepped: 0.1 / 0.3 / 0.6 / 1.2 s, top = AUTO).");
     compMakeup .setTooltip ("Bus comp make-up gain (-10..+20 dB). Double-click for 0 dB; Shift-drag for fine.");
-    // White pointer on the powder-blue body — matches the SSL G-bus
+    // White pointer on the powder-blue body - matches the SSL G-bus
     // comp's painted-line indicator. styleSmallKnob's default thumb
     // (fill-brightened) washes out against the light blue.
     for (auto* k : { &compRatio, &compAttack, &compRelease, &compMakeup })
         k->setColour (juce::Slider::thumbColourId, juce::Colours::white);
     compMakeup .onValueChange = [this] { bus.strip.compMakeupDb .store ((float) compMakeup .getValue(), std::memory_order_relaxed); };
 
-    // Ratio / attack / release are SSL-style stepped selectors — the donor's
+    // Ratio / attack / release are SSL-style stepped selectors - the donor's
     // bus_* params are Choices, so the knob detents on the real values and the
     // readout shows them (no more continuous knob landing between steps).
     configureSteppedKnob (compRatio, sslsteps::ratioValues(), sslsteps::ratioLabels(),
@@ -669,7 +669,7 @@ BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
     addAndMakeVisible (compRelLbl); addAndMakeVisible (compMakLbl);
 
     // Pan. Format matches channel-strip pan: "C" at centre,
-    // "L<pct>" / "R<pct>" otherwise — no decimals, no raw -1..1 number.
+    // "L<pct>" / "R<pct>" otherwise - no decimals, no raw -1..1 number.
     styleSmallKnob (panKnob, -1.0, 1.0, 0.0, bus.strip.pan.load(), panRed, "", 0);
     panKnob.setNumDecimalPlacesToDisplay (0);
     panKnob.textFromValueFunction = [] (double v) -> juce::String
@@ -685,7 +685,7 @@ BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
     panKnob.onDragEnd     = [this] { bus.strip.panTouched.store (false, std::memory_order_release); };
     addAndMakeVisible (panKnob);
     // Match the channel-strip PAN label (10.5 pt bold) instead of the
-    // smaller 8.5 pt used by the bus's L/M/H knob captions — PAN sits
+    // smaller 8.5 pt used by the bus's L/M/H knob captions - PAN sits
     // alone above its knob and benefits from the larger size for parity
     // with the track strips.
     panLbl.setText ("PAN", juce::dontSendNotification);
@@ -698,7 +698,7 @@ BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
     faderSlider.setSkewFactorFromMidPoint (-12.0);
     faderSlider.setValue (bus.strip.faderDb.load (std::memory_order_relaxed), juce::dontSendNotification);
     faderSlider.setDoubleClickReturnValue (true, 0.0);
-    // No textbox — the standalone faderValueLabel below shows the value at
+    // No textbox - the standalone faderValueLabel below shows the value at
     // the channel-strip's font weight + size (cap can fully reach min/max).
     faderSlider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
     faderSlider.setTooltip ("Bus fader (-90..+12 dB). Double-click for 0 dB; Shift-drag for fine.");
@@ -759,7 +759,7 @@ BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
     };
     addAndMakeVisible (soloButton);
 
-    // Automation-mode button — same grammar as the channel strips: borderless
+    // Automation-mode button - same grammar as the channel strips: borderless
     // text, mode colour applied via refreshAutoModeButton(), in-window menu.
     autoModeButton.setTooltip ("Automation mode (click to pick: Off / Read / Write / Touch). "
                                 "READ replays the recorded ride; WRITE captures fader / pan / "
@@ -1065,7 +1065,7 @@ void BusComponent::timerCallback()
     if (! meterArea.isEmpty())   repaint (meterArea);
     if (! grMeterArea.isEmpty()) repaint (grMeterArea.expanded (2, 10));  // include "GR" caption
 
-    // Motor-fader / motor-pan animation + Write/Touch capture — same grammar
+    // Motor-fader / motor-pan animation + Write/Touch capture - same grammar
     // as ChannelStripComponent. We poll the live* atoms (the engine writes
     // them every block: Off mirrors the setpoint, so MIDI-bound moves still
     // sync here; Read/Touch-untouched carry the lane value). Gate the visual
@@ -1247,7 +1247,7 @@ void BusComponent::paint (juce::Graphics& g)
     // COMP region: amber-tinted background + gold outline.
     if (! compArea.isEmpty())
     {
-        // SSL G-bus comp chassis — near-black with a soft powder-blue
+        // SSL G-bus comp chassis - near-black with a soft powder-blue
         // outline. Matches the EQ section's hardware-grammar treatment.
         g.setColour (juce::Colour (0xff0a0a0a));
         g.fillRoundedRectangle (compArea.toFloat(), 3.0f);
@@ -1262,7 +1262,7 @@ void BusComponent::paint (juce::Graphics& g)
         // positions line up with the fader tick labels (+6 / +3 / 0 / 3
         // / 6 / 12 / 24 / 40 / off). Without the skew the LED's "0 dB"
         // sat at 91 % of bar height while the fader's "0" tick lived at
-        // 73 % — they read as two different scales for the same signal.
+        // 73 % - they read as two different scales for the same signal.
         constexpr float kMinDb = ChannelStripParams::kFaderMinDb;   // -100
         constexpr float kMaxDb = ChannelStripParams::kFaderMaxDb;   // +12
         constexpr float kFaderSkewMidDb = -12.0f;
@@ -1275,13 +1275,13 @@ void BusComponent::paint (juce::Graphics& g)
             g.setColour (juce::Colour (0xff2a2a2e));
             g.drawRoundedRectangle (bar, 1.5f, 0.6f);
 
-            // LED-style hard zones — match the channel-strip meter look.
+            // LED-style hard zones - match the channel-strip meter look.
             const juce::Colour kLedGreen  (0xff20d040);
             const juce::Colour kLedYellow (0xfff0e020);
             const juce::Colour kLedRed    (0xffff2020);
             auto fracForDb = [&] (float db)
             {
-                // JUCE setSkewFactorFromMidPoint formula —
+                // JUCE setSkewFactorFromMidPoint formula -
                 // skewFactor = log(0.5) / log(midFrac).
                 const float midFrac = (kFaderSkewMidDb - kMinDb)
                                     / (kMaxDb - kMinDb);
@@ -1381,7 +1381,7 @@ void BusComponent::paint (juce::Graphics& g)
                      juce::Justification::centred, false);
     }
 
-    // Fader dB scale labels — drawn LEFT of the slider's track (track-3
+    // Fader dB scale labels - drawn LEFT of the slider's track (track-3
     // grammar). Each label has a short tick line stub extending toward
     // the track; the label glyph sits a few px further left for breathing
     // room. Skipped when the fader scale column was carved out (legacy
@@ -1444,7 +1444,7 @@ void BusComponent::setCompactMode (bool compact)
 
     // Hide / show every EQ + COMP child in lockstep with the mode.
     // Same approach as ChannelStripComponent::setEqSectionVisible /
-    // setCompSectionVisible — no per-section toggle, the whole block
+    // setCompSectionVisible - no per-section toggle, the whole block
     // collapses behind the compact placeholder button.
     const bool sec = ! compact;
     if (eqHeaderBtn != nullptr) eqHeaderBtn->setVisible (sec);
@@ -1565,7 +1565,7 @@ void BusComponent::resized()
     //   Body    : CompMeterStrip on the LEFT (36 px), 2×2 knob grid on
     //             the RIGHT (RAT / MAK on top, ATK / REL on bottom).
     //             Threshold is set via the triangle handle on the meter
-    //             — no dedicated THR knob.
+    //             - no dedicated THR knob.
     {
         constexpr int kCompKnobLabelH = 10;
         constexpr int kCompKnobRowH   = kCompKnobLabelH + kKnobBlockH;
@@ -1573,7 +1573,7 @@ void BusComponent::resized()
         constexpr int kCompMeterGap   = 4;
 
         // Single-row COMP body (matches channel-strip track-3 grammar):
-        // 4 knobs (RAT / ATK / REL / MAK) across one row — no 2×2 grid.
+        // 4 knobs (RAT / ATK / REL / MAK) across one row - no 2×2 grid.
         constexpr int kCompBodyH = kCompKnobRowH;
         constexpr int kCompSectionH = 16 + 2 + kCompBodyH + 2;
         compArea = area.removeFromTop (kCompSectionH);
@@ -1584,9 +1584,9 @@ void BusComponent::resized()
         s.removeFromTop (2);
 
         auto body = s.removeFromTop (kCompBodyH);
-        // compMeter no longer lives inside the COMP section — it's the
-        // fader-side GR LED now (placed beside the level meter further
-        // below). The 4-knob row uses the full body width.
+        // The comp GR indicator is the fader-side GR LED (placed beside the
+        // level meter further below), not inside the COMP section, so the
+        // 4-knob row uses the full body width.
         juce::ignoreUnused (kCompMeterW, kCompMeterGap);
 
         auto layoutCell = [&] (juce::Rectangle<int> cell,
@@ -1606,7 +1606,7 @@ void BusComponent::resized()
     } // end !compactMode EQ + COMP branch
 
     // Pan is positioned later (below) at the TOP of the fader column so it
-    // sits directly above the slider thumb — matches ChannelStripComponent's
+    // sits directly above the slider thumb - matches ChannelStripComponent's
     // pan-on-fader-top grammar instead of floating in the middle of the strip.
 
     // Mute / solo at the bottom.
@@ -1615,7 +1615,7 @@ void BusComponent::resized()
     soloButton.setBounds (buttons.reduced (2));
     area.removeFromBottom (2);
 
-    // Automation-mode row directly above M/S — thin full-width row, same
+    // Automation-mode row directly above M/S - thin full-width row, same
     // 16 px grammar as the channel strips.
     auto autoRow = area.removeFromBottom (16);
     autoModeButton.setBounds (autoRow.reduced (1, 0));
@@ -1627,7 +1627,7 @@ void BusComponent::resized()
     auto peakRow = area.removeFromBottom (14);
     area.removeFromBottom (2);
 
-    // Right-side stack — fader-side grammar matching the channel strip:
+    // Right-side stack - fader-side grammar matching the channel strip:
     //   [right pad] [GR LED (compMeter)] [gap] [level meter] [gap] [fader]
     // Scale labels (+6 / +3 / 0 / ... / off) drawn by paint() to the LEFT
     // of the fader track (same kSharedXOver math as ChannelStripComponent).
@@ -1651,12 +1651,12 @@ void BusComponent::resized()
     area.removeFromRight (kMeterToGrGap);
     meterArea = area.removeFromRight (kMeterW);
     area.removeFromRight (kFaderToMeterGap);
-    // Trim meter top so it lines up with the slider's +6 tick — same
+    // Trim meter top so it lines up with the slider's +6 tick - same
     // grammar as channel strips (meter scale = fader scale 1:1, peaks
     // above +6 read as clip, never floating in unlabeled space).
     // Bottom trimmed by the same amount the slider is (kFaderValueH + 8
     // reserved for the standalone value label) so the meter's "off" /
-    // -inf bottom lines up with the fader's "off" tick — without this
+    // -inf bottom lines up with the fader's "off" tick - without this
     // the meter overhangs the fader by 26 px and looks disconnected
     // from the strip's level scale.
     const int meterTopY = panSlice.getBottom() + kPanFaderGap
@@ -1675,7 +1675,7 @@ void BusComponent::resized()
                                          kRightStackW);
     area.removeFromLeft (leftPad);
     // Right-bias the slider bounds inside the fader column so the cap
-    // sits visually adjacent to the level meter — matches the
+    // sits visually adjacent to the level meter - matches the
     // cap-to-LED distance the channel strip has by construction.
     // Without this narrowing, the cap floats in the centre of a wide
     // column with a large empty gap to the meter that reads as
@@ -1683,7 +1683,7 @@ void BusComponent::resized()
     constexpr int kFaderColW = 50;
     if (area.getWidth() > kFaderColW)
         area = area.removeFromRight (kFaderColW);
-    // Scale labels no longer use a dedicated carved column — they're drawn
+    // Scale labels no longer use a dedicated carved column - they're drawn
     // in paint() to the left of the fader track via kSharedXOver math.
     faderScaleArea = juce::Rectangle<int>();
     // grMeterArea was the old standalone GR bar; compMeter now owns the

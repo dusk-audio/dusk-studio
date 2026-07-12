@@ -51,7 +51,7 @@ public:
                              const juce::String& fileOrIdentifier) override
     {
         // In-house formats are our own code and can't crash the host, so scan
-        // them in-process. Third-party binary formats are sandboxed — and for
+        // them in-process. Third-party binary formats are sandboxed - and for
         // those we NEVER fall back to in-process: an unauthorized or crashy
         // plugin scanned in-process takes down the whole app (issue #45).
         if (! scanproto::formatRequiresSandbox (format.getName()))
@@ -64,7 +64,7 @@ public:
         {
             // No sandbox binary to isolate the scan with. Skip rather than probe
             // in-process. Returning true with an empty result marks the plugin
-            // UNSCANNED (JUCE blacklists only on a false return) — it did nothing
+            // UNSCANNED (JUCE blacklists only on a false return) - it did nothing
             // wrong, and a later scan with the host present re-probes it.
             noteSandboxUnavailable (fileOrIdentifier);
             return true;
@@ -116,7 +116,7 @@ public:
 
             if (juce::Time::getMillisecondCounter() - startMs >= (std::uint32_t) kScanTimeoutMs)
             {
-                proc.kill();                         // TerminateProcess on Windows — unblocks a modal dialog
+                proc.kill();                         // TerminateProcess on Windows - unblocks a modal dialog
                 proc.waitForProcessToFinish (200);   // reap the SIGKILLed child, no zombie
                 timedOut = true;
                 break;
@@ -157,7 +157,7 @@ private:
     {
         if (sandboxSkips != nullptr) ++(*sandboxSkips);
         std::fprintf (stderr,
-                      "[Dusk Studio/scan] sandbox unavailable — left unscanned: %s\n",
+                      "[Dusk Studio/scan] sandbox unavailable - left unscanned: %s\n",
                       fileOrIdentifier.toRawUTF8());
         std::fflush (stderr);
     }
@@ -330,7 +330,7 @@ int PluginManager::scanInstalledPlugins (
         onProgress (1.0f, {});
 
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
-    // Release the child-launching scanner — load-time instantiation must stay
+    // Release the child-launching scanner - load-time instantiation must stay
     // in-process and doesn't go through the custom scanner anyway.
     knownPluginList.setCustomScanner (nullptr);
     lastScanSandboxSkips.store (sandboxSkips, std::memory_order_relaxed);
@@ -339,13 +339,13 @@ int PluginManager::scanInstalledPlugins (
     // Prune dead entries so the picker never offers a plugin that can't load.
     // Two instantiation-free checks cover every format:
     //   1. Path-backed formats (VST3 / AU bundles / CLAP / soundfonts): the
-    //      bundle or file is gone or hollowed out — see pluginBackingLooksDead.
+    //      bundle or file is gone or hollowed out - see pluginBackingLooksDead.
     //   2. URI-backed formats (LV2, AU component IDs): the identifier is no
     //      longer discoverable in the format's live search paths because the
     //      bundle was uninstalled. searchPathsForPlugins re-reads the LV2 world /
     //      AU registry but does NOT instantiate, so a crashy plugin can't take
     //      down the scan, and one call yields the whole live set per format.
-    // Skipped on abort — the list is mid-scan and incomplete.
+    // Skipped on abort - the list is mid-scan and incomplete.
     int pruned = 0;
     if (! aborting)
     {
@@ -400,7 +400,7 @@ int PluginManager::scanInstalledPlugins (
 
     if (! aborting)
     {
-        scanClapPlugins();        // CLAP isn't a juce format — scan it alongside the JUCE pass
+        scanClapPlugins();        // CLAP isn't a juce format - scan it alongside the JUCE pass
         scanLv2Plugins();         // native-LV2 rows are separate from JUCE's LV2 format
         scanVst3NativePlugins();  // native-VST3 rows are separate from JUCE's VST3 format
     }
@@ -408,10 +408,10 @@ int PluginManager::scanInstalledPlugins (
 }
 
 #if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_VST3
-// One native bundle → picker rows through the sandbox child (loading a bundle
+// One native bundle -> picker rows through the sandbox child (loading a bundle
 // executes its code; a broken .so must kill the child, not the app). False =
 // couldn't spawn (caller falls back in-process); a spawned child that crashes
-// or times out yields no payload and the bundle is skipped — re-probed next
+// or times out yields no payload and the bundle is skipped - re-probed next
 // scan, but never fatal.
 bool PluginManager::scanNativeBundleSandboxed (const char* format, const juce::File& bundle,
                                                juce::Array<juce::PluginDescription>& into) const
@@ -452,7 +452,7 @@ bool PluginManager::scanNativeBundleSandboxed (const char* format, const juce::F
     const juce::String payload = scanproto::extractPayload (captured.toString());
     if (payload.isEmpty())
     {
-        // Crash / hang / no sentinels — treat as handled (skip the bundle) so the
+        // Crash / hang / no sentinels - treat as handled (skip the bundle) so the
         // caller doesn't re-execute the crashing code in-process.
         std::fprintf (stderr, "[Dusk Studio/scan] native %s bundle skipped (child failed): %s\n",
                       format, bundle.getFullPathName().toRawUTF8());
@@ -469,7 +469,7 @@ bool PluginManager::scanNativeBundleSandboxed (const char* format, const juce::F
 void PluginManager::scanClapPlugins()
 {
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
-    // Discover OUTSIDE the lock (executes every bundle's factory — slow), swap
+    // Discover OUTSIDE the lock (executes every bundle's factory - slow), swap
     // in under it. The cache write also stays outside so a picker open on the
     // message thread can't stall behind this thread's file I/O.
     juce::Array<juce::PluginDescription> fresh;
@@ -477,7 +477,7 @@ void PluginManager::scanClapPlugins()
     {
         const juce::File file (juce::String::fromUTF8 (path.u8string().c_str()));
         if (! scanNativeBundleSandboxed ("clap", file, fresh))
-            nativescan::appendClapRows (file, fresh);   // no sandbox available — in-process
+            nativescan::appendClapRows (file, fresh);   // no sandbox available - in-process
     }
     {
         const juce::ScopedLock sl (nativeDescriptionsLock);
@@ -512,7 +512,7 @@ void PluginManager::loadNativeCache (juce::Array<juce::PluginDescription>& into,
                 continue;
             // Drop entries whose bundle is gone since the cache was written, so
             // the picker never offers a removed plugin until a rescan rebuilds it.
-            // fileOrIdentifier carries "bundle\npluginId" — check the bundle half.
+            // fileOrIdentifier carries "bundle\npluginId" - check the bundle half.
             const juce::File bundle (
                 hosting::splitNativeIdentifier (d.fileOrIdentifier).bundlePath);
             if (bundleIsDirectory ? bundle.isDirectory() : bundle.exists())
@@ -574,7 +574,7 @@ void PluginManager::scanLv2Plugins()
         for (const auto& s : scanned)
         {
             // Audio effects (audio in + out) and instruments (atom/MIDI in,
-            // audio out, no audio in — classified by Lv2Bundle::describePlugin).
+            // audio out, no audio in - classified by Lv2Bundle::describePlugin).
             // MIDI-only utilities stay with the JUCE LV2 format.
             const bool effect = s.desc.audioInputs > 0 && s.desc.audioOutputs > 0;
             if (! effect && ! s.desc.isInstrument)
@@ -610,7 +610,7 @@ void PluginManager::scanVst3NativePlugins()
     {
         const juce::File file (juce::String::fromUTF8 (path.u8string().c_str()));
         if (! scanNativeBundleSandboxed ("vst3", file, fresh))
-            nativescan::appendVst3Rows (file, fresh);   // no sandbox available — in-process
+            nativescan::appendVst3Rows (file, fresh);   // no sandbox available - in-process
     }
     {
         const juce::ScopedLock sl (nativeDescriptionsLock);
@@ -722,7 +722,7 @@ void PluginManager::createPluginInstanceAsync (
     // multisample / soundfont player, which decodes samples). JUCE runs the
     // format's createInstance on a background thread when the format reports
     // requiresUnblockedMessageThreadDuringCreation() == false, then fires this
-    // callback ON THE MESSAGE THREAD with the fully-built instance — so the
+    // callback ON THE MESSAGE THREAD with the fully-built instance - so the
     // caller's swap-in logic stays single-threaded.
     formatManager.createPluginInstanceAsync (desc, sampleRate, blockSize,
         [cb = std::move (callback)]

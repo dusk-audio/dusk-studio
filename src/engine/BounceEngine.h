@@ -78,7 +78,7 @@ public:
     // False if a render is already in flight. sampleRate <= 0 uses
     // engine's current rate. blockSize 1024 amortises overhead vs
     // realtime. tail = silence appended so reverb/comp tails decay.
-    // wavBitDepth: 24 (default) or 16 — 16 gets TPDF dither at ±1 LSB
+    // wavBitDepth: 24 (default) or 16 - 16 gets TPDF dither at ±1 LSB
     // before the truncation (CD / distribution target).
     bool start (const juce::File& outputFile,
                 double sampleRate = 0.0,
@@ -92,8 +92,8 @@ public:
     void cancel() noexcept { cancelRequested.store (true, std::memory_order_relaxed); }
 
     // Synchronous single-track FREEZE render (message thread; transport must be
-    // stopped). Bakes trackIndex's PRE-FADER signal — instrument + EQ + comp,
-    // before fader/pan/sends — to a 24-bit stereo WAV at outFile, lenSamples
+    // stopped). Bakes trackIndex's PRE-FADER signal - instrument + EQ + comp,
+    // before fader/pan/sends - to a 24-bit stereo WAV at outFile, lenSamples
     // long at sampleRate. Reuses the offline drive (detach device, 4× oversample,
     // PDC lead-in trim) like the stem path, but captures the strip's pre-fader
     // tap (ChannelStrip::setFreezeCapture) instead of the master mix. Blocks

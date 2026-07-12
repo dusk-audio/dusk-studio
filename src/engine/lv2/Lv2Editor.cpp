@@ -34,7 +34,7 @@ struct Lv2Editor::Impl
     // ui:idleInterface, queried from the instantiated UI. Optional.
     const LV2UI_Idle_Interface* idleIface = nullptr;
 
-    // Feature payloads handed to suil_instance_new — must outlive the instance.
+    // Feature payloads handed to suil_instance_new - must outlive the instance.
     LV2UI_Resize               resizeData {};
     LV2_Extension_Data_Feature extData {};
     LV2_Feature parentFeature {}, instanceFeature {}, dataFeature {},
@@ -44,7 +44,7 @@ struct Lv2Editor::Impl
     int  prefW = 0, prefH = 0;
     bool discovered = false, embedded = false, mapped = false, leakOnClose = false;
 
-    // ── suil host callbacks (message thread: the UI runs off our idle pump) ──
+    // suil host callbacks (message thread: the UI runs off our idle pump)
     static void writePort (SuilController c, uint32_t portIndex, uint32_t bufferSize,
                            uint32_t protocol, const void* buffer)
     {
@@ -152,7 +152,7 @@ bool Lv2Editor::embed (unsigned long parentX11, int x, int y, int w, int h, std:
     const int hh = h > 0 ? h : 320;
 
     // Solid background (not None) so the map fills with black instead of stale
-    // framebuffer — same rationale as ClapEditor::embed.
+    // framebuffer - same rationale as ClapEditor::embed.
     XSetWindowAttributes swa {};
     swa.background_pixel = BlackPixel (dpy, DefaultScreen (dpy));
     swa.border_pixel     = 0;
@@ -166,7 +166,7 @@ bool Lv2Editor::embed (unsigned long parentX11, int x, int y, int w, int h, std:
                                       (unsigned) ww, (unsigned) hh, 0,
                                       CopyFromParent, InputOutput, CopyFromParent,
                                       CWBackPixel | CWBorderPixel | CWEventMask | CWOverrideRedirect, &swa);
-    // Viewable BEFORE the UI instantiates into it — toolkit wrappers (and JUCE-
+    // Viewable BEFORE the UI instantiates into it - toolkit wrappers (and JUCE-
     // wrapped UIs) can abort realising into an unmapped parent.
     XMapWindow (dpy, impl->hostWindow);
     XSync (dpy, False);
@@ -216,7 +216,7 @@ bool Lv2Editor::embed (unsigned long parentX11, int x, int y, int w, int h, std:
     { impl->prefW = attrs.width; impl->prefH = attrs.height; }
 
     // Belt-and-braces: most UIs parent themselves under ui:parent, but the spec
-    // doesn't force it — reparent explicitly (a no-op when already a child).
+    // doesn't force it - reparent explicitly (a no-op when already a child).
     XReparentWindow (dpy, (Window) impl->uiWindow, (Window) impl->hostWindow, 0, 0);
 
     // A UI that reports no size and never fires ui:resize would otherwise keep an

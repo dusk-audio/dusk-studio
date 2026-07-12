@@ -7,7 +7,7 @@
 
 namespace duskstudio
 {
-// Dusk-native menu bar — drop-in replacement for juce::MenuBarComponent
+// Dusk-native menu bar - drop-in replacement for juce::MenuBarComponent
 // that routes top-level menu pops through showContextMenu (EmbeddedModal
 // + DuskContextMenuPanel) instead of juce::PopupMenu's native popup.
 //

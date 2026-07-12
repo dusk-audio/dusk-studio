@@ -6,7 +6,7 @@
 namespace duskstudio
 {
 // In-window keyboard-shortcut reference. Opened from the Settings menu or the
-// '?' key (shown via EmbeddedModal). Static content — the bindings live in
+// '?' key (shown via EmbeddedModal). Static content - the bindings live in
 // MainComponent::keyPressed; this just makes them discoverable.
 class ShortcutsPanel final : public juce::Component
 {

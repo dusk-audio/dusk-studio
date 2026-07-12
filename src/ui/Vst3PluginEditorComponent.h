@@ -43,7 +43,7 @@ private:
     double lastPumpMs = 0.0;
     bool loaded    = false;
     bool embedded  = false;
-    bool embedding = false;   // guards re-entry: attached() can fire resizeView → setSize → resized()
+    bool embedding = false;   // guards re-entry: attached() can fire resizeView -> setSize -> resized()
     int  geometryCheckTick = 0;
     int  driftLogsLeft     = 10;
     bool geometryLostLogged = false;

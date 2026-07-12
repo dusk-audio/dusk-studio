@@ -4,7 +4,7 @@ namespace duskstudio
 {
 namespace
 {
-// Frame rates as ratios (numerator, denominator) — kept exact for the
+// Frame rates as ratios (numerator, denominator) - kept exact for the
 // drop-frame math, which counts whole frames per 10-minute block.
 struct FrameRateInfo
 {
@@ -21,10 +21,10 @@ constexpr FrameRateInfo kRates[4] =
 };
 
 // Convert (HH, MM, SS, FF, rate) to an absolute frame count from
-// 00:00:00:00 — the model the rest of Dusk Studio sees. For non-drop rates
+// 00:00:00:00 - the model the rest of Dusk Studio sees. For non-drop rates
 // this is the obvious h*nominalFps*3600 + m*nominalFps*60 + s*nominalFps + f.
 // For 29.97 DF we COUNT the drop-frame skips: every minute except every
-// 10th drops 2 frame indices (00 and 01) — the wall-clock frame count
+// 10th drops 2 frame indices (00 and 01) - the wall-clock frame count
 // stays continuous because the master also drops them.
 std::int64_t smpteToFrames (int hh, int mm, int ss, int ff,
                             MidiTimeCodeReceiver::FrameRate rate) noexcept
@@ -57,7 +57,7 @@ void MidiTimeCodeReceiver::onQuarterFrame (std::uint8_t data1,
     const int dataBits  = data1 & 0x0F;
 
     // Strict monotonic-sequence validator. We accept a nibble only if
-    // it matches the one we were expecting next (0 → 1 → ... → 7).
+    // it matches the one we were expecting next (0 -> 1 -> ... -> 7).
     // Any deviation (reverse-scrub, USB drop, duplicate) snaps the
     // expectation back to 0 and parks the receiver until a fresh
     // forward sequence starts. Without this guard, reverse-scrub
@@ -82,7 +82,7 @@ void MidiTimeCodeReceiver::onQuarterFrame (std::uint8_t data1,
 
     if (nibbleIdx == 0)
     {
-        // Fresh forward sequence — clear accumulator + exit reverse-park.
+        // Fresh forward sequence - clear accumulator + exit reverse-park.
         reversed.store (false, std::memory_order_relaxed);
         nibbleAccumulator[0] = (std::uint8_t) dataBits;
         nibbleAccumulator[1] = nibbleAccumulator[2] = nibbleAccumulator[3] = 0;
@@ -90,8 +90,8 @@ void MidiTimeCodeReceiver::onQuarterFrame (std::uint8_t data1,
     else
     {
         // Each nibble pair (lo, hi) builds one byte of (frames, secs,
-        // mins, hr+rate). nibbleIdx 0..1 → frames, 2..3 → seconds,
-        // 4..5 → minutes, 6..7 → hours+rate.
+        // mins, hr+rate). nibbleIdx 0..1 -> frames, 2..3 -> seconds,
+        // 4..5 -> minutes, 6..7 -> hours+rate.
         const int byteIdx = nibbleIdx / 2;
         if ((nibbleIdx & 1) == 0)
             nibbleAccumulator[byteIdx] =
@@ -143,7 +143,7 @@ void MidiTimeCodeReceiver::commitAssembledFrame (std::int64_t atSample,
 void MidiTimeCodeReceiver::onFullFrameSysex (const std::uint8_t* msg, int sz,
                                                std::int64_t atSample) noexcept
 {
-    // F0 7F 7F 01 01 hr mn sc fr F7 — 10 bytes. Indices into msg:
+    // F0 7F 7F 01 01 hr mn sc fr F7 - 10 bytes. Indices into msg:
     //   0: F0
     //   1: 7F (universal real time)
     //   2: 7F (broadcast)
@@ -162,7 +162,7 @@ void MidiTimeCodeReceiver::onFullFrameSysex (const std::uint8_t* msg, int sz,
     nibbleAccumulator[1] = (std::uint8_t) (msg[7] & 0x3F);  // ss
     nibbleAccumulator[2] = (std::uint8_t) (msg[6] & 0x3F);  // mm
     nibbleAccumulator[3] = (std::uint8_t) (msg[5] & 0x7F);  // hh + rate
-    // No +2 offset — full-frame sysex carries the master's INSTANT
+    // No +2 offset - full-frame sysex carries the master's INSTANT
     // playhead. Also exits reverse-park (re-locate is a forward op).
     reversed.store (false, std::memory_order_relaxed);
     commitAssembledFrame (atSample, /*applyTwoFrameOffset*/ false);

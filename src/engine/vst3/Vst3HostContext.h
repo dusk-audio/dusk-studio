@@ -7,8 +7,8 @@ namespace duskstudio::vst3
 {
 // The host-side COM object a VST3 plugin talks back to: IHostApplication (name +
 // IMessage/IAttributeList factory via the SDK's HostApplication), IComponentHandler
-// (editor→host parameter edits + restartComponent), IPlugFrame (editor resize
-// requests), and the Linux IRunLoop (fd/timer registry plugin UIs — and some DSP —
+// (editor->host parameter edits + restartComponent), IPlugFrame (editor resize
+// requests), and the Linux IRunLoop (fd/timer registry plugin UIs - and some DSP -
 // require on Linux). VST3's analog of ClapHost.
 //
 // Threading: everything here is message-thread. VST3 routes controller-side calls
@@ -40,7 +40,7 @@ public:
     void setCallbacks (Callbacks* cb) noexcept;
 
     // Opaque Steinberg interface pointers (all facets of one COM object whose
-    // lifetime is this context — plugins may addRef/release freely):
+    // lifetime is this context - plugins may addRef/release freely):
     void* hostApplication() const noexcept;   // Steinberg::Vst::IHostApplication*
     void* componentHandler() const noexcept;  // Steinberg::Vst::IComponentHandler*
     void* plugFrame() const noexcept;         // Steinberg::IPlugFrame*

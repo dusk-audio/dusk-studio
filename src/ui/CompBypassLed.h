@@ -36,7 +36,7 @@ public:
         // than the COMP header button's LED at the same widget size.
         //
         // The visual caps at 10 px and centres in the bounds, so callers
-        // can give the widget a larger hit area than the dot — an 8 px
+        // can give the widget a larger hit area than the dot - an 8 px
         // click target is unusable.
         auto r = getLocalBounds().toFloat();
         const float d = juce::jmin (r.getWidth(), r.getHeight(), 10.0f);

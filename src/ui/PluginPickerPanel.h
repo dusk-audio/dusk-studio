@@ -7,14 +7,14 @@
 namespace duskstudio
 {
 // Dusk-native plugin picker. Replaces juce::PopupMenu for the insert /
-// AUX slot pickers — pure in-window Component, no native popup peer,
+// AUX slot pickers - pure in-window Component, no native popup peer,
 // no JUCE PopupMenu dismiss heuristics. Shown via EmbeddedModal so it
 // inherits the same Esc / click-outside dismiss the rest of Dusk uses.
 //
 // Two-column layout:
-//   • Title row.
-//   • Scrollable plugin list grouped by manufacturer.
-//   • Bottom action row: Hardware Insert / Load Soundfont / Browse /
+//   - Title row.
+//   - Scrollable plugin list grouped by manufacturer.
+//   - Bottom action row: Hardware Insert / Load Soundfont / Browse /
 //     Scan / Cancel.
 //
 // Callbacks let the host wire each action without the panel knowing
@@ -31,8 +31,8 @@ public:
         std::function<void (const juce::PluginDescription&)> onPickPlugin;
         std::function<void()> onScan;
         std::function<void()> onBrowseFile;
-        std::function<void()> onHardwareInsert;   // null → omit button
-        std::function<void()> onLoadSoundfont;    // null → omit button
+        std::function<void()> onHardwareInsert;   // null -> omit button
+        std::function<void()> onLoadSoundfont;    // null -> omit button
         std::function<void()> onCancel;
     };
 

@@ -11,13 +11,13 @@ class BrickwallLimiter;
 
 // Waves L4-style brickwall limiter editor for the mastering chain.
 //
-// Layout (left → right):
-//   • Two big vertical meters: Threshold (drag the handle to adjust drive
+// Layout (left -> right):
+//   - Two big vertical meters: Threshold (drag the handle to adjust drive
 //     into the limiter via params.limiterDriveDb) and Ceiling (drag to set
 //     limiterCeilingDb). Each meter shows the live level next to its handle.
-//   • Atten meter: live gain reduction (1..30 dB).
-//   • LUFS readout box (Long-term integrated I-LUFS via params).
-//   • Right column: Mode dropdown + Release / Stereo-link toggles.
+//   - Atten meter: live gain reduction (1..30 dB).
+//   - LUFS readout box (Long-term integrated I-LUFS via params).
+//   - Right column: Mode dropdown + Release / Stereo-link toggles.
 class MasteringLimiterEditor final : public juce::Component, private juce::Timer
 {
 public:
@@ -47,7 +47,7 @@ private:
     MasteringParams&  params;
     BrickwallLimiter& limiter;
 
-    // Shared console chrome — LED-pill header (click toggles enable), same
+    // Shared console chrome - LED-pill header (click toggles enable), same
     // component the strips use. See MasteringEqEditor.
     std::unique_ptr<class CompHeaderButton> headerBtn;
 

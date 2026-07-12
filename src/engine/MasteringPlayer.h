@@ -27,7 +27,7 @@ public:
     // Message thread. deviceSampleRate drives the resampler: a source whose
     // rate differs from the device is Lagrange-interpolated in process() so
     // it plays at the right speed and pitch (the playhead stays in SOURCE
-    // samples — the UI's waveform and seek math use the source rate).
+    // samples - the UI's waveform and seek math use the source rate).
     void prepare (int maxBlockSize, double deviceSampleRate);
     bool loadFile (const juce::File& file);
     void unloadFile();
@@ -55,7 +55,7 @@ private:
 
     // Declared before the readers so it outlives them (destruction is
     // reverse declaration order). Prefetches for the BufferingAudioReader
-    // wrapper so process() never does synchronous disk I/O — a cold file
+    // wrapper so process() never does synchronous disk I/O - a cold file
     // or a seek after setPlayhead would otherwise stall the callback.
     juce::TimeSliceThread bufferingThread { "Dusk Studio mastering prefetch" };
 
@@ -87,7 +87,7 @@ private:
     // touched by process() between its audioInFlight bump and scope exit.
     // The message thread parks currentReader on null and drains
     // audioInFlight to zero (parkAndWaitForAudio) BEFORE resizing or
-    // resetting any of them — a ratio publish alone wouldn't stop an
+    // resetting any of them - a ratio publish alone wouldn't stop an
     // in-flight block from racing the resize.
     std::atomic<double> speedRatio { 1.0 };
     juce::AudioBuffer<float>  inScratch;
@@ -107,7 +107,7 @@ private:
     };
 
     // Message thread: park the audio thread on a null reader and wait for
-    // any in-flight process() to leave. False when the drain timed out —
+    // any in-flight process() to leave. False when the drain timed out -
     // the caller must then leave the shared state untouched.
     bool parkAndWaitForAudio();
 

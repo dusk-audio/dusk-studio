@@ -30,7 +30,7 @@ public:
     static std::vector<std::filesystem::path> findClapFiles (const std::vector<std::filesystem::path>& dirs);
 
     // Load every discovered bundle and gather its advertised plugins. Bundles that
-    // fail to load are skipped silently — a broken .clap must not abort the scan.
+    // fail to load are skipped silently - a broken .clap must not abort the scan.
     static std::vector<ScannedClap> scan (const std::vector<std::filesystem::path>& dirs);
     static std::vector<ScannedClap> scan() { return scan (defaultSearchPaths()); }
 };

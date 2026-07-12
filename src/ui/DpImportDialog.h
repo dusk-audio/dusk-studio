@@ -29,7 +29,7 @@ public:
         title.setColour (juce::Label::textColourId, juce::Colours::white);
         addAndMakeVisible (title);
 
-        // Em-dash and middle dots are UTF-8 multibyte — route through
+        // Em-dash and middle dots are UTF-8 multibyte - route through
         // CharPointer_UTF8 (operator<< on a char* reads bytes as single
         // characters and renders mojibake, GH issue #27).
         const juce::String dot (juce::CharPointer_UTF8 ("  \xc2\xb7  "));

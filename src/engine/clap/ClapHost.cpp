@@ -73,7 +73,7 @@ void ClapHost::logMsg (const clap_host_t* h, clap_log_severity sev, const char* 
         std::fprintf (stderr, "[clap host] sev=%d %s\n", (int) sev, msg != nullptr ? msg : "");
 }
 
-// ── gui ──────────────────────────────────────────────────────────────────────
+// gui
 void ClapHost::resizeHintsChanged (const clap_host_t* h) noexcept
 {
     if (auto* c = self (h).callbacks.load (std::memory_order_acquire)) c->onResizeHintsChanged();
@@ -95,7 +95,7 @@ void ClapHost::guiClosed (const clap_host_t* h, bool wasDestroyed) noexcept
     if (auto* c = self (h).callbacks.load (std::memory_order_acquire)) c->onGuiClosed (wasDestroyed);
 }
 
-// ── posix-fd ─────────────────────────────────────────────────────────────────
+// posix-fd
 bool ClapHost::registerFd (const clap_host_t* h, int fd, clap_posix_fd_flags_t flags) noexcept
 {
     auto& s = self (h);
@@ -119,7 +119,7 @@ bool ClapHost::unregisterFd (const clap_host_t* h, int fd) noexcept
     return v.size() != n;
 }
 
-// ── timer ────────────────────────────────────────────────────────────────────
+// timer
 bool ClapHost::registerTimer (const clap_host_t* h, uint32_t periodMs, clap_id* idOut) noexcept
 {
     if (idOut == nullptr) return false;
@@ -141,7 +141,7 @@ bool ClapHost::unregisterTimer (const clap_host_t* h, clap_id id) noexcept
     return v.size() != n;
 }
 
-// ── pump ─────────────────────────────────────────────────────────────────────
+// pump
 void ClapHost::pumpGui (double elapsedMs)
 {
     if (plugin == nullptr) return;
@@ -166,7 +166,7 @@ void ClapHost::pumpGui (double elapsedMs)
                 pfds.push_back ({ r.fd, ev, 0 });
             }
             if (::poll (pfds.data(), (nfds_t) pfds.size(), 0) > 0)
-                for (const auto& p : pfds)   // iterates the local snapshot — on_fd may (un)register
+                for (const auto& p : pfds)   // iterates the local snapshot - on_fd may (un)register
                 {
                     clap_posix_fd_flags_t f = 0;
                     if (p.revents & POLLIN)                          f |= CLAP_POSIX_FD_READ;
@@ -187,8 +187,8 @@ void ClapHost::pumpGui (double elapsedMs)
         if (const auto* tSup = static_cast<const clap_plugin_timer_support_t*> (
                 plugin->get_extension (plugin, CLAP_EXT_TIMER_SUPPORT)); tSup != nullptr && tSup->on_timer != nullptr)
         {
-            // Advance accumulators first (no callbacks → `timers` stays stable),
-            // collect what's due, then fire — on_timer may (un)register timers.
+            // Advance accumulators first (no callbacks -> `timers` stays stable),
+            // collect what's due, then fire - on_timer may (un)register timers.
             std::vector<clap_id> due;
             for (auto& t : timers)
             {
@@ -197,7 +197,7 @@ void ClapHost::pumpGui (double elapsedMs)
                 // overshoots doesn't drop time and the timer stays on-rate. fmod (not a
                 // single subtract) also BOUNDS the accumulator: a timer whose period is
                 // shorter than the pump interval would otherwise grow accumMs without
-                // limit. Fire at most once per pump — no catch-up storm.
+                // limit. Fire at most once per pump - no catch-up storm.
                 if (t.accumMs >= (double) t.periodMs)
                 {
                     t.accumMs = std::fmod (t.accumMs, (double) t.periodMs);

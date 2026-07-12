@@ -15,7 +15,7 @@ namespace duskstudio::juce_compat
 // the member `= delete`, which passes SFINAE then fails at the call
 // site. The upstream JUCE lacks the free function entirely, so
 // `decltype(juce::addDefaultFormatsToManager(...))` fails lookup at
-// template definition time rather than substitution — also unusable
+// template definition time rather than substitution - also unusable
 // for SFINAE. CMake-time text scan is the only clean cross-shape
 // detection.
 inline void addDefaultFormats (juce::AudioPluginFormatManager& fm)

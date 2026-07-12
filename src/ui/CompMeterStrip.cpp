@@ -18,7 +18,7 @@ CompMeterStrip::CompMeterStrip (Source s) : src (std::move (s))
 //   VCA  -> compVcaThreshDb directly (clamped to its -38..12 range)
 //   Opto -> compOptoPeakRed  (knob 0 dB = 0 % reduction, -60 dB = 100 %)
 //   FET  -> compFetThresholdDb (donor's adjustable fet_threshold). Output
-//           knob is independent, drive is independent — touching threshold
+//           knob is independent, drive is independent - touching threshold
 //           sets the real detection threshold, not a drive amount.
 //           Matches ChannelCompEditor::writeThresholdToMode.
 void CompMeterStrip::writeThresholdForMode (Track& t, float threshDb)
@@ -81,7 +81,7 @@ void CompMeterStrip::resetThresholdForMode (Track& t)
             t.strip.compOptoPeakRed.store (0.0f, std::memory_order_relaxed);
             break;
         case 1:
-            // FET: reset only compFetThresholdDb — the parameter the THRESHOLD
+            // FET: reset only compFetThresholdDb - the parameter the THRESHOLD
             // handle actually drives (writeThresholdForMode/readThresholdForMode
             // both map FET to compFetThresholdDb). The input-drive and output
             // (makeup) knobs are independent controls the user set elsewhere;
@@ -153,7 +153,7 @@ void CompMeterStrip::resized()
 
     if (! showInputBar)
     {
-        // Slim layout — used by the fader-side track variant. With the
+        // Slim layout - used by the fader-side track variant. With the
         // handle hidden the whole widget collapses to a pure GR bar so
         // it can sit next to the main level meter as a skinny GR LED
         // (master-strip-style).
@@ -267,7 +267,7 @@ void CompMeterStrip::timerCallback()
     else
         displayedGrDb += (gr - displayedGrDb) * 0.18f;
     // Snap the decaying tail to exactly 0 once we're within a fraction of
-    // a dB — prevents a tiny residual fill that looks like a stuck LED.
+    // a dB - prevents a tiny residual fill that looks like a stuck LED.
     if (displayedGrDb > -0.05f) displayedGrDb = 0.0f;
 
     repaint();
@@ -324,7 +324,7 @@ void CompMeterStrip::paint (juce::Graphics& g)
         // Full-widget background only when the IN bar is visible (the
         // background visually frames the bar pair). In slim GR-only mode
         // the handle column would otherwise read as a phantom IN bar to
-        // the left of the GR LED — skip the full fill and let the
+        // the left of the GR LED - skip the full fill and let the
         // background show through, painting bg only behind the GR bar.
         auto bg = getLocalBounds().toFloat();
         g.setColour (juce::Colour (0xff141418));
@@ -350,7 +350,7 @@ void CompMeterStrip::paint (juce::Graphics& g)
                          juce::Rectangle<float> (inputBarArea.getX() - 1.0f, 0.0f,
                                                    inputBarArea.getWidth() + 2.0f, 9.0f),
                          juce::Justification::centred, false);
-        // "GR" needs ~13 px at this font size — when the bar is slim
+        // "GR" needs ~13 px at this font size - when the bar is slim
         // (e.g. the 9-px master-style LED) the natural bar width can't
         // hold both letters, so widen the text rect (allowed to overflow
         // into adjacent transparent space) instead of truncating to "G".
@@ -416,7 +416,7 @@ void CompMeterStrip::paint (juce::Graphics& g)
                                             std::abs (displayedGrDb));
         const float frac = grAbs / std::abs (kGrFloorDb);
         // Force one segment per dB of reduction (24 segments for the
-        // 0..-24 dB range) so each visible LED step represents 1 dB —
+        // 0..-24 dB range) so each visible LED step represents 1 dB -
         // lets the user read GR amount off the bar directly without a
         // dB tick column.
         const int grSegments = (int) std::abs (kGrFloorDb);
@@ -436,10 +436,10 @@ void CompMeterStrip::paint (juce::Graphics& g)
         const float thresh = src.getThresholdDb ? src.getThresholdDb() : 0.0f;
         const float y = yForDb (thresh, refBar);
 
-        // Bigger, more prominent triangle when the IN bar is hidden — the
+        // Bigger, more prominent triangle when the IN bar is hidden - the
         // fader-side layout needs the handle to read clearly without a
         // neighbouring bar to anchor against. Tip points TOWARD the bar
-        // — that's RIGHT when the handle sits on the left of the bar
+        // - that's RIGHT when the handle sits on the left of the bar
         // (default) and LEFT when handleOnRight=true (fader-side layout).
         const float halfH = showInputBar ? 7.0f : 11.0f;
         const float baseX = handleOnRight ? handleArea.getRight()
@@ -476,7 +476,7 @@ void CompMeterStrip::paint (juce::Graphics& g)
 
 void CompMeterStrip::mouseDown (const juce::MouseEvent& e)
 {
-    if (! showHandle) return;   // pure-GR mode — no threshold drag
+    if (! showHandle) return;   // pure-GR mode - no threshold drag
     // Hit area = union of bar + handle column so clicks land whichever
     // side the triangle is on. Without this, flipping handleOnRight=true
     // (channel-strip fader-side layout) broke drag because the old test

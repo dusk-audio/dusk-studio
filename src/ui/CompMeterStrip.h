@@ -49,7 +49,7 @@ public:
     void mouseDoubleClick (const juce::MouseEvent&) override;
 
     // Hides the IN level bar (and its scale + "IN" caption) so the strip
-    // becomes a slim handle + GR bar — used by the experimental track-3
+    // becomes a slim handle + GR bar - used by the experimental track-3
     // fader-side layout where the main level meter already shows IN dB
     // and would duplicate the small IN bar inside this widget.
     void setShowInputBar (bool s);
@@ -89,7 +89,7 @@ public:
     // vertical extent.
     juce::Rectangle<float> getGrBarArea() const noexcept { return grBarArea; }
 
-    // Per-mode threshold helpers — exposed so parent components can drive
+    // Per-mode threshold helpers - exposed so parent components can drive
     // threshold drag from a different widget (e.g. the channel strip's
     // main level meter when the compMeter widget runs in slim pure-GR
     // mode). Mirrors the mode-specific mapping used internally by the

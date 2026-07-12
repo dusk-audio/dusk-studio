@@ -24,7 +24,7 @@ std::vector<float> decodeMono (juce::AudioFormatManager& fm, const juce::File& f
     if (len <= 0 || ch <= 0 || reader->sampleRate <= 0.0) return out;
     // Guard against absurd files eating all RAM. A stereo decode allocates
     // ~12 bytes/sample (the 2-ch buffer + the mono out), so this caps the
-    // worst case near ~1 GB — generous for any real DP song (15 min @ 96 k /
+    // worst case near ~1 GB - generous for any real DP song (15 min @ 96 k /
     // 30 min @ 48 k) while refusing a pathological multi-hour file.
     if (len > 96000ll * 60ll * 15ll) return out;
 
@@ -136,7 +136,7 @@ CorrResult crossCorrelate (const std::vector<float>& longEnv,
     juce::dsp::FFT fft (order);
     // perform() must NOT alias input and output. macOS vDSP tolerates in-place,
     // but the FFTFallback engine (Linux / any non-vDSP build) writes garbage
-    // when input == output — which silently zeroed the whole correlation and
+    // when input == output - which silently zeroed the whole correlation and
     // left every fragment unplaced. Keep the in/out buffers distinct.
     fft.perform (A.data(), Af.data(), false);
     fft.perform (B.data(), Bf.data(), false);

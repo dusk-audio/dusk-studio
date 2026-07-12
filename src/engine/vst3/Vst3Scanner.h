@@ -30,7 +30,7 @@ public:
     static std::vector<std::filesystem::path> findVst3Bundles (const std::vector<std::filesystem::path>& dirs);
 
     // Load every discovered module and gather its advertised effect classes.
-    // Modules that fail to load are skipped silently — a broken .vst3 must not
+    // Modules that fail to load are skipped silently - a broken .vst3 must not
     // abort the scan.
     static std::vector<ScannedVst3> scan (const std::vector<std::filesystem::path>& dirs);
     static std::vector<ScannedVst3> scan() { return scan (defaultSearchPaths()); }

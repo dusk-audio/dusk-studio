@@ -244,7 +244,7 @@ void DuskComboBox::showPopup()
     auto* root = getRootMenu();
     if (root == nullptr)
     {
-        // No backing menu — fall through to JUCE's default popup so we
+        // No backing menu - fall through to JUCE's default popup so we
         // don't silently drop the click.
         juce::ComboBox::showPopup();
         return;
@@ -284,7 +284,7 @@ void DuskComboBox::showPopup()
                 // Reset juce::ComboBox's internal `menuActive` flag so
                 // the next click reopens the popup. Without this the
                 // base class still thinks our (overridden) popup is up
-                // and showPopupIfNotActive short-circuits → combo
+                // and showPopupIfNotActive short-circuits -> combo
                 // appears frozen after one selection.
                 s->hidePopup();
                 // Apply selection silently, then fire onChange by hand.
@@ -303,7 +303,7 @@ void DuskComboBox::showPopup()
     // Anchor the popup BELOW the combo's screen bounds (or above when it
     // would clip the bottom edge), instead of centring in the parent
     // window. Without this the popup floats in the middle of the screen
-    // far from the click — confusing and easy to miss.
+    // far from the click - confusing and easy to miss.
     const int panelW = panel->getWidth();
     const int panelH = panel->getHeight();
     const auto comboScreen = getScreenBounds();
@@ -327,7 +327,7 @@ void DuskComboBox::showPopup()
 
     // EmbeddedModal centred the body during show(); now slam it (and
     // its backdrop) to the anchor position. repositionBody moves both
-    // together — moving the body alone leaves the centred backdrop
+    // together - moving the body alone leaves the centred backdrop
     // rendering as a stray blank panel where the body used to be.
     const auto localTopLeft = parent->getLocalPoint (nullptr,
                                                         juce::Point<int> (sx, sy));

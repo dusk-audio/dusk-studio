@@ -148,7 +148,7 @@ HardwareInsertEditor::HardwareInsertEditor (HardwareInsertParams& paramsRef,
 
     // Cancel + Done are popup-modal vestiges. When embedded inline in
     // the AUX lane, the X (remove) button on the slot header handles
-    // teardown — the editor doesn't need its own footer actions, and
+    // teardown - the editor doesn't need its own footer actions, and
     // we don't even wire the onClicks so the dead state can't surprise
     // anyone later.
     doneButton.setColour (juce::TextButton::buttonColourId, juce::Colour (0xff2a5a3a));
@@ -381,7 +381,7 @@ void HardwareInsertEditor::resized()
         formatMidSideButton.setBounds (row.removeFromLeft (110));
     }
 
-    // Footer row, pinned to the bottom. Skip layout when embedded —
+    // Footer row, pinned to the bottom. Skip layout when embedded -
     // the buttons aren't addAndMakeVisible'd, but setBounds on a hidden
     // child is wasted work and also keeps the buttons offscreen in
     // case someone later flips them visible without re-layout.

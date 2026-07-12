@@ -1,6 +1,6 @@
 #include "KeyboardStateLinux.h"
 
-// Sealed X11 translation unit — must NOT include any JUCE header. Xlib's
+// Sealed X11 translation unit - must NOT include any JUCE header. Xlib's
 // `#define KeyPress 2` (and Bool/None/Status/Window) collide with JUCE names.
 #include <X11/Xlib.h>
 
@@ -12,7 +12,7 @@ namespace
     // app window already uses ($DISPLAY -> the session's XWayland). XQueryKeymap
     // reports global server key state, so a dedicated connection observes the
     // same physical keyboard as JUCE's connection while staying free of JUCE's
-    // headers. Never closed — reclaimed at process exit (one Display, like JUCE
+    // headers. Never closed - reclaimed at process exit (one Display, like JUCE
     // itself leaks on Linux shutdown).
     Display* displayConnection() noexcept
     {

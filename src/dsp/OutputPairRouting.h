@@ -12,7 +12,7 @@ inline int decodePairR (int id)          noexcept { return (id - 1) % 1000; }
 
 // Accumulate a processed stereo buffer (L/R) onto the device output pair named
 // by encodedPair. No-op when unrouted (<= 0) or when the pair falls outside the
-// device's open outputs — the same bounds discipline as the hardware-insert
+// device's open outputs - the same bounds discipline as the hardware-insert
 // send. Audio-thread safe: no allocation, no lock, plain += onto buffers the
 // callback has already cleared, so several taps to the same pair sum cleanly.
 inline void tapStereoPairInto (float* const* outs, int numOuts,

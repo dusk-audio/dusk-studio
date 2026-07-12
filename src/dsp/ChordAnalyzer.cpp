@@ -93,14 +93,10 @@ ChordInfo ChordAnalyzer::analyze(const std::vector<int>& midiNotes)
         return result;
     }
 
-    // Sort notes for consistent analysis
     std::vector<int> sortedNotes = midiNotes;
     std::sort(sortedNotes.begin(), sortedNotes.end());
 
-    // Get bass note
     result.bassNote = sortedNotes[0] % 12;
-
-    // Find the root
     result.rootNote = findRoot(sortedNotes);
 
     if (result.rootNote < 0)
@@ -110,10 +106,8 @@ ChordInfo ChordAnalyzer::analyze(const std::vector<int>& midiNotes)
         return result;
     }
 
-    // Get intervals from root
     auto intervals = getIntervals(sortedNotes, result.rootNote);
 
-    // Match pattern
     int priority = 0;
     const int matchedIndex = matchPattern(intervals, priority);
     result.quality = (matchedIndex >= 0)
@@ -122,27 +116,20 @@ ChordInfo ChordAnalyzer::analyze(const std::vector<int>& midiNotes)
 
     if (result.quality == ChordQuality::Unknown)
     {
-        // Try simpler patterns by removing some notes
-        // Sometimes extra notes don't fit known patterns
         result.name = pitchClassToName(result.rootNote) + "?";
         result.romanNumeral = "?";
         result.confidence = 0.3f;
         return result;
     }
 
-    // Build chord name
     result.name = pitchClassToName(result.rootNote) + qualityToSuffix(result.quality);
-
-    // Calculate inversion
     result.inversion = calculateInversion(sortedNotes, result.rootNote);
 
-    // Add inversion notation if not root position
     if (result.inversion > 0)
     {
         result.extensions = "/" + pitchClassToName(result.bassNote);
     }
 
-    // Get Roman numeral and function
     result.romanNumeral = buildRomanNumeral(result.rootNote, result.quality);
     result.function = getHarmonicFunction(result.rootNote, result.quality);
 
@@ -171,7 +158,6 @@ int ChordAnalyzer::findRoot(const std::vector<int>& notes) const
 {
     if (notes.empty()) return -1;
 
-    // Get unique pitch classes
     std::set<int> pitchClasses;
     for (int note : notes)
         pitchClasses.insert(note % 12);
@@ -434,7 +420,6 @@ std::string ChordAnalyzer::buildRomanNumeral(int chordRoot, ChordQuality quality
     int degree = getScaleDegree(chordRoot);
     std::string accidental = getAccidental(chordRoot);
 
-    // Determine if uppercase (major quality) or lowercase (minor quality)
     bool uppercase = true;
     switch (quality)
     {
@@ -559,7 +544,6 @@ HarmonicFunction ChordAnalyzer::getHarmonicFunction(int chordRoot, ChordQuality 
 //==============================================================================
 std::string ChordAnalyzer::getRootNameInKey(int degree) const
 {
-    // Calculate the pitch class for this scale degree
     static const int majorIntervals[] = {0, 2, 4, 5, 7, 9, 11};
     static const int minorIntervals[] = {0, 2, 3, 5, 7, 8, 10};
 
@@ -568,21 +552,14 @@ std::string ChordAnalyzer::getRootNameInKey(int degree) const
     int interval = minorKey ? minorIntervals[degree - 1] : majorIntervals[degree - 1];
     int pitchClass = (keyRoot + interval) % 12;
 
-    // Use the key-aware spelling method
     return getSpellingForKey(pitchClass);
 }
 
 std::string ChordAnalyzer::getSpellingForKey(int pitchClass) const
 {
-    // Determine correct enharmonic spelling based on key signature
-    // This ensures scale degrees use the musically correct note names
-    //
     // Flat keys (use flats for accidentals): F, Bb, Eb, Ab, Db, Gb/Cb
     // Sharp keys (use sharps for accidentals): G, D, A, E, B, F#/C#
     // C major/A minor: convention uses sharps for accidentals
-
-    // Define the correct note names for each key (major keys)
-    // Format: array of 12 note names indexed by pitch class
     static const char* keySpellings[12][12] = {
         // C major: C D E F G A B (no accidentals, sharps for chromatic)
         {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"},
@@ -627,7 +604,6 @@ std::vector<ChordSuggestion> ChordAnalyzer::getSuggestions(const ChordInfo& curr
 
     int currentDegree = getScaleDegree(currentChord.rootNote);
 
-    // Always add basic suggestions
     addBasicSuggestions(suggestions, currentDegree, currentChord.quality);
 
     if (maxLevel >= SuggestionCategory::Intermediate)
@@ -891,7 +867,6 @@ int ChordAnalyzer::nameToNote(const std::string& name)
         default: return -1;
     }
 
-    // Check for accidentals
     if (upper.length() > 1)
     {
         if (upper[1] == '#' || upper[1] == 'S') base++;

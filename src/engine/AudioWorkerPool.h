@@ -16,11 +16,11 @@ namespace duskstudio
 // the audio thread itself for lane == workers. So laneCount() == workers + 1.
 //
 // Workers park on an auto-reset event between blocks and are woken
-// by the audio thread's signal() — a bounded, uncontended, ns-scale event that
+// by the audio thread's signal() - a bounded, uncontended, ns-scale event that
 // is the one deliberate exception to the no-lock-on-the-audio-thread rule, used
 // ONLY in this opt-in parallel mode. The join is a short bounded spin (fast
 // path: workers finish within the spin) followed by a blocking wait on a
-// completion event — NEVER an unbounded yield-spin. sched_yield from a SCHED_RR
+// completion event - NEVER an unbounded yield-spin. sched_yield from a SCHED_RR
 // thread does not cede the core to a lower-priority thread, so an unbounded
 // spin deadlocks the callback if a worker is migrated onto the audio thread's
 // core; the blocking wait frees the core and is immune to priority layout.
@@ -28,8 +28,8 @@ namespace duskstudio
 // (see RtPriority.h) so RR round-robins them fairly when they do share a core.
 //
 // Dispatches are identified by an epoch counter (`seq`); each worker records the
-// last epoch it acknowledged. quiesce() — message thread only, and only when no
-// new runBlock can begin — waits until every worker has acknowledged the current
+// last epoch it acknowledged. quiesce() - message thread only, and only when no
+// new runBlock can begin - waits until every worker has acknowledged the current
 // epoch, waking and draining any worker whose dispatch signal was delivered but
 // whose dispatcher died (the device I/O thread can be force-killed mid-runBlock
 // by AlsaAudioIODevice::stop's thread timeout). A worker woken BY quiesce skips
@@ -59,7 +59,7 @@ public:
 
     // Message thread only; caller must guarantee no new runBlock can begin
     // (callback detached, device stopped, or device thread not yet spawned).
-    // Returns once no worker lane is in flight — including lanes orphaned by a
+    // Returns once no worker lane is in flight - including lanes orphaned by a
     // force-killed dispatcher. Cheap no-op when the pool is idle.
     void quiesce();
 

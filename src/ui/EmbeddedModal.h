@@ -12,7 +12,7 @@ namespace duskstudio
 // transport + loop/punch + playhead navigation + window fullscreen: edit /
 // clipboard / destructive keys (Delete, split, nudge, undo, save, marker, ...)
 // are NOT forwarded because they would act on the arrangement hidden behind
-// the modal — e.g. Delete silently removing a region the user can't even see.
+// the modal - e.g. Delete silently removing a region the user can't even see.
 // The loop/punch keys ARE forwarded so the engineer can set a loop and audition
 // it while a comp / EQ / plugin editor is open (none of L / P / [ / ] has a
 // Cmd-binding, so forwarding can't trip a destructive op). A focused child
@@ -20,7 +20,7 @@ namespace duskstudio
 // it never reaches the modal's listener and typing is unaffected.
 inline bool isModalForwardableShortcut (const juce::KeyPress& k) noexcept
 {
-    // Bare transport keys only — a Cmd/Ctrl/Alt chord (e.g. Ctrl+R, Cmd+.)
+    // Bare transport keys only - a Cmd/Ctrl/Alt chord (e.g. Ctrl+R, Cmd+.)
     // must NOT be mistaken for the unmodified transport key, otherwise a
     // host shortcut would silently trigger record / loop / etc. The full
     // KeyPress comparisons below (spaceKey/homeKey/F11Key) already reject
@@ -42,7 +42,7 @@ inline bool isModalForwardableShortcut (const juce::KeyPress& k) noexcept
 
 // Component-properties tag marking a plugin-editor component (JUCE editor, OOP
 // embed, native CLAP/LV2 editor). EmbeddedModal hides tagged components while a
-// modal is up — native editor windows otherwise paint above the modal regardless
+// modal is up - native editor windows otherwise paint above the modal regardless
 // of JUCE z-order, burying dialogs. Every editor wrapper must carry this tag.
 inline constexpr const char* kPluginEditorTag = "dusk_pluginEditor";
 
@@ -98,7 +98,7 @@ public:
         if (dismissOnClickOutside)
             dim_->onClick = [this]
             {
-                // Local copy BEFORE invoking — the user's callback may
+                // Local copy BEFORE invoking - the user's callback may
                 // close() this modal, which resets userOnDismiss = {}
                 // and destroys the closure (with captures) mid-call.
                 // SIGABRT on Linux/XWayland without this.
@@ -122,7 +122,7 @@ public:
 
         body_->setBounds (bodyBounds);
         parent.addAndMakeVisible (body_.get());
-        // Force topmost — a stage swap that re-adds a fullscreen view
+        // Force topmost - a stage swap that re-adds a fullscreen view
         // (AuxView, MasteringView) after the modal opens can demote it.
         // addAndMakeVisible alone is only topmost-at-add-time.
         dim_     ->toFront (false);
@@ -135,7 +135,7 @@ public:
         hidePluginEditorsUnder (parent);
     }
 
-    // Body NOT owned — caller keeps alive across show/close cycles.
+    // Body NOT owned - caller keeps alive across show/close cycles.
     // Used for plugin editors: tearing down a plugin's editor window on
     // every close races the WM and on XWayland with GL-heavy GUIs can
     // crash the compositor. Keeping the editor alive and add/removing
@@ -147,14 +147,14 @@ public:
         close();
         host = &parent;
         borrowedBody_ = &body;
-        // showBorrowed is plugin-editors-only — use the lighter editor dim so
+        // showBorrowed is plugin-editors-only - use the lighter editor dim so
         // the strip meters behind stay readable while auditioning.
         dim_ = std::make_unique<DimOverlay> (kEditorDimAlpha);
         dim_->setBounds (parent.getLocalBounds());
         userOnDismiss = std::move (onDismiss);
         dim_->onClick = [this]
         {
-            // See owning show()'s onClick — local copy survives close().
+            // See owning show()'s onClick - local copy survives close().
             if (auto cb = userOnDismiss) cb();
             else                          close();
         };
@@ -181,12 +181,12 @@ public:
         body.addKeyListener (this);
         // Plugin editors announce their real size only once the native
         // window embeds (after this show) and can rescale live from
-        // their own UI — track it, or the body grows down-right from
+        // their own UI - track it, or the body grows down-right from
         // the stale centre and the backdrop stays at the old size.
         body.addComponentListener (this);
         // Track the host too: resizing the main window with an editor
         // open otherwise leaves the modal at the old centre, clipped at
-        // the new edges. Borrowed-only — owned bodies include anchored
+        // the new edges. Borrowed-only - owned bodies include anchored
         // popups (DuskContextMenu / DuskComboBox) that must NOT recentre.
         parent.addComponentListener (this);
 
@@ -197,7 +197,7 @@ public:
     // just removes from parent.
     //
     // CONTRACT: close() does NOT invoke userOnDismiss. Only Esc and
-    // dim-click do. Helpers (DuskAlerts' OK button) rely on this —
+    // dim-click do. Helpers (DuskAlerts' OK button) rely on this -
     // they wire their action button to close() AND their follow-up,
     // trusting close() won't double-fire. Audit every caller before
     // changing this contract.
@@ -207,7 +207,7 @@ public:
     // disappears immediately, then defers destruction to the next
     // message-loop tick via callAsync. Without that, body_.reset()
     // would run ~Button -> ~std::function while the button's onClick
-    // lambda is still on the stack — observed to corrupt JUCE's
+    // lambda is still on the stack - observed to corrupt JUCE's
     // message-thread state and crash compositors on next X11 round.
     void close()
     {
@@ -231,11 +231,11 @@ public:
 
         if (body_ != nullptr)
         {
-            // Hand to a callAsync lambda — destructs on the next tick
+            // Hand to a callAsync lambda - destructs on the next tick
             // after the current button-callback stack unwinds. Don't
-            // capture `this` — EmbeddedModal itself may be destructed
+            // capture `this` - EmbeddedModal itself may be destructed
             // by then (app shutdown). shared_ptr (not unique) so the
-            // capture is copyable — std::function needs copyable
+            // capture is copyable - std::function needs copyable
             // callables on libc++ (macOS).
             std::shared_ptr<juce::Component> trash (body_.release());
             juce::MessageManager::callAsync (
@@ -267,7 +267,7 @@ public:
         // trash lambdas have run and the modal's children are gone).
         //
         // Without this, every popup pick leaves focus orphaned on the
-        // DocumentWindow itself — JUCE's default focus traverser does
+        // DocumentWindow itself - JUCE's default focus traverser does
         // NOT reliably drill into the content component on this hybrid
         // X11/Wayland setup, so spacebar / R silently die until the
         // user clicks the canvas.
@@ -290,7 +290,7 @@ public:
     // destroyed and a body whose destructor talks to the engine
     // (AudioSettingsPanel, PluginScanModal, BounceDialog) frees memory
     // it then dereferences. This variant destroys the body in place.
-    // Only call when no body callback is on the stack — i.e. from
+    // Only call when no body callback is on the stack - i.e. from
     // ~MainComponent / beginSafeShutdown.
     void closeAndDeleteBodyNow()
     {
@@ -353,7 +353,7 @@ public:
             juce::jmin (juce::jmax (1, body->getHeight()), bounds.getHeight() - 16));
         body->setTopLeftPosition (bodyBounds.getTopLeft());
         // Re-fit the backdrop to the body's REAL bounds (not the clamped
-        // rect) — a body that outgrew its open-time size otherwise keeps
+        // rect) - a body that outgrew its open-time size otherwise keeps
         // the old, smaller frame behind it.
         if (backdrop_ != nullptr)
             backdrop_->setBounds (body->getBounds().expanded (kBackdropMargin));
@@ -374,7 +374,7 @@ private:
         // '.', F11) to MainComponent (registered as the focus-restore target
         // on app startup). The modal body has keyboard focus, so without this
         // hop the keys die at the body. Forwarding to MainComponent::keyPressed
-        // directly reaches the handler — forwarding to the top-level
+        // directly reaches the handler - forwarding to the top-level
         // DocumentWindow does NOT, because DocumentWindow's own keyPressed only
         // handles its title-bar shortcuts. Edit/destructive keys are excluded
         // (see isModalForwardableShortcut). TextEditor children consume their
@@ -424,7 +424,7 @@ private:
     // SafePointer, not raw: the function-local-static shared modals
     // (DuskAlerts, DuskContextMenu, DuskComboBox, file browser, plugin
     // picker) outlive MainComponent. If one is still open at quit, its
-    // static destructor runs close() after the host was destroyed — a
+    // static destructor runs close() after the host was destroyed - a
     // raw pointer would dereference freed memory in removeChildComponent.
     juce::Component::SafePointer<juce::Component> host;
     std::unique_ptr<DimOverlay> dim_;
@@ -438,7 +438,7 @@ private:
     // by restoreHiddenPluginEditors() in close(). Plugin editors (in
     // particular OOP / XEmbed / GL-rendering hosts) can paint above
     // JUCE's modal in the native window's z-order regardless of
-    // toFront() — toggling their visibility forces them out of view
+    // toFront() - toggling their visibility forces them out of view
     // for the modal's lifetime.
     juce::Array<juce::Component::SafePointer<juce::Component>> hiddenForModal_;
 
@@ -503,7 +503,7 @@ private:
                 if (count <= 1)
                 {
                     c->getProperties().remove ("dusk_modalHideCount");
-                    c->setVisible (true);   // last covering modal gone → editor returns
+                    c->setVisible (true);   // last covering modal gone -> editor returns
                 }
                 else
                 {
@@ -516,7 +516,7 @@ private:
 };
 
 // Global KeyListener that forwards transport / navigation hotkeys (Space, R,
-// Home, '.', F11 — see isModalForwardableShortcut) to the registered
+// Home, '.', F11 - see isModalForwardableShortcut) to the registered
 // MainComponent regardless of where focus currently sits.
 // Attach to modal surfaces that bypass EmbeddedModal (e.g. the TapeMachine
 // gear modal's raw DimOverlay host) so the user can play / stop / record /
@@ -540,7 +540,7 @@ public:
     }
 };
 
-// Convenience — installs the singleton transport-key forwarder on c.
+// Convenience - installs the singleton transport-key forwarder on c.
 // No removal step needed: the singleton outlives every component, and
 // JUCE auto-clears the listener list when c is destructed.
 inline void attachTransportKeyForwarder (juce::Component& c)

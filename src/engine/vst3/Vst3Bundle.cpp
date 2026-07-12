@@ -52,7 +52,7 @@ bool Vst3Bundle::load (const std::string& path, std::string& errorOut)
     if (descriptors.empty())
     {
         errorOut = "no audio-effect classes in module: " + path;
-        return false;   // module Ptr goes out of scope → unloaded
+        return false;   // module Ptr goes out of scope -> unloaded
     }
 
     impl->module = std::move (mod);

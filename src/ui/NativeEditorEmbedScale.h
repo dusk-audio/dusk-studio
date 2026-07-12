@@ -5,8 +5,8 @@
 namespace duskstudio::embedscale
 {
 // JUCE component coordinates are logical; raw X11 windows live in physical
-// pixels. The full logical→physical factor is the peer's platform scale TIMES
-// the Desktop global scale — the app-set UI zoom (appconfig ui_scale →
+// pixels. The full logical->physical factor is the peer's platform scale TIMES
+// the Desktop global scale - the app-set UI zoom (appconfig ui_scale ->
 // Desktop::setGlobalScaleFactor) is NOT part of getPlatformScaleFactor(), and
 // missing it drifts every native editor window down-right by zoom% of its
 // position. Plugin-reported sizes (resizeView / ui:resize / clap gui) are
@@ -23,7 +23,7 @@ inline double factor (const juce::Component& c)
 inline juce::Rectangle<int> toPhysical (const juce::Component& c,
                                         juce::Rectangle<int> logical)
 {
-    // Round the corners, not the dimensions — independently rounded x and
+    // Round the corners, not the dimensions - independently rounded x and
     // width can land the right/bottom edge 1px off the painted edge.
     const double s = factor (c);
     const int x0 = juce::roundToInt (logical.getX()      * s);

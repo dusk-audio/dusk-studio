@@ -70,7 +70,7 @@ std::int64_t MiniTimelineStrip::sampleForX (int x, std::int64_t end) const noexc
 
 int MiniTimelineStrip::markerIndexAtX (int x, std::int64_t end) const noexcept
 {
-    // Nearest marker within the hit radius, not the first — when two ticks fall
+    // Nearest marker within the hit radius, not the first - when two ticks fall
     // inside kMarkerHitPx, the closer one should win.
     const auto& markers = session.getMarkers();
     int best = -1, bestDist = kMarkerHitPx + 1;
@@ -130,7 +130,7 @@ void MiniTimelineStrip::paint (juce::Graphics& g)
     // Marker names: a small flag right of each tick, clipped to the gap before
     // the next marker so adjacent labels never overlap (ellipsised if cramped).
     // The active marker's flag is brightened. Rects are recorded so a click on
-    // the visible label — not just the tick — hits the marker.
+    // the visible label - not just the tick - hits the marker.
     markerFlags.clear();
     const juce::Font nameFont { juce::FontOptions (11.0f, juce::Font::bold) };
     g.setFont (nameFont);
@@ -210,7 +210,7 @@ void MiniTimelineStrip::timerCallback()
 {
     // Collapsed timeline: the strip is hidden but the timer keeps firing. The content
     // signature below scans every track's regions + markers, so skip it entirely when
-    // off-screen — nothing to repaint, and it re-syncs on the next visible tick.
+    // off-screen - nothing to repaint, and it re-syncs on the next visible tick.
     if (! isShowing()) return;
 
     bool dirty = false;
@@ -220,12 +220,12 @@ void MiniTimelineStrip::timerCallback()
     if (ph != lastPlayhead) { lastPlayhead = ph; dirty = true; }
 
     // The UndoManager broadcast (changeListenerCallback) covers undoable edits,
-    // but direct session mutations — import / load, programmatic region or
-    // marker changes — don't go through it. Poll a cheap content signature
+    // but direct session mutations - import / load, programmatic region or
+    // marker changes - don't go through it. Poll a cheap content signature
     // (region + marker counts and the song extent) so those still refresh.
     size_t sig = session.getMarkers().size();
-    // Hash each marker's content that affects rendering / hit-testing — position,
-    // name, colour — not just the count, so a rename / recolour / move that
+    // Hash each marker's content that affects rendering / hit-testing - position,
+    // name, colour - not just the count, so a rename / recolour / move that
     // doesn't change the count or song extent still invalidates (the undo
     // change-listener covers undoable edits; this is the direct-mutation backstop).
     for (const auto& mk : session.getMarkers())

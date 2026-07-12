@@ -12,10 +12,10 @@
 
 namespace duskstudio::nativescan
 {
-// One bundle → picker rows, shared verbatim by the sandboxed scan child
+// One bundle -> picker rows, shared verbatim by the sandboxed scan child
 // (dusk-studio-plugin-host --scan-native) and the parent's in-process fallback,
 // so both sides emit identical descriptions. Loading a bundle executes its code
-// (dlopen + factory read) — that is exactly what the sandbox exists for; call
+// (dlopen + factory read) - that is exactly what the sandbox exists for; call
 // these in-process only as the fallback when the child can't spawn.
 
 #if DUSKSTUDIO_HAS_NATIVE_CLAP

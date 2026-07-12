@@ -8,7 +8,7 @@ namespace duskstudio::lv2
 // One plugin advertised by an LV2 bundle's manifest.
 struct PluginDesc
 {
-    std::string uri;    // the stable plugin URI — the id persisted in sessions
+    std::string uri;    // the stable plugin URI - the id persisted in sessions
     std::string name;
     int  audioInputs  = 0;
     int  audioOutputs = 0;
@@ -17,7 +17,7 @@ struct PluginDesc
 
 // Owns a private LilvWorld, loads a single .lv2 bundle directory into it, and
 // enumerates the plugins that bundle advertises (URI, name, audio-port counts).
-// RAII: lilv_world_free on destruction. Message thread only — not real-time safe.
+// RAII: lilv_world_free on destruction. Message thread only - not real-time safe.
 //
 // LV2's analog of ClapBundle. lilv types stay out of this header (opaque void*
 // handles); the instance layer includes lilv and casts. This stage only loads +

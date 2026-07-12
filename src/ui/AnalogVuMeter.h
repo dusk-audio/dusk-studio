@@ -72,7 +72,7 @@ private:
     // window moves to a different-DPI monitor.
     float lastScale = 1.0f;
 
-    // Needle position per channel as an angleFrac in [-1, +1] — -1 is the
+    // Needle position per channel as an angleFrac in [-1, +1] - -1 is the
     // resting left endstop (-20 VU), +1 is the +3 VU endstop. Mapped to a
     // physical angle by the .cpp's anchor table so the needle motion is
     // non-linear, matching the hardware face's compressed dB spacing.

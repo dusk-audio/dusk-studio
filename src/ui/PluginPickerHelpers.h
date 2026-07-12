@@ -27,9 +27,9 @@ namespace pluginpicker
 enum class PluginKind { Effects, Instruments };
 
 // Open a popup menu of installed plugins anchored on `target`. On selection:
-//   • 1..N → resolves to KnownPluginList types and loadFromDescription.
-//   • "Scan plugins" → runs the synchronous scan + reopens the picker.
-//   • "Browse for file..." → opens the in-window DuskFileBrowser.
+//   - 1..N -> resolves to KnownPluginList types and loadFromDescription.
+//   - "Scan plugins" -> runs the synchronous scan + reopens the picker.
+//   - "Browse for file..." -> opens the in-window DuskFileBrowser.
 // `onChange` runs on every successful change to the slot.
 //
 // `kind` filters the visible list: Effects hides instruments,
@@ -49,11 +49,11 @@ enum class PluginKind { Effects, Instruments };
 // `onPickNativeClap`, when set, MERGES native-CLAP plugins (PluginManager's CLAP
 // scan) into the list tagged "(CLAP)" and routes a CLAP selection here (the .clap
 // bundle path) instead of the JUCE loader. Used by every surface with a native CLAP
-// host — aux lanes AND channel-strip effect slots — which expose CLAP rows alongside
-// their JUCE-hosted VST3/LV2/AU. Unset → no CLAP rows (surfaces without a native host).
+// host - aux lanes AND channel-strip effect slots - which expose CLAP rows alongside
+// their JUCE-hosted VST3/LV2/AU. Unset -> no CLAP rows (surfaces without a native host).
 // `onPickNativeLv2` is the LV2 twin: merges "LV2-Native" rows (bundle-directory
 // paths) and routes their selection here. When set, JUCE-format "LV2" effect rows
-// are hidden so each plugin appears once, hosted natively; unset → JUCE LV2 rows
+// are hidden so each plugin appears once, hosted natively; unset -> JUCE LV2 rows
 // stay as the fallback host.
 // `onPickNativeVst3` is the VST3 twin: merges "VST3-Native" rows (.vst3 bundle
 // paths), hides the JUCE-format "VST3" effect rows, and routes selection here.
@@ -69,13 +69,13 @@ void openPickerMenu (PluginSlot& slot,
                       std::function<void (const juce::File&, const juce::String&)> onPickNativeVst3 = {});
 
 // Two-step insert flow. Step 1 shows a small modal with three big
-// buttons — Hardware Insert / Soundfont / Plugin — letting the user
+// buttons - Hardware Insert / Soundfont / Plugin - letting the user
 // pick WHAT kind of insert they want before the (potentially long)
 // plugin list appears. Step 2 routes to the existing helper:
-//   • Hardware Insert → onPickHardwareInsert() (no-op if unset)
-//   • Soundfont       → openSoundfontFileChooser
-//   • Plugin          → openPickerMenu (existing plugin list flow)
-// Same lifetime / callback contract as openPickerMenu — onChange runs
+//   - Hardware Insert -> onPickHardwareInsert() (no-op if unset)
+//   - Soundfont       -> openSoundfontFileChooser
+//   - Plugin          -> openPickerMenu (existing plugin list flow)
+// Same lifetime / callback contract as openPickerMenu - onChange runs
 // on every successful slot change. Buttons that don't make sense for
 // the active slot (HW insert on a MIDI/instrument slot, Soundfont on
 // an audio/effect slot) are hidden.

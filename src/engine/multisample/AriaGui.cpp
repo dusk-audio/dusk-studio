@@ -218,7 +218,7 @@ AriaGuiDoc AriaGuiDoc::buildAutoSkin(const juce::File& bgImage,
         AriaWidget knob;
         knob.kind    = AriaWidgetKind::Knob;
         knob.paramCC = ccLabels[i].first;
-        knob.frames  = 1;                      // no filmstrip → default rotary
+        knob.frames  = 1;                      // no filmstrip -> default rotary
         knob.bounds  = { cx, cy + kCapH, kKnobSz, kKnobSz };
         doc.widgets.push_back(std::move(knob));
     }

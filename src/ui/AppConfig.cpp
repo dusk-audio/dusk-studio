@@ -155,7 +155,7 @@ void setUiScaleOverride (float scale)
 bool getScanPluginsOnStartup()
 {
     const auto raw = readKey (kKeyScanOnStartup);
-    if (raw.empty()) return false;   // default off — caches are cheap, scans aren't
+    if (raw.empty()) return false;   // default off - caches are cheap, scans aren't
     return isTruthy (raw);
 }
 
@@ -167,7 +167,7 @@ void setScanPluginsOnStartup (bool scan)
 bool getTapeStripExpandedDefault()
 {
     const auto raw = readKey (kKeyTapeStripExpanded);
-    if (raw.empty()) return false;   // default collapsed — strips get full body
+    if (raw.empty()) return false;   // default collapsed - strips get full body
     return isTruthy (raw);
 }
 
@@ -179,7 +179,7 @@ void setTapeStripExpandedDefault (bool expanded)
 bool getFollowPlayheadDefault()
 {
     const auto raw = readKey (kKeyFollowPlayhead);
-    if (raw.empty()) return false;   // default off — view stays put unless asked
+    if (raw.empty()) return false;   // default off - view stays put unless asked
     return isTruthy (raw);
 }
 
@@ -204,7 +204,7 @@ void setAutosaveIntervalSeconds (int seconds)
 bool getMidiSoftTakeover()
 {
     const auto raw = readKey (kKeyMidiSoftTakeover);
-    if (raw.empty()) return false;   // default off — controllers track 1:1
+    if (raw.empty()) return false;   // default off - controllers track 1:1
     return isTruthy (raw);
 }
 
@@ -244,7 +244,7 @@ void setMulticoreDspMode (MulticoreDspMode m)
 int maxMulticoreWorkers()
 {
     // Never advertise more than the engine will actually use, regardless of CPU
-    // count — otherwise the settings UI / manual-worker cap drift above what
+    // count - otherwise the settings UI / manual-worker cap drift above what
     // resolveWorkerCount can request. AudioEngine is the single source of truth.
     return std::clamp (numCpus() - 2, 0, AudioEngine::getMaxWorkerCount());
 }
@@ -252,7 +252,7 @@ int maxMulticoreWorkers()
 int getMulticoreManualWorkers()
 {
     // On a host with no spare cores maxMulticoreWorkers() is 0, and runtime
-    // clamps Manual to 0 too — so allow 0 here instead of forcing 1, otherwise
+    // clamps Manual to 0 too - so allow 0 here instead of forcing 1, otherwise
     // the stored/displayed count (1) disagrees with what actually runs (0).
     const int mx = maxMulticoreWorkers();
     const int lo = std::min (1, mx);   // 1 when workers are possible, else 0

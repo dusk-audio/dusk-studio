@@ -154,12 +154,12 @@ private:
 };
 
 // Joins (glues) a set of audio regions on the same track into one.
-//   • Fast path: when every selected region references the same source
+//   - Fast path: when every selected region references the same source
 //     file and the regions abut (or overlap) on the timeline, the join
 //     collapses them into a single AudioRegion by extending the leading
 //     region's lengthInSamples and erasing the rest. Source data and
 //     existing fades at the outer edges are preserved.
-//   • Slow path: when sources differ or there are gaps, the join renders
+//   - Slow path: when sources differ or there are gaps, the join renders
 //     a fresh WAV into <session>/takes/ that mixes every selected region
 //     across [minStart, maxEnd) and replaces the selection with one
 //     region pointing at that file.
@@ -283,7 +283,7 @@ private:
 // Wraps the per-track regions + midiRegions diff produced by
 // RecordManager::stopRecording so a take commit (audio + midi) becomes
 // one undo step. perform() applies the after-snapshot; undo() restores
-// the before-snapshot. WAV files on disk are NOT deleted on undo —
+// the before-snapshot. WAV files on disk are NOT deleted on undo -
 // the user can redo to re-attach the take, and orphaned files are
 // reclaimed via the existing "Clean Out" menu action.
 class RecordCommitAction final : public juce::UndoableAction

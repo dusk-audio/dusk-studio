@@ -20,7 +20,7 @@ class EditModeToolbar;
 //
 // Owned by MainComponent. Constructed on the message thread; the
 // underlying AudioRegion may be mutated by other UI / RecordManager
-// while open. region() validates indices on every access — a stale
+// while open. region() validates indices on every access - a stale
 // view paints nothing rather than crashing.
 class AudioRegionEditor final : public juce::Component,
                                   private juce::ChangeListener,
@@ -76,7 +76,7 @@ private:
                              FadeShape& prevOutShape, FadeShape& nextInShape) const;
 
     juce::AudioFormatManager formatManager;
-    // 8 is plenty — we show one region at a time, but cached entries
+    // 8 is plenty - we show one region at a time, but cached entries
     // keep take cycling snappy.
     juce::AudioThumbnailCache thumbCache { 8 };
     std::unique_ptr<juce::AudioThumbnail> thumb;
@@ -149,7 +149,7 @@ private:
 
     void showFadeShapeMenu (juce::Point<int> screenPos, bool isFadeIn);
 
-    // Parallel mouse surface to right-click — used to alias into
+    // Parallel mouse surface to right-click - used to alias into
     // showContextMenu; now real region inspector (rename / colour /
     // mute / lock / delete).
     void showRegionPropertiesPopup();
@@ -201,7 +201,7 @@ public:
     // mouseMove fallback when no handle is under the pointer.
     void updateModeCursor();
 
-    // CursorOverlay sink — MainComponent wires this so the editor can
+    // CursorOverlay sink - MainComponent wires this so the editor can
     // push its local mouse position into the shared overlay (instead
     // of the overlay polling Desktop::getMousePosition, which is
     // broken on Wayland).
@@ -214,7 +214,7 @@ public:
 
     // Push (x, y) into the shared CursorOverlay if it's inside the
     // waveArea and the active mode wants a glyph (Grab / Cut / Draw).
-    // Called from BOTH mouseMove and mouseDrag — drag fires only
+    // Called from BOTH mouseMove and mouseDrag - drag fires only
     // mouseDrag (not mouseMove), so without this the overlay glyph
     // freezes at the click point while the region drags out from
     // underneath it.
@@ -238,7 +238,7 @@ public:
     // fades (fadeInAuto=false with non-zero length) untouched. Each
     // changed region commits as its own RegionEditAction in the
     // caller's undo transaction. Called after every geometry mutation
-    // — MoveRegion, TrimStart, TrimEnd.
+    // - MoveRegion, TrimStart, TrimEnd.
     void syncAutoCrossfades();
 private:
 
@@ -256,7 +256,7 @@ private:
 
     // Grab mode: click empty area to add, drag a dot to move, right-click
     // to delete. Draw mode: drag to paint a freehand curve. Edit only when
-    // transport stopped — audio reads lane lock-free, mid-play would race.
+    // transport stopped - audio reads lane lock-free, mid-play would race.
     juce::TextButton automationParamButton { "Auto: Off" };
     int  automationParam = -1;        // -1 = overlay disabled; else AutomationParam enum
     int  draggedPointIdx = -1;

@@ -9,8 +9,8 @@
 
 // Guarded read accessors over nlohmann::json, replicating JUCE's var lenient
 // coerce-or-default contract. nlohmann's get<>() throws on a type mismatch and
-// const operator[] on a missing key is undefined, so session load — which
-// parses untrusted, possibly hand-edited files — must never touch the json
+// const operator[] on a missing key is undefined, so session load - which
+// parses untrusted, possibly hand-edited files - must never touch the json
 // directly. Every read goes through here.
 namespace dusk::json
 {

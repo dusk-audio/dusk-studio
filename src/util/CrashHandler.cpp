@@ -32,7 +32,7 @@ juce::File makeLogFile()
 
 // JUCE invokes this from a signal-handler context (SIGSEGV / SIGABRT /
 // SIGFPE). Strictly we should be async-signal-safe here, but the
-// process is dying — best effort is to write a paste-able report.
+// process is dying - best effort is to write a paste-able report.
 // FileOutputStream allocations may fail under stack corruption; if so,
 // the OS still produces a core dump.
 void crashCallback (void* /*platformSpecific*/)
@@ -61,7 +61,7 @@ void crashCallback (void* /*platformSpecific*/)
 
     // Tail the current log file so the crash report carries a window
     // of recent activity. Read backward from end-of-file with a bounded
-    // 64 KB buffer — loadFileAsString would allocate the entire log,
+    // 64 KB buffer - loadFileAsString would allocate the entire log,
     // and a long-running session's log can be many MB. Crashing
     // processes are exactly the case where big allocations fail; the
     // smaller bounded read is the most likely to succeed.
@@ -100,7 +100,7 @@ void crashCallback (void* /*platformSpecific*/)
 
 void install (const juce::String& appVersion)
 {
-    // Always refresh version — a second install() call from a future
+    // Always refresh version - a second install() call from a future
     // hot-reload / test harness updates the crash report header even
     // though the FileLogger + signal handler stay registered as-is.
     cachedAppVersion = appVersion;
@@ -115,7 +115,7 @@ void install (const juce::String& appVersion)
 
     // Replace any pre-existing logger (none in normal flow, but tests
     // may have installed one). FileLogger appends; daily rotation comes
-    // from the date in the filename — next-day startup picks a new file.
+    // from the date in the filename - next-day startup picks a new file.
     ownedLogger = std::make_unique<juce::FileLogger> (
         cachedLogFile,
         "Dusk Studio " + appVersion + " - "
@@ -134,7 +134,7 @@ void uninstall()
     if (! installed.compare_exchange_strong (expected, false)) return;
     juce::Logger::setCurrentLogger (nullptr);
     // Intentionally leak the FileLogger. juce::Logger::setCurrentLogger
-    // is not thread-safe — a background thread that loaded the old
+    // is not thread-safe - a background thread that loaded the old
     // pointer just before the null-store could still be inside
     // writeToLog and would dereference a destroyed object after .reset().
     // Process is exiting; the OS reclaims the memory either way.

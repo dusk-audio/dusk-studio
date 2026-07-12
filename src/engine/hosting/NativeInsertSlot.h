@@ -22,7 +22,7 @@ namespace duskstudio::hosting
 //   static constexpr const char* bundleNoun;  // load-error prefix ("bundle"/"module")
 //   static bool pickPlugin (const Bundle&, const std::string& requestedId,
 //                           std::string& idOut, std::string& errorOut);
-//     — empty requestedId: the format's default (first effect); non-empty: honour
+//     - empty requestedId: the format's default (first effect); non-empty: honour
 //       it when the bundle advertises it, else fail (a renamed/removed class must
 //       not silently load a different plugin).
 //
@@ -30,7 +30,7 @@ namespace duskstudio::hosting
 // reads a lock-free `ready` flag so it no-ops cleanly when empty.
 //
 // Concurrency: a load / unload while the audio thread might be mid-process must be
-// fenced by the engine's process gate (suspend → silent buffers → swap → resume);
+// fenced by the engine's process gate (suspend -> silent buffers -> swap -> resume);
 // the slot itself only guards the steady state via the acquire/release `ready` flag.
 template <typename Traits>
 class NativeInsertSlot
@@ -42,7 +42,7 @@ public:
     NativeInsertSlot() = default;
 
     // Message thread: load the bundle at `path` and instantiate `pluginId` (empty =
-    // the format's default pick — the first effect), replacing any prior load.
+    // the format's default pick - the first effect), replacing any prior load.
     // False (+ errorOut) on failure.
     bool load (const juce::File& path, double sampleRate, int maxBlock, std::string& errorOut,
                const juce::String& pluginId = {})
@@ -79,7 +79,7 @@ public:
     void unload()
     {
         ready.store (false, std::memory_order_release);
-        instance.reset();   // destroy the plugin first — its vtables live in the bundle
+        instance.reset();   // destroy the plugin first - its vtables live in the bundle
         bundle.reset();     // then unload the .so / world backing them
         loadedPath.clear();
         loadedPluginId.clear();
@@ -113,7 +113,7 @@ public:
 
     bool isLoaded() const noexcept { return ready.load (std::memory_order_acquire); }
     const juce::String& getPath() const noexcept { return loadedPath; }
-    // The instantiated plugin's id within its bundle (class UID / URI / CLAP id) —
+    // The instantiated plugin's id within its bundle (class UID / URI / CLAP id) -
     // resolved even when load() defaulted, so sessions persist the actual pick.
     const juce::String& getPluginId() const noexcept { return loadedPluginId; }
 
@@ -128,12 +128,12 @@ public:
     bool loadState (const std::vector<uint8_t>& in)
     { return instance != nullptr && instance->loadState (in); }
 
-    // Whether the loaded plugin is an instrument (no main audio input — the
+    // Whether the loaded plugin is an instrument (no main audio input - the
     // block's MIDI drives it and its output IS the signal).
     bool isLoadedInstrument() const noexcept
     { return isLoaded() && instance != nullptr && instance->portLayout().isInstrument; }
 
-    // Audio thread: process stereo through the plugin, via the InsertAdapter →
+    // Audio thread: process stereo through the plugin, via the InsertAdapter ->
     // INativeInstance::processBlock. Clears the outputs + returns when no plugin
     // is loaded; passes audio through when bypassed. midiIn feeds instruments
     // and MIDI-driven effects (null ok).
@@ -150,7 +150,7 @@ public:
         };
 
         // Clear when empty or momentarily inactive (mid-reactivate, fenced by the
-        // engine gate) — a no-op silent pass.
+        // engine gate) - a no-op silent pass.
         if (! ready.load (std::memory_order_acquire) || instance == nullptr
             || ! instance->isActive() || inL == nullptr)
         {
@@ -163,7 +163,7 @@ public:
 
         if (bypassed.load (std::memory_order_relaxed))
         {
-            // Passthrough — copy in→out (a no-op when called in-place).
+            // Passthrough - copy in->out (a no-op when called in-place).
             if (outL != nullptr && outL != inL) std::memcpy (outL, inL, n);
             const float* r = (inR != nullptr) ? inR : inL;
             if (outR != nullptr && outR != r)   std::memcpy (outR, r, n);
@@ -192,16 +192,16 @@ public:
     Instance* getInstance() noexcept
         { return ready.load (std::memory_order_acquire) ? instance.get() : nullptr; }
 
-    // ── MIDI-binding parameter writes ──────────────────────────────────────
+    // MIDI-binding parameter writes
     // The MIDI apply loop runs on the AUDIO thread, but the instances' param
     // rings are single-producer (message thread: host sets + editor edits), so
     // a binding can't push there directly. Same inversion as PluginSlot: the
     // audio thread queues {paramIndex, 0..1 fraction} here, and the engine's
     // message-thread drain timer applies it through the format's param surface
-    // (which then queues back UI→RT — one drain tick of extra latency, same as
+    // (which then queues back UI->RT - one drain tick of extra latency, same as
     // the JUCE slot's bindings).
 
-    // Audio thread. Full ⇒ drop (only under a pathological controller flood).
+    // Audio thread. Full => drop (only under a pathological controller flood).
     void queueParamBinding (uint32_t paramIndex, float frac) noexcept
     { bindingRing.push ({ paramIndex, frac }); }
 
@@ -218,9 +218,9 @@ public:
 
 protected:
     // Format hook: map paramIndex + 0..1 fraction onto the instance's parameter
-    // surface (message thread). Default: format has no parameters — drop.
+    // surface (message thread). Default: format has no parameters - drop.
     virtual void applyParamBinding (uint32_t /*paramIndex*/, float /*frac*/) {}
-    // bundle declared first so it is destroyed LAST — the instance's vtables live
+    // bundle declared first so it is destroyed LAST - the instance's vtables live
     // in the bundle's .so / world.
     std::unique_ptr<Bundle>   bundle;
     std::unique_ptr<Instance> instance;

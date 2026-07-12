@@ -109,7 +109,7 @@ juce::MidiBuffer McuController::buildEmitBuffer (bool forceAll)
     const int assign = session.mcu.assignMode.load (std::memory_order_acquire);
     const int selected = session.mcu.selectedChannel.load (std::memory_order_acquire);
 
-    // ── Per-strip fader / button feedback for the 8 banked tracks ──
+    // Per-strip fader / button feedback for the 8 banked tracks
     for (int strip = 0; strip < kStripsPerBank; ++strip)
     {
         const int t = bank * kStripsPerBank + strip;
@@ -154,7 +154,7 @@ juce::MidiBuffer McuController::buildEmitBuffer (bool forceAll)
         }
     }
 
-    // ── Master fader ──
+    // Master fader
     const float masterDb = session.master().liveFaderDb.load (std::memory_order_relaxed);
     const int masterPb = mcu::faderDbToPitchBend14 (masterDb);
     if (forceAll || masterPb != lastMasterFader)
@@ -163,7 +163,7 @@ juce::MidiBuffer McuController::buildEmitBuffer (bool forceAll)
         lastMasterFader = masterPb;
     }
 
-    // ── Bank arrow LEDs ──
+    // Bank arrow LEDs
     if (forceAll || bank != lastBank)
     {
         const bool leftAvailable  = bank > 0;
@@ -175,7 +175,7 @@ juce::MidiBuffer McuController::buildEmitBuffer (bool forceAll)
         lastBank = bank;
     }
 
-    // ── Assign-mode LEDs (exactly one lit) ──
+    // Assign-mode LEDs (exactly one lit)
     if (forceAll || assign != lastAssignMode)
     {
         // Map session.mcu.assignMode -> the lit button:
@@ -200,7 +200,7 @@ juce::MidiBuffer McuController::buildEmitBuffer (bool forceAll)
         lastAssignMode = assign;
     }
 
-    // ── Selected-channel LED (when the selection falls in the bank) ──
+    // Selected-channel LED (when the selection falls in the bank)
     if (forceAll || selected != lastSelectedChannel || bank != lastBank)
     {
         // Clear all 8 SELECT LEDs first, then light the active one if
@@ -219,7 +219,7 @@ juce::MidiBuffer McuController::buildEmitBuffer (bool forceAll)
         lastSelectedChannel = selected;
     }
 
-    // ── Transport LEDs (and loop) ──
+    // Transport LEDs (and loop)
     // Provider is wired by AudioEngine in its ctor; tests can leave it
     // unset and the controller skips this branch (the transport LEDs
     // simply stay at their last cached value).
@@ -262,8 +262,8 @@ juce::MidiBuffer McuController::buildEmitBuffer (bool forceAll)
         buf.addEvent (juce::MidiMessage::noteOn (1, mcu::btn::Loop,   (std::uint8_t) 0x00), 0);
     }
 
-    // ── LCD row 0: track names (7 chars per strip) ──
-    // ── LCD row 1: value readouts depending on assign mode ──
+    // LCD row 0: track names (7 chars per strip)
+    // LCD row 1: value readouts depending on assign mode
     std::array<char, mcu::sysex::kLcdRowBytes> row0 {};
     std::array<char, mcu::sysex::kLcdRowBytes> row1 {};
     row0.fill (' ');
@@ -300,7 +300,7 @@ juce::MidiBuffer McuController::buildEmitBuffer (bool forceAll)
         writeStripField (row1, strip, value);
     }
 
-    // ── Per-channel meters (channel pressure 0xD0) ──
+    // Per-channel meters (channel pressure 0xD0)
     // Toggle every tick so we emit at ~15 Hz - half of the 30 Hz UI
     // cadence. MCU meters fall back from peak under their own
     // ballistics; over-driving them buries the bus in low-value
@@ -333,7 +333,7 @@ juce::MidiBuffer McuController::buildEmitBuffer (bool forceAll)
         }
     }
 
-    // ── V-pot LED rings (CC 0x30+N) ──
+    // V-pot LED rings (CC 0x30+N)
     // Value encodes mode (high nibble) + LED position 1..11 (low
     // nibble). In PAN mode use ModeBoost (single dot moves from
     // centre); in SEND modes use ModeWrap (fill from left); in EQ /
@@ -411,7 +411,7 @@ juce::MidiBuffer McuController::buildEmitBuffer (bool forceAll)
         lastLcdRow1 = row1;
     }
 
-    // ── Timecode display ──
+    // Timecode display
     // Format BBT or SMPTE depending on session.timeDisplayMode. 10
     // chars total (MCU's number panel adds the dots itself, so we
     // emit pure digits with no separators).

@@ -7,20 +7,20 @@
 
 namespace duskstudio
 {
-// MTC decoder. Audio-thread only. Sibling of MidiSyncReceiver — Clock
+// MTC decoder. Audio-thread only. Sibling of MidiSyncReceiver - Clock
 // carries tempo, MTC carries absolute SMPTE (HH:MM:SS:FF).
 //
 // Decode surface:
-//   0xF1 Quarter-Frame  — 1 status + 1 data (nibble index 0..7 + 4 bits).
+//   0xF1 Quarter-Frame  - 1 status + 1 data (nibble index 0..7 + 4 bits).
 //     8 QFs assemble one SMPTE value spanning 2 frames of wall time, so
 //     at nibble-7 commit the assembled value is the time as it was 2
 //     frames AGO. We add +2 at the commit so getFrames() is wall-clock
 //     aligned with what the master is displaying right now.
-//   F0 7F 7F 01 01 hr mn sc fr F7 Full-Frame sysex — instantaneous
+//   F0 7F 7F 01 01 hr mn sc fr F7 Full-Frame sysex - instantaneous
 //     locate. No +2 offset.
 //
 // Reverse scrubbing (v1: detect-and-park): masters scrubbing backward
-// send 7→0. We freeze frames + rolling on two consecutive QFs with
+// send 7->0. We freeze frames + rolling on two consecutive QFs with
 // strictly decreasing nibbles and wait for a forward sequence resumption.
 //
 // Rolling watchdog: QF arrival rate, not nibble order. 500 ms covers a
@@ -91,7 +91,7 @@ private:
     double sr = 48000.0;
     std::int64_t rollingTimeoutSamples = 12000;
 
-    // QF assembly: 8 nibbles → 32 bits split (frames lo+hi, secs lo+hi,
+    // QF assembly: 8 nibbles -> 32 bits split (frames lo+hi, secs lo+hi,
     // mins lo+hi, hours+rate lo+hi). Outer index picks the SMPTE field.
     std::uint8_t nibbleAccumulator[4] {};
 

@@ -45,7 +45,7 @@ void setFollowPlayheadDefault (bool follow);
 // (Operation > Transport > "Audio During Fast Forward / Rewind") and
 // Logic (Preferences > Recording > "Stop returns to playback start").
 // PauseInPlace (default, current behaviour) leaves the playhead where
-// the user stopped — pause-and-resume feels musical. ReturnToZero
+// the user stopped - pause-and-resume feels musical. ReturnToZero
 // rewinds to the timeline origin on every Stop. ReturnToLastClicked
 // jumps to the last position the user clicked on the tape strip ruler,
 // so Stop -> Play re-cycles a region the user just auditioned without
@@ -62,7 +62,7 @@ void         setStopBehavior (StopBehavior b);
 // Multicore DSP: fan the 24 channel strips' per-block DSP across a pool of
 // real-time worker threads (the audio-thread callback runs one lane itself).
 // Off = serial (one core, the proven path). Auto = cores-2 workers on machines
-// with >=4 cores, else Off — leaves a core for the UI + OS on top of the audio
+// with >=4 cores, else Off - leaves a core for the UI + OS on top of the audio
 // thread. Manual = a user-pinned worker count (clamped to the same cap).
 // Persisted per-machine: a session authored on a many-core box must not impose
 // its worker count on a 4-core target, so this never travels in session.json.
@@ -99,12 +99,12 @@ void setAutosaveIntervalSeconds (int seconds);
 // MIDI soft takeover (pickup): a continuous absolute binding stays dormant
 // until the controller crosses the parameter's current position, instead of
 // snapping the parameter on first touch. Default false (absolute controllers
-// track 1:1 like a classic console surface). Per-machine — it describes the
+// track 1:1 like a classic console surface). Per-machine - it describes the
 // hardware on this desk, not the session.
 bool getMidiSoftTakeover();
 void setMidiSoftTakeover (bool on);
 
-// Virtual-keyboard centre note (MIDI 0..120). Default 36 (C2) — sits
+// Virtual-keyboard centre note (MIDI 0..120). Default 36 (C2) - sits
 // near the lower half of the bass register so the visible 2-octave
 // window (centre-12..centre+12) covers C1..C3 by default, matching
 // typical bassline / synth-bass authoring on a 49-key controller.

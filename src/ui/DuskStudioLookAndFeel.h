@@ -25,7 +25,7 @@ inline constexpr std::array<FaderTick, 9> kFaderTicks {{
 inline constexpr float kFaderTrackPad = 18.0f;
 
 // PARENT-coord Y for a given dB. Call from the parent's paint(), NOT
-// from the slider's own paint() or after g.setOrigin() — math won't
+// from the slider's own paint() or after g.setOrigin() - math won't
 // match. Honours NormalisableRange skew. Non-const + non-noexcept
 // because valueToProportionOfLength caches internally and can call
 // user-supplied lambdas.
@@ -33,7 +33,7 @@ inline float faderYForDb (juce::Slider& fader, float dB)
 {
     const auto b = fader.getBounds();
     const float prop = (float) fader.valueToProportionOfLength (dB);
-    // Mirror getSliderLayout — we override V2's 8 px reduce so visual
+    // Mirror getSliderLayout - we override V2's 8 px reduce so visual
     // track and drag math share the same Y. Just carve the textbox.
     const auto pos = fader.getTextBoxPosition();
     const int textBoxH = (pos == juce::Slider::TextBoxAbove
@@ -59,7 +59,7 @@ public:
         setColour (juce::Slider::backgroundColourId,          juce::Colour (0xff1a1a1c));
     }
 
-    // JUCE defaults clamp combo at 15 px / popup at 17 px — long MIDI
+    // JUCE defaults clamp combo at 15 px / popup at 17 px - long MIDI
     // device names truncate ("PANO..."). Bump to 16 / 18.5 px.
     juce::Font getComboBoxFont (juce::ComboBox&) override
     {
@@ -200,7 +200,7 @@ public:
         layout.draw (g, juce::Rectangle<float> (8.0f, ty, innerW, layout.getHeight()));
     }
 
-    // Override V2's 8 px top/bottom reduce — default reduce makes the
+    // Override V2's 8 px top/bottom reduce - default reduce makes the
     // drag math span a smaller rect than the visual track, so the cap
     // couldn't reach the bottom tick. Visual + drag math now identical.
     juce::Slider::SliderLayout getSliderLayout (juce::Slider& slider) override
@@ -273,7 +273,7 @@ public:
                                                         trackW, bounds.getHeight());
         g.setColour (juce::Colour (0xff0a0a0c));
         g.fillRoundedRectangle (trackRect, trackW * 0.5f);
-        // Recessed look — vertical fade just inside the top edge.
+        // Recessed look - vertical fade just inside the top edge.
         {
             juce::ColourGradient innerShadow (juce::Colour (0x80000000),
                                                 trackRect.getX(), trackRect.getY(),
@@ -292,7 +292,7 @@ public:
         const auto range = slider.getNormalisableRange();
         const float padTopBot = 0.0f;   // bounds already inset
         const float trackH = bounds.getHeight() - padTopBot * 2.0f;
-        // Per-slider opt-in via "dusk_drawFaderScaleLabels" property —
+        // Per-slider opt-in via "dusk_drawFaderScaleLabels" property -
         // hardware-fader grammar: ticks extend further, dB drawn left of
         // tick, "off" replaces "90" at the bottom.
         const bool drawScaleLabels = (bool) slider.getProperties()
@@ -312,11 +312,11 @@ public:
                          trackRect.getRight() + xOver, tickY,
                          isZero ? 1.2f : 0.7f);
 
-            // Labels not drawn here — strip is too narrow without
+            // Labels not drawn here - strip is too narrow without
             // clipping; strip's own paint() uses faderYForDb.
         }
 
-        // Cap CENTRE sits exactly on the value's Y — hardware-fader
+        // Cap CENTRE sits exactly on the value's Y - hardware-fader
         // grammar (cap straddles the value line).
         const float capW = juce::jmin (bounds.getWidth() - 6.0f, 20.0f);
         const float capH = 36.0f;
@@ -399,7 +399,7 @@ public:
             const int   nDots   = 11;
             const float dotRing = R * 0.965f;
             const float dotSz   = juce::jmax (0.9f, R * 0.06f);
-            g.setColour (juce::Colour (0xffc8c8d2));   // light marker — high contrast on the dark margin
+            g.setColour (juce::Colour (0xffc8c8d2));   // light marker - high contrast on the dark margin
             for (int i = 0; i < nDots; ++i)
             {
                 const float t = (float) i / (float) (nDots - 1);
@@ -463,7 +463,7 @@ namespace fourKColors
     inline constexpr std::uint32_t kMasterTan = 0xffd0a060;
 }
 
-// SSL 9000J palette — EQ knob bodies only. Separate namespace so the
+// SSL 9000J palette - EQ knob bodies only. Separate namespace so the
 // track colour-picker (driven by fourKColors) keeps its labels (Red /
 // Orange / Amber / Green).
 namespace sslEqColors
@@ -471,9 +471,9 @@ namespace sslEqColors
     inline constexpr std::uint32_t kHfRed   = 0xffc44444;
     inline constexpr std::uint32_t kHmGreen = 0xff5fa55f;
     inline constexpr std::uint32_t kLmBlue  = 0xff5878b0;
-    inline constexpr std::uint32_t kLfBlack = 0xff5a5a62;  // graphite, not true black — legible on the dark EQ panel while staying the darkest band
+    inline constexpr std::uint32_t kLfBlack = 0xff5a5a62;  // graphite, not true black - legible on the dark EQ panel while staying the darkest band
     inline constexpr std::uint32_t kHpfBlue = 0xff4a7c9e;
-    // 9000J top-section filter knobs are white-faced — HPF + LPF
+    // 9000J top-section filter knobs are white-faced - HPF + LPF
     // share this so they read as a pair.
     inline constexpr std::uint32_t kFilterWhite = 0xffe0e0e4;
 }

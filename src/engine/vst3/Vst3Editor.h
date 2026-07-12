@@ -13,9 +13,9 @@ class Vst3Instance;
 // attaches to it via kPlatformTypeX11EmbedWindowID. Mirrors Lv2Editor's shape:
 // open() discovers/creates the view, embed() parents it on-screen.
 //
-// The frame is wired at open() — BEFORE attached() — so the view can reach the
+// The frame is wired at open() - BEFORE attached() - so the view can reach the
 // IPlugFrame (and query the Linux IRunLoop through it) while attaching. Resize
-// requests round-trip resizeView → host window resize → onSize, per spec.
+// requests round-trip resizeView -> host window resize -> onSize, per spec.
 //
 // No X11 / Steinberg types leak here: everything lives behind the pImpl.
 class Vst3Editor
@@ -28,7 +28,7 @@ public:
 
     // Create the controller's editor view and wire the frame + host callbacks.
     // False (+errorOut) when the plugin ships no X11-embeddable editor. Keeps a
-    // reference to `inst` — the owner must keep it alive past this editor.
+    // reference to `inst` - the owner must keep it alive past this editor.
     bool open (Vst3Instance& inst, std::string& errorOut);
 
     // Create the host X11 window under parentX11 at (x,y,w,h), attach the view

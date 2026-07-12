@@ -49,7 +49,7 @@ public:
     // session.json, shows Save / Don't Save / Cancel; otherwise quits.
     void requestQuit();
 
-    // Sequenced shutdown — destroy-notify storm of a hard quit races
+    // Sequenced shutdown - destroy-notify storm of a hard quit races
     // the compositor on Linux/Wayland (Mutter) and has been observed
     // to take down the whole session.
     //
@@ -63,7 +63,7 @@ public:
     void leakAllPluginInstancesForShutdown();
 
     // Open a session from a path (a session.json file or a session directory
-    // containing one) — used for command-line / file-manager "open with" and
+    // containing one) - used for command-line / file-manager "open with" and
     // the second-instance handoff. No-op if the path resolves to nothing.
     void openSessionPath (const juce::File& path);
 
@@ -105,7 +105,7 @@ private:
     void guardUnsavedThen (const juce::String& title, const juce::String& message,
                             std::function<void()> proceed);
     void newSessionPrompt();
-    // The folder-pick + create half of newSessionPrompt — runs only once any
+    // The folder-pick + create half of newSessionPrompt - runs only once any
     // unsaved-changes prompt has been resolved.
     void promptNewSessionLocation();
     // True if the live session diverges from the last manual save / autosave.
@@ -207,7 +207,7 @@ private:
     // wiring its own.
     juce::TooltipWindow tooltipWindow { this, 600 };
 
-    // Dusk-native menu bar — same MenuBarModel API as juce::MenuBarComponent
+    // Dusk-native menu bar - same MenuBarModel API as juce::MenuBarComponent
     // but popups render via showContextMenu (in-window EmbeddedModal)
     // instead of native PopupMenu. Fixes XWayland popup flash / focus drop.
     DuskMenuBar menuBar;
@@ -243,16 +243,16 @@ private:
     void refreshSnapUi();
 
     // Every dialog opens via DuskFileBrowser (in-window EmbeddedModal)
-    // which owns its own lifetime — no caller-side keep-alive. Standalone
+    // which owns its own lifetime - no caller-side keep-alive. Standalone
     // juce::FileChooser had X11/Wayland positioning + stacking issues.
     std::unique_ptr<class MasteringView> masteringView;
     std::unique_ptr<class AuxView>       auxView;
 
-    // Explicitly torn down in our dtor BEFORE AudioEngine destructs —
+    // Explicitly torn down in our dtor BEFORE AudioEngine destructs -
     // the dialog hosts an AudioDeviceSelectorComponent that listens to
     // engine.deviceManager. Letting JUCE's ModalComponentManager clean
     // it up at app exit (which runs AFTER us) would deref a freed
-    // AudioDeviceManager → SIGSEGV.
+    // AudioDeviceManager -> SIGSEGV.
     EmbeddedModal audioSettingsModal;
     EmbeddedModal mixdownModal;
     EmbeddedModal bounceModal;
@@ -282,7 +282,7 @@ private:
 
     void toggleVirtualKeyboard();
 
-    // True once the audio callback is removed for shutdown — makes
+    // True once the audio callback is removed for shutdown - makes
     // detach idempotent and signals publishPluginStateForSave that the
     // atomic-park sleeps can be skipped.
     bool engineDetached = false;
@@ -316,7 +316,7 @@ private:
     // the still-present startup dialog.
     void dismissStartupDialog (std::function<void()> onDone = {});
 
-    // Cross-OS cursor overlay — paints Grab / Cut / Draw glyphs at the
+    // Cross-OS cursor overlay - paints Grab / Cut / Draw glyphs at the
     // mouse position via a 60 Hz JUCE timer, bypassing the platform
     // cursor pipeline entirely. See CursorOverlay.h for the design.
     std::unique_ptr<class CursorOverlay> cursorOverlay;
@@ -357,7 +357,7 @@ private:
     void scheduleEditModeRestore();
     void restoreEditModeIfModalClosed();
 
-    // One-shot deferred teardown for the editor collapse animation — kept
+    // One-shot deferred teardown for the editor collapse animation - kept
     // alive while the ComponentAnimator runs, then fires the immediate
     // close. Only one region editor is open at a time, so a single slot
     // suffices.

@@ -144,7 +144,7 @@ void TransportIconButton::paintButton (juce::Graphics& g, bool isMouseOver,
         }
         case Icon::Punch:
         {
-            // Concentric ring + filled inner disc — "bullseye". Reads as
+            // Concentric ring + filled inner disc - "bullseye". Reads as
             // a punch-in target.
             const float ringW = iconBox.getWidth() * 0.15f;
             g.drawEllipse (iconBox, ringW);
@@ -176,7 +176,7 @@ void TransportIconButton::paintButton (juce::Graphics& g, bool isMouseOver,
         case Icon::Bars:
         {
             // Bars/beats glyph: four ascending vertical bars representing a
-            // bar count graphic — quick read as "musical time".
+            // bar count graphic - quick read as "musical time".
             const float w = iconBox.getWidth();
             const float h = iconBox.getHeight();
             const float bw = w * 0.16f;
@@ -192,7 +192,7 @@ void TransportIconButton::paintButton (juce::Graphics& g, bool isMouseOver,
         }
         case Icon::TimeClock:
         {
-            // Clock face: circle outline + two hands (12 → up, 3 → right).
+            // Clock face: circle outline + two hands (12 -> up, 3 -> right).
             g.drawEllipse (iconBox.reduced (0.5f), 1.4f);
             const auto c = iconBox.getCentre();
             const float r1 = iconBox.getWidth() * 0.34f;   // hour hand length
@@ -284,7 +284,7 @@ void TransportIconButton::buttonStateChanged()
 
 TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
 {
-    // Accessibility floor — screen readers announce buttons by name
+    // Accessibility floor - screen readers announce buttons by name
     // (icon-only buttons would otherwise speak as "button"). Tooltip
     // text supplied below covers the description.
     setTitle ("Transport bar");
@@ -370,7 +370,7 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
     clockLabel.setFont (juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(),
                                                         18.0f, juce::Font::bold)));
     clockLabel.setText ("00:00.000", juce::dontSendNotification);
-    // Direct numeric location entry. Double-click → text editor; Enter
+    // Direct numeric location entry. Double-click -> text editor; Enter
     // commits via the parser; Esc reverts. Three formats accepted:
     //   1:23 / 1:23.456    minutes : seconds[.ms]
     //   12.3.4 / 12|3|4    bar . beat . subdivision (1-indexed bar/beat,
@@ -454,10 +454,9 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
         repaint();
     };
     timeFormatToggle.onClick = flipTimeMode;
-    // Always visible after the bank-row refactor — banks now live inline
-    // beside the centered stage block, not overlaid on the transport bar's
-    // x-band, so the time-format toggle no longer collides with them at
-    // any width. Right-click on the clock label remains a redundant
+    // Always visible: banks live inline beside the centered stage block, not
+    // overlaid on the transport bar's x-band, so the time-format toggle does
+    // not collide with them at any width. Right-click on the clock label is a
     // fallback for changing time-display mode.
     addAndMakeVisible (timeFormatToggle);
 
@@ -482,7 +481,7 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
         b.setColour (juce::TextButton::textColourOnId,   juce::Colours::white);
     };
 
-    // clickToggle is now a TransportIconButton — paints from its ctor
+    // clickToggle is now a TransportIconButton - paints from its ctor
     // colour, no TextButton styling needed.
     styleModeToggle (countInToggle, juce::Colour (0xff60c060));   // green: same family as CLICK
 
@@ -507,7 +506,7 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
     {
         engine.getTransport().setPunchEnabled (punchButton.getToggleState());
     };
-    punchButton.addMouseListener (this, false);  // right-click → settings menu
+    punchButton.addMouseListener (this, false);  // right-click -> settings menu
     addAndMakeVisible (punchButton);
 
     keyboardButton.setTooltip ("Virtual MIDI Keyboard (K) - type on your keyboard to play notes.");
@@ -523,7 +522,7 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
     {
         engine.getSession().metronomeEnabled.store (clickToggle.getToggleState());
     };
-    // Right-click → behaviour menu (Click while recording / Only during
+    // Right-click -> behaviour menu (Click while recording / Only during
     // count-in / Click while playing / Polyphonic clicks). Routed via
     // addMouseListener so TransportBar::mouseDown sees popup events on
     // clickToggle without subclassing the button.
@@ -556,7 +555,7 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
     bpmValue.setText (formatBpm (engine.getSession().tempoBpm.load()),
                        juce::dontSendNotification);
     // Shows the tempo at the playhead (following the tempo map). Not a
-    // free-typing Label editor — double-click routes through the same
+    // free-typing Label editor - double-click routes through the same
     // prompt + undoable commit the ruler's tempo edits use.
     bpmValue.setEditable (false, false);
     bpmValue.setTooltip ("Tempo at the playhead (beats per minute). "
@@ -700,10 +699,10 @@ void TransportBar::timerCallback()
                 const bool wasScrub = scrubbing;
                 pressedAt = 0;
                 scrubbing = false;
-                if (! wasScrub) tap();   // short press → marker jump
+                if (! wasScrub) tap();   // short press -> marker jump
             }
             else if (! isHeld && pressedAt == 0 && newPress)
-                tap();   // press+release fell entirely between two polls → fast tap
+                tap();   // press+release fell entirely between two polls -> fast tap
         };
         mcuEdge (mcuRew,  sess.mcu.rewPressCount.load  (std::memory_order_relaxed),
                  mcuRewLastPressCount,  mcuRewPressedAtMs,  mcuRewIsScrubbing,  [this] { rewindTap();  });
@@ -726,7 +725,7 @@ void TransportBar::timerCallback()
     // Skip the periodic refresh while the user is mid-edit so we don't
     // stomp their typed input. Same pattern the BPM editor uses below.
     // When MIDI learn is pending, the clock label dims and shows a
-    // "MIDI LEARN…" prompt so the user knows the next CC/Note will be
+    // "MIDI LEARN..." prompt so the user knows the next CC/Note will be
     // captured. Cleared on capture (drained below in the same tick).
     if (! clockLabel.isBeingEdited())
     {
@@ -748,10 +747,10 @@ void TransportBar::timerCallback()
                                                         engine.getSession().tempoMap,
                                                         bpm, bpb, mode),
                                  juce::dontSendNotification);
-            // Icon shows what the next click will switch TO — matches the
+            // Icon shows what the next click will switch TO - matches the
             // convention used by Reaper / Pro Tools secondary time-scale
-            // buttons. Bars-mode shows the clock (click → time); Time-mode
-            // shows the bars glyph (click → bars).
+            // buttons. Bars-mode shows the clock (click -> time); Time-mode
+            // shows the bars glyph (click -> bars).
             timeFormatToggle.setIcon (mode == TimeDisplayMode::Bars
                                           ? TransportIconButton::Icon::TimeClock
                                           : TransportIconButton::Icon::Bars);
@@ -975,7 +974,7 @@ void TransportBar::refreshButtonStates()
 
     // Avoid stomping the user's mid-edit text - only refresh the BPM
     // display when the label isn't currently being typed into. Show the tempo
-    // AT THE PLAYHEAD (follows the tempo map), not the constant bar-1 tempo —
+    // AT THE PLAYHEAD (follows the tempo map), not the constant bar-1 tempo -
     // otherwise this clobbers the playhead-driven value timerCallback just set.
     if (! bpmValue.isBeingEdited())
         bpmValue.setText (formatBpm (
@@ -983,10 +982,10 @@ void TransportBar::refreshButtonStates()
                            juce::dontSendNotification);
 
     // BPM caption priority:
-    //   "MTC" + amber  — incoming MTC quarter-frames decoded (master is
+    //   "MTC" + amber  - incoming MTC quarter-frames decoded (master is
     //                    driving absolute time)
-    //   "EXT" + amber  — incoming MIDI Clock producing a stable BPM
-    //   "BPM" + grey   — Dusk Studio-internal tempo
+    //   "EXT" + amber  - incoming MIDI Clock producing a stable BPM
+    //   "BPM" + grey   - Dusk Studio-internal tempo
     // MTC takes priority over EXT because MTC implies a richer
     // master-slave relationship; if both flow, the user cares more
     // about the absolute-time chase.
@@ -1114,7 +1113,7 @@ void TransportBar::mouseDown (const juce::MouseEvent& e)
         return;
     }
     // Right-click on the metronome (CLICK) button opens the behaviour
-    // menu — when the click fires (recording / count-in / playing) +
+    // menu - when the click fires (recording / count-in / playing) +
     // polyphonic toggle. Plain click stays as on/off.
     if (e.eventComponent == &clickToggle && e.mods.isPopupMenu())
     {
@@ -1122,7 +1121,7 @@ void TransportBar::mouseDown (const juce::MouseEvent& e)
         return;
     }
     // Right-click on clock flips the time-display mode. Always
-    // available — including in compact mode where the dedicated
+    // available - including in compact mode where the dedicated
     // timeFormatToggle button is hidden to avoid bank-button collision.
     if (e.eventComponent == &clockLabel && e.mods.isPopupMenu())
     {
@@ -1255,7 +1254,7 @@ void TransportBar::promptEditTempoAtPlayhead()
     const auto playhead = engine.getTransport().getPlayhead();
     const float current = s.bpmAt (playhead);
 
-    // Preserve fractional BPM in the prefill (e.g. a tapped 127.6) —
+    // Preserve fractional BPM in the prefill (e.g. a tapped 127.6) -
     // rounding it would make an untouched OK commit a spurious edit.
     const juce::String prefill =
         std::abs (current - std::round (current)) < 0.005f
@@ -1282,7 +1281,7 @@ void TransportBar::promptEditTempoAtPlayhead()
                 return;
             }
 
-            // Tempo map active: edit the point governing the playhead —
+            // Tempo map active: edit the point governing the playhead -
             // the value the readout shows. Same undoable commit as the
             // ruler's tempo edits.
             auto vec = s2.tempoMap.points();
@@ -1450,7 +1449,7 @@ void TransportBar::confirmAndApplyBpm (float newBpm, float oldBpm)
     auto& s = engine.getSession();
 
     // No-op only for a genuinely unchanged value. A small tolerance (not 0.5)
-    // so fractional edits like 127.2 → 127.6 still apply; the prefill already
+    // so fractional edits like 127.2 -> 127.6 still apply; the prefill already
     // round-trips fractional BPM, so an untouched OK stays a true no-op.
     if (std::abs (newBpm - oldBpm) < 0.005f)
     {
@@ -1460,7 +1459,7 @@ void TransportBar::confirmAndApplyBpm (float newBpm, float oldBpm)
 
     // When a tempo map is active it governs timing directly, so the BPM field
     // edits the bar-1 tempo point instead of running the legacy single-tempo
-    // region retime (and there's no retime dialog — nothing is rescaled).
+    // region retime (and there's no retime dialog - nothing is rescaled).
     if (! s.tempoMap.empty())
     {
         auto pts = s.tempoMap.points();
@@ -1496,7 +1495,7 @@ void TransportBar::confirmAndApplyBpm (float newBpm, float oldBpm)
         return;
     }
 
-    // Show the genuine (possibly fractional) values so a 127.2 → 127.6 edit
+    // Show the genuine (possibly fractional) values so a 127.2 -> 127.6 edit
     // doesn't read as "127 to 127 BPM". Trim trailing zeros so whole numbers
     // still show as "127", not "127.00".
     auto fmtBpm = [] (float v)

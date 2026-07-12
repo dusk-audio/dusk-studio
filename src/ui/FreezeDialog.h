@@ -13,7 +13,7 @@ class Session;
 // Modal progress panel for a track FREEZE. Owns a BounceEngine, kicks the
 // pre-fader render on the worker thread (BounceEngine::startFreeze) so a long
 // render never wedges the message thread, and polls the engine's atomics on a
-// 20 Hz timer — the same no-callback-marshalling pattern as BounceDialog. On
+// 20 Hz timer - the same no-callback-marshalling pattern as BounceDialog. On
 // success it commits the freeze on the message thread (AudioEngine::commitFreeze)
 // before the user dismisses it; Cancel aborts the render and writes nothing.
 class FreezeDialog final : public juce::Component,
@@ -55,7 +55,7 @@ private:
     juce::TextButton  cancelButton { "Cancel" };
     juce::TextButton  closeButton  { "Close" };
 
-    bool   isMidiTrack = false;   // cached in ctor — picks the audio vs instrument message
+    bool   isMidiTrack = false;   // cached in ctor - picks the audio vs instrument message
     bool   finished  = false;
     bool   succeeded = false;
     bool   committed = false;     // commitFreeze runs exactly once

@@ -46,7 +46,7 @@ public:
                   std::string& errorOut) noexcept;
 
     // Non-blocking check. Returns true if the child has exited.
-    // Idempotent — once reaped, subsequent calls return false (the pid
+    // Idempotent - once reaped, subsequent calls return false (the pid
     // is cleared).
     bool pollExit() noexcept;
 

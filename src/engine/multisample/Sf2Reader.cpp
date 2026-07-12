@@ -232,7 +232,7 @@ Sf2File readSf2(const juce::File& file)
         return out;
     }
 
-    // ── Samples (shdr) ──
+    // Samples (shdr)
     {
         const int n = (int) (shdr.size / kShdrSize);
         Cursor c { shdr.data, shdr.size, 0 };
@@ -255,7 +255,7 @@ Sf2File readSf2(const juce::File& file)
         }
     }
 
-    // ── Instrument generator zones ──
+    // Instrument generator zones
     std::vector<uint16_t> ibagGenNdx;
     std::vector<Sf2Generator> igens;
     {
@@ -297,7 +297,7 @@ Sf2File readSf2(const juce::File& file)
         }
     }
 
-    // ── Preset generator zones ──
+    // Preset generator zones
     std::vector<uint16_t> pbagGenNdx;
     std::vector<Sf2Generator> pgens;
     {

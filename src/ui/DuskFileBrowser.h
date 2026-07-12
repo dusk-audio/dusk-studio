@@ -5,7 +5,7 @@
 
 namespace duskstudio::filebrowser
 {
-// Mode hint — same shape as juce::FileBrowserComponent's flag bitmask
+// Mode hint - same shape as juce::FileBrowserComponent's flag bitmask
 // but enum'd so callers don't deal with OR'd constants. Save mode adds
 // a name field at the bottom + warns about overwriting existing files.
 enum class Mode { Open, Save };
@@ -14,14 +14,14 @@ struct Options
 {
     juce::String title;                  // shown in the modal header
     juce::File   initialFileOrDirectory; // path to seed (file selected when Save)
-    juce::String filePatternsAllowed;    // "*.wav;*.aiff" — empty = any
+    juce::String filePatternsAllowed;    // "*.wav;*.aiff" - empty = any
     Mode         mode = Mode::Open;
     bool         warnAboutOverwriting = true;  // Save mode only
     bool         selectDirectories     = false; // false = files only
 };
 
 // In-window Dusk-native file browser. Hosts juce::FileBrowserComponent
-// inside an EmbeddedModal-hosted panel — no juce::FileChooser standalone
+// inside an EmbeddedModal-hosted panel - no juce::FileChooser standalone
 // window, no Wayland positioning / stacking issues, parented to the
 // main app window so it inherits the DAW's modal grammar.
 //

@@ -9,7 +9,7 @@ namespace duskstudio
 Lv2PluginEditorComponent::Lv2PluginEditorComponent()
 {
     setOpaque (false);
-    // EmbeddedModal hides tagged editors while a modal is up — the native X11
+    // EmbeddedModal hides tagged editors while a modal is up - the native X11
     // window otherwise paints ABOVE the modal regardless of JUCE z-order,
     // burying dialogs under the plugin UI.
     getProperties().set (kPluginEditorTag, true);
@@ -34,7 +34,7 @@ bool Lv2PluginEditorComponent::attach (lv2::Lv2Instance& shared, juce::String& e
                      embedscale::fromPhysical (*this, h));
     };
     // The UI reported closed (idle() non-zero): stop treating it as live AND tear
-    // the native UI down — leaving it open would keep a dead-by-its-own-request
+    // the native UI down - leaving it open would keep a dead-by-its-own-request
     // window mapped. close() is safe from inside pump()'s onClosed dispatch (pump
     // returns immediately after) and idempotent for the destructor's later call.
     editor.onClosed = [this]
@@ -67,7 +67,7 @@ void Lv2PluginEditorComponent::tryEmbed()
     // host window, and toolkit wrappers can abort realising into a non-viewable
     // parent (same rule as the CLAP editor).
     // `embedding` breaks the re-entry cycle: suil instantiation runs the UI's
-    // ui:resize synchronously → onResize → setSize → resized() → tryEmbed again,
+    // ui:resize synchronously -> onResize -> setSize -> resized() -> tryEmbed again,
     // which would build a SECOND UI instance and orphan the first (the black-
     // rectangle bug).
     if (! loaded || embedded || embedding || ! isShowing()) return;
@@ -108,7 +108,7 @@ void Lv2PluginEditorComponent::pushBounds()
 {
     if (! embedded) return;
     // Borrowed bodies get setBounds'd by EmbeddedModal BEFORE being re-added
-    // to a parent — getTopLevelComponent() is then `this` and the area
+    // to a parent - getTopLevelComponent() is then `this` and the area
     // degenerates to (0,0), slamming the native window to the origin. Skip
     // while unparented; parentHierarchyChanged re-syncs once re-added.
     if (getParentComponent() == nullptr || getPeer() == nullptr) return;
@@ -145,7 +145,7 @@ void Lv2PluginEditorComponent::leakForShutdown()
 void Lv2PluginEditorComponent::verifyGeometry()
 {
     // The message flow can miss a move (compositor interference, an event
-    // arriving while unparented) — poll the REAL geometry ~3 Hz, snap back on
+    // arriving while unparented) - poll the REAL geometry ~3 Hz, snap back on
     // drift, and log the numbers so field reports say what actually happened.
     if (! isShowing() || getParentComponent() == nullptr || getPeer() == nullptr) return;
     if (++geometryCheckTick < 20) return;
@@ -188,7 +188,7 @@ void Lv2PluginEditorComponent::verifyGeometry()
 
 void Lv2PluginEditorComponent::timerCallback()
 {
-    // Ancestor visibility changes (tab switches) don't fire visibilityChanged —
+    // Ancestor visibility changes (tab switches) don't fire visibilityChanged -
     // poll like the CLAP editor so the native window can't float over another view.
     // The un-embedded poll covers the mirror case: a component created while its
     // lane was hidden (session restore lands before the AUX tab is first shown)

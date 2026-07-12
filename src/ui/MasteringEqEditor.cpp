@@ -75,7 +75,7 @@ MasteringEqEditor::MasteringEqEditor (MasteringParams& p, MasteringChain* c)
 
     specDb.fill (kSpecFloorDb);
 
-    // Spectrum on/off — a small unobtrusive pill in the curve's top-right.
+    // Spectrum on/off - a small unobtrusive pill in the curve's top-right.
     specToggle.setClickingTogglesState (true);
     specToggle.setToggleState (showSpectrum, juce::dontSendNotification);
     specToggle.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff202028));
@@ -98,7 +98,7 @@ MasteringEqEditor::MasteringEqEditor (MasteringParams& p, MasteringChain* c)
             if (headerBtn != nullptr) headerBtn->repaint();
         });
     headerBtn->setLabelText ("MASTERING EQ");
-    headerBtn->setAccentColour (juce::Colour (0xff5fa8d0));   // blue — transparent EQ
+    headerBtn->setAccentColour (juce::Colour (0xff5fa8d0));   // blue - transparent EQ
     addAndMakeVisible (headerBtn.get());
 
     for (int i = 0; i < 5; ++i)
@@ -210,8 +210,8 @@ float MasteringEqEditor::bandResponseDb (int idx, float freqHz) const noexcept
 {
     // Plot the actual biquad magnitude (shared coefficient math with the DSP).
     // The DSP runs the biquads oversampled, so evaluate the curve at the same
-    // oversampled rate — that's the de-crammed response the audio applies.
-    // Guard a null chain AND an invalid scope rate (0 / negative / non-finite) —
+    // oversampled rate - that's the de-crammed response the audio applies.
+    // Guard a null chain AND an invalid scope rate (0 / negative / non-finite) -
     // either would push a bad sample rate into magnitudeDb. Matches drawSpectrum.
     double base = (chain != nullptr) ? chain->getScopeSampleRate() : 48000.0;
     if (! (base > 0.0) || ! std::isfinite (base)) base = 48000.0;
@@ -353,11 +353,11 @@ void MasteringEqEditor::paint (juce::Graphics& g)
                      juce::Justification::centred, false);
     }
 
-    // ── Live spectrum (post-EQ), behind the EQ curves ──
+    // Live spectrum (post-EQ), behind the EQ curves
     if (showSpectrum)
         drawSpectrum (g, plot);
 
-    // ── Per-band response curves (dim) ──
+    // Per-band response curves (dim)
     constexpr int kNumPoints = 220;
     std::array<float, kNumPoints> freqs;
     for (int i = 0; i < kNumPoints; ++i)
@@ -431,7 +431,7 @@ void MasteringEqEditor::paint (juce::Graphics& g)
                      juce::Justification::centred, false);
     }
 
-    // ── dB scale labels on the right edge of the plot ──
+    // dB scale labels on the right edge of the plot
     g.setColour (juce::Colour (0xff909094));
     g.setFont (juce::Font (juce::FontOptions (9.5f, juce::Font::bold)));
     for (float db : { 12.0f, 6.0f, 0.0f, -6.0f, -12.0f })
@@ -443,7 +443,7 @@ void MasteringEqEditor::paint (juce::Graphics& g)
         g.drawText (txt, rect, juce::Justification::centredRight, false);
     }
 
-    // ── Band handle dots on the curve at each band's centre frequency ──
+    // Band handle dots on the curve at each band's centre frequency
     // Larger dots (16 px) so they're easy to grab; the dragged band gets a
     // brighter halo so the user always knows which one they're moving.
     constexpr float kDotR = 8.0f;
@@ -496,7 +496,7 @@ void MasteringEqEditor::paint (juce::Graphics& g)
     }
 }
 
-// ── Plot <-> param coordinate helpers ────────────────────────────────────
+// Plot <-> param coordinate helpers
 //
 // All of these stay coordinate-correct against curveArea so paint() and the
 // drag path don't drift. dbToY uses the same midY/halfH math as paint();
@@ -641,11 +641,11 @@ void MasteringEqEditor::resized()
     area.removeFromBottom (4);
     curveArea = area;
 
-    // FFT toggle — small pill in the plot's top-left (top-right holds the
+    // FFT toggle - small pill in the plot's top-left (top-right holds the
     // +12 dB scale label, centre holds the BYPASS badge).
     specToggle.setBounds (curveArea.getX() + 6, curveArea.getY() + 5, 34, 15);
 
-    // ── Band controls: 5 equal columns. Each column has band label,
+    // Band controls: 5 equal columns. Each column has band label,
     //    Freq knob, Gain knob, and Q knob (mid bands only). Shelf columns
     //    drop the Q row and centre Freq+Gain instead.
     const int colW = controlsArea.getWidth() / 5;

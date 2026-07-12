@@ -15,13 +15,13 @@
 namespace duskstudio
 {
 // Console-style automation. Performance gestures in Write/Touch, replay
-// in Read — no curve drawing UI (CLAUDE.md constraint #4). Values stored
+// in Read - no curve drawing UI (CLAUDE.md constraint #4). Values stored
 // normalized 0..1; per-param normalize/denormalize bridges to natural
 // range (dB / pan / 0|1).
 enum class AutomationMode : int { Off = 0, Read = 1, Write = 2, Touch = 3 };
 
 // EQ, Comp, HPF and bus assigns are deliberately NOT automatable per
-// DuskStudio.md — automation is for dynamics gestures, not tone shaping.
+// DuskStudio.md - automation is for dynamics gestures, not tone shaping.
 enum class AutomationParam : int
 {
     FaderDb = 0,
@@ -37,7 +37,7 @@ enum class AutomationParam : int
 
 constexpr int kNumAutomationParams = (int) AutomationParam::kCount;
 
-// Continuous params interp + RDP-thin; discrete (mute/solo) skip both —
+// Continuous params interp + RDP-thin; discrete (mute/solo) skip both -
 // intermediate values break the binary semantic.
 constexpr bool isContinuousParam (AutomationParam p) noexcept
 {
@@ -52,7 +52,7 @@ struct AutomationPoint
 
     bool operator== (const AutomationPoint& o) const noexcept
     {
-        // Bit-exact compares (juce::exactlyEqual) — these are value-identity checks, not
+        // Bit-exact compares (juce::exactlyEqual) - these are value-identity checks, not
         // tolerance compares, and exactlyEqual silences -Wfloat-equal (a CI -Werror).
         return timeSamples == o.timeSamples
             && juce::exactlyEqual (value, o.value)
@@ -68,16 +68,16 @@ struct AutomationPoint
 // one-publish-behind reclamation contract.
 //
 // Accessor discipline:
-//   pointsForRead()      — audio thread (acquire-load). Never null post-ctor.
-//   pointsConst()        — message-thread read.
-//   mutableForWritePass()— Write-mode capture ONLY. In-place append/erase with
+//   pointsForRead()      - audio thread (acquire-load). Never null post-ctor.
+//   pointsConst()        - message-thread read.
+//   mutableForWritePass()- Write-mode capture ONLY. In-place append/erase with
 //                          NO publish. Sound solely because the audio thread
 //                          does not read this lane in Write mode (it reads the
 //                          manual setpoint), and discrete capture is gated
-//                          Write-only. Do NOT use for edit gestures — a
+//                          Write-only. Do NOT use for edit gestures - a
 //                          resize under a concurrent reader is UB; use
 //                          mutatePoints / publishPoints there.
-//   publishPoints/mutate — safe swap for every edit / load / thin path.
+//   publishPoints/mutate - safe swap for every edit / load / thin path.
 struct AutomationLane
 {
     AtomicSnapshot<std::vector<AutomationPoint>> snapshot;
@@ -96,7 +96,7 @@ struct AutomationLane
 
 // Linear interp between bracketing points for continuous; step (hold
 // previous) for discrete. Out-of-range holds the first / last value.
-// Returns 0 on empty input — callers gate on points.empty() first.
+// Returns 0 on empty input - callers gate on points.empty() first.
 float evaluateLane (const std::vector<AutomationPoint>& points, std::int64_t t,
                     AutomationParam param) noexcept;
 
@@ -105,7 +105,7 @@ float normalizeAutomationValue   (AutomationParam p, float denormValue) noexcept
 
 // RDP thin in normalized 0..1 units (range-independent). 0.002 = 0.2%
 // of vertical, the production default. No-op for discrete params.
-// Synchronous — 10-min Write pass (~18k points) runs in < 1 ms.
+// Synchronous - 10-min Write pass (~18k points) runs in < 1 ms.
 void thinAutomationLane (std::vector<AutomationPoint>& points,
                             AutomationParam param,
                             double epsilon) noexcept;
@@ -175,7 +175,7 @@ struct ChannelStripParams
     std::atomic<bool>  mute    { false };
     std::atomic<bool>  solo    { false };
     std::atomic<bool>  phaseInvert { false };
-    // Insert (plugin or hardware) bypass — drives the insert crossfade
+    // Insert (plugin or hardware) bypass - drives the insert crossfade
     // gate to dry. The plugin keeps processing so tails stay warm and
     // un-bypass is click-free.
     std::atomic<bool>  insertBypassed { false };
@@ -185,7 +185,7 @@ struct ChannelStripParams
     // offsets.
     std::atomic<int>   faderGroupId { 0 };
 
-    // Bus assigns are EXCLUSIVE with the master send — see
+    // Bus assigns are EXCLUSIVE with the master send - see
     // ChannelStrip::processAndAccumulate for the routing (toMaster
     // gate by 1-maxBusG). Without this exclusivity the signal would
     // arrive at master twice (direct + via bus) and double by +3 dB.
@@ -228,7 +228,7 @@ struct ChannelStripParams
     // UI swaps visible controls.
     std::atomic<bool>  compEnabled    { false };
     std::atomic<int>   compMode       { 0 };       // 0=Opto, 1=FET, 2=VCA
-    // True once the user picks a mode — UI shows "COMP" otherwise so
+    // True once the user picks a mode - UI shows "COMP" otherwise so
     // first-time users see a clear "click here" affordance. DSP still
     // uses compMode regardless.
     std::atomic<bool>  compModePicked { false };
@@ -244,7 +244,7 @@ struct ChannelStripParams
     std::atomic<float> compFetAttack  { 0.2f };    // 0.02..80 ms
     std::atomic<float> compFetRelease { 400.0f };  // 50..1100 ms
     std::atomic<int>   compFetRatio   { 0 };       // 0=4:1, 1=8:1, 2=12:1, 3=20:1, 4=All
-    // Adjustable FET threshold — donor's original was a hardcoded -10
+    // Adjustable FET threshold - donor's original was a hardcoded -10
     // dBFS; defaulting here to the same value preserves saved-state
     // behaviour for sessions written before fet_threshold existed.
     std::atomic<float> compFetThresholdDb { -10.0f }; // -60..0 dB
@@ -257,10 +257,10 @@ struct ChannelStripParams
     std::atomic<float> compVcaOutput   { 0.0f };    // -20..20 dB
     // dbx 160X OverEasy parabolic soft knee.
     std::atomic<bool>  compVcaOverEasy { false };
-    // false = Adaptive (donor's 35→5 ms RMS TC); true = Classic (fixed 10 ms).
+    // false = Adaptive (donor's 35->5 ms RMS TC); true = Classic (fixed 10 ms).
     std::atomic<bool>  compVcaDetectorClassic { false };
 
-    // Legacy unified threshold — driven by the comp-meter drag handle,
+    // Legacy unified threshold - driven by the comp-meter drag handle,
     // mirrors the current mode's primary knob so drag stays usable.
     // Audio thread does NOT read directly; see ChannelStrip::updateCompParameters.
     std::atomic<float> compThresholdDb { 0.0f };
@@ -293,7 +293,7 @@ struct ChannelStripParams
     };
     std::array<std::atomic<bool>, kNumAuxSends> auxSendTouched {};
 
-    // Discrete — no touched flag (clicks are instantaneous). Touch
+    // Discrete - no touched flag (clicks are instantaneous). Touch
     // mode = read lane, any click writes a transition. Session::
     // anyTrackSoloed scans liveSolo so automated solos trigger the
     // global SIP-mute.
@@ -324,7 +324,7 @@ struct ChannelStripParams
     static constexpr float kCompMakeupMin =  -12.0f, kCompMakeupMax =  24.0f;
 };
 
-// Take-history slot — timeline position is NOT stored so rotating
+// Take-history slot - timeline position is NOT stored so rotating
 // preserves the region's timelineStart (same spot in the song).
 struct TakeRef
 {
@@ -377,7 +377,7 @@ struct TempoPoint
 // takes the first point's tempo (segment 0 starts at the timeline origin no
 // matter where the first point sits).
 //
-// An EMPTY map carries no tempo of its own — the session's constant tempoBpm is
+// An EMPTY map carries no tempo of its own - the session's constant tempoBpm is
 // authoritative then, so callers check empty() and fall back to the
 // duskstudio::samplesToTicks/ticksToSamples free functions with Session::tempoBpm.
 // That keeps tempoBpm the single source of truth for constant tempo (the map
@@ -385,7 +385,7 @@ struct TempoPoint
 //
 // Message-thread state for now; the audio thread still reads Session::tempoBpm.
 // A lock-free published snapshot for the RT MIDI scheduler arrives in a later
-// phase — until then nothing on the audio path reads this.
+// phase - until then nothing on the audio path reads this.
 class TempoMap
 {
 public:
@@ -401,7 +401,7 @@ public:
     // sample (last wins). Positions are preserved.
     void setPoints (std::vector<TempoPoint> pts)
     {
-        // Stable so equal-sample points keep their input order — the
+        // Stable so equal-sample points keep their input order - the
         // collision loop below is "last wins", which only means "last in the
         // caller's order" if equal keys aren't reshuffled.
         std::stable_sort (pts.begin(), pts.end(),
@@ -494,7 +494,7 @@ private:
 
 enum class TimeDisplayMode : int { Bars = 0, Time = 1 };
 
-// Ardour-style. Stretch is deliberately absent — DuskStudio.md forbids
+// Ardour-style. Stretch is deliberately absent - DuskStudio.md forbids
 // time-stretching.
 enum class EditMode : int
 {
@@ -596,7 +596,7 @@ inline juce::String formatSamplePosition (std::int64_t samples,
          + juce::String (tick).paddedLeft ('0', 3);
 }
 
-// Off events folded into lengthInTicks — no dangling on/off bookkeeping.
+// Off events folded into lengthInTicks - no dangling on/off bookkeeping.
 // Negative or zero length = "all-notes-off across region" sentinel.
 struct MidiNote
 {
@@ -668,7 +668,7 @@ struct MidiRegion
 };
 
 // All shapes: shape(0)=0, shape(1)=1. EqualPower is constant-power for
-// crossfades. RaisedCosine has zero slope at both endpoints — the right
+// crossfades. RaisedCosine has zero slope at both endpoints - the right
 // choice for very-short click-mask fades (punch in/out).
 enum class FadeShape : int
 {
@@ -681,7 +681,7 @@ enum class FadeShape : int
 };
 
 // Used by PlaybackEngine for audio + AudioRegionEditor for envelope
-// painting — keep in sync.
+// painting - keep in sync.
 inline float applyFadeShape (float t, FadeShape s) noexcept
 {
     t = juce::jlimit (0.0f, 1.0f, t);
@@ -721,7 +721,7 @@ struct AudioRegion
     // Auto-fade set by the editor's auto-crossfade path (move-drag
     // produces overlap). Next move re-syncs to current overlap and
     // clears entirely when overlap is gone. Cleared by manual handle
-    // drag / explicit shape pick / Reset fades — those promote the
+    // drag / explicit shape pick / Reset fades - those promote the
     // fade to user-owned.
     bool fadeInAuto  = false;
     bool fadeOutAuto = false;
@@ -765,7 +765,7 @@ struct Track
     std::atomic<int> mode { (int) Mode::Mono };
 
     std::atomic<bool> recordArmed { false };
-    // OFF by default — live input NEVER passes through to master
+    // OFF by default - live input NEVER passes through to master
     // without explicit opt-in (feedback / hearing safety).
     std::atomic<bool> inputMonitor { false };
     // Recorded WAV captures post-EQ/post-comp signal. Off so the user
@@ -780,7 +780,7 @@ struct Track
     // USB-MIDI replug. Message thread only.
     juce::String      midiInputIdentifier;
 
-    // External MIDI out — drives a hardware synth/drum machine in
+    // External MIDI out - drives a hardware synth/drum machine in
     // parallel with the loaded instrument plugin. Synth's audio
     // returns on a separate audio track.
     std::atomic<int>  midiOutputIndex { -1 };
@@ -796,7 +796,7 @@ struct Track
     // "convert to MIDI" UX would explicitly clear them.
     // regions: written only at session load, audio reads via the
     // PlaybackEngine snapshot. midiRegions: written at load AND at
-    // recording-stop, audio reads directly during MIDI playback —
+    // recording-stop, audio reads directly during MIDI playback -
     // wrapped in AtomicSnapshot for the lock-free swap.
     std::vector<AudioRegion>                regions;
     AtomicSnapshot<std::vector<MidiRegion>> midiRegions;
@@ -843,7 +843,7 @@ struct Track
     std::atomic<float> meterOutLDb   { -100.0f };
     std::atomic<float> meterOutRDb   { -100.0f };
 
-    // int (not bool) — 4 states. Lock-free: UI relaxed-stores; audio
+    // int (not bool) - 4 states. Lock-free: UI relaxed-stores; audio
     // relaxed-loads. 3c-i wires Off + Read; Write/Touch reserved.
     std::atomic<int> automationMode { 0 };  // AutomationMode cast
 
@@ -921,7 +921,7 @@ struct Bus
 // reverb / delay).
 struct AuxLaneParams
 {
-    // 1 slot — full plugin UI at comfortable size; doubling up halved
+    // 1 slot - full plugin UI at comfortable size; doubling up halved
     // that budget and squeezed fixed-size editors.
     static constexpr int kMaxLanePlugins = 1;
 
@@ -943,7 +943,7 @@ struct AuxLaneParams
     std::atomic<bool> faderTouched { false };
 
     // Same shape as ChannelStripParams for code reuse, but only
-    // FaderDb + Mute get populated — pan/solo/sends aren't aux concepts.
+    // FaderDb + Mute get populated - pan/solo/sends aren't aux concepts.
     std::atomic<int> automationMode { 0 };
     std::array<AutomationLane, kNumAutomationParams> automationLanes {};
 
@@ -951,7 +951,7 @@ struct AuxLaneParams
     mutable std::atomic<float> meterPostR { -100.0f };
 };
 
-// Message-thread only — audio thread doesn't read markers (only
+// Message-thread only - audio thread doesn't read markers (only
 // cares about playhead / loop / punch). Kept sorted by timelineSamples
 // for ruler iteration + binary-search hit-testing.
 struct Marker
@@ -973,7 +973,7 @@ struct AuxLane
     std::array<juce::String, AuxLaneParams::kMaxLanePlugins> pluginStateBase64;
 
     // Native host alternatives to the JUCE plugin above. A slot is JUCE /
-    // native-CLAP / native-LV2 / native-VST3 / hardware / empty — at most one
+    // native-CLAP / native-LV2 / native-VST3 / hardware / empty - at most one
     // host per slot (precedence CLAP > LV2 > VST3 if several native paths are
     // somehow set). Always present so non-Linux builds round-trip the fields
     // untouched.
@@ -1003,7 +1003,7 @@ struct MasterBusParams
     // also skips the metering RMS smooth.
     std::atomic<bool>  mute        { false };
 
-    // Collapse L+R to (L+R)*0.5 on both channels — mono compatibility
+    // Collapse L+R to (L+R)*0.5 on both channels - mono compatibility
     // check via console monitor "Mono" button. Independent of stereo
     // width / pan; affects only the final stereo->mono fold.
     std::atomic<bool>  monoSum     { false };
@@ -1069,7 +1069,7 @@ struct MasteringParams
     std::atomic<float> eqBandGainDb[kNumEqBands]{ 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
     std::atomic<float> eqBandQ[kNumEqBands]     { 0.7f, 1.0f, 1.0f, 1.0f, 0.7f };
 
-    // Legacy Tube-EQ atoms — back-compat with sessions saved before
+    // Legacy Tube-EQ atoms - back-compat with sessions saved before
     // the digital-EQ swap. Not driven by the DSP any more.
     std::atomic<float> eqLfBoost       { 0.0f };
     std::atomic<float> eqHfBoost       { 0.0f };
@@ -1091,7 +1091,7 @@ struct MasteringParams
     std::atomic<float> limiterDriveDb  { 0.0f };
     std::atomic<float> limiterCeilingDb{ -0.3f };
     std::atomic<float> limiterReleaseMs{ 100.0f };
-    // 0 Modern, 1 Transparent, 2 Punchy — shapes hold/release around the
+    // 0 Modern, 1 Transparent, 2 Punchy - shapes hold/release around the
     // release knob. Stereo link on = matched L/R gain (preserves the image);
     // off = independent per-channel limiting.
     std::atomic<int>   limiterMode       { 0 };
@@ -1163,7 +1163,7 @@ public:
     MasteringParams&       mastering() noexcept       { return masteringParams; }
     const MasteringParams& mastering() const noexcept { return masteringParams; }
 
-    // O(1) — counter-backed. Bulk write paths (SessionSerializer,
+    // O(1) - counter-backed. Bulk write paths (SessionSerializer,
     // self-test) bypass the setters then call recomputeRtCounters.
     bool anyTrackSoloed() const noexcept;
     bool anyBusSoloed()   const noexcept;
@@ -1187,7 +1187,7 @@ public:
     void setTrackFaderGrouped (int ti, float newDb) noexcept;
 
     // Mirrored to/from Transport by publish/consume bookends. Plain
-    // non-atomic — touched only on the message thread between bookends.
+    // non-atomic - touched only on the message thread between bookends.
     std::int64_t savedLoopStart    = 0;
     std::int64_t savedLoopEnd      = 0;
     bool        savedLoopEnabled  = false;
@@ -1225,7 +1225,7 @@ public:
 
     // Canonical sample rate of the session's recorded/imported audio. WAVs
     // play 1:1 (no SRC in the playback path), so the device must run at this
-    // rate for correct speed/pitch — the load path tries to switch the device
+    // rate for correct speed/pitch - the load path tries to switch the device
     // and warns when it can't. 0 = unset (pre-SR-aware session); adopted from
     // the device on load. Message thread only.
     double sessionSampleRate = 0.0;
@@ -1250,7 +1250,7 @@ public:
                  : tempoMap.samplesToTicks (samples, sr);
     }
     // Fractional ticks (no rounding) for sub-tick-smooth UI like the piano-roll
-    // playhead — the integer path jumps in whole-tick steps (several pixels when
+    // playhead - the integer path jumps in whole-tick steps (several pixels when
     // zoomed in), which reads as a glitchy line.
     double samplesToTicksFractional (std::int64_t samples, double sr) const noexcept
     {
@@ -1297,7 +1297,7 @@ public:
     // the Settings dropdown. AudioEngine::stop reads this on Stop.
     std::atomic<int>      stopBehavior              { 0 };
     // Last position the user clicked on the tape-strip ruler (samples).
-    // -1 = never clicked / unknown — engine treats as PauseInPlace fall-
+    // -1 = never clicked / unknown - engine treats as PauseInPlace fall-
     // back when ReturnToLastClicked is selected.
     std::atomic<std::int64_t> lastClickedTimelineSample { -1 };
 
@@ -1348,7 +1348,7 @@ public:
 
     // Persisted as device identifier in JSON; engine resolves to index
     // on load + on every hot-plug rebuild. externalBpm: smoothed BPM
-    // by MidiSyncReceiver. v1 is tempo-only — engine reads BPM but
+    // by MidiSyncReceiver. v1 is tempo-only - engine reads BPM but
     // ignores the rolling flag unless externalSyncChasesTransport.
     juce::String              syncSourceInputIdentifier;
     std::atomic<int>          syncSourceInputIdx      { -1 };
@@ -1365,7 +1365,7 @@ public:
 
     // MTC slave-decoded state. Shares syncSourceInputIdx port with
     // Clock (QF + F8 multiplex). externalTimeCodeFrames has the
-    // 2-frame QF transmission-delay compensation applied — matches
+    // 2-frame QF transmission-delay compensation applied - matches
     // what the master's display reads RIGHT NOW.
     mutable std::atomic<std::int64_t> externalTimeCodeFrames    { 0 };
     mutable std::atomic<bool>        externalTimeCodeRolling   { false };
@@ -1382,7 +1382,7 @@ public:
     std::atomic<bool> syncOutputEmitTimeCode     { false };
     std::atomic<int>  syncOutputTimeCodeFrameRate { 3 };
 
-    // Bank/select/assign are session-runtime, NOT persisted — a fresh
+    // Bank/select/assign are session-runtime, NOT persisted - a fresh
     // launch always starts on bank 0 / channel 0 / PAN so controller
     // LEDs match on-screen mixer reset state.
     struct McuSessionState
@@ -1399,12 +1399,12 @@ public:
         // Which 8 of the 24 tracks the controller shows.
         std::atomic<int> bank            { 0 };
 
-        // 0..15 — drives EQ/COMP encoder target + plugin-editor focus.
+        // 0..15 - drives EQ/COMP encoder target + plugin-editor focus.
         std::atomic<int> selectedChannel { 0 };
 
         // REW / FFWD held-state (press = true, release = false). The
         // TransportBar timer turns a short press into a marker jump and a
-        // hold into a 10x playhead scrub — same gesture as the on-screen
+        // hold into a 10x playhead scrub - same gesture as the on-screen
         // Rewind / Forward buttons.
         std::atomic<bool> rewHeld  { false };
         std::atomic<bool> ffwdHeld { false };

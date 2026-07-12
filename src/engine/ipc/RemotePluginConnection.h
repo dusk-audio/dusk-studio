@@ -18,20 +18,20 @@
 namespace duskstudio::ipc
 {
 // Parent-side connection to a dusk-studio-plugin-host child process. Owns:
-//   • the SHM file descriptor (memfd_create) and its mmap.
-//   • the child PID + fork/exec + waitpid lifecycle.
-//   • the futex round-trip that drives processBlockSync.
+//   - the SHM file descriptor (memfd_create) and its mmap.
+//   - the child PID + fork/exec + waitpid lifecycle.
+//   - the futex round-trip that drives processBlockSync.
 //
 // Phase 1 surface is intentionally minimal: just construct, run a stub
 // echo round-trip, tear down. Plugin loading, state save/restore, editor
-// embedding, and crash recovery come in subsequent phases — they're
+// embedding, and crash recovery come in subsequent phases - they're
 // stubbed here so callers in Phase 2+ have stable signatures.
 //
 // Threading rules:
-//   • construct / connect / disconnect       — message thread only.
-//   • processBlockSync                       — audio thread, RT-safe
+//   - construct / connect / disconnect       - message thread only.
+//   - processBlockSync                       - audio thread, RT-safe
 //     (no allocations, no syscalls beyond the futex pair).
-//   • isCrashed                              — any thread, atomic load.
+//   - isCrashed                              - any thread, atomic load.
 class RemotePluginConnection
 {
 public:
@@ -107,7 +107,7 @@ public:
     bool resizeEditor (int width, int height, std::string& errorOut);
 
     // --- Parameter mirror (3c-3a, --ipc-host mode only) ------------------
-    // Parent → child one-shot SetParam send. The child applies the new
+    // Parent -> child one-shot SetParam send. The child applies the new
     // value to its DSP-side instance via juce::MessageManager::callAsync.
     // No reply is expected; this returns false only if the socket write
     // itself fails (peer-closed, EBADF, etc.).
@@ -121,7 +121,7 @@ public:
 
     // Subscribe to async ParamChangedFromChild pushes from the child.
     // Invoked on the JUCE message thread (the reader thread marshals
-    // every push via MessageManager::callAsync — no MessageManagerLock,
+    // every push via MessageManager::callAsync - no MessageManagerLock,
     // no audio-thread reentry, no blocking).
     //
     // The sink may be replaced or cleared (pass {}) at any time from
@@ -139,7 +139,7 @@ public:
     // (caller should engage bypass). On success the audio output buffer
     // in SHM is filled and ready to read, and `midi` has been overwritten
     // with whatever the plugin emitted (matching JUCE's processBlock
-    // contract — input MIDI is consumed, output MIDI replaces it).
+    // contract - input MIDI is consumed, output MIDI replaces it).
     //
     // Audio data is `numIn` channel pointers each `numSamples` long;
     // they're memcpy'd into the SHM input region. After successful
@@ -149,12 +149,12 @@ public:
     // MIDI is serialised in the same wire format the dusk-studio-plugin-host
     // child uses: each event is `[int sample][uint16 len][bytes]`, total
     // capped at PluginIpc::kMidiBytes (16 KB). Events that don't fit are
-    // dropped — same behaviour as the child's serialiser.
+    // dropped - same behaviour as the child's serialiser.
     //
     // RT-safe: only memcpy + futex syscalls, no allocation. The output
     // MIDI buffer is rebuilt via clear() + addEvent() into the caller's
     // `midi`; juce::MidiBuffer::clear is RT-safe and addEvent only
-    // allocates when capacity is exceeded — the engine pre-sizes per-
+    // allocates when capacity is exceeded - the engine pre-sizes per-
     // track scratch buffers so this stays allocation-free in practice.
     // numOut is the plugin's output channel count (queried at scan/load
     // and stored in PluginSlot::remoteNumOut). The child copies its
@@ -183,12 +183,12 @@ public:
     // Non-blocking child-exit check. Calls waitpid(childPid, &status,
     // WNOHANG); if the child has exited, sets `crashed` and returns
     // true. Returns false if the child is still alive or the connection
-    // isn't connected. Idempotent — once crashed, returns false on
+    // isn't connected. Idempotent - once crashed, returns false on
     // subsequent calls because childPid has been reaped (set to -1).
     //
     // Designed to be called from a low-frequency message-thread timer
     // (~1 Hz). Catches the case where the child dies while the audio
-    // thread isn't actively running processBlockSync — without this
+    // thread isn't actively running processBlockSync - without this
     // the slot would still appear loaded until the user resumed
     // playback and the audio thread's futex deadline tripped.
     //
@@ -218,9 +218,9 @@ private:
     // --- 3c-3a control-plane demuxer state -------------------------------
     // The reader thread blocks on readExact(controlChannel, ...), peels
     // one frame off, then either:
-    //   • routes ParamChangedFromChild pushes through callAsync to
+    //   - routes ParamChangedFromChild pushes through callAsync to
     //     paramChangedSink_;
-    //   • parks every other opcode in {replyHeader, replyPayload, reply
+    //   - parks every other opcode in {replyHeader, replyPayload, reply
     //     Ready} as the next sync-RPC reply and signals replyCv.
     //
     // Started ONLY in --ipc-host mode (extraArg). The --ipc-stub child
@@ -244,7 +244,7 @@ private:
     // Sink state lives in a separately-allocated shared object so a
     // callAsync lambda queued by the reader thread can outlive the
     // RemotePluginConnection itself without deref'ing freed memory.
-    // The lambda captures sinkState_ BY VALUE (shared_ptr copy →
+    // The lambda captures sinkState_ BY VALUE (shared_ptr copy ->
     // atomic ref-count bump); the dispatch path therefore does not
     // touch `this`. If the connection destroys before the lambda
     // fires, sinkState_ keeps the SinkState alive until the last
@@ -270,7 +270,7 @@ private:
     // RPC. Holds controlMutex across the write + CV wait so a reply
     // arriving while we're mid-write can't be lost. timeoutMs caps the
     // wait; on expiry the function returns false with errorOut set
-    // (the connection is NOT marked crashed — caller decides).
+    // (the connection is NOT marked crashed - caller decides).
     bool sendAndAwaitReply (OpCode op,
                               const void* payload, std::uint32_t payloadLen,
                               ControlMsgHeader& hdrOut,

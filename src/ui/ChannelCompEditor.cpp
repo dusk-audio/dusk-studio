@@ -41,14 +41,14 @@ void applyTimingRanges (juce::Slider& attack, juce::Slider& release, int mode)
 {
     switch (mode)
     {
-        case 1:  // FET — 1176-shaped: 0.02..80 ms attack, 50..1100 ms release
+        case 1:  // FET - 1176-shaped: 0.02..80 ms attack, 50..1100 ms release
             attack .setRange (0.02, 80.0,   0.01);
             attack .setSkewFactorFromMidPoint (0.8);    // midpoint = 0.8 ms (1176 sweet spot)
             release.setRange (50.0, 1100.0, 1.0);
             release.setSkewFactorFromMidPoint (200.0);
             break;
 
-        case 2:  // VCA — dbx/SSL-shaped: 0.1..50 ms attack, 10..5000 ms release
+        case 2:  // VCA - dbx/SSL-shaped: 0.1..50 ms attack, 10..5000 ms release
             attack .setRange (0.1,  50.0,   0.01);
             attack .setSkewFactorFromMidPoint (3.0);
             release.setRange (10.0, 5000.0, 1.0);
@@ -116,9 +116,9 @@ ChannelCompEditor::ChannelCompEditor (Track& t) : track (t)
     };
     addAndMakeVisible (vcaOverEasyBtn);
 
-    // VCA detector mode toggle — when ON, switches the donor's RMS detector
+    // VCA detector mode toggle - when ON, switches the donor's RMS detector
     // to a fixed 10 ms TC (dbx 160 spec). When OFF, the level-adaptive
-    // 35 ms → 5 ms curve (donor default).
+    // 35 ms -> 5 ms curve (donor default).
     vcaDetectorBtn.setClickingTogglesState (true);
     vcaDetectorBtn.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff181820));
     vcaDetectorBtn.setColour (juce::TextButton::buttonOnColourId, juce::Colour (fourKColors::kCompGold));
@@ -136,7 +136,7 @@ ChannelCompEditor::ChannelCompEditor (Track& t) : track (t)
 
     const auto gold = juce::Colour (fourKColors::kCompGold);
     styleKnob (threshKnob,  gold, ChannelStripParams::kCompThreshMin,  ChannelStripParams::kCompThreshMax,  -12.0,  -24.0, " dB", 1);
-    // threshKnob stays hidden in the new layout — threshold (and the
+    // threshKnob stays hidden in the new layout - threshold (and the
     // OPTO peak-reduction / FET input equivalents) are set via the
     // triangle handle on the GR meter strip. The knob is kept as a
     // backing value-source for syncKnobsFromMode / writeThresholdToMode
@@ -152,7 +152,7 @@ ChannelCompEditor::ChannelCompEditor (Track& t) : track (t)
     releaseKnob.onValueChange = [this] { writeReleaseToMode(); };
     makeupKnob.onValueChange  = [this] { writeMakeupToMode(); };
 
-    // threshKnob deliberately NOT addAndMakeVisible — value is read +
+    // threshKnob deliberately NOT addAndMakeVisible - value is read +
     // written via the triangle handle, not a knob.
     addAndMakeVisible (ratioKnob);
     addAndMakeVisible (attackKnob);  addAndMakeVisible (releaseKnob);
@@ -172,7 +172,7 @@ ChannelCompEditor::ChannelCompEditor (Track& t) : track (t)
     refreshLabelsForMode();   // applies per-mode ranges + sets size
     // Sync AFTER refreshLabelsForMode so the per-mode slider range (set by
     // applyTimingRanges) is already in place when the stored atom value is
-    // pushed into the slider — otherwise the default construction range
+    // pushed into the slider - otherwise the default construction range
     // would clamp values that are valid in the active mode.
     syncKnobsFromMode();
 
@@ -201,7 +201,7 @@ void ChannelCompEditor::refreshLabelsForMode()
     // Uniform RAT / ATK / REL / MAKEUP labels across every mode. Matches
     // the inline strip + bus + master comp labels so every comp in the
     // mixer reads identically. FET still calls this "output gain"
-    // internally and VCA still calls it "makeup gain" — the UX cost of
+    // internally and VCA still calls it "makeup gain" - the UX cost of
     // two different labels for the same control isn't worth the
     // technical accuracy.
     const char* thresh  = "THRESHOLD";
@@ -213,7 +213,7 @@ void ChannelCompEditor::refreshLabelsForMode()
     switch (m)
     {
         case 0:  // Opto: peak-reduction style. Attack/release/ratio are
-                 // fixed by the optical model — hide those knobs entirely
+                 // fixed by the optical model - hide those knobs entirely
                  // (don't show "(fixed)" placeholders).
             thresh  = "PEAK RED";
             break;
@@ -236,7 +236,7 @@ void ChannelCompEditor::refreshLabelsForMode()
     // clamped to 0 on display / double-click reset and the sentinel is lost.
     threshKnob.setRange (-60.0, (m == 2) ? 12.0 : 0.0, 0.1);
 
-    // OPTO hides the fixed knobs (ratio / attack / release) entirely —
+    // OPTO hides the fixed knobs (ratio / attack / release) entirely -
     // showing them greyed out with "(fixed)" labels added visual noise.
     // FET / VCA expose the full 2×2 grid.
     const bool optoMode = (m == 0);
@@ -248,7 +248,7 @@ void ChannelCompEditor::refreshLabelsForMode()
     releaseKnob.setEnabled (! optoMode);
 
     // Per-mode timing ranges + log skew. Must run before any setValue() that
-    // pushes a stored atom into the slider — the slider will clamp the
+    // pushes a stored atom into the slider - the slider will clamp the
     // incoming value against whichever range is currently active.
     applyTimingRanges (attackKnob, releaseKnob, m);
 
@@ -263,7 +263,7 @@ void ChannelCompEditor::refreshLabelsForMode()
     vcaDetectorBtn.setToggleState (track.strip.compVcaDetectorClassic.load (std::memory_order_relaxed),
                                     juce::dontSendNotification);
 
-    // Uniform height — same grid across every mode, no resize on
+    // Uniform height - same grid across every mode, no resize on
     // mode swap.
     constexpr int kKnobBlockH = 56 + 18 + 4;
     constexpr int kRowGap     = 6;
@@ -320,8 +320,8 @@ void ChannelCompEditor::writeThresholdToMode()
         case 1: // FET
         {
             // Adjustable threshold (donor's fet_threshold param). Original
-            // 1176 hardware had no threshold control — the input knob
-            // drove signal into a fixed -10 dBFS detector. We now expose a
+            // 1176 hardware had no threshold control - the input knob
+            // drove signal into a fixed -10 dBFS detector. Dusk exposes a
             // real threshold so the FET's UX matches Opto / VCA; the
             // characteristic saturation / transformer colouration is still
             // baked into the donor's FET stage.
@@ -487,14 +487,14 @@ void ChannelCompEditor::refreshModeButtons()
 
 void ChannelCompEditor::timerCallback()
 {
-    // GR — peak-style meter: fast-down (snap), slow release-up.
+    // GR - peak-style meter: fast-down (snap), slow release-up.
     const float gr = track.meterGrDb.load (std::memory_order_relaxed);
     if (gr < displayedGrDb)
         displayedGrDb = gr;
     else
         displayedGrDb += (gr - displayedGrDb) * 0.18f;
 
-    // Input — peak-style on the way up, slower on the way down so the
+    // Input - peak-style on the way up, slower on the way down so the
     // engineer can read fast transients.
     const float in = track.meterInputDb.load (std::memory_order_relaxed);
     if (in > displayedInputDb)
@@ -540,7 +540,7 @@ void ChannelCompEditor::paint (juce::Graphics& g)
             g.fillRoundedRectangle (fillRect, 1.5f);
         }
 
-        // Caption above and value below — both in small grey type so the
+        // Caption above and value below - both in small grey type so the
         // bar stays the dominant element.
         g.setColour (juce::Colour (0xffa0a0a0));
         g.setFont (juce::Font (juce::FontOptions (10.0f, juce::Font::bold)));
@@ -551,7 +551,7 @@ void ChannelCompEditor::paint (juce::Graphics& g)
                      juce::Justification::centred, false);
     };
 
-    // Input meter (left of pair) — green at low, yellow at -6, red at -1.
+    // Input meter (left of pair) - green at low, yellow at -6, red at -1.
     drawVerticalMeter (inputMeterArea, displayedInputDb, -60.0f, 0.0f,
                         juce::Colour (0xffd05a5a),  // top (loud)
                         juce::Colour (0xff60c060),  // bottom (quiet)
@@ -559,7 +559,7 @@ void ChannelCompEditor::paint (juce::Graphics& g)
                         displayedInputDb <= -99.0f ? juce::String ("-inf")
                                                    : juce::String::formatted ("%.1f", displayedInputDb));
 
-    // GR meter (right of pair) — gradient from gold at low GR to red at deep GR.
+    // GR meter (right of pair) - gradient from gold at low GR to red at deep GR.
     // GR is negative dB; map -20 .. 0 onto the bar with 0 = empty, -20 = full.
     drawVerticalMeter (grMeterArea, -displayedGrDb, 0.0f, 20.0f,
                         juce::Colour (fourKColors::kHfRed).brighter (0.1f),
@@ -567,7 +567,7 @@ void ChannelCompEditor::paint (juce::Graphics& g)
                         "GR",
                         juce::String::formatted ("%.1f", displayedGrDb));
 
-    // ── Threshold marker on the IN bar. Read the per-mode atomic the engine
+    // Threshold marker on the IN bar. Read the per-mode atomic the engine
     //    uses, then convert back to a unified threshold-dB axis for display.
     //    Mirrors CompMeterStrip's drawing exactly so the inline strip and
     //    the popup look the same.
@@ -627,7 +627,7 @@ void ChannelCompEditor::paint (juce::Graphics& g)
     }
 }
 
-// ── Threshold drag (mirrors CompMeterStrip's mouse handling). The triangle
+// Threshold drag (mirrors CompMeterStrip's mouse handling). The triangle
 //    in threshHandleArea / clicks on the IN bar set threshold for the
 //    currently-active comp mode, using the same per-mode mapping the engine
 //    reads (see writeThresholdToMode for routing).
@@ -773,7 +773,7 @@ void ChannelCompEditor::resized()
     }
 
     // BODY: LEFT (meter strip with threshold drag handle) | RIGHT (rotaries grid).
-    // No dedicated threshold knob/slider — the triangle on the meter
+    // No dedicated threshold knob/slider - the triangle on the meter
     // handle column drives threshold / peak-red / FET input.
     constexpr int kColGap = 12;
 
@@ -786,7 +786,7 @@ void ChannelCompEditor::resized()
     threshLabel.setVisible (false);
     threshKnob .setVisible (false);
 
-    // ── Meter strip: handle | IN | GR.
+    // Meter strip: handle | IN | GR.
     auto handleCol = meterStrip.removeFromLeft (kHandleW);
     meterStrip.removeFromLeft (kMeterGap);
     auto inMeter = meterStrip.removeFromLeft (kMeterW);
@@ -799,7 +799,7 @@ void ChannelCompEditor::resized()
     inputMeterArea   = inMeter;
     grMeterArea      = grMeter;
 
-    // ── Rotaries grid on the right. FET/VCA show 2×2 (RAT/ATK over
+    // Rotaries grid on the right. FET/VCA show 2×2 (RAT/ATK over
     // REL/MAK). OPTO is sparse: only MAKEUP (rendered as "GAIN" by the
     // label refresh), centred at the top of the column.
     const int mode = juce::jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
@@ -813,12 +813,12 @@ void ChannelCompEditor::resized()
     };
 
     // FET / VCA: full 2×2 grid (RAT / ATK on top, REL / GAIN on bottom).
-    // OPTO: only GAIN visible — centered in the rotaries column. The
+    // OPTO: only GAIN visible - centered in the rotaries column. The
     // visibility flags are driven by refreshLabelsForMode; we just lay
     // out whichever knobs are visible here.
     makeupKnob.setVisible (true);   makeupLabel.setVisible (true);
 
-    if (mode == 0)  // OPTO — single GAIN knob, centred vertically.
+    if (mode == 0)  // OPTO - single GAIN knob, centred vertically.
     {
         const int cellH = kRowLabelH + rowH;
         const int cellW = juce::jmin (rotariesCol.getWidth(), 120);

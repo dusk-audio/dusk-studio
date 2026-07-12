@@ -33,7 +33,7 @@ public:
     void prepare (double sampleRate, int blockSize);
 
     // Message thread, audio STOPPED. paramsRef is a plain pointer (not
-    // atomic) — binding while audio runs is a data race. Caller keeps
+    // atomic) - binding while audio runs is a data race. Caller keeps
     // `params` alive for the duration of audio processing.
     void bind (const HardwareInsertParams& params) noexcept;
 
@@ -58,11 +58,11 @@ public:
     void resetTailsAndDelayLine() noexcept;
 
     // True while the UI has a ping in flight (pingPending set, result
-    // not yet delivered). Audio thread only — lets the strip bypass its
+    // not yet delivered). Audio thread only - lets the strip bypass its
     // not-passing skip so the slot gets serviced for the measurement.
     bool isPingRequested() const noexcept;
 
-    // ~340 ms at 48 kHz — ample for any realistic outboard round-trip.
+    // ~340 ms at 48 kHz - ample for any realistic outboard round-trip.
     static constexpr int kMaxDelaySamples = 16384;
 
     // Ping calibration. Chirp = 100 ms (capped 9600 samples). Capture

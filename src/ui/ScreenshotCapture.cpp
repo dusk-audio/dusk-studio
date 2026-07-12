@@ -4,7 +4,7 @@
 // figure into the output directory, then quits the app.
 //
 // This is a developer/docs tool, not part of the shipping signal path. It runs
-// once, on the message thread, with the transport stopped — so directly writing
+// once, on the message thread, with the transport stopped - so directly writing
 // Session region vectors (normally only touched at load) is safe here because
 // the audio thread never reads them without a play/prepare cycle.
 
@@ -131,7 +131,7 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
 
     const double sr = engine.getCurrentSampleRate() > 0 ? engine.getCurrentSampleRate() : 48000.0;
 
-    // ── Synthesise demo content ─────────────────────────────────────────
+    // Synthesise demo content
     const char* names[8] = { "Kick", "Snare", "Bass", "Gtr L", "Gtr R", "Keys", "Vox", "Room" };
     for (int t = 0; t < 8; ++t)
     {
@@ -190,7 +190,7 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
     if (consoleView != nullptr)
         consoleView->setBank (0);
 
-    // ── RECORDING stage ─────────────────────────────────────────────────
+    // RECORDING stage
     switchToStage (AudioEngine::Stage::Recording);
 
     // Tape-strip figure: expand the timeline. Keep strips FULL (non-compact)
@@ -219,7 +219,7 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
         snapshotComponent (consoleView->getStripComponent (0), outDir, "qg-03-arm-track.png");
     }
 
-    // Lit input meters → "record rolling" / "overdub".
+    // Lit input meters -> "record rolling" / "overdub".
     for (int t = 0; t < 8; ++t)
     {
         auto& tr = session.track (t);
@@ -231,7 +231,7 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
     snapshotComponent (this, outDir, "qg-04-record-rolling.png", 120);
     snapshotComponent (this, outDir, "qg-05-overdub.png", 60);
 
-    // ── MIXING stage ────────────────────────────────────────────────────
+    // MIXING stage
     switchToStage (AudioEngine::Stage::Mixing);
     if (consoleView != nullptr) consoleView->setStripsMixingMode (true);
     resized();
@@ -264,13 +264,13 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
             s2->refreshInsertButtonForCapture();
     }
 
-    // ── AUX stage ───────────────────────────────────────────────────────
+    // AUX stage
     switchToStage (AudioEngine::Stage::Aux);
     resized();
     settle (300);
     snapshotComponent (auxView.get(), outDir, "np-07-aux-view.png");
 
-    // ── MASTERING stage ─────────────────────────────────────────────────
+    // MASTERING stage
     switchToStage (AudioEngine::Stage::Mastering);
     resized();
     settle (300);
@@ -282,7 +282,7 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
     resized();
     settle (200);
 
-    // ── Modal panels (standalone, snapshot directly) ────────────────────
+    // Modal panels (standalone, snapshot directly)
     auto modalShot = [&] (juce::Component& m, int w, int h, const juce::String& name, int settleMs)
     {
         addAndMakeVisible (m);
@@ -321,7 +321,7 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
         modalShot (p, 480, 520, "pl-04-hw-insert.png", 300);
     }
     {
-        // Channel EQ editor — the 4-band EQ the strip's EQ button opens. Give
+        // Channel EQ editor - the 4-band EQ the strip's EQ button opens. Give
         // it a few non-flat bands so the curve reads.
         auto& s = session.track (0).strip;
         s.eqEnabled.store (true, std::memory_order_relaxed);
@@ -345,7 +345,7 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
         modalShot (cp, w, h, "fx-02-comp.png", 300);
     }
     {
-        // Startup dialog — full-bleed, so size it to the window.
+        // Startup dialog - full-bleed, so size it to the window.
         juce::Array<juce::File> recents {
             juce::File ("~/Music/Dusk Studio/Album Demo").getFullPathName(),
             juce::File ("~/Music/Dusk Studio/Live Take 3").getFullPathName(),
@@ -371,7 +371,7 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
             mk ("ZamComp",         "Zam Audio",       "Dynamics"),
             mk ("x42 Convolver",   "Robin Gareus",    "Reverb")
         };
-        PluginPickerPanel::Callbacks cb;   // all null — display only
+        PluginPickerPanel::Callbacks cb;   // all null - display only
         PluginPickerPanel pp (descs, PluginPickerPanel::Kind::Effects, cb);
         modalShot (pp, 480, 560, "pl-01-plugin-picker.png", 300);
     }

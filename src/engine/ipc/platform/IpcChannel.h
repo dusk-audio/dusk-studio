@@ -6,7 +6,7 @@
 // Platform-abstracted IPC channel primitives. The "channel" is a pair of
 // connected endpoints used for control-plane request/reply between the
 // parent (Dusk Studio) and the child (dusk-studio-plugin-host). It is NOT
-// the hot audio path — audio goes through shared memory + the IpcSync
+// the hot audio path - audio goes through shared memory + the IpcSync
 // wake/wait primitives. Channel I/O happens on the message thread (parent)
 // and a dedicated socket-reader thread (child), so blocking calls are OK.
 //
@@ -45,7 +45,7 @@ inline bool isValid (const NativeHandle& h) noexcept
    #endif
 }
 
-// Close + invalidate. Idempotent — closing an already-invalid handle is
+// Close + invalidate. Idempotent - closing an already-invalid handle is
 // a no-op. On Linux: ::close(fd).
 void closeHandle (NativeHandle& h) noexcept;
 

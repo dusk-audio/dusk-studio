@@ -50,7 +50,7 @@ void CursorOverlay::setMousePosition (juce::Component& source,
                           || mode == EditMode::Draw);
 
     // Nothing to redraw when position / mode / cut-line are unchanged AND the
-    // paint-state matches — covers both "still painting the same spot" and a
+    // paint-state matches - covers both "still painting the same spot" and a
     // non-painting mode (Range/Grid) parked in place (no redundant repaint).
     if (myLocal == lastLocal && mode == lastMode
         && myCutLine == lastCutLineY && lastPainting == paints)
@@ -68,7 +68,7 @@ void CursorOverlay::setMousePosition (juce::Component& source,
 
     // Invalidate only the glyph-sized rects at the OLD and NEW positions.
     // The overlay spans the whole window and isn't opaque, so a bare
-    // repaint() forces everything underneath to redraw per mouse pixel —
+    // repaint() forces everything underneath to redraw per mouse pixel -
     // visibly stuttery on large windows. Repainting the old rect too is
     // what clears the previous glyph (dirtying only the new one leaves
     // trails).

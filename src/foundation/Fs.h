@@ -266,7 +266,7 @@ inline std::filesystem::path currentExecutablePath()
         const DWORD n = GetModuleFileNameW (nullptr, buf.data(), (DWORD) buf.size());
         if (n == 0) return {};
         if (n < buf.size()) return std::filesystem::path (std::wstring (buf.data(), n));
-        buf.resize (buf.size() * 2);   // truncated (n == size) — grow and retry
+        buf.resize (buf.size() * 2);   // truncated (n == size) - grow and retry
     }
 #elif defined(__APPLE__)
     std::uint32_t size = 0;
@@ -282,7 +282,7 @@ inline std::filesystem::path currentExecutablePath()
         if (n < 0) return {};
         if ((std::size_t) n < buf.size())
             return std::filesystem::u8path (std::string (buf.data(), (std::size_t) n));
-        buf.resize (buf.size() * 2);   // possibly truncated — grow and retry
+        buf.resize (buf.size() * 2);   // possibly truncated - grow and retry
     }
 #endif
 }

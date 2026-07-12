@@ -17,7 +17,7 @@ namespace
 {
 // Process-wide static modal for the piano roll's text-input dialogs
 // (region label rename). Mirrors the sharedAlertModal pattern in
-// PluginPickerHelpers — one in-window EmbeddedModal at a time, no
+// PluginPickerHelpers - one in-window EmbeddedModal at a time, no
 // per-call instance tracking, idempotent close.
 EmbeddedModal& sharedPianoRollTextInputModal()
 {
@@ -25,7 +25,7 @@ EmbeddedModal& sharedPianoRollTextInputModal()
     return m;
 }
 
-// Dusk-styled text-input panel — title + prompt + TextEditor + OK /
+// Dusk-styled text-input panel - title + prompt + TextEditor + OK /
 // Cancel. Replaces juce::AlertWindow + addTextEditor for the piano
 // roll's rename flow so the dialog renders inside the main window's
 // component tree and doesn't drop a native popup onto the X11 /
@@ -106,7 +106,7 @@ public:
     {
         if (! isVisible()) return;
         // Deferred: at this point the modal host may not have finished
-        // showing, and a synchronous grab silently fails — the user then
+        // showing, and a synchronous grab silently fails - the user then
         // has to click into the field before typing.
         juce::Component::SafePointer<TextInputPanel> safe (this);
         juce::MessageManager::callAsync ([safe]
@@ -405,7 +405,7 @@ PianoRollComponent::PianoRollComponent (Session& s, AudioEngine& e, int t, int r
 
     // Edit-mode palette (shared with AudioRegionEditor + TapeStrip).
     // PianoRoll only supports Grab (select / box-select) and Draw
-    // (the pencil — sole note-creation tool); Range / Cut / Grid are
+    // (the pencil - sole note-creation tool); Range / Cut / Grid are
     // inert here so we hide them from the palette to keep the pencil
     // discoverable as THE drawing tool.
     editModeToolbar = std::make_unique<EditModeToolbar> (engine);
@@ -451,7 +451,7 @@ PianoRollComponent::PianoRollComponent (Session& s, AudioEngine& e, int t, int r
     startTimerHz (30);
 
     // Force default-cursored child labels / buttons to defer to this
-    // editor's stored cursor — see EditCursors.h comment for the
+    // editor's stored cursor - see EditCursors.h comment for the
     // JUCE-default-NormalCursor-shadows-parent bug.
     inheritCursorOnDescendants (*this);
 }
@@ -479,7 +479,7 @@ const MidiRegion* PianoRollComponent::region() const
 
 void PianoRollComponent::beginNoteEdit()
 {
-    // One call per mouseDown — always re-capture so a gesture whose mouseUp
+    // One call per mouseDown - always re-capture so a gesture whose mouseUp
     // got swallowed (e.g. a context menu) can't leave a stale snapshot for
     // the next gesture. Discrete edits use their own local snapshots, so
     // nothing nests with this member state.
@@ -512,7 +512,7 @@ void PianoRollComponent::pushNoteEdit (const MidiRegion& before,
 int PianoRollComponent::yForNoteNumber (int n) const
 {
     // High notes at the top (matches a piano keyboard's visual layout).
-    // Note 127 → row 0, note 0 → row kNumKeys-1. Top band = toolbar
+    // Note 127 -> row 0, note 0 -> row kNumKeys-1. Top band = toolbar
     // (kToolbarHeight) + bar ruler (kHeaderHeight).
     return kToolbarHeight + kHeaderHeight
          + (kNumKeys - 1 - n) * kNoteHeight - scrollY;
@@ -632,7 +632,7 @@ void PianoRollComponent::syncEditModeToolbar()
     // Only paint the edit-mode cursor when the pointer is actually inside
     // the note grid; chrome (toolbar / header / keyboard / velocity & CC
     // strips / scrollbar / status bar) keeps the normal arrow. Piano roll
-    // only implements Grab (select / move) and Draw (pencil) — Range /
+    // only implements Grab (select / move) and Draw (pencil) - Range /
     // Cut / Grid have no piano-roll click handler, so leave their cursor
     // at the normal arrow instead of advertising an action that won't
     // happen. Mirrors the equivalent guard in mouseMove.
@@ -641,9 +641,9 @@ void PianoRollComponent::syncEditModeToolbar()
     // Seed the overlay glyph for the CURRENT pointer so a mode switch (toolbar /
     // hotkey) updates the cursor immediately instead of waiting for the next
     // mouse move. pushCursorPosition owns the overlay (and its own drag / edge /
-    // over-note rules); here we only match the native cursor — hide it exactly
+    // over-note rules); here we only match the native cursor - hide it exactly
     // where the overlay paints so the two never show at once. invisibleCursor(),
-    // NOT MouseCursor::NoCursor (broken on some Linux WMs — see EditCursors.h).
+    // NOT MouseCursor::NoCursor (broken on some Linux WMs - see EditCursors.h).
     pushCursorPosition (p.x, p.y);
     bool onEdge = false;
     const bool inContent = noteGridArea().contains (p);
@@ -1239,7 +1239,7 @@ void PianoRollComponent::paintVelocityStrip (juce::Graphics& g, juce::Rectangle<
     const auto* r = region();
     if (r == nullptr || r->lengthInTicks <= 0) return;
 
-    // Cull against the actual incoming dirty rect — matches the
+    // Cull against the actual incoming dirty rect - matches the
     // paintNotes fix; without this, every visible velocity lollipop
     // ran the stem + head + ellipse + selection paints on every
     // 30 Hz playhead repaint tick.
@@ -1430,7 +1430,7 @@ void PianoRollComponent::quantizeSelected (std::int64_t gridTicks, float strengt
     if (r == nullptr || gridTicks <= 0) return;
     const MidiRegion before = *r;
     strength = juce::jlimit (0.0f, 1.0f, strength);
-    // No selection → quantize every note in the region. Matches Logic
+    // No selection -> quantize every note in the region. Matches Logic
     // and Reaper (Q on empty selection = quantize all).
     auto applyToOne = [gridTicks, strength] (MidiNote& n)
     {
@@ -1887,7 +1887,7 @@ int PianoRollComponent::snapPitchToScale (int noteNumber) const noexcept
 {
     // "Key snap": when armed with a scale, coerce a placed / dragged pitch to the
     // nearest in-scale note (vertical analogue of the horizontal grid snap). No
-    // scale or toggle off → identity. Any chromatic note is at most a couple of
+    // scale or toggle off -> identity. Any chromatic note is at most a couple of
     // semitones from a scale tone; search outward, preferring the lower on a tie.
     if (! keySnap || scale == Scale::Off) return noteNumber;
     noteNumber = juce::jlimit (0, kNumKeys - 1, noteNumber);
@@ -2096,7 +2096,7 @@ void PianoRollComponent::paintCcStrip (juce::Graphics& g, juce::Rectangle<int> a
     const auto* r = region();
     if (r == nullptr || r->lengthInTicks <= 0) return;
 
-    // Cull against the actual dirty rect — same fix as paintNotes /
+    // Cull against the actual dirty rect - same fix as paintNotes /
     // paintVelocityStrip. The 30 Hz partial playhead repaint should
     // skip every CC bar that doesn't intersect the playhead's strip.
     const auto dirty = g.getClipBounds().getIntersection (area);
@@ -2537,7 +2537,7 @@ void PianoRollComponent::mouseDown (const juce::MouseEvent& e)
     // reusing the same range bookkeeping the ruler-click path at the
     // top of this function already drives. Without this branch a
     // Range-mode click on the note grid was falling through to the
-    // note-creation block below — drawing a note on every click.
+    // note-creation block below - drawing a note on every click.
     if (session.editMode == EditMode::Range)
     {
         clearSelection();   // start a fresh time-range with no stale note selection (matches the ruler-start path)
@@ -2898,7 +2898,7 @@ void PianoRollComponent::mouseMove (const juce::MouseEvent& e)
     {
         // Empty grid: Draw (pencil) and Grab (hand) paint via the CursorOverlay,
         // so hide the native cursor. invisibleCursor() (not MouseCursor::NoCursor,
-        // which is broken on some Linux WMs — see EditCursors.h). Other modes are
+        // which is broken on some Linux WMs - see EditCursors.h). Other modes are
         // inert here - normal arrow.
         if (mode == EditMode::Draw || mode == EditMode::Grab)
             setMouseCursor (invisibleCursor());
@@ -2912,7 +2912,7 @@ void PianoRollComponent::mouseMove (const juce::MouseEvent& e)
         return;
     }
     // Note edges resize; in Grab a note body gets the overlay grab-hand (hide
-    // the native cursor so the glyph shows — invisibleCursor(), not the
+    // the native cursor so the glyph shows - invisibleCursor(), not the
     // Linux-WM-broken MouseCursor::NoCursor), other modes keep JUCE's drag-hand.
     if (onEdge)
         setMouseCursor (juce::MouseCursor::LeftRightResizeCursor);
@@ -2990,7 +2990,7 @@ void PianoRollComponent::mouseUp (const juce::MouseEvent&)
 bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
 {
     // Edit-mode shortcuts. The modal grabs keyboard focus on open so
-    // MainComponent::keyPressed doesn't see these — handle locally.
+    // MainComponent::keyPressed doesn't see these - handle locally.
     if (! k.getModifiers().isAnyModifierKeyDown())
     {
         const auto ch = k.getTextCharacter();
@@ -3111,7 +3111,7 @@ bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
             navigateRegion (-1);
             return true;
         }
-        // Loop enable toggles on Cmd/Ctrl+L — bare 'L' is taken by the CC-
+        // Loop enable toggles on Cmd/Ctrl+L - bare 'L' is taken by the CC-
         // controller cycle further down, so the loop toggle takes the modifier.
         if (cmdOrCtrl && k.getKeyCode() == 'L')
         {
@@ -3132,7 +3132,7 @@ bool PianoRollComponent::keyPressed (const juce::KeyPress& k)
         // Mirrors the audio region editor, but the roll works in ticks so the
         // cursor maps through the region anchor.
         // On Linux/X11 getKeyCode() returns the SHIFTED glyph, so Shift+[ comes
-        // through as '{' and Shift+] as '}' — fold them back to [ / ].
+        // through as '{' and Shift+] as '}' - fold them back to [ / ].
         const int  rawKc = k.getKeyCode();
         const int  kc = (rawKc == '{') ? '[' : (rawKc == '}') ? ']' : rawKc;
         const bool sh = k.getModifiers().isShiftDown();
@@ -3452,7 +3452,7 @@ void PianoRollComponent::mouseWheelMove (const juce::MouseEvent& e,
     repaint();
 }
 
-// ── Top icon-row buttons ──────────────────────────────────────────────
+// Top icon-row buttons
 PianoRollComponent::IconButton::IconButton (const juce::String& name, Glyph g)
     : juce::Button (name), glyph (g)
 {
@@ -3731,11 +3731,11 @@ void PianoRollComponent::showRegionPropertiesPopup()
     m.addSectionHeader (juce::String::formatted ("Track %d  MIDI region %d",
                                                     trackIdx + 1, regionIdx + 1));
 
-    // Rename / label — embedded text-input modal (H2 sweep). Same
+    // Rename / label - embedded text-input modal (H2 sweep). Same
     // shape as the audio editor's region-properties popup so users
     // see one consistent gesture across both region types. The panel
     // renders inside the main window's component tree via Embedded
-    // Modal — no native juce::AlertWindow on the X11 / Wayland stack.
+    // Modal - no native juce::AlertWindow on the X11 / Wayland stack.
     const auto currentLabel = r->label;
     const juce::String renameLabel = currentLabel.isEmpty()
         ? juce::String ("Add label...")
@@ -3912,7 +3912,7 @@ int PianoRollComponent::transportPlayheadX (juce::Rectangle<int> gridArea) const
     const double sr = juce::jmax (1.0, engine.getCurrentSampleRate());
     // Fractional ticks so the playhead advances sub-tick smoothly. The integer
     // samplesToTicks quantises to whole ticks, so x would jump in tick-sized
-    // steps (several pixels when zoomed in) — a glitchy line. xForTick's pixel
+    // steps (several pixels when zoomed in) - a glitchy line. xForTick's pixel
     // math, inlined here against a double tick.
     const double regStartTick = session.samplesToTicksFractional (r->timelineStart, sr);
     const double localTick = session.samplesToTicksFractional (playheadSample, sr) - regStartTick;

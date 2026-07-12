@@ -99,7 +99,7 @@ void SystemStatusBar::timerCallback()
     }
 
     // DSP warn colour (same formula paint() uses). Track it separately so the
-    // colour repaints when warn flips even if the dspInfo string is unchanged —
+    // colour repaints when warn flips even if the dspInfo string is unchanged -
     // e.g. cpu crossing 0.85 within the same rounded "85%".
     const bool dspWarn = lastCpuUsage > 0.85
                       || (lastEngineXruns + lastBackendXruns) > 0;
@@ -177,7 +177,7 @@ void SystemStatusBar::paint (juce::Graphics& g)
 
 void SystemStatusBar::mouseDoubleClick (const juce::MouseEvent& e)
 {
-    // Double-click the DSP readout to zero the xrun counters — lets the
+    // Double-click the DSP readout to zero the xrun counters - lets the
     // user clear a stale warning after fixing whatever caused it and
     // watch for fresh ones.
     if (dspSegmentBounds().contains (e.getPosition()))

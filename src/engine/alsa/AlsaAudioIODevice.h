@@ -113,13 +113,13 @@ private:
 
     // Recover from an EPIPE / ESTRPIPE / EBADFD; bumps xrunCount. Returns
     // 0 on successful recovery, the original errno on failure. On success it
-    // also re-arms the stream (see rearmStream) — snd_pcm_recover alone leaves
+    // also re-arms the stream (see rearmStream) - snd_pcm_recover alone leaves
     // a linked duplex device PREPARED-but-not-RUNNING, which stalls audio.
     int recoverFromXrun (snd_pcm_t* handle, int err);
 
     // Restart a recovered stream: prepare both handles, prefill the playback
     // ring past start_threshold from silencePrefill, then snd_pcm_start. Mirrors
-    // the start sequence in open(). Audio-thread safe — no allocation.
+    // the start sequence in open(). Audio-thread safe - no allocation.
     void rearmStream() noexcept;
 
     // Convert one period's worth of float samples to the negotiated sample

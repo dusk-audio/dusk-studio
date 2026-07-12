@@ -139,7 +139,7 @@ private:
 
     // tierList BEFORE viewport: the viewport holds a non-owning pointer to it
     // (setViewedComponent(&tierList, false)), so tierList must outlive the
-    // viewport — members destruct in reverse declaration order.
+    // viewport - members destruct in reverse declaration order.
     TierList        tierList;
     juce::Viewport  viewport;
     juce::TextButton closeBtn { "Close" };

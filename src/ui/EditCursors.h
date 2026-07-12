@@ -7,7 +7,7 @@ namespace duskstudio
 {
 juce::MouseCursor cursorForEditMode (EditMode m);
 
-// True invisible image cursor — 2x2 transparent ARGB image cursor that
+// True invisible image cursor - 2x2 transparent ARGB image cursor that
 // goes through the SAME image-cursor pipeline as our scissors / hand /
 // pencil custom cursors. JUCE's MouseCursor::NoCursor is a special-case
 // enum that hits a different (broken-on-some-Linux-WMs) code path; use
@@ -15,7 +15,7 @@ juce::MouseCursor cursorForEditMode (EditMode m);
 // path has been verified working.
 juce::MouseCursor invisibleCursor();
 
-// Direct glyph paint helpers — used both by the native MouseCursor
+// Direct glyph paint helpers - used both by the native MouseCursor
 // image-builders below AND by the CursorOverlay component that bypasses
 // the platform cursor pipeline. Each paints the glyph centred at (cx,
 // cy) in the supplied Graphics context, sized to fit a 24×24 cursor box.

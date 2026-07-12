@@ -25,7 +25,7 @@
 #if DUSKSTUDIO_HAS_DUSK_DSP
   // Framework-free donor cores. The strip drives the full comp feature set
   // (Opto/FET/VCA) with the core's internal oversampling left off because the
-  // strip wraps EQ+Comp in its own StereoOversampler — running both would
+  // strip wraps EQ+Comp in its own StereoOversampler - running both would
   // double-OS. The EQ likewise runs 1x internally inside that same wrap (its
   // console saturation is the only saturating stage and the wrap band-limits it).
   #include <dsp/FourKEQDSP.hpp>
@@ -59,7 +59,7 @@ public:
         return pdcTargetSamples.load (std::memory_order_relaxed);
     }
 
-    // Slot is dormant until a plugin loads — empty strips pay zero RT cost.
+    // Slot is dormant until a plugin loads - empty strips pay zero RT cost.
     void bindPluginManager (PluginManager& mgr) noexcept { pluginSlot.setManager (mgr); }
     PluginSlot&       getPluginSlot()       noexcept { return pluginSlot; }
     const PluginSlot& getPluginSlot() const noexcept { return pluginSlot; }
@@ -91,7 +91,7 @@ public:
     bool nativeClapReloadFailed() const noexcept { return false; }
 #endif
 
-    // Native LV2 host path — same contract as the CLAP block above.
+    // Native LV2 host path - same contract as the CLAP block above.
 #if DUSKSTUDIO_HAS_NATIVE_LV2
     bool loadNativeLv2   (const juce::File& path, std::string& errorOut,
                           const juce::String& pluginId = {});
@@ -110,7 +110,7 @@ public:
     bool nativeLv2ReloadFailed() const noexcept { return false; }
 #endif
 
-    // Native VST3 host path — same contract as the CLAP block above.
+    // Native VST3 host path - same contract as the CLAP block above.
 #if DUSKSTUDIO_HAS_NATIVE_VST3
     bool loadNativeVst3   (const juce::File& path, std::string& errorOut,
                            const juce::String& pluginId = {});
@@ -129,7 +129,7 @@ public:
 #endif
 
     // Whether a native host owns the insert with an instrument loaded (no main
-    // audio input — MIDI drives it). Gates the track-mode/unload interplay.
+    // audio input - MIDI drives it). Gates the track-mode/unload interplay.
     bool insertIsNativeInstrument() const noexcept
     {
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
@@ -189,7 +189,7 @@ public:
     // Valid for lastProcessedSamples samples after the most recent
     // processAndAccumulate. nullptr if no DSP ran this block.
     const float* getLastProcessedMono() const noexcept { return lastProcessedPtr; }
-    // nullptr in mono mode — callers wanting stereo print must check.
+    // nullptr in mono mode - callers wanting stereo print must check.
     const float* getLastProcessedR() const noexcept { return lastProcessedR; }
     int getLastProcessedSamples() const noexcept { return lastProcessedSamples; }
 
@@ -227,7 +227,7 @@ public:
     // freeze render reads each block: after the EQ/comp stage (pre-fader),
     // srcL/srcR are copied there. nullptr (the default) disables the tap, so
     // it costs nothing on the live path. Message thread only, set while the
-    // engine is detached for the offline render — never during live audio.
+    // engine is detached for the offline render - never during live audio.
     void setFreezeCapture (float* l, float* r) noexcept { freezeCapL = l; freezeCapR = r; }
 
 private:
@@ -254,13 +254,13 @@ private:
     // native rate; the wrap moves the whole per-channel DSP to the oversampled
     // rate so the half-band FIRs band-limit it before downsampling. One
     // StereoOversampler serves both track widths: mono feeds channel 0 with a
-    // silent channel 1 (osMonoScratchR) and processes only channel 0 — the
+    // silent channel 1 (osMonoScratchR) and processes only channel 0 - the
     // wasted R half-band FIR runs on silence, but avoids doubling the expensive
     // EQ + comp work a duplicate-mono approach would incur, and no mono-only
     // primitive exists.
     dusk::audio::StereoOversampler oversampler;
     std::vector<float> osMonoScratchR;
-    int oversampleFactor = 1;    // 1 / 2 / 4 — drives the comp sub-chunk size
+    int oversampleFactor = 1;    // 1 / 2 / 4 - drives the comp sub-chunk size
 
     // Sits between phase invert and the EQ stage.
     PluginSlot pluginSlot;
@@ -320,7 +320,7 @@ private:
     void relatchPdcIfDrained (float blockPeakAbs, int numSamples) noexcept;
 
     // The per-strip oversampler's rounded internal latency (half-band filter
-    // state). The EQ — which carries the always-on console saturation — runs
+    // state). The EQ - which carries the always-on console saturation - runs
     // every block, so the oversampler is never skipped; this value is kept only
     // so the silent-skip can account for the oversampler's tail before dropping
     // a block (see requiredDrain in processAndAccumulate). The FIR round trip is
@@ -339,7 +339,7 @@ private:
     // doesn't emit a transient from stale filter history.
     bool prevEqEnabled { true };
 
-    // memcmp against last block — only push the EQ setters when a field
+    // memcmp against last block - only push the EQ setters when a field
     // changed, skipping the biquad recompute when no knob moved. Plain-float
     // struct (no padding) value-init to zero so memcmp is byte-reliable, and
     // so a bypassed EQ's flat defaults (all bands 0 dB, filters off) are the
@@ -360,7 +360,7 @@ private:
     // 20 ms ramps for continuous params so knob drags don't zipper.
     // Discrete params (mode, bypass, LIMIT, FET ratio) bypass. Their per-chunk
     // published values feed the core's atomic setters (no APVTS atoms to cache
-    // — the core does not port the donor's analog-hiss stage, so the old
+    // - the core does not port the donor's analog-hiss stage, so the old
     // noise_enable force-off is unnecessary).
     dusk::audio::SmoothedValue<float> smoothedOptoPeakRed;
     dusk::audio::SmoothedValue<float> smoothedOptoGain;

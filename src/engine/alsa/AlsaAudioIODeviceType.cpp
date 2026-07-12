@@ -59,7 +59,7 @@ void AlsaAudioIODeviceType::scanForDevices()
             snd_pcm_info_set_device   (pcmInfo, (unsigned int) device);
             snd_pcm_info_set_subdevice (pcmInfo, 0);
 
-            // Capture name from the FIRST successful query — pcmInfo is
+            // Capture name from the FIRST successful query - pcmInfo is
             // mutated by snd_ctl_pcm_info and may be left in an undefined
             // state if a subsequent stream-direction query fails.
             juce::String pcmName;

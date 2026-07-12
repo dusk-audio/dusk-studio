@@ -13,7 +13,7 @@
 
 namespace duskstudio
 {
-// Mastering-stage signal chain: Tube EQ → Bus comp → Brickwall limiter.
+// Mastering-stage signal chain: Tube EQ -> Bus comp -> Brickwall limiter.
 // Reads its parameters from MasteringParams (a sibling of MasterBusParams);
 // the same DSP cores are used so the sound carries from the live master
 // into mastering, with the limiter as the new final stage.
@@ -51,11 +51,11 @@ public:
 #endif
     BrickwallLimiter&    getLimiter() noexcept { return limiter; }
 
-    // ── Spectrum-analyzer feed (post-EQ) ──
+    // Spectrum-analyzer feed (post-EQ)
     // The audio thread writes mono-summed post-EQ samples into a free-running
     // ring; the message thread copies the most recent window for the mastering
     // EQ's FFT overlay. A read overlapping a write tears at most one frame,
-    // which is invisible on a spectrum, so no FIFO accounting is needed — a
+    // which is invisible on a spectrum, so no FIFO accounting is needed - a
     // single release/acquire write index is the whole contract.
     int    readScopeLatest (float* dest, int count) const noexcept;
     double getScopeSampleRate() const noexcept { return sampleRateForMeter; }
@@ -71,7 +71,7 @@ private:
     void updateLimiterParameters() noexcept;
 
     // Post-EQ scope ring (power-of-two length; mask-indexed). Written on the
-    // audio thread, read on the message thread — see readScopeLatest.
+    // audio thread, read on the message thread - see readScopeLatest.
     juce::AudioBuffer<float> scopeRing;
     std::atomic<long long>   scopeWritePos { 0 };
     std::atomic<int>         scopeRingMask { 0 };   // written in prepare, read by both threads

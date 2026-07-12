@@ -59,7 +59,7 @@ inline int comparePrerelease (const juce::String& a, const juce::String& b)
         {
             const int va = pa[i].getIntValue();
             const int vb = pb[i].getIntValue();
-            if (va != vb) return va < vb ? -1 : 1;   // direct compare — no subtraction overflow
+            if (va != vb) return va < vb ? -1 : 1;   // direct compare - no subtraction overflow
         }
         else if (na != nb)
         {
@@ -86,7 +86,7 @@ inline bool isNewer (const ParsedVersion& candidate, const ParsedVersion& curren
     return comparePrerelease (candidate.prerelease, current.prerelease) > 0;
 }
 
-// Blocking fetch — call from a background thread only. The GitHub API
+// Blocking fetch - call from a background thread only. The GitHub API
 // rejects requests without a User-Agent, so both paths set one.
 inline juce::String fetchTagsJson()
 {
@@ -140,7 +140,7 @@ inline juce::String highestTag (const juce::String& json)
 // name; never called when up to date or on any failure.
 //
 // LIFETIME: onNewer fires after a network round-trip (seconds), so it may
-// outlive the caller. It is NOT given a lifetime token — the caller MUST
+// outlive the caller. It is NOT given a lifetime token - the caller MUST
 // capture a juce::Component::SafePointer / std::weak_ptr to any owned object
 // and re-check it inside onNewer (which runs on the message thread). See the
 // call site in MainComponent for the SafePointer pattern.

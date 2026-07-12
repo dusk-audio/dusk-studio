@@ -34,15 +34,15 @@ namespace
 // so the close that follows is benign.
 //
 // On Linux + macOS, shutdown(fd, SHUT_RD) wakes the blocked read with
-// EOF semantics — the standard portable way to unblock a thread sitting
+// EOF semantics - the standard portable way to unblock a thread sitting
 // on read(socketpair_fd, ...). Safe to call before the actual close.
 //
-// Idempotent: invalid handle → no-op success.
+// Idempotent: invalid handle -> no-op success.
 void wakeReaderForShutdown (platform::NativeHandle& ch) noexcept
 {
    #if defined(_WIN32)
     if (ch.h == nullptr || ch.h == reinterpret_cast<void*> (-1)) return;
-    // CancelIoEx returns FALSE on Win 7+ if no pending I/O — that's not
+    // CancelIoEx returns FALSE on Win 7+ if no pending I/O - that's not
     // an error condition for our use case, so the return value is
     // ignored. The handle pointer doubles as both SOCKET and HANDLE on
     // Windows; either type is valid for CancelIoEx.
@@ -51,7 +51,7 @@ void wakeReaderForShutdown (platform::NativeHandle& ch) noexcept
     if (ch.fd < 0) return;
     // SHUT_RD: future reads return 0 (EOF). The reader's readExact
     // returns false on the next iteration. EBADF / ENOTSOCK from a
-    // non-socket fd is harmless — disconnect immediately proceeds to
+    // non-socket fd is harmless - disconnect immediately proceeds to
     // closeHandle. Return value intentionally unused.
     (void) ::shutdown (ch.fd, SHUT_RD);
    #endif
@@ -292,7 +292,7 @@ bool RemotePluginConnection::sendAndAwaitReply (OpCode op,
 
     // Clear stale slot in case a prior call timed out without consuming
     // its reply. If a late reply for that previous call lands AFTER we
-    // send, we'd misattribute — but: the message thread is single, so
+    // send, we'd misattribute - but: the message thread is single, so
     // a timeout means the caller already returned and no other call
     // can be in flight. Discarding the prior slot is correct.
     replyReady   = false;
@@ -520,7 +520,7 @@ bool RemotePluginConnection::setRemoteParam (int paramIndex, float value01) noex
 void RemotePluginConnection::setParamChangedSink (ParamChangedSink sink)
 {
     // Mutate the shared SinkState under its own mutex (independent of
-    // controlMutex — that one guards the reply-correlation queue only).
+    // controlMutex - that one guards the reply-correlation queue only).
     std::lock_guard<std::mutex> lk (sinkState_->mutex);
     sinkState_->sink = std::move (sink);
 }
@@ -546,7 +546,7 @@ void RemotePluginConnection::stopReaderThread() noexcept
     }
     // 3c-4: explicitly wake the reader thread. Before this call the
     // reader could be sitting in a blocking readExact even after the
-    // child terminated — on Windows the close-during-blocking-ReadFile
+    // child terminated - on Windows the close-during-blocking-ReadFile
     // race left the reader stuck until the kernel finished tearing
     // down the IRP, sometimes seconds. Now CancelIoEx (Win) /
     // shutdown(SHUT_RD) (POSIX) returns the reader from its syscall
@@ -566,10 +566,10 @@ void RemotePluginConnection::readerLoop()
             break;  // EOF / peer closed / EBADF on disconnect
 
         if (hdr.payloadLen > kMaxControlPayload)
-            break;  // corrupt/hostile header — refuse the alloc, drop the link
+            break;  // corrupt/hostile header - refuse the alloc, drop the link
 
         // Header self-consistency: both writers set totalLen = sizeof(hdr) +
-        // payloadLen, so a mismatch is a framing bug / corruption — drop the link.
+        // payloadLen, so a mismatch is a framing bug / corruption - drop the link.
         if (hdr.totalLen != (std::uint32_t) sizeof (hdr) + hdr.payloadLen)
             break;
 
@@ -581,7 +581,7 @@ void RemotePluginConnection::readerLoop()
         if (hdr.op == (std::uint32_t) OpCode::ParamChangedFromChild)
         {
             // Async push from child. Marshal to the JUCE message thread
-            // via callAsync — never invoke the sink directly here (we're
+            // via callAsync - never invoke the sink directly here (we're
             // on the reader thread, sink callers may touch UI / JUCE
             // listener state).
             //
@@ -615,7 +615,7 @@ void RemotePluginConnection::readerLoop()
         // Anything else is a sync-RPC reply. Park it for the waiting
         // sender. Single in-flight RPC is the invariant (message thread
         // is JUCE-single-threaded), so overwriting an unconsumed reply
-        // would be a bug — we still publish to avoid deadlocking, and
+        // would be a bug - we still publish to avoid deadlocking, and
         // drop the prior unread slot on the floor with a stderr line.
         std::lock_guard<std::mutex> lk (controlMutex);
         if (replyReady)
@@ -630,7 +630,7 @@ void RemotePluginConnection::readerLoop()
         replyCv.notify_all();
     }
 
-    // Exiting — either peer-closed (child terminated) or disconnect
+    // Exiting - either peer-closed (child terminated) or disconnect
     // explicitly requested. Wake any sender waiting on replyCv so it
     // returns with an error rather than blocking forever.
     std::lock_guard<std::mutex> lk (controlMutex);
@@ -653,7 +653,7 @@ void RemotePluginConnection::disconnect()
     //      sockThread closes its socket end on the way out, which makes
     //      our reader's readExact return false.
     //   2. stopReaderThread joins after readerExited/replyCv have been
-    //      published — any sender currently in CV wait wakes up and
+    //      published - any sender currently in CV wait wakes up and
     //      returns with an error.
     //   3. Close our half of the control channel.
     //   4. shm.close drops the mmap.
@@ -662,7 +662,7 @@ void RemotePluginConnection::disconnect()
     // race: on Linux closing the fd while another thread is mid-read
     // returns EBADF and the read fails (well-defined since 2.6.31).
     // On macOS the close-during-blocking-read behaviour is the same;
-    // on Windows the equivalent is CancelIoEx — out of scope for
+    // on Windows the equivalent is CancelIoEx - out of scope for
     // 3c-3a but documented as a 3c-4 hardening item.
     if (child.isAlive())
     {

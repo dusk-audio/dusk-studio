@@ -8,7 +8,7 @@ namespace duskstudio
 {
 // Embedded-modal panel that turns the user's typing keyboard into a MIDI
 // note source. Pushes Note On / Note Off messages into the engine's
-// synthetic "Virtual Keyboard (Dusk Studio)" MidiMessageCollector — to actually
+// synthetic "Virtual Keyboard (Dusk Studio)" MidiMessageCollector - to actually
 // hear the notes, a track must select that device on its MIDI input
 // dropdown and have an instrument plugin loaded.
 //
@@ -22,14 +22,14 @@ namespace duskstudio
 // Note Off detection: keyPressed fires only for key-down (and for OS
 // auto-repeat); JUCE doesn't deliver key-up events. A 30 Hz timer scans
 // the held set and, for each tracked code, asks whether its typing key is
-// still physically down — when it isn't, the matching Note Off is emitted on
+// still physically down - when it isn't, the matching Note Off is emitted on
 // whatever channel/note the original Note On used (so an octave/channel
 // shift mid-press doesn't orphan the off).
 //
 // The "still down?" query is the subtle part. On Linux/XWayland JUCE's
 // juce::KeyPress::isKeyCurrentlyDown derives state from the X11 event stream,
 // which goes stale during OS key auto-repeat (a held key reads false between
-// repeats) — so a held note would drop after ~the debounce window and the
+// repeats) - so a held note would drop after ~the debounce window and the
 // next repeat's keyPressed would re-trigger it: one held key becomes a stream
 // of notes. So the scan uses isCodePhysicallyDown(), which on Linux reads the
 // X server's physical key state via XQueryKeymap (auto-repeat-immune; see
@@ -73,7 +73,7 @@ private:
 
     AudioEngine& engine;
 
-    // Initialised from appconfig::getVkbCentreNote() in the ctor — the
+    // Initialised from appconfig::getVkbCentreNote() in the ctor - the
     // last-used centre is persisted, so re-opening the VKB lands on the
     // user's previous octave. Default on first run is C2 (MIDI 36).
     int centreNote { 36 };
@@ -100,7 +100,7 @@ private:
     };
     // ~100 ms at the 30 Hz scan rate. With XQueryKeymap ground truth a single
     // scan would do; the extra scans absorb a one-off stale read while keeping
-    // release latency imperceptible — and leave a window (silentScans in
+    // release latency imperceptible - and leave a window (silentScans in
     // [kReleaseScans-1, kReleaseScans)) where a fast re-press can retrigger on
     // CONFIRMED release evidence rather than a lone stale increment.
     static constexpr int kReleaseScans = 3;

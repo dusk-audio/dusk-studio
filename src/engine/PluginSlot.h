@@ -25,7 +25,7 @@ class PluginManager;
 // sees either nullptr (bypass) or a fully-prepared instance.
 //
 // PluginSlot inherits juce::Timer so the audio-thread param-write path
-// (setParamNormalised → SPSC FIFO push) can be drained on the message
+// (setParamNormalised -> SPSC FIFO push) can be drained on the message
 // thread without ever blocking, allocating, or invoking JUCE parameter
 // setters from the render context. See timerCallback() + paramFifo.
 class PluginSlot : private juce::Timer
@@ -57,7 +57,7 @@ public:
     void prepareToPlay (double sampleRate, int blockSize);
     void releaseResources();
 
-    // Process-shutdown only. Drops ownership without destructing — some
+    // Process-shutdown only. Drops ownership without destructing - some
     // Linux plugins abort the process from their destructor (e.g. u-he
     // Diva). The OS reclaims the leaked memory at exit. NEVER call
     // outside shutdown.
@@ -67,7 +67,7 @@ public:
     bool loadFromDescription (const juce::PluginDescription& desc,
                                 juce::String& errorMessage);
 
-    // Off-thread load (in-process only — OOP falls back to the sync path).
+    // Off-thread load (in-process only - OOP falls back to the sync path).
     // Creates the instance on a background thread so a slow sample decode never
     // freezes the UI, then swaps it in + fires onDone(success, error) ON THE
     // MESSAGE THREAD. Safe against the slot being destroyed or a newer
@@ -98,7 +98,7 @@ public:
 
     // Message thread. Hold while constructing the plugin's editor: sampler-
     // style plugins share an internal lock between processBlock and their
-    // editor/loader, so a seconds-long editor build can block processBlock —
+    // editor/loader, so a seconds-long editor build can block processBlock -
     // and with it the whole audio callback. Holding the slot's process lock
     // makes the audio thread dry-pass THIS strip for the duration instead.
     juce::SpinLock& getProcessLock() noexcept { return processLock; }
@@ -132,7 +132,7 @@ public:
     bool hideRemoteEditor();
     bool resizeRemoteEditor (int width, int height);
 
-    // Message-thread only — audio thread may swap the instance.
+    // Message-thread only - audio thread may swap the instance.
     juce::AudioPluginInstance* getInstance() const noexcept
     {
         return currentInstance.load (std::memory_order_acquire);
@@ -144,7 +144,7 @@ public:
     // Cached at load. AudioPluginInstance::getLatencySamples isn't
     // documented as RT-safe (plugins may take locks), so we cache on
     // the message thread and the audio thread reads the atom.
-    // A bypassed slot passes dry and adds no delay, so it reports 0 —
+    // A bypassed slot passes dry and adds no delay, so it reports 0 -
     // otherwise recomputePdc() compensates for latency that isn't there.
     int getLatencySamples() const noexcept
     {
@@ -185,7 +185,7 @@ public:
 
     // True when restore couldn't re-instantiate (plugin missing /
     // moved / unsupported). Saved description + state are preserved so
-    // a subsequent save round-trips them — user doesn't lose state
+    // a subsequent save round-trips them - user doesn't lose state
     // because the plugin wasn't available at load time.
     bool         isOffline() const noexcept;
     juce::String getOfflineName() const;
@@ -257,9 +257,9 @@ private:
     std::atomic<bool> bypassed { false };
     std::atomic<bool> autoBypassed { false };
 
-    // Per-instance prepare↔process exclusion (the Tracktion ExternalPlugin
+    // Per-instance prepare<->process exclusion (the Tracktion ExternalPlugin
     // pattern). The audio/worker thread TRY-locks around the plugin's
-    // processBlock — if prepareToPlay/releaseResources holds the lock the
+    // processBlock - if prepareToPlay/releaseResources holds the lock the
     // block passes dry, one inaudible skip. The message-thread mutators take
     // it blocking, so a plugin can never be re-prepared mid-processBlock even
     // on a reconfigure path the engine-level gate didn't anticipate.
@@ -299,7 +299,7 @@ private:
 
     // Watchdog state (audio-thread only).
     // blocksSinceLoad skips the budget check while cold caches / lazy
-    // init / oversampler ramps warm up — without it, look-ahead
+    // init / oversampler ramps warm up - without it, look-ahead
     // limiters and reverbs trip on block 1 every time.
     // consecutiveOverruns requires N in a row before tripping so single
     // late blocks from scheduling jitter don't kill the plugin.
@@ -373,7 +373,7 @@ private:
     std::unique_ptr<ShellParamListener> shellParamListener;
 
     // Called by the ParamChangedSink the parent registered on
-    // ownedRemote — runs on the message thread (callAsync marshalled).
+    // ownedRemote - runs on the message thread (callAsync marshalled).
     // Sets applyingFromMirror across the setValueNotifyingHost call so
     // the shell listener doesn't bounce the change back.
     void applyShellParamFromChild (int paramIndex, float value01) noexcept;
@@ -388,7 +388,7 @@ private:
     // gives ~85× headroom for chord-strike-plus-drag scenarios).
     //
     // ParamWrite is a trivial POD so the in-place store on the audio
-    // thread is a single 12-byte write + an atomic finishedWrite — no
+    // thread is a single 12-byte write + an atomic finishedWrite - no
     // ctor, no dtor, no allocation. loadEpoch is stamped from
     // currentLoadEpoch at push time so the drain can discard entries
     // queued against a now-replaced plugin instance.
