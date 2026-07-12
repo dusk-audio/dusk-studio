@@ -360,7 +360,7 @@ juce::String AudioPipelineSelfTest::testBusSoloMutesDirect()
     const bool silentL = m.peakL < 1.0e-4f;
     const bool silentR = m.peakR < 1.0e-4f;
 
-    // Restore — prepareCleanState resets track solos but not bus solos, so
+    // Restore - prepareCleanState resets track solos but not bus solos, so
     // clear it here to avoid bleeding into the next test.
     session.setBusSoloed (0, false);
 
@@ -989,18 +989,18 @@ juce::String AudioPipelineSelfTest::testParallelMatchesSerial()
     constexpr int    bs = 256, numIn = 16, numOut = 2;
     constexpr double sr = 48000.0;
     // Long warmup so every strip's IIR transient (notably the low-freq HPF,
-    // which has a slow settle) fully decays before measuring — otherwise two
+    // which has a slow settle) fully decays before measuring - otherwise two
     // serial runs measured mid-transient differ and the baseline is noisy.
     constexpr int    warmup = 256, measure = 16;
     constexpr int    activeTracks = 16;        // spread across every worker lane
 
-    // Mirror the engine's own cap. 0 workers on hosts with < 3 cores — there the
+    // Mirror the engine's own cap. 0 workers on hosts with < 3 cores - there the
     // parallel path is the serial path, so the comparison is trivially equal.
     const int testWorkers = jmax (0, jmin (juce::SystemStats::getNumCpus() - 2, 15));
 
     // Active strips: monitor input (sine on every input channel), HPF + per-track-
     // distinct 4-band EQ + fader so each lane carries decorrelated, non-trivial DSP
-    // output — making the serial-vs-parallel reduce a real float-reassociation test,
+    // output - making the serial-vs-parallel reduce a real float-reassociation test,
     // not an all-zeros sum. Comp stays OFF deliberately: the donor compressor's
     // envelope is not guaranteed to reset bit-identically across two prepare calls,
     // and over a sustained tone a slow release would make even two SERIAL runs
@@ -1099,7 +1099,7 @@ juce::String AudioPipelineSelfTest::testParallelMatchesSerial()
     // The real invariant: enabling workers must not change the mix any more than
     // re-running serial does. We compare parallelDiff against the serial-vs-serial
     // baseline (not an absolute floor) because the serial path itself isn't
-    // bit-deterministic across two prepare+drive cycles — and a buggy reduce
+    // bit-deterministic across two prepare+drive cycles - and a buggy reduce
     // (dropped/double-counted strip, wrong lane partition) would push parallelDiff
     // to ~unity, far past serialDiff + the pure 16-way sum-reorder term.
     constexpr float kReassocTol = 2.0e-5f;
@@ -1123,13 +1123,14 @@ juce::String AudioPipelineSelfTest::testParallelMatchesSerial()
 juce::String AudioPipelineSelfTest::testMidiPlayAlongMonitor()
 {
     // Regression guard: an armed, input-monitored MIDI track must sound the
-    // live controller in ALL transport states — Stopped, Playing, and Stopped
-    // again. The historical bug: pressing PLAY silenced live play-along
-    // because the disk-playback routing branch never merged live input.
+    // live controller in ALL transport states - Stopped, Playing, and Stopped
+    // again. Guards against the playback branch dropping live input - the
+    // disk-playback routing branch must merge live input on top of scheduled
+    // notes so play-along sounds while the transport rolls.
     //
     // Observable: session.track(0).midiActivity, set true whenever a block
     // routes any event into the track's per-track MIDI buffer (the buffer the
-    // instrument would receive). No instrument needed — the routing decision
+    // instrument would receive). No instrument needed - the routing decision
     // is what regressed, and midiActivity is its direct proxy.
     prepareCleanState();
 
@@ -1180,16 +1181,27 @@ juce::String AudioPipelineSelfTest::testMidiPlayAlongMonitor()
                                                   numOut, bs, ctx);
     };
 
-    // Probe one transport state: run a few settle blocks so the stop/seek
+    // Probe one transport state. Seek to 0 first so every probe measures at a
+    // deterministic playhead (guards against future seeded content latching
+    // activity off disk events), then run a few settle blocks so the stop/seek
     // hanging-note flush clears and the playhead reaches a contiguous steady
-    // state (a flush block would raise midiActivity on its own and mask the
-    // real signal). Then inject a fresh note on the measure block — the
-    // injection is consumed in a single block — and read the latch.
+    // state (a flush block raises midiActivity on its own and would mask the
+    // real signal). Reset the latch and run ONE empty block: it must STILL read
+    // false, proving the flush is inert before the live note is injected - so
+    // the measured latch reflects the injected note, not lingering flush
+    // inertia. Then inject a fresh note (consumed in a single block) and read.
+    bool flushInert = true;
     auto probe = [&] (Transport::State st) -> bool
     {
+        engine.getTransport().setPlayhead (0);
         engine.getTransport().setState (st);
         for (int i = 0; i < 4; ++i)
             runBlock();
+
+        t0.midiActivity.store (false, std::memory_order_relaxed);
+        runBlock();   // no injection - the flush must have gone quiet by now
+        if (t0.midiActivity.load (std::memory_order_relaxed))
+            flushInert = false;
 
         juce::MidiBuffer m;
         m.addEvent (juce::MidiMessage::noteOn (1, 60, (juce::uint8) 100), 0);
@@ -1210,14 +1222,15 @@ juce::String AudioPipelineSelfTest::testMidiPlayAlongMonitor()
     t0.midiChannel.store    (savedMidiCh,  std::memory_order_relaxed);
     t0.midiActivity.store   (savedActivity, std::memory_order_relaxed);
 
-    const bool pass = stoppedBefore && playing && stoppedAfter;
+    const bool pass = stoppedBefore && playing && stoppedAfter && flushInert;
     return juce::String::formatted (
         "%s MIDI play-along monitor (armed + IN MIDI track, live note each state)\n"
-        "      stopped=%s  playing=%s  stopped-again=%s %s",
+        "      stopped=%s  playing=%s  stopped-again=%s  flush-inert=%s %s",
         fmtPassFail (pass).toRawUTF8(),
         stoppedBefore ? "sound" : "SILENT",
         playing       ? "sound" : "SILENT",
         stoppedAfter  ? "sound" : "SILENT",
+        flushInert    ? "yes"   : "NO",
         pass ? "" : "<-- live MIDI dropped (play-along must sound while rolling)");
 }
 
@@ -1513,7 +1526,7 @@ juce::String AudioPipelineSelfTest::runPerfSuite()
 
     // Multicore scaling: the heavy full-mixer config (the one that actually
     // saturates a core) at serial vs cores-2 workers. The two median figures
-    // are the real speedup — e.g. a 4-core Pi 5 with 2 workers should roughly
+    // are the real speedup - e.g. a 4-core Pi 5 with 2 workers should roughly
     // halve the per-block strip-DSP time. Worker count 0 = serial; > 0 fans the
     // 24 strips across the pool.
     const int parW = juce::jmax (0, juce::jmin (juce::SystemStats::getNumCpus() - 2, 15));

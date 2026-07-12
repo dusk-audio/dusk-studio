@@ -12,6 +12,20 @@ namespace duskstudio
 // realtime monitoring stays at the user's lighter Effect Oversampling setting.
 static constexpr int kRenderOversamplingFactor = 4;
 
+namespace
+{
+// Latches the engine's offline-render flag for the lifetime of a render loop so
+// the audio callback suppresses live-MIDI pulls (see AudioEngine's play-along
+// overlay). RAII so an early-out or exception still clears it.
+struct ScopedOfflineRender
+{
+    explicit ScopedOfflineRender (AudioEngine& e) noexcept : engine (e)
+        { engine.setOfflineRenderActive (true); }
+    ~ScopedOfflineRender() { engine.setOfflineRenderActive (false); }
+    AudioEngine& engine;
+};
+} // namespace
+
 BounceEngine::BounceEngine (AudioEngine& e, Session& s,
                               juce::AudioDeviceManager& dm) noexcept
     : juce::Thread ("Dusk Studio bounce"), engine (e), session (s), deviceManager (dm)
@@ -64,7 +78,7 @@ std::int64_t BounceEngine::computeBounceLength (double sampleRate, double tail) 
 {
     // Longest region end across all tracks defines the natural bounce end;
     // tail extends that so reverb/comp/EQ ringouts decay before we cut.
-    // MIDI regions and freeze WAVs count too — a virtual-instrument song has
+    // MIDI regions and freeze WAVs count too - a virtual-instrument song has
     // no audio regions at all, and MIDI playing past the last audio region
     // must not be truncated.
     std::int64_t maxRegionEnd = 0;
@@ -138,7 +152,7 @@ bool BounceEngine::start (const juce::File& outFile, double sr, int bs, double t
     // Pre-compute stem count so the UI's "track N of M" label has its
     // total available immediately (otherwise the dialog flashes 0 until
     // the worker thread enters its loop). Tracks render only when they
-    // have audio / MIDI regions or are armed for recording — empty
+    // have audio / MIDI regions or are armed for recording - empty
     // unarmed tracks would write silent stems.
     int stems = 0;
     if (renderMode == Mode::Stems)
@@ -243,6 +257,7 @@ void BounceEngine::run()
     // Detach the engine from the realtime device - we drive its audio
     // callback ourselves at non-realtime pace. State is restored at the
     // bottom of this function regardless of how we exit.
+    ScopedOfflineRender offlineGuard (engine);
     deviceManager.removeAudioCallback (&engine);
     // Render the saturating stages at 4× so the bounce is alias-free; cleared
     // before the live re-prepare below.
@@ -284,7 +299,7 @@ void BounceEngine::run()
         transport.setState (Transport::State::Playing);
         engine.getPlaybackEngine().preparePlayback();
         // The in-callback relatch of the master-stage aux PDC only runs while
-        // stopped — and this offline drive is Playing from the first block.
+        // stopped - and this offline drive is Playing from the first block.
         // Latch the targets here (callback is detached) or the render plays
         // wet returns misaligned against the dry mix.
         engine.applyMasterPdcTargetsNow();
@@ -389,7 +404,7 @@ void BounceEngine::run()
 
     writer.reset();  // flush + close
     // A cancelled or failed render must not leave a truncated file where the
-    // user's previous good bounce was — stems and freeze already do this.
+    // user's previous good bounce was - stems and freeze already do this.
     if (! succeeded)
         outputFile.deleteFile();
 
@@ -522,7 +537,7 @@ bool BounceEngine::renderOneStem (const juce::File& outFile,
 
     if (cancelRequested.load (std::memory_order_relaxed) || ! ok)
     {
-        // Drop the partial stem — a half-rendered file is more
+        // Drop the partial stem - a half-rendered file is more
         // confusing than no file when the user cancels or the writer
         // fails mid-render. Delete is performed AFTER writer.reset()
         // above so the file handle is closed before we unlink.
@@ -562,6 +577,7 @@ bool BounceEngine::runStemsMode()
 
     // Detach engine + prepare for offline rate just once. Each stem
     // re-uses the same prepared state.
+    ScopedOfflineRender offlineGuard (engine);
     deviceManager.removeAudioCallback (&engine);
     // Stems render through the full strip path too, so oversample them 4× for
     // alias-free output; cleared before the live re-prepare below.
@@ -575,7 +591,7 @@ bool BounceEngine::runStemsMode()
     engine.setStage (AudioEngine::Stage::Mixing);
     // Same reason as the master-mix path: the stem drive runs Playing from
     // block 0, so the in-callback (stopped-only) relatch never engages the
-    // master-stage aux PDC — latch it while the callback is detached.
+    // master-stage aux PDC - latch it while the callback is detached.
     engine.applyMasterPdcTargetsNow();
 
     bool succeeded = true;
@@ -609,7 +625,7 @@ bool BounceEngine::runStemsMode()
         }
     }
 
-    // Restore everything — solo, transport, stage, device callback.
+    // Restore everything - solo, transport, stage, device callback.
     for (int t = 0; t < Session::kNumTracks; ++t)
         session.setTrackSoloed (t, savedSolo[(size_t) t]);
     transport.setState (savedTransportState);
@@ -650,9 +666,9 @@ bool BounceEngine::startFreeze (int trackIndex, const juce::File& outFile,
     rendering.store (true, std::memory_order_relaxed);
 
     // run() owns clearing `rendering`, so if the thread never starts we must
-    // clear it here — otherwise isRendering() stays true forever and the dialog
+    // clear it here - otherwise isRendering() stays true forever and the dialog
     // wedges. Routes the caller into FreezeDialog's failBeforeStart path.
-    if (! startThread())   // → run() → renderFreezeTrack on the worker thread
+    if (! startThread())   // -> run() -> renderFreezeTrack on the worker thread
     {
         rendering.store (false, std::memory_order_relaxed);
         const juce::ScopedLock lock (lastErrorLock);
@@ -683,7 +699,7 @@ bool BounceEngine::renderFreezeTrack (int trackIndex, const juce::File& outFile,
     renderBlockSize  = juce::jmax (16, blockSize);
     renderFormat     = Format::Wav;   // freeze is always WAV (sample-accurate re-import)
 
-    // Open the writer first — a failure here means we never touch engine state.
+    // Open the writer first - a failure here means we never touch engine state.
     std::unique_ptr<juce::FileOutputStream> outStream (outFile.createOutputStream());
     if (outStream == nullptr)
     {
@@ -706,6 +722,7 @@ bool BounceEngine::renderFreezeTrack (int trackIndex, const juce::File& outFile,
     }
 
     // Detach + offline-prepare, exactly like the stem path.
+    ScopedOfflineRender offlineGuard (engine);
     deviceManager.removeAudioCallback (&engine);
     engine.setRenderOversamplingOverride (kRenderOversamplingFactor);
     engine.prepareForSelfTest (renderSampleRate, renderBlockSize);
@@ -753,7 +770,7 @@ bool BounceEngine::renderFreezeTrack (int trackIndex, const juce::File& outFile,
 
     // The capture tap is post-insert, so an audio track's latent insert
     // (lookahead comp, linear-phase EQ) delays the captured signal by its own
-    // latency — and frozen playback reports 0 to PDC, so that delay would be
+    // latency - and frozen playback reports 0 to PDC, so that delay would be
     // baked in and replayed late. Render that many extra samples and drop them
     // from the head. MIDI instruments are excluded: the scheduler pre-shifts
     // their events by the plugin latency, so their capture is already aligned.
@@ -810,7 +827,7 @@ bool BounceEngine::renderFreezeTrack (int trackIndex, const juce::File& outFile,
     engine.getPlaybackEngine().stopPlayback();
     writer.reset();   // flush + close before any deleteFile
 
-    // Restore everything — solo, transport, stage, oversampling, device callback.
+    // Restore everything - solo, transport, stage, oversampling, device callback.
     for (int t = 0; t < Session::kNumTracks; ++t)
         session.setTrackSoloed (t, savedSolo[(size_t) t]);
     transport.setState (savedTransportState);
