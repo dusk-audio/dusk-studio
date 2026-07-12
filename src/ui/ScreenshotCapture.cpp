@@ -243,6 +243,20 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
         snapshotComponent (consoleView->getBusComponent (0),   outDir, "np-05-bus-strip.png");
         snapshotComponent (consoleView->getMasterStripComponent(), outDir, "np-06-master-strip.png");
 
+        // Compact-mode strips: EQ / COMP (and TAPE / AUX) collapse into section
+        // pills that carry the same left-toggle / right-menu / double-click-editor
+        // grammar as the full headers. Capture channel, bus, and master compacted,
+        // then restore full mode so later shots aren't collapsed.
+        consoleView->setStripsCompactMode (true);
+        resized();
+        settle (300);
+        snapshotComponent (consoleView->getStripComponent (0),     outDir, "cs-01-channel-compact.png");
+        snapshotComponent (consoleView->getBusComponent (0),       outDir, "cs-02-bus-compact.png");
+        snapshotComponent (consoleView->getMasterStripComponent(), outDir, "cs-03-master-compact.png");
+        consoleView->setStripsCompactMode (false);
+        resized();
+        settle (200);
+
         // Automation-mode label in WRITE.
         session.track (0).automationMode.store ((int) AutomationMode::Write, std::memory_order_relaxed);
         resized();

@@ -122,10 +122,9 @@ private:
     juce::Rectangle<int> eqArea;
     juce::Rectangle<int> compArea;
     // Compact-mode section pills. Hidden when compactMode=false; visible (and the
-    // section knobs hidden) when true. Left-click toggles the EQ / COMP enable state;
-    // right-click opens the matching editor popup (openEqEditorPopup / openCompEditorPopup)
-    // so the user can tweak without expanding the strip. Mirrors ChannelStripComponent's
-    // eqCompactButton / compCompactButton grammar.
+    // section knobs hidden) when true. Identical grammar to the expanded headers:
+    // left-click toggles enable, right-click opens the section menu, double-click
+    // opens the matching editor popup. Mirrors ChannelStripComponent's compact pills.
     SectionPillButton eqCompactButton  { "EQ"   };
     SectionPillButton compCompactButton { "COMP" };
     // Compact-mode popups: clicking the placeholder button shows a
@@ -135,6 +134,12 @@ private:
     EmbeddedModal compEditorModal;
     void openEqEditorPopup();
     void openCompEditorPopup();
+    // Unified section context menus (right-click on a header or compact pill):
+    // whole-section reset + open editor. Fixed-topology, so no character items.
+    void showEqSectionMenu();
+    void showCompSectionMenu();
+    void resetEqSection();
+    void resetCompSection();
     juce::Label outputPeakLabel;
     float displayedOutputLDb = -100.0f;
     float displayedOutputRDb = -100.0f;

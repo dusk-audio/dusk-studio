@@ -96,15 +96,15 @@ private:
     juce::Slider     compMakeup    { juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow };
     juce::Label      compRatLabel, compAtkLabel, compRelLabel, compMakLabel;
 
-    // Compact-mode pill labelled "TAPE". Left-click opens the TapeMachine
-    // editor modal; right-click toggles tapeEnabled (so the timeline /
-    // compact view can bypass tape without expanding the master strip) -
-    // symmetric with the expanded-mode CompHeaderButton's left/right
-    // behaviour. The lit state is driven by the tapeEnabled atom (synced
-    // from the 30 Hz timer) so the editor's auto-arm is still reflected here.
+    // Compact-mode pill labelled "TAPE". Unified section grammar (identical
+    // to the expanded tapeHeaderBtn): left-click toggles tapeEnabled, right-
+    // click opens the TAPE section menu, double-click opens the TapeMachine
+    // editor. The lit state is driven by the tapeEnabled atom (synced from
+    // the 30 Hz timer) so the editor's auto-arm is still reflected here.
     SectionPillButton tapeButton { "TAPE" };
     // Expanded-mode header: shared CompHeaderButton (matches EQ/COMP
-    // grammar). Right-click opens TapeMachine editor via pickFn.
+    // grammar). Left toggles, right opens the section menu, double-click
+    // opens the TapeMachine editor.
     std::unique_ptr<CompHeaderButton> tapeHeaderBtn;
     ::TapeMachineAudioProcessor* tapeProcessorPtr = nullptr;
     void openTapeMachineModal();
@@ -143,6 +143,14 @@ private:
     EmbeddedModal compEditorModal;
     void openEqEditorPopup();
     void openCompEditorPopup();
+    // Unified section context menus (right-click on a header or compact pill):
+    // whole-section reset (where a per-knob reset precedent exists) + open
+    // editor. Master sections are fixed-topology, so no character items.
+    void showEqSectionMenu();
+    void showCompSectionMenu();
+    void showTapeSectionMenu();
+    void resetEqSection();
+    void resetCompSection();
     juce::Label outputPeakLabel;
     float displayedOutputLDb = -100.0f;
     float displayedOutputRDb = -100.0f;

@@ -680,7 +680,8 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     const auto compGold    = juce::Colour (0xff7da8c5);   // SSL G-bus comp powder blue (legacy var name)
 
     // EQ header - shared CompHeaderButton pill (green LED + bold label).
-    // Left-click toggles; right-click opens the EQ editor (matches COMP / TAPE).
+    // Left-click toggles; right-click opens the EQ section menu; double-
+    // click opens the editor (matches COMP / TAPE + channel + bus).
     eqHeaderBtn = std::make_unique<CompHeaderButton> (
         /*getEnabled*/ [this] { return params.eqEnabled.load (std::memory_order_relaxed); },
         /*onToggle*/   [this]
@@ -689,9 +690,10 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
                             params.eqEnabled.store (now, std::memory_order_release);
                             if (eqHeaderBtn != nullptr) eqHeaderBtn->repaint();
                         },
-        /*onPick*/     [this] { openEqEditorPopup(); });
+        /*onPick*/       [this] { showEqSectionMenu(); },
+        /*onDoubleClick*/[this] { openEqEditorPopup(); });
     eqHeaderBtn->setLabelText ("EQ");
-    eqHeaderBtn->setTooltip ("Left-click EQ on/off. Right-click to open the editor.");
+    eqHeaderBtn->setTooltip ("Left-click EQ on/off. Right-click for the EQ menu. Double-click to open the editor.");
     addAndMakeVisible (eqHeaderBtn.get());
 
     // Suffixes intentionally empty - section labels already convey the
@@ -836,7 +838,9 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
                             params.compEnabled.store (now, std::memory_order_relaxed);
                             if (compHeaderBtn != nullptr) compHeaderBtn->repaint();
                         },
-        /*onPick*/     [this] { openCompEditorPopup(); });
+        /*onPick*/       [this] { showCompSectionMenu(); },
+        /*onDoubleClick*/[this] { openCompEditorPopup(); });
+    compHeaderBtn->setTooltip ("Left-click comp on/off. Right-click for the COMP menu. Double-click to open the editor.");
     addAndMakeVisible (compHeaderBtn.get());
 
     CompMeterStrip::Source compSrc;
@@ -922,17 +926,18 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     };
     styleCompactSectionBtn (eqCompactButton,   juce::Colour (0xff5fc46f));
     styleCompactSectionBtn (compCompactButton, juce::Colour (0xffe0c050));
-    eqCompactButton  .setTooltip ("Left-click EQ on/off. Right-click to open the editor.");
-    compCompactButton.setTooltip ("Left-click comp on/off. Right-click to open the editor.");
-    // Same grammar as the expanded headers: left-click toggles, right-click opens
-    // the editor. (Was: any click opened the modal - inconsistent with expanded mode.)
+    eqCompactButton  .setTooltip ("Left-click EQ on/off. Right-click for the EQ menu. Double-click to open the editor.");
+    compCompactButton.setTooltip ("Left-click comp on/off. Right-click for the COMP menu. Double-click to open the editor.");
+    // Identical grammar to the expanded headers: left-click toggles, right-click
+    // opens the section menu, double-click opens the editor.
     eqCompactButton.onClick = [this]
     {
         const bool now = ! params.eqEnabled.load (std::memory_order_relaxed);
         params.eqEnabled.store (now, std::memory_order_release);
         eqCompactButton.setToggleState (now, juce::dontSendNotification);
     };
-    eqCompactButton.onRightClick = [this] (const juce::MouseEvent&) { openEqEditorPopup(); };
+    eqCompactButton.onRightClick  = [this] (const juce::MouseEvent&) { showEqSectionMenu(); };
+    eqCompactButton.onDoubleClick = [this] { openEqEditorPopup(); };
     eqCompactButton.setToggleState (params.eqEnabled.load (std::memory_order_relaxed), juce::dontSendNotification);
 
     compCompactButton.onClick = [this]
@@ -941,7 +946,8 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
         params.compEnabled.store (now, std::memory_order_relaxed);
         compCompactButton.setToggleState (now, juce::dontSendNotification);
     };
-    compCompactButton.onRightClick = [this] (const juce::MouseEvent&) { openCompEditorPopup(); };
+    compCompactButton.onRightClick  = [this] (const juce::MouseEvent&) { showCompSectionMenu(); };
+    compCompactButton.onDoubleClick = [this] { openCompEditorPopup(); };
     compCompactButton.setToggleState (params.compEnabled.load (std::memory_order_relaxed), juce::dontSendNotification);
     addChildComponent (eqCompactButton);
     addChildComponent (compCompactButton);
@@ -953,11 +959,11 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
     addAndMakeVisible (compRatLabel); addAndMakeVisible (compAtkLabel);
     addAndMakeVisible (compRelLabel); addAndMakeVisible (compMakLabel);
 
-    // TAPE pill (compact / tape-strip mode only) - matches the EQ / COMP compact
-    // pills: any click opens the tape editor modal, where the on/off toggle
-    // lives. (The regular-mode tapeHeaderBtn keeps its own left-toggle /
-    // right-open grammar - unchanged.) Lit state still reflects the tapeEnabled
-    // atom (synced from timerCallback) so the engine's auto-arm-on-edit shows up.
+    // TAPE pill (compact / tape-strip mode only) - identical grammar to the
+    // EQ / COMP compact pills and the regular-mode tapeHeaderBtn: left-click
+    // toggles tapeEnabled, right-click opens the section menu, double-click
+    // opens the editor. Lit state still reflects the tapeEnabled atom (synced
+    // from timerCallback) so the engine's auto-arm-on-edit shows up.
     {
         const auto tapeAccent = juce::Colour (0xffd0a060);
         tapeButton.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff282830));
@@ -968,24 +974,26 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
         tapeButton.setClickingTogglesState (false);   // toggle path goes through the atom, not the button state
         tapeButton.setToggleState (params.tapeEnabled.load (std::memory_order_relaxed),
                                     juce::dontSendNotification);
-        tapeButton.setTooltip ("Left-click tape on/off. Right-click to open the editor.");
-        // Same grammar as the expanded headers + the EQ/COMP pills: left-click toggles,
-        // right-click opens the editor.
+        tapeButton.setTooltip ("Left-click tape on/off. Right-click for the TAPE menu. Double-click to open the editor.");
+        // Identical grammar to the expanded headers + the EQ/COMP pills: left-click
+        // toggles, right-click opens the section menu, double-click opens the editor.
         tapeButton.onClick = [this]
         {
             const bool now = ! params.tapeEnabled.load (std::memory_order_relaxed);
             params.tapeEnabled.store (now, std::memory_order_relaxed);
             tapeButton.setToggleState (now, juce::dontSendNotification);
         };
-        tapeButton.onRightClick = [this] (const juce::MouseEvent&) { openTapeMachineModal(); };
+        tapeButton.onRightClick  = [this] (const juce::MouseEvent&) { showTapeSectionMenu(); };
+        tapeButton.onDoubleClick = [this] { openTapeMachineModal(); };
         addAndMakeVisible (tapeButton);
     }
 
     // Regular-mode TAPE header - CompHeaderButton (LED + label). Left-click
     // toggles enable (matches the EQ / COMP headers); right-click opens the
-    // editor (tape has no inline controls, so the popup is its only editor).
-    // The LED reflects tapeEnabled. setCompactMode swaps visibility between
-    // this header and the compact tapeButton pill above.
+    // TAPE section menu; double-click opens the editor (tape has no inline
+    // controls, so the popup is its only editor). The LED reflects
+    // tapeEnabled. setCompactMode swaps visibility between this header and
+    // the compact tapeButton pill above.
     tapeHeaderBtn = std::make_unique<CompHeaderButton> (
         /*getEnabled*/            [this] { return params.tapeEnabled.load (std::memory_order_relaxed); },
         /*onToggle (left-click)*/ [this]
@@ -994,9 +1002,10 @@ MasterStripComponent::MasterStripComponent (MasterBusParams& p,
                             params.tapeEnabled.store (now, std::memory_order_relaxed);
                             if (tapeHeaderBtn != nullptr) tapeHeaderBtn->repaint();
                         },
-        /*onPickMode (right-click)*/ [this] { openTapeMachineModal(); });
+        /*onPick*/       [this] { showTapeSectionMenu(); },
+        /*onDoubleClick*/[this] { openTapeMachineModal(); });
     tapeHeaderBtn->setLabelText ("TAPE");
-    tapeHeaderBtn->setTooltip ("Left-click to bypass / engage tape. Right-click to open the tape-machine editor.");
+    tapeHeaderBtn->setTooltip ("Left-click to bypass / engage tape. Right-click for the TAPE menu. Double-click to open the editor.");
     addAndMakeVisible (tapeHeaderBtn.get());
 
     // Default mode is regular (compactMode = false). Hide the compact
@@ -2052,5 +2061,93 @@ void MasterStripComponent::openCompEditorPopup()
     auto* host = getTopLevelComponent();
     if (host == nullptr) host = this;
     compEditorModal.show (*host, std::make_unique<MasterCompEditorPanel> (params));
+}
+
+void MasterStripComponent::showEqSectionMenu()
+{
+    juce::PopupMenu menu;
+    menu.addItem (10, "Reset EQ");
+    menu.addSeparator();
+    menu.addItem (11, "Open editor...");
+    juce::Component& anchor = compactMode ? (juce::Component&) eqCompactButton
+                                          : (juce::Component&) *eqHeaderBtn;
+    showContextMenu (menu, anchor,
+        [safeThis = juce::Component::SafePointer<MasterStripComponent> (this)] (int chosen)
+        {
+            auto* self = safeThis.getComponent();
+            if (self == nullptr) return;
+            if (chosen == 10) self->resetEqSection();
+            else if (chosen == 11) self->openEqEditorPopup();
+        });
+}
+
+void MasterStripComponent::showCompSectionMenu()
+{
+    juce::PopupMenu menu;
+    menu.addItem (10, "Reset comp");
+    menu.addSeparator();
+    menu.addItem (11, "Open editor...");
+    juce::Component& anchor = compactMode ? (juce::Component&) compCompactButton
+                                          : (juce::Component&) *compHeaderBtn;
+    showContextMenu (menu, anchor,
+        [safeThis = juce::Component::SafePointer<MasterStripComponent> (this)] (int chosen)
+        {
+            auto* self = safeThis.getComponent();
+            if (self == nullptr) return;
+            if (chosen == 10) self->resetCompSection();
+            else if (chosen == 11) self->openCompEditorPopup();
+        });
+}
+
+void MasterStripComponent::showTapeSectionMenu()
+{
+    // Tape has no inline strip knobs (its only controls live in the popup
+    // editor), so there is no per-knob double-click precedent to build a
+    // whole-section reset from — the menu offers just "Open editor...".
+    juce::PopupMenu menu;
+    menu.addItem (11, "Open editor...");
+    juce::Component& anchor = compactMode ? (juce::Component&) tapeButton
+                                          : (juce::Component&) *tapeHeaderBtn;
+    showContextMenu (menu, anchor,
+        [safeThis = juce::Component::SafePointer<MasterStripComponent> (this)] (int chosen)
+        {
+            auto* self = safeThis.getComponent();
+            if (self == nullptr) return;
+            if (chosen == 11) self->openTapeMachineModal();
+        });
+}
+
+void MasterStripComponent::resetEqSection()
+{
+    // Replays each EQ knob's double-click return value through its live
+    // onValueChange path (no new defaults). Restore the engaged state after —
+    // the knobs auto-arm on change, but a reset shouldn't toggle the EQ on.
+    const bool wasEnabled = params.eqEnabled.load (std::memory_order_relaxed);
+    auto reset = [] (juce::Slider& s)
+    {
+        if (s.isDoubleClickReturnEnabled())
+            s.setValue (s.getDoubleClickReturnValue(), juce::sendNotificationSync);
+    };
+    reset (eqLfBoost);  reset (eqLfAtten);
+    reset (eqHfBoost);  reset (eqHfAtten);
+    reset (eqLfFreqKnob);
+    reset (eqHfBoostFreqKnob);
+    reset (eqHfAttenFreqKnob);
+    params.eqEnabled.store (wasEnabled, std::memory_order_release);
+    if (eqHeaderBtn != nullptr) eqHeaderBtn->repaint();
+}
+
+void MasterStripComponent::resetCompSection()
+{
+    // Comp threshold lives on the meter-strip drag handle (no knob), so it
+    // has no double-click precedent and is left untouched.
+    auto reset = [] (juce::Slider& s)
+    {
+        if (s.isDoubleClickReturnEnabled())
+            s.setValue (s.getDoubleClickReturnValue(), juce::sendNotificationSync);
+    };
+    reset (compRatio);  reset (compAttack);
+    reset (compRelease); reset (compMakeup);
+    if (compHeaderBtn != nullptr) compHeaderBtn->repaint();
 }
 } // namespace duskstudio

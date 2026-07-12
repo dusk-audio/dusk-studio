@@ -31,121 +31,6 @@
 namespace duskstudio
 {
 
-// Custom header button for the COMP section. Acts as both an
-// enable-toggle (left click) and a mode-picker (right click). Single
-// affordance replacing the older COMP label + mode pill + bypass LED
-// triplet - less visual noise, one obvious click target.
-class ChannelStripComponent::CompHeaderButton final : public juce::Component,
-                                                          public juce::SettableTooltipClient
-{
-public:
-    CompHeaderButton (std::function<bool()> getEnabled,
-                       std::function<void()> onToggleEnable,
-                       std::function<void()> onPickMode)
-        : isEnabledFn (std::move (getEnabled)),
-          toggleFn    (std::move (onToggleEnable)),
-          pickFn      (std::move (onPickMode))
-    {
-        setMouseCursor (juce::MouseCursor::PointingHandCursor);
-        setTooltip ("Left-click to enable / disable. Right-click to choose mode (OPTO / FET / VCA).");
-    }
-
-    void setLabelText (juce::String t)
-    {
-        if (text != t) { text = std::move (t); repaint(); }
-    }
-
-    // EQ header uses these to surface the active type (Brown / Black)
-    // - see ChannelStripComponent::timerCallback. COMP header leaves
-    // them at defaults.
-    void setChipText (juce::String t)
-    {
-        if (chip != t) { chip = std::move (t); repaint(); }
-    }
-    void setAccentColour (juce::Colour c)
-    {
-        if (accent != c) { accent = c; repaint(); }
-    }
-
-    void paint (juce::Graphics& g) override
-    {
-        const auto r = getLocalBounds().toFloat().reduced (1.0f);
-        const bool on = isEnabledFn ? isEnabledFn() : false;
-
-        // Pill background - same dark fill regardless of state.
-        g.setColour (juce::Colour (0xff242428));
-        g.fillRoundedRectangle (r, 4.0f);
-        g.setColour (juce::Colour (0xff3a3a40));
-        g.drawRoundedRectangle (r, 4.0f, 0.8f);
-
-        // LED on the left, vertically centered. Green when engaged.
-        const float ledSize = juce::jmin (r.getHeight() - 4.0f, 8.0f);
-        const float ledX    = r.getX() + 4.0f;
-        const float ledY    = r.getCentreY() - ledSize / 2.0f;
-        const auto ledRect  = juce::Rectangle<float> (ledX, ledY, ledSize, ledSize);
-        g.setColour (juce::Colour (0xff0a0a0c));
-        g.fillEllipse (ledRect.expanded (1.0f));
-        g.setColour (on ? juce::Colour (0xff60d060) : juce::Colour (0xff2a3028));
-        g.fillEllipse (ledRect);
-        if (on)
-        {
-            g.setColour (juce::Colour (0xffa0f0a0).withAlpha (0.55f));
-            g.fillEllipse (ledRect.reduced (ledSize * 0.35f, ledSize * 0.35f)
-                                    .translated (-ledSize * 0.10f, -ledSize * 0.10f));
-        }
-
-        // Optional right-side chip (EQ type indicator).
-        const float chipReserve = chip.isNotEmpty() ? 18.0f : 0.0f;
-        if (chip.isNotEmpty())
-        {
-            const auto chipR = juce::Rectangle<float> (
-                r.getRight() - chipReserve - 2.0f,
-                r.getY() + 3.0f,
-                chipReserve, r.getHeight() - 6.0f);
-            const auto chipFill = accent.isTransparent()
-                                       ? juce::Colour (0xff2a2a32)
-                                       : accent;
-            g.setColour (chipFill);
-            g.fillRoundedRectangle (chipR, 2.5f);
-            g.setColour (juce::Colour (0xff0a0a0c));
-            g.drawRoundedRectangle (chipR, 2.5f, 0.6f);
-            g.setColour (juce::Colours::white);
-            g.setFont (juce::Font (juce::FontOptions (9.5f, juce::Font::bold)));
-            g.drawText (chip, chipR, juce::Justification::centred, false);
-        }
-
-        // Text always white, centered in the remaining space (offset
-        // right of the LED so the visual centre lands on the pill).
-        g.setColour (juce::Colours::white);
-        g.setFont (juce::Font (juce::FontOptions (10.5f, juce::Font::bold)));
-        auto textBounds = r;
-        textBounds.removeFromLeft (ledSize + 8.0f);
-        textBounds.removeFromRight (4.0f + chipReserve);
-        g.drawText (text, textBounds, juce::Justification::centred, false);
-    }
-
-    void mouseDown (const juce::MouseEvent& e) override
-    {
-        if (e.mods.isPopupMenu())   // right-click
-        {
-            if (pickFn) pickFn();
-        }
-        else                         // left-click
-        {
-            if (toggleFn) toggleFn();
-            repaint();
-        }
-    }
-
-private:
-    std::function<bool()> isEnabledFn;
-    std::function<void()> toggleFn;
-    std::function<void()> pickFn;
-    juce::String text { "COMP" };
-    juce::String chip;                                  // empty = no chip
-    juce::Colour accent { juce::Colours::transparentBlack };
-};
-
 namespace
 {
 struct BandSpec
@@ -357,12 +242,12 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     };
     addAndMakeVisible (eqTypeChip);
 
-    // EQ region
-    // Single EQ header button - same grammar as COMP. Left-click
-    // toggles eqEnabled; right-click pops the EQ-type picker
-    // (Brown E / Black G). Built-in green LED illuminates when
-    // engaged (auto-armed on first knob touch); text always white.
-    // Replaces the prior [LED] + label + [E/G pill] triple.
+    // ── EQ region ──
+    // Single EQ header button - unified section grammar. Left-click
+    // toggles eqEnabled; right-click opens the EQ section menu (type +
+    // reset + open editor); double-click opens the full EQ editor.
+    // Built-in green LED illuminates when engaged (auto-armed on first
+    // knob touch); text always white.
     eqHeaderBtn = std::make_unique<CompHeaderButton> (
         [this] { return track.strip.eqEnabled.load (std::memory_order_relaxed); },
         [this]
@@ -371,20 +256,24 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
             track.strip.eqEnabled.store (now, std::memory_order_release);
             if (eqHeaderBtn != nullptr) eqHeaderBtn->repaint();
         },
-        [this] { showEqTypeMenu(); });
+        [this] { showEqSectionMenu(); },
+        [this] { openEqEditorPopup(); });
     eqHeaderBtn->setLabelText ("EQ");
-    eqHeaderBtn->setTooltip ("Left-click to enable / disable. Right-click to choose type (Brown E / Black G).");
+    eqHeaderBtn->setTooltip ("Left-click to enable / disable. Right-click for the EQ menu. Double-click to open the editor.");
     addAndMakeVisible (eqHeaderBtn.get());
 
     // COMP region
     // Single COMP header button: left-click enables/disables, right-
-    // click opens the mode picker. Shows "COMP" until the user picks
-    // a mode, then shows the mode name (OPTO/FET/VCA). Built-in green
-    // LED illuminates when the comp is engaged. Text always white.
+    // click opens the COMP section menu (mode + reset + open editor),
+    // double-click opens the full COMP editor. Shows "COMP" until the
+    // user picks a mode, then shows the mode name (OPTO/FET/VCA). Built-
+    // in green LED illuminates when the comp is engaged. Text white.
     compModeButton = std::make_unique<CompHeaderButton> (
         [this] { return track.strip.compEnabled.load (std::memory_order_relaxed); },
         [this] { setCompEnabled (! track.strip.compEnabled.load (std::memory_order_relaxed)); },
-        [this] { showCompModeMenu(); });
+        [this] { showCompSectionMenu(); },
+        [this] { openCompEditorPopup(); });
+    compModeButton->setTooltip ("Left-click to enable / disable. Right-click for the COMP menu. Double-click to open the editor.");
     addAndMakeVisible (compModeButton.get());
 
     refreshCompModeButtonState();
@@ -1490,21 +1379,26 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     eqCompactButton  .setButtonText ("EQ");
     compCompactButton.setButtonText ("COMP");
     auxCompactButton .setButtonText ("AUX");
-    // Same grammar as the expanded EQ/COMP headers: left-click toggles the section
-    // on/off, right-click opens the editor. The illuminated background (driven by the
-    // 30 Hz refresh) reflects the enabled state.
-    eqCompactButton  .setTooltip ("Left-click EQ on/off. Right-click to open the editor.");
-    compCompactButton.setTooltip ("Left-click comp on/off. Right-click to open the editor.");
-    auxCompactButton .setTooltip ("Click to open the AUX sends panel (click again to close).");
+    // Identical grammar to the expanded EQ/COMP headers: left-click toggles the
+    // section on/off, right-click opens the section menu, double-click opens the
+    // editor. The illuminated background (driven by the 30 Hz refresh) reflects
+    // the enabled state. AUX has no enable, so its left-click opens the editor.
+    eqCompactButton  .setTooltip ("Left-click EQ on/off. Right-click for the EQ menu. Double-click to open the editor.");
+    compCompactButton.setTooltip ("Left-click comp on/off. Right-click for the COMP menu. Double-click to open the editor.");
+    auxCompactButton .setTooltip ("Click to open the AUX sends panel. Right-click for the AUX menu.");
     eqCompactButton  .onClick = [this]
     {
         track.strip.eqEnabled.store (! track.strip.eqEnabled.load (std::memory_order_relaxed),
                                       std::memory_order_release);
     };
-    eqCompactButton  .onRightClick = [this] (const juce::MouseEvent&) { openEqEditorPopup(); };
-    compCompactButton.onClick      = [this] { setCompEnabled (! track.strip.compEnabled.load (std::memory_order_relaxed)); };
-    compCompactButton.onRightClick = [this] (const juce::MouseEvent&) { openCompEditorPopup(); };
-    auxCompactButton .onClick = [this] { openAuxEditorPopup(); };
+    eqCompactButton  .onRightClick   = [this] (const juce::MouseEvent&) { showEqSectionMenu(); };
+    eqCompactButton  .onDoubleClick  = [this] { openEqEditorPopup(); };
+    compCompactButton.onClick        = [this] { setCompEnabled (! track.strip.compEnabled.load (std::memory_order_relaxed)); };
+    compCompactButton.onRightClick   = [this] (const juce::MouseEvent&) { showCompSectionMenu(); };
+    compCompactButton.onDoubleClick  = [this] { openCompEditorPopup(); };
+    auxCompactButton .onClick        = [this] { openAuxEditorPopup(); };
+    auxCompactButton .onRightClick   = [this] (const juce::MouseEvent&) { showAuxSectionMenu(); };
+    auxCompactButton .onDoubleClick  = [this] { openAuxEditorPopup(); };
     addChildComponent (eqCompactButton);    // hidden until compact mode flips on
     addChildComponent (compCompactButton);
     addChildComponent (auxCompactButton);
@@ -4592,47 +4486,156 @@ void ChannelStripComponent::refreshCompKnobVisibility()
     vcaOutputKnob  .setVisible (isVca);   vcaOutputLabel  .setVisible (isVca);
 }
 
-void ChannelStripComponent::showCompModeMenu()
+void ChannelStripComponent::showEqSectionMenu()
 {
-    // Mode-only dropdown. Bypass lives on the round LED in the lower
-    // left of the comp section - click that LED to toggle compEnabled.
-    const int m = juce::jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
-    juce::PopupMenu menu;
-    menu.addItem (2, "OPTO - program-dependent, smooth", true, m == 0);
-    menu.addItem (3, "FET - fast attack, gritty under load", true, m == 1);
-    menu.addItem (4, "VCA - clean, predictable", true, m == 2);
-    showContextMenu (menu, *compModeButton,
-        [safeThis = juce::Component::SafePointer<ChannelStripComponent> (this)]
-        (int chosen)
-        {
-            auto* self = safeThis.getComponent();
-            if (self == nullptr) return;
-            if (chosen >= 2 && chosen <= 4)
-                self->setCompMode (chosen - 2);
-        });
-}
-
-void ChannelStripComponent::showEqTypeMenu()
-{
-    // EQ type picker - right-click on the EQ header button. Mirrors
-    // showCompModeMenu's grammar (ticked current choice). Two types
-    // for the British EQ donor: Brown (E-series) vs Black (G-series).
+    // Unified EQ section menu - shared by the full header and the compact
+    // pill. Character items (Brown / Black) + whole-section reset + open
+    // editor. Bypass toggle lives on the header's left-click.
     const bool isBlack = track.strip.eqBlackMode.load (std::memory_order_relaxed);
     juce::PopupMenu menu;
     menu.addItem (1, "Brown - E-series, classic",   true, ! isBlack);
     menu.addItem (2, "Black - G-series, modern",    true,   isBlack);
-    showContextMenu (menu, *eqHeaderBtn,
+    menu.addSeparator();
+    menu.addItem (10, "Reset EQ");
+    menu.addSeparator();
+    menu.addItem (11, "Open editor...");
+
+    juce::Component& anchor = compactMode ? (juce::Component&) eqCompactButton
+                                          : (juce::Component&) *eqHeaderBtn;
+    showContextMenu (menu, anchor,
         [safeThis = juce::Component::SafePointer<ChannelStripComponent> (this)]
         (int chosen)
         {
             auto* self = safeThis.getComponent();
             if (self == nullptr) return;
-            if (chosen == 1 || chosen == 2)
+            switch (chosen)
             {
-                self->track.strip.eqBlackMode.store (chosen == 2, std::memory_order_relaxed);
-                if (self->eqHeaderBtn != nullptr) self->eqHeaderBtn->repaint();
+                case 1: case 2:
+                    self->track.strip.eqBlackMode.store (chosen == 2, std::memory_order_relaxed);
+                    if (self->eqHeaderBtn != nullptr) self->eqHeaderBtn->repaint();
+                    break;
+                case 10: self->resetEqSection();    break;
+                case 11: self->openEqEditorPopup(); break;
+                default: break;
             }
         });
+}
+
+void ChannelStripComponent::showCompSectionMenu()
+{
+    // Unified COMP section menu — mode items (OPTO / FET / VCA) + whole-
+    // section reset + open editor. Bypass lives on the header's left-click.
+    const int m = juce::jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
+    juce::PopupMenu menu;
+    menu.addItem (2, "OPTO - program-dependent, smooth",     true, m == 0);
+    menu.addItem (3, "FET - fast attack, gritty under load", true, m == 1);
+    menu.addItem (4, "VCA - clean, predictable",             true, m == 2);
+    menu.addSeparator();
+    menu.addItem (10, "Reset comp");
+    menu.addSeparator();
+    menu.addItem (11, "Open editor...");
+
+    juce::Component& anchor = compactMode ? (juce::Component&) compCompactButton
+                                          : (juce::Component&) *compModeButton;
+    showContextMenu (menu, anchor,
+        [safeThis = juce::Component::SafePointer<ChannelStripComponent> (this)]
+        (int chosen)
+        {
+            auto* self = safeThis.getComponent();
+            if (self == nullptr) return;
+            switch (chosen)
+            {
+                case 2: case 3: case 4: self->setCompMode (chosen - 2); break;
+                case 10: self->resetCompSection();    break;
+                case 11: self->openCompEditorPopup(); break;
+                default: break;
+            }
+        });
+}
+
+void ChannelStripComponent::showAuxSectionMenu()
+{
+    // Compact AUX pill context menu — mirrors the full-mode aux-knob menu
+    // (per-send PRE/POST toggle) minus the knob-specific MIDI-learn items,
+    // plus a whole-section reset and open editor.
+    juce::Component::SafePointer<ChannelStripComponent> safeThis (this);
+    juce::PopupMenu menu;
+    menu.addSectionHeader ("Track " + juce::String (trackIndex + 1) + " AUX sends");
+    for (int i = 0; i < (int) ChannelStripParams::kNumAuxSends; ++i)
+    {
+        const bool isPre = track.strip.auxSendPreFader[(size_t) i].load (std::memory_order_relaxed);
+        menu.addItem ("AUX " + juce::String (i + 1) + (isPre ? ": PRE-fader" : ": POST-fader"),
+                      true, isPre,
+            [safeThis, i]
+            {
+                auto* self = safeThis.getComponent();
+                if (self == nullptr) return;
+                auto& a = self->track.strip.auxSendPreFader[(size_t) i];
+                a.store (! a.load (std::memory_order_relaxed), std::memory_order_relaxed);
+                self->refreshAuxSendLabel (i);
+            });
+    }
+    menu.addSeparator();
+    menu.addItem ("Reset sends",
+        [safeThis] { if (auto* s = safeThis.getComponent()) s->resetAuxSection(); });
+    menu.addSeparator();
+    menu.addItem ("Open AUX editor...",
+        [safeThis] { if (auto* s = safeThis.getComponent()) s->openAuxEditorPopup(); });
+
+    duskstudio::showContextMenu (menu, auxCompactButton);
+}
+
+void ChannelStripComponent::resetEqSection()
+{
+    // Replays each EQ knob's own double-click return value through its live
+    // onValueChange path (no new defaults invented). The band knobs auto-arm
+    // eqEnabled on change, so restore the prior engaged state afterwards — a
+    // reset flattens the EQ but shouldn't toggle it on.
+    const bool wasEnabled = track.strip.eqEnabled.load (std::memory_order_relaxed);
+    auto reset = [] (juce::Slider& s)
+    {
+        if (s.isDoubleClickReturnEnabled())
+            s.setValue (s.getDoubleClickReturnValue(), juce::sendNotificationSync);
+    };
+    reset (hpfKnob);
+    reset (lpfKnob);
+    for (auto& row : eqRows)
+    {
+        if (row.gain != nullptr) reset (*row.gain);
+        if (row.freq != nullptr) reset (*row.freq);
+        if (row.q    != nullptr) reset (*row.q);
+    }
+    track.strip.eqEnabled.store (wasEnabled, std::memory_order_release);
+    if (eqHeaderBtn != nullptr) eqHeaderBtn->repaint();
+}
+
+void ChannelStripComponent::resetCompSection()
+{
+    // Same replay-the-defaults pattern as resetEqSection. VCA threshold has
+    // no knob (it lives on the GR meter-strip drag handle) so it has no
+    // double-click precedent and is left untouched.
+    const bool wasEnabled = track.strip.compEnabled.load (std::memory_order_relaxed);
+    auto reset = [] (juce::Slider& s)
+    {
+        if (s.isDoubleClickReturnEnabled())
+            s.setValue (s.getDoubleClickReturnValue(), juce::sendNotificationSync);
+    };
+    reset (optoPeakRedKnob);  reset (optoGainKnob);
+    reset (fetInputKnob);     reset (fetOutputKnob);
+    reset (fetAttackKnob);    reset (fetReleaseKnob);  reset (fetRatioKnob);
+    reset (vcaRatioKnob);     reset (vcaAttackKnob);
+    reset (vcaReleaseKnob);   reset (vcaOutputKnob);
+    if (optoLimitButton.getToggleState())
+        optoLimitButton.setToggleState (false, juce::sendNotificationSync);
+    track.strip.compEnabled.store (wasEnabled, std::memory_order_relaxed);
+    refreshCompModeButtonState();
+}
+
+void ChannelStripComponent::resetAuxSection()
+{
+    for (auto& knob : auxKnobs)
+        if (knob != nullptr && knob->isDoubleClickReturnEnabled())
+            knob->setValue (knob->getDoubleClickReturnValue(), juce::sendNotificationSync);
 }
 
 void ChannelStripComponent::setCompEnabled (bool enabled)

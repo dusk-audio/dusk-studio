@@ -528,7 +528,8 @@ BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
 
     // EQ section header - CompHeaderButton (LED + label pill) matches the
     // COMP header below and the channel-strip EQ header. Left-click toggles
-    // enable; no right-click (bus EQ has fixed topology, no mode picker).
+    // enable; right-click opens the EQ section menu; double-click opens the
+    // editor. Fixed topology (no mode picker).
     eqHeaderBtn = std::make_unique<CompHeaderButton> (
         /*getEnabled*/ [this] { return bus.strip.eqEnabled.load (std::memory_order_relaxed); },
         /*onToggle*/   [this]
@@ -536,9 +537,11 @@ BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
                             const bool now = ! bus.strip.eqEnabled.load (std::memory_order_relaxed);
                             bus.strip.eqEnabled.store (now, std::memory_order_release);
                             if (eqHeaderBtn != nullptr) eqHeaderBtn->repaint();
-                        });
+                        },
+        /*onPick*/       [this] { showEqSectionMenu(); },
+        /*onDoubleClick*/[this] { openEqEditorPopup(); });
     eqHeaderBtn->setLabelText ("EQ");
-    eqHeaderBtn->setTooltip ("3-band British-style EQ on/off");
+    eqHeaderBtn->setTooltip ("Left-click EQ on/off. Right-click for the EQ menu. Double-click to open the editor.");
     addAndMakeVisible (eqHeaderBtn.get());
 
     // Suffixes empty - same rationale as master: 38-px textbox can't fit
@@ -584,7 +587,10 @@ BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
                             const bool now = ! bus.strip.compEnabled.load (std::memory_order_relaxed);
                             bus.strip.compEnabled.store (now, std::memory_order_release);
                             if (compHeaderBtn != nullptr) compHeaderBtn->repaint();
-                        });
+                        },
+        /*onPick*/       [this] { showCompSectionMenu(); },
+        /*onDoubleClick*/[this] { openCompEditorPopup(); });
+    compHeaderBtn->setTooltip ("Left-click comp on/off. Right-click for the COMP menu. Double-click to open the editor.");
     addAndMakeVisible (compHeaderBtn.get());
 
     CompMeterStrip::Source compSrc;
@@ -813,11 +819,12 @@ BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
     };
     styleCompactSectionBtn (eqCompactButton,   juce::Colour (0xff5fc46f));
     styleCompactSectionBtn (compCompactButton, juce::Colour (0xffe0c050));
-    // Same grammar as the expanded EQ/COMP headers: left-click toggles the section
-    // on/off, right-click opens the editor. The illuminated background (driven by the
-    // 30 Hz refresh) reflects the enabled state.
-    eqCompactButton  .setTooltip ("Left-click EQ on/off. Right-click to open the editor.");
-    compCompactButton.setTooltip ("Left-click comp on/off. Right-click to open the editor.");
+    // Identical grammar to the expanded EQ/COMP headers: left-click toggles the
+    // section on/off, right-click opens the section menu, double-click opens the
+    // editor. The illuminated background (driven by the 30 Hz refresh) reflects
+    // the enabled state.
+    eqCompactButton  .setTooltip ("Left-click EQ on/off. Right-click for the EQ menu. Double-click to open the editor.");
+    compCompactButton.setTooltip ("Left-click comp on/off. Right-click for the COMP menu. Double-click to open the editor.");
     eqCompactButton  .onClick = [this]
     {
         const bool now = ! bus.strip.eqEnabled.load (std::memory_order_relaxed);
@@ -826,14 +833,16 @@ BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
         // (textColourOnId vs Off) reflects the new state immediately, not 33 ms later.
         eqCompactButton.setToggleState (now, juce::dontSendNotification);
     };
-    eqCompactButton  .onRightClick = [this] (const juce::MouseEvent&) { openEqEditorPopup(); };
+    eqCompactButton  .onRightClick  = [this] (const juce::MouseEvent&) { showEqSectionMenu(); };
+    eqCompactButton  .onDoubleClick = [this] { openEqEditorPopup(); };
     compCompactButton.onClick = [this]
     {
         const bool now = ! bus.strip.compEnabled.load (std::memory_order_relaxed);
         bus.strip.compEnabled.store (now, std::memory_order_release);
         compCompactButton.setToggleState (now, juce::dontSendNotification);
     };
-    compCompactButton.onRightClick = [this] (const juce::MouseEvent&) { openCompEditorPopup(); };
+    compCompactButton.onRightClick  = [this] (const juce::MouseEvent&) { showCompSectionMenu(); };
+    compCompactButton.onDoubleClick = [this] { openCompEditorPopup(); };
     addChildComponent (eqCompactButton);
     addChildComponent (compCompactButton);
 
@@ -1751,5 +1760,71 @@ void BusComponent::openCompEditorPopup()
     compEditorModal.show (*host, std::make_unique<BusCompEditorPanel> (bus),
                           /*onDismiss*/ {}, /*dismissOnClickOutside*/ true,
                           /*dismissOnEscape*/ true, kEditorDimAlpha);
+}
+
+void BusComponent::showEqSectionMenu()
+{
+    juce::PopupMenu menu;
+    menu.addItem (10, "Reset EQ");
+    menu.addSeparator();
+    menu.addItem (11, "Open editor...");
+    juce::Component& anchor = compactMode ? (juce::Component&) eqCompactButton
+                                          : (juce::Component&) *eqHeaderBtn;
+    showContextMenu (menu, anchor,
+        [safeThis = juce::Component::SafePointer<BusComponent> (this)] (int chosen)
+        {
+            auto* self = safeThis.getComponent();
+            if (self == nullptr) return;
+            if (chosen == 10) self->resetEqSection();
+            else if (chosen == 11) self->openEqEditorPopup();
+        });
+}
+
+void BusComponent::showCompSectionMenu()
+{
+    juce::PopupMenu menu;
+    menu.addItem (10, "Reset comp");
+    menu.addSeparator();
+    menu.addItem (11, "Open editor...");
+    juce::Component& anchor = compactMode ? (juce::Component&) compCompactButton
+                                          : (juce::Component&) *compHeaderBtn;
+    showContextMenu (menu, anchor,
+        [safeThis = juce::Component::SafePointer<BusComponent> (this)] (int chosen)
+        {
+            auto* self = safeThis.getComponent();
+            if (self == nullptr) return;
+            if (chosen == 10) self->resetCompSection();
+            else if (chosen == 11) self->openCompEditorPopup();
+        });
+}
+
+void BusComponent::resetEqSection()
+{
+    // Replays each EQ gain knob's double-click return value (flat, 0 dB) through
+    // its live onValueChange path. The band knobs auto-arm on change, so restore
+    // the prior engaged state — a reset flattens the EQ but shouldn't toggle it on.
+    const bool wasEnabled = bus.strip.eqEnabled.load (std::memory_order_relaxed);
+    auto reset = [] (juce::Slider& s)
+    {
+        if (s.isDoubleClickReturnEnabled())
+            s.setValue (s.getDoubleClickReturnValue(), juce::sendNotificationSync);
+    };
+    reset (eqLfGain);  reset (eqMidGain);  reset (eqHfGain);
+    bus.strip.eqEnabled.store (wasEnabled, std::memory_order_release);
+    if (eqHeaderBtn != nullptr) eqHeaderBtn->repaint();
+}
+
+void BusComponent::resetCompSection()
+{
+    // Comp threshold lives on the meter-strip drag handle (no knob), so it has
+    // no double-click precedent and is left untouched.
+    auto reset = [] (juce::Slider& s)
+    {
+        if (s.isDoubleClickReturnEnabled())
+            s.setValue (s.getDoubleClickReturnValue(), juce::sendNotificationSync);
+    };
+    reset (compRatio);  reset (compAttack);
+    reset (compRelease); reset (compMakeup);
+    if (compHeaderBtn != nullptr) compHeaderBtn->repaint();
 }
 } // namespace duskstudio

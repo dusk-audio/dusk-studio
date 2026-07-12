@@ -6,6 +6,7 @@
 #include <functional>
 #include <memory>
 #include "CompMeterStrip.h"
+#include "CompHeaderButton.h"
 #include "EmbeddedModal.h"
 #include "DuskComboBox.h"
 #include "SectionPillButton.h"
@@ -125,8 +126,7 @@ private:
     juce::TextButton eqTypeChip { "E" };
 
     // Same grammar as the COMP header. Left = toggle eqEnabled. Right
-    // = type picker. Label stays "EQ" regardless of mode.
-    class CompHeaderButton;   // defined in .cpp (shared with COMP)
+    // = section menu. Double-click = open editor. Label stays "EQ".
     std::unique_ptr<CompHeaderButton> eqHeaderBtn;
     struct BandRow
     {
@@ -302,8 +302,16 @@ private:
     // session-load mode change leaves every mode's knobs overlapping in
     // the comp section.
     int lastAppliedCompMode = -1;
-    void showCompModeMenu();
-    void showEqTypeMenu();
+    // Unified section context menus (right-click on the EQ / COMP header or
+    // compact pill): character items + whole-section reset + open editor.
+    void showEqSectionMenu();
+    void showCompSectionMenu();
+    void showAuxSectionMenu();
+    // Whole-section resets — replays each section knob's own double-click
+    // return value through its live onValueChange path (message thread).
+    void resetEqSection();
+    void resetCompSection();
+    void resetAuxSection();
     void armCompOnUserEdit();
     // Right-click context menu uses this since the button itself is
     // the mode picker.
@@ -385,7 +393,7 @@ private:
     bool compactMode = false;
     SectionPillButton eqCompactButton   { "EQ" };
     SectionPillButton compCompactButton { "COMP" };
-    juce::TextButton  auxCompactButton  { "AUX" };
+    SectionPillButton auxCompactButton  { "AUX" };
     // EQ / COMP / AUX compact editors, each a centred EmbeddedModal (dim
     // backdrop, Esc / click-outside dismiss, transport-key forwarding, focus
     // restore all handled internally). Mutually exclusive - opening one closes
