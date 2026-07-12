@@ -144,7 +144,12 @@ private:
     // path) or when no MessageManager exists (headless tests). Polls so app
     // shutdown (stopThread -> signalThreadShouldExit) can't deadlock the worker
     // against ~BounceEngine's join.
-    void runOnMessageThread (std::function<void()> fn);
+    // Returns true iff fn ran to completion. Returns false when the call is
+    // abandoned - the message queue rejected the post (message manager quitting)
+    // or shutdown asked the worker to exit before fn ran. A false return means
+    // the engine was NOT detached/re-prepared (or re-attached), so the caller
+    // must unwind without touching engine state.
+    bool runOnMessageThread (std::function<void()> fn);
 
     AudioEngine& engine;
     Session&     session;

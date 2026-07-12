@@ -37,28 +37,46 @@ BounceEngine::~BounceEngine()
     stopThread (5000);
 }
 
-void BounceEngine::runOnMessageThread (std::function<void()> fn)
+bool BounceEngine::runOnMessageThread (std::function<void()> fn)
 {
     auto* mm = juce::MessageManager::getInstanceWithoutCreating();
     if (mm == nullptr || mm->isThisTheMessageThread())
     {
         fn();
-        return;
+        return true;
     }
 
-    // The queued lambda owns the sync state and fn, so abandoning the wait on
-    // shutdown (below) can never leave a dangling reference behind it.
-    struct Sync { juce::WaitableEvent done; };
+    // The queued lambda owns the sync state and fn. fn captures this, so an
+    // abandoned message must never run it: after ~BounceEngine the capture is
+    // dangling. The abandoned flag is decisive because the queued lambda and
+    // every ~BounceEngine path run on the message thread (serialized), and the
+    // worker's store below is published to the message thread by the dtor's
+    // stopThread join.
+    struct Sync { juce::WaitableEvent done; std::atomic<bool> abandoned { false }; };
     auto sync = std::make_shared<Sync>();
-    juce::MessageManager::callAsync ([sync, fn = std::move (fn)]
+    const bool posted = juce::MessageManager::callAsync ([sync, fn = std::move (fn)]
     {
-        fn();
+        if (! sync->abandoned.load (std::memory_order_acquire))
+            fn();
         sync->done.signal();
     });
 
+    if (! posted)
+    {
+        // The queue rejected the post (message manager quitting): the lambda
+        // will never run and never signal, so don't wait on it. fn did not run.
+        sync->abandoned.store (true, std::memory_order_release);
+        return false;
+    }
+
     while (! sync->done.wait (50))
         if (threadShouldExit())
-            break;   // app shutdown: don't block ~BounceEngine's stopThread join
+        {
+            // App shutdown: don't block ~BounceEngine's stopThread join.
+            sync->abandoned.store (true, std::memory_order_release);
+            return false;
+        }
+    return true;
 }
 
 std::unique_ptr<juce::AudioFormatWriter>
@@ -286,12 +304,21 @@ void BounceEngine::run()
     // hosted plugin's (de)activate, which the CLAP contract forbids off the main
     // thread. Render the saturating stages at 4× so the bounce is alias-free;
     // cleared before the live re-prepare below.
-    runOnMessageThread ([this]
+    if (! runOnMessageThread ([this]
+        {
+            deviceManager.removeAudioCallback (&engine);
+            engine.setRenderOversamplingOverride (kRenderOversamplingFactor);
+            engine.prepareForSelfTest (renderSampleRate, renderBlockSize);
+        }))
     {
-        deviceManager.removeAudioCallback (&engine);
-        engine.setRenderOversamplingOverride (kRenderOversamplingFactor);
-        engine.prepareForSelfTest (renderSampleRate, renderBlockSize);
-    });
+        // Detach/prepare never ran (shutdown or dead message queue). The engine
+        // is still live-attached and unprepared for offline - touch no engine
+        // state. Drop the partial file and bail.
+        writer.reset();
+        outputFile.deleteFile();
+        rendering.store (false, std::memory_order_relaxed);
+        return;
+    }
 
     // Synthetic input buffers - silent, since the bounce is master-mix
     // (we render whatever's on the timeline through the channel strips,
@@ -616,12 +643,13 @@ bool BounceEngine::runStemsMode()
     // on this worker - see runOnMessageThread). Stems render through the full
     // strip path too, so oversample them 4× for alias-free output; cleared before
     // the live re-prepare below.
-    runOnMessageThread ([this]
-    {
-        deviceManager.removeAudioCallback (&engine);
-        engine.setRenderOversamplingOverride (kRenderOversamplingFactor);
-        engine.prepareForSelfTest (renderSampleRate, renderBlockSize);
-    });
+    if (! runOnMessageThread ([this]
+        {
+            deviceManager.removeAudioCallback (&engine);
+            engine.setRenderOversamplingOverride (kRenderOversamplingFactor);
+            engine.prepareForSelfTest (renderSampleRate, renderBlockSize);
+        }))
+        return false;   // shutdown before detach/prepare - engine untouched
 
     auto& transport = engine.getTransport();
     const auto savedTransportState = transport.getState();
@@ -768,12 +796,19 @@ bool BounceEngine::renderFreezeTrack (int trackIndex, const juce::File& outFile,
     // Detach + offline-prepare, exactly like the stem path (on the message
     // thread - plugin (de)activate must not run on this worker).
     ScopedOfflineRender offlineGuard (engine);
-    runOnMessageThread ([this]
+    if (! runOnMessageThread ([this]
+        {
+            deviceManager.removeAudioCallback (&engine);
+            engine.setRenderOversamplingOverride (kRenderOversamplingFactor);
+            engine.prepareForSelfTest (renderSampleRate, renderBlockSize);
+        }))
     {
-        deviceManager.removeAudioCallback (&engine);
-        engine.setRenderOversamplingOverride (kRenderOversamplingFactor);
-        engine.prepareForSelfTest (renderSampleRate, renderBlockSize);
-    });
+        // Detach/prepare never ran (shutdown) - engine untouched. Drop the
+        // 0-byte file we truncated above and bail.
+        writer.reset();
+        outFile.deleteFile();
+        return false;
+    }
 
     constexpr int kNumIn = 16;
     std::vector<std::vector<float>> inputs (kNumIn,
