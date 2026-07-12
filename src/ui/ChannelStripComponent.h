@@ -29,6 +29,12 @@ public:
     // harness's synchronous settle()). Used after PluginSlot::setOfflineForCapture.
     void refreshInsertButtonForCapture();
 
+    // Screenshot-harness only: force the track into the given mode (0=mono,
+    // 1=stereo, 2=MIDI), open the I/O config popup, and return its body for
+    // snapshotting. Pair with closeIoConfigPopupForCapture().
+    juce::Component* openIoConfigPopupForCapture (int mode);
+    void closeIoConfigPopupForCapture();
+
     void paint (juce::Graphics&) override;
     void resized() override;
     void mouseDown (const juce::MouseEvent& e) override;

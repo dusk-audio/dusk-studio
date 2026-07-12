@@ -570,14 +570,14 @@ Click the name label at the top of the strip to rename the track. Right-click to
 
 ## Input block (RECORDING stage)
 
-This block is only visible in the RECORDING stage. In other stages it collapses into a single small **I/O** button you can click to reopen it.
+This block is only visible in the RECORDING stage. In other stages it collapses into a single small **I/O** button that opens the same controls as a popup, titled with the track name. Each row carries an on-screen caption (**Mode**, **Input**, **MIDI port**, **Channel**, **MIDI out**).
 
 - **Mode**: **Mono**, **Stereo**, or **MIDI**. Determines whether the track records one audio channel, two audio channels, or MIDI events.
-- **Input** (Mono mode): the audio device input to record from. The default `−2: follow track index` means track 1 reads device input 1, track 2 reads device input 2, and so on. Choose a specific input to override.
+- **Input** (Mono mode): the audio device input to record from. The default, shown as **In N (follow)** (e.g. `In 1 (follow)` on track 1), means track 1 reads device input 1, track 2 reads device input 2, and so on. Choose a specific input to override, or **None** for no input.
 - **Input L / Input R** (Stereo mode): the left and right device inputs.
-- **MIDI port** (MIDI mode): which MIDI input to record from.
-- **MIDI channel** (MIDI mode): **Omni** (all 16 channels) or a single channel filter.
-- **MIDI output** (MIDI mode): optional external MIDI output to drive a hardware synth as you play.
+- **MIDI port** (MIDI mode): which MIDI input to record from, or **None**.
+- **Channel** (MIDI mode): **Omni** (all 16 channels) or a single channel filter.
+- **MIDI out** (MIDI mode): optional external MIDI output to drive a hardware synth as you play, or **None**.
 - **Activity LED**: blinks green when MIDI arrives on the chosen channel.
 
 ## ARM, IN, PRINT/FREEZE (RECORDING stage)

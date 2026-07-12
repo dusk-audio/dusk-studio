@@ -282,6 +282,27 @@ void MainComponent::captureScreenshots (const juce::File& outDir)
     resized();
     settle (200);
 
+    // I/O config popup (three mode variants). The popup borrows a strip's
+    // live combos, so drive it through a real strip and snapshot the modal
+    // body. Restored to mono afterwards.
+    if (consoleView != nullptr)
+    {
+        if (auto* s0 = consoleView->getStripComponent (0))
+        {
+            const char* ioNames[3] = { "io-01-input-config-mono.png",
+                                       "io-02-input-config-stereo.png",
+                                       "io-03-input-config-midi.png" };
+            for (int m = 0; m < 3; ++m)
+            {
+                if (auto* body = s0->openIoConfigPopupForCapture (m))
+                    snapshotComponent (body, outDir, ioNames[m], 200);
+                s0->closeIoConfigPopupForCapture();
+            }
+            s0->openIoConfigPopupForCapture (0);
+            s0->closeIoConfigPopupForCapture();
+        }
+    }
+
     // Modal panels (standalone, snapshot directly)
     auto modalShot = [&] (juce::Component& m, int w, int h, const juce::String& name, int settleMs)
     {

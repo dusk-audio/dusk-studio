@@ -1125,7 +1125,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     // -2 = follow track index; -1 = none; 0..N = explicit input. We populate
     // a small set of options here; the device may have fewer inputs at runtime
     // and we'll just route silence in that case.
-    inputSelector.addItem ("In " + juce::String (trackIndex + 1), 1);   // ID 1 = follow (-2)
+    inputSelector.addItem ("In " + juce::String (trackIndex + 1) + " (follow)", 1);   // ID 1 = follow (-2)
     inputSelector.addItem ("None",                                  2); // ID 2 = -1
     for (int i = 0; i < 16; ++i)
         inputSelector.addItem ("In " + juce::String (i + 1) + " (fixed)", 100 + i);  // ID 100+i = explicit
@@ -1160,7 +1160,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     addChildComponent (modeSelector);   // hidden inline; lives in the I/O popup
 
     // Stereo R-channel input (mirrors the L selector's options)
-    inputSelectorR.addItem ("In " + juce::String (trackIndex + 2), 1);   // ID 1 = follow (-2 -> L+1)
+    inputSelectorR.addItem ("In " + juce::String (trackIndex + 2) + " (follow)", 1);   // ID 1 = follow (-2 -> L+1)
     inputSelectorR.addItem ("None", 2);                                   // ID 2 = -1
     for (int i = 0; i < 16; ++i)
         inputSelectorR.addItem ("In " + juce::String (i + 1) + " (fixed)", 100 + i);
@@ -1186,7 +1186,7 @@ ChannelStripComponent::ChannelStripComponent (int idx, Track& t, Session& s,
     // MIDI input selector - populated from the engine's current MIDI
     // input bank. Re-populated whenever AudioEngine signals a refresh
     // (USB hot-plug etc.) via the ChangeListener wiring in the dtor /
-    // changeListenerCallback below. Item ID 1 = "(none)" (maps to
+    // changeListenerCallback below. Item ID 1 = "None" (maps to
     // track.midiInputIndex = -1). Subsequent IDs are 2 + deviceIndex.
     rebuildMidiInputDropdown();
     midiInputSelector.onChange = [this]
@@ -1565,7 +1565,7 @@ void ChannelStripComponent::changeListenerCallback (juce::ChangeBroadcaster*)
 void ChannelStripComponent::rebuildMidiInputDropdown()
 {
     midiInputSelector.clear (juce::dontSendNotification);
-    midiInputSelector.addItem ("(none)", 1);
+    midiInputSelector.addItem ("None", 1);
     const auto& inputs = engine.getMidiInputDevices();
     for (int i = 0; i < (int) inputs.size(); ++i)
         midiInputSelector.addItem (inputs[i].name, 2 + i);
@@ -1597,9 +1597,9 @@ void ChannelStripComponent::rebuildMidiInputDropdown()
 void ChannelStripComponent::rebuildMidiOutputDropdown()
 {
     // Mirror of rebuildMidiInputDropdown for the output side. ID 1 =
-    // "(none)" (= idx -1, no external output); 2..N = device index.
+    // "None" (= idx -1, no external output); 2..N = device index.
     midiOutputSelector.clear (juce::dontSendNotification);
-    midiOutputSelector.addItem ("(none)", 1);
+    midiOutputSelector.addItem ("None", 1);
     const auto& outs = engine.getMidiOutputDevices();
     for (int i = 0; i < (int) outs.size(); ++i)
         midiOutputSelector.addItem (outs[i].name, 2 + i);
@@ -2818,14 +2818,34 @@ void ChannelStripComponent::loadNativeVst3ForChannel (const juce::File& vst3File
 
 namespace
 {
+constexpr int kIoPopupW    = 290;
+constexpr int kIoInset     = 8;
+constexpr int kIoRowH      = 24;
+constexpr int kIoRowGap    = 6;
+constexpr int kIoTitleH    = 20;
+constexpr int kIoTitleGap  = 8;
+constexpr int kIoGutterW   = 90;   // right-justified caption column
+constexpr int kIoGutterGap = 6;
+
+int ioConfigRows (int mode) { return mode == 2 ? 4 : mode == 1 ? 3 : 2; }
+
+int ioConfigBodyHeight (int mode)
+{
+    const int rows = ioConfigRows (mode);
+    return kIoInset + kIoTitleH + kIoTitleGap
+         + rows * kIoRowH + (rows - 1) * kIoRowGap + kIoInset;
+}
+
 // Popup body for the I/O config button. Re-parents the 6 inline ComboBoxes
-// (+ MIDI activity LED) into a single column. When the popup closes the
+// (+ MIDI activity LED) into a labelled column. When the popup closes the
 // widgets become orphans; ChannelStripComponent retains ownership and
-// state lives on Track atoms, so reopening the popup just re-parents.
+// state lives on Track atoms, so reopening the popup just re-parents. The
+// title + caption labels are owned by the popup and die with it.
 class IoConfigPopup : public juce::Component
 {
 public:
-    IoConfigPopup (juce::ComboBox& mode, juce::ComboBox& in, juce::ComboBox& inR,
+    IoConfigPopup (const juce::String& trackName, int trackIndex,
+                    juce::ComboBox& mode, juce::ComboBox& in, juce::ComboBox& inR,
                     juce::ComboBox& mIn, juce::ComboBox& mCh, juce::ComboBox& mOut,
                     juce::Component& led)
         : modeSelector (mode), inputSelector (in), inputSelectorR (inR),
@@ -2839,52 +2859,100 @@ public:
         addAndMakeVisible (midiChannelSelector);
         addAndMakeVisible (midiOutputSelector);
         addAndMakeVisible (activityLed);
-        setSize (240, 160);
+
+        const auto title = trackName.isNotEmpty() ? trackName
+                                                   : "Track " + juce::String (trackIndex + 1);
+        titleLabel.setText (title + " \xe2\x80\x94 Input", juce::dontSendNotification);
+        titleLabel.setJustificationType (juce::Justification::centredLeft);
+        titleLabel.setColour (juce::Label::textColourId, juce::Colour (0xffe0e0e6));
+        titleLabel.setFont (juce::Font (juce::FontOptions (14.0f, juce::Font::bold)));
+        addAndMakeVisible (titleLabel);
+
+        auto styleCaption = [this] (juce::Label& l, const juce::String& text, float pt)
+        {
+            l.setText (text, juce::dontSendNotification);
+            l.setJustificationType (juce::Justification::centredRight);
+            l.setColour (juce::Label::textColourId, juce::Colour (0xff909094));
+            l.setFont (juce::Font (juce::FontOptions (pt)));
+            addAndMakeVisible (l);
+        };
+        styleCaption (modeCaption,     "Mode",      11.0f);
+        styleCaption (inputCaption,    "Input",     11.0f);
+        styleCaption (inputRCaption,   "Input R",   11.0f);
+        styleCaption (midiPortCaption, "MIDI port", 11.0f);
+        styleCaption (channelCaption,  "Channel",   11.0f);
+        styleCaption (midiOutCaption,  "MIDI out",  11.0f);
+        styleCaption (activityCaption, "activity",  10.0f);
+
+        setSize (kIoPopupW, ioConfigBodyHeight (juce::jlimit (0, 2, modeSelector.getSelectedId() - 1)));
     }
 
     void resized() override
     {
-        auto area = getLocalBounds().reduced (8);
-        constexpr int kRowH = 24, kGap = 6;
-
-        modeSelector.setBounds (area.removeFromTop (kRowH));
-        area.removeFromTop (kGap);
-
         const int mode = juce::jlimit (0, 2, modeSelector.getSelectedId() - 1);
-        inputSelector.setVisible (mode == 0 || mode == 1);
-        inputSelectorR.setVisible (mode == 1);
+
+        inputSelector      .setVisible (mode == 0 || mode == 1);
+        inputSelectorR     .setVisible (mode == 1);
         midiInputSelector  .setVisible (mode == 2);
         midiChannelSelector.setVisible (mode == 2);
         midiOutputSelector .setVisible (mode == 2);
-        activityLed       .setVisible (mode == 2);
+        activityLed        .setVisible (mode == 2);
+
+        inputCaption   .setVisible (mode == 0 || mode == 1);
+        inputRCaption  .setVisible (mode == 1);
+        midiPortCaption.setVisible (mode == 2);
+        channelCaption .setVisible (mode == 2);
+        midiOutCaption .setVisible (mode == 2);
+        activityCaption.setVisible (mode == 2);
+        inputCaption.setText (mode == 1 ? "Input L" : "Input", juce::dontSendNotification);
+
+        auto area = getLocalBounds().reduced (kIoInset);
+
+        // Title row. In MIDI mode the activity LED + its caption ride the row's
+        // right edge so every combo below stays equal width.
+        auto titleRow = area.removeFromTop (kIoTitleH);
+        if (mode == 2)
+        {
+            activityLed.setBounds (titleRow.removeFromRight (kIoTitleH).withSizeKeepingCentre (12, 12));
+            titleRow.removeFromRight (4);
+            activityCaption.setBounds (titleRow.removeFromRight (50));
+        }
+        titleLabel.setBounds (titleRow);
+        area.removeFromTop (kIoTitleGap);
+
+        auto layoutRow = [&] (juce::Label& cap, juce::Component& combo)
+        {
+            auto row = area.removeFromTop (kIoRowH);
+            cap.setBounds (row.removeFromLeft (kIoGutterW));
+            row.removeFromLeft (kIoGutterGap);
+            combo.setBounds (row);
+            area.removeFromTop (kIoRowGap);
+        };
+
+        layoutRow (modeCaption, modeSelector);
 
         if (mode == 0)
         {
-            inputSelector.setBounds (area.removeFromTop (kRowH));
+            layoutRow (inputCaption, inputSelector);
         }
         else if (mode == 1)
         {
-            auto row = area.removeFromTop (kRowH);
-            const int half = (row.getWidth() - 4) / 2;
-            inputSelector .setBounds (row.removeFromLeft (half));
-            row.removeFromLeft (4);
-            inputSelectorR.setBounds (row);
+            layoutRow (inputCaption,  inputSelector);
+            layoutRow (inputRCaption, inputSelectorR);
         }
         else
         {
-            constexpr int kLedW = 14;
-            auto inRow = area.removeFromTop (kRowH);
-            activityLed.setBounds (inRow.removeFromRight (kLedW).reduced (1));
-            inRow.removeFromRight (4);
-            midiInputSelector.setBounds (inRow);
-            area.removeFromTop (kGap);
-            midiChannelSelector.setBounds (area.removeFromTop (kRowH));
-            area.removeFromTop (kGap);
-            midiOutputSelector.setBounds (area.removeFromTop (kRowH));
+            layoutRow (midiPortCaption, midiInputSelector);
+            layoutRow (channelCaption,  midiChannelSelector);
+            layoutRow (midiOutCaption,  midiOutputSelector);
         }
     }
 
 private:
+    juce::Label titleLabel;
+    juce::Label modeCaption, inputCaption, inputRCaption;
+    juce::Label midiPortCaption, channelCaption, midiOutCaption, activityCaption;
+
     juce::ComboBox& modeSelector;
     juce::ComboBox& inputSelector;
     juce::ComboBox& inputSelectorR;
@@ -2899,12 +2967,12 @@ void ChannelStripComponent::openIoConfigPopup()
 {
     if (ioConfigModal.isOpen()) { ioConfigModal.close(); return; }
 
-    auto panel = std::make_unique<IoConfigPopup> (modeSelector, inputSelector, inputSelectorR,
+    auto panel = std::make_unique<IoConfigPopup> (track.name, trackIndex,
+                                                   modeSelector, inputSelector, inputSelectorR,
                                                    midiInputSelector, midiChannelSelector,
                                                    midiOutputSelector, midiActivityLed);
     const int mode = juce::jlimit (0, 2, modeSelector.getSelectedId() - 1);
-    const int rows = mode == 2 ? 4 : 2;
-    panel->setSize (240, 8 + rows * 24 + (rows - 1) * 6 + 8);
+    panel->setSize (kIoPopupW, ioConfigBodyHeight (mode));
 
     auto* topLevel = getTopLevelComponent();
     if (topLevel == nullptr) topLevel = this;
@@ -2919,6 +2987,22 @@ void ChannelStripComponent::openIoConfigPopup()
     ioConfigModal.show (*topLevel, std::move (panel),
                         /*onDismiss*/ {}, /*dismissOnClickOutside*/ true,
                         /*dismissOnEscape*/ true, kEditorDimAlpha);
+    // show() parks focus on the body; move it to the mode combo so keyboard
+    // users land on the first control.
+    modeSelector.grabKeyboardFocus();
+}
+
+juce::Component* ChannelStripComponent::openIoConfigPopupForCapture (int mode)
+{
+    if (ioConfigModal.isOpen()) ioConfigModal.close();
+    modeSelector.setSelectedId (juce::jlimit (0, 2, mode) + 1, juce::sendNotificationSync);
+    openIoConfigPopup();
+    return ioConfigModal.getBody();
+}
+
+void ChannelStripComponent::closeIoConfigPopupForCapture()
+{
+    if (ioConfigModal.isOpen()) ioConfigModal.close();
 }
 
 void ChannelStripComponent::refreshAuxSendLabel (int auxIdx)
@@ -3078,7 +3162,7 @@ void ChannelStripComponent::refreshIoConfigButton()
     {
         text = "Mono ";
         const auto in = inputSelector.getText();
-        text += in.isEmpty() ? "(none)" : in;
+        text += in.isEmpty() ? "None" : in;
     }
     else if (mode == 1)   // Stereo
     {
@@ -3094,7 +3178,7 @@ void ChannelStripComponent::refreshIoConfigButton()
         // U+00B7 middle dot via CharPointer_UTF8 - juce::String's char*
         // ctor uses the system locale which mangles UTF-8 on Linux.
         const juce::String midDot (juce::CharPointer_UTF8 ("\xc2\xb7"));
-        text = "MIDI " + (port.isEmpty() ? juce::String ("(none)") : port)
+        text = "MIDI " + (port.isEmpty() ? juce::String ("None") : port)
                 + " " + midDot + " " + (ch.isEmpty() ? juce::String ("Omni") : ch);
     }
     if (ioConfigButton.getButtonText() != text)
@@ -4370,19 +4454,16 @@ void ChannelStripComponent::onTrackModeChanged()
     refreshPluginSlotButton();
     refreshIoConfigButton();
     refreshPrintButtonForMode();
-    // If the I/O popup is open it needs to grow / shrink (rows differ per
-    // mode: 2 for audio, 4 for MIDI), then re-centre - EmbeddedModal centres
-    // only at show() time, so a plain setSize would leave the grown MIDI panel
-    // anchored off-centre with its extra rows clipped. resized() runs
-    // unconditionally after setSize because mono <-> stereo both use rows == 2
-    // (no height change -> setSize no-ops), yet the inner layout still differs
-    // (full-width mono input vs L/R halves) and must re-lay-out.
+    // If the I/O popup is open it needs to grow / shrink (rows differ per mode:
+    // 2 mono, 3 stereo, 4 MIDI), then re-centre - EmbeddedModal centres only at
+    // show() time, so a plain setSize would leave the resized panel anchored
+    // off-centre with its extra rows clipped. resized() runs after setSize so
+    // the inner layout tracks the new mode even when the height is unchanged.
     if (ioConfigModal.isOpen())
     {
         if (auto* body = ioConfigModal.getBody())
         {
-            const int rows = (mode == 2) ? 4 : 2;
-            body->setSize (240, 8 + rows * 24 + (rows - 1) * 6 + 8);
+            body->setSize (kIoPopupW, ioConfigBodyHeight (mode));
             body->resized();
             ioConfigModal.recenterBody();
         }
