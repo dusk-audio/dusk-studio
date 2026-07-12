@@ -376,11 +376,11 @@ void StartupDialog::resized()
 
 void StartupDialog::setUpdateAvailable (const juce::String& tagName)
 {
-    updateLabel.setText ("Update available: " + tagName + "  -  get it on Patreon",
+    updateLabel.setText ("Update available: " + tagName + "  -  click to download",
                          juce::dontSendNotification);
     updateLabel.setTooltip ("A newer Dusk Studio release (" + tagName + ") is "
-                            "available. Click to open the Dusk Audio Patreon page, "
-                            "where downloads are posted.");
+                            "available. Click to open the Dusk Audio downloads "
+                            "page (access is gated for supporters).");
     updateLabel.setColour (juce::Label::textColourId, juce::Colour (0xffe0a050));
     updateLabel.setMouseCursor (juce::MouseCursor::PointingHandCursor);
     updateLabel.addMouseListener (this, false);
@@ -392,11 +392,12 @@ void StartupDialog::setUpdateAvailable (const juce::String& tagName)
 
 void StartupDialog::mouseUp (const juce::MouseEvent& e)
 {
-    // Downloads are gated behind Patreon, so the banner links to the page
-    // rather than a direct artifact URL (the releases repo is private).
+    // The downloads page is Dusk-owned so the destination can change without
+    // an app update; artifacts themselves are supporter-gated behind it (the
+    // releases repo is private, so no direct artifact URL exists).
     if (e.eventComponent == &updateLabel && updateLabel.isVisible()
         && e.mouseWasClicked())
-        juce::URL ("https://www.patreon.com/duskaudio").launchInDefaultBrowser();
+        juce::URL ("https://builds.duskaudio.com/latest").launchInDefaultBrowser();
 }
 
 void StartupDialog::timerCallback()
