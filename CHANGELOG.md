@@ -35,6 +35,19 @@ and a Windows plugin-scan crash.
 
 ### Changed
 
+- **Track input picker.** The I/O popup now carries a title with the track
+  name, a caption on every field (Mode, Input L/R, MIDI port, Channel, MIDI
+  out), a labelled MIDI-activity LED, equal-width dropdowns, and honest
+  wording: the follow-track default reads "In N (follow)" and empty
+  selections read "None" everywhere.
+- **One click grammar for strip sections.** EQ, COMP, AUX and TAPE behave
+  identically on channel, bus and master strips, expanded or compact:
+  left-click toggles the section, right-click opens its menu (character or
+  mode, reset where supported, open editor), double-click opens the editor.
+- **Update banner links to Patreon.** The startup dialog's update notice is
+  clickable and opens the downloads page.
+- Clearer startup messages when no usable display is found (headless vs
+  Wayland-without-XWayland vs unreachable X server).
 - Mixer-style controllers with a Mackie/MCU emulation mode (Tascam Model 12
   and similar) should use MCU mode rather than hand-mapped MIDI bindings -
   the manual's control-surface chapter now says so and explains why
