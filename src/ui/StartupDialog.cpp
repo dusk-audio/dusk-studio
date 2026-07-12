@@ -376,13 +376,27 @@ void StartupDialog::resized()
 
 void StartupDialog::setUpdateAvailable (const juce::String& tagName)
 {
-    updateLabel.setText ("Update available: " + tagName, juce::dontSendNotification);
-    updateLabel.setTooltip ("A newer Dusk Studio release (" + tagName + ") is available.");
+    updateLabel.setText ("Update available: " + tagName + "  -  get it on Patreon",
+                         juce::dontSendNotification);
+    updateLabel.setTooltip ("A newer Dusk Studio release (" + tagName + ") is "
+                            "available. Click to open the Dusk Audio Patreon page, "
+                            "where downloads are posted.");
     updateLabel.setColour (juce::Label::textColourId, juce::Colour (0xffe0a050));
+    updateLabel.setMouseCursor (juce::MouseCursor::PointingHandCursor);
+    updateLabel.addMouseListener (this, false);
     updateLabel.setVisible (true);
     resized();   // reserve the banner row above the heading now that it's shown
     updateBlinkCount = 0;
     startTimer (500);
+}
+
+void StartupDialog::mouseUp (const juce::MouseEvent& e)
+{
+    // Downloads are gated behind Patreon, so the banner links to the page
+    // rather than a direct artifact URL (the releases repo is private).
+    if (e.eventComponent == &updateLabel && updateLabel.isVisible()
+        && e.mouseWasClicked())
+        juce::URL ("https://www.patreon.com/duskaudio").launchInDefaultBrowser();
 }
 
 void StartupDialog::timerCallback()

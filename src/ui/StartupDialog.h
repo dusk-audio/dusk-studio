@@ -24,6 +24,7 @@ public:
     void resized() override;
     void paint (juce::Graphics&) override;
     bool keyPressed (const juce::KeyPress& key) override;
+    void mouseUp (const juce::MouseEvent& e) override;
 
     // Shows the flashing "update available" badge in the sidebar.
     // Called (message thread) when the async tag check finds a release
