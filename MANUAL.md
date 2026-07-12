@@ -564,7 +564,7 @@ Mute, Solo, and the input-monitor (IN) toggle gate the entire accumulation — w
 
 This is the order the audio actually flows. On screen, controls are arranged for ergonomics — the fader is at the bottom, the EQ in the middle — but the underlying chain never changes.
 
-Every processing section (EQ, compressor, tape) follows one consistent grammar on its header — and on its compact pill when the strip collapses, and on the channel, bus, and master strips alike: **left-click toggles the section on or off, right-click opens the section menu (character / mode where it has one, reset, open editor), and double-click opens the full editor.**
+Every processing section (EQ, compressor, tape) follows one consistent grammar on its header — and on its compact pill when the strip collapses, and on the channel, bus, and master strips alike: **left-click toggles the section on or off, right-click opens the section menu (character / mode where it has one, reset where the section supports it, open editor), and double-click opens the full editor.**
 
 ## Track name and colour
 

@@ -200,7 +200,9 @@ static bool displayUsableOrExplain()
             std::fprintf (stderr, "Dusk Studio: Wayland session detected - running via XWayland.\n");
         return true;
     }
-    if (onWayland)
+    const char* xDisplay = std::getenv ("DISPLAY");
+    const bool haveDisplayVar = xDisplay != nullptr && xDisplay[0] != '\0';
+    if (onWayland && ! haveDisplayVar)
         std::fprintf (stderr,
             "Dusk Studio needs an X11 display and could not open one.\n"
             "This is a Wayland session without XWayland. Enable it, then relaunch:\n"
@@ -208,11 +210,23 @@ static bool displayUsableOrExplain()
             "  niri:   run `xwayland-satellite` and export the DISPLAY it prints\n"
             "  labwc:  start labwc with XWayland enabled (the default build)\n"
             "  river / mango / other wlroots: ensure XWayland is installed and enabled\n");
+    else if (onWayland)
+        std::fprintf (stderr,
+            "Dusk Studio needs an X11 display and could not open one.\n"
+            "DISPLAY is set (%s) but that X server did not respond - XWayland may\n"
+            "have stopped. Restart your session, or restart XWayland and relaunch.\n",
+            xDisplay);
+    else if (haveDisplayVar)
+        std::fprintf (stderr,
+            "Dusk Studio needs an X11 display and could not open one.\n"
+            "DISPLAY is set (%s) but that X server is unreachable. Point DISPLAY\n"
+            "at a running X server, or launch from a graphical session.\n",
+            xDisplay);
     else
         std::fprintf (stderr,
             "Dusk Studio needs an X11 display and could not open one.\n"
-            "No display was found (DISPLAY is unset or unreachable). Launch from a\n"
-            "graphical session, or set DISPLAY to a reachable X server.\n");
+            "No display was found (DISPLAY is unset). Launch from a graphical\n"
+            "session, or set DISPLAY to a reachable X server.\n");
     std::fflush (stderr);
     return false;
 }
