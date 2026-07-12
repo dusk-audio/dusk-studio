@@ -17,6 +17,7 @@
 #include "ui/WindowState.h"
 #include "engine/AudioEngine.h"
 #include "engine/AudioPipelineSelfTest.h"
+#include "engine/BounceEngine.h"
 #include "engine/PluginManager.h"
 #include "engine/PluginSlot.h"
 #include "session/SessionSerializer.h"
@@ -951,6 +952,443 @@ static void runHeadlessSelfTest()
     std::fflush (stdout);
 }
 
+// Headless bounce regression harness: DUSKSTUDIO_BOUNCE_TEST=<plugin path>.
+//
+// Builds a two-track session with synthesised audio, loads the given plugin
+// (.clap / .vst3 / .lv2, dispatched to the matching NATIVE host slot exactly as
+// ChannelStrip does live) as an insert on track 0, then drives a full
+// BounceEngine MasterMix render to a temp WAV THROUGH THE REAL ASYNC WORKER -
+// start() spins the worker thread and the worker marshals its engine re-prepare
+// back to the message thread via BounceEngine::runOnMessageThread. This harness
+// must therefore keep the message loop pumping while it waits, which it does by
+// polling from a juce::Timer (fired by the app dispatch loop) rather than
+// blocking - a blocking wait would deadlock the worker's callAsync marshalling.
+//
+// The u-he-Satin-native-CLAP crash lived precisely in that worker/message-thread
+// interaction (plugin deactivate off the main thread tripped u-he's contract
+// checker abort()). This path is the automated proof the fix holds.
+//
+// Also renders a FREEZE of the plugin track (second [PASS] line): freeze captures
+// the strip's pre-fader tap, so nonzero freeze output proves the plugin actually
+// processed through the native insert.
+//
+// Exits nonzero on any failure. Runs offline (device detached), and closes the
+// audio device up front so no real hardware is held while it renders - safe to
+// run on a machine that is actively making sound elsewhere.
+//
+// Usage:
+//   DUSKSTUDIO_BOUNCE_TEST=/home/marc/.clap/u-he/Satin.64.clap ./DuskStudio
+struct DuskStudioApp::BounceTest : private juce::Timer
+{
+    BounceTest (DuskStudioApp& a, juce::String p)
+        : app (a), pluginPath (std::move (p)) {}
+
+    ~BounceTest() override { stopTimer(); }
+
+    // Synchronous setup on the message thread. Returns false if setup failed
+    // (return value + [FAIL] already emitted); the caller then quits immediately.
+    bool begin()
+    {
+        std::fprintf (stdout, "=== Dusk Studio Headless Bounce Test ===\n");
+        std::fprintf (stdout, "Plugin: %s\nSR=%.0f BS=%d\n\n", pluginPath.toRawUTF8(), sr, bs);
+        std::fflush (stdout);
+
+        tmpDir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                     .getChildFile ("duskstudio-bounce-test");
+        tmpDir.createDirectory();
+        mixFile    = tmpDir.getChildFile ("mix.wav");
+        freezeFile = tmpDir.getChildFile ("freeze.wav");
+        mixFile.deleteFile();
+        freezeFile.deleteFile();
+
+        session = std::make_unique<Session>();
+        engine  = std::make_unique<AudioEngine> (*session);
+
+        // The engine ctor opened a real device + attached itself. Detach AND close
+        // the device now so no hardware is held during the (potentially slow) native
+        // plugin load + offline render on a machine in active use. The offline
+        // render never needs a device; the bounce re-attaches at the end, harmless
+        // against a closed device.
+        engine->getDeviceManager().removeAudioCallback (engine.get());
+        engine->getDeviceManager().closeAudioDevice();
+        engine->prepareForSelfTest (sr, bs);
+
+        synthesiseContent();
+
+        if (! loadPluginByExtension())
+        {
+            // loadPluginByExtension already printed the [FAIL] line.
+            exitCode = 1;
+            return false;
+        }
+
+        std::fprintf (stdout, "[INFO] loaded %s insert on track 0: %s\n\n",
+                      loadedFormat.toRawUTF8(), pluginPath.toRawUTF8());
+        std::fflush (stdout);
+
+        bounce = std::make_unique<BounceEngine> (*engine, *session,
+                                                 engine->getDeviceManager());
+        bounce->onFinished = [this] (bool ok, juce::String err)
+        {
+            // Worker thread. Record + let the poll timer pick it up on the message
+            // thread. masterDone is the release fence.
+            masterOk  = ok;
+            masterErr = err;
+            masterDone.store (true, std::memory_order_release);
+        };
+
+        // Real async path: start() spins the worker; tail kept short for speed.
+        if (! bounce->start (mixFile, sr, bs, 1.0, BounceEngine::Mode::MasterMix,
+                             BounceEngine::Format::Wav))
+        {
+            std::fprintf (stdout, "[FAIL] MasterMix bounce start() returned false: %s\n",
+                          bounce->getLastError().toRawUTF8());
+            exitCode = 1;
+            return false;
+        }
+
+        phase = Phase::WaitMaster;
+        phaseStartMs = juce::Time::getMillisecondCounter();
+        startTimer (25);
+        return true;
+    }
+
+private:
+    // Two detuned sines with an amplitude envelope; a plausible recorded take.
+    juce::File writeDemoWav (const juce::File& file, double fL, double fR)
+    {
+        const int numCh = 2;
+        const int numFrames = (int) (sr * kContentSeconds);
+        juce::AudioBuffer<float> buf (numCh, numFrames);
+        for (int n = 0; n < numFrames; ++n)
+        {
+            const double t   = (double) n / sr;
+            const double env = std::sin (juce::MathConstants<double>::pi * (double) n / numFrames);
+            buf.setSample (0, n, (float) (env * 0.6 * std::sin (2.0 * juce::MathConstants<double>::pi * fL * t)));
+            buf.setSample (1, n, (float) (env * 0.6 * std::sin (2.0 * juce::MathConstants<double>::pi * fR * t)));
+        }
+        juce::WavAudioFormat wav;
+        file.deleteFile();
+        if (auto os = std::unique_ptr<juce::OutputStream> (file.createOutputStream()))
+        {
+            const auto opts = juce::AudioFormatWriterOptions {}
+                                  .withSampleRate (sr)
+                                  .withNumChannels (numCh)
+                                  .withBitsPerSample (24);
+            if (auto writer = wav.createWriterFor (os, opts))
+                writer->writeFromAudioSampleBuffer (buf, 0, numFrames);
+        }
+        return file;
+    }
+
+    void synthesiseContent()
+    {
+        const std::int64_t lenSamples = (std::int64_t) (sr * kContentSeconds);
+        auto makeRegion = [&] (const juce::File& f)
+        {
+            AudioRegion r;
+            r.file            = f;
+            r.timelineStart   = 0;
+            r.lengthInSamples = lenSamples;
+            r.numChannels     = 2;
+            r.fadeInSamples   = (std::int64_t) (sr * 0.02);
+            r.fadeOutSamples  = (std::int64_t) (sr * 0.05);
+            return r;
+        };
+        const auto wav0 = writeDemoWav (tmpDir.getChildFile ("take0.wav"), 196.0, 198.0);
+        const auto wav1 = writeDemoWav (tmpDir.getChildFile ("take1.wav"), 261.0, 264.0);
+
+        session->track (0).name = "Plugin Trk";
+        session->track (0).mode.store ((int) Track::Mode::Stereo, std::memory_order_relaxed);
+        session->track (0).regions = { makeRegion (wav0) };
+
+        session->track (1).name = "Dry Trk";
+        session->track (1).mode.store ((int) Track::Mode::Stereo, std::memory_order_relaxed);
+        session->track (1).regions = { makeRegion (wav1) };
+    }
+
+    // Dispatch to the native host slot by file extension - exactly the ChannelStrip
+    // path the live UI uses, and the path the bounce crash lived in. Prints a
+    // [FAIL] line on failure. Falls back to a clear message when the format's
+    // native host isn't compiled into this build.
+    bool loadPluginByExtension()
+    {
+        const juce::File f (pluginPath);
+        if (! f.exists())
+        {
+            std::fprintf (stdout, "[FAIL] plugin path does not exist: %s\n", pluginPath.toRawUTF8());
+            return false;
+        }
+
+        auto& strip = engine->getChannelStrip (0);
+        std::string err;
+        bool ok = false;
+
+        if (f.getFileName().endsWithIgnoreCase (".clap"))
+        {
+           #if DUSKSTUDIO_HAS_NATIVE_CLAP
+            loadedFormat = "CLAP";
+            ok = strip.loadNativeClap (f, err);
+           #else
+            std::fprintf (stdout, "[FAIL] .clap given but DUSKSTUDIO_HAS_NATIVE_CLAP is off\n");
+            return false;
+           #endif
+        }
+        else if (f.getFileName().endsWithIgnoreCase (".vst3"))
+        {
+           #if DUSKSTUDIO_HAS_NATIVE_VST3
+            loadedFormat = "VST3";
+            ok = strip.loadNativeVst3 (f, err);
+           #else
+            std::fprintf (stdout, "[FAIL] .vst3 given but DUSKSTUDIO_HAS_NATIVE_VST3 is off\n");
+            return false;
+           #endif
+        }
+        else if (f.getFileName().endsWithIgnoreCase (".lv2"))
+        {
+           #if DUSKSTUDIO_HAS_NATIVE_LV2
+            loadedFormat = "LV2";
+            ok = strip.loadNativeLv2 (f, err);
+           #else
+            std::fprintf (stdout, "[FAIL] .lv2 given but DUSKSTUDIO_HAS_NATIVE_LV2 is off\n");
+            return false;
+           #endif
+        }
+        else
+        {
+            std::fprintf (stdout, "[FAIL] unrecognised plugin extension: %s\n",
+                          f.getFileName().toRawUTF8());
+            return false;
+        }
+
+        if (! ok)
+            std::fprintf (stdout, "[FAIL] native %s load failed: %s\n",
+                          loadedFormat.toRawUTF8(), err.c_str());
+        return ok;
+    }
+
+    // Read a rendered WAV back and report nonzero + finite. peakOut set to the
+    // linear peak. Returns false with a printed [FAIL] reason on any problem.
+    bool validateWav (const juce::File& file, const char* label, float& peakOut)
+    {
+        peakOut = 0.0f;
+        if (! file.existsAsFile())
+        {
+            std::fprintf (stdout, "[FAIL] %s: output file not written: %s\n",
+                          label, file.getFullPathName().toRawUTF8());
+            return false;
+        }
+        juce::WavAudioFormat wav;
+        std::unique_ptr<juce::AudioFormatReader> reader (
+            wav.createReaderFor (file.createInputStream().release(), true));
+        if (reader == nullptr)
+        {
+            std::fprintf (stdout, "[FAIL] %s: could not open output WAV for readback\n", label);
+            return false;
+        }
+        const int n = (int) reader->lengthInSamples;
+        if (n <= 0)
+        {
+            std::fprintf (stdout, "[FAIL] %s: output WAV has zero samples\n", label);
+            return false;
+        }
+        juce::AudioBuffer<float> buf ((int) juce::jmax (1u, reader->numChannels), n);
+        reader->read (&buf, 0, n, 0, true, true);
+        bool allFinite = true;
+        float peak = 0.0f;
+        for (int c = 0; c < buf.getNumChannels(); ++c)
+        {
+            const float* d = buf.getReadPointer (c);
+            for (int i = 0; i < n; ++i)
+            {
+                if (! std::isfinite (d[i])) { allFinite = false; break; }
+                peak = juce::jmax (peak, std::abs (d[i]));
+            }
+            if (! allFinite) break;
+        }
+        peakOut = peak;
+        if (! allFinite)
+        {
+            std::fprintf (stdout, "[FAIL] %s: output WAV contains non-finite samples\n", label);
+            return false;
+        }
+        if (peak <= 1.0e-6f)
+        {
+            std::fprintf (stdout, "[FAIL] %s: output WAV is silent (peak=%.3e)\n", label, peak);
+            return false;
+        }
+        return true;
+    }
+
+    // After the render restores the engine, drive one manual callback block and
+    // confirm the engine still processes to finite output - proves the device
+    // callback path came back to a working state post-bounce.
+    bool driveOnePostBounceBlock()
+    {
+        constexpr int kIn = 16, kOut = 2;
+        std::vector<std::vector<float>> in ((size_t) kIn, std::vector<float> ((size_t) bs, 0.0f));
+        std::vector<const float*> inP ((size_t) kIn);
+        for (int c = 0; c < kIn; ++c) inP[(size_t) c] = in[(size_t) c].data();
+        std::vector<std::vector<float>> out ((size_t) kOut, std::vector<float> ((size_t) bs, 0.0f));
+        std::vector<float*> outP ((size_t) kOut);
+        for (int c = 0; c < kOut; ++c) outP[(size_t) c] = out[(size_t) c].data();
+
+        juce::AudioIODeviceCallbackContext ctx {};
+        engine->audioDeviceIOCallbackWithContext (inP.data(), kIn, outP.data(), kOut, bs, ctx);
+
+        for (int c = 0; c < kOut; ++c)
+            for (int i = 0; i < bs; ++i)
+                if (! std::isfinite (out[(size_t) c][(size_t) i]))
+                    return false;
+        return true;
+    }
+
+    void timerCallback() override
+    {
+        const auto now = juce::Time::getMillisecondCounter();
+        const bool timedOut = (now - phaseStartMs) > (juce::uint32) kTimeoutMs;
+
+        switch (phase)
+        {
+            case Phase::WaitMaster:
+            {
+                if (masterDone.load (std::memory_order_acquire))
+                {
+                    float peak = 0.0f;
+                    const bool wav = validateWav (mixFile, "MasterMix", peak);
+                    const bool cb  = driveOnePostBounceBlock();
+                    if (! cb)
+                        std::fprintf (stdout, "[FAIL] MasterMix: engine produced non-finite output "
+                                              "on the post-bounce callback\n");
+                    const bool ok = masterOk && masterErr.isEmpty() && wav && cb;
+                    if (! masterOk || masterErr.isNotEmpty())
+                        std::fprintf (stdout, "[FAIL] MasterMix: worker reported ok=%d err=\"%s\"\n",
+                                      (int) masterOk, masterErr.toRawUTF8());
+                    if (ok)
+                        std::fprintf (stdout,
+                                      "[PASS] MasterMix render OK (peak=%.4f, engine reattached + "
+                                      "processes finite)\n", peak);
+                    else
+                        exitCode = 1;
+                    std::fflush (stdout);
+
+                    freezeAttempts = 0;
+                    phase = Phase::StartFreeze;
+                    phaseStartMs = now;
+                }
+                else if (timedOut)
+                {
+                    std::fprintf (stdout, "[FAIL] MasterMix render did not finish within %d ms\n",
+                                  kTimeoutMs);
+                    exitCode = 1;
+                    finish();
+                }
+                break;
+            }
+
+            case Phase::StartFreeze:
+            {
+                // The master worker thread may not have fully exited the instant
+                // isRendering() went false; startFreeze()'s startThread() then
+                // returns false. Retry a few ticks before giving up.
+                bounce->onFinished = [this] (bool ok, juce::String err)
+                {
+                    freezeOk  = ok;
+                    freezeErr = err;
+                    freezeDone.store (true, std::memory_order_release);
+                };
+                const std::int64_t freezeLen = (std::int64_t) (sr * 1.5);
+                if (bounce->startFreeze (0, freezeFile, freezeLen, sr, bs))
+                {
+                    phase = Phase::WaitFreeze;
+                    phaseStartMs = now;
+                }
+                else if (++freezeAttempts > 40)
+                {
+                    std::fprintf (stdout, "[FAIL] Freeze: startFreeze() would not start: %s\n",
+                                  bounce->getLastError().toRawUTF8());
+                    exitCode = 1;
+                    finish();
+                }
+                break;
+            }
+
+            case Phase::WaitFreeze:
+            {
+                if (freezeDone.load (std::memory_order_acquire))
+                {
+                    float peak = 0.0f;
+                    const bool wav = validateWav (freezeFile, "Freeze", peak);
+                    const bool ok  = freezeOk && freezeErr.isEmpty() && wav;
+                    if (! freezeOk || freezeErr.isNotEmpty())
+                        std::fprintf (stdout, "[FAIL] Freeze: worker reported ok=%d err=\"%s\"\n",
+                                      (int) freezeOk, freezeErr.toRawUTF8());
+                    if (ok)
+                        std::fprintf (stdout,
+                                      "[PASS] Freeze render OK (peak=%.4f, plugin processed through "
+                                      "the native insert)\n", peak);
+                    else
+                        exitCode = 1;
+                    std::fflush (stdout);
+                    finish();
+                }
+                else if (timedOut)
+                {
+                    std::fprintf (stdout, "[FAIL] Freeze render did not finish within %d ms\n",
+                                  kTimeoutMs);
+                    exitCode = 1;
+                    finish();
+                }
+                break;
+            }
+
+            case Phase::Done:
+                break;
+        }
+    }
+
+    void finish()
+    {
+        stopTimer();
+        phase = Phase::Done;
+        std::fprintf (stdout, "\n%s\n", exitCode == 0 ? "RESULT: ALL PASS" : "RESULT: FAIL");
+        std::fprintf (stdout, "=== End of Bounce Test ===\n");
+        std::fflush (stdout);
+
+        // Tear the bounce down before the engine/session (worker joined in its dtor).
+        bounce.reset();
+        app.setApplicationReturnValue (exitCode);
+        app.quit();
+    }
+
+    static constexpr double kContentSeconds = 2.0;
+    static constexpr int    kTimeoutMs = 60000;
+
+    enum class Phase { WaitMaster, StartFreeze, WaitFreeze, Done };
+
+    DuskStudioApp& app;
+    juce::String   pluginPath;
+    juce::String   loadedFormat;
+
+    std::unique_ptr<Session>      session;
+    std::unique_ptr<AudioEngine>  engine;
+    std::unique_ptr<BounceEngine> bounce;
+
+    juce::File tmpDir, mixFile, freezeFile;
+    double sr = 48000.0;
+    int    bs = 1024;
+
+    Phase        phase = Phase::WaitMaster;
+    juce::uint32 phaseStartMs = 0;
+    int          freezeAttempts = 0;
+    int          exitCode = 0;
+
+    std::atomic<bool> masterDone { false };
+    std::atomic<bool> freezeDone { false };
+    bool masterOk = false, freezeOk = false;
+    juce::String masterErr, freezeErr;
+};
+
 // Resolve a session path passed on the command line / by the file manager.
 // Prefer a token that clearly names a session (session.json, a directory holding
 // one, or any .json file); otherwise fall back to the first existing token so a
@@ -1038,6 +1476,22 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
     {
         runHeadlessPipelineTest (juce::String (path));
         quit();
+        return;
+    }
+
+    // DUSKSTUDIO_BOUNCE_TEST renders through the REAL async worker, whose engine
+    // re-prepare marshals back to this (message) thread - so it can't run + wait
+    // synchronously here. begin() sets everything up and starts a poll timer, then
+    // we RETURN and let the app dispatch loop pump the worker's marshalling. The
+    // harness sets the return value + quits itself when both renders finish.
+    if (const char* path = std::getenv ("DUSKSTUDIO_BOUNCE_TEST"); path != nullptr && *path)
+    {
+        bounceTest = std::make_unique<BounceTest> (*this, juce::String (path));
+        if (! bounceTest->begin())
+        {
+            setApplicationReturnValue (1);
+            quit();
+        }
         return;
     }
 
@@ -1487,6 +1941,7 @@ void DuskStudioApp::shutdown()
 #if DUSKSTUDIO_HAS_NATIVE_VST3
     vst3EditorTest.reset();         // dev VST3-editor test path: window first, then instance/bundle
 #endif
+    bounceTest.reset();             // headless bounce harness: worker joined, then engine/session
 
     // Tear down the FileLogger installed by crash_handler::install so
     // JUCE's leak detector doesn't complain at exit. The crash callback
