@@ -30,6 +30,11 @@
   <content_rating type="oars-1.1"/>
   <releases>
     <!-- scripts/bump-version.sh prepends new <release> entries here. -->
+    <release version="0.12.2" date="2026-07-12">
+      <description>
+        <p>Beta patch: fixes a mixdown/stems/freeze crash with CLAP (and VST3/LV2) plugin inserts.</p>
+      </description>
+    </release>
     <release version="0.12.1" date="2026-07-12">
       <description>
         <p>Beta patch: live play-along during playback, Mackie fader calibration, Windows plugin-scan sandbox fix, deterministic bounces.</p>
