@@ -205,7 +205,8 @@ static bool displayUsableOrExplain()
     if (onWayland && ! haveDisplayVar)
         std::fprintf (stderr,
             "Dusk Studio needs an X11 display and could not open one.\n"
-            "This is a Wayland session without XWayland. Enable it, then relaunch:\n"
+            "This is a Wayland session with no DISPLAY set - most likely XWayland\n"
+            "is not running. Enable it, then relaunch:\n"
             "  sway:   add `xwayland enable` to your config and restart sway\n"
             "  niri:   run `xwayland-satellite` and export the DISPLAY it prints\n"
             "  labwc:  start labwc with XWayland enabled (the default build)\n"
@@ -213,14 +214,16 @@ static bool displayUsableOrExplain()
     else if (onWayland)
         std::fprintf (stderr,
             "Dusk Studio needs an X11 display and could not open one.\n"
-            "DISPLAY is set (%s) but that X server did not respond - XWayland may\n"
-            "have stopped. Restart your session, or restart XWayland and relaunch.\n",
+            "DISPLAY is set (%s) but connecting to it failed - XWayland may have\n"
+            "stopped, or access was refused. Restart your session (or XWayland)\n"
+            "and relaunch.\n",
             xDisplay);
     else if (haveDisplayVar)
         std::fprintf (stderr,
             "Dusk Studio needs an X11 display and could not open one.\n"
-            "DISPLAY is set (%s) but that X server is unreachable. Point DISPLAY\n"
-            "at a running X server, or launch from a graphical session.\n",
+            "DISPLAY is set (%s) but connecting to it failed - the server may be\n"
+            "unreachable or access refused (check XAUTHORITY / xhost). Point\n"
+            "DISPLAY at a running X server, or launch from a graphical session.\n",
             xDisplay);
     else
         std::fprintf (stderr,

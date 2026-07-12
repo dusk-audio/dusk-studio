@@ -572,7 +572,7 @@ Click the name label at the top of the strip to rename the track. Right-click to
 
 ## Input block (RECORDING stage)
 
-This block is only visible in the RECORDING stage. In other stages it collapses into a single small **I/O** button that opens the same controls as a popup, titled with the track name. Each row carries an on-screen caption (**Mode**, **Input**, **MIDI port**, **Channel**, **MIDI out**).
+This block is visible in the RECORDING stage, alongside a small **I/O** button that opens the same controls as a popup titled with the track name. In the MIXING stage the block and the button give way to the four AUX send knobs — switch back to RECORDING to change a track's inputs. Each row carries an on-screen caption (**Mode**, **Input**, **MIDI port**, **Channel**, **MIDI out**).
 
 - **Mode**: **Mono**, **Stereo**, or **MIDI**. Determines whether the track records one audio channel, two audio channels, or MIDI events.
 - **Input** (Mono mode): the audio device input to record from. The default, shown as **In N (follow)** (e.g. `In 1 (follow)` on track 1), means track 1 reads device input 1, track 2 reads device input 2, and so on. Choose a specific input to override, or **None** for no input.
