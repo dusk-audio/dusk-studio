@@ -68,16 +68,17 @@ TEST_CASE ("McuController: initial resync emits faders + LED state for 8 banked 
 
     auto buf = controller.buildBufferForTest();
 
-    // Track 0 fader: live -6 dB on a -100..+12 range -> norm ~= 0.839
-    // -> pb14 ~= 13746. Allow a small rounding band.
+    // Track 0 fader: live -6 dB on the Mackie taper -> pb14 == 9944
+    // (position 0.607). Allow a small rounding band.
     const int pb0 = findPitchBend14 (buf, 0);
-    REQUIRE (pb0 >= 13000);
-    REQUIRE (pb0 <= 14000);
+    REQUIRE (pb0 >= 9850);
+    REQUIRE (pb0 <= 10050);
 
-    // Master fader: 0 dB -> norm = 100/112 -> pb14 ~= 14627.
+    // Master fader: 0 dB -> the taper's unity anchor, pb14 == 12808
+    // (position 0.782, ~3/4 throw).
     const int pbMaster = findPitchBend14 (buf, mcu::kMasterFaderIndex);
-    REQUIRE (pbMaster >= 14000);
-    REQUIRE (pbMaster <= 15500);
+    REQUIRE (pbMaster >= 12700);
+    REQUIRE (pbMaster <= 12900);
 
     // Mute LED on track 3 lit, others dark (vel 0x00).
     REQUIRE (findValueForNote (buf, 0x90, mcu::btn::MuteBase + 3) == 0x7F);

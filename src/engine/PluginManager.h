@@ -25,6 +25,13 @@ public:
     void setOopEnabled (bool enable) noexcept { oopEnabled = enable; }
     bool isOopEnabled() const noexcept       { return oopEnabled; }
 
+    // Number of third-party plugins the most recent scan left UNSCANNED because
+    // the OOP sandbox host was unavailable (missing binary / spawn failure).
+    // Zero on a healthy scan; surfaced by the scan-complete UI so the user knows
+    // some plugins were skipped rather than silently dropped.
+    int getLastScanSandboxSkips() const noexcept
+    { return lastScanSandboxSkips.load (std::memory_order_relaxed); }
+
     // Path to the OOP child binary, alongside the running app. Empty when
     // OOP isn't compiled in for this platform.
     juce::String getHostExecutablePath() const;
@@ -116,6 +123,10 @@ private:
     juce::Array<juce::PluginDescription> lv2Descriptions;        // native LV2 (scanned separately)
     juce::Array<juce::PluginDescription> vst3NativeDescriptions; // native VST3 (scanned separately)
     bool                           oopEnabled { false };
+    // Written on the scan (background) thread at the end of scanInstalledPlugins,
+    // read on the message thread by the scan-complete UI. The read is fenced by
+    // the modal's scanDone release/acquire; atomic keeps it race-free regardless.
+    std::atomic<int>               lastScanSandboxSkips { 0 };
 
     juce::Array<juce::PluginDescription> filterByInstrumentFlag (
         const juce::Array<juce::PluginDescription>& source, bool wantInstrument) const;
@@ -145,7 +156,16 @@ inline juce::String PluginManager::getHostExecutablePath() const
 {
    #if DUSKSTUDIO_HAS_OOP_PLUGINS
     auto exe = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
-    return exe.getParentDirectory().getChildFile ("dusk-studio-plugin-host").getFullPathName();
+   #if JUCE_WINDOWS
+    // CreateProcess (lpApplicationName) and File::existsAsFile both require the
+    // explicit .exe on Windows — without it the sandbox host is never found and
+    // third-party scanning silently falls through to the crash-prone in-process
+    // path (issue #45).
+    const char* const childName = "dusk-studio-plugin-host.exe";
+   #else
+    const char* const childName = "dusk-studio-plugin-host";
+   #endif
+    return exe.getParentDirectory().getChildFile (childName).getFullPathName();
    #else
     return {};
    #endif

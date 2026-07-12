@@ -47,22 +47,23 @@ TEST_CASE ("McuReceiver: fader pitch-bend writes faderDb on banked strip",
     McuReceiver r (s);
 
     // Bank 0 -> channels 0..7 = tracks 0..7. Pitch-bend on channel 3
-    // (zero-indexed = MCU strip 4) at full scale = 0 dB (top of fader).
-    // Linear-in-dB mapping: 16383 -> +12 dB.
+    // (zero-indexed = MCU strip 4) at full scale = top of throw = +12 dB.
     r.process (makePitchBend (3, mcu::kPitchBendMaxValue), 0);
     REQUIRE_THAT (s.track (3).strip.faderDb.load (std::memory_order_relaxed),
                   WithinAbs (12.0f, 0.1f));
 
-    // Bottom of fader: 0 -> -100 dB.
+    // Bottom of fader: 0 -> -100 dB (-inf floor).
     r.process (makePitchBend (3, 0), 0);
     REQUIRE_THAT (s.track (3).strip.faderDb.load (std::memory_order_relaxed),
                   WithinAbs (-100.0f, 0.1f));
 
     // Bank 1 -> channels 0..7 = tracks 8..15. Strip 0 moves track 8.
+    // Half the 14-bit range (8191) sits on the Mackie taper between the
+    // -12 dB (7657) and -9 dB (8735) breakpoints -> ~-10.5 dB.
     s.mcu.bank.store (1, std::memory_order_relaxed);
     r.process (makePitchBend (0, mcu::kPitchBendMaxValue / 2), 0);
     REQUIRE_THAT (s.track (8).strip.faderDb.load (std::memory_order_relaxed),
-                  WithinAbs (-44.0f, 1.0f));   // midway in -100..+12 -> -44
+                  WithinAbs (-10.5f, 0.3f));
 }
 
 TEST_CASE ("McuReceiver: master fader pitch-bend (channel 8) targets MasterBusParams",

@@ -5,6 +5,7 @@
 #include "../dsp/OutputPairRouting.h"
 #include "McuReceiver.h"
 #include "McuController.h"
+#include "FaderBindingMap.h"
 #include "../session/RegionEditActions.h"
 #include "DeviceFallbackMessage.h"
 #if defined(DUSKSTUDIO_HAS_ALSA)
@@ -38,8 +39,9 @@ static float currentFracForTarget (Session& session, const MidiBinding& b) noexc
     {
         case MidiBindingTarget::TrackFader:
             if (b.targetIndex < 0 || b.targetIndex >= Session::kNumTracks) return -1.0f;
-            return inv (session.track (b.targetIndex).strip.faderDb.load (std::memory_order_relaxed),
-                        -90.0f, 12.0f);
+            return faderBindingDbToFrac (
+                session.track (b.targetIndex).strip.faderDb.load (std::memory_order_relaxed),
+                b.trigger == MidiBindingTrigger::PitchBend);
         case MidiBindingTarget::TrackPan:
             if (b.targetIndex < 0 || b.targetIndex >= Session::kNumTracks) return -1.0f;
             return inv (session.track (b.targetIndex).strip.pan.load (std::memory_order_relaxed),
@@ -133,8 +135,9 @@ static float currentFracForTarget (Session& session, const MidiBinding& b) noexc
         }
         case MidiBindingTarget::BusFader:
             if (b.targetIndex < 0 || b.targetIndex >= Session::kNumBuses) return -1.0f;
-            return inv (session.bus (b.targetIndex).strip.faderDb.load (std::memory_order_relaxed),
-                        -90.0f, 12.0f);
+            return faderBindingDbToFrac (
+                session.bus (b.targetIndex).strip.faderDb.load (std::memory_order_relaxed),
+                b.trigger == MidiBindingTrigger::PitchBend);
         case MidiBindingTarget::BusPan:
             if (b.targetIndex < 0 || b.targetIndex >= Session::kNumBuses) return -1.0f;
             return inv (session.bus (b.targetIndex).strip.pan.load (std::memory_order_relaxed),
@@ -152,10 +155,13 @@ static float currentFracForTarget (Session& session, const MidiBinding& b) noexc
         }
         case MidiBindingTarget::AuxLaneFader:
             if (b.targetIndex < 0 || b.targetIndex >= Session::kNumAuxLanes) return -1.0f;
-            return inv (session.auxLane (b.targetIndex).params.returnLevelDb
-                            .load (std::memory_order_relaxed), -90.0f, 12.0f);
+            return faderBindingDbToFrac (
+                session.auxLane (b.targetIndex).params.returnLevelDb.load (std::memory_order_relaxed),
+                b.trigger == MidiBindingTrigger::PitchBend);
         case MidiBindingTarget::MasterFader:
-            return inv (session.master().faderDb.load (std::memory_order_relaxed), -90.0f, 12.0f);
+            return faderBindingDbToFrac (
+                session.master().faderDb.load (std::memory_order_relaxed),
+                b.trigger == MidiBindingTrigger::PitchBend);
         case MidiBindingTarget::MasterEqLfBoost:
             return inv (session.master().eqLfBoost.load (std::memory_order_relaxed), 0.0f, 10.0f);
         case MidiBindingTarget::MasterEqHfBoost:
@@ -3152,12 +3158,13 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                         case MidiBindingTarget::TrackFader:
                             if (b.targetIndex >= 0 && b.targetIndex < Session::kNumTracks)
                             {
-                                // 0..1 fraction maps to -90..+12 dB linearly. -90
-                                // sits below the kFaderInfThreshDb hard-mute floor
-                                // so a zero-position fader cleanly silences the
-                                // strip. Pitch-bend's 14-bit resolution gives a
-                                // ~128x finer dB step than 7-bit CC.
-                                const float db = -90.0f + frac * (12.0f + 90.0f);
+                                // CC/Note: linear -90..+12 dB. PitchBend: the
+                                // Mackie taper (faderBindingFracToDb) so an
+                                // MCU-style motor fader tracks its printed
+                                // scale — 0 dB at ~3/4 throw, bottom at -100 dB
+                                // (below kFaderInfThreshDb, hard-muted).
+                                const float db = faderBindingFracToDb (
+                                    frac, b.trigger == MidiBindingTrigger::PitchBend);
                                 session.setTrackFaderGrouped (b.targetIndex, db);
                             }
                             break;
@@ -3354,7 +3361,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                         case MidiBindingTarget::BusFader:
                             if (b.targetIndex >= 0 && b.targetIndex < Session::kNumBuses)
                             {
-                                const float db = -90.0f + frac * (12.0f + 90.0f);
+                                const float db = faderBindingFracToDb (
+                                    frac, b.trigger == MidiBindingTrigger::PitchBend);
                                 session.bus (b.targetIndex).strip.faderDb.store (
                                     db, std::memory_order_relaxed);
                             }
@@ -3474,7 +3482,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                         case MidiBindingTarget::AuxLaneFader:
                             if (b.targetIndex >= 0 && b.targetIndex < Session::kNumAuxLanes)
                             {
-                                const float db = -90.0f + frac * (12.0f + 90.0f);
+                                const float db = faderBindingFracToDb (
+                                    frac, b.trigger == MidiBindingTrigger::PitchBend);
                                 session.auxLane (b.targetIndex).params.returnLevelDb
                                     .store (db, std::memory_order_relaxed);
                             }
@@ -3490,7 +3499,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
 
                         case MidiBindingTarget::MasterFader:
                         {
-                            const float db = -90.0f + frac * (12.0f + 90.0f);
+                            const float db = faderBindingFracToDb (
+                                frac, b.trigger == MidiBindingTrigger::PitchBend);
                             session.master().faderDb.store (db, std::memory_order_relaxed);
                             break;
                         }

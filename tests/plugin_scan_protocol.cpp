@@ -104,3 +104,22 @@ TEST_CASE ("scan protocol: malformed payload XML parses to nothing", "[scanproto
     parsePayload ("<PLUGINS><PLUGIN garbled", out);   // not well-formed
     CHECK (out.isEmpty());
 }
+
+TEST_CASE ("scan sandbox policy: third-party formats are sandboxed, in-house is not",
+           "[scanproto]")
+{
+    // Third-party binary formats load foreign code and MUST be scanned
+    // out-of-process — this is the decision that keeps an unauthorized / crashy
+    // plugin from taking down the app (issue #45).
+    CHECK (formatRequiresSandbox ("VST3"));
+    CHECK (formatRequiresSandbox ("VST"));
+    CHECK (formatRequiresSandbox ("LV2"));
+    CHECK (formatRequiresSandbox ("AudioUnit"));
+
+    // In-house / trusted formats scan in-process. DuskMultisample is our own
+    // soundfont player; an unknown name defaults to in-process (never sandboxed
+    // by accident — but also never a third-party crash vector).
+    CHECK_FALSE (formatRequiresSandbox ("DuskMultisample"));
+    CHECK_FALSE (formatRequiresSandbox (""));
+    CHECK_FALSE (formatRequiresSandbox ("CLAP"));   // native CLAP has its own sandbox path
+}
