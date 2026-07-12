@@ -5,6 +5,41 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
+## [0.12.1] - 2026-07-12
+
+Beta patch on the 0.12 line: live play-along, control-surface calibration,
+and a Windows plugin-scan crash.
+
+### Fixed
+
+- **Live play-along during playback.** An armed, input-monitored instrument
+  or MIDI track went silent the moment PLAY was pressed and came back on
+  STOP - the playback path never merged live input. With **IN** engaged the
+  live controller and on-screen keyboard now sound on top of the timeline
+  while the transport rolls.
+- **Control-surface fader calibration.** The MCU fader map was linear in dB,
+  so a surface's printed **0** landed around -10 dB on screen. Faders now
+  follow the standard Mackie taper in MCU mode and for hand-mapped pitchbend
+  fader bindings alike: printed 0 means 0.0 dB, full-up +12, and motor
+  positions round-trip exactly.
+- **Windows plugin-scan crash.** The out-of-process scan sandbox never
+  actually engaged on Windows (the helper binary was looked up without its
+  .exe suffix), so one bad or unauthorized plugin could take down the whole
+  app during a scan. The sandbox now runs; a plugin that hangs on a license
+  dialog is quarantined after 30 s with a distinct reason; if the sandbox
+  is unavailable, third-party plugins are skipped and reported instead of
+  scanned in-process; cancelling a scan no longer blacklists the plugin in
+  flight.
+- **Deterministic bounces.** Live MIDI input can no longer print into an
+  offline bounce, stem render, or track freeze.
+
+### Changed
+
+- Mixer-style controllers with a Mackie/MCU emulation mode (Tascam Model 12
+  and similar) should use MCU mode rather than hand-mapped MIDI bindings -
+  the manual's control-surface chapter now says so and explains why
+  (bindings are one-way: no LEDs, no motor feedback, no transport).
+
 ## [0.12.0] - 2026-07-11
 
 Beta. The biggest release so far: Linux-native plugin hosting across CLAP,
