@@ -3397,10 +3397,15 @@ void MainComponent::openBounceStemsDialog()
 {
     // Pick a base WAV; per-stem filenames derive from it via
     // BounceEngine::stemOutputFile (<base>_<NN>_<sanitized-track>.wav).
-    // Sit alongside the master mix so the user can find them together.
+    // Default into a stems/ subfolder - a full set is 20+ files and would
+    // bury session.json and mixdown.wav in the session root. The browser can
+    // still navigate anywhere.
     auto defaultDir = session.getSessionDirectory();
     if (! defaultDir.isDirectory())
         defaultDir = juce::File::getSpecialLocation (juce::File::userMusicDirectory);
+    else
+        defaultDir = defaultDir.getChildFile ("stems");
+    defaultDir.createDirectory();
     const auto defaultFile = defaultDir.getChildFile ("stems.wav");
 
     // Stems are WAV-only - MP3 encoder delay/padding would misalign them for
