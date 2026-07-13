@@ -3,6 +3,7 @@
 #include <juce_core/juce_core.h>
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace duskstudio
@@ -72,13 +73,13 @@ struct Sf2Zone
 
 struct Sf2Instrument
 {
-    juce::String         name;
+    std::string          name;
     std::vector<Sf2Zone> zones;   // first zone may be a global zone (no sampleID)
 };
 
 struct Sf2Preset
 {
-    juce::String         name;
+    std::string          name;
     uint16_t             preset { 0 };   // MIDI program
     uint16_t             bank   { 0 };
     std::vector<Sf2Zone> zones;          // first zone may be global; others ref instruments
@@ -86,7 +87,7 @@ struct Sf2Preset
 
 struct Sf2Sample
 {
-    juce::String name;
+    std::string  name;
     uint32_t     start          { 0 };   // sample frames into the smpl chunk
     uint32_t     end            { 0 };
     uint32_t     startLoop      { 0 };
@@ -113,7 +114,7 @@ struct Sf2File
     std::int64_t sm24Size   { 0 };
 
     bool         ok    { false };
-    juce::String error;
+    std::string  error;
 };
 
 // Parse an .sf2 file. On failure returns an Sf2File with ok=false and a

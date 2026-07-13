@@ -18,7 +18,7 @@ TEST_CASE("Sf2Reader: rejects a non-SF2 file", "[sf2]")
     tmp.replaceWithText("this is not a soundfont");
     auto sf = duskstudio::readSf2(tmp);
     REQUIRE_FALSE(sf.ok);
-    REQUIRE(sf.error.isNotEmpty());
+    REQUIRE_FALSE(sf.error.empty());
     tmp.deleteFile();
 }
 
@@ -26,7 +26,7 @@ TEST_CASE("Sf2Reader: missing file errors cleanly", "[sf2]")
 {
     auto sf = duskstudio::readSf2(juce::File("/no/such/file.sf2"));
     REQUIRE_FALSE(sf.ok);
-    REQUIRE(sf.error.isNotEmpty());
+    REQUIRE_FALSE(sf.error.empty());
 }
 
 TEST_CASE("Sf2Reader: parses FluidR3 GM structure", "[sf2][.fixture]")
@@ -39,7 +39,7 @@ TEST_CASE("Sf2Reader: parses FluidR3 GM structure", "[sf2][.fixture]")
 
     auto sf = duskstudio::readSf2(kFluidR3);
     REQUIRE(sf.ok);
-    REQUIRE(sf.error.isEmpty());
+    REQUIRE(sf.error.empty());
 
     // GM bank: 128 melodic + percussion + GS extras. Exact count varies
     // by FluidR3 revision; assert a sane lower bound rather than ==.
@@ -54,7 +54,7 @@ TEST_CASE("Sf2Reader: parses FluidR3 GM structure", "[sf2][.fixture]")
     // Every preset has a name and at least one zone.
     for (const auto& p : sf.presets)
     {
-        REQUIRE(p.name.isNotEmpty());
+        REQUIRE_FALSE(p.name.empty());
         REQUIRE_FALSE(p.zones.empty());
     }
 

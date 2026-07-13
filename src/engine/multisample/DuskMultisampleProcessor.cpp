@@ -278,7 +278,7 @@ bool DuskMultisampleProcessor::applySf2Preset (const juce::File& sf2,
     // sfizz roots relative sample= names at the SFZ path's parent dir,
     // so point the virtual SFZ inside the temp dir holding the WAVs.
     const auto virtualSfz = newDir.getChildFile ("preset.sfz");
-    const auto body       = conv.sfzText.toStdString();
+    const auto body       = conv.sfzText;
     const auto pathStr    = virtualSfz.getFullPathName().toStdString();
     // Only the sfizz call itself is serialised against processBlock - the
     // expensive conversion above runs unlocked so the audio thread keeps

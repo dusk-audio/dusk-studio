@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "engine/multisample/Sf2ToSfz.h"
+#include "foundation/Text.h"
 
 #include <juce_core/juce_core.h>
 
@@ -24,7 +25,7 @@ TEST_CASE("Sf2ToSfz: missing file fails cleanly", "[sf2conv]")
     auto dir = freshTempDir();
     auto conv = duskstudio::convertSf2Preset(juce::File("/no/such.sf2"), 0, dir);
     REQUIRE_FALSE(conv.ok);
-    REQUIRE(conv.error.isNotEmpty());
+    REQUIRE_FALSE(conv.error.empty());
     dir.deleteRecursively();
 }
 
@@ -40,14 +41,14 @@ TEST_CASE("Sf2ToSfz: converts FluidR3 preset 0 to SFZ + WAVs", "[sf2conv][.fixtu
     auto conv = duskstudio::convertSf2Preset(kFluidR3, 0, dir);
 
     REQUIRE(conv.ok);
-    REQUIRE(conv.error.isEmpty());
-    REQUIRE(conv.presetName.isNotEmpty());
+    REQUIRE(conv.error.empty());
+    REQUIRE_FALSE(conv.presetName.empty());
 
     // SFZ body has the expected scaffolding + at least one region.
-    REQUIRE(conv.sfzText.contains("<region>"));
-    REQUIRE(conv.sfzText.contains("sample="));
-    REQUIRE(conv.sfzText.contains("pitch_keycenter="));
-    REQUIRE(conv.sfzText.contains("lokey="));
+    REQUIRE(dusk::text::contains(conv.sfzText, "<region>"));
+    REQUIRE(dusk::text::contains(conv.sfzText, "sample="));
+    REQUIRE(dusk::text::contains(conv.sfzText, "pitch_keycenter="));
+    REQUIRE(dusk::text::contains(conv.sfzText, "lokey="));
 
     // At least one WAV was extracted into the sample dir, and each
     // sample= name in the SFZ resolves to a real file there.
@@ -55,10 +56,10 @@ TEST_CASE("Sf2ToSfz: converts FluidR3 preset 0 to SFZ + WAVs", "[sf2conv][.fixtu
     REQUIRE(wavs.size() > 0);
 
     // Spot-check the first region's sample resolves on disk.
-    const int regionIdx = conv.sfzText.indexOf("sample=");
-    REQUIRE(regionIdx >= 0);
-    auto afterEq = conv.sfzText.substring(regionIdx + 7);
-    const auto name = afterEq.upToFirstOccurrenceOf(" ", false, false).trim();
+    const auto regionIdx = conv.sfzText.find("sample=");
+    REQUIRE(regionIdx != std::string::npos);
+    const auto afterEq = conv.sfzText.substr(regionIdx + 7);
+    const auto name = dusk::text::trim(afterEq.substr(0, afterEq.find(' ')));
     REQUIRE(dir.getChildFile(name).existsAsFile());
 
     dir.deleteRecursively();

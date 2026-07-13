@@ -3,6 +3,8 @@
 #include <juce_core/juce_core.h>
 #include "Sf2Reader.h"
 
+#include <string>
+
 namespace duskstudio
 {
 // Converts one preset of a SoundFont 2 file into an SFZ text body plus a
@@ -18,10 +20,10 @@ namespace duskstudio
 struct Sf2Conversion
 {
     bool         ok { false };
-    juce::String error;
-    juce::String sfzText;     // synthetic SFZ body for sfizz_load_string
+    std::string  error;
+    std::string  sfzText;     // synthetic SFZ body for sfizz_load_string
     juce::File   sampleDir;   // dir holding the extracted WAVs (sfizz root path)
-    juce::String presetName;  // human-readable, for the editor's file label
+    std::string  presetName;  // human-readable, for the editor's file label
 };
 
 // Convert preset `presetIndex` of `sf2` into SFZ + WAVs under `outDir`
