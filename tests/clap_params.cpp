@@ -8,6 +8,7 @@
 
 #include <cmath>
 #include <cstdlib>
+#include <filesystem>
 #include <vector>
 
 using duskstudio::clap::NativeClapSlot;
@@ -25,7 +26,7 @@ TEST_CASE ("CLAP params enumerate, read, and round-trip a change through process
     constexpr int kBlock = 512;
     NativeClapSlot slot;
     std::string err;
-    REQUIRE (slot.load (juce::File (juce::String (path)), 48000.0, kBlock, err));
+    REQUIRE (slot.load (std::filesystem::u8path (path), 48000.0, kBlock, err));
 
     const int n = slot.paramCount();
     // A valid effect can legitimately expose zero parameters — skip rather than fail.

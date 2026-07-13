@@ -1672,7 +1672,7 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
         duskstudio::platform::preferX11ForNextNativeWindow();   // editor host needs an X11 peer
         lv2EditorTest = std::make_unique<Lv2EditorTest>();
         std::string err;
-        if (! lv2EditorTest->slot.load (juce::File (juce::String (path)), 48000.0, 1024, err))
+        if (! lv2EditorTest->slot.load (std::filesystem::u8path (path), 48000.0, 1024, err))
         {
             std::fprintf (stderr, "[lv2 editor test] load failed: %s\n", err.c_str());
             quit();

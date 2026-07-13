@@ -106,8 +106,9 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     {
         const juce::File p (pendingClapPath);
         std::string err;
-        const bool ok = nativeClapSlot.load (p, preparedSampleRate, preparedBlockSize, err,
-                                             pendingClapPluginId);
+        const bool ok = nativeClapSlot.load (std::filesystem::u8path (p.getFullPathName().toStdString()),
+                                             preparedSampleRate, preparedBlockSize, err,
+                                             pendingClapPluginId.toStdString());
         if (ok && ! pendingClapState.empty())
             nativeClapSlot.loadState (pendingClapState);
         nativeReloadFailed.store (! ok, std::memory_order_relaxed);
@@ -129,8 +130,9 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
         {
             const juce::File p (pendingLv2Path);
             std::string err;
-            const bool ok = nativeLv2Slot.load (p, preparedSampleRate, preparedBlockSize, err,
-                                                pendingLv2PluginId);
+            const bool ok = nativeLv2Slot.load (std::filesystem::u8path (p.getFullPathName().toStdString()),
+                                                preparedSampleRate, preparedBlockSize, err,
+                                                pendingLv2PluginId.toStdString());
             if (ok && ! pendingLv2State.empty())
             {
                 nativeLv2Slot.setStateDirectory (pendingLv2StateDir);
@@ -159,8 +161,9 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
         {
             const juce::File p (pendingVst3Path);
             std::string err;
-            const bool ok = nativeVst3Slot.load (p, preparedSampleRate, preparedBlockSize, err,
-                                                 pendingVst3PluginId);
+            const bool ok = nativeVst3Slot.load (std::filesystem::u8path (p.getFullPathName().toStdString()),
+                                                 preparedSampleRate, preparedBlockSize, err,
+                                                 pendingVst3PluginId.toStdString());
             if (ok && ! pendingVst3State.empty())
                 nativeVst3Slot.loadState (pendingVst3State);
             vst3ReloadFailed.store (! ok, std::memory_order_relaxed);
@@ -452,7 +455,8 @@ bool ChannelStrip::loadNativeClap (const juce::File& path, std::string& errorOut
     unloadNativeLv2();
     unloadNativeVst3();
     pluginSlot.unload();
-    const bool ok = nativeClapSlot.load (path, preparedSampleRate, preparedBlockSize, errorOut, pluginId);
+    const bool ok = nativeClapSlot.load (std::filesystem::u8path (path.getFullPathName().toStdString()),
+                                         preparedSampleRate, preparedBlockSize, errorOut, pluginId.toStdString());
     // A user-initiated load is not a restore, so it always ends any "failed restore"
     // state - whether it succeeds (recovered) or fails (caller clears the persisted
     // refs). Clearing unconditionally keeps the flag's meaning independent of the caller.
@@ -488,7 +492,8 @@ bool ChannelStrip::loadNativeLv2 (const juce::File& path, std::string& errorOut,
     unloadNativeClap();
     unloadNativeVst3();
     pluginSlot.unload();
-    const bool ok = nativeLv2Slot.load (path, preparedSampleRate, preparedBlockSize, errorOut, pluginId);
+    const bool ok = nativeLv2Slot.load (std::filesystem::u8path (path.getFullPathName().toStdString()),
+                                        preparedSampleRate, preparedBlockSize, errorOut, pluginId.toStdString());
     // A user-initiated load always ends any "failed restore" state (see loadNativeClap).
     lv2ReloadFailed.store (false, std::memory_order_relaxed);
     return ok;
@@ -524,7 +529,8 @@ bool ChannelStrip::loadNativeVst3 (const juce::File& path, std::string& errorOut
     unloadNativeClap();
     unloadNativeLv2();
     pluginSlot.unload();
-    const bool ok = nativeVst3Slot.load (path, preparedSampleRate, preparedBlockSize, errorOut, pluginId);
+    const bool ok = nativeVst3Slot.load (std::filesystem::u8path (path.getFullPathName().toStdString()),
+                                         preparedSampleRate, preparedBlockSize, errorOut, pluginId.toStdString());
     // A user-initiated load always ends any "failed restore" state (see loadNativeClap).
     vst3ReloadFailed.store (false, std::memory_order_relaxed);
     return ok;

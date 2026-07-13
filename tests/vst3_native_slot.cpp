@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -56,7 +57,7 @@ TEST_CASE ("NativeVst3Slot loads, processes, and unloads cleanly", "[vst3][slot]
     std::string err;
     constexpr int kBlock = 256;
 
-    if (! slot.load (juce::File (juce::String (path)), 48000.0, kBlock, err))
+    if (! slot.load (std::filesystem::u8path (path), 48000.0, kBlock, err))
     {
         SUCCEED ("module has no loadable audio effect (" + err + ") — skipping");
         return;
@@ -119,15 +120,15 @@ TEST_CASE ("NativeVst3Slot loads, processes, and unloads cleanly", "[vst3][slot]
 
     SECTION ("explicit plugin id: round-trips, bogus id refuses to load")
     {
-        const juce::String pickedId = slot.getPluginId();
-        REQUIRE (pickedId.isNotEmpty());
+        const std::string pickedId = slot.getPluginId();
+        REQUIRE (! pickedId.empty());
 
         slot.unload();
-        REQUIRE (slot.load (juce::File (juce::String (path)), 48000.0, kBlock, err, pickedId));
+        REQUIRE (slot.load (std::filesystem::u8path (path), 48000.0, kBlock, err, pickedId));
         REQUIRE (slot.getPluginId() == pickedId);
 
         slot.unload();
-        REQUIRE_FALSE (slot.load (juce::File (juce::String (path)), 48000.0, kBlock, err,
+        REQUIRE_FALSE (slot.load (std::filesystem::u8path (path), 48000.0, kBlock, err,
                                   "urn:duskstudio:no-such-plugin"));
         REQUIRE_FALSE (slot.isLoaded());
     }
