@@ -3,6 +3,10 @@
 #include "McuFaderTaper.h"
 #include "Transport.h"
 #include "../session/Session.h"
+#include "../foundation/Text.h"
+
+#include <algorithm>
+#include <string>
 
 namespace duskstudio
 {
@@ -14,16 +18,15 @@ namespace
 constexpr int kLcdCharsPerStrip = mcu::sysex::kLcdCharsPerStrip;   // 7
 
 void writeStripField (std::array<char, mcu::sysex::kLcdRowBytes>& row,
-                      int strip, const juce::String& text)
+                      int strip, const std::string& text)
 {
     const int base = strip * kLcdCharsPerStrip;
     if (base + kLcdCharsPerStrip > (int) row.size()) return;
     // Truncate or right-pad to exactly kLcdCharsPerStrip. Skip non-
     // ASCII runs (utf-8 multi-byte glyphs would otherwise emit two
     // garbage characters before the rest shifts).
-    const auto utf = text.toRawUTF8();
     int written = 0;
-    for (const char* p = utf; *p && written < kLcdCharsPerStrip; ++p)
+    for (const char* p = text.c_str(); *p && written < kLcdCharsPerStrip; ++p)
     {
         const unsigned char c = (unsigned char) *p;
         row[(size_t) (base + written++)] = (c >= 0x20 && c < 0x7F)
@@ -71,20 +74,20 @@ void emitTimecode (juce::MidiBuffer& buf,
     buf.addEvent (juce::MidiMessage (bytes.data(), (int) n), 0);
 }
 
-juce::String formatFaderDbForLcd (float db)
+std::string formatFaderDbForLcd (float db)
 {
-    if (db <= ChannelStripParams::kFaderInfThreshDb) return juce::String ("  -inf");
+    if (db <= ChannelStripParams::kFaderInfThreshDb) return "  -inf";
     // 1 decimal, max width 6 chars including sign. " +3.0 " etc.
-    if (db >= 0.0f) return "+" + juce::String (db, 1);
-    return juce::String (db, 1);
+    if (db >= 0.0f) return "+" + dusk::text::format ("%.1f", db);
+    return dusk::text::format ("%.1f", db);
 }
 
-juce::String formatPanForLcd (float pan)
+std::string formatPanForLcd (float pan)
 {
-    if (std::abs (pan) < 0.01f) return juce::String ("  C   ");
+    if (std::abs (pan) < 0.01f) return "  C   ";
     const int magnitude = (int) std::round (std::abs (pan) * 100.0f);
-    return (pan < 0.0f ? juce::String ("L") : juce::String ("R"))
-         + juce::String (magnitude);
+    return (pan < 0.0f ? std::string ("L") : std::string ("R"))
+         + std::to_string (magnitude);
 }
 } // namespace
 
@@ -276,13 +279,13 @@ juce::MidiBuffer McuController::buildEmitBuffer (bool forceAll)
 
         // Row 0: track name. Empty / default-numeric -> "TRK N".
         const auto rawName = trk.name.trim();
-        const juce::String displayName = rawName.isNotEmpty()
-                                            ? rawName
-                                            : "TRK " + juce::String (t + 1);
+        const std::string displayName = rawName.isNotEmpty()
+                                            ? rawName.toStdString()
+                                            : "TRK " + std::to_string (t + 1);
         writeStripField (row0, strip, displayName);
 
         // Row 1: value depends on assign mode.
-        juce::String value;
+        std::string value;
         switch (assign)
         {
             case 0:   value = formatPanForLcd (trk.strip.pan.load (std::memory_order_relaxed)); break;
@@ -291,8 +294,8 @@ juce::MidiBuffer McuController::buildEmitBuffer (bool forceAll)
                             trk.strip.auxSendDb[(size_t) (assign - 1)]
                                 .load (std::memory_order_relaxed));
                 break;
-            case 5:   value = juce::String ("EQ");   break;
-            case 6:   value = juce::String ("COMP"); break;
+            case 5:   value = "EQ";   break;
+            case 6:   value = "COMP"; break;
             default:  value = formatFaderDbForLcd (
                             trk.strip.liveFaderDb.load (std::memory_order_relaxed));
                 break;
@@ -316,7 +319,7 @@ juce::MidiBuffer McuController::buildEmitBuffer (bool forceAll)
             const auto& trk = session.track (t);
             const float dbL = trk.meterInputDb .load (std::memory_order_relaxed);
             const float dbR = trk.meterInputRDb.load (std::memory_order_relaxed);
-            const float peakDb = juce::jmax (dbL, dbR);
+            const float peakDb = std::max (dbL, dbR);
             // Map -60..0 dB to 0..14, clip > 0 dB to 15.
             int level;
             if (peakDb >= 0.0f) level = mcu::meter::kClipLevel;
@@ -422,27 +425,28 @@ juce::MidiBuffer McuController::buildEmitBuffer (bool forceAll)
         if (auto* transport = transportProvider())
             playhead = transport->getPlayhead();
     const float bpm   = session.tempoBpm.load (std::memory_order_relaxed);
-    const int bpb     = juce::jmax (1, session.beatsPerBar.load (std::memory_order_relaxed));
+    const int bpb     = std::max (1, session.beatsPerBar.load (std::memory_order_relaxed));
     double sr = sampleRateProvider ? sampleRateProvider() : 0.0;
     if (sr <= 0.0) sr = 48000.0;
     const double samplesPerBeat = (bpm > 0.0f)
                                     ? sr * 60.0 / (double) bpm : sr;
     const double samplesPerBar  = samplesPerBeat * (double) bpb;
-    const int bar  = (int) ((double) playhead / juce::jmax (1.0, samplesPerBar));
-    const int beat = (int) (((double) playhead - bar * samplesPerBar) / juce::jmax (1.0, samplesPerBeat));
+    const int bar  = (int) ((double) playhead / std::max (1.0, samplesPerBar));
+    const int beat = (int) (((double) playhead - bar * samplesPerBar) / std::max (1.0, samplesPerBeat));
     const int subdiv = (int) (((double) playhead
                                 - bar * samplesPerBar
                                 - beat * samplesPerBeat)
                                 * 4.0
-                                / juce::jmax (1.0, samplesPerBeat));
+                                / std::max (1.0, samplesPerBeat));
     auto pad = [] (int v, int width)
     {
-        return juce::String (juce::jmax (0, v) + 1).paddedLeft ('0', width);
+        return dusk::text::paddedLeft (std::to_string (std::max (0, v) + 1), '0', width);
     };
-    const auto tcStr = (pad (bar, 3) + pad (beat, 2) + pad (subdiv, 2) + "  0")
-                          .substring (0, mcu::sysex::kTimecodeDigits);
+    const auto tcStr = dusk::text::substring (
+                           pad (bar, 3) + pad (beat, 2) + pad (subdiv, 2) + "  0",
+                           0, mcu::sysex::kTimecodeDigits);
     for (int i = 0; i < mcu::sysex::kTimecodeDigits
-                    && i < tcStr.length(); ++i)
+                    && i < (int) tcStr.length(); ++i)
         tc[(size_t) i] = (char) tcStr[i];
 
     const bool transportRolling = lastTransportState
