@@ -130,7 +130,7 @@ public:
                     busActive[(size_t) a] = true;
             for (int a = 0; a < ChannelStripParams::kNumAuxSends; ++a)
                 if (tr.strip.auxSendDb[(size_t) a].load (std::memory_order_relaxed)
-                        > ChannelStripParams::kFaderInfThreshDb)
+                        > ChannelStripParams::kAuxSendOffDb)
                     auxActive[(size_t) a] = true;
         }
 
@@ -179,6 +179,13 @@ public:
     // realtime. tail = silence appended so reverb/comp tails decay.
     // wavBitDepth: 24 (default) or 16 - 16 gets TPDF dither at ±1 LSB
     // before the truncation (CD / distribution target).
+    //
+    // realtimeCapture (MasterMix / Stems only): instead of detaching the
+    // engine, the session PLAYS live and the callback streams the capture
+    // taps to disk - the only path that prints hardware inserts, since the
+    // external loop needs the device rolling. Renders at the device rate,
+    // always WAV, at the user's live oversampling (it prints what you hear,
+    // minus the monitoring click). The transport must be stopped to start.
     bool start (const juce::File& outputFile,
                 double sampleRate = 0.0,
                 int blockSize = 1024,
@@ -186,7 +193,8 @@ public:
                 Mode mode = Mode::MasterMix,
                 Format format = Format::Wav,
                 int mp3BitrateKbps = 320,
-                int wavBitDepth = 24);
+                int wavBitDepth = 24,
+                bool realtimeCapture = false);
 
     void cancel() noexcept { cancelRequested.store (true, std::memory_order_relaxed); }
 
@@ -257,6 +265,7 @@ private:
     std::int64_t  totalSamples     = 0;
     Mode         renderMode       = Mode::MasterMix;
     Format       renderFormat     = Format::Wav;
+    bool         renderRealtime   = false;
     int          renderBitrateKbps = 320;
     int          renderWavBitDepth = 24;
     int          freezeTrackIndex = -1;   // Mode::FreezeTrack target
@@ -279,5 +288,6 @@ private:
         makeWriter (std::unique_ptr<juce::FileOutputStream> outStream, juce::String& errOut) const;
 
     bool runStemsMode();
+    bool runRealtimeMode();
 };
 } // namespace duskstudio

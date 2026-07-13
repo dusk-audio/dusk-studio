@@ -4575,11 +4575,13 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         busStrips[(size_t) a].processInPlace (busL[(size_t) a].data(),
                                               busR[(size_t) a].data(),
                                               numSamples);
-        if (stemBusCapL[(size_t) a] != nullptr)
+        auto* capBusL = stemBusCapL[(size_t) a].load (std::memory_order_acquire);
+        auto* capBusR = stemBusCapR[(size_t) a].load (std::memory_order_relaxed);
+        if (capBusL != nullptr && capBusR != nullptr)
         {
-            juce::FloatVectorOperations::add (stemBusCapL[(size_t) a],
+            juce::FloatVectorOperations::add (capBusL,
                                                 busL[(size_t) a].data(), numSamples);
-            juce::FloatVectorOperations::add (stemBusCapR[(size_t) a],
+            juce::FloatVectorOperations::add (capBusR,
                                                 busR[(size_t) a].data(), numSamples);
         }
         // SIMD'd mix accumulate - hot inner loop, runs once per active aux
@@ -4775,11 +4777,13 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                 wR[i] = dR.popSample (0);
             }
         }
-        if (stemAuxCapL[(size_t) a] != nullptr)
+        auto* capAuxL = stemAuxCapL[(size_t) a].load (std::memory_order_acquire);
+        auto* capAuxR = stemAuxCapR[(size_t) a].load (std::memory_order_relaxed);
+        if (capAuxL != nullptr && capAuxR != nullptr)
         {
-            juce::FloatVectorOperations::add (stemAuxCapL[(size_t) a],
+            juce::FloatVectorOperations::add (capAuxL,
                                                 auxLaneL[(size_t) a].data(), numSamples);
-            juce::FloatVectorOperations::add (stemAuxCapR[(size_t) a],
+            juce::FloatVectorOperations::add (capAuxR,
                                                 auxLaneR[(size_t) a].data(), numSamples);
         }
         juce::FloatVectorOperations::add (mixL.data(),
@@ -4805,6 +4809,47 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
     perfLap (PerfSections::kAuxes);
 
     master.processInPlace (mixL.data(), mixR.data(), numSamples);
+
+    // Realtime bounce: push each armed sink's block to its disk writer.
+    // Post-master, pre-metronome, so the monitoring click never prints.
+    // Gated on the transport actually rolling - the sinks are armed while
+    // stopped, and capturing the pre-roll would front-pad every file with
+    // silence. ThreadedWriter::write is a lock-free FIFO push (its
+    // TimeSliceThread drains to disk), so this stays RT-safe.
+    if (const int nSinks = rtBounceSinkCount.load (std::memory_order_acquire);
+        nSinks > 0 && isPlaying)
+    {
+        auto* sinks = rtBounceSinks.load (std::memory_order_relaxed);
+        for (int s = 0; sinks != nullptr && s < nSinks; ++s)
+        {
+            auto& sink = sinks[s];
+            const float* srcL = sink.srcL != nullptr ? sink.srcL : mixL.data();
+            const float* srcR = sink.srcR != nullptr ? sink.srcR : mixR.data();
+
+            int offset = 0;
+            if (sink.leadRemaining > 0)
+            {
+                offset = (int) juce::jmin ((std::int64_t) numSamples, sink.leadRemaining);
+                sink.leadRemaining -= offset;
+            }
+            const auto already = sink.written.load (std::memory_order_relaxed);
+            const int n = (int) juce::jmin ((std::int64_t) (numSamples - offset),
+                                              sink.cap - already);
+            if (n > 0)
+            {
+                const float* chans[2] = { srcL + offset, srcR + offset };
+                if (sink.writer->write (chans, n))
+                    sink.written.store (already + n, std::memory_order_release);
+                else
+                    sink.writeFailed.store (true, std::memory_order_release);
+            }
+            if (sink.wipeL != nullptr)
+            {
+                juce::FloatVectorOperations::clear (sink.wipeL, numSamples);
+                juce::FloatVectorOperations::clear (sink.wipeR, numSamples);
+            }
+        }
+    }
 
     // Metronome - push session BPM + enable into the click generator each
     // block (cheap atomic loads), then mix the click into the post-master

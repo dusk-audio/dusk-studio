@@ -230,14 +230,19 @@ public:
     // engine is detached for the offline render - never during live audio.
     void setFreezeCapture (float* l, float* r) noexcept { freezeCapL = l; freezeCapR = r; }
 
-    // setStemCapture points the strip at a stereo scratch the offline stems
-    // render reads each block: the post-fader / post-pan output (the track's
-    // full wet contribution, BEFORE the master-vs-bus routing split) is
-    // accumulated there. The caller clears the scratch each block, so a strip
-    // whose processing is skipped leaves silence. Same contract as
-    // setFreezeCapture: nullptr disables, message thread only, set while the
-    // engine is detached.
-    void setStemCapture (float* l, float* r) noexcept { stemCapL = l; stemCapR = r; }
+    // setStemCapture points the strip at a stereo scratch the stems render
+    // reads each block: the post-fader / post-pan output (the track's full
+    // wet contribution, BEFORE the master-vs-bus routing split) is
+    // accumulated there. The caller clears the scratch each block, so a
+    // strip whose processing is skipped leaves silence. Message thread;
+    // atomic (unlike the freeze tap) because a REALTIME bounce arms it while
+    // the live callback is running.
+    void setStemCapture (float* l, float* r) noexcept
+    {
+        // R first: the audio thread gates on L, so L's release-store publishes R.
+        stemCapR.store (r, std::memory_order_relaxed);
+        stemCapL.store (l, std::memory_order_release);
+    }
 
 private:
     const ChannelStripParams* paramsRef = nullptr;
@@ -400,10 +405,10 @@ private:
     float* freezeCapL = nullptr;
     float* freezeCapR = nullptr;
 
-    // Post-fader capture destinations for the offline stems render (see
-    // setStemCapture). nullptr on the live path.
-    float* stemCapL = nullptr;
-    float* stemCapR = nullptr;
+    // Post-fader capture destinations for the stems render (see
+    // setStemCapture). nullptr when no stems bounce is running.
+    std::atomic<float*> stemCapL { nullptr };
+    std::atomic<float*> stemCapR { nullptr };
 
     void updateGainTargets() noexcept;
     void updateEqParameters() noexcept;

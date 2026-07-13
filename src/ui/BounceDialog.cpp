@@ -12,20 +12,23 @@ BounceDialog::BounceDialog (AudioEngine& e,
                               BounceEngine::Format format,
                               int mp3BitrateKbps,
                               double sampleRate,
-                              int bitDepth)
+                              int bitDepth,
+                              bool realtime)
     : engine (e), session (s), deviceManager (dm), outputFile (f),
       renderMode (mode), renderFormat (format), mp3Bitrate (mp3BitrateKbps),
       renderSampleRate (sampleRate), wavBitDepth (bitDepth),
+      renderRealtime (realtime),
       progressBar (progressValue)
 {
     titleLabel.setJustificationType (juce::Justification::centredLeft);
     titleLabel.setFont (juce::Font (juce::FontOptions (14.0f, juce::Font::bold)));
     titleLabel.setColour (juce::Label::textColourId, juce::Colour (0xffe8e8e8));
     titleLabel.setText (renderMode == BounceEngine::Mode::MasteringChain
-                          ? "Exporting master..."
-                          : (renderMode == BounceEngine::Mode::Stems
-                              ? "Bouncing stems..."
-                              : "Bouncing master mix..."),
+                          ? juce::String ("Exporting master...")
+                          : juce::String (renderMode == BounceEngine::Mode::Stems
+                                            ? "Bouncing stems"
+                                            : "Bouncing master mix")
+                              + (renderRealtime ? " (realtime)..." : "..."),
                          juce::dontSendNotification);
     addAndMakeVisible (titleLabel);
 
@@ -36,9 +39,13 @@ BounceDialog::BounceDialog (AudioEngine& e,
 
     // Offline renders drive the engine detached from the audio device, so an
     // external hardware-insert loop can't run: those inserts print dry (or
-    // silent at full wet). Mastering renders skip the strips, so only the
-    // strip-driven modes warn.
-    if (renderMode != BounceEngine::Mode::MasteringChain
+    // silent at full wet). Mastering renders skip the strips, and a realtime
+    // bounce runs the loop for real, so only the offline strip-driven modes
+    // warn. Components are visible by default, so hide first - resized()
+    // reserves the warning row off isVisible().
+    hwWarnLabel.setVisible (false);
+    if (! renderRealtime
+        && renderMode != BounceEngine::Mode::MasteringChain
         && BounceEngine::anyHardwareInsertActive (session))
     {
         hwWarnLabel.setJustificationType (juce::Justification::centredLeft);
@@ -74,7 +81,8 @@ BounceDialog::BounceDialog (AudioEngine& e,
     // complexity of marshalling callbacks back to a Component that might be
     // closing.
     if (! bounceEngine->start (outputFile, renderSampleRate, 1024, 5.0,
-                                renderMode, renderFormat, mp3Bitrate, wavBitDepth))
+                                renderMode, renderFormat, mp3Bitrate, wavBitDepth,
+                                renderRealtime))
     {
         finished = true;
         succeeded = false;

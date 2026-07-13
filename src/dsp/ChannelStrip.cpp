@@ -1203,6 +1203,12 @@ void ChannelStrip::processAndAccumulate (const float* inL,
     // during playback). It's the level BEFORE the master/bus routing split, so
     // it reflects the track's contribution regardless of where it's routed.
     float outPeakL = 0.0f, outPeakR = 0.0f;
+    // Both sides or neither: a live disarm (realtime bounce) nulls the pair
+    // non-atomically, so one load can land each side of it.
+    float* scL = stemCapL.load (std::memory_order_acquire);
+    float* scR = stemCapR.load (std::memory_order_acquire);
+    if (scL == nullptr || scR == nullptr)
+        scL = scR = nullptr;
     const auto publishOutMeter = [this] (float pL, float pR)
     {
         currentOutLDb.store (pL > 1e-5f ? dusk::audio::gainToDecibels (pL, -100.0f) : -100.0f,
@@ -1227,7 +1233,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             const float oR = srcR[i] * gR;
             masterL[i] += oL;
             masterR[i] += oR;
-            if (stemCapL != nullptr) { stemCapL[i] += oL; stemCapR[i] += oR; }
+            if (scL != nullptr) { scL[i] += oL; scR[i] += oR; }
             outPeakL = juce::jmax (outPeakL, std::abs (oL));
             outPeakR = juce::jmax (outPeakR, std::abs (oR));
         }
@@ -1252,7 +1258,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         const float wetRPre = sR * pR;
         const float wetL = sL * gL;
         const float wetR = sR * gR;
-        if (stemCapL != nullptr) { stemCapL[i] += wetL; stemCapR[i] += wetR; }
+        if (scL != nullptr) { scL[i] += wetL; scR[i] += wetR; }
         outPeakL = juce::jmax (outPeakL, std::abs (wetL));
         outPeakR = juce::jmax (outPeakR, std::abs (wetR));
 

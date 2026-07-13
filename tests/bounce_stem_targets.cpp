@@ -67,15 +67,20 @@ TEST_CASE ("collectStemTargets: tracks then buses then auxes, gated on routing",
     REQUIRE (targets[3].file.getFileName() == "mix_aux2_Plate.wav");
 }
 
-TEST_CASE ("collectStemTargets: send at the -inf floor stays inactive", "[bounce][stems]")
+TEST_CASE ("collectStemTargets: send at the off sentinel stays inactive", "[bounce][stems]")
 {
     Session s;
     s.track (0).recordArmed.store (true);
-    s.track (0).strip.auxSendDb[0].store (duskstudio::ChannelStripParams::kFaderInfThreshDb);
+    s.track (0).strip.auxSendDb[0].store (duskstudio::ChannelStripParams::kAuxSendOffDb);
 
     const auto targets = BounceEngine::collectStemTargets (s, baseFile());
     REQUIRE (targets.size() == 1);
     REQUIRE (targets[0].kind == BounceEngine::StemTarget::Kind::Track);
+
+    // Anything above the sentinel is audible on the audio thread, however
+    // faint, so it must produce an aux stem.
+    s.track (0).strip.auxSendDb[0].store (-90.0f);
+    REQUIRE (BounceEngine::collectStemTargets (s, baseFile()).size() == 2);
 }
 
 TEST_CASE ("anyHardwareInsertActive follows rendered tracks and aux lanes",

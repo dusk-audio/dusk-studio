@@ -27,6 +27,8 @@ class BounceDialog final : public juce::Component,
 public:
     // renderSampleRate 0 = the engine's current rate; wavBitDepth 16 dithers
     // (see BounceEngine::start). The mastering export presets drive both.
+    // realtime plays the session live and captures it (hardware inserts
+    // print); MasterMix / Stems only.
     BounceDialog (AudioEngine& engine,
                    Session& session,
                    juce::AudioDeviceManager& deviceManager,
@@ -35,7 +37,8 @@ public:
                    BounceEngine::Format format = BounceEngine::Format::Wav,
                    int mp3BitrateKbps = 320,
                    double renderSampleRate = 0.0,
-                   int wavBitDepth = 24);
+                   int wavBitDepth = 24,
+                   bool realtime = false);
     ~BounceDialog() override;
 
     void resized() override;
@@ -67,6 +70,7 @@ private:
     int mp3Bitrate;
     double renderSampleRate;
     int wavBitDepth;
+    bool renderRealtime;
 
     std::unique_ptr<BounceEngine> bounceEngine;
 

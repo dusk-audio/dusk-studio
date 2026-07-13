@@ -1751,7 +1751,7 @@ The File menu has three bounce commands:
 
   A track stem is that track's post-fader output — its full processed signal, without master-strip processing — so the whole set is mutually sample-aligned and track + bus + aux stems together reconstruct the pre-master mix. A track routed to a bus appears both as its own stem and (processed) inside the bus stem; re-import one or the other, not both. Mute and solo print as heard, so a muted track writes a silent stem.
 
-If a session uses **hardware inserts**, the bounce dialog shows a warning: an offline render is detached from the audio interface, so the external loop cannot run and those inserts print dry.
+If a session uses **hardware inserts**, an offline render cannot run the external loop (it is detached from the audio interface), so those inserts would print dry. Bounce and stem flows therefore ask whether to run a **realtime bounce** instead: the session plays once through the interface at normal speed and the capture streams to disk, printing the hardware exactly as you hear it (minus the monitoring click, which never prints). Realtime bounces are always WAV, render at the device sample rate, and need the transport stopped to start; choosing **Offline** keeps the fast render with the dry-insert warning.
 
 ## Bouncing the master vs the mastering chain
 
