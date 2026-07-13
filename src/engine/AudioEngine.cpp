@@ -703,13 +703,19 @@ void AudioEngine::recomputePdc() noexcept
         // their output is timeline-aligned as if zero-latency.
         const bool midi = session.track (t).mode.load (std::memory_order_relaxed)
                               == (int) Track::Mode::Midi;
-        // A frozen track plays its baked WAV with the insert bypassed, so its
-        // plugin / hardware latency must not count toward PDC - it's a zero-latency
-        // disk source (the bake was captured pre-PDC; see ChannelStrip freeze tap).
+        // A frozen track plays its baked WAV with the baked plugin bypassed, so
+        // PLUGIN latency must not count toward PDC - it's a zero-latency disk
+        // source (the bake was captured pre-PDC; see ChannelStrip freeze tap).
+        // A HARDWARE insert is different: the frozen strip path still runs it
+        // on the WAV audio, so its measured loop latency counts.
         const bool frozen = session.track (t).frozen.load (std::memory_order_relaxed);
-        if (! midi && ! frozen)
+        const int  mode   = strip.insertMode.load (std::memory_order_relaxed);
+        if (mode == ChannelStrip::kInsertHardware && (frozen || ! midi))
         {
-            const int mode = strip.insertMode.load (std::memory_order_relaxed);
+            lat = strip.getHardwareInsertSlot().getLatencySamples();
+        }
+        else if (! midi && ! frozen)
+        {
             if (mode == ChannelStrip::kInsertPlugin)
             {
                 lat = strip.getPluginSlot().getLatencySamples();
@@ -733,8 +739,6 @@ void AudioEngine::recomputePdc() noexcept
                         lat = inst->getLatencySamples();
 #endif
             }
-            else if (mode == ChannelStrip::kInsertHardware)
-                lat = strip.getHardwareInsertSlot().getLatencySamples();
         }
         latency[t] = juce::jlimit (0, ChannelStrip::kMaxPdcSamples, lat);
     }

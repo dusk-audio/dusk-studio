@@ -320,8 +320,9 @@ private:
     // useChooser=true: shows 3-button Add Insert chooser (Hardware /
     // Soundfont / Plugin) first. false: jump to plugin list (used by
     // Replace plugin... where the user already committed to plugin).
-    void openPluginPicker (bool useChooser = true);
+    void openPluginPicker();
     void unloadPluginSlot();
+    void removeHardwareInsert();
     void refreshPluginSlotButton();
 
     // Flips insertMode to Hardware and shows HardwareInsertEditor in

@@ -590,6 +590,7 @@ This block is visible in the RECORDING stage, alongside a small **I/O** button t
 - **FREEZE** (MIDI tracks, and audio tracks once recorded): the same button reads **FREEZE**. Click it to render the track to an audio file and bypass the DSP that produced it, to reclaim CPU — the frozen track plays back from the rendered audio with the fader, pan, and aux sends still live so you can keep mixing. The button turns to a snowflake while frozen; click it again to unfreeze (the rendered file is discarded). Frozen state is saved with the session, and a frozen track is locked — unfreeze first to edit, re-record, or change its mode.
   - On a **MIDI track** freeze bakes the instrument plugin plus the channel EQ and compressor — the way to reclaim CPU from a heavy synth or sample library once you're happy with a part.
   - On an **audio track** the PRINT button becomes FREEZE once the track holds a recorded take. Freeze bakes the recorded audio through its insert, EQ, and compressor — a large CPU saving when you run high effect oversampling, since the oversampled processing no longer runs on playback.
+  - A frozen track still accepts a **hardware insert**: the baked audio is a source like any other, so you can route it through outboard gear (its measured loop latency is compensated as usual). The insert picker on a frozen MIDI track offers effects rather than instruments — the instrument is baked into the audio. A plugin insert added while frozen doesn't process until you unfreeze (the frozen audio plays through untouched).
 
 ## Insert slot
 

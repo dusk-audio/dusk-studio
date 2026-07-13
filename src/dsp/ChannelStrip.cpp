@@ -966,16 +966,40 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         if (isFrozen)
         {
             // Frozen track: inL/inR are the pre-rendered (instrument + EQ +
-            // comp) audio. Copy it in as the source; the instrument plugin and
-            // the EQ/comp stage below are skipped (baked into the WAV). PDC and
-            // fader/pan/sends still run. Keep the insert-gate smoother ticking
-            // so an un-freeze mid-session resumes click-free.
+            // comp) audio. Copy it in as the source; the baked plugin and the
+            // EQ/comp stage below stay skipped. A HARDWARE insert still runs -
+            // it is only ever engaged by an explicit post-freeze user action,
+            // and the frozen WAV is an audio source like any other. A plugin
+            // slot cannot run here: the strip can't tell a newly added effect
+            // from a still-loaded baked native instrument, which would render
+            // silence over the WAV. PDC and fader/pan/sends still run.
             if (inL != nullptr) std::memcpy (L, inL, sizeof (float) * (size_t) numSamples);
             else                juce::FloatVectorOperations::clear (L, numSamples);
             if (inR != nullptr) std::memcpy (R, inR, sizeof (float) * (size_t) numSamples);
             else                std::memcpy (R, L,   sizeof (float) * (size_t) numSamples);
-            for (int i = 0; i < numSamples; ++i)
-                activeInsertGain.getNextValue();
+
+            if (activeInsertMode == kInsertHardware)
+            {
+                jassert (numSamples <= (int) insertScratchL.size());
+                std::memcpy (insertScratchL.data(), L, sizeof (float) * (size_t) numSamples);
+                std::memcpy (insertScratchR.data(), R, sizeof (float) * (size_t) numSamples);
+                hardwareSlot.processStereoBlock (L, R, numSamples,
+                                                  deviceInputs, numDeviceInputs,
+                                                  deviceOutputs, numDeviceOutputs);
+                for (int i = 0; i < numSamples; ++i)
+                {
+                    const float g = activeInsertGain.getNextValue();
+                    L[i] = (1.0f - g) * insertScratchL[(size_t) i] + g * L[i];
+                    R[i] = (1.0f - g) * insertScratchR[(size_t) i] + g * R[i];
+                }
+            }
+            else
+            {
+                // Keep the insert-gate smoother ticking so an un-freeze or a
+                // hardware engage mid-session resumes click-free.
+                for (int i = 0; i < numSamples; ++i)
+                    activeInsertGain.getNextValue();
+            }
         }
         else if (isMidi)
         {
