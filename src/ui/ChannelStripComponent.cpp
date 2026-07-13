@@ -1838,7 +1838,10 @@ void ChannelStripComponent::openHardwareInsertEditor()
                 self->hardwareInsertModal.close();
                 self->refreshPluginSlotButton();
             }
-        });
+        },
+        /*embedded*/ false,
+        /*allowMono*/ track.mode.load (std::memory_order_relaxed)
+                          == (int) Track::Mode::Mono);
 
     auto* parent = findParentComponentOfClass<juce::Component>();
     if (parent == nullptr) parent = this;

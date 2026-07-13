@@ -1508,7 +1508,7 @@ The configuration panel has six controls:
 - **Input volume**: a level trim on the return side, 0.0 to 1.0.
 - **Latency samples**: the round-trip delay through the external gear, in samples. Determines the dry-path delay applied to the rest of the mix so the hardware insert remains time-aligned.
 - **Dry/Wet**: 0.0 plays only the dry signal (insert bypassed), 1.0 plays only the returned wet signal. Useful for parallel processing.
-- **Format**: **Stereo** or **Mid/Side**. Mid/Side encodes the signal so that the hardware EQ processes the mid and side components independently.
+- **Format**: **Stereo** or **Mid/Side**. Mid/Side encodes the signal so that the hardware EQ processes the mid and side components independently. On a **mono track** a third option, **Mono**, patches a single output and a single return — the natural hookup for one-channel outboard like a mono compressor or a pedal — and the channel dropdowns list individual channels instead of pairs.
 
 ## Auto-measuring latency
 
