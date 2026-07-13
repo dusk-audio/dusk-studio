@@ -76,6 +76,7 @@ MasteringEqEditor::MasteringEqEditor (MasteringParams& p, MasteringChain* c)
     specDb.fill (kSpecFloorDb);
 
     // Spectrum on/off - a small unobtrusive pill in the curve's top-right.
+    specToggle.setMouseClickGrabsKeyboardFocus (false);
     specToggle.setClickingTogglesState (true);
     specToggle.setToggleState (showSpectrum, juce::dontSendNotification);
     specToggle.setColour (juce::TextButton::buttonColourId,   juce::Colour (0xff202028));
