@@ -84,5 +84,6 @@ private:
     double progressValue = 0.0;  // bound to ProgressBar
     bool   finished      = false;
     bool   succeeded     = false;
+    bool   stemsStatusShown = false;
 };
 } // namespace duskstudio

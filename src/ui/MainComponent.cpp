@@ -3381,14 +3381,34 @@ void MainComponent::openBounceDialog()
             // is WAV data under an .mp3 extension.
             const auto target = realtime ? outFile.withFileExtension ("wav") : outFile;
             const auto format = realtime ? BounceEngine::Format::Wav : fmt;
-            auto panel = std::make_unique<BounceDialog> (engine, session,
-                                                           engine.getDeviceManager(), target,
-                                                           BounceEngine::Mode::MasterMix, format,
-                                                           320, 0.0, 24, realtime);
-            panel->setSize (520, 200);
-            juce::Component::SafePointer<MainComponent> safeThis (this);
-            panel->onRequestClose = [safeThis] { if (safeThis != nullptr) safeThis->bounceModal.close(); };
-            bounceModal.show (*this, std::move (panel), {}, false, false);
+
+            auto launchBounce = [this, target, format, realtime]
+            {
+                auto panel = std::make_unique<BounceDialog> (engine, session,
+                                                               engine.getDeviceManager(), target,
+                                                               BounceEngine::Mode::MasterMix, format,
+                                                               320, 0.0, 24, realtime);
+                panel->setSize (520, 200);
+                juce::Component::SafePointer<MainComponent> safeThis (this);
+                panel->onRequestClose = [safeThis] { if (safeThis != nullptr) safeThis->bounceModal.close(); };
+                bounceModal.show (*this, std::move (panel), {}, false, false);
+            };
+
+            // The .mp3 -> .wav retarget skips the file browser's overwrite
+            // check (it inspected the .mp3 name), so re-check the real target.
+            if (target != outFile && target.existsAsFile())
+            {
+                juce::Component::SafePointer<MainComponent> safe (this);
+                showDuskConfirm (*this, "Overwrite file?",
+                                 target.getFileName()
+                                   + " already exists (realtime bounces are written as WAV). "
+                                     "Overwrite it?",
+                                 "Overwrite",
+                                 [safe, launchBounce] { if (safe != nullptr) launchBounce(); },
+                                 "Cancel", {}, /*destructive*/ true);
+                return;
+            }
+            launchBounce();
         });
     });
 }

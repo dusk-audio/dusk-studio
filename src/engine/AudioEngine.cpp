@@ -2125,6 +2125,20 @@ void AudioEngine::prepareForSelfTest (double sr, int bs)
     };
     const ResumeGuard resumeGuard { *this };
 
+    // A re-prepare invalidates an armed realtime bounce: its capture
+    // scratches were sized for the old block, so a grown one would overrun
+    // them from the audio thread (the mixL guard tracks the NEW size and
+    // passes). The gate above guarantees no callback is mid-sink-loop; kill
+    // the arming here and let the bounce worker fail the render cleanly.
+    if (rtBounceSinkCount.load (std::memory_order_relaxed) > 0)
+    {
+        rtBounceSinkCount.store (0, std::memory_order_relaxed);
+        rtBounceAborted.store (true, std::memory_order_release);
+        for (auto& s : strips) s.setStemCapture (nullptr, nullptr);
+        for (int a = 0; a < Session::kNumBuses; ++a)    setBusStemCapture (a, nullptr, nullptr);
+        for (int a = 0; a < Session::kNumAuxLanes; ++a) setAuxStemCapture (a, nullptr, nullptr);
+    }
+
     currentSampleRate.store (sr, std::memory_order_relaxed);
     currentBlockSize.store  (bs, std::memory_order_relaxed);
 
@@ -4812,36 +4826,42 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
 
     // Realtime bounce: push each armed sink's block to its disk writer.
     // Post-master, pre-metronome, so the monitoring click never prints.
-    // Gated on the transport actually rolling - the sinks are armed while
-    // stopped, and capturing the pre-roll would front-pad every file with
-    // silence. ThreadedWriter::write is a lock-free FIFO push (its
-    // TimeSliceThread drains to disk), so this stays RT-safe.
+    // Writes are gated on the transport actually rolling - the sinks are
+    // armed while stopped, and capturing the pre-roll would front-pad every
+    // file with silence. The scratch WIPES are not gated: the taps
+    // accumulate during stopped callbacks too (input monitoring runs the
+    // strips), and an unwiped pre-roll prints as a summed burst at sample 0.
+    // ThreadedWriter::write is a lock-free FIFO push (its TimeSliceThread
+    // drains to disk), so this stays RT-safe.
     if (const int nSinks = rtBounceSinkCount.load (std::memory_order_acquire);
-        nSinks > 0 && isPlaying)
+        nSinks > 0)
     {
         auto* sinks = rtBounceSinks.load (std::memory_order_relaxed);
         for (int s = 0; sinks != nullptr && s < nSinks; ++s)
         {
             auto& sink = sinks[s];
-            const float* srcL = sink.srcL != nullptr ? sink.srcL : mixL.data();
-            const float* srcR = sink.srcR != nullptr ? sink.srcR : mixR.data();
+            if (isPlaying)
+            {
+                const float* srcL = sink.srcL != nullptr ? sink.srcL : mixL.data();
+                const float* srcR = sink.srcR != nullptr ? sink.srcR : mixR.data();
 
-            int offset = 0;
-            if (sink.leadRemaining > 0)
-            {
-                offset = (int) juce::jmin ((std::int64_t) numSamples, sink.leadRemaining);
-                sink.leadRemaining -= offset;
-            }
-            const auto already = sink.written.load (std::memory_order_relaxed);
-            const int n = (int) juce::jmin ((std::int64_t) (numSamples - offset),
-                                              sink.cap - already);
-            if (n > 0)
-            {
-                const float* chans[2] = { srcL + offset, srcR + offset };
-                if (sink.writer->write (chans, n))
-                    sink.written.store (already + n, std::memory_order_release);
-                else
-                    sink.writeFailed.store (true, std::memory_order_release);
+                int offset = 0;
+                if (sink.leadRemaining > 0)
+                {
+                    offset = (int) juce::jmin ((std::int64_t) numSamples, sink.leadRemaining);
+                    sink.leadRemaining -= offset;
+                }
+                const auto already = sink.written.load (std::memory_order_relaxed);
+                const int n = (int) juce::jmin ((std::int64_t) (numSamples - offset),
+                                                  sink.cap - already);
+                if (n > 0)
+                {
+                    const float* chans[2] = { srcL + offset, srcR + offset };
+                    if (sink.writer->write (chans, n))
+                        sink.written.store (already + n, std::memory_order_release);
+                    else
+                        sink.writeFailed.store (true, std::memory_order_release);
+                }
             }
             if (sink.wipeL != nullptr)
             {

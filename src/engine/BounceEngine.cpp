@@ -516,6 +516,52 @@ void BounceEngine::run()
     if (onFinished) onFinished (succeeded, errSnapshot);
 }
 
+std::unique_ptr<juce::AudioFormatWriter>
+BounceEngine::openWriterFor (const juce::File& outFile, juce::String& errOut) const
+{
+    std::unique_ptr<juce::FileOutputStream> outStream (outFile.createOutputStream());
+    if (outStream == nullptr)
+    {
+        errOut = "Could not open output file " + outFile.getFullPathName();
+        return nullptr;
+    }
+    outStream->setPosition (0);
+    outStream->truncate();
+    auto writer = makeWriter (std::move (outStream), errOut);
+    if (writer == nullptr)
+        errOut += " (" + outFile.getFileName() + ")";
+    return writer;
+}
+
+void BounceEngine::armStemTap (const StemTarget& target, float* l, float* r)
+{
+    switch (target.kind)
+    {
+        case StemTarget::Kind::Track: engine.getStrip (target.index).setStemCapture (l, r); break;
+        case StemTarget::Kind::Bus:   engine.setBusStemCapture (target.index, l, r);        break;
+        case StemTarget::Kind::Aux:   engine.setAuxStemCapture (target.index, l, r);        break;
+        case StemTarget::Kind::Mix:   break;   // fed straight off the mix bus, no tap
+    }
+}
+
+void BounceEngine::clearAllStemTaps()
+{
+    for (int t = 0; t < Session::kNumTracks; ++t)
+        engine.getStrip (t).setStemCapture (nullptr, nullptr);
+    for (int a = 0; a < Session::kNumBuses; ++a)
+        engine.setBusStemCapture (a, nullptr, nullptr);
+    for (int a = 0; a < Session::kNumAuxLanes; ++a)
+        engine.setAuxStemCapture (a, nullptr, nullptr);
+}
+
+std::int64_t BounceEngine::leadInFor (StemTarget::Kind kind) const
+{
+    const auto trackLead = (std::int64_t) engine.getAggregatePdcLatencySamples();
+    if (kind == StemTarget::Kind::Track || kind == StemTarget::Kind::Bus)
+        return trackLead;
+    return trackLead + (std::int64_t) engine.getMasterDryPdcTargetSamples();
+}
+
 bool BounceEngine::runStemsMode()
 {
     const auto targets = collectStemTargets (session, outputFile);
@@ -560,36 +606,15 @@ bool BounceEngine::runStemsMode()
     std::vector<std::vector<float>> capR ((size_t) numStems,
                                             std::vector<float> ((size_t) renderBlockSize, 0.0f));
 
-    const auto clearAllTaps = [this]
-    {
-        for (int t = 0; t < Session::kNumTracks; ++t)
-            engine.getStrip (t).setStemCapture (nullptr, nullptr);
-        for (int a = 0; a < Session::kNumBuses; ++a)
-            engine.setBusStemCapture (a, nullptr, nullptr);
-        for (int a = 0; a < Session::kNumAuxLanes; ++a)
-            engine.setAuxStemCapture (a, nullptr, nullptr);
-    };
-
     // Open every writer up front so a full disk / bad path fails before any
-    // rendering. Track which files exist so a failure can remove them all.
+    // rendering.
     bool succeeded = true;
     std::vector<std::unique_ptr<juce::AudioFormatWriter>> writers;
     writers.reserve ((size_t) numStems);
     for (const auto& tgt : targets)
     {
-        std::unique_ptr<juce::FileOutputStream> outStream (tgt.file.createOutputStream());
-        std::unique_ptr<juce::AudioFormatWriter> writer;
         juce::String writerErr;
-        if (outStream == nullptr)
-            writerErr = "Could not open stem output file " + tgt.file.getFullPathName();
-        else
-        {
-            outStream->setPosition (0);
-            outStream->truncate();
-            writer = makeWriter (std::move (outStream), writerErr);
-            if (writer == nullptr)
-                writerErr += " (stem " + tgt.file.getFileName() + ")";
-        }
+        auto writer = openWriterFor (tgt.file, writerErr);
         if (writer == nullptr)
         {
             {
@@ -605,17 +630,8 @@ bool BounceEngine::runStemsMode()
     if (succeeded)
     {
         for (int i = 0; i < numStems; ++i)
-        {
-            const auto& tgt = targets[(size_t) i];
-            auto* l = capL[(size_t) i].data();
-            auto* r = capR[(size_t) i].data();
-            switch (tgt.kind)
-            {
-                case StemTarget::Kind::Track: engine.getStrip (tgt.index).setStemCapture (l, r); break;
-                case StemTarget::Kind::Bus:   engine.setBusStemCapture (tgt.index, l, r);        break;
-                case StemTarget::Kind::Aux:   engine.setAuxStemCapture (tgt.index, l, r);        break;
-            }
-        }
+            armStemTap (targets[(size_t) i],
+                        capL[(size_t) i].data(), capR[(size_t) i].data());
 
         constexpr int kNumChannels = 2;
         constexpr int kNumIn = 16;
@@ -635,25 +651,16 @@ bool BounceEngine::runStemsMode()
         transport.setState (Transport::State::Playing);
         engine.getPlaybackEngine().preparePlayback();
 
-        // Per-kind PDC lead-in trim. Track and bus taps sit BEFORE the
-        // master-stage dry delay (the strip's own cross-track PDC is inside
-        // the strip, so their content is offset by the deepest track latency
-        // only); aux taps are captured after the aux-return PDC, so they
-        // carry the master-stage delay on top. Trimming each stem by its own
-        // offset keeps the whole set mutually sample-aligned at sample 0
-        // without cutting real head content off the track / bus stems.
-        const std::int64_t trackLead = (std::int64_t) engine.getAggregatePdcLatencySamples();
-        const std::int64_t auxLead   = trackLead
-                                        + (std::int64_t) engine.getMasterDryPdcTargetSamples();
-
-        std::vector<std::int64_t> leadIn     ((size_t) numStems, trackLead);
+        // Per-kind PDC lead-in trim (see leadInFor). Trimming each stem by
+        // its own offset keeps the whole set mutually sample-aligned at
+        // sample 0 without cutting real head content off track / bus stems.
+        std::vector<std::int64_t> leadIn     ((size_t) numStems, 0);
         std::vector<std::int64_t> droppedFor ((size_t) numStems, 0);
         std::vector<std::int64_t> writtenFor ((size_t) numStems, 0);
         std::int64_t maxLead = 0;
         for (int i = 0; i < numStems; ++i)
         {
-            if (targets[(size_t) i].kind == StemTarget::Kind::Aux)
-                leadIn[(size_t) i] = auxLead;
+            leadIn[(size_t) i] = leadInFor (targets[(size_t) i].kind);
             maxLead = juce::jmax (maxLead, leadIn[(size_t) i]);
         }
         const std::int64_t toRender = totalSamples + maxLead;
@@ -718,7 +725,8 @@ bool BounceEngine::runStemsMode()
         engine.getPlaybackEngine().stopPlayback();
     }
 
-    clearAllTaps();
+    clearAllStemTaps();
+    const size_t writersOpened = writers.size();
     writers.clear();  // flush + close before any delete below
 
     if (cancelRequested.load (std::memory_order_relaxed))
@@ -726,9 +734,12 @@ bool BounceEngine::runStemsMode()
     if (! succeeded)
     {
         // Drop the partial set - half-rendered files are more confusing than
-        // no files when the user cancels or a writer fails mid-render.
-        for (const auto& tgt : targets)
-            tgt.file.deleteFile();
+        // no files when the user cancels or a writer fails mid-render. Only
+        // files this run actually opened (truncated): targets past a failed
+        // open still hold the previous bounce's good stems.
+        const size_t touched = juce::jmin (targets.size(), writersOpened + 1);
+        for (size_t i = 0; i < touched; ++i)
+            targets[i].file.deleteFile();
     }
 
     // Restore everything - transport, stage, device callback.
@@ -760,12 +771,10 @@ bool BounceEngine::runRealtimeMode()
     // ThreadedWriters (see AudioEngine::RtBounceSink); this worker only
     // orchestrates transport state and polls progress. Hardware inserts run
     // their external loop for real - the whole point of this mode.
-    struct Target { StemTarget::Kind kind; int index; juce::File file; };
-    std::vector<Target> files;
+    std::vector<StemTarget> files;
     if (renderMode == Mode::Stems)
     {
-        for (const auto& tgt : collectStemTargets (session, outputFile))
-            files.push_back ({ tgt.kind, tgt.index, tgt.file });
+        files = collectStemTargets (session, outputFile);
         if (files.empty())
         {
             const juce::ScopedLock lock (lastErrorLock);
@@ -776,8 +785,7 @@ bool BounceEngine::runRealtimeMode()
     }
     else
     {
-        // Master mix: one sink fed straight off the mix bus (srcL == nullptr).
-        files.push_back ({ StemTarget::Kind::Track, -1, outputFile });
+        files.push_back ({ StemTarget::Kind::Mix, -1, outputFile });
     }
     const int numFiles = (int) files.size();
 
@@ -795,32 +803,13 @@ bool BounceEngine::runRealtimeMode()
         capR.assign ((size_t) numFiles, std::vector<float> ((size_t) scratchLen, 0.0f));
     }
 
-    const auto clearAllTaps = [this]
-    {
-        for (int t = 0; t < Session::kNumTracks; ++t)
-            engine.getStrip (t).setStemCapture (nullptr, nullptr);
-        for (int a = 0; a < Session::kNumBuses; ++a)
-            engine.setBusStemCapture (a, nullptr, nullptr);
-        for (int a = 0; a < Session::kNumAuxLanes; ++a)
-            engine.setAuxStemCapture (a, nullptr, nullptr);
-    };
-
     bool succeeded = true;
     std::vector<std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter>> writers;
     writers.reserve ((size_t) numFiles);
     for (const auto& f : files)
     {
-        std::unique_ptr<juce::FileOutputStream> outStream (f.file.createOutputStream());
-        std::unique_ptr<juce::AudioFormatWriter> writer;
         juce::String writerErr;
-        if (outStream == nullptr)
-            writerErr = "Could not open output file " + f.file.getFullPathName();
-        else
-        {
-            outStream->setPosition (0);
-            outStream->truncate();
-            writer = makeWriter (std::move (outStream), writerErr);
-        }
+        auto writer = openWriterFor (f.file, writerErr);
         if (writer == nullptr)
         {
             {
@@ -840,20 +829,14 @@ bool BounceEngine::runRealtimeMode()
 
     if (succeeded)
     {
-        // Per-kind PDC lead-in, exactly as the offline stems path: track /
-        // bus taps sit before the master-stage dry delay, aux taps and the
-        // mix carry it too.
-        const std::int64_t trackLead = (std::int64_t) engine.getAggregatePdcLatencySamples();
-        const std::int64_t mixLead   = trackLead
-                                        + (std::int64_t) engine.getMasterDryPdcTargetSamples();
-
         auto sinks = std::make_unique<AudioEngine::RtBounceSink[]> ((size_t) numFiles);
         for (int i = 0; i < numFiles; ++i)
         {
             auto& sink = sinks[(size_t) i];
             sink.writer = writers[(size_t) i].get();
             sink.cap    = totalSamples;
-            if (renderMode == Mode::Stems)
+            sink.leadRemaining = leadInFor (files[(size_t) i].kind);
+            if (files[(size_t) i].kind != StemTarget::Kind::Mix)
             {
                 auto* l = capL[(size_t) i].data();
                 auto* r = capR[(size_t) i].data();
@@ -861,34 +844,40 @@ bool BounceEngine::runRealtimeMode()
                 sink.srcR = r;
                 sink.wipeL = l;
                 sink.wipeR = r;
-                sink.leadRemaining = files[(size_t) i].kind == StemTarget::Kind::Aux
-                                       ? mixLead : trackLead;
-                switch (files[(size_t) i].kind)
-                {
-                    case StemTarget::Kind::Track:
-                        engine.getStrip (files[(size_t) i].index).setStemCapture (l, r); break;
-                    case StemTarget::Kind::Bus:
-                        engine.setBusStemCapture (files[(size_t) i].index, l, r); break;
-                    case StemTarget::Kind::Aux:
-                        engine.setAuxStemCapture (files[(size_t) i].index, l, r); break;
-                }
+                armStemTap (files[(size_t) i], l, r);
             }
-            else
-            {
-                sink.leadRemaining = mixLead;   // srcL stays null = master mix
-            }
+            // Mix sinks keep srcL null - the callback feeds them the mix bus.
         }
 
         engine.armRealtimeBounce (sinks.get(), numFiles);
 
-        if (! runOnMessageThread ([this, &transport]
+        // Re-check the transport INSIDE the marshaled start: start()'s
+        // stopped-gate ran when the dialog opened, but MCU / MIDI-binding
+        // transport commands can start playback in the gap - yanking a live
+        // take to sample 0 here would corrupt it.
+        bool transportWasBusy = false;
+        if (! runOnMessageThread ([this, &transport, &transportWasBusy]
             {
+                if (! transport.isStopped())
+                {
+                    transportWasBusy = true;
+                    return;
+                }
                 transport.setLoopEnabled (false);
                 transport.setPlayhead (0);
                 engine.play();
             }))
         {
             engine.disarmRealtimeBounce();
+            succeeded = false;
+        }
+        else if (transportWasBusy)
+        {
+            engine.disarmRealtimeBounce();
+            {
+                const juce::ScopedLock lock (lastErrorLock);
+                lastError = "Transport started before the realtime bounce could begin";
+            }
             succeeded = false;
         }
 
@@ -914,6 +903,15 @@ bool BounceEngine::runRealtimeMode()
                 {
                     const juce::ScopedLock lock (lastErrorLock);
                     lastError = "Realtime bounce overran the disk writer (disk too slow)";
+                    succeeded = false;
+                    break;
+                }
+                if (engine.wasRealtimeBounceAborted())
+                {
+                    // A re-prepare (device change, buffer renegotiation)
+                    // invalidated the armed scratches; the engine disarmed.
+                    const juce::ScopedLock lock (lastErrorLock);
+                    lastError = "Audio device changed during the realtime bounce";
                     succeeded = false;
                     break;
                 }
@@ -943,17 +941,24 @@ bool BounceEngine::runRealtimeMode()
             }
 
             runOnMessageThread ([this] { engine.stop(); });
-            // The callback gates capture on a rolling transport; give the
-            // block in flight at stop time a chance to drain before the
-            // sinks and scratches go away.
-            wait (150);
         }
 
         engine.disarmRealtimeBounce();
-        clearAllTaps();
+        clearAllStemTaps();
+        // A callback that loaded the sink count before the disarm can still
+        // be mid-loop over the sinks; the process gate waits for in-flight
+        // callbacks to drain, so after this fence nothing references the
+        // sink array or the scratches. A fixed sleep can't guarantee that -
+        // a device period or scheduler stall can exceed any constant.
+        runOnMessageThread ([this]
+        {
+            engine.suspendProcessing();
+            engine.resumeProcessing();
+        });
     }
 
     // ThreadedWriter destructors flush their queues to disk.
+    const size_t writersOpened = writers.size();
     writers.clear();
     diskThread.stopThread (2000);
 
@@ -970,8 +975,13 @@ bool BounceEngine::runRealtimeMode()
         lastError = kCancelledError;
     }
     if (! succeeded)
-        for (const auto& f : files)
-            f.file.deleteFile();
+    {
+        // Only files this run actually opened (truncated): targets past a
+        // failed open still hold the previous bounce's good stems.
+        const size_t touched = juce::jmin (files.size(), writersOpened + 1);
+        for (size_t i = 0; i < touched; ++i)
+            files[i].file.deleteFile();
+    }
 
     return succeeded;
 }

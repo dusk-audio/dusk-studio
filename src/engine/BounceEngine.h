@@ -97,9 +97,11 @@ public:
     // overwrite-conflict check so the two can't drift.
     struct StemTarget
     {
-        enum class Kind { Track, Bus, Aux };
+        // Mix is never produced by collectStemTargets; the realtime
+        // master-mix bounce uses it so its sink is not mistaken for a track.
+        enum class Kind { Track, Bus, Aux, Mix };
         Kind kind;
-        int  index;        // track / bus / aux index, zero-based
+        int  index;        // track / bus / aux index, zero-based (-1 for Mix)
         juce::File file;
     };
     static std::vector<StemTarget> collectStemTargets (const Session& session,
@@ -129,9 +131,19 @@ public:
                 if (tr.strip.busAssign[(size_t) a].load (std::memory_order_relaxed))
                     busActive[(size_t) a] = true;
             for (int a = 0; a < ChannelStripParams::kNumAuxSends; ++a)
-                if (tr.strip.auxSendDb[(size_t) a].load (std::memory_order_relaxed)
-                        > ChannelStripParams::kAuxSendOffDb)
+            {
+                // The audio thread follows liveAuxSendDb, which automation
+                // can raise even when the knob rests at the off sentinel -
+                // a send lane with points makes the aux potentially audible.
+                const bool manualOn =
+                    tr.strip.auxSendDb[(size_t) a].load (std::memory_order_relaxed)
+                        > ChannelStripParams::kAuxSendOffDb;
+                const auto param = (AutomationParam) ((int) AutomationParam::AuxSend1 + a);
+                const bool automated =
+                    ! tr.automationLanes[(size_t) param].pointsForRead().empty();
+                if (manualOn || automated)
                     auxActive[(size_t) a] = true;
+            }
         }
 
         for (int a = 0; a < Session::kNumBuses; ++a)
@@ -286,6 +298,22 @@ private:
     // ownership of outStream on success; on failure outStream is freed.
     std::unique_ptr<juce::AudioFormatWriter>
         makeWriter (std::unique_ptr<juce::FileOutputStream> outStream, juce::String& errOut) const;
+
+    // Open + truncate outFile, then wrap it in the configured format writer.
+    // Null + errOut on failure - the file may already be truncated by then,
+    // so failure paths that must preserve prior content delete it.
+    std::unique_ptr<juce::AudioFormatWriter>
+        openWriterFor (const juce::File& outFile, juce::String& errOut) const;
+
+    // Stem-tap registry plumbing shared by the offline and realtime stem
+    // renders. Arm and clear must cover the same tap set or a render leaves
+    // the audio thread accumulating into a freed scratch.
+    void armStemTap (const StemTarget& target, float* l, float* r);
+    void clearAllStemTaps();
+
+    // Per-kind PDC lead-in: track / bus taps sit before the master-stage dry
+    // delay; aux taps and the mix carry it too.
+    std::int64_t leadInFor (StemTarget::Kind kind) const;
 
     bool runStemsMode();
     bool runRealtimeMode();

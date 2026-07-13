@@ -1170,23 +1170,27 @@ private:
 
     // Read a rendered WAV back and report nonzero + finite. peakOut set to the
     // linear peak. Returns false with a printed [FAIL] reason on any problem.
-    bool validateWav (const juce::File& file, const char* label, float& peakOut)
+    bool validateWav (const juce::File& file, const char* label, float& peakOut,
+                      std::int64_t* lengthOut = nullptr)
     {
         peakOut = 0.0f;
+        if (lengthOut != nullptr) *lengthOut = 0;
         if (! file.existsAsFile())
         {
             std::fprintf (stdout, "[FAIL] %s: output file not written: %s\n",
                           label, file.getFullPathName().toRawUTF8());
             return false;
         }
+        auto stream = file.createInputStream();
         juce::WavAudioFormat wav;
         std::unique_ptr<juce::AudioFormatReader> reader (
-            wav.createReaderFor (file.createInputStream().release(), true));
+            stream != nullptr ? wav.createReaderFor (stream.release(), true) : nullptr);
         if (reader == nullptr)
         {
             std::fprintf (stdout, "[FAIL] %s: could not open output WAV for readback\n", label);
             return false;
         }
+        if (lengthOut != nullptr) *lengthOut = reader->lengthInSamples;
         const int n = (int) reader->lengthInSamples;
         if (n <= 0)
         {
@@ -1403,6 +1407,7 @@ private:
                             case BounceEngine::StemTarget::Kind::Track: ++trackStems; break;
                             case BounceEngine::StemTarget::Kind::Bus:   ++busStems;   break;
                             case BounceEngine::StemTarget::Kind::Aux:   ++auxStems;   break;
+                            case BounceEngine::StemTarget::Kind::Mix:   break;
                         }
                     if (trackStems != 2 || busStems != 1 || auxStems != 1)
                     {
@@ -1416,26 +1421,22 @@ private:
                     for (const auto& tgt : targets)
                     {
                         float peak = 0.0f;
+                        std::int64_t len = 0;
                         const auto label = "Stems: " + tgt.file.getFileName();
-                        if (! validateWav (tgt.file, label.toRawUTF8(), peak))
+                        if (! validateWav (tgt.file, label.toRawUTF8(), peak, &len))
                         {
                             ok = false;
                             continue;
                         }
-                        juce::WavAudioFormat wav;
-                        if (auto reader = std::unique_ptr<juce::AudioFormatReader> (
-                                wav.createReaderFor (tgt.file.createInputStream().release(), true)))
+                        if (commonLen < 0) commonLen = len;
+                        else if (len != commonLen)
                         {
-                            if (commonLen < 0) commonLen = reader->lengthInSamples;
-                            else if (reader->lengthInSamples != commonLen)
-                            {
-                                std::fprintf (stdout, "[FAIL] Stems: %s length %lld != %lld - "
-                                                      "set is not sample-aligned\n",
-                                              tgt.file.getFileName().toRawUTF8(),
-                                              (long long) reader->lengthInSamples,
-                                              (long long) commonLen);
-                                ok = false;
-                            }
+                            std::fprintf (stdout, "[FAIL] Stems: %s length %lld != %lld - "
+                                                  "set is not sample-aligned\n",
+                                          tgt.file.getFileName().toRawUTF8(),
+                                          (long long) len,
+                                          (long long) commonLen);
+                            ok = false;
                         }
                     }
 

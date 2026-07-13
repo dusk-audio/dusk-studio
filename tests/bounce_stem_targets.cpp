@@ -83,6 +83,21 @@ TEST_CASE ("collectStemTargets: send at the off sentinel stays inactive", "[boun
     REQUIRE (BounceEngine::collectStemTargets (s, baseFile()).size() == 2);
 }
 
+TEST_CASE ("collectStemTargets: automated send activates its aux even at the off sentinel",
+           "[bounce][stems]")
+{
+    Session s;
+    s.track (0).recordArmed.store (true);
+    s.track (0).strip.auxSendDb[2].store (duskstudio::ChannelStripParams::kAuxSendOffDb);
+    s.track (0).automationLanes[(size_t) duskstudio::AutomationParam::AuxSend3]
+        .publishPoints ({ { 0, 0.5f } });
+
+    const auto targets = BounceEngine::collectStemTargets (s, baseFile());
+    REQUIRE (targets.size() == 2);
+    REQUIRE (targets[1].kind == BounceEngine::StemTarget::Kind::Aux);
+    REQUIRE (targets[1].index == 2);
+}
+
 TEST_CASE ("anyHardwareInsertActive follows rendered tracks and aux lanes",
            "[bounce][stems]")
 {

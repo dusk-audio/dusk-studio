@@ -327,8 +327,17 @@ public:
     };
     void armRealtimeBounce (RtBounceSink* sinks, int count) noexcept
     {
+        rtBounceAborted.store (false, std::memory_order_relaxed);
         rtBounceSinks.store (sinks, std::memory_order_relaxed);
         rtBounceSinkCount.store (count, std::memory_order_release);
+    }
+    // True when a re-prepare (device change, buffer-size renegotiation) killed
+    // an armed realtime bounce: the capture scratches are sized at arm time,
+    // so a grown block would overrun them - prepare disarms instead and the
+    // bounce worker fails the render.
+    bool wasRealtimeBounceAborted() const noexcept
+    {
+        return rtBounceAborted.load (std::memory_order_acquire);
     }
     void disarmRealtimeBounce() noexcept
     {
@@ -611,6 +620,7 @@ private:
     // when nonzero.
     std::atomic<AudioEngine::RtBounceSink*> rtBounceSinks { nullptr };
     std::atomic<int> rtBounceSinkCount { 0 };
+    std::atomic<bool> rtBounceAborted { false };
 
     std::array<ChannelStrip, Session::kNumTracks> strips;
     std::array<BusStrip,  Session::kNumBuses> busStrips;

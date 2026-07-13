@@ -41,18 +41,23 @@ BounceDialog::BounceDialog (AudioEngine& e,
     // external hardware-insert loop can't run: those inserts print dry (or
     // silent at full wet). Mastering renders skip the strips, and a realtime
     // bounce runs the loop for real, so only the offline strip-driven modes
-    // warn. Components are visible by default, so hide first - resized()
-    // reserves the warning row off isVisible().
+    // warn. A live solo gets its own note: stems print as heard, so a
+    // forgotten solo writes a mostly-silent set that still reports success.
+    // Components are visible by default, so hide first - resized() reserves
+    // the warning row off isVisible().
     hwWarnLabel.setVisible (false);
+    juce::String warn;
     if (! renderRealtime
         && renderMode != BounceEngine::Mode::MasteringChain
         && BounceEngine::anyHardwareInsertActive (session))
+        warn = "Hardware inserts are bypassed in an offline render and will print dry.";
+    else if (renderMode == BounceEngine::Mode::Stems && session.anyTrackSoloed())
+        warn = "Solo is active - unsoloed tracks will print silent stems.";
+    if (warn.isNotEmpty())
     {
         hwWarnLabel.setJustificationType (juce::Justification::centredLeft);
         hwWarnLabel.setColour (juce::Label::textColourId, juce::Colour (0xffe0b050));
-        hwWarnLabel.setText ("Hardware inserts are bypassed in an offline render "
-                             "and will print dry.",
-                             juce::dontSendNotification);
+        hwWarnLabel.setText (warn, juce::dontSendNotification);
         addAndMakeVisible (hwWarnLabel);
     }
 
@@ -145,11 +150,13 @@ void BounceDialog::timerCallback()
     progressValue = (double) bounceEngine->getProgress();
     progressBar.repaint();
 
-    if (renderMode == BounceEngine::Mode::Stems && bounceEngine->isRendering())
+    if (renderMode == BounceEngine::Mode::Stems && bounceEngine->isRendering()
+        && ! stemsStatusShown)
     {
         const int total = bounceEngine->getTotalStemsToRender();
         if (total > 0)
         {
+            stemsStatusShown = true;
             statusLabel.setText ("Rendering " + juce::String (total) + " stem"
                                   + juce::String (total == 1 ? "" : "s")
                                   + " -> " + outputFile.getParentDirectory().getFullPathName(),
