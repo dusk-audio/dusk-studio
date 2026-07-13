@@ -1288,9 +1288,14 @@ private:
 
             case Phase::StartFreeze:
             {
-                // The master worker thread may not have fully exited the instant
-                // isRendering() went false; startFreeze()'s startThread() then
-                // returns false. Retry a few ticks before giving up.
+                // Recreate the engine so the previous instance's dtor joins the
+                // master worker before we touch onFinished: the worker sets
+                // masterDone from inside that std::function and is still unwinding
+                // out of it, so reassigning the target here would free it under the
+                // worker's feet. A fresh instance also isn't rendering, so
+                // startFreeze() starts on the first tick.
+                bounce = std::make_unique<BounceEngine> (*engine, *session,
+                                                         engine->getDeviceManager());
                 bounce->onFinished = [this] (bool ok, juce::String err)
                 {
                     freezeOk  = ok;
