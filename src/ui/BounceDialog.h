@@ -72,6 +72,7 @@ private:
 
     juce::Label       titleLabel;
     juce::Label       statusLabel;
+    juce::Label       hwWarnLabel;
     juce::ProgressBar progressBar;
     juce::TextButton  cancelButton { "Cancel" };
     juce::TextButton  closeButton  { "Close" };

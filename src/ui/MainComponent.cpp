@@ -3387,22 +3387,14 @@ void MainComponent::openBounceStemsDialog()
             outFile = outFile.withFileExtension ("wav");
 
         // Preflight: the base WAV is never written for stems - the real
-        // targets are the derived <base>_<NN>_<track>.wav files. Compute
-        // them for the tracks that will actually render (same predicate
-        // as BounceEngine) and warn if any already exist, so the file
-        // browser's base-file overwrite check doesn't give false comfort.
+        // targets are the derived stem files. Ask BounceEngine for the exact
+        // set it would write (tracks + bus / aux stems) and warn if any
+        // already exist, so the file browser's base-file overwrite check
+        // doesn't give false comfort.
         juce::StringArray conflicts;
-        for (int t = 0; t < Session::kNumTracks; ++t)
-        {
-            const auto& tr = session.track (t);
-            const bool hasContent = ! tr.regions.empty()
-                                  || ! tr.midiRegions.current().empty();
-            const bool armed = tr.recordArmed.load (std::memory_order_relaxed);
-            if (! (hasContent || armed)) continue;
-            const auto sf = BounceEngine::stemOutputFile (outFile, t, tr.name);
-            if (sf.existsAsFile())
-                conflicts.add (sf.getFileName());
-        }
+        for (const auto& tgt : BounceEngine::collectStemTargets (session, outFile))
+            if (tgt.file.existsAsFile())
+                conflicts.add (tgt.file.getFileName());
 
         auto launch = [this, outFile]
         {

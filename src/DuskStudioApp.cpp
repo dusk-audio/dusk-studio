@@ -1336,11 +1336,121 @@ private:
                     else
                         exitCode = 1;
                     std::fflush (stdout);
-                    finish();
+                    phase = Phase::StartStems;
+                    phaseStartMs = now;
                 }
                 else if (timedOut)
                 {
                     std::fprintf (stdout, "[FAIL] Freeze render did not finish within %d ms\n",
+                                  kTimeoutMs);
+                    exitCode = 1;
+                    finish();
+                }
+                break;
+            }
+
+            case Phase::StartStems:
+            {
+                // Route track 1 into bus 1 and send it to aux 1 so the single
+                // pass has to produce every stem kind: two track stems, a bus
+                // stem, and an aux stem. Master leg already ran, so mutating
+                // the routing here can't disturb its output.
+                session->track (1).strip.busAssign[0].store (true);
+                session->track (1).strip.auxSendDb[0].store (0.0f);
+
+                stemsBase = tmpDir.getChildFile ("stems.wav");
+                for (const auto& tgt : BounceEngine::collectStemTargets (*session, stemsBase))
+                    tgt.file.deleteFile();
+
+                bounce = std::make_unique<BounceEngine> (*engine, *session,
+                                                         engine->getDeviceManager());
+                bounce->onFinished = [this] (bool ok, juce::String err)
+                {
+                    stemsOk  = ok;
+                    stemsErr = err;
+                    stemsDone.store (true, std::memory_order_release);
+                };
+                if (bounce->start (stemsBase, sr, bs, 1.0, BounceEngine::Mode::Stems,
+                                   BounceEngine::Format::Wav))
+                {
+                    phase = Phase::WaitStems;
+                    phaseStartMs = now;
+                }
+                else if (++stemsAttempts > 40)
+                {
+                    std::fprintf (stdout, "[FAIL] Stems: start() would not start: %s\n",
+                                  bounce->getLastError().toRawUTF8());
+                    exitCode = 1;
+                    finish();
+                }
+                break;
+            }
+
+            case Phase::WaitStems:
+            {
+                if (stemsDone.load (std::memory_order_acquire))
+                {
+                    bool ok = stemsOk && stemsErr.isEmpty();
+                    if (! ok)
+                        std::fprintf (stdout, "[FAIL] Stems: worker reported ok=%d err=\"%s\"\n",
+                                      (int) stemsOk, stemsErr.toRawUTF8());
+
+                    const auto targets = BounceEngine::collectStemTargets (*session, stemsBase);
+                    int trackStems = 0, busStems = 0, auxStems = 0;
+                    for (const auto& tgt : targets)
+                        switch (tgt.kind)
+                        {
+                            case BounceEngine::StemTarget::Kind::Track: ++trackStems; break;
+                            case BounceEngine::StemTarget::Kind::Bus:   ++busStems;   break;
+                            case BounceEngine::StemTarget::Kind::Aux:   ++auxStems;   break;
+                        }
+                    if (trackStems != 2 || busStems != 1 || auxStems != 1)
+                    {
+                        std::fprintf (stdout, "[FAIL] Stems: expected 2 track + 1 bus + 1 aux "
+                                              "targets, got %d/%d/%d\n",
+                                      trackStems, busStems, auxStems);
+                        ok = false;
+                    }
+
+                    std::int64_t commonLen = -1;
+                    for (const auto& tgt : targets)
+                    {
+                        float peak = 0.0f;
+                        const auto label = "Stems: " + tgt.file.getFileName();
+                        if (! validateWav (tgt.file, label.toRawUTF8(), peak))
+                        {
+                            ok = false;
+                            continue;
+                        }
+                        juce::WavAudioFormat wav;
+                        if (auto reader = std::unique_ptr<juce::AudioFormatReader> (
+                                wav.createReaderFor (tgt.file.createInputStream().release(), true)))
+                        {
+                            if (commonLen < 0) commonLen = reader->lengthInSamples;
+                            else if (reader->lengthInSamples != commonLen)
+                            {
+                                std::fprintf (stdout, "[FAIL] Stems: %s length %lld != %lld - "
+                                                      "set is not sample-aligned\n",
+                                              tgt.file.getFileName().toRawUTF8(),
+                                              (long long) reader->lengthInSamples,
+                                              (long long) commonLen);
+                                ok = false;
+                            }
+                        }
+                    }
+
+                    if (ok)
+                        std::fprintf (stdout,
+                                      "[PASS] Stems single-pass render OK (%d files, equal length, "
+                                      "all nonzero + finite)\n", (int) targets.size());
+                    else
+                        exitCode = 1;
+                    std::fflush (stdout);
+                    finish();
+                }
+                else if (timedOut)
+                {
+                    std::fprintf (stdout, "[FAIL] Stems render did not finish within %d ms\n",
                                   kTimeoutMs);
                     exitCode = 1;
                     finish();
@@ -1370,7 +1480,7 @@ private:
     static constexpr double kContentSeconds = 2.0;
     static constexpr int    kTimeoutMs = 60000;
 
-    enum class Phase { WaitMaster, StartFreeze, WaitFreeze, Done };
+    enum class Phase { WaitMaster, StartFreeze, WaitFreeze, StartStems, WaitStems, Done };
 
     DuskStudioApp& app;
     juce::String   pluginPath;
@@ -1380,19 +1490,21 @@ private:
     std::unique_ptr<AudioEngine>  engine;
     std::unique_ptr<BounceEngine> bounce;
 
-    juce::File tmpDir, mixFile, freezeFile;
+    juce::File tmpDir, mixFile, freezeFile, stemsBase;
     double sr = 48000.0;
     int    bs = 1024;
 
     Phase        phase = Phase::WaitMaster;
     juce::uint32 phaseStartMs = 0;
     int          freezeAttempts = 0;
+    int          stemsAttempts = 0;
     int          exitCode = 0;
 
     std::atomic<bool> masterDone { false };
     std::atomic<bool> freezeDone { false };
-    bool masterOk = false, freezeOk = false;
-    juce::String masterErr, freezeErr;
+    std::atomic<bool> stemsDone  { false };
+    bool masterOk = false, freezeOk = false, stemsOk = false;
+    juce::String masterErr, freezeErr, stemsErr;
 };
 
 // Resolve a session path passed on the command line / by the file manager.

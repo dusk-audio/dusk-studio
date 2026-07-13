@@ -34,6 +34,21 @@ BounceDialog::BounceDialog (AudioEngine& e,
     statusLabel.setText (outputFile.getFullPathName(), juce::dontSendNotification);
     addAndMakeVisible (statusLabel);
 
+    // Offline renders drive the engine detached from the audio device, so an
+    // external hardware-insert loop can't run: those inserts print dry (or
+    // silent at full wet). Mastering renders skip the strips, so only the
+    // strip-driven modes warn.
+    if (renderMode != BounceEngine::Mode::MasteringChain
+        && BounceEngine::anyHardwareInsertActive (session))
+    {
+        hwWarnLabel.setJustificationType (juce::Justification::centredLeft);
+        hwWarnLabel.setColour (juce::Label::textColourId, juce::Colour (0xffe0b050));
+        hwWarnLabel.setText ("Hardware inserts are bypassed in an offline render "
+                             "and will print dry.",
+                             juce::dontSendNotification);
+        addAndMakeVisible (hwWarnLabel);
+    }
+
     progressBar.setColour (juce::ProgressBar::backgroundColourId, juce::Colour (0xff101012));
     progressBar.setColour (juce::ProgressBar::foregroundColourId, juce::Colour (0xff5fa8ff));
     addAndMakeVisible (progressBar);
@@ -101,6 +116,11 @@ void BounceDialog::resized()
     titleLabel.setBounds (area.removeFromTop (24));
     area.removeFromTop (4);
     statusLabel.setBounds (area.removeFromTop (20));
+    if (hwWarnLabel.isVisible())
+    {
+        area.removeFromTop (2);
+        hwWarnLabel.setBounds (area.removeFromTop (18));
+    }
     area.removeFromTop (12);
     progressBar.setBounds (area.removeFromTop (24));
     area.removeFromTop (16);
@@ -119,12 +139,11 @@ void BounceDialog::timerCallback()
 
     if (renderMode == BounceEngine::Mode::Stems && bounceEngine->isRendering())
     {
-        const int idx   = bounceEngine->getCurrentStemIndex();
         const int total = bounceEngine->getTotalStemsToRender();
-        if (idx > 0 && total > 0)
+        if (total > 0)
         {
-            statusLabel.setText ("Rendering stem " + juce::String (idx)
-                                  + " of " + juce::String (total)
+            statusLabel.setText ("Rendering " + juce::String (total) + " stem"
+                                  + juce::String (total == 1 ? "" : "s")
                                   + " -> " + outputFile.getParentDirectory().getFullPathName(),
                                   juce::dontSendNotification);
         }

@@ -281,6 +281,24 @@ public:
     void setOfflineRenderActive (bool active) noexcept
         { offlineRenderActive.store (active, std::memory_order_relaxed); }
 
+    // Offline-render stem capture for bus groups and aux lanes (the per-track
+    // taps live on ChannelStrip::setStemCapture). When set, the audio path
+    // accumulates the named unit's processed output - the exact signal it
+    // sums into the mix - into the given scratch each block. The caller
+    // clears the scratch per block, so a skipped (silent) bus or aux leaves
+    // silence. Same contract as the strip taps: nullptr disables, message
+    // thread only, set while the engine is detached for an offline render.
+    void setBusStemCapture (int bus, float* l, float* r) noexcept
+    {
+        stemBusCapL[(size_t) bus] = l;
+        stemBusCapR[(size_t) bus] = r;
+    }
+    void setAuxStemCapture (int lane, float* l, float* r) noexcept
+    {
+        stemAuxCapL[(size_t) lane] = l;
+        stemAuxCapR[(size_t) lane] = r;
+    }
+
     // Cross-track Plugin Delay Compensation. Reads each track's reported insert
     // latency (plugin OR hardware, gated by mode; MIDI tracks count 0 because
     // their instrument latency is already absorbed by the MIDI scheduling
@@ -540,6 +558,13 @@ private:
     // True only while an offline render drives the callback. See
     // setOfflineRenderActive.
     std::atomic<bool> offlineRenderActive { false };
+
+    // Stem-capture destinations for bus groups / aux lanes (see
+    // setBusStemCapture / setAuxStemCapture). nullptr on the live path.
+    std::array<float*, Session::kNumBuses>    stemBusCapL {};
+    std::array<float*, Session::kNumBuses>    stemBusCapR {};
+    std::array<float*, Session::kNumAuxLanes> stemAuxCapL {};
+    std::array<float*, Session::kNumAuxLanes> stemAuxCapR {};
 
     std::array<ChannelStrip, Session::kNumTracks> strips;
     std::array<BusStrip,  Session::kNumBuses> busStrips;

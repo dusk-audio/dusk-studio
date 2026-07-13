@@ -230,6 +230,15 @@ public:
     // engine is detached for the offline render - never during live audio.
     void setFreezeCapture (float* l, float* r) noexcept { freezeCapL = l; freezeCapR = r; }
 
+    // setStemCapture points the strip at a stereo scratch the offline stems
+    // render reads each block: the post-fader / post-pan output (the track's
+    // full wet contribution, BEFORE the master-vs-bus routing split) is
+    // accumulated there. The caller clears the scratch each block, so a strip
+    // whose processing is skipped leaves silence. Same contract as
+    // setFreezeCapture: nullptr disables, message thread only, set while the
+    // engine is detached.
+    void setStemCapture (float* l, float* r) noexcept { stemCapL = l; stemCapR = r; }
+
 private:
     const ChannelStripParams* paramsRef = nullptr;
     dusk::audio::SmoothedValue<float> faderGain  { 0.0f };
@@ -390,6 +399,11 @@ private:
     // setFreezeCapture). nullptr on the live path.
     float* freezeCapL = nullptr;
     float* freezeCapR = nullptr;
+
+    // Post-fader capture destinations for the offline stems render (see
+    // setStemCapture). nullptr on the live path.
+    float* stemCapL = nullptr;
+    float* stemCapR = nullptr;
 
     void updateGainTargets() noexcept;
     void updateEqParameters() noexcept;

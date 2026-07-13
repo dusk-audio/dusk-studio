@@ -1227,6 +1227,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             const float oR = srcR[i] * gR;
             masterL[i] += oL;
             masterR[i] += oR;
+            if (stemCapL != nullptr) { stemCapL[i] += oL; stemCapR[i] += oR; }
             outPeakL = juce::jmax (outPeakL, std::abs (oL));
             outPeakR = juce::jmax (outPeakR, std::abs (oR));
         }
@@ -1251,6 +1252,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         const float wetRPre = sR * pR;
         const float wetL = sL * gL;
         const float wetR = sR * gR;
+        if (stemCapL != nullptr) { stemCapL[i] += wetL; stemCapR[i] += wetR; }
         outPeakL = juce::jmax (outPeakL, std::abs (wetL));
         outPeakR = juce::jmax (outPeakR, std::abs (wetR));
 

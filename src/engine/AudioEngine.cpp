@@ -4575,6 +4575,13 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         busStrips[(size_t) a].processInPlace (busL[(size_t) a].data(),
                                               busR[(size_t) a].data(),
                                               numSamples);
+        if (stemBusCapL[(size_t) a] != nullptr)
+        {
+            juce::FloatVectorOperations::add (stemBusCapL[(size_t) a],
+                                                busL[(size_t) a].data(), numSamples);
+            juce::FloatVectorOperations::add (stemBusCapR[(size_t) a],
+                                                busR[(size_t) a].data(), numSamples);
+        }
         // SIMD'd mix accumulate - hot inner loop, runs once per active aux
         // per callback. JUCE picks the right SSE/NEON path based on the
         // platform; cheaper than scalar [i]+= even with -O3.
@@ -4767,6 +4774,13 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                 wL[i] = dL.popSample (0);
                 wR[i] = dR.popSample (0);
             }
+        }
+        if (stemAuxCapL[(size_t) a] != nullptr)
+        {
+            juce::FloatVectorOperations::add (stemAuxCapL[(size_t) a],
+                                                auxLaneL[(size_t) a].data(), numSamples);
+            juce::FloatVectorOperations::add (stemAuxCapR[(size_t) a],
+                                                auxLaneR[(size_t) a].data(), numSamples);
         }
         juce::FloatVectorOperations::add (mixL.data(),
                                             auxLaneL[(size_t) a].data(),

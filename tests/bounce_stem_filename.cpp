@@ -68,3 +68,22 @@ TEST_CASE ("stemOutputFile builds <dir>/<base>_<NN>_<safe>.wav", "[bounce][stems
                   == "master_01_kick.wav");
     }
 }
+
+TEST_CASE ("namedStemOutputFile builds <dir>/<base>_<tag>_<safe>.wav", "[bounce][stems]")
+{
+    const auto temp = juce::File::getSpecialLocation (juce::File::tempDirectory);
+    const auto base = temp.getChildFile ("mix.wav");
+
+    REQUIRE (BounceEngine::namedStemOutputFile (base, "bus1", "Rhythm").getFileName()
+              == "mix_bus1_Rhythm.wav");
+    REQUIRE (BounceEngine::namedStemOutputFile (base, "aux3", "Plate  ").getFileName()
+              == "mix_aux3_Plate.wav");
+
+    SECTION ("empty or all-whitespace names fall back to the tag alone")
+    {
+        REQUIRE (BounceEngine::namedStemOutputFile (base, "aux2", "").getFileName()
+                  == "mix_aux2.wav");
+        REQUIRE (BounceEngine::namedStemOutputFile (base, "bus4", "   ").getFileName()
+                  == "mix_bus4.wav");
+    }
+}

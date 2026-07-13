@@ -1747,7 +1747,11 @@ The File menu has three bounce commands:
 
 - **Bounce…** — render the full master mix to a WAV you choose.
 - **Mixdown** — one-shot render to `mixdown.wav` in the session folder, then automatically switch to the MASTERING stage with that file loaded.
-- **Bounce stems…** — render one WAV per track (named `<base>_<NN>_<track>.wav`); warns before overwriting any existing stem files.
+- **Bounce stems…** — render every stem in a single offline pass: one WAV per track with content (named `<base>_<NN>_<track>.wav`), plus one per bus group any of those tracks route into (`<base>_bus<N>_<name>.wav`) and one per aux lane they send to (`<base>_aux<N>_<name>.wav`). Warns before overwriting any existing stem files.
+
+  A track stem is that track's post-fader output — its full processed signal, without master-strip processing — so the whole set is mutually sample-aligned and track + bus + aux stems together reconstruct the pre-master mix. A track routed to a bus appears both as its own stem and (processed) inside the bus stem; re-import one or the other, not both. Mute and solo print as heard, so a muted track writes a silent stem.
+
+If a session uses **hardware inserts**, the bounce dialog shows a warning: an offline render is detached from the audio interface, so the external loop cannot run and those inserts print dry.
 
 ## Bouncing the master vs the mastering chain
 
