@@ -34,14 +34,14 @@ TEST_CASE ("pluginBackingLooksDead classifies filesystem backings")
     {
         auto gone = root.getChildFile ("ghost.vst3");
         REQUIRE_FALSE (gone.exists());
-        REQUIRE (pluginBackingLooksDead (gone.getFullPathName()));
+        REQUIRE (pluginBackingLooksDead (gone.getFullPathName().toStdString()));
     }
 
     SECTION ("a present single-file backing is alive")
     {
         auto f = root.getChildFile ("plugin.so");
         f.replaceWithText ("ELF");
-        REQUIRE_FALSE (pluginBackingLooksDead (f.getFullPathName()));
+        REQUIRE_FALSE (pluginBackingLooksDead (f.getFullPathName().toStdString()));
     }
 
     SECTION ("an empty bundle directory is dead (hollow / broken install)")
@@ -51,7 +51,7 @@ TEST_CASE ("pluginBackingLooksDead classifies filesystem backings")
         auto bundle = root.getChildFile ("Hollow.vst3");
         bundle.getChildFile ("Contents/x86_64-linux").createDirectory();
         REQUIRE (bundle.isDirectory());
-        REQUIRE (pluginBackingLooksDead (bundle.getFullPathName()));
+        REQUIRE (pluginBackingLooksDead (bundle.getFullPathName().toStdString()));
     }
 
     SECTION ("a bundle directory holding any file is alive")
@@ -61,7 +61,7 @@ TEST_CASE ("pluginBackingLooksDead classifies filesystem backings")
         auto bundle = root.getChildFile ("Valid.vst3");
         bundle.getChildFile ("Contents/x86_64-linux").createDirectory();
         bundle.getChildFile ("Contents/x86_64-linux/Valid.so").replaceWithText ("ELF");
-        REQUIRE_FALSE (pluginBackingLooksDead (bundle.getFullPathName()));
+        REQUIRE_FALSE (pluginBackingLooksDead (bundle.getFullPathName().toStdString()));
     }
 
     root.deleteRecursively();

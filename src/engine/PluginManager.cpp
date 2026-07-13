@@ -373,7 +373,7 @@ int PluginManager::scanInstalledPlugins (
         // mutating the live list inside this loop can't invalidate the iteration.
         for (const auto& desc : knownPluginList.getTypes())
         {
-            bool dead = pluginBackingLooksDead (desc.fileOrIdentifier);
+            bool dead = pluginBackingLooksDead (desc.fileOrIdentifier.toStdString());
 
             if (! dead && ! juce::File::isAbsolutePath (desc.fileOrIdentifier))
             {
