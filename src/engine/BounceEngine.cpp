@@ -187,7 +187,11 @@ bool BounceEngine::start (const juce::File& outFile, double sr, int bs, double t
     renderFormat    = (mode == Mode::Stems || renderRealtime) ? Format::Wav : format;
     renderBitrateKbps = mp3BitrateKbps;
     // Stems keep 24-bit regardless: they exist for re-import, not delivery.
-    renderWavBitDepth = (mode != Mode::Stems && wavBitDepth == 16) ? 16 : 24;
+    // Realtime does too: its disk path streams through ThreadedWriter with no
+    // dither stage, so a 16-bit realtime file would truncate undithered (the
+    // offline loop is where the TPDF dither lives).
+    renderWavBitDepth = (mode != Mode::Stems && ! renderRealtime && wavBitDepth == 16)
+                          ? 16 : 24;
 
     if (renderMode == Mode::MasterMix || renderMode == Mode::Stems)
     {
