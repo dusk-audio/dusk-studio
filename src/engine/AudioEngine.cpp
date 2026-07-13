@@ -4921,6 +4921,12 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         else if (isPlaying)
             clickRolling = wantWhilePlay;
 
+        // The click is a monitoring aid and must never print: an offline
+        // bounce captures the mix it is about to be added to, so suppress it
+        // for the render. (Realtime bounces capture pre-click, upstream.)
+        if (offlineRenderActive.load (std::memory_order_relaxed))
+            clickRolling = false;
+
         // The click mixes post-master, AFTER the master-stage aux PDC delayed
         // the program by masterDryPdcApplied - reference the click to the
         // delayed position or it leads everything it's supposed to mark.
