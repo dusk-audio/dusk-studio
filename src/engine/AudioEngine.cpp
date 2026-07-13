@@ -3945,9 +3945,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         {
             monoIn = deviceInput;
         }
-        else if (! isFrozen
-                 && (strips[(size_t) t].getPluginSlot().isLoaded()
-                     || session.track (t).hardwareInsert.pingPending.load (std::memory_order_acquire)))
+        else if ((! isFrozen && strips[(size_t) t].getPluginSlot().isLoaded())
+                 || session.track (t).hardwareInsert.pingPending.load (std::memory_order_acquire))
         {
             // Generator-style insert with no input source: feed a
             // pre-zeroed buffer so the chain runs and the plugin can
@@ -3956,7 +3955,9 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
             // Same feed while a hardware-insert ping is in flight -
             // with transport stopped and IN off the track has no
             // source, and the slot needs to be serviced to run the
-            // chirp + capture.
+            // chirp + capture. The ping feed ignores frozen state: the
+            // frozen strip path runs the hardware slot too, and a
+            // stopped frozen track otherwise has no input at all.
             monoIn = silentInputScratch.data();
         }
 
