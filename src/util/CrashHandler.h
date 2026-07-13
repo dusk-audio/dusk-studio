@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_core/juce_core.h>
+#include <string>
 
 namespace duskstudio::crash_handler
 {
@@ -16,7 +17,7 @@ namespace duskstudio::crash_handler
 // Patreon support flow: ask user to attach the most recent file from
 // each folder to their DM. With the --version output (see DuskStudioApp),
 // that's enough to triage 90% of reports without back-and-forth.
-void install (const juce::String& appVersion);
+void install (const std::string& appVersion);
 
 // Detach + delete the FileLogger so JUCE's leak detector stays quiet at
 // shutdown. The crash callback registered via SystemStats stays put

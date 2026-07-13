@@ -122,7 +122,7 @@ TEST_CASE ("FileImporter: 44.1k mono -> 48k session preserves length", "[FileImp
 
     const auto res = duskstudio::fileimport::importAudio (req);
     REQUIRE (res.ok);
-    REQUIRE (res.errorMessage.isEmpty());
+    REQUIRE (res.errorMessage.empty());
 
     const auto rb = readWav (res.region.file);
     REQUIRE (rb.sampleRate == 48000.0);

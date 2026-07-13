@@ -948,7 +948,7 @@ static void runHeadlessSelfTest()
     AudioPipelineSelfTest test (*engine, engine->getDeviceManager(), *session);
     const auto report = test.runAll();
 
-    std::fprintf (stdout, "%s\n", report.toRawUTF8());
+    std::fprintf (stdout, "%s\n", report.c_str());
     std::fflush (stdout);
 }
 
@@ -1956,7 +1956,7 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
 
         AudioPipelineSelfTest test (*engine, engine->getDeviceManager(), *session);
         const auto report = test.runPerfSuite();
-        std::fprintf (stdout, "%s\n", report.toRawUTF8());
+        std::fprintf (stdout, "%s\n", report.c_str());
         std::fflush (stdout);
 
         quit();

@@ -2,6 +2,7 @@
 
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <array>
+#include <string>
 #include <vector>
 #include "AudioEngine.h"
 #include "../session/Session.h"
@@ -29,7 +30,7 @@ public:
     // Runs the full suite, returns a multi-line formatted report suitable for
     // pasting into bug reports. Safe to call from the message thread; takes
     // a few hundred milliseconds to a few seconds depending on backend count.
-    juce::String runAll();
+    std::string runAll();
 
     // Headless engine-CPU benchmark: configures the engine for a given load
     // (number of active tracks, EQ on/off, comp on/off, tape on/HQ), drives
@@ -37,7 +38,7 @@ public:
     // wall-clock timings vs. the buffer budget. Independent from any audio
     // device - measures the engine's pure DSP cost, exactly the figure you
     // compare against Reaper / Bitwig / Ardour at the same load.
-    juce::String runPerfSuite();
+    std::string runPerfSuite();
 
 private:
     struct Measurements
@@ -103,26 +104,26 @@ private:
                                 int numMeasureBlocks);
 
     // Test cases - each formats a "[PASS]/[FAIL] name: details" string.
-    juce::String testPassThroughUnity();
-    juce::String testMuteSilences();
-    juce::String testMasterFaderMinusSix();
-    juce::String testMasterCompNoNoiseFloor(); // comp ON + silent in stays silent (donor analog-noise off)
-    juce::String testBusSoloMutesDirect();      // SIP bus solo: unassigned/direct track muted when a bus is soloed
-    juce::String testChannelRoutingTwoOut();
-    juce::String testChannelRoutingFourOut();
-    juce::String testMasterTapeAddsGain();   // sanity: tape ON should not silently drop signal
-    juce::String testCompEachMode();         // -18 dBFS sine through Opto/FET/VCA; THD + alias floor
-    juce::String testCompHeavyGR();          // extreme settings: characterize harmonics at heavy GR
-    juce::String testCompPerTrack();         // all 16 tracks under Opto produce identical output
-    juce::String testParallelMatchesSerial(); // worker-pool mix == serial mix within float-reassoc tol
-    juce::String testMidiPlayAlongMonitor();   // armed+IN MIDI track sounds live notes in Stopped AND Playing
-    juce::String testBackendsOpenCleanly();
-    juce::String probeUMC1820AlsaFormat();   // explicitly open UMC1820 ALSA & report format
+    std::string testPassThroughUnity();
+    std::string testMuteSilences();
+    std::string testMasterFaderMinusSix();
+    std::string testMasterCompNoNoiseFloor(); // comp ON + silent in stays silent (donor analog-noise off)
+    std::string testBusSoloMutesDirect();      // SIP bus solo: unassigned/direct track muted when a bus is soloed
+    std::string testChannelRoutingTwoOut();
+    std::string testChannelRoutingFourOut();
+    std::string testMasterTapeAddsGain();   // sanity: tape ON should not silently drop signal
+    std::string testCompEachMode();         // -18 dBFS sine through Opto/FET/VCA; THD + alias floor
+    std::string testCompHeavyGR();          // extreme settings: characterize harmonics at heavy GR
+    std::string testCompPerTrack();         // all 16 tracks under Opto produce identical output
+    std::string testParallelMatchesSerial(); // worker-pool mix == serial mix within float-reassoc tol
+    std::string testMidiPlayAlongMonitor();   // armed+IN MIDI track sounds live notes in Stopped AND Playing
+    std::string testBackendsOpenCleanly();
+    std::string probeUMC1820AlsaFormat();   // explicitly open UMC1820 ALSA & report format
 
     // Per-config benchmark cell. Drives `numBlocks` callbacks and returns one
     // formatted line "[OK]/[OVER]  config  -> median X us / p95 Y us / max Z us
     // (budget B us, overruns N/total)". budget = blockSize * 1e6 / sampleRate.
-    juce::String runPerfBenchmark (const juce::String& label,
+    std::string runPerfBenchmark (const std::string& label,
                                     double sampleRate, int blockSize,
                                     int numActiveTracks,
                                     bool eqEnabled, bool compEnabled,

@@ -2,6 +2,7 @@
 
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_core/juce_core.h>
+#include <string>
 #include <vector>
 
 // Importer for raw song folders written by a hardware SD-card multitrack
@@ -52,7 +53,7 @@ struct MixerStrip
 // is decoded each fragment is surfaced separately and named by its ZZ id.
 struct ImportedTrack
 {
-    juce::String name;               // "DP 0006" (the ZZ fragment id)
+    std::string  name;               // "DP 0006" (the ZZ fragment id)
     Fragment     fragment;
     std::int64_t  timelineStart = 0;  // 0 until the placement table is solved
     MixerStrip   mixer;
@@ -74,7 +75,7 @@ struct SongScan
     std::vector<ImportedTrack> tracks;  // one entry per audio fragment (NOT per device track)
     int          stereoPairs = 0;
     int          discardedTakes = 0;       // on-disk fragments excluded as not-in-arrangement (File-List)
-    juce::String deviceModel;              // "DP-24" / "DP-32" from edltable.sys, or empty
+    std::string  deviceModel;              // "DP-24" / "DP-32" from edltable.sys, or empty
     int          deviceTrackLimit = 0;     // physical track faders: 18 (DP-24), 20 (DP-32), 0 unknown
     int          tempoBpm = 0;             // song.sys 0x6d8 (u8 BPM); 0 = not decoded/default
     int          timeSigNum = 0;           // song.sys 0x6d9 numerator (1..12); 0 = not decoded
@@ -84,7 +85,7 @@ struct SongScan
     bool         hasMixdown = false;       // an in-folder master WAV is present (enables alignment)
     juce::File   mixdownFile;              // the detected master mixdown, if any
     std::vector<DpMarker> markers;         // song.sys locate marks -> session markers
-    juce::String warnings;                 // human-readable caveats for the dialog
+    std::string  warnings;                 // human-readable caveats for the dialog
 };
 
 // Scan a song folder. Never throws; bad/short WAV headers and garbage

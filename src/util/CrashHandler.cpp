@@ -9,7 +9,7 @@ namespace duskstudio::crash_handler
 namespace
 {
 std::atomic<bool>             installed { false };
-juce::String                  cachedAppVersion;
+std::string                   cachedAppVersion;
 juce::File                    cachedCrashDir;
 juce::File                    cachedLogFile;
 std::unique_ptr<juce::FileLogger> ownedLogger;
@@ -49,7 +49,7 @@ void crashCallback (void* /*platformSpecific*/)
     stream << "Dusk Studio crash report\n"
            << "==================\n"
            << "Time:         " << juce::Time::getCurrentTime().toString (true, true) << "\n"
-           << "App version:  " << cachedAppVersion << "\n"
+           << "App version:  " << cachedAppVersion.c_str() << "\n"
            << "JUCE version: " << juce::SystemStats::getJUCEVersion() << "\n"
            << "OS:           " << juce::SystemStats::getOperatingSystemName() << "\n"
            << "CPU:          " << juce::SystemStats::getCpuModel()
@@ -98,7 +98,7 @@ void crashCallback (void* /*platformSpecific*/)
 }
 } // namespace
 
-void install (const juce::String& appVersion)
+void install (const std::string& appVersion)
 {
     // Always refresh version - a second install() call from a future
     // hot-reload / test harness updates the crash report header even
@@ -118,7 +118,7 @@ void install (const juce::String& appVersion)
     // from the date in the filename - next-day startup picks a new file.
     ownedLogger = std::make_unique<juce::FileLogger> (
         cachedLogFile,
-        "Dusk Studio " + appVersion + " - "
+        "Dusk Studio " + juce::String (appVersion) + " - "
             + juce::Time::getCurrentTime().toString (true, true));
     juce::Logger::setCurrentLogger (ownedLogger.get());
 

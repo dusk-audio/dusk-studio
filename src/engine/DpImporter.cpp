@@ -1,5 +1,6 @@
 #include "DpImporter.h"
 
+#include "../foundation/Text.h"
 #include <cmath>
 #include <cstring>
 #include <map>
@@ -148,7 +149,7 @@ float panByteToNorm (std::uint8_t v) noexcept
 // carries a constant "DP-24   " magic on both models - but edltable.sys
 // records the real model ("DP-24"/"DP-32" at 0x08, "DP-24_EDL"/"DP-32_EDL"
 // at 0x18). Returns the physical track count (18 / 20) or 0 if unknown.
-int readDeviceModel (const juce::File& edl, juce::String& modelOut)
+int readDeviceModel (const juce::File& edl, std::string& modelOut)
 {
     juce::FileInputStream in (edl);
     if (! in.openedOk()) return 0;
@@ -515,7 +516,7 @@ SongScan scanSongFolder (const juce::File& folder)
         }
 
         ImportedTrack t;
-        t.name     = juce::String::formatted ("DP %04d", idx);   // ZZ fragment id, not a track number
+        t.name     = dusk::text::format ("DP %04d", idx);   // ZZ fragment id, not a track number
         t.fragment = frag;
         scan.tracks.push_back (std::move (t));
         if (frag.stereo) ++scan.stereoPairs;
@@ -523,8 +524,8 @@ SongScan scanSongFolder (const juce::File& folder)
 
     if (scan.tracks.empty())
     {
-        scan.warnings = warn.joinIntoString ("\n");
-        if (scan.warnings.isEmpty()) scan.warnings = "No importable fragments.";
+        scan.warnings = warn.joinIntoString ("\n").toStdString();
+        if (scan.warnings.empty()) scan.warnings = "No importable fragments.";
         return scan;
     }
 
@@ -544,7 +545,7 @@ SongScan scanSongFolder (const juce::File& folder)
             "fragments are virtual takes / punch clips / cut regions. Without the "
             "(undecoded) placement table they can't be grouped, so each fragment "
             "is imported onto its own track for you to sort manually.",
-            nFrag, scan.deviceModel.toRawUTF8(), scan.deviceTrackLimit));
+            nFrag, scan.deviceModel.c_str(), scan.deviceTrackLimit));
     else
         warn.add ("Each audio fragment is imported onto its own track; fragments "
                   "are not grouped into their original device tracks.");
@@ -628,7 +629,7 @@ SongScan scanSongFolder (const juce::File& folder)
     else
         warn.add ("All clips start at song start (no stored offsets).");
 
-    scan.warnings = warn.joinIntoString ("\n");
+    scan.warnings = warn.joinIntoString ("\n").toStdString();
     scan.ok = true;
     return scan;
 }
