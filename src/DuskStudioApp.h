@@ -35,5 +35,10 @@ private:
     struct Vst3EditorTest;
     std::unique_ptr<Vst3EditorTest> vst3EditorTest;
 #endif
+    // DUSKSTUDIO_BOUNCE_TEST harness. Owns the session + engine + BounceEngine and
+    // drives a real async render to completion on the message loop, so it must
+    // outlive initialise(). Set the app return value + quits when done.
+    struct BounceTest;
+    std::unique_ptr<BounceTest> bounceTest;
 };
 } // namespace duskstudio

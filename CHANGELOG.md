@@ -5,6 +5,22 @@ All notable changes to Dusk Studio. Format loosely follows
 back-filled from `git log`; once tags exist this file is the
 canonical source.
 
+## [0.12.2] - 2026-07-12
+
+Beta patch on the 0.12 line: fixes a crash when bouncing, rendering stems,
+or freezing a track through a CLAP (or VST3/LV2) plugin insert.
+
+### Fixed
+
+- **Mixdown crash with native plugin inserts.** Bouncing to a file, rendering
+  stems, or freezing a track could crash when a channel or aux strip hosted a
+  CLAP plugin. The offline render detaches the audio device and re-prepares
+  the engine, which reaches every hosted plugin's activate/deactivate - the
+  CLAP contract (and VST3/LV2) requires those calls on the main thread, but
+  they were running on the bounce worker. The re-prepare now marshals to the
+  message thread, so the plugin's thread contract is honoured. Shutting down
+  mid-bounce can no longer leave a dangling callback either.
+
 ## [0.12.1] - 2026-07-12
 
 Beta patch on the 0.12 line: live play-along, control-surface calibration,

@@ -202,6 +202,7 @@ static std::filesystem::path lv2StateDirFor (Session& session, const juce::Strin
 }
 #endif
 
+#if DUSKSTUDIO_HAS_NATIVE_CLAP || DUSKSTUDIO_HAS_NATIVE_LV2 || DUSKSTUDIO_HAS_NATIVE_VST3
 // Session-carried native plugin state blob (base64) -> bytes. Empty on any
 // decode failure - callers treat "no state" and "bad state" the same.
 static std::vector<uint8_t> decodeBase64Blob (const juce::String& s)
@@ -214,6 +215,7 @@ static std::vector<uint8_t> decodeBase64Blob (const juce::String& s)
                      static_cast<const uint8_t*> (mb.getData()) + mb.getSize());
     return blob;
 }
+#endif
 
 class AudioEngine::PerfReporter final : public juce::Timer
 {
