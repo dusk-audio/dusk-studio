@@ -1069,14 +1069,15 @@ private:
         }
         juce::WavAudioFormat wav;
         file.deleteFile();
-        if (auto os = std::unique_ptr<juce::OutputStream> (file.createOutputStream()))
+        if (auto os = std::unique_ptr<juce::FileOutputStream> (file.createOutputStream()))
         {
-            const auto opts = juce::AudioFormatWriterOptions {}
-                                  .withSampleRate (sr)
-                                  .withNumChannels (numCh)
-                                  .withBitsPerSample (24);
-            if (auto writer = wav.createWriterFor (os, opts))
-                writer->writeFromAudioSampleBuffer (buf, 0, numFrames);
+            // createWriterFor takes ownership of the stream only on success.
+            if (auto* writer = wav.createWriterFor (os.get(), sr, (unsigned) numCh, 24, {}, 0))
+            {
+                os.release();
+                std::unique_ptr<juce::AudioFormatWriter> w (writer);
+                w->writeFromAudioSampleBuffer (buf, 0, numFrames);
+            }
         }
         return file;
     }
