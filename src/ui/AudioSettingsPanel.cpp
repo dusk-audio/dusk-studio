@@ -675,7 +675,7 @@ void AudioSettingsPanel::applyRescan()
     // AudioDeviceSelectorComponent to re-query and rebuild its dropdowns.
     //
     // We iterate every type rather than only the current one so that
-    // switching backend (e.g. ALSA -> JACK) after a hot-plug still sees
+    // switching backend (e.g. ALSA -> PipeWire) after a hot-plug still sees
     // the freshly-enumerated devices on the new backend.
     const auto& types = deviceManager.getAvailableDeviceTypes();
     for (auto* type : types)

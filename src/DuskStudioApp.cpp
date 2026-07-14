@@ -29,6 +29,9 @@
  #include "engine/alsa/AlsaAudioIODeviceType.h"
  #include "engine/alsa/AlsaPerformanceTest.h"
 #endif
+#if defined(DUSKSTUDIO_HAS_PIPEWIRE)
+ #include "engine/pipewire/PipeWireAudioIODeviceType.h"
+#endif
 #include "session/Session.h"
 
 #include <algorithm>
@@ -274,7 +277,7 @@ static bool envFlagSet (const char* name)
 // Test button at low buffer sizes on ALSA + USB interfaces.
 //
 // Env vars (all optional, sensible defaults):
-//   DUSKSTUDIO_TONE_BACKEND     "ALSA" | "JACK"           (default "ALSA")
+//   DUSKSTUDIO_TONE_BACKEND     "ALSA" | "PipeWire"       (default "ALSA")
 //   DUSKSTUDIO_TONE_DEVICE      output device name        (default "" = backend default)
 //   DUSKSTUDIO_TONE_RATE        sample rate in Hz         (default 48000)
 //   DUSKSTUDIO_TONE_BUFFER      buffer size in samples    (default 128)
@@ -302,16 +305,19 @@ static void runHeadlessToneTest()
                   backendName.toRawUTF8(), deviceName.toRawUTF8(),
                   targetRate, targetBuf, durationMs);
 
-    // Linux: pre-register Dusk Studio's ALSA backend + JACK before init, same
-    // pattern AudioEngine uses. Stops JUCE's createDeviceTypesIfNeeded
-    // from auto-registering its stock ALSA path (which would collide on
-    // the type-name "ALSA" with ours). Pre-scanning lets init's
+    // Linux: pre-register Dusk Studio's own backends before init, same pattern
+    // (and preference order) AudioEngine uses - native PipeWire first, native
+    // ALSA fallback, no JUCE JACK. Stops JUCE's createDeviceTypesIfNeeded from
+    // auto-registering its stock ALSA path. Pre-scanning lets init's
     // pickCurrentDeviceTypeWithDevices read device counts without tripping
     // hasScanned assertions.
+   #if defined(DUSKSTUDIO_HAS_PIPEWIRE)
+    dm.addAudioDeviceType (std::make_unique<duskstudio::PipeWireAudioIODeviceType>());
+   #endif
    #if defined(__linux__)
-    if (auto* jackType = juce::AudioIODeviceType::createAudioIODeviceType_JACK())
-        dm.addAudioDeviceType (std::unique_ptr<juce::AudioIODeviceType> (jackType));
     dm.addAudioDeviceType (std::make_unique<duskstudio::AlsaAudioIODeviceType>());
+   #endif
+   #if defined(__linux__)
     for (auto* type : dm.getAvailableDeviceTypes())
         if (type != nullptr) type->scanForDevices();
    #endif

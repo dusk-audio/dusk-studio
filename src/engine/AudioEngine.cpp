@@ -12,6 +12,9 @@
   #include "alsa/AlsaAudioIODeviceType.h"
 #endif
 #include <algorithm>
+#if defined(DUSKSTUDIO_HAS_PIPEWIRE)
+  #include "pipewire/PipeWireAudioIODeviceType.h"
+#endif
 #include <array>
 #include <cstdlib>
 #include <cstring>
@@ -427,20 +430,25 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
     master.bind (session.master());
     masteringChain.bind (session.mastering());
 
-    // Linux: pre-register Dusk Studio's ALSA + JACK BEFORE
-    // initialiseWithDefaultDevices so JUCE's createDeviceTypesIfNeeded
-    // branch is a no-op (it only auto-registers defaults when the type
-    // list is empty, which would re-add the stock ALSA path). Explicit
-    // scanForDevices so init's pickCurrentDeviceTypeWithDevices doesn't
-    // trip hasScanned assertions. Dropdown ends up with "ALSA" (ours)
-    // + "JACK", no double-listing.
-    // macOS / Windows let JUCE auto-register natives - DUSKSTUDIO_HAS_ALSA
-    // isn't defined there.
+    // Linux: pre-register Dusk Studio's own backends BEFORE
+    // initialiseWithDefaultDevices so JUCE's createDeviceTypesIfNeeded branch is
+    // a no-op (it only auto-registers defaults when the type list is empty,
+    // which would re-add the stock ALSA path). Explicit scanForDevices so init's
+    // pickCurrentDeviceTypeWithDevices doesn't trip hasScanned assertions.
+    //
+    // Registration order = default-backend preference (the pick lands on the
+    // first registered type that has devices): native PipeWire first (correct
+    // graph latency, native node naming, no pipewire-jack shim), native ALSA as
+    // the hardware-direct fallback. JUCE's JACK backend is intentionally NOT
+    // registered - talking to libpipewire directly replaces it.
+    // macOS / Windows let JUCE auto-register natives - these gates aren't defined there.
+   #if defined(DUSKSTUDIO_HAS_PIPEWIRE)
+    deviceManager.addAudioDeviceType (std::make_unique<PipeWireAudioIODeviceType>());
+   #endif
    #if defined(DUSKSTUDIO_HAS_ALSA)
-    if (auto* jackType = juce::AudioIODeviceType::createAudioIODeviceType_JACK())
-        deviceManager.addAudioDeviceType (std::unique_ptr<juce::AudioIODeviceType> (jackType));
     deviceManager.addAudioDeviceType (std::make_unique<AlsaAudioIODeviceType>());
-
+   #endif
+   #if defined(DUSKSTUDIO_HAS_PIPEWIRE) || defined(DUSKSTUDIO_HAS_ALSA)
     for (auto* t : deviceManager.getAvailableDeviceTypes())
         if (t != nullptr) t->scanForDevices();
    #endif
@@ -498,10 +506,10 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
     // The saved setup can pin an ALSA hw: device that another app (PipeWire,
     // JACK, another DAW) holds exclusively. JUCE's selectDefaultDeviceOnFailure
     // only re-picks another device NAME on the same ALSA type - the same hw
-    // conflict - so it never falls through to JACK. Recover explicitly: JACK
-    // (routes through PipeWire and reaches the interface even while the raw hw
-    // handle is held) -> the first ALSA device that opens -> give up and tell the
-    // user. This runs BEFORE addAudioCallback / addChangeListener: the audio
+    // conflict - so it never falls through to the graph. Recover explicitly: the
+    // native PipeWire backend (reaches the interface through the graph even while
+    // the raw hw handle is held) -> the first ALSA device that opens -> give up
+    // and tell the user. This runs BEFORE addAudioCallback / addChangeListener: the audio
     // thread isn't attached and the engine isn't a change listener yet, so the
     // setup-switch broadcasts reach no one (no re-entrancy, no fallback loop).
     {
@@ -539,8 +547,11 @@ AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
                 deviceManager.setAudioDeviceSetup (s, /*treatAsChosen*/ true);
             };
 
-            // 1) JACK / PipeWire default.
-            openDefaultOnType ("JACK", juce::String());
+            // 1) Native PipeWire default (the graph reaches the interface even
+            //    while another app holds the raw ALSA hw handle).
+           #if defined(DUSKSTUDIO_HAS_PIPEWIRE)
+            openDefaultOnType ("PipeWire", juce::String());
+           #endif
 
             // 2) Walk ALSA device names; the busy one fails, the next (Built-in
             //    / HDMI / other interface) opens.

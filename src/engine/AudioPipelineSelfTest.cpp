@@ -4,6 +4,9 @@
  #include "alsa/AlsaAudioIODevice.h"
 #endif
 #include <algorithm>
+#if defined(DUSKSTUDIO_HAS_PIPEWIRE)
+ #include "pipewire/PipeWireAudioIODevice.h"
+#endif
 #include <cmath>
 
 namespace duskstudio
@@ -1378,6 +1381,14 @@ std::string AudioPipelineSelfTest::runAll()
     // exercised by the backend cycle below alongside the JUCE-stock
     // ALSA / JACK paths.
     report.push_back (AlsaAudioIODevice::runSelfTest().toStdString());
+    report.push_back ("");
+   #endif
+
+   #if defined(DUSKSTUDIO_HAS_PIPEWIRE)
+    // Pure-logic self-test for the native PipeWire backend: active-channel
+    // counting (drives port creation) and node.latency string formatting. No
+    // live graph needed; a real-device open is exercised by the backend cycle.
+    report.push_back (PipeWireAudioIODevice::runSelfTest().toStdString());
     report.push_back ("");
    #endif
 

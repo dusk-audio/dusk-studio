@@ -39,6 +39,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         pkg_check_modules(LILV IMPORTED_TARGET GLOBAL lilv-0)
         pkg_check_modules(SUIL IMPORTED_TARGET GLOBAL suil-0)
         pkg_check_modules(LV2  IMPORTED_TARGET GLOBAL lv2)
+        pkg_check_modules(PIPEWIRE IMPORTED_TARGET GLOBAL libpipewire-0.3)
     endif()
     if(LILV_FOUND AND SUIL_FOUND AND LV2_FOUND)
         option(DUSKSTUDIO_NATIVE_LV2 "Build the native LV2 plugin host (Linux, needs lilv/suil)" ON)
@@ -526,6 +527,20 @@ if(UNIX AND NOT APPLE)
         src/ui/KeyboardStateLinux.cpp)
     target_link_libraries(DuskStudio PRIVATE asound X11 ${CMAKE_DL_LIBS})  # X11/dl: clap host + windowing
     target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_ALSA=1)
+endif()
+
+# Dusk Studio-owned native PipeWire backend - a juce::AudioIODevice +
+# AudioIODeviceType pair speaking libpipewire directly (single pw_filter node),
+# replacing JUCE's JACK-over-pipewire-jack path. Correct graph latency, native
+# node naming, one fewer shim on the Linux #1 audio path. Linux-only, and only
+# when the dev libs are present (as with the LV2 host); registration in
+# AudioEngine is guarded by DUSKSTUDIO_HAS_PIPEWIRE.
+if(UNIX AND NOT APPLE AND PIPEWIRE_FOUND)
+    target_sources(DuskStudio PRIVATE
+        src/engine/pipewire/PipeWireAudioIODevice.cpp
+        src/engine/pipewire/PipeWireAudioIODeviceType.cpp)
+    target_link_libraries(DuskStudio PRIVATE PkgConfig::PIPEWIRE)
+    target_compile_definitions(DuskStudio PRIVATE DUSKSTUDIO_HAS_PIPEWIRE=1)
 endif()
 
 # Shared native-host layer (format-agnostic) — compiled whenever any native host
