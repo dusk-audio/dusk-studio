@@ -2,6 +2,8 @@
 
 #include "../../foundation/Text.h"
 
+#include <algorithm>
+
 namespace duskstudio
 {
 const Sf2Generator* Sf2Zone::find(uint16_t oper) const noexcept
@@ -88,10 +90,10 @@ std::vector<Sf2Zone> buildZones(int bagStart, int bagEnd,
         // genNdx, used as this zone's end). A malformed bank can have a
         // header bag index past the bag table - bail rather than read OOB.
         if (b < 0 || b + 1 >= maxBag) break;
-        const int genStart = juce::jlimit(0, (int) gens.size(),
-                                           (int) bagGenNdx[(size_t) b]);
-        const int genEnd   = juce::jlimit(0, (int) gens.size(),
-                                           (int) bagGenNdx[(size_t) b + 1]);
+        const int genStart = std::clamp((int) bagGenNdx[(size_t) b],
+                                        0, (int) gens.size());
+        const int genEnd   = std::clamp((int) bagGenNdx[(size_t) b + 1],
+                                        0, (int) gens.size());
         Sf2Zone z;
         for (int g = genStart; g < genEnd; ++g)
             z.gens.push_back(gens[(size_t) g]);
@@ -158,9 +160,9 @@ Sf2File readSf2(const juce::File& file)
                         // Clamp to the file's real remainder: smplSize is the
                         // bound writeSampleWav validates shdr ranges against,
                         // so it must never exceed what the file can deliver.
-                        out.smplSize   = juce::jlimit ((std::int64_t) 0,
-                                                        (std::int64_t) (in.getTotalLength() - sBody),
-                                                        (std::int64_t) sSize);
+                        out.smplSize   = std::clamp ((std::int64_t) sSize,
+                                                      (std::int64_t) 0,
+                                                      (std::int64_t) (in.getTotalLength() - sBody));
                     }
                     else if (idEquals(sid, "sm24"))
                     {
@@ -177,10 +179,10 @@ Sf2File readSf2(const juce::File& file)
                 // for a 140 MB GM bank. Clamp to the bytes actually left in
                 // the file: a crafted ckSize (~2 GB) must not size an
                 // allocation the read can never fill.
-                const int bodyLen = (int) juce::jlimit (
+                const int bodyLen = (int) std::clamp (
+                    (std::int64_t) ckSize - 4,   // minus the listType
                     (std::int64_t) 0,
-                    (std::int64_t) (in.getTotalLength() - in.getPosition()),
-                    (std::int64_t) ckSize - 4);   // minus the listType
+                    (std::int64_t) (in.getTotalLength() - in.getPosition()));
                 if (bodyLen > 0)
                 {
                     pdtaBytes.setSize((size_t) bodyLen);
@@ -189,7 +191,7 @@ Sf2File readSf2(const juce::File& file)
                     // sub-chunk parser never walks into uninitialised tail
                     // bytes (setSize preserves the leading data on shrink).
                     if (got < bodyLen)
-                        pdtaBytes.setSize((size_t) juce::jmax(0, got));
+                        pdtaBytes.setSize((size_t) std::max(0, got));
                 }
             }
         }

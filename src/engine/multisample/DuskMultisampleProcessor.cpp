@@ -4,6 +4,8 @@
 
 #include <sfizz.h>
 
+#include <algorithm>
+
 namespace duskstudio
 {
 struct DuskMultisampleProcessor::Impl
@@ -41,7 +43,7 @@ DuskMultisampleProcessor::DuskMultisampleProcessor()
 void DuskMultisampleProcessor::setHDCC (int cc, float normValue)
 {
     if (cc < 0 || cc >= kNumHdcc) return;
-    const float v = juce::jlimit (0.0f, 1.0f, normValue);
+    const float v = std::clamp (normValue, 0.0f, 1.0f);
     ccCache[(size_t) cc].store (v, std::memory_order_relaxed);
 
     // Queue for the audio thread. If the FIFO is momentarily full
@@ -297,8 +299,7 @@ bool DuskMultisampleProcessor::applySf2Preset (const juce::File& sf2,
         impl->sf2TempDir.deleteRecursively();
     impl->sf2TempDir = newDir;
 
-    sf2PresetIndex = juce::jlimit (0, juce::jmax (0, sf2PresetNames.size() - 1),
-                                    presetIndex);
+    sf2PresetIndex = std::clamp (presetIndex, 0, std::max (0, sf2PresetNames.size() - 1));
     loadedFilePath = sf2.getFullPathName();
     lastLoadError.clear();
     return true;
@@ -307,7 +308,7 @@ bool DuskMultisampleProcessor::applySf2Preset (const juce::File& sf2,
 void DuskMultisampleProcessor::setPolyphony (int newPolyphony)
 {
     // Message/loader-thread entry point - never the audio thread.
-    const int clamped = juce::jlimit (1, 256, newPolyphony);
+    const int clamped = std::clamp (newPolyphony, 1, 256);
     overrides.polyphony.store (clamped, std::memory_order_relaxed);
     if (impl != nullptr && impl->synth != nullptr)
     {
@@ -441,7 +442,7 @@ void DuskMultisampleProcessor::processBlock (juce::AudioBuffer<float>& buf,
     for (const auto meta : midi)
     {
         const auto m = meta.getMessage();
-        const int delay = juce::jlimit (0, numSamples - 1, meta.samplePosition);
+        const int delay = std::clamp (meta.samplePosition, 0, numSamples - 1);
         if (m.isNoteOn())
             sfizz_send_note_on (impl->synth, delay,
                                  m.getNoteNumber(), m.getVelocity());
@@ -535,14 +536,14 @@ void DuskMultisampleProcessor::setStateInformation (const void* data, int size)
 
     if (state.hasProperty ("masterVolDb"))
         overrides.masterVolDb.store (
-            juce::jlimit (-60.0f, 12.0f, (float) state.getProperty ("masterVolDb")),
+            std::clamp ((float) state.getProperty ("masterVolDb"), -60.0f, 12.0f),
             std::memory_order_relaxed);
     if (state.hasProperty ("masterTuneCents"))
         overrides.masterTuneCents.store (
-            juce::jlimit (-100.0f, 100.0f, (float) state.getProperty ("masterTuneCents")),
+            std::clamp ((float) state.getProperty ("masterTuneCents"), -100.0f, 100.0f),
             std::memory_order_relaxed);
     if (state.hasProperty ("polyphony"))
-        setPolyphony (juce::jlimit (1, 256, (int) state.getProperty ("polyphony")));
+        setPolyphony (std::clamp ((int) state.getProperty ("polyphony"), 1, 256));
 
     // Restore the SF2 preset selection (no-op for SFZ). Must run after
     // the file load above so the SF2 name list + sfizz state exist.

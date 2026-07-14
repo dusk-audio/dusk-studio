@@ -2,6 +2,7 @@
 
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_data_structures/juce_data_structures.h>
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <mutex>
@@ -52,7 +53,7 @@ public:
     // host cap. Does NOT re-prepare - caller drives a device-callback detach/
     // reattach (as the Audio Settings panel does) to apply it live. Ignored
     // while DUSKSTUDIO_AUDIO_WORKERS pins the count.
-    void setDesiredWorkers (int n) noexcept { desiredWorkers = juce::jmax (0, n); }
+    void setDesiredWorkers (int n) noexcept { desiredWorkers = std::max (0, n); }
 
     // Largest worker count the engine can use: the strips fan out across at most
     // kMaxDspLanes - 1 worker lanes (the audio callback runs the last lane
@@ -269,7 +270,7 @@ public:
     // factor. BounceEngine sets it around its render and clears it (0) before
     // the engine is re-prepared for live playback.
     void setRenderOversamplingOverride (int factor) noexcept
-        { renderOversamplingOverride.store (juce::jmax (0, factor), std::memory_order_relaxed); }
+        { renderOversamplingOverride.store (std::max (0, factor), std::memory_order_relaxed); }
 
     // Offline-render latch. While an offline bounce/stem/freeze drives the audio
     // callback on its worker thread, the live MIDI-input path stays open (the

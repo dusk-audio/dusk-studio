@@ -1,5 +1,6 @@
 #include "AuxLaneStrip.h"
 #include "OutputPairRouting.h"
+#include <algorithm>
 #include <cmath>
 
 namespace duskstudio
@@ -7,7 +8,7 @@ namespace duskstudio
 void AuxLaneStrip::prepare (double sampleRate, int blockSize)
 {
     preparedSampleRate = sampleRate;
-    preparedBlockSize  = juce::jmax (1, blockSize);
+    preparedBlockSize  = std::max (1, blockSize);
 
     // A loaded native CLAP was activated at the prior spec; re-activate at the
     // new one. Reload by path (the instance has no in-place re-prepare) - a
@@ -114,7 +115,7 @@ void AuxLaneStrip::prepare (double sampleRate, int blockSize)
     returnGain.reset (sampleRate, rampSeconds);
     returnGain.setCurrentAndTargetValue (1.0f);
     for (auto& s : slots)
-        s.prepareToPlay (sampleRate, juce::jmax (1, blockSize));
+        s.prepareToPlay (sampleRate, std::max (1, blockSize));
 
     // Per-slot hardware insert + crossfade gate. Same 20 ms ramp used
     // by the channel strip so mode flips feel consistent across the
@@ -128,8 +129,8 @@ void AuxLaneStrip::prepare (double sampleRate, int blockSize)
         if (activeInsertMode[s] == 0)
             activeInsertMode[s] = kInsertPlugin;   // preserve existing behaviour
     }
-    insertScratchL.assign ((size_t) juce::jmax (1, blockSize), 0.0f);
-    insertScratchR.assign ((size_t) juce::jmax (1, blockSize), 0.0f);
+    insertScratchL.assign ((size_t) std::max (1, blockSize), 0.0f);
+    insertScratchR.assign ((size_t) std::max (1, blockSize), 0.0f);
 
     // Pre-size the MIDI scratch so the audio thread's plugin-output
     // addEvent calls (PluginSlot / RemotePluginConnection deserialise)

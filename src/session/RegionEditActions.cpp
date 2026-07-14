@@ -136,10 +136,10 @@ bool SplitRegionAction::perform()
     // NOT introduce auto-fades - the boundary is a hard cut by default.
     // Crossfades only happen when regions are dragged to actually overlap;
     // PlaybackEngine's implicit-overlap detection handles that case.
-    orig.fadeInSamples   = juce::jlimit<std::int64_t> (0, orig.lengthInSamples, orig.fadeInSamples);
-    orig.fadeOutSamples  = juce::jlimit<std::int64_t> (0, orig.lengthInSamples - orig.fadeInSamples, orig.fadeOutSamples);
-    right.fadeInSamples  = juce::jlimit<std::int64_t> (0, right.lengthInSamples, right.fadeInSamples);
-    right.fadeOutSamples = juce::jlimit<std::int64_t> (0, right.lengthInSamples - right.fadeInSamples, right.fadeOutSamples);
+    orig.fadeInSamples   = std::clamp<std::int64_t> (orig.fadeInSamples, 0, orig.lengthInSamples);
+    orig.fadeOutSamples  = std::clamp<std::int64_t> (orig.fadeOutSamples, 0, orig.lengthInSamples - orig.fadeInSamples);
+    right.fadeInSamples  = std::clamp<std::int64_t> (right.fadeInSamples, 0, right.lengthInSamples);
+    right.fadeOutSamples = std::clamp<std::int64_t> (right.fadeOutSamples, 0, right.lengthInSamples - right.fadeInSamples);
 
     regs.insert (regs.begin() + regionIdx + 1, right);
 
@@ -276,7 +276,7 @@ bool DeleteRegionAction::undo()
     if (frozenLocked (session, trackIdx)) return false;
     auto& regs = session.track (trackIdx).regions;
 
-    const int insertAt = juce::jmin (regionIdx, (int) regs.size());
+    const int insertAt = std::min (regionIdx, (int) regs.size());
     regs.insert (regs.begin() + insertAt, removed);
     rebuildPlaybackIfStopped (engine);
     return true;
@@ -308,7 +308,7 @@ bool DeleteMidiRegionAction::undo()
     if (trackIdx < 0 || trackIdx >= Session::kNumTracks) return false;
     if (frozenLocked (session, trackIdx)) return false;
     auto& v = session.track (trackIdx).midiRegions.currentMutable();
-    const int insertAt = juce::jmin (regionIdx, (int) v.size());
+    const int insertAt = std::min (regionIdx, (int) v.size());
     v.insert (v.begin() + insertAt, removed);
     rebuildPlaybackIfStopped (engine);
     return true;
@@ -693,11 +693,11 @@ bool JoinRegionsAction::perform()
         fm.createReaderFor (beforeRegions.front().file));
     if (firstReader == nullptr) return false;
     const double sr   = firstReader->sampleRate;
-    const int    bits = juce::jmax (16, (int) firstReader->bitsPerSample);
-    const int    chs  = juce::jmax (1, (int) beforeRegions.front().numChannels);
+    const int    bits = std::max (16, (int) firstReader->bitsPerSample);
+    const int    chs  = std::max (1, (int) beforeRegions.front().numChannels);
 
-    const auto totalSamples = (int) juce::jlimit<std::int64_t> (
-        1, std::numeric_limits<int>::max(), totalLen);
+    const auto totalSamples = (int) std::clamp<std::int64_t> (
+        totalLen, 1, std::numeric_limits<int>::max());
     juce::AudioBuffer<float> mixBuf (chs, totalSamples);
     mixBuf.clear();
 
@@ -705,8 +705,8 @@ bool JoinRegionsAction::perform()
     {
         std::unique_ptr<juce::AudioFormatReader> rdr (fm.createReaderFor (reg.file));
         if (rdr == nullptr) continue;
-        const int regSamples = (int) juce::jlimit<std::int64_t> (
-            0, std::numeric_limits<int>::max(), reg.lengthInSamples);
+        const int regSamples = (int) std::clamp<std::int64_t> (
+            reg.lengthInSamples, 0, std::numeric_limits<int>::max());
         if (regSamples == 0) continue;
         juce::AudioBuffer<float> tmp (chs, regSamples);
         tmp.clear();
@@ -866,12 +866,12 @@ bool ReverseRegionAction::perform()
         // Bound the channel count: corrupt session data could carry a wild
         // numChannels and blow up the buffer allocation. Cap to 1-2 (the app is
         // stereo-max) and to what the reader actually has.
-        const int chs = juce::jlimit (1, juce::jmin (2, (int) rdr->numChannels),
-                                       (int) beforeState.numChannels);
-        const std::int64_t len = juce::jlimit<std::int64_t> (
-            1, std::numeric_limits<int>::max(), beforeState.lengthInSamples);
+        const int chs = std::clamp ((int) beforeState.numChannels,
+                                     1, std::min (2, (int) rdr->numChannels));
+        const std::int64_t len = std::clamp<std::int64_t> (
+            beforeState.lengthInSamples, 1, std::numeric_limits<int>::max());
         const double sr   = rdr->sampleRate;
-        const int    bits = juce::jmax (16, (int) rdr->bitsPerSample);
+        const int    bits = std::max (16, (int) rdr->bitsPerSample);
 
         auto takesDir = session.getSessionDirectory().getChildFile ("takes");
         if (! takesDir.exists() && takesDir.createDirectory().failed()) return false;
@@ -895,7 +895,7 @@ bool ReverseRegionAction::perform()
         bool ioOk = true;
         while (remaining > 0)
         {
-            const int n = (int) juce::jmin ((std::int64_t) kChunk, remaining);
+            const int n = (int) std::min ((std::int64_t) kChunk, remaining);
             chunk.clear();
             if (! rdr->read (&chunk, 0, n,
                              beforeState.sourceOffset + (remaining - n), true, chs > 1))

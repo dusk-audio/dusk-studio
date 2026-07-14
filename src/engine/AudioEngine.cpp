@@ -11,6 +11,7 @@
 #if defined(DUSKSTUDIO_HAS_ALSA)
   #include "alsa/AlsaAudioIODeviceType.h"
 #endif
+#include <algorithm>
 #include <array>
 #include <cstdlib>
 #include <cstring>
@@ -33,7 +34,7 @@ static float currentFracForTarget (Session& session, const MidiBinding& b) noexc
 {
     const auto inv = [] (float v, float lo, float hi)
     {
-        return juce::jlimit (0.0f, 1.0f, (v - lo) / (hi - lo));
+        return std::clamp ((v - lo) / (hi - lo), 0.0f, 1.0f);
     };
     switch (b.target)
     {
@@ -65,8 +66,8 @@ static float currentFracForTarget (Session& session, const MidiBinding& b) noexc
             if (! strip.hpfEnabled.load (std::memory_order_relaxed)) return 0.0f;
             const float f = strip.hpfFreq.load (std::memory_order_relaxed);
             if (f <= ChannelStripParams::kHpfMinHz) return 0.0f;
-            return juce::jlimit (0.0f, 1.0f,
-                std::log (f / ChannelStripParams::kHpfMinHz) / kHpfLogRange);
+            return std::clamp (
+                std::log (f / ChannelStripParams::kHpfMinHz) / kHpfLogRange, 0.0f, 1.0f);
         }
         case MidiBindingTarget::TrackEqGain:
         {
@@ -91,7 +92,7 @@ static float currentFracForTarget (Session& session, const MidiBinding& b) noexc
             const auto logInv = [] (float f, float lo, float hi)
             {
                 if (f <= lo) return 0.0f;
-                return juce::jlimit (0.0f, 1.0f, std::log (f / lo) / std::log (hi / lo));
+                return std::clamp (std::log (f / lo) / std::log (hi / lo), 0.0f, 1.0f);
             };
             switch (band)
             {
@@ -118,7 +119,7 @@ static float currentFracForTarget (Session& session, const MidiBinding& b) noexc
         {
             if (b.targetIndex < 0 || b.targetIndex >= Session::kNumTracks) return -1.0f;
             const auto& s = session.track (b.targetIndex).strip;
-            const int mode = juce::jlimit (0, 2, s.compMode.load (std::memory_order_relaxed));
+            const int mode = std::clamp (s.compMode.load (std::memory_order_relaxed), 0, 2);
             if (b.target == MidiBindingTarget::TrackCompMakeup)
                 switch (mode)
                 {
@@ -356,7 +357,7 @@ private:
 #endif
 
 AudioEngine::AudioEngine (Session& sessionToBindTo, int initialWorkers)
-    : session (sessionToBindTo), desiredWorkers (juce::jmax (0, initialWorkers))
+    : session (sessionToBindTo), desiredWorkers (std::max (0, initialWorkers))
 {
     if (const char* p = std::getenv ("DUSKSTUDIO_PERF"); p != nullptr && p[0] == '1')
     {
@@ -740,7 +741,7 @@ void AudioEngine::recomputePdc() noexcept
 #endif
             }
         }
-        latency[t] = juce::jlimit (0, ChannelStrip::kMaxPdcSamples, lat);
+        latency[t] = std::clamp (lat, 0, ChannelStrip::kMaxPdcSamples);
     }
 
     int comp[Session::kNumTracks];
@@ -781,13 +782,13 @@ void AudioEngine::recomputePdc() noexcept
                     if (auto* inst = lane.getNativeVst3Slot (p).getInstance())
                         slotLat = inst->getLatencySamples();
 #endif
-                laneLat += juce::jmax (0, slotLat);
+                laneLat += std::max (0, slotLat);
             }
             else if (mode == AuxLaneStrip::kInsertHardware)
-                laneLat += juce::jmax (0, lane.getHardwareInsertSlot (p).getLatencySamples());
+                laneLat += std::max (0, lane.getHardwareInsertSlot (p).getLatencySamples());
         }
-        auxLat[a]  = juce::jlimit (0, ChannelStrip::kMaxPdcSamples, laneLat);
-        deepestAux = juce::jmax (deepestAux, auxLat[a]);
+        auxLat[a]  = std::clamp (laneLat, 0, ChannelStrip::kMaxPdcSamples);
+        deepestAux = std::max (deepestAux, auxLat[a]);
     }
     masterDryPdcTarget.store (deepestAux, std::memory_order_relaxed);
     for (int a = 0; a < Session::kNumAuxLanes; ++a)
@@ -833,10 +834,10 @@ bool AudioEngine::freezePrepare (int trackIndex, juce::File& outFile, std::int64
     std::int64_t contentEnd = 0;
     if (isMidi)
         for (const auto& mr : track.midiRegions.current())
-            contentEnd = juce::jmax (contentEnd, mr.timelineStart + mr.lengthInSamples);
+            contentEnd = std::max (contentEnd, mr.timelineStart + mr.lengthInSamples);
     else
         for (const auto& r : track.regions)
-            contentEnd = juce::jmax (contentEnd, r.timelineStart + r.lengthInSamples);
+            contentEnd = std::max (contentEnd, r.timelineStart + r.lengthInSamples);
     if (contentEnd <= 0)
         { lastFreezeError = "Track has no content to freeze"; return false; }
 
@@ -1086,7 +1087,7 @@ int AudioEngine::getBackendXRunCount() const noexcept
     // const_cast: getCurrentAudioDevice is non-const for historical
     // reasons. Benign - getXRunCount is noexcept and returns a counter.
     if (auto* dev = const_cast<juce::AudioDeviceManager&> (deviceManager).getCurrentAudioDevice())
-        return juce::jmax (0, dev->getXRunCount()
+        return std::max (0, dev->getXRunCount()
                                   - backendXrunBaseline.load (std::memory_order_relaxed));
     return 0;
 }
@@ -1328,7 +1329,7 @@ void AudioEngine::record()
         if (pre > 0.0f)
         {
             const auto preSamples = (std::int64_t) ((double) pre * sr);
-            const auto candidate = juce::jmax ((std::int64_t) 0, startSample - preSamples);
+            const auto candidate = std::max ((std::int64_t) 0, startSample - preSamples);
             if (candidate < transport.getPlayhead())
                 transport.setPlayhead (candidate);
         }
@@ -2315,8 +2316,8 @@ void AudioEngine::reconcileWorkerPool (int target)
     // the normal-priority message (UI) thread, freezing the app exactly under
     // the heavy load this is meant to help. cores - 2 leaves one core for the
     // UI + the OS on top of the audio thread.
-    const int cap = juce::jmin (juce::SystemStats::getNumCpus() - 2, kMaxDspLanes - 1);
-    const int n   = juce::jlimit (0, juce::jmax (0, cap), target);
+    const int cap = std::min (juce::SystemStats::getNumCpus() - 2, kMaxDspLanes - 1);
+    const int n   = std::clamp (target, 0, std::max (0, cap));
     const int cur = workerPool.isActive() ? workerPool.laneCount() - 1 : 0;
     if (n == cur)
         return;
@@ -3347,8 +3348,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                             if (b.targetIndex < 0 || b.targetIndex >= Session::kNumTracks)
                                 break;
                             auto& strip = session.track (b.targetIndex).strip;
-                            const int mode = juce::jlimit (0, 2,
-                                strip.compMode.load (std::memory_order_relaxed));
+                            const int mode = std::clamp (
+                                strip.compMode.load (std::memory_order_relaxed), 0, 2);
                             const bool isMakeup = (b.target == MidiBindingTarget::TrackCompMakeup);
                             auto remap = [frac] (float lo, float hi)
                             {
@@ -3678,7 +3679,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
             // shared cpuUsage update below).
             if (bufferMs > 0.0)
             {
-                const float instant = (float) juce::jlimit (0.0, 2.0, elapsedMs / bufferMs);
+                const float instant = (float) std::clamp (elapsedMs / bufferMs, 0.0, 2.0);
                 const float prev = cpuUsage.load (std::memory_order_relaxed);
                 cpuUsage.store (prev + 0.2f * (instant - prev), std::memory_order_relaxed);
             }
@@ -4006,7 +4007,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
         if (meterSrc != nullptr && numSamples > 0)
         {
             const auto rng = juce::FloatVectorOperations::findMinAndMax (meterSrc, numSamples);
-            inputPeak = juce::jmax (std::abs (rng.getStart()), std::abs (rng.getEnd()));
+            inputPeak = std::max (std::abs (rng.getStart()), std::abs (rng.getEnd()));
         }
         const float inputDb = (inputPeak > 1e-5f)
                               ? juce::Decibels::gainToDecibels (inputPeak, -100.0f)
@@ -4025,7 +4026,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
             if (deviceInputR != nullptr && (armed || monitorEnabled) && numSamples > 0)
             {
                 const auto rng = juce::FloatVectorOperations::findMinAndMax (deviceInputR, numSamples);
-                const float peak = juce::jmax (std::abs (rng.getStart()), std::abs (rng.getEnd()));
+                const float peak = std::max (std::abs (rng.getStart()), std::abs (rng.getEnd()));
                 if (peak > 1e-5f)
                     inputRDb = juce::Decibels::gainToDecibels (peak, -100.0f);
             }
@@ -4444,8 +4445,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
             if (auto* lp = strips[(size_t) t].getLastProcessedMono(); lp != nullptr && n > 0)
             {
                 const auto rng = juce::FloatVectorOperations::findMinAndMax (lp, n);
-                const float pk = juce::jmax (std::abs (rng.getStart()),
-                                              std::abs (rng.getEnd()));
+                const float pk = std::max (std::abs (rng.getStart()),
+                                            std::abs (rng.getEnd()));
                 session.track (t).meterInputDb.store (
                     pk > 1e-5f ? juce::Decibels::gainToDecibels (pk, -100.0f) : -100.0f,
                     std::memory_order_relaxed);
@@ -4453,8 +4454,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
             if (auto* rp = strips[(size_t) t].getLastProcessedR(); rp != nullptr && n > 0)
             {
                 const auto rng = juce::FloatVectorOperations::findMinAndMax (rp, n);
-                const float pk = juce::jmax (std::abs (rng.getStart()),
-                                              std::abs (rng.getEnd()));
+                const float pk = std::max (std::abs (rng.getStart()),
+                                            std::abs (rng.getEnd()));
                 session.track (t).meterInputRDb.store (
                     pk > 1e-5f ? juce::Decibels::gainToDecibels (pk, -100.0f) : -100.0f,
                     std::memory_order_relaxed);
@@ -4510,7 +4511,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                 const auto pOut = transport.getPunchOut();
                 if (pOut > pIn)
                 {
-                    effIn  = juce::jmax (effIn, pIn);
+                    effIn  = std::max (effIn, pIn);
                     effOut = pOut;
                 }
                 else
@@ -4520,8 +4521,8 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
             }
 
             const auto blockEnd = blockStartSamples + numSamples;
-            const auto sliceStart = juce::jmax (blockStartSamples, effIn);
-            const auto sliceEnd   = juce::jmin (blockEnd,        effOut);
+            const auto sliceStart = std::max (blockStartSamples, effIn);
+            const auto sliceEnd   = std::min (blockEnd,        effOut);
             if (sliceEnd > sliceStart)
             {
                 const int writeOffset = (int) (sliceStart - blockStartSamples);
@@ -4597,9 +4598,9 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                                   busL[(size_t) a].data(), numSamples);
             const auto rngR = juce::FloatVectorOperations::findMinAndMax (
                                   busR[(size_t) a].data(), numSamples);
-            const float peak = juce::jmax (
-                juce::jmax (std::abs (rngL.getStart()), std::abs (rngL.getEnd())),
-                juce::jmax (std::abs (rngR.getStart()), std::abs (rngR.getEnd())));
+            const float peak = std::max (
+                std::max (std::abs (rngL.getStart()), std::abs (rngL.getEnd())),
+                std::max (std::abs (rngR.getStart()), std::abs (rngR.getEnd())));
             if (peak <= 1e-6f)
             {
                 // Bus pass is being skipped (no audio routed). Reset the
@@ -4762,9 +4763,9 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                                   auxLaneL[(size_t) lane].data(), numSamples);
             const auto rngR = juce::FloatVectorOperations::findMinAndMax (
                                   auxLaneR[(size_t) lane].data(), numSamples);
-            return juce::jmax (
-                juce::jmax (std::abs (rngL.getStart()), std::abs (rngL.getEnd())),
-                juce::jmax (std::abs (rngR.getStart()), std::abs (rngR.getEnd())));
+            return std::max (
+                std::max (std::abs (rngL.getStart()), std::abs (rngL.getEnd())),
+                std::max (std::abs (rngR.getStart()), std::abs (rngR.getEnd())));
         };
 
         if (! laneHasHardware)
@@ -4877,12 +4878,12 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
                 int offset = 0;
                 if (sink.leadRemaining > 0)
                 {
-                    offset = (int) juce::jmin ((std::int64_t) numSamples, sink.leadRemaining);
+                    offset = (int) std::min ((std::int64_t) numSamples, sink.leadRemaining);
                     sink.leadRemaining -= offset;
                 }
                 const auto already = sink.written.load (std::memory_order_relaxed);
-                const int n = (int) juce::jmin ((std::int64_t) (numSamples - offset),
-                                                  sink.cap - already);
+                const int n = (int) std::min ((std::int64_t) (numSamples - offset),
+                                                sink.cap - already);
                 if (n > 0)
                 {
                     const float* chans[2] = { srcL + offset, srcR + offset };
@@ -5019,7 +5020,7 @@ void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputCha
 
         if (bufferMs > 0.0)
         {
-            const float instant = (float) juce::jlimit (0.0, 2.0, elapsedMs / bufferMs);
+            const float instant = (float) std::clamp (elapsedMs / bufferMs, 0.0, 2.0);
             // 0.2 coefficient -> ~5-block smoothing; fast enough that the
             // user sees real spikes, slow enough to mask single-block jitter.
             const float prev = cpuUsage.load (std::memory_order_relaxed);

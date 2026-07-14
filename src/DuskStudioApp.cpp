@@ -31,6 +31,7 @@
 #endif
 #include "session/Session.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 
@@ -103,8 +104,8 @@ public:
             // unplugged-monitor case still falls back gracefully).
             const auto checkRect = isFullScreen()
                 ? juce::Rectangle<int> (0, 0,
-                                          juce::jmax (getWidth(), 800),
-                                          juce::jmax (getHeight(), 600))
+                                          std::max (getWidth(), 800),
+                                          std::max (getHeight(), 600))
                 : getBounds();
             if (WindowState::rectIsUsable (checkRect))
                 restored = true;
@@ -423,7 +424,7 @@ static void runHeadlessInstrumentTest (const juce::String& pluginPath)
         {
             const float l = L[(size_t) s];
             const float r = R[(size_t) s];
-            const float mag = juce::jmax (std::abs (l), std::abs (r));
+            const float mag = std::max (std::abs (l), std::abs (r));
             if (mag > peak) peak = mag;
             rms += (double) l * (double) l + (double) r * (double) r;
             counted += 2;
@@ -690,7 +691,7 @@ static void runHeadlessPipelineTest (const juce::String& pluginPath)
         {
             const float l = outputs[0][(size_t) s];
             const float r = outputs[1][(size_t) s];
-            const float mag = juce::jmax (std::abs (l), std::abs (r));
+            const float mag = std::max (std::abs (l), std::abs (r));
             if (mag > masterPeak) masterPeak = mag;
             masterRms += (double) l * (double) l + (double) r * (double) r;
             counted += 2;
@@ -707,7 +708,7 @@ static void runHeadlessPipelineTest (const juce::String& pluginPath)
             if (n > 0)
             {
                 const auto rng = juce::FloatVectorOperations::findMinAndMax (lp, n);
-                const float p = juce::jmax (std::abs (rng.getStart()), std::abs (rng.getEnd()));
+                const float p = std::max (std::abs (rng.getStart()), std::abs (rng.getEnd()));
                 if (p > stripPeak) stripPeak = p;
             }
         }
@@ -717,7 +718,7 @@ static void runHeadlessPipelineTest (const juce::String& pluginPath)
             if (n > 0)
             {
                 const auto rng = juce::FloatVectorOperations::findMinAndMax (rp, n);
-                const float p = juce::jmax (std::abs (rng.getStart()), std::abs (rng.getEnd()));
+                const float p = std::max (std::abs (rng.getStart()), std::abs (rng.getEnd()));
                 if (p > stripPeak) stripPeak = p;
             }
         }
@@ -751,7 +752,7 @@ static void runHeadlessPipelineTest (const juce::String& pluginPath)
         juce::StringArray sizes = juce::StringArray::fromTokens (juce::String (cyc), ",", {});
         for (const auto& tok : sizes)
         {
-            const int bs = juce::jlimit (32, 8192, tok.trim().getIntValue());
+            const int bs = std::clamp (tok.trim().getIntValue(), 32, 8192);
             std::fprintf (stdout, "BS-CYCLE: re-prepare at %d samples + 64 blocks\n", bs);
             std::fflush (stdout);
 
@@ -890,9 +891,9 @@ static void runHeadlessSessionPerf (const juce::String& sessionPath)
             blockSize, ctx);
 
         for (int s = 0; s < blockSize; ++s)
-            masterPeak = juce::jmax (masterPeak,
+            masterPeak = std::max ({ masterPeak,
                                      std::abs (outputs[0][(size_t) s]),
-                                     std::abs (outputs[1][(size_t) s]));
+                                     std::abs (outputs[1][(size_t) s]) });
 
         // Pace to realtime so the prefetch thread fills readers the way a
         // live device run would; free-running would outrun it and the
@@ -1197,7 +1198,7 @@ private:
             std::fprintf (stdout, "[FAIL] %s: output WAV has zero samples\n", label);
             return false;
         }
-        juce::AudioBuffer<float> buf ((int) juce::jmax (1u, reader->numChannels), n);
+        juce::AudioBuffer<float> buf ((int) std::max (1u, reader->numChannels), n);
         reader->read (&buf, 0, n, 0, true, true);
         bool allFinite = true;
         float peak = 0.0f;
@@ -1207,7 +1208,7 @@ private:
             for (int i = 0; i < n; ++i)
             {
                 if (! std::isfinite (d[i])) { allFinite = false; break; }
-                peak = juce::jmax (peak, std::abs (d[i]));
+                peak = std::max (peak, std::abs (d[i]));
             }
             if (! allFinite) break;
         }
@@ -1638,8 +1639,8 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
             quit();
             return;
         }
-        const int w = juce::jmax (200, comp->getWidth());
-        const int h = juce::jmax (200, comp->getHeight());
+        const int w = std::max (200, comp->getWidth());
+        const int h = std::max (200, comp->getHeight());
         // Plain juce::DocumentWindow's title-bar close button is a no-op; this dev
         // harness is "close the window to quit", so route it through systemRequestedQuit.
         struct TestWindow final : juce::DocumentWindow
@@ -1687,8 +1688,8 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
             quit();
             return;
         }
-        const int w = juce::jmax (200, comp->getWidth());
-        const int h = juce::jmax (200, comp->getHeight());
+        const int w = std::max (200, comp->getWidth());
+        const int h = std::max (200, comp->getHeight());
         struct TestWindow final : juce::DocumentWindow
         {
             using juce::DocumentWindow::DocumentWindow;
@@ -1742,8 +1743,8 @@ void DuskStudioApp::initialise (const juce::String& commandLine)
             quit();
             return;
         }
-        const int w = juce::jmax (200, comp->getWidth());
-        const int h = juce::jmax (200, comp->getHeight());
+        const int w = std::max (200, comp->getWidth());
+        const int h = std::max (200, comp->getHeight());
         struct TestWindow final : juce::DocumentWindow
         {
             using juce::DocumentWindow::DocumentWindow;

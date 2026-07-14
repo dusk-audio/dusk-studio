@@ -221,7 +221,7 @@ int runIpcHostTest (const std::string& hostExecutablePath,
         }
 
         const auto t0 = steady_clock::now();
-        if (! conn.processBlockSync (in, juce::jmax (numIn, 1), juce::jmax (numOut, 1),
+        if (! conn.processBlockSync (in, std::max (numIn, 1), std::max (numOut, 1),
                                        numSamples, emptyMidi, kTimeoutNs))
         {
             std::fprintf (stderr, "FAIL: processBlockSync at iter %d\n", it);
@@ -235,7 +235,7 @@ int runIpcHostTest (const std::string& hostExecutablePath,
         // initial silence).
         if (! isInstrument && it >= 10 && ! anyDifference)
         {
-            for (int c = 0; c < juce::jmin (2, numOut); ++c)
+            for (int c = 0; c < std::min (2, numOut); ++c)
             {
                 const float* o = conn.readOutChannel (c);
                 const float* expected = (c == 0) ? bufL.data() : bufR.data();

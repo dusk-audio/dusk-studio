@@ -1,4 +1,5 @@
 #include "BounceEngine.h"
+#include <algorithm>
 #include <cmath>
 #include "AudioEngine.h"
 #include "LameMp3Writer.h"
@@ -128,12 +129,12 @@ std::int64_t BounceEngine::computeBounceLength (double sampleRate, double tail) 
     {
         const auto& track = session.track (t);
         for (const auto& r : track.regions)
-            maxRegionEnd = juce::jmax (maxRegionEnd, r.timelineStart + r.lengthInSamples);
+            maxRegionEnd = std::max (maxRegionEnd, r.timelineStart + r.lengthInSamples);
         for (const auto& mr : track.midiRegions.current())
-            maxRegionEnd = juce::jmax (maxRegionEnd, mr.timelineStart + mr.lengthInSamples);
+            maxRegionEnd = std::max (maxRegionEnd, mr.timelineStart + mr.lengthInSamples);
         if (track.frozen.load (std::memory_order_relaxed)
             && track.frozenRegion.lengthInSamples > 0)
-            maxRegionEnd = juce::jmax (maxRegionEnd,
+            maxRegionEnd = std::max (maxRegionEnd,
                                         track.frozenRegion.timelineStart
                                             + track.frozenRegion.lengthInSamples);
     }
@@ -175,7 +176,7 @@ bool BounceEngine::start (const juce::File& outFile, double sr, int bs, double t
     outputFile  = outFile;
     renderSampleRate = (sr > 0.0) ? sr : engine.getCurrentSampleRate();
     if (renderSampleRate <= 0.0) renderSampleRate = 48000.0;
-    renderBlockSize = juce::jmax (64, bs);
+    renderBlockSize = std::max (64, bs);
     tailSeconds     = tail;
     renderMode      = mode;
     // Stems must stay WAV: MP3 encoder delay + frame padding shift each stem by
@@ -412,7 +413,7 @@ void BounceEngine::run()
     juce::Random ditherRng;
     while (done < toRender && ! cancelRequested.load (std::memory_order_relaxed))
     {
-        const int remaining = (int) juce::jmin ((std::int64_t) renderBlockSize,
+        const int remaining = (int) std::min ((std::int64_t) renderBlockSize,
                                                   toRender - done);
 
         // Reset outputs each block.
@@ -426,7 +427,7 @@ void BounceEngine::run()
         int writeStart = 0;
         if (dropped < leadIn)
         {
-            writeStart = (int) juce::jmin ((std::int64_t) remaining, leadIn - dropped);
+            writeStart = (int) std::min ((std::int64_t) remaining, leadIn - dropped);
             dropped += writeStart;
         }
         const int writeCount = remaining - writeStart;
@@ -665,14 +666,14 @@ bool BounceEngine::runStemsMode()
         for (int i = 0; i < numStems; ++i)
         {
             leadIn[(size_t) i] = leadInFor (targets[(size_t) i].kind);
-            maxLead = juce::jmax (maxLead, leadIn[(size_t) i]);
+            maxLead = std::max (maxLead, leadIn[(size_t) i]);
         }
         const std::int64_t toRender = totalSamples + maxLead;
 
         std::int64_t done = 0;
         while (done < toRender && ! cancelRequested.load (std::memory_order_relaxed))
         {
-            const int remaining = (int) juce::jmin ((std::int64_t) renderBlockSize,
+            const int remaining = (int) std::min ((std::int64_t) renderBlockSize,
                                                       toRender - done);
 
             for (auto& o : outputs) std::fill (o.begin(), o.end(), 0.0f);
@@ -692,13 +693,13 @@ bool BounceEngine::runStemsMode()
                 int writeStart = 0;
                 if (droppedFor[(size_t) i] < leadIn[(size_t) i])
                 {
-                    writeStart = (int) juce::jmin ((std::int64_t) remaining,
+                    writeStart = (int) std::min ((std::int64_t) remaining,
                                                      leadIn[(size_t) i] - droppedFor[(size_t) i]);
                     droppedFor[(size_t) i] += writeStart;
                 }
                 // Shorter-lead stems run out of file before the render loop
                 // ends; cap each writer at totalSamples so lengths stay equal.
-                const int writeCount = (int) juce::jmin ((std::int64_t) (remaining - writeStart),
+                const int writeCount = (int) std::min ((std::int64_t) (remaining - writeStart),
                                                            totalSamples - writtenFor[(size_t) i]);
                 if (writeCount > 0)
                 {
@@ -715,7 +716,7 @@ bool BounceEngine::runStemsMode()
                     }
                     writtenFor[(size_t) i] += writeCount;
                 }
-                minWritten = juce::jmin (minWritten, writtenFor[(size_t) i]);
+                minWritten = std::min (minWritten, writtenFor[(size_t) i]);
             }
             if (! succeeded) break;
 
@@ -741,7 +742,7 @@ bool BounceEngine::runStemsMode()
         // no files when the user cancels or a writer fails mid-render. Only
         // files this run actually opened (truncated): targets past a failed
         // open still hold the previous bounce's good stems.
-        const size_t touched = juce::jmin (targets.size(), writersOpened + 1);
+        const size_t touched = std::min (targets.size(), writersOpened + 1);
         for (size_t i = 0; i < touched; ++i)
             targets[i].file.deleteFile();
     }
@@ -799,7 +800,7 @@ bool BounceEngine::runRealtimeMode()
     // Capture scratches sized to the live block; the callback never hands the
     // strips more than the prepared block size (oversized host blocks are
     // guarded upstream).
-    const int scratchLen = juce::jmax (engine.getCurrentBlockSize(), 4096);
+    const int scratchLen = std::max (engine.getCurrentBlockSize(), 4096);
     std::vector<std::vector<float>> capL, capR;
     if (renderMode == Mode::Stems)
     {
@@ -898,7 +899,7 @@ bool BounceEngine::runRealtimeMode()
                 bool anyWriteFailed = false;
                 for (int i = 0; i < numFiles; ++i)
                 {
-                    minWritten = juce::jmin (minWritten,
+                    minWritten = std::min (minWritten,
                                              sinks[(size_t) i].written.load (std::memory_order_acquire));
                     anyWriteFailed = anyWriteFailed
                                    || sinks[(size_t) i].writeFailed.load (std::memory_order_acquire);
@@ -982,7 +983,7 @@ bool BounceEngine::runRealtimeMode()
     {
         // Only files this run actually opened (truncated): targets past a
         // failed open still hold the previous bounce's good stems.
-        const size_t touched = juce::jmin (files.size(), writersOpened + 1);
+        const size_t touched = std::min (files.size(), writersOpened + 1);
         for (size_t i = 0; i < touched; ++i)
             files[i].file.deleteFile();
     }
@@ -999,7 +1000,7 @@ bool BounceEngine::startFreeze (int trackIndex, const juce::File& outFile,
     outputFile       = outFile;
     renderSampleRate = (sampleRate > 0.0) ? sampleRate : engine.getCurrentSampleRate();
     if (renderSampleRate <= 0.0) renderSampleRate = 48000.0;
-    renderBlockSize  = juce::jmax (16, blockSize);
+    renderBlockSize  = std::max (16, blockSize);
     renderMode       = Mode::FreezeTrack;
     renderFormat     = Format::Wav;
     freezeTrackIndex = trackIndex;
@@ -1042,7 +1043,7 @@ bool BounceEngine::renderFreezeTrack (int trackIndex, const juce::File& outFile,
     }
 
     renderSampleRate = (sampleRate > 0.0) ? sampleRate : renderSampleRate;
-    renderBlockSize  = juce::jmax (16, blockSize);
+    renderBlockSize  = std::max (16, blockSize);
     renderFormat     = Format::Wav;   // freeze is always WAV (sample-accurate re-import)
 
     // Open the writer first - a failure here means we never touch engine state.
@@ -1143,7 +1144,7 @@ bool BounceEngine::renderFreezeTrack (int trackIndex, const juce::File& outFile,
     bool ok = true;
     while (done < toRender && ! cancelRequested.load (std::memory_order_relaxed))
     {
-        const int remaining = (int) juce::jmin ((std::int64_t) renderBlockSize, toRender - done);
+        const int remaining = (int) std::min ((std::int64_t) renderBlockSize, toRender - done);
         for (auto& o : outputs) std::fill (o.begin(), o.end(), 0.0f);
         std::fill (capL.begin(), capL.end(), 0.0f);
         std::fill (capR.begin(), capR.end(), 0.0f);
@@ -1155,7 +1156,7 @@ bool BounceEngine::renderFreezeTrack (int trackIndex, const juce::File& outFile,
         int writeStart = 0;
         if (dropped < leadIn)
         {
-            writeStart = (int) juce::jmin ((std::int64_t) remaining, leadIn - dropped);
+            writeStart = (int) std::min ((std::int64_t) remaining, leadIn - dropped);
             dropped += writeStart;
         }
         const int writeCount = remaining - writeStart;
@@ -1175,7 +1176,7 @@ bool BounceEngine::renderFreezeTrack (int trackIndex, const juce::File& outFile,
         done += remaining;
         renderedSamples.store (written, std::memory_order_relaxed);
         const float p = (float) ((double) written / (double) lenSamples);
-        progress.store (juce::jlimit (0.0f, 1.0f, p), std::memory_order_relaxed);
+        progress.store (std::clamp (p, 0.0f, 1.0f), std::memory_order_relaxed);
         if (onProgressUpdated) onProgressUpdated (progress.load (std::memory_order_relaxed));
     }
 

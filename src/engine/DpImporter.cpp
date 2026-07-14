@@ -1,6 +1,7 @@
 #include "DpImporter.h"
 
 #include "../foundation/Text.h"
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <map>
@@ -108,9 +109,9 @@ constexpr float kFreqTable[64] = {
     14000,15000,16000,17000,18000 };
 constexpr float kQTable[7] = { 0.25f, 0.5f, 1.0f, 2.0f, 4.0f, 8.0f, 16.0f };
 
-float eqGainDb (std::uint8_t v) noexcept { return (float) juce::jlimit (0, 24, (int) v) - 12.0f; }
-float freqAt   (int idx) noexcept { return kFreqTable[(size_t) juce::jlimit (0, 63, idx)]; }
-float qAt      (std::uint8_t v) noexcept { return kQTable[(size_t) juce::jlimit (0, 6, (int) v)]; }
+float eqGainDb (std::uint8_t v) noexcept { return (float) std::clamp ((int) v, 0, 24) - 12.0f; }
+float freqAt   (int idx) noexcept { return kFreqTable[(size_t) std::clamp (idx, 0, 63)]; }
+float qAt      (std::uint8_t v) noexcept { return kQTable[(size_t) std::clamp ((int) v, 0, 6)]; }
 
 // Fader byte -> dB, calibrated from SONG_0002 (24 faders set to known values,
 // read off the device display). Monotonic anchor table; linear-interpolate
@@ -142,7 +143,7 @@ float faderByteToDb (std::uint8_t v) noexcept
 
 float panByteToNorm (std::uint8_t v) noexcept
 {
-    return juce::jlimit (-1.0f, 1.0f, ((float) v - 64.0f) / 63.0f);   // 0x40 centre
+    return std::clamp (((float) v - 64.0f) / 63.0f, -1.0f, 1.0f);   // 0x40 centre
 }
 
 // Read the device model from edltable.sys. song.sys is NOT reliable - it

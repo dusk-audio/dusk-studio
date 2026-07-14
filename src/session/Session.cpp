@@ -1,5 +1,7 @@
 #include "Session.h"
 
+#include <algorithm>
+
 namespace duskstudio
 {
 Session::Session()
@@ -81,8 +83,8 @@ void Session::setTrackFaderGrouped (int ti, float newDb) noexcept
 {
     if (ti < 0 || ti >= kNumTracks) return;
     auto& strip = tracks[(size_t) ti].strip;
-    const float clampedNew = juce::jlimit (ChannelStripParams::kFaderMinDb,
-                                           ChannelStripParams::kFaderMaxDb, newDb);
+    const float clampedNew = std::clamp (newDb, ChannelStripParams::kFaderMinDb,
+                                          ChannelStripParams::kFaderMaxDb);
 
     const int gid = strip.faderGroupId.load (std::memory_order_relaxed);
     if (gid == 0)
@@ -105,8 +107,8 @@ void Session::setTrackFaderGrouped (int ti, float newDb) noexcept
         auto& peer = tracks[(size_t) t].strip;
         if (peer.faderGroupId.load (std::memory_order_relaxed) != gid) continue;
         const float pv = peer.faderDb.load (std::memory_order_relaxed);
-        peer.faderDb.store (juce::jlimit (ChannelStripParams::kFaderMinDb,
-                                          ChannelStripParams::kFaderMaxDb, pv + delta),
+        peer.faderDb.store (std::clamp (pv + delta, ChannelStripParams::kFaderMinDb,
+                                        ChannelStripParams::kFaderMaxDb),
                             std::memory_order_relaxed);
     }
 }
@@ -190,7 +192,7 @@ void Session::setSessionDirectory (const juce::File& dir)
 int Session::addMarker (std::int64_t timelineSamples, const juce::String& name)
 {
     Marker m;
-    m.timelineSamples = juce::jmax ((std::int64_t) 0, timelineSamples);
+    m.timelineSamples = std::max ((std::int64_t) 0, timelineSamples);
     m.name = name.isNotEmpty()
                 ? name
                 : juce::String ("Marker ") + juce::String ((int) markers.size() + 1);
@@ -241,7 +243,7 @@ int Session::findMarkerNear (std::int64_t timelineSamples,
 // (dB / pan / 0|1) and stored (0..1) values when drawing automation.
 float denormalizeAutomationValue (AutomationParam p, float v) noexcept
 {
-    v = juce::jlimit (0.0f, 1.0f, v);
+    v = std::clamp (v, 0.0f, 1.0f);
     switch (p)
     {
         case AutomationParam::FaderDb:
@@ -280,10 +282,10 @@ float normalizeAutomationValue (AutomationParam p, float denormValue) noexcept
         {
             const float lo = ChannelStripParams::kFaderMinDb;
             const float hi = ChannelStripParams::kFaderMaxDb;
-            return juce::jlimit (0.0f, 1.0f, (denormValue - lo) / (hi - lo));
+            return std::clamp ((denormValue - lo) / (hi - lo), 0.0f, 1.0f);
         }
         case AutomationParam::Pan:
-            return juce::jlimit (0.0f, 1.0f, (denormValue + 1.0f) * 0.5f);
+            return std::clamp ((denormValue + 1.0f) * 0.5f, 0.0f, 1.0f);
 
         case AutomationParam::Mute:
         case AutomationParam::Solo:
@@ -297,7 +299,7 @@ float normalizeAutomationValue (AutomationParam p, float denormValue) noexcept
             if (denormValue <= ChannelStripParams::kAuxSendOffDb + 0.1f) return 0.0f;
             const float lo = ChannelStripParams::kAuxSendMinDb;
             const float hi = ChannelStripParams::kAuxSendMaxDb;
-            return juce::jlimit (0.0f, 1.0f, (denormValue - lo) / (hi - lo));
+            return std::clamp ((denormValue - lo) / (hi - lo), 0.0f, 1.0f);
         }
 
         case AutomationParam::kCount:
@@ -459,11 +461,11 @@ void applyTempoChange (Session& s, float newBpm, double sampleRate) noexcept
     // Clamp before storing so an external caller can't push 0 / NaN /
     // negative tempos into the audio thread's tick->sample math. Same
     // limits the TransportBar's spinner and tap-tempo enforce. Note:
-    // juce::jlimit returns NaN when its input is NaN (the comparisons
+    // std::clamp returns NaN when its input is NaN (the comparisons
     // it relies on are both false for NaN), so an explicit isfinite
     // check has to run first.
     if (! std::isfinite (newBpm)) newBpm = 120.0f;
-    newBpm = juce::jlimit (30.0f, 300.0f, newBpm);
+    newBpm = std::clamp (newBpm, 30.0f, 300.0f);
 
     if (sampleRate > 0.0 && oldBpm > 0.0f && newBpm > 0.0f
         && std::abs (oldBpm - newBpm) > 1e-4f)

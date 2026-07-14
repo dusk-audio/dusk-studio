@@ -2,6 +2,7 @@
 
 #include <juce_audio_formats/juce_audio_formats.h>
 
+#include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
@@ -135,7 +136,7 @@ Sf2Conversion convertSf2Preset(const juce::File& sf2,
         return conv;
     }
 
-    presetIndex = juce::jlimit(0, (int) parsed.presets.size() - 1, presetIndex);
+    presetIndex = std::clamp(presetIndex, 0, (int) parsed.presets.size() - 1);
     const auto& preset = parsed.presets[(size_t) presetIndex];
     conv.presetName = preset.name;
 
@@ -210,13 +211,13 @@ Sf2Conversion convertSf2Preset(const juce::File& sf2,
             }
             if (auto it = presetLayer.find(kGenKeyRange); it != presetLayer.end())
             {
-                loKey = juce::jmax(loKey, it->second & 0xff);
-                hiKey = juce::jmin(hiKey, (it->second >> 8) & 0xff);
+                loKey = std::max(loKey, it->second & 0xff);
+                hiKey = std::min(hiKey, (it->second >> 8) & 0xff);
             }
             if (auto it = presetLayer.find(kGenVelRange); it != presetLayer.end())
             {
-                loVel = juce::jmax(loVel, it->second & 0xff);
-                hiVel = juce::jmin(hiVel, (it->second >> 8) & 0xff);
+                loVel = std::max(loVel, it->second & 0xff);
+                hiVel = std::min(hiVel, (it->second >> 8) & 0xff);
             }
             if (loKey > hiKey || loVel > hiVel) continue;   // empty after intersect
 
@@ -241,7 +242,7 @@ Sf2Conversion convertSf2Preset(const juce::File& sf2,
             if (hasPanGen)
             {
                 const int panRaw = genOr(eff, kGenPan, 0) + genOr(presetLayer, kGenPan, 0);
-                pan = juce::jlimit(-100.0, 100.0, (double) panRaw / 5.0);
+                pan = std::clamp((double) panRaw / 5.0, -100.0, 100.0);
             }
             else
             {
@@ -268,8 +269,8 @@ Sf2Conversion convertSf2Preset(const juce::File& sf2,
             if (auto it = eff.find(kGenSustainVolEnv); it != eff.end())
             {
                 // SF2 sustain is centibels of attenuation from full level.
-                const double pct = juce::jlimit(0.0, 100.0,
-                                                 100.0 * std::pow(10.0, -((double) it->second) / 200.0));
+                const double pct = std::clamp(100.0 * std::pow(10.0, -((double) it->second) / 200.0),
+                                              0.0, 100.0);
                 env += " ampeg_sustain=" + fmtF(pct, 2);
             }
             if (auto it = eff.find(kGenReleaseVolEnv); it != eff.end())
@@ -283,7 +284,7 @@ Sf2Conversion convertSf2Preset(const juce::File& sf2,
             if (fcCents < 13500)
             {
                 const double hz = 8.176 * std::pow(2.0, (double) fcCents / 1200.0);
-                env += " cutoff=" + fmtF(juce::jlimit(20.0, 22000.0, hz), 1)
+                env += " cutoff=" + fmtF(std::clamp(hz, 20.0, 22000.0), 1)
                      + " fil_type=lpf_2p";
             }
             const int resCb = genOr(eff, kGenInitialFilterQ, 0)
@@ -319,7 +320,7 @@ Sf2Conversion convertSf2Preset(const juce::File& sf2,
                           + " lovel=" + std::to_string(loVel) + " hivel=" + std::to_string(hiVel)
                           + " pitch_keycenter=" + std::to_string(rootKey);
             if (coarse != 0) r += " transpose=" + std::to_string(coarse);
-            if (fine   != 0) r += " tune=" + std::to_string(juce::jlimit(-100, 100, fine));
+            if (fine   != 0) r += " tune=" + std::to_string(std::clamp(fine, -100, 100));
             if (std::abs(volumeDb) > 0.01) r += " volume=" + fmtF(volumeDb, 2);
             if (std::abs(pan) > 0.01)      r += " pan=" + fmtF(pan, 1);
             if (loops && smp.endLoop > smp.startLoop && smp.startLoop >= smp.start

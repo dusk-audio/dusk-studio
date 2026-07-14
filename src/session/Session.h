@@ -393,7 +393,7 @@ public:
     static constexpr float kMaxBpm = 300.0f;
     static float clampBpm (float b) noexcept
     {
-        return std::isfinite (b) ? juce::jlimit (kMinBpm, kMaxBpm, b) : 120.0f;
+        return std::isfinite (b) ? std::clamp (b, kMinBpm, kMaxBpm) : 120.0f;
     }
 
     // Replace the points. Input need not be sorted; this sorts by sample, clamps
@@ -411,7 +411,7 @@ public:
         for (auto& p : pts)
         {
             p.bpm = clampBpm (p.bpm);
-            p.timelineSamples = juce::jmax ((std::int64_t) 0, p.timelineSamples);
+            p.timelineSamples = std::max ((std::int64_t) 0, p.timelineSamples);
             if (! points_.empty() && points_.back().timelineSamples == p.timelineSamples)
                 points_.back() = p;                 // collision: last wins
             else
@@ -450,7 +450,7 @@ public:
             const std::int64_t segEnd = (i + 1 < points_.size())
                                          ? points_[i + 1].timelineSamples
                                          : std::numeric_limits<std::int64_t>::max();
-            const std::int64_t upTo = juce::jmin (sample, segEnd);
+            const std::int64_t upTo = std::min (sample, segEnd);
             ticks += (double) (upTo - segStart) * (double) points_[i].bpm * k;
         }
         return ticks;
@@ -684,7 +684,7 @@ enum class FadeShape : int
 // painting - keep in sync.
 inline float applyFadeShape (float t, FadeShape s) noexcept
 {
-    t = juce::jlimit (0.0f, 1.0f, t);
+    t = std::clamp (t, 0.0f, 1.0f);
     switch (s)
     {
         case FadeShape::Linear:      return t;

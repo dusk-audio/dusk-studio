@@ -1,6 +1,7 @@
 #include "PluginSlot.h"
 #include "AtomicPark.h"
 #include "PluginManager.h"
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 
@@ -334,7 +335,7 @@ void PluginSlot::prepareToPlay (double sampleRate, int blockSize)
     const juce::SpinLock::ScopedLockType processGuard (processLock);
 
     preparedSampleRate = sampleRate;
-    preparedBlockSize  = juce::jmax (1, blockSize);
+    preparedBlockSize  = std::max (1, blockSize);
     secondsPerTick     = 1.0 / (double) juce::Time::getHighResolutionTicksPerSecond();
 
     // Pre-size the stereo scratch so the audio thread never allocates when
@@ -1255,8 +1256,8 @@ void PluginSlot::processMonoBlock (float* monoData, int numSamples,
             inPtrs[0] = nullptr;
         }
 
-        if (! r->processBlockSync (inPtrs, juce::jmax (rNumIn, 0),
-                                       juce::jmax (rNumOut, 0),
+        if (! r->processBlockSync (inPtrs, std::max (rNumIn, 0),
+                                       std::max (rNumOut, 0),
                                        numSamples, midiMessages,
                                        kOopProcessTimeoutNs))
         {
@@ -1324,7 +1325,7 @@ void PluginSlot::processMonoBlock (float* monoData, int numSamples,
         // symmetrical avoids a foot-gun if filtering ever loosens.
         if (numSamples > stereoScratch.getNumSamples()) return;
 
-        const int procCh = juce::jmin (numOut, stereoScratch.getNumChannels());
+        const int procCh = std::min (numOut, stereoScratch.getNumChannels());
         for (int c = 0; c < procCh; ++c)
             stereoScratch.clear (c, 0, numSamples);
 
@@ -1435,8 +1436,8 @@ void PluginSlot::processStereoBlock (float* L, float* R, int numSamples,
             return;
         }
 
-        if (! r->processBlockSync (inPtrs, juce::jmax (rNumIn, 0),
-                                       juce::jmax (rNumOut, 0),
+        if (! r->processBlockSync (inPtrs, std::max (rNumIn, 0),
+                                       std::max (rNumOut, 0),
                                        numSamples, midiMessages,
                                        kOopProcessTimeoutNs))
         {
@@ -1522,8 +1523,8 @@ void PluginSlot::processStereoBlock (float* L, float* R, int numSamples,
         // - JUCE's contract is that the plugin only reads numIn channels,
         // but copying mono there is harmless and avoids leaving uninit
         // memory in the buffer (which we otherwise read back as outR).
-        const int procCh = juce::jmin (juce::jmax (numIn, numOut),
-                                         stereoScratch.getNumChannels());
+        const int procCh = std::min (std::max (numIn, numOut),
+                                       stereoScratch.getNumChannels());
         for (int c = 1; c < procCh; ++c)
             stereoScratch.copyFrom (c, 0, mono, numSamples);
 
@@ -1551,7 +1552,7 @@ void PluginSlot::processStereoBlock (float* L, float* R, int numSamples,
         // separate storage that may hold the previous block's plugin output.
         if (numSamples > stereoScratch.getNumSamples()) return;
 
-        const int procCh = juce::jmin (numOut, stereoScratch.getNumChannels());
+        const int procCh = std::min (numOut, stereoScratch.getNumChannels());
         for (int c = 0; c < procCh; ++c)
             stereoScratch.clear (c, 0, numSamples);
 
@@ -1629,7 +1630,7 @@ void PluginSlot::setParamNormalised (int paramIndex, float value01) noexcept
     const int slot = (sz1 > 0) ? s1 : s2;
     paramQueue[(size_t) slot] = ParamWrite {
         paramIndex,
-        juce::jlimit (0.0f, 1.0f, value01),
+        std::clamp (value01, 0.0f, 1.0f),
         currentLoadEpoch.load (std::memory_order_acquire)
     };
     paramFifo.finishedWrite (1);
@@ -1843,7 +1844,7 @@ void PluginSlot::applyShellParamFromChild (int paramIndex, float value01) noexce
     if (param == nullptr) return;
 
     applyingFromMirror.store (true, std::memory_order_release);
-    param->setValueNotifyingHost (juce::jlimit (0.0f, 1.0f, value01));
+    param->setValueNotifyingHost (std::clamp (value01, 0.0f, 1.0f));
     applyingFromMirror.store (false, std::memory_order_release);
 }
 

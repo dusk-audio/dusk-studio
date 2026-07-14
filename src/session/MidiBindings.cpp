@@ -554,8 +554,8 @@ std::optional<std::vector<MidiBinding>> deserializeBindingsPreset (const juce::S
     {
         if (! v.is_object()) continue;
         MidiBinding b;
-        b.channel    = juce::jlimit (0, 16,  dusk::json::getInt (v, "channel", 0));
-        b.dataNumber = juce::jlimit (0, 127, dusk::json::getInt (v, "data", 0));
+        b.channel    = std::clamp (dusk::json::getInt (v, "channel", 0), 0, 16);
+        b.dataNumber = std::clamp (dusk::json::getInt (v, "data", 0), 0, 127);
         const int rawTrig = dusk::json::getInt (v, "trigger", (int) MidiBindingTrigger::CC);
         switch (rawTrig)
         {
@@ -631,7 +631,7 @@ std::optional<std::vector<MidiBinding>> deserializeBindingsPreset (const juce::S
         b.targetIndex = dusk::json::getInt (v, "target_idx", 0);
         b.paramIndex  = dusk::json::getInt (v, "param_idx", 0);
         if (v.contains ("button_mode"))
-            b.buttonMode = (MidiButtonMode) juce::jlimit (0, 1, dusk::json::getInt (v, "button_mode", 0));
+            b.buttonMode = (MidiButtonMode) std::clamp (dusk::json::getInt (v, "button_mode", 0), 0, 1);
         if (b.isValid()) out.push_back (b);
     }
     return out;

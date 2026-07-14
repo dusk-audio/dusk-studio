@@ -26,6 +26,10 @@ namespace json = ::dusk::json;
 
 namespace
 {
+// clamp with jlimit's argument order (lo, hi, value).
+template <typename T>
+inline T jlimit (T lo, T hi, T value) noexcept { return std::clamp (value, lo, hi); }
+
 // Save path builds ordered_json so key order follows insertion order, keeping
 // session.json diffs stable across saves.
 using JObj = nlohmann::ordered_json;
@@ -90,7 +94,7 @@ inline AutomationPoint parseAutomationPoint (const nlohmann::json& pv, double fa
     // safe default; ±inf is already clamped to the [0,1] range by jlimit.
     float rawV = json::getFloat (pv, "v", 0.0f);
     if (std::isnan (rawV)) rawV = 0.0f;
-    pt.value         = juce::jlimit (0.0f, 1.0f, rawV);
+    pt.value         = jlimit (0.0f, 1.0f, rawV);
     const float bpm  = json::getFloat (pv, "bpm", safeFallback);
     // A zero / negative bpm would break tempo-retime math (division by it),
     // so accept only a finite, strictly-positive value; else fall back.
@@ -851,7 +855,7 @@ void restoreTrack (Track& t, const nlohmann::json& v, double defaultRecordBpm,
         fr.timelineStart   = 0;
         fr.lengthInSamples = json::getInt64 (v, "frozen_len", 0);
         fr.sourceOffset    = 0;
-        fr.numChannels     = juce::jlimit (1, 2, json::getInt (v, "frozen_channels", 2));
+        fr.numChannels     = jlimit (1, 2, json::getInt (v, "frozen_channels", 2));
         fr.gainDb          = 0.0f;
         t.frozenPluginBypass.store (json::getBool (v, "frozen_plugin_bypass", false));
         // A frozen flag with no usable WAV (missing file, zero length) is
@@ -878,7 +882,7 @@ void restoreTrack (Track& t, const nlohmann::json& v, double defaultRecordBpm,
 
     {
         const auto& buses = json::array (v, "bus_assign");
-        const int n = juce::jmin (ChannelStripParams::kNumBuses, (int) buses.size());
+        const int n = std::min (ChannelStripParams::kNumBuses, (int) buses.size());
         for (int i = 0; i < n; ++i)
             t.strip.busAssign[(size_t) i].store (buses[(size_t) i].is_boolean() && buses[(size_t) i].get<bool>(),
                                                  std::memory_order_relaxed);
@@ -886,7 +890,7 @@ void restoreTrack (Track& t, const nlohmann::json& v, double defaultRecordBpm,
 
     {
         const auto& auxLevels = json::array (v, "aux_send_db");
-        const int n = juce::jmin (ChannelStripParams::kNumAuxSends, (int) auxLevels.size());
+        const int n = std::min (ChannelStripParams::kNumAuxSends, (int) auxLevels.size());
         for (int i = 0; i < n; ++i)
             t.strip.auxSendDb[(size_t) i].store (auxLevels[(size_t) i].is_number()
                                                      ? (float) auxLevels[(size_t) i].get<double>() : 0.0f,
@@ -894,7 +898,7 @@ void restoreTrack (Track& t, const nlohmann::json& v, double defaultRecordBpm,
     }
     {
         const auto& auxPrePost = json::array (v, "aux_send_pre_fader");
-        const int n = juce::jmin (ChannelStripParams::kNumAuxSends, (int) auxPrePost.size());
+        const int n = std::min (ChannelStripParams::kNumAuxSends, (int) auxPrePost.size());
         for (int i = 0; i < n; ++i)
             t.strip.auxSendPreFader[(size_t) i].store (auxPrePost[(size_t) i].is_boolean()
                                                            && auxPrePost[(size_t) i].get<bool>(),
@@ -1050,11 +1054,11 @@ void restoreTrack (Track& t, const nlohmann::json& v, double defaultRecordBpm,
             // loader below) so a hand-edited or truncated session.json can't
             // seed negative values that underflow PlaybackEngine's read-pointer
             // math (readStart = sourceOffset + (firstWithin - timelineStart)).
-            r.timelineStart   = juce::jmax ((std::int64_t) 0, (std::int64_t) json::getInt64 (rv, "timeline_start", 0));
-            r.lengthInSamples = juce::jmax ((std::int64_t) 0, (std::int64_t) json::getInt64 (rv, "length", 0));
-            r.sourceOffset    = juce::jmax ((std::int64_t) 0, (std::int64_t) json::getInt64 (rv, "source_offset", 0));
-            r.fadeInSamples   = juce::jmax ((std::int64_t) 0, (std::int64_t) json::getInt64 (rv, "fade_in", 0));
-            r.fadeOutSamples  = juce::jmax ((std::int64_t) 0, (std::int64_t) json::getInt64 (rv, "fade_out", 0));
+            r.timelineStart   = std::max ((std::int64_t) 0, (std::int64_t) json::getInt64 (rv, "timeline_start", 0));
+            r.lengthInSamples = std::max ((std::int64_t) 0, (std::int64_t) json::getInt64 (rv, "length", 0));
+            r.sourceOffset    = std::max ((std::int64_t) 0, (std::int64_t) json::getInt64 (rv, "source_offset", 0));
+            r.fadeInSamples   = std::max ((std::int64_t) 0, (std::int64_t) json::getInt64 (rv, "fade_in", 0));
+            r.fadeOutSamples  = std::max ((std::int64_t) 0, (std::int64_t) json::getInt64 (rv, "fade_out", 0));
             auto loadShape = [] (int i) -> FadeShape
             {
                 if (i >= 0 && i <= (int) FadeShape::RaisedCosine) return (FadeShape) i;
@@ -1064,7 +1068,7 @@ void restoreTrack (Track& t, const nlohmann::json& v, double defaultRecordBpm,
             r.fadeOutShape    = loadShape (json::getInt (rv, "fade_out_shape", 0));
             r.fadeInAuto      = json::getBool (rv, "fade_in_auto", false);
             r.fadeOutAuto     = json::getBool (rv, "fade_out_auto", false);
-            r.numChannels     = juce::jlimit (1, 2, json::getInt (rv, "num_channels", 1));
+            r.numChannels     = jlimit (1, 2, json::getInt (rv, "num_channels", 1));
             r.gainDb          = json::has (rv, "gain_db") ? finiteFloatOr (rv["gain_db"], 0.0f) : 0.0f;
             r.customColour    = json::has (rv, "custom_colour")
                                  ? juce::Colour::fromString (juce::String (json::getString (rv, "custom_colour")))
@@ -1081,8 +1085,8 @@ void restoreTrack (Track& t, const nlohmann::json& v, double defaultRecordBpm,
                     TakeRef take;
                     take.file            = resolvePortablePath (json::getString (tv, "file"),
                                                                  sessionDir, missingFiles);
-                    take.sourceOffset    = juce::jmax ((std::int64_t) 0, (std::int64_t) json::getInt64 (tv, "source_offset", 0));
-                    take.lengthInSamples = juce::jmax ((std::int64_t) 0, (std::int64_t) json::getInt64 (tv, "length", 0));
+                    take.sourceOffset    = std::max ((std::int64_t) 0, (std::int64_t) json::getInt64 (tv, "source_offset", 0));
+                    take.lengthInSamples = std::max ((std::int64_t) 0, (std::int64_t) json::getInt64 (tv, "length", 0));
                     r.previousTakes.push_back (std::move (take));
                 }
             }
@@ -1104,11 +1108,11 @@ void restoreTrack (Track& t, const nlohmann::json& v, double defaultRecordBpm,
         {
             if (! nv.is_object()) continue;
             MidiNote n;
-            n.channel       = juce::jlimit (1, 16,  json::getInt (nv, "ch", 1));
-            n.noteNumber    = juce::jlimit (0, 127, json::getInt (nv, "note", 60));
-            n.velocity      = juce::jlimit (1, 127, json::getInt (nv, "vel", 100));
-            n.startTick     = juce::jmax ((std::int64_t) 0, (std::int64_t) json::getInt64 (nv, "start", 0));
-            n.lengthInTicks = juce::jmax ((std::int64_t) 0, (std::int64_t) json::getInt64 (nv, "len", 0));
+            n.channel       = jlimit (1, 16,  json::getInt (nv, "ch", 1));
+            n.noteNumber    = jlimit (0, 127, json::getInt (nv, "note", 60));
+            n.velocity      = jlimit (1, 127, json::getInt (nv, "vel", 100));
+            n.startTick     = std::max ((std::int64_t) 0, (std::int64_t) json::getInt64 (nv, "start", 0));
+            n.lengthInTicks = std::max ((std::int64_t) 0, (std::int64_t) json::getInt64 (nv, "len", 0));
             dst.push_back (n);
         }
     };
@@ -1120,10 +1124,10 @@ void restoreTrack (Track& t, const nlohmann::json& v, double defaultRecordBpm,
         {
             if (! cv.is_object()) continue;
             MidiCc c;
-            c.channel    = juce::jlimit (1, 16,  json::getInt (cv, "ch", 1));
-            c.controller = juce::jlimit (0, 127, json::getInt (cv, "ctrl", 0));
-            c.value      = juce::jlimit (0, 127, json::getInt (cv, "val", 0));
-            c.atTick     = juce::jmax ((std::int64_t) 0, (std::int64_t) json::getInt64 (cv, "at", 0));
+            c.channel    = jlimit (1, 16,  json::getInt (cv, "ch", 1));
+            c.controller = jlimit (0, 127, json::getInt (cv, "ctrl", 0));
+            c.value      = jlimit (0, 127, json::getInt (cv, "val", 0));
+            c.atTick     = std::max ((std::int64_t) 0, (std::int64_t) json::getInt64 (cv, "at", 0));
             dst.push_back (c);
         }
     };
@@ -1138,9 +1142,9 @@ void restoreTrack (Track& t, const nlohmann::json& v, double defaultRecordBpm,
         {
             if (! rv.is_object()) continue;
             MidiRegion r;
-            r.timelineStart   = juce::jmax ((std::int64_t) 0, (std::int64_t) json::getInt64 (rv, "timeline_start", 0));
-            r.lengthInSamples = juce::jmax ((std::int64_t) 0, (std::int64_t) json::getInt64 (rv, "length_samples", 0));
-            r.lengthInTicks   = juce::jmax ((std::int64_t) 0, (std::int64_t) json::getInt64 (rv, "length_ticks", 0));
+            r.timelineStart   = std::max ((std::int64_t) 0, (std::int64_t) json::getInt64 (rv, "timeline_start", 0));
+            r.lengthInSamples = std::max ((std::int64_t) 0, (std::int64_t) json::getInt64 (rv, "length_samples", 0));
+            r.lengthInTicks   = std::max ((std::int64_t) 0, (std::int64_t) json::getInt64 (rv, "length_ticks", 0));
             r.customColour    = json::has (rv, "custom_colour")
                                  ? juce::Colour::fromString (juce::String (json::getString (rv, "custom_colour")))
                                  : juce::Colour();
@@ -1169,7 +1173,7 @@ void restoreTrack (Track& t, const nlohmann::json& v, double defaultRecordBpm,
                 {
                     if (! tv.is_object()) continue;
                     MidiTakeRef take;
-                    take.lengthInTicks = juce::jmax ((std::int64_t) 0, (std::int64_t) json::getInt64 (tv, "length_ticks", 0));
+                    take.lengthInTicks = std::max ((std::int64_t) 0, (std::int64_t) json::getInt64 (tv, "length_ticks", 0));
                     parseNotes (json::array (tv, "notes"), take.notes);
                     parseCcs   (json::array (tv, "ccs"),   take.ccs);
                     r.previousTakes.push_back (std::move (take));
@@ -1627,7 +1631,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
             // session tempo instead of using a raw out-of-range value. Reject a
             // value past float range before it narrows (UB) - keep the seeded tempo.
             if (std::isfinite (peeked) && std::abs (peeked) <= (double) std::numeric_limits<float>::max())
-                sessionLoadBpm = juce::jlimit (30.0, 300.0, peeked);
+                sessionLoadBpm = jlimit (30.0, 300.0, peeked);
         }
     }
 
@@ -1684,7 +1688,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
             if (auto str = json::getString (v, "name");   ! str.empty()) lane.name   = str;
             if (auto str = json::getString (v, "colour"); ! str.empty()) lane.colour = hexToColour (str, lane.colour);
             if (json::has (v, "return_level_db"))
-                lane.params.returnLevelDb.store (juce::jlimit (-100.0f, 12.0f, json::getFloat (v, "return_level_db", 0.0f)));
+                lane.params.returnLevelDb.store (jlimit (-100.0f, 12.0f, json::getFloat (v, "return_level_db", 0.0f)));
             if (json::has (v, "mute"))
                 lane.params.mute.store (json::getBool (v, "mute", false));
             if (json::has (v, "output_pair"))
@@ -1693,7 +1697,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                 lane.params.outputPair.store (-1);   // model default: Master only
             {
                 const auto& slots = json::array (v, "plugin_slots");
-                const int sn = juce::jmin (AuxLaneParams::kMaxLanePlugins, (int) slots.size());
+                const int sn = std::min (AuxLaneParams::kMaxLanePlugins, (int) slots.size());
                 for (int p = 0; p < sn; ++p)
                 {
                     const auto& sv = slots[(size_t) p];
@@ -1788,7 +1792,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         // session (no pre-load reset), so a conditional store would inherit the
         // previously-loaded session's value. (Audible master state: level /
         // routing / mute.)
-        s.master().faderDb.store    (master.contains ("fader_db")    ? juce::jlimit (-100.0f, 12.0f, json::getFloat (master, "fader_db", 0.0f)) : 0.0f);
+        s.master().faderDb.store    (master.contains ("fader_db")    ? jlimit (-100.0f, 12.0f, json::getFloat (master, "fader_db", 0.0f)) : 0.0f);
         s.master().outputPair.store (json::getInt  (master, "output_pair", -1));
         s.master().mute.store       (json::getBool (master, "mute", false));
         // Reset-when-absent too (same rationale as the level/routing/mute lines
@@ -1957,7 +1961,7 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
             // it and keep the existing tempo instead.
             const double bpm = json::getDouble (tport, "tempo_bpm", 0.0);
             if (std::isfinite (bpm) && std::abs (bpm) <= (double) std::numeric_limits<float>::max())
-                s.tempoBpm.store (juce::jlimit (30.0f, 300.0f, (float) bpm));
+                s.tempoBpm.store (jlimit (30.0f, 300.0f, (float) bpm));
         }
         if (json::has (tport, "tempo_points"))
         {
@@ -1970,13 +1974,13 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                     const double bpm = json::getDouble (o, "bpm", 0.0);
                     if (! std::isfinite (bpm)) continue;
                     pts.push_back ({ json::getInt64 (o, "sample", 0),
-                                     juce::jlimit (30.0f, 300.0f, (float) bpm) });
+                                     jlimit (30.0f, 300.0f, (float) bpm) });
                 }
             s.tempoMap.setPoints (std::move (pts));
         }
         else
             s.tempoMap.setPoints ({});   // no map in the file -> clear any stale map from a prior load
-        if (json::has (tport, "ui_stage"))          s.uiStage.store          (juce::jlimit (0, 3, json::getInt (tport, "ui_stage", 0)));
+        if (json::has (tport, "ui_stage"))          s.uiStage.store          (jlimit (0, 3, json::getInt (tport, "ui_stage", 0)));
         if (json::has (tport, "sync_source_input"))
             s.syncSourceInputIdentifier = json::getString (tport, "sync_source_input");
         if (json::has (tport, "sync_follow_tempo"))
@@ -1993,13 +1997,13 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
             s.mcu.outputIdentifier = json::getString (tport, "mcu_output_id");
         if (json::has (tport, "mcu_assign_mode"))
         {
-            const int m = juce::jlimit (0, 6, json::getInt (tport, "mcu_assign_mode", 0));
+            const int m = jlimit (0, 6, json::getInt (tport, "mcu_assign_mode", 0));
             s.mcu.assignMode.store (m, std::memory_order_relaxed);
         }
-        if (json::has (tport, "beats_per_bar"))     s.beatsPerBar.store      (juce::jlimit (1, 32, json::getInt (tport, "beats_per_bar", 4)));
-        if (json::has (tport, "beat_unit"))         s.beatUnit.store         (juce::jlimit (1, 32, json::getInt (tport, "beat_unit", 4)));
+        if (json::has (tport, "beats_per_bar"))     s.beatsPerBar.store      (jlimit (1, 32, json::getInt (tport, "beats_per_bar", 4)));
+        if (json::has (tport, "beat_unit"))         s.beatUnit.store         (jlimit (1, 32, json::getInt (tport, "beat_unit", 4)));
         if (json::has (tport, "metronome_enabled")) s.metronomeEnabled.store (json::getBool (tport, "metronome_enabled", false));
-        if (json::has (tport, "metronome_vol_db"))  s.metronomeVolDb.store   (juce::jlimit (-60.0f, 12.0f, json::getFloat (tport, "metronome_vol_db", 0.0f)));
+        if (json::has (tport, "metronome_vol_db"))  s.metronomeVolDb.store   (jlimit (-60.0f, 12.0f, json::getFloat (tport, "metronome_vol_db", 0.0f)));
         if (json::has (tport, "metronome_click_recording"))
             s.metronomeClickWhileRecording.store (json::getBool (tport, "metronome_click_recording", false));
         if (json::has (tport, "metronome_click_playing"))
@@ -2009,15 +2013,15 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
         if (json::has (tport, "metronome_polyphonic"))
             s.metronomePolyphonic         .store (json::getBool (tport, "metronome_polyphonic", false));
         if (json::has (tport, "count_in_enabled"))  s.countInEnabled.store   (json::getBool (tport, "count_in_enabled", false));
-        if (json::has (tport, "time_display_mode")) s.timeDisplayMode.store  (juce::jlimit (0, 1, json::getInt (tport, "time_display_mode", 0)));
+        if (json::has (tport, "time_display_mode")) s.timeDisplayMode.store  (jlimit (0, 1, json::getInt (tport, "time_display_mode", 0)));
         // jumpback_seconds was a previous-version Session field powering
         // the standalone "« 5s" jumpback button; the button has been
         // removed in favor of the DP-24SD-style multi-action REW. We
         // silently ignore the legacy field on load so older session.json
         // files still parse cleanly.
         if (json::has (tport, "last_record_point")) s.lastRecordPointSamples.store (json::getInt64 (tport, "last_record_point", 0));
-        if (json::has (tport, "pre_roll_seconds"))  s.preRollSeconds.store   (juce::jlimit (0.0f, 300.0f, json::getFloat (tport, "pre_roll_seconds", 0.0f)));
-        if (json::has (tport, "post_roll_seconds")) s.postRollSeconds.store  (juce::jlimit (0.0f, 300.0f, json::getFloat (tport, "post_roll_seconds", 0.0f)));
+        if (json::has (tport, "pre_roll_seconds"))  s.preRollSeconds.store   (jlimit (0.0f, 300.0f, json::getFloat (tport, "pre_roll_seconds", 0.0f)));
+        if (json::has (tport, "post_roll_seconds")) s.postRollSeconds.store  (jlimit (0.0f, 300.0f, json::getFloat (tport, "post_roll_seconds", 0.0f)));
         // Default true when absent (Session.h) so an older file lacking the key
         // doesn't inherit a disabled flag from a previously-loaded session.
         s.preRollEnabled.store  (json::getBool (tport, "pre_roll_enabled", true));
@@ -2033,8 +2037,8 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
             {
                 if (! v.is_object()) continue;
                 MidiBinding b;
-                b.channel     = juce::jlimit (0, 16,  json::getInt (v, "channel", 0));
-                b.dataNumber  = juce::jlimit (0, 127, json::getInt (v, "data", 0));
+                b.channel     = jlimit (0, 16,  json::getInt (v, "channel", 0));
+                b.dataNumber  = jlimit (0, 127, json::getInt (v, "data", 0));
                 const int rawTrig = json::getInt (v, "trigger", (int) MidiBindingTrigger::CC);
                 switch (rawTrig)
                 {
@@ -2129,15 +2133,15 @@ bool SessionSerializer::load (Session& s, const juce::File& source)
                                             ? Session::kBankSize * kPackedEqBands - 1
                                             : Session::kBankSize - 1))
                                     : Session::kNumTracks - 1)))));
-                b.targetIndex = juce::jlimit (0, maxIdx, rawIdx);
+                b.targetIndex = jlimit (0, maxIdx, rawIdx);
                 // paramIndex only meaningful for TrackPluginParam, but
                 // round-trip unconditionally for forward-compat. Clamp
                 // wide so future plugins with hundreds of params
                 // round-trip cleanly.
                 if (json::has (v, "param_idx"))
-                    b.paramIndex = juce::jlimit (0, 65535, json::getInt (v, "param_idx", 0));
+                    b.paramIndex = jlimit (0, 65535, json::getInt (v, "param_idx", 0));
                 if (json::has (v, "button_mode"))
-                    b.buttonMode = (MidiButtonMode) juce::jlimit (0, 1, json::getInt (v, "button_mode", 0));
+                    b.buttonMode = (MidiButtonMode) jlimit (0, 1, json::getInt (v, "button_mode", 0));
                 if (b.isValid())
                     fresh->push_back (b);
             }

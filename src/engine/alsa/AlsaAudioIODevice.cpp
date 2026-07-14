@@ -286,7 +286,7 @@ juce::String cardOfHwId (const juce::String& id)
 
 void AlsaAudioIODevice::setRequestedPeriods (int p) noexcept
 {
-    gRequestedPeriods.store (juce::jlimit (2, 16, p), std::memory_order_relaxed);
+    gRequestedPeriods.store (std::clamp (p, 2, 16), std::memory_order_relaxed);
 }
 int AlsaAudioIODevice::getRequestedPeriods() noexcept
 {
@@ -484,7 +484,7 @@ bool AlsaAudioIODevice::configurePcm (snd_pcm_t* handle, bool isCapture,
         unsigned int minCh = 0, maxCh = 0;
         snd_pcm_hw_params_get_channels_min (hw, &minCh);
         snd_pcm_hw_params_get_channels_max (hw, &maxCh);
-        numChannels = juce::jlimit (minCh, maxCh, numChannels);
+        numChannels = std::clamp (numChannels, minCh, maxCh);
         if (snd_pcm_hw_params_set_channels (handle, hw, numChannels) < 0)
         {
             lastError = "device rejected channel count " + juce::String ((int) numChannels);
@@ -552,7 +552,7 @@ juce::String AlsaAudioIODevice::open (const juce::BigInteger& inputChannels,
         return lastError;
     }
 
-    snd_pcm_uframes_t period = (snd_pcm_uframes_t) juce::jmax (32, bufferSizeSamples);
+    snd_pcm_uframes_t period = (snd_pcm_uframes_t) std::max (32, bufferSizeSamples);
     unsigned int     periods = (unsigned int) gRequestedPeriods.load (std::memory_order_relaxed);
     unsigned int     rate    = (unsigned int) sampleRate;
 
@@ -672,10 +672,10 @@ juce::String AlsaAudioIODevice::open (const juce::BigInteger& inputChannels,
     // callback gets silence / no input. Fall back to the first available
     // channel(s) (a default stereo pair) so we always have at least one.
     if (wantOutput && clampedOutMask.isZero() && (int) outNumChannels > 0)
-        for (int i = 0; i < juce::jmin (2, (int) outNumChannels); ++i)
+        for (int i = 0; i < std::min (2, (int) outNumChannels); ++i)
         { activeOutDeviceChannelIndex.add (i); clampedOutMask.setBit (i); }
     if (wantInput && clampedInMask.isZero() && (int) inNumChannels > 0)
-        for (int i = 0; i < juce::jmin (2, (int) inNumChannels); ++i)
+        for (int i = 0; i < std::min (2, (int) inNumChannels); ++i)
         { activeInDeviceChannelIndex.add (i); clampedInMask.setBit (i); }
 
     // Publish the actually-active masks. The requested mask can be wider than the
@@ -690,8 +690,8 @@ juce::String AlsaAudioIODevice::open (const juce::BigInteger& inputChannels,
     const int activeOut = activeOutDeviceChannelIndex.size();
     const int activeIn  = activeInDeviceChannelIndex.size();
 
-    callbackOutFloats.setSize (juce::jmax (1, activeOut), periodSize, false, true, false);
-    callbackInFloats .setSize (juce::jmax (1, activeIn),  periodSize, false, true, false);
+    callbackOutFloats.setSize (std::max (1, activeOut), periodSize, false, true, false);
+    callbackInFloats .setSize (std::max (1, activeIn),  periodSize, false, true, false);
     callbackOutPointers.resize (activeOut);
     callbackInPointers .resize (activeIn);
     for (int i = 0; i < activeOut; ++i) callbackOutPointers.set (i, callbackOutFloats.getWritePointer (i));
@@ -1232,7 +1232,7 @@ juce::String AlsaAudioIODevice::runSelfTest()
 
             float maxErr = 0.0f;
             for (int i = 0; i < kFrames; ++i)
-                maxErr = juce::jmax (maxErr, std::abs (src.getSample (0, i) - dest.getSample (0, i)));
+                maxErr = std::max (maxErr, std::abs (src.getSample (0, i) - dest.getSample (0, i)));
 
             record (juce::String ("Format round-trip ") + c.name,
                      maxErr <= c.epsilon,
@@ -1289,7 +1289,7 @@ juce::String AlsaAudioIODevice::runSelfTest()
         float maxErr = 0.0f;
         for (int a = 0; a < kActive; ++a)
             for (int f = 0; f < kFrames; ++f)
-                maxErr = juce::jmax (maxErr, std::abs (src.getSample (a, f) - dest.getSample (a, f)));
+                maxErr = std::max (maxErr, std::abs (src.getSample (a, f) - dest.getSample (a, f)));
 
         record ("Channel routing - round-trip preserves active channels",
                  maxErr <= 2.0f / kInt32Scale,

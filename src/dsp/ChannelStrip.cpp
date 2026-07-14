@@ -43,8 +43,8 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     }
     for (auto& b : auxSendPre) b = false;
 
-    tempMono.assign ((size_t) juce::jmax (1, blockSize), 0.0f);
-    tempStereoBuffer.setSize (2, juce::jmax (1, blockSize), false, false, true);
+    tempMono.assign ((size_t) std::max (1, blockSize), 0.0f);
+    tempStereoBuffer.setSize (2, std::max (1, blockSize), false, false, true);
 
     // Hardware insert + the plugin <-> hardware crossfade gate. Same
     // 20 ms ramp as the rest of the strip so the transition feels in
@@ -58,8 +58,8 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     activeInsertMode = insertMode.load (std::memory_order_relaxed);
     activeInsertGain.setCurrentAndTargetValue (
         activeInsertMode == kInsertEmpty ? 0.0f : 1.0f);
-    insertScratchL.assign ((size_t) juce::jmax (1, blockSize), 0.0f);
-    insertScratchR.assign ((size_t) juce::jmax (1, blockSize), 0.0f);
+    insertScratchL.assign ((size_t) std::max (1, blockSize), 0.0f);
+    insertScratchR.assign ((size_t) std::max (1, blockSize), 0.0f);
 
     // PDC compensation delay lines, pre-sized to the max so setDelay() is a pure
     // parameter update (no RT allocation). The compensation amount itself is set
@@ -84,13 +84,13 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     // sees an unprepared instance. If the slot has no plugin loaded, this
     // is essentially a no-op; if a plugin is loaded across a device-rate
     // change, the slot re-preps it for the new config.
-    pluginSlot.prepareToPlay (sampleRate, juce::jmax (1, blockSize));
+    pluginSlot.prepareToPlay (sampleRate, std::max (1, blockSize));
 
     // Native CLAP insert (mirrors AuxLaneStrip). Stash the spec; re-activate a loaded
     // slot at the new rate; consummate a pending session-restore now the SR is known.
     // Engine fences this via its process gate.
     preparedSampleRate = sampleRate;
-    preparedBlockSize  = juce::jmax (1, blockSize);
+    preparedBlockSize  = std::max (1, blockSize);
 #if DUSKSTUDIO_HAS_NATIVE_CLAP
     if (nativeClapSlot.isLoaded())
     {
@@ -185,7 +185,7 @@ void ChannelStrip::prepare (double sampleRate, int blockSize, int oversamplingFa
     const int factor = (oversamplingFactor == 2 || oversamplingFactor == 4)
                             ? oversamplingFactor : 1;
     oversampleFactor = factor;
-    const int bsClamped = juce::jmax (1, blockSize);
+    const int bsClamped = std::max (1, blockSize);
     oversampler.setFactor (factor);
     oversampler.prepare (bsClamped);
     osMonoScratchR.assign ((size_t) bsClamped, 0.0f);
@@ -718,7 +718,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         {
             if (buf == nullptr || n <= 0) return 0.0f;
             const auto rng = juce::FloatVectorOperations::findMinAndMax (buf, n);
-            return juce::jmax (std::abs (rng.getStart()), std::abs (rng.getEnd()));
+            return std::max (std::abs (rng.getStart()), std::abs (rng.getEnd()));
         };
         const float peakL = peakAbs (inL, numSamples);
         const float peakR = (stereo && inR != nullptr) ? peakAbs (inR, numSamples) : 0.0f;
@@ -737,7 +737,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         const std::int64_t requiredDrain =
             (pdcAppliedSamples > 0 && osLatencySamples > 0)
                 ? (std::int64_t) pdcAppliedSamples + (std::int64_t) osLatencySamples
-                : (std::int64_t) juce::jmax (pdcAppliedSamples, osLatencySamples);
+                : (std::int64_t) std::max (pdcAppliedSamples, osLatencySamples);
         if (peakL <= 1e-6f && peakR <= 1e-6f && pdcSilentRun >= requiredDrain)
         {
            #if DUSKSTUDIO_HAS_DUSK_DSP
@@ -884,7 +884,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         // session's deepest-latency track on every downstream route.
         {
             const auto rng = juce::FloatVectorOperations::findMinAndMax (tempMono.data(), numSamples);
-            relatchPdcIfDrained (juce::jmax (std::abs (rng.getStart()), std::abs (rng.getEnd())),
+            relatchPdcIfDrained (std::max (std::abs (rng.getStart()), std::abs (rng.getEnd())),
                                   numSamples);
             // Skip PDC while freeze-capturing: the strip's delay-comp is an
             // inter-track alignment shift, not part of the track's audio. Baking
@@ -1103,8 +1103,8 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         {
             const auto rL = juce::FloatVectorOperations::findMinAndMax (L, numSamples);
             const auto rR = juce::FloatVectorOperations::findMinAndMax (R, numSamples);
-            const float pk = juce::jmax (std::abs (rL.getStart()), std::abs (rL.getEnd()),
-                                          std::abs (rR.getStart()), std::abs (rR.getEnd()));
+            const float pk = std::max ({ std::abs (rL.getStart()), std::abs (rL.getEnd()),
+                                          std::abs (rR.getStart()), std::abs (rR.getEnd()) });
             relatchPdcIfDrained (pk, numSamples);
             // See the mono path: skip PDC while freeze-capturing so the baked WAV
             // is pre-PDC and frozen playback applies the alignment delay once.
@@ -1264,8 +1264,8 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             masterL[i] += oL;
             masterR[i] += oR;
             if (scL != nullptr) { scL[i] += oL; scR[i] += oR; }
-            outPeakL = juce::jmax (outPeakL, std::abs (oL));
-            outPeakR = juce::jmax (outPeakR, std::abs (oR));
+            outPeakL = std::max (outPeakL, std::abs (oL));
+            outPeakR = std::max (outPeakR, std::abs (oR));
         }
         publishOutMeter (outPeakL, outPeakR);
         return;
@@ -1289,8 +1289,8 @@ void ChannelStrip::processAndAccumulate (const float* inL,
         const float wetL = sL * gL;
         const float wetR = sR * gR;
         if (scL != nullptr) { scL[i] += wetL; scR[i] += wetR; }
-        outPeakL = juce::jmax (outPeakL, std::abs (wetL));
-        outPeakR = juce::jmax (outPeakR, std::abs (wetR));
+        outPeakL = std::max (outPeakL, std::abs (wetL));
+        outPeakR = std::max (outPeakR, std::abs (wetR));
 
         // Bus routing is EXCLUSIVE with master routing: a track assigned to
         // any bus must not also hit the master direct, otherwise the signal
@@ -1306,7 +1306,7 @@ void ChannelStrip::processAndAccumulate (const float* inL,
             perBusG[a] = busGain[(size_t) a].getNextValue();
             if (perBusG[a] > maxBusG) maxBusG = perBusG[a];
         }
-        const float toMaster = juce::jmax (0.0f, 1.0f - maxBusG);
+        const float toMaster = std::max (0.0f, 1.0f - maxBusG);
 
         masterL[i] += wetL * toMaster;
         masterR[i] += wetR * toMaster;

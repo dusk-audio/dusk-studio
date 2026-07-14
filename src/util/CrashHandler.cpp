@@ -1,5 +1,6 @@
 #include "CrashHandler.h"
 
+#include <algorithm>
 #include <atomic>
 #include <csignal>
 #include <memory>
@@ -72,7 +73,7 @@ void crashCallback (void* /*platformSpecific*/)
         if (in.openedOk())
         {
             const std::int64_t total = in.getTotalLength();
-            const auto bytes = juce::jmin (total, kTailBytes);
+            const auto bytes = std::min (total, kTailBytes);
             in.setPosition (total - bytes);
             juce::MemoryBlock buf;
             in.readIntoMemoryBlock (buf, (int) bytes);

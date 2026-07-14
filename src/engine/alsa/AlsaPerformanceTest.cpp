@@ -70,7 +70,7 @@ public:
         if (fakeLoadUs > 0)
         {
             const auto budgetTicks = (std::int64_t) (((double) fakeLoadUs * 1.0e-6)
-                                                       / juce::jmax (1.0e-12, secondsPerTick));
+                                                       / std::max (1.0e-12, secondsPerTick));
             const auto deadline = t0 + budgetTicks;
             while (juce::Time::getHighResolutionTicks() < deadline) { /* spin */ }
         }
@@ -96,8 +96,8 @@ public:
     Stats computeStats() const
     {
         const int total = callbackCount.load (std::memory_order_acquire);
-        const int measured = juce::jmax (0, total - kWarmupCallbacks);
-        const int n = juce::jmin (measured, kSampleBufferSize);
+        const int measured = std::max (0, total - kWarmupCallbacks);
+        const int n = std::min (measured, kSampleBufferSize);
         Stats s;
         s.n = n;
         if (n == 0)

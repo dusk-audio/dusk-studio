@@ -1,5 +1,6 @@
 #include "InsertAdapter.h"
 
+#include <algorithm>
 #include <cstring>
 
 namespace duskstudio::hosting
@@ -21,7 +22,7 @@ void InsertAdapter::repoint()
 
 void InsertAdapter::prepare (const PortLayout& layout, int maxBlockFrames)
 {
-    maxFrames = juce::jmax (0, maxBlockFrames);
+    maxFrames = std::max (0, maxBlockFrames);
     inChans  = layout.mainInChannels();
     outChans = layout.mainOutChannels();
     scChans  = layout.hasSidechain()
