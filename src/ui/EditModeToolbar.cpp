@@ -1,6 +1,8 @@
 #include "EditModeToolbar.h"
 #include "DuskContextMenu.h"
 
+#include <algorithm>
+
 namespace duskstudio
 {
 namespace
@@ -20,7 +22,7 @@ void paintGrabGlyph (juce::Graphics& g, juce::Rectangle<float> r)
     // Drawn as one filled path (no bitmap asset).
     const float cx = r.getCentreX();
     const float cy = r.getCentreY();
-    const float s  = juce::jmin (r.getWidth(), r.getHeight());
+    const float s  = std::min (r.getWidth(), r.getHeight());
 
     juce::Path p;
 
@@ -80,7 +82,7 @@ void paintCutGlyph (juce::Graphics& g, juce::Rectangle<float> r)
     // Scissors-ish: two crossing strokes with small loops.
     const float cx = r.getCentreX();
     const float cy = r.getCentreY();
-    const float a  = juce::jmin (r.getWidth(), r.getHeight()) * 0.32f;
+    const float a  = std::min (r.getWidth(), r.getHeight()) * 0.32f;
     juce::Path p;
     p.startNewSubPath (cx - a, cy - a); p.lineTo (cx + a, cy + a);
     p.startNewSubPath (cx + a, cy - a); p.lineTo (cx - a, cy + a);

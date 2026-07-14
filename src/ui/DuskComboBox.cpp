@@ -1,6 +1,8 @@
 #include "DuskComboBox.h"
 #include "EmbeddedModal.h"
 
+#include <algorithm>
+
 namespace duskstudio
 {
 namespace
@@ -61,21 +63,21 @@ public:
         {
             if (r.isSep) continue;
             const auto& f = r.isHeader ? headerFont : rowFont;
-            maxTextW = juce::jmax (maxTextW,
+            maxTextW = std::max (maxTextW,
                 (int) std::ceil (f.getStringWidthFloat (r.text)));
         }
         if (title.isNotEmpty())
-            maxTextW = juce::jmax (maxTextW,
+            maxTextW = std::max (maxTextW,
                 (int) std::ceil (headerFont.getStringWidthFloat (title)));
 
-        const int w = juce::jlimit (kMinW, kMaxW,
-                                       maxTextW + kTextXPad + kTrailPad);
+        const int w = std::clamp (maxTextW + kTextXPad + kTrailPad,
+                                    kMinW, kMaxW);
 
         const int headerH = title.isEmpty() ? 0 : 28;
         int total = headerH + kBottomPad;
         for (const auto& r : rowsData)
             total += r.isSep ? kSepH : kRowH;
-        setSize (w, juce::jmax (60, total));
+        setSize (w, std::max (60, total));
     }
 
     void paint (juce::Graphics& g) override
@@ -190,7 +192,7 @@ public:
             {
                 next = (next < 0)
                         ? (dir > 0 ? 0 : (int) rowsData.size() - 1)
-                        : juce::jlimit (0, (int) rowsData.size() - 1, next + dir);
+                        : std::clamp (next + dir, 0, (int) rowsData.size() - 1);
                 const auto& r = rowsData[(size_t) next];
                 if (! r.isSep && ! r.isHeader && r.isEnabled && r.itemId != 0)
                 {
@@ -312,10 +314,10 @@ void DuskComboBox::showPopup()
     int sx = comboScreen.getX();
     int sy = comboScreen.getBottom() + 2;
     if (sy + panelH > parentScreen.getBottom() - 8)
-        sy = juce::jmax (parentScreen.getY() + 8, comboScreen.getY() - panelH - 2);
+        sy = std::max (parentScreen.getY() + 8, comboScreen.getY() - panelH - 2);
     if (sx + panelW > parentScreen.getRight() - 8)
-        sx = juce::jmax (parentScreen.getX() + 8, parentScreen.getRight() - panelW - 8);
-    sx = juce::jmax (parentScreen.getX() + 8, sx);
+        sx = std::max (parentScreen.getX() + 8, parentScreen.getRight() - panelW - 8);
+    sx = std::max (parentScreen.getX() + 8, sx);
 
     sharedComboModal().show (*parent, std::move (panel),
                                 /*onDismiss*/ [safeSelf]

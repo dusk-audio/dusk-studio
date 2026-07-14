@@ -4,6 +4,7 @@
 #include <juce_events/juce_events.h>
 #include <nlohmann/json.hpp>
 #include <functional>
+#include <algorithm>
 
 namespace duskstudio
 {
@@ -51,7 +52,7 @@ inline int comparePrerelease (const juce::String& a, const juce::String& b)
 {
     const auto pa = juce::StringArray::fromTokens (a, ".", {});
     const auto pb = juce::StringArray::fromTokens (b, ".", {});
-    for (int i = 0; i < juce::jmin (pa.size(), pb.size()); ++i)
+    for (int i = 0; i < std::min (pa.size(), pb.size()); ++i)
     {
         const bool na = pa[i].containsOnly ("0123456789") && pa[i].isNotEmpty();
         const bool nb = pb[i].containsOnly ("0123456789") && pb[i].isNotEmpty();

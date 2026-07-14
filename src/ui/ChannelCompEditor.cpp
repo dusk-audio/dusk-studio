@@ -1,8 +1,16 @@
 #include "ChannelCompEditor.h"
 #include "DuskStudioLookAndFeel.h"
 
+#include <algorithm>
+
 namespace duskstudio
 {
+namespace
+{
+// clamp with jlimit's argument order (lo, hi, value).
+template <typename T>
+inline T jlimit (T lo, T hi, T value) noexcept { return std::clamp (value, lo, hi); }
+} // namespace
 namespace
 {
 void styleKnob (juce::Slider& k, juce::Colour fill,
@@ -196,7 +204,7 @@ void ChannelCompEditor::setMode (int modeIndex)
 
 void ChannelCompEditor::refreshLabelsForMode()
 {
-    const int m = juce::jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
+    const int m = jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
 
     // Uniform RAT / ATK / REL / MAKEUP labels across every mode. Matches
     // the inline strip + bus + master comp labels so every comp in the
@@ -308,12 +316,12 @@ void ChannelCompEditor::writeThresholdToMode()
     onButton.setToggleState (true, juce::dontSendNotification);
 
     const float threshDb = (float) threshKnob.getValue();
-    const int mode = juce::jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
+    const int mode = jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
     switch (mode)
     {
         case 0: // Opto: -60 dB -> 100% peak reduction, 0 dB -> 0%
         {
-            const float peakRed = juce::jlimit (0.0f, 100.0f, -threshDb * (100.0f / 60.0f));
+            const float peakRed = jlimit (0.0f, 100.0f, -threshDb * (100.0f / 60.0f));
             track.strip.compOptoPeakRed.store (peakRed, std::memory_order_relaxed);
             break;
         }
@@ -325,13 +333,13 @@ void ChannelCompEditor::writeThresholdToMode()
             // real threshold so the FET's UX matches Opto / VCA; the
             // characteristic saturation / transformer colouration is still
             // baked into the donor's FET stage.
-            track.strip.compFetThresholdDb.store (juce::jlimit (-60.0f, 0.0f, threshDb),
+            track.strip.compFetThresholdDb.store (jlimit (-60.0f, 0.0f, threshDb),
                                                     std::memory_order_relaxed);
             break;
         }
         case 2: // VCA: direct
         default:
-            track.strip.compVcaThreshDb.store (juce::jlimit (-38.0f, 12.0f, threshDb),
+            track.strip.compVcaThreshDb.store (jlimit (-38.0f, 12.0f, threshDb),
                                                 std::memory_order_relaxed);
             break;
     }
@@ -340,7 +348,7 @@ void ChannelCompEditor::writeThresholdToMode()
 void ChannelCompEditor::writeRatioToMode()
 {
     const float r = (float) ratioKnob.getValue();
-    const int mode = juce::jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
+    const int mode = jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
     switch (mode)
     {
         case 0: break;  // Opto: ratio fixed by optical curve
@@ -356,7 +364,7 @@ void ChannelCompEditor::writeRatioToMode()
         }
         case 2:
         default:
-            track.strip.compVcaRatio.store (juce::jlimit (1.0f, 120.0f, r),
+            track.strip.compVcaRatio.store (jlimit (1.0f, 120.0f, r),
                                              std::memory_order_relaxed);
             break;
     }
@@ -365,17 +373,17 @@ void ChannelCompEditor::writeRatioToMode()
 void ChannelCompEditor::writeAttackToMode()
 {
     const float a = (float) attackKnob.getValue();
-    const int mode = juce::jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
+    const int mode = jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
     switch (mode)
     {
         case 0: break;  // Opto attack is the optical lag - fixed
         case 1:
-            track.strip.compFetAttack.store (juce::jlimit (0.02f, 80.0f, a),
+            track.strip.compFetAttack.store (jlimit (0.02f, 80.0f, a),
                                               std::memory_order_relaxed);
             break;
         case 2:
         default:
-            track.strip.compVcaAttack.store (juce::jlimit (0.1f, 50.0f, a),
+            track.strip.compVcaAttack.store (jlimit (0.1f, 50.0f, a),
                                               std::memory_order_relaxed);
             break;
     }
@@ -384,17 +392,17 @@ void ChannelCompEditor::writeAttackToMode()
 void ChannelCompEditor::writeReleaseToMode()
 {
     const float r = (float) releaseKnob.getValue();
-    const int mode = juce::jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
+    const int mode = jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
     switch (mode)
     {
         case 0: break;  // Opto release is the optical decay - fixed
         case 1:
-            track.strip.compFetRelease.store (juce::jlimit (50.0f, 1100.0f, r),
+            track.strip.compFetRelease.store (jlimit (50.0f, 1100.0f, r),
                                                std::memory_order_relaxed);
             break;
         case 2:
         default:
-            track.strip.compVcaRelease.store (juce::jlimit (10.0f, 5000.0f, r),
+            track.strip.compVcaRelease.store (jlimit (10.0f, 5000.0f, r),
                                                std::memory_order_relaxed);
             break;
     }
@@ -409,24 +417,24 @@ void ChannelCompEditor::writeMakeupToMode()
     // threshold would wipe whatever makeup the user had dialled in).
     track.strip.compMakeupDb.store (dB, std::memory_order_relaxed);
 
-    const int mode = juce::jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
+    const int mode = jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
     switch (mode)
     {
         case 0: // Opto: 0..100 % gain, 50 % = unity
         {
-            const float pct = juce::jlimit (0.0f, 100.0f, 50.0f + dB * 2.5f);
+            const float pct = jlimit (0.0f, 100.0f, 50.0f + dB * 2.5f);
             track.strip.compOptoGain.store (pct, std::memory_order_relaxed);
             break;
         }
         case 1: // FET: independent OUTPUT knob, no chain coupling.
         {
-            track.strip.compFetOutput.store (juce::jlimit (-20.0f, 20.0f, dB),
+            track.strip.compFetOutput.store (jlimit (-20.0f, 20.0f, dB),
                                               std::memory_order_relaxed);
             break;
         }
         case 2:
         default:
-            track.strip.compVcaOutput.store (juce::jlimit (-20.0f, 20.0f, dB),
+            track.strip.compVcaOutput.store (jlimit (-20.0f, 20.0f, dB),
                                               std::memory_order_relaxed);
             break;
     }
@@ -436,7 +444,7 @@ void ChannelCompEditor::writeMakeupToMode()
 // mode changes so the user sees the calibration for the active mode).
 void ChannelCompEditor::syncKnobsFromMode()
 {
-    const int mode = juce::jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
+    const int mode = jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
     switch (mode)
     {
         case 0: // Opto
@@ -458,7 +466,7 @@ void ChannelCompEditor::syncKnobsFromMode()
             // continuous scale. Mirrors the inverse of writeRatioToMode():
             //   0=4:1, 1=8:1, 2=12:1, 3=20:1, 4=All (clamped to display max).
             static const float kFetRatioDisplay[] = { 4.0f, 8.0f, 12.0f, 20.0f, 20.0f };
-            const int ratioIdx = juce::jlimit (0, 4,
+            const int ratioIdx = jlimit (0, 4,
                 track.strip.compFetRatio.load (std::memory_order_relaxed));
             ratioKnob.setValue   (kFetRatioDisplay[ratioIdx], juce::dontSendNotification);
             attackKnob.setValue  (track.strip.compFetAttack.load  (std::memory_order_relaxed), juce::dontSendNotification);
@@ -479,7 +487,7 @@ void ChannelCompEditor::syncKnobsFromMode()
 
 void ChannelCompEditor::refreshModeButtons()
 {
-    const int m = juce::jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
+    const int m = jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
     modeOpto.setToggleState (m == 0, juce::dontSendNotification);
     modeFet.setToggleState  (m == 1, juce::dontSendNotification);
     modeVca.setToggleState  (m == 2, juce::dontSendNotification);
@@ -525,7 +533,7 @@ void ChannelCompEditor::paint (juce::Graphics& g)
         g.setColour (juce::Colour (0xff2a2a2e));
         g.drawRoundedRectangle (bar, 2.0f, 0.8f);
 
-        const float clamped = juce::jlimit (minDb, maxDb, dB);
+        const float clamped = jlimit (minDb, maxDb, dB);
         const float frac = (clamped - minDb) / (maxDb - minDb);
         if (frac > 0.001f)
         {
@@ -573,7 +581,7 @@ void ChannelCompEditor::paint (juce::Graphics& g)
     //    the popup look the same.
     if (! inputMeterArea.isEmpty() && ! threshHandleArea.isEmpty())
     {
-        const int mode = juce::jlimit (0, 2,
+        const int mode = jlimit (0, 2,
             track.strip.compMode.load (std::memory_order_relaxed));
         float thresh = 0.0f;
         switch (mode)
@@ -594,7 +602,7 @@ void ChannelCompEditor::paint (juce::Graphics& g)
                 thresh = track.strip.compVcaThreshDb.load (std::memory_order_relaxed);
                 break;
         }
-        const float clamped = juce::jlimit (-60.0f, 0.0f, thresh);
+        const float clamped = jlimit (-60.0f, 0.0f, thresh);
         const float frac = (clamped - (-60.0f)) / 60.0f;
         const auto inBar = inputMeterArea.toFloat();
         const float y = inBar.getBottom() - 2.0f - frac * (inBar.getHeight() - 4.0f);
@@ -636,29 +644,29 @@ namespace
 float dbForYInBar (int y, juce::Rectangle<int> bar)
 {
     const float relY = (float) (bar.getBottom() - 2 - y) / (float) (bar.getHeight() - 4);
-    return juce::jlimit (-60.0f, 0.0f, -60.0f + juce::jlimit (0.0f, 1.0f, relY) * 60.0f);
+    return jlimit (-60.0f, 0.0f, -60.0f + jlimit (0.0f, 1.0f, relY) * 60.0f);
 }
 
 void writeThresholdForMode (Track& t, float threshDb)
 {
-    const int mode = juce::jlimit (0, 2, t.strip.compMode.load (std::memory_order_relaxed));
+    const int mode = jlimit (0, 2, t.strip.compMode.load (std::memory_order_relaxed));
     switch (mode)
     {
         case 0:
         {
-            const float peakRed = juce::jlimit (0.0f, 100.0f, -threshDb * (100.0f / 60.0f));
+            const float peakRed = jlimit (0.0f, 100.0f, -threshDb * (100.0f / 60.0f));
             t.strip.compOptoPeakRed.store (peakRed, std::memory_order_relaxed);
             break;
         }
         case 1:
         {
-            t.strip.compFetThresholdDb.store (juce::jlimit (-60.0f, 0.0f, threshDb),
+            t.strip.compFetThresholdDb.store (jlimit (-60.0f, 0.0f, threshDb),
                                                 std::memory_order_relaxed);
             break;
         }
         case 2:
         default:
-            t.strip.compVcaThreshDb.store (juce::jlimit (-38.0f, 12.0f, threshDb),
+            t.strip.compVcaThreshDb.store (jlimit (-38.0f, 12.0f, threshDb),
                                             std::memory_order_relaxed);
             break;
     }
@@ -709,7 +717,7 @@ void ChannelCompEditor::mouseDoubleClick (const juce::MouseEvent& e)
 
     // Reset to "no compression" - mode-specific because 0 dB threshold
     // doesn't mean the same thing across modes (see CompMeterStrip's note).
-    const int mode = juce::jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
+    const int mode = jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
     switch (mode)
     {
         case 0:  track.strip.compOptoPeakRed.store (0.0f, std::memory_order_relaxed); break;
@@ -802,7 +810,7 @@ void ChannelCompEditor::resized()
     // Rotaries grid on the right. FET/VCA show 2×2 (RAT/ATK over
     // REL/MAK). OPTO is sparse: only MAKEUP (rendered as "GAIN" by the
     // label refresh), centred at the top of the column.
-    const int mode = juce::jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
+    const int mode = jlimit (0, 2, track.strip.compMode.load (std::memory_order_relaxed));
     constexpr int kRowLabelH = 14;
     const int rowH = (rotariesCol.getHeight() - kRowLabelH * 2 - 12) / 2;
     auto layoutCell = [&] (juce::Rectangle<int> cell,
@@ -821,7 +829,7 @@ void ChannelCompEditor::resized()
     if (mode == 0)  // OPTO - single GAIN knob, centred vertically.
     {
         const int cellH = kRowLabelH + rowH;
-        const int cellW = juce::jmin (rotariesCol.getWidth(), 120);
+        const int cellW = std::min (rotariesCol.getWidth(), 120);
         const auto centred = juce::Rectangle<int> (
             rotariesCol.getCentreX() - cellW / 2,
             rotariesCol.getCentreY() - cellH / 2,

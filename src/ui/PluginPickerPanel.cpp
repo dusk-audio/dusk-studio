@@ -1,5 +1,7 @@
 #include "PluginPickerPanel.h"
 
+#include <algorithm>
+
 namespace duskstudio
 {
 
@@ -230,8 +232,8 @@ private:
 
     void clampScroll() noexcept
     {
-        const int maxOffset = juce::jmax (0, getContentHeight() - getHeight());
-        scrollOffset = juce::jlimit (0, maxOffset, scrollOffset);
+        const int maxOffset = std::max (0, getContentHeight() - getHeight());
+        scrollOffset = std::clamp (scrollOffset, 0, maxOffset);
     }
 
     void drawScrollbar (juce::Graphics& g)
@@ -241,7 +243,7 @@ private:
         if (contentH <= viewH) return;
 
         const float ratio  = (float) viewH / (float) contentH;
-        const int thumbH   = juce::jmax (20, (int) (viewH * ratio));
+        const int thumbH   = std::max (20, (int) (viewH * ratio));
         const int trackH   = viewH;
         const int maxOff   = contentH - viewH;
         const float prog   = maxOff > 0 ? (float) scrollOffset / (float) maxOff : 0.0f;

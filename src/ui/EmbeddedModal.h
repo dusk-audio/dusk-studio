@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include <algorithm>
 #include <functional>
 #include <memory>
 #include "DimOverlay.h"
@@ -108,11 +109,11 @@ public:
         parent.addAndMakeVisible (dim_.get());
 
         const auto bounds = parent.getLocalBounds();
-        const int w = juce::jmax (1, body_->getWidth());
-        const int h = juce::jmax (1, body_->getHeight());
+        const int w = std::max (1, body_->getWidth());
+        const int h = std::max (1, body_->getHeight());
         const auto bodyBounds = bounds.withSizeKeepingCentre (
-            juce::jmin (w, bounds.getWidth()  - 16),
-            juce::jmin (h, bounds.getHeight() - 16));
+            std::min (w, bounds.getWidth()  - 16),
+            std::min (h, bounds.getHeight() - 16));
 
         // Slightly larger than body so rounded corners frame the panel.
         // Added BEFORE body so body paints on top.
@@ -161,11 +162,11 @@ public:
         parent.addAndMakeVisible (dim_.get());
 
         const auto bounds = parent.getLocalBounds();
-        const int w = juce::jmax (1, body.getWidth());
-        const int h = juce::jmax (1, body.getHeight());
+        const int w = std::max (1, body.getWidth());
+        const int h = std::max (1, body.getHeight());
         const auto bodyBounds = bounds.withSizeKeepingCentre (
-            juce::jmin (w, bounds.getWidth()  - 16),
-            juce::jmin (h, bounds.getHeight() - 16));
+            std::min (w, bounds.getWidth()  - 16),
+            std::min (h, bounds.getHeight() - 16));
 
         backdrop_ = std::make_unique<Backdrop>();
         backdrop_->setBounds (bodyBounds.expanded (kBackdropMargin));
@@ -349,8 +350,8 @@ public:
         if (body == nullptr || host == nullptr) return;
         const auto bounds = host->getLocalBounds();
         const auto bodyBounds = bounds.withSizeKeepingCentre (
-            juce::jmin (juce::jmax (1, body->getWidth()),  bounds.getWidth()  - 16),
-            juce::jmin (juce::jmax (1, body->getHeight()), bounds.getHeight() - 16));
+            std::min (std::max (1, body->getWidth()),  bounds.getWidth()  - 16),
+            std::min (std::max (1, body->getHeight()), bounds.getHeight() - 16));
         body->setTopLeftPosition (bodyBounds.getTopLeft());
         // Re-fit the backdrop to the body's REAL bounds (not the clamped
         // rect) - a body that outgrew its open-time size otherwise keeps

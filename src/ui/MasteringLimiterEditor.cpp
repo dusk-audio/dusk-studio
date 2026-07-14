@@ -1,11 +1,14 @@
 #include "MasteringLimiterEditor.h"
 #include "CompHeaderButton.h"
 #include "../dsp/BrickwallLimiter.h"
+#include <algorithm>
 
 namespace duskstudio
 {
 namespace
 {
+template <typename T>
+inline T jlimit (T lo, T hi, T value) noexcept { return std::clamp (value, lo, hi); }
 constexpr float kThreshMinDb  = -20.0f;
 constexpr float kThreshMaxDb  =   0.0f;
 constexpr float kCeilingMinDb = -12.0f;
@@ -15,15 +18,15 @@ constexpr float kAttenMaxDb   =  20.0f;   // GR axis max
 // Map a dB value to a y-coordinate inside a vertical meter, top = max dB.
 float dbToY (float db, float minDb, float maxDb, juce::Rectangle<float> bar)
 {
-    const float frac = juce::jlimit (0.0f, 1.0f, (db - minDb) / (maxDb - minDb));
+    const float frac = jlimit (0.0f, 1.0f, (db - minDb) / (maxDb - minDb));
     return bar.getBottom() - 2.0f - frac * (bar.getHeight() - 4.0f);
 }
 
 float yToDb (int y, float minDb, float maxDb, juce::Rectangle<float> bar)
 {
-    const float relY = (float) (bar.getBottom() - 2 - y) / juce::jmax (1.0f, bar.getHeight() - 4.0f);
-    return juce::jlimit (minDb, maxDb,
-                          minDb + juce::jlimit (0.0f, 1.0f, relY) * (maxDb - minDb));
+    const float relY = (float) (bar.getBottom() - 2 - y) / std::max (1.0f, bar.getHeight() - 4.0f);
+    return jlimit (minDb, maxDb,
+                          minDb + jlimit (0.0f, 1.0f, relY) * (maxDb - minDb));
 }
 
 void styleKnob (juce::Slider& s, juce::Colour fill,
@@ -75,7 +78,7 @@ MasteringLimiterEditor::MasteringLimiterEditor (MasteringParams& p,
     modeCombo.addItem ("Punchy", 3);
     // Clamp at the param boundary so a stale / corrupt limiterMode can't select
     // an ID the combo doesn't have (which renders it blank).
-    const int storedMode = juce::jlimit (0, modeCombo.getNumItems() - 1,
+    const int storedMode = jlimit (0, modeCombo.getNumItems() - 1,
                                           params.limiterMode.load (std::memory_order_relaxed));
     modeCombo.setSelectedId (storedMode + 1, juce::dontSendNotification);
     modeCombo.setColour (juce::ComboBox::backgroundColourId, juce::Colour (0xff1a1a22));
@@ -83,7 +86,7 @@ MasteringLimiterEditor::MasteringLimiterEditor (MasteringParams& p,
     modeCombo.setColour (juce::ComboBox::outlineColourId,    juce::Colour (0xff404048));
     modeCombo.onChange = [this]
     {
-        const int candidate = juce::jlimit (0, modeCombo.getNumItems() - 1,
+        const int candidate = jlimit (0, modeCombo.getNumItems() - 1,
                                              modeCombo.getSelectedId() - 1);
         params.limiterMode.store (candidate, std::memory_order_relaxed);
     };
@@ -156,7 +159,7 @@ void MasteringLimiterEditor::timerCallback()
     // (which rewrites the params in place) would leave them stale. Re-sync from
     // the params here - dontSendNotification so this never re-fires the onChange
     // write-back. Skip the knob while the user is dragging it.
-    const int modeId = juce::jlimit (0, modeCombo.getNumItems() - 1,
+    const int modeId = jlimit (0, modeCombo.getNumItems() - 1,
                                      params.limiterMode.load (std::memory_order_relaxed)) + 1;
     if (modeCombo.getSelectedId() != modeId)
         modeCombo.setSelectedId (modeId, juce::dontSendNotification);
@@ -190,7 +193,7 @@ void MasteringLimiterEditor::timerCallback()
     // seeing/producing.
     const float postL = params.meterPostMasterLDb.load (std::memory_order_relaxed);
     const float postR = params.meterPostMasterRDb.load (std::memory_order_relaxed);
-    const float post  = juce::jmax (postL, postR);
+    const float post  = std::max (postL, postR);
     if (post > displayedOutDb) displayedOutDb = post;
     else                        displayedOutDb += (post - displayedOutDb) * 0.15f;
 
@@ -259,8 +262,8 @@ void MasteringLimiterEditor::paint (juce::Graphics& g)
         drawMeterBg (bar);
 
         // Live fill - cyan gradient, fills upward.
-        const float frac = juce::jlimit (0.0f, 1.0f,
-            (juce::jlimit (kThreshMinDb, kThreshMaxDb, displayedInDb) - kThreshMinDb)
+        const float frac = jlimit (0.0f, 1.0f,
+            (jlimit (kThreshMinDb, kThreshMaxDb, displayedInDb) - kThreshMinDb)
               / (kThreshMaxDb - kThreshMinDb));
         if (frac > 0.001f)
         {
@@ -289,7 +292,7 @@ void MasteringLimiterEditor::paint (juce::Graphics& g)
         // Threshold value box rides just under the handle line so the line,
         // triangle, and readout read as one control (shows -drive). Clamped to
         // stay inside the bar at the extremes.
-        const float boxY = juce::jlimit (bar.getY() + 1.0f, bar.getBottom() - 15.0f,
+        const float boxY = jlimit (bar.getY() + 1.0f, bar.getBottom() - 15.0f,
                                           handleY + 1.0f);
         const auto valBox = juce::Rectangle<float> (bar.getX() + 2.0f, boxY,
                                                        bar.getWidth() - 4.0f, 14.0f);
@@ -309,8 +312,8 @@ void MasteringLimiterEditor::paint (juce::Graphics& g)
         const auto bar = ceilingMeterArea.toFloat();
         drawMeterBg (bar);
 
-        const float frac = juce::jlimit (0.0f, 1.0f,
-            (juce::jlimit (kCeilingMinDb, kCeilingMaxDb, displayedOutDb) - kCeilingMinDb)
+        const float frac = jlimit (0.0f, 1.0f,
+            (jlimit (kCeilingMinDb, kCeilingMaxDb, displayedOutDb) - kCeilingMinDb)
               / (kCeilingMaxDb - kCeilingMinDb));
         if (frac > 0.001f)
         {
@@ -335,7 +338,7 @@ void MasteringLimiterEditor::paint (juce::Graphics& g)
         drawCaption (ceilingMeterArea, "Ceiling");
 
         // Ceiling value box rides just above the handle line (one control).
-        const float boxY = juce::jlimit (bar.getY() + 1.0f, bar.getBottom() - 15.0f,
+        const float boxY = jlimit (bar.getY() + 1.0f, bar.getBottom() - 15.0f,
                                           handleY - 15.0f);
         const auto valBox = juce::Rectangle<float> (bar.getX() + 2.0f, boxY,
                                                        bar.getWidth() - 4.0f, 14.0f);
@@ -355,7 +358,7 @@ void MasteringLimiterEditor::paint (juce::Graphics& g)
         const auto bar = attenMeterArea.toFloat();
         drawMeterBg (bar);
 
-        const float grAbs = juce::jlimit (0.0f, kAttenMaxDb, std::abs (displayedGrDb));
+        const float grAbs = jlimit (0.0f, kAttenMaxDb, std::abs (displayedGrDb));
         const float frac = grAbs / kAttenMaxDb;
         if (frac > 0.001f)
         {
@@ -456,7 +459,7 @@ void MasteringLimiterEditor::resized()
         const int kRelKnobH = 70;
         releaseLabel.setBounds (col.removeFromTop (14));
         const int knobY = col.getY();
-        const int knobW = juce::jmin (col.getWidth(), kRelKnobH);
+        const int knobW = std::min (col.getWidth(), kRelKnobH);
         const int knobX = col.getX() + (col.getWidth() - knobW) / 2;
         releaseKnob.setBounds (knobX, knobY, knobW, kRelKnobH);
         col.removeFromTop (kRelKnobH + 2);
@@ -464,7 +467,7 @@ void MasteringLimiterEditor::resized()
         col.removeFromTop (8);
         lookaheadLabel.setBounds (col.removeFromTop (14));
         const int laY = col.getY();
-        const int laW = juce::jmin (col.getWidth(), kRelKnobH);
+        const int laW = std::min (col.getWidth(), kRelKnobH);
         const int laX = col.getX() + (col.getWidth() - laW) / 2;
         lookaheadKnob.setBounds (laX, laY, laW, kRelKnobH);
         col.removeFromTop (kRelKnobH + 2);
@@ -492,7 +495,7 @@ void MasteringLimiterEditor::resized()
     constexpr int kAttenW   = 18;   // narrower than threshold / ceiling
     constexpr int kHandlePad = 8;   // room on left for triangle handle
     const int twoColW = (meters.getWidth() - kAttenW - 2 * kMeterGap - kHandlePad * 2);
-    const int colW = juce::jmax (12, twoColW / 2);
+    const int colW = std::max (12, twoColW / 2);
 
     meters.removeFromLeft (kHandlePad);
     threshMeterArea  = meters.removeFromLeft (colW);
@@ -502,7 +505,7 @@ void MasteringLimiterEditor::resized()
     attenMeterArea   = meters.removeFromLeft (kAttenW);
 
     // LUFS box centred under the meters.
-    const int lufsBoxW = juce::jmin (180, lufsRow.getWidth());
+    const int lufsBoxW = std::min (180, lufsRow.getWidth());
     const int lufsX = lufsRow.getX() + (lufsRow.getWidth() - lufsBoxW) / 2;
     lufsBoxArea = juce::Rectangle<int> (lufsX, lufsRow.getY(), lufsBoxW, kLufsBoxH);
 }

@@ -8,12 +8,19 @@
 #include "../dsp/MultibandCompPresets.h"
 #include "../engine/BounceEngine.h"
 #include "../engine/MasteringPlayer.h"
+#include <algorithm>
 #if DUSKSTUDIO_HAS_DUSK_DSP
   #include "ModernCompressorPanels.h"   // multi-comp - MultibandCompressorPanel
 #endif
 
 namespace duskstudio
 {
+namespace
+{
+template <typename T>
+inline T jlimit (T lo, T hi, T value) noexcept { return std::clamp (value, lo, hi); }
+}
+
 WaveformDisplay::WaveformDisplay (MasteringPlayer& p)
     : player (p),
       thumbnail (512, formatManager, thumbnailCache)
@@ -63,7 +70,7 @@ void WaveformDisplay::paint (juce::Graphics& g)
     const double playSecRaw = (sr > 0.0) ? (double) player.getPlayhead() / sr : 0.0;
     // Clamp to [0, total]: if the playhead runs past EOF, an unclamped playSec
     // makes the unplayed drawChannels() call's startTime exceed its endTime.
-    const double playSec = juce::jlimit (0.0, total, playSecRaw);
+    const double playSec = jlimit (0.0, total, playSecRaw);
     const float  frac    = (total > 0.0) ? (float) (playSec / total) : 0.0f;
     const int    splitX  = bounds.getX() + (int) (frac * bounds.getWidth());
 
@@ -131,7 +138,7 @@ void WaveformDisplay::mouseDown (const juce::MouseEvent& e)
     if (sr <= 0.0 || total <= 0.0) return;
     auto bounds = getLocalBounds().reduced (4);
     if (bounds.getWidth() <= 0) return;
-    const float frac = juce::jlimit (0.0f, 1.0f,
+    const float frac = jlimit (0.0f, 1.0f,
                                        (float) (e.x - bounds.getX()) / (float) bounds.getWidth());
     const auto target = (std::int64_t) (frac * total * sr);
     player.setPlayhead (target);
@@ -255,14 +262,14 @@ MasteringView::MasteringView (Session& s, AudioEngine& e)
             label += juce::String::formatted ("  (%g LUFS / %g dBTP)", t.lufs, t.ceilingDbTP);
         masteringTargetCombo.addItem (label, i + 1);
     }
-    const int idx = juce::jlimit (0, kNumMasteringTargets - 1,
+    const int idx = jlimit (0, kNumMasteringTargets - 1,
                                     session.mastering().targetPresetIndex.load());
     masteringTargetCombo.setSelectedId (idx + 1, juce::dontSendNotification);
     masteringTargetCombo.onChange = [this]
     {
         const int newIdx = masteringTargetCombo.getSelectedId() - 1;
         session.mastering().targetPresetIndex.store (
-            juce::jlimit (0, kNumMasteringTargets - 1, newIdx));
+            jlimit (0, kNumMasteringTargets - 1, newIdx));
     };
     addAndMakeVisible (masteringTargetCombo);
 
@@ -373,7 +380,7 @@ void MasteringView::applyMultibandPreset (int presetIndex)
     {
         if (auto* param = apvts.getParameter (id))
             param->setValueNotifyingHost (
-                juce::jlimit (0.0f, 1.0f, apvts.getParameterRange (id).convertTo0to1 (value)));
+                jlimit (0.0f, 1.0f, apvts.getParameterRange (id).convertTo0to1 (value)));
     };
     const auto setBand = [&setP] (const char* band, const mbpresets::Band& b)
     {
@@ -470,8 +477,8 @@ void MasteringView::resized()
     {
         if (transportRow.getWidth() <= 0) { c.setVisible (false); return; }
         c.setVisible (true);
-        c.setBounds (transportRow.removeFromLeft (juce::jmin (w, transportRow.getWidth())));
-        if (gapAfter > 0) transportRow.removeFromLeft (juce::jmin (gapAfter, transportRow.getWidth()));
+        c.setBounds (transportRow.removeFromLeft (std::min (w, transportRow.getWidth())));
+        if (gapAfter > 0) transportRow.removeFromLeft (std::min (gapAfter, transportRow.getWidth()));
     };
     placeL (rewindButton, 50, 4);
     placeL (playButton,   70, 4);
@@ -485,8 +492,8 @@ void MasteringView::resized()
     {
         if (transportRow.getWidth() <= 0) { c.setVisible (false); return; }
         c.setVisible (true);
-        c.setBounds (transportRow.removeFromRight (juce::jmin (w, transportRow.getWidth())));
-        if (gapBefore > 0) transportRow.removeFromRight (juce::jmin (gapBefore, transportRow.getWidth()));
+        c.setBounds (transportRow.removeFromRight (std::min (w, transportRow.getWidth())));
+        if (gapBefore > 0) transportRow.removeFromRight (std::min (gapBefore, transportRow.getWidth()));
     };
     placeR (masteringTargetCombo, 240, 4);
     placeR (targetCaption,         40, 12);
@@ -521,7 +528,7 @@ void MasteringView::resized()
     auto panelsRow = area;
 
     constexpr int kPanelGap = 8;
-    const int totalW    = juce::jmax (0, panelsRow.getWidth() - 2 * kPanelGap);
+    const int totalW    = std::max (0, panelsRow.getWidth() - 2 * kPanelGap);
     // The limiter is the terminal stage and was starved at 0.14 (clipped
     // labels, cramped meters); the EQ curve had the most slack. Rebalance to
     // 0.36 / 0.42 / 0.22 so all three read comfortably.
@@ -553,7 +560,7 @@ void MasteringView::resized()
         inner.removeFromTop (6);
         auto presetRow = inner.removeFromTop (24);
         const int capW    = 52;
-        const int dropW   = juce::jmin (190, presetRow.getWidth() - capW - 6);
+        const int dropW   = std::min (190, presetRow.getWidth() - capW - 6);
         if (dropW <= 0)
         {
             // Too narrow for caption + combo - hide rather than lay out negative
@@ -643,7 +650,7 @@ void MasteringView::timerCallback()
     //   TP cell:     green at-or-below ceiling, red above.
     // No data (sentinel) keeps the neutral colour so a fresh load doesn't
     // flash green spuriously.
-    const int targetIdx = juce::jlimit (0, kNumMasteringTargets - 1,
+    const int targetIdx = jlimit (0, kNumMasteringTargets - 1,
                                           m.targetPresetIndex.load());
     const auto neutralBg = juce::Colour (0xff121214);
     const auto greenBg   = juce::Colour (0xff1a3a1a);

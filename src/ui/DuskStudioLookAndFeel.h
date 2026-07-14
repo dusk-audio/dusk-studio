@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include <algorithm>
 #include <array>
 
 namespace duskstudio
@@ -119,7 +120,7 @@ public:
             as.setWordWrap (juce::AttributedString::byWord);
             as.append (flat, font, juce::Colours::white);
             juce::TextLayout tl;
-            tl.createLayout (as, (float) juce::jmax (1, boxW - kPadX));
+            tl.createLayout (as, (float) std::max (1, boxW - kPadX));
             return (int) std::ceil (tl.getHeight()) + kPadY;
         };
 
@@ -130,15 +131,15 @@ public:
             // gap that fits the natural width (left/status gap first), else the
             // wider side, clamping width so the tip never overlaps the tabs.
             constexpr int gap = 12;
-            int w = juce::jmin (textW, tooltipRow_.getWidth());
+            int w = std::min (textW, tooltipRow_.getWidth());
             int x = tooltipRow_.getCentreX() - w / 2;
 
             if (! tooltipAvoid_.isEmpty()
                   && juce::Rectangle<int> (x, tooltipRow_.getY(), w, tooltipRow_.getHeight())
                         .intersects (tooltipAvoid_))
             {
-                const int leftRoom  = juce::jmax (0, tooltipAvoid_.getX() - gap - tooltipRow_.getX());
-                const int rightRoom = juce::jmax (0, tooltipRow_.getRight() - (tooltipAvoid_.getRight() + gap));
+                const int leftRoom  = std::max (0, tooltipAvoid_.getX() - gap - tooltipRow_.getX());
+                const int rightRoom = std::max (0, tooltipRow_.getRight() - (tooltipAvoid_.getRight() + gap));
                 if (w <= leftRoom)              { x = tooltipRow_.getX(); }
                 else if (w <= rightRoom)        { x = tooltipAvoid_.getRight() + gap; }
                 else if (leftRoom >= rightRoom) { w = leftRoom;  x = tooltipRow_.getX(); }
@@ -149,8 +150,8 @@ public:
             // constrainedWithin only repositions (never resizes) - a resize
             // would shrink the box below the width wrappedHeight used and
             // re-introduce clipping.
-            w = juce::jlimit (1, parentArea.getWidth(), w);
-            const int h = juce::jmin (wrappedHeight (w), parentArea.getHeight());
+            w = std::clamp (w, 1, parentArea.getWidth());
+            const int h = std::min (wrappedHeight (w), parentArea.getHeight());
             // Single line: centre vertically in the row. Wrapped (taller than
             // the row): start at the row top and grow downward over the
             // transport row below - a transient tip may briefly cover content.
@@ -163,11 +164,11 @@ public:
         // Fallback before the first layout pass sets a placement: centre the
         // tip in a top band the height of the original menu row.
         constexpr int kMenuRowH = 28;
-        const int w = juce::jlimit (1, parentArea.getWidth(),
-                                     juce::jmin (textW, juce::jmax (60, parentArea.getWidth() - 16)));
-        const int h = juce::jmin (wrappedHeight (w), parentArea.getHeight());
+        const int w = std::clamp (std::min (textW, std::max (60, parentArea.getWidth() - 16)),
+                                   1, parentArea.getWidth());
+        const int h = std::min (wrappedHeight (w), parentArea.getHeight());
         const int x = parentArea.getCentreX() - w / 2;
-        const int y = parentArea.getY() + juce::jmax (0, (kMenuRowH - h) / 2);
+        const int y = parentArea.getY() + std::max (0, (kMenuRowH - h) / 2);
         // w/h fit parentArea, so constrainedWithin only repositions (no resize
         // that would diverge from wrappedHeight's wrapping width).
         return juce::Rectangle<int> (x, y, w, h).constrainedWithin (parentArea);
@@ -194,9 +195,9 @@ public:
                     juce::Font (juce::FontOptions (13.0f)),
                     findColour (juce::TooltipWindow::textColourId));
         juce::TextLayout layout;
-        const float innerW = (float) juce::jmax (1, width - 16);
+        const float innerW = (float) std::max (1, width - 16);
         layout.createLayout (as, innerW);
-        const float ty = juce::jmax (0.0f, ((float) height - layout.getHeight()) * 0.5f);
+        const float ty = std::max (0.0f, ((float) height - layout.getHeight()) * 0.5f);
         layout.draw (g, juce::Rectangle<float> (8.0f, ty, innerW, layout.getHeight()));
     }
 
@@ -268,7 +269,7 @@ public:
 
         // bounds = layout.sliderBounds (already shrunk by kFaderTrackPad
         // in getSliderLayout). No extra inset needed.
-        const float trackW = juce::jmin (4.0f, bounds.getWidth() * 0.18f);
+        const float trackW = std::min (4.0f, bounds.getWidth() * 0.18f);
         const auto trackRect = juce::Rectangle<float> (cx - trackW * 0.5f, bounds.getY(),
                                                         trackW, bounds.getHeight());
         g.setColour (juce::Colour (0xff0a0a0c));
@@ -318,7 +319,7 @@ public:
 
         // Cap CENTRE sits exactly on the value's Y - hardware-fader
         // grammar (cap straddles the value line).
-        const float capW = juce::jmin (bounds.getWidth() - 6.0f, 20.0f);
+        const float capW = std::min (bounds.getWidth() - 6.0f, 20.0f);
         const float capH = 36.0f;
         const float capCy = sliderPos;
         const auto cap = juce::Rectangle<float> (cx - capW * 0.5f,
@@ -371,7 +372,7 @@ public:
     {
         const float cx = x + width  * 0.5f;
         const float cy = y + height * 0.5f;
-        const float outerR = juce::jmin (width, height) * 0.5f - 2.0f;
+        const float outerR = std::min (width, height) * 0.5f - 2.0f;
         if (outerR <= 2.0f) return;
 
         const float angle = rotaryStartAngle + sliderPos * (rotaryEndAngle - rotaryStartAngle);
@@ -398,7 +399,7 @@ public:
         {
             const int   nDots   = 11;
             const float dotRing = R * 0.965f;
-            const float dotSz   = juce::jmax (0.9f, R * 0.06f);
+            const float dotSz   = std::max (0.9f, R * 0.06f);
             g.setColour (juce::Colour (0xffc8c8d2));   // light marker - high contrast on the dark margin
             for (int i = 0; i < nDots; ++i)
             {
@@ -437,11 +438,11 @@ public:
         g.setColour (juce::Colour (0xff0c0c0e));
         g.drawLine (cx + bodyR * 0.82f * dx, cy + bodyR * 0.82f * dy,
                     cx + bodyR * 1.0f  * dx, cy + bodyR * 1.0f  * dy,
-                    juce::jmax (2.4f, R * 0.13f));
+                    std::max (2.4f, R * 0.13f));
         g.setColour (juce::Colours::white);
         g.drawLine (cx + bodyR * 0.16f * dx, cy + bodyR * 0.16f * dy,
                     cx + bodyR * 0.76f * dx, cy + bodyR * 0.76f * dy,
-                    juce::jmax (2.0f, R * 0.10f));
+                    std::max (2.0f, R * 0.10f));
     }
 
 private:

@@ -2,6 +2,7 @@
 
 #include <juce_graphics/juce_graphics.h>
 #include "../session/Session.h"
+#include <algorithm>
 #include <cmath>
 
 namespace duskstudio::fadeviz
@@ -15,7 +16,7 @@ inline juce::Path buildFadeCurve (juce::Rectangle<float> zone,
                                    FadeShape shape, bool rising)
 {
     juce::Path p;
-    const int span = juce::jmax (1, (int) std::round (zone.getWidth()));
+    const int span = std::max (1, (int) std::round (zone.getWidth()));
     for (int i = 0; i <= span; ++i)
     {
         const float t    = (float) i / (float) span;

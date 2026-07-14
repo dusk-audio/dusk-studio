@@ -15,6 +15,7 @@
 #endif
 
 #include <cmath>
+#include <algorithm>
 
 namespace duskstudio
 {
@@ -57,8 +58,8 @@ public:
         g.fillRect (0, 0, w, h);
 
         // Panel
-        const int panelW = juce::jmin (640, w - 80);
-        const int panelH = juce::jmin (380, h - 80);
+        const int panelW = std::min (640, w - 80);
+        const int panelH = std::min (380, h - 80);
         auto panel = juce::Rectangle<int> ((w - panelW) / 2, (h - panelH) / 2, panelW, panelH);
 
         juce::ColourGradient bgGrad (
@@ -135,7 +136,7 @@ public:
             g.fillRect (cx - 1, barY - 4, 3, barH + 8);
 
             // Current cents indicator
-            const float cents = juce::jlimit (-50.0f, 50.0f, smoothedCents_);
+            const float cents = std::clamp (smoothedCents_, -50.0f, 50.0f);
             const int   ix    = barX + static_cast<int> ((cents + 50.0f) * (float) barW / 100.0f);
             const bool  inTune = std::abs (cents) <= 5.0f;
             g.setColour (inTune ? juce::Colour (0xff60c060) : juce::Colour (0xffd0a040));

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include <algorithm>
 #include <functional>
 
 namespace duskstudio
@@ -62,7 +63,7 @@ public:
         g.setColour (juce::Colour (0xff3a3a40).withAlpha (0.55f));
         g.drawRoundedRectangle (r, 4.0f, 0.8f);
 
-        const float ledSize = juce::jmin (r.getHeight() - 4.0f, 8.0f);
+        const float ledSize = std::min (r.getHeight() - 4.0f, 8.0f);
         const float ledX    = r.getX() + 4.0f;
         const float ledY    = r.getCentreY() - ledSize / 2.0f;
         const auto ledRect  = juce::Rectangle<float> (ledX, ledY, ledSize, ledSize);

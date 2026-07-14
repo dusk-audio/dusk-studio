@@ -2,6 +2,8 @@
 #include "AuxLaneComponent.h"
 #include "../engine/AudioEngine.h"
 
+#include <algorithm>
+
 namespace duskstudio
 {
 namespace
@@ -227,7 +229,7 @@ void AuxView::promptRenameLane (int index)
 
 void AuxView::setActiveLane (int index)
 {
-    index = juce::jlimit (0, Session::kNumAuxLanes - 1, index);
+    index = std::clamp (index, 0, Session::kNumAuxLanes - 1);
     activeLaneIndex = index;
 
     for (int i = 0; i < Session::kNumAuxLanes; ++i)
@@ -270,7 +272,7 @@ void AuxView::resized()
     // for visual consistency.
     constexpr int kSelectorH = 28;
     auto row = area.removeFromTop (kSelectorH);
-    const int btnW = juce::jmax (1, row.getWidth() / Session::kNumAuxLanes);
+    const int btnW = std::max (1, row.getWidth() / Session::kNumAuxLanes);
     for (int i = 0; i < Session::kNumAuxLanes; ++i)
     {
         // Last button absorbs any rounding remainder so the row exactly

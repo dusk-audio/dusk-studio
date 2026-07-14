@@ -4,6 +4,8 @@
 #include "../engine/AudioEngine.h"
 #include "../session/Session.h"
 
+#include <algorithm>
+
 namespace duskstudio
 {
 // Arrangement view: one row per visible track, regions painted as
@@ -254,7 +256,7 @@ private:
     {
         juce::Font getTextButtonFont (juce::TextButton&, int h) override
         {
-            return juce::Font (juce::FontOptions (juce::jmin (12.0f, (float) h * 0.8f),
+            return juce::Font (juce::FontOptions (std::min (12.0f, (float) h * 0.8f),
                                                    juce::Font::bold));
         }
     };

@@ -4,6 +4,7 @@
 #include "../../engine/multisample/AriaBank.h"
 #include "../../engine/multisample/AriaGui.h"
 #include "../../engine/multisample/DuskMultisampleProcessor.h"
+#include <algorithm>
 
 namespace duskstudio
 {
@@ -246,7 +247,7 @@ void DuskMultisampleEditor::rebuildSkin()
         sf2PresetSelector.clear (juce::dontSendNotification);
         for (int i = 0; i < presets.size(); ++i)
             sf2PresetSelector.addItem (presets[i], i + 1);   // IDs 1-based
-        sf2PresetSelector.setSelectedId (juce::jmax (1, processor.getSf2PresetIndex() + 1),
+        sf2PresetSelector.setSelectedId (std::max (1, processor.getSf2PresetIndex() + 1),
                                           juce::dontSendNotification);
     }
     sf2PresetLabel   .setVisible (showSf2Presets);
@@ -266,7 +267,7 @@ void DuskMultisampleEditor::rebuildSkin()
         const auto natH = ariaSkin->nativeSize().getHeight();
         // Header (62) + optional program-switcher row (28) + skin + 12.
         const int progRow = showAriaPrograms ? 28 : 0;
-        setSize (juce::jmax (natW + 24, 520), 62 + progRow + natH + 12);
+        setSize (std::max (natW + 24, 520), 62 + progRow + natH + 12);
     }
     else
     {
@@ -401,7 +402,7 @@ void DuskMultisampleEditor::resized()
         {
             auto progRow = area.removeFromTop (24);
             ariaProgramLabel.setBounds (progRow.removeFromLeft (64));
-            ariaProgramSelector.setBounds (progRow.removeFromLeft (juce::jmin (260, progRow.getWidth())));
+            ariaProgramSelector.setBounds (progRow.removeFromLeft (std::min (260, progRow.getWidth())));
             area.removeFromTop (4);
         }
 

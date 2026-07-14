@@ -168,7 +168,7 @@ struct MultiImportTargetPicker::Row : public juce::Component
     void resized() override
     {
         auto area = getLocalBounds().reduced (24, 6);
-        const int pickerW = juce::jmin (260, area.getWidth() / 2);
+        const int pickerW = std::min (260, area.getWidth() / 2);
         trackPicker.setBounds (area.removeFromRight (pickerW).reduced (0, 4));
         area.removeFromRight (12);
         nameLabel   .setBounds (area.removeFromTop (area.getHeight() / 2));
@@ -272,7 +272,7 @@ MultiImportTargetPicker::MultiImportTargetPicker (Session& s,
     // viewport still scrolls. On normal windows all rows are visible at
     // once - no wasted scroll-band for 3 files in a 1080p modal.
     const int listH = (int) rows.size() * kRowH + kListPad * 2;
-    const int wantH = juce::jmax (kPanelMinH,
+    const int wantH = std::max (kPanelMinH,
                                      kHeaderH + listH + kFooterH + 24);
     setSize (kPanelW, wantH);
 }
@@ -304,7 +304,7 @@ void MultiImportTargetPicker::resized()
 
     listViewport.setBounds (area);
 
-    const int innerW = juce::jmax (0, listViewport.getMaximumVisibleWidth());
+    const int innerW = std::max (0, listViewport.getMaximumVisibleWidth());
     const int innerH = (int) rows.size() * kRowH + kListPad;
     listContainer.setSize (innerW, innerH);
     int y = 0;

@@ -4,6 +4,8 @@
 #include "NativeEditorEmbedScale.h"
 #include "../engine/vst3/Vst3Instance.h"
 
+#include <algorithm>
+
 namespace duskstudio
 {
 Vst3PluginEditorComponent::Vst3PluginEditorComponent()
@@ -71,7 +73,7 @@ void Vst3PluginEditorComponent::tryEmbed()
     std::string err;
     embedding = true;
     const bool ok = editor.embed (parent, area.getX(), area.getY(),
-                                  juce::jmax (1, area.getWidth()), juce::jmax (1, area.getHeight()), err);
+                                  std::max (1, area.getWidth()), std::max (1, area.getHeight()), err);
     embedding = false;
     if (ok)
     {
@@ -107,7 +109,7 @@ void Vst3PluginEditorComponent::pushBounds()
     const auto area = embedscale::toPhysical (
         *this, getTopLevelComponent()->getLocalArea (this, getLocalBounds()));
     editor.setBounds (area.getX(), area.getY(),
-                      juce::jmax (1, area.getWidth()), juce::jmax (1, area.getHeight()));
+                      std::max (1, area.getWidth()), std::max (1, area.getHeight()));
 }
 
 void Vst3PluginEditorComponent::resized()                { if (embedded) pushBounds(); else tryEmbed(); }
@@ -159,7 +161,7 @@ void Vst3PluginEditorComponent::verifyGeometry()
         return;
     }
     if (ax != area.getX() || ay != area.getY()
-        || aw != juce::jmax (1, area.getWidth()) || ah != juce::jmax (1, area.getHeight()))
+        || aw != std::max (1, area.getWidth()) || ah != std::max (1, area.getHeight()))
     {
         if (driftLogsLeft > 0)
         {

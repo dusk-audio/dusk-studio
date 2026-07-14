@@ -4,6 +4,8 @@
  #include "KeyboardStateLinux.h"
 #endif
 
+#include <algorithm>
+
 namespace duskstudio
 {
 namespace
@@ -77,7 +79,7 @@ VirtualKeyboardComponent::VirtualKeyboardComponent (AudioEngine& engineRef)
     // Restore the last-used centre note (default C2 = MIDI 36 on first run).
     // Clamp to the same range shiftCentre enforces so a hand-edited / corrupt
     // config can't seed an out-of-range centre.
-    centreNote = juce::jlimit (0, 120, appconfig::getVkbCentreNote());
+    centreNote = std::clamp (appconfig::getVkbCentreNote(), 0, 120);
 
     auto styleHeaderBtn = [] (juce::TextButton& b)
     {
@@ -95,13 +97,13 @@ VirtualKeyboardComponent::VirtualKeyboardComponent (AudioEngine& engineRef)
     chDownBtn.onClick = [this]
     {
         const int prev = channel;
-        channel = juce::jlimit (1, 16, channel - 1);
+        channel = std::clamp (channel - 1, 1, 16);
         if (channel != prev) repaint();
     };
     chUpBtn.onClick = [this]
     {
         const int prev = channel;
-        channel = juce::jlimit (1, 16, channel + 1);
+        channel = std::clamp (channel + 1, 1, 16);
         if (channel != prev) repaint();
     };
 
@@ -142,14 +144,14 @@ bool VirtualKeyboardComponent::keyPressed (const juce::KeyPress& k)
     if (code == juce::KeyPress::leftKey)
     {
         const int prev = channel;
-        channel = juce::jlimit (1, 16, channel - 1);
+        channel = std::clamp (channel - 1, 1, 16);
         if (channel != prev) repaint();
         return true;
     }
     if (code == juce::KeyPress::rightKey)
     {
         const int prev = channel;
-        channel = juce::jlimit (1, 16, channel + 1);
+        channel = std::clamp (channel + 1, 1, 16);
         if (channel != prev) repaint();
         return true;
     }
@@ -233,7 +235,7 @@ void VirtualKeyboardComponent::sendNoteOff (int note, int chan)
 void VirtualKeyboardComponent::shiftCentre (int semitones)
 {
     const int prev = centreNote;
-    centreNote = juce::jlimit (0, 120, centreNote + semitones);
+    centreNote = std::clamp (centreNote + semitones, 0, 120);
     if (centreNote == prev) return;
     releaseAll();
     appconfig::setVkbCentreNote (centreNote);
@@ -276,11 +278,11 @@ int VirtualKeyboardComponent::noteAtPoint (juce::Point<int> p) const
 {
     if (! keyboardArea.contains (p)) return -1;
 
-    const int firstNote = juce::jmax (0, centreNote - 12);
+    const int firstNote = std::max (0, centreNote - 12);
     // One octave of bass context below the centre, then up to the top typed key
     // (centreNote + 28 = the 'P' key in the I9O0P top row) so every typeable
     // note is on-screen + labelled. Must match paint() exactly.
-    const int lastNote  = juce::jmin (127, centreNote + 28);
+    const int lastNote  = std::min (127, centreNote + 28);
     int numWhite = 0;
     for (int m = firstNote; m <= lastNote; ++m)
         if (! isBlackKey (m)) ++numWhite;
@@ -399,16 +401,16 @@ void VirtualKeyboardComponent::paint (juce::Graphics& g)
     // start of the upper octave - one octave of context below (so the
     // user has bass-side reference) and one octave above where the typed
     // Z/Q-row letters land. Centre C2 -> display C1..C3 by default.
-    const int firstNote = juce::jmax (0, centreNote - 12);
+    const int firstNote = std::max (0, centreNote - 12);
     // One octave of bass context below the centre, then up to the top typed key
     // (centreNote + 28 = the 'P' key in the I9O0P top row) so every typeable
     // note is on-screen + labelled. Must match noteAtPoint() exactly.
-    const int lastNote  = juce::jmin (127, centreNote + 28);
+    const int lastNote  = std::min (127, centreNote + 28);
     const int numWhite  = [&] {
         int n = 0;
         for (int m = firstNote; m <= lastNote; ++m)
             if (! isBlackKey (m)) ++n;
-        return juce::jmax (1, n);
+        return std::max (1, n);
     }();
 
     const auto kb = keyboardArea.toFloat();
@@ -428,7 +430,7 @@ void VirtualKeyboardComponent::paint (juce::Graphics& g)
     // key silhouette (square shoulders at the top, rounded toe).
     auto bottomRoundedKey = [] (juce::Rectangle<float> r, float radius)
     {
-        radius = juce::jmin (radius, r.getWidth() * 0.5f, r.getHeight() * 0.5f);
+        radius = std::min ({radius, r.getWidth() * 0.5f, r.getHeight() * 0.5f});
         juce::Path p;
         p.startNewSubPath (r.getX(), r.getY());
         p.lineTo (r.getRight(), r.getY());

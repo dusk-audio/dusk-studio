@@ -401,11 +401,11 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
             parts.removeEmptyStrings();
             if (parts.size() >= 1 && parts.size() <= 3)
             {
-                const int bar  = juce::jmax (1, parts[0].getIntValue());
-                const int beat = parts.size() >= 2 ? juce::jmax (1, parts[1].getIntValue()) : 1;
-                const int sub  = parts.size() >= 3 ? juce::jmax (1, parts[2].getIntValue()) : 1;
+                const int bar  = std::max (1, parts[0].getIntValue());
+                const int beat = parts.size() >= 2 ? std::max (1, parts[1].getIntValue()) : 1;
+                const int sub  = parts.size() >= 3 ? std::max (1, parts[2].getIntValue()) : 1;
                 const float bpm = engine.getSession().tempoBpm.load (std::memory_order_relaxed);
-                const int beatsPerBar = juce::jmax (1, engine.getSession().beatsPerBar.load (std::memory_order_relaxed));
+                const int beatsPerBar = std::max (1, engine.getSession().beatsPerBar.load (std::memory_order_relaxed));
                 if (bpm > 0.0f)
                 {
                     const double secondsPerBeat = 60.0 / (double) bpm;
@@ -429,14 +429,14 @@ TransportBar::TransportBar (AudioEngine& engineRef) : engine (engineRef)
             const double mins = minStr.isEmpty() ? 0.0 : (double) minStr.getDoubleValue();
             const double secs = (double) secStr.getDoubleValue();
             const auto target = (std::int64_t) std::round ((mins * 60.0 + secs) * sr);
-            engine.getTransport().setPlayhead (juce::jmax ((std::int64_t) 0, target));
+            engine.getTransport().setPlayhead (std::max ((std::int64_t) 0, target));
             return;
         }
 
         // Bare number = seconds.
         const double secs = (double) text.getDoubleValue();
         const auto target = (std::int64_t) std::round (secs * sr);
-        engine.getTransport().setPlayhead (juce::jmax ((std::int64_t) 0, target));
+        engine.getTransport().setPlayhead (std::max ((std::int64_t) 0, target));
     };
     addAndMakeVisible (clockLabel);
 
@@ -677,7 +677,7 @@ void TransportBar::timerCallback()
             lastScrubTickMs = nowMs;
             const auto delta = (std::int64_t) ((double) dtMs * 0.001 * sr * kScrubMultiplier);
             const auto cur = engine.getTransport().getPlayhead();
-            engine.getTransport().setPlayhead (juce::jmax ((std::int64_t) 0,
+            engine.getTransport().setPlayhead (std::max ((std::int64_t) 0,
                 cur + (std::int64_t) direction * delta));
         };
 
@@ -1030,7 +1030,7 @@ void TransportBar::resized()
     constexpr int kBtnDia = 36;
     constexpr int kBtnGap = 4;
     auto buttons = area.removeFromLeft (kBtnDia * 8 + kBtnGap * 7);
-    const int yPad = juce::jmax (0, (buttons.getHeight() - kBtnDia) / 2);
+    const int yPad = std::max (0, (buttons.getHeight() - kBtnDia) / 2);
     auto buttonRow = buttons.reduced (0, yPad);
 
     auto place = [&] (juce::Component& c)
@@ -1055,7 +1055,7 @@ void TransportBar::resized()
     timeFormatToggle.setVisible (true);
     {
         auto tfRect = area.removeFromLeft (kBtnDia);
-        const int tfPad = juce::jmax (0, (tfRect.getHeight() - kBtnDia) / 2);
+        const int tfPad = std::max (0, (tfRect.getHeight() - kBtnDia) / 2);
         timeFormatToggle.setBounds (tfRect.reduced (0, tfPad));
         area.removeFromLeft (6);
     }
@@ -1068,7 +1068,7 @@ void TransportBar::resized()
     area.removeFromRight (4);
     {
         auto rect = area.removeFromRight (kBtnDia);
-        const int pad = juce::jmax (0, (rect.getHeight() - kBtnDia) / 2);
+        const int pad = std::max (0, (rect.getHeight() - kBtnDia) / 2);
         clickToggle.setBounds (rect.reduced (0, pad));
     }
     area.removeFromRight (4);
@@ -1089,7 +1089,7 @@ void TransportBar::resized()
     }
     {
         auto rect = area.removeFromRight (kBtnDia);
-        const int pad = juce::jmax (0, (rect.getHeight() - kBtnDia) / 2);
+        const int pad = std::max (0, (rect.getHeight() - kBtnDia) / 2);
         tuneButton.setBounds (rect.reduced (0, pad));
     }
     area.removeFromRight (compact ? 8 : 12);
@@ -1271,7 +1271,7 @@ void TransportBar::promptEditTempoAtPlayhead()
             // rejects rather than letting jlimit clamp it to 30 BPM.
             float parsed = 0.0f;
             if (! parseFullFloat (text.toStdString(), parsed) || parsed <= 0.0f) return;
-            const float b = juce::jlimit (30.0f, 300.0f, parsed);
+            const float b = std::clamp (parsed, 30.0f, 300.0f);
 
             auto& s2 = safe->engine.getSession();
             if (s2.tempoMap.empty())
@@ -1342,7 +1342,7 @@ void TransportBar::onTap()
         sumMs += tapStamps[(size_t) i] - tapStamps[(size_t) (i - 1)];
     const double avgMs = (double) sumMs / (double) intervals;
     if (avgMs <= 0.0) return;
-    const float bpm = juce::jlimit (30.0f, 300.0f, (float) (60000.0 / avgMs));
+    const float bpm = std::clamp ((float) (60000.0 / avgMs), 30.0f, 300.0f);
     const float oldBpm = engine.getSession().tempoBpm.load (std::memory_order_relaxed);
     confirmAndApplyBpm (bpm, oldBpm);
 }
@@ -1350,8 +1350,8 @@ void TransportBar::onTap()
 void TransportBar::refreshTimeSigButton()
 {
     auto& s = engine.getSession();
-    const int n = juce::jmax (1, s.beatsPerBar.load (std::memory_order_relaxed));
-    const int d = juce::jmax (1, s.beatUnit   .load (std::memory_order_relaxed));
+    const int n = std::max (1, s.beatsPerBar.load (std::memory_order_relaxed));
+    const int d = std::max (1, s.beatUnit   .load (std::memory_order_relaxed));
     timeSigButton.setButtonText (juce::String (n) + "/" + juce::String (d));
 }
 
@@ -1365,7 +1365,7 @@ void TransportBar::applyTimeSig (int numerator, int denominator)
     bool denomOk = false;
     for (int d : kAllowedDenoms) if (d == safeD) { denomOk = true; break; }
     if (! denomOk) safeD = 4;
-    const int safeN = juce::jlimit (1, 32, numerator);
+    const int safeN = std::clamp (numerator, 1, 32);
 
     auto& s = engine.getSession();
     s.beatsPerBar.store (safeN, std::memory_order_release);

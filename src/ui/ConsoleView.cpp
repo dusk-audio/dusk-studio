@@ -1,5 +1,7 @@
 #include "ConsoleView.h"
 
+#include <algorithm>
+
 namespace duskstudio
 {
 void ConsoleView::dropAllPluginEditors()
@@ -97,13 +99,13 @@ int ConsoleView::channelsThatFitForWidth (int componentWidth) noexcept
                         + kSectionGap     // gap between channels and buses
                         + kSectionGap     // gap between buses and master
                         + kMinMasterWidth;
-    const int avail     = juce::jmax (0, componentWidth - outerPad - rightCol);
+    const int avail     = std::max (0, componentWidth - outerPad - rightCol);
     // Per-strip slot = strip width + inter-channel gap. We add one gap
     // back so the LAST strip doesn't reserve a trailing gap.
     const int perSlot   = kMinChannelWidth + kStripGap;
     if (perSlot <= 0 || avail <= 0) return kMinStride;
     const int fit = (avail + kStripGap) / perSlot;
-    return juce::jlimit (kMinStride, Session::kNumTracks, fit);
+    return std::clamp (fit, kMinStride, Session::kNumTracks);
 }
 
 int ConsoleView::channelsThatFit() const
@@ -133,7 +135,7 @@ std::pair<int, int> ConsoleView::rangeForBankAtWidth (int bankIndex,
 {
     const int stride = channelsThatFitForWidth (componentWidth);
     const int first  = bankIndex * stride;
-    const int last   = juce::jmin (Session::kNumTracks - 1, first + stride - 1);
+    const int last   = std::min (Session::kNumTracks - 1, first + stride - 1);
     return { first + 1, last + 1 };
 }
 
@@ -145,7 +147,7 @@ std::pair<int, int> ConsoleView::rangeForBank (int bankIndex) const noexcept
 void ConsoleView::setBank (int bankIndex)
 {
     const int requested = bankIndex;
-    bankIndex = juce::jlimit (0, juce::jmax (0, numBanks() - 1), bankIndex);
+    bankIndex = std::clamp (bankIndex, 0, std::max (0, numBanks() - 1));
     if (bankIndex == currentBank) return;
     currentBank = bankIndex;
     // Publish the active bank to the audio thread so bank-relative MIDI
@@ -208,7 +210,7 @@ void ConsoleView::resized()
     // numBanks so a window-shrink doesn't leave us viewing an empty
     // bank past the end.
     const int preClampBank = currentBank;
-    currentBank = juce::jlimit (0, juce::jmax (0, numBanks() - 1), currentBank);
+    currentBank = std::clamp (currentBank, 0, std::max (0, numBanks() - 1));
     if (currentBank != preClampBank)
     {
         // Republish the clamped SCREEN bank so bank-relative MIDI bindings
@@ -232,7 +234,7 @@ void ConsoleView::resized()
         // Sparse last bank gets only the remainder; non-final banks get
         // the full stride.
         const int firstIdx = currentBank * stride;
-        visibleChannels = juce::jmin (stride, Session::kNumTracks - firstIdx);
+        visibleChannels = std::min (stride, Session::kNumTracks - firstIdx);
     }
 
     // Channels stay at *reference* width unless even that won't fit - in which
@@ -249,7 +251,7 @@ void ConsoleView::resized()
                    + kSectionGap
                    + (Session::kNumBuses - 1) * kStripGap
                    + kSectionGap;
-    const int availForStrips = juce::jmax (0, area.getWidth() - gaps);
+    const int availForStrips = std::max (0, area.getWidth() - gaps);
     const int refTotal = widthRefChannels * kRefChannelWidth
                        + Session::kNumBuses * kRefBusWidth
                        + kRefMasterWidth;
@@ -262,9 +264,9 @@ void ConsoleView::resized()
     {
         // Window is narrower than the reference - shrink proportionally.
         const float scale = (float) availForStrips / (float) refTotal;
-        channelW = juce::jmax (kMinChannelWidth, (int) std::round (kRefChannelWidth * scale));
-        busW     = juce::jmax (kMinBusWidth,     (int) std::round (kRefBusWidth     * scale));
-        masterW  = juce::jmax (kMinMasterWidth,  (int) std::round (kRefMasterWidth  * scale));
+        channelW = std::max (kMinChannelWidth, (int) std::round (kRefChannelWidth * scale));
+        busW     = std::max (kMinBusWidth,     (int) std::round (kRefBusWidth     * scale));
+        masterW  = std::max (kMinMasterWidth,  (int) std::round (kRefMasterWidth  * scale));
 
         // Secondary fit-to-budget pass: if the kMin floors pushed total
         // above availForStrips, shrink CHANNELS first (they have the most
@@ -289,11 +291,11 @@ void ConsoleView::resized()
             // Step 1: shrink channels (floor 1 px).
             if (overflow > 0 && widthRefChannels > 0)
             {
-                const int channelGiveable = juce::jmax (0, channelW - 1);
+                const int channelGiveable = std::max (0, channelW - 1);
                 // Ceiling division so the per-channel shrink covers the
                 // remainder without the extra +1 that overshoots when
                 // overflow divides evenly.
-                const int eachReducible   = juce::jmin (
+                const int eachReducible   = std::min (
                     (overflow + widthRefChannels - 1) / widthRefChannels,
                     channelGiveable);
                 channelW -= eachReducible;
@@ -302,8 +304,8 @@ void ConsoleView::resized()
             // Step 2: shrink buses if channels couldn't absorb everything.
             if (overflow > 0 && Session::kNumBuses > 0)
             {
-                const int busGiveable   = juce::jmax (0, busW - 1);
-                const int eachReducible = juce::jmin (
+                const int busGiveable   = std::max (0, busW - 1);
+                const int eachReducible = std::min (
                     (overflow + Session::kNumBuses - 1) / Session::kNumBuses,
                     busGiveable);
                 busW -= eachReducible;
@@ -312,10 +314,10 @@ void ConsoleView::resized()
             // Step 3: as a last resort, shrink master (the comp row will
             // start clipping past here).
             if (overflow > 0)
-                masterW = juce::jmax (1, masterW - overflow);
+                masterW = std::max (1, masterW - overflow);
         }
         // After all three steps, channelW / busW / masterW are clamped
-        // to a minimum of 1 via juce::jmax, so totalOf() can still
+        // to a minimum of 1 via std::max, so totalOf() can still
         // exceed availForStrips in pathologically narrow windows
         // (visibleChannels + Session::kNumBuses + 1 px per strip is
         // the hard floor). That case is treated as a window-sizing
@@ -440,7 +442,7 @@ void ConsoleView::focusStrip (int track)
 void ConsoleView::moveFocus (int delta)
 {
     const int start = focusedStrip >= 0 ? focusedStrip : 0;
-    focusStrip (juce::jlimit (0, Session::kNumTracks - 1, start + delta));
+    focusStrip (std::clamp (start + delta, 0, Session::kNumTracks - 1));
 }
 
 void ConsoleView::paintOverChildren (juce::Graphics& g)

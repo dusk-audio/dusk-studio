@@ -1,6 +1,8 @@
 #include "DuskAudioDeviceSelector.h"
 #include "DuskAlerts.h"
 
+#include <algorithm>
+
 namespace duskstudio
 {
 namespace
@@ -204,7 +206,7 @@ void DuskAudioDeviceSelector::resized()
 {
     auto area = getLocalBounds();
     constexpr int kRowH = 26, kGap = 6;
-    const int labelW = juce::jmin (140, area.getWidth() / 3);
+    const int labelW = std::min (140, area.getWidth() / 3);
 
     auto placeRow = [&] (juce::Label& l, DuskComboBox& c)
     {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include <algorithm>
 
 namespace duskstudio::embedscale
 {
@@ -35,6 +36,6 @@ inline juce::Rectangle<int> toPhysical (const juce::Component& c,
 
 inline int fromPhysical (const juce::Component& c, int physical)
 {
-    return juce::jmax (1, juce::roundToInt (physical / factor (c)));
+    return std::max (1, juce::roundToInt (physical / factor (c)));
 }
 } // namespace duskstudio::embedscale

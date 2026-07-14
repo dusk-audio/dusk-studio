@@ -1,6 +1,8 @@
 #include "DuskContextMenu.h"
 #include "EmbeddedModal.h"
 
+#include <algorithm>
+
 namespace duskstudio
 {
 namespace
@@ -90,9 +92,9 @@ public:
         const juce::Font font { juce::FontOptions (16.0f) };
         int maxText = 0;
         for (const auto& r : rowsData)
-            maxText = juce::jmax (maxText, (int) std::ceil (font.getStringWidthFloat (r.text)));
-        const int w = juce::jlimit (160, 480, maxText + 64);
-        setSize (w, juce::jmax (40, total));
+            maxText = std::max (maxText, (int) std::ceil (font.getStringWidthFloat (r.text)));
+        const int w = std::clamp (maxText + 64, 160, 480);
+        setSize (w, std::max (40, total));
     }
 
     void paint (juce::Graphics& g) override
@@ -273,9 +275,9 @@ void DuskContextMenuPanel::openSubmenu (int row, juce::Point<int> screenPos)
     const auto myScreen   = getScreenBounds();
     int x = myScreen.getRight() + 2;
     if (x + w > hostBounds.getRight() - 8)
-        x = juce::jmax (hostBounds.getX() + 8, myScreen.getX() - w - 2);
+        x = std::max (hostBounds.getX() + 8, myScreen.getX() - w - 2);
     int y = screenPos.y - 4;
-    y = juce::jlimit (hostBounds.getY() + 8, hostBounds.getBottom() - h - 8, y);
+    y = std::clamp (y, hostBounds.getY() + 8, hostBounds.getBottom() - h - 8);
 
     // EmbeddedModal::show expects parent-local bounds; submodal sizes
     // itself, so pre-set bounds in screen and trust the modal helper
@@ -315,12 +317,12 @@ void showContextMenuAt (const juce::PopupMenu& menu,
     int y = screenAnchor.y;
     // Flip if the menu would clip the bottom edge.
     if (y + h > hostBounds.getBottom() - 8)
-        y = juce::jmax (hostBounds.getY() + 8, y - h);
+        y = std::max (hostBounds.getY() + 8, y - h);
     // Clamp right edge.
     if (x + w > hostBounds.getRight() - 8)
-        x = juce::jmax (hostBounds.getX() + 8, hostBounds.getRight() - w - 8);
-    x = juce::jmax (hostBounds.getX() + 8, x);
-    y = juce::jmax (hostBounds.getY() + 8, y);
+        x = std::max (hostBounds.getX() + 8, hostBounds.getRight() - w - 8);
+    x = std::max (hostBounds.getX() + 8, x);
+    y = std::max (hostBounds.getY() + 8, y);
 
     sharedContextModal().show (host, std::move (panel),
                                  /*onDismiss*/ [onResult]

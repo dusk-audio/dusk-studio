@@ -1,11 +1,14 @@
 #include "MasteringEqEditor.h"
 #include "CompHeaderButton.h"
 #include <cmath>
+#include <algorithm>
 
 namespace duskstudio
 {
 namespace
 {
+template <typename T>
+inline T jlimit (T lo, T hi, T value) noexcept { return std::clamp (value, lo, hi); }
 constexpr float kFreqMinHz = 20.0f;
 constexpr float kFreqMaxHz = 20000.0f;
 constexpr float kCurveDbRange = 18.0f;   // ±18 dB on the vertical axis
@@ -248,7 +251,7 @@ bool MasteringEqEditor::updateSpectrum()
     constexpr float kRef = 4.0f / (float) kFftSize;
     for (int i = 0; i < kNumBins; ++i)
     {
-        const float db = juce::jlimit (kSpecFloorDb, kSpecTopDb,
+        const float db = jlimit (kSpecFloorDb, kSpecTopDb,
             juce::Decibels::gainToDecibels (fftWork[(size_t) i] * kRef, kSpecFloorDb));
         float& s = specDb[(size_t) i];
         s = (db > s) ? db : s + (db - s) * 0.25f;   // instant attack, slow release
@@ -269,7 +272,7 @@ void MasteringEqEditor::drawSpectrum (juce::Graphics& g, juce::Rectangle<float> 
     };
     auto dbToY = [&] (float db)
     {
-        const float frac = juce::jlimit (0.0f, 1.0f,
+        const float frac = jlimit (0.0f, 1.0f,
             (db - kSpecFloorDb) / (kSpecTopDb - kSpecFloorDb));
         return plot.getBottom() - frac * plot.getHeight();
     };
@@ -383,7 +386,7 @@ void MasteringEqEditor::paint (juce::Graphics& g)
             // a flat line at 0 dB which is visually correct.
             const float db = bandResponseDb (b, freqs[(size_t) i]);
             const float x = fToX (freqs[(size_t) i]);
-            const float y = juce::jlimit (plot.getY(), plot.getBottom(), dbToY (db));
+            const float y = jlimit (plot.getY(), plot.getBottom(), dbToY (db));
             if (i == 0) bandPath.startNewSubPath (x, y);
             else        bandPath.lineTo (x, y);
         }
@@ -402,7 +405,7 @@ void MasteringEqEditor::paint (juce::Graphics& g)
         float total = 0.0f;
         for (int b = 0; b < 5; ++b) total += bandResponseDb (b, freqs[(size_t) i]);
         const float x = fToX (freqs[(size_t) i]);
-        const float y = juce::jlimit (plot.getY(), plot.getBottom(), dbToY (total));
+        const float y = jlimit (plot.getY(), plot.getBottom(), dbToY (total));
         if (i == 0)
         {
             totalPath.startNewSubPath (x, y);
@@ -454,7 +457,7 @@ void MasteringEqEditor::paint (juce::Graphics& g)
         float total = 0.0f;
         for (int bi = 0; bi < 5; ++bi) total += bandResponseDb (bi, fc);
         const float x = fToX (fc);
-        const float y = juce::jlimit (plot.getY(), plot.getBottom(), dbToY (total));
+        const float y = jlimit (plot.getY(), plot.getBottom(), dbToY (total));
         const bool isDragging = (b == draggingBand);
         const auto fill = kBandColours[b].withAlpha (lastEnabled ? 0.95f : 0.55f);
 
@@ -520,7 +523,7 @@ float MasteringEqEditor::yToDb (float y) const noexcept
     const float midY  = plot.getCentreY();
     const float halfH = plot.getHeight() * 0.5f;
     if (halfH <= 0.0f) return 0.0f;
-    return juce::jlimit (-kCurveDbRange, kCurveDbRange,
+    return jlimit (-kCurveDbRange, kCurveDbRange,
                           (midY - y) / halfH * kCurveDbRange);
 }
 
@@ -538,7 +541,7 @@ float MasteringEqEditor::xToFreq (float x) const noexcept
     if (curveArea.isEmpty()) return kFreqMinHz;
     const auto plot = curveArea.toFloat().reduced (1.0f);
     if (plot.getWidth() <= 0.0f) return kFreqMinHz;
-    const float frac = juce::jlimit (0.0f, 1.0f,
+    const float frac = jlimit (0.0f, 1.0f,
                                        (x - plot.getX()) / plot.getWidth());
     const float logF = std::log10 (kFreqMinHz)
                         + frac * (std::log10 (kFreqMaxHz) - std::log10 (kFreqMinHz));
@@ -557,7 +560,7 @@ int MasteringEqEditor::hitTestBandDot (juce::Point<int> p) const noexcept
         for (int bi = 0; bi < 5; ++bi) total += bandResponseDb (bi, fc);
         const auto plot = curveArea.toFloat().reduced (1.0f);
         const float x = freqToX (fc);
-        const float y = juce::jlimit (plot.getY(), plot.getBottom(), dbToY (total));
+        const float y = jlimit (plot.getY(), plot.getBottom(), dbToY (total));
         const float dx = (float) p.x - x;
         const float dy = (float) p.y - y;
         const float dist = std::sqrt (dx * dx + dy * dy);
@@ -583,14 +586,14 @@ void MasteringEqEditor::mouseDrag (const juce::MouseEvent& e)
     // Y -> gain (clamped to the gain knob's range so the slider doesn't
     // jump outside its scale and so a wild drag past the plot edge doesn't
     // store a value that no longer makes audible sense).
-    const float gainDb = juce::jlimit (-12.0f, 12.0f, yToDb ((float) e.y));
+    const float gainDb = jlimit (-12.0f, 12.0f, yToDb ((float) e.y));
     params.eqBandGainDb[b].store (gainDb, std::memory_order_relaxed);
     bandUI[(size_t) b].gainKnob.setValue (gainDb, juce::dontSendNotification);
 
     // X -> freq, clamped to that band's UI range so dragging doesn't
     // teleport bands out of order (e.g. dragging Mid past High).
     const auto& range = bandUI[(size_t) b].freqKnob.getRange();
-    const float hz = juce::jlimit ((float) range.getStart(),
+    const float hz = jlimit ((float) range.getStart(),
                                      (float) range.getEnd(),
                                      xToFreq ((float) e.x));
     params.eqBandFreq[b].store (hz, std::memory_order_relaxed);
@@ -637,7 +640,7 @@ void MasteringEqEditor::resized()
     // Curve plot uses ~55 % of remaining height; the controls row uses the
     // rest. With a tall panel the user reads the curve clearly; with a
     // narrower panel both halves shrink proportionally.
-    const int controlsH = juce::jlimit (130, 210, (int) (area.getHeight() * 0.48f));
+    const int controlsH = jlimit (130, 210, (int) (area.getHeight() * 0.48f));
     controlsArea = area.removeFromBottom (controlsH);
     area.removeFromBottom (4);
     curveArea = area;
@@ -650,7 +653,7 @@ void MasteringEqEditor::resized()
     //    Freq knob, Gain knob, and Q knob (mid bands only). Shelf columns
     //    drop the Q row and centre Freq+Gain instead.
     const int colW = controlsArea.getWidth() / 5;
-    const int knobSize = juce::jlimit (34, 60, (controlsArea.getHeight() - 16) / 3 - 8);
+    const int knobSize = jlimit (34, 60, (controlsArea.getHeight() - 16) / 3 - 8);
 
     for (int i = 0; i < 5; ++i)
     {
@@ -670,7 +673,7 @@ void MasteringEqEditor::resized()
         {
             const int x = row.getX() + (row.getWidth() - knobSize) / 2;
             const int y = row.getY() + 2;
-            k.setBounds (x, y, knobSize, juce::jmin (knobSize + 14, row.getHeight() - 2));
+            k.setBounds (x, y, knobSize, std::min (knobSize + 14, row.getHeight() - 2));
         };
         layoutKnob (bandUI[(size_t) i].freqKnob, col.removeFromTop (rowH));
         layoutKnob (bandUI[(size_t) i].gainKnob, col.removeFromTop (rowH));

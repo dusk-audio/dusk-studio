@@ -13,6 +13,9 @@ namespace duskstudio
 {
 namespace
 {
+// clamp with jlimit's argument order (lo, hi, value).
+template <typename T>
+inline T jlimit (T lo, T hi, T value) noexcept { return std::clamp (value, lo, hi); }
 
 void styleSmallKnob (juce::Slider& s, double minV, double maxV, double midPt,
                       double initialV, juce::Colour col, const juce::String& suffix,
@@ -285,7 +288,7 @@ public:
             g.setColour (juce::Colour (0xff2a2a2e));
             g.drawRoundedRectangle (bar, 2.0f, 0.8f);
 
-            const float clamped = juce::jlimit (minDb, maxDb, dB);
+            const float clamped = jlimit (minDb, maxDb, dB);
             const float frac = (clamped - minDb) / (maxDb - minDb);
             if (frac > 0.001f)
             {
@@ -325,7 +328,7 @@ public:
         // Threshold triangle handle, drawn on the LEFT of the IN meter.
         if (! inputMeterArea.isEmpty() && ! threshHandleArea.isEmpty())
         {
-            const float thresh = juce::jlimit (-60.0f, 0.0f,
+            const float thresh = jlimit (-60.0f, 0.0f,
                 bus.strip.compThreshDb.load (std::memory_order_relaxed));
             const float frac = (thresh - (-60.0f)) / 60.0f;
             const auto inBar = inputMeterArea.toFloat();
@@ -445,7 +448,7 @@ private:
         // Smooth IN meter (fast-up, slow-down).
         const float l = bus.strip.meterPostBusLDb.load (std::memory_order_relaxed);
         const float r = bus.strip.meterPostBusRDb.load (std::memory_order_relaxed);
-        const float in = juce::jmax (l, r);
+        const float in = std::max (l, r);
         if (in > displayedInputDb) displayedInputDb = in;
         else                        displayedInputDb += (in - displayedInputDb) * 0.10f;
 
@@ -465,9 +468,9 @@ private:
         if (height <= 0) return;
         const float relY = (float) (inputMeterArea.getBottom() - 2 - y)
                             / (float) height;
-        const float dbOnInAxis = juce::jlimit (-60.0f, 0.0f,
-            -60.0f + juce::jlimit (0.0f, 1.0f, relY) * 60.0f);
-        bus.strip.compThreshDb.store (juce::jlimit (-60.0f, 0.0f, dbOnInAxis),
+        const float dbOnInAxis = jlimit (-60.0f, 0.0f,
+            -60.0f + jlimit (0.0f, 1.0f, relY) * 60.0f);
+        bus.strip.compThreshDb.store (jlimit (-60.0f, 0.0f, dbOnInAxis),
                                         std::memory_order_relaxed);
     }
 
@@ -598,13 +601,13 @@ BusComponent::BusComponent (Bus& b, Session& s, AudioEngine& e, int idx)
                               {
                                   const float l = bus.strip.meterPostBusLDb.load (std::memory_order_relaxed);
                                   const float r = bus.strip.meterPostBusRDb.load (std::memory_order_relaxed);
-                                  return juce::jmax (l, r);
+                                  return std::max (l, r);
                               };
     compSrc.getGrDb        = [this] { return bus.strip.meterGrDb.load (std::memory_order_relaxed); };
     compSrc.getThresholdDb = [this] { return bus.strip.compThreshDb.load (std::memory_order_relaxed); };
     compSrc.setThresholdDb = [this] (float db)
                               {
-                                  bus.strip.compThreshDb.store (juce::jlimit (-60.0f, 0.0f, db),
+                                  bus.strip.compThreshDb.store (jlimit (-60.0f, 0.0f, db),
                                                                   std::memory_order_relaxed);
                               };
     compSrc.resetThreshold = [this]
@@ -870,10 +873,10 @@ void BusComponent::captureWritePoint (AutomationParam param, float denormValue)
             {
                 const float lo = ChannelStripParams::kFaderMinDb;
                 const float hi = ChannelStripParams::kFaderMaxDb;
-                return juce::jlimit (0.0f, 1.0f, (v - lo) / (hi - lo));
+                return jlimit (0.0f, 1.0f, (v - lo) / (hi - lo));
             }
             case AutomationParam::Pan:
-                return juce::jlimit (0.0f, 1.0f, (v + 1.0f) * 0.5f);
+                return jlimit (0.0f, 1.0f, (v + 1.0f) * 0.5f);
             case AutomationParam::Mute:
                 return v >= 0.5f ? 1.0f : 0.0f;
             // Buses don't automate solo or aux sends.
@@ -1049,14 +1052,14 @@ void BusComponent::timerCallback()
 
         if (src >= peakHold) { peakHold = src; peakFrames = 18; }
         else if (peakFrames > 0) --peakFrames;
-        else peakHold = juce::jmax (-100.0f, peakHold - 1.5f);
+        else peakHold = std::max (-100.0f, peakHold - 1.5f);
     };
     const float outL = bus.strip.meterPostBusLDb.load (std::memory_order_relaxed);
     const float outR = bus.strip.meterPostBusRDb.load (std::memory_order_relaxed);
     smoothChannel (displayedOutputLDb, outputPeakHoldLDb, outputPeakHoldFramesL, outL);
     smoothChannel (displayedOutputRDb, outputPeakHoldRDb, outputPeakHoldFramesR, outR);
 
-    const float maxHold = juce::jmax (outputPeakHoldLDb, outputPeakHoldRDb);
+    const float maxHold = std::max (outputPeakHoldLDb, outputPeakHoldRDb);
     if (maxHold <= -60.0f)
         outputPeakLabel.setText ("-inf", juce::dontSendNotification);
     else
@@ -1295,7 +1298,7 @@ void BusComponent::paint (juce::Graphics& g)
                 const float midFrac = (kFaderSkewMidDb - kMinDb)
                                     / (kMaxDb - kMinDb);
                 const float skewFactor = std::log (0.5f) / std::log (midFrac);
-                const float t = juce::jlimit (0.0f, 1.0f,
+                const float t = jlimit (0.0f, 1.0f,
                                                   (db - kMinDb) / (kMaxDb - kMinDb));
                 return std::pow (t, skewFactor);
             };
@@ -1331,13 +1334,13 @@ void BusComponent::paint (juce::Graphics& g)
                     g.setColour (col);
                     g.fillRect (juce::Rectangle<float> (x, top, w, bottom - top));
                 };
-                fillBand (juce::jmax (yFillTop, bar.getY()),
-                            juce::jmin (yRedTop, yFillBot),
+                fillBand (std::max (yFillTop, bar.getY()),
+                            std::min (yRedTop, yFillBot),
                             kLedRed);
-                fillBand (juce::jmax (yFillTop, yRedTop),
-                            juce::jmin (yYellowTop, yFillBot),
+                fillBand (std::max (yFillTop, yRedTop),
+                            std::min (yYellowTop, yFillBot),
                             kLedYellow);
-                fillBand (juce::jmax (yFillTop, yYellowTop),
+                fillBand (std::max (yFillTop, yYellowTop),
                             yFillBot,
                             kLedGreen);
             }
@@ -1365,7 +1368,7 @@ void BusComponent::paint (juce::Graphics& g)
         g.drawRoundedRectangle (bar, 1.5f, 0.5f);
 
         constexpr float kGrFloorDb = 20.0f;
-        const float grAbs = juce::jlimit (0.0f, kGrFloorDb, std::abs (displayedGrDb));
+        const float grAbs = jlimit (0.0f, kGrFloorDb, std::abs (displayedGrDb));
         if (grAbs > 0.05f)
         {
             const float frac = grAbs / kGrFloorDb;
@@ -1399,7 +1402,7 @@ void BusComponent::paint (juce::Graphics& g)
         const auto& range = faderSlider.getNormalisableRange();
         const auto sliderB = faderSlider.getBounds().toFloat();
         const float trackCx = sliderB.getCentreX();
-        const float trackW  = juce::jmin (4.0f, sliderB.getWidth() * 0.18f);
+        const float trackW  = std::min (4.0f, sliderB.getWidth() * 0.18f);
         const float trackLx = trackCx - trackW * 0.5f;
         constexpr float kSharedXOver = 24.0f;
         const float labelRight = trackLx - kSharedXOver - 6.0f;
@@ -1499,8 +1502,8 @@ void BusComponent::resized()
         const int stripW = area.getWidth();
         const int heightDriver = compactVu ? stripW * 6 / 12 : stripW * 7 / 12;
         const int minH = compactVu ? 32 : 36;
-        const int vuH  = juce::jmax (minH, heightDriver);
-        const int vuW  = juce::jmax (1, stripW - 8);
+        const int vuH  = std::max (minH, heightDriver);
+        const int vuW  = std::max (1, stripW - 8);
         auto slot = area.removeFromTop (vuH);
         vuMeter->setBounds (slot.withSizeKeepingCentre (vuW, vuH));
         area.removeFromTop (3);
@@ -1525,7 +1528,7 @@ void BusComponent::resized()
         auto labelRow = parent.removeFromTop (10);
         auto knobRow  = parent.removeFromTop (kKnobBlockH);
         const int totalW = n * kKnobBlockW;
-        const int leftPad = juce::jmax (0, (labelRow.getWidth() - totalW) / 2);
+        const int leftPad = std::max (0, (labelRow.getWidth() - totalW) / 2);
         labelRow.removeFromLeft (leftPad);
         knobRow .removeFromLeft (leftPad);
         return { labelRow, knobRow };
@@ -1680,7 +1683,7 @@ void BusComponent::resized()
     // Mirror padding so the fader's centre lands on the strip's centre.
     constexpr int kRightStackW = kRightPad + kGrLedW + kMeterToGrGap
                                   + kMeterW + kFaderToMeterGap;
-    const int leftPad = juce::jlimit (0, juce::jmax (0, area.getWidth() - 20),
+    const int leftPad = jlimit (0, std::max (0, area.getWidth() - 20),
                                          kRightStackW);
     area.removeFromLeft (leftPad);
     // Right-bias the slider bounds inside the fader column so the cap
@@ -1703,7 +1706,7 @@ void BusComponent::resized()
     // Pan knob/label centred on the FADER column X.
     const int faderCentreX = area.getCentreX();
     const int knobX        = faderCentreX - kPanBlockW / 2;
-    const int labelBlockW  = juce::jmax (kPanBlockW, 40);
+    const int labelBlockW  = std::max (kPanBlockW, 40);
     panLbl .setBounds (faderCentreX - labelBlockW / 2,
                          panSlice.getY(),
                          labelBlockW, kPanLabelH);
