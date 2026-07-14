@@ -9,18 +9,27 @@ namespace duskstudio
 {
 namespace detail
 {
-// Mirrors JUCE File::isAbsolutePath: a leading separator, a Windows drive
-// colon, or a leading '~' on POSIX. std::filesystem::path::is_absolute would
-// reject the tilde form, so classify by hand to keep the same verdicts.
+// A leading separator, a Windows drive colon or forward slash, or a leading
+// '~' on POSIX. std::filesystem::path::is_absolute would reject the tilde
+// form, so classify by hand.
 inline bool pathLooksAbsolute (const std::string& path) noexcept
 {
     if (path.empty()) return false;
     const char first = path[0];
 #if defined(_WIN32)
-    return first == '\\' || (path.size() > 1 && path[1] == ':');
+    return first == '\\' || first == '/' || (path.size() > 1 && path[1] == ':');
 #else
     return first == '/' || first == '~';
 #endif
+}
+
+// JUCE's File(String) expanded a leading tilde; std::filesystem takes it
+// literally, which would misread every home-relative entry as dead.
+inline std::filesystem::path expandedPath (const std::string& p)
+{
+    if (! p.empty() && p[0] == '~' && (p.size() == 1 || p[1] == '/'))
+        return dusk::fs::userHomeDir() / std::filesystem::u8path (p.substr (p.size() == 1 ? 1 : 2));
+    return std::filesystem::u8path (p);
 }
 } // namespace detail
 
@@ -41,7 +50,7 @@ inline bool pluginBackingLooksDead (const std::string& fileOrIdentifier)
         return false;
 
     namespace stdfs = std::filesystem;
-    const auto path = stdfs::u8path (fileOrIdentifier);
+    const auto path = detail::expandedPath (fileOrIdentifier);
 
     std::error_code ec;
     if (! stdfs::exists (path, ec))         return true;

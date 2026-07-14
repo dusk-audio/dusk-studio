@@ -29,8 +29,9 @@ void writeStripField (std::array<char, mcu::sysex::kLcdRowBytes>& row,
     for (const char* p = text.c_str(); *p && written < kLcdCharsPerStrip; ++p)
     {
         const unsigned char c = (unsigned char) *p;
-        row[(size_t) (base + written++)] = (c >= 0x20 && c < 0x7F)
-                                             ? (char) c : ' ';
+        if (c >= 0x7F)
+            continue;   // drop UTF-8 bytes without spending LCD columns on them
+        row[(size_t) (base + written++)] = (c >= 0x20) ? (char) c : ' ';
     }
     while (written < kLcdCharsPerStrip)
         row[(size_t) (base + written++)] = ' ';

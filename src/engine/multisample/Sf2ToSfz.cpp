@@ -55,11 +55,14 @@ std::string sanitize(const std::string& s)
 }
 
 // Fixed decimal-place formatting with trailing-zero padding for the SFZ
-// numeric fields.
+// numeric fields. snprintf's decimal separator follows the C locale (which
+// hosted plugins are known to flip); SFZ requires '.', so normalize.
 std::string fmtF(double v, int dp)
 {
     char buf[64];
     std::snprintf(buf, sizeof(buf), "%.*f", dp, v);
+    for (char* c = buf; *c != '\0'; ++c)
+        if (*c == ',') *c = '.';
     return std::string(buf);
 }
 

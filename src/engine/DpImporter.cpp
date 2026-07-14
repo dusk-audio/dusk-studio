@@ -540,7 +540,7 @@ SongScan scanSongFolder (const juce::File& folder)
                                              scan.deviceModel);
     const int nFrag = (int) scan.tracks.size();
     if (scan.deviceTrackLimit > 0 && nFrag > scan.deviceTrackLimit)
-        warn.add (juce::String::formatted (
+        warn.add (dusk::text::format (
             "%d audio fragments found, but a %s has only %d tracks. The extra "
             "fragments are virtual takes / punch clips / cut regions. Without the "
             "(undecoded) placement table they can't be grouped, so each fragment "
