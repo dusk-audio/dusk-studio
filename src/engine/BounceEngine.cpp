@@ -81,7 +81,7 @@ bool BounceEngine::runOnMessageThread (std::function<void()> fn)
 
 std::unique_ptr<juce::AudioFormatWriter>
 BounceEngine::makeWriter (std::unique_ptr<juce::FileOutputStream> outStream,
-                            juce::String& errOut) const
+                            std::string& errOut) const
 {
     constexpr unsigned kNumChannels = 2;   // bounce is always stereo
 
@@ -249,7 +249,7 @@ void BounceEngine::run()
     {
         const bool ok = runRealtimeMode();
         rendering.store (false, std::memory_order_relaxed);
-        juce::String errSnapshot;
+        std::string errSnapshot;
         {
             const juce::ScopedLock lock (lastErrorLock);
             errSnapshot = lastError;
@@ -262,7 +262,7 @@ void BounceEngine::run()
     {
         const bool ok = runStemsMode();
         rendering.store (false, std::memory_order_relaxed);
-        juce::String errSnapshot;
+        std::string errSnapshot;
         {
             const juce::ScopedLock lock (lastErrorLock);
             errSnapshot = lastError;
@@ -277,7 +277,7 @@ void BounceEngine::run()
                                             freezeLenSamples, renderSampleRate,
                                             renderBlockSize);
         rendering.store (false, std::memory_order_relaxed);
-        juce::String errSnapshot;
+        std::string errSnapshot;
         {
             const juce::ScopedLock lock (lastErrorLock);
             errSnapshot = lastError;
@@ -291,7 +291,7 @@ void BounceEngine::run()
     std::unique_ptr<juce::FileOutputStream> outStream (outputFile.createOutputStream());
     if (outStream == nullptr)
     {
-        juce::String err = "Could not open output file " + outputFile.getFullPathName();
+        const std::string err = ("Could not open output file " + outputFile.getFullPathName()).toStdString();
         {
             const juce::ScopedLock lock (lastErrorLock);
             lastError = err;
@@ -304,7 +304,7 @@ void BounceEngine::run()
     outStream->truncate();
 
     constexpr int kNumChannels = 2;   // bounce is always stereo
-    juce::String writerErr;
+    std::string writerErr;
     std::unique_ptr<juce::AudioFormatWriter> writer = makeWriter (std::move (outStream), writerErr);
     if (writer == nullptr)
     {
@@ -451,7 +451,7 @@ void BounceEngine::run()
             if (! writer->writeFromFloatArrays (offPtrs.data(), kNumChannels, writeCount))
             {
                 const juce::ScopedLock lock (lastErrorLock);
-                lastError = "Writer failed mid-render at " + juce::String (written) + " samples";
+                lastError = "Writer failed mid-render at " + std::to_string (written) + " samples";
                 succeeded = false;
                 break;
             }
@@ -512,7 +512,7 @@ void BounceEngine::run()
     });
 
     rendering.store (false, std::memory_order_relaxed);
-    juce::String errSnapshot;
+    std::string errSnapshot;
     {
         const juce::ScopedLock lock (lastErrorLock);
         errSnapshot = lastError;
@@ -521,19 +521,19 @@ void BounceEngine::run()
 }
 
 std::unique_ptr<juce::AudioFormatWriter>
-BounceEngine::openWriterFor (const juce::File& outFile, juce::String& errOut) const
+BounceEngine::openWriterFor (const juce::File& outFile, std::string& errOut) const
 {
     std::unique_ptr<juce::FileOutputStream> outStream (outFile.createOutputStream());
     if (outStream == nullptr)
     {
-        errOut = "Could not open output file " + outFile.getFullPathName();
+        errOut = ("Could not open output file " + outFile.getFullPathName()).toStdString();
         return nullptr;
     }
     outStream->setPosition (0);
     outStream->truncate();
     auto writer = makeWriter (std::move (outStream), errOut);
     if (writer == nullptr)
-        errOut += " (" + outFile.getFileName() + ")";
+        errOut += (" (" + outFile.getFileName() + ")").toStdString();
     return writer;
 }
 
@@ -617,7 +617,7 @@ bool BounceEngine::runStemsMode()
     writers.reserve ((size_t) numStems);
     for (const auto& tgt : targets)
     {
-        juce::String writerErr;
+        std::string writerErr;
         auto writer = openWriterFor (tgt.file, writerErr);
         if (writer == nullptr)
         {
@@ -708,8 +708,8 @@ bool BounceEngine::runStemsMode()
                     {
                         const juce::ScopedLock lock (lastErrorLock);
                         lastError = "Writer failed mid-stem at "
-                                    + juce::String (writtenFor[(size_t) i]) + " samples in "
-                                    + targets[(size_t) i].file.getFileName();
+                                    + std::to_string (writtenFor[(size_t) i]) + " samples in "
+                                    + targets[(size_t) i].file.getFileName().toStdString();
                         succeeded = false;
                         break;
                     }
@@ -812,7 +812,7 @@ bool BounceEngine::runRealtimeMode()
     writers.reserve ((size_t) numFiles);
     for (const auto& f : files)
     {
-        juce::String writerErr;
+        std::string writerErr;
         auto writer = openWriterFor (f.file, writerErr);
         if (writer == nullptr)
         {
@@ -1050,14 +1050,14 @@ bool BounceEngine::renderFreezeTrack (int trackIndex, const juce::File& outFile,
     if (outStream == nullptr)
     {
         const juce::ScopedLock lock (lastErrorLock);
-        lastError = "Could not open freeze file " + outFile.getFullPathName();
+        lastError = ("Could not open freeze file " + outFile.getFullPathName()).toStdString();
         return false;
     }
     outStream->setPosition (0);
     outStream->truncate();
 
     constexpr int kNumChannels = 2;
-    juce::String writerErr;
+    std::string writerErr;
     std::unique_ptr<juce::AudioFormatWriter> writer = makeWriter (std::move (outStream), writerErr);
     if (writer == nullptr)
     {
@@ -1165,7 +1165,7 @@ bool BounceEngine::renderFreezeTrack (int trackIndex, const juce::File& outFile,
             if (! writer->writeFromFloatArrays (capPtrs, kNumChannels, writeCount))
             {
                 const juce::ScopedLock lock (lastErrorLock);
-                lastError = "Writer failed mid-freeze at " + juce::String (written) + " samples";
+                lastError = "Writer failed mid-freeze at " + std::to_string (written) + " samples";
                 ok = false;
                 break;
             }

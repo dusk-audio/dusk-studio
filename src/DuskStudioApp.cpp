@@ -1042,7 +1042,7 @@ struct DuskStudioApp::BounceTest : private juce::Timer
                              BounceEngine::Format::Wav))
         {
             std::fprintf (stdout, "[FAIL] MasterMix bounce start() returned false: %s\n",
-                          bounce->getLastError().toRawUTF8());
+                          bounce->getLastError().c_str());
             exitCode = 1;
             return false;
         }
@@ -1316,7 +1316,7 @@ private:
                 else if (++freezeAttempts > 40)
                 {
                     std::fprintf (stdout, "[FAIL] Freeze: startFreeze() would not start: %s\n",
-                                  bounce->getLastError().toRawUTF8());
+                                  bounce->getLastError().c_str());
                     exitCode = 1;
                     finish();
                 }
@@ -1383,7 +1383,7 @@ private:
                 else if (++stemsAttempts > 40)
                 {
                     std::fprintf (stdout, "[FAIL] Stems: start() would not start: %s\n",
-                                  bounce->getLastError().toRawUTF8());
+                                  bounce->getLastError().c_str());
                     exitCode = 1;
                     finish();
                 }

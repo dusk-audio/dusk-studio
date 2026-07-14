@@ -180,7 +180,7 @@ void BounceDialog::finalizeIfStopped()
 
     finished = true;
     const auto err = bounceEngine->getLastError();
-    succeeded = err.isEmpty();
+    succeeded = err.empty();
 
     if (succeeded)
     {

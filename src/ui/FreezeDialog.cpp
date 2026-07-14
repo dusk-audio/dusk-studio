@@ -74,8 +74,8 @@ FreezeDialog::FreezeDialog (AudioEngine& e, Session& s,
         // freeze render thread"); only fall back to the generic message if it's empty.
         const auto startErr = bounceEngine->getLastError();
         failBeforeStart ("Freeze failed",
-                         startErr.isNotEmpty() ? startErr
-                                               : juce::String ("A render is already in progress."));
+                         ! startErr.empty() ? juce::String (startErr)
+                                            : juce::String ("A render is already in progress."));
         return;
     }
 
@@ -129,7 +129,7 @@ void FreezeDialog::finalizeIfStopped()
 
     finished = true;
     const auto err = bounceEngine->getLastError();
-    succeeded = err.isEmpty();
+    succeeded = err.empty();
 
     if (succeeded)
     {
