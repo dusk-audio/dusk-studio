@@ -86,6 +86,30 @@ public:
         addAndMakeVisible (okBtn);
         addAndMakeVisible (cancelBtn);
 
+        // New-folder affordance for flows that write somewhere: Save targets
+        // and directory pickers. Plain Open stays uncluttered.
+        if (opts.mode == Mode::Save || opts.selectDirectories)
+        {
+            styleBtn (newFolderBtn, juce::Colour (0xff262630));
+            newFolderBtn.onClick = [this] { toggleNewFolderRow(); };
+            addAndMakeVisible (newFolderBtn);
+
+            newFolderName.setSelectAllWhenFocused (true);
+            newFolderName.onReturnKey = [this] { createNewFolder(); };
+            newFolderName.onEscapeKey = [this] { toggleNewFolderRow(); };
+            newFolderName.onTextChange = [this]
+            {
+                newFolderName.setColour (juce::TextEditor::outlineColourId,
+                                          findColour (juce::TextEditor::outlineColourId));
+                newFolderName.repaint();
+            };
+            addChildComponent (newFolderName);
+
+            styleBtn (createFolderBtn, juce::Colour (0xff385a78));
+            createFolderBtn.onClick = [this] { createNewFolder(); };
+            addChildComponent (createFolderBtn);
+        }
+
         // Comfortable browse size - clamped to parent by EmbeddedModal.
         setSize (820, 560);
     }
@@ -112,7 +136,18 @@ public:
         cancelBtn.setBounds (bottom.removeFromRight (100));
         bottom.removeFromRight (8);
         okBtn    .setBounds (bottom.removeFromRight (100));
+        if (newFolderBtn.isVisible())
+            newFolderBtn.setBounds (bottom.removeFromLeft (110));
         area.removeFromBottom (10);
+
+        if (newFolderName.isVisible())
+        {
+            auto row = area.removeFromBottom (28);
+            createFolderBtn.setBounds (row.removeFromRight (80));
+            row.removeFromRight (8);
+            newFolderName.setBounds (row);
+            area.removeFromBottom (8);
+        }
 
         if (browser != nullptr) browser->setBounds (area);
     }
@@ -186,6 +221,37 @@ private:
         if (multi)  multi  (juce::Array<juce::File>());
     }
 
+    void toggleNewFolderRow()
+    {
+        const bool show = ! newFolderName.isVisible();
+        newFolderName.setVisible (show);
+        createFolderBtn.setVisible (show);
+        resized();
+        if (show)
+        {
+            newFolderName.setText ("New folder", juce::dontSendNotification);
+            newFolderName.grabKeyboardFocus();
+        }
+    }
+
+    void createNewFolder()
+    {
+        if (browser == nullptr) return;
+        const auto name = juce::File::createLegalFileName (newFolderName.getText().trim());
+        if (name.isEmpty()) return;
+
+        const auto dir = browser->getRoot().getChildFile (name);
+        if (! dir.isDirectory() && ! dir.createDirectory())
+        {
+            newFolderName.setColour (juce::TextEditor::outlineColourId,
+                                      juce::Colour (0xffcc4444));
+            newFolderName.repaint();
+            return;
+        }
+        toggleNewFolderRow();
+        browser->setRoot (dir);
+    }
+
     Options opts;
     std::function<void (juce::File)> resultFn;
     std::function<void (juce::Array<juce::File>)> multiResultFn;
@@ -193,6 +259,8 @@ private:
     std::unique_ptr<juce::FileBrowserComponent> browser;
     juce::Label titleLabel;
     juce::TextButton okBtn, cancelBtn;
+    juce::TextButton newFolderBtn { "New folder..." }, createFolderBtn { "Create" };
+    juce::TextEditor newFolderName;
     juce::File chosen;
 };
 } // namespace

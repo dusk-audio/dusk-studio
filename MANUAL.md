@@ -1763,7 +1763,7 @@ The metronome never prints in any bounce: it is a monitoring aid, mixed in after
 
 ## Where bounces go
 
-By default, bounces are written to the session folder itself (the same directory that holds `session.json`). The bounce dialog opens a file browser there so you can rename or redirect each export. The most-recent bounce in the session folder is what the mastering stage's **Load latest mixdown** button picks up.
+By default, bounces are written to the session folder itself (the same directory that holds `session.json`). The bounce dialog opens a file browser there so you can rename or redirect each export; **New folder…** in its bottom-left corner creates a subfolder and jumps into it, handy for keeping stem sets together. The most-recent bounce in the session folder is what the mastering stage's **Load latest mixdown** button picks up.
 
 \newpage
 

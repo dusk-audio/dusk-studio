@@ -119,6 +119,7 @@ MasteringLimiterEditor::MasteringLimiterEditor (MasteringParams& p,
     lookaheadLabel.setColour (juce::Label::textColourId, juce::Colour (0xffa0a0a8));
     addAndMakeVisible (lookaheadLabel);
 
+    stereoLinkToggle.setMouseClickGrabsKeyboardFocus (false);
     stereoLinkToggle.setColour (juce::ToggleButton::textColourId, juce::Colour (0xffd0d0d0));
     stereoLinkToggle.setToggleState (params.limiterStereoLink.load (std::memory_order_relaxed),
                                       juce::dontSendNotification);

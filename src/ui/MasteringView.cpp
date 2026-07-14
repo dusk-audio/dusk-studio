@@ -72,13 +72,24 @@ void WaveformDisplay::paint (juce::Graphics& g)
     g.drawHorizontalLine (bounds.getCentreY(), (float) bounds.getX(), (float) bounds.getRight());
 
     // Played portion bright, unplayed dim - position reads at a glance.
-    if (total > 0.0 && frac > 0.0f)
+    // Both passes draw the FULL time range into the FULL rect and let a clip
+    // region do the split: drawChannels re-derives its time-to-pixel mapping
+    // from the rect it's given, so drawing the two halves into two rects that
+    // resize every frame makes the rendered wave shimmer during playback.
+    if (splitX > bounds.getX())
     {
+        juce::Graphics::ScopedSaveState ss (g);
+        g.reduceClipRegion (bounds.withRight (splitX));
         g.setColour (juce::Colour (0xff7ab0ee));
-        thumbnail.drawChannels (g, bounds.withRight (splitX), 0.0, playSec, 1.0f);
+        thumbnail.drawChannels (g, bounds, 0.0, total, 1.0f);
     }
-    g.setColour (juce::Colour (0xff3c5c84));
-    thumbnail.drawChannels (g, bounds.withLeft (splitX), playSec, total, 1.0f);
+    if (splitX < bounds.getRight())
+    {
+        juce::Graphics::ScopedSaveState ss (g);
+        g.reduceClipRegion (bounds.withLeft (splitX));
+        g.setColour (juce::Colour (0xff3c5c84));
+        thumbnail.drawChannels (g, bounds, 0.0, total, 1.0f);
+    }
 
     // Time ruler along the bottom - a handful of mm:ss ticks.
     if (total > 0.0)
@@ -148,6 +159,17 @@ constexpr int kNumMasteringTargets = (int) (sizeof (kMasteringTargets) / sizeof 
 MasteringView::MasteringView (Session& s, AudioEngine& e)
     : session (s), engine (e)
 {
+    // A clicked button would otherwise take keyboard focus and eat Space
+    // (juce::Button triggers on it), so the global play/stop toggle in
+    // MainComponent::keyPressed would go dead after any click in here.
+    loadButton.setMouseClickGrabsKeyboardFocus (false);
+    loadLatestMixdown.setMouseClickGrabsKeyboardFocus (false);
+    playButton.setMouseClickGrabsKeyboardFocus (false);
+    stopButton.setMouseClickGrabsKeyboardFocus (false);
+    rewindButton.setMouseClickGrabsKeyboardFocus (false);
+    resetLoudness.setMouseClickGrabsKeyboardFocus (false);
+    exportButton.setMouseClickGrabsKeyboardFocus (false);
+
     // header
     sourceFileLabel.setText ("No mix loaded", juce::dontSendNotification);
     sourceFileLabel.setColour (juce::Label::textColourId, juce::Colour (0xffd0d0d0));
