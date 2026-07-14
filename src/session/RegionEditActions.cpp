@@ -694,7 +694,7 @@ bool JoinRegionsAction::perform()
     if (firstReader == nullptr) return false;
     const double sr   = firstReader->sampleRate;
     const int    bits = std::max (16, (int) firstReader->bitsPerSample);
-    const int    chs  = std::max (1, (int) beforeRegions.front().numChannels);
+    const int    chs  = std::clamp ((int) beforeRegions.front().numChannels, 1, 2);
 
     const auto totalSamples = (int) std::clamp<std::int64_t> (
         totalLen, 1, std::numeric_limits<int>::max());

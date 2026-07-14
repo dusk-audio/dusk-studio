@@ -276,8 +276,9 @@ void DuskContextMenuPanel::openSubmenu (int row, juce::Point<int> screenPos)
     int x = myScreen.getRight() + 2;
     if (x + w > hostBounds.getRight() - 8)
         x = std::max (hostBounds.getX() + 8, myScreen.getX() - w - 2);
-    int y = screenPos.y - 4;
-    y = std::clamp (y, hostBounds.getY() + 8, hostBounds.getBottom() - h - 8);
+    const int loY = hostBounds.getY() + 8;
+    const int hiY = std::max (loY, hostBounds.getBottom() - h - 8);
+    int y = std::clamp (screenPos.y - 4, loY, hiY);
 
     // EmbeddedModal::show expects parent-local bounds; submodal sizes
     // itself, so pre-set bounds in screen and trust the modal helper
