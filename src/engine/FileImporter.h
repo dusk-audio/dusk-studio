@@ -3,6 +3,7 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_core/juce_core.h>
 #include "../session/Session.h"
+#include <string>
 
 namespace duskstudio::fileimport
 {
@@ -35,7 +36,7 @@ struct AudioImportRequest
 struct AudioImportResult
 {
     bool         ok = false;
-    juce::String errorMessage;
+    std::string  errorMessage;
     AudioRegion  region;
 };
 
@@ -52,7 +53,7 @@ struct MidiImportRequest
 struct MidiImportResult
 {
     bool         ok = false;
-    juce::String errorMessage;
+    std::string  errorMessage;
     MidiRegion   region;
 };
 

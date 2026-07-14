@@ -6,6 +6,7 @@
 #include <juce_core/juce_core.h>
 
 #include "engine/DpImporter.h"
+#include "foundation/Text.h"
 
 #include <cstring>
 #include <memory>
@@ -165,7 +166,7 @@ TEST_CASE ("DpImporter: lone _2 imported as mono with warning", "[DpImporter]")
     REQUIRE (scan.tracks.size() == 1);
     REQUIRE_FALSE (scan.tracks[0].fragment.stereo);
     REQUIRE (scan.tracks[0].fragment.lengthSamples == 2000);
-    REQUIRE (scan.warnings.containsIgnoreCase ("right channel without left"));
+    REQUIRE (dusk::text::containsIgnoreCase (scan.warnings, "right channel without left"));
 }
 
 TEST_CASE ("DpImporter: empty folder and garbage never throw", "[DpImporter]")

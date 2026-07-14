@@ -33,8 +33,9 @@ void AuxLaneStrip::prepare (double sampleRate, int blockSize)
             // set to kInsertPlugin by the engine before it stashed this.
             const juce::File p (pendingClapPath[(size_t) s]);
             std::string err;
-            const bool ok = ncs.load (p, preparedSampleRate, preparedBlockSize, err,
-                                      pendingClapPluginId[(size_t) s]);
+            const bool ok = ncs.load (std::filesystem::u8path (p.getFullPathName().toStdString()),
+                                      preparedSampleRate, preparedBlockSize, err,
+                                      pendingClapPluginId[(size_t) s].toStdString());
             if (ok && ! pendingClapState[(size_t) s].empty())
                 ncs.loadState (pendingClapState[(size_t) s]);
             nativeReloadFailed[(size_t) s].store (! ok, std::memory_order_relaxed);
@@ -60,8 +61,9 @@ void AuxLaneStrip::prepare (double sampleRate, int blockSize)
             {
                 const juce::File p (pendingLv2Path[(size_t) s]);
                 std::string err;
-                const bool ok = nls.load (p, preparedSampleRate, preparedBlockSize, err,
-                                          pendingLv2PluginId[(size_t) s]);
+                const bool ok = nls.load (std::filesystem::u8path (p.getFullPathName().toStdString()),
+                                          preparedSampleRate, preparedBlockSize, err,
+                                          pendingLv2PluginId[(size_t) s].toStdString());
                 if (ok && ! pendingLv2State[(size_t) s].empty())
                 {
                     nls.setStateDirectory (pendingLv2StateDir[(size_t) s]);
@@ -94,8 +96,9 @@ void AuxLaneStrip::prepare (double sampleRate, int blockSize)
             {
                 const juce::File p (pendingVst3Path[(size_t) s]);
                 std::string err;
-                const bool ok = nvs.load (p, preparedSampleRate, preparedBlockSize, err,
-                                          pendingVst3PluginId[(size_t) s]);
+                const bool ok = nvs.load (std::filesystem::u8path (p.getFullPathName().toStdString()),
+                                          preparedSampleRate, preparedBlockSize, err,
+                                          pendingVst3PluginId[(size_t) s].toStdString());
                 if (ok && ! pendingVst3State[(size_t) s].empty())
                     nvs.loadState (pendingVst3State[(size_t) s]);
                 vst3ReloadFailed[(size_t) s].store (! ok, std::memory_order_relaxed);
@@ -153,7 +156,8 @@ bool AuxLaneStrip::loadNativeClap (int slotIdx, const juce::File& path, std::str
     unloadNativeLv2 (slotIdx);
     unloadNativeVst3 (slotIdx);
     slots[(size_t) slotIdx].unload();
-    const bool ok = nativeClapSlots[(size_t) slotIdx].load (path, preparedSampleRate, preparedBlockSize, errorOut, pluginId);
+    const bool ok = nativeClapSlots[(size_t) slotIdx].load (std::filesystem::u8path (path.getFullPathName().toStdString()),
+                                                            preparedSampleRate, preparedBlockSize, errorOut, pluginId.toStdString());
     // User-initiated load always ends any "failed restore" state (see ChannelStrip::
     // loadNativeClap) - clear regardless of outcome so the flag stays caller-independent.
     nativeReloadFailed[(size_t) slotIdx].store (false, std::memory_order_relaxed);
@@ -192,7 +196,8 @@ bool AuxLaneStrip::loadNativeLv2 (int slotIdx, const juce::File& path, std::stri
     unloadNativeClap (slotIdx);
     unloadNativeVst3 (slotIdx);
     slots[(size_t) slotIdx].unload();
-    const bool ok = nativeLv2Slots[(size_t) slotIdx].load (path, preparedSampleRate, preparedBlockSize, errorOut, pluginId);
+    const bool ok = nativeLv2Slots[(size_t) slotIdx].load (std::filesystem::u8path (path.getFullPathName().toStdString()),
+                                                           preparedSampleRate, preparedBlockSize, errorOut, pluginId.toStdString());
     lv2ReloadFailed[(size_t) slotIdx].store (false, std::memory_order_relaxed);
     return ok;
 }
@@ -231,7 +236,8 @@ bool AuxLaneStrip::loadNativeVst3 (int slotIdx, const juce::File& path, std::str
     unloadNativeClap (slotIdx);
     unloadNativeLv2 (slotIdx);
     slots[(size_t) slotIdx].unload();
-    const bool ok = nativeVst3Slots[(size_t) slotIdx].load (path, preparedSampleRate, preparedBlockSize, errorOut, pluginId);
+    const bool ok = nativeVst3Slots[(size_t) slotIdx].load (std::filesystem::u8path (path.getFullPathName().toStdString()),
+                                                            preparedSampleRate, preparedBlockSize, errorOut, pluginId.toStdString());
     vst3ReloadFailed[(size_t) slotIdx].store (false, std::memory_order_relaxed);
     return ok;
 }

@@ -18,6 +18,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <filesystem>
+#include <string>
 #include <vector>
 
 namespace
@@ -85,7 +87,7 @@ TEST_CASE ("Native CLAP instrument produces audio from notes", "[clap][instrumen
 
     duskstudio::clap::NativeClapSlot slot;
     std::string err;
-    REQUIRE (slot.load (juce::File (juce::String (path)), 48000.0, kBlock, err));
+    REQUIRE (slot.load (std::filesystem::u8path (path), 48000.0, kBlock, err));
     REQUIRE (slot.isLoadedInstrument());
 
     driveSilence (slot, 188);   // ~2 s warmup: sample libraries stream their kits
@@ -105,14 +107,14 @@ TEST_CASE ("Native VST3 instrument produces audio from notes", "[vst3][instrumen
     duskstudio::vst3::Vst3Bundle bundle;
     std::string err;
     REQUIRE (bundle.load (path, err));
-    juce::String classId;
+    std::string classId;
     for (const auto& d : bundle.plugins())
-        if (d.isInstrument) { classId = juce::String (juce::CharPointer_UTF8 (d.id.c_str())); break; }
-    if (classId.isEmpty())
+        if (d.isInstrument) { classId = d.id; break; }
+    if (classId.empty())
     { SUCCEED ("module advertises no instrument class — skipping"); return; }
 
     duskstudio::vst3::NativeVst3Slot slot;
-    REQUIRE (slot.load (juce::File (juce::String (path)), 48000.0, kBlock, err, classId));
+    REQUIRE (slot.load (std::filesystem::u8path (path), 48000.0, kBlock, err, classId));
     // No isLoadedInstrument assert: instrument-flagged hybrids with an audio
     // input bus exist (drum-replacement tools). Notes making sound is the test.
 
@@ -136,7 +138,7 @@ TEST_CASE ("Native LV2 instrument produces audio from notes", "[lv2][instrument]
 
     duskstudio::lv2::NativeLv2Slot slot;
     std::string err;
-    REQUIRE (slot.load (juce::File (juce::String (path)), 48000.0, kBlock, err));
+    REQUIRE (slot.load (std::filesystem::u8path (path), 48000.0, kBlock, err));
     // No isLoadedInstrument assert: JUCE-built LV2 instruments expose an audio
     // input bus, so the layout legitimately isn't input-less. The strip's MIDI
     // branch only needs isLoaded — what matters is that notes make sound.

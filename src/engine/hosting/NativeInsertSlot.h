@@ -1,12 +1,13 @@
 #pragma once
 
-#include <juce_core/juce_core.h>
+#include <juce_audio_basics/juce_audio_basics.h>   // JUCE MidiBuffer (audio path)
 
 #include "InsertAdapter.h"
 #include "SpscRing.h"
 
 #include <atomic>
 #include <cstring>
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <vector>
@@ -44,19 +45,19 @@ public:
     // Message thread: load the bundle at `path` and instantiate `pluginId` (empty =
     // the format's default pick - the first effect), replacing any prior load.
     // False (+ errorOut) on failure.
-    bool load (const juce::File& path, double sampleRate, int maxBlock, std::string& errorOut,
-               const juce::String& pluginId = {})
+    bool load (const std::filesystem::path& path, double sampleRate, int maxBlock,
+               std::string& errorOut, const std::string& pluginId = {})
     {
         unload();
         bindingRing.clear();   // writes queued against the previous occupant
 
         auto b = std::make_unique<Bundle>();
         std::string err;
-        if (! b->load (path.getFullPathName().toStdString(), err))
+        if (! b->load (path.u8string(), err))
         { errorOut = std::string (Traits::bundleNoun) + ": " + err; return false; }
 
         std::string pickedId;
-        if (! Traits::pickPlugin (*b, pluginId.toStdString(), pickedId, errorOut))
+        if (! Traits::pickPlugin (*b, pluginId, pickedId, errorOut))
             return false;
 
         auto inst = std::make_unique<Instance>();
@@ -70,8 +71,8 @@ public:
         bundle     = std::move (b);
         instance   = std::move (inst);
         adapter.prepare (instance->portLayout(), maxBlock);   // size the fold scratch
-        loadedPath     = path.getFullPathName();
-        loadedPluginId = juce::String (pickedId);
+        loadedPath     = path.u8string();
+        loadedPluginId = pickedId;
         ready.store (true, std::memory_order_release);
         return true;
     }
@@ -112,10 +113,10 @@ public:
     }
 
     bool isLoaded() const noexcept { return ready.load (std::memory_order_acquire); }
-    const juce::String& getPath() const noexcept { return loadedPath; }
+    const std::string& getPath() const noexcept { return loadedPath; }
     // The instantiated plugin's id within its bundle (class UID / URI / CLAP id) -
     // resolved even when load() defaulted, so sessions persist the actual pick.
-    const juce::String& getPluginId() const noexcept { return loadedPluginId; }
+    const std::string& getPluginId() const noexcept { return loadedPluginId; }
 
     // Bypass: processStereo passes audio through untouched (the plugin stays loaded).
     void setBypassed (bool b) noexcept { bypassed.store (b, std::memory_order_relaxed); }
@@ -229,8 +230,8 @@ protected:
     InsertAdapter     adapter;
     std::atomic<bool> ready    { false };
     std::atomic<bool> bypassed { false };
-    juce::String      loadedPath;
-    juce::String      loadedPluginId;
+    std::string       loadedPath;
+    std::string       loadedPluginId;
 
 private:
     struct ParamBinding { uint32_t paramIndex; float frac; };

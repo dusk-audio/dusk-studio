@@ -58,9 +58,9 @@ public:
         warnings.setColour (juce::TextEditor::textColourId, juce::Colour (0xffd0a060));
         warnings.setColour (juce::TextEditor::outlineColourId, juce::Colour (0xff35404a));
         warnings.setFont (juce::Font (juce::FontOptions (13.0f)));
-        warnings.setText (scan.warnings.isEmpty()
+        warnings.setText (scan.warnings.empty()
                               ? juce::String ("Ready to import.")
-                              : scan.warnings,
+                              : juce::String (scan.warnings),
                           juce::dontSendNotification);
         addAndMakeVisible (warnings);
 

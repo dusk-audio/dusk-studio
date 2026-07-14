@@ -1,4 +1,5 @@
 #include "AudioPipelineSelfTest.h"
+#include "../foundation/Text.h"
 #if defined(__linux__)
  #include "alsa/AlsaAudioIODevice.h"
 #endif
@@ -22,7 +23,7 @@ float ampToDb (float a, float ref = 1.0f)
     return 20.0f * std::log10 (juce::jmax (1.0e-9f, a) / juce::jmax (1.0e-9f, ref));
 }
 
-juce::String fmtPassFail (bool pass) { return pass ? juce::String ("[PASS]") : juce::String ("[FAIL]"); }
+std::string fmtPassFail (bool pass) { return pass ? "[PASS]" : "[FAIL]"; }
 } // namespace
 
 AudioPipelineSelfTest::AudioPipelineSelfTest (AudioEngine& e,
@@ -243,7 +244,7 @@ AudioPipelineSelfTest::runSynthetic (double sampleRate, int blockSize,
     return m;
 }
 
-juce::String AudioPipelineSelfTest::testPassThroughUnity()
+std::string AudioPipelineSelfTest::testPassThroughUnity()
 {
     prepareCleanState();
     constexpr int bs = 512;
@@ -262,14 +263,14 @@ juce::String AudioPipelineSelfTest::testPassThroughUnity()
                       && std::abs (m.rmsR  - expRms)  < kRmsTol;
     const bool stereoOK = std::abs (m.peakL - m.peakR) < 0.01f;
 
-    return juce::String::formatted (
+    return dusk::text::format (
         "%s Pass-Through Unity (track 0 IN, fader 0 dB, pan center, master 0 dB)\n"
         "      Input -6 dBFS sine @1 kHz, %.0f Hz / %d samples, 16in/2out\n"
         "      Expected peak=%.4f (%+.2f dBFS), RMS=%.4f (%+.2f dBFS)\n"
         "      Measured L peak=%.4f (%+.2f dBFS), RMS=%.4f (%+.2f dBFS) %s\n"
         "      Measured R peak=%.4f (%+.2f dBFS), RMS=%.4f (%+.2f dBFS) %s\n"
         "      L vs R peak delta: %.4f %s",
-        fmtPassFail (peakOK && rmsOK && stereoOK).toRawUTF8(),
+        fmtPassFail (peakOK && rmsOK && stereoOK).c_str(),
         sr, bs,
         expPeak, ampToDb (expPeak), expRms, ampToDb (expRms),
         m.peakL, ampToDb (m.peakL), m.rmsL, ampToDb (m.rmsL),
@@ -280,7 +281,7 @@ juce::String AudioPipelineSelfTest::testPassThroughUnity()
         stereoOK ? "" : "<-- L/R imbalance!");
 }
 
-juce::String AudioPipelineSelfTest::testMuteSilences()
+std::string AudioPipelineSelfTest::testMuteSilences()
 {
     prepareCleanState();
     session.track (0).strip.mute.store (true, std::memory_order_relaxed);
@@ -290,16 +291,16 @@ juce::String AudioPipelineSelfTest::testMuteSilences()
     const bool silentL = m.peakL < 1.0e-4f;
     const bool silentR = m.peakR < 1.0e-4f;
 
-    return juce::String::formatted (
+    return dusk::text::format (
         "%s Mute Silences (track 0 IN + mute on)\n"
         "      Expected peak=0.0 on both channels\n"
         "      Measured L peak=%.6f, R peak=%.6f %s",
-        fmtPassFail (silentL && silentR).toRawUTF8(),
+        fmtPassFail (silentL && silentR).c_str(),
         m.peakL, m.peakR,
         silentL && silentR ? "" : "<-- audio leaking past mute!");
 }
 
-juce::String AudioPipelineSelfTest::testMasterFaderMinusSix()
+std::string AudioPipelineSelfTest::testMasterFaderMinusSix()
 {
     prepareCleanState();
     session.master().faderDb.store (-6.0f, std::memory_order_relaxed);
@@ -311,17 +312,17 @@ juce::String AudioPipelineSelfTest::testMasterFaderMinusSix()
     const float expPeak = kInputAmpMinusSixDb * 0.7071f * 0.5012f;
     const bool peakOK = std::abs (m.peakL - expPeak) < kPeakTol;
 
-    return juce::String::formatted (
+    return dusk::text::format (
         "%s Master Fader -6 dB (track 0 unity + pan center, master -6 dB)\n"
         "      Expected peak=%.4f (%+.2f dBFS)\n"
         "      Measured L peak=%.4f (%+.2f dBFS) %s",
-        fmtPassFail (peakOK).toRawUTF8(),
+        fmtPassFail (peakOK).c_str(),
         expPeak, ampToDb (expPeak),
         m.peakL, ampToDb (m.peakL),
         peakOK ? "" : "<-- master fader not applying expected gain!");
 }
 
-juce::String AudioPipelineSelfTest::testMasterCompNoNoiseFloor()
+std::string AudioPipelineSelfTest::testMasterCompNoNoiseFloor()
 {
     prepareCleanState();
     // Engage the master bus compressor over SILENT input. The donor comp's
@@ -337,16 +338,16 @@ juce::String AudioPipelineSelfTest::testMasterCompNoNoiseFloor()
     const bool silentL = m.peakL < 1.0e-4f;   // -80 dBFS
     const bool silentR = m.peakR < 1.0e-4f;
 
-    return juce::String::formatted (
+    return dusk::text::format (
         "%s Master Comp No Noise Floor (comp ON, silent input)\n"
         "      Expected peak=0.0 on both channels (donor analog-noise disabled)\n"
         "      Measured L peak=%.6f (%+.2f dBFS), R peak=%.6f %s",
-        fmtPassFail (silentL && silentR).toRawUTF8(),
+        fmtPassFail (silentL && silentR).c_str(),
         m.peakL, ampToDb (m.peakL), m.peakR,
         silentL && silentR ? "" : "<-- comp injecting noise into silence!");
 }
 
-juce::String AudioPipelineSelfTest::testBusSoloMutesDirect()
+std::string AudioPipelineSelfTest::testBusSoloMutesDirect()
 {
     prepareCleanState();   // clears track 0's busAssign -> guaranteed direct-to-master
     // Solo bus 0 with NO track routed to it. Track 0 takes the direct-to-master
@@ -364,31 +365,31 @@ juce::String AudioPipelineSelfTest::testBusSoloMutesDirect()
     // clear it here to avoid bleeding into the next test.
     session.setBusSoloed (0, false);
 
-    return juce::String::formatted (
+    return dusk::text::format (
         "%s Bus Solo Mutes Direct (bus 0 soloed + empty, track 0 unassigned)\n"
         "      Expected silence: a direct-to-master track must not bypass bus solo\n"
         "      Measured L peak=%.6f, R peak=%.6f %s",
-        fmtPassFail (silentL && silentR).toRawUTF8(),
+        fmtPassFail (silentL && silentR).c_str(),
         m.peakL, m.peakR,
         silentL && silentR ? "" : "<-- unassigned track leaking past bus solo!");
 }
 
-juce::String AudioPipelineSelfTest::testChannelRoutingTwoOut()
+std::string AudioPipelineSelfTest::testChannelRoutingTwoOut()
 {
     prepareCleanState();
     auto m = runSynthetic (48000.0, 512, 16, 2, kInputAmpMinusSixDb, kToneHz, 8, 4);
 
     // With 2 output channels, both should have signal (pan center).
     const bool bothPresent = m.peakL > 0.05f && m.peakR > 0.05f;
-    return juce::String::formatted (
+    return dusk::text::format (
         "%s Channel Routing 2-out (16in/2out, pan center)\n"
         "      L=%.4f R=%.4f %s",
-        fmtPassFail (bothPresent).toRawUTF8(),
+        fmtPassFail (bothPresent).c_str(),
         m.peakL, m.peakR,
         bothPresent ? "" : "<-- one or both output channels missing signal");
 }
 
-juce::String AudioPipelineSelfTest::testChannelRoutingFourOut()
+std::string AudioPipelineSelfTest::testChannelRoutingFourOut()
 {
     prepareCleanState();
 
@@ -440,17 +441,17 @@ juce::String AudioPipelineSelfTest::testChannelRoutingFourOut()
     const bool ch01HaveSignal = peaks[0] > 0.05f && peaks[1] > 0.05f;
     const bool ch23AreSilent  = peaks[2] < 1.0e-4f && peaks[3] < 1.0e-4f;
 
-    return juce::String::formatted (
+    return dusk::text::format (
         "%s Channel Routing 4-out (16in/4out, only ch 0+1 should have audio)\n"
         "      ch0=%.4f ch1=%.4f ch2=%.6f ch3=%.6f %s",
-        fmtPassFail (ch01HaveSignal && ch23AreSilent).toRawUTF8(),
+        fmtPassFail (ch01HaveSignal && ch23AreSilent).c_str(),
         peaks[0], peaks[1], peaks[2], peaks[3],
         (! ch01HaveSignal) ? "<-- L/R missing"
             : (! ch23AreSilent) ? "<-- ch2/3 should be silent (engine bleeding into extra channels?)"
             : "");
 }
 
-juce::String AudioPipelineSelfTest::testMasterTapeAddsGain()
+std::string AudioPipelineSelfTest::testMasterTapeAddsGain()
 {
     // Audit: characterize the master tape donor's transfer function across
     // its input-gain (drive) parameter, with auto-compensation both ON and
@@ -472,7 +473,7 @@ juce::String AudioPipelineSelfTest::testMasterTapeAddsGain()
     auto* pOut     = apvts.getParameter ("outputGain");
     auto* pAuto    = apvts.getParameter ("autoComp");
    #else
-    return juce::String ("[SKIP] Master Tape gain audit - DUSKSTUDIO_HAS_DUSK_DSP not defined");
+    return std::string ("[SKIP] Master Tape gain audit - DUSKSTUDIO_HAS_DUSK_DSP not defined");
    #endif
 
     auto setNorm = [] (juce::AudioProcessorParameter* p, float n)
@@ -483,8 +484,8 @@ juce::String AudioPipelineSelfTest::testMasterTapeAddsGain()
 
     constexpr float postStripPeak = 0.5012f * 0.7071f;  // 0.3544 = -9.01 dBFS
 
-    juce::String table;
-    table << juce::String::formatted (
+    std::string table;
+    table += dusk::text::format (
         "      Pre-tape peak (track 0 -> pan center): %.4f (%+.2f dBFS)\n",
         postStripPeak, ampToDb (postStripPeak));
 
@@ -499,14 +500,14 @@ juce::String AudioPipelineSelfTest::testMasterTapeAddsGain()
         setNorm (pAuto, ac ? 1.0f : 0.0f);   // Choice "Off"/"On" -> 0 / 1
         setNorm (pOut,  normFromGainDb (0.0f));
 
-        table << juce::String::formatted ("      autoComp=%s\n", ac ? "ON " : "OFF");
+        table += dusk::text::format ("      autoComp=%s\n", ac ? "ON " : "OFF");
         for (float drDb : drives)
         {
             setNorm (pIn, normFromGainDb (drDb));
             auto m = runSynthetic (48000.0, 512, 16, 2,
                                     kInputAmpMinusSixDb, kToneHz, 24, 8);
             const float deltaDb = ampToDb (m.peakL / postStripPeak);
-            table << juce::String::formatted (
+            table += dusk::text::format (
                 "        drive=%+6.1f dB -> post-tape L=%.4f (%+.2f dBFS), "
                 "delta=%+.2f dB\n",
                 drDb, m.peakL, ampToDb (m.peakL), deltaDb);
@@ -527,13 +528,13 @@ juce::String AudioPipelineSelfTest::testMasterTapeAddsGain()
 
     const bool pass = autoCompOnWithinHalfDb;
 
-    return juce::String::formatted (
+    return dusk::text::format (
         "%s Master Tape gain audit (sweep)\n%s"
         "      Default (autoComp ON, drive 0 dB): %+.2f dB vs unity\n"
         "      autoComp ON worst |delta| over -12..+12 dB: %.2f dB "
         "(pass if < 0.5 dB at every drive point)",
-        fmtPassFail (pass).toRawUTF8(),
-        table.toRawUTF8(),
+        fmtPassFail (pass).c_str(),
+        table.c_str(),
         deltaAtDefault,
         worstAutoOnDelta);
 }
@@ -617,7 +618,7 @@ void captureToneOutput (AudioEngine& engine, double sr, int blockSize,
 }
 } // namespace
 
-juce::String AudioPipelineSelfTest::testCompEachMode()
+std::string AudioPipelineSelfTest::testCompEachMode()
 {
     // -18 dBFS @ 1 kHz through each comp mode on track 0. Goertzel measures
     // fundamental + first 4 harmonics; the 17 kHz bin acts as a "no-signal-
@@ -640,7 +641,7 @@ juce::String AudioPipelineSelfTest::testCompEachMode()
         { 0, "Opto" }, { 1, "FET" }, { 2, "VCA" }
     };
 
-    juce::String table;
+    std::string table;
     bool allPass = true;
 
     for (const auto& m : modes)
@@ -685,7 +686,7 @@ juce::String AudioPipelineSelfTest::testCompEachMode()
         const bool pass    = fundOk && aliasOk;
         if (! pass) allPass = false;
 
-        table << juce::String::formatted (
+        table += dusk::text::format (
             "      %s  fund=%+6.2f dBFS  H2=%+6.2f  H3=%+6.2f  H4=%+6.2f  "
             "H5=%+6.2f  THD=%5.2f%%  alias17k=%+7.2f dBFS  %s\n",
             m.label,
@@ -699,13 +700,13 @@ juce::String AudioPipelineSelfTest::testCompEachMode()
             pass ? "OK" : "FAIL");
     }
 
-    return juce::String::formatted (
+    return dusk::text::format (
         "%s Channel comp (Opto / FET / VCA) on -18 dBFS @ 1 kHz\n%s",
-        fmtPassFail (allPass).toRawUTF8(),
-        table.toRawUTF8());
+        fmtPassFail (allPass).c_str(),
+        table.c_str());
 }
 
-juce::String AudioPipelineSelfTest::testCompHeavyGR()
+std::string AudioPipelineSelfTest::testCompHeavyGR()
 {
     // Heavy gain-reduction stress: push each mode to its aggressive corner
     // and measure how much harmonic + alias energy comes out. This run is
@@ -746,7 +747,7 @@ juce::String AudioPipelineSelfTest::testCompHeavyGR()
                                  -36.0f, 20.0f, 1.0f, 50.0f, 12.0f }
     };
 
-    juce::String table;
+    std::string table;
     for (const auto& s : specs)
     {
         prepareCleanState();
@@ -782,7 +783,7 @@ juce::String AudioPipelineSelfTest::testCompHeavyGR()
         float peak = 0.0f;
         for (float v : buf) if (std::abs (v) > peak) peak = std::abs (v);
 
-        table << juce::String::formatted (
+        table += dusk::text::format (
             "      %s  peak=%+6.2f  fund=%+6.2f  H2=%+6.2f  H3=%+6.2f  "
             "H4=%+6.2f  H5=%+6.2f  THD=%6.2f%%  alias17k=%+7.2f\n",
             s.label,
@@ -796,15 +797,15 @@ juce::String AudioPipelineSelfTest::testCompHeavyGR()
             ampToDb (alias));
     }
 
-    return juce::String::formatted (
+    return dusk::text::format (
         "[INFO] Channel comp heavy-GR characterization (-6 dBFS in, extreme settings)\n%s"
         "      Heavy-GR distortion is partly intrinsic (envelope chatter,\n"
         "      asymmetric saturation) and partly side-effect (donor clip if\n"
         "      makeup pushes hot). 17 kHz floor < -50 dBFS = OS doing its job.",
-        table.toRawUTF8());
+        table.c_str());
 }
 
-juce::String AudioPipelineSelfTest::testCompPerTrack()
+std::string AudioPipelineSelfTest::testCompPerTrack()
 {
     // Wiring uniformity: run the same Opto-comp config on each of the 16
     // tracks one at a time. Output peaks must agree within tolerance,
@@ -867,25 +868,25 @@ juce::String AudioPipelineSelfTest::testCompPerTrack()
                               : 999.0f;
     const bool pass = spreadDb < 0.5f && minP > 0.01f;
 
-    return juce::String::formatted (
+    return dusk::text::format (
         "%s Comp wiring uniformity across 16 tracks (Opto)\n"
         "      peak min=%+6.2f dBFS  max=%+6.2f dBFS  spread=%.3f dB "
         "(pass if spread < 0.5 dB AND min > -40 dBFS)",
-        fmtPassFail (pass).toRawUTF8(),
+        fmtPassFail (pass).c_str(),
         ampToDb (minP),
         ampToDb (maxP),
         spreadDb);
 }
 
-juce::String AudioPipelineSelfTest::probeUMC1820AlsaFormat()
+std::string AudioPipelineSelfTest::probeUMC1820AlsaFormat()
 {
     // Explicitly open the UMC1820 front: device on the ALSA backend so the
     // device-open stderr line shows what format/access mode plug negotiated
     // for THAT specific PCM. Verifies the format-pin patch (S24_3LE first
     // for non-hw: devices) is taking effect on the actual hardware the user
     // selects in the dialog.
-    juce::String out;
-    out << "--- UMC1820 ALSA Direct Open Probe ---\n";
+    std::string out;
+    out += "--- UMC1820 ALSA Direct Open Probe ---\n";
 
     const auto origType  = deviceManager.getCurrentAudioDeviceType();
     const auto origSetup = deviceManager.getAudioDeviceSetup();
@@ -909,13 +910,13 @@ juce::String AudioPipelineSelfTest::probeUMC1820AlsaFormat()
         const auto err = deviceManager.setAudioDeviceSetup (setup, /*treatAsChosen*/ true);
         if (err.isNotEmpty())
         {
-            out << "  " << name << ": ERROR " << err << "\n";
+            out += "  " + name.toStdString() + ": ERROR " + err.toStdString() + "\n";
             continue;
         }
 
         if (auto* dev = deviceManager.getCurrentAudioDevice())
         {
-            out << juce::String::formatted (
+            out += dusk::text::format (
                 "  %s\n      OPENED rate=%.0f buf=%d in=%d out=%d "
                 "(see [Dusk Studio/JUCE-ALSA] line in stderr for format/access)\n",
                 name.toRawUTF8(),
@@ -926,7 +927,7 @@ juce::String AudioPipelineSelfTest::probeUMC1820AlsaFormat()
         }
         else
         {
-            out << "  " << name << ": OPEN-FAILED (getCurrentAudioDevice() == nullptr)\n";
+            out += "  " + name.toStdString() + ": OPEN-FAILED (getCurrentAudioDevice() == nullptr)\n";
         }
     }
 
@@ -935,10 +936,10 @@ juce::String AudioPipelineSelfTest::probeUMC1820AlsaFormat()
     return out;
 }
 
-juce::String AudioPipelineSelfTest::testBackendsOpenCleanly()
+std::string AudioPipelineSelfTest::testBackendsOpenCleanly()
 {
-    juce::String out;
-    out << "--- Backend Open Tests ---\n";
+    std::string out;
+    out += "--- Backend Open Tests ---\n";
 
     // Capture the user's current setup so we can restore.
     const auto origType  = deviceManager.getCurrentAudioDeviceType();
@@ -953,16 +954,17 @@ juce::String AudioPipelineSelfTest::testBackendsOpenCleanly()
         const auto outDevs = type->getDeviceNames (false);
         const auto inDevs  = type->getDeviceNames (true);
 
-        out << "  Backend: " << type->getTypeName()
-            << " | " << outDevs.size() << " out devs, " << inDevs.size() << " in devs\n";
-        for (const auto& d : outDevs) out << "      out: " << d << "\n";
-        for (const auto& d : inDevs)  out << "      in:  " << d << "\n";
+        out += dusk::text::format ("  Backend: %s | %d out devs, %d in devs\n",
+                                   type->getTypeName().toRawUTF8(),
+                                   outDevs.size(), inDevs.size());
+        for (const auto& d : outDevs) out += "      out: " + d.toStdString() + "\n";
+        for (const auto& d : inDevs)  out += "      in:  " + d.toStdString() + "\n";
 
         // Try opening the type's default device.
         deviceManager.setCurrentAudioDeviceType (type->getTypeName(), /*treatAsChosenDevice*/ true);
         if (auto* dev = deviceManager.getCurrentAudioDevice())
         {
-            out << juce::String::formatted (
+            out += dusk::text::format (
                 "      OPENED  rate=%.0f buf=%d in=%d out=%d\n",
                 dev->getCurrentSampleRate(),
                 dev->getCurrentBufferSizeSamples(),
@@ -971,18 +973,18 @@ juce::String AudioPipelineSelfTest::testBackendsOpenCleanly()
         }
         else
         {
-            out << "      OPEN-FAILED (deviceManager.getCurrentAudioDevice() returned nullptr)\n";
+            out += "      OPEN-FAILED (deviceManager.getCurrentAudioDevice() returned nullptr)\n";
         }
     }
 
     // Restore.
     deviceManager.setCurrentAudioDeviceType (origType, /*treatAsChosenDevice*/ true);
     deviceManager.setAudioDeviceSetup (origSetup, /*treatAsChosenDevice*/ true);
-    out << "  (restored original setup: " << origType << ")\n";
+    out += "  (restored original setup: " + origType.toStdString() + ")\n";
     return out;
 }
 
-juce::String AudioPipelineSelfTest::testParallelMatchesSerial()
+std::string AudioPipelineSelfTest::testParallelMatchesSerial()
 {
     using juce::jmax;
     using juce::jmin;
@@ -1108,10 +1110,10 @@ juce::String AudioPipelineSelfTest::testParallelMatchesSerial()
     const bool matchOK   = testWorkers == 0 || parallelDiff <= serialDiff + kReassocTol;
     const bool pass      = sizeOK && signalOK && matchOK;
 
-    return juce::String::formatted (
+    return dusk::text::format (
         "%s Parallel Matches Serial (%d active tracks, %d workers vs serial)\n"
         "      serial-vs-serial = %.3e   serial-vs-parallel = %.3e   (reassoc tol %.1e, peak %.4f)%s",
-        fmtPassFail (pass).toRawUTF8(),
+        fmtPassFail (pass).c_str(),
         activeTracks, testWorkers,
         (double) serialDiff, (double) parallelDiff, (double) kReassocTol, (double) peak,
         testWorkers == 0 ? "  [host < 3 cores: parallel == serial by construction]"
@@ -1120,7 +1122,7 @@ juce::String AudioPipelineSelfTest::testParallelMatchesSerial()
                           : "");
 }
 
-juce::String AudioPipelineSelfTest::testMidiPlayAlongMonitor()
+std::string AudioPipelineSelfTest::testMidiPlayAlongMonitor()
 {
     // Regression guard: an armed, input-monitored MIDI track must sound the
     // live controller in ALL transport states - Stopped, Playing, and Stopped
@@ -1144,8 +1146,8 @@ juce::String AudioPipelineSelfTest::testMidiPlayAlongMonitor()
 
     if (vkbIdx < 0)
     {
-        return juce::String ("[PASS] MIDI play-along monitor: SKIPPED "
-                             "(no virtual-keyboard input available headlessly)");
+        return std::string ("[PASS] MIDI play-along monitor: SKIPPED "
+                            "(no virtual-keyboard input available headlessly)");
     }
 
     const double sr = 48000.0;
@@ -1223,10 +1225,10 @@ juce::String AudioPipelineSelfTest::testMidiPlayAlongMonitor()
     t0.midiActivity.store   (savedActivity, std::memory_order_relaxed);
 
     const bool pass = stoppedBefore && playing && stoppedAfter && flushInert;
-    return juce::String::formatted (
+    return dusk::text::format (
         "%s MIDI play-along monitor (armed + IN MIDI track, live note each state)\n"
         "      stopped=%s  playing=%s  stopped-again=%s  flush-inert=%s %s",
-        fmtPassFail (pass).toRawUTF8(),
+        fmtPassFail (pass).c_str(),
         stoppedBefore ? "sound" : "SILENT",
         playing       ? "sound" : "SILENT",
         stoppedAfter  ? "sound" : "SILENT",
@@ -1234,14 +1236,14 @@ juce::String AudioPipelineSelfTest::testMidiPlayAlongMonitor()
         pass ? "" : "<-- live MIDI dropped (play-along must sound while rolling)");
 }
 
-juce::String AudioPipelineSelfTest::runAll()
+std::string AudioPipelineSelfTest::runAll()
 {
-    juce::StringArray report;
-    report.add ("=== Dusk Studio Audio Pipeline Self-Test ===");
-    report.add ("Time: " + juce::Time::getCurrentTime().toString (true, true));
+    std::vector<std::string> report;
+    report.push_back ("=== Dusk Studio Audio Pipeline Self-Test ===");
+    report.push_back ("Time: " + juce::Time::getCurrentTime().toString (true, true).toStdString());
     {
         const auto& setup = deviceManager.getAudioDeviceSetup();
-        report.add (juce::String::formatted (
+        report.push_back (dusk::text::format (
             "Active backend: %s, %s out, %s in, %.0f Hz, %d-sample buffer",
             deviceManager.getCurrentAudioDeviceType().toRawUTF8(),
             setup.outputDeviceName.toRawUTF8(),
@@ -1249,27 +1251,27 @@ juce::String AudioPipelineSelfTest::runAll()
             setup.sampleRate,
             setup.bufferSize));
     }
-    report.add ("");
+    report.push_back ("");
 
     // Save state, detach engine.
     const auto savedSession = saveState();
     deviceManager.removeAudioCallback (&engine);
 
-    report.add ("--- Synthetic Engine Pipeline Tests (no hardware) ---");
-    report.add (testPassThroughUnity());
-    report.add (testMuteSilences());
-    report.add (testMasterFaderMinusSix());
-    report.add (testMasterCompNoNoiseFloor());
-    report.add (testBusSoloMutesDirect());
-    report.add (testChannelRoutingTwoOut());
-    report.add (testChannelRoutingFourOut());
-    report.add (testMasterTapeAddsGain());
-    report.add (testCompEachMode());
-    report.add (testCompHeavyGR());
-    report.add (testCompPerTrack());
-    report.add (testParallelMatchesSerial());
-    report.add (testMidiPlayAlongMonitor());
-    report.add ("");
+    report.push_back ("--- Synthetic Engine Pipeline Tests (no hardware) ---");
+    report.push_back (testPassThroughUnity());
+    report.push_back (testMuteSilences());
+    report.push_back (testMasterFaderMinusSix());
+    report.push_back (testMasterCompNoNoiseFloor());
+    report.push_back (testBusSoloMutesDirect());
+    report.push_back (testChannelRoutingTwoOut());
+    report.push_back (testChannelRoutingFourOut());
+    report.push_back (testMasterTapeAddsGain());
+    report.push_back (testCompEachMode());
+    report.push_back (testCompHeavyGR());
+    report.push_back (testCompPerTrack());
+    report.push_back (testParallelMatchesSerial());
+    report.push_back (testMidiPlayAlongMonitor());
+    report.push_back ("");
 
    #if defined(__linux__)
     // Pure-logic self-test for the Dusk Studio-owned ALSA backend. Covers the
@@ -1277,8 +1279,8 @@ juce::String AudioPipelineSelfTest::runAll()
     // periods-knob clamping. Real-device opens of the backend are
     // exercised by the backend cycle below alongside the JUCE-stock
     // ALSA / JACK paths.
-    report.add (AlsaAudioIODevice::runSelfTest());
-    report.add ("");
+    report.push_back (AlsaAudioIODevice::runSelfTest().toStdString());
+    report.push_back ("");
    #endif
 
     // Re-attach the engine BEFORE the backend cycle. Without an audio callback
@@ -1322,21 +1324,21 @@ juce::String AudioPipelineSelfTest::runAll()
     engine.applyDesiredWorkers();
     deviceManager.addAudioCallback (&engine);
 
-    report.add (testBackendsOpenCleanly());
-    report.add ("");
-    report.add (probeUMC1820AlsaFormat());
+    report.push_back (testBackendsOpenCleanly());
+    report.push_back ("");
+    report.push_back (probeUMC1820AlsaFormat());
 
     // Probe done (devices opened/closed) - reinstate the user's real session.
     restoreState (savedSession);
     for (int a = 0; a < Session::kNumAuxLanes; ++a)
         session.auxLane (a).params.mute.store (savedAuxMute[(size_t) a], std::memory_order_relaxed);
 
-    report.add ("");
-    report.add ("=== End of Self-Test ===");
-    return report.joinIntoString ("\n");
+    report.push_back ("");
+    report.push_back ("=== End of Self-Test ===");
+    return dusk::text::joinIntoString (report, "\n");
 }
 
-juce::String AudioPipelineSelfTest::runPerfBenchmark (const juce::String& label,
+std::string AudioPipelineSelfTest::runPerfBenchmark (const std::string& label,
                                                       double sampleRate, int blockSize,
                                                       int numActiveTracks,
                                                       bool eqEnabled, bool compEnabled,
@@ -1453,25 +1455,25 @@ juce::String AudioPipelineSelfTest::runPerfBenchmark (const juce::String& label,
     for (auto v : times) if (v > budgetUs) ++overruns;
     const double headroomPctMedian = 100.0 * (1.0 - median / budgetUs);
 
-    return juce::String::formatted (
+    return dusk::text::format (
         "%s %s  median=%.1f us  p95=%.1f us  p99=%.1f us  max=%.1f us  min=%.1f us  "
         "(budget=%.1f us, headroom@median=%.1f%%, overruns=%d/%d)",
         overruns > 0 ? "[OVER]" : "[OK]",
-        label.toRawUTF8(),
+        label.c_str(),
         median, p95, p99, maxV, minV,
         budgetUs, headroomPctMedian,
         overruns, (int) times.size());
 }
 
-juce::String AudioPipelineSelfTest::runPerfSuite()
+std::string AudioPipelineSelfTest::runPerfSuite()
 {
-    juce::StringArray report;
-    report.add ("=== Dusk Studio Engine Perf Benchmark ===");
-    report.add (juce::String ("Time: ") + juce::Time::getCurrentTime().toString (true, true));
-    report.add ("Measures pure-engine callback wall time across configs.");
-    report.add ("All callbacks driven directly via audioDeviceIOCallbackWithContext;");
-    report.add ("no audio device, no PipeWire, no ALSA - engine DSP only.");
-    report.add ("");
+    std::vector<std::string> report;
+    report.push_back ("=== Dusk Studio Engine Perf Benchmark ===");
+    report.push_back ("Time: " + juce::Time::getCurrentTime().toString (true, true).toStdString());
+    report.push_back ("Measures pure-engine callback wall time across configs.");
+    report.push_back ("All callbacks driven directly via audioDeviceIOCallbackWithContext;");
+    report.push_back ("no audio device, no PipeWire, no ALSA - engine DSP only.");
+    report.push_back ("");
 
     const auto saved = saveState();
     deviceManager.removeAudioCallback (&engine);
@@ -1496,32 +1498,32 @@ juce::String AudioPipelineSelfTest::runPerfSuite()
 
     for (const auto& cfg : configs)
     {
-        report.add (juce::String ("--- ") + cfg.label + " ---");
-        report.add (runPerfBenchmark ("idle (1 track, EQ off, comp off)            ",
+        report.push_back (std::string ("--- ") + cfg.label + " ---");
+        report.push_back (runPerfBenchmark ("idle (1 track, EQ off, comp off)            ",
                                        cfg.sr, cfg.bs, 1, false, false, false, /*ox*/ 1,
                                        warm, meas));
         // EQ-only and comp-only on 16ch isolates where the per-channel cost lives.
-        report.add (runPerfBenchmark ("16ch EQ only  (comp off)                    ",
+        report.push_back (runPerfBenchmark ("16ch EQ only  (comp off)                    ",
                                        cfg.sr, cfg.bs, 16, true,  false, false, /*ox*/ 1,
                                        warm, meas));
-        report.add (runPerfBenchmark ("16ch comp only (EQ off)                     ",
+        report.push_back (runPerfBenchmark ("16ch comp only (EQ off)                     ",
                                        cfg.sr, cfg.bs, 16, false, true,  false, /*ox*/ 1,
                                        warm, meas));
         // ASCII-only labels - these go straight into a TextEditor display
         // and would mojibake without UTF-8 wrapping. "x" reads naturally.
-        report.add (runPerfBenchmark ("16ch + EQ + comp (full mixer) @1x           ",
+        report.push_back (runPerfBenchmark ("16ch + EQ + comp (full mixer) @1x           ",
                                        cfg.sr, cfg.bs, 16, true,  true,  false, /*ox*/ 1,
                                        warm, meas));
-        report.add (runPerfBenchmark ("16ch + EQ + comp + tape on    @1x           ",
+        report.push_back (runPerfBenchmark ("16ch + EQ + comp + tape on    @1x           ",
                                        cfg.sr, cfg.bs, 16, true,  true,  true,  /*ox*/ 1,
                                        warm, meas));
-        report.add (runPerfBenchmark ("16ch + EQ + comp + tape on    @2x           ",
+        report.push_back (runPerfBenchmark ("16ch + EQ + comp + tape on    @2x           ",
                                        cfg.sr, cfg.bs, 16, true,  true,  true,  /*ox*/ 2,
                                        warm, meas));
-        report.add (runPerfBenchmark ("16ch + EQ + comp + tape on    @4x           ",
+        report.push_back (runPerfBenchmark ("16ch + EQ + comp + tape on    @4x           ",
                                        cfg.sr, cfg.bs, 16, true,  true,  true,  /*ox*/ 4,
                                        warm, meas));
-        report.add ("");
+        report.push_back ("");
     }
 
     // Multicore scaling: the heavy full-mixer config (the one that actually
@@ -1532,24 +1534,24 @@ juce::String AudioPipelineSelfTest::runPerfSuite()
     const int parW = juce::jmax (0, juce::jmin (juce::SystemStats::getNumCpus() - 2, 15));
     if (parW > 0)
     {
-        report.add ("--- Multicore scaling (48k/256, 16ch + EQ + comp @1x) ---");
-        report.add (runPerfBenchmark ("serial (0 workers)                          ",
+        report.push_back ("--- Multicore scaling (48k/256, 16ch + EQ + comp @1x) ---");
+        report.push_back (runPerfBenchmark ("serial (0 workers)                          ",
                                        48000.0, 256, 16, true, true, false, /*ox*/ 1,
                                        warm, meas, /*workers*/ 0));
-        report.add (runPerfBenchmark (juce::String (parW) + " worker"
+        report.push_back (runPerfBenchmark (std::to_string (parW) + " worker"
                                           + (parW == 1 ? "" : "s")
-                                          + " (cores-2)" + juce::String::repeatedString (" ", 22),
+                                          + " (cores-2)" + std::string (22, ' '),
                                        48000.0, 256, 16, true, true, false, /*ox*/ 1,
                                        warm, meas, /*workers*/ parW));
-        report.add ("  (divide serial median by parallel median for the speedup)");
-        report.add ("");
+        report.push_back ("  (divide serial median by parallel median for the speedup)");
+        report.push_back ("");
         // Leave the engine serial for any later use.
         engine.setWorkerCountForTest (0);
     }
     else
     {
-        report.add ("--- Multicore scaling: host has < 3 cores; serial only ---");
-        report.add ("");
+        report.push_back ("--- Multicore scaling: host has < 3 cores; serial only ---");
+        report.push_back ("");
     }
 
     restoreState (saved);
@@ -1557,7 +1559,7 @@ juce::String AudioPipelineSelfTest::runPerfSuite()
     engine.applyDesiredWorkers();
     deviceManager.addAudioCallback (&engine);
 
-    report.add ("=== End of Engine Perf Benchmark ===");
-    return report.joinIntoString ("\n");
+    report.push_back ("=== End of Engine Perf Benchmark ===");
+    return dusk::text::joinIntoString (report, "\n");
 }
 } // namespace duskstudio

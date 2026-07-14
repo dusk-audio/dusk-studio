@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdarg>
+#include <cstdio>
 #include <cstdlib>
 #include <string>
 #include <string_view>
@@ -189,5 +191,40 @@ inline std::vector<std::string> split (std::string_view s, char delim)
             start = i + 1;
         }
     return out;
+}
+
+// Narrow vsnprintf-based printf replacement for JUCE's String::formatted. Unlike
+// that one (wide printf on MSVC, where %s reads char* as wchar_t*), %s with a
+// char* argument is correct on every platform here.
+#if defined(__GNUC__)
+__attribute__((format (printf, 1, 2)))
+#endif
+inline std::string format (const char* fmt, ...)
+{
+    va_list args;
+    va_start (args, fmt);
+
+    char stackBuf[256];
+    va_list argsCopy;
+    va_copy (argsCopy, args);
+    const int n = std::vsnprintf (stackBuf, sizeof (stackBuf), fmt, argsCopy);
+    va_end (argsCopy);
+
+    if (n < 0)
+    {
+        va_end (args);
+        return {};
+    }
+
+    if ((size_t) n < sizeof (stackBuf))
+    {
+        va_end (args);
+        return std::string (stackBuf, (size_t) n);
+    }
+
+    std::string heap ((size_t) n, '\0');
+    std::vsnprintf (&heap[0], (size_t) n + 1, fmt, args);
+    va_end (args);
+    return heap;
 }
 } // namespace dusk::text

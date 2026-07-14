@@ -1,5 +1,6 @@
 #include "FileImporter.h"
 
+#include "../foundation/Text.h"
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <algorithm>
 #include <array>
@@ -17,16 +18,14 @@ namespace
 // "track{NN}_{timestamp}.wav" so imports sit next to recordings in the
 // session's audio directory and aren't visually distinct in the file
 // listing. "import_" prefix is the only differentiator.
-juce::String makeImportedFilename (int trackIndex, const juce::String& extension = ".wav")
+std::string makeImportedFilename (int trackIndex, const juce::String& extension = ".wav")
 {
     const auto now = juce::Time::getCurrentTime();
-    const auto stamp = juce::String::formatted ("%04d%02d%02d-%02d%02d%02d",
-                                                  now.getYear(), now.getMonth() + 1, now.getDayOfMonth(),
-                                                  now.getHours(), now.getMinutes(), now.getSeconds());
-    // No %s through String::formatted: MSVC's wide printf reads a char* as
-    // wchar_t* and garbles the name into invalid filename characters.
-    return "import_track" + juce::String (trackIndex + 1).paddedLeft ('0', 2)
-             + "_" + stamp + extension;
+    return dusk::text::format ("import_track%02d_%04d%02d%02d-%02d%02d%02d%s",
+                               trackIndex + 1,
+                               now.getYear(), now.getMonth() + 1, now.getDayOfMonth(),
+                               now.getHours(), now.getMinutes(), now.getSeconds(),
+                               extension.toRawUTF8());
 }
 
 // Channel-conform the first `numSamples` of `src` into `dst` (both pre-sized
@@ -71,7 +70,7 @@ AudioImportResult importAudio (const AudioImportRequest& req)
 
     if (! req.source.existsAsFile())
     {
-        result.errorMessage = "Source file does not exist: " + req.source.getFullPathName();
+        result.errorMessage = ("Source file does not exist: " + req.source.getFullPathName()).toStdString();
         return result;
     }
     // Session sample rate can legitimately be zero at import time when
@@ -91,8 +90,8 @@ AudioImportResult importAudio (const AudioImportRequest& req)
         const auto created = req.audioDir.createDirectory();
         if (created.failed())
         {
-            result.errorMessage = "Could not create audio directory: "
-                                + created.getErrorMessage();
+            result.errorMessage = ("Could not create audio directory: "
+                                + created.getErrorMessage()).toStdString();
             return result;
         }
     }
@@ -112,8 +111,8 @@ AudioImportResult importAudio (const AudioImportRequest& req)
     }
     if (reader == nullptr)
     {
-        result.errorMessage = "Unsupported or unreadable audio file: "
-                            + req.source.getFileName();
+        result.errorMessage = ("Unsupported or unreadable audio file: "
+                            + req.source.getFileName()).toStdString();
         return result;
     }
 
@@ -165,8 +164,8 @@ AudioImportResult importAudio (const AudioImportRequest& req)
         if (! copied)
         {
             outFile.deleteFile();   // drop any partial copy (matches the slow path)
-            result.errorMessage = "Could not copy the file into the session audio folder: "
-                                + outFile.getFullPathName();
+            result.errorMessage = ("Could not copy the file into the session audio folder: "
+                                + outFile.getFullPathName()).toStdString();
             return result;
         }
 
@@ -217,8 +216,8 @@ AudioImportResult importAudio (const AudioImportRequest& req)
     }
     if (stream == nullptr || ! stream->openedOk())
     {
-        result.errorMessage = "Could not open output file for writing: "
-                            + outFile.getFullPathName();
+        result.errorMessage = ("Could not open output file for writing: "
+                            + outFile.getFullPathName()).toStdString();
         return result;
     }
 
@@ -385,7 +384,7 @@ MidiImportResult importMidi (const MidiImportRequest& req)
 
     if (! req.source.existsAsFile())
     {
-        result.errorMessage = "MIDI file does not exist: " + req.source.getFullPathName();
+        result.errorMessage = ("MIDI file does not exist: " + req.source.getFullPathName()).toStdString();
         return result;
     }
     // MIDI has no inherent sample rate - the importer only needs one to

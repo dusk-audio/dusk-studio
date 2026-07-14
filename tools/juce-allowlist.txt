@@ -30,7 +30,6 @@ src/engine/McuController.h
 src/engine/NativeScanRows.h
 src/engine/PlaybackEngine.cpp
 src/engine/PlaybackEngine.h
-src/engine/PluginBackingCheck.h
 src/engine/PluginManager.cpp
 src/engine/PluginManager.h
 src/engine/PluginSlot.cpp

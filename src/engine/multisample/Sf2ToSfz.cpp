@@ -2,7 +2,11 @@
 
 #include <juce_audio_formats/juce_audio_formats.h>
 
+#include <cctype>
+#include <cmath>
+#include <cstdio>
 #include <map>
+#include <string>
 
 namespace duskstudio
 {
@@ -34,20 +38,32 @@ bool hasGen(const Sf2Zone& z, uint16_t oper)
 // absence of instrument (41).
 constexpr uint16_t kGenInstrument = 41;
 
-juce::String sanitize(const juce::String& s)
+std::string sanitize(const std::string& s)
 {
-    juce::String out;
-    for (auto c : s)
+    std::string out;
+    for (const char ch : s)
     {
-        // Cast the fallback to juce_wchar so both ternary branches share a
-        // single type. Without the cast, arm64 GCC sees juce_wchar (uint32)
-        // + int and flags the operator+= overload set as ambiguous; amd64
-        // GCC is more permissive but the cast is correct on both.
-        const juce::juce_wchar pick = juce::CharacterFunctions::isLetterOrDigit (c)
-                                          ? c : (juce::juce_wchar) '_';
-        out += pick;
+        const auto c = (unsigned char) ch;
+        if (c >= 0x80)                 // pass UTF-8 continuation/lead bytes through
+            out += (char) c;
+        else if (std::isalnum(c))
+            out += (char) c;
+        else
+            out += '_';
     }
-    return out.isEmpty() ? juce::String("s") : out;
+    return out.empty() ? std::string("s") : out;
+}
+
+// Fixed decimal-place formatting with trailing-zero padding for the SFZ
+// numeric fields. snprintf's decimal separator follows the C locale (which
+// hosted plugins are known to flip); SFZ requires '.', so normalize.
+std::string fmtF(double v, int dp)
+{
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), "%.*f", dp, v);
+    for (char* c = buf; *c != '\0'; ++c)
+        if (*c == ',') *c = '.';
+    return std::string(buf);
 }
 
 // Extract one mono sample [start,end) of 16-bit PCM from the smpl chunk
@@ -142,8 +158,8 @@ Sf2Conversion convertSf2Preset(const juce::File& sf2,
         firstInstZone = 1;
     }
 
-    juce::StringArray regions;
-    std::map<int, juce::String> extracted;   // sampleIndex -> wav filename
+    std::vector<std::string> regions;
+    std::map<int, std::string> extracted;   // sampleIndex -> wav filename
 
     for (size_t pz = firstInstZone; pz < preset.zones.size(); ++pz)
     {
@@ -240,24 +256,24 @@ Sf2Conversion convertSf2Preset(const juce::File& sf2,
 
             // Volume envelope (timecents -> seconds; cB -> % sustain)
             auto tcToSec = [](int tc) { return std::pow(2.0, (double) tc / 1200.0); };
-            juce::String env;
+            std::string env;
             if (auto it = eff.find(kGenDelayVolEnv);   it != eff.end())
-                env << " ampeg_delay="   << juce::String(tcToSec(it->second), 4);
+                env += " ampeg_delay="   + fmtF(tcToSec(it->second), 4);
             if (auto it = eff.find(kGenAttackVolEnv);  it != eff.end())
-                env << " ampeg_attack="  << juce::String(tcToSec(it->second), 4);
+                env += " ampeg_attack="  + fmtF(tcToSec(it->second), 4);
             if (auto it = eff.find(kGenHoldVolEnv);    it != eff.end())
-                env << " ampeg_hold="    << juce::String(tcToSec(it->second), 4);
+                env += " ampeg_hold="    + fmtF(tcToSec(it->second), 4);
             if (auto it = eff.find(kGenDecayVolEnv);   it != eff.end())
-                env << " ampeg_decay="   << juce::String(tcToSec(it->second), 4);
+                env += " ampeg_decay="   + fmtF(tcToSec(it->second), 4);
             if (auto it = eff.find(kGenSustainVolEnv); it != eff.end())
             {
                 // SF2 sustain is centibels of attenuation from full level.
                 const double pct = juce::jlimit(0.0, 100.0,
                                                  100.0 * std::pow(10.0, -((double) it->second) / 200.0));
-                env << " ampeg_sustain=" << juce::String(pct, 2);
+                env += " ampeg_sustain=" + fmtF(pct, 2);
             }
             if (auto it = eff.find(kGenReleaseVolEnv); it != eff.end())
-                env << " ampeg_release=" << juce::String(tcToSec(it->second), 4);
+                env += " ampeg_release=" + fmtF(tcToSec(it->second), 4);
 
             // Lowpass filter
             // initialFilterFc is absolute cents (8.176 Hz reference);
@@ -267,29 +283,29 @@ Sf2Conversion convertSf2Preset(const juce::File& sf2,
             if (fcCents < 13500)
             {
                 const double hz = 8.176 * std::pow(2.0, (double) fcCents / 1200.0);
-                env << " cutoff=" << juce::String(juce::jlimit(20.0, 22000.0, hz), 1)
-                    << " fil_type=lpf_2p";
+                env += " cutoff=" + fmtF(juce::jlimit(20.0, 22000.0, hz), 1)
+                     + " fil_type=lpf_2p";
             }
             const int resCb = genOr(eff, kGenInitialFilterQ, 0)
                             + genOr(presetLayer, kGenInitialFilterQ, 0);
             if (resCb > 0)
-                env << " resonance=" << juce::String((double) resCb / 10.0, 2);
+                env += " resonance=" + fmtF((double) resCb / 10.0, 2);
 
             // Key tracking (scaleTuning, cents/key; default 100)
             if (auto it = eff.find(kGenScaleTuning); it != eff.end() && it->second != 100)
-                env << " pitch_keytrack=" << (int) it->second;
+                env += " pitch_keytrack=" + std::to_string((int) it->second);
 
             // Exclusive class -> self-choking group (drum hi-hats)
             if (auto it = eff.find(kGenExclusiveClass); it != eff.end() && it->second != 0)
-                env << " group=" << (int) it->second
-                    << " off_by=" << (int) it->second;
+                env += " group=" + std::to_string((int) it->second)
+                     + " off_by=" + std::to_string((int) it->second);
 
             // Extract the sample once, reuse the WAV across regions.
             auto exIt = extracted.find(sampleIdx);
             if (exIt == extracted.end())
             {
-                const auto fname = "s" + juce::String(sampleIdx) + "_"
-                                 + sanitize(smp.name) + ".wav";
+                const std::string fname = "s" + std::to_string(sampleIdx) + "_"
+                                        + sanitize(smp.name) + ".wav";
                 const auto wav = outDir.getChildFile(fname);
                 if (! writeSampleWav(in, parsed.smplOffset, parsed.smplSize, smp, wav))
                     continue;
@@ -298,40 +314,38 @@ Sf2Conversion convertSf2Preset(const juce::File& sf2,
             const auto& wavName = exIt->second;
 
             // Emit region
-            juce::String r;
-            r << "<region> sample=" << wavName
-              << " lokey=" << loKey << " hikey=" << hiKey
-              << " lovel=" << loVel << " hivel=" << hiVel
-              << " pitch_keycenter=" << rootKey;
-            if (coarse != 0) r << " transpose=" << coarse;
-            if (fine   != 0) r << " tune=" << juce::jlimit(-100, 100, fine);
-            if (std::abs(volumeDb) > 0.01) r << " volume=" << juce::String(volumeDb, 2);
-            if (std::abs(pan) > 0.01)      r << " pan=" << juce::String(pan, 1);
+            std::string r = "<region> sample=" + wavName
+                          + " lokey=" + std::to_string(loKey) + " hikey=" + std::to_string(hiKey)
+                          + " lovel=" + std::to_string(loVel) + " hivel=" + std::to_string(hiVel)
+                          + " pitch_keycenter=" + std::to_string(rootKey);
+            if (coarse != 0) r += " transpose=" + std::to_string(coarse);
+            if (fine   != 0) r += " tune=" + std::to_string(juce::jlimit(-100, 100, fine));
+            if (std::abs(volumeDb) > 0.01) r += " volume=" + fmtF(volumeDb, 2);
+            if (std::abs(pan) > 0.01)      r += " pan=" + fmtF(pan, 1);
             if (loops && smp.endLoop > smp.startLoop && smp.startLoop >= smp.start
                 && smp.endLoop <= smp.end)
             {
-                r << " loop_mode=loop_continuous"
-                  << " loop_start=" << (int) (smp.startLoop - smp.start)
-                  << " loop_end="   << (int) (smp.endLoop   - smp.start - 1);
+                r += " loop_mode=loop_continuous";
+                r += " loop_start=" + std::to_string((int) (smp.startLoop - smp.start));
+                r += " loop_end="   + std::to_string((int) (smp.endLoop   - smp.start - 1));
             }
-            r << env;
-            regions.add(r);
+            r += env;
+            regions.push_back(r);
         }
     }
 
-    if (regions.isEmpty())
+    if (regions.empty())
     {
         conv.error = "SF2 preset \"" + preset.name + "\" produced no playable regions";
         return conv;
     }
 
-    juce::String sfz;
-    sfz << "// Auto-generated from " << sf2.getFileName()
-        << " preset \"" << preset.name << "\"\n"
-        << "<control>\n"
-        << "<global>\n";
+    std::string sfz = "// Auto-generated from " + sf2.getFileName().toStdString()
+                    + " preset \"" + preset.name + "\"\n"
+                    + "<control>\n"
+                    + "<global>\n";
     for (const auto& r : regions)
-        sfz << r << "\n";
+        sfz += r + "\n";
 
     conv.sfzText   = sfz;
     conv.sampleDir = outDir;

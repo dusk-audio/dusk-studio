@@ -120,6 +120,7 @@ target_include_directories(dusk-studio-tests SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/
 # JUCE-free foundation helpers (dusk::text / dusk::fs / dusk::json) — no external deps.
 target_sources(dusk-studio-tests PRIVATE
     foundation_text.cpp
+    foundation_text_format.cpp
     foundation_fs.cpp
     foundation_special_locations.cpp
     foundation_json.cpp

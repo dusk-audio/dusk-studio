@@ -1,5 +1,7 @@
 #include "Sf2Reader.h"
 
+#include "../../foundation/Text.h"
+
 namespace duskstudio
 {
 const Sf2Generator* Sf2Zone::find(uint16_t oper) const noexcept
@@ -44,13 +46,13 @@ struct Cursor
         pos += 4;
         return v;
     }
-    juce::String fixedStr(int n)
+    std::string fixedStr(int n)
     {
         // SF2 name fields are NUL-padded ASCII up to n bytes.
         const char* s = (const char*) (p + pos);
         int len = 0;
         while (len < n && s[len] != '\0') ++len;
-        juce::String out (juce::CharPointer_UTF8 (s), (size_t) len);
+        std::string out (s, (size_t) len);
         pos += (size_t) n;
         return out;
     }
@@ -106,7 +108,7 @@ Sf2File readSf2(const juce::File& file)
     juce::FileInputStream in (file);
     if (! in.openedOk())
     {
-        out.error = "Could not open " + file.getFileName();
+        out.error = ("Could not open " + file.getFileName()).toStdString();
         return out;
     }
 
@@ -250,7 +252,7 @@ Sf2File readSf2(const juce::File& file)
             s.sampleLink      = c.u16();
             s.sampleType      = c.u16();
             // Last record is the "EOS" terminal sentinel - drop it.
-            if (i == n - 1 && s.name.startsWith("EOS")) break;
+            if (i == n - 1 && dusk::text::startsWith(s.name, "EOS")) break;
             out.samples.push_back(std::move(s));
         }
     }
@@ -279,7 +281,7 @@ Sf2File readSf2(const juce::File& file)
     {
         const int n = (int) (inst.size / kInstSize);
         Cursor c { inst.data, inst.size, 0 };
-        std::vector<juce::String> names;
+        std::vector<std::string>  names;
         std::vector<int>          bagNdx;
         for (int i = 0; i < n; ++i)
         {
@@ -321,7 +323,7 @@ Sf2File readSf2(const juce::File& file)
     {
         const int n = (int) (phdr.size / kPhdrSize);
         Cursor c { phdr.data, phdr.size, 0 };
-        std::vector<juce::String> names;
+        std::vector<std::string>  names;
         std::vector<uint16_t>     progs, banks;
         std::vector<int>          bagNdx;
         for (int i = 0; i < n; ++i)

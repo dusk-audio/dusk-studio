@@ -10,6 +10,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <filesystem>
+#include <string>
 #include <vector>
 
 TEST_CASE ("NativeClapSlot loads, processes, and unloads cleanly", "[clap][slot]")
@@ -25,7 +27,7 @@ TEST_CASE ("NativeClapSlot loads, processes, and unloads cleanly", "[clap][slot]
     duskstudio::clap::NativeClapSlot slot;
     std::string err;
 
-    REQUIRE (slot.load (juce::File (juce::String (path)), 48000.0, kBlock, err));
+    REQUIRE (slot.load (std::filesystem::u8path (path), 48000.0, kBlock, err));
     REQUIRE (slot.isLoaded());
     REQUIRE (slot.getInstance() != nullptr);
 
@@ -35,15 +37,15 @@ TEST_CASE ("NativeClapSlot loads, processes, and unloads cleanly", "[clap][slot]
 
     SECTION ("explicit plugin id: round-trips, bogus id refuses to load")
     {
-        const juce::String pickedId = slot.getPluginId();
-        REQUIRE (pickedId.isNotEmpty());
+        const std::string pickedId = slot.getPluginId();
+        REQUIRE (! pickedId.empty());
 
         slot.unload();
-        REQUIRE (slot.load (juce::File (juce::String (path)), 48000.0, kBlock, err, pickedId));
+        REQUIRE (slot.load (std::filesystem::u8path (path), 48000.0, kBlock, err, pickedId));
         REQUIRE (slot.getPluginId() == pickedId);
 
         slot.unload();
-        REQUIRE_FALSE (slot.load (juce::File (juce::String (path)), 48000.0, kBlock, err,
+        REQUIRE_FALSE (slot.load (std::filesystem::u8path (path), 48000.0, kBlock, err,
                                   "urn:duskstudio:no-such-plugin"));
         REQUIRE_FALSE (slot.isLoaded());
     }
@@ -131,7 +133,7 @@ TEST_CASE ("NativeClapSlot reactivate keeps the same instance (no destroy)", "[c
 
     duskstudio::clap::NativeClapSlot slot;
     std::string err;
-    REQUIRE (slot.load (juce::File (juce::String (path)), 48000.0, 512, err));
+    REQUIRE (slot.load (std::filesystem::u8path (path), 48000.0, 512, err));
     auto* before = slot.getInstance();
     REQUIRE (before != nullptr);
 
@@ -172,7 +174,7 @@ TEST_CASE ("NativeClapSlot state round-trips into a fresh slot", "[clap][slot][s
     }
 
     constexpr int kBlock = 512;
-    const juce::File bundle { juce::String (path) };
+    const std::filesystem::path bundle = std::filesystem::u8path (path);
 
     duskstudio::clap::NativeClapSlot a;
     std::string err;

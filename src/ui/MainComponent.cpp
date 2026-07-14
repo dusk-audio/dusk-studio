@@ -3830,9 +3830,9 @@ void MainComponent::importDpSongPrompt()
         if (! scan.ok)
         {
             showImportError ("Import DP Song",
-                             scan.warnings.isEmpty()
+                             scan.warnings.empty()
                                  ? juce::String ("No DP song folder found at that location.")
-                                 : scan.warnings);
+                                 : juce::String (scan.warnings));
             return;
         }
 
