@@ -1028,7 +1028,7 @@ struct DuskStudioApp::BounceTest : private juce::Timer
 
         bounce = std::make_unique<BounceEngine> (*engine, *session,
                                                  engine->getDeviceManager());
-        bounce->onFinished = [this] (bool ok, juce::String err)
+        bounce->onFinished = [this] (bool ok, std::string err)
         {
             // Worker thread. Record + let the poll timer pick it up on the message
             // thread. masterDone is the release fence.
@@ -1042,7 +1042,7 @@ struct DuskStudioApp::BounceTest : private juce::Timer
                              BounceEngine::Format::Wav))
         {
             std::fprintf (stdout, "[FAIL] MasterMix bounce start() returned false: %s\n",
-                          bounce->getLastError().toRawUTF8());
+                          bounce->getLastError().c_str());
             exitCode = 1;
             return false;
         }
@@ -1265,10 +1265,10 @@ private:
                     if (! cb)
                         std::fprintf (stdout, "[FAIL] MasterMix: engine produced non-finite output "
                                               "on the post-bounce callback\n");
-                    const bool ok = masterOk && masterErr.isEmpty() && wav && cb;
-                    if (! masterOk || masterErr.isNotEmpty())
+                    const bool ok = masterOk && masterErr.empty() && wav && cb;
+                    if (! masterOk || ! masterErr.empty())
                         std::fprintf (stdout, "[FAIL] MasterMix: worker reported ok=%d err=\"%s\"\n",
-                                      (int) masterOk, masterErr.toRawUTF8());
+                                      (int) masterOk, masterErr.c_str());
                     if (ok)
                         std::fprintf (stdout,
                                       "[PASS] MasterMix render OK (peak=%.4f, engine reattached + "
@@ -1301,7 +1301,7 @@ private:
                 // startFreeze() starts on the first tick.
                 bounce = std::make_unique<BounceEngine> (*engine, *session,
                                                          engine->getDeviceManager());
-                bounce->onFinished = [this] (bool ok, juce::String err)
+                bounce->onFinished = [this] (bool ok, std::string err)
                 {
                     freezeOk  = ok;
                     freezeErr = err;
@@ -1316,7 +1316,7 @@ private:
                 else if (++freezeAttempts > 40)
                 {
                     std::fprintf (stdout, "[FAIL] Freeze: startFreeze() would not start: %s\n",
-                                  bounce->getLastError().toRawUTF8());
+                                  bounce->getLastError().c_str());
                     exitCode = 1;
                     finish();
                 }
@@ -1329,10 +1329,10 @@ private:
                 {
                     float peak = 0.0f;
                     const bool wav = validateWav (freezeFile, "Freeze", peak);
-                    const bool ok  = freezeOk && freezeErr.isEmpty() && wav;
-                    if (! freezeOk || freezeErr.isNotEmpty())
+                    const bool ok  = freezeOk && freezeErr.empty() && wav;
+                    if (! freezeOk || ! freezeErr.empty())
                         std::fprintf (stdout, "[FAIL] Freeze: worker reported ok=%d err=\"%s\"\n",
-                                      (int) freezeOk, freezeErr.toRawUTF8());
+                                      (int) freezeOk, freezeErr.c_str());
                     if (ok)
                         std::fprintf (stdout,
                                       "[PASS] Freeze render OK (peak=%.4f, plugin processed through "
@@ -1368,7 +1368,7 @@ private:
 
                 bounce = std::make_unique<BounceEngine> (*engine, *session,
                                                          engine->getDeviceManager());
-                bounce->onFinished = [this] (bool ok, juce::String err)
+                bounce->onFinished = [this] (bool ok, std::string err)
                 {
                     stemsOk  = ok;
                     stemsErr = err;
@@ -1383,7 +1383,7 @@ private:
                 else if (++stemsAttempts > 40)
                 {
                     std::fprintf (stdout, "[FAIL] Stems: start() would not start: %s\n",
-                                  bounce->getLastError().toRawUTF8());
+                                  bounce->getLastError().c_str());
                     exitCode = 1;
                     finish();
                 }
@@ -1394,10 +1394,10 @@ private:
             {
                 if (stemsDone.load (std::memory_order_acquire))
                 {
-                    bool ok = stemsOk && stemsErr.isEmpty();
+                    bool ok = stemsOk && stemsErr.empty();
                     if (! ok)
                         std::fprintf (stdout, "[FAIL] Stems: worker reported ok=%d err=\"%s\"\n",
-                                      (int) stemsOk, stemsErr.toRawUTF8());
+                                      (int) stemsOk, stemsErr.c_str());
 
                     const auto targets = BounceEngine::collectStemTargets (*session, stemsBase);
                     int trackStems = 0, busStems = 0, auxStems = 0;
@@ -1505,7 +1505,7 @@ private:
     std::atomic<bool> freezeDone { false };
     std::atomic<bool> stemsDone  { false };
     bool masterOk = false, freezeOk = false, stemsOk = false;
-    juce::String masterErr, freezeErr, stemsErr;
+    std::string  masterErr, freezeErr, stemsErr;
 };
 
 // Resolve a session path passed on the command line / by the file manager.

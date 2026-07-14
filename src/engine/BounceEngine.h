@@ -3,6 +3,7 @@
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_audio_formats/juce_audio_formats.h>
 #include "../session/Session.h"
+#include "../foundation/Text.h"
 #include <array>
 #include <atomic>
 #include <functional>
@@ -53,39 +54,40 @@ public:
     // AudioEngine + Session + the bounce loop.
     static juce::File stemOutputFile (const juce::File& base,
                                         int trackIndexZeroBased,
-                                        const juce::String& trackName)
+                                        const std::string& trackName)
     {
         auto dir  = base.getParentDirectory();
         auto stem = base.getFileNameWithoutExtension();
         if (stem.isEmpty()) stem = "bounce";
 
-        auto safeName = trackName.trim();
-        if (safeName.isEmpty() || safeName == juce::String (trackIndexZeroBased + 1))
+        auto safeName = dusk::text::trim (trackName);
+        if (safeName.empty() || safeName == std::to_string (trackIndexZeroBased + 1))
             safeName = "track";
 
-        safeName = juce::File::createLegalFileName (safeName);
-        if (safeName.isEmpty()) safeName = "track";
+        safeName = juce::File::createLegalFileName (safeName).toStdString();
+        if (safeName.empty()) safeName = "track";
 
         // Stems are always WAV regardless of the base file's extension: start()
         // forces Format::Wav for Stems mode (MP3 encoder delay + frame padding
         // would shift each stem and break the sample-accurate alignment a
         // re-import needs).
-        const auto idx = juce::String (trackIndexZeroBased + 1).paddedLeft ('0', 2);
+        const auto idx = dusk::text::paddedLeft (std::to_string (trackIndexZeroBased + 1), '0', 2);
         return dir.getChildFile (stem + "_" + idx + "_" + safeName + ".wav");
     }
 
     // <dir>/<base>_<tag>_<safe>.wav for bus / aux stems (tag = "bus1".."aux4").
     // Falls back to the tag alone when the unit has no usable name.
     static juce::File namedStemOutputFile (const juce::File& base,
-                                             const juce::String& tag,
-                                             const juce::String& unitName)
+                                             const std::string& tag,
+                                             const std::string& unitName)
     {
         auto dir  = base.getParentDirectory();
         auto stem = base.getFileNameWithoutExtension();
         if (stem.isEmpty()) stem = "bounce";
 
-        auto safeName = juce::File::createLegalFileName (unitName.trim());
-        return dir.getChildFile (safeName.isEmpty()
+        const auto safeName =
+            juce::File::createLegalFileName (dusk::text::trim (unitName)).toStdString();
+        return dir.getChildFile (safeName.empty()
                                     ? stem + "_" + tag + ".wav"
                                     : stem + "_" + tag + "_" + safeName + ".wav");
     }
@@ -125,7 +127,7 @@ public:
             if (! (hasContent || armed)) continue;
 
             targets.push_back ({ StemTarget::Kind::Track, t,
-                                 stemOutputFile (base, t, tr.name) });
+                                 stemOutputFile (base, t, tr.name.toStdString()) });
 
             for (int a = 0; a < Session::kNumBuses; ++a)
                 if (tr.strip.busAssign[(size_t) a].load (std::memory_order_relaxed))
@@ -149,13 +151,13 @@ public:
         for (int a = 0; a < Session::kNumBuses; ++a)
             if (busActive[(size_t) a])
                 targets.push_back ({ StemTarget::Kind::Bus, a,
-                                     namedStemOutputFile (base, "bus" + juce::String (a + 1),
-                                                            session.bus (a).name) });
+                                     namedStemOutputFile (base, "bus" + std::to_string (a + 1),
+                                                            session.bus (a).name.toStdString()) });
         for (int a = 0; a < Session::kNumAuxLanes; ++a)
             if (auxActive[(size_t) a])
                 targets.push_back ({ StemTarget::Kind::Aux, a,
-                                     namedStemOutputFile (base, "aux" + juce::String (a + 1),
-                                                            session.auxLane (a).name) });
+                                     namedStemOutputFile (base, "aux" + std::to_string (a + 1),
+                                                            session.auxLane (a).name.toStdString()) });
         return targets;
     }
 
@@ -233,9 +235,10 @@ public:
     float        getProgress() const noexcept { return progress.load (std::memory_order_relaxed); }
     int          getTotalStemsToRender() const noexcept
         { return totalStemsToRender.load (std::memory_order_relaxed); }
-    juce::String getLastError() const
+    std::string getLastError() const
     {
-        // juce::String is refcounted; concurrent copy races the refcount.
+        // A std::string copy concurrent with a writer is UB; the lock is
+        // load-bearing.
         const juce::ScopedLock lock (lastErrorLock);
         return lastError;
     }
@@ -244,7 +247,7 @@ public:
     // Called on the worker thread. Use MessageManager::callAsync for UI.
     std::function<void()>                  onStarted;
     std::function<void(float)>             onProgressUpdated;
-    std::function<void(bool, juce::String)> onFinished;
+    std::function<void(bool, std::string)> onFinished;
 
 private:
     void run() override;
@@ -288,7 +291,7 @@ private:
     std::atomic<float> progress         { 0.0f };
     std::atomic<std::int64_t> renderedSamples { 0 };
     std::atomic<int>   totalStemsToRender { 0 };
-    juce::String lastError;
+    std::string lastError;
     juce::CriticalSection lastErrorLock;
 
     std::int64_t computeBounceLength (double sampleRate, double tail) const;
@@ -297,13 +300,13 @@ private:
     // (truncated) output stream. Returns null + sets errOut on failure. Takes
     // ownership of outStream on success; on failure outStream is freed.
     std::unique_ptr<juce::AudioFormatWriter>
-        makeWriter (std::unique_ptr<juce::FileOutputStream> outStream, juce::String& errOut) const;
+        makeWriter (std::unique_ptr<juce::FileOutputStream> outStream, std::string& errOut) const;
 
     // Open + truncate outFile, then wrap it in the configured format writer.
     // Null + errOut on failure - the file may already be truncated by then,
     // so failure paths that must preserve prior content delete it.
     std::unique_ptr<juce::AudioFormatWriter>
-        openWriterFor (const juce::File& outFile, juce::String& errOut) const;
+        openWriterFor (const juce::File& outFile, std::string& errOut) const;
 
     // Stem-tap registry plumbing shared by the offline and realtime stem
     // renders. Arm and clear must cover the same tap set or a render leaves
